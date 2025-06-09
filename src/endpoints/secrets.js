@@ -99,6 +99,7 @@ export class SecretManager {
     constructor(directories) {
         this.directories = directories;
         this.filePath = path.join(directories.root, SECRETS_FILE);
+        this.defaultSecrets = {};
     }
 
     /**
@@ -107,7 +108,7 @@ export class SecretManager {
      */
     _ensureSecretsFile() {
         if (!fs.existsSync(this.filePath)) {
-            writeFileAtomicSync(this.filePath, JSON.stringify({}), 'utf-8');
+            writeFileAtomicSync(this.filePath, JSON.stringify(this.defaultSecrets), 'utf-8');
         }
     }
 
@@ -382,12 +383,7 @@ export class SecretManager {
         }
 
         // Mark as migrated
-        migratedSecrets[SECRET_KEYS._MIGRATED] = [{
-            id: uuidv4(),
-            value: 'true',
-            label: 'Migration Marker',
-            active: true,
-        }];
+        migratedSecrets[SECRET_KEYS._MIGRATED] = [];
 
         // Save backup of the old secrets file
         const backupFilePath = path.join(this.directories.backups, `secrets_migration_${Date.now()}.json`);
