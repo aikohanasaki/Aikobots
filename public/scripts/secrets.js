@@ -1,8 +1,16 @@
 import { DOMPurify, moment } from '../lib.js';
 import { getRequestHeaders } from '../script.js';
 import { t } from './i18n.js';
+import { chat_completion_sources } from './openai.js';
 import { callGenericPopup, Popup, POPUP_TYPE } from './popup.js';
+import { SlashCommand } from './slash-commands/SlashCommand.js';
+import { ARGUMENT_TYPE, SlashCommandNamedArgument } from './slash-commands/SlashCommandArgument.js';
+import { enumIcons } from './slash-commands/SlashCommandCommonEnumsProvider.js';
+import { enumTypes, SlashCommandEnumValue } from './slash-commands/SlashCommandEnumValue.js';
+import { SlashCommandParser } from './slash-commands/SlashCommandParser.js';
 import { renderTemplateAsync } from './templates.js';
+import { textgen_types } from './textgen-settings.js';
+import { isTrueBoolean } from './utils.js';
 
 export const SECRET_KEYS = {
     HORDE: 'api_key_horde',
@@ -84,6 +92,14 @@ const FRIENDLY_NAMES = {
     [SECRET_KEYS.DEEPSEEK]: 'DeepSeek',
     [SECRET_KEYS.XAI]: 'xAI (Grok)',
     [SECRET_KEYS.VERTEXAI_SERVICE_ACCOUNT]: 'Google Vertex AI (Service Account)',
+    [SECRET_KEYS.STABILITY]: 'Stability AI',
+    [SECRET_KEYS.CUSTOM_OPENAI_TTS]: 'Custom OpenAI TTS',
+    [SECRET_KEYS.TAVILY]: 'Tavily',
+    [SECRET_KEYS.BFL]: 'Black Forest Labs',
+    [SECRET_KEYS.SERPAPI]: 'SerpApi',
+    [SECRET_KEYS.SERPER]: 'Serper',
+    [SECRET_KEYS.FALAI]: 'FAL.AI',
+    [SECRET_KEYS.AZURE_TTS]: 'Azure TTS',
 };
 
 const INPUT_MAP = {
@@ -122,6 +138,55 @@ const INPUT_MAP = {
     [SECRET_KEYS.XAI]: '#api_key_xai',
     [SECRET_KEYS.VERTEXAI_SERVICE_ACCOUNT]: '#vertexai_service_account_json',
 };
+
+/**
+ * Resolves the secret key based on the selected API, chat completion source, and text completion type.
+ * @returns {string|null} The secret key corresponding to the selected API, or null if no key is found.
+ */
+function resolveSecretKey() {
+    const { mainApi, chatCompletionSettings, textCompletionSettings } = SillyTavern.getContext();
+    const chatCompletionSource = chatCompletionSettings.chat_completion_source;
+    const textCompletionType = textCompletionSettings.type;
+
+    if (mainApi === 'koboldhorde') {
+        return SECRET_KEYS.HORDE;
+    }
+
+    if (mainApi === 'novel') {
+        return SECRET_KEYS.NOVEL;
+    }
+
+    if (mainApi === 'textgenerationwebui') {
+        const [key] = Object.entries(textgen_types).find(([, value]) => value === textCompletionType) ?? [null];
+        if (key && SECRET_KEYS[key]) {
+            return SECRET_KEYS[key];
+        }
+    }
+
+    if (mainApi === 'openai') {
+        if (chatCompletionSource === chat_completion_sources.VERTEXAI) {
+            switch (chatCompletionSettings.vertexai_auth_mode) {
+                case 'express':
+                    return SECRET_KEYS.VERTEXAI;
+                case 'full':
+                    return SECRET_KEYS.VERTEXAI_SERVICE_ACCOUNT;
+            }
+        }
+
+        if (chatCompletionSource === chat_completion_sources.SCALE) {
+            return chatCompletionSettings.use_alt_scale
+                ? SECRET_KEYS.SCALE_COOKIE
+                : SECRET_KEYS.SCALE;
+        }
+
+        const [key] = Object.entries(chat_completion_sources).find(([, value]) => value === chatCompletionSource) ?? [null];
+        if (key && SECRET_KEYS[key]) {
+            return SECRET_KEYS[key];
+        }
+    }
+
+    return null;
+}
 
 const STATIC_PLACEHOLDER_KEYS = [
     SECRET_KEYS.VERTEXAI_SERVICE_ACCOUNT,
@@ -505,7 +570,7 @@ async function openKeyManagerDialog(key) {
     }
 }
 
-jQuery(async () => {
+export async function initSecrets() {
     $('#viewSecrets').on('click', viewSecrets);
     $(document).on('click', '.manage-api-keys', async function () {
         const key = $(this).data('key');
@@ -539,4 +604,89 @@ jQuery(async () => {
         warningElement.toggle(value.length > 0);
     });
     $('.openrouter_authorize').on('click', authorizeOpenRouter);
-});
+
+    SlashCommandParser.addCommandObject(SlashCommand.fromProps({
+        name: 'secret-id',
+        helpString: t`Sets the ID of a currently active secret key. Gets the ID of the secret key if no value is provided.`,
+        returns: t`The ID of the secret key that is now active.`,
+        namedArgumentList: [
+            SlashCommandNamedArgument.fromProps({
+                name: 'quiet',
+                description: t`Suppress toast message notifications.`,
+                isRequired: false,
+                typeList: [ARGUMENT_TYPE.BOOLEAN],
+            }),
+            SlashCommandNamedArgument.fromProps({
+                name: 'key',
+                description: t`The key to get the secret ID for. If not provided, will use the currently active API secrets.`,
+                isRequired: false,
+                enumProvider: () => Object.values(SECRET_KEYS).map(key => new SlashCommandEnumValue(key, FRIENDLY_NAMES[key] || key, enumTypes.name, enumIcons.key)),
+            }),
+        ],
+        unnamedArgumentList: [
+            SlashCommandNamedArgument.fromProps({
+                name: 'id',
+                description: t`The ID or a label of the secret key to set as active. If not provided, will return the currently active secret ID.`,
+                isRequired: false,
+                typeList: [ARGUMENT_TYPE.STRING],
+                enumProvider: (executor, _scope) => {
+                    const key = executor?.namedArgumentList?.find(x => x.name === 'key')?.value?.toString() || resolveSecretKey();
+                    if (!key || !secret_state[key] || !Array.isArray(secret_state[key]) || secret_state[key].length === 0) {
+                        return [];
+                    }
+
+                    return secret_state[key].map(secret => {
+                        return new SlashCommandEnumValue(secret.id, `${secret.label} (${secret.value})`, enumTypes.name, enumIcons.key);
+                    });
+                },
+            }),
+        ],
+        callback: async (args, value) => {
+            const quiet = isTrueBoolean(args?.quiet?.toString());
+            const id = value?.toString()?.trim();
+            const key = args?.key?.toString()?.trim() || resolveSecretKey();
+
+            if (!key) {
+                if (!quiet) {
+                    toastr.error(t`No secret key provided, and the key can't be resolved for the currently selected API type.`);
+                }
+                return '';
+            }
+
+            const secrets = secret_state[key];
+            if (!Array.isArray(secrets) || secrets.length === 0) {
+                if (!quiet) {
+                    toastr.error(t`No saved secrets found for the key: ${key}`);
+                }
+                return '';
+            }
+
+            if (!id) {
+                const activeSecret = secrets.find(s => s.active);
+                if (!activeSecret) {
+                    if (!quiet) {
+                        toastr.error(t`No active secret found for the key: ${key}`);
+                    }
+                    return '';
+                }
+                return activeSecret.id;
+            }
+
+            const savedSecret = secrets.find(s => s.id === id) ?? secrets.find(s => s.label === id);
+            if (!savedSecret) {
+                if (!quiet) {
+                    toastr.error(t`No secret found with ID: ${id} for the key: ${key}`);
+                }
+                return '';
+            }
+
+            // Set the secret as active
+            await rotateSecret(key, savedSecret.id);
+            if (!quiet) {
+                toastr.success(t`Secret with ID: ${id} is now active for the key: ${key}`);
+            }
+
+            return savedSecret.id;
+        },
+    }));
+}

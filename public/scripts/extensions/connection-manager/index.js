@@ -41,6 +41,7 @@ const CC_COMMANDS = [
     'start-reply-with',
     'reasoning-template',
     'prompt-post-processing',
+    'secret-id',
 ];
 
 const TC_COMMANDS = [
@@ -57,6 +58,7 @@ const TC_COMMANDS = [
     'stop-strings',
     'start-reply-with',
     'reasoning-template',
+    'secret-id',
 ];
 
 const FANCY_NAMES = {
@@ -75,6 +77,7 @@ const FANCY_NAMES = {
     'start-reply-with': 'Start Reply With',
     'reasoning-template': 'Reasoning Template',
     'prompt-post-processing': 'Prompt Post-Processing',
+    'secret-id': 'Secret ID',
 };
 
 /**
