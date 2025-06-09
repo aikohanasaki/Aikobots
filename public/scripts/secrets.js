@@ -1,7 +1,7 @@
 import { DOMPurify, moment } from '../lib.js';
 import { getRequestHeaders } from '../script.js';
 import { t } from './i18n.js';
-import { callGenericPopup, Popup, POPUP_RESULT, POPUP_TYPE } from './popup.js';
+import { callGenericPopup, Popup, POPUP_TYPE } from './popup.js';
 import { renderTemplateAsync } from './templates.js';
 
 export const SECRET_KEYS = {
@@ -443,9 +443,8 @@ function updateInputDataLists() {
  * @param {string} key Key for which to open the key manager dialog.
  */
 async function openKeyManagerDialog(key) {
-    const secrets = secret_state[key] ?? [];
     const name = FRIENDLY_NAMES[key] || key;
-    const template = $(await renderTemplateAsync('secretKeyManager', { name, key, secrets }));
+    const template = $(await renderTemplateAsync('secretKeyManager', { name, key }));
     template.find('button[data-action="add-secret"]').on('click', async function () {
         const value = await Popup.show.input(t`Add Secret`, t`Enter the secret value:`);
         if (!value) {
@@ -453,56 +452,57 @@ async function openKeyManagerDialog(key) {
         }
         const label = await Popup.show.input(t`Add Secret`, t`Enter a label for the secret (optional):`, getLabel());
         await writeSecret(key, value, label);
-        await popup.complete(POPUP_RESULT.CANCELLED);
-        openKeyManagerDialog(key);
-    });
-    template.find('button[data-action="rotate-secret"]').on('click', async function () {
-        const secretId = $(this).data('id');
-        await rotateSecret(key, secretId);
-        await popup.complete(POPUP_RESULT.CANCELLED);
-        openKeyManagerDialog(key);
-    });
-    template.find('button[data-action="rename-secret"]').on('click', async function () {
-        const secretId = $(this).data('id');
-        const currentSecret = secret_state[key].find(secret => secret.id === secretId);
-        const label = await Popup.show.input(t`Rename Secret`, t`Enter new label for the secret:`, currentSecret?.label || getLabel());
-        if (!label) {
-            return;
-        }
-        await renameSecret(key, secretId, label);
-        await popup.complete(POPUP_RESULT.CANCELLED);
-        openKeyManagerDialog(key);
-    });
-    template.find('button[data-action="delete-secret"]').on('click', async function () {
-        const secretId = $(this).data('id');
-        const currentSecret = secret_state[key].find(secret => secret.id === secretId);
-        const confirm = await Popup.show.confirm(t`Delete Secret: ${currentSecret?.label}`, t`Are you sure you want to delete this secret? This action cannot be undone.`);
-        if (!confirm) {
-            return;
-        }
-        await deleteSecret(key, secretId);
-        await popup.complete(POPUP_RESULT.CANCELLED);
-        openKeyManagerDialog(key);
+        await renderSecretsList();
     });
 
-    const popup = new Popup(template, POPUP_TYPE.TEXT, '', { wide: true, large: true, animation: 'none' });
-    const completePromise = popup.show();
+    await renderSecretsList();
+    await callGenericPopup(template, POPUP_TYPE.TEXT, '', { wide: true, large: true, onOpen: scrollToActive });
 
-    // Scroll to active key if it's not in view
-    requestAnimationFrame(() => {
-        const activeKey = template.find('.active');
+    async function renderSecretsList() {
+        const secrets = secret_state[key] ?? [];
+        const list = template.find('.secretKeyManagerList');
+        const previousScrollTop = list.scrollTop();
+
+        const emptyMessage = template.find('.secretKeyManagerListEmpty');
+        emptyMessage.toggle(secrets.length === 0);
+
+        const itemBlocks = [];
+        for (const secret of secrets) {
+            const itemTemplate = $(await renderTemplateAsync('secretKeyManagerListItem', secret));
+            itemTemplate.find('button[data-action="rotate-secret"]').on('click', async function () {
+                await rotateSecret(key, secret.id);
+                await renderSecretsList();
+            });
+            itemTemplate.find('button[data-action="rename-secret"]').on('click', async function () {
+                const label = await Popup.show.input(t`Rename Secret`, t`Enter new label for the secret:`, secret?.label || getLabel());
+                if (!label) {
+                    return;
+                }
+                await renameSecret(key, secret.id, label);
+                await renderSecretsList();
+            });
+            itemTemplate.find('button[data-action="delete-secret"]').on('click', async function () {
+                const confirm = await Popup.show.confirm(t`Delete Secret: ${secret?.label}`, t`Are you sure you want to delete this secret? This action cannot be undone.`);
+                if (!confirm) {
+                    return;
+                }
+                await deleteSecret(key, secret.id);
+                await renderSecretsList();
+            });
+            itemBlocks.push(itemTemplate);
+        }
+
+        list.empty().append(itemBlocks).scrollTop(previousScrollTop);
+    }
+
+    function scrollToActive() {
+        const list = template.find('.secretKeyManagerList');
+        const activeKey = list.find('.active');
         if (activeKey.length > 0) {
-            const parent = activeKey.parent();
-            const parentHeight = parent.height();
-            const activeKeyOffset = activeKey.position().top;
-            const activeKeyHeight = activeKey.outerHeight(true);
-            if (activeKeyOffset < 0 || activeKeyOffset + activeKeyHeight > parentHeight) {
-                parent.scrollTop(activeKeyOffset - (parentHeight / 2) + (activeKeyHeight / 2));
-            }
+            const activeKeyScrollTop = activeKey.position().top + list.scrollTop() - list.height() / 2;
+            list.scrollTop(activeKeyScrollTop);
         }
-    });
-
-    await completePromise;
+    }
 }
 
 jQuery(async () => {
