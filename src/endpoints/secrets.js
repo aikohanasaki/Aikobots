@@ -3,7 +3,7 @@ import path from 'node:path';
 
 import express from 'express';
 import { sync as writeFileAtomicSync } from 'write-file-atomic';
-import { getConfigValue, uuidv4 } from '../util.js';
+import { color, getConfigValue, uuidv4 } from '../util.js';
 
 export const SECRETS_FILE = 'secrets.json';
 export const SECRET_KEYS = {
@@ -394,7 +394,7 @@ export class SecretManager {
         fs.cpSync(this.filePath, backupFilePath);
 
         this._writeSecretsFile(migratedSecrets);
-        console.info('Secrets migrated successfully, old secrets backed up to:', backupFilePath);
+        console.info(color.green('Secrets migrated successfully, old secrets backed up to:'), backupFilePath);
     }
 }
 
@@ -406,7 +406,7 @@ export class SecretManager {
  * @param {string} value Secret value
  */
 export function writeSecret(directories, key, value) {
-    return new SecretManager(directories).writeSecret(key, value, 'Unnamed');
+    return new SecretManager(directories).writeSecret(key, value);
 }
 
 /**
@@ -415,7 +415,7 @@ export function writeSecret(directories, key, value) {
  * @param {string} key Secret key
  */
 export function deleteSecret(directories, key) {
-    return new SecretManager(directories).deleteSecret(key, '');
+    return new SecretManager(directories).deleteSecret(key, null);
 }
 
 /**
@@ -467,13 +467,17 @@ export function getAllSecrets(directories) {
 //#endregion
 
 /**
- * Migrates legacy secrets format to the new format for all user directories
+ * Migrates legacy flat secrets format to the new format for all user directories
  * @param {import('../users.js').UserDirectoryList[]} directoriesList User directories
  */
-export function migrateLegacySecrets(directoriesList) {
+export function migrateFlatSecrets(directoriesList) {
     for (const directories of directoriesList) {
-        const manager = new SecretManager(directories);
-        manager.migrateFlatSecrets();
+        try {
+            const manager = new SecretManager(directories);
+            manager.migrateFlatSecrets();
+        } catch (error) {
+            console.warn(color.red(`Failed to migrate secrets for ${directories.root}:`), error);
+        }
     }
 }
 
@@ -509,12 +513,12 @@ router.post('/read', (request, response) => {
 });
 
 router.post('/view', (request, response) => {
-    if (!allowKeysExposure) {
-        console.error('secrets.json could not be viewed unless allowKeysExposure in config.yaml is set to true');
-        return response.sendStatus(403);
-    }
-
     try {
+        if (!allowKeysExposure) {
+            console.error('secrets.json could not be viewed unless allowKeysExposure in config.yaml is set to true');
+            return response.sendStatus(403);
+        }
+
         const secrets = getAllSecrets(request.user.directories);
 
         if (!secrets) {
@@ -529,18 +533,18 @@ router.post('/view', (request, response) => {
 });
 
 router.post('/find', (request, response) => {
-    const { key } = request.body;
-
-    if (!key) {
-        return response.status(400).send('Key is required');
-    }
-
-    if (!allowKeysExposure && !EXPORTABLE_KEYS.includes(key)) {
-        console.error('Cannot fetch secrets unless allowKeysExposure in config.yaml is set to true');
-        return response.sendStatus(403);
-    }
-
     try {
+        const { key } = request.body;
+
+        if (!key) {
+            return response.status(400).send('Key is required');
+        }
+
+        if (!allowKeysExposure && !EXPORTABLE_KEYS.includes(key)) {
+            console.error('Cannot fetch secrets unless allowKeysExposure in config.yaml is set to true');
+            return response.sendStatus(403);
+        }
+
         const manager = new SecretManager(request.user.directories);
         const secret = manager.readSecret(key);
 
