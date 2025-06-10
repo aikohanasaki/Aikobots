@@ -46,12 +46,20 @@ access.log
 /cache/
 public/css/user.css
 public/error/
+public/presets
 /plugins/
 /data
 /default/scaffold
+/default/content/characters
+/default/content/worlds
+/default/content/settings.json
+/default/content/index.json
 public/scripts/extensions/third-party
 /certs
 .aider*
 .env
 /StartDev.bat
+/public/indexbackup.html
+/public/indexecho.html
+/public/index.html
 
