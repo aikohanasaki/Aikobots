@@ -1033,7 +1033,7 @@ async function firstLoadInit() {
     doDailyExtensionUpdatesCheck();
     await hideLoader();
     await fixViewport();
-    await initializeAikobots
+    await initializeAikobots();
     await eventSource.emit(event_types.APP_READY);
 }
 

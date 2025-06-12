@@ -5,7 +5,7 @@ function showElement(selector) {
     try {
         const element = document.querySelector(selector);
         if (element) {
-            element.style.display = 'block';
+            element.style.display = 'flex';
             console.log(`Showing element: ${selector}`);
         } else {
             console.warn(`Element not found: ${selector}`);
