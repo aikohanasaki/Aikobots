@@ -1,0 +1,11 @@
+{
+    "display_name": "Aikobots",
+    "loading_order": 1,
+    "requires": [],
+    "optional": [],
+    "js": "aikobots.js",
+    "css": "",
+    "author": "aikohanasaki",
+    "version": "1.0.0",
+    "homePage": "https://github.com/aikohanasaki/aikobots"
+}
