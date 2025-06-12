@@ -1,5 +1,4 @@
 import { POPUP_RESULT, POPUP_TYPE, Popup } from './popup.js';
-import { initializeAikobots } from './extensions/aikobots/aikobots.js';
 
 /** @type {Popup} */
 let loaderPopup;
@@ -26,8 +25,6 @@ export async function hideLoader() {
         console.warn('There is no loader showing to hide');
         return Promise.resolve();
     }
-
-    await initializeAikobots();
 
     return new Promise((resolve) => {
         const spinner = $('#load-spinner');

@@ -285,6 +285,7 @@ import { accountStorage } from './scripts/util/AccountStorage.js';
 import { initWelcomeScreen, openPermanentAssistantChat, openPermanentAssistantCard, getPermanentAssistantAvatar } from './scripts/welcome-screen.js';
 import { isAdmin } from './scripts/user.js';
 import { getAikobotsEnabled } from './scripts/utils.js';
+import { initializeAikobots } from './scripts/extensions/aikobots/aikobots.js';
 
 // API OBJECT FOR EXTERNAL WIRING
 globalThis.SillyTavern = {
@@ -1032,6 +1033,7 @@ async function firstLoadInit() {
     doDailyExtensionUpdatesCheck();
     await hideLoader();
     await fixViewport();
+    await initializeAikobots
     await eventSource.emit(event_types.APP_READY);
 }
 
