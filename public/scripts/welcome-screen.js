@@ -75,7 +75,7 @@ function sendAssistantMessage() {
     const message = {
         name: name,
         force_avatar: avatar,
-        mes: t`🎉 **Welcome to Aikobots!** 🎉` + '\n\n' + t`We're glad you're here. If you ever need help, head to the #help-911 channel in our Discord server.`  + '\n\n' + t`Now that you're here:` + '\n' + t`1️⃣ Download the latest Aikobots preset` + '\n' + t`2️⃣ Connect to an API` + '\n' + t`3️⃣ Choose a character to play with!`  + '\n\n' + t`For a list of commands, be sure to take a look at https://www.aikobots.com/commands.html and the other commands lists (the menu contains dropdowns.)` + '\n***\n' + t`**PS:** Set any character as your welcome page assistant from their "More..." menu.`,
+        mes: t`# 🎉 __**Welcome to Aikobots!**__ 🎉` + '\n\n' + t`We're glad you're here. If you ever need help, head to the #help-911 channel in our Discord server.`  + '\n\n' + t`Now that you're here:` + '\n' + t`1️⃣ Download the latest Aikobots preset` + '\n' + t`2️⃣ Connect to an API` + '\n' + t`3️⃣ Choose a character to play with!`  + '\n\n' + t`For commands, be sure to take a look at` + `\n` + t`- [General Commands](https://www.aikobots.com/commands.html)` + `\n` + t`- [Memory Helpers](https://www.aikobots.com/cmd-memory.html)` + `\n` + t`- [NSFW Overrides](https://www.aikobots.com/cmd-override.html)` + `\n` + t`- [Aikobots Exclusives](https://www.aikobots.com/cmd-aikobots.html)` + `\n` + t`- [LaDS-Specific Commands](https://www.aikobots.com/ladscommands.html).` + '\n***\n' + t`**PS:** Set any character as your welcome page assistant from their "More..." menu.`,
         is_system: false,
         is_user: false,
         extra: {
