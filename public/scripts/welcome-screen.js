@@ -75,7 +75,7 @@ function sendAssistantMessage() {
     const message = {
         name: name,
         force_avatar: avatar,
-        mes: t`If you're connected to an API, try asking me something!` + '\n***\n' + t`**Hint:** Set any character as your welcome page assistant from their "More..." menu.`,
+        mes: t`**Welcome to Aikobots!**` + '\n\n' + t`We're glad you're here. If you ever need help, head to the #help-911 channel in our Discord server.` + '\n\n' + t`Download the latest Aikobots preset, connect to an API, and choose a character to play with! For a list of commands, be sure to take a look at https://www.aikobots.com/commands.html and the other commands lists (the menu contains dropdowns.)` + '\n***\n' + t`**PS:** Set any character as your welcome page assistant from their "More..." menu.`,
         is_system: false,
         is_user: false,
         extra: {
