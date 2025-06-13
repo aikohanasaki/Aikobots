@@ -50,10 +50,7 @@ public/presets
 /plugins/
 /data
 /default/scaffold
-/default/content/characters
-/default/content/worlds
-/default/content/settings.json
-/default/content/index.json
+/default/content
 public/scripts/extensions/third-party
 /certs
 .aider*
