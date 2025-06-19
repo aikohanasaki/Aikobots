@@ -920,7 +920,7 @@ export async function setWorldInfoSettings(settings, data) {
     const aikobotsEnabled = await getAikobotsEnabled();
     if (aikobotsEnabled && !isAdmin()){
         // only admins can see 9Z files
-        let filteredNames = world_names.filter(name.includes('9Z'));
+        let filteredNames = world_names.filter(name => !name.includes('ZZZZ') && !name.includes('9Z'));
 
         // for other users filter lorebooks by file names to control viewership
         const currentUserHandle = getCurrentUserHandle();
@@ -1833,7 +1833,7 @@ export async function updateWorldInfoList() {
         const aikobotsEnabled = await getAikobotsEnabled();
         if (aikobotsEnabled && !isAdmin()){
             // only admins can see 9Z files
-            let filteredNames = world_names.filter(name.includes('9Z'));
+            let filteredNames = world_names.filter(name => !name.includes('ZZZZ') && !name.includes('9Z'));
 
             // for other users filter lorebooks by file names to control viewership
             const currentUserHandle = getCurrentUserHandle();
