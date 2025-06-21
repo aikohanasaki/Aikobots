@@ -816,6 +816,10 @@
         "type": "character"
     },
     {
+        "filename": "characters/Mikey.png",
+        "type": "character"
+    },
+    {
         "filename": "characters/Damien.png",
         "type": "character"
     },
@@ -868,6 +872,10 @@
         "type": "character"
     },
     {
+        "filename": "characters/Gage.png",
+        "type": "character"
+    },
+    {
         "filename": "characters/Callum Thorne.png",
         "type": "character"
     },
@@ -884,11 +892,19 @@
         "type": "character"
     },
     {
+        "filename": "characters/Mabey.png",
+        "type": "character"
+    },
+    {
         "filename": "characters/Si Woo.png",
         "type": "character"
     },
     {
         "filename": "characters/Alessandro.png",
+        "type": "character"
+    },
+    {
+        "filename": "characters/GLaDOS.png",
         "type": "character"
     },
     {
@@ -1052,7 +1068,7 @@
         "type": "world"
     },
     {
-        "filename": "worlds/Z-Xavier - ZZZZ.json",
+        "filename": "worlds/Z-nyotoni-marcelline.json",
         "type": "world"
     },
     {
@@ -1064,7 +1080,11 @@
         "type": "world"
     },
     {
-        "filename": "worlds/Z-Greyson - ZZZZ.json",
+        "filename": "worlds/9ZZ Andalina.json",
+        "type": "world"
+    },
+    {
+        "filename": "worlds/9ZZ Rafayel.json",
         "type": "world"
     },
     {
@@ -1084,11 +1104,23 @@
         "type": "world"
     },
     {
-        "filename": "worlds/Z-aqua-Cassian.json",
+        "filename": "worlds/9ZZ Gage.json",
         "type": "world"
     },
     {
-        "filename": "worlds/Z-LaDS Game Info - ZZZZ.json",
+        "filename": "worlds/Z-dreamweaver-Arcadia.json",
+        "type": "world"
+    },
+    {
+        "filename": "worlds/9ZZ Mark.json",
+        "type": "world"
+    },
+    {
+        "filename": "worlds/9Z Aikobots.json",
+        "type": "world"
+    },
+    {
+        "filename": "worlds/Z-aqua-Cassian.json",
         "type": "world"
     },
     {
@@ -1096,7 +1128,27 @@
         "type": "world"
     },
     {
+        "filename": "worlds/9ZZ Q.json",
+        "type": "world"
+    },
+    {
+        "filename": "worlds/9ZZ Andalino.json",
+        "type": "world"
+    },
+    {
+        "filename": "worlds/9Z Shared Knowledge.json",
+        "type": "world"
+    },
+    {
+        "filename": "worlds/9ZZ Xavier.json",
+        "type": "world"
+    },
+    {
         "filename": "worlds/Z-aqua-Niko.json",
+        "type": "world"
+    },
+    {
+        "filename": "worlds/9Z Commands.json",
         "type": "world"
     },
     {
@@ -1109,6 +1161,10 @@
     },
     {
         "filename": "worlds/Z-nari-Theo.json",
+        "type": "world"
+    },
+    {
+        "filename": "worlds/9ZZ Zee.json",
         "type": "world"
     },
     {
@@ -1128,14 +1184,6 @@
         "type": "world"
     },
     {
-        "filename": "worlds/Z-Zee Castellanos ZZZZ.json",
-        "type": "world"
-    },
-    {
-        "filename": "worlds/Z-Commands ZZZZ.json",
-        "type": "world"
-    },
-    {
         "filename": "worlds/Z-echomeria-Caesar.json",
         "type": "world"
     },
@@ -1144,11 +1192,11 @@
         "type": "world"
     },
     {
-        "filename": "worlds/Z-Polk ZZZZ.json",
+        "filename": "worlds/Z-missluckii-xaden.json",
         "type": "world"
     },
     {
-        "filename": "worlds/Z-missluckii-xaden.json",
+        "filename": "worlds/9ZZ Mikey.json",
         "type": "world"
     },
     {
@@ -1160,15 +1208,11 @@
         "type": "world"
     },
     {
+        "filename": "worlds/9ZZ Polk.json",
+        "type": "world"
+    },
+    {
         "filename": "worlds/Z-missluckii-soren.json",
-        "type": "world"
-    },
-    {
-        "filename": "worlds/Z-Shared Knowledge ZZZZ.json",
-        "type": "world"
-    },
-    {
-        "filename": "worlds/Z-Mark ZZZZ.json",
         "type": "world"
     },
     {
@@ -1176,11 +1220,15 @@
         "type": "world"
     },
     {
-        "filename": "worlds/Z-Elliott Lee ZZZZ.json",
+        "filename": "worlds/Z-nyotoni-revelin.json",
         "type": "world"
     },
     {
-        "filename": "worlds/Z-LaDS World Info - ZZZZ.json",
+        "filename": "worlds/9ZZ Caleb.json",
+        "type": "world"
+    },
+    {
+        "filename": "worlds/9ZZ Sylus.json",
         "type": "world"
     },
     {
@@ -1192,19 +1240,15 @@
         "type": "world"
     },
     {
-        "filename": "worlds/Z-Andalina Madrigal ZZZZ.json",
-        "type": "world"
-    },
-    {
-        "filename": "worlds/Z-Adriano Ghost Li - ZZZZ.json",
-        "type": "world"
-    },
-    {
-        "filename": "worlds/Z-Twins - ZZZZ.json",
-        "type": "world"
-    },
-    {
         "filename": "worlds/Z-nari-Ace.json",
+        "type": "world"
+    },
+    {
+        "filename": "worlds/9ZZ Ghost.json",
+        "type": "world"
+    },
+    {
+        "filename": "worlds/Z-echomeria-Nao.json",
         "type": "world"
     },
     {
@@ -1212,11 +1256,23 @@
         "type": "world"
     },
     {
-        "filename": "worlds/Z-Aikobots ZZZZ.json",
+        "filename": "worlds/9Z LaDS World Info.json",
         "type": "world"
     },
     {
-        "filename": "worlds/Z-Q ZZZZ.json",
+        "filename": "worlds/9ZZ Blackburn.json",
+        "type": "world"
+    },
+    {
+        "filename": "worlds/9ZZ Vhar.json",
+        "type": "world"
+    },
+    {
+        "filename": "worlds/9Z Universal Commands.json",
+        "type": "world"
+    },
+    {
+        "filename": "worlds/9ZZ Twins.json",
         "type": "world"
     },
     {
@@ -1224,15 +1280,15 @@
         "type": "world"
     },
     {
-        "filename": "worlds/Z-Vhar Reznick - ZZZZ.json",
-        "type": "world"
-    },
-    {
         "filename": "worlds/Z-aqua-Cadan.json",
         "type": "world"
     },
     {
-        "filename": "worlds/Z-Andalino Madrigal ZZZZ.json",
+        "filename": "worlds/9Z LaDS Game Info.json",
+        "type": "world"
+    },
+    {
+        "filename": "worlds/Z-ravenh-NoahGraves.json",
         "type": "world"
     },
     {
@@ -1240,11 +1296,19 @@
         "type": "world"
     },
     {
+        "filename": "worlds/Z-dreamweaver-Venryk'sLore.json",
+        "type": "world"
+    },
+    {
         "filename": "worlds/Z-whisperedinsanity-Felix and Vex.json",
         "type": "world"
     },
     {
-        "filename": "worlds/Z-Laurent ZZZZ.json",
+        "filename": "worlds/9ZZ Greyson.json",
+        "type": "world"
+    },
+    {
+        "filename": "worlds/9ZZ Zayne.json",
         "type": "world"
     },
     {
@@ -1252,15 +1316,11 @@
         "type": "world"
     },
     {
-        "filename": "worlds/Z-Jenna - ZZZZ.json",
+        "filename": "worlds/9ZZ Jenna.json",
         "type": "world"
     },
     {
-        "filename": "worlds/Z-Wraith ZZZZ.json",
-        "type": "world"
-    },
-    {
-        "filename": "worlds/Z-Sylus - ZZZZ.json",
+        "filename": "worlds/Z-echomeria-Kai.json",
         "type": "world"
     },
     {
@@ -1284,7 +1344,15 @@
         "type": "world"
     },
     {
-        "filename": "worlds/Z-Rafayel - ZZZZ.json",
+        "filename": "worlds/9ZZ Wraith.json",
+        "type": "world"
+    },
+    {
+        "filename": "worlds/Z-lyraevanstine-MarshallLee.json",
+        "type": "world"
+    },
+    {
+        "filename": "worlds/9ZZ Mabey.json",
         "type": "world"
     },
     {
@@ -1296,7 +1364,11 @@
         "type": "world"
     },
     {
-        "filename": "worlds/Z-Caleb - ZZZZ.json",
+        "filename": "worlds/9ZZ Elliott.json",
+        "type": "world"
+    },
+    {
+        "filename": "worlds/9ZZ Laurent.json",
         "type": "world"
     },
     {
@@ -1304,7 +1376,7 @@
         "type": "world"
     },
     {
-        "filename": "worlds/Z-Blackburn ZZZZ.json",
+        "filename": "worlds/Z-bunnymally-Thadius T Ravenshire.json",
         "type": "world"
     },
     {
@@ -1316,7 +1388,7 @@
         "type": "world"
     },
     {
-        "filename": "worlds/Z-Zayne - ZZZZ.json",
+        "filename": "worlds/9ZZ GLaDOS.json",
         "type": "world"
     },
     {

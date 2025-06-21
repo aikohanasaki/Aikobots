@@ -1848,9 +1848,9 @@ export async function updateWorldInfoList() {
             });
         }
 
-        world_names.forEach((item, i) => {
-            $('#world_info').append(`<option value='${i}'${selected_world_info.includes(item) ? ' selected' : ''}>${item}</option>`);
-            $('#world_editor_select').append(`<option value='${i}'>${item}</option>`);
+        world_names.forEach((item) => {
+            $('#world_info').append(`<option value='${item}'${selected_world_info.includes(item) ? ' selected' : ''}>${item}</option>`);
+            $('#world_editor_select').append(`<option value='${item}'>${item}</option>`);
         });
     }
 }
