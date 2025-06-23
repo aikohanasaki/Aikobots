@@ -126,6 +126,17 @@ export function isValidUrl(value) {
 }
 
 /**
+ * Checks if a string is a valid UUID (version 1-5).
+ * @param {string} value String to check
+ * @returns {boolean} True if the string is a valid UUID, false otherwise.
+ */
+export function isUuid(value) {
+    // Regular expression to match UUIDs
+    const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+    return uuidRegex.test(value);
+}
+
+/**
  * Converts string to a value of a given type. Includes pythonista-friendly aliases.
  * @param {string|SlashCommandClosure} value String value
  * @param {string} type Type to convert to
@@ -982,6 +993,11 @@ function parseTimestamp(timestamp) {
         return new Date(unixTime).toISOString();
     }
 
+    // ISO 8601
+    if (moment(timestamp, moment.ISO_8601, true).isValid()) {
+        return timestamp;
+    }
+
     let dtFmt = [];
 
     // meridiem-based format
@@ -1008,6 +1024,7 @@ function parseTimestamp(timestamp) {
         if (!rgxMatch) continue;
         return x.callback(...rgxMatch);
     }
+
     return;
 }
 
@@ -2147,19 +2164,26 @@ export function getFreeName(name, list, numberFormatter = (n) => ` #${n}`) {
  */
 export function toggleDrawer(drawer, expand = true) {
     /** @type {HTMLElement} */
-    const icon = drawer.querySelector('.inline-drawer-icon');
+    const icon = drawer.querySelector(':scope > .inline-drawer-header .inline-drawer-icon');
     /** @type {HTMLElement} */
-    const content = drawer.querySelector('.inline-drawer-content');
+    const content = drawer.querySelector(':scope > .inline-drawer-content');
+
+    if (!icon || !content) {
+        console.debug('toggleDrawer: No icon or content found in the drawer element.');
+        return;
+    }
 
     if (expand) {
-        icon.classList.remove('up', 'fa-circle-chevron-up');
-        icon.classList.add('down', 'fa-circle-chevron-down');
-        content.style.display = 'block';
-    } else {
         icon.classList.remove('down', 'fa-circle-chevron-down');
         icon.classList.add('up', 'fa-circle-chevron-up');
+        content.style.display = 'block';
+    } else {
+        icon.classList.remove('up', 'fa-circle-chevron-up');
+        icon.classList.add('down', 'fa-circle-chevron-down');
         content.style.display = 'none';
     }
+
+    drawer.dispatchEvent(new CustomEvent('inline-drawer-toggle', { bubbles: true }));
 
     // Set the height of "autoSetHeight" textareas within the inline-drawer to their scroll height
     if (!CSS.supports('field-sizing', 'content')) {
@@ -2343,7 +2367,7 @@ export function findChar({ name = null, allowAvatar = true, insensitive = true, 
 
     // If allowAvatar is true, search by avatar first
     if (allowAvatar && name) {
-        const characterByAvatar = filteredCharacters.find(char => char.avatar === name);
+        const characterByAvatar = filteredCharacters.find(char => char.avatar === name || (!name.endsWith('.png') && char.avatar === `${name}.png`));
         if (characterByAvatar) {
             return characterByAvatar;
         }

@@ -1,4 +1,4 @@
-import { callPopup, characters, eventSource, event_types, getCurrentChatId, reloadCurrentChat, saveSettingsDebounced, this_chid } from '../../../script.js';
+import { characters, eventSource, event_types, getCurrentChatId, reloadCurrentChat, saveSettingsDebounced, this_chid } from '../../../script.js';
 import { extension_settings, renderExtensionTemplateAsync, writeExtensionField } from '../../extensions.js';
 import { selected_group } from '../../group-chats.js';
 import { callGenericPopup, POPUP_TYPE } from '../../popup.js';
@@ -12,6 +12,8 @@ import { regex_placement, runRegexScript, substitute_find_regex } from './engine
 import { t } from '../../i18n.js';
 import { accountStorage } from '../../util/AccountStorage.js';
 
+const sanitizeFileName = name => name.replace(/[\s.<>:"/\\|?*\x00-\x1F\x7F]/g, '_').toLowerCase();
+
 /**
  * @typedef {import('../../char-data.js').RegexScriptData} RegexScript
  */
@@ -23,6 +25,18 @@ import { accountStorage } from '../../util/AccountStorage.js';
  */
 export function getRegexScripts() {
     return [...(extension_settings.regex ?? []), ...(characters[this_chid]?.data?.extensions?.regex_scripts ?? [])];
+}
+
+/**
+ * Toggle the icon for the "select all" checkbox in the regex settings.
+ * - Use `fa-check-double` when the checkbox is unchecked (indicating all scripts are not selected).
+ * - Use `fa-minus` when the checkbox is checked (indicating all scripts are selected).
+ * @param {boolean} allAreChecked Should the "select all" icon be in the checked state?
+ */
+function setToggleAllIcon(allAreChecked) {
+    const selectAllIcon = $('#bulk_select_all_toggle').find('i');
+    selectAllIcon.toggleClass('fa-check-double', !allAreChecked);
+    selectAllIcon.toggleClass('fa-minus', allAreChecked);
 }
 
 /**
@@ -43,18 +57,18 @@ async function saveRegexScript(regexScript, existingScriptIndex, isScoped) {
 
     // Is the script name undefined or empty?
     if (!regexScript.scriptName) {
-        toastr.error('Could not save regex script: The script name was undefined or empty!');
+        toastr.error(t`Could not save regex script: The script name was undefined or empty!`);
         return;
     }
 
     // Is a find regex present?
     if (regexScript.findRegex.length === 0) {
-        toastr.warning('This regex script will not work, but was saved anyway: A find regex isn\'t present.');
+        toastr.warning(t`This regex script will not work, but was saved anyway: A find regex isn't present.`);
     }
 
     // Is there someplace to place results?
     if (regexScript.placement.length === 0) {
-        toastr.warning('This regex script will not work, but was saved anyway: One "Affects" checkbox must be selected!');
+        toastr.warning(t`This regex script will not work, but was saved anyway: One "Affects" checkbox must be selected!`);
     }
 
     if (existingScriptIndex !== -1) {
@@ -101,6 +115,7 @@ async function deleteRegexScript({ id, isScoped }) {
 async function loadRegexScripts() {
     $('#saved_regex_scripts').empty();
     $('#saved_scoped_scripts').empty();
+    setToggleAllIcon(false);
 
     const scriptTemplate = $(await renderExtensionTemplateAsync('regex', 'scriptTemplate'));
 
@@ -137,7 +152,7 @@ async function loadRegexScripts() {
             await onRegexEditorOpenClick(scriptHtml.attr('id'), isScoped);
         });
         scriptHtml.find('.move_to_global').on('click', async function () {
-            const confirm = await callGenericPopup('Are you sure you want to move this regex script to global?', POPUP_TYPE.CONFIRM);
+            const confirm = await callGenericPopup(t`Are you sure you want to move this regex script to global?`, POPUP_TYPE.CONFIRM);
 
             if (!confirm) {
                 return;
@@ -148,16 +163,16 @@ async function loadRegexScripts() {
         });
         scriptHtml.find('.move_to_scoped').on('click', async function () {
             if (this_chid === undefined) {
-                toastr.error('No character selected.');
+                toastr.error(t`No character selected.`);
                 return;
             }
 
             if (selected_group) {
-                toastr.error('Cannot edit scoped scripts in group chats.');
+                toastr.error(t`Cannot edit scoped scripts in group chats.`);
                 return;
             }
 
-            const confirm = await callGenericPopup('Are you sure you want to move this regex script to scoped?', POPUP_TYPE.CONFIRM);
+            const confirm = await callGenericPopup(t`Are you sure you want to move this regex script to scoped?`, POPUP_TYPE.CONFIRM);
 
             if (!confirm) {
                 return;
@@ -167,12 +182,12 @@ async function loadRegexScripts() {
             await saveRegexScript(script, -1, true);
         });
         scriptHtml.find('.export_regex').on('click', async function () {
-            const fileName = `${script.scriptName.replace(/[\s.<>:"/\\|?*\x00-\x1F\x7F]/g, '_').toLowerCase()}.json`;
+            const fileName = `regex-${sanitizeFileName(script.scriptName)}.json`;
             const fileData = JSON.stringify(script, null, 4);
             download(fileData, fileName, 'application/json');
         });
         scriptHtml.find('.delete_regex').on('click', async function () {
-            const confirm = await callGenericPopup('Are you sure you want to delete this regex script?', POPUP_TYPE.CONFIRM);
+            const confirm = await callGenericPopup(t`Are you sure you want to delete this regex script?`, POPUP_TYPE.CONFIRM);
 
             if (!confirm) {
                 return;
@@ -181,12 +196,17 @@ async function loadRegexScripts() {
             await deleteRegexScript({ id: script.id, isScoped });
             await reloadCurrentChat();
         });
+        scriptHtml.find('.regex_bulk_checkbox').on('change', function () {
+            const checkboxes = $('#regex_container .regex_bulk_checkbox');
+            const allAreChecked = checkboxes.length === checkboxes.filter(':checked').length;
+            setToggleAllIcon(allAreChecked);
+        });
 
         $(container).append(scriptHtml);
     }
 
-    extension_settings?.regex?.forEach((script, index, array) => renderScript('#saved_regex_scripts', script, false, index, array));
-    characters[this_chid]?.data?.extensions?.regex_scripts?.forEach((script, index, array) => renderScript('#saved_scoped_scripts', script, true, index, array));
+    extension_settings?.regex?.forEach((script, index) => renderScript('#saved_regex_scripts', script, false, index));
+    characters[this_chid]?.data?.extensions?.regex_scripts?.forEach((script, index) => renderScript('#saved_scoped_scripts', script, true, index));
 
     const isAllowed = extension_settings?.character_allowed_regex?.includes(characters?.[this_chid]?.avatar);
     $('#regex_scoped_toggle').prop('checked', isAllowed);
@@ -260,11 +280,18 @@ async function onRegexEditorOpenClick(existingId, isScoped) {
 
         const testScript = {
             id: uuidv4(),
-            scriptName: editorHtml.find('.regex_script_name').val(),
-            findRegex: editorHtml.find('.find_regex').val(),
-            replaceString: editorHtml.find('.regex_replace_string').val(),
+            scriptName: editorHtml.find('.regex_script_name').val().toString(),
+            findRegex: editorHtml.find('.find_regex').val().toString(),
+            replaceString: editorHtml.find('.regex_replace_string').val().toString(),
             trimStrings: String(editorHtml.find('.regex_trim_strings').val()).split('\n').filter((e) => e.length !== 0) || [],
             substituteRegex: Number(editorHtml.find('select[name="substitute_regex"]').val()),
+            disabled: false,
+            promptOnly: false,
+            markdownOnly: false,
+            runOnEdit: false,
+            minDepth: null,
+            maxDepth: null,
+            placement: null,
         };
         const rawTestString = String(editorHtml.find('#regex_test_input').val());
         const result = runRegexScript(testScript, rawTestString);
@@ -274,19 +301,19 @@ async function onRegexEditorOpenClick(existingId, isScoped) {
     editorHtml.find('input, textarea, select').on('input', updateTestResult);
     updateInfoBlock(editorHtml);
 
-    const popupResult = await callPopup(editorHtml, 'confirm', undefined, { okButton: t`Save` });
+    const popupResult = await callGenericPopup(editorHtml, POPUP_TYPE.CONFIRM, '', { okButton: t`Save`, cancelButton: t`Cancel`, allowVerticalScrolling: true });
     if (popupResult) {
         const newRegexScript = {
             id: existingId ? String(existingId) : uuidv4(),
             scriptName: String(editorHtml.find('.regex_script_name').val()),
             findRegex: String(editorHtml.find('.find_regex').val()),
             replaceString: String(editorHtml.find('.regex_replace_string').val()),
-            trimStrings: editorHtml.find('.regex_trim_strings').val().split('\n').filter((e) => e.length !== 0) || [],
+            trimStrings: String(editorHtml.find('.regex_trim_strings').val()).split('\n').filter((e) => e.length !== 0) || [],
             placement:
                 editorHtml
                     .find('input[name="replace_position"]')
                     .filter(':checked')
-                    .map(function () { return parseInt($(this).val()); })
+                    .map(function () { return parseInt($(this).val().toString()); })
                     .get()
                     .filter((e) => !isNaN(e)) || [],
             disabled: editorHtml.find('input[name="disabled"]').prop('checked'),
@@ -459,19 +486,12 @@ async function toggleRegexCallback(args, scriptName) {
 }
 
 /**
- * Performs the import of the regex file.
- * @param {File} file Input file
+ * Performs the import of the regex object.
+ * @param {Object} regexScript Input object
  * @param {boolean} isScoped Is the script scoped to a character?
  */
-async function onRegexImportFileChange(file, isScoped) {
-    if (!file) {
-        toastr.error('No file provided.');
-        return;
-    }
-
+async function onRegexImportObjectChange(regexScript, isScoped) {
     try {
-        const fileText = await getFileText(file);
-        const regexScript = JSON.parse(fileText);
         if (!regexScript.scriptName) {
             throw new Error('No script name provided.');
         }
@@ -488,7 +508,34 @@ async function onRegexImportFileChange(file, isScoped) {
 
         saveSettingsDebounced();
         await loadRegexScripts();
-        toastr.success(`Regex script "${regexScript.scriptName}" imported.`);
+        toastr.success(t`Regex script "${regexScript.scriptName}" imported.`);
+    } catch (error) {
+        console.log(error);
+        toastr.error(t`Invalid regex object.`);
+        return;
+    }
+}
+
+/**
+ * Performs the import of the regex file.
+ * @param {File} file Input file
+ * @param {boolean} isScoped Is the script scoped to a character?
+ */
+async function onRegexImportFileChange(file, isScoped) {
+    if (!file) {
+        toastr.error('No file provided.');
+        return;
+    }
+
+    try {
+        const regexScripts = JSON.parse(await getFileText(file));
+        if (Array.isArray(regexScripts)) {
+            for (const regexScript of regexScripts) {
+                await onRegexImportObjectChange(regexScript, isScoped);
+            }
+        } else {
+            await onRegexImportObjectChange(regexScripts, isScoped);
+        }
     } catch (error) {
         console.log(error);
         toastr.error('Invalid JSON file.');
@@ -556,12 +603,12 @@ jQuery(async () => {
     });
     $('#open_scoped_editor').on('click', function () {
         if (this_chid === undefined) {
-            toastr.error('No character selected.');
+            toastr.error(t`No character selected.`);
             return;
         }
 
         if (selected_group) {
-            toastr.error('Cannot edit scoped scripts in group chats.');
+            toastr.error(t`Cannot edit scoped scripts in group chats.`);
             return;
         }
 
@@ -583,6 +630,82 @@ jQuery(async () => {
     });
     $('#import_regex').on('click', function () {
         $('#import_regex_file').trigger('click');
+    });
+
+    function getSelectedScripts() {
+        const scripts = getRegexScripts();
+        const selector = '#regex_container .regex-script-label:has(.regex_bulk_checkbox:checked)';
+        const selectedIds = Array.from(document.querySelectorAll(selector)).map(e => e.getAttribute('id')).filter(id => id);
+        return scripts.filter(script => selectedIds.includes(script.id));
+    }
+
+    $('#bulk_select_all_toggle').on('click', async function () {
+        const checkboxes = $('#regex_container .regex_bulk_checkbox');
+        if (checkboxes.length === 0) {
+            return;
+        }
+
+        const allAreChecked = checkboxes.length === checkboxes.filter(':checked').length;
+        const newState = !allAreChecked; // true if we just checked all, false if we just unchecked all
+
+        checkboxes.prop('checked', newState);
+        setToggleAllIcon(newState);
+    });
+
+    $('#bulk_enable_regex').on('click', async function () {
+        const scripts = getSelectedScripts().filter(script => script.disabled);
+        if (scripts.length === 0) {
+            toastr.warning(t`No regex scripts selected for enabling.`);
+            return;
+        }
+        for (const script of scripts) {
+            script.disabled = false;
+        }
+        saveSettingsDebounced();
+        await loadRegexScripts();
+    });
+
+    $('#bulk_disable_regex').on('click', async function () {
+        const scripts = getSelectedScripts().filter(script => !script.disabled);
+        if (scripts.length === 0) {
+            toastr.warning(t`No regex scripts selected for disabling.`);
+            return;
+        }
+        for (const script of scripts) {
+            script.disabled = true;
+        }
+        saveSettingsDebounced();
+        await loadRegexScripts();
+    });
+
+    $('#bulk_delete_regex').on('click', async function () {
+        const scripts = getSelectedScripts();
+        if (scripts.length === 0) {
+            toastr.warning(t`No regex scripts selected for deletion.`);
+            return;
+        }
+        const confirm = await callGenericPopup('Are you sure you want to delete the selected regex scripts?', POPUP_TYPE.CONFIRM);
+        if (!confirm) {
+            return;
+        }
+        for (const script of scripts) {
+            const isScoped = characters[this_chid]?.data?.extensions?.regex_scripts?.some(s => s.id === script.id);
+            await deleteRegexScript({ id: script.id, isScoped: isScoped });
+        }
+        await reloadCurrentChat();
+        saveSettingsDebounced();
+    });
+
+    $('#bulk_export_regex').on('click', async function () {
+        const scripts = getSelectedScripts();
+        if (scripts.length === 0) {
+            toastr.warning(t`No regex scripts selected for export.`);
+            return;
+        }
+        const fileName = `regex-${new Date().toISOString()}.json`;
+        const fileData = JSON.stringify(scripts, null, 4);
+        download(fileData, fileName, 'application/json');
+        await loadRegexScripts();
     });
 
     let sortableDatas = [
@@ -622,12 +745,12 @@ jQuery(async () => {
 
     $('#regex_scoped_toggle').on('input', function () {
         if (this_chid === undefined) {
-            toastr.error('No character selected.');
+            toastr.error(t`No character selected.`);
             return;
         }
 
         if (selected_group) {
-            toastr.error('Cannot edit scoped scripts in group chats.');
+            toastr.error(t`Cannot edit scoped scripts in group chats.`);
             return;
         }
 

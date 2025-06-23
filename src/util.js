@@ -7,6 +7,7 @@ import { createRequire } from 'node:module';
 import { Buffer } from 'node:buffer';
 import { promises as dnsPromise } from 'node:dns';
 import os from 'node:os';
+import crypto from 'node:crypto';
 
 import yaml from 'yaml';
 import { sync as commandExistsSync } from 'command-exists';
@@ -371,9 +372,15 @@ export const color = chalk;
  * @returns {string} A UUIDv4 string
  */
 export function uuidv4() {
+    // Node v16.7.0+
     if ('crypto' in globalThis && 'randomUUID' in globalThis.crypto) {
         return globalThis.crypto.randomUUID();
     }
+    // Node v14.17.0+
+    if ('randomUUID' in crypto) {
+        return crypto.randomUUID();
+    }
+    // Very insecure UUID generator, but it's better than nothing.
     return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function (c) {
         const r = Math.random() * 16 | 0;
         const v = c === 'x' ? r : (r & 0x3 | 0x8);
@@ -656,6 +663,15 @@ export function excludeKeysByYaml(obj, yamlString) {
  */
 export function trimV1(str) {
     return String(str ?? '').replace(/\/$/, '').replace(/\/v1$/, '');
+}
+
+/**
+ * Removes trailing slash from a string.
+ * @param {string} str Input string
+ * @returns {string} String with trailing slash removed
+ */
+export function trimTrailingSlash(str) {
+    return String(str ?? '').replace(/\/$/, '');
 }
 
 /**
@@ -1145,4 +1161,55 @@ export function setPermissionsSync(targetPath) {
     } catch (error) {
         console.error(`Error setting write permissions for ${targetPath}:`, error);
     }
+}
+
+/**
+ * Checks if a child path is under a parent path.
+ * @param {string} parentPath Parent path
+ * @param {string} childPath Child path
+ * @returns {boolean} Returns true if the child path is under the parent path, false otherwise
+ */
+export function isPathUnderParent(parentPath, childPath) {
+    const normalizedParent = path.normalize(parentPath);
+    const normalizedChild = path.normalize(childPath);
+
+    const relativePath = path.relative(normalizedParent, normalizedChild);
+
+    return !relativePath.startsWith('..') && !path.isAbsolute(relativePath);
+}
+
+/**
+ * Checks if the given request is a file URL.
+ * @param {string | URL | Request} request The request to check
+ * @return {boolean} Returns true if the request is a file URL, false otherwise
+ */
+export function isFileURL(request) {
+    if (typeof request === 'string') {
+        return request.startsWith('file://');
+    }
+    if (request instanceof URL) {
+        return request.protocol === 'file:';
+    }
+    if (request instanceof Request) {
+        return request.url.startsWith('file://');
+    }
+    return false;
+}
+
+/**
+ * Gets the URL from the request.
+ * @param {string | URL | Request} request The request to get the URL from
+ * @return {string} The URL of the request
+ */
+export function getRequestURL(request) {
+    if (typeof request === 'string') {
+        return request;
+    }
+    if (request instanceof URL) {
+        return request.href;
+    }
+    if (request instanceof Request) {
+        return request.url;
+    }
+    throw new TypeError('Invalid request type');
 }

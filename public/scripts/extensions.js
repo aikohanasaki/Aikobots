@@ -36,7 +36,13 @@ export let modules = [];
  * A set of active extensions.
  * @type {Set<string>}
  */
-let activeExtensions = new Set();
+const activeExtensions = new Set();
+
+/**
+ * Errors that occurred while loading extensions.
+ * @type {Set<string>}
+ */
+const extensionLoadErrors = new Set();
 
 const getApiUrl = () => extension_settings.apiUrl;
 const sortManifestsByOrder = (a, b) => parseInt(a.loading_order) - parseInt(b.loading_order) || String(a.display_name).localeCompare(String(b.display_name));
@@ -172,6 +178,7 @@ export const extension_settings = {
         llmPrompt: undefined,
         allowMultiple: true,
         rerollIfSame: false,
+        promptType: 'raw',
     },
     connectionManager: {
         selectedProfile: '',
@@ -379,37 +386,90 @@ async function getManifests(names) {
  * @returns {Promise<void>}
  */
 async function activateExtensions() {
+    extensionLoadErrors.clear();
     const extensions = Object.entries(manifests).sort((a, b) => sortManifestsByOrder(a[1], b[1]));
+    const extensionNames = extensions.map(x => x[0]);
     const promises = [];
 
     for (let entry of extensions) {
         const name = entry[0];
         const manifest = entry[1];
+        const extrasRequirements = manifest.requires;
+        const extensionDependencies = manifest.dependencies;
+        const displayName = manifest.display_name || name;
 
         if (activeExtensions.has(name)) {
             continue;
         }
 
-        const meetsModuleRequirements = !Array.isArray(manifest.requires) || isSubsetOf(modules, manifest.requires);
+        // Module requirements: pass if 'requires' is undefined, null, or not an array; check subset if it's an array
+        let meetsModuleRequirements = true;
+        let missingModules = [];
+        if (extrasRequirements !== undefined) {
+            if (Array.isArray(extrasRequirements)) {
+                meetsModuleRequirements = isSubsetOf(modules, extrasRequirements);
+                missingModules = extrasRequirements.filter(req => !modules.includes(req));
+            } else {
+                console.warn(`Extension ${name}: manifest.json 'requires' field is not an array. Loading allowed, but any intended requirements were not verified to exist.`);
+            }
+        }
+
+        // Extension dependencies: pass if 'dependencies' is undefined or not an array; check subset and disabled status if it's an array
+        let meetsExtensionDeps = true;
+        let missingDependencies = [];
+        let disabledDependencies = [];
+        if (extensionDependencies !== undefined) {
+            if (Array.isArray(extensionDependencies)) {
+                // Check if all dependencies exist
+                meetsExtensionDeps = isSubsetOf(extensionNames, extensionDependencies);
+                missingDependencies = extensionDependencies.filter(dep => !extensionNames.includes(dep));
+                // Check for disabled dependencies
+                if (meetsExtensionDeps) {
+                    disabledDependencies = extensionDependencies.filter(dep => extension_settings.disabledExtensions.includes(dep));
+                    if (disabledDependencies.length > 0) {
+                        // Fail if any dependencies are disabled
+                        meetsExtensionDeps = false;
+                    }
+                }
+            } else {
+                console.warn(`Extension ${name}: manifest.json 'dependencies' field is not an array. Loading allowed, but any intended requirements were not verified to exist.`);
+            }
+        }
+
         const isDisabled = extension_settings.disabledExtensions.includes(name);
 
-        if (meetsModuleRequirements && !isDisabled) {
+        if (meetsModuleRequirements && meetsExtensionDeps && !isDisabled) {
             try {
                 console.debug('Activating extension', name);
-                const promise = addExtensionLocale(name, manifest).finally(() => Promise.all([addExtensionScript(name, manifest), addExtensionStyle(name, manifest)]));
+                const promise = addExtensionLocale(name, manifest).finally(() =>
+                    Promise.all([addExtensionScript(name, manifest), addExtensionStyle(name, manifest)]),
+                );
                 await promise
                     .then(() => activeExtensions.add(name))
-                    .catch(err => console.log('Could not activate extension', name, err));
+                    .catch(err => {
+                        console.log('Could not activate extension', name, err);
+                        extensionLoadErrors.add(t`Extension "${displayName}" failed to load: ${err}`);
+                    });
                 promises.push(promise);
+            } catch (error) {
+                console.error('Could not activate extension', name, error);
             }
-            catch (error) {
-                console.error('Could not activate extension', name);
-                console.error(error);
+        } else if (!meetsModuleRequirements && !isDisabled) {
+            console.warn(t`Extension "${name}" did not load. Missing required Extras module(s): "${missingModules.join(', ')}"`);
+            extensionLoadErrors.add(t`Extension "${displayName}" did not load. Missing required Extras module(s): "${missingModules.join(', ')}"`);
+        } else if (!meetsExtensionDeps && !isDisabled) {
+            if (disabledDependencies.length > 0) {
+                console.warn(t`Extension "${name}" did not load. Required extensions exist but are disabled: "${disabledDependencies.join(', ')}". Enable them first, then reload.`);
+                extensionLoadErrors.add(t`Extension "${displayName}" did not load. Required extensions exist but are disabled: "${disabledDependencies.join(', ')}". Enable them first, then reload.`);
+            } else {
+                console.warn(t`Extension "${name}" did not load. Missing required extensions: "${missingDependencies.join(', ')}"`);
+                extensionLoadErrors.add(t`Extension "${displayName}" did not load. Missing required extensions: "${missingDependencies.join(', ')}"`);
             }
         }
     }
 
     await Promise.allSettled(promises);
+    $('#extensions_details').toggleClass('warning', extensionLoadErrors.size > 0);
 }
 
 async function connectClickHandler() {
@@ -752,6 +812,27 @@ function getModuleInformation() {
 }
 
 /**
+ * Generates HTML for the extension load errors.
+ * @returns {string} HTML string containing the errors that occurred while loading extensions.
+ */
+function getExtensionLoadErrorsHtml() {
+    if (extensionLoadErrors.size === 0) {
+        return '';
+    }
+
+    const container = document.createElement('div');
+    container.classList.add('info-block', 'error');
+
+    for (const error of extensionLoadErrors) {
+        const errorElement = document.createElement('div');
+        errorElement.textContent = error;
+        container.appendChild(errorElement);
+    }
+
+    return container.outerHTML;
+}
+
+/**
  * Generates the HTML strings for all extensions and displays them in a popup.
  */
 async function showExtensionsDetails() {
@@ -765,6 +846,7 @@ async function showExtensionsDetails() {
             initialScrollTop = oldPopup.content.scrollTop;
             await oldPopup.completeCancelled();
         }
+        const htmlErrors = getExtensionLoadErrorsHtml();
         const htmlDefault = $('<div class="marginBot10"><h3 class="textAlignCenter">' + t`Built-in Extensions:` + '</h3></div>');
         const htmlExternal = $('<div class="marginBot10"><h3 class="textAlignCenter">' + t`Installed Extensions:` + '</h3></div>');
         const htmlLoading = $(`<div class="flex-container alignItemsCenter justifyCenter marginTop10 marginBot5">
@@ -787,6 +869,7 @@ async function showExtensionsDetails() {
 
         const html = $('<div></div>')
             .addClass('extensions_info')
+            .append(htmlErrors)
             .append(htmlDefault)
             .append(htmlExternal)
             .append(getModuleInformation());
@@ -893,11 +976,14 @@ async function onUpdateClick() {
  * Updates a third-party extension via the API.
  * @param {string} extensionName Extension folder name
  * @param {boolean} quiet If true, don't show a success message
+ * @param {number?} timeout Timeout in milliseconds to wait for the update to complete. If null, no timeout is set.
  */
-async function updateExtension(extensionName, quiet) {
+async function updateExtension(extensionName, quiet, timeout = null) {
     try {
+        const signal = timeout ? AbortSignal.timeout(timeout) : undefined;
         const response = await fetch('/api/extensions/update', {
             method: 'POST',
+            signal: signal,
             headers: getRequestHeaders(),
             body: JSON.stringify({
                 extensionName,
@@ -926,7 +1012,7 @@ async function updateExtension(extensionName, quiet) {
             toastr.success(t`Extension ${extensionName} updated to ${data.shortCommitHash}`, t`Reload the page to apply updates`);
         }
     } catch (error) {
-        console.error('Error:', error);
+        console.error('Extension update error:', error);
     }
 }
 
@@ -1397,6 +1483,7 @@ async function autoUpdateExtensions(forceAll) {
     const banner = toastr.info(t`Auto-updating extensions. This may take several minutes.`, t`Please wait...`, { timeOut: 10000, extendedTimeOut: 10000 });
     const isCurrentUserAdmin = isAdmin();
     const promises = [];
+    const autoUpdateTimeout = 60 * 1000;
     for (const [id, manifest] of Object.entries(manifests)) {
         const isDisabled = extension_settings.disabledExtensions.includes(id);
         if (!forceAll && isDisabled) {
@@ -1410,7 +1497,7 @@ async function autoUpdateExtensions(forceAll) {
         }
         if ((forceAll || manifest.auto_update) && id.startsWith('third-party')) {
             console.debug(`Auto-updating 3rd-party extension: ${manifest.display_name} (${id})`);
-            promises.push(updateExtension(id.replace('third-party', ''), true));
+            promises.push(updateExtension(id.replace('third-party', ''), true, autoUpdateTimeout));
         }
     }
     await Promise.allSettled(promises);
@@ -1453,7 +1540,7 @@ export async function runGenerationInterceptors(chat, contextSize, type) {
 
 /**
  * Writes a field to the character's data extensions object.
- * @param {number} characterId Index in the character array
+ * @param {number|string} characterId Index in the character array
  * @param {string} key Field name
  * @param {any} value Field value
  * @returns {Promise<void>} When the field is written

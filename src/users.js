@@ -760,7 +760,7 @@ async function autheliaUserLogin(request) {
 
     const userHandles = await getAllUserHandles();
     for (const userHandle of userHandles) {
-        if (remoteUser === userHandle) {
+        if (remoteUser.toLowerCase() === userHandle) {
             const user = await storage.getItem(toKey(userHandle));
             if (user && user.enabled) {
                 request.session.handle = userHandle;

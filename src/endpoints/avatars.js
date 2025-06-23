@@ -35,7 +35,7 @@ router.post('/delete', getFileNameValidationFunction('avatar'), function (reques
     return response.sendStatus(404);
 });
 
-router.post('/upload', async (request, response) => {
+router.post('/upload', getFileNameValidationFunction('overwrite_name'), async (request, response) => {
     if (!request.file) return response.sendStatus(400);
 
     try {

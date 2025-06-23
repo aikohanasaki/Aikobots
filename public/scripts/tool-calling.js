@@ -1,7 +1,7 @@
 import { DOMPurify } from '../lib.js';
 
 import { addOneMessage, chat, event_types, eventSource, main_api, saveChatConditional, system_avatar, systemUserName } from '../script.js';
-import { chat_completion_sources, model_list, oai_settings } from './openai.js';
+import { chat_completion_sources, custom_prompt_post_processing_types, model_list, oai_settings } from './openai.js';
 import { Popup } from './popup.js';
 import { SlashCommand } from './slash-commands/SlashCommand.js';
 import { ARGUMENT_TYPE, SlashCommandArgument, SlashCommandNamedArgument } from './slash-commands/SlashCommandArgument.js';
@@ -60,6 +60,9 @@ function assignNestedVariables(scope, arg, prefix) {
     Object.entries(arg).forEach(([key, value]) => {
         const newPrefix = `${prefix}.${key}`;
         if (typeof value === 'object' && value !== null) {
+            if (Array.isArray(value)) {
+                scope.letVariable(newPrefix, JSON.stringify(value));
+            }
             assignNestedVariables(scope, value, newPrefix);
         } else {
             scope.letVariable(newPrefix, value);
@@ -298,6 +301,19 @@ export class ToolManager {
     }
 
     /**
+    * Parse tool call parameters -- they're usually JSON, but they can also be empty strings (which are not valid JSON apparently).
+    * @param {object} parameters The parameters for a tool call, usually a string with JSON inside
+    * @returns {object} The parsed parameters
+    */
+    static #parseParameters(parameters) {
+        return parameters === ''
+            ? {}
+            : typeof parameters === 'string'
+                ? JSON.parse(parameters)
+                : parameters;
+    }
+
+    /**
      * Invokes a tool by name. Returns the result of the tool's action function.
      * @param {string} name The name of the tool to invoke.
      * @param {object} parameters Function parameters. For example, if the tool requires a "name" parameter, you would pass {name: "value"}.
@@ -309,7 +325,7 @@ export class ToolManager {
                 throw new Error(`No tool with the name "${name}" has been registered.`);
             }
 
-            const invokeParameters = typeof parameters === 'string' ? JSON.parse(parameters) : parameters;
+            const invokeParameters = this.#parseParameters(parameters);
             const tool = this.#tools.get(name);
             const result = await tool.invoke(invokeParameters);
             return typeof result === 'string' ? result : JSON.stringify(result);
@@ -352,7 +368,7 @@ export class ToolManager {
 
         try {
             const tool = this.#tools.get(name);
-            const formatParameters = typeof parameters === 'string' ? JSON.parse(parameters) : parameters;
+            const formatParameters = this.#parseParameters(parameters);
             return await tool.formatMessage(formatParameters);
         } catch (error) {
             console.error(`[ToolManager] An error occurred while formatting the tool call message for "${name}":`, error);
@@ -576,7 +592,9 @@ export class ToolManager {
         }
 
         // Post-processing will forcefully remove past tool calls from the prompt, making them useless
-        if (oai_settings.custom_prompt_post_processing) {
+        const { NONE, MERGE_TOOLS, SEMI_TOOLS, STRICT_TOOLS } = custom_prompt_post_processing_types;
+        const allowedPromptPostProcessing = [NONE, MERGE_TOOLS, SEMI_TOOLS, STRICT_TOOLS];
+        if (!allowedPromptPostProcessing.includes(oai_settings.custom_prompt_post_processing)) {
             return false;
         }
 
@@ -593,6 +611,7 @@ export class ToolManager {
             chat_completion_sources.MISTRALAI,
             chat_completion_sources.CLAUDE,
             chat_completion_sources.OPENROUTER,
+            chat_completion_sources.AIMLAPI,
             chat_completion_sources.GROQ,
             chat_completion_sources.COHERE,
             chat_completion_sources.DEEPSEEK,

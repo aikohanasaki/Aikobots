@@ -1,6 +1,6 @@
 import { ensureImageFormatSupported, getBase64Async, isTrueBoolean, saveBase64AsFile } from '../../utils.js';
 import { getContext, getApiUrl, doExtrasFetch, extension_settings, modules, renderExtensionTemplateAsync } from '../../extensions.js';
-import { appendMediaToMessage, callPopup, eventSource, event_types, getRequestHeaders, saveChatConditional, saveSettingsDebounced, substituteParamsExtended } from '../../../script.js';
+import { appendMediaToMessage, eventSource, event_types, getRequestHeaders, saveChatConditional, saveSettingsDebounced, substituteParamsExtended } from '../../../script.js';
 import { getMessageTimeStamp } from '../../RossAscends-mods.js';
 import { SECRET_KEYS, secret_state } from '../../secrets.js';
 import { getMultimodalCaption } from '../shared.js';
@@ -9,6 +9,7 @@ import { SlashCommandParser } from '../../slash-commands/SlashCommandParser.js';
 import { SlashCommand } from '../../slash-commands/SlashCommand.js';
 import { ARGUMENT_TYPE, SlashCommandArgument, SlashCommandNamedArgument } from '../../slash-commands/SlashCommandArgument.js';
 import { commonEnumProviders } from '../../slash-commands/SlashCommandCommonEnumsProvider.js';
+import { callGenericPopup, Popup, POPUP_TYPE } from '../../popup.js';
 export { MODULE_NAME };
 
 const MODULE_NAME = 'caption';
@@ -98,9 +99,9 @@ async function wrapCaptionTemplate(caption) {
     let messageText = substituteParamsExtended(template, { caption: caption });
 
     if (extension_settings.caption.refine_mode) {
-        messageText = await callPopup(
-            '<h3>Review and edit the generated caption:</h3>Press "Cancel" to abort the caption sending.',
-            'input',
+        messageText = await Popup.show.input(
+            'Review and edit the generated caption:',
+            'Press "Cancel" to abort the caption sending.',
             messageText,
             { rows: 5, okButton: 'Send' });
 
@@ -278,7 +279,7 @@ async function captionMultimodal(base64Img, externalPrompt) {
     let prompt = externalPrompt || extension_settings.caption.prompt || PROMPT_DEFAULT;
 
     if (!externalPrompt && extension_settings.caption.prompt_ask) {
-        const customPrompt = await callPopup('<h3>Enter a comment or question:</h3>', 'input', prompt, { rows: 2 });
+        const customPrompt = await callGenericPopup('Enter a comment or question:', POPUP_TYPE.INPUT, prompt, { rows: 2 });
         if (!customPrompt) {
             throw new Error('User aborted the caption sending.');
         }
@@ -432,6 +433,7 @@ jQuery(async function () {
                         'zerooneai': SECRET_KEYS.ZEROONEAI,
                         'groq': SECRET_KEYS.GROQ,
                         'cohere': SECRET_KEYS.COHERE,
+                        'aimlapi': SECRET_KEYS.AIMLAPI,
                     };
 
                     if (chatCompletionApis[api] && secret_state[chatCompletionApis[api]]) {

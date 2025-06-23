@@ -56,6 +56,13 @@ export async function getMultimodalCaption(base64Img, prompt) {
         model: extension_settings.caption.multimodal_model || 'gpt-4-turbo',
     };
 
+    // Add Vertex AI specific parameters if using Vertex AI
+    if (extension_settings.caption.multimodal_api === 'vertexai') {
+        requestBody.vertexai_auth_mode = oai_settings.vertexai_auth_mode;
+        requestBody.vertexai_region = oai_settings.vertexai_region;
+        requestBody.vertexai_express_project_id = oai_settings.vertexai_express_project_id;
+    }
+
     if (isOllama) {
         if (extension_settings.caption.multimodal_model === 'ollama_current') {
             requestBody.model = textgenerationwebui_settings.ollama_model;
@@ -164,8 +171,24 @@ function throwIfInvalidModel(useReverseProxy) {
         throw new Error('Google AI Studio API key is not set.');
     }
 
-    if (multimodalApi === 'vertexai' && !secret_state[SECRET_KEYS.VERTEXAI] && !useReverseProxy) {
-        throw new Error('Google Vertex AI API key is not set.');
+    if (multimodalApi === 'vertexai' && !useReverseProxy) {
+        // Check based on authentication mode
+        const authMode = oai_settings.vertexai_auth_mode || 'express';
+
+        if (authMode === 'express') {
+            // Express mode requires API key
+            if (!secret_state[SECRET_KEYS.VERTEXAI]) {
+                throw new Error('Google Vertex AI API key is not set for Express mode.');
+            }
+        } else if (authMode === 'full') {
+            // Full mode requires Service Account JSON and region settings
+            if (!secret_state[SECRET_KEYS.VERTEXAI_SERVICE_ACCOUNT]) {
+                throw new Error('Service Account JSON is required for Vertex AI Full mode. Please validate and save your Service Account JSON.');
+            }
+            if (!oai_settings.vertexai_region) {
+                throw new Error('Region is required for Vertex AI Full mode.');
+            }
+        }
     }
 
     if (multimodalApi === 'mistral' && !secret_state[SECRET_KEYS.MISTRALAI] && !useReverseProxy) {
@@ -210,6 +233,10 @@ function throwIfInvalidModel(useReverseProxy) {
 
     if (multimodalApi === 'custom' && !oai_settings.custom_url) {
         throw new Error('Custom API URL is not set.');
+    }
+
+    if (multimodalApi === 'aimlapi' && !secret_state[SECRET_KEYS.AIMLAPI]) {
+        throw new Error('AI/ML API key is not set.');
     }
 }
 

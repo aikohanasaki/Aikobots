@@ -332,6 +332,10 @@
     overflow: hidden;
 }
 
+.overflowYScroll {
+    overflow-y: scroll;
+}
+
 .padding0 {
     padding: 0;
 }
@@ -480,7 +484,7 @@
 }
 
 .hoverglow {
-    transition: opacity 200ms;
+    transition: opacity var(--animation-duration-2x);
 }
 
 .hoverglow:hover {
@@ -554,6 +558,10 @@ textarea:disabled {
 .widthFitContent {
     width: fit-content;
     min-width: fit-content;
+}
+
+.flexGap2 {
+    gap: 2px;
 }
 
 .flexGap5 {

@@ -2,6 +2,7 @@ import {
     addOneMessage,
     characters,
     chat,
+    deleteCharacterChatByName,
     displayVersion,
     doNewChat,
     event_types,
@@ -16,13 +17,19 @@ import {
     newAssistantChat,
     openCharacterChat,
     printCharactersDebounced,
+    renameGroupOrCharacterChat,
     selectCharacterById,
     system_avatar,
     system_message_types,
     this_chid,
+    unshallowCharacter,
+    updateRemoteChatName,
 } from '../script.js';
-import { getGroupAvatar, groups, is_group_generating, openGroupById, openGroupChat } from './group-chats.js';
+import { getRegexedString, regex_placement } from './extensions/regex/engine.js';
+import { deleteGroupChatByName, getGroupAvatar, groups, is_group_generating, openGroupById, openGroupChat } from './group-chats.js';
 import { t } from './i18n.js';
+import { callGenericPopup, POPUP_TYPE } from './popup.js';
+import { getMessageTimeStamp } from './RossAscends-mods.js';
 import { renderTemplateAsync } from './templates.js';
 import { accountStorage } from './util/AccountStorage.js';
 import { sortMoments, timestampToMoment } from './utils.js';
@@ -48,9 +55,16 @@ export function getPermanentAssistantAvatar() {
     return assistantAvatar;
 }
 
-export async function openWelcomeScreen() {
+/**
+ * Opens a welcome screen if no chat is currently active.
+ * @param {object} param Additional parameters
+ * @param {boolean} [param.force] If true, forces clearing of the welcome screen.
+ * @param {boolean} [param.expand] If true, expands the recent chats section.
+ * @returns {Promise<void>}
+ */
+export async function openWelcomeScreen({ force = false, expand = false } = {}) {
     const currentChatId = getCurrentChatId();
-    if (currentChatId !== undefined || chat.length > 0) {
+    if (currentChatId !== undefined || (chat.length > 0 && !force)) {
         return;
     }
 
@@ -61,9 +75,45 @@ export async function openWelcomeScreen() {
         return;
     }
 
-    await sendWelcomePanel(recentChats);
+    if (chatAfterFetch === undefined && force) {
+        console.debug('Forcing welcome screen open.');
+        chat.splice(0, chat.length);
+        $('#chat').empty();
+    }
+
+    await sendWelcomePanel(recentChats, expand);
+    await unshallowPermanentAssistant();
     sendAssistantMessage();
     sendWelcomePrompt();
+}
+
+/**
+ * Makes sure the assistant character has all data loaded.
+ * @returns {Promise<void>}
+ */
+async function unshallowPermanentAssistant() {
+    const assistantAvatar = getPermanentAssistantAvatar();
+    const characterId = characters.findIndex(x => x.avatar === assistantAvatar);
+    if (characterId === -1) {
+        return;
+    }
+
+    await unshallowCharacter(String(characterId));
+}
+
+/**
+ * Returns a greeting message for the assistant based on the character.
+ * @param {import('./char-data.js').v1CharData} character Character data
+ * @returns {string} Greeting message
+*/
+function getAssistantGreeting(character) {
+    const defaultGreeting = t`If you're connected to an API, try asking me something!`;
+
+    if (!character) {
+        return defaultGreeting;
+    }
+
+    return getRegexedString(character.first_mes || '', regex_placement.AI_OUTPUT) || defaultGreeting;
 }
 
 function sendAssistantMessage() {
@@ -71,6 +121,7 @@ function sendAssistantMessage() {
     const character = characters.find(x => x.avatar === currentAssistantAvatar);
     const name = character ? character.name : neutralCharacterName;
     const avatar = character ? getThumbnailUrl('avatar', character.avatar) : system_avatar;
+    const greeting = getAssistantGreeting(character);
 
     const message = {
         name: name,
@@ -78,6 +129,7 @@ function sendAssistantMessage() {
         mes: t`# 🎉 __**Welcome to Aikobots!**__ 🎉` + '\n\n' + t`We're glad you're here. If you ever need help, head to the #help-911 channel in our Discord server.`  + '\n\n' + t`Now that you're here:` + '\n' + t`1️⃣ Download the latest Aikobots preset` + '\n' + t`2️⃣ Connect to an API` + '\n' + t`3️⃣ Choose a character to play with!`  + '\n\n' + t`If you can't decide who to play with:` + '\n' + t`- Try the [Character Archetype Matching Quiz](https://www.aikobots.com/archetypes-quiz.html)` + '\n' + t`- Check out the [Character Roll Call](https://www.aikobots.com/rollcall.html) for compatibility quizzes` + '\n' + t`- Take our giant [Character Recommender quiz](https://www.aikobots.com/recommender-quiz.html)!`  + '\n\n' + t`For commands, be sure to take a look at` + `\n` + t`- [General Commands](https://www.aikobots.com/commands.html)` + `\n` + t`- [Memory Helpers](https://www.aikobots.com/cmd-memory.html)` + `\n` + t`- [NSFW Overrides](https://www.aikobots.com/cmd-override.html)` + `\n` + t`- [Aikobots Exclusives](https://www.aikobots.com/cmd-aikobots.html)` + `\n` + t`- [LaDS-Specific Commands](https://www.aikobots.com/ladscommands.html).` + '\n***\n' + t`**PS:** Set any character as your welcome page assistant from their "More..." menu.`,
         is_system: false,
         is_user: false,
+        send_date: getMessageTimeStamp(),
         extra: {
             type: system_message_types.ASSISTANT_MESSAGE,
         },
@@ -96,8 +148,9 @@ function sendWelcomePrompt() {
 /**
  * Sends the welcome panel to the chat.
  * @param {RecentChat[]} chats List of recent chats
+ * @param {boolean} [expand=false] If true, expands the recent chats section
  */
-async function sendWelcomePanel(chats) {
+async function sendWelcomePanel(chats, expand = false) {
     try {
         const chatElement = document.getElementById('chat');
         const sendTextArea = document.getElementById('send_textarea');
@@ -180,7 +233,50 @@ async function sendWelcomePanel(chats) {
                 $(avatar).replaceWith(groupAvatar);
             }
         });
+        fragment.querySelectorAll('.recentChat .renameChat').forEach((renameButton) => {
+            renameButton.addEventListener('click', (event) => {
+                event.stopPropagation();
+                const chatItem = renameButton.closest('.recentChat');
+                if (!chatItem) {
+                    return;
+                }
+                const avatarId = chatItem.getAttribute('data-avatar');
+                const groupId = chatItem.getAttribute('data-group');
+                const fileName = chatItem.getAttribute('data-file');
+                if (avatarId && fileName) {
+                    void renameRecentCharacterChat(avatarId, fileName);
+                }
+                if (groupId && fileName) {
+                    void renameRecentGroupChat(groupId, fileName);
+                }
+            });
+        });
+        fragment.querySelectorAll('.recentChat .deleteChat').forEach((deleteButton) => {
+            deleteButton.addEventListener('click', (event) => {
+                event.stopPropagation();
+                const chatItem = deleteButton.closest('.recentChat');
+                if (!chatItem) {
+                    return;
+                }
+                const avatarId = chatItem.getAttribute('data-avatar');
+                const groupId = chatItem.getAttribute('data-group');
+                const fileName = chatItem.getAttribute('data-file');
+                if (avatarId && fileName) {
+                    void deleteRecentCharacterChat(avatarId, fileName);
+                }
+                if (groupId && fileName) {
+                    void deleteRecentGroupChat(groupId, fileName);
+                }
+            });
+        });
         chatElement.append(fragment.firstChild);
+        if (expand) {
+            chatElement.querySelectorAll('button.showMoreChats').forEach((button) => {
+                if (button instanceof HTMLButtonElement) {
+                    button.click();
+                }
+            });
+        }
     } catch (error) {
         console.error('Welcome screen error:', error);
     }
@@ -236,6 +332,144 @@ async function openRecentGroupChat(groupId, fileName) {
         console.error('Error opening recent group chat:', error);
         toastr.error(t`Failed to open recent group chat. See console for details.`);
     }
+}
+
+/**
+ * Renames a recent character chat.
+ * @param {string} avatarId Avatar file name
+ * @param {string} fileName Chat file name
+ */
+async function renameRecentCharacterChat(avatarId, fileName) {
+    const characterId = characters.findIndex(x => x.avatar === avatarId);
+    if (characterId === -1) {
+        console.error(`Character not found for avatar ID: ${avatarId}`);
+        return;
+    }
+    try {
+        const popupText = await renderTemplateAsync('chatRename');
+        const newName = await callGenericPopup(popupText, POPUP_TYPE.INPUT, fileName);
+        if (!newName || typeof newName !== 'string' || newName === fileName) {
+            console.log('No new name provided, aborting');
+            return;
+        }
+        await renameGroupOrCharacterChat({
+            characterId: String(characterId),
+            oldFileName: fileName,
+            newFileName: newName,
+            loader: false,
+        });
+        await updateRemoteChatName(characterId, newName);
+        await refreshWelcomeScreen();
+        toastr.success(t`Chat renamed.`);
+    } catch (error) {
+        console.error('Error renaming recent character chat:', error);
+        toastr.error(t`Failed to rename recent chat. See console for details.`);
+    }
+}
+
+/**
+ * Renames a recent group chat.
+ * @param {string} groupId Group ID
+ * @param {string} fileName Chat file name
+ */
+async function renameRecentGroupChat(groupId, fileName) {
+    const group = groups.find(x => x.id === groupId);
+    if (!group) {
+        console.error(`Group not found for ID: ${groupId}`);
+        return;
+    }
+    try {
+        const popupText = await renderTemplateAsync('chatRename');
+        const newName = await callGenericPopup(popupText, POPUP_TYPE.INPUT, fileName);
+        if (!newName || newName === fileName) {
+            console.log('No new name provided, aborting');
+            return;
+        }
+        await renameGroupOrCharacterChat({
+            groupId: String(groupId),
+            oldFileName: fileName,
+            newFileName: String(newName),
+            loader: false,
+        });
+        await refreshWelcomeScreen();
+        toastr.success(t`Group chat renamed.`);
+    } catch (error) {
+        console.error('Error renaming recent group chat:', error);
+        toastr.error(t`Failed to rename recent group chat. See console for details.`);
+    }
+}
+
+/**
+ * Deletes a recent character chat.
+ * @param {string} avatarId Avatar file name
+ * @param {string} fileName Chat file name
+ */
+async function deleteRecentCharacterChat(avatarId, fileName) {
+    const characterId = characters.findIndex(x => x.avatar === avatarId);
+    if (characterId === -1) {
+        console.error(`Character not found for avatar ID: ${avatarId}`);
+        return;
+    }
+    try {
+        const confirm = await callGenericPopup(t`Delete the Chat File?`, POPUP_TYPE.CONFIRM);
+        if (!confirm) {
+            console.log('Deletion cancelled by user');
+            return;
+        }
+        await deleteCharacterChatByName(String(characterId), fileName);
+        await refreshWelcomeScreen();
+        toastr.success(t`Chat deleted.`);
+    } catch (error) {
+        console.error('Error deleting recent character chat:', error);
+        toastr.error(t`Failed to delete recent chat. See console for details.`);
+    }
+}
+
+/**
+ * Deletes a recent group chat.
+ * @param {string} groupId Group ID
+ * @param {string} fileName Chat file name
+ */
+async function deleteRecentGroupChat(groupId, fileName) {
+    const group = groups.find(x => x.id === groupId);
+    if (!group) {
+        console.error(`Group not found for ID: ${groupId}`);
+        return;
+    }
+    try {
+        const confirm = await callGenericPopup(t`Delete the Chat File?`, POPUP_TYPE.CONFIRM);
+        if (!confirm) {
+            console.log('Deletion cancelled by user');
+            return;
+        }
+        await deleteGroupChatByName(groupId, fileName);
+        await refreshWelcomeScreen();
+        toastr.success(t`Group chat deleted.`);
+    } catch (error) {
+        console.error('Error deleting recent group chat:', error);
+        toastr.error(t`Failed to delete recent group chat. See console for details.`);
+    }
+}
+
+/**
+ * Reopens the welcome screen and restores the scroll position.
+ * @returns {Promise<void>}
+ */
+async function refreshWelcomeScreen() {
+    const chatElement = document.getElementById('chat');
+    if (!chatElement) {
+        console.error('Chat element not found');
+        return;
+    }
+
+    const scrollTop = chatElement.scrollTop;
+    const scrollHeight = chatElement.scrollHeight;
+    const expand = chatElement.querySelectorAll('button.showMoreChats.rotated').length > 0;
+
+    await openWelcomeScreen({ force: true, expand });
+
+    // Restore scroll position
+    chatElement.scrollTop = scrollTop + (chatElement.scrollHeight - scrollHeight);
 }
 
 /**

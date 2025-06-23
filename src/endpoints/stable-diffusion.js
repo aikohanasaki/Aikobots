@@ -11,6 +11,7 @@ import _ from 'lodash';
 
 import { delay, getBasicAuthHeader, tryParse } from '../util.js';
 import { readSecret, SECRET_KEYS } from './secrets.js';
+import { AIMLAPI_HEADERS } from '../constants.js';
 
 /**
  * Gets the comfy workflows.
@@ -819,7 +820,6 @@ pollinations.post('/generate', async (request, response) => {
             model: String(request.body.model),
             negative_prompt: String(request.body.negative_prompt),
             seed: String(request.body.seed >= 0 ? request.body.seed : Math.floor(Math.random() * 10_000_000)),
-            enhance: String(request.body.enhance ?? false),
             width: String(request.body.width ?? 1024),
             height: String(request.body.height ?? 1024),
             nologo: String(true),
@@ -827,6 +827,9 @@ pollinations.post('/generate', async (request, response) => {
             private: String(true),
             referrer: 'sillytavern',
         });
+        if (request.body.enhance) {
+            params.set('enhance', String(true));
+        }
         promptUrl.search = params.toString();
 
         console.info('Pollinations request URL:', promptUrl.toString());
@@ -1324,6 +1327,90 @@ xai.post('/generate', async (request, response) => {
     }
 });
 
+const aimlapi = express.Router();
+
+aimlapi.post('/models', async (request, response) => {
+    try {
+        const key = readSecret(request.user.directories, SECRET_KEYS.AIMLAPI);
+
+        if (!key) {
+            console.warn('AI/ML API key not found.');
+            return response.sendStatus(400);
+        }
+
+        const modelsResponse = await fetch('https://api.aimlapi.com/v1/models', {
+            method: 'GET',
+            headers: {
+                Authorization: `Bearer ${key}`,
+            },
+        });
+
+        if (!modelsResponse.ok) {
+            console.warn('AI/ML API returned an error.');
+            return response.sendStatus(500);
+        }
+
+        /** @type {any} */
+        const data = await modelsResponse.json();
+        const models = (data.data || [])
+            .filter(model =>
+                model.type === 'image' &&
+                model.id !== 'triposr' &&
+                model.id !== 'flux/dev/image-to-image',
+            )
+            .map(model => ({
+                value: model.id,
+                text: model.info?.name || model.id,
+            }));
+
+        return response.send({ data: models });
+    } catch (error) {
+        console.error(error);
+        return response.sendStatus(500);
+    }
+});
+
+aimlapi.post('/generate-image', async (req, res) => {
+    try {
+        const key = readSecret(req.user.directories, SECRET_KEYS.AIMLAPI);
+        if (!key) return res.sendStatus(400);
+
+        console.debug('AI/ML API image request:', req.body);
+
+        const apiRes = await fetch('https://api.aimlapi.com/v1/images/generations', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${key}`, ...AIMLAPI_HEADERS },
+            body: JSON.stringify(req.body),
+        });
+        if (!apiRes.ok) {
+            const err = await apiRes.text();
+            return res.status(500).send(err);
+        }
+        /** @type {any} */
+        const data = await apiRes.json();
+
+        const imgObj = Array.isArray(data.images) ? data.images[0] : data.data?.[0];
+        if (!imgObj) return res.status(500).send('No image returned');
+
+        let base64;
+        if (imgObj.b64_json || imgObj.base64) {
+            base64 = imgObj.b64_json || imgObj.base64;
+        } else if (imgObj.url) {
+            const blobRes = await fetch(imgObj.url);
+            if (!blobRes.ok) throw new Error('Failed to fetch image URL');
+            const buffer = await blobRes.arrayBuffer();
+            base64 = Buffer.from(buffer).toString('base64');
+        } else {
+            throw new Error('Unsupported image format');
+        }
+
+        return res.json({ format: 'png', data: base64 });
+    } catch (e) {
+        console.error(e);
+        res.status(500).send('Internal error');
+    }
+});
+
 router.use('/comfy', comfy);
 router.use('/together', together);
 router.use('/drawthings', drawthings);
@@ -1334,3 +1421,4 @@ router.use('/nanogpt', nanogpt);
 router.use('/bfl', bfl);
 router.use('/falai', falai);
 router.use('/xai', xai);
+router.use('/aimlapi', aimlapi);

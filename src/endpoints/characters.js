@@ -12,7 +12,7 @@ import mime from 'mime-types';
 import { Jimp, JimpMime } from '../jimp.js';
 import storage from 'node-persist';
 
-import { AVATAR_WIDTH, AVATAR_HEIGHT } from '../constants.js';
+import { AVATAR_WIDTH, AVATAR_HEIGHT, DEFAULT_AVATAR_PATH } from '../constants.js';
 import { default as validateAvatarUrlMiddleware, getFileNameValidationFunction } from '../middleware/validateFileName.js';
 import { deepMerge, humanizedISO8601DateTime, tryParse, extractFileFromZipBuffer, MemoryLimitedMap, getConfigValue, mutateJsonString } from '../util.js';
 import { TavernCardValidator } from '../validator/TavernCardValidator.js';
@@ -22,7 +22,6 @@ import { invalidateThumbnail } from './thumbnails.js';
 import { importRisuSprites } from './sprites.js';
 import { getUserDirectories } from '../users.js';
 import { getChatInfo } from './chats.js';
-const defaultAvatarPath = './public/img/ai4.png';
 
 // With 100 MB limit it would take roughly 3000 characters to reach this limit
 const memoryCacheCapacity = getConfigValue('performance.memoryCacheCapacity', '100mb');
@@ -243,7 +242,7 @@ async function writeCharacterData(inputFile, data, outputFile, request, crop = u
             } catch (error) {
                 const message = Buffer.isBuffer(inputFile) ? 'Failed to read image buffer.' : `Failed to read image: ${inputFile}.`;
                 console.warn(message, 'Using a fallback image.', error);
-                return await fs.promises.readFile(defaultAvatarPath);
+                return await fs.promises.readFile(DEFAULT_AVATAR_PATH);
             }
         }
 
@@ -746,7 +745,7 @@ async function importFromYaml(uploadPath, context, preservedFileName) {
         'creator': '',
         'tags': '',
     }, context.request.user.directories);
-    const result = await writeCharacterData(defaultAvatarPath, JSON.stringify(char), fileName, context.request);
+    const result = await writeCharacterData(DEFAULT_AVATAR_PATH, JSON.stringify(char), fileName, context.request);
     return result ? fileName : '';
 }
 
@@ -775,7 +774,7 @@ async function importFromCharX(uploadPath, { request }, preservedFileName) {
     }
 
     /** @type {string|Buffer} */
-    let avatar = defaultAvatarPath;
+    let avatar = DEFAULT_AVATAR_PATH;
     const assets = _.get(card, 'data.assets');
     if (Array.isArray(assets) && assets.length) {
         for (const asset of assets.filter(x => x.type === 'icon' && typeof x.uri === 'string')) {
@@ -817,7 +816,7 @@ async function importFromJson(uploadPath, { request }, preservedFileName) {
         jsonData['create_date'] = humanizedISO8601DateTime();
         const pngName = preservedFileName || getPngName(jsonData.data?.name || jsonData.name, request.user.directories);
         const char = JSON.stringify(jsonData);
-        const result = await writeCharacterData(defaultAvatarPath, char, pngName, request);
+        const result = await writeCharacterData(DEFAULT_AVATAR_PATH, char, pngName, request);
         return result ? pngName : '';
     } else if (jsonData.name !== undefined) {
         console.info('Importing from v1 json');
@@ -843,7 +842,7 @@ async function importFromJson(uploadPath, { request }, preservedFileName) {
         };
         char = convertToV2(char, request.user.directories);
         let charJSON = JSON.stringify(char);
-        const result = await writeCharacterData(defaultAvatarPath, charJSON, pngName, request);
+        const result = await writeCharacterData(DEFAULT_AVATAR_PATH, charJSON, pngName, request);
         return result ? pngName : '';
     } else if (jsonData.char_name !== undefined) {//json Pygmalion notepad
         console.info('Importing from gradio json');
@@ -869,7 +868,7 @@ async function importFromJson(uploadPath, { request }, preservedFileName) {
         };
         char = convertToV2(char, request.user.directories);
         const charJSON = JSON.stringify(char);
-        const result = await writeCharacterData(defaultAvatarPath, charJSON, pngName, request);
+        const result = await writeCharacterData(DEFAULT_AVATAR_PATH, charJSON, pngName, request);
         return result ? pngName : '';
     }
 
@@ -936,7 +935,7 @@ async function importFromPng(uploadPath, { request }, preservedFileName) {
 
 export const router = express.Router();
 
-router.post('/create', async function (request, response) {
+router.post('/create', getFileNameValidationFunction('file_name'), async function (request, response) {
     try {
         if (!request.body) return response.sendStatus(400);
 
@@ -950,7 +949,7 @@ router.post('/create', async function (request, response) {
         if (!fs.existsSync(chatsPath)) fs.mkdirSync(chatsPath);
 
         if (!request.file) {
-            await writeCharacterData(defaultAvatarPath, char, internalName, request);
+            await writeCharacterData(DEFAULT_AVATAR_PATH, char, internalName, request);
             return response.send(avatarName);
         } else {
             const crop = tryParse(request.query.crop);
@@ -1047,9 +1046,8 @@ router.post('/edit', validateAvatarUrlMiddleware, async function (request, respo
         }
 
         return response.sendStatus(200);
-    }
-    catch {
-        console.error('An error occured, character edit invalidated.');
+    } catch (err) {
+        console.error('An error occurred, character edit invalidated.', err);
     }
 });
 
@@ -1095,7 +1093,7 @@ router.post('/edit-attribute', validateAvatarUrlMiddleware, async function (requ
         await writeCharacterData(avatarPath, newCharJSON, targetFile, request);
         return response.sendStatus(200);
     } catch (err) {
-        console.error('An error occured, character edit invalidated.', err);
+        console.error('An error occurred, character edit invalidated.', err);
     }
 });
 

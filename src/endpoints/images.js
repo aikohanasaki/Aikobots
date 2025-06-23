@@ -5,7 +5,7 @@ import { Buffer } from 'node:buffer';
 import express from 'express';
 import sanitize from 'sanitize-filename';
 
-import { clientRelativePath, removeFileExtension, getImages } from '../util.js';
+import { clientRelativePath, removeFileExtension, getImages, isPathUnderParent } from '../util.js';
 
 /**
  * Ensure the directory for the provided file path exists.
@@ -46,7 +46,7 @@ router.post('/upload', async (request, response) => {
         const splitParts = request.body.image.split(',');
         const format = splitParts[0].split(';')[0].split('/')[1];
         const base64Data = splitParts[1];
-        const validFormat = ['png', 'jpg', 'webp', 'jpeg', 'gif'].includes(format);
+        const validFormat = ['png', 'jpg', 'webp', 'jpeg', 'gif', 'mp4', 'avi', 'mov', 'wmv', 'flv', 'webm', '3gp', 'mkv'].includes(format);
         if (!validFormat) {
             return response.status(400).send({ error: 'Invalid image format' });
         }
@@ -124,5 +124,29 @@ router.post('/folders', (request, response) => {
     } catch (error) {
         console.error(error);
         return response.status(500).send({ error: 'Unable to retrieve folders' });
+    }
+});
+
+router.post('/delete', async (request, response) => {
+    try {
+        if (!request.body.path) {
+            return response.status(400).send('No path specified');
+        }
+
+        const pathToDelete = path.join(request.user.directories.root, request.body.path);
+        if (!isPathUnderParent(request.user.directories.userImages, pathToDelete)) {
+            return response.status(400).send('Invalid path');
+        }
+
+        if (!fs.existsSync(pathToDelete)) {
+            return response.status(404).send('File not found');
+        }
+
+        fs.unlinkSync(pathToDelete);
+        console.info(`Deleted image: ${request.body.path} from ${request.user.profile.handle}`);
+        return response.sendStatus(200);
+    } catch (error) {
+        console.error(error);
+        return response.sendStatus(500);
     }
 });

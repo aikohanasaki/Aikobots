@@ -120,7 +120,7 @@ class OpenAICompatibleTtsProvider {
     }
 
     async checkReady() {
-        await this.fetchTtsVoiceObjects();
+        this.voices = await this.fetchTtsVoiceObjects();
     }
 
     async onRefreshClick() {
