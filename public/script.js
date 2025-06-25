@@ -5853,6 +5853,12 @@ export function findItemizedPromptSet(itemizedPrompts, incomingMesId) {
 }
 
 async function promptItemize(itemizedPrompts, requestedMesId) {
+    // If Aikobots is enabled and user is not admin, disable this function
+    const aikobotsEnabled = await getAikobotsEnabled();
+    if (aikobotsEnabled && !isAdmin()){
+        return;
+    }
+
     console.log('PROMPT ITEMIZE ENTERED');
     var incomingMesId = Number(requestedMesId);
     console.debug(`looking for MesId ${incomingMesId}`);
@@ -5900,11 +5906,6 @@ async function promptItemize(itemizedPrompts, requestedMesId) {
         diffPrevPrompt.style.display = 'none';
     }
     popup.dlg.querySelector('#copyPromptToClipboard').addEventListener('pointerup', async function () {
-        // If Aikobots is enabled and user is not admin, disable this function
-        const aikobotsEnabled = await getAikobotsEnabled();
-        if (aikobotsEnabled && !isAdmin()){
-            return;
-        }
         let rawPrompt = itemizedPrompts[PromptArrayItemForRawPromptDisplay].rawPrompt;
         let rawPromptValues = rawPrompt;
 
@@ -5917,12 +5918,6 @@ async function promptItemize(itemizedPrompts, requestedMesId) {
     });
 
     popup.dlg.querySelector('#showRawPrompt').addEventListener('click', async function () {
-        // If Aikobots is enabled and user is not admin, disable this function
-        const aikobotsEnabled = await getAikobotsEnabled();
-        if (aikobotsEnabled && !isAdmin()){
-            return;
-        }
-        //console.log(itemizedPrompts[PromptArrayItemForRawPromptDisplay].rawPrompt);
         console.log(PromptArrayItemForRawPromptDisplay);
         console.log(itemizedPrompts);
         console.log(itemizedPrompts[PromptArrayItemForRawPromptDisplay].rawPrompt);
