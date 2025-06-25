@@ -837,7 +837,7 @@ export async function getWorldInfoPrompt(chat, maxContext, isDryRun, globalScanD
     };
 }
 
-export function setWorldInfoSettings(settings, data) {
+export async function setWorldInfoSettings(settings, data) {
     if (settings.world_info_depth !== undefined)
         world_info_depth = Number(settings.world_info_depth);
     if (settings.world_info_min_activations !== undefined)

@@ -367,7 +367,7 @@ class PromptManager {
         };
 
         // Open edit form and load selected prompt
-        this.handleInspect = (event) => {
+        this.handleInspect = async (event) => {
             // If Aikobots is enabled and user is not admin, disable this function
             const aikobotsEnabled = await getAikobotsEnabled();
             if (aikobotsEnabled && !isAdmin()){
@@ -508,7 +508,7 @@ class PromptManager {
         };
 
         // Create new prompt, then save it to settings and close form.
-        this.handleNewPrompt = (event) => {
+        this.handleNewPrompt = async (event) => {
             // If Aikobots is enabled and user is not admin, disable this function
             const aikobotsEnabled = await getAikobotsEnabled();
             if (aikobotsEnabled && !isAdmin()){
@@ -526,7 +526,7 @@ class PromptManager {
         };
 
         // Export all user prompts
-        this.handleFullExport = () => {
+        this.handleFullExport = async () => {
             // If Aikobots is enabled and user is not admin, disable this function
             const aikobotsEnabled = await getAikobotsEnabled();
             if (aikobotsEnabled && !isAdmin()){
@@ -555,7 +555,7 @@ class PromptManager {
         };
 
         // Export user prompts and order for this character
-        this.handleCharacterExport = () => {
+        this.handleCharacterExport = async () => {
             // If Aikobots is enabled and user is not admin, disable this function
             const aikobotsEnabled = await getAikobotsEnabled();
             if (aikobotsEnabled && !isAdmin()){
