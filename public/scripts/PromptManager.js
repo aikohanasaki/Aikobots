@@ -12,6 +12,8 @@ import { renderTemplateAsync } from './templates.js';
 import { Popup } from './popup.js';
 import { t } from './i18n.js';
 import { isMobile } from './RossAscends-mods.js';
+import { isAdmin } from './user.js';
+import { getAikobotsEnabled } from './utils.js';
 
 function debouncePromise(func, delay) {
     let timeoutId;
@@ -366,6 +368,11 @@ class PromptManager {
 
         // Open edit form and load selected prompt
         this.handleInspect = (event) => {
+            // If Aikobots is enabled and user is not admin, disable this function
+            const aikobotsEnabled = await getAikobotsEnabled();
+            if (aikobotsEnabled && !isAdmin()){
+                return;
+            }
             this.clearEditForm();
             this.clearInspectForm();
 
@@ -502,6 +509,11 @@ class PromptManager {
 
         // Create new prompt, then save it to settings and close form.
         this.handleNewPrompt = (event) => {
+            // If Aikobots is enabled and user is not admin, disable this function
+            const aikobotsEnabled = await getAikobotsEnabled();
+            if (aikobotsEnabled && !isAdmin()){
+                return;
+            }
             const prompt = {
                 identifier: this.getUuidv4(),
                 name: '',
@@ -515,6 +527,11 @@ class PromptManager {
 
         // Export all user prompts
         this.handleFullExport = () => {
+            // If Aikobots is enabled and user is not admin, disable this function
+            const aikobotsEnabled = await getAikobotsEnabled();
+            if (aikobotsEnabled && !isAdmin()){
+                return;
+            }
             const prompts = this.serviceSettings.prompts.reduce((userPrompts, prompt) => {
                 if (false === prompt.system_prompt && false === prompt.marker) userPrompts.push(prompt);
                 return userPrompts;
@@ -539,6 +556,11 @@ class PromptManager {
 
         // Export user prompts and order for this character
         this.handleCharacterExport = () => {
+            // If Aikobots is enabled and user is not admin, disable this function
+            const aikobotsEnabled = await getAikobotsEnabled();
+            if (aikobotsEnabled && !isAdmin()){
+                return;
+            }
             const characterPrompts = this.getPromptsForCharacter(this.activeCharacter).reduce((userPrompts, prompt) => {
                 if (false === prompt.system_prompt && !prompt.marker) userPrompts.push(prompt);
                 return userPrompts;
