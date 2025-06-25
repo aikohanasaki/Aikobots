@@ -31,7 +31,7 @@
     <link href="css/fontawesome.min.css" rel="stylesheet">
     <link href="css/solid.min.css" rel="stylesheet">
     <link href="css/user.css" rel="stylesheet">
-    <title>SillyTavern</title>
+    <title>Aikobots</title>
 </head>
 
 <body class="login">
@@ -40,16 +40,12 @@
             <div id="dialogue_popup_holder">
                 <div id="dialogue_popup_text">
                     <div id="userSelectBlock" class="flex-container flexFlowColumn alignItemsCenter">
-                        <h2 id="logoBlock" class="flex-container">
-                            <img src="img/logo.png" alt="SillyTavern" class="logo">
-                            <span>Welcome to SillyTavern</span>
+                        <h2 id="logoBlock" class="flex-container" style="margin-top: 5px;">
+                            <img src="img/okia.png" alt="Okia">
                         </h2>
-                        <h3 id="normalLoginPrompt">
-                            Select an Account
-                        </h3>
-                        <h3 id="discreetLoginPrompt">
-                            Enter Login Details
-                        </h3>
+                        <h2 id="logoBlock" class="flex-container">
+                            <span>Welcome to Aikobots</span>
+                        </h2>
                         <div id="userListBlock" class="wide100p">
                             <div id="userList" class="flex-container justifySpaceEvenly"></div>
                             <div id="handleEntryBlock" style="display:none;" class="flex-container flexFlowColumn alignItemsCenter">
@@ -58,21 +54,10 @@
                             <div id="passwordEntryBlock" style="display:none;"
                                 class="flex-container flexFlowColumn alignItemsCenter">
                                 <input id="userPassword" class="text_pole" type="password" placeholder="Password" autocomplete="current-password">
-                                <a id="recoverPassword" href="#" onclick="return false;">Forgot password?</a>
                                 <div class="flex-container">
                                     <div id="loginButton" class="menu_button">Login</div>
                                 </div>
-                            </div>
-                            <div id="passwordRecoveryBlock" style="display:none;" class="flex-container flexFlowColumn alignItemsCenter">
-                                <div id="recoverMessage">
-                                    Recovery code has been posted to the server console.
-                                </div>
-                                <input id="recoveryCode" class="text_pole" type="text" placeholder="Recovery code">
-                                <input id="newPassword" class="text_pole" type="password" placeholder="New password" autocomplete="new-password">
-                                <div class="flex-container flexGap10">
-                                    <div id="sendRecovery" class="menu_button">Send</div>
-                                    <div id="cancelRecovery" class="menu_button">Cancel</div>
-                                </div>
+                                <small id="forgotPassword">Forgot your password? Contact Aiko to get it reset.</small>
                             </div>
                         </div>
                         <div class="neutral_warning" id="errorMessage">
