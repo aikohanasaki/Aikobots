@@ -297,6 +297,9 @@ import { extractReasoningFromData, initReasoning, parseReasoningInSwipes, Prompt
 import { accountStorage } from './scripts/util/AccountStorage.js';
 import { initWelcomeScreen, openPermanentAssistantChat, openPermanentAssistantCard, getPermanentAssistantAvatar } from './scripts/welcome-screen.js';
 import { initDataMaid } from './scripts/data-maid.js';
+import { isAdmin } from './scripts/user.js';
+import { getAikobotsEnabled } from './scripts/utils.js';
+import { initializeAikobots } from './scripts/extensions/aikobots/aikobots.js';
 
 // API OBJECT FOR EXTERNAL WIRING
 globalThis.SillyTavern = {
@@ -1041,6 +1044,7 @@ async function firstLoadInit() {
     doDailyExtensionUpdatesCheck();
     await hideLoader();
     await fixViewport();
+    await initializeAikobots();
     await eventSource.emit(event_types.APP_READY);
 }
 
@@ -5896,6 +5900,11 @@ async function promptItemize(itemizedPrompts, requestedMesId) {
         diffPrevPrompt.style.display = 'none';
     }
     popup.dlg.querySelector('#copyPromptToClipboard').addEventListener('pointerup', async function () {
+        // If Aikobots is enabled and user is not admin, disable this function
+        const aikobotsEnabled = await getAikobotsEnabled();
+        if (aikobotsEnabled && !isAdmin()){
+            return;
+        }
         let rawPrompt = itemizedPrompts[PromptArrayItemForRawPromptDisplay].rawPrompt;
         let rawPromptValues = rawPrompt;
 
@@ -5908,6 +5917,11 @@ async function promptItemize(itemizedPrompts, requestedMesId) {
     });
 
     popup.dlg.querySelector('#showRawPrompt').addEventListener('click', async function () {
+        // If Aikobots is enabled and user is not admin, disable this function
+        const aikobotsEnabled = await getAikobotsEnabled();
+        if (aikobotsEnabled && !isAdmin()){
+            return;
+        }
         //console.log(itemizedPrompts[PromptArrayItemForRawPromptDisplay].rawPrompt);
         console.log(PromptArrayItemForRawPromptDisplay);
         console.log(itemizedPrompts);
