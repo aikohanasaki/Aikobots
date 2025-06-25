@@ -41,12 +41,12 @@ public/QuickReplies/
 content.log
 cloudflared.exe
 public/assets/
+public/presets
 access.log
 /vectors/
 /cache/
 public/css/user.css
 public/error/
-public/presets
 /plugins/
 /data
 /default/scaffold
@@ -56,6 +56,3 @@ public/scripts/extensions/third-party
 .aider*
 .env
 /StartDev.bat
-/public/indexbackup.html
-/public/loginaikobots.html
-/public/indexaikobots.html
