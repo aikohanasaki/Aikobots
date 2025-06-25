@@ -88,87 +88,6 @@
                 <div class="scrollableInner">
                     <div class="flex-container flexNoGap" id="ai_response_configuration">
                         <div id="respective-presets-block" class="width100p">
-                            <div id="kobold_api-presets">
-                                <div class="margin0 title_restorable standoutHeader">
-                                    <strong>
-                                        <span data-i18n="kobldpresets">Kobold Presets</span>
-                                    </strong>
-
-                                    <div class="flex-container gap3px">
-                                        <div data-preset-manager-import="kobold" class="margin0 menu_button_icon menu_button" title="Import preset" data-i18n="[title]Import preset">
-                                            <i class="fa-fw fa-solid fa-file-import"></i>
-                                        </div>
-                                        <div data-preset-manager-export="kobold" class="margin0 menu_button_icon menu_button" title="Export preset" data-i18n="[title]Export preset">
-                                            <i class="fa-fw fa-solid fa-file-export"></i>
-                                        </div>
-                                        <div data-preset-manager-delete="kobold" class="margin0 menu_button_icon menu_button" title="Delete the preset" data-i18n="[title]Delete the preset">
-                                            <i class="fa-fw fa-solid fa-trash-can"></i>
-                                        </div>
-                                    </div>
-                                </div>
-                                <div class="flex-container flexNoGap">
-                                    <select id="settings_preset" data-preset-manager-for="kobold" class="flex1 text_pole">
-                                        <option value="gui" data-i18n="guikoboldaisettings">GUI KoboldAI Settings</option>
-                                    </select>
-                                    <div class="flex-container marginLeft5 gap3px">
-                                        <input type="file" hidden data-preset-manager-file="kobold" accept=".json, .settings">
-                                        <div data-preset-manager-update="kobold" class="menu_button menu_button_icon" title="Update current preset" data-i18n="[title]Update current preset">
-                                            <i class="fa-fw fa-solid fa-save"></i>
-                                        </div>
-                                        <div data-preset-manager-rename="kobold" class="menu_button menu_button_icon" title="Rename current preset" data-i18n="[title]Rename current preset">
-                                            <i class="fa-fw fa-solid fa-pencil"></i>
-                                        </div>
-                                        <div data-preset-manager-new="kobold" class="menu_button menu_button_icon" title="Save preset as" data-i18n="[title]Save preset as">
-                                            <i class="fa-fw fa-solid fa-file-circle-plus"></i>
-                                        </div>
-                                        <div data-preset-manager-restore="kobold" class="menu_button menu_button_icon" title="Restore current preset" data-i18n="[title]Restore current preset">
-                                            <i class="fa-fw fa-solid fa-recycle"></i>
-                                        </div>
-                                    </div>
-                                </div>
-                            </div>
-                            <div id="novel_api-presets">
-                                <div class="margin0 title_restorable standoutHeader">
-                                    <strong>
-                                        <span data-i18n="novelaipresets">NovelAI Presets</span>
-                                        <a href="https://docs.sillytavern.app/usage/api-connections/novelai/" class="notes-link" target="_blank">
-                                            <span class="fa-solid fa-circle-question note-link-span"></span>
-                                        </a>
-                                    </strong>
-
-                                    <div class="flex-container gap3px">
-                                        <div data-preset-manager-import="novel" class="margin0 menu_button_icon menu_button" title="Import preset" data-i18n="[title]Import preset">
-                                            <i class="fa-fw fa-solid fa-file-import"></i>
-                                        </div>
-                                        <div data-preset-manager-export="novel" class="margin0 menu_button_icon menu_button" title="Export preset" data-i18n="[title]Export preset">
-                                            <i class="fa-fw fa-solid fa-file-export"></i>
-                                        </div>
-                                        <div data-preset-manager-delete="novel" class="margin0 menu_button_icon menu_button" title="Delete the preset" data-i18n="[title]Delete the preset">
-                                            <i class="fa-fw fa-solid fa-trash-can"></i>
-                                        </div>
-                                    </div>
-                                </div>
-                                <div class="flex-container flexNoGap">
-                                    <select id="settings_preset_novel" class="flex1 text_pole" data-preset-manager-for="novel">
-                                        <option value="gui" data-i18n="Default">Default</option>
-                                    </select>
-                                    <div class="flex-container marginLeft5 gap3px">
-                                        <input type="file" hidden data-preset-manager-file="novel" accept=".json, .settings, .preset">
-                                        <div data-preset-manager-update="novel" class="menu_button menu_button_icon" title="Update current preset" data-i18n="[title]Update current preset">
-                                            <i class="fa-fw fa-solid fa-save"></i>
-                                        </div>
-                                        <div data-preset-manager-rename="novel" class="menu_button menu_button_icon" title="Rename current preset" data-i18n="[title]Rename current preset">
-                                            <i class="fa-fw fa-solid fa-pencil"></i>
-                                        </div>
-                                        <div data-preset-manager-new="novel" class="menu_button menu_button_icon" title="Save preset as" data-i18n="[title]Save preset as">
-                                            <i class="fa-fw fa-solid fa-file-circle-plus"></i>
-                                        </div>
-                                        <div data-preset-manager-restore="novel" class="menu_button menu_button_icon" title="Restore current preset" data-i18n="[title]Restore current preset">
-                                            <i class="fa-fw fa-solid fa-recycle"></i>
-                                        </div>
-                                    </div>
-                                </div>
-                            </div>
                             <div id="openai_api-presets">
                                 <div>
                                     <div class="margin0 title_restorable standoutHeader">
@@ -253,7 +172,7 @@
                                 <span class="warning">CHECK THE TEMPERATURE SLIDER!</span> <small>All bots should have recommended temperature settings per engine listed in Creator's Notes or on the <a style="text-decoration: underline;" href="https://www.aikobots.com/rollcall.html" target="_blank">Roll Call</a>.</small>
                             </div>
                             <div id="range_block_openai">
-                                <div class="range-block" data-source="openai,claude,windowai,openrouter,ai21,scale,makersuite,mistralai,custom,cohere,perplexity,groq,01ai,nanogpt,deepseek">
+                                <div class="range-block" data-source="openai,claude,windowai,aimlapi,openrouter,ai21,scale,makersuite,vertexai,mistralai,custom,cohere,perplexity,groq,01ai,nanogpt,deepseek,xai,pollinations">
                                     <div class="range-block-title" data-i18n="Temperature">
                                         Temperature
                                     </div>
@@ -287,13 +206,8 @@
                                         <input type="number" id="openai_max_tokens" name="openai_max_tokens" class="text_pole" min="1" max="65536">
                                     </div>
                                 </div>
-                                <div class="range-block" data-source="openai,custom,xai,aimlapi">
-                                    <div class="range-block-title" data-i18n="Multiple swipes per generation">
-                                        Multiple swipes per generation
-                                    </div>
-                                    <div class="wide100p">
-                                        <input type="number" id="n_openai" name="n_openai" class="text_pole" min="1" value="1">
-                                    </div>
+                                <div class="range-block m-b-1">
+                                    <div id="completion_prompt_manager"></div>
                                 </div>
                                 <div data-source="openrouter" class="range-block">
                                     <div class="range-block-title" data-i18n="[title]Allow compressing requests by removing messages from the middle of the prompt." title="Allow compressing requests by removing messages from the middle of the prompt.">
@@ -312,33 +226,6 @@
                                     <span data-i18n="Max prompt cost:">Max prompt cost:</span> <span id="openrouter_max_prompt_cost" data-i18n="Unknown">Unknown</span>
                                 </div>
                                 <hr>
-                                <div class="range-block">
-                                    <label for="stream_toggle" title="Enable OpenAI completion streaming" data-i18n="[title]Enable OpenAI completion streaming" class="checkbox_label widthFreeExpand">
-                                        <input id="stream_toggle" type="checkbox" /><span data-i18n="Streaming">
-                                            Streaming</span>
-                                    </label>
-                                    <div class="toggle-description justifyLeft">
-                                        <span data-i18n="Display the response bit by bit as it is generated.">
-                                            Display the response bit by bit as it is generated.
-                                        </span><br>
-                                        <span data-i18n="When this is off, responses will be displayed all at once when they are complete.">
-                                            When this is off, responses will be displayed all at once when they are complete.
-                                        </span>
-                                    </div>
-                                </div>
-                                <div class="range-block" data-source="openai,claude,windowai,aimlapi,openrouter,ai21,scale,makersuite,vertexai,mistralai,custom,cohere,perplexity,groq,01ai,nanogpt,deepseek,xai,pollinations">
-                                    <div class="range-block-title" data-i18n="Temperature">
-                                        Temperature
-                                    </div>
-                                    <div class="range-block-range-and-counter">
-                                        <div class="range-block-range">
-                                            <input type="range" id="temp_openai" name="volume" min="0" max="2.0" step="0.01">
-                                        </div>
-                                        <div class="range-block-counter">
-                                            <input type="number" min="0" max="2.0" step="0.01" data-for="temp_openai" id="temp_counter_openai">
-                                        </div>
-                                    </div>
-                                </div>
                                 <div class="range-block" data-source="openai,aimlapi,openrouter,custom,cohere,perplexity,groq,mistralai,nanogpt,deepseek,xai,pollinations">
                                     <div class="range-block-title" data-i18n="Frequency Penalty">
                                         Frequency Penalty
@@ -517,7 +404,7 @@
                                         </div>
                                     </div>
                                 </div>
-                                <div class="range-block" data-source="openai,openrouter,mistralai,custom,cohere,groq,nanogpt,xai,pollinations,aimlapi">
+                                <div style="display:none" class="range-block" data-source="openai,openrouter,mistralai,custom,cohere,groq,nanogpt,xai,pollinations,aimlapi">
                                     <div class="range-block-title justifyLeft" data-i18n="Seed">
                                         Seed
                                     </div>
@@ -567,19 +454,6 @@
                                         <div class="toggle-description justifyLeft">
                                             <span data-i18n="Continue sends the last message as assistant role instead of system message with instruction.">
                                                 Continue sends the last message as assistant role instead of system message with instruction.
-                                            </span>
-                                        </div>
-                                    </div>
-                                    <div class="range-block">
-                                        <label for="squash_system_messages" title="Squash system messages" data-i18n="[title]Squash system messages" class="checkbox_label widthFreeExpand">
-                                            <input id="squash_system_messages" type="checkbox" />
-                                            <span data-i18n="Squash system messages">
-                                                Squash system messages
-                                            </span>
-                                        </label>
-                                        <div class="toggle-description justifyLeft">
-                                            <span data-i18n="Combines consecutive system messages into one (excluding example dialogues). May improve coherence for some models.">
-                                                Combines consecutive system messages into one (excluding example dialogues). May improve coherence for some models.
                                             </span>
                                         </div>
                                     </div>
@@ -742,49 +616,6 @@
                                             </span>
                                         </div>
                                     </div>
-                                </div>
-                                <div class="range-block m-t-1" data-source="openai,aimlapi,openrouter,scale,custom">
-                                    <div id="logit_bias_openai" class="range-block-title openai_restorable" data-i18n="Logit Bias">
-                                        Logit Bias
-                                    </div>
-                                    <div class="toggle-description justifyLeft">
-                                        <span data-i18n="Helps to ban or reenforce the usage of certain words">Helps to ban or reinforce the usage of certain tokens.</span>
-                                        <span data-i18n="Confirm token parsing with">Confirm token parsing with</span>
-                                        <a target="_blank" href="https://platform.openai.com/tokenizer/" data-i18n="Tokenizer">Tokenizer</a>.
-                                    </div>
-                                    <div class="openai_logit_bias_preset_form">
-                                        <select id="openai_logit_bias_preset">
-                                        </select>
-                                        <i title="New preset" id="openai_logit_bias_new_preset" class="menu_button fa-solid fa-plus" data-i18n="[title]New preset"></i>
-                                        <i title="Import preset" id="openai_logit_bias_import_preset" class="menu_button fa-solid fa-file-import" data-i18n="[title]Import preset"></i>
-                                        <i title="Export preset" id="openai_logit_bias_export_preset" class="menu_button fa-solid fa-file-export" data-i18n="[title]Export preset"></i>
-                                        <i title="Delete preset" id="openai_logit_bias_delete_preset" class="menu_button fa-solid fa-trash-can" data-i18n="[title]Delete preset"></i>
-                                        <input id="openai_logit_bias_import_file" type="file" accept=".json" hidden />
-                                    </div>
-                                    <div class="inline-drawer wide100p">
-                                        <div class="inline-drawer-toggle inline-drawer-header">
-                                            <b data-i18n="View / Edit bias preset">View / Edit bias preset</b>
-                                            <div class="fa-solid fa-circle-chevron-down inline-drawer-icon down"></div>
-                                        </div>
-                                        <div class="inline-drawer-content">
-                                            <div id="openai_logit_bias_new_entry" class="menu_button wide100p flex-container justifyCenter" data-i18n="Add bias entry">
-                                                Add bias entry
-                                            </div>
-                                            <div class="openai_logit_bias_list" no_items_text="No items" data-i18n="[no_items_text]openai_logit_bias_no_items"></div>
-                                            <div class="m-t-1">
-                                                <small>
-                                                    <i class="fa-solid fa-lightbulb"></i>
-                                                    &nbsp;
-                                                    <span data-i18n="Most tokens have a leading space.">
-                                                        Most tokens have a leading space.
-                                                    </span>
-                                                </small>
-                                            </div>
-                                        </div>
-                                    </div>
-                                </div>
-                                <div class="range-block m-b-1">
-                                    <div id="completion_prompt_manager"></div>
                                 </div>
                             </div><!-- end of OpenAI settings-->
                         </div>
@@ -4114,7 +3945,6 @@
                         <hr class="wide100p">
                     </div>
                 </div>
-
                 <!-- this div structure must be preserved until group peeking can adjust -->
                 <div id="rm_PinAndTabs">
                     <div id="right-nav-panel-tabs" class="">
@@ -4139,7 +3969,6 @@
                     </div>
                 </div>
                 <!-- end group peeking cope structure-->
-
                 <div class="scrollableInner">
                     <div name="Solo Char Create/Edit Panel" id="rm_ch_create_block" class="right_menu flex-container flexFlowColumn" style="display: none;">
                         <form id="form_create" action="javascript:void(null);" method="post" enctype="multipart/form-data">
@@ -4163,7 +3992,7 @@
                                                 <div id="favorite_button" class="menu_button fa-solid fa-star" title="Add to Favorites" data-i18n="[title]Add to Favorites"></div>
                                                 <input type="hidden" id="fav_checkbox" name="fav" />
                                                 <div id="advanced_div" class="menu_button fa-solid fa-book " title="Advanced Definitions" data-i18n="[title]Advanced Definition"></div>
-                                                <div id="world_button" class="menu_button fa-solid fa-globe" title="Character Lore&#10;&#10;Click to load&#10;Shift-click to open 'Link to World Info' popup" data-i18n="[title]world_button_title"></div>
+                                                <div id="world_button" class="menu_button fa-solid fa-globe" title="Character Lore&#10;&#10;Click to load&#10;Shift-click to open 'Link to World Info' popup" data-i18n="[title]world_button_title" style="display:none;"></div>
                                                 <div class="chat_lorebook_button menu_button fa-solid fa-passport" title="Chat Lore&#10;Alt+Click to open the lorebook" data-i18n="[title]Chat Lore Alt+Click to open the lorebook"></div>
                                                 <div id="char_connections_button" class="menu_button fa-solid fa-face-smile" title="Connected Personas" data-i18n="[title]Connected Personas"></div>
                                                 <div id="export_button" class="menu_button fa-solid fa-file-export " title="Export and Download" data-i18n="[title]Export and Download"></div>
@@ -4238,8 +4067,28 @@
                                 <div id="creator_notes_spoiler" class="flex1"></div>
                                 <!-- A button to show / hide description_div and description_textarea and first_message_div and firstmessage_textarea-->
                             </div>
+                            <hr>
+                            <div style="margin-top:5px" id="firstMessageWrapper" class="flex-container flexFlowColumn flex1">
+                                <div id="first_message_div" class="title_restorable">
+                                    <div class="flex-container alignitemscenter flex1">
+                                        <span data-i18n="First message" class="mdhotkey_location">First message</span>
+                                        <i class="editor_maximize fa-solid fa-maximize right_menu_button" data-for="firstmessage_textarea" title="Expand the editor" data-i18n="[title]Expand the editor"></i>
+                                        <a href="https://docs.sillytavern.app/usage/core-concepts/characterdesign/#first-message" class="notes-link" target="_blank">
+                                            <span class="fa-solid fa-circle-question note-link-span"></span>
+                                        </a>
+                                    </div>
+                                    <div class="menu_button menu_button_icon open_alternate_greetings margin0" title="Click to set additional greeting messages" data-i18n="[title]Click to set additional greeting messages">
+                                        <span data-i18n="Alt. Greetings">
+                                            Alt. Greetings
+                                        </span>
+                                    </div>
+                                </div>
+                                <textarea class="mdHotkeys" id="firstmessage_textarea" data-i18n="[placeholder]This will be the first message from the character that starts every chat." placeholder="This will be the first message from the character that starts every chat." name="first_mes" placeholder=""></textarea>
+                                <div class="extension_token_counter">
+                                    <span data-i18n="extension_token_counter">Tokens:</span> <span data-token-counter="firstmessage_textarea">counting...</span>
+                                </div>
+                            </div>
                             <div id="descriptionWrapper" class="flex-container flexFlowColumn flex1">
-                                <hr>
                                 <div id="description_div" class="title_restorable">
                                     <div class="flex-container alignitemscenter">
                                         <span data-i18n="Character Description" class="mdhotkey_location">Description</span>
@@ -4259,26 +4108,6 @@
                                 <textarea id="description_textarea" class="mdHotkeys" data-i18n="[placeholder]Describe your character's physical and mental traits here." placeholder="Describe your character's physical and mental traits here." name="description" placeholder=""></textarea>
                                 <div class="extension_token_counter">
                                     <span data-i18n="extension_token_counter">Tokens:</span> <span data-token-counter="description_textarea" data-token-permanent="true">counting...</span>
-                                </div>
-                            </div>
-                            <div id="firstMessageWrapper" class="flex-container flexFlowColumn flex1">
-                                <div id="first_message_div" class="title_restorable">
-                                    <div class="flex-container alignitemscenter flex1">
-                                        <span data-i18n="First message" class="mdhotkey_location">First message</span>
-                                        <i class="editor_maximize fa-solid fa-maximize right_menu_button" data-for="firstmessage_textarea" title="Expand the editor" data-i18n="[title]Expand the editor"></i>
-                                        <a href="https://docs.sillytavern.app/usage/core-concepts/characterdesign/#first-message" class="notes-link" target="_blank">
-                                            <span class="fa-solid fa-circle-question note-link-span"></span>
-                                        </a>
-                                    </div>
-                                    <div class="menu_button menu_button_icon open_alternate_greetings margin0" title="Click to set additional greeting messages" data-i18n="[title]Click to set additional greeting messages">
-                                        <span data-i18n="Alt. Greetings">
-                                            Alt. Greetings
-                                        </span>
-                                    </div>
-                                </div>
-                                <textarea class="mdHotkeys" id="firstmessage_textarea" data-i18n="[placeholder]This will be the first message from the character that starts every chat." placeholder="This will be the first message from the character that starts every chat." name="first_mes" placeholder=""></textarea>
-                                <div class="extension_token_counter">
-                                    <span data-i18n="extension_token_counter">Tokens:</span> <span data-token-counter="firstmessage_textarea">counting...</span>
                                 </div>
                             </div>
                             <!-- these divs are invisible and used for server communication purposes -->
@@ -4440,10 +4269,6 @@
                     <div name="Character List Panel" id="rm_characters_block" class="right_menu">
                         <div id="charListFixedTop">
                             <form id="form_character_search_form" action="javascript:void(null);">
-                                <div id="rm_button_create" title="Create New Character" data-i18n="[title]Create New Character" class="menu_button fa-solid fa-user-plus "></div>
-                                <div id="character_import_button" title="Import Character from File" data-i18n="[title]Import Character from File" class="menu_button fa-solid fa-file-import faSmallFontSquareFix"></div>
-                                <div id="external_import_button" title="Import content from external URL" data-i18n="[title]Import content from external URL" class="menu_button fa-solid fa-cloud-arrow-down faSmallFontSquareFix"></div>
-                                <div id="rm_button_group_chats" title="Create New Chat Group" data-i18n="[title]Create New Chat Group" class="menu_button fa-solid fa-users-gear "></div>
                                 <input id="character_search_bar" class="text_pole width100p" type="search" data-i18n="[placeholder]Search..." placeholder="Search..." />
                                 <select id="character_sort_order" title="Characters sorting order" data-i18n="[title]Characters sorting order">
                                     <option data-field="search" data-order="desc" data-i18n="Search" hidden>Search</option>
@@ -4463,6 +4288,12 @@
                             <div class="rm_tag_controls">
                                 <div class="tags rm_tag_filter"></div>
                                 <div class="tags rm_tag_bogus_drilldown"></div>
+                            </div>
+                            <div class="rm_tag_controls">
+                                <div id="rm_button_create" title="Create New Character" data-i18n="[title]Create New Character" class="menu_button fa-solid fa-user-plus "></div>
+                                <div id="rm_button_group_chats" title="Create New Chat Group" data-i18n="[title]Create New Chat Group" class="menu_button fa-solid fa-users-gear "></div>
+                                <div id="character_import_button" title="Import Character from File" data-i18n="[title]Import Character from File" class="menu_button fa-solid fa-file-import faSmallFontSquareFix"></div>
+                                <div id="external_import_button" title="Import content from external URL" data-i18n="[title]Import content from external URL" class="menu_button fa-solid fa-cloud-arrow-down faSmallFontSquareFix"></div>
                             </div>
                             <hr>
                         </div>
