@@ -5854,7 +5854,7 @@ export function findItemizedPromptSet(itemizedPrompts, incomingMesId) {
 
 async function promptItemize(itemizedPrompts, requestedMesId) {
     // If Aikobots is enabled and user is not admin, disable this function
-    const aikobotsEnabled = await getAikobotsEnabled();
+    const aikobotsEnabled = window.aikobotsEnabled ?? (window.aikobotsEnabled = await getAikobotsEnabled());
     if (aikobotsEnabled && !isAdmin()){
         return;
     }
