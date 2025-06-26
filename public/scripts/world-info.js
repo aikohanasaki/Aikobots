@@ -918,7 +918,7 @@ export async function setWorldInfoSettings(settings, data) {
     world_names = data.world_names?.length ? data.world_names : [];
 
     // Aikobots Lorebooks User-Access Filter Functionality
-    const aikobotsEnabled = await getAikobotsEnabled();
+    const aikobotsEnabled = window.aikobotsEnabled ?? (window.aikobotsEnabled = await getAikobotsEnabled());
     if (aikobotsEnabled && !isAdmin()){
         // only admins can see 9Z files
         let filteredNames = world_names.filter(name => !name.includes('ZZZZ') && !name.includes('9Z'));
@@ -1901,7 +1901,7 @@ export async function updateWorldInfoList() {
         $('#world_editor_select').find('option[value!=""]').remove();
 
         // Aikobots Lorebooks User-Access Filter Functionality
-        const aikobotsEnabled = await getAikobotsEnabled();
+        const aikobotsEnabled = window.aikobotsEnabled ?? (window.aikobotsEnabled = await getAikobotsEnabled());
         if (aikobotsEnabled && !isAdmin()){
             // only admins can see 9Z files
             let filteredNames = world_names.filter(name => !name.includes('ZZZZ') && !name.includes('9Z'));
