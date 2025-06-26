@@ -836,6 +836,10 @@
         "type": "character"
     },
     {
+        "filename": "characters/Ryuichi.png",
+        "type": "character"
+    },
+    {
         "filename": "characters/.gitkeep",
         "type": "character"
     },
@@ -985,10 +989,6 @@
     },
     {
         "filename": "characters/Ivy.png",
-        "type": "character"
-    },
-    {
-        "filename": "characters/Ryuichi Sasaki.png",
         "type": "character"
     },
     {
