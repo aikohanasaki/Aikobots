@@ -880,10 +880,6 @@
         "type": "character"
     },
     {
-        "filename": "characters/Kian Blackwood.png",
-        "type": "character"
-    },
-    {
         "filename": "characters/Rafayel.png",
         "type": "character"
     },
@@ -1144,10 +1140,6 @@
         "type": "world"
     },
     {
-        "filename": "worlds/Z-dreamweaver-Arcadia.json",
-        "type": "world"
-    },
-    {
         "filename": "worlds/9ZZ Mark.json",
         "type": "world"
     },
@@ -1365,10 +1357,6 @@
     },
     {
         "filename": "worlds/Z-bumblebee-Alessandro.json",
-        "type": "world"
-    },
-    {
-        "filename": "worlds/Z-autumnreve-KianBlackwood.json",
         "type": "world"
     },
     {
