@@ -832,6 +832,10 @@
         "type": "character"
     },
     {
+        "filename": "characters/Atlas.png",
+        "type": "character"
+    },
+    {
         "filename": "characters/Zayne.png",
         "type": "character"
     },
@@ -892,6 +896,10 @@
         "type": "character"
     },
     {
+        "filename": "characters/Dane.png",
+        "type": "character"
+    },
+    {
         "filename": "characters/Ace.png",
         "type": "character"
     },
@@ -944,6 +952,10 @@
         "type": "character"
     },
     {
+        "filename": "characters/Venryk.png",
+        "type": "character"
+    },
+    {
         "filename": "characters/Kiernan Rowe.png",
         "type": "character"
     },
@@ -977,6 +989,10 @@
     },
     {
         "filename": "characters/Changmin.png",
+        "type": "character"
+    },
+    {
+        "filename": "characters/Marcelline.png",
         "type": "character"
     },
     {
@@ -1072,6 +1088,10 @@
         "type": "character"
     },
     {
+        "filename": "characters/Evander.png",
+        "type": "character"
+    },
+    {
         "filename": "characters/Cassian.png",
         "type": "character"
     },
@@ -1100,6 +1120,10 @@
         "type": "world"
     },
     {
+        "filename": "worlds/Z-wishfulstar-rian.json",
+        "type": "world"
+    },
+    {
         "filename": "worlds/Z-nari-Aiven.json",
         "type": "world"
     },
@@ -1113,6 +1137,14 @@
     },
     {
         "filename": "worlds/9ZZ Rafayel.json",
+        "type": "world"
+    },
+    {
+        "filename": "worlds/Z-hyperion-Brennan.json",
+        "type": "world"
+    },
+    {
+        "filename": "worlds/Z-nari-Dane.json",
         "type": "world"
     },
     {
@@ -1212,6 +1244,10 @@
         "type": "world"
     },
     {
+        "filename": "worlds/Z-aqua-Evander.json",
+        "type": "world"
+    },
+    {
         "filename": "worlds/Z-lyraevanstine-CallumThorne.json",
         "type": "world"
     },
@@ -1304,6 +1340,14 @@
         "type": "world"
     },
     {
+        "filename": "worlds/Z-nari-Atlas.json",
+        "type": "world"
+    },
+    {
+        "filename": "worlds/Z-aqua-Virelya.json",
+        "type": "world"
+    },
+    {
         "filename": "worlds/9ZZ Twins.json",
         "type": "world"
     },
@@ -1352,7 +1396,15 @@
         "type": "world"
     },
     {
-        "filename": "worlds/Z-echomeria-Kai.json",
+        "filename": "worlds/Z-trinity-Ford.json",
+        "type": "world"
+    },
+    {
+        "filename": "worlds/Z-hyperion-Ravenwood.json",
+        "type": "world"
+    },
+    {
+        "filename": "worlds/Z-dreamweaver-VenrykLore.json",
         "type": "world"
     },
     {
@@ -1416,7 +1468,15 @@
         "type": "world"
     },
     {
+        "filename": "worlds/Z-whisperedinsanity-Jinu.json",
+        "type": "world"
+    },
+    {
         "filename": "worlds/Z-nyotoni-matthew.json",
+        "type": "world"
+    },
+    {
+        "filename": "worlds/Z-kaiyazure-ShatteredWishes.json",
         "type": "world"
     },
     {
