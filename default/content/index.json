@@ -1100,6 +1100,10 @@
         "type": "character"
     },
     {
+        "filename": "characters/Polk.png",
+        "type": "character"
+    },
+    {
         "filename": "characters/Cadan.png",
         "type": "character"
     },
@@ -1164,6 +1168,10 @@
         "type": "world"
     },
     {
+        "filename": "worlds/Z-kaiyazure-Isamu.json",
+        "type": "world"
+    },
+    {
         "filename": "worlds/9ZZ Gage.json",
         "type": "world"
     },
@@ -1196,15 +1204,15 @@
         "type": "world"
     },
     {
-        "filename": "worlds/9Z Shared Knowledge.json",
-        "type": "world"
-    },
-    {
         "filename": "worlds/9ZZ Xavier.json",
         "type": "world"
     },
     {
         "filename": "worlds/Z-aqua-Niko.json",
+        "type": "world"
+    },
+    {
+        "filename": "worlds/Z-dreamweaver-Venryk.json",
         "type": "world"
     },
     {
@@ -1217,6 +1225,10 @@
     },
     {
         "filename": "worlds/Universal Commands.json",
+        "type": "world"
+    },
+    {
+        "filename": "worlds/Z-kaiyazure-Shouhei.json",
         "type": "world"
     },
     {
@@ -1300,6 +1312,10 @@
         "type": "world"
     },
     {
+        "filename": "worlds/9Z Sex Extras.json",
+        "type": "world"
+    },
+    {
         "filename": "worlds/Z-whisperedinsanity-Dante.json",
         "type": "world"
     },
@@ -1309,6 +1325,10 @@
     },
     {
         "filename": "worlds/Z-nari-Ace.json",
+        "type": "world"
+    },
+    {
+        "filename": "worlds/Z-soona-studiobots-robena.json",
         "type": "world"
     },
     {
@@ -1325,6 +1345,10 @@
     },
     {
         "filename": "worlds/9Z LaDS World Info.json",
+        "type": "world"
+    },
+    {
+        "filename": "worlds/Z-soona-studiobots-xo.json",
         "type": "world"
     },
     {
@@ -1360,6 +1384,10 @@
         "type": "world"
     },
     {
+        "filename": "worlds/Z-kaiyazure-Juichi.json",
+        "type": "world"
+    },
+    {
         "filename": "worlds/9Z LaDS Game Info.json",
         "type": "world"
     },
@@ -1369,10 +1397,6 @@
     },
     {
         "filename": "worlds/Z-missluckii-kiernan.json",
-        "type": "world"
-    },
-    {
-        "filename": "worlds/Z-dreamweaver-Venryk'sLore.json",
         "type": "world"
     },
     {
@@ -1404,10 +1428,6 @@
         "type": "world"
     },
     {
-        "filename": "worlds/Z-dreamweaver-VenrykLore.json",
-        "type": "world"
-    },
-    {
         "filename": "worlds/Z-bumblebee-Alessandro.json",
         "type": "world"
     },
@@ -1421,6 +1441,10 @@
     },
     {
         "filename": "worlds/Z-whisperedinsanity-Pride.json",
+        "type": "world"
+    },
+    {
+        "filename": "worlds/9Z Celebrations.json",
         "type": "world"
     },
     {
@@ -1441,6 +1465,10 @@
     },
     {
         "filename": "worlds/Z-echomeria-Mikhail.json",
+        "type": "world"
+    },
+    {
+        "filename": "worlds/9Z Demon Codex.json",
         "type": "world"
     },
     {
