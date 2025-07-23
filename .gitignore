@@ -56,3 +56,4 @@ public/scripts/extensions/third-party
 .aider*
 .env
 /StartDev.bat
+default/content/index.json
