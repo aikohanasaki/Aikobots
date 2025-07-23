@@ -810,5 +810,769 @@
     {
         "filename": "presets/context/Dots1.json",
         "type": "context"
+    },
+    {
+        "filename": "characters/Alex.png",
+        "type": "character"
+    },
+    {
+        "filename": "characters/Taizi.png",
+        "type": "character"
+    },
+    {
+        "filename": "characters/Sebastian.png",
+        "type": "character"
+    },
+    {
+        "filename": "characters/Mikey.png",
+        "type": "character"
+    },
+    {
+        "filename": "characters/Damien.png",
+        "type": "character"
+    },
+    {
+        "filename": "characters/Atlas.png",
+        "type": "character"
+    },
+    {
+        "filename": "characters/Zayne.png",
+        "type": "character"
+    },
+    {
+        "filename": "characters/Ryuichi.png",
+        "type": "character"
+    },
+    {
+        "filename": "characters/.gitkeep",
+        "type": "character"
+    },
+    {
+        "filename": "characters/Jasper.png",
+        "type": "character"
+    },
+    {
+        "filename": "characters/Haru.png",
+        "type": "character"
+    },
+    {
+        "filename": "characters/Laurent.png",
+        "type": "character"
+    },
+    {
+        "filename": "characters/Vhar.png",
+        "type": "character"
+    },
+    {
+        "filename": "characters/Matthew.png",
+        "type": "character"
+    },
+    {
+        "filename": "characters/Liam Mairi.png",
+        "type": "character"
+    },
+    {
+        "filename": "characters/Mikhail.png",
+        "type": "character"
+    },
+    {
+        "filename": "characters/Andalina.png",
+        "type": "character"
+    },
+    {
+        "filename": "characters/Bryson.png",
+        "type": "character"
+    },
+    {
+        "filename": "characters/Rafayel.png",
+        "type": "character"
+    },
+    {
+        "filename": "characters/Gage.png",
+        "type": "character"
+    },
+    {
+        "filename": "characters/Callum Thorne.png",
+        "type": "character"
+    },
+    {
+        "filename": "characters/Dane.png",
+        "type": "character"
+    },
+    {
+        "filename": "characters/Ace.png",
+        "type": "character"
+    },
+    {
+        "filename": "characters/Noct.png",
+        "type": "character"
+    },
+    {
+        "filename": "characters/Greyson.png",
+        "type": "character"
+    },
+    {
+        "filename": "characters/Mabey.png",
+        "type": "character"
+    },
+    {
+        "filename": "characters/Si Woo.png",
+        "type": "character"
+    },
+    {
+        "filename": "characters/Alessandro.png",
+        "type": "character"
+    },
+    {
+        "filename": "characters/GLaDOS.png",
+        "type": "character"
+    },
+    {
+        "filename": "characters/Theo.png",
+        "type": "character"
+    },
+    {
+        "filename": "characters/Elias.png",
+        "type": "character"
+    },
+    {
+        "filename": "characters/Reyes.png",
+        "type": "character"
+    },
+    {
+        "filename": "characters/Wraith.png",
+        "type": "character"
+    },
+    {
+        "filename": "characters/Blackburn.png",
+        "type": "character"
+    },
+    {
+        "filename": "characters/River.png",
+        "type": "character"
+    },
+    {
+        "filename": "characters/Aiden.png",
+        "type": "character"
+    },
+    {
+        "filename": "characters/Carl.png",
+        "type": "character"
+    },
+    {
+        "filename": "characters/Venryk.png",
+        "type": "character"
+    },
+    {
+        "filename": "characters/Kiernan Rowe.png",
+        "type": "character"
+    },
+    {
+        "filename": "characters/Ryker.png",
+        "type": "character"
+    },
+    {
+        "filename": "characters/Caesar.png",
+        "type": "character"
+    },
+    {
+        "filename": "characters/Gemma.png",
+        "type": "character"
+    },
+    {
+        "filename": "characters/Lucien.png",
+        "type": "character"
+    },
+    {
+        "filename": "characters/Zee.png",
+        "type": "character"
+    },
+    {
+        "filename": "characters/Twins.png",
+        "type": "character"
+    },
+    {
+        "filename": "characters/Anon.png",
+        "type": "character"
+    },
+    {
+        "filename": "characters/Changmin.png",
+        "type": "character"
+    },
+    {
+        "filename": "characters/Marcelline.png",
+        "type": "character"
+    },
+    {
+        "filename": "characters/Giyuu Tomioka.png",
+        "type": "character"
+    },
+    {
+        "filename": "characters/Ivy.png",
+        "type": "character"
+    },
+    {
+        "filename": "characters/Grim.png",
+        "type": "character"
+    },
+    {
+        "filename": "characters/Dante.png",
+        "type": "character"
+    },
+    {
+        "filename": "characters/[Redacted].png",
+        "type": "character"
+    },
+    {
+        "filename": "characters/Riku.png",
+        "type": "character"
+    },
+    {
+        "filename": "characters/Soren Blackwood.png",
+        "type": "character"
+    },
+    {
+        "filename": "characters/Mark.png",
+        "type": "character"
+    },
+    {
+        "filename": "characters/Xavier.png",
+        "type": "character"
+    },
+    {
+        "filename": "characters/Caleb.png",
+        "type": "character"
+    },
+    {
+        "filename": "characters/Sir Dimitri Ambrose.png",
+        "type": "character"
+    },
+    {
+        "filename": "characters/Pride.png",
+        "type": "character"
+    },
+    {
+        "filename": "characters/Niko.png",
+        "type": "character"
+    },
+    {
+        "filename": "characters/Felix and Vex.png",
+        "type": "character"
+    },
+    {
+        "filename": "characters/Andalino.png",
+        "type": "character"
+    },
+    {
+        "filename": "characters/Luca.png",
+        "type": "character"
+    },
+    {
+        "filename": "characters/Xaden Riorson.png",
+        "type": "character"
+    },
+    {
+        "filename": "characters/Jenna.png",
+        "type": "character"
+    },
+    {
+        "filename": "characters/Faye.png",
+        "type": "character"
+    },
+    {
+        "filename": "characters/Thadius.png",
+        "type": "character"
+    },
+    {
+        "filename": "characters/Aiven.png",
+        "type": "character"
+    },
+    {
+        "filename": "characters/Elliott.png",
+        "type": "character"
+    },
+    {
+        "filename": "characters/Sylus.png",
+        "type": "character"
+    },
+    {
+        "filename": "characters/Evander.png",
+        "type": "character"
+    },
+    {
+        "filename": "characters/Cassian.png",
+        "type": "character"
+    },
+    {
+        "filename": "characters/Chase.png",
+        "type": "character"
+    },
+    {
+        "filename": "characters/Polk.png",
+        "type": "character"
+    },
+    {
+        "filename": "characters/Cadan.png",
+        "type": "character"
+    },
+    {
+        "filename": "characters/Ghost.png",
+        "type": "character"
+    },
+    {
+        "filename": "worlds/Z-ravenh-Noah.json",
+        "type": "world"
+    },
+    {
+        "filename": "worlds/Z-ravenh-Ryker.json",
+        "type": "world"
+    },
+    {
+        "filename": "worlds/Z-bumblebee-Luca.json",
+        "type": "world"
+    },
+    {
+        "filename": "worlds/Z-nyotoni-marcelline.json",
+        "type": "world"
+    },
+    {
+        "filename": "worlds/Z-wishfulstar-rian.json",
+        "type": "world"
+    },
+    {
+        "filename": "worlds/Z-echomeria-Vanerra.json",
+        "type": "world"
+    },
+    {
+        "filename": "worlds/Z-nari-Aiven.json",
+        "type": "world"
+    },
+    {
+        "filename": "worlds/Z-whisperedinsanity-Alex.json",
+        "type": "world"
+    },
+    {
+        "filename": "worlds/9ZZ Andalina.json",
+        "type": "world"
+    },
+    {
+        "filename": "worlds/9ZZ Rafayel.json",
+        "type": "world"
+    },
+    {
+        "filename": "worlds/Z-hyperion-Brennan.json",
+        "type": "world"
+    },
+    {
+        "filename": "worlds/Z-nari-Dane.json",
+        "type": "world"
+    },
+    {
+        "filename": "worlds/Z-echomeria-Sebastian.json",
+        "type": "world"
+    },
+    {
+        "filename": "worlds/Z-nari-Haru.json",
+        "type": "world"
+    },
+    {
+        "filename": "worlds/Z-nari-Damien.json",
+        "type": "world"
+    },
+    {
+        "filename": "worlds/Z-nyotoni-Faye.json",
+        "type": "world"
+    },
+    {
+        "filename": "worlds/Z-kaiyazure-Isamu.json",
+        "type": "world"
+    },
+    {
+        "filename": "worlds/9ZZ Gage.json",
+        "type": "world"
+    },
+    {
+        "filename": "worlds/.gitkeep",
+        "type": "world"
+    },
+    {
+        "filename": "worlds/9ZZ Mark.json",
+        "type": "world"
+    },
+    {
+        "filename": "worlds/9Z Aikobots.json",
+        "type": "world"
+    },
+    {
+        "filename": "worlds/Z-aqua-Cassian.json",
+        "type": "world"
+    },
+    {
+        "filename": "worlds/Z-nari-Grim.json",
+        "type": "world"
+    },
+    {
+        "filename": "worlds/9ZZ Q.json",
+        "type": "world"
+    },
+    {
+        "filename": "worlds/9ZZ Andalino.json",
+        "type": "world"
+    },
+    {
+        "filename": "worlds/9Z Themis World.json",
+        "type": "world"
+    },
+    {
+        "filename": "worlds/9ZZ Aiden.json",
+        "type": "world"
+    },
+    {
+        "filename": "worlds/9ZZ Xavier.json",
+        "type": "world"
+    },
+    {
+        "filename": "worlds/Z-aqua-Niko.json",
+        "type": "world"
+    },
+    {
+        "filename": "worlds/Z-dreamweaver-Venryk.json",
+        "type": "world"
+    },
+    {
+        "filename": "worlds/Z-nari-Lucien.json",
+        "type": "world"
+    },
+    {
+        "filename": "worlds/Universal Commands.json",
+        "type": "world"
+    },
+    {
+        "filename": "worlds/Z-kaiyazure-Shouhei.json",
+        "type": "world"
+    },
+    {
+        "filename": "worlds/Z-kaiyazure-Ryuichi.json",
+        "type": "world"
+    },
+    {
+        "filename": "worlds/Z-nari-Theo.json",
+        "type": "world"
+    },
+    {
+        "filename": "worlds/9ZZ Zee.json",
+        "type": "world"
+    },
+    {
+        "filename": "worlds/Z-nari-Riku.json",
+        "type": "world"
+    },
+    {
+        "filename": "worlds/Z-ravenh-liammairi.json",
+        "type": "world"
+    },
+    {
+        "filename": "worlds/Z-catsplosion-River.json",
+        "type": "world"
+    },
+    {
+        "filename": "worlds/Z-aqua-Evander.json",
+        "type": "world"
+    },
+    {
+        "filename": "worlds/Z-lyraevanstine-CallumThorne.json",
+        "type": "world"
+    },
+    {
+        "filename": "worlds/Z-echomeria-Caesar.json",
+        "type": "world"
+    },
+    {
+        "filename": "worlds/Z-trinity-gemma.json",
+        "type": "world"
+    },
+    {
+        "filename": "worlds/Z-missluckii-xaden.json",
+        "type": "world"
+    },
+    {
+        "filename": "worlds/9ZZ Mikey.json",
+        "type": "world"
+    },
+    {
+        "filename": "worlds/9ZZ Artem.json",
+        "type": "world"
+    },
+    {
+        "filename": "worlds/Z-echomeria-Redacted.json",
+        "type": "world"
+    },
+    {
+        "filename": "worlds/Z-reeplaysgames-Jinwoo.json",
+        "type": "world"
+    },
+    {
+        "filename": "worlds/Z-aqua-Demon Slayer.json",
+        "type": "world"
+    },
+    {
+        "filename": "worlds/9ZZ Polk.json",
+        "type": "world"
+    },
+    {
+        "filename": "worlds/Z-missluckii-soren.json",
+        "type": "world"
+    },
+    {
+        "filename": "worlds/Z-whisperedinsanity-Changmin.json",
+        "type": "world"
+    },
+    {
+        "filename": "worlds/Z-nyotoni-revelin.json",
+        "type": "world"
+    },
+    {
+        "filename": "worlds/9ZZ Caleb.json",
+        "type": "world"
+    },
+    {
+        "filename": "worlds/9ZZ Sylus.json",
+        "type": "world"
+    },
+    {
+        "filename": "worlds/9Z Sex Extras.json",
+        "type": "world"
+    },
+    {
+        "filename": "worlds/Z-whisperedinsanity-Dante.json",
+        "type": "world"
+    },
+    {
+        "filename": "worlds/Z-echomeria-Jasper.json",
+        "type": "world"
+    },
+    {
+        "filename": "worlds/Z-nari-Ace.json",
+        "type": "world"
+    },
+    {
+        "filename": "worlds/9ZZ Marius.json",
+        "type": "world"
+    },
+    {
+        "filename": "worlds/9ZZ Vyn.json",
+        "type": "world"
+    },
+    {
+        "filename": "worlds/Z-soona-studiobots-robena.json",
+        "type": "world"
+    },
+    {
+        "filename": "worlds/9ZZ Ghost.json",
+        "type": "world"
+    },
+    {
+        "filename": "worlds/Z-echomeria-Nao.json",
+        "type": "world"
+    },
+    {
+        "filename": "worlds/Z-missluckii-dimitri.json",
+        "type": "world"
+    },
+    {
+        "filename": "worlds/9Z LaDS World Info.json",
+        "type": "world"
+    },
+    {
+        "filename": "worlds/Z-soona-studiobots-xo.json",
+        "type": "world"
+    },
+    {
+        "filename": "worlds/9ZZ Blackburn.json",
+        "type": "world"
+    },
+    {
+        "filename": "worlds/9ZZ Vhar.json",
+        "type": "world"
+    },
+    {
+        "filename": "worlds/Z-lightseeker-Carl.json",
+        "type": "world"
+    },
+    {
+        "filename": "worlds/9Z Universal Commands.json",
+        "type": "world"
+    },
+    {
+        "filename": "worlds/Z-nari-Atlas.json",
+        "type": "world"
+    },
+    {
+        "filename": "worlds/Z-aqua-Virelya.json",
+        "type": "world"
+    },
+    {
+        "filename": "worlds/9ZZ Twins.json",
+        "type": "world"
+    },
+    {
+        "filename": "worlds/Z-nari-Anon.json",
+        "type": "world"
+    },
+    {
+        "filename": "worlds/Z-aqua-Cadan.json",
+        "type": "world"
+    },
+    {
+        "filename": "worlds/Z-kaiyazure-Juichi.json",
+        "type": "world"
+    },
+    {
+        "filename": "worlds/9Z LaDS Game Info.json",
+        "type": "world"
+    },
+    {
+        "filename": "worlds/Z-missluckii-kiernan.json",
+        "type": "world"
+    },
+    {
+        "filename": "worlds/Z-whisperedinsanity-Felix and Vex.json",
+        "type": "world"
+    },
+    {
+        "filename": "worlds/9ZZ Greyson.json",
+        "type": "world"
+    },
+    {
+        "filename": "worlds/9ZZ Zayne.json",
+        "type": "world"
+    },
+    {
+        "filename": "worlds/Z-trinity-Noct.json",
+        "type": "world"
+    },
+    {
+        "filename": "worlds/9ZZ Jenna.json",
+        "type": "world"
+    },
+    {
+        "filename": "worlds/Z-trinity-Ford.json",
+        "type": "world"
+    },
+    {
+        "filename": "worlds/Z-echomeria-Kael.json",
+        "type": "world"
+    },
+    {
+        "filename": "worlds/Z-hyperion-Ravenwood.json",
+        "type": "world"
+    },
+    {
+        "filename": "worlds/Z-bumblebee-Alessandro.json",
+        "type": "world"
+    },
+    {
+        "filename": "worlds/Z-ravenh-IvyMatheson.json",
+        "type": "world"
+    },
+    {
+        "filename": "worlds/Z-whisperedinsanity-Elias.json",
+        "type": "world"
+    },
+    {
+        "filename": "worlds/Z-whisperedinsanity-Pride.json",
+        "type": "world"
+    },
+    {
+        "filename": "worlds/9Z Celebrations.json",
+        "type": "world"
+    },
+    {
+        "filename": "worlds/Z-wishfulstar-taizi.json",
+        "type": "world"
+    },
+    {
+        "filename": "worlds/9ZZ Wraith.json",
+        "type": "world"
+    },
+    {
+        "filename": "worlds/Z-lyraevanstine-MarshallLee.json",
+        "type": "world"
+    },
+    {
+        "filename": "worlds/9ZZ Mabey.json",
+        "type": "world"
+    },
+    {
+        "filename": "worlds/9ZZ Luke.json",
+        "type": "world"
+    },
+    {
+        "filename": "worlds/9Z Exclusives.json",
+        "type": "world"
+    },
+    {
+        "filename": "worlds/Z-echomeria-Mikhail.json",
+        "type": "world"
+    },
+    {
+        "filename": "worlds/9Z Demon Codex.json",
+        "type": "world"
+    },
+    {
+        "filename": "worlds/Z-nari-Chase.json",
+        "type": "world"
+    },
+    {
+        "filename": "worlds/9ZZ Elliott.json",
+        "type": "world"
+    },
+    {
+        "filename": "worlds/9ZZ Laurent.json",
+        "type": "world"
+    },
+    {
+        "filename": "worlds/Z-nyotoni-Celestia.json",
+        "type": "world"
+    },
+    {
+        "filename": "worlds/Z-bunnymally-Thadius T Ravenshire.json",
+        "type": "world"
+    },
+    {
+        "filename": "worlds/Z-aqua-Giyuu Lorebook.json",
+        "type": "world"
+    },
+    {
+        "filename": "worlds/Z-whisperedinsanity-Jinu.json",
+        "type": "world"
+    },
+    {
+        "filename": "worlds/Z-nyotoni-matthew.json",
+        "type": "world"
+    },
+    {
+        "filename": "worlds/Z-bunnymally-1Luv.json",
+        "type": "world"
+    },
+    {
+        "filename": "worlds/Z-kaiyazure-ShatteredWishes.json",
+        "type": "world"
+    },
+    {
+        "filename": "worlds/9ZZ GLaDOS.json",
+        "type": "world"
+    },
+    {
+        "filename": "worlds/Z-nyotoni-Reyes.json",
+        "type": "world"
+    },
+    {
+        "filename": "worlds/Z-ravenh-BrysonRidgeway.json",
+        "type": "world"
+    },
+    {
+        "filename": "worlds/Z-whisperedinsanity-Si Woo.json",
+        "type": "world"
     }
 ]
