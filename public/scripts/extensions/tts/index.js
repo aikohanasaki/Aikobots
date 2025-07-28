@@ -31,6 +31,7 @@ import { GoogleNativeTtsProvider } from './google-native.js';
 import { ChatterboxTtsProvider } from './chatterbox.js';
 import { KokoroTtsProvider } from './kokoro.js';
 import { TtsWebuiProvider } from './tts-webui.js';
+import { PollinationsTtsProvider } from './pollinations.js';
 
 const UPDATE_INTERVAL = 1000;
 const wrapper = new ModuleWorkerWrapper(moduleWorker);
@@ -129,6 +130,7 @@ const ttsProviders = {
     Novel: NovelTtsProvider,
     OpenAI: OpenAITtsProvider,
     'OpenAI Compatible': OpenAICompatibleTtsProvider,
+    Pollinations: PollinationsTtsProvider,
     SBVits2: SBVits2TtsProvider,
     Silero: SileroTtsProvider,
     SpeechT5: SpeechT5TtsProvider,
@@ -866,7 +868,7 @@ async function onMessageEvent(messageId, lastCharIndex) {
 
     console.debug(`Adding message from ${message.name} for TTS processing: "${message.mes}"`);
 
-    if (extension_settings.tts.periodic_auto_generation) {
+    if (extension_settings.tts.periodic_auto_generation && isStreamingEnabled()) {
         ttsJobQueue.push(message);
     } else {
         processAndQueueTtsMessage(message);

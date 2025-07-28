@@ -22,3 +22,21 @@ export const debounce_timeout = {
  * which is needed to preserve world info timed effects.
  */
 export const IGNORE_SYMBOL = Symbol.for('ignore');
+
+/**
+ * Common video file extensions. Should be the same as supported by Gemini.
+ * https://ai.google.dev/gemini-api/docs/video-understanding#supported-formats
+ */
+export const VIDEO_EXTENSIONS = ['mp4', 'avi', 'mov', 'wmv', 'flv', 'webm', '3gp', 'mkv', 'mpg'];
+
+/**
+ * Known generation triggers that can be passed to Generate function.
+ */
+export const GENERATION_TYPE_TRIGGERS = [
+    'normal',
+    'continue',
+    'impersonate',
+    'swipe',
+    'regenerate',
+    'quiet',
+];

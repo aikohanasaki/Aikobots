@@ -4,7 +4,6 @@ import {
     characters,
     online_status,
     main_api,
-    api_server,
     is_send_press,
     max_context,
     saveSettingsDebounced,
@@ -42,6 +41,7 @@ import { debounce_timeout } from './constants.js';
 import { Popup } from './popup.js';
 import { accountStorage } from './util/AccountStorage.js';
 import { getCurrentUserHandle } from './user.js';
+import { kai_settings } from './kai-settings.js';
 
 var RPanelPin = document.getElementById('rm_button_panel_pin');
 var LPanelPin = document.getElementById('lm_button_panel_pin');
@@ -371,7 +371,7 @@ function RA_autoconnect(PrevApi) {
     if (online_status === 'no_connection' && power_user.auto_connect) {
         switch (main_api) {
             case 'kobold':
-                if (api_server && isValidUrl(api_server)) {
+                if (kai_settings.api_server && isValidUrl(kai_settings.api_server)) {
                     $('#api_button').trigger('click');
                 }
                 break;
@@ -397,8 +397,6 @@ function RA_autoconnect(PrevApi) {
             case 'openai':
                 if (((secret_state[SECRET_KEYS.OPENAI] || oai_settings.reverse_proxy) && oai_settings.chat_completion_source == chat_completion_sources.OPENAI)
                     || ((secret_state[SECRET_KEYS.CLAUDE] || oai_settings.reverse_proxy) && oai_settings.chat_completion_source == chat_completion_sources.CLAUDE)
-                    || ((secret_state[SECRET_KEYS.SCALE] || secret_state[SECRET_KEYS.SCALE_COOKIE]) && oai_settings.chat_completion_source == chat_completion_sources.SCALE)
-                    || (oai_settings.chat_completion_source == chat_completion_sources.WINDOWAI)
                     || (secret_state[SECRET_KEYS.OPENROUTER] && oai_settings.chat_completion_source == chat_completion_sources.OPENROUTER)
                     || (secret_state[SECRET_KEYS.AI21] && oai_settings.chat_completion_source == chat_completion_sources.AI21)
                     || (secret_state[SECRET_KEYS.MAKERSUITE] && oai_settings.chat_completion_source == chat_completion_sources.MAKERSUITE)
@@ -434,19 +432,19 @@ function OpenNavPanels() {
         //auto-open R nav if locked and previously open
         if (accountStorage.getItem('NavLockOn') == 'true' && accountStorage.getItem('NavOpened') == 'true') {
             //console.log("RA -- clicking right nav to open");
-            $('#rightNavDrawerIcon').click();
+            $('#rightNavDrawerIcon').trigger('click');
         }
 
         //auto-open L nav if locked and previously open
         if (accountStorage.getItem('LNavLockOn') == 'true' && accountStorage.getItem('LNavOpened') == 'true') {
             console.debug('RA -- clicking left nav to open');
-            $('#leftNavDrawerIcon').click();
+            $('#leftNavDrawerIcon').trigger('click');
         }
 
         //auto-open WI if locked and previously open
         if (accountStorage.getItem('WINavLockOn') == 'true' && accountStorage.getItem('WINavOpened') == 'true') {
             console.debug('RA -- clicking WI to open');
-            $('#WIDrawerIcon').click();
+            $('#WIDrawerIcon').trigger('click');
         }
     }
 }
@@ -711,7 +709,7 @@ export function initRossMods() {
         RA_autoconnect();
     }
 
-    $('#main_api').change(function () {
+    $('#main_api').on('change', function () {
         var PrevAPI = main_api;
         setTimeout(() => RA_autoconnect(PrevAPI), 100);
     });
@@ -834,11 +832,11 @@ export function initRossMods() {
     });
 
     var chatbarInFocus = false;
-    $('#send_textarea').focus(function () {
+    $('#send_textarea').on('focus', function () {
         chatbarInFocus = true;
     });
 
-    $('#send_textarea').blur(function () {
+    $('#send_textarea').on('blur', function () {
         chatbarInFocus = false;
     });
 
@@ -846,8 +844,8 @@ export function initRossMods() {
         OpenNavPanels();
     }, 300);
 
-    $(SelectedCharacterTab).click(function () { accountStorage.setItem('SelectedNavTab', 'rm_button_selected_ch'); });
-    $('#rm_button_characters').click(function () { accountStorage.setItem('SelectedNavTab', 'rm_button_characters'); });
+    $(SelectedCharacterTab).on('click', function () { accountStorage.setItem('SelectedNavTab', 'rm_button_selected_ch'); });
+    $('#rm_button_characters').on('click', function () { accountStorage.setItem('SelectedNavTab', 'rm_button_characters'); });
 
     // when a char is selected from the list, save them as the auto-load character for next page load
 
@@ -932,7 +930,7 @@ export function initRossMods() {
         var SwipeTargetMesClassParent = $(e.target).closest('.last_mes');
         if (SwipeTargetMesClassParent !== null) {
             if (SwipeButR.css('display') === 'flex') {
-                SwipeButR.click();
+                SwipeButR.trigger('click');
             }
         }
     });
@@ -956,7 +954,7 @@ export function initRossMods() {
         var SwipeTargetMesClassParent = $(e.target).closest('.last_mes');
         if (SwipeTargetMesClassParent !== null) {
             if (SwipeButL.css('display') === 'flex') {
-                SwipeButL.click();
+                SwipeButL.trigger('click');
             }
         }
     });
@@ -1159,7 +1157,7 @@ export function initRossMods() {
                 const lastMes = document.querySelector('.last_mes');
                 const editMes = lastMes.querySelector('.mes_block .mes_edit');
                 if (editMes !== null) {
-                    $(editMes).click();
+                    $(editMes).trigger('click');
                     return;
                 }
             }
