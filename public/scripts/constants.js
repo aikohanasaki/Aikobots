@@ -40,3 +40,28 @@ export const GENERATION_TYPE_TRIGGERS = [
     'regenerate',
     'quiet',
 ];
+
+/**
+ * Known injection IDs and helper functions for system extensions handling.
+ */
+export const inject_ids = {
+    STORY_STRING: '__STORY_STRING__',
+    QUIET_PROMPT: 'QUIET_PROMPT',
+    DEPTH_PROMPT: 'DEPTH_PROMPT',
+    DEPTH_PROMPT_INDEX: (index) => `DEPTH_PROMPT_${index}`,
+    CUSTOM_WI_DEPTH: 'customDepthWI',
+    CUSTOM_WI_DEPTH_ROLE: (depth, role) => `customDepthWI_${depth}_${role}`,
+};
+
+export const COMETAPI_IGNORE_PATTERNS = [
+    // Image generation models
+    'dall-e', 'dalle', 'midjourney', 'mj_', 'stable-diffusion', 'sd-',
+    'flux-', 'playground-v', 'ideogram', 'recraft-', 'black-forest-labs',
+    '/recraft-v3', 'recraftv3', 'stability-ai/', 'sdxl',
+    // Audio generation models
+    'suno_', 'tts', 'whisper',
+    // Video generation models
+    'runway', 'luma_', 'luma-', 'veo', 'kling_', 'minimax_video', 'hunyuan-t1',
+    // Utility models
+    'embedding', 'search-gpts', 'files_retrieve', 'moderation',
+];

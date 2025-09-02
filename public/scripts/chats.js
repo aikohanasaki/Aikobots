@@ -14,7 +14,6 @@ import {
     name1,
     name2,
     reloadCurrentChat,
-    saveChatDebounced,
     saveSettingsDebounced,
     showSwipeButtons,
     this_chid,
@@ -163,7 +162,7 @@ export async function hideChatMessageRange(start, end, unhide, nameFitler = null
     hideSwipeButtons();
     showSwipeButtons();
 
-    saveChatDebounced();
+    await saveChatConditional();
 }
 
 /**
@@ -1925,7 +1924,10 @@ export function initChatUtilities() {
         embedMessageFile(messageId, messageBlock);
     });
 
-    $(document).on('click', '.editor_maximize', async function () {
+    $(document).on('click', '.editor_maximize', async function (e) {
+        e.preventDefault();
+        e.stopPropagation();
+
         const broId = $(this).attr('data-for');
         const bro = $(`#${broId}`);
         const contentEditable = bro.is('[contenteditable]');

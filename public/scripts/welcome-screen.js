@@ -18,7 +18,10 @@ import {
     openCharacterChat,
     printCharactersDebounced,
     renameGroupOrCharacterChat,
+    saveSettingsDebounced,
     selectCharacterById,
+    setActiveCharacter,
+    setActiveGroup,
     system_avatar,
     system_message_types,
     this_chid,
@@ -107,7 +110,7 @@ async function unshallowPermanentAssistant() {
  * @returns {string} Greeting message
 */
 function getAssistantGreeting(character) {
-    const defaultGreeting = t`If you're connected to an API, try asking me something!`;
+    const defaultGreeting = t`# 🎉 __**Welcome to Aikobots!**__ 🎉` + '\n\n' + t`We're glad you're here. If you ever need help, head to the #help-911 channel in our Discord server.`  + '\n\n' + t`**Now that you're here:**` + '\n' + t`1️⃣ Download the latest Aikobots preset ([right click here 🔗 and choose "Save As"](presets/Aikobots.json))` + '\n' + t`2️⃣ Click <i class="fa-solid fa-sliders"></i> in the top menu bar and click <i class="fa-solid fa-file-import"></i> next to Chat Completion Presets to import Aikobots.json` + '\n' + t`3️⃣ Connect to an API (click <i class="fa-solid fa-plug"></i> in the top menu bar)` + '\n' + t`4️⃣ Create a persona for yourself (click <i class="fa-solid fa-face-smile"></i> in the top menu bar)` + '\n' + t`5️⃣ Choose a character to play with! (click <i class="fa-solid fa-address-card"></i> in the top menu bar)`  + '\n\n' + '\n\n' + t`**If you can't decide who to play with:**` + '\n' + t`💘 Try the [Character Archetype Matching Quiz](https://www.aikobots.com/archetypes-quiz.html)` + '\n' + t`📇 Check out the [Character Roll Call](https://www.aikobots.com/rollcall.html) for compatibility quizzes` + '\n' + t`🐢 Talk to Carl (turtle holding a strawberry) and ask him for recommendations!` + '\n' + t`💬 Talk to Okia if you want to do some analysis!` + '\n\n' + '\n\n' + t`**For commands, be sure to take a look at:**` + `\n` + t`📜 [List of all Aikobots Commands](https://www.aikobots.com/commands.html)` + `\n` + t`🛰️ [LaDS-Specific Commands](https://www.aikobots.com/ladscommands.html)` + `\n` + t`🧠 [Memory Helpers](https://www.aikobots.com/cmd-memory.html) (not needed if you use the Create Memory function)` + '\n***\n' + t`💡 **PS:** Set any character as your welcome page assistant from their "More..." menu.`,
 
     if (!character) {
         return defaultGreeting;
@@ -126,7 +129,7 @@ function sendAssistantMessage() {
     const message = {
         name: name,
         force_avatar: avatar,
-        mes: t`# 🎉 __**Welcome to Aikobots!**__ 🎉` + '\n\n' + t`We're glad you're here. If you ever need help, head to the #help-911 channel in our Discord server.`  + '\n\n' + t`**Now that you're here:**` + '\n' + t`1️⃣ Download the latest Aikobots preset ([right click here 🔗 and choose "Save As"](presets/Aikobots.json))` + '\n' + t`2️⃣ Click <i class="fa-solid fa-sliders"></i> in the top menu bar and click <i class="fa-solid fa-file-import"></i> next to Chat Completion Presets to import Aikobots.json` + '\n' + t`3️⃣ Connect to an API (click <i class="fa-solid fa-plug"></i> in the top menu bar)` + '\n' + t`4️⃣ Create a persona for yourself (click <i class="fa-solid fa-face-smile"></i> in the top menu bar)` + '\n' + t`5️⃣ Choose a character to play with! (click <i class="fa-solid fa-address-card"></i> in the top menu bar)`  + '\n\n' + '\n\n' + t`**If you can't decide who to play with:**` + '\n' + t`💘 Try the [Character Archetype Matching Quiz](https://www.aikobots.com/archetypes-quiz.html)` + '\n' + t`📇 Check out the [Character Roll Call](https://www.aikobots.com/rollcall.html) for compatibility quizzes` + '\n' + t`🐢 Talk to Carl (turtle holding a strawberry) and ask him for recommendations!` + '\n' + t`💬 Talk to Okia if you want to do some analysis!` + '\n\n' + '\n\n' + t`**For commands, be sure to take a look at:**` + `\n` + t`📜 [List of all Aikobots Commands](https://www.aikobots.com/commands.html)` + `\n` + t`🛰️ [LaDS-Specific Commands](https://www.aikobots.com/ladscommands.html)` + `\n` + t`🧠 [Memory Helpers](https://www.aikobots.com/cmd-memory.html) (not needed if you use the Create Memory function)` + '\n***\n' + t`💡 **PS:** Set any character as your welcome page assistant from their "More..." menu.`,
+        mes: greeting + '\n***\n' + t`**Hint:** Set any character as your welcome page assistant from their "More..." menu.`,
         is_system: false,
         is_user: false,
         send_date: getMessageTimeStamp(),
@@ -296,6 +299,8 @@ async function openRecentCharacterChat(avatarId, fileName) {
 
     try {
         await selectCharacterById(characterId);
+        setActiveCharacter(avatarId);
+        saveSettingsDebounced();
         const currentChatId = getCurrentChatId();
         if (currentChatId === fileName) {
             console.debug(`Chat ${fileName} is already open.`);
@@ -322,6 +327,8 @@ async function openRecentGroupChat(groupId, fileName) {
 
     try {
         await openGroupById(groupId);
+        setActiveGroup(groupId);
+        saveSettingsDebounced();
         const currentChatId = getCurrentChatId();
         if (currentChatId === fileName) {
             console.debug(`Chat ${fileName} is already open.`);

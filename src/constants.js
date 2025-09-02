@@ -173,12 +173,14 @@ export const CHAT_COMPLETION_SOURCES = {
     COHERE: 'cohere',
     PERPLEXITY: 'perplexity',
     GROQ: 'groq',
-    ZEROONEAI: '01ai',
     NANOGPT: 'nanogpt',
     DEEPSEEK: 'deepseek',
     AIMLAPI: 'aimlapi',
     XAI: 'xai',
     POLLINATIONS: 'pollinations',
+    MOONSHOT: 'moonshot',
+    FIREWORKS: 'fireworks',
+    COMETAPI: 'cometapi',
 };
 
 /**
