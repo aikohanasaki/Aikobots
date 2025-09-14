@@ -57,3 +57,4 @@ public/scripts/extensions/third-party
 .env
 /StartDev.bat
 default/content/index.json
+yarn.lock
