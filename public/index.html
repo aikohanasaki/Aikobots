@@ -88,87 +88,6 @@
                 <div class="scrollableInner">
                     <div class="flex-container flexNoGap" id="ai_response_configuration">
                         <div id="respective-presets-block" class="width100p">
-                            <div id="kobold_api-presets">
-                                <div class="margin0 title_restorable standoutHeader">
-                                    <strong>
-                                        <span data-i18n="kobldpresets">Kobold Presets</span>
-                                    </strong>
-
-                                    <div class="flex-container gap3px">
-                                        <div data-preset-manager-import="kobold" class="margin0 menu_button_icon menu_button" title="Import preset" data-i18n="[title]Import preset">
-                                            <i class="fa-fw fa-solid fa-file-import"></i>
-                                        </div>
-                                        <div data-preset-manager-export="kobold" class="margin0 menu_button_icon menu_button" title="Export preset" data-i18n="[title]Export preset">
-                                            <i class="fa-fw fa-solid fa-file-export"></i>
-                                        </div>
-                                        <div data-preset-manager-delete="kobold" class="margin0 menu_button_icon menu_button" title="Delete the preset" data-i18n="[title]Delete the preset">
-                                            <i class="fa-fw fa-solid fa-trash-can"></i>
-                                        </div>
-                                    </div>
-                                </div>
-                                <div class="flex-container flexNoGap">
-                                    <select id="settings_preset" data-preset-manager-for="kobold" class="flex1 text_pole">
-                                        <option value="gui" data-i18n="guikoboldaisettings">GUI KoboldAI Settings</option>
-                                    </select>
-                                    <div class="flex-container marginLeft5 gap3px">
-                                        <input type="file" hidden data-preset-manager-file="kobold" accept=".json, .settings">
-                                        <div data-preset-manager-update="kobold" class="menu_button menu_button_icon" title="Update current preset" data-i18n="[title]Update current preset">
-                                            <i class="fa-fw fa-solid fa-save"></i>
-                                        </div>
-                                        <div data-preset-manager-rename="kobold" class="menu_button menu_button_icon" title="Rename current preset" data-i18n="[title]Rename current preset">
-                                            <i class="fa-fw fa-solid fa-pencil"></i>
-                                        </div>
-                                        <div data-preset-manager-new="kobold" class="menu_button menu_button_icon" title="Save preset as" data-i18n="[title]Save preset as">
-                                            <i class="fa-fw fa-solid fa-file-circle-plus"></i>
-                                        </div>
-                                        <div data-preset-manager-restore="kobold" class="menu_button menu_button_icon" title="Restore current preset" data-i18n="[title]Restore current preset">
-                                            <i class="fa-fw fa-solid fa-recycle"></i>
-                                        </div>
-                                    </div>
-                                </div>
-                            </div>
-                            <div id="novel_api-presets">
-                                <div class="margin0 title_restorable standoutHeader">
-                                    <strong>
-                                        <span data-i18n="novelaipresets">NovelAI Presets</span>
-                                        <a href="https://docs.sillytavern.app/usage/api-connections/novelai/" class="notes-link" target="_blank">
-                                            <span class="fa-solid fa-circle-question note-link-span"></span>
-                                        </a>
-                                    </strong>
-
-                                    <div class="flex-container gap3px">
-                                        <div data-preset-manager-import="novel" class="margin0 menu_button_icon menu_button" title="Import preset" data-i18n="[title]Import preset">
-                                            <i class="fa-fw fa-solid fa-file-import"></i>
-                                        </div>
-                                        <div data-preset-manager-export="novel" class="margin0 menu_button_icon menu_button" title="Export preset" data-i18n="[title]Export preset">
-                                            <i class="fa-fw fa-solid fa-file-export"></i>
-                                        </div>
-                                        <div data-preset-manager-delete="novel" class="margin0 menu_button_icon menu_button" title="Delete the preset" data-i18n="[title]Delete the preset">
-                                            <i class="fa-fw fa-solid fa-trash-can"></i>
-                                        </div>
-                                    </div>
-                                </div>
-                                <div class="flex-container flexNoGap">
-                                    <select id="settings_preset_novel" class="flex1 text_pole" data-preset-manager-for="novel">
-                                        <option value="gui" data-i18n="Default">Default</option>
-                                    </select>
-                                    <div class="flex-container marginLeft5 gap3px">
-                                        <input type="file" hidden data-preset-manager-file="novel" accept=".json, .settings, .preset">
-                                        <div data-preset-manager-update="novel" class="menu_button menu_button_icon" title="Update current preset" data-i18n="[title]Update current preset">
-                                            <i class="fa-fw fa-solid fa-save"></i>
-                                        </div>
-                                        <div data-preset-manager-rename="novel" class="menu_button menu_button_icon" title="Rename current preset" data-i18n="[title]Rename current preset">
-                                            <i class="fa-fw fa-solid fa-pencil"></i>
-                                        </div>
-                                        <div data-preset-manager-new="novel" class="menu_button menu_button_icon" title="Save preset as" data-i18n="[title]Save preset as">
-                                            <i class="fa-fw fa-solid fa-file-circle-plus"></i>
-                                        </div>
-                                        <div data-preset-manager-restore="novel" class="menu_button menu_button_icon" title="Restore current preset" data-i18n="[title]Restore current preset">
-                                            <i class="fa-fw fa-solid fa-recycle"></i>
-                                        </div>
-                                    </div>
-                                </div>
-                            </div>
                             <div id="openai_api-presets">
                                 <div>
                                     <div class="margin0 title_restorable standoutHeader">
@@ -196,7 +115,7 @@
 
                                     <div class="flex-container flexNoGap">
                                         <select id="settings_preset_openai" class="flex1 text_pole" data-preset-manager-for="openai">
-                                            <option value="gui" data-i18n="Default">Default</option>
+                                            <option value="gui" data-i18n="Aikobots">Aikobots</option>
                                         </select>
                                         <div class="flex-container marginLeft5 gap3px">
                                             <input id="openai_preset_import_file" type="file" accept=".json,.settings" hidden />
@@ -252,76 +171,6 @@
                                 </div>
                             </div>
                         </div>
-                        <div id="common-gen-settings-block" class="width100p">
-                            <div id="pro-settings-block" class="flex-container gap10h5v justifyCenter">
-                                <div id="amount_gen_block" class="alignitemscenter flex-container marginBot5 flexFlowColumn flexBasis48p flexGrow flexShrink gap0">
-                                    <small data-i18n="response legth(tokens)">Response (tokens)</small>
-                                    <input class="neo-range-slider" type="range" id="amount_gen" name="volume" min="16" max="2048" step="1">
-                                    <div data-randomization-disabled="true" class="wide100p">
-                                        <input class="neo-range-input" type="number" min="16" max="2048" step="1" data-for="amount_gen" id="amount_gen_counter">
-                                    </div>
-                                    <div id="streaming_textgenerationwebui_block" class="flex-container alignitemscenter justifyCenter marginTop5">
-                                        <label class="checkbox_label" for="streaming_textgenerationwebui">
-                                            <input type="checkbox" id="streaming_textgenerationwebui" />
-                                            <small><span data-i18n="Streaming">Streaming</span>
-                                                <div class="margin5 fa-solid fa-circle-info opacity50p" data-i18n="[title]Streaming_desc" title="Display the response bit by bit as it is generated.&#13;When this is off, responses will be displayed all at once when they are complete."></div>
-                                            </small>
-                                        </label>
-                                    </div>
-                                    <div id="streaming_kobold_block" class="flex-container alignitemscenter justifyCenter marginTop5">
-                                        <label class="checkbox_label" for="streaming_kobold">
-                                            <input type="checkbox" id="streaming_kobold" />
-                                            <small><span data-i18n="Streaming">Streaming</span>
-                                                <div class="margin5 fa-solid fa-circle-info opacity50p" data-i18n="[title]Streaming_desc" title="Display the response bit by bit as it is generated.&#13;When this is off, responses will be displayed all at once when they are complete."></div>
-                                            </small>
-                                        </label>
-                                    </div>
-                                    <div id="streaming_novel_block" class="flex-container alignitemscenter justifyCenter marginTop5">
-                                        <label class="checkbox_label" for="streaming_novel">
-                                            <input type="checkbox" id="streaming_novel" />
-                                            <small><span data-i18n="Streaming">Streaming</span>
-                                                <div class="margin5 fa-solid fa-circle-info opacity50p" data-i18n="[title]Streaming_desc" title="Display the response bit by bit as it is generated.&#13;When this is off, responses will be displayed all at once when they are complete."></div>
-                                            </small>
-                                        </label>
-                                    </div>
-                                </div>
-                                <div id="max_context_block" class="alignitemscenter flex-container marginBot5 flexFlowColumn flexBasis48p flexGrow flexShrink gap0">
-                                    <small data-i18n="context size(tokens)">Context (tokens)</small>
-                                    <input class="neo-range-slider" type="range" id="max_context" name="volume" min="512" max="8192" step="64">
-                                    <div data-randomization-disabled="true" class="wide100p">
-                                        <input class="neo-range-input" type="number" min="512" max="8192" step="64" data-for="max_context" id="max_context_counter">
-                                    </div>
-                                    <div class="flex-container alignitemscenter justifyCenter marginTop5" id="max_context_unlocked_block">
-                                        <label class="checkbox_label">
-                                            <input id="max_context_unlocked" type="checkbox" />
-                                            <small><span data-i18n="unlocked">Unlocked</span>
-                                                <div id="max_context_unlocked_warning" class="fa-solid fa-circle-info opacity50p " data-i18n="[title]Only enable this if your model supports context sizes greater than 8192 tokens" title="Only enable this if your model supports context sizes greater than 8192 tokens.&#13;Increase only if you know what you're doing."></div>
-                                            </small>
-                                        </label>
-                                    </div>
-                                </div>
-                                <small id="prompt_cost_block" data-tg-type="openrouter">
-                                    <span data-i18n="Max prompt cost:">Max prompt cost:</span> <span id="or_prompt_cost">&ndash;</span>
-                                </small>
-                            </div>
-                            <div id="ai_module_block_novel" class="width100p">
-                                <div class="range-block">
-                                    <div class="range-block-title justifyLeft" data-i18n="AI Module">
-                                        AI Module
-                                    </div>
-                                    <div class="toggle-description justifyLeft" data-i18n="Changes the style of the generated text.">
-                                        Changes the style of the generated text.
-                                    </div>
-                                    <select id="nai_prefix">
-                                        <option value="vanilla" data-i18n="No Module">No Module</option>
-                                        <option value="special_instruct" data-i18n="Instruct">Instruct</option>
-                                        <option value="special_proseaugmenter" data-i18n="Prose Augmenter">Prose Augmenter</option>
-                                        <option value="theme_textadventure" data-i18n="Text Adventure">Text Adventure</option>
-                                    </select>
-                                </div>
-                            </div>
-                            <hr>
-                        </div>
                         <div id="respective-ranges-and-temps" class="width100p">
                             <div id="range_block_openai">
                                 <div style="display:none" class="range-block">
@@ -338,7 +187,7 @@
                                         </span>
                                     </div>
                                 </div>
-                                <div class="range-block" data-source="openai,claude,windowai,aimlapi,openrouter,ai21,scale,makersuite,vertexai,mistralai,custom,cohere,perplexity,groq,01ai,nanogpt,deepseek,xai,pollinations">
+                                <div class="range-block" data-source="openai,claude,aimlapi,openrouter,ai21,makersuite,vertexai,mistralai,custom,cohere,perplexity,groq,electronhub,nanogpt,deepseek,xai,pollinations,moonshot,fireworks,cometapi,azure_openai">
                                     <div class="range-block-title" data-i18n="Temperature">
                                         Temperature
                                     </div>
@@ -682,21 +531,7 @@
                         </div>
                         <div id="advanced-ai-config-block" class="width100p">
                             <div id="openai_settings">
-                                <div class="range-block">
-                                    <label for="stream_toggle" title="Enable OpenAI completion streaming" data-i18n="[title]Enable OpenAI completion streaming" class="checkbox_label widthFreeExpand">
-                                        <input id="stream_toggle" type="checkbox" /><span data-i18n="Streaming">
-                                            Streaming</span>
-                                    </label>
-                                    <div class="toggle-description justifyLeft">
-                                        <span data-i18n="Display the response bit by bit as it is generated.">
-                                            Display the response bit by bit as it is generated.
-                                        </span><br>
-                                        <span data-i18n="When this is off, responses will be displayed all at once when they are complete.">
-                                            When this is off, responses will be displayed all at once when they are complete.
-                                        </span>
-                                    </div>
-                                </div>
-                                <div class="range-block m-t-1" data-source="openai,aimlapi,openrouter,scale,custom">
+                                <div class="range-block m-t-1" data-source="openai,aimlapi,openrouter,custom,azure_openai,electronhub">
                                     <div id="logit_bias_openai" class="range-block-title openai_restorable" data-i18n="Logit Bias">
                                         Logit Bias
                                     </div>
@@ -737,7 +572,7 @@
                                     </div>
                                 </div>
                                 <div class="">
-                                    <div style="display:none;" class="inline-drawer wide100p flexFlowColumn">
+                                    <div class="inline-drawer wide100p flexFlowColumn">
                                         <div class="inline-drawer-toggle inline-drawer-header">
                                             <div class="flex-container alignItemsCenter">
                                                 <b data-i18n="Character Names Behavior">Character Names Behavior</b>
@@ -779,7 +614,7 @@
                                             <input type="hidden" id="names_behavior" class="displayNone" />
                                         </div>
                                     </div>
-                                    <div style="display:none;" class="inline-drawer wide100p flexFlowColumn marginBot10">
+                                    <div class="inline-drawer wide100p flexFlowColumn marginBot10">
                                         <div class="inline-drawer-toggle inline-drawer-header">
                                             <div class="flex-container alignItemsCenter">
                                                 <b data-i18n="Continue Postfix">Continue Postfix</b>
@@ -807,15 +642,6 @@
                                             </label>
                                             <!-- Hidden input for loading radio buttons from presets. Don't remove! -->
                                             <input type="hidden" id="continue_postfix" class="displayNone" />
-                                        </div>
-                                    </div>
-                                    <hr>
-                                    <div class="range-block" data-source="openai,custom,xai,aimlapi">
-                                        <div class="range-block-title" data-i18n="Multiple swipes per generation">
-                                            Multiple swipes per generation
-                                        </div>
-                                        <div class="wide100p">
-                                            <input type="number" id="n_openai" name="n_openai" class="text_pole" min="1" value="1">
                                         </div>
                                     </div>
                                     <div class="range-block">
