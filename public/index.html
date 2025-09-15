@@ -1061,8 +1061,6 @@
                                 <option value="azure_openai">Azure OpenAI</option>
                                 <option value="claude">Claude</option>
                                 <option value="cohere">Cohere</option>
-                                <!-- Temporarily disabled. -->
-                                <!-- <option value="cometapi">CometAPI</option> -->
                                 <option value="deepseek">DeepSeek</option>
                                 <option value="electronhub">Electron Hub</option>
                                 <option value="fireworks">Fireworks AI</option>
@@ -3641,34 +3639,32 @@
                 </form>
             </div>
         </div>
-        <div style="display:none" id="extensions-settings-button" class="drawer">
+        <div id="extensions-settings-button" class="drawer">
             <div class="drawer-toggle">
-                <div class="drawer-icon fa-solid fa-cubes fa-fw closedIcon" title="Extensions" data-i18n="[title]Extensions"></div>
+                <div class="drawer-icon fa-solid fa-paintbrush fa-fw closedIcon" title="Image Generation" data-i18n="[title]Extensions"></div>
             </div>
             <div id="rm_extensions_block" class="drawer-content closedDrawer">
                 <div class="extensions_block flex-container">
                     <div class="alignitemscenter flex-container wide100p">
                         <h3 class="margin0 flex1" data-i18n="Extensions">
-                            Extensions
+                            Image Generation Controls
                         </h3>
-                        <label for="extensions_notify_updates" class="checkbox_label flexNoGap">
-                            <input id="extensions_notify_updates" type="checkbox">
-                            <span data-i18n="Notify on extension updates">Notify on extension updates</span>
-                        </label>
-                        <div id="extensions_details" class="menu_button_icon menu_button">
+                        <div style="display:none" id="extension_update_checkbox"></div>
+                        </div>
+                        <div style="display:none" id="extensions_details" class="menu_button_icon menu_button">
                             <i class="fa-solid fa-cubes"></i>
                             <span data-i18n="Manage extensions">Manage extensions</span>
                         </div>
-                        <div id="third_party_extension_button" title="Import Extension From Git Repo" data-i18n="[title]Import Extension From Git Repo" class="menu_button menu_button_icon">
+                        <div style="display:none" id="third_party_extension_button" title="Import Extension From Git Repo" data-i18n="[title]Import Extension From Git Repo" class="menu_button menu_button_icon">
                             <i class="fa-solid fa-cloud-arrow-down"></i>
                             <span data-i18n="Install extension">Install extension</span>
                         </div>
                     </div>
-                    <div id="extensions_settings" class="flex1 wide50p">
-                        <div id="assets_container" class="extension_container"></div>
-                        <div id="typing_indicator_container" class="extension_container"></div>
+                    <div id="sd_container" class="extension_container"></div>
+                    <div style="display:none" id="extensions_settings" class="flex1 wide50p">
                         <div id="expressions_container" class="extension_container"></div>
-                        <div id="sd_container" class="extension_container"></div>
+                        <div style="display:none" id="assets_container" class="extension_container"></div>
+                        <div id="typing_indicator_container" class="extension_container"></div>
                         <div id="tts_container" class="extension_container"></div>
                         <div id="rvc_container" class="extension_container"></div>
                         <div id="stt_container" class="extension_container"></div>
@@ -3682,7 +3678,7 @@
                         <div id="webllm_container" class="extension_container"></div>
                         <div id="rss_container" class="extension_container"></div>
                     </div>
-                    <div id="extensions_settings2" class="flex1 wide50p">
+                    <div style="display:none" id="extensions_settings2" class="flex1 wide50p">
                         <div id="websearch_container" class="extension_container"></div>
                         <div id="emulatorjs_container" class="extension_container"></div>
                         <div id="qr_container" class="extension_container"></div>
@@ -3700,29 +3696,7 @@
                         <div id="accuweather_container" class="extension_container"></div>
                         <div id="dice_container" class="extension_container"></div>
                     </div>
-                    <hr class="wide100p margin0">
-                    <div class="alignitemscenter flex-container justifyCenter wide100p" style="justify-content: space-between;">
-                        <h4 class="margin0">
-                            <span data-i18n="(DEPRECATED)">(DEPRECATED)</span>
-                            <span data-i18n="Extras API:">Extras API:</span>
-                        </h4>
-                        <div class="flex-container">
-                            <div id="extensions_status" data-i18n="Not connected...">Not connected...</div>
-                            <label for="extensions_autoconnect" class="checkbox_label flexNoGap">
-                                <input id="extensions_autoconnect" type="checkbox">
-                                <span data-i18n="Auto-connect">Auto-connect</span>
-                            </label>
-                        </div>
-                    </div>
-                    <div class="alignitemsflexstart flex-container wide100p">
-                        <input id="extensions_url" type="text" class="flex1 heightFitContent text_pole widthNatural" data-i18n="[placeholder]Extras API URL" placeholder="Extras API URL">
-                        <input id="extensions_api_key" type="text" class="flex1 heightFitContent text_pole widthNatural" data-i18n="[placeholder]Extras API key (optional)" placeholder="Extras API key (optional)">
-                        <div class="extensions_url_block">
-                            <div id="extensions_connect" class="menu_button" data-i18n="Connect">Connect</div>
-                        </div>
-                    </div>
                 </div>
-            </div>
         </div>
         <div id="persona-management-button" class="drawer">
             <div class="drawer-toggle">

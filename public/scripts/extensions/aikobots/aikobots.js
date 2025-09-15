@@ -22,6 +22,11 @@ export async function initializeAikobots() {
     }
     // Show admin-only elements
     showElement('[id="advanced-formatting-button"]');
-    showElement('[id="extensions-settings-button"]');
+    showElement('[id="extension_update_checkbox"]');
+    showElement('[id="extensions_details"]');
+    showElement('[id="third_party_extension_button"]');
+    showElement('[id="extensions_settings"]');
+    showElement('[id="assets_container"]');
+    showElement('[id="extensions_settings2"]');
     showElement('[id="world_button"]');
 }
