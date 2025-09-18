@@ -122,6 +122,7 @@ const max_8k = 8191;
 const max_16k = 16383;
 const max_32k = 32767;
 const max_64k = 65535;
+const max_96k = 96600;
 const max_128k = 128 * 1000;
 const max_200k = 200 * 1000;
 const max_256k = 256 * 1000;
@@ -4714,7 +4715,7 @@ function getElectronHubMaxContext(model, isUnlocked) {
             return modelInfo.tokens;
         }
     }
-    return max_8k;
+    return max_96k;
 }
 
 /**
