@@ -1,9 +1,0 @@
-{
-  "permissions": {
-    "allow": [
-      "WebFetch(domain:api.electronhub.ai)"
-    ],
-    "deny": [],
-    "ask": []
-  }
-}
