@@ -3477,21 +3477,7 @@ async function runCallback(args, name) {
         return result.pipe;
     }
 
-    if (typeof window['executeQuickReplyByName'] !== 'function') {
-        throw new Error(t`Quick Reply extension is not loaded`);
-    }
-
-    try {
-        name = name.trim();
-        /**@type {ExecuteSlashCommandsOptions} */
-        const options = {
-            abortController: args._abortController,
-            debugController: args._debugController,
-        };
-        return await window['executeQuickReplyByName'](name, args, options);
-    } catch (error) {
-        throw new Error(t`Error running Quick Reply "${name}": ${error.message}`);
-    }
+    throw new Error(t`Quick Reply extension is not available`);
 }
 
 /**

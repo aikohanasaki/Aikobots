@@ -200,7 +200,6 @@ export const extension_settings = {
     chromadb: {},
     translate: {},
     objective: {},
-    quickReply: {},
     randomizer: {
         controls: [],
         fluctuation: 0.1,

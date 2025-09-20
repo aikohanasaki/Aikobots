@@ -1868,7 +1868,7 @@ function setNameCallback({ mode = 'all' }, name) {
 
     if (['temp', 'all'].includes(mode)) {
         // Otherwise, set just the name
-        setUserName(name); //this prevented quickReply usage
+        setUserName(name);
     }
 
     return '';

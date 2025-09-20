@@ -7,7 +7,6 @@ import { SlashCommandClosure } from './SlashCommandClosure.js';
 import { SlashCommandExecutor } from './SlashCommandExecutor.js';
 import { SlashCommandParserError } from './SlashCommandParserError.js';
 import { AutoCompleteNameResult } from '../autocomplete/AutoCompleteNameResult.js';
-import { SlashCommandQuickReplyAutoCompleteOption } from './SlashCommandQuickReplyAutoCompleteOption.js';
 import { SlashCommandScope } from './SlashCommandScope.js';
 import { SlashCommandVariableAutoCompleteOption } from './SlashCommandVariableAutoCompleteOption.js';
 import { SlashCommandNamedArgumentAssignment } from './SlashCommandNamedArgumentAssignment.js';
@@ -515,23 +514,13 @@ export class SlashCommandParser {
                     ?.map(it=>new SlashCommandVariableAutoCompleteOption(it))
                     ?? []
                 ;
-                try {
-                    if ('quickReplyApi' in globalThis) {
-                        const qrApi = globalThis.quickReplyApi;
-                        options.push(...qrApi.listSets()
-                            .map(set=>qrApi.listQuickReplies(set).map(qr=>`${set}.${qr}`))
-                            .flat()
-                            .map(qr=>new SlashCommandQuickReplyAutoCompleteOption(qr)),
-                        );
-                    }
-                } catch { /* empty */ }
                 const result = new AutoCompleteNameResult(
                     executor.unnamedArgumentList[0]?.value.toString(),
                     executor.start,
                     options,
                     true,
-                    ()=>`No matching variables in scope and no matching Quick Replies for "${result.name}"`,
-                    ()=>'No variables in scope and no Quick Replies found.',
+                    ()=>`No matching variables in scope for "${result.name}"`,
+                    ()=>'No variables in scope found.',
                 );
                 return result;
             }

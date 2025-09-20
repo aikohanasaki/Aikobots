@@ -3677,11 +3677,6 @@ function getAutomationIdCallback(data) {
             }
         }
 
-        if ('quickReplyApi' in globalThis) {
-            for (const automationId of globalThis.quickReplyApi.listAutomationIds()) {
-                ids.add(String(automationId));
-            }
-        }
 
         const haystack = Array.from(ids);
         haystack.sort((a, b) => a.localeCompare(b));
