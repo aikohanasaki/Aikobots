@@ -156,7 +156,6 @@ export const extension_settings = {
     notifyUpdates: false,
     disabledExtensions: [],
     expressionOverrides: [],
-    memory: {},
     note: {
         default: '',
         chara: [],
