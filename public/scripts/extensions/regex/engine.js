@@ -1,4 +1,4 @@
-import { characters, substituteParams, substituteParamsExtended, this_chid } from '../../../script.js';
+import { characters, substituteParams, substituteParamsExtended, this_chid, chat, saveChatConditional } from '../../../script.js';
 import { extension_settings } from '../../extensions.js';
 import { regexFromString } from '../../utils.js';
 export {
@@ -116,12 +116,51 @@ function getRegexedString(rawString, placement, { characterOverride, isMarkdown,
             }
 
             if (script.placement.includes(placement)) {
-                finalString = runRegexScript(script, finalString, { characterOverride });
+                const processedString = runRegexScript(script, finalString, { characterOverride });
+
+                // Permanent edit for display-time processing
+                if (script.permanentEdit && isMarkdown && processedString !== finalString && typeof depth === 'number') {
+                    updateChatMessagePermanently(placement, characterOverride, depth, processedString, finalString);
+                }
+
+                finalString = processedString;
             }
         }
     });
 
     return finalString;
+}
+
+/**
+ * Updates a chat message permanently when permanent edit is enabled
+ * @param {number} placement The regex placement type
+ * @param {string} characterOverride Character name override
+ * @param {number} depth Message depth
+ * @param {string} newText The processed text
+ * @param {string} originalText The original text
+ * @returns {void}
+ */
+function updateChatMessagePermanently(placement, characterOverride, depth, newText, originalText) {
+    try {
+        const messageIndex = chat.length - depth - 1;
+        if (messageIndex >= 0 && messageIndex < chat.length) {
+            const message = chat[messageIndex];
+
+            // Check message type matches placement
+            const isCorrectType = (
+                (placement === regex_placement.USER_INPUT && message.is_user) ||
+                (placement === regex_placement.AI_OUTPUT && !message.is_user && !message.is_system) ||
+                (placement === regex_placement.SLASH_COMMAND && message.extra?.type === 'narrator')
+            );
+
+            if (isCorrectType && message.mes === originalText) {
+                message.mes = newText;
+                saveChatConditional();
+            }
+        }
+    } catch (error) {
+        console.warn('Failed to update chat message:', error);
+    }
 }
 
 /**
