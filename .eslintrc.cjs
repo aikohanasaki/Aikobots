@@ -77,7 +77,6 @@ module.exports = {
         'docker/**',
         'plugins/**',
         '**/*.min.js',
-        'public/scripts/extensions/tts/lib/**',
     ],
     rules: {
         'jsdoc/no-undefined-types': ['warn', { disableReporting: true, markVariablesAsUsed: true }],

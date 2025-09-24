@@ -155,7 +155,6 @@ export const extension_settings = {
     autoConnect: false,
     notifyUpdates: false,
     disabledExtensions: [],
-    expressionOverrides: [],
     note: {
         default: '',
         chara: [],
@@ -163,21 +162,6 @@ export const extension_settings = {
     },
     caption: {
         refine_mode: false,
-    },
-    expressions: {
-        /** @type {number} see `EXPRESSION_API` */
-        api: undefined,
-        /** @type {string[]} */
-        custom: [],
-        showDefault: false,
-        translate: false,
-        /** @type {string} */
-        fallback_expression: undefined,
-        /** @type {string} */
-        llmPrompt: undefined,
-        allowMultiple: true,
-        rerollIfSame: false,
-        promptType: 'raw',
     },
     connectionManager: {
         selectedProfile: '',
@@ -190,7 +174,6 @@ export const extension_settings = {
     /** @type {import('./extensions/regex/index.js').RegexPreset[]} */
     regex_presets: [],
     character_allowed_regex: [],
-    tts: {},
     sd: {
         prompts: {},
         character_prompts: {},
