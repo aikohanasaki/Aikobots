@@ -94,8 +94,8 @@ function getRegexedString(rawString, placement, { characterOverride, isMarkdown,
             (script.markdownOnly && isMarkdown) ||
             // Script applies to Generate and input is Generate
             (script.promptOnly && isPrompt) ||
-            // Script applies to all cases when neither "only"s are true, but there's no need to do it when `isMarkdown`, the as source (chat history) should already be changed beforehand
-            (!script.markdownOnly && !script.promptOnly && !isMarkdown && !isPrompt)
+            // Script applies to all cases when neither "only"s are true
+            (!script.markdownOnly && !script.promptOnly)
         ) {
             if (isEdit && !script.runOnEdit) {
                 console.debug(`getRegexedString: Skipping script ${script.scriptName} because it does not run on edit`);
