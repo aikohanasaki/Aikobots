@@ -683,11 +683,11 @@ code {
     /* word-wrap: break-word; */
     border: 1px solid var(--SmartThemeBorderColor);
     border-radius: 5px;
-    background-color: var(--black70a);
+    background-color: var(--SmartThemeChatTintColor);
     padding: 0 3px;
     /* max-width: calc(100dvw - 95px); */
     line-height: var(--mainFontSize);
-    color: var(--white70a);
+    color: inherit;
 }
 
 kbd {

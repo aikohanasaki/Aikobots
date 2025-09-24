@@ -170,6 +170,9 @@ export const power_user = {
 
     custom_css: '',
 
+    main_font: '',
+    mono_font: '',
+
     waifuMode: false,
     movingUI: false,
     movingUIState: {},
@@ -1148,6 +1151,22 @@ function applyCustomCSS() {
     style.innerHTML = power_user.custom_css;
 }
 
+async function loadGoogleFont(fontName) {
+    if (!fontName) return;
+
+    const fontUrl = `https://fonts.googleapis.com/css2?family=${fontName.replace(/\s+/g, '+')}:wght@400;700&display=swap`;
+
+    // Check if already loaded
+    if (document.querySelector(`link[href="${fontUrl}"]`)) return;
+
+    const linkElement = document.createElement('link');
+    linkElement.rel = 'stylesheet';
+    linkElement.href = fontUrl;
+    linkElement.id = `google-font-${fontName.replace(/\s+/g, '-').toLowerCase()}`;
+
+    document.head.appendChild(linkElement);
+}
+
 function applyBlurStrength() {
     document.documentElement.style.setProperty('--blurStrength', String(power_user.blur_strength));
     $('#blur_strength_counter').val(power_user.blur_strength);
@@ -1687,6 +1706,19 @@ export async function loadPowerUserSettings(settings, data) {
 
     $('#font_scale').val(power_user.font_scale);
     $('#font_scale_counter').val(power_user.font_scale);
+
+    $('#main-font-input').val(power_user.main_font);
+    $('#mono-font-input').val(power_user.mono_font);
+
+    // Load saved fonts on startup
+    if (power_user.main_font) {
+        loadGoogleFont(power_user.main_font);
+        document.documentElement.style.setProperty('--mainFontFamily', `"${power_user.main_font}", "Noto Sans", sans-serif`);
+    }
+    if (power_user.mono_font) {
+        loadGoogleFont(power_user.mono_font);
+        document.documentElement.style.setProperty('--monoFontFamily', `"${power_user.mono_font}", 'Noto Sans Mono', 'Courier New', Consolas, monospace`);
+    }
 
     $('#blur_strength').val(power_user.blur_strength);
     $('#blur_strength_counter').val(power_user.blur_strength);
@@ -3426,6 +3458,32 @@ jQuery(() => {
         power_user.custom_css = String($('#customCSS').val());
         saveSettingsDebounced();
         applyCustomCSS();
+    });
+
+    $('#main-font-input').on('input', async function() {
+        const fontName = $(this).val().trim();
+        power_user.main_font = fontName;
+
+        if (fontName) {
+            await loadGoogleFont(fontName);
+            document.documentElement.style.setProperty('--mainFontFamily', `"${fontName}", "Noto Sans", sans-serif`);
+        } else {
+            document.documentElement.style.setProperty('--mainFontFamily', `"Noto Sans", sans-serif`);
+        }
+        saveSettingsDebounced();
+    });
+
+    $('#mono-font-input').on('input', async function() {
+        const fontName = $(this).val().trim();
+        power_user.mono_font = fontName;
+
+        if (fontName) {
+            await loadGoogleFont(fontName);
+            document.documentElement.style.setProperty('--monoFontFamily', `"${fontName}", 'Noto Sans Mono', 'Courier New', Consolas, monospace`);
+        } else {
+            document.documentElement.style.setProperty('--monoFontFamily', `'Noto Sans Mono', 'Courier New', Consolas, monospace`);
+        }
+        saveSettingsDebounced();
     });
 
     $('#movingUImode').on('change', function () {
