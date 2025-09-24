@@ -206,7 +206,7 @@ function runRegexScript(regexScript, rawString, { characterOverride } = {}) {
     const regexString = getRegexString();
     const findRegex = regexFromString(regexString);
 
-    // The user skill issued. Return with nothing.
+    // The user made an error. Return with nothing.
     if (!findRegex) {
         return newString;
     }
