@@ -78,7 +78,6 @@ function getScopedRegex() {
 function getRegexedString(rawString, placement, { characterOverride, isMarkdown, isPrompt, isEdit, depth } = {}) {
     // WTF have you passed me?
     if (typeof rawString !== 'string') {
-        console.warn('getRegexedString: rawString is not a string. Returning empty string.');
         return '';
     }
 
@@ -98,31 +97,24 @@ function getRegexedString(rawString, placement, { characterOverride, isMarkdown,
             (!script.markdownOnly && !script.promptOnly)
         ) {
             if (isEdit && !script.runOnEdit) {
-                console.debug(`getRegexedString: Skipping script ${script.scriptName} because it does not run on edit`);
                 return;
             }
 
             // Check if the depth is within the min/max depth
             if (typeof depth === 'number') {
                 if (!isNaN(script.minDepth) && script.minDepth !== null && script.minDepth >= -1 && depth < script.minDepth) {
-                    console.debug(`getRegexedString: Skipping script ${script.scriptName} because depth ${depth} is less than minDepth ${script.minDepth}`);
                     return;
                 }
 
                 if (!isNaN(script.maxDepth) && script.maxDepth !== null && script.maxDepth >= 0 && depth > script.maxDepth) {
-                    console.debug(`getRegexedString: Skipping script ${script.scriptName} because depth ${depth} is greater than maxDepth ${script.maxDepth}`);
                     return;
                 }
             } else {
-                // Debug: Log when depth is not a number
-                console.debug(`getRegexedString: Script ${script.scriptName} - depth is not a number: ${depth} (typeof: ${typeof depth})`);
-
                 // When depth is null/undefined, treat it as depth 0 for filtering purposes
                 // This prevents scripts with minDepth > 0 from running on null depth
                 if (depth === null || depth === undefined) {
                     const effectiveDepth = 0;
                     if (!isNaN(script.minDepth) && script.minDepth !== null && script.minDepth >= -1 && effectiveDepth < script.minDepth) {
-                        console.debug(`getRegexedString: Skipping script ${script.scriptName} because null depth (treated as ${effectiveDepth}) is less than minDepth ${script.minDepth}`);
                         return;
                     }
                 }
