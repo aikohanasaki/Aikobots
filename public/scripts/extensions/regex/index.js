@@ -1754,6 +1754,7 @@ jQuery(async () => {
 
     eventSource.on(event_types.CHAT_CHANGED, checkEmbeddedRegexScripts);
     eventSource.on(event_types.CHARACTER_DELETED, purgeEmbeddedRegexScripts);
+    eventSource.on(event_types.GENERATION_ENDED, reloadCurrentChat);
 
     presetManager.setupEventListeners();
     presetManager.registerSlashCommands();
