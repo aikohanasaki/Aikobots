@@ -2,7 +2,7 @@
 // Prints the favorite status (true/false) for both fav and data.extensions.fav
 
 import fs from "fs";
-import { read } from "../../../src/character-card-parser.js";
+import { read } from "../../../../src/character-card-parser.js";
 
 if (process.argv.length < 3) {
     console.error("Usage: node read_favorite.js <path/to/character.png>");

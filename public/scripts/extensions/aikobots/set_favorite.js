@@ -2,7 +2,7 @@
 // Sets both fav and data.extensions.fav fields in the PNG metadata
 
 import fs from "fs";
-import { read, write } from "../../../src/character-card-parser.js";
+import { read, write } from "../../../../src/character-card-parser.js";
 
 if (process.argv.length < 4) {
     console.error("Usage: node set_favorite.js <path/to/character.png> <true|false>");
