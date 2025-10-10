@@ -1035,7 +1035,6 @@ function registerWorldInfoSlashCommands() {
 
     async function getEntriesFromFile(file) {
         if (!file || !world_names.includes(file)) {
-            toastr.warning(t`Valid World Info file name is required`);
             return '';
         }
 
@@ -1243,7 +1242,6 @@ function registerWorldInfoSlashCommands() {
         const data = await loadWorldInfo(file);
 
         if (!data || !('entries' in data)) {
-            toastr.warning('Valid World Info file name is required');
             return '';
         }
 
@@ -1297,7 +1295,6 @@ function registerWorldInfoSlashCommands() {
         const data = await loadWorldInfo(file);
 
         if (!data || !('entries' in data)) {
-            toastr.warning('Valid World Info file name is required');
             return '';
         }
 
