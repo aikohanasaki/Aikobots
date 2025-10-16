@@ -10,7 +10,8 @@
     "world_info_settings": {
         "world_info": {
             "globalSelect": [],
-            "charLore": []
+            "charLore": [
+            ]
         },
         "world_info_depth": 10,
         "world_info_min_activations": 0,

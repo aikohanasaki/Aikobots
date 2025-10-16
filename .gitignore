@@ -51,12 +51,10 @@ public/error/
 /plugins/
 /data
 /default/scaffold
-/default/content
-public/scripts/extensions/third-party
+/default/content/
 /certs
 .aider*
 .env
 /StartDev.bat
-default/content/index.json
 yarn.lock
 *.code-workspace

@@ -183,60 +183,15 @@
                                     </div>
                                 </div>
                                 <div data-source="electronhub">
-                                    <span data-i18n="Max prompt cost:">Max prompt cost:</span> <span id="electronhub_max_prompt_cost" data-i18n="Unknown">Unknown</span>
-                                </div>
-                                <div class="range-block" data-source="openai,custom,xai,aimlapi,moonshot,azure_openai">
-                                    <div class="range-block-title" data-i18n="Multiple swipes per generation">
-                                        Multiple swipes per generation
-                                    </div>
-                                    <div class="wide100p">
-                                        <input type="number" id="n_openai" name="n_openai" class="text_pole" min="1" value="1">
-                                    </div>
-                                </div>
-                                <div data-source="openrouter" class="range-block">
-                                    <div class="range-block-title" data-i18n="[title]Allow compressing requests by removing messages from the middle of the prompt." title="Allow compressing requests by removing messages from the middle of the prompt.">
-                                        <span data-i18n="Middle-out Transform">Middle-out Transform</span>
-                                        <a href="https://openrouter.ai/docs/transforms" target="_blank" rel="noreferrer noopener" class="note-link-span fa-solid fa-circle-question"></a>
-                                    </div>
-                                    <div class="wide100p">
-                                        <select id="openrouter_middleout" class="text_pole">
-                                            <option value="auto" data-i18n="Auto">Auto</option>
-                                            <option value="on" data-i18n="Allow">Allow</option>
-                                            <option value="off" data-i18n="Forbid">Forbid</option>
-                                        </select>
-                                    </div>
+                                    <small><span data-i18n="Max prompt cost:">Max prompt cost:</span> <span id="electronhub_max_prompt_cost" data-i18n="Unknown">Unknown</span></small>
                                 </div>
                                 <div data-source="openrouter">
                                     <span data-i18n="Max prompt cost:">Max prompt cost:</span> <span id="openrouter_max_prompt_cost" data-i18n="Unknown">Unknown</span>
                                 </div>
+                                <div class="range-block m-b-1">
+                                    <div id="completion_prompt_manager"></div>
+                                </div>
                                 <hr>
-                                <div class="range-block">
-                                    <label for="stream_toggle" title="Enable OpenAI completion streaming" data-i18n="[title]Enable OpenAI completion streaming" class="checkbox_label widthFreeExpand">
-                                        <input id="stream_toggle" type="checkbox" /><span data-i18n="Streaming">
-                                            Streaming</span>
-                                    </label>
-                                    <div class="toggle-description justifyLeft">
-                                        <span data-i18n="Display the response bit by bit as it is generated.">
-                                            Display the response bit by bit as it is generated.
-                                        </span><br>
-                                        <span data-i18n="When this is off, responses will be displayed all at once when they are complete.">
-                                            When this is off, responses will be displayed all at once when they are complete.
-                                        </span>
-                                    </div>
-                                </div>
-                                <div class="range-block" data-source="openai,claude,aimlapi,openrouter,ai21,makersuite,vertexai,mistralai,custom,cohere,perplexity,groq,electronhub,nanogpt,deepseek,xai,pollinations,moonshot,fireworks,cometapi,azure_openai">
-                                    <div class="range-block-title" data-i18n="Temperature">
-                                        Temperature
-                                    </div>
-                                    <div class="range-block-range-and-counter">
-                                        <div class="range-block-range">
-                                            <input type="range" id="temp_openai" name="volume" min="0" max="2.0" step="0.01">
-                                        </div>
-                                        <div class="range-block-counter">
-                                            <input type="number" min="0" max="2.0" step="0.01" data-for="temp_openai" id="temp_counter_openai">
-                                        </div>
-                                    </div>
-                                </div>
                                 <div class="range-block" data-source="openai,aimlapi,openrouter,custom,cohere,perplexity,groq,mistralai,electronhub,nanogpt,deepseek,xai,pollinations,moonshot,fireworks,cometapi,azure_openai">
                                     <div class="range-block-title" data-i18n="Frequency Penalty">
                                         Frequency Penalty
@@ -821,6 +776,20 @@
                                             <div class="toggle-description justifyLeft marginBot5" data-source="makersuite,vertexai" data-i18n="Allocates a portion of the response length for thinking (Flash 2.5/Pro 2.5) (min: 0/128 tokens, low: 10%, medium: 25%, high: 50%, max: 24576/32768 tokens). Auto lets the model decide.">
                                                 Allocates a portion of the response length for thinking (Flash 2.5/Pro 2.5) (min: 0/128 tokens, low: 10%, medium: 25%, high: 50%, max: 24576/32768 tokens). Auto lets the model decide.
                                             </div>
+                                        </div>
+                                    </div>
+                                    <div class="range-block">
+                                        <label for="stream_toggle" title="Enable OpenAI completion streaming" data-i18n="[title]Enable OpenAI completion streaming" class="checkbox_label widthFreeExpand">
+                                            <input id="stream_toggle" type="checkbox" /><span data-i18n="Streaming">
+                                                Streaming</span>
+                                        </label>
+                                        <div class="toggle-description justifyLeft">
+                                            <span data-i18n="Display the response bit by bit as it is generated.">
+                                                Display the response bit by bit as it is generated.
+                                            </span><br>
+                                            <span data-i18n="When this is off, responses will be displayed all at once when they are complete.">
+                                                When this is off, responses will be displayed all at once when they are complete.
+                                            </span>
                                         </div>
                                     </div>
                                     <div class="range-block" data-source="claude">
