@@ -2139,12 +2139,12 @@ function getReasoningEffort() {
  * @param {string} type (impersonate, quiet, continue, etc)
  * @param {Array} messages
  * @param {AbortSignal?} signal
- * @param {import('../script.js').AdditionalRequestOptions} options
+ * @param {import('../script.js').AdditionalRequestOptions & { responseFormat?: any, responseMimeType?: string, includeReasoning?: boolean }} options
  * @returns {Promise<unknown>}
  * @throws {Error}
  */
 
-async function sendOpenAIRequest(type, messages, signal, { jsonSchema = null } = {}) {
+async function sendOpenAIRequest(type, messages, signal, { jsonSchema = null, responseFormat = null, responseMimeType = null, includeReasoning = null } = {}) {
     // Provide default abort signal
     if (!signal) {
         signal = new AbortController().signal;
@@ -2220,6 +2220,16 @@ async function sendOpenAIRequest(type, messages, signal, { jsonSchema = null } =
         'request_images': Boolean(oai_settings.request_images),
         'custom_prompt_post_processing': oai_settings.custom_prompt_post_processing,
     };
+// Structured-output hints pass-through from caller
+    if (includeReasoning !== null) {
+        generate_data.include_reasoning = includeReasoning;
+    }
+    if (responseFormat) {
+        generate_data.response_format = responseFormat;
+    }
+    if (responseMimeType) {
+        generate_data.response_mime_type = responseMimeType;
+    }
 
     if (isAzureOpenAI) {
         generate_data.azure_base_url = oai_settings.azure_base_url;
