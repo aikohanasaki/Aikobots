@@ -4569,6 +4569,8 @@ export async function sendMessageAs(args, text) {
         insertAt = chat.length + insertAt;
     }
 
+    chat_metadata['tainted'] = true;
+
     if (!isNaN(insertAt) && insertAt >= 0 && insertAt <= chat.length) {
         chat.splice(insertAt, 0, message);
         await saveChatConditional();
@@ -4618,6 +4620,8 @@ export async function sendNarratorMessage(args, text) {
         // Negative value means going back from current chat length. (E.g.: 8 messages, Depth 1 means insert at index 7)
         insertAt = chat.length + insertAt;
     }
+
+    chat_metadata['tainted'] = true;
 
     if (!isNaN(insertAt) && insertAt >= 0 && insertAt <= chat.length) {
         chat.splice(insertAt, 0, message);
@@ -4669,6 +4673,8 @@ export async function promptQuietForLoudResponse(who, text) {
         },
     };
 
+    chat_metadata['tainted'] = true;
+
     chat.push(message);
     await eventSource.emit(event_types.MESSAGE_SENT, (chat.length - 1));
     addOneMessage(message);
@@ -4702,6 +4708,8 @@ async function sendCommentMessage(args, text) {
         // Negative value means going back from current chat length. (E.g.: 8 messages, Depth 1 means insert at index 7)
         insertAt = chat.length + insertAt;
     }
+
+    chat_metadata['tainted'] = true;
 
     if (!isNaN(insertAt) && insertAt >= 0 && insertAt <= chat.length) {
         chat.splice(insertAt, 0, message);

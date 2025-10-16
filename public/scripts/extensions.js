@@ -173,7 +173,10 @@ export const extension_settings = {
     regex: [],
     /** @type {import('./extensions/regex/index.js').RegexPreset[]} */
     regex_presets: [],
+    /** @type {string[]} */
     character_allowed_regex: [],
+    /** @type {Record<string, string[]>} */
+    preset_allowed_regex: {},
     sd: {
         prompts: {},
         character_prompts: {},
