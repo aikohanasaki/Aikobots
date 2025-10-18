@@ -18,7 +18,6 @@ import { deriveTemplatesFromChatTemplate } from './chat-templates.js';
 import { t } from './i18n.js';
 import { autoSelectInstructPreset, selectContextPreset, selectInstructPreset } from './instruct-mode.js';
 import { BIAS_CACHE, createNewLogitBiasEntry, displayLogitBias, getLogitBiasListResult } from './logit-bias.js';
-
 import { power_user, registerDebugFunction } from './power-user.js';
 import { SECRET_KEYS, writeSecret } from './secrets.js';
 import { getEventSourceStream } from './sse-stream.js';

@@ -568,28 +568,9 @@ function onFeatherlessModelSelect(modelId) {
     setGenerationParamsFromPreset({ max_length: model.context_length });
 }
 
-let featherlessIsGridView = false;  // Default state set to grid view
-
 // Ensure the correct initial view is applied when the page loads
 document.addEventListener('DOMContentLoaded', function () {
-    const modelCardBlock = document.getElementById('featherless_model_card_block');
-    modelCardBlock.classList.add('list-view');
-
-    const toggleButton = document.getElementById('featherless_model_grid_toggle');
-    toggleButton.addEventListener('click', function () {
-        // Toggle between grid and list view
-        if (featherlessIsGridView) {
-            modelCardBlock.classList.remove('grid-view');
-            modelCardBlock.classList.add('list-view');
-            this.title = 'Toggle to grid view';
-        } else {
-            modelCardBlock.classList.remove('list-view');
-            modelCardBlock.classList.add('grid-view');
-            this.title = 'Toggle to list view';
-        }
-
-        featherlessIsGridView = !featherlessIsGridView;
-    });
+    return;
 });
 function onMancerModelSelect() {
     const modelId = String($('#mancer_model').val());

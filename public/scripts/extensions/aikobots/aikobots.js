@@ -21,6 +21,8 @@ export async function initializeAikobots() {
         return;
     }
     // Show admin-only elements
+    showElement('[id="quick_prompts_edit_drawer"]');
+    showElement('[id="utility_prompts_edit_drawer"]');
     showElement('[id="advanced-formatting-button"]');
     showElement('[id="extensions_notify_updates_label"]');
     showElement('[id="extensions_details"]');

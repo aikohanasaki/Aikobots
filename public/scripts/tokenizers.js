@@ -7,7 +7,6 @@ import { getStringHash } from './utils.js';
 import { kai_flags, kai_settings } from './kai-settings.js';
 import { textgen_types, textgenerationwebui_settings as textgen_settings, getTextGenServer, getTextGenModel } from './textgen-settings.js';
 import { getCurrentDreamGenModelTokenizer, getCurrentOpenRouterModelTokenizer, openRouterModels } from './textgen-models.js';
-
 export const CHARACTERS_PER_TOKEN_RATIO = 3.35;
 export const TOKENIZER_WARNING_KEY = 'tokenizationWarningShown';
 export const TOKENIZER_SUPPORTED_KEY = 'tokenizationSupported';
