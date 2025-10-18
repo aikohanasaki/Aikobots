@@ -254,6 +254,7 @@ router.post('/get', (request, response) => {
 
     const themes = readAndParseFromDirectory(request.user.directories.themes);
     const movingUIPresets = readAndParseFromDirectory(request.user.directories.movingUI);
+    const quickReplyPresets = readAndParseFromDirectory(request.user.directories.quickreplies);
 
     const instruct = readAndParseFromDirectory(request.user.directories.instruct);
     const context = readAndParseFromDirectory(request.user.directories.context);
@@ -273,6 +274,7 @@ router.post('/get', (request, response) => {
         textgenerationwebui_preset_names,
         themes,
         movingUIPresets,
+        quickReplyPresets,
         instruct,
         context,
         sysprompt,
