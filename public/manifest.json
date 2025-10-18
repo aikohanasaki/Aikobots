@@ -1,6 +1,6 @@
 {
-    "name": "Aikobots (a SillyTavern fork)",
-    "short_name": "Aikobots",
+    "name": "SillyTavern",
+    "short_name": "SillyTavern",
     "start_url": "/",
     "display": "standalone",
     "theme_color": "#202124",

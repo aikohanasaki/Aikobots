@@ -1,6 +1,7 @@
 import libs from './lib';
 import getContext from './scripts/st-context';
 import { power_user } from './scripts/power-user';
+import { QuickReplyApi } from './scripts/extensions/quick-reply/api/QuickReplyApi';
 
 declare global {
     // Custom types
@@ -15,6 +16,7 @@ declare global {
 
     var pdfjsLib;
     var ePub;
+    var quickReplyApi: QuickReplyApi;
 
     var SillyTavern: {
         getContext(): typeof getContext;

@@ -4502,7 +4502,7 @@ export async function Generate(type, { automatic_trigger, force_name2, quiet_pro
             mesId: getNextMessageId(type),
             allAnchors: await getAllExtensionPrompts(),
             chatInjects: injectedIndices?.map(index => arrMes[arrMes.length - index - 1])?.join('') || '',
-            summarizeString: '',
+            summarizeString: (extension_prompts['1_memory']?.value || ''),
             authorsNoteString: (extension_prompts['2_floating_prompt']?.value || ''),
             smartContextString: (extension_prompts['chromadb']?.value || ''),
             chatVectorsString: (extension_prompts['3_vectors']?.value || ''),

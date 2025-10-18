@@ -692,11 +692,11 @@ code {
     /* word-wrap: break-word; */
     border: 1px solid var(--SmartThemeBorderColor);
     border-radius: 5px;
-    background-color: var(--SmartThemeChatTintColor);
+    background-color: var(--black70a);
     padding: 0 3px;
     /* max-width: calc(100dvw - 95px); */
     line-height: var(--mainFontSize);
-    color: inherit;
+    color: var(--white70a);
 }
 
 kbd {
