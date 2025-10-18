@@ -24,7 +24,6 @@ import { t } from './i18n.js';
 import { accountStorage } from './util/AccountStorage.js';
 import { getOrCreatePersonaDescriptor, setPersonaDescription, user_avatar } from './personas.js';
 import { isAdmin, getCurrentUserHandle } from './user.js';
-import { getAikobotsEnabled } from './utils.js';
 
 export const world_info_insertion_strategy = {
     evenly: 0,
@@ -876,7 +875,7 @@ export async function getWorldInfoPrompt(chat, maxContext, isDryRun, globalScanD
     };
 }
 
-export async function setWorldInfoSettings(settings, data) {
+export function setWorldInfoSettings(settings, data) {
     if (settings.world_info_depth !== undefined)
         world_info_depth = Number(settings.world_info_depth);
     if (settings.world_info_min_activations !== undefined)
@@ -956,22 +955,16 @@ export async function setWorldInfoSettings(settings, data) {
 
     world_names = data.world_names?.length ? data.world_names : [];
 
-    // Aikobots Lorebooks User-Access Filter Functionality
-    const aikobotsEnabled = window.aikobotsEnabled ?? (window.aikobotsEnabled = await getAikobotsEnabled());
-    if (aikobotsEnabled && !isAdmin()){
-        // only admins can see 9Z files
-        let filteredNames = world_names.filter(name => !name.includes('ZZZZ') && !name.includes('9Z'));
+    // Visibility filter: restrict which world names are visible to non-admins
+    if (!isAdmin()) {
+        // Hide any names containing "9Z"
+        const filteredNames = world_names.filter(name => !name.includes('9Z'));
 
-        // for other users filter lorebooks by file names to control viewership
+        // Only show Z-(handle)-prefixed books to their owner; allow all other names
         const currentUserHandle = getCurrentUserHandle();
         world_names = filteredNames.filter(name => {
-            // Check if the filename matches Z-(handle)
             const userHandleMatch = name.match(/^Z-([^-]+)/);
-            if (userHandleMatch) {
-            // If it has a user pattern, only keep if it matches current user
-                return userHandleMatch[1] === currentUserHandle;
-            }
-            return true;
+            return userHandleMatch ? userHandleMatch[1] === currentUserHandle : true;
         });
     }
 
@@ -1040,6 +1033,7 @@ function registerWorldInfoSlashCommands() {
 
     async function getEntriesFromFile(file) {
         if (!file || !world_names.includes(file)) {
+            toastr.warning(t`Valid World Info file name is required`);
             return '';
         }
 
@@ -2029,27 +2023,19 @@ export async function updateWorldInfoList() {
         const data = await result.json();
         const editorSelected = String($('#world_editor_select').find(':selected').text());
         world_names = data.world_names?.length ? data.world_names : [];
-        $('#world_info').find('option[value!=""]').remove();
-        $('#world_editor_select').find('option[value!=""]').remove();
 
-        // Aikobots Lorebooks User-Access Filter Functionality
-        const aikobotsEnabled = window.aikobotsEnabled ?? (window.aikobotsEnabled = await getAikobotsEnabled());
-        if (aikobotsEnabled && !isAdmin()){
-            // only admins can see 9Z files
-            let filteredNames = world_names.filter(name => !name.includes('ZZZZ') && !name.includes('9Z'));
-
-            // for other users filter lorebooks by file names to control viewership
+        // Visibility filter: restrict which world names are visible to non-admins
+        if (!isAdmin()) {
+            const filteredNames = world_names.filter(name => !name.includes('9Z'));
             const currentUserHandle = getCurrentUserHandle();
             world_names = filteredNames.filter(name => {
-                // Check if the filename matches Z-(handle)
                 const userHandleMatch = name.match(/^Z-([^-]+)/);
-                if (userHandleMatch) {
-                // If it has a user pattern, only keep if it matches current user
-                    return userHandleMatch[1] === currentUserHandle;
-                }
-                return true;
+                return userHandleMatch ? userHandleMatch[1] === currentUserHandle : true;
             });
         }
+
+        $('#world_info').find('option[value!=""]').remove();
+        $('#world_editor_select').find('option[value!=""]').remove();
 
         world_names.forEach((item, i) => {
             const globalListOption = new Option(item, i.toString());

@@ -28,7 +28,6 @@ import {
     unshallowCharacter,
     updateRemoteChatName,
 } from '../script.js';
-import { getRegexedString, regex_placement } from './extensions/regex/engine.js';
 import { deleteGroupChatByName, getGroupAvatar, groups, is_group_generating, openGroupById, openGroupChat } from './group-chats.js';
 import { t } from './i18n.js';
 import { callGenericPopup, POPUP_TYPE } from './popup.js';
@@ -104,11 +103,6 @@ async function unshallowPermanentAssistant() {
     await unshallowCharacter(String(characterId));
 }
 
-/**
- * Returns a greeting message for the assistant based on the character.
- * @param {import('./char-data.js').v1CharData} character Character data
- * @returns {string} Greeting message
-*/
 function sendAssistantMessage() {
     const currentAssistantAvatar = getPermanentAssistantAvatar();
     const character = characters.find(x => x.avatar === currentAssistantAvatar);
