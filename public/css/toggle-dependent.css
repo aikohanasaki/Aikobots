@@ -4,9 +4,18 @@
     --big-avatar-border-factor: 5;
 }
 
+body.tts .mes[is_system="true"] .mes_narrate {
+    display: none;
+}
+
 body.sd .sd_message_gen,
-body.translate .mes_translate {
+body.translate .mes_translate,
+body.tts .mes_narrate {
     display: inline-block;
+}
+
+body:not(.tts) #ttsExtensionNarrateAll {
+    display: none;
 }
 
 body.no-hotswap .hotswap,
