@@ -112,7 +112,7 @@ function sendAssistantMessage() {
     const message = {
         name: name,
         force_avatar: avatar,
-        mes: t`# 🎉 __**Welcome to Aikobots!**__ 🎉` + '\n\n' + t`We're glad you're here. If you ever need help, head to the #help-911 channel in our Discord server.`  + '\n\n' + t`**Now that you're here:**` + '\n' + t`1️⃣ Download the latest Aikobots preset ([right click here 🔗 and choose "Save As"](presets/Aikobots.json))` + '\n' + t`2️⃣ Click <i class="fa-solid fa-sliders"></i> in the top menu bar and click <i class="fa-solid fa-file-import"></i> next to Chat Completion Presets to import Aikobots.json` + '\n' + t`3️⃣ Connect to an API (click <i class="fa-solid fa-plug"></i> in the top menu bar)` + '\n' + t`4️⃣ Create a persona for yourself (click <i class="fa-solid fa-face-smile"></i> in the top menu bar)` + '\n' + t`5️⃣ Choose a character to play with! (click <i class="fa-solid fa-address-card"></i> in the top menu bar)`  + '\n\n' + '\n\n' + t`**If you can't decide who to play with:**` + '\n' + t`💘 Try the [Character Archetype Matching Quiz](https://www.aikobots.com/archetypes-quiz.html)` + '\n' + t`📇 Check out the [Character Roll Call](https://www.aikobots.com/rollcall.html) for compatibility quizzes` + '\n' + t`🐢 Talk to Carl (turtle holding a strawberry) and ask him for recommendations!` + '\n' + t`💬 Talk to Okia if you want to do some analysis!` + '\n\n' + '\n\n' + t`**For commands, be sure to take a look at:**` + `\n` + t`📜 [List of all Aikobots Commands](https://www.aikobots.com/commands.html)` + `\n` + t`🛰️ [LaDS-Specific Commands](https://www.aikobots.com/ladscommands.html)` + `\n` + t`🧠 [Memory Helpers](https://www.aikobots.com/cmd-memory.html) (not needed if you use the Create Memory function)` + '\n***\n' + t`💡 **PS:** Set any character as your welcome page assistant from their "More..." menu.`,
+        mes: t`# 🎉 __**Welcome to Aikobots!**__ 🎉` + '\n\n' + t`We're glad you're here. If you ever need help, head to the #help-911 channel in our Discord server.`  + '\n\n' + t`**Now that you're here:**` + '\n' + t`1️⃣ Download the latest Aikobots preset ([right click HERE and choose "Save As"](presets/Aikobots.json))` + '\n' + t`2️⃣ Click :fa-sliders: in the top menu bar and click :fa-file-import: next to Chat Completion Presets to import Aikobots.json` + '\n' + t`3️⃣ Connect to an API (click :fa-plug: in the top menu bar)` + '\n' + t`4️⃣ Create a persona for yourself (click :fa-face-smile: in the top menu bar)` + '\n' + t`5️⃣ Choose a character to play with! (click :fa-address-card: in the top menu bar)`  + '\n\n' + '\n\n' + t`**If you can't decide who to play with:**` + '\n' + t`💘 Try the [Character Archetype Matching Quiz](https://www.aikobots.com/archetypes-quiz.html)` + '\n' + t`📇 Check out the [Character Roll Call](https://www.aikobots.com/rollcall.html) for compatibility quizzes` + '\n' + t`🐢 Talk to Carl (turtle holding a strawberry) and ask him for recommendations!` + '\n' + t`💬 Talk to Okia if you want to do some analysis!` + '\n\n' + '\n\n' + t`**For commands, be sure to take a look at:**` + `\n` + t`📜 [List of all Aikobots Commands](https://www.aikobots.com/commands.html)` + `\n` + t`🛰️ [LaDS-Specific Commands](https://www.aikobots.com/ladscommands.html)` + `\n` + t`🧠 [Memory Helpers](https://www.aikobots.com/cmd-memory.html) (not needed if you use the Create Memory function)` + '\n***\n' + t`💡 **PS:** Set any character as your welcome page assistant from their "More..." menu.`,
         is_system: false,
         is_user: false,
         send_date: getMessageTimeStamp(),
@@ -123,8 +123,62 @@ function sendAssistantMessage() {
 
     chat.push(message);
     addOneMessage(message, { scroll: false });
+    postProcessAssistantIcons();
 }
-
+ 
+function postProcessAssistantIcons() {
+    try {
+        const chatElement = document.getElementById('chat');
+        if (!chatElement || !chatElement.lastElementChild) return;
+        // Only process the most recently inserted message (this assistant message)
+        replaceIconTokensInElement(chatElement.lastElementChild);
+    } catch (e) {
+        console.warn('Icon token post-process failed:', e);
+    }
+}
+ 
+function replaceIconTokensInElement(root) {
+    const TOKEN_REGEX = /:fa-([a-z0-9-]+):/gi;
+    // Collect matching text nodes first to avoid walker invalidation during replacement
+    const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, null);
+    const textNodes = [];
+    let node;
+    while ((node = walker.nextNode())) {
+        const value = node.nodeValue || '';
+        if (TOKEN_REGEX.test(value)) {
+            textNodes.push(node);
+        }
+        TOKEN_REGEX.lastIndex = 0; // reset due to global regex
+    }
+ 
+    for (const textNode of textNodes) {
+        const text = textNode.nodeValue || '';
+        const frag = document.createDocumentFragment();
+        let lastIndex = 0;
+        let match;
+        TOKEN_REGEX.lastIndex = 0;
+        while ((match = TOKEN_REGEX.exec(text)) !== null) {
+            const before = text.slice(lastIndex, match.index);
+            if (before) frag.appendChild(document.createTextNode(before));
+            const iconName = match[1];
+            frag.appendChild(createFaIcon(iconName));
+            lastIndex = TOKEN_REGEX.lastIndex;
+        }
+        const after = text.slice(lastIndex);
+        if (after) frag.appendChild(document.createTextNode(after));
+        if (textNode.parentNode) {
+            textNode.parentNode.replaceChild(frag, textNode);
+        }
+    }
+}
+ 
+function createFaIcon(name) {
+    const i = document.createElement('i');
+    i.classList.add('fa-solid', `fa-${name}`);
+    i.setAttribute('aria-hidden', 'true');
+    return i;
+}
+ 
 function sendWelcomePrompt() {
     const message = getSystemMessageByType(system_message_types.WELCOME_PROMPT);
     chat.push(message);
