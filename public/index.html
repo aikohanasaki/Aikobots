@@ -1348,15 +1348,15 @@
                         </div>
                         <div id="electronhub_form" data-source="electronhub">
                             <h4 data-i18n="Electron Hub API Key">Electron Hub API Key</h4>
-                            <div>
-                                <a href="https://playground.electronhub.ai/console" target="_blank" data-i18n="View Remaining Credits">View Remaining Credits</a>
-                            </div>
                             <div class="flex-container">
                                 <input id="api_key_electronhub" name="api_key_electronhub" class="text_pole flex1" value="" type="text" autocomplete="off">
                                 <div title="Manage API keys" data-i18n="[title]Manage API keys" class="menu_button fa-solid fa-key fa-fw manage-api-keys" data-key="api_key_electronhub"></div>
                             </div>
                             <div data-for="api_key_electronhub" class="neutral_warning" data-i18n="For privacy reasons, your API key will be hidden after you click 'Connect'.">
                                 For privacy reasons, your API key will be hidden after you click 'Connect'.
+                            </div>
+                            <div>
+                                <small><a href="https://playground.electronhub.ai/console" target="_blank" data-i18n="View Remaining Credits">View Remaining Credits</a> (only if you have your own Electron Hub key; will not work if you are using the key share proxies from Aiko!)</small>
                             </div>
                             <div>
                                 <h4 data-i18n="Electron Hub Model">Electron Hub Model</h4>
@@ -3587,7 +3587,6 @@
                                         <div class="flex-container" id="avatar_controls">
                                             <div class="form_create_bottom_buttons_block buttons_block">
                                                 <div id="rm_button_back" class="menu_button fa-solid fa-left-long "></div>
-                                                <!-- <div id="renameCharButton" class="menu_button fa-solid fa-user-pen" title="Rename Character"></div> -->
                                                 <div id="favorite_button" class="menu_button fa-solid fa-star" title="Add to Favorites" data-i18n="[title]Add to Favorites"></div>
                                                 <input type="hidden" id="fav_checkbox" name="fav" />
                                                 <div id="advanced_div" class="menu_button fa-solid fa-book " title="Advanced Definitions" data-i18n="[title]Advanced Definition"></div>
@@ -3595,8 +3594,6 @@
                                                 <div class="chat_lorebook_button menu_button fa-solid fa-passport" title="Chat Lore&#10;Alt+Click to open the lorebook" data-i18n="[title]Chat Lore Alt+Click to open the lorebook"></div>
                                                 <div id="char_connections_button" class="menu_button fa-solid fa-face-smile" title="Connected Personas" data-i18n="[title]Connected Personas"></div>
                                                 <div id="export_button" class="menu_button fa-solid fa-file-export " title="Export and Download" data-i18n="[title]Export and Download"></div>
-                                                <!-- <div id="set_chat_scenario" class="menu_button fa-solid fa-scroll" title="Set a chat scenario override"></div> -->
-                                                <!-- <div id="set_character_world" class="menu_button fa-solid fa-globe" title="Set a character World Info / Lorebook"></div> -->
                                                 <div id="dupe_button" class="menu_button fa-solid fa-clone " title="Duplicate Character" data-i18n="[title]Duplicate Character"></div>
                                                 <label for="create_button" id="create_button_label" class="menu_button fa-solid fa-user-check" title="Create Character" data-i18n="[title]Create Character">
                                                     <input type="submit" id="create_button" name="create_button">
@@ -3606,9 +3603,6 @@
                                             <label class="flex1 height100p" for="char-management-dropdown">
                                                 <select id="char-management-dropdown" class="text_pole">
                                                     <option value="default" disabled selected data-i18n="More...">More...</option>
-                                                    <option id="set_character_world" data-i18n="Link to World Info">
-                                                        Link to World Info
-                                                    </option>
                                                     <option id="import_character_info" data-i18n="Import Card Lore">
                                                         Import Card Lore
                                                     </option>
@@ -3633,15 +3627,6 @@
                                                     <option id="set_as_assistant" data-i18n="Set / Unset as Welcome Page Assistant">
                                                         Set / Unset as Welcome Page Assistant
                                                     </option>
-                                                    <!--<option id="dupe_button">
-                                                            Duplicate
-                                                        </option>
-                                                        <option id="export_button">
-                                                            Export
-                                                        </option>
-                                                        <option id="delete_button">
-                                                            Delete
-                                                        </option>-->
                                                 </select>
                                             </label>
                                         </div>
@@ -3674,28 +3659,7 @@
                                 </div>
                             </div>
                             <small id="creators_note_desc_hidden" data-i18n="Character details are hidden.">Character details are hidden.</small>
-                            <div id="descriptionWrapper" class="flex-container flexFlowColumn flex1">
-                                <div id="description_div" class="title_restorable">
-                                    <div class="flex-container alignitemscenter">
-                                        <span data-i18n="Character Description" class="mdhotkey_location">Description</span>
-                                        <i class="editor_maximize fa-solid fa-maximize right_menu_button" data-for="description_textarea" title="Expand the editor" data-i18n="[title]Expand the editor"></i>
-                                        <a href="https://docs.sillytavern.app/usage/core-concepts/characterdesign/#character-description" class="notes-link" target="_blank">
-                                            <span class="fa-solid fa-circle-question note-link-span"></span>
-                                        </a>
-                                    </div>
-                                    <div id="character_open_media_overrides" class="menu_button menu_button_icon open_media_overrides" title="Click to allow/forbid the use of external media for this character." data-i18n="[title]Click to allow/forbid the use of external media for this character.">
-                                        <i id="character_media_allowed_icon" class="fa-solid fa-fw fa-link"></i>
-                                        <i id="character_media_forbidden_icon" class="fa-solid fa-fw fa-link-slash"></i>
-                                        <span data-i18n="Ext. Media">
-                                            Ext. Media
-                                        </span>
-                                    </div>
-                                </div>
-                                <textarea id="description_textarea" class="mdHotkeys" data-i18n="[placeholder]Describe your character's physical and mental traits here." placeholder="Describe your character's physical and mental traits here." name="description" placeholder=""></textarea>
-                                <div class="extension_token_counter">
-                                    <span data-i18n="extension_token_counter">Tokens:</span> <span data-token-counter="description_textarea" data-token-permanent="true">counting...</span>
-                                </div>
-                            </div>
+                            <hr>
                             <div id="firstMessageWrapper" class="flex-container flexFlowColumn flex1">
                                 <div id="first_message_div" class="title_restorable">
                                     <div class="flex-container alignitemscenter flex1">
@@ -3714,6 +3678,29 @@
                                 <textarea class="mdHotkeys" id="firstmessage_textarea" data-i18n="[placeholder]This will be the first message from the character that starts every chat." placeholder="This will be the first message from the character that starts every chat." name="first_mes" placeholder=""></textarea>
                                 <div class="extension_token_counter">
                                     <span data-i18n="extension_token_counter">Tokens:</span> <span data-token-counter="firstmessage_textarea">counting...</span>
+                                </div>
+                            </div>
+                            <hr>
+                            <div id="descriptionWrapper" class="flex-container flexFlowColumn flex1">
+                                <div id="description_div" class="title_restorable">
+                                    <div class="flex-container alignitemscenter">
+                                        <span data-i18n="Character Description" class="mdhotkey_location">Description</span>
+                                        <i class="editor_maximize fa-solid fa-maximize right_menu_button" data-for="description_textarea" title="Expand the editor" data-i18n="[title]Expand the editor"></i>
+                                        <a href="https://docs.sillytavern.app/usage/core-concepts/characterdesign/#character-description" class="notes-link" target="_blank">
+                                            <span class="fa-solid fa-circle-question note-link-span"></span>
+                                        </a>
+                                    </div>
+                                    <div id="character_open_media_overrides" class="menu_button menu_button_icon open_media_overrides" title="Click to allow/forbid the use of external media for this character." data-i18n="[title]Click to allow/forbid the use of external media for this character.">
+                                        <i id="character_media_allowed_icon" class="fa-solid fa-fw fa-link"></i>
+                                        <i id="character_media_forbidden_icon" class="fa-solid fa-fw fa-link-slash"></i>
+                                        <span data-i18n="Ext. Media">
+                                            Ext. Media
+                                        </span>
+                                    </div>
+                                </div>
+                                <textarea id="description_textarea" class="mdHotkeys" data-i18n="[placeholder]Describe your character's physical and mental traits here." placeholder="[Note from Aiko: Do not fill this in. It will be sent to the AI and ALSO will be exported if someone exports your character.]" name="description" placeholder=""></textarea>
+                                <div class="extension_token_counter">
+                                    <span data-i18n="extension_token_counter">Tokens:</span> <span data-token-counter="description_textarea" data-token-permanent="true">counting...</span>
                                 </div>
                             </div>
                             <!-- these divs are invisible and used for server communication purposes -->
