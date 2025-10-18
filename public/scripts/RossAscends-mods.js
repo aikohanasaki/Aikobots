@@ -466,7 +466,6 @@ function restoreUserInput() {
 function saveUserInput() {
     const userInput = String($('#send_textarea').val());
     localStorage.setItem(getUserInputKey(), userInput);
-    // console.debug('User Input -- ', userInput);
 }
 const saveUserInputDebounced = debounce(saveUserInput);
 

@@ -13,7 +13,6 @@ import { Popup } from './popup.js';
 import { t } from './i18n.js';
 import { isMobile } from './RossAscends-mods.js';
 import { isAdmin } from './user.js';
-import { getAikobotsEnabled } from './utils.js';
 
 function debouncePromise(func, delay) {
     let timeoutId;
@@ -467,12 +466,8 @@ class PromptManager {
         };
 
         // Open edit form and load selected prompt
-        this.handleInspect = async (event) => {
-            // If Aikobots is enabled and user is not admin, disable this function
-            const aikobotsEnabled = window.aikobotsEnabled ?? (window.aikobotsEnabled = await getAikobotsEnabled());
-            if (aikobotsEnabled && !isAdmin()){
-                return;
-            }
+        this.handleInspect = (event) => {
+            if(!isAdmin()) return; // Disable function for non-Admin users
             this.clearEditForm();
             this.clearInspectForm();
 
@@ -628,12 +623,7 @@ class PromptManager {
         };
 
         // Create new prompt, then save it to settings and close form.
-        this.handleNewPrompt = async (event) => {
-            // If Aikobots is enabled and user is not admin, disable this function
-            const aikobotsEnabled = window.aikobotsEnabled ?? (window.aikobotsEnabled = await getAikobotsEnabled());
-            if (aikobotsEnabled && !isAdmin()){
-                return;
-            }
+        this.handleNewPrompt = (event) => {
             const prompt = {
                 identifier: this.getUuidv4(),
                 name: '',
@@ -646,12 +636,7 @@ class PromptManager {
         };
 
         // Export all user prompts
-        this.handleFullExport = async () => {
-            // If Aikobots is enabled and user is not admin, disable this function
-            const aikobotsEnabled = window.aikobotsEnabled ?? (window.aikobotsEnabled = await getAikobotsEnabled());
-            if (aikobotsEnabled && !isAdmin()){
-                return;
-            }
+        this.handleFullExport = () => {
             const prompts = this.serviceSettings.prompts.reduce((userPrompts, prompt) => {
                 if (false === prompt.system_prompt && false === prompt.marker) userPrompts.push(prompt);
                 return userPrompts;
@@ -675,12 +660,7 @@ class PromptManager {
         };
 
         // Export user prompts and order for this character
-        this.handleCharacterExport = async () => {
-            // If Aikobots is enabled and user is not admin, disable this function
-            const aikobotsEnabled = window.aikobotsEnabled ?? (window.aikobotsEnabled = await getAikobotsEnabled());
-            if (aikobotsEnabled && !isAdmin()){
-                return;
-            }
+        this.handleCharacterExport = () => {
             const characterPrompts = this.getPromptsForCharacter(this.activeCharacter).reduce((userPrompts, prompt) => {
                 if (false === prompt.system_prompt && !prompt.marker) userPrompts.push(prompt);
                 return userPrompts;
@@ -1086,9 +1066,10 @@ class PromptManager {
     /**
      * Check whether a prompt can be inspected.
      * @param {Prompt} prompt - The prompt to check.
-     * @returns {boolean} True if the prompt is a marker, false otherwise.
+     * @returns {boolean} True if the user is an admin, false otherwise.
      */
     isPromptInspectionAllowed(prompt) {
+        if(!isAdmin()) return false; // Disable function for non-Admin users
         return true;
     }
 

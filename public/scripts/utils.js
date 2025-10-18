@@ -2522,13 +2522,6 @@ export function clearInfoBlock(target) {
     }
 }
 
-// Check if Aikobots is enabled
-export async function getAikobotsEnabled() {
-    const response = await fetch('/api/settings/config');
-    const config = await response.json();
-    return config.aikobotsEnabled;
-}
-
 /**
  * Provides a matcher function for select2 that matches both the text and value of options.
  * @param {import('select2').SearchOptions} params

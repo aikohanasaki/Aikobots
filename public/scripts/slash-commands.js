@@ -1808,7 +1808,7 @@ export function initDefaultSlashCommands() {
                 ${t`Stops the generation and any streaming if it is currently running.`}
             </div>
             <div>
-                ${t`Note: This command cannot be executed from the chat input, as sending any message or script from there is blocked during generation. But it can be executed via automations.`}
+                ${t`Note: This command cannot be executed from the chat input, as sending any message or script from there is blocked during generation. But it can be executed via automations or QR scripts/buttons.`}
             </div>
         `,
         aliases: ['generate-stop'],
@@ -2014,7 +2014,7 @@ export function initDefaultSlashCommands() {
         name: 'run',
         aliases: ['call', 'exec'],
         callback: runCallback,
-        returns: t`result of the executed closure`,
+        returns: t`result of the executed closure of QR`,
         namedArgumentList: [
             new SlashCommandNamedArgument(
                 'args', t`named arguments`, [ARGUMENT_TYPE.STRING, ARGUMENT_TYPE.NUMBER, ARGUMENT_TYPE.BOOLEAN, ARGUMENT_TYPE.LIST, ARGUMENT_TYPE.DICTIONARY], false, true,
@@ -2022,17 +2022,19 @@ export function initDefaultSlashCommands() {
         ],
         unnamedArgumentList: [
             SlashCommandArgument.fromProps({
-                description: t`scoped variable label`,
+                description: t`scoped variable or qr label`,
                 typeList: [ARGUMENT_TYPE.VARIABLE_NAME, ARGUMENT_TYPE.STRING, ARGUMENT_TYPE.CLOSURE],
                 isRequired: true,
                 enumProvider: (executor, scope) => [
                     ...commonEnumProviders.variables('scope')(executor, scope),
+                    ...(typeof window['qrEnumProviderExecutables'] === 'function') ? window['qrEnumProviderExecutables']() : [],
                 ],
             }),
         ],
         helpString: `
         <div>
-            ${t`Runs a closure from a scoped variable.`}
+            ${t`Runs a closure from a scoped variable, or a Quick Reply with the specified name from a currently active preset or from another preset.`}
+            ${t`Named arguments can be referenced in a QR with <code>{{arg::key}}</code>.`}
         </div>
     `,
     }));
@@ -3475,7 +3477,21 @@ async function runCallback(args, name) {
         return result.pipe;
     }
 
-    throw new Error(t`Command or closure "${name}" not found`);
+    if (typeof window['executeQuickReplyByName'] !== 'function') {
+        throw new Error(t`Quick Reply extension is not loaded`);
+    }
+
+    try {
+        name = name.trim();
+        /**@type {ExecuteSlashCommandsOptions} */
+        const options = {
+            abortController: args._abortController,
+            debugController: args._debugController,
+        };
+        return await window['executeQuickReplyByName'](name, args, options);
+    } catch (error) {
+        throw new Error(t`Error running Quick Reply "${name}": ${error.message}`);
+    }
 }
 
 /**
@@ -5309,7 +5325,7 @@ const clearCommandProgressDebounced = debounce(clearCommandProgress);
  * @prop {SlashCommandAbortController} [abortController] (null) Controller used to abort or pause command execution
  * @prop {SlashCommandDebugController} [debugController] (null) Controller used to control debug execution
  * @prop {(done:number, total:number)=>void} [onProgress] (null) Callback to handle progress events
- * @prop {string} [source] (null) String indicating where the code come from
+ * @prop {string} [source] (null) String indicating where the code come from (e.g., QR name)
  */
 
 /**
@@ -5317,7 +5333,7 @@ const clearCommandProgressDebounced = debounce(clearCommandProgress);
  * @prop {SlashCommandScope} [scope] (null) The scope to be used when executing the commands.
  * @prop {import('./slash-commands/SlashCommandParser.js').ParserFlags} [parserFlags] (null) Parser flags to apply
  * @prop {boolean} [clearChatInput] (false) Whether to clear the chat input textarea
- * @prop {string} [source] (null) String indicating where the code come from
+ * @prop {string} [source] (null) String indicating where the code come from (e.g., QR name)
  */
 
 /**
@@ -5523,7 +5539,7 @@ async function executeSlashCommands(text, handleParserErrors = true, scope = nul
 /**
  *
  * @param {HTMLTextAreaElement} textarea The textarea to receive autocomplete
- * @param {Boolean} isFloating Whether to show the auto complete as a floating window
+ * @param {Boolean} isFloating Whether to show the auto complete as a floating window (e.g., large QR editor)
  * @returns {Promise<AutoComplete>}
  */
 export async function setSlashCommandAutoComplete(textarea, isFloating = false) {

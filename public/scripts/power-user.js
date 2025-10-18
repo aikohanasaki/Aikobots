@@ -170,10 +170,8 @@ export const power_user = {
     border_color: `${getComputedStyle(document.documentElement).getPropertyValue('--SmartThemeBorderColor').trim()}`,
 
     custom_css: '',
-
     main_font: '',
     mono_font: '',
-
     waifuMode: false,
     movingUI: false,
     movingUIState: {},
