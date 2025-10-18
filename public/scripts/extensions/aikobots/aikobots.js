@@ -22,6 +22,7 @@ export async function initializeAikobots() {
     }
     // Show admin-only elements
     showElement('[id="advanced-formatting-button"]');
+    showElement('[id="extensions_notify_updates_label"]');
     showElement('[id="extensions_details"]');
     showElement('[id="third_party_extension_button"]');
     showElement('[id="assets_container"]');

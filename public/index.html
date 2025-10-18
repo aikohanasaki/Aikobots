@@ -2,7 +2,7 @@
 <html>
 
 <head>
-    <title>SillyTavern</title>
+    <title>Aikobots</title>
     <base href="/">
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, viewport-fit=cover, initial-scale=1, maximum-scale=1.0, user-scalable=no, interactive-widget=resizes-content">
@@ -3764,7 +3764,7 @@
                 </div>
             </div>
         </div>
-        <div id="advanced-formatting-button" class="drawer">
+        <div id="advanced-formatting-button" style="display:none;" class="drawer">
             <div class="drawer-toggle">
                 <div class="drawer-icon fa-solid fa-font fa-fw closedIcon" title="AI Response Formatting" data-i18n="[title]AI Response Formatting"></div>
             </div>
@@ -5352,75 +5352,29 @@
                         <h3 class="margin0 flex1" data-i18n="Extensions">
                             Extensions
                         </h3>
-                        <label for="extensions_notify_updates" class="checkbox_label flexNoGap">
+                        <label id="extensions_notify_updates_label" style="display: none;" for="extensions_notify_updates" class="checkbox_label flexNoGap">
                             <input id="extensions_notify_updates" type="checkbox">
                             <span data-i18n="Notify on extension updates">Notify on extension updates</span>
                         </label>
-                        <div id="extensions_details" class="menu_button_icon menu_button">
+                        <div id="extensions_details" style="display: none;" class="menu_button_icon menu_button">
                             <i class="fa-solid fa-cubes"></i>
                             <span data-i18n="Manage extensions">Manage extensions</span>
                         </div>
-                        <div id="third_party_extension_button" title="Import Extension From Git Repo" data-i18n="[title]Import Extension From Git Repo" class="menu_button menu_button_icon">
+                        <div id="third_party_extension_button" style="display: none;" title="Import Extension From Git Repo" data-i18n="[title]Import Extension From Git Repo" class="menu_button menu_button_icon">
                             <i class="fa-solid fa-cloud-arrow-down"></i>
                             <span data-i18n="Install extension">Install extension</span>
                         </div>
                     </div>
-                    <div id="extensions_settings" class="flex1 wide50p">
-                        <div id="assets_container" class="extension_container"></div>
-                        <div id="typing_indicator_container" class="extension_container"></div>
+                    <div id="extensions_settings" class="flex1">
+                        <div id="assets_container" class="extension_container" style="display:none;"></div>
                         <div id="expressions_container" class="extension_container"></div>
                         <div id="sd_container" class="extension_container"></div>
-                        <div id="tts_container" class="extension_container"></div>
-                        <div id="rvc_container" class="extension_container"></div>
-                        <div id="stt_container" class="extension_container"></div>
-                        <div id="audio_container" class="extension_container"></div>
-                        <div id="silence_container" class="extension_container"></div>
-                        <div id="objective_container" class="extension_container"></div>
-                        <div id="blip_container" class="extension_container"></div>
-                        <div id="live2d_container" class="extension_container"></div>
-                        <div id="vrm_container" class="extension_container"></div>
                         <div id="timelines_container" class="extension_container"></div>
-                        <div id="webllm_container" class="extension_container"></div>
-                        <div id="rss_container" class="extension_container"></div>
-                    </div>
-                    <div id="extensions_settings2" class="flex1 wide50p">
-                        <div id="websearch_container" class="extension_container"></div>
-                        <div id="emulatorjs_container" class="extension_container"></div>
                         <div id="qr_container" class="extension_container"></div>
                         <div id="translation_container" class="extension_container"></div>
-                        <div id="caption_container" class="extension_container"></div>
-                        <div id="idle_container" class="extension_container"></div>
-                        <div id="summarize_container" class="extension_container"></div>
-                        <div id="hypebot_container" class="extension_container"></div>
                         <div id="regex_container" class="extension_container"></div>
                         <div id="vectors_container" class="extension_container"></div>
-                        <div id="randomizer_container" class="extension_container"></div>
-                        <div id="chromadb_container" class="extension_container"></div>
                         <div id="message_limit_container" class="extension_container"></div>
-                        <div id="injects_container" class="extension_container"></div>
-                        <div id="accuweather_container" class="extension_container"></div>
-                        <div id="dice_container" class="extension_container"></div>
-                    </div>
-                    <hr class="wide100p margin0">
-                    <div class="alignitemscenter flex-container justifyCenter wide100p" style="justify-content: space-between;">
-                        <h4 class="margin0">
-                            <span data-i18n="(DEPRECATED)">(DEPRECATED)</span>
-                            <span data-i18n="Extras API:">Extras API:</span>
-                        </h4>
-                        <div class="flex-container">
-                            <div id="extensions_status" data-i18n="Not connected...">Not connected...</div>
-                            <label for="extensions_autoconnect" class="checkbox_label flexNoGap">
-                                <input id="extensions_autoconnect" type="checkbox">
-                                <span data-i18n="Auto-connect">Auto-connect</span>
-                            </label>
-                        </div>
-                    </div>
-                    <div class="alignitemsflexstart flex-container wide100p">
-                        <input id="extensions_url" type="text" class="flex1 heightFitContent text_pole widthNatural" data-i18n="[placeholder]Extras API URL" placeholder="Extras API URL">
-                        <input id="extensions_api_key" type="text" class="flex1 heightFitContent text_pole widthNatural" data-i18n="[placeholder]Extras API key (optional)" placeholder="Extras API key (optional)">
-                        <div class="extensions_url_block">
-                            <div id="extensions_connect" class="menu_button" data-i18n="Connect">Connect</div>
-                        </div>
                     </div>
                 </div>
             </div>
@@ -5660,7 +5614,7 @@
                                                 <div id="favorite_button" class="menu_button fa-solid fa-star" title="Add to Favorites" data-i18n="[title]Add to Favorites"></div>
                                                 <input type="hidden" id="fav_checkbox" name="fav" />
                                                 <div id="advanced_div" class="menu_button fa-solid fa-book " title="Advanced Definitions" data-i18n="[title]Advanced Definition"></div>
-                                                <div id="world_button" class="menu_button fa-solid fa-globe" title="Character Lore&#10;&#10;Click to load&#10;Shift-click to open 'Link to World Info' popup" data-i18n="[title]world_button_title"></div>
+                                                <div id="world_button" style="display:none" class="menu_button fa-solid fa-globe" title="Character Lore&#10;&#10;Click to load&#10;Shift-click to open 'Link to World Info' popup" data-i18n="[title]world_button_title"></div>
                                                 <div class="chat_lorebook_button menu_button fa-solid fa-passport" title="Chat Lore&#10;Alt+Click to open the lorebook" data-i18n="[title]Chat Lore Alt+Click to open the lorebook"></div>
                                                 <div id="char_connections_button" class="menu_button fa-solid fa-face-smile" title="Connected Personas" data-i18n="[title]Connected Personas"></div>
                                                 <div id="export_button" class="menu_button fa-solid fa-file-export " title="Export and Download" data-i18n="[title]Export and Download"></div>
