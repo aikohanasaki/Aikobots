@@ -1033,7 +1033,6 @@ function registerWorldInfoSlashCommands() {
 
     async function getEntriesFromFile(file) {
         if (!file || !world_names.includes(file)) {
-            toastr.warning(t`Valid World Info file name is required`);
             return '';
         }
 
