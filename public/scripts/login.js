@@ -50,21 +50,9 @@ async function getUserList() {
  * @returns {Promise<void>}
  */
 async function sendRecoveryPart1(handle) {
-    const response = await fetch('/api/users/recover-step1', {
-        method: 'POST',
-        headers: {
-            'Content-Type': 'application/json',
-            'X-CSRF-Token': csrfToken,
-        },
-        body: JSON.stringify({ handle }),
-    });
-
-    if (!response.ok) {
-        const errorData = await response.json();
-        return displayError(errorData.error || 'An error occurred');
-    }
-
-    showRecoveryBlock();
+    displayError('Password recovery is disabled. Contact Aiko to get it reset.');
+    $('#passwordRecoveryBlock').hide();
+    $('#passwordEntryBlock').show();
 }
 
 /**
@@ -75,28 +63,9 @@ async function sendRecoveryPart1(handle) {
  * @returns {Promise<void>}
  */
 async function sendRecoveryPart2(handle, code, newPassword) {
-    const recoveryData = {
-        handle,
-        code,
-        newPassword,
-    };
-
-    const response = await fetch('/api/users/recover-step2', {
-        method: 'POST',
-        headers: {
-            'Content-Type': 'application/json',
-            'X-CSRF-Token': csrfToken,
-        },
-        body: JSON.stringify(recoveryData),
-    });
-
-    if (!response.ok) {
-        const errorData = await response.json();
-        return displayError(errorData.error || 'An error occurred');
-    }
-
-    console.log(`Successfully recovered password for ${handle}!`);
-    await performLogin(handle, newPassword);
+    displayError('Password recovery is disabled. Contact Aiko to get it reset.');
+    $('#passwordRecoveryBlock').hide();
+    $('#passwordEntryBlock').show();
 }
 
 /**

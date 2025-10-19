@@ -7,6 +7,7 @@ import { power_user, registerDebugFunction } from './power-user.js';
 import { isMobile } from './RossAscends-mods.js';
 import { renderTemplateAsync } from './templates.js';
 import { getFriendlyTokenizerName, getTokenCountAsync } from './tokenizers.js';
+import { isAdmin } from './user.js';
 import { copyText } from './utils.js';
 
 let PromptArrayItemForRawPromptDisplay;
@@ -20,6 +21,7 @@ export let itemizedPrompts = [];
  * @param {string} chatId Chat ID to load
  */
 export async function loadItemizedPrompts(chatId) {
+    if (!isAdmin()) { return; }
     try {
         if (!chatId) {
             itemizedPrompts = [];
@@ -42,6 +44,7 @@ export async function loadItemizedPrompts(chatId) {
  * @param {string} chatId Chat ID to save itemized prompts for
  */
 export async function saveItemizedPrompts(chatId) {
+    if (!isAdmin()) { return; }
     try {
         if (!chatId) {
             return;
@@ -221,8 +224,8 @@ export async function itemizedParams(itemizedPrompts, thisPromptSet, incomingMes
 }
 
 export function findItemizedPromptSet(itemizedPrompts, incomingMesId) {
+    if (!isAdmin()) { return; }
     let thisPromptSet = undefined;
-
     for (let i = 0; i < itemizedPrompts.length; i++) {
         console.log(`looking for ${incomingMesId} vs ${itemizedPrompts[i].mesId}`);
         if (itemizedPrompts[i].mesId === incomingMesId) {
@@ -240,6 +243,7 @@ export function findItemizedPromptSet(itemizedPrompts, incomingMesId) {
 }
 
 export async function promptItemize(itemizedPrompts, requestedMesId) {
+    if (!isAdmin()) { return; }
     console.log('PROMPT ITEMIZE ENTERED');
     var incomingMesId = Number(requestedMesId);
     console.debug(`looking for MesId ${incomingMesId}`);
@@ -262,6 +266,7 @@ export async function promptItemize(itemizedPrompts, requestedMesId) {
 
     /** @type {HTMLElement} */
     const diffPrevPrompt = popup.dlg.querySelector('#diffPrevPrompt');
+    if (!isAdmin()) { return; }
     if (priorPromptArrayItemForRawPromptDisplay) {
         diffPrevPrompt.style.display = '';
         diffPrevPrompt.addEventListener('click', function () {
@@ -287,6 +292,7 @@ export async function promptItemize(itemizedPrompts, requestedMesId) {
         diffPrevPrompt.style.display = 'none';
     }
     popup.dlg.querySelector('#copyPromptToClipboard').addEventListener('pointerup', async function () {
+        if (!isAdmin()) { return; }
         let rawPrompt = itemizedPrompts[PromptArrayItemForRawPromptDisplay].rawPrompt;
         let rawPromptValues = rawPrompt;
 
@@ -299,6 +305,7 @@ export async function promptItemize(itemizedPrompts, requestedMesId) {
     });
 
     popup.dlg.querySelector('#showRawPrompt').addEventListener('click', async function () {
+        if (!isAdmin()) { return; }
         //console.log(itemizedPrompts[PromptArrayItemForRawPromptDisplay].rawPrompt);
         console.log(PromptArrayItemForRawPromptDisplay);
         console.log(itemizedPrompts);
