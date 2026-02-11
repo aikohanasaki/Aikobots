@@ -80,6 +80,31 @@ const API_ZAI_COMMON = 'https://api.z.ai/api/paas/v4';
 const API_ZAI_CODING = 'https://api.z.ai/api/coding/paas/v4';
 const API_SILICONFLOW = 'https://api.siliconflow.com/v1';
 
+// blocked due to site policy, unblocking august 2026
+const BLOCKED_CUSTOM_ENDPOINT_HOSTNAME = 'voidai.app';
+
+/**
+ * @param {string} hostname
+ * @returns {boolean}
+ */
+function isVoidaiAppHostname(hostname) {
+    const normalized = String(hostname || '').toLowerCase();
+    return normalized === BLOCKED_CUSTOM_ENDPOINT_HOSTNAME || normalized.endsWith(`.${BLOCKED_CUSTOM_ENDPOINT_HOSTNAME}`);
+}
+
+/**
+ * @param {string} urlString
+ * @returns {boolean}
+ */
+function isVoidaiAppUrl(urlString) {
+    if (!urlString) return false;
+    try {
+        return isVoidaiAppHostname(new URL(urlString).hostname);
+    } catch {
+        return false;
+    }
+}
+
 /**
  * Gets OpenRouter transforms based on the request.
  * @param {import('express').Request} request Express request
@@ -1391,6 +1416,16 @@ export const router = express.Router();
 router.post('/status', async function (request, statusResponse) {
     if (!request.body) return statusResponse.sendStatus(400);
 
+    if (request.body.reverse_proxy && isVoidaiAppUrl(request.body.reverse_proxy)) {
+        console.warn('Blocked reverse proxy endpoint (voidai.app).');
+        return statusResponse.status(403).send({ error: { message: 'The domain voidai.app is blocked as a custom API endpoint.' } });
+    }
+
+    if (request.body.chat_completion_source === CHAT_COMPLETION_SOURCES.CUSTOM && isVoidaiAppUrl(request.body.custom_url)) {
+        console.warn('Blocked custom endpoint (voidai.app).');
+        return statusResponse.status(403).send({ error: { message: 'The domain voidai.app is blocked as a custom API endpoint.' } });
+    }
+
     let apiUrl = '';
     let apiKey = '';
     let headers = {};
@@ -1745,6 +1780,16 @@ router.post('/bias', async function (request, response) {
 
 router.post('/generate', function (request, response) {
     if (!request.body) return response.status(400).send({ error: true });
+
+    if (request.body.reverse_proxy && isVoidaiAppUrl(request.body.reverse_proxy)) {
+        console.warn('Blocked reverse proxy endpoint (voidai.app).');
+        return response.status(403).send({ error: { message: 'The domain voidai.app is blocked as a custom API endpoint.' } });
+    }
+
+    if (request.body.chat_completion_source === CHAT_COMPLETION_SOURCES.CUSTOM && isVoidaiAppUrl(request.body.custom_url)) {
+        console.warn('Blocked custom endpoint (voidai.app).');
+        return response.status(403).send({ error: { message: 'The domain voidai.app is blocked as a custom API endpoint.' } });
+    }
 
     const postProcessingType = request.body.custom_prompt_post_processing;
     if (Array.isArray(request.body.messages) && postProcessingType) {

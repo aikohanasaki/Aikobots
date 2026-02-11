@@ -12,8 +12,43 @@ import { AIMLAPI_HEADERS, OPENROUTER_HEADERS } from '../constants.js';
 
 export const router = express.Router();
 
+// blocked due to site policy, unblocking august 2026
+const BLOCKED_CUSTOM_ENDPOINT_HOSTNAME = 'voidai.app';
+
+/**
+ * @param {string} hostname
+ * @returns {boolean}
+ */
+function isVoidaiAppHostname(hostname) {
+    const normalized = String(hostname || '').toLowerCase();
+    return normalized === BLOCKED_CUSTOM_ENDPOINT_HOSTNAME || normalized.endsWith(`.${BLOCKED_CUSTOM_ENDPOINT_HOSTNAME}`);
+}
+
+/**
+ * @param {string} urlString
+ * @returns {boolean}
+ */
+function isVoidaiAppUrl(urlString) {
+    if (!urlString) return false;
+    try {
+        return isVoidaiAppHostname(new URL(urlString).hostname);
+    } catch {
+        return false;
+    }
+}
+
 router.post('/caption-image', async (request, response) => {
     try {
+        if (request.body?.reverse_proxy && isVoidaiAppUrl(request.body.reverse_proxy)) {
+            console.warn('Blocked reverse proxy endpoint (voidai.app).');
+            return response.status(403).send('The domain voidai.app is blocked as a custom API endpoint until August 2026.');
+        }
+
+        if (request.body?.server_url && isVoidaiAppUrl(request.body.server_url)) {
+            console.warn('Blocked custom endpoint (voidai.app).');
+            return response.status(403).send('The domain voidai.app is blocked as a custom API endpoint until August 2026.');
+        }
+
         let key = '';
         let headers = {};
         let bodyParams = {};
