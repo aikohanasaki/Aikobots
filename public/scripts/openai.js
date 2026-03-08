@@ -4570,7 +4570,7 @@ function getMaxContextOpenAI(value) {
     }
     else {
         // default to gpt-3 (4095 tokens)
-        return max_4k;
+        return max_128k;
     }
 }
 
@@ -4593,7 +4593,7 @@ function getMistralMaxContext(model, isUnlocked) {
     }
 
     // Return context size if model found, otherwise default to 32k
-    return max_32k;
+    return max_128k;
 }
 
 /**
@@ -4782,7 +4782,7 @@ function getFireworksMaxContext(model, isUnlocked) {
         }
     }
 
-    return max_32k;
+    return max_128k;
 }
 
 /**
@@ -5039,7 +5039,7 @@ async function onModelChange() {
         } else if (value.includes('gemma-3')) {
             $('#openai_max_context').attr('max', max_32k);
         } else {
-            $('#openai_max_context').attr('max', max_32k);
+            $('#openai_max_context').attr('max', max_128k);
         }
         let makersuite_max_temp = (value.includes('vision') || value.includes('ultra') || value.includes('gemma')) ? 1.0 : 2.0;
         oai_settings.temp_openai = Math.min(makersuite_max_temp, oai_settings.temp_openai);
@@ -5056,7 +5056,7 @@ async function onModelChange() {
             if (model?.context_length) {
                 $('#openai_max_context').attr('max', model.context_length);
             } else {
-                $('#openai_max_context').attr('max', max_8k);
+                $('#openai_max_context').attr('max', max_128k);
             }
         }
         oai_settings.openai_max_context = Math.min(Number($('#openai_max_context').attr('max')), oai_settings.openai_max_context);
@@ -5140,7 +5140,7 @@ async function onModelChange() {
             $('#openai_max_context').attr('max', max_16k);
         }
         else {
-            $('#openai_max_context').attr('max', max_4k);
+            $('#openai_max_context').attr('max', max_128k);
         }
         oai_settings.openai_max_context = Math.min(Number($('#openai_max_context').attr('max')), oai_settings.openai_max_context);
         $('#openai_max_context').val(oai_settings.openai_max_context).trigger('input');
@@ -5239,7 +5239,7 @@ async function onModelChange() {
         } else if (oai_settings.deepseek_model == 'deepseek-coder') {
             $('#openai_max_context').attr('max', max_16k);
         } else {
-            $('#openai_max_context').attr('max', max_64k);
+            $('#openai_max_context').attr('max', max_128k);
         }
 
         oai_settings.openai_max_context = Math.min(Number($('#openai_max_context').attr('max')), oai_settings.openai_max_context);
@@ -5281,7 +5281,7 @@ async function onModelChange() {
             maxContext = unlocked_max;
         } else {
             const model = model_list.find(m => m.id === oai_settings.aimlapi_model);
-            maxContext = (model?.info?.contextLength ?? model?.context_length) || max_32k;
+            maxContext = (model?.info?.contextLength ?? model?.context_length) || max_128k;
             console.log('[AI/ML API] Model CTX:', model?.info?.contextLength);
         }
 
