@@ -45,6 +45,7 @@ import {
     embedOpenRouterMedia,
 } from '../../prompt-converters.js';
 import { assembleChatCompletionPrompt } from '../../prompting/chat-completion-assembly.js';
+import { compareChatCompletionMessages } from '../../prompting/chat-completion-compare.js';
 
 import { readSecret, SECRET_KEYS } from '../secrets.js';
 import {
@@ -2200,6 +2201,27 @@ router.post('/assemble', async function (request, response) {
         return response.send(result);
     } catch (error) {
         console.error('Chat completion assembly failed', error);
+        return response.status(500).send({ error: String(error?.message || error) });
+    }
+});
+
+router.post('/assemble/compare', async function (request, response) {
+    try {
+        if (!request.body) {
+            return response.sendStatus(400);
+        }
+
+        const result = await assembleChatCompletionPrompt(request.body);
+        const comparison = compareChatCompletionMessages(request.body.clientChat || [], result.chat, {
+            maxDifferences: request.body.maxDifferences,
+        });
+
+        return response.send({
+            ...result,
+            comparison,
+        });
+    } catch (error) {
+        console.error('Chat completion assembly comparison failed', error);
         return response.status(500).send({ error: String(error?.message || error) });
     }
 });

@@ -1547,6 +1547,75 @@ export async function assembleOpenAIMessagesOnServer({
     messages,
     messageExamples,
 } = {}) {
+    const payload = await buildServerAssemblyPayload({
+        name2,
+        charDescription,
+        charPersonality,
+        persona,
+        scenario,
+        mesExamples,
+        charDepthPrompt,
+        creatorNotes,
+        worldInfoBefore,
+        worldInfoAfter,
+        bias,
+        type,
+        quietPrompt,
+        quietImage,
+        extensionPrompts,
+        cyclePrompt,
+        systemPromptOverride,
+        jailbreakPromptOverride,
+        messages,
+        messageExamples,
+    });
+
+    const response = await fetch('/api/backends/chat-completions/assemble', {
+        method: 'POST',
+        headers: getRequestHeaders(),
+        body: JSON.stringify(payload),
+    });
+
+    if (!response.ok) {
+        const errorText = await response.text();
+        tryParseStreamingError(response, errorText);
+        throw new Error(errorText || `Prompt assembly failed with status ${response.status}`);
+    }
+
+    const data = await response.json();
+    const chat = Array.isArray(data?.chat) ? data.chat : [];
+    const hasMessagesCount = data?.messagesCount !== undefined && data?.messagesCount !== null;
+    openai_messages_count = hasMessagesCount
+        ? Number(data.messagesCount)
+        : chat.filter(x => !x?.tool_calls && ['user', 'assistant', 'tool'].includes(x?.role)).length || 0;
+
+    await eventSource.emit(event_types.CHAT_COMPLETION_PROMPT_READY, { chat, dryRun: false });
+
+    return [chat, data?.counts || false];
+}
+
+async function buildServerAssemblyPayload({
+    name2,
+    charDescription,
+    charPersonality,
+    persona,
+    scenario,
+    mesExamples,
+    charDepthPrompt,
+    creatorNotes,
+    worldInfoBefore,
+    worldInfoAfter,
+    bias,
+    type,
+    quietPrompt,
+    quietImage,
+    extensionPrompts,
+    cyclePrompt,
+    systemPromptOverride,
+    jailbreakPromptOverride,
+    messages,
+    messageExamples,
+} = {}) {
     const resolvedExtensionPrompts = {};
     for (const [key, prompt] of Object.entries(extensionPrompts || {})) {
         if (!prompt) {
@@ -1573,63 +1642,70 @@ export async function assembleOpenAIMessagesOnServer({
         await ToolManager.registerFunctionToolsOpenAI(toolBudgetData);
     }
 
-    const response = await fetch('/api/backends/chat-completions/assemble', {
+    return {
+        model: getChatCompletionModel(),
+        chatCompletionSource: oai_settings.chat_completion_source,
+        userName: name1,
+        charName: name2,
+        groupNames: getGroupNames(),
+        selectedGroup: Boolean(selected_group),
+        activeCharacter: promptManager?.activeCharacter ? { id: promptManager.activeCharacter.id } : null,
+        serviceSettings: structuredClone(promptManager?.serviceSettings || {}),
+        oaiSettings: structuredClone(oai_settings),
+        powerUser: {
+            pin_examples: Boolean(power_user.pin_examples),
+            persona_description: power_user.persona_description || '',
+            persona_description_position: power_user.persona_description_position,
+        },
+        personaDescriptionPosition: {
+            IN_PROMPT: persona_description_positions.IN_PROMPT,
+        },
+        name2,
+        charDescription,
+        charPersonality,
+        scenario,
+        mesExamples,
+        charDepthPrompt,
+        creatorNotes,
+        persona,
+        worldInfoBefore,
+        worldInfoAfter,
+        bias,
+        type,
+        quietPrompt,
+        quietImage,
+        extensionPrompts: resolvedExtensionPrompts,
+        cyclePrompt,
+        systemPromptOverride,
+        jailbreakPromptOverride,
+        messages,
+        messageExamples,
+        canUseTools: ToolManager.isToolCallingSupported(),
+        toolBudgetData,
+    };
+}
+
+export async function compareOpenAIMessagesWithServer(options = {}) {
+    const [clientChat, clientCounts] = await prepareOpenAIMessages(options, true);
+    const payload = await buildServerAssemblyPayload(options);
+    payload.clientChat = clientChat;
+
+    const response = await fetch('/api/backends/chat-completions/assemble/compare', {
         method: 'POST',
         headers: getRequestHeaders(),
-        body: JSON.stringify({
-            model: getChatCompletionModel(),
-            chatCompletionSource: oai_settings.chat_completion_source,
-            userName: name1,
-            charName: name2,
-            groupNames: getGroupNames(),
-            selectedGroup: Boolean(selected_group),
-            activeCharacter: promptManager?.activeCharacter ? { id: promptManager.activeCharacter.id } : null,
-            serviceSettings: structuredClone(promptManager?.serviceSettings || {}),
-            oaiSettings: structuredClone(oai_settings),
-            powerUser: {
-                pin_examples: Boolean(power_user.pin_examples),
-                persona_description: power_user.persona_description || '',
-                persona_description_position: power_user.persona_description_position,
-            },
-            personaDescriptionPosition: {
-                IN_PROMPT: persona_description_positions.IN_PROMPT,
-            },
-            name2,
-            charDescription,
-            charPersonality,
-            scenario,
-            mesExamples,
-            charDepthPrompt,
-            creatorNotes,
-            persona,
-            worldInfoBefore,
-            worldInfoAfter,
-            bias,
-            type,
-            quietPrompt,
-            quietImage,
-            extensionPrompts: resolvedExtensionPrompts,
-            cyclePrompt,
-            systemPromptOverride,
-            jailbreakPromptOverride,
-            messages,
-            messageExamples,
-            canUseTools: ToolManager.isToolCallingSupported(),
-            toolBudgetData,
-        }),
+        body: JSON.stringify(payload),
     });
 
     if (!response.ok) {
-        throw new Error(`Prompt assembly failed with status ${response.status}`);
+        throw new Error(`Prompt assembly comparison failed with status ${response.status}`);
     }
 
     const data = await response.json();
-    const chat = Array.isArray(data?.chat) ? data.chat : [];
-    openai_messages_count = Number(data?.messagesCount) || 0;
-
-    await eventSource.emit(event_types.CHAT_COMPLETION_PROMPT_READY, { chat, dryRun: false });
-
-    return [chat, data?.counts || false];
+    return {
+        ...data,
+        clientChat,
+        clientCounts,
+    };
 }
 
 /**
