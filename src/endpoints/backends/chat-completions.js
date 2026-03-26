@@ -44,6 +44,7 @@ import {
     addAssistantPrefix,
     embedOpenRouterMedia,
 } from '../../prompt-converters.js';
+import { assembleChatCompletionPrompt } from '../../prompting/chat-completion-assembly.js';
 
 import { readSecret, SECRET_KEYS } from '../secrets.js';
 import {
@@ -2186,6 +2187,20 @@ router.post('/generate', function (request, response) {
         } else {
             response.end();
         }
+    }
+});
+
+router.post('/assemble', async function (request, response) {
+    try {
+        if (!request.body) {
+            return response.sendStatus(400);
+        }
+
+        const result = await assembleChatCompletionPrompt(request.body);
+        return response.send(result);
+    } catch (error) {
+        console.error('Chat completion assembly failed', error);
+        return response.status(500).send({ error: String(error?.message || error) });
     }
 });
 

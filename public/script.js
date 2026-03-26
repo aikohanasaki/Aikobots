@@ -101,6 +101,7 @@ import {
     setOpenAIMessages,
     setupChatCompletionPromptManager,
     prepareOpenAIMessages,
+    assembleOpenAIMessagesOnServer,
     sendOpenAIRequest,
     loadOpenAISettings,
     oai_settings,
@@ -4894,11 +4895,18 @@ export async function Generate(type, { automatic_trigger, force_name2, quiet_pro
             break;
         }
         case 'openai': {
-            let [prompt, counts] = await prepareOpenAIMessages({
+            const hasInlineMedia = oaiMessages.some(message => Array.isArray(message?.media) && message.media.length > 0);
+            const requiresLocalAssembly = Boolean(quietImage) || hasInlineMedia;
+            const assembleMessages = (dryRun || requiresLocalAssembly) ? prepareOpenAIMessages : assembleOpenAIMessagesOnServer;
+            let [prompt, counts] = await assembleMessages({
                 name2: name2,
                 charDescription: description,
                 charPersonality: personality,
+                persona: persona,
                 scenario: scenario,
+                mesExamples: mesExamples,
+                charDepthPrompt: charDepthPrompt,
+                creatorNotes: creatorNotes,
                 worldInfoBefore: worldInfoBefore,
                 worldInfoAfter: worldInfoAfter,
                 extensionPrompts: extension_prompts,

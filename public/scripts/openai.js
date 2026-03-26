@@ -1525,6 +1525,113 @@ export async function prepareOpenAIMessages({
     return [chat, promptManager.tokenHandler.counts];
 }
 
+export async function assembleOpenAIMessagesOnServer({
+    name2,
+    charDescription,
+    charPersonality,
+    persona,
+    scenario,
+    mesExamples,
+    charDepthPrompt,
+    creatorNotes,
+    worldInfoBefore,
+    worldInfoAfter,
+    bias,
+    type,
+    quietPrompt,
+    quietImage,
+    extensionPrompts,
+    cyclePrompt,
+    systemPromptOverride,
+    jailbreakPromptOverride,
+    messages,
+    messageExamples,
+} = {}) {
+    const resolvedExtensionPrompts = {};
+    for (const [key, prompt] of Object.entries(extensionPrompts || {})) {
+        if (!prompt) {
+            continue;
+        }
+
+        const hasFilter = typeof prompt.filter === 'function';
+        if (hasFilter && !await prompt.filter()) {
+            continue;
+        }
+
+        resolvedExtensionPrompts[key] = {
+            value: prompt.value,
+            position: prompt.position,
+            depth: prompt.depth,
+            scan: prompt.scan,
+            role: prompt.role,
+        };
+    }
+
+    let toolBudgetData = null;
+    if (ToolManager.canPerformToolCalls(type)) {
+        toolBudgetData = {};
+        await ToolManager.registerFunctionToolsOpenAI(toolBudgetData);
+    }
+
+    const response = await fetch('/api/backends/chat-completions/assemble', {
+        method: 'POST',
+        headers: getRequestHeaders(),
+        body: JSON.stringify({
+            model: getChatCompletionModel(),
+            chatCompletionSource: oai_settings.chat_completion_source,
+            userName: name1,
+            charName: name2,
+            groupNames: getGroupNames(),
+            selectedGroup: Boolean(selected_group),
+            activeCharacter: promptManager?.activeCharacter ? { id: promptManager.activeCharacter.id } : null,
+            serviceSettings: structuredClone(promptManager?.serviceSettings || {}),
+            oaiSettings: structuredClone(oai_settings),
+            powerUser: {
+                pin_examples: Boolean(power_user.pin_examples),
+                persona_description: power_user.persona_description || '',
+                persona_description_position: power_user.persona_description_position,
+            },
+            personaDescriptionPosition: {
+                IN_PROMPT: persona_description_positions.IN_PROMPT,
+            },
+            name2,
+            charDescription,
+            charPersonality,
+            scenario,
+            mesExamples,
+            charDepthPrompt,
+            creatorNotes,
+            persona,
+            worldInfoBefore,
+            worldInfoAfter,
+            bias,
+            type,
+            quietPrompt,
+            quietImage,
+            extensionPrompts: resolvedExtensionPrompts,
+            cyclePrompt,
+            systemPromptOverride,
+            jailbreakPromptOverride,
+            messages,
+            messageExamples,
+            canUseTools: ToolManager.isToolCallingSupported(),
+            toolBudgetData,
+        }),
+    });
+
+    if (!response.ok) {
+        throw new Error(`Prompt assembly failed with status ${response.status}`);
+    }
+
+    const data = await response.json();
+    const chat = Array.isArray(data?.chat) ? data.chat : [];
+    openai_messages_count = Number(data?.messagesCount) || 0;
+
+    await eventSource.emit(event_types.CHAT_COMPLETION_PROMPT_READY, { chat, dryRun: false });
+
+    return [chat, data?.counts || false];
+}
+
 /**
  * Handles errors during streaming requests.
  * @param {Response} response
