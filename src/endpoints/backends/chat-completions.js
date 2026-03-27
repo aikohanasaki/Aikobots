@@ -46,6 +46,8 @@ import {
 } from '../../prompt-converters.js';
 import { assembleChatCompletionPrompt } from '../../prompting/chat-completion-assembly.js';
 import { compareChatCompletionMessages } from '../../prompting/chat-completion-compare.js';
+import { runServerGenerationExtensions } from '../../extensions/server-runtime.js';
+import { prepareEntriesForScan, resolveSortedEntriesPayload } from '../worldinfo.js';
 
 import { readSecret, SECRET_KEYS } from '../secrets.js';
 import {
@@ -1415,6 +1417,60 @@ async function sendAzureOpenAIRequest(request, response) {
 
 export const router = express.Router();
 
+async function prepareServerPromptContext(user, directories, promptContext) {
+    if (!promptContext || typeof promptContext !== 'object') {
+        return { aborted: false, executedExtensions: [] };
+    }
+
+    const runtimeResult = await runServerGenerationExtensions(directories, promptContext);
+    if (runtimeResult.aborted) {
+        throw new Error('Generation aborted by server extension runtime.');
+    }
+
+    const worldInfoRequest = promptContext.worldInfoRequest;
+    if (worldInfoRequest && !Array.isArray(worldInfoRequest.sortedEntries)) {
+        const resolved = await resolveSortedEntriesPayload(user, worldInfoRequest);
+        worldInfoRequest.sortedEntries = prepareEntriesForScan(resolved.entries, {
+            ...(worldInfoRequest.substitutionEnv || {}),
+            macroSnapshot: worldInfoRequest.macroSnapshot || promptContext.macroSnapshot,
+            extensionPrompts: promptContext.extensionPrompts || {},
+        });
+    }
+
+    return runtimeResult;
+}
+
+function getPromptAssemblyErrorStatus(error) {
+    const errorName = String(error?.name || '');
+    if (['TokenBudgetExceededError', 'IdentifierNotFoundError'].includes(errorName)) {
+        return 422;
+    }
+
+    return 500;
+}
+
+function setTimedWorldInfoHeader(response, timedWorldInfo) {
+    if (!timedWorldInfo || typeof timedWorldInfo !== 'object') {
+        return;
+    }
+
+    try {
+        const encoded = Buffer.from(JSON.stringify(timedWorldInfo), 'utf8').toString('base64');
+        response.setHeader('X-ST-Timed-World-Info', encoded);
+    } catch (error) {
+        console.warn('Failed to encode timed world info header', error);
+    }
+}
+
+function toPromptAssemblyErrorBody(error) {
+    return {
+        error: {
+            message: String(error?.message || error),
+            type: String(error?.name || 'Error'),
+        },
+    };
+}
+
 router.post('/status', async function (request, statusResponse) {
     if (!request.body) return statusResponse.sendStatus(400);
 
@@ -1783,6 +1839,8 @@ router.post('/bias', async function (request, response) {
 router.post('/generate', function (request, response) {
     if (!request.body) return response.status(400).send({ error: true });
 
+    return (async () => {
+
     if (request.body.reverse_proxy && isVoidaiAppUrl(request.body.reverse_proxy)) {
         console.warn('Blocked reverse proxy endpoint (voidai.app).');
         return response.status(403).send({ error: { message: 'The domain voidai.app is blocked as a custom API endpoint.' } });
@@ -1794,16 +1852,27 @@ router.post('/generate', function (request, response) {
     }
 
     const postProcessingType = request.body.custom_prompt_post_processing;
-    if (Array.isArray(request.body.messages) && postProcessingType) {
+
+    if (request.body.json_schema?.value) {
+        request.body.json_schema.value = flattenSchema(request.body.json_schema.value, request.body.chat_completion_source);
+    }
+
+    let assembledPromptContext = false;
+    if (!Array.isArray(request.body.messages) && request.body.prompt_context && typeof request.body.prompt_context === 'object') {
+        await prepareServerPromptContext(request.user, request.user.directories, request.body.prompt_context);
+        const assembled = await assembleChatCompletionPrompt(request.body.prompt_context);
+        request.body.messages = assembled.chat;
+        response.setHeader('X-ST-Messages-Count', String(Number(assembled.messagesCount) || 0));
+        setTimedWorldInfoHeader(response, assembled.timedWorldInfo);
+        assembledPromptContext = true;
+    }
+
+    if (Array.isArray(request.body.messages) && postProcessingType && (!request.body.prompt_context || assembledPromptContext)) {
         console.info('Applying custom prompt post-processing of type', postProcessingType);
         request.body.messages = postProcessPrompt(
             request.body.messages,
             postProcessingType,
             getPromptNames(request));
-    }
-
-    if (request.body.json_schema?.value) {
-        request.body.json_schema.value = flattenSchema(request.body.json_schema.value, request.body.chat_completion_source);
     }
 
     switch (request.body.chat_completion_source) {
@@ -2189,6 +2258,14 @@ router.post('/generate', function (request, response) {
             response.end();
         }
     }
+    })().catch((error) => {
+        console.error('Chat completion generation failed', error);
+        if (!response.headersSent) {
+            response.status(getPromptAssemblyErrorStatus(error)).send(toPromptAssemblyErrorBody(error));
+        } else if (!response.writableEnded) {
+            response.end();
+        }
+    });
 });
 
 router.post('/assemble', async function (request, response) {
@@ -2197,11 +2274,13 @@ router.post('/assemble', async function (request, response) {
             return response.sendStatus(400);
         }
 
+        await prepareServerPromptContext(request.user, request.user.directories, request.body);
         const result = await assembleChatCompletionPrompt(request.body);
+        setTimedWorldInfoHeader(response, result.timedWorldInfo);
         return response.send(result);
     } catch (error) {
         console.error('Chat completion assembly failed', error);
-        return response.status(500).send({ error: String(error?.message || error) });
+        return response.status(getPromptAssemblyErrorStatus(error)).send(toPromptAssemblyErrorBody(error));
     }
 });
 
@@ -2211,7 +2290,9 @@ router.post('/assemble/compare', async function (request, response) {
             return response.sendStatus(400);
         }
 
+        await prepareServerPromptContext(request.user, request.user.directories, request.body);
         const result = await assembleChatCompletionPrompt(request.body);
+        setTimedWorldInfoHeader(response, result.timedWorldInfo);
         const comparison = compareChatCompletionMessages(request.body.clientChat || [], result.chat, {
             maxDifferences: request.body.maxDifferences,
         });
@@ -2222,7 +2303,7 @@ router.post('/assemble/compare', async function (request, response) {
         });
     } catch (error) {
         console.error('Chat completion assembly comparison failed', error);
-        return response.status(500).send({ error: String(error?.message || error) });
+        return response.status(getPromptAssemblyErrorStatus(error)).send(toPromptAssemblyErrorBody(error));
     }
 });
 

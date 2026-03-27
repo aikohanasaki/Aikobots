@@ -1,12 +1,12 @@
 import { Fuse } from '../lib.js';
 
-import { saveSettings, substituteParams, getRequestHeaders, chat_metadata, this_chid, characters, saveCharacterDebounced, menu_type, eventSource, event_types, getExtensionPromptByName, saveMetadata, getCurrentChatId, extension_prompt_roles, create_save, createOrEditCharacter, name1 } from '../script.js';
+import { saveSettings, substituteParams, getRequestHeaders, chat_metadata, this_chid, characters, saveCharacterDebounced, menu_type, eventSource, event_types, getExtensionPromptByName, getExtensionPromptSnapshot, main_api, saveMetadata, getCurrentChatId, extension_prompt_roles, create_save, createOrEditCharacter, name1 } from '../script.js';
 import { download, debounce, initScrollHeight, resetScrollHeight, parseJsonFile, extractDataFromPng, getFileBuffer, getCharaFilename, getSortableDelay, escapeRegex, PAGINATION_TEMPLATE, navigation_option, waitUntilCondition, isTrueBoolean, setValueByPath, flashHighlight, select2ModifyOptions, getSelect2OptionId, dynamicSelect2DataViaAjax, highlightRegex, select2ChoiceClickSubscribe, isFalseBoolean, getSanitizedFilename, checkOverwriteExistingData, getStringHash, parseStringArray, cancelDebounce, findChar, onlyUnique, equalsIgnoreCaseAndAccents, uuidv4, normalizeArray, getUniqueName } from './utils.js';
 import { extension_settings, getContext } from './extensions.js';
 import { NOTE_MODULE_NAME, metadata_keys, shouldWIAddPrompt } from './authors-note.js';
 import { isMobile } from './RossAscends-mods.js';
 import { FILTER_TYPES, FilterHelper } from './filters.js';
-import { getTokenCountAsync } from './tokenizers.js';
+import { getTokenCountAsync, getTokenizerModel } from './tokenizers.js';
 import { power_user } from './power-user.js';
 import { getTagKeyForEntity } from './tags.js';
 import { debounce_timeout, GENERATION_TYPE_TRIGGERS } from './constants.js';
@@ -23,7 +23,6 @@ import { renderTemplateAsync } from './templates.js';
 import { t } from './i18n.js';
 import { accountStorage } from './util/AccountStorage.js';
 import { getOrCreatePersonaDescriptor, setPersonaDescription, user_avatar } from './personas.js';
-import { isAdmin, getCurrentUserHandle } from './user.js';
 
 export const world_info_insertion_strategy = {
     evenly: 0,
@@ -67,6 +66,8 @@ export let world_info = {};
 export let selected_world_info = [];
 /** @type {string[]} */
 export let world_names;
+let world_info_items = [];
+const worldInfoItemMap = new Map();
 export let world_info_depth = 2;
 export let world_info_min_activations = 0; // if > 0, will continue seeking chat until minimum world infos are activated
 export let world_info_min_activations_depth_max = 0; // used when (world_info_min_activations > 0)
@@ -99,6 +100,158 @@ export const DEFAULT_WEIGHT = 100;
 export const MAX_SCAN_DEPTH = 1000;
 const MAX_COMMENT_LENGTH = 100;
 const KNOWN_DECORATORS = ['@@activate', '@@dont_activate'];
+
+function normalizeWorldInfoItems(data = {}) {
+    if (Array.isArray(data.world_info_items) && data.world_info_items.length > 0) {
+        return data.world_info_items
+            .filter(item => item && typeof item.name === 'string' && item.name)
+            .map(item => ({
+                name: item.name,
+                storage: item.storage === 'secure' ? 'secure' : 'user',
+                ownerHandle: String(item.ownerHandle || ''),
+                canEdit: Boolean(item.canEdit),
+                canDelete: Boolean(item.canDelete),
+                canPromote: Boolean(item.canPromote),
+                canDemote: Boolean(item.canDemote),
+            }));
+    }
+
+    return Array.isArray(data.world_names)
+        ? data.world_names.map(name => ({
+            name,
+            storage: 'user',
+            ownerHandle: '',
+            canEdit: true,
+            canDelete: true,
+            canPromote: true,
+            canDemote: false,
+        }))
+        : [];
+}
+
+function setWorldInfoItems(items = []) {
+    world_info_items = items;
+    worldInfoItemMap.clear();
+
+    for (const item of items) {
+        worldInfoItemMap.set(item.name, item);
+    }
+
+    world_names = items.map(item => item.name);
+}
+
+function getWorldInfoItem(name) {
+    return worldInfoItemMap.get(name) || null;
+}
+
+function hasBoundWorldInfo(name) {
+    return Boolean(String(name || '').trim());
+}
+
+function getHiddenSelectedWorldInfo() {
+    return selected_world_info.filter(name => hasBoundWorldInfo(name) && !world_names.includes(name));
+}
+
+function updateWorldInfoStorageButton(name = '') {
+    const button = $('#world_secure_toggle');
+    const icon = button.find('i');
+    const item = getWorldInfoItem(name);
+
+    if (!item) {
+        button.addClass('disabled');
+        button.attr('title', 'Move lorebook between user and secure storage');
+        icon.removeClass('fa-lock fa-lock-open');
+        icon.addClass('fa-shield-halved');
+        return;
+    }
+
+    const canToggle = item.canPromote || item.canDemote;
+    button.toggleClass('disabled', !canToggle);
+
+    if (item.storage === 'secure') {
+        button.attr('title', 'Return lorebook to user storage');
+        icon.removeClass('fa-lock-open fa-shield-halved');
+        icon.addClass('fa-lock');
+    } else {
+        button.attr('title', 'Promote lorebook to secure storage');
+        icon.removeClass('fa-lock fa-shield-halved');
+        icon.addClass('fa-lock-open');
+    }
+}
+
+function refreshWorldInfoSelectors(editorSelected = '') {
+    $('#world_info').find('option[value!=""]').remove();
+    $('#world_editor_select').find('option[value!=""]').remove();
+
+    world_names.forEach((item, i) => {
+        const globalListOption = new Option(item, i.toString());
+        globalListOption.selected = selected_world_info.includes(item);
+        const editorListOption = new Option(item, i.toString());
+        editorListOption.selected = editorSelected === item;
+        $('#world_info').append(globalListOption);
+        $('#world_editor_select').append(editorListOption);
+    });
+
+    updateWorldInfoStorageButton(editorSelected);
+}
+
+async function requestWorldInfoList() {
+    const response = await fetch('/api/worldinfo/list', {
+        method: 'POST',
+        headers: getRequestHeaders(),
+        body: JSON.stringify({}),
+    });
+
+    if (!response.ok) {
+        return null;
+    }
+
+    return await response.json();
+}
+
+async function moveWorldInfoStorage(name) {
+    const item = getWorldInfoItem(name);
+    if (!item) {
+        return false;
+    }
+
+    const movingToSecure = item.storage !== 'secure';
+    const confirmed = await Popup.show.confirm(
+        movingToSecure ? `Promote "${name}" to secure storage?` : `Return "${name}" to user storage?`,
+        movingToSecure
+            ? 'This keeps the lorebook name the same but moves the file out of your user directory.'
+            : 'This keeps the lorebook name the same but moves the file back into your user directory.',
+    );
+
+    if (!confirmed) {
+        return false;
+    }
+
+    const response = await fetch(movingToSecure ? '/api/worldinfo/promote' : '/api/worldinfo/demote', {
+        method: 'POST',
+        headers: getRequestHeaders(),
+        body: JSON.stringify({ name }),
+    });
+
+    if (!response.ok) {
+        const error = await response.json().catch(() => null);
+        toastr.error(error?.error?.message || t`Could not move lorebook storage.`, t`World Info`);
+        return false;
+    }
+
+    worldInfoCache.delete(name);
+    const updatedData = await loadWorldInfo(name);
+    await updateWorldInfoList();
+
+    const selectedIndex = world_names.indexOf(name);
+    if (selectedIndex !== -1) {
+        $('#world_editor_select').val(String(selectedIndex)).trigger('change');
+    } else if (updatedData) {
+        await displayWorldEntries(name, updatedData);
+    }
+
+    return true;
+}
 
 // Typedef area
 /**
@@ -853,15 +1006,33 @@ export const worldInfoCache = new StructuredCloneMap({ cloneOnGet: true, cloneOn
  */
 export async function getWorldInfoPrompt(chat, maxContext, isDryRun, globalScanData) {
     let worldInfoString = '', worldInfoBefore = '', worldInfoAfter = '';
+    let activatedWorldInfo;
+    try {
+        const scanResult = await scanWorldInfoOnServer(chat, maxContext, isDryRun, globalScanData);
+        if (!isDryRun && scanResult?.timedWorldInfo && typeof scanResult.timedWorldInfo === 'object') {
+            chat_metadata.timedWorldInfo = scanResult.timedWorldInfo;
+        }
+        if (!isDryRun) {
+            applyWorldInfoAuthorsNote(scanResult?.ANBeforeEntries ?? [], scanResult?.ANAfterEntries ?? []);
+        }
+        activatedWorldInfo = scanResult;
+    } catch (error) {
+        console.warn('[WI] Falling back to client-side world info scan.', error);
+        activatedWorldInfo = await checkWorldInfo(chat, maxContext, isDryRun, globalScanData);
+    }
 
-    const activatedWorldInfo = await checkWorldInfo(chat, maxContext, isDryRun, globalScanData);
     worldInfoBefore = activatedWorldInfo.worldInfoBefore;
     worldInfoAfter = activatedWorldInfo.worldInfoAfter;
     worldInfoString = worldInfoBefore + worldInfoAfter;
 
-    if (!isDryRun && activatedWorldInfo.allActivatedEntries && activatedWorldInfo.allActivatedEntries.size > 0) {
-        const arg = Array.from(activatedWorldInfo.allActivatedEntries.values());
+    if (!isDryRun && activatedWorldInfo.allActivatedEntries) {
+        const arg = Array.isArray(activatedWorldInfo.allActivatedEntries)
+            ? activatedWorldInfo.allActivatedEntries
+            : Array.from(activatedWorldInfo.allActivatedEntries.values());
+
+        if (arg.length > 0) {
         await eventSource.emit(event_types.WORLD_INFO_ACTIVATED, arg);
+        }
     }
 
     return {
@@ -874,6 +1045,192 @@ export async function getWorldInfoPrompt(chat, maxContext, isDryRun, globalScanD
         anAfter: activatedWorldInfo.ANAfterEntries ?? [],
         outletEntries: activatedWorldInfo.outletEntries ?? {},
     };
+}
+
+function rebuildWorldInfoScanResult(entries) {
+    const allActivatedEntries = Array.isArray(entries) ? entries : [];
+    const WIDepthEntries = [];
+    const outletEntries = {};
+    const WIBeforeEntries = [];
+    const WIAfterEntries = [];
+    const EMEntries = [];
+    const ANBeforeEntries = [];
+    const ANAfterEntries = [];
+    const sortFn = (a, b) => (b.order ?? 0) - (a.order ?? 0);
+
+    [...allActivatedEntries].sort(sortFn).forEach((entry) => {
+        const content = entry?.content;
+        if (!content) {
+            return;
+        }
+
+        switch (entry.position) {
+            case world_info_position.before:
+                WIBeforeEntries.unshift(content);
+                break;
+            case world_info_position.after:
+                WIAfterEntries.unshift(content);
+                break;
+            case world_info_position.EMTop:
+                EMEntries.unshift({ position: wi_anchor_position.before, content });
+                break;
+            case world_info_position.EMBottom:
+                EMEntries.unshift({ position: wi_anchor_position.after, content });
+                break;
+            case world_info_position.ANTop:
+                ANBeforeEntries.unshift(content);
+                break;
+            case world_info_position.ANBottom:
+                ANAfterEntries.unshift(content);
+                break;
+            case world_info_position.atDepth: {
+                const depth = entry.depth ?? DEFAULT_DEPTH;
+                const role = entry.role ?? extension_prompt_roles.SYSTEM;
+                const existingDepthIndex = WIDepthEntries.findIndex(item => item.depth === depth && item.role === role);
+                if (existingDepthIndex !== -1) {
+                    WIDepthEntries[existingDepthIndex].entries.unshift(content);
+                } else {
+                    WIDepthEntries.push({ depth, entries: [content], role });
+                }
+                break;
+            }
+            case world_info_position.outlet:
+                if (entry.outletName) {
+                    outletEntries[entry.outletName] = outletEntries[entry.outletName] ?? [];
+                    outletEntries[entry.outletName].push(content);
+                }
+                break;
+            default:
+                break;
+        }
+    });
+
+    return {
+        worldInfoBefore: WIBeforeEntries.join('\n'),
+        worldInfoAfter: WIAfterEntries.join('\n'),
+        EMEntries,
+        WIDepthEntries,
+        ANBeforeEntries,
+        ANAfterEntries,
+        outletEntries,
+        allActivatedEntries,
+    };
+}
+
+async function emitServerWorldInfoScanDone(scanResult, sortedEntries) {
+    const activatedEntries = Array.isArray(scanResult?.allActivatedEntries) ? structuredClone(scanResult.allActivatedEntries) : [];
+    const args = {
+        state: {
+            current: null,
+            next: null,
+            loopCount: null,
+            server: true,
+        },
+        new: {
+            all: [],
+            sucessful: [],
+        },
+        activated: {
+            entries: activatedEntries,
+            text: activatedEntries.map(entry => entry?.content).filter(Boolean).join('\n'),
+        },
+        sortedEntries: structuredClone(sortedEntries),
+        recursionDelay: {
+            availableLevels: [],
+            currentLevel: null,
+        },
+        budget: {
+            current: null,
+            overflowed: false,
+        },
+        timedEffects: null,
+    };
+
+    await eventSource.emit(event_types.WORLDINFO_SCAN_DONE, args);
+
+    if (!Array.isArray(args.activated.entries)) {
+        return scanResult;
+    }
+
+    return {
+        ...scanResult,
+        ...rebuildWorldInfoScanResult(args.activated.entries),
+    };
+}
+
+async function scanWorldInfoOnServer(chat, maxContext, isDryRun, globalScanData) {
+    const context = getContext();
+    const extensionPrompts = await getExtensionPromptSnapshot(context.extensionPrompts);
+
+    const tagKey = getTagKeyForEntity(this_chid);
+    const currentCharacterTags = Array.isArray(context.tagMap?.[tagKey]) ? context.tagMap[tagKey] : [];
+    const currentCharacterFilename = getCharaFilename();
+    const character = characters[this_chid];
+    const fileName = getCharaFilename(this_chid);
+    const extraCharLore = world_info.charLore?.find((entry) => entry.name === fileName);
+
+    const response = await fetch('/api/worldinfo/scan', {
+        method: 'POST',
+        headers: getRequestHeaders(),
+        body: JSON.stringify({
+            chat,
+            maxContext,
+            isDryRun,
+            globalScanData,
+            selectedWorldInfo: selected_world_info,
+            chatWorld: chat_metadata[METADATA_KEY] || '',
+            personaWorld: power_user.persona_description_lorebook || '',
+            characterWorld: character?.data?.extensions?.world || '',
+            characterExtraBooks: extraCharLore?.extraBooks || [],
+            worldInfoCharacterStrategy: world_info_character_strategy,
+            substitutionEnv: {
+                user: name1,
+                char: characters[this_chid]?.name || '',
+                description: globalScanData.characterDescription || '',
+                personality: globalScanData.characterPersonality || '',
+                scenario: globalScanData.scenario || '',
+                persona: globalScanData.personaDescription || '',
+                charDepthPrompt: globalScanData.characterDepthPrompt || '',
+                creatorNotes: globalScanData.creatorNotes || '',
+            },
+            extensionPrompts,
+            currentCharacterFilename,
+            currentCharacterTags,
+            timedWorldInfo: structuredClone(chat_metadata.timedWorldInfo || {}),
+            settings: {
+                world_info_depth,
+                world_info_min_activations,
+                world_info_min_activations_depth_max,
+                world_info_budget,
+                world_info_recursive,
+                world_info_case_sensitive,
+                world_info_match_whole_words,
+                world_info_budget_cap,
+                world_info_use_group_scoring,
+                world_info_max_recursion_steps,
+            },
+            worldInfoPosition: world_info_position,
+            wiAnchorPosition: wi_anchor_position,
+            tokenizerModel: main_api === 'openai' ? getTokenizerModel() : '',
+        }),
+        cache: 'no-cache',
+    });
+
+    if (!response.ok) {
+        throw new Error(`World info scan failed with status ${response.status}`);
+    }
+
+    const scanResult = await response.json();
+    return emitServerWorldInfoScanDone(scanResult, []);
+}
+
+function applyWorldInfoAuthorsNote(anTopEntries, anBottomEntries) {
+    if (shouldWIAddPrompt) {
+        const context = getContext();
+        const originalAN = context.extensionPrompts[NOTE_MODULE_NAME].value;
+        const ANWithWI = `${anTopEntries.join('\n')}\n${originalAN}\n${anBottomEntries.join('\n')}`.replace(/(^\n)|(\n$)/g, '');
+        context.setExtensionPrompt(NOTE_MODULE_NAME, ANWithWI, chat_metadata[metadata_keys.position], chat_metadata[metadata_keys.depth], extension_settings.note.allowWIScan, chat_metadata[metadata_keys.role]);
+    }
 }
 
 export function setWorldInfoSettings(settings, data) {
@@ -954,39 +1311,19 @@ export function setWorldInfoSettings(settings, data) {
     $('#world_info_max_recursion_steps').val(world_info_max_recursion_steps);
     $('#world_info_max_recursion_steps_counter').val(world_info_max_recursion_steps);
 
-    world_names = data.world_names?.length ? data.world_names : [];
-
-    // Visibility filter: restrict which world names are visible to non-admins
-    if (!isAdmin()) {
-        // Hide any names containing "9Z"
-        const filteredNames = world_names.filter(name => !name.includes('9Z'));
-
-        // Only show Z-(handle)-prefixed books to their owner; allow all other names
-        const currentUserHandle = getCurrentUserHandle();
-        world_names = filteredNames.filter(name => {
-            const userHandleMatch = name.match(/^Z-([^-]+)/);
-            return userHandleMatch ? userHandleMatch[1] === currentUserHandle : true;
-        });
-    }
+    setWorldInfoItems(normalizeWorldInfoItems(data));
 
     // Add to existing selected WI if it exists
-    selected_world_info = selected_world_info.concat(settings.world_info?.globalSelect?.filter((e) => world_names.includes(e)) ?? []);
+    selected_world_info = normalizeArray(selected_world_info.concat(settings.world_info?.globalSelect?.filter(hasBoundWorldInfo) ?? []));
 
-    if (world_names.length > 0) {
-        $('#world_info').empty();
-    }
-
-    world_names.forEach((item, i) => {
-        $('#world_info').append(`<option value='${i}'${selected_world_info.includes(item) ? ' selected' : ''}>${item}</option>`);
-        $('#world_editor_select').append(`<option value='${i}'>${item}</option>`);
-    });
+    refreshWorldInfoSelectors();
 
     $('#world_info_sort_order').val(accountStorage.getItem(SORT_ORDER_KEY) || '0');
     $('#world_info').trigger('change');
     $('#world_editor_select').trigger('change');
 
     eventSource.on(event_types.CHAT_CHANGED, async () => {
-        const hasWorldInfo = !!chat_metadata[METADATA_KEY] && world_names.includes(chat_metadata[METADATA_KEY]);
+        const hasWorldInfo = hasBoundWorldInfo(chat_metadata[METADATA_KEY]);
         $('.chat_lorebook_button').toggleClass('world_set', hasWorldInfo);
         // Pre-cache the world info data for the chat for quicker first prompt generation
         await getSortedEntries();
@@ -1135,7 +1472,7 @@ function registerWorldInfoSlashCommands() {
             return '';
         }
 
-        if (chat_metadata[METADATA_KEY] && world_names.includes(chat_metadata[METADATA_KEY])) {
+        if (hasBoundWorldInfo(chat_metadata[METADATA_KEY])) {
             return chat_metadata[METADATA_KEY];
         }
 
@@ -2013,38 +2350,11 @@ export async function loadWorldInfo(name) {
 }
 
 export async function updateWorldInfoList() {
-    const result = await fetch('/api/settings/get', {
-        method: 'POST',
-        headers: getRequestHeaders(),
-        body: JSON.stringify({}),
-    });
-
-    if (result.ok) {
-        const data = await result.json();
+    const data = await requestWorldInfoList();
+    if (data) {
         const editorSelected = String($('#world_editor_select').find(':selected').text());
-        world_names = data.world_names?.length ? data.world_names : [];
-
-        // Visibility filter: restrict which world names are visible to non-admins
-        if (!isAdmin()) {
-            const filteredNames = world_names.filter(name => !name.includes('9Z'));
-            const currentUserHandle = getCurrentUserHandle();
-            world_names = filteredNames.filter(name => {
-                const userHandleMatch = name.match(/^Z-([^-]+)/);
-                return userHandleMatch ? userHandleMatch[1] === currentUserHandle : true;
-            });
-        }
-
-        $('#world_info').find('option[value!=""]').remove();
-        $('#world_editor_select').find('option[value!=""]').remove();
-
-        world_names.forEach((item, i) => {
-            const globalListOption = new Option(item, i.toString());
-            globalListOption.selected = selected_world_info.includes(item);
-            const editorListOption = new Option(item, i.toString());
-            editorListOption.selected = editorSelected === item;
-            $('#world_info').append(globalListOption);
-            $('#world_editor_select').append(editorListOption);
-        });
+        setWorldInfoItems(normalizeWorldInfoItems(data));
+        refreshWorldInfoSelectors(editorSelected);
     }
 }
 
@@ -2286,6 +2596,8 @@ async function displayWorldEntries(name, data, navigation = navigation_option.no
         $('#world_popup_export').off('click').on('click', nullWorldInfo);
         $('#world_popup_delete').off('click').on('click', nullWorldInfo);
         $('#world_duplicate').off('click').on('click', nullWorldInfo);
+        $('#world_secure_toggle').off('click').on('click', nullWorldInfo);
+        updateWorldInfoStorageButton('');
         worldEntriesList.hide();
         $('#world_info_pagination').html('');
         return;
@@ -2439,8 +2751,23 @@ async function displayWorldEntries(name, data, navigation = navigation_option.no
     });
 
     $('#world_popup_name_button').off('click').on('click', async () => {
+        const lorebook = getWorldInfoItem(name);
+        if (lorebook?.storage === 'secure') {
+            toastr.info(t`Secure lorebooks cannot be renamed here.`, t`World Info`);
+            return;
+        }
         await renameWorldInfo(name, data);
     });
+
+    $('#world_secure_toggle').off('click').on('click', async () => {
+        const lorebook = getWorldInfoItem(name);
+        if (!lorebook || (!lorebook.canPromote && !lorebook.canDemote)) {
+            return;
+        }
+
+        await moveWorldInfoStorage(name);
+    });
+    updateWorldInfoStorageButton(name);
 
     $('#world_backfill_memos').off('click').on('click', async () => {
         let counter = 0;
@@ -4013,11 +4340,19 @@ async function _save(name, data) {
     // Prevent double saving if both immediate and debounced save are called
     cancelDebounce(saveWorldDebounced);
 
-    await fetch('/api/worldinfo/edit', {
+    const response = await fetch('/api/worldinfo/edit', {
         method: 'POST',
         headers: getRequestHeaders(),
         body: JSON.stringify({ name: name, data: data }),
     });
+
+    if (!response.ok) {
+        const error = await response.json().catch(() => null);
+        const message = error?.error?.message || t`Could not save lorebook.`;
+        toastr.error(message, t`World Info`);
+        throw new Error(message);
+    }
+
     await eventSource.emit(event_types.WORLDINFO_UPDATED, name, data);
 }
 
@@ -4044,13 +4379,24 @@ export async function saveWorldInfo(name, data, immediately = false) {
     worldInfoCache.set(name, data);
 
     if (immediately) {
-        return await _save(name, data);
+        try {
+            return await _save(name, data);
+        } catch (error) {
+            worldInfoCache.delete(name);
+            throw error;
+        }
     }
 
     saveWorldDebounced(name, data);
 }
 
 async function renameWorldInfo(name, data) {
+    const lorebook = getWorldInfoItem(name);
+    if (lorebook?.storage === 'secure') {
+        toastr.info(t`Secure lorebooks cannot be renamed here.`, t`World Info`);
+        return;
+    }
+
     const oldName = name;
     const newName = await Popup.show.input('Rename World Info', 'Enter a new name:', oldName);
 
@@ -4325,7 +4671,7 @@ async function getPersonaLore() {
     return entries;
 }
 
-export async function getSortedEntries() {
+async function getSortedEntriesLocally() {
     try {
         const [
             globalLore,
@@ -4379,6 +4725,49 @@ export async function getSortedEntries() {
     catch (e) {
         console.error(e);
         return [];
+    }
+}
+
+async function getSortedEntriesOnServer() {
+    const character = characters[this_chid];
+    const fileName = getCharaFilename(this_chid);
+    const extraCharLore = world_info.charLore?.find((entry) => entry.name === fileName);
+    const response = await fetch('/api/worldinfo/sorted-entries', {
+        method: 'POST',
+        headers: getRequestHeaders(),
+        body: JSON.stringify({
+            selectedWorldInfo: selected_world_info,
+            chatWorld: chat_metadata[METADATA_KEY] || '',
+            personaWorld: power_user.persona_description_lorebook || '',
+            characterWorld: character?.data?.extensions?.world || '',
+            characterExtraBooks: extraCharLore?.extraBooks || [],
+            worldInfoCharacterStrategy: world_info_character_strategy,
+        }),
+        cache: 'no-cache',
+    });
+
+    if (!response.ok) {
+        throw new Error(`Failed to resolve world info entries on server: ${response.status}`);
+    }
+
+    const data = await response.json();
+    const globalLore = Array.isArray(data?.globalLore) ? data.globalLore : [];
+    const characterLore = Array.isArray(data?.characterLore) ? data.characterLore : [];
+    const chatLore = Array.isArray(data?.chatLore) ? data.chatLore : [];
+    const personaLore = Array.isArray(data?.personaLore) ? data.personaLore : [];
+    const entries = Array.isArray(data?.entries) ? data.entries : [];
+
+    await eventSource.emit(event_types.WORLDINFO_ENTRIES_LOADED, { globalLore, characterLore, chatLore, personaLore });
+
+    return structuredClone(entries);
+}
+
+export async function getSortedEntries() {
+    try {
+        return await getSortedEntriesOnServer();
+    } catch (error) {
+        console.warn('[WI] Falling back to client-side world info entry resolution.', error);
+        return getSortedEntriesLocally();
     }
 }
 
@@ -5418,7 +5807,7 @@ export function setWorldInfoButtonClass(chid, forceValue = undefined) {
     }
 
     const world = characters[chid]?.data?.extensions?.world;
-    const worldSet = Boolean(world && world_names.includes(world));
+    const worldSet = hasBoundWorldInfo(world);
     $('#set_character_world, #world_button').toggleClass('world_set', worldSet);
 }
 
@@ -5435,7 +5824,7 @@ export function checkEmbeddedWorld(chid) {
         // Only show the alert once per character
         const checkKey = `AlertWI_${characters[chid].avatar}`;
         const worldName = characters[chid]?.data?.extensions?.world;
-        if (!accountStorage.getItem(checkKey) && (!worldName || !world_names.includes(worldName))) {
+        if (!accountStorage.getItem(checkKey) && !hasBoundWorldInfo(worldName)) {
             accountStorage.setItem(checkKey, 'true');
 
             if (power_user.world_import_dialog) {
@@ -5570,7 +5959,7 @@ export function onWorldInfoChange(args, text) {
                 }
             });
         }
-        selected_world_info = tempWorldInfo;
+        selected_world_info = normalizeArray([...tempWorldInfo, ...getHiddenSelectedWorldInfo()]);
     }
 
     saveSettingsDebounced();
@@ -5951,9 +6340,11 @@ export function initWorldInfo() {
         const selectedIndex = String($('#world_editor_select').find(':selected').val());
 
         if (selectedIndex === '') {
+            updateWorldInfoStorageButton('');
             await hideWorldEditor();
         } else {
             const worldName = world_names[selectedIndex];
+            updateWorldInfoStorageButton(worldName);
             showWorldEditor(worldName);
         }
     });

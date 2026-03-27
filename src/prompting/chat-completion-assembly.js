@@ -5,6 +5,8 @@ import {
     getTokenizerModel,
     getWebTokenizer,
 } from '../endpoints/tokenizers.js';
+import { createMacroState, evaluatePromptMacros, refreshMacroOutletValues } from './macro-evaluator.js';
+import { scanWorldInfo } from './world-info-scan.js';
 
 const INJECTION_POSITION = {
     RELATIVE: 0,
@@ -100,6 +102,8 @@ class TokenHandler {
 }
 
 class Message {
+    static tokensPerImage = 85;
+
     constructor(role, content, identifier, tokenHandler) {
         this.identifier = identifier;
         this.role = role || 'system';
@@ -120,9 +124,30 @@ class Message {
         return Message.createAsync(prompt.role, prompt.content, prompt.identifier, tokenHandler);
     }
 
+    ensureContentIsArray() {
+        const textContent = this.content;
+        if (!Array.isArray(this.content)) {
+            this.content = [];
+            if (typeof textContent === 'string' && textContent.length > 0) {
+                this.content.push({ type: 'text', text: textContent });
+            }
+        }
+        return this.content;
+    }
+
+    async refreshTokens() {
+        const payload = {
+            role: this.role,
+            ...(this.content !== undefined ? { content: this.content } : {}),
+            ...(this.name ? { name: this.name } : {}),
+            ...(this.tool_calls ? { tool_calls: this.tool_calls } : {}),
+        };
+        this.tokens = await this.tokenHandler.countAsync(payload);
+    }
+
     async setName(name) {
         this.name = name;
-        this.tokens = await this.tokenHandler.countAsync({ role: this.role, content: this.content, name: this.name });
+        await this.refreshTokens();
     }
 
     async setToolCalls(invocations) {
@@ -134,7 +159,46 @@ class Message {
                 name: invocation.name,
             },
         }));
-        this.tokens = await this.tokenHandler.countAsync({ role: this.role, tool_calls: JSON.stringify(this.tool_calls) });
+        await this.refreshTokens();
+    }
+
+    async addImage(image, quality = 'auto') {
+        this.content = this.ensureContentIsArray();
+        try {
+            image = isDataURL(image) ? image : await fetchMediaAsDataUrl(image, 'image/png');
+        } catch (error) {
+            console.error('Image adding skipped', error);
+            return;
+        }
+
+        this.content.push({ type: 'image_url', image_url: { url: image, detail: quality } });
+        this.tokens += getImageTokenCost(image, quality);
+    }
+
+    async addVideo(video) {
+        this.content = this.ensureContentIsArray();
+        try {
+            video = isDataURL(video) ? video : await fetchMediaAsDataUrl(video, 'video/mp4');
+        } catch (error) {
+            console.error('Video adding skipped', error);
+            return;
+        }
+
+        this.content.push({ type: 'video_url', video_url: { url: video } });
+        this.tokens += 263 * 40;
+    }
+
+    async addAudio(audio) {
+        this.content = this.ensureContentIsArray();
+        try {
+            audio = isDataURL(audio) ? audio : await fetchMediaAsDataUrl(audio, 'audio/wav');
+        } catch (error) {
+            console.error('Audio adding skipped', error);
+            return;
+        }
+
+        this.content.push({ type: 'audio_url', audio_url: { url: audio } });
+        this.tokens += 32 * 300;
     }
 
     getTokens() {
@@ -169,6 +233,20 @@ class MessageCollection {
             }
             return acc;
         }, []);
+    }
+}
+
+class IdentifierNotFoundError extends Error {
+    constructor(identifier) {
+        super(`Identifier not found: ${identifier}`);
+        this.name = 'IdentifierNotFoundError';
+    }
+}
+
+class TokenBudgetExceededError extends Error {
+    constructor(identifier) {
+        super(`Token budget exceeded. Message: ${identifier}`);
+        this.name = 'TokenBudgetExceededError';
     }
 }
 
@@ -247,12 +325,16 @@ class ChatCompletion {
     }
 
     findMessageIndex(identifier) {
-        return this.messages.collection.findIndex(item => item?.identifier === identifier);
+        const index = this.messages.collection.findIndex(item => item?.identifier === identifier);
+        if (index < 0) {
+            throw new IdentifierNotFoundError(identifier);
+        }
+        return index;
     }
 
     checkTokenBudget(message, identifier) {
         if (!this.canAfford(message)) {
-            throw new Error(`Token budget exceeded. Message: ${identifier}`);
+            throw new TokenBudgetExceededError(identifier);
         }
     }
 
@@ -303,6 +385,26 @@ class ChatCompletion {
 
         return chat;
     }
+}
+
+function serializeMessageNode(node) {
+    if (node instanceof MessageCollection) {
+        return {
+            type: 'collection',
+            identifier: node.identifier,
+            collection: node.getCollection().map(serializeMessageNode),
+        };
+    }
+
+    return {
+        type: 'message',
+        identifier: node.identifier,
+        role: node.role,
+        content: node.content,
+        name: node.name,
+        tokens: node.tokens,
+        tool_calls: node.tool_calls,
+    };
 }
 
 class PromptManagerCore {
@@ -385,18 +487,287 @@ function stringFormat(format, ...values) {
     return String(format || '').replace(/{(\d+)}/g, (match, index) => values[index] ?? match);
 }
 
-function substituteParams(content, env = {}, additional = {}) {
-    if (!content) {
+function isDataURL(value) {
+    return typeof value === 'string' && /^data:([a-z]+\/[a-z0-9.+-]+)?(;[a-z-]+=[a-z0-9-]+)*(;base64)?,/i.test(value);
+}
+
+function normalizeMimeType(contentType, fallbackMimeType) {
+    const normalized = String(contentType || '').split(';')[0].trim().toLowerCase();
+    return normalized || fallbackMimeType;
+}
+
+async function fetchMediaAsDataUrl(url, fallbackMimeType) {
+    const response = await fetch(url, { method: 'GET' });
+    if (!response.ok) {
+        throw new Error(`Failed to fetch media: ${response.status}`);
+    }
+
+    const contentType = normalizeMimeType(response.headers.get('content-type'), fallbackMimeType);
+    const body = Buffer.from(await response.arrayBuffer()).toString('base64');
+    return `data:${contentType};base64,${body}`;
+}
+
+function decodeDataUrl(dataUrl) {
+    const match = /^data:([^;,]+)?(?:;[^,]*)?;base64,(.*)$/i.exec(String(dataUrl || ''));
+    if (!match) {
+        return null;
+    }
+
+    return {
+        mimeType: String(match[1] || '').toLowerCase(),
+        buffer: Buffer.from(match[2], 'base64'),
+    };
+}
+
+function getPngSize(buffer) {
+    if (buffer.length < 24 || buffer.toString('ascii', 1, 4) !== 'PNG') {
+        return null;
+    }
+
+    return {
+        width: buffer.readUInt32BE(16),
+        height: buffer.readUInt32BE(20),
+    };
+}
+
+function getGifSize(buffer) {
+    if (buffer.length < 10 || (buffer.toString('ascii', 0, 6) !== 'GIF87a' && buffer.toString('ascii', 0, 6) !== 'GIF89a')) {
+        return null;
+    }
+
+    return {
+        width: buffer.readUInt16LE(6),
+        height: buffer.readUInt16LE(8),
+    };
+}
+
+function getJpegSize(buffer) {
+    if (buffer.length < 4 || buffer[0] !== 0xFF || buffer[1] !== 0xD8) {
+        return null;
+    }
+
+    let offset = 2;
+    while (offset + 9 < buffer.length) {
+        if (buffer[offset] !== 0xFF) {
+            offset++;
+            continue;
+        }
+
+        const marker = buffer[offset + 1];
+        offset += 2;
+
+        if (marker === 0xD8 || marker === 0xD9) {
+            continue;
+        }
+
+        if (offset + 2 > buffer.length) {
+            break;
+        }
+
+        const segmentLength = buffer.readUInt16BE(offset);
+        if (segmentLength < 2 || offset + segmentLength > buffer.length) {
+            break;
+        }
+
+        const isSofMarker = (marker >= 0xC0 && marker <= 0xC3) || (marker >= 0xC5 && marker <= 0xC7) || (marker >= 0xC9 && marker <= 0xCB) || (marker >= 0xCD && marker <= 0xCF);
+        if (isSofMarker && segmentLength >= 7) {
+            return {
+                height: buffer.readUInt16BE(offset + 3),
+                width: buffer.readUInt16BE(offset + 5),
+            };
+        }
+
+        offset += segmentLength;
+    }
+
+    return null;
+}
+
+function getWebpSize(buffer) {
+    if (buffer.length < 30 || buffer.toString('ascii', 0, 4) !== 'RIFF' || buffer.toString('ascii', 8, 12) !== 'WEBP') {
+        return null;
+    }
+
+    const chunkType = buffer.toString('ascii', 12, 16);
+    if (chunkType === 'VP8X' && buffer.length >= 30) {
+        return {
+            width: 1 + buffer.readUIntLE(24, 3),
+            height: 1 + buffer.readUIntLE(27, 3),
+        };
+    }
+
+    if (chunkType === 'VP8L' && buffer.length >= 25) {
+        const bits = buffer.readUInt32LE(21);
+        return {
+            width: (bits & 0x3FFF) + 1,
+            height: ((bits >> 14) & 0x3FFF) + 1,
+        };
+    }
+
+    return null;
+}
+
+function getImageSizeFromDataUrl(dataUrl) {
+    const decoded = decodeDataUrl(dataUrl);
+    if (!decoded) {
+        return null;
+    }
+
+    const { mimeType, buffer } = decoded;
+    if (mimeType === 'image/png') {
+        return getPngSize(buffer);
+    }
+    if (mimeType === 'image/jpeg' || mimeType === 'image/jpg') {
+        return getJpegSize(buffer);
+    }
+    if (mimeType === 'image/gif') {
+        return getGifSize(buffer);
+    }
+    if (mimeType === 'image/webp') {
+        return getWebpSize(buffer);
+    }
+
+    return null;
+}
+
+function getImageTokenCost(dataUrl, quality) {
+    if (quality === 'low') {
+        return Message.tokensPerImage;
+    }
+
+    const size = getImageSizeFromDataUrl(dataUrl);
+    if (!size?.width || !size?.height) {
+        return Message.tokensPerImage;
+    }
+
+    if (quality === 'auto' && size.width <= 512 && size.height <= 512) {
+        return Message.tokensPerImage;
+    }
+
+    const scale = 2048 / Math.min(size.width, size.height);
+    const scaledWidth = Math.round(size.width * scale);
+    const scaledHeight = Math.round(size.height * scale);
+    const finalScale = 768 / Math.min(scaledWidth, scaledHeight);
+    const finalWidth = Math.round(scaledWidth * finalScale);
+    const finalHeight = Math.round(scaledHeight * finalScale);
+    const squares = Math.ceil(finalWidth / 512) * Math.ceil(finalHeight / 512);
+    return squares * 170 + 85;
+}
+
+function resolveMediaUrl(url, clientOrigin = '') {
+    const mediaUrl = String(url || '');
+    if (!mediaUrl || isDataURL(mediaUrl)) {
+        return mediaUrl;
+    }
+
+    try {
+        return new URL(mediaUrl).toString();
+    } catch {
+        if (!clientOrigin) {
+            return mediaUrl;
+        }
+        try {
+            return new URL(mediaUrl, clientOrigin).toString();
+        } catch {
+            return mediaUrl;
+        }
+    }
+}
+
+function parseExampleIntoIndividual(messageExampleString, userName, charName, groupNames = [], appendNamesForGroup = true, selectedGroup = false) {
+    const groupBotNames = groupNames.filter(Boolean).map(name => `${name}:`);
+    const lines = String(messageExampleString || '').split('\n');
+    const result = [];
+    const currentMessageLines = [];
+    let inUser = false;
+    let inBot = false;
+    let botName = charName;
+
+    const addMessage = (name, role, systemName) => {
+        let parsedMessage = currentMessageLines.join('\n').replace(`${name}:`, '').trim();
+
+        if (appendNamesForGroup && selectedGroup && ['example_user', 'example_assistant'].includes(systemName)) {
+            parsedMessage = `${name}: ${parsedMessage}`;
+        }
+
+        result.push({ role, content: parsedMessage, name: systemName });
+        currentMessageLines.length = 0;
+    };
+
+    for (let index = 1; index < lines.length; index++) {
+        const currentLine = lines[index];
+
+        if (currentLine.startsWith(`${userName}:`)) {
+            inUser = true;
+            if (inBot) {
+                addMessage(botName, 'system', 'example_assistant');
+            }
+            inBot = false;
+        } else if (currentLine.startsWith(`${charName}:`) || groupBotNames.some(name => currentLine.startsWith(name))) {
+            if (!currentLine.startsWith(`${charName}:`) && groupBotNames.length) {
+                botName = currentLine.split(':')[0];
+            }
+
+            inBot = true;
+            if (inUser) {
+                addMessage(userName, 'system', 'example_user');
+            }
+            inUser = false;
+        }
+
+        currentMessageLines.push(currentLine);
+    }
+
+    if (inUser) {
+        addMessage(userName, 'system', 'example_user');
+    } else if (inBot) {
+        addMessage(botName, 'system', 'example_assistant');
+    }
+
+    return result;
+}
+
+function parseWorldInfoExampleBlocks(content, context) {
+    const exampleString = String(content || '').replace(/\r/gm, '');
+    if (!exampleString.trim()) {
+        return [];
+    }
+
+    const normalizedExamples = exampleString.startsWith('<START>')
+        ? exampleString
+        : `<START>\n${exampleString.trim()}`;
+    const exampleBlocks = normalizedExamples
+        .split(/<START>/gi)
+        .slice(1)
+        .map(block => `<START>\n${block.trim()}\n`);
+
+    return exampleBlocks
+        .map(block => block.replace(/<START>/i, '{Example Dialogue:}'))
+        .map(block => parseExampleIntoIndividual(block, context.userName, context.charName, context.groupNames, true, context.selectedGroup))
+        .filter(block => Array.isArray(block) && block.length > 0);
+}
+
+function normalizeMessageExamples(examples) {
+    let examplesString = String(examples || '');
+    if (!examplesString || examplesString === '<START>') {
         return '';
     }
 
-    const values = { ...env, ...additional };
-    return String(content).replace(/{{\s*([a-zA-Z0-9_]+)\s*}}/g, (match, key) => {
-        const value = values[key];
-        if (value === undefined || value === null) {
-            return match;
-        }
-        return typeof value === 'function' ? value() : String(value);
+    if (!examplesString.startsWith('<START>')) {
+        examplesString = `<START>\n${examplesString.trim()}`;
+    }
+
+    return examplesString
+        .split(/<START>/gi)
+        .slice(1)
+        .map(block => `<START>\n${block.trim()}\n`)
+        .join('');
+}
+
+function substituteParams(content, env = {}, additional = {}) {
+    return evaluatePromptMacros(content, env, {
+        additional,
+        macroState: env?.__macroState || additional?.__macroState || null,
     });
 }
 
@@ -445,14 +816,15 @@ function getExtensionPromptMaxDepth(extensionPrompts = {}) {
 }
 
 function getExtensionPrompt(extensionPrompts = {}, env = {}, position = extension_prompt_types.IN_PROMPT, depth, separator = '\n', role, wrap = true) {
+    const getValue = (prompt) => String(prompt?.value ?? prompt?.resolvedValue ?? '');
     const prompts = Object.keys(extensionPrompts)
         .sort()
         .map(key => extensionPrompts[key])
-        .filter(prompt => prompt?.position === position && prompt?.value)
+        .filter(prompt => prompt?.position === position && getValue(prompt))
         .filter(prompt => depth === undefined || prompt.depth === undefined || prompt.depth === depth)
         .filter(prompt => role === undefined || prompt.role === undefined || prompt.role === role);
 
-    let values = prompts.map(prompt => String(prompt.value).trim()).join(separator);
+    let values = prompts.map(prompt => getValue(prompt).trim()).join(separator);
     if (wrap && values.length && !values.startsWith(separator)) {
         values = separator + values;
     }
@@ -460,6 +832,78 @@ function getExtensionPrompt(extensionPrompts = {}, env = {}, position = extensio
         values += separator;
     }
     return values.length ? substituteParams(values, env) : values;
+}
+
+async function applyWorldInfoToContext(context) {
+    if (!context.worldInfoRequest || typeof context.worldInfoRequest !== 'object') {
+        return;
+    }
+
+    const scanResult = await scanWorldInfo({
+        ...context.worldInfoRequest,
+        extensionPrompts: context.extensionPrompts,
+    });
+    context.worldInfoTimedState = structuredClone(scanResult.timedWorldInfo || {});
+    context.worldInfoRequest.timedWorldInfo = structuredClone(scanResult.timedWorldInfo || {});
+
+    context.worldInfoBefore = scanResult.worldInfoBefore || '';
+    context.worldInfoAfter = scanResult.worldInfoAfter || '';
+
+    const extensionPrompts = { ...context.extensionPrompts };
+    const authorsNote = extensionPrompts['2_floating_prompt'];
+    if (authorsNote) {
+        const original = String(authorsNote.value || '');
+        const originalResolved = String(authorsNote.resolvedValue ?? authorsNote.value ?? '');
+        const top = Array.isArray(scanResult.ANBeforeEntries) ? scanResult.ANBeforeEntries.join('\n') : '';
+        const bottom = Array.isArray(scanResult.ANAfterEntries) ? scanResult.ANAfterEntries.join('\n') : '';
+        extensionPrompts['2_floating_prompt'] = {
+            ...authorsNote,
+            value: [top, original, bottom].filter(Boolean).join('\n'),
+            resolvedValue: [top, originalResolved, bottom].filter(Boolean).join('\n'),
+        };
+    }
+
+    for (const item of Array.isArray(scanResult.WIDepthEntries) ? scanResult.WIDepthEntries : []) {
+        extensionPrompts[`customDepthWI_${item.depth}_${item.role}`] = {
+            value: Array.isArray(item.entries) ? item.entries.join('\n') : '',
+            position: extension_prompt_types.IN_CHAT,
+            depth: item.depth,
+            scan: false,
+            role: item.role ?? extension_prompt_roles.SYSTEM,
+        };
+    }
+
+    for (const [key, value] of Object.entries(scanResult.outletEntries || {})) {
+        extensionPrompts[`customWIOutlet_${key}`] = {
+            value: Array.isArray(value) ? value.join('\n') : '',
+            position: extension_prompt_types.NONE,
+            depth: 0,
+            scan: false,
+            role: extension_prompt_roles.SYSTEM,
+        };
+    }
+
+    context.extensionPrompts = extensionPrompts;
+    refreshMacroOutletValues(context.macroState, extensionPrompts);
+
+    if (Array.isArray(scanResult.EMEntries) && scanResult.EMEntries.length) {
+        const messageExamples = Array.isArray(context.messageExamples) ? [...context.messageExamples] : [];
+
+        for (const example of scanResult.EMEntries) {
+            const parsedBlocks = parseWorldInfoExampleBlocks(example?.content, context);
+            if (!parsedBlocks.length) {
+                continue;
+            }
+
+            if (example?.position === wi_anchor_position.before) {
+                messageExamples.unshift(...parsedBlocks);
+            } else {
+                messageExamples.push(...parsedBlocks);
+            }
+        }
+
+        context.messageExamples = messageExamples;
+    }
 }
 
 async function countSentencepieceArrayTokens(tokenizer, array) {
@@ -630,7 +1074,9 @@ async function populateChatHistory(messages, prompts, chatCompletion, context) {
         const continueMessageIndex = messages.findLastIndex(message => !message.injected);
         if (continueMessageIndex >= 0) {
             const continueMessage = messages.splice(continueMessageIndex, 1)[0];
-            const chatMessage = await Message.fromPromptAsync(new Prompt(continueMessage), context.tokenHandler);
+            const prompt = new Prompt(continueMessage);
+            const preparedPrompt = context.promptManager.preparePrompt(prompt);
+            const chatMessage = await Message.fromPromptAsync(preparedPrompt, context.tokenHandler);
             continueMessageCollection.add(chatMessage);
         }
         const continueNudge = substituteParams(context.oaiSettings.continue_nudge_prompt, context.env, { lastChatMessage: String(context.cyclePrompt).trim() });
@@ -645,15 +1091,49 @@ async function populateChatHistory(messages, prompts, chatCompletion, context) {
     }
 
     const chatPool = [...messages].reverse();
+    const mediaSupport = context.mediaSupport || {};
     for (let index = 0; index < chatPool.length; index++) {
         const chatPrompt = chatPool[index];
         const prompt = new Prompt(chatPrompt);
         prompt.identifier = `chatHistory-${messages.length - index}`;
-        const chatMessage = await Message.fromPromptAsync(prompt, context.tokenHandler);
+        const preparedPrompt = context.promptManager.preparePrompt(prompt);
+        const chatMessage = await Message.fromPromptAsync(preparedPrompt, context.tokenHandler);
 
-        if (context.serviceSettings.names_behavior === character_names_behavior.COMPLETION && prompt.name) {
-            const messageName = context.promptManager.isValidName(prompt.name) ? prompt.name : context.promptManager.sanitizeName(prompt.name);
+        if (context.serviceSettings.names_behavior === character_names_behavior.COMPLETION && preparedPrompt.name) {
+            const messageName = context.promptManager.isValidName(preparedPrompt.name) ? preparedPrompt.name : context.promptManager.sanitizeName(preparedPrompt.name);
             await chatMessage.setName(messageName);
+        }
+
+        async function inlineMediaAttachment(media) {
+            if (!media?.url) {
+                return;
+            }
+
+            const mediaType = String(media.type || 'image');
+            const mediaUrl = resolveMediaUrl(media.url, context.clientOrigin);
+            const imageQuality = context.oaiSettings.inline_image_quality || 'auto';
+
+            if (mediaSupport.image && mediaType === 'image') {
+                await chatMessage.addImage(mediaUrl, imageQuality);
+            }
+            if (mediaSupport.video && mediaType === 'video') {
+                await chatMessage.addVideo(mediaUrl);
+            }
+            if (mediaSupport.audio && mediaType === 'audio') {
+                await chatMessage.addAudio(mediaUrl);
+            }
+        }
+
+        if (Array.isArray(chatPrompt.media) && chatPrompt.media.length) {
+            if (chatPrompt.mediaDisplay === 'list') {
+                for (const media of chatPrompt.media) {
+                    await inlineMediaAttachment(media);
+                }
+            }
+            if (chatPrompt.mediaDisplay === 'gallery') {
+                const media = chatPrompt.media[chatPrompt.mediaIndex];
+                await inlineMediaAttachment(media);
+            }
         }
 
         if (context.canUseTools && Array.isArray(chatPrompt.invocations)) {
@@ -710,28 +1190,28 @@ async function preparePromptsForChatCompletion(context) {
 
     const extensionPrompts = context.extensionPrompts || {};
     const summary = extensionPrompts['1_memory'];
-    if (summary?.value) {
-        systemPrompts.push({ role: getPromptRole(summary.role), content: summary.value, identifier: 'summary', position: getPromptPosition(summary.position) });
+    if (summary?.value ?? summary?.resolvedValue) {
+        systemPrompts.push({ role: getPromptRole(summary.role), content: summary.value ?? summary.resolvedValue, identifier: 'summary', position: getPromptPosition(summary.position) });
     }
 
     const authorsNote = extensionPrompts['2_floating_prompt'];
-    if (authorsNote?.value) {
-        systemPrompts.push({ role: getPromptRole(authorsNote.role), content: authorsNote.value, identifier: 'authorsNote', position: getPromptPosition(authorsNote.position) });
+    if (authorsNote?.value ?? authorsNote?.resolvedValue) {
+        systemPrompts.push({ role: getPromptRole(authorsNote.role), content: authorsNote.value ?? authorsNote.resolvedValue, identifier: 'authorsNote', position: getPromptPosition(authorsNote.position) });
     }
 
     const vectorsMemory = extensionPrompts['3_vectors'];
-    if (vectorsMemory?.value) {
-        systemPrompts.push({ role: 'system', content: vectorsMemory.value, identifier: 'vectorsMemory', position: getPromptPosition(vectorsMemory.position) });
+    if (vectorsMemory?.value ?? vectorsMemory?.resolvedValue) {
+        systemPrompts.push({ role: 'system', content: vectorsMemory.value ?? vectorsMemory.resolvedValue, identifier: 'vectorsMemory', position: getPromptPosition(vectorsMemory.position) });
     }
 
     const vectorsDataBank = extensionPrompts['4_vectors_data_bank'];
-    if (vectorsDataBank?.value) {
-        systemPrompts.push({ role: getPromptRole(vectorsDataBank.role), content: vectorsDataBank.value, identifier: 'vectorsDataBank', position: getPromptPosition(vectorsDataBank.position) });
+    if (vectorsDataBank?.value ?? vectorsDataBank?.resolvedValue) {
+        systemPrompts.push({ role: getPromptRole(vectorsDataBank.role), content: vectorsDataBank.value ?? vectorsDataBank.resolvedValue, identifier: 'vectorsDataBank', position: getPromptPosition(vectorsDataBank.position) });
     }
 
     const smartContext = extensionPrompts.chromadb;
-    if (smartContext?.value) {
-        systemPrompts.push({ role: 'system', content: smartContext.value, identifier: 'smartContext', position: getPromptPosition(smartContext.position) });
+    if (smartContext?.value ?? smartContext?.resolvedValue) {
+        systemPrompts.push({ role: 'system', content: smartContext.value ?? smartContext.resolvedValue, identifier: 'smartContext', position: getPromptPosition(smartContext.position) });
     }
 
     if (context.powerUser.persona_description && context.powerUser.persona_description_position === context.personaDescriptionPosition.IN_PROMPT) {
@@ -740,7 +1220,8 @@ async function preparePromptsForChatCompletion(context) {
 
     const knownExtensionPrompts = new Set(['1_memory', '2_floating_prompt', '3_vectors', '4_vectors_data_bank', 'chromadb', 'PERSONA_DESCRIPTION', 'QUIET_PROMPT', 'DEPTH_PROMPT']);
     for (const [key, prompt] of Object.entries(extensionPrompts)) {
-        if (knownExtensionPrompts.has(key) || !prompt?.value) {
+        const promptValue = prompt?.value ?? prompt?.resolvedValue;
+        if (knownExtensionPrompts.has(key) || !promptValue) {
             continue;
         }
         if (![extension_prompt_types.BEFORE_PROMPT, extension_prompt_types.IN_PROMPT].includes(prompt.position)) {
@@ -750,7 +1231,7 @@ async function preparePromptsForChatCompletion(context) {
             identifier: key.replace(/\W/g, '_'),
             position: getPromptPosition(prompt.position),
             role: getPromptRole(prompt.role),
-            content: prompt.value,
+            content: promptValue,
             extension: true,
         });
     }
@@ -832,6 +1313,9 @@ async function populateChatCompletion(prompts, chatCompletion, context) {
 
     if (prompts.has('quietPrompt')) {
         const quietPromptMessage = await Message.fromPromptAsync(prompts.get('quietPrompt'), context.tokenHandler);
+        if (context.mediaSupport?.image && context.quietImage) {
+            await quietPromptMessage.addImage(resolveMediaUrl(context.quietImage, context.clientOrigin), context.oaiSettings.inline_image_quality || 'auto');
+        }
         if (quietPromptMessage?.content) {
             controlPrompts.add(quietPromptMessage);
         }
@@ -905,18 +1389,20 @@ async function populateChatCompletion(prompts, chatCompletion, context) {
 export async function assembleChatCompletionPrompt(payload = {}) {
     const model = payload.model || '';
     const groupNames = Array.isArray(payload.groupNames) ? payload.groupNames.filter(Boolean) : [];
+    const groupMacroValues = payload.groupMacroValues || {};
+    const normalizedMesExamples = normalizeMessageExamples(payload.mesExamples);
     const env = {
         user: payload.userName || '',
         char: payload.charName || '',
-        group: groupNames.length ? groupNames.join(', ') : (payload.charName || ''),
-        charIfNotGroup: groupNames.length ? groupNames.join(', ') : (payload.charName || ''),
-        groupNotMuted: groupNames.length ? groupNames.join(', ') : (payload.charName || ''),
-        notChar: payload.userName || '',
+        group: groupMacroValues.group || (groupNames.length ? groupNames.join(', ') : (payload.charName || '')),
+        charIfNotGroup: groupMacroValues.group || (groupNames.length ? groupNames.join(', ') : (payload.charName || '')),
+        groupNotMuted: groupMacroValues.groupNotMuted || (groupNames.length ? groupNames.join(', ') : (payload.charName || '')),
+        notChar: groupMacroValues.notChar || payload.userName || '',
         description: payload.charDescription || '',
         personality: payload.charPersonality || '',
         scenario: payload.scenario || '',
         persona: payload.persona || '',
-        mesExamples: payload.mesExamples || '',
+        mesExamples: normalizedMesExamples,
         mesExamplesRaw: payload.mesExamples || '',
         charDepthPrompt: payload.charDepthPrompt || '',
         creatorNotes: payload.creatorNotes || '',
@@ -936,6 +1422,7 @@ export async function assembleChatCompletionPrompt(payload = {}) {
     const context = {
         ...payload,
         env,
+        macroState: createMacroState(payload.macroSnapshot || {}, payload.extensionPrompts || {}),
         tokenHandler,
         promptManager,
         serviceSettings: payload.serviceSettings || {},
@@ -948,10 +1435,12 @@ export async function assembleChatCompletionPrompt(payload = {}) {
         toolBudgetData: payload.toolBudgetData || null,
         personaDescriptionPosition: payload.personaDescriptionPosition || { IN_PROMPT: 0 },
     };
+    context.env.__macroState = context.macroState;
 
     const chatCompletion = new ChatCompletion(tokenHandler);
     chatCompletion.setTokenBudget(Number(context.serviceSettings.openai_max_context) || 0, Number(context.serviceSettings.openai_max_tokens) || 0);
 
+    await applyWorldInfoToContext(context);
     const prompts = await preparePromptsForChatCompletion(context);
     await populateChatCompletion(prompts, chatCompletion, context);
 
@@ -967,5 +1456,7 @@ export async function assembleChatCompletionPrompt(payload = {}) {
         counts: false,
         messagesCount,
         overriddenPrompts: prompts.overriddenPrompts,
+        messagesState: serializeMessageNode(chatCompletion.getMessages()),
+        timedWorldInfo: structuredClone(context.worldInfoTimedState || context.worldInfoRequest?.timedWorldInfo || {}),
     };
 }

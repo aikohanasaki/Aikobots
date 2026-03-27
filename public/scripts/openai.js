@@ -15,6 +15,9 @@ import {
     Generate,
     getExtensionPrompt,
     getExtensionPromptMaxDepth,
+    getExtensionPromptSnapshot,
+    getCurrentChatId,
+    getServerMacroSnapshot,
     getMediaDisplay,
     getMediaIndex,
     getRequestHeaders,
@@ -26,13 +29,15 @@ import {
     resultCheckStatus,
     saveSettingsDebounced,
     setOnlineStatus,
+    setInContextMessages,
     startStatusLoading,
     substituteParams,
     substituteParamsExtended,
     system_message_types,
     this_chid,
 } from '../script.js';
-import { getGroupNames, selected_group } from './group-chats.js';
+import { getGroupMacroValues, getGroupNames, selected_group } from './group-chats.js';
+import { extension_settings } from './extensions.js';
 
 import {
     chatCompletionDefaultPrompts,
@@ -95,6 +100,7 @@ export {
 };
 
 let openai_messages_count = 0;
+let pendingTimedWorldInfo = null;
 
 const default_main_prompt = 'Write {{char}}\'s next reply in a fictional chat between {{charIfNotGroup}} and {{user}}.';
 const default_nsfw_prompt = '';
@@ -657,13 +663,7 @@ function setupChatCompletionPromptManager(openAiSettings) {
         return new Promise((resolve) => eventSource.once(event_types.SETTINGS_UPDATED, resolve));
     };
 
-    promptManager.tryGenerate = () => {
-        if (characters[this_chid]) {
-            return Generate('normal', {}, true);
-        } else {
-            return Promise.resolve();
-        }
-    };
+    promptManager.tryGenerate = () => Promise.resolve();
 
     promptManager.tokenHandler = tokenHandler;
 
@@ -1589,12 +1589,100 @@ export async function assembleOpenAIMessagesOnServer({
         ? Number(data.messagesCount)
         : chat.filter(x => !x?.tool_calls && ['user', 'assistant', 'tool'].includes(x?.role)).length || 0;
 
+    applyServerPromptManagerState(data);
+
     await eventSource.emit(event_types.CHAT_COMPLETION_PROMPT_READY, { chat, dryRun: false });
 
     return [chat, data?.counts || false];
 }
 
-async function buildServerAssemblyPayload({
+function deserializeServerPromptManagerNode(node) {
+    if (!node || typeof node !== 'object') {
+        return null;
+    }
+
+    if (node.type === 'collection') {
+        const collection = new MessageCollection(node.identifier);
+        for (const child of Array.isArray(node.collection) ? node.collection : []) {
+            const deserializedChild = deserializeServerPromptManagerNode(child);
+            if (deserializedChild) {
+                collection.add(deserializedChild);
+            }
+        }
+        return collection;
+    }
+
+    if (node.type === 'message') {
+        const message = new Message(node.role, node.content, node.identifier);
+        message.name = node.name;
+        message.tokens = Number(node.tokens) || 0;
+        if (node.tool_calls) {
+            message.tool_calls = node.tool_calls;
+        }
+        return message;
+    }
+
+    return null;
+}
+
+function applyServerPromptManagerState(data = {}) {
+    if (!promptManager || !data?.messagesState) {
+        return;
+    }
+
+    const messages = deserializeServerPromptManagerNode(data.messagesState);
+    if (!(messages instanceof MessageCollection)) {
+        return;
+    }
+
+    promptManager.setMessages(messages);
+    promptManager.populateTokenCounts(messages);
+    promptManager.overriddenPrompts = Array.isArray(data.overriddenPrompts) ? data.overriddenPrompts : [];
+    promptManager.render(false);
+}
+
+function applyAssemblyResponseMetadata(response, type) {
+    const messagesCountHeader = response.headers.get('X-ST-Messages-Count');
+    if (messagesCountHeader === null) {
+        return;
+    }
+
+    const messagesCount = Number(messagesCountHeader);
+    if (!Number.isFinite(messagesCount) || messagesCount < 0) {
+        return;
+    }
+
+    openai_messages_count = messagesCount;
+    setInContextMessages(openai_messages_count, type);
+}
+
+function decodeTimedWorldInfoHeader(encoded) {
+    if (!encoded) {
+        return null;
+    }
+
+    try {
+        return JSON.parse(atob(encoded));
+    } catch (error) {
+        console.warn('Failed to decode timed world info header', error);
+        return null;
+    }
+}
+
+function applyTimedWorldInfoResponseMetadata(response) {
+    pendingTimedWorldInfo = decodeTimedWorldInfoHeader(response.headers.get('X-ST-Timed-World-Info'));
+}
+
+export function consumeOpenAITimedWorldInfo() {
+    const value = pendingTimedWorldInfo && typeof pendingTimedWorldInfo === 'object'
+        ? structuredClone(pendingTimedWorldInfo)
+        : null;
+    pendingTimedWorldInfo = null;
+    return value;
+}
+
+export async function buildServerAssemblyPayload({
+    coreChat,
     name2,
     charDescription,
     charPersonality,
@@ -1610,31 +1698,35 @@ async function buildServerAssemblyPayload({
     quietPrompt,
     quietImage,
     extensionPrompts,
+    worldInfoRequest,
     cyclePrompt,
     systemPromptOverride,
     jailbreakPromptOverride,
     messages,
     messageExamples,
 } = {}) {
-    const resolvedExtensionPrompts = {};
-    for (const [key, prompt] of Object.entries(extensionPrompts || {})) {
-        if (!prompt) {
-            continue;
-        }
-
-        const hasFilter = typeof prompt.filter === 'function';
-        if (hasFilter && !await prompt.filter()) {
-            continue;
-        }
-
-        resolvedExtensionPrompts[key] = {
-            value: prompt.value,
-            position: prompt.position,
-            depth: prompt.depth,
-            scan: prompt.scan,
-            role: prompt.role,
-        };
-    }
+    const resolvedExtensionPrompts = await getExtensionPromptSnapshot(extensionPrompts);
+    resolvedExtensionPrompts.QUIET_PROMPT = {
+        value: quietPrompt || '',
+        resolvedValue: quietPrompt || '',
+        position: extension_prompt_types.IN_PROMPT,
+        depth: 0,
+        scan: true,
+        role: extension_prompt_roles.SYSTEM,
+    };
+    const groupMacroValues = getGroupMacroValues(name2);
+    const macroSnapshot = getServerMacroSnapshot();
+    const serializedCoreChat = Array.isArray(coreChat)
+        ? structuredClone(coreChat).map(message => ({
+            ...message,
+            extra: message?.extra
+                ? {
+                    ...message.extra,
+                    ignore: Boolean(message.extra?.[IGNORE_SYMBOL]),
+                }
+                : undefined,
+        }))
+        : [];
 
     let toolBudgetData = null;
     if (ToolManager.canPerformToolCalls(type)) {
@@ -1645,17 +1737,28 @@ async function buildServerAssemblyPayload({
     return {
         model: getChatCompletionModel(),
         chatCompletionSource: oai_settings.chat_completion_source,
+        clientOrigin: window.location.origin,
         userName: name1,
         charName: name2,
+        currentChatId: getCurrentChatId() || '',
+        coreChat: serializedCoreChat,
         groupNames: getGroupNames(),
+        groupMacroValues,
+        mediaSupport: {
+            image: isImageInliningSupported(),
+            video: isVideoInliningSupported(),
+            audio: isAudioInliningSupported(),
+        },
         selectedGroup: Boolean(selected_group),
         activeCharacter: promptManager?.activeCharacter ? { id: promptManager.activeCharacter.id } : null,
         serviceSettings: structuredClone(promptManager?.serviceSettings || {}),
+        extensionSettings: structuredClone(extension_settings || {}),
         oaiSettings: structuredClone(oai_settings),
         powerUser: {
             pin_examples: Boolean(power_user.pin_examples),
             persona_description: power_user.persona_description || '',
             persona_description_position: power_user.persona_description_position,
+            media_display: power_user.media_display,
         },
         personaDescriptionPosition: {
             IN_PROMPT: persona_description_positions.IN_PROMPT,
@@ -1675,6 +1778,10 @@ async function buildServerAssemblyPayload({
         quietPrompt,
         quietImage,
         extensionPrompts: resolvedExtensionPrompts,
+        macroSnapshot,
+        worldInfoRequest: worldInfoRequest && typeof worldInfoRequest === 'object'
+            ? { ...worldInfoRequest, macroSnapshot }
+            : worldInfoRequest,
         cyclePrompt,
         systemPromptOverride,
         jailbreakPromptOverride,
@@ -2482,12 +2589,16 @@ async function sendOpenAIRequest(type, messages, signal, { jsonSchema = null } =
         signal = new AbortController().signal;
     }
 
-    // HACK: Filter out null and non-object messages
-    if (!Array.isArray(messages)) {
+    const promptContext = !Array.isArray(messages) && messages && typeof messages === 'object' ? messages.promptContext : null;
+    pendingTimedWorldInfo = null;
+
+    if (!promptContext && !Array.isArray(messages)) {
         throw new Error('messages must be an array');
     }
 
-    messages = messages.filter(msg => msg && typeof msg === 'object');
+    messages = Array.isArray(messages)
+        ? messages.filter(msg => msg && typeof msg === 'object')
+        : [];
 
     let logit_bias = {};
     const isClaude = oai_settings.chat_completion_source == chat_completion_sources.CLAUDE;
@@ -2538,7 +2649,8 @@ async function sendOpenAIRequest(type, messages, signal, { jsonSchema = null } =
     const model = getChatCompletionModel();
     const generate_data = {
         'type': type,
-        'messages': messages,
+        'messages': promptContext ? undefined : messages,
+        'prompt_context': promptContext || undefined,
         'model': model,
         'temperature': Number(oai_settings.temp_openai),
         'frequency_penalty': Number(oai_settings.freq_pen_openai),
@@ -2763,11 +2875,13 @@ async function sendOpenAIRequest(type, messages, signal, { jsonSchema = null } =
         delete generate_data.frequency_penalty;
         delete generate_data.presence_penalty;
         if (model.startsWith('o1')) {
-            generate_data.messages.forEach((msg) => {
-                if (msg.role === 'system') {
-                    msg.role = 'user';
-                }
-            });
+            if (Array.isArray(generate_data.messages)) {
+                generate_data.messages.forEach((msg) => {
+                    if (msg.role === 'system') {
+                        msg.role = 'user';
+                    }
+                });
+            }
             delete generate_data.n;
             delete generate_data.tools;
             delete generate_data.tool_choice;
@@ -2815,6 +2929,10 @@ async function sendOpenAIRequest(type, messages, signal, { jsonSchema = null } =
         tryParseStreamingError(response, await response.text());
         throw new Error(`Got response status ${response.status}`);
     }
+
+    applyAssemblyResponseMetadata(response, type);
+    applyTimedWorldInfoResponseMetadata(response);
+
     if (stream) {
         const eventStream = getEventSourceStream();
         response.body.pipeThrough(eventStream);

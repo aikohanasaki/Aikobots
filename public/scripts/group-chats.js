@@ -308,6 +308,41 @@ export function getGroupNames() {
         : [];
 }
 
+export function getGroupMacroValues(currentSpeaker = name2) {
+    if (!selected_group) {
+        return {
+            group: currentSpeaker || '',
+            groupNotMuted: currentSpeaker || '',
+            notChar: name1 || '',
+        };
+    }
+
+    const group = groups.find(x => x.id == selected_group);
+    if (!group || !Array.isArray(group.members)) {
+        return {
+            group: currentSpeaker || '',
+            groupNotMuted: currentSpeaker || '',
+            notChar: name1 || '',
+        };
+    }
+
+    const disabledMembers = Array.isArray(group.disabled_members) ? group.disabled_members : [];
+    const memberNames = group.members
+        .map(member => characters.find(character => character.avatar === member)?.name)
+        .filter(Boolean);
+    const unmutedNames = group.members
+        .filter(member => !disabledMembers.includes(member))
+        .map(member => characters.find(character => character.avatar === member)?.name)
+        .filter(Boolean);
+    const notCharNames = [...memberNames.filter(name => name !== currentSpeaker), name1].filter(Boolean);
+
+    return {
+        group: memberNames.join(', '),
+        groupNotMuted: unmutedNames.join(', '),
+        notChar: notCharNames.join(', '),
+    };
+}
+
 /**
  * Finds the character ID for a group member.
  * @param {number|string} arg 0-based member index or character name

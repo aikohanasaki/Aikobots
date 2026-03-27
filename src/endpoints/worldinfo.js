@@ -3,66 +3,244 @@ import path from 'node:path';
 
 import express from 'express';
 import sanitize from 'sanitize-filename';
-import { sync as writeFileAtomicSync } from 'write-file-atomic';
+import { createMacroState, evaluatePromptMacros } from '../prompting/macro-evaluator.js';
+import { scanWorldInfo } from '../prompting/world-info-scan.js';
+import {
+    LorebookRepositoryError,
+    deleteLorebookForManagement,
+    demoteLorebook,
+    getLorebookForManagement,
+    listLorebooksForManagement,
+    promoteLorebook,
+    readLorebookForGeneration,
+    readWorldInfoFile as readUserWorldInfoFile,
+    saveLorebookForManagement,
+} from '../lorebook-repository.js';
 
-/**
- * Reads a World Info file and returns its contents
- * @param {import('../users.js').UserDirectoryList} directories User directories
- * @param {string} worldInfoName Name of the World Info file
- * @param {boolean} allowDummy If true, returns an empty object if the file doesn't exist
- * @returns {object} World Info file contents
- */
-export function readWorldInfoFile(directories, worldInfoName, allowDummy) {
-    const dummyObject = allowDummy ? { entries: {} } : null;
-
-    if (!worldInfoName) {
-        return dummyObject;
-    }
-
-    const filename = sanitize(`${worldInfoName}.json`);
-    const pathToWorldInfo = path.join(directories.worlds, filename);
-
-    if (!fs.existsSync(pathToWorldInfo)) {
-        console.error(`World info file ${filename} doesn't exist.`);
-        return dummyObject;
-    }
-
-    const worldInfoText = fs.readFileSync(pathToWorldInfo, 'utf8');
-    const worldInfo = JSON.parse(worldInfoText);
-    return worldInfo;
-}
+export const readWorldInfoFile = readUserWorldInfoFile;
 
 export const router = express.Router();
 
-router.post('/get', (request, response) => {
+const world_info_insertion_strategy = {
+    evenly: 0,
+    character_first: 1,
+    global_first: 2,
+};
+
+const KNOWN_DECORATORS = ['@@activate', '@@dont_activate'];
+
+function getStringHash(str, seed = 0) {
+    if (typeof str !== 'string') {
+        return 0;
+    }
+
+    let h1 = 0xdeadbeef ^ seed;
+    let h2 = 0x41c6ce57 ^ seed;
+    for (let index = 0; index < str.length; index++) {
+        const ch = str.charCodeAt(index);
+        h1 = Math.imul(h1 ^ ch, 2654435761);
+        h2 = Math.imul(h2 ^ ch, 1597334677);
+    }
+
+    h1 = Math.imul(h1 ^ (h1 >>> 16), 2246822507) ^ Math.imul(h2 ^ (h2 >>> 13), 3266489909);
+    h2 = Math.imul(h2 ^ (h2 >>> 16), 2246822507) ^ Math.imul(h1 ^ (h1 >>> 13), 3266489909);
+
+    return 4294967296 * (2097151 & h2) + (h1 >>> 0);
+}
+
+function parseDecorators(content) {
+    const isKnownDecorator = (data) => {
+        if (data.startsWith('@@@')) {
+            data = data.substring(1);
+        }
+
+        return KNOWN_DECORATORS.some(decorator => data.startsWith(decorator));
+    };
+
+    if (!String(content || '').startsWith('@@')) {
+        return [[], content];
+    }
+
+    let newContent = content;
+    const lines = String(content).split('\n');
+    const decorators = [];
+    let fallbacked = false;
+
+    for (let index = 0; index < lines.length; index++) {
+        const line = lines[index];
+        if (!line.startsWith('@@')) {
+            newContent = lines.slice(index).join('\n');
+            break;
+        }
+
+        if (line.startsWith('@@@') && !fallbacked) {
+            continue;
+        }
+
+        if (isKnownDecorator(line)) {
+            decorators.push(line.startsWith('@@@') ? line.substring(1) : line);
+            fallbacked = false;
+        } else {
+            fallbacked = true;
+        }
+    }
+
+    return [decorators, newContent];
+}
+
+function worldEntriesFromBook(worldInfo, worldName) {
+    if (!worldInfo?.entries || typeof worldInfo.entries !== 'object') {
+        return [];
+    }
+
+    return Object.keys(worldInfo.entries)
+        .map(key => worldInfo.entries[key])
+        .map(({ uid, ...rest }) => ({ uid, world: worldName, ...rest }));
+}
+
+async function readWorldEntries(user, worldName) {
+    const worldInfo = await readLorebookForGeneration(user, worldName, true);
+    return worldEntriesFromBook(worldInfo, worldName);
+}
+
+function sortEntriesWithStrategy(globalLore, characterLore, strategy) {
+    const sortFn = (a, b) => (b.order ?? 0) - (a.order ?? 0);
+
+    switch (Number(strategy)) {
+        case world_info_insertion_strategy.evenly:
+            return [...globalLore, ...characterLore].sort(sortFn);
+        case world_info_insertion_strategy.character_first:
+            return [...characterLore.sort(sortFn), ...globalLore.sort(sortFn)];
+        case world_info_insertion_strategy.global_first:
+            return [...globalLore.sort(sortFn), ...characterLore.sort(sortFn)];
+        default:
+            console.error('[WI] Unknown WI insertion strategy:', strategy, 'defaulting to evenly');
+            return [...globalLore, ...characterLore].sort(sortFn);
+    }
+}
+
+function substituteParams(content, env = {}) {
+    return evaluatePromptMacros(content, env, {
+        macroState: env?.__macroState || null,
+    });
+}
+
+export async function resolveSortedEntriesPayload(user, body = {}) {
+    const {
+        selectedWorldInfo = [],
+        chatWorld = '',
+        personaWorld = '',
+        characterWorld = '',
+        characterExtraBooks = [],
+        worldInfoCharacterStrategy = world_info_insertion_strategy.character_first,
+    } = body;
+
+    const selectedWorldSet = new Set(Array.isArray(selectedWorldInfo) ? selectedWorldInfo.filter(Boolean) : []);
+    const characterWorldSet = new Set([characterWorld, ...(Array.isArray(characterExtraBooks) ? characterExtraBooks : [])].filter(Boolean));
+
+    const globalLore = (await Promise.all([...selectedWorldSet].map(worldName => readWorldEntries(user, worldName)))).flat();
+
+    const characterLore = (await Promise.all([...characterWorldSet]
+        .filter(worldName => !selectedWorldSet.has(worldName) && worldName !== chatWorld && worldName !== personaWorld)
+        .map(worldName => readWorldEntries(user, worldName)))).flat();
+
+    const chatLore = chatWorld && !selectedWorldSet.has(chatWorld)
+        ? await readWorldEntries(user, chatWorld)
+        : [];
+
+    const personaLore = personaWorld && personaWorld !== chatWorld && !selectedWorldSet.has(personaWorld)
+        ? await readWorldEntries(user, personaWorld)
+        : [];
+
+    let entries = sortEntriesWithStrategy(globalLore, characterLore, worldInfoCharacterStrategy);
+    const sortFn = (a, b) => (b.order ?? 0) - (a.order ?? 0);
+    entries = [...chatLore.sort(sortFn), ...personaLore.sort(sortFn), ...entries];
+
+    entries = entries
+        .map((entry) => {
+            const [decorators, content] = parseDecorators(entry.content || '');
+            return { ...entry, decorators, content };
+        })
+        .map((entry) => ({
+            ...entry,
+            hash: getStringHash(JSON.stringify(entry)),
+        }));
+
+    return {
+        globalLore,
+        characterLore,
+        chatLore,
+        personaLore,
+        entries,
+    };
+}
+
+export function prepareEntriesForScan(entries = [], env = {}) {
+    const macroState = createMacroState(env.macroSnapshot || {}, env.extensionPrompts || {});
+    const macroEnv = { ...env, __macroState: macroState };
+    return entries.map((entry) => ({
+        ...structuredClone(entry),
+        key: Array.isArray(entry.key) ? entry.key.map((key) => substituteParams(key, macroEnv)) : entry.key,
+        keysecondary: Array.isArray(entry.keysecondary) ? entry.keysecondary.map((key) => substituteParams(key, macroEnv)) : entry.keysecondary,
+        content: substituteParams(entry.content || '', macroEnv),
+    }));
+}
+
+function sendLorebookError(response, error) {
+    if (error instanceof LorebookRepositoryError) {
+        return response.status(error.status).send({
+            error: {
+                type: error.type,
+                message: error.message,
+            },
+        });
+    }
+
+    console.error('[Lorebooks] Unexpected error', error);
+    return response.status(500).send({
+        error: {
+            type: 'LorebookInternalError',
+            message: String(error?.message || error),
+        },
+    });
+}
+
+router.post('/list', async (request, response) => {
+    try {
+        const items = await listLorebooksForManagement(request.user);
+        return response.send({ items, world_info_items: items, world_names: items.map(item => item.name) });
+    } catch (error) {
+        return sendLorebookError(response, error);
+    }
+});
+
+router.post('/get', async (request, response) => {
     if (!request.body?.name) {
         return response.sendStatus(400);
     }
 
-    const file = readWorldInfoFile(request.user.directories, request.body.name, true);
-
-    return response.send(file);
+    try {
+        const { data, metadata } = await getLorebookForManagement(request.user, request.body.name, true);
+        return response.send({ ...data, name: metadata.name, storage: metadata.storage, ownerHandle: metadata.ownerHandle });
+    } catch (error) {
+        return sendLorebookError(response, error);
+    }
 });
 
-router.post('/delete', (request, response) => {
+router.post('/delete', async (request, response) => {
     if (!request.body?.name) {
         return response.sendStatus(400);
     }
 
-    const worldInfoName = request.body.name;
-    const filename = sanitize(`${worldInfoName}.json`);
-    const pathToWorldInfo = path.join(request.user.directories.worlds, filename);
-
-    if (!fs.existsSync(pathToWorldInfo)) {
-        throw new Error(`World info file ${filename} doesn't exist.`);
+    try {
+        const result = await deleteLorebookForManagement(request.user, request.body.name);
+        return response.send({ ok: true, ...result });
+    } catch (error) {
+        return sendLorebookError(response, error);
     }
-
-    fs.unlinkSync(pathToWorldInfo);
-
-    return response.sendStatus(200);
 });
 
-router.post('/import', (request, response) => {
+router.post('/import', async (request, response) => {
     if (!request.file) return response.sendStatus(400);
 
     const filename = `${path.parse(sanitize(request.file.originalname)).name}.json`;
@@ -86,18 +264,21 @@ router.post('/import', (request, response) => {
         return response.status(400).send('Is not a valid world info file');
     }
 
-    const pathToNewFile = path.join(request.user.directories.worlds, filename);
-    const worldName = path.parse(pathToNewFile).name;
+    const worldName = path.parse(filename).name;
 
     if (!worldName) {
         return response.status(400).send('World file must have a name');
     }
 
-    writeFileAtomicSync(pathToNewFile, fileContents);
-    return response.send({ name: worldName });
+    try {
+        const metadata = await saveLorebookForManagement(request.user, worldName, JSON.parse(fileContents));
+        return response.send({ name: metadata.name, storage: metadata.storage, ownerHandle: metadata.ownerHandle });
+    } catch (error) {
+        return sendLorebookError(response, error);
+    }
 });
 
-router.post('/edit', (request, response) => {
+router.post('/edit', async (request, response) => {
     if (!request.body) {
         return response.sendStatus(400);
     }
@@ -114,10 +295,73 @@ router.post('/edit', (request, response) => {
         return response.status(400).send('Is not a valid world info file');
     }
 
-    const filename = sanitize(`${request.body.name}.json`);
-    const pathToFile = path.join(request.user.directories.worlds, filename);
+    try {
+        const metadata = await saveLorebookForManagement(request.user, request.body.name, request.body.data);
+        return response.send({ ok: true, name: metadata.name, storage: metadata.storage, ownerHandle: metadata.ownerHandle });
+    } catch (error) {
+        return sendLorebookError(response, error);
+    }
+});
 
-    writeFileAtomicSync(pathToFile, JSON.stringify(request.body.data, null, 4));
+router.post('/promote', async (request, response) => {
+    if (!request.body?.name) {
+        return response.sendStatus(400);
+    }
 
-    return response.send({ ok: true });
+    try {
+        const result = await promoteLorebook(request.user, request.body.name);
+        return response.send({ ok: true, ...result });
+    } catch (error) {
+        return sendLorebookError(response, error);
+    }
+});
+
+router.post('/demote', async (request, response) => {
+    if (!request.body?.name) {
+        return response.sendStatus(400);
+    }
+
+    try {
+        const result = await demoteLorebook(request.user, request.body.name);
+        return response.send({ ok: true, ...result });
+    } catch (error) {
+        return sendLorebookError(response, error);
+    }
+});
+
+router.post('/sorted-entries', async (request, response) => {
+    if (!request.body) {
+        return response.sendStatus(400);
+    }
+
+    try {
+        return response.send(await resolveSortedEntriesPayload(request.user, request.body));
+    } catch (error) {
+        return sendLorebookError(response, error);
+    }
+});
+
+router.post('/scan', (request, response) => {
+    return (async () => {
+        if (!request.body) {
+            return response.sendStatus(400);
+        }
+
+        try {
+            const payload = { ...request.body };
+            if (!Array.isArray(payload.sortedEntries)) {
+                const resolved = await resolveSortedEntriesPayload(request.user, payload);
+                payload.sortedEntries = prepareEntriesForScan(resolved.entries, {
+                    ...(payload.substitutionEnv || {}),
+                    macroSnapshot: payload.macroSnapshot || payload.substitutionEnv?.macroSnapshot,
+                    extensionPrompts: payload.extensionPrompts || payload.substitutionEnv?.extensionPrompts,
+                });
+            }
+
+            return response.send(await scanWorldInfo(payload));
+        } catch (error) {
+            console.error('World info scan failed', error);
+            return response.status(500).send({ error: String(error?.message || error) });
+        }
+    })();
 });

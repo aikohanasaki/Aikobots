@@ -44,7 +44,21 @@ import {
     checkEmbeddedWorld,
     setWorldInfoButtonClass,
     wi_anchor_position,
+    selected_world_info,
+    world_info_depth,
+    world_info_min_activations,
+    world_info_min_activations_depth_max,
+    world_info_budget,
     world_info_include_names,
+    world_info_recursive,
+    world_info_case_sensitive,
+    world_info_match_whole_words,
+    world_info_use_group_scoring,
+    world_info_character_strategy,
+    world_info_budget_cap,
+    world_info_max_recursion_steps,
+    world_info_position,
+    METADATA_KEY,
     initWorldInfo,
     charUpdatePrimaryWorld,
     charSetAuxWorlds,
@@ -100,8 +114,8 @@ import {
     setOpenAIMessageExamples,
     setOpenAIMessages,
     setupChatCompletionPromptManager,
-    prepareOpenAIMessages,
-    assembleOpenAIMessagesOnServer,
+    buildServerAssemblyPayload,
+    consumeOpenAITimedWorldInfo,
     sendOpenAIRequest,
     loadOpenAISettings,
     oai_settings,
@@ -246,7 +260,7 @@ import { hideLoader, showLoader } from './scripts/loader.js';
 import { BulkEditOverlay } from './scripts/BulkEditOverlay.js';
 import { appendFileContent, hasPendingFileAttachment, populateFileAttachment, decodeStyleTags, encodeStyleTags, isExternalMediaAllowed, preserveNeutralChat, restoreNeutralChat, formatCreatorNotes, initChatUtilities, addDOMPurifyHooks } from './scripts/chats.js';
 import { getPresetManager, initPresetManager } from './scripts/preset-manager.js';
-import { evaluateMacros, getLastMessageId, initMacros } from './scripts/macros.js';
+import { evaluateMacros, getLastMessageId, initMacros, MacrosParser } from './scripts/macros.js';
 import { currentUser, setUserControls } from './scripts/user.js';
 import { POPUP_RESULT, POPUP_TYPE, Popup, callGenericPopup, fixToastrForDialogs } from './scripts/popup.js';
 import { renderTemplate, renderTemplateAsync } from './scripts/templates.js';
@@ -1490,6 +1504,7 @@ export async function clearChat() {
 export async function deleteLastMessage() {
     chat.length = chat.length - 1;
     chatElement.children('.mes').last().remove();
+    restoreTimedWorldInfoFromChat();
     await eventSource.emit(event_types.MESSAGE_DELETED, chat.length);
 }
 
@@ -1539,6 +1554,7 @@ export async function deleteMessage(id, swipeDeletionIndex = undefined, askConfi
 
     chat.splice(id, 1);
     messageElement.remove();
+    restoreTimedWorldInfoFromChat();
 
     chat_metadata['tainted'] = true;
 
@@ -2770,6 +2786,100 @@ export function substituteParams(content, _name1, _name2, _original, _group, _re
     return evaluateMacros(content, environment, postProcessFn);
 }
 
+export function getServerMacroSnapshot() {
+    const macroNames = new Set([
+        'user',
+        'char',
+        'group',
+        'charIfNotGroup',
+        'groupNotMuted',
+        'notChar',
+        'model',
+        'description',
+        'personality',
+        'scenario',
+        'persona',
+        'mesExamples',
+        'mesExamplesRaw',
+        'charVersion',
+        'char_version',
+        'charDepthPrompt',
+        'creatorNotes',
+        'charPrompt',
+        'charInstruction',
+        'charJailbreak',
+        'input',
+        'maxPrompt',
+        'lastMessage',
+        'lastMessageId',
+        'lastUserMessage',
+        'lastCharMessage',
+        'firstIncludedMessageId',
+        'firstDisplayedMessageId',
+        'lastSwipeId',
+        'currentSwipeId',
+        'time',
+        'date',
+        'weekday',
+        'isotime',
+        'isodate',
+        'idle_duration',
+        'isMobile',
+        'lastGenerationType',
+        'systemPrompt',
+        'defaultSystemPrompt',
+        'instructSystem',
+        'instructSystemPrompt',
+        'chatSeparator',
+        'chatStart',
+        'instructStoryStringPrefix',
+        'instructStoryStringSuffix',
+        'instructInput',
+        'instructUserPrefix',
+        'instructUserSuffix',
+        'instructOutput',
+        'instructAssistantPrefix',
+        'instructSeparator',
+        'instructAssistantSuffix',
+        'instructSystemPrefix',
+        'instructSystemSuffix',
+        'instructFirstOutput',
+        'instructFirstAssistantPrefix',
+        'instructLastOutput',
+        'instructLastAssistantPrefix',
+        'instructStop',
+        'instructUserFiller',
+        'instructSystemInstructionPrefix',
+        'instructFirstInput',
+        'instructFirstUserPrefix',
+        'instructLastInput',
+        'instructLastUserPrefix',
+    ]);
+
+    for (const { key } of MacrosParser) {
+        for (const alias of String(key || '').split('|').map(x => x.trim()).filter(Boolean)) {
+            macroNames.add(alias);
+        }
+    }
+
+    const values = {};
+    for (const macroName of macroNames) {
+        const marker = `{{${macroName}}}`;
+        const resolved = substituteParams(marker);
+        if (resolved !== marker) {
+            values[macroName] = resolved;
+        }
+    }
+
+    return {
+        values,
+        localVariables: structuredClone(chat_metadata.variables || {}),
+        globalVariables: structuredClone(extension_settings.variables.global || {}),
+        chatId: chat_metadata['main_chat'] ?? getCurrentChatId() ?? '',
+        now: new Date().toISOString(),
+    };
+}
+
 
 /**
  * Gets stopping sequences for the prompt.
@@ -2974,27 +3084,57 @@ function addPersonaDescriptionExtensionPrompt() {
     }
 }
 
+async function shouldIncludeExtensionPrompt(prompt) {
+    if (!prompt) {
+        return false;
+    }
+
+    const hasFilter = typeof prompt.filter === 'function';
+    if (hasFilter && !await prompt.filter()) {
+        return false;
+    }
+
+    return true;
+}
+
+/**
+ * Returns a filtered extension prompt snapshot for server-side prompt assembly.
+ * @param {Record<string, any>} [source] Source prompt registry
+ * @returns {Promise<Record<string, {value: string, resolvedValue: string, position: number, depth: number, scan: boolean, role: number}>>}
+ */
+export async function getExtensionPromptSnapshot(source = extension_prompts) {
+    const snapshot = {};
+
+    for (const key of Object.keys(source || {}).sort()) {
+        const prompt = source[key];
+
+        if (!await shouldIncludeExtensionPrompt(prompt)) {
+            continue;
+        }
+
+        const value = String(prompt.value ?? '');
+        snapshot[key] = {
+            value,
+            resolvedValue: substituteParams(value),
+            position: prompt.position === undefined ? undefined : Number(prompt.position),
+            depth: prompt.depth === undefined ? undefined : Number(prompt.depth),
+            scan: !!prompt.scan,
+            role: Number(prompt.role ?? extension_prompt_roles.SYSTEM),
+        };
+    }
+
+    return snapshot;
+}
+
 /**
  * Returns all extension prompts combined.
  * @returns {Promise<string>} Combined extension prompts
  */
 async function getAllExtensionPrompts() {
-    const values = [];
-
-    for (const prompt of Object.values(extension_prompts)) {
-        const value = prompt?.value?.trim();
-
-        if (!value) {
-            continue;
-        }
-
-        const hasFilter = typeof prompt.filter === 'function';
-        if (hasFilter && !await prompt.filter()) {
-            continue;
-        }
-
-        values.push(value);
-    }
+    const snapshot = await getExtensionPromptSnapshot();
+    const values = Object.values(snapshot)
+        .map(prompt => prompt.value.trim())
+        .filter(Boolean);
 
     return substituteParams(values.join('\n'));
 }
@@ -3009,19 +3149,8 @@ export async function getExtensionPromptByName(moduleName) {
         return '';
     }
 
-    const prompt = extension_prompts[moduleName];
-
-    if (!prompt) {
-        return '';
-    }
-
-    const hasFilter = typeof prompt.filter === 'function';
-
-    if (hasFilter && !await prompt.filter()) {
-        return '';
-    }
-
-    return substituteParams(prompt.value);
+    const snapshot = await getExtensionPromptSnapshot({ [moduleName]: extension_prompts[moduleName] });
+    return snapshot[moduleName]?.resolvedValue || '';
 }
 
 /**
@@ -3049,21 +3178,13 @@ export function getExtensionPromptMaxDepth() {
  * @returns {Promise<string>} Extension prompt
  */
 export async function getExtensionPrompt(position = extension_prompt_types.IN_PROMPT, depth = undefined, separator = '\n', role = undefined, wrap = true) {
-    const filterByFunction = async (prompt) => {
-        const hasFilter = typeof prompt.filter === 'function';
-        if (hasFilter && !await prompt.filter()) {
-            return false;
-        }
-        return true;
-    };
-    const promptPromises = Object.keys(extension_prompts)
+    const snapshot = await getExtensionPromptSnapshot();
+    const prompts = Object.keys(snapshot)
         .sort()
-        .map((x) => extension_prompts[x])
-        .filter(x => x.position == position && x.value)
-        .filter(x => depth === undefined || x.depth === undefined || x.depth === depth)
-        .filter(x => role === undefined || x.role === undefined || x.role === role)
-        .filter(filterByFunction);
-    const prompts = await Promise.all(promptPromises);
+        .map((key) => snapshot[key])
+        .filter(prompt => prompt.position == position && prompt.value)
+        .filter(prompt => depth === undefined || prompt.depth === undefined || prompt.depth === depth)
+        .filter(prompt => role === undefined || prompt.role === undefined || prompt.role === role);
 
     let values = prompts.map(x => x.value.trim()).join(separator);
     if (wrap && values.length && !values.startsWith(separator)) {
@@ -3908,6 +4029,11 @@ export async function Generate(type, { automatic_trigger, force_name2, quiet_pro
     setGenerationProgress(0);
     generation_started = new Date();
 
+    // OpenAI prompt preview/dry-run is disabled so WI and prompt assembly stay server-side.
+    if (main_api === 'openai' && dryRun) {
+        return Promise.resolve();
+    }
+
     // Prevent generation from shallow characters
     await unshallowCharacter(this_chid);
 
@@ -4021,6 +4147,7 @@ export async function Generate(type, { automatic_trigger, force_name2, quiet_pro
         }
         else if (type !== 'quiet' && type !== 'swipe' && !isImpersonate && !dryRun && chat.length) {
             chat.length = chat.length - 1;
+            restoreTimedWorldInfoFromChat();
             await removeLastMessage();
             await eventSource.emit(event_types.MESSAGE_DELETED, chat.length);
         }
@@ -4229,10 +4356,9 @@ export async function Generate(type, { automatic_trigger, force_name2, quiet_pro
     // Set non-WI AN
     setFloatingPrompt();
 
-    // Add WI to prompt (and also inject WI to AN value via hijack)
-    // Make quiet prompt available for WIAN
-    setExtensionPrompt(inject_ids.QUIET_PROMPT, quiet_prompt || '', extension_prompt_types.IN_PROMPT, 0, true);
     const chatForWI = coreChat.map(x => world_info_include_names ? `${x.name}: ${x.mes}` : x.mes).reverse();
+    const preliminaryOaiMessages = main_api === 'openai' ? setOpenAIMessages(coreChat) : [];
+    const useServerOpenAIGeneration = main_api === 'openai';
     /** @type {import('./scripts/world-info.js').WIGlobalScanData} */
     const globalScanData = {
         personaDescription: persona,
@@ -4243,25 +4369,40 @@ export async function Generate(type, { automatic_trigger, force_name2, quiet_pro
         creatorNotes: creatorNotes,
         trigger: GENERATION_TYPE_TRIGGERS.includes(type) ? type : 'normal',
     };
-    const { worldInfoString, worldInfoBefore, worldInfoAfter, worldInfoExamples, worldInfoDepth, outletEntries } = await getWorldInfoPrompt(chatForWI, this_max_context, dryRun, globalScanData);
-    setExtensionPrompt(inject_ids.QUIET_PROMPT, '', extension_prompt_types.IN_PROMPT, 0, true);
+    let worldInfoString = '';
+    let worldInfoBefore = '';
+    let worldInfoAfter = '';
+    let worldInfoExamples = [];
+    let worldInfoDepth = [];
+    let outletEntries = {};
+    if (!useServerOpenAIGeneration) {
+        // Add WI to prompt (and also inject WI to AN value via hijack)
+        // Make quiet prompt available for WIAN
+        setExtensionPrompt(inject_ids.QUIET_PROMPT, quiet_prompt || '', extension_prompt_types.IN_PROMPT, 0, true);
+        ({ worldInfoString, worldInfoBefore, worldInfoAfter, worldInfoExamples, worldInfoDepth, outletEntries } = await getWorldInfoPrompt(chatForWI, this_max_context, dryRun, globalScanData));
+        setExtensionPrompt(inject_ids.QUIET_PROMPT, '', extension_prompt_types.IN_PROMPT, 0, true);
+    } else {
+        flushWIInjections();
+    }
 
     // Add message example WI
-    for (const example of worldInfoExamples) {
-        const exampleMessage = example.content;
+    if (!useServerOpenAIGeneration) {
+        for (const example of worldInfoExamples) {
+            const exampleMessage = example.content;
 
-        if (exampleMessage.length === 0) {
-            continue;
-        }
+            if (exampleMessage.length === 0) {
+                continue;
+            }
 
-        const formattedExample = baseChatReplace(exampleMessage, name1, name2);
-        const cleanedExample = parseMesExamples(formattedExample, isInstruct);
+            const formattedExample = baseChatReplace(exampleMessage, name1, name2);
+            const cleanedExample = parseMesExamples(formattedExample, isInstruct);
 
-        // Insert depending on before or after position
-        if (example.position === wi_anchor_position.before) {
-            mesExamplesArray.unshift(...cleanedExample);
-        } else {
-            mesExamplesArray.push(...cleanedExample);
+            // Insert depending on before or after position
+            if (example.position === wi_anchor_position.before) {
+                mesExamplesArray.unshift(...cleanedExample);
+            } else {
+                mesExamplesArray.push(...cleanedExample);
+            }
         }
     }
 
@@ -4272,7 +4413,7 @@ export async function Generate(type, { automatic_trigger, force_name2, quiet_pro
         mesExamplesArray = formatInstructModeExamples(mesExamplesArray, name1, name2);
     }
 
-    if (skipWIAN !== true) {
+    if (skipWIAN !== true && !useServerOpenAIGeneration) {
         console.log('skipWIAN not active, adding WIAN');
         // Add all depth WI entries to prompt
         flushWIInjections();
@@ -4443,7 +4584,7 @@ export async function Generate(type, { automatic_trigger, force_name2, quiet_pro
     let oaiMessageExamples = [];
 
     if (main_api === 'openai') {
-        oaiMessages = setOpenAIMessages(coreChat);
+        oaiMessages = preliminaryOaiMessages;
         oaiMessageExamples = setOpenAIMessageExamples(mesExamplesArray);
     }
 
@@ -4895,10 +5036,10 @@ export async function Generate(type, { automatic_trigger, force_name2, quiet_pro
             break;
         }
         case 'openai': {
-            const hasInlineMedia = oaiMessages.some(message => Array.isArray(message?.media) && message.media.length > 0);
-            const requiresLocalAssembly = Boolean(quietImage) || hasInlineMedia;
-            const assembleMessages = (dryRun || requiresLocalAssembly) ? prepareOpenAIMessages : assembleOpenAIMessagesOnServer;
-            let [prompt, counts] = await assembleMessages({
+            const tagKey = getTagKeyForEntity(this_chid);
+            const extraCharLore = world_info.charLore?.find((entry) => entry.name === getCharaFilename(this_chid));
+            const promptContext = await buildServerAssemblyPayload({
+                coreChat,
                 name2: name2,
                 charDescription: description,
                 charPersonality: personality,
@@ -4907,8 +5048,6 @@ export async function Generate(type, { automatic_trigger, force_name2, quiet_pro
                 mesExamples: mesExamples,
                 charDepthPrompt: charDepthPrompt,
                 creatorNotes: creatorNotes,
-                worldInfoBefore: worldInfoBefore,
-                worldInfoAfter: worldInfoAfter,
                 extensionPrompts: extension_prompts,
                 bias: promptBias,
                 type: type,
@@ -4919,18 +5058,39 @@ export async function Generate(type, { automatic_trigger, force_name2, quiet_pro
                 jailbreakPromptOverride: jailbreak,
                 messages: oaiMessages,
                 messageExamples: oaiMessageExamples,
-            }, dryRun);
-            generate_data = { prompt: prompt };
-
-            // TODO: move these side-effects somewhere else, so this switch-case solely sets generate_data
-            // counts will return false if the user has not enabled the token breakdown feature
-            if (counts) {
-                parseTokenCounts(counts, thisPromptBits);
-            }
-
-            if (!dryRun) {
-                setInContextMessages(openai_messages_count, type);
-            }
+                worldInfoRequest: {
+                    chat: chatForWI,
+                    includeNames: world_info_include_names,
+                    maxContext: this_max_context,
+                    isDryRun: dryRun,
+                    globalScanData,
+                    selectedWorldInfo: selected_world_info,
+                    chatWorld: chat_metadata[METADATA_KEY] || '',
+                    personaWorld: power_user.persona_description_lorebook || '',
+                    characterWorld: characters[this_chid]?.data?.extensions?.world || '',
+                    characterExtraBooks: extraCharLore?.extraBooks || [],
+                    worldInfoCharacterStrategy: world_info_character_strategy,
+                    currentCharacterFilename: getCharaFilename(),
+                    currentCharacterTags: Array.isArray(tag_map?.[tagKey]) ? tag_map[tagKey] : [],
+                    timedWorldInfo: structuredClone(chat_metadata.timedWorldInfo || {}),
+                    settings: {
+                        world_info_depth,
+                        world_info_min_activations,
+                        world_info_min_activations_depth_max,
+                        world_info_budget,
+                        world_info_recursive,
+                        world_info_case_sensitive,
+                        world_info_match_whole_words,
+                        world_info_budget_cap,
+                        world_info_use_group_scoring,
+                        world_info_max_recursion_steps,
+                    },
+                    worldInfoPosition: world_info_position,
+                    wiAnchorPosition: wi_anchor_position,
+                    tokenizerModel: getTokenizerModel(),
+                },
+            });
+            generate_data = { promptContext };
             break;
         }
     }
@@ -4957,9 +5117,10 @@ export async function Generate(type, { automatic_trigger, force_name2, quiet_pro
 
         //set array object for prompt token itemization of this message
         let currentArrayEntry = Number(thisPromptBits.length - 1);
+        const isServerAssembledOpenAI = main_api === 'openai' && !generate_data.prompt && !generate_data.input;
         let additionalPromptStuff = {
             ...thisPromptBits[currentArrayEntry],
-            rawPrompt: generate_data.prompt || generate_data.input,
+            rawPrompt: isServerAssembledOpenAI ? '' : (generate_data.prompt || generate_data.input),
             mesId: getNextMessageId(type),
             allAnchors: await getAllExtensionPrompts(),
             chatInjects: injectedIndices?.map(index => arrMes[arrMes.length - index - 1])?.join('') || '',
@@ -4968,27 +5129,28 @@ export async function Generate(type, { automatic_trigger, force_name2, quiet_pro
             smartContextString: (extension_prompts['chromadb']?.value || ''),
             chatVectorsString: (extension_prompts['3_vectors']?.value || ''),
             dataBankVectorsString: (extension_prompts['4_vectors_data_bank']?.value || ''),
-            worldInfoString: worldInfoString,
-            storyString: storyString,
-            beforeScenarioAnchor: beforeScenarioAnchor,
-            afterScenarioAnchor: afterScenarioAnchor,
-            examplesString: examplesString,
-            mesSendString: mesSendString,
-            generatedPromptCache: generatedPromptCache,
+            worldInfoString: isServerAssembledOpenAI ? '' : worldInfoString,
+            storyString: isServerAssembledOpenAI ? '' : storyString,
+            beforeScenarioAnchor: isServerAssembledOpenAI ? '' : beforeScenarioAnchor,
+            afterScenarioAnchor: isServerAssembledOpenAI ? '' : afterScenarioAnchor,
+            examplesString: isServerAssembledOpenAI ? '' : examplesString,
+            mesSendString: isServerAssembledOpenAI ? '' : mesSendString,
+            generatedPromptCache: isServerAssembledOpenAI ? '' : generatedPromptCache,
             promptBias: promptBias,
-            finalPrompt: finalPrompt,
+            finalPrompt: isServerAssembledOpenAI ? '' : finalPrompt,
             charDescription: description,
             charPersonality: personality,
             scenarioText: scenario,
             this_max_context: this_max_context,
             padding: power_user.token_padding,
             main_api: main_api,
+            serverPromptAssembly: isServerAssembledOpenAI,
             instruction: main_api !== 'openai' && power_user.sysprompt.enabled ? substituteParams(power_user.prefer_character_prompt && system ? system : power_user.sysprompt.content) : '',
             userPersona: (power_user.persona_description_position == persona_description_positions.IN_PROMPT ? (persona || '') : ''),
             tokenizer: getFriendlyTokenizerName(main_api).tokenizerName || '',
             presetName: getPresetManager()?.getSelectedPresetName() || '',
-            messagesCount: main_api !== 'openai' ? mesSend.length : oaiMessages.length,
-            examplesCount: main_api !== 'openai' ? (pinExmString ? mesExamplesArray.length : count_exm_add) : oaiMessageExamples.length,
+            messagesCount: main_api !== 'openai' ? mesSend.length : null,
+            examplesCount: main_api !== 'openai' ? (pinExmString ? mesExamplesArray.length : count_exm_add) : null,
         };
 
         //console.log(additionalPromptStuff);
@@ -5655,7 +5817,7 @@ export async function duplicateCharacter() {
     return '';
 }
 
-function setInContextMessages(msgInContextCount, type) {
+export function setInContextMessages(msgInContextCount, type) {
     chatElement.find('.mes').removeClass('lastInContext');
 
     if (type === 'swipe' || type === 'regenerate' || type === 'continue') {
@@ -6211,6 +6373,8 @@ export async function saveReply({ type, getMessage, fromStreaming = false, title
         reasoning = '';
     }
 
+    const timedWorldInfo = consumeOpenAITimedWorldInfo();
+
     let oldMessage = '';
     const generationFinished = new Date();
     if (type === 'swipe') {
@@ -6325,6 +6489,13 @@ export async function saveReply({ type, getMessage, fromStreaming = false, title
     }
 
     const item = chat[chat.length - 1];
+    if (!item.extra || typeof item.extra !== 'object') {
+        item.extra = {};
+    }
+    if (timedWorldInfo && typeof timedWorldInfo === 'object') {
+        item.extra.timedWorldInfo = structuredClone(timedWorldInfo);
+        chat_metadata.timedWorldInfo = structuredClone(timedWorldInfo);
+    }
     if (item['swipe_info'] === undefined) {
         item['swipe_info'] = [];
     }
@@ -6422,6 +6593,29 @@ export function syncMesToSwipe(messageId = null) {
     return true;
 }
 
+function restoreTimedWorldInfoFromChat(messageId = null) {
+    if (!Array.isArray(chat) || chat.length === 0) {
+        delete chat_metadata.timedWorldInfo;
+        return false;
+    }
+
+    const startIndex = Math.min(
+        typeof messageId === 'number' ? messageId : chat.length - 1,
+        chat.length - 1,
+    );
+
+    for (let index = startIndex; index >= 0; index--) {
+        const snapshot = chat[index]?.extra?.timedWorldInfo;
+        if (snapshot && typeof snapshot === 'object') {
+            chat_metadata.timedWorldInfo = structuredClone(snapshot);
+            return true;
+        }
+    }
+
+    delete chat_metadata.timedWorldInfo;
+    return false;
+}
+
 /**
  * Syncs swipe data back to the message data at the given message ID (or the last message if no ID is given).
  * If the swipe ID is not provided, the current swipe ID in the message object is used.
@@ -6490,6 +6684,7 @@ export function syncSwipeToMes(messageId = null, swipeId = null) {
     targetMessage.gen_started = targetSwipeInfo?.gen_started;
     targetMessage.gen_finished = targetSwipeInfo?.gen_finished;
     targetMessage.extra = structuredClone(targetSwipeInfo?.extra) ?? {};
+    restoreTimedWorldInfoFromChat(targetMessageId);
 
     return true;
 }
