@@ -456,6 +456,24 @@ export async function readLorebookForGeneration(user, name, allowDummy = false) 
 /**
  * @param {import('./users.js').User} user
  * @param {string} name
+ * @returns {boolean}
+ */
+export function hasLorebookForGeneration(user, name) {
+    const canonicalName = getCanonicalLorebookName(name);
+
+    if (!canonicalName) {
+        return false;
+    }
+
+    return Boolean(
+        getUserLorebookRecord(user.profile.handle, canonicalName) ||
+        getSecureIndexEntry(canonicalName),
+    );
+}
+
+/**
+ * @param {import('./users.js').User} user
+ * @param {string} name
  * @param {object} data
  */
 export async function saveLorebookForManagement(user, name, data, storage = 'user') {

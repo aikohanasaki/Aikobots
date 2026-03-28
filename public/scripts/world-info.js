@@ -4373,6 +4373,7 @@ async function getSortedEntriesOnServer() {
             characterWorld: character?.data?.extensions?.world || '',
             characterExtraBooks: extraCharLore?.extraBooks || [],
             worldInfoCharacterStrategy: world_info_character_strategy,
+            currentCharacterFilename: fileName,
         }),
         cache: 'no-cache',
     });

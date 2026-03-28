@@ -6,7 +6,9 @@ import sanitize from 'sanitize-filename';
 import { createMacroState, evaluatePromptMacros } from '../prompting/macro-evaluator.js';
 import { getRegexedString, regex_placement } from '../prompting/regex-runtime.js';
 import { scanWorldInfo } from '../prompting/world-info-scan.js';
+import { getHiddenLorebooksForCharacter } from '../hidden-lorebook-bindings.js';
 import {
+    hasLorebookForGeneration,
     LorebookRepositoryError,
     deleteLorebookForManagement,
     demoteLorebook,
@@ -186,31 +188,55 @@ function substituteParams(content, env = {}) {
     });
 }
 
-export async function resolveSortedEntriesPayload(user, body = {}) {
+export async function resolveSortedEntriesPayload(user, body = {}, options = {}) {
     const {
         selectedWorldInfo = [],
         chatWorld = '',
         personaWorld = '',
         characterWorld = '',
         characterExtraBooks = [],
+        currentCharacterFilename = '',
         worldInfoCharacterStrategy = world_info_insertion_strategy.character_first,
     } = body;
+    const readEntries = options.readEntries ?? readWorldEntries;
+    const getHiddenBooks = options.getHiddenBooks ?? getHiddenLorebooksForCharacter;
+    const hasLorebook = options.hasLorebook ?? hasLorebookForGeneration;
 
     const selectedWorldSet = new Set(Array.isArray(selectedWorldInfo) ? selectedWorldInfo.filter(Boolean) : []);
-    const characterWorldSet = new Set([characterWorld, ...(Array.isArray(characterExtraBooks) ? characterExtraBooks : [])].filter(Boolean));
+    const excludedCharacterBooks = new Set([chatWorld, personaWorld, ...selectedWorldSet].filter(Boolean));
+    const visibleCharacterBooks = new Set([characterWorld, ...(Array.isArray(characterExtraBooks) ? characterExtraBooks : [])].filter(Boolean));
+    const resolvedHiddenBooks = getHiddenBooks(currentCharacterFilename);
+    const hiddenCharacterBooks = new Set(
+        (Array.isArray(resolvedHiddenBooks) ? resolvedHiddenBooks : [])
+            .filter(Boolean)
+            .filter(worldName => !visibleCharacterBooks.has(worldName)),
+    );
 
-    const globalLore = (await Promise.all([...selectedWorldSet].map(worldName => readWorldEntries(user, worldName)))).flat();
+    const globalLore = (await Promise.all([...selectedWorldSet].map(worldName => readEntries(user, worldName)))).flat();
 
-    const characterLore = (await Promise.all([...characterWorldSet]
-        .filter(worldName => !selectedWorldSet.has(worldName) && worldName !== chatWorld && worldName !== personaWorld)
-        .map(worldName => readWorldEntries(user, worldName)))).flat();
+    const visibleCharacterLore = (await Promise.all([...visibleCharacterBooks]
+        .filter(worldName => !excludedCharacterBooks.has(worldName))
+        .map(worldName => readEntries(user, worldName)))).flat();
+
+    const hiddenCharacterLore = (await Promise.all([...hiddenCharacterBooks]
+        .filter(worldName => !excludedCharacterBooks.has(worldName))
+        .map(async worldName => {
+            if (!hasLorebook(user, worldName)) {
+                console.warn(`[WI] Hidden lorebook "${worldName}" not found for character "${currentCharacterFilename}". Skipping.`);
+                return [];
+            }
+
+            return readEntries(user, worldName);
+        }))).flat();
+
+    const characterLore = [...visibleCharacterLore, ...hiddenCharacterLore];
 
     const chatLore = chatWorld && !selectedWorldSet.has(chatWorld)
-        ? await readWorldEntries(user, chatWorld)
+        ? await readEntries(user, chatWorld)
         : [];
 
     const personaLore = personaWorld && personaWorld !== chatWorld && !selectedWorldSet.has(personaWorld)
-        ? await readWorldEntries(user, personaWorld)
+        ? await readEntries(user, personaWorld)
         : [];
 
     let entries = sortEntriesWithStrategy(globalLore, characterLore, worldInfoCharacterStrategy);
