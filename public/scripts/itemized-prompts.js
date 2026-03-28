@@ -346,6 +346,14 @@ export function initItemizedPrompts() {
         let mesIdForItemization = $(this).closest('.mes').attr('mesId');
         console.log(`looking for mesID: ${mesIdForItemization}`);
         if (itemizedPrompts.length !== undefined && itemizedPrompts.length !== 0) {
+            const itemizedPrompt = itemizedPrompts.find(x => Number(x.mesId) === Number(mesIdForItemization));
+            if (itemizedPrompt?.serverPromptAssembly && typeof globalThis.SillyTavern?.debugServerAssembly === 'function') {
+                try {
+                    await globalThis.SillyTavern.debugServerAssembly();
+                } catch (error) {
+                    console.error('Failed to refresh server prompt assembly debug dump', error);
+                }
+            }
             await promptItemize(itemizedPrompts, mesIdForItemization);
         }
     });

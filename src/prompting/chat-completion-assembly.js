@@ -855,6 +855,19 @@ function formatWorldInfo(value, wiFormat) {
     return stringFormat(wiFormat, value);
 }
 
+function formatPersonaDescription(value) {
+    const personaText = String(value || '').trim();
+    if (!personaText) {
+        return '';
+    }
+
+    return [
+        '=== Persona Notes for {{user}} ===',
+        personaText,
+        '=== END Persona Notes for {{user}} ===',
+    ].join('\n');
+}
+
 function getPromptRole(role) {
     switch (role) {
         case extension_prompt_roles.USER:
@@ -1288,7 +1301,7 @@ async function preparePromptsForChatCompletion(context) {
     }
 
     if (context.powerUser.persona_description && context.powerUser.persona_description_position === context.personaDescriptionPosition.IN_PROMPT) {
-        systemPrompts.push({ role: 'system', content: context.powerUser.persona_description, identifier: 'personaDescription' });
+        systemPrompts.push({ role: 'system', content: formatPersonaDescription(context.powerUser.persona_description), identifier: 'personaDescription' });
     }
 
     const knownExtensionPrompts = new Set(['1_memory', '2_floating_prompt', '3_vectors', '4_vectors_data_bank', 'chromadb', 'PERSONA_DESCRIPTION', 'QUIET_PROMPT', 'DEPTH_PROMPT']);
@@ -1378,6 +1391,25 @@ async function populateChatCompletion(prompts, chatCompletion, context) {
     await addToChatCompletion('scenario');
     await addToChatCompletion('personaDescription');
 
+    const handledPromptIdentifiers = new Set([
+        'worldInfoBefore',
+        'main',
+        'worldInfoAfter',
+        'charDescription',
+        'charPersonality',
+        'scenario',
+        'personaDescription',
+        'impersonate',
+        'quietPrompt',
+        'groupNudge',
+        'summary',
+        'authorsNote',
+        'vectorsMemory',
+        'vectorsDataBank',
+        'smartContext',
+        'bias',
+    ]);
+
     const controlPrompts = new MessageCollection('controlPrompts');
     if (prompts.has('impersonate') && context.type === 'impersonate') {
         const impersonateMessage = await Message.fromPromptAsync(prompts.get('impersonate'), context.tokenHandler);
@@ -1407,12 +1439,21 @@ async function populateChatCompletion(prompts, chatCompletion, context) {
         if (chatMessage.name && namesInCompletion) {
             await continueMessage.setName(context.promptManager.sanitizeName(chatMessage.name));
         }
-        controlPrompts.add(continueMessage);
-        chatCompletion.reserveBudget(continueMessage);
-        context.messages = context.messages.slice(1);
+        if (chatCompletion.canAfford(continueMessage)) {
+            controlPrompts.add(continueMessage);
+            chatCompletion.reserveBudget(continueMessage);
+            context.messages = context.messages.slice(1);
+        }
     }
 
-    for (const identifier of ['nsfw', 'jailbreak', ...prompts.collection.filter(prompt => !prompt.system_prompt && prompt.injection_position !== INJECTION_POSITION.ABSOLUTE).map(prompt => prompt.identifier)]) {
+    const dynamicPromptIdentifiers = prompts.collection
+        .filter(prompt => !prompt.system_prompt)
+        .filter(prompt => prompt.injection_position !== INJECTION_POSITION.ABSOLUTE)
+        .filter(prompt => !prompt.position)
+        .filter(prompt => !handledPromptIdentifiers.has(prompt.identifier))
+        .map(prompt => prompt.identifier);
+
+    for (const identifier of ['nsfw', 'jailbreak', ...dynamicPromptIdentifiers]) {
         await addToChatCompletion(identifier);
     }
 

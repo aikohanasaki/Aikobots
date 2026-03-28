@@ -117,6 +117,8 @@ import {
     setupChatCompletionPromptManager,
     buildServerAssemblyPayload,
     consumeOpenAITimedWorldInfo,
+    debugServerAssemblyDump,
+    getLastServerAssemblyDebugDump,
     sendOpenAIRequest,
     loadOpenAISettings,
     oai_settings,
@@ -296,10 +298,55 @@ import { initDomHandlers } from './scripts/dom-handlers.js';
 import { SimpleMutex } from './scripts/util/SimpleMutex.js';
 import { AudioPlayer } from './scripts/audio-player.js';
 
+async function debugServerAssemblyToPrompt(promptContext = null) {
+    const dump = await debugServerAssemblyDump(promptContext);
+
+    if (!isAdmin()) {
+        return dump;
+    }
+
+    if (!Array.isArray(itemizedPrompts)) {
+        return dump;
+    }
+
+    let targetPrompt = null;
+    for (let index = itemizedPrompts.length - 1; index >= 0; index--) {
+        const item = itemizedPrompts[index];
+        if (item?.serverPromptAssembly) {
+            targetPrompt = item;
+            break;
+        }
+    }
+
+    if (!targetPrompt && itemizedPrompts.length > 0) {
+        targetPrompt = itemizedPrompts[itemizedPrompts.length - 1];
+    }
+
+    if (!targetPrompt) {
+        return dump;
+    }
+
+    targetPrompt.rawPrompt = Array.isArray(dump?.assembly?.chat)
+        ? structuredClone(dump.assembly.chat)
+        : '';
+    targetPrompt.serverAssemblyDebugDump = structuredClone(dump);
+    targetPrompt.messagesCount = dump?.assembly?.messagesCount ?? targetPrompt.messagesCount ?? null;
+
+    const targetMesId = Number(targetPrompt.mesId);
+    if (Number.isFinite(targetMesId) && targetMesId >= 0) {
+        chatElement.find(`.mes[mesid="${targetMesId}"] .mes_prompt`).show();
+    }
+
+    await saveItemizedPrompts(getCurrentChatId());
+    return dump;
+}
+
 // API OBJECT FOR EXTERNAL WIRING
 globalThis.SillyTavern = {
     libs,
     getContext,
+    debugServerAssembly: debugServerAssemblyToPrompt,
+    getLastServerAssemblyDebugDump,
 };
 
 export {
@@ -2541,14 +2588,16 @@ export function addOneMessage(mes, { type = 'normal', insertAfter = null, scroll
         newMessage.addClass('toolCall');
     }
 
-    //shows or hides the Prompt display button
+    // Shows the Prompt display button for admins only.
     let mesIdToFind = type === 'swipe' ? params.mesId - 1 : params.mesId;  //Number(newMessage.attr('mesId'));
+    const promptButton = newMessage.find('.mes_prompt');
+    promptButton.hide();
 
     //if we have itemized messages, and the array isn't null..
-    if (params.isUser === false && Array.isArray(itemizedPrompts) && itemizedPrompts.length > 0) {
+    if (isAdmin() && params.isUser === false && Array.isArray(itemizedPrompts) && itemizedPrompts.length > 0) {
         const itemizedPrompt = itemizedPrompts.find(x => Number(x.mesId) === Number(mesIdToFind));
         if (itemizedPrompt) {
-            newMessage.find('.mes_prompt').show();
+            promptButton.show();
         }
     }
 

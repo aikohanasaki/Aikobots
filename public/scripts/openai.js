@@ -102,6 +102,8 @@ export {
 
 let openai_messages_count = 0;
 let pendingTimedWorldInfo = null;
+let lastServerAssemblyPromptContext = null;
+let lastServerAssemblyDebugDump = null;
 
 function sanitizeForServerPayload(value, seen = new WeakSet()) {
     if (value === null || value === undefined) {
@@ -148,6 +150,84 @@ function sanitizeForServerPayload(value, seen = new WeakSet()) {
 
     seen.delete(value);
     return result;
+}
+
+function storeServerAssemblyPromptContext(promptContext) {
+    lastServerAssemblyPromptContext = promptContext && typeof promptContext === 'object'
+        ? structuredClone(promptContext)
+        : null;
+}
+
+function storeServerAssemblyDebugDump(dump) {
+    lastServerAssemblyDebugDump = dump && typeof dump === 'object'
+        ? dump
+        : null;
+}
+
+function cloneServerAssemblyDebugDump(dump) {
+    return dump && typeof dump === 'object'
+        ? structuredClone(dump)
+        : null;
+}
+
+export function getLastServerAssemblyDebugDump() {
+    return cloneServerAssemblyDebugDump(lastServerAssemblyDebugDump);
+}
+
+export async function debugServerAssemblyDump(promptContext = null) {
+    const context = promptContext && typeof promptContext === 'object'
+        ? structuredClone(promptContext)
+        : (lastServerAssemblyPromptContext && typeof lastServerAssemblyPromptContext === 'object'
+            ? structuredClone(lastServerAssemblyPromptContext)
+            : null);
+
+    if (!context) {
+        throw new Error('No promptContext is available for server assembly debug.');
+    }
+
+    const response = await fetch('/api/backends/chat-completions/assemble/compare', {
+        method: 'POST',
+        headers: getRequestHeaders(),
+        body: JSON.stringify({
+            ...context,
+            clientChat: Array.isArray(context.messages) ? structuredClone(context.messages) : [],
+        }),
+    });
+
+    const responseText = await response.text();
+    let data = null;
+    try {
+        data = responseText ? JSON.parse(responseText) : null;
+    } catch {
+        data = null;
+    }
+
+    if (!response.ok) {
+        const message =
+            data?.error?.message ||
+            data?.message ||
+            responseText?.trim() ||
+            `Got response status ${response.status}`;
+        throw new Error(message);
+    }
+
+    const dump = {
+        createdAt: new Date().toISOString(),
+        promptContext: context,
+        assembly: data,
+    };
+
+    storeServerAssemblyDebugDump(dump);
+
+    console.groupCollapsed('Chat completion assembly debug');
+    console.log('promptContext', dump.promptContext);
+    console.log('assembled.chat', dump.assembly?.chat);
+    console.log('assembled.messagesState', dump.assembly?.messagesState);
+    console.log('assembled.comparison', dump.assembly?.comparison);
+    console.log('assembled.overriddenPrompts', dump.assembly?.overriddenPrompts);
+    console.groupEnd();
+
+    return cloneServerAssemblyDebugDump(dump);
 }
 
 function maybeNotifyWorldInfoOverflow(data) {
@@ -1682,6 +1762,7 @@ async function sendOpenAIRequest(type, messages, signal, { jsonSchema = null } =
 
     const promptContext = !Array.isArray(messages) && messages && typeof messages === 'object' ? messages.promptContext : null;
     pendingTimedWorldInfo = null;
+    storeServerAssemblyPromptContext(promptContext);
 
     if (!promptContext && !Array.isArray(messages)) {
         throw new Error('messages must be an array');
