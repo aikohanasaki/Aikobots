@@ -56,6 +56,25 @@ function getSecureIndexPath() {
     return path.join(getSecureLorebookDirectory(), SECURE_INDEX_FILENAME);
 }
 
+function getSecureIndexMetadata(name) {
+    const canonicalName = getCanonicalLorebookName(name);
+    if (!canonicalName) {
+        return null;
+    }
+
+    const index = readSecureIndex();
+    const metadata = index.books[canonicalName];
+    if (!metadata) {
+        return null;
+    }
+
+    return {
+        name: canonicalName,
+        metadata,
+        path: getSecureLorebookPath(canonicalName),
+    };
+}
+
 function readJsonFileSync(filePath) {
     return JSON.parse(fs.readFileSync(filePath, 'utf8'));
 }
@@ -87,19 +106,34 @@ function writeSecureIndex(index) {
 }
 
 function getSecureIndexEntry(name) {
-    const canonicalName = getCanonicalLorebookName(name);
-    if (!canonicalName) {
+    const secureEntry = getSecureIndexMetadata(name);
+    if (!secureEntry) {
         return null;
     }
 
-    const index = readSecureIndex();
-    const metadata = index.books[canonicalName];
-    if (!metadata) {
+    const { name: canonicalName, metadata, path: filePath } = secureEntry;
+    let stats;
+
+    try {
+        stats = fs.lstatSync(filePath);
+    } catch (error) {
+        if (error?.code !== 'ENOENT') {
+            console.warn(`[Lorebooks] Failed to inspect secure lorebook "${canonicalName}"`, error);
+        } else {
+            console.warn(`[Lorebooks] Secure lorebook "${canonicalName}" is missing its symlink.`);
+        }
         return null;
     }
 
-    const filePath = getSecureLorebookPath(canonicalName);
-    if (!fs.existsSync(filePath)) {
+    if (!stats.isSymbolicLink()) {
+        console.warn(`[Lorebooks] Secure lorebook "${canonicalName}" is not stored as a symlink.`);
+        return null;
+    }
+
+    try {
+        fs.accessSync(filePath, fs.constants.R_OK);
+    } catch (error) {
+        console.warn(`[Lorebooks] Secure lorebook "${canonicalName}" points to an unreadable target.`, error);
         return null;
     }
 
@@ -151,7 +185,7 @@ function buildListItem(record, currentHandle) {
         storage: record.storage,
         ownerHandle: record.ownerHandle,
         canEdit: canManage || isSecure,
-        canDelete: canManage || isSecure,
+        canDelete: !isSecure && canManage,
         canPromote: !isSecure && canManage,
         canDemote: isSecure,
     };
@@ -184,19 +218,16 @@ function readLorebookFromRecord(record, allowDummy) {
 }
 
 async function assertSecureNameAvailableForPromotion(name) {
-    const secureRecord = getSecureIndexEntry(name);
-    if (secureRecord) {
+    const secureEntry = getSecureIndexMetadata(name);
+    if (secureEntry) {
         throw new LorebookRepositoryError('LorebookAlreadySecure', `Lorebook "${name}" is already secure.`, 409);
     }
 }
 
-function writeSecureLorebook(name, data, ownerHandle, actorHandle, existingMetadata = null) {
+function writeSecureLorebookMetadata(name, ownerHandle, actorHandle, existingMetadata = null) {
     const index = readSecureIndex();
     const timestamp = new Date().toISOString();
     const canonicalName = assertCanonicalName(name);
-    const filePath = getSecureLorebookPath(canonicalName);
-
-    writeFileAtomicSync(filePath, JSON.stringify(data, null, 4), 'utf8');
     index.books[canonicalName] = {
         ownerHandle,
         createdAt: existingMetadata?.createdAt || timestamp,
@@ -207,15 +238,45 @@ function writeSecureLorebook(name, data, ownerHandle, actorHandle, existingMetad
     writeSecureIndex(index);
 }
 
+function createSecureLorebookLink(name, ownerHandle) {
+    const canonicalName = assertCanonicalName(name);
+    const targetPath = getUserLorebookPath(ownerHandle, canonicalName);
+    const linkPath = getSecureLorebookPath(canonicalName);
+
+    if (!targetPath || !fs.existsSync(targetPath)) {
+        throw new LorebookRepositoryError('LorebookNotFound', `Lorebook "${canonicalName}" not found.`, 404);
+    }
+
+    ensureDirectory(path.dirname(linkPath));
+    const relativeTargetPath = path.relative(path.dirname(linkPath), targetPath) || path.basename(targetPath);
+
+    try {
+        fs.symlinkSync(relativeTargetPath, linkPath, 'file');
+    } catch (error) {
+        if (error?.code === 'EPERM' || error?.code === 'EACCES') {
+            const message = process.platform === 'win32'
+                ? 'Could not create the secure lorebook link. On Windows, enable Developer Mode or run the server with permission to create symlinks.'
+                : 'Could not create the secure lorebook link. Check filesystem permissions and symlink support.';
+            throw new LorebookRepositoryError('LorebookSymlinkCreationFailed', message, 500);
+        }
+
+        throw error;
+    }
+}
+
 function removeSecureLorebook(name) {
     const canonicalName = assertCanonicalName(name);
-    const record = getSecureIndexEntry(canonicalName);
+    const filePath = getSecureLorebookPath(canonicalName);
     const index = readSecureIndex();
     delete index.books[canonicalName];
     writeSecureIndex(index);
 
-    if (record?.path && fs.existsSync(record.path)) {
-        fs.unlinkSync(record.path);
+    try {
+        fs.unlinkSync(filePath);
+    } catch (error) {
+        if (error?.code !== 'ENOENT') {
+            throw error;
+        }
     }
 }
 
@@ -249,7 +310,24 @@ export function readWorldInfoFile(directories, worldInfoName, allowDummy) {
 export async function listLorebooksForManagement(user) {
     const currentHandle = user.profile.handle;
     const items = [];
+    const seenNames = new Set();
     const worldsDir = user.directories.worlds;
+    const secureIndex = readSecureIndex();
+    const secureRecords = new Map();
+
+    for (const [name, metadata] of Object.entries(secureIndex.books)) {
+        const ownerHandle = String(metadata?.ownerHandle || '');
+        const secureRecord = getSecureIndexEntry(name);
+
+        if (!secureRecord) {
+            continue;
+        }
+
+        secureRecords.set(name, secureRecord);
+        if (!user.profile.admin && ownerHandle !== currentHandle) {
+            continue;
+        }
+    }
 
     if (fs.existsSync(worldsDir)) {
         const worldFiles = fs.readdirSync(worldsDir)
@@ -258,31 +336,30 @@ export async function listLorebooksForManagement(user) {
 
         for (const file of worldFiles) {
             const name = path.parse(file).name;
-            items.push(buildListItem({
-                name,
-                storage: 'user',
-                ownerHandle: currentHandle,
-            }, currentHandle));
+            const secureRecord = secureRecords.get(name);
+            const effectiveRecord = secureRecord?.ownerHandle === currentHandle
+                ? secureRecord
+                : {
+                    name,
+                    storage: 'user',
+                    ownerHandle: currentHandle,
+                };
+
+            items.push(buildListItem(effectiveRecord, currentHandle));
+            seenNames.add(name);
         }
     }
 
-    const secureIndex = readSecureIndex();
-    for (const [name, metadata] of Object.entries(secureIndex.books)) {
-        const ownerHandle = String(metadata?.ownerHandle || '');
-        if (!user.profile.admin && ownerHandle !== currentHandle) {
-            continue;
-        }
+    if (user.profile.admin) {
+        for (const [name, secureRecord] of Array.from(secureRecords.entries()).sort(([left], [right]) => left.localeCompare(right))) {
+            if (seenNames.has(name)) {
+                console.warn(`[Lorebooks] Skipping duplicate manageable lorebook name "${name}" in secure storage.`);
+                continue;
+            }
 
-        if (items.some(item => item.name === name)) {
-            console.warn(`[Lorebooks] Skipping duplicate manageable lorebook name "${name}" in secure storage.`);
-            continue;
+            items.push(buildListItem(secureRecord, currentHandle));
+            seenNames.add(name);
         }
-
-        items.push(buildListItem({
-            name,
-            storage: 'secure',
-            ownerHandle,
-        }, currentHandle));
     }
 
     return items.sort((a, b) => a.name.localeCompare(b.name));
@@ -391,7 +468,8 @@ export async function saveLorebookForManagement(user, name, data, storage = 'use
             throw new LorebookRepositoryError('LorebookNotFound', `Lorebook "${canonicalName}" not found.`, 404);
         }
 
-        writeSecureLorebook(canonicalName, data, secureRecord.ownerHandle, user.profile.handle, secureRecord);
+        writeUserLorebook(secureRecord.ownerHandle, canonicalName, data);
+        writeSecureLorebookMetadata(canonicalName, secureRecord.ownerHandle, user.profile.handle, secureRecord);
         return {
             name: canonicalName,
             storage: 'secure',
@@ -404,7 +482,7 @@ export async function saveLorebookForManagement(user, name, data, storage = 'use
         name: canonicalName,
         storage: 'user',
         ownerHandle: user.profile.handle,
-        shadowingSecure: Boolean(secureRecord && canManageSecureLorebook(user, secureRecord)),
+        shadowingSecure: Boolean(secureRecord && secureRecord.ownerHandle !== user.profile.handle && canManageSecureLorebook(user, secureRecord)),
     };
 }
 
@@ -421,12 +499,7 @@ export async function deleteLorebookForManagement(user, name) {
             throw new LorebookRepositoryError('LorebookAccessDenied', `Lorebook "${canonicalName}" is not deletable.`, 403);
         }
 
-        removeSecureLorebook(canonicalName);
-        return {
-            name: canonicalName,
-            storage: 'secure',
-            ownerHandle: secureRecord.ownerHandle,
-        };
+        throw new LorebookRepositoryError('LorebookAccessDenied', `Secure lorebook "${canonicalName}" must be demoted before deletion.`, 403);
     }
 
     const userRecord = getUserLorebookRecord(user.profile.handle, canonicalName);
@@ -455,9 +528,8 @@ export async function promoteLorebook(user, name) {
 
     await assertSecureNameAvailableForPromotion(canonicalName);
 
-    const data = readLorebookFromRecord(userRecord, false);
-    writeSecureLorebook(canonicalName, data, user.profile.handle, user.profile.handle);
-    fs.unlinkSync(userRecord.path);
+    createSecureLorebookLink(canonicalName, user.profile.handle);
+    writeSecureLorebookMetadata(canonicalName, user.profile.handle, user.profile.handle);
 
     return {
         name: canonicalName,
@@ -482,17 +554,6 @@ export async function demoteLorebook(user, name) {
         throw new LorebookRepositoryError('LorebookAccessDenied', `Lorebook "${canonicalName}" is not movable.`, 403);
     }
 
-    const destinationRecord = getUserLorebookRecord(secureRecord.ownerHandle, canonicalName);
-    if (destinationRecord) {
-        throw new LorebookRepositoryError(
-            'LorebookDestinationConflict',
-            `Cannot return "${canonicalName}" to user storage because that name already exists there.`,
-            409,
-        );
-    }
-
-    const data = readLorebookFromRecord(secureRecord, false);
-    writeUserLorebook(secureRecord.ownerHandle, canonicalName, data);
     removeSecureLorebook(canonicalName);
 
     return {

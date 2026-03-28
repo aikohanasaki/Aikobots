@@ -210,10 +210,10 @@ async function moveWorldInfoStorage(name) {
 
     const movingToSecure = item.storage !== 'secure';
     const confirmed = await Popup.show.confirm(
-        movingToSecure ? `Promote "${name}" to secure storage?` : `Return "${name}" to user storage?`,
+        movingToSecure ? `Make "${name}" a secure lorebook?` : `Remove lorebook security from "${name}"?`,
         movingToSecure
-            ? 'This keeps the lorebook name the same but moves the file out of your user directory.'
-            : 'This keeps the lorebook name the same but moves the file back into your user directory.',
+            ? 'This makes the lorebook usable for generation by all users. The lorebook remains only visible to you and admins.'
+            : 'This makes the lorebook private and only visible to you.',
     );
 
     if (!confirmed) {
@@ -2212,6 +2212,12 @@ async function displayWorldEntries(name, data, navigation = navigation_option.no
     // Regardless of whether success is displayed or not. Make sure the delete button is available.
     // Do not put this code behind.
     $('#world_popup_delete').off('click').on('click', async () => {
+        const lorebook = getWorldInfoItem(name);
+        if (lorebook?.storage === 'secure') {
+            toastr.info(t`Secure lorebooks must be demoted before deletion.`, t`World Info`);
+            return;
+        }
+
         const confirmation = await Popup.show.confirm(`Delete the World/Lorebook: "${name}"?`, 'This action is irreversible!');
         if (!confirmation) {
             return;
@@ -4055,6 +4061,12 @@ export async function deleteWorldInfo(worldInfoName) {
         return false;
     }
 
+    const lorebook = getWorldInfoItem(worldInfoName);
+    if (lorebook?.storage === 'secure') {
+        toastr.info(t`Secure lorebooks must be demoted before deletion.`, t`World Info`);
+        return false;
+    }
+
     const response = await fetch('/api/worldinfo/delete', {
         method: 'POST',
         headers: getRequestHeaders(),
@@ -4062,6 +4074,8 @@ export async function deleteWorldInfo(worldInfoName) {
     });
 
     if (!response.ok) {
+        const error = await response.json().catch(() => null);
+        toastr.error(error?.error?.message || t`Could not delete lorebook.`, t`World Info`);
         return false;
     }
 
@@ -4097,6 +4111,15 @@ export async function deleteWorldInfo(worldInfoName) {
     }
 
     return true;
+}
+
+function deleteWorldInfoOnOverwrite(existingName) {
+    const lorebook = getWorldInfoItem(existingName);
+    if (lorebook?.storage === 'secure') {
+        return;
+    }
+
+    void deleteWorldInfo(existingName);
 }
 
 export function getFreeWorldEntryUid(data) {
@@ -4146,7 +4169,7 @@ export async function createNewWorldInfo(worldName, { interactive = false } = {}
 
     const sanitizedWorldName = await getSanitizedFilename(worldName);
 
-    const allowed = await checkOverwriteExistingData('World Info', world_names, sanitizedWorldName, { interactive: interactive, actionName: 'Create', deleteAction: (existingName) => deleteWorldInfo(existingName) });
+    const allowed = await checkOverwriteExistingData('World Info', world_names, sanitizedWorldName, { interactive: interactive, actionName: 'Create', deleteAction: deleteWorldInfoOnOverwrite });
     if (!allowed) {
         return false;
     }
@@ -4866,7 +4889,7 @@ export async function importWorldInfo(file) {
     const worldName = file.name.substr(0, file.name.lastIndexOf('.'));
     const sanitizedWorldName = await getSanitizedFilename(worldName);
     formData.append('storage', getLorebookStorageForRequest(sanitizedWorldName));
-    const allowed = await checkOverwriteExistingData('World Info', world_names, sanitizedWorldName, { interactive: true, actionName: 'Import', deleteAction: (existingName) => deleteWorldInfo(existingName) });
+    const allowed = await checkOverwriteExistingData('World Info', world_names, sanitizedWorldName, { interactive: true, actionName: 'Import', deleteAction: deleteWorldInfoOnOverwrite });
     if (!allowed) {
         return false;
     }
