@@ -331,6 +331,7 @@ async function debugServerAssemblyToPrompt(promptContext = null) {
         : '';
     targetPrompt.serverAssemblyDebugDump = structuredClone(dump);
     targetPrompt.messagesCount = dump?.assembly?.messagesCount ?? targetPrompt.messagesCount ?? null;
+    targetPrompt.examplesCount = dump?.assembly?.examplesCount ?? targetPrompt.examplesCount ?? null;
 
     const targetMesId = Number(targetPrompt.mesId);
     if (Number.isFinite(targetMesId) && targetMesId >= 0) {
@@ -4652,8 +4653,11 @@ export async function Generate(type, { automatic_trigger, force_name2, quiet_pro
 
     // Inject all Depth prompts. Chat Completion does it separately
     let injectedIndices = [];
+    let systemInjectedIndices = [];
     if (main_api !== 'openai') {
-        injectedIndices = await doChatInject(coreChat, isContinue);
+        const injectionData = await doChatInject(coreChat, isContinue);
+        injectedIndices = injectionData.indices;
+        systemInjectedIndices = injectionData.systemIndices;
     }
 
     if (main_api !== 'openai' && power_user.sysprompt.enabled) {
@@ -4779,6 +4783,7 @@ export async function Generate(type, { automatic_trigger, force_name2, quiet_pro
         cyclePrompt = chat2.shift();
         // Adjust indices to account for the shift
         injectedIndices = injectedIndices.map(shiftDownByOne).filter(x => x >= 0);
+        systemInjectedIndices = systemInjectedIndices.map(shiftDownByOne).filter(x => x >= 0);
         userMessageIndices = userMessageIndices.map(shiftDownByOne).filter(x => x >= 0);
     }
 
@@ -4850,17 +4855,22 @@ export async function Generate(type, { automatic_trigger, force_name2, quiet_pro
     // Unsparse the array. Adjust injected indices
     const newArrMes = [];
     const newInjectedIndices = [];
+    const newSystemInjectedIndices = [];
     for (let i = 0; i < arrMes.length; i++) {
         if (arrMes[i] !== undefined) {
             newArrMes.push(arrMes[i]);
             if (injectedIndices.includes(i)) {
                 newInjectedIndices.push(newArrMes.length - 1);
             }
+            if (systemInjectedIndices.includes(i)) {
+                newSystemInjectedIndices.push(newArrMes.length - 1);
+            }
         }
     }
 
     arrMes = newArrMes;
     injectedIndices = newInjectedIndices;
+    systemInjectedIndices = newSystemInjectedIndices;
 
     if (main_api !== 'openai') {
         setInContextMessages(arrMes.length - injectedIndices.length, type);
@@ -5283,6 +5293,7 @@ export async function Generate(type, { automatic_trigger, force_name2, quiet_pro
             mesId: getNextMessageId(type),
             allAnchors: await getAllExtensionPrompts(),
             chatInjects: injectedIndices?.map(index => arrMes[arrMes.length - index - 1])?.join('') || '',
+            chatSystemInjects: systemInjectedIndices?.map(index => arrMes[arrMes.length - index - 1])?.join('') || '',
             summarizeString: (extension_prompts['1_memory']?.value || ''),
             authorsNoteString: (extension_prompts['2_floating_prompt']?.value || ''),
             smartContextString: (extension_prompts['chromadb']?.value || ''),
@@ -5308,7 +5319,7 @@ export async function Generate(type, { automatic_trigger, force_name2, quiet_pro
             userPersona: (power_user.persona_description_position == persona_description_positions.IN_PROMPT ? (persona || '') : ''),
             tokenizer: getFriendlyTokenizerName(main_api).tokenizerName || '',
             presetName: getPresetManager()?.getSelectedPresetName() || '',
-            messagesCount: main_api !== 'openai' ? mesSend.length : null,
+            messagesCount: main_api !== 'openai' ? Math.max(0, mesSend.length - systemInjectedIndices.length) : null,
             examplesCount: main_api !== 'openai' ? (pinExmString ? mesExamplesArray.length : count_exm_add) : null,
         };
 
@@ -5566,6 +5577,7 @@ export function stopGeneration() {
  */
 async function doChatInject(messages, isContinue) {
     const injectedMessages = [];
+    const systemInjectedMessages = [];
     let totalInsertedMessages = 0;
     messages.reverse();
 
@@ -5606,12 +5618,17 @@ async function doChatInject(messages, isContinue) {
             messages.splice(injectIdx, 0, ...roleMessages);
             totalInsertedMessages += roleMessages.length;
             injectedMessages.push(...roleMessages);
+            systemInjectedMessages.push(...roleMessages.filter(x => x.extra?.type === system_message_types.NARRATOR));
         }
     }
 
     const injectedIndices = injectedMessages.map(msg => messages.indexOf(msg));
+    const systemInjectedIndices = systemInjectedMessages.map(msg => messages.indexOf(msg));
     messages.reverse();
-    return injectedIndices;
+    return {
+        indices: injectedIndices,
+        systemIndices: systemInjectedIndices,
+    };
 }
 
 function flushWIInjections() {

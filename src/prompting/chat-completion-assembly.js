@@ -192,8 +192,12 @@ class Message {
         return message;
     }
 
-    static fromPromptAsync(prompt, tokenHandler) {
-        return Message.createAsync(prompt.role, prompt.content, prompt.identifier, tokenHandler);
+    static async fromPromptAsync(prompt, tokenHandler) {
+        const message = await Message.createAsync(prompt.role, prompt.content, prompt.identifier, tokenHandler);
+        message.extension = Boolean(prompt?.extension);
+        message.injected = Boolean(prompt?.injected);
+        message.systemPrompt = Boolean(prompt?.system_prompt);
+        return message;
     }
 
     ensureContentIsArray() {
@@ -475,8 +479,183 @@ function serializeMessageNode(node) {
         content: node.content,
         name: node.name,
         tokens: node.tokens,
+        extension: Boolean(node.extension),
+        injected: Boolean(node.injected),
+        systemPrompt: Boolean(node.systemPrompt),
         tool_calls: node.tool_calls,
     };
+}
+
+function createPromptItemization(serviceSettings = {}) {
+    return {
+        oaiStartTokens: 0,
+        oaiPromptTokens: 0,
+        oaiBiasTokens: 0,
+        oaiNudgeTokens: 0,
+        oaiJailbreakTokens: 0,
+        oaiImpersonateTokens: 0,
+        oaiExamplesTokens: 0,
+        oaiConversationTokens: 0,
+        oaiNsfwTokens: 0,
+        oaiMainTokens: 0,
+        charDescriptionTokens: 0,
+        charPersonalityTokens: 0,
+        scenarioTextTokens: 0,
+        userPersonaStringTokens: 0,
+        worldInfoStringTokens: 0,
+        worldInfoDepthTokens: 0,
+        summarizeStringTokens: 0,
+        authorsNoteStringTokens: 0,
+        smartContextStringTokens: 0,
+        chatVectorsStringTokens: 0,
+        dataBankVectorsStringTokens: 0,
+        allAnchorsTokens: 0,
+        beforeScenarioAnchorTokens: 0,
+        afterScenarioAnchorTokens: 0,
+        finalPromptTokens: 0,
+        maxContext: Math.max(0, (Number(serviceSettings?.openai_max_context) || 0) - (Number(serviceSettings?.openai_max_tokens) || 0)),
+    };
+}
+
+function addPromptItemizationTokens(itemization, key, tokens) {
+    itemization[key] = (itemization[key] ?? 0) + tokens;
+}
+
+function classifyPromptItemizationMessage(message, collectionIdentifier, itemization) {
+    const identifier = String(message?.identifier || '');
+    const tokens = Number(message?.tokens) || 0;
+
+    if (!tokens) {
+        return;
+    }
+
+    if (identifier === 'newMainChat') {
+        addPromptItemizationTokens(itemization, 'oaiStartTokens', tokens);
+        return;
+    }
+
+    if (identifier === 'newChat' || identifier.startsWith('dialogueExamples ') || collectionIdentifier === 'dialogueExamples') {
+        addPromptItemizationTokens(itemization, 'oaiExamplesTokens', tokens);
+        return;
+    }
+
+    if (
+        identifier.startsWith('chatHistory-') ||
+        identifier.startsWith('toolCall-') ||
+        identifier === 'emptyUserMessageReplacement' ||
+        identifier === 'continuePrefill' ||
+        message.role === 'tool' ||
+        (collectionIdentifier === 'continueNudge' && identifier !== 'continueNudgeText')
+    ) {
+        if (message?.injected && message.role === 'system') {
+            addPromptItemizationTokens(itemization, 'worldInfoDepthTokens', tokens);
+            return;
+        }
+        addPromptItemizationTokens(itemization, 'oaiConversationTokens', tokens);
+        return;
+    }
+
+    switch (identifier) {
+        case 'worldInfoBefore':
+        case 'worldInfoAfter':
+            addPromptItemizationTokens(itemization, 'worldInfoStringTokens', tokens);
+            return;
+        case 'charDescription':
+            addPromptItemizationTokens(itemization, 'charDescriptionTokens', tokens);
+            return;
+        case 'charPersonality':
+            addPromptItemizationTokens(itemization, 'charPersonalityTokens', tokens);
+            return;
+        case 'scenario':
+            addPromptItemizationTokens(itemization, 'scenarioTextTokens', tokens);
+            return;
+        case 'personaDescription':
+            addPromptItemizationTokens(itemization, 'userPersonaStringTokens', tokens);
+            return;
+        case 'summary':
+            addPromptItemizationTokens(itemization, 'summarizeStringTokens', tokens);
+            addPromptItemizationTokens(itemization, 'allAnchorsTokens', tokens);
+            return;
+        case 'authorsNote':
+            addPromptItemizationTokens(itemization, 'authorsNoteStringTokens', tokens);
+            addPromptItemizationTokens(itemization, 'allAnchorsTokens', tokens);
+            return;
+        case 'smartContext':
+            addPromptItemizationTokens(itemization, 'smartContextStringTokens', tokens);
+            addPromptItemizationTokens(itemization, 'allAnchorsTokens', tokens);
+            return;
+        case 'vectorsMemory':
+            addPromptItemizationTokens(itemization, 'chatVectorsStringTokens', tokens);
+            addPromptItemizationTokens(itemization, 'allAnchorsTokens', tokens);
+            return;
+        case 'vectorsDataBank':
+            addPromptItemizationTokens(itemization, 'dataBankVectorsStringTokens', tokens);
+            addPromptItemizationTokens(itemization, 'allAnchorsTokens', tokens);
+            return;
+        case 'bias':
+            addPromptItemizationTokens(itemization, 'oaiBiasTokens', tokens);
+            return;
+        case 'impersonate':
+            addPromptItemizationTokens(itemization, 'oaiImpersonateTokens', tokens);
+            return;
+        case 'quietPrompt':
+        case 'groupNudge':
+        case 'continueNudgeText':
+            addPromptItemizationTokens(itemization, 'oaiNudgeTokens', tokens);
+            return;
+        case 'jailbreak':
+            addPromptItemizationTokens(itemization, 'oaiJailbreakTokens', tokens);
+            return;
+        case 'nsfw':
+            addPromptItemizationTokens(itemization, 'oaiNsfwTokens', tokens);
+            return;
+        case 'main':
+            addPromptItemizationTokens(itemization, 'oaiMainTokens', tokens);
+            return;
+    }
+
+    if (message?.extension) {
+        addPromptItemizationTokens(itemization, 'allAnchorsTokens', tokens);
+        return;
+    }
+
+    addPromptItemizationTokens(itemization, 'oaiMainTokens', tokens);
+}
+
+function walkPromptItemization(node, itemization, collectionIdentifier = null) {
+    if (node instanceof MessageCollection) {
+        for (const child of node.getCollection()) {
+            walkPromptItemization(child, itemization, node.identifier || collectionIdentifier);
+        }
+        return;
+    }
+
+    classifyPromptItemizationMessage(node, collectionIdentifier, itemization);
+}
+
+function buildPromptItemization(messages, serviceSettings = {}) {
+    const itemization = createPromptItemization(serviceSettings);
+    walkPromptItemization(messages, itemization);
+    itemization.oaiPromptTokens =
+        itemization.charDescriptionTokens +
+        itemization.charPersonalityTokens +
+        itemization.scenarioTextTokens +
+        itemization.userPersonaStringTokens +
+        itemization.oaiExamplesTokens;
+    itemization.finalPromptTokens =
+        itemization.oaiStartTokens +
+        itemization.oaiPromptTokens +
+        itemization.oaiBiasTokens +
+        itemization.oaiNudgeTokens +
+        itemization.oaiJailbreakTokens +
+        itemization.oaiImpersonateTokens +
+        itemization.oaiConversationTokens +
+        itemization.oaiNsfwTokens +
+        itemization.oaiMainTokens +
+        itemization.worldInfoStringTokens +
+        itemization.worldInfoDepthTokens +
+        itemization.allAnchorsTokens;
+    return itemization;
 }
 
 class PromptManagerCore {
@@ -1565,17 +1744,24 @@ export async function assembleChatCompletionPrompt(payload = {}) {
     const prompts = await preparePromptsForChatCompletion(context);
     await populateChatCompletion(prompts, chatCompletion, context);
 
+    const itemization = payload.includeItemization
+        ? buildPromptItemization(chatCompletion.getMessages(), context.serviceSettings)
+        : null;
+
     if (context.oaiSettings.squash_system_messages) {
         await chatCompletion.squashSystemMessages();
     }
 
     const chat = chatCompletion.getChat();
     const messagesCount = chat.filter(message => !message?.tool_calls && ['user', 'assistant', 'tool'].includes(message?.role)).length || 0;
+    const examplesCount = Array.isArray(context.messageExamples) ? context.messageExamples.length : 0;
 
     return {
         chat,
-        counts: false,
+        counts: itemization ? structuredClone(itemization) : false,
+        itemization,
         messagesCount,
+        examplesCount,
         overriddenPrompts: prompts.overriddenPrompts,
         messagesState: serializeMessageNode(chatCompletion.getMessages()),
         timedWorldInfo: structuredClone(context.worldInfoTimedState || context.worldInfoRequest?.timedWorldInfo || {}),

@@ -66,9 +66,19 @@
                     <div class="tokenItemizingSubclass"> {{instructionTokens}}</div>
                 </div>
             </div>
-            <div class="wide100p flex-container">
-                <div class="flex1" style="color: gold;">World Info:</div>
-                <div class="">{{worldInfoStringTokens}}</div>
+            <div class="wide100p flex-container flexNoGap flexFlowColumn">
+                <div class="wide100p flex-container">
+                    <div class="flex1" style="color: gold;">World Info:</div>
+                    <div class="">{{worldInfoTotalTokens}}</div>
+                </div>
+                <div class="flex-container">
+                    <div class=" flex1 tokenItemizingSubclass">-- Before/After:</div>
+                    <div class="tokenItemizingSubclass">{{worldInfoStringTokens}}</div>
+                </div>
+                <div class="flex-container">
+                    <div class=" flex1 tokenItemizingSubclass">-- At Depth:</div>
+                    <div class="tokenItemizingSubclass">{{worldInfoDepthTokens}}</div>
+                </div>
             </div>
             <div class="wide100p flex-container">
                 <div class="flex1" style="color: palegreen;">

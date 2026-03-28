@@ -104,30 +104,42 @@ export async function clearItemizedPrompts() {
     }
 }
 
+function toNumber(value) {
+    const number = Number(value);
+    return Number.isFinite(number) ? number : 0;
+}
+
+function getPercentage(value, total) {
+    return total > 0 ? ((value / total) * 100).toFixed(2) : '0.00';
+}
+
 export async function itemizedParams(itemizedPrompts, thisPromptSet, incomingMesId) {
+    const itemizedPrompt = itemizedPrompts[thisPromptSet];
+    const serverItemization = itemizedPrompt?.serverAssemblyDebugDump?.assembly?.itemization;
     const params = {
-        charDescriptionTokens: await getTokenCountAsync(itemizedPrompts[thisPromptSet].charDescription),
-        charPersonalityTokens: await getTokenCountAsync(itemizedPrompts[thisPromptSet].charPersonality),
-        scenarioTextTokens: await getTokenCountAsync(itemizedPrompts[thisPromptSet].scenarioText),
-        userPersonaStringTokens: await getTokenCountAsync(itemizedPrompts[thisPromptSet].userPersona),
-        worldInfoStringTokens: await getTokenCountAsync(itemizedPrompts[thisPromptSet].worldInfoString),
-        allAnchorsTokens: await getTokenCountAsync(itemizedPrompts[thisPromptSet].allAnchors),
-        summarizeStringTokens: await getTokenCountAsync(itemizedPrompts[thisPromptSet].summarizeString),
-        authorsNoteStringTokens: await getTokenCountAsync(itemizedPrompts[thisPromptSet].authorsNoteString),
-        smartContextStringTokens: await getTokenCountAsync(itemizedPrompts[thisPromptSet].smartContextString),
-        beforeScenarioAnchorTokens: await getTokenCountAsync(itemizedPrompts[thisPromptSet].beforeScenarioAnchor),
-        afterScenarioAnchorTokens: await getTokenCountAsync(itemizedPrompts[thisPromptSet].afterScenarioAnchor),
-        zeroDepthAnchorTokens: await getTokenCountAsync(itemizedPrompts[thisPromptSet].zeroDepthAnchor), // TODO: unused
-        thisPrompt_padding: itemizedPrompts[thisPromptSet].padding,
-        this_main_api: itemizedPrompts[thisPromptSet].main_api,
-        chatInjects: await getTokenCountAsync(itemizedPrompts[thisPromptSet].chatInjects),
-        chatVectorsStringTokens: await getTokenCountAsync(itemizedPrompts[thisPromptSet].chatVectorsString),
-        dataBankVectorsStringTokens: await getTokenCountAsync(itemizedPrompts[thisPromptSet].dataBankVectorsString),
+        charDescriptionTokens: serverItemization ? toNumber(serverItemization.charDescriptionTokens) : await getTokenCountAsync(itemizedPrompt.charDescription),
+        charPersonalityTokens: serverItemization ? toNumber(serverItemization.charPersonalityTokens) : await getTokenCountAsync(itemizedPrompt.charPersonality),
+        scenarioTextTokens: serverItemization ? toNumber(serverItemization.scenarioTextTokens) : await getTokenCountAsync(itemizedPrompt.scenarioText),
+        userPersonaStringTokens: serverItemization ? toNumber(serverItemization.userPersonaStringTokens) : await getTokenCountAsync(itemizedPrompt.userPersona),
+        worldInfoStringTokens: serverItemization ? toNumber(serverItemization.worldInfoStringTokens) : await getTokenCountAsync(itemizedPrompt.worldInfoString),
+        worldInfoDepthTokens: serverItemization ? toNumber(serverItemization.worldInfoDepthTokens) : await getTokenCountAsync(itemizedPrompt.chatSystemInjects),
+        allAnchorsTokens: serverItemization ? toNumber(serverItemization.allAnchorsTokens) : await getTokenCountAsync(itemizedPrompt.allAnchors),
+        summarizeStringTokens: serverItemization ? toNumber(serverItemization.summarizeStringTokens) : await getTokenCountAsync(itemizedPrompt.summarizeString),
+        authorsNoteStringTokens: serverItemization ? toNumber(serverItemization.authorsNoteStringTokens) : await getTokenCountAsync(itemizedPrompt.authorsNoteString),
+        smartContextStringTokens: serverItemization ? toNumber(serverItemization.smartContextStringTokens) : await getTokenCountAsync(itemizedPrompt.smartContextString),
+        beforeScenarioAnchorTokens: serverItemization ? toNumber(serverItemization.beforeScenarioAnchorTokens) : await getTokenCountAsync(itemizedPrompt.beforeScenarioAnchor),
+        afterScenarioAnchorTokens: serverItemization ? toNumber(serverItemization.afterScenarioAnchorTokens) : await getTokenCountAsync(itemizedPrompt.afterScenarioAnchor),
+        zeroDepthAnchorTokens: await getTokenCountAsync(itemizedPrompt.zeroDepthAnchor), // TODO: unused
+        thisPrompt_padding: itemizedPrompt.padding,
+        this_main_api: itemizedPrompt.main_api,
+        chatInjects: await getTokenCountAsync(itemizedPrompt.chatInjects),
+        chatVectorsStringTokens: serverItemization ? toNumber(serverItemization.chatVectorsStringTokens) : await getTokenCountAsync(itemizedPrompt.chatVectorsString),
+        dataBankVectorsStringTokens: serverItemization ? toNumber(serverItemization.dataBankVectorsStringTokens) : await getTokenCountAsync(itemizedPrompt.dataBankVectorsString),
         modelUsed: chat[incomingMesId]?.extra?.model,
         apiUsed: chat[incomingMesId]?.extra?.api,
-        presetName: itemizedPrompts[thisPromptSet].presetName || t`(Unknown)`,
-        messagesCount: String(itemizedPrompts[thisPromptSet].messagesCount ?? ''),
-        examplesCount: String(itemizedPrompts[thisPromptSet].examplesCount ?? ''),
+        presetName: itemizedPrompt.presetName || t`(Unknown)`,
+        messagesCount: String(itemizedPrompt.messagesCount ?? ''),
+        examplesCount: String(itemizedPrompt.examplesCount ?? ''),
     };
 
     const getFriendlyName = (value) => $(`#rm_api_block select option[value="${value}"]`).first().text() || value;
@@ -140,54 +152,72 @@ export async function itemizedParams(itemizedPrompts, thisPromptSet, incomingMes
         params.mainApiFriendlyName = getFriendlyName(params.this_main_api);
     }
 
-    if (params.chatInjects) {
-        params.ActualChatHistoryTokens = params.ActualChatHistoryTokens - params.chatInjects;
-    }
-
     if (params.this_main_api == 'openai') {
         //for OAI API
         //console.log('-- Counting OAI Tokens');
+        if (serverItemization && itemizedPrompt.serverPromptAssembly) {
+            params.oaiMainTokens = toNumber(serverItemization.oaiMainTokens);
+            params.oaiStartTokens = toNumber(serverItemization.oaiStartTokens);
+            params.ActualChatHistoryTokens = toNumber(serverItemization.oaiConversationTokens);
+            params.examplesStringTokens = toNumber(serverItemization.oaiExamplesTokens);
+            params.oaiPromptTokens = toNumber(serverItemization.oaiPromptTokens);
+            params.oaiBiasTokens = toNumber(serverItemization.oaiBiasTokens);
+            params.oaiJailbreakTokens = toNumber(serverItemization.oaiJailbreakTokens);
+            params.oaiNudgeTokens = toNumber(serverItemization.oaiNudgeTokens);
+            params.oaiImpersonateTokens = toNumber(serverItemization.oaiImpersonateTokens);
+            params.oaiNsfwTokens = toNumber(serverItemization.oaiNsfwTokens);
+            params.finalPromptTokens = toNumber(serverItemization.finalPromptTokens);
+            params.thisPrompt_max_context = toNumber(serverItemization.maxContext) || (oai_settings.openai_max_context - oai_settings.openai_max_tokens);
+        } else {
+            //params.finalPromptTokens = itemizedPrompts[thisPromptSet].oaiTotalTokens;
+            params.oaiMainTokens = itemizedPrompt.oaiMainTokens;
+            params.oaiStartTokens = itemizedPrompt.oaiStartTokens;
+            params.ActualChatHistoryTokens = itemizedPrompt.oaiConversationTokens;
+            params.examplesStringTokens = itemizedPrompt.oaiExamplesTokens;
+            params.oaiPromptTokens = itemizedPrompt.oaiPromptTokens - (params.afterScenarioAnchorTokens + params.beforeScenarioAnchorTokens) + params.examplesStringTokens;
+            params.oaiBiasTokens = itemizedPrompt.oaiBiasTokens;
+            params.oaiJailbreakTokens = itemizedPrompt.oaiJailbreakTokens;
+            params.oaiNudgeTokens = itemizedPrompt.oaiNudgeTokens;
+            params.oaiImpersonateTokens = itemizedPrompt.oaiImpersonateTokens;
+            params.oaiNsfwTokens = itemizedPrompt.oaiNsfwTokens;
+            params.finalPromptTokens =
+                params.oaiStartTokens +
+                params.oaiPromptTokens +
+                params.oaiMainTokens +
+                params.oaiNsfwTokens +
+                params.oaiBiasTokens +
+                params.oaiImpersonateTokens +
+                params.oaiJailbreakTokens +
+                params.oaiNudgeTokens +
+                params.ActualChatHistoryTokens +
+                params.worldInfoStringTokens +
+                params.beforeScenarioAnchorTokens +
+                params.afterScenarioAnchorTokens;
+            params.thisPrompt_max_context = (oai_settings.openai_max_context - oai_settings.openai_max_tokens);
+        }
 
-        //params.finalPromptTokens = itemizedPrompts[thisPromptSet].oaiTotalTokens;
-        params.oaiMainTokens = itemizedPrompts[thisPromptSet].oaiMainTokens;
-        params.oaiStartTokens = itemizedPrompts[thisPromptSet].oaiStartTokens;
-        params.ActualChatHistoryTokens = itemizedPrompts[thisPromptSet].oaiConversationTokens;
-        params.examplesStringTokens = itemizedPrompts[thisPromptSet].oaiExamplesTokens;
-        params.oaiPromptTokens = itemizedPrompts[thisPromptSet].oaiPromptTokens - (params.afterScenarioAnchorTokens + params.beforeScenarioAnchorTokens) + params.examplesStringTokens;
-        params.oaiBiasTokens = itemizedPrompts[thisPromptSet].oaiBiasTokens;
-        params.oaiJailbreakTokens = itemizedPrompts[thisPromptSet].oaiJailbreakTokens;
-        params.oaiNudgeTokens = itemizedPrompts[thisPromptSet].oaiNudgeTokens;
-        params.oaiImpersonateTokens = itemizedPrompts[thisPromptSet].oaiImpersonateTokens;
-        params.oaiNsfwTokens = itemizedPrompts[thisPromptSet].oaiNsfwTokens;
-        params.finalPromptTokens =
-            params.oaiStartTokens +
-            params.oaiPromptTokens +
-            params.oaiMainTokens +
-            params.oaiNsfwTokens +
-            params.oaiBiasTokens +
-            params.oaiImpersonateTokens +
-            params.oaiJailbreakTokens +
-            params.oaiNudgeTokens +
-            params.ActualChatHistoryTokens +
-            //charDescriptionTokens +
-            //charPersonalityTokens +
-            //allAnchorsTokens +
-            params.worldInfoStringTokens +
-            params.beforeScenarioAnchorTokens +
-            params.afterScenarioAnchorTokens;
-        // Max context size - max completion tokens
-        params.thisPrompt_max_context = (oai_settings.openai_max_context - oai_settings.openai_max_tokens);
+        params.oaiStartTokens = toNumber(params.oaiStartTokens);
+        params.oaiPromptTokens = toNumber(params.oaiPromptTokens);
+        params.oaiMainTokens = toNumber(params.oaiMainTokens);
+        params.oaiNsfwTokens = toNumber(params.oaiNsfwTokens);
+        params.oaiBiasTokens = toNumber(params.oaiBiasTokens);
+        params.oaiImpersonateTokens = toNumber(params.oaiImpersonateTokens);
+        params.oaiJailbreakTokens = toNumber(params.oaiJailbreakTokens);
+        params.oaiNudgeTokens = toNumber(params.oaiNudgeTokens);
+        params.ActualChatHistoryTokens = toNumber(params.ActualChatHistoryTokens);
+        params.examplesStringTokens = toNumber(params.examplesStringTokens);
+        params.finalPromptTokens = toNumber(params.finalPromptTokens);
+        params.worldInfoTotalTokens = params.worldInfoStringTokens + params.worldInfoDepthTokens;
 
-        //console.log('-- applying % on OAI tokens');
-        params.oaiStartTokensPercentage = ((params.oaiStartTokens / (params.finalPromptTokens)) * 100).toFixed(2);
-        params.storyStringTokensPercentage = (((params.afterScenarioAnchorTokens + params.beforeScenarioAnchorTokens + params.oaiPromptTokens) / (params.finalPromptTokens)) * 100).toFixed(2);
-        params.ActualChatHistoryTokensPercentage = ((params.ActualChatHistoryTokens / (params.finalPromptTokens)) * 100).toFixed(2);
-        params.promptBiasTokensPercentage = ((params.oaiBiasTokens / (params.finalPromptTokens)) * 100).toFixed(2);
-        params.worldInfoStringTokensPercentage = ((params.worldInfoStringTokens / (params.finalPromptTokens)) * 100).toFixed(2);
-        params.allAnchorsTokensPercentage = ((params.allAnchorsTokens / (params.finalPromptTokens)) * 100).toFixed(2);
+        params.oaiStartTokensPercentage = getPercentage(params.oaiStartTokens, params.finalPromptTokens);
+        params.storyStringTokensPercentage = getPercentage(params.oaiPromptTokens, params.finalPromptTokens);
+        params.ActualChatHistoryTokensPercentage = getPercentage(params.ActualChatHistoryTokens, params.finalPromptTokens);
+        params.promptBiasTokensPercentage = getPercentage(params.oaiBiasTokens, params.finalPromptTokens);
+        params.worldInfoStringTokensPercentage = getPercentage(params.worldInfoTotalTokens, params.finalPromptTokens);
+        params.allAnchorsTokensPercentage = getPercentage(params.allAnchorsTokens, params.finalPromptTokens);
         params.selectedTokenizer = getFriendlyTokenizerName(params.this_main_api).tokenizerName;
         params.oaiSystemTokens = params.oaiImpersonateTokens + params.oaiJailbreakTokens + params.oaiNudgeTokens + params.oaiStartTokens + params.oaiNsfwTokens + params.oaiMainTokens;
-        params.oaiSystemTokensPercentage = ((params.oaiSystemTokens / (params.finalPromptTokens)) * 100).toFixed(2);
+        params.oaiSystemTokensPercentage = getPercentage(params.oaiSystemTokens, params.finalPromptTokens);
     } else {
         //for non-OAI APIs
         //console.log('-- Counting non-OAI Tokens');
@@ -195,13 +225,14 @@ export async function itemizedParams(itemizedPrompts, thisPromptSet, incomingMes
         params.storyStringTokens = await getTokenCountAsync(itemizedPrompts[thisPromptSet].storyString) - params.worldInfoStringTokens;
         params.examplesStringTokens = await getTokenCountAsync(itemizedPrompts[thisPromptSet].examplesString);
         params.mesSendStringTokens = await getTokenCountAsync(itemizedPrompts[thisPromptSet].mesSendString);
-        params.ActualChatHistoryTokens = params.mesSendStringTokens - (params.allAnchorsTokens - (params.beforeScenarioAnchorTokens + params.afterScenarioAnchorTokens)) + power_user.token_padding;
+        params.ActualChatHistoryTokens = params.mesSendStringTokens - (params.allAnchorsTokens - (params.beforeScenarioAnchorTokens + params.afterScenarioAnchorTokens)) - params.worldInfoDepthTokens + power_user.token_padding;
         params.instructionTokens = await getTokenCountAsync(itemizedPrompts[thisPromptSet].instruction);
         params.promptBiasTokens = await getTokenCountAsync(itemizedPrompts[thisPromptSet].promptBias);
+        params.worldInfoTotalTokens = params.worldInfoStringTokens + params.worldInfoDepthTokens;
 
         params.totalTokensInPrompt =
             params.storyStringTokens +     //chardefs total
-            params.worldInfoStringTokens +
+            params.worldInfoTotalTokens +
             params.examplesStringTokens + // example messages
             params.ActualChatHistoryTokens +  //chat history
             params.allAnchorsTokens +      // AN and/or legacy anchors
@@ -216,7 +247,7 @@ export async function itemizedParams(itemizedPrompts, thisPromptSet, incomingMes
         params.storyStringTokensPercentage = ((params.storyStringTokens / (params.totalTokensInPrompt)) * 100).toFixed(2);
         params.ActualChatHistoryTokensPercentage = ((params.ActualChatHistoryTokens / (params.totalTokensInPrompt)) * 100).toFixed(2);
         params.promptBiasTokensPercentage = ((params.promptBiasTokens / (params.totalTokensInPrompt)) * 100).toFixed(2);
-        params.worldInfoStringTokensPercentage = ((params.worldInfoStringTokens / (params.totalTokensInPrompt)) * 100).toFixed(2);
+        params.worldInfoStringTokensPercentage = ((params.worldInfoTotalTokens / (params.totalTokensInPrompt)) * 100).toFixed(2);
         params.allAnchorsTokensPercentage = ((params.allAnchorsTokens / (params.totalTokensInPrompt)) * 100).toFixed(2);
         params.selectedTokenizer = itemizedPrompts[thisPromptSet]?.tokenizer || getFriendlyTokenizerName(params.this_main_api).tokenizerName;
     }

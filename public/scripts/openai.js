@@ -190,6 +190,7 @@ export async function debugServerAssemblyDump(promptContext = null) {
         headers: getRequestHeaders(),
         body: JSON.stringify({
             ...context,
+            includeItemization: true,
             clientChat: Array.isArray(context.messages) ? structuredClone(context.messages) : [],
         }),
     });
