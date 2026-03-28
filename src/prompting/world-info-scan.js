@@ -576,6 +576,24 @@ function filterByInclusionGroups(newEntries, allActivatedEntries, buffer, scanSt
     }
 }
 
+function getScanInjects(payload = {}) {
+    const extensionPrompts = payload.extensionPrompts;
+    if (extensionPrompts && typeof extensionPrompts === 'object') {
+        const injects = Object.keys(extensionPrompts)
+            .sort()
+            .map((key) => extensionPrompts[key])
+            .filter(prompt => prompt?.scan)
+            .map(prompt => String(prompt.resolvedValue ?? prompt.scanText ?? prompt.value ?? '').trim())
+            .filter(Boolean);
+
+        if (injects.length) {
+            return injects;
+        }
+    }
+
+    return Array.isArray(payload.injects) ? payload.injects.filter(Boolean) : [];
+}
+
 export async function scanWorldInfo(payload = {}) {
     const settings = payload.settings || {};
     const chat = Array.isArray(payload.chat) ? payload.chat.map(String) : [];
@@ -651,26 +669,8 @@ export async function scanWorldInfo(payload = {}) {
                 const filtered = entry.characterFilter.isExclude ? nameIncluded : !nameIncluded;
                 if (filtered) {
                     continue;
-    }
-}
-
-function getScanInjects(payload = {}) {
-    const extensionPrompts = payload.extensionPrompts;
-    if (extensionPrompts && typeof extensionPrompts === 'object') {
-        const injects = Object.keys(extensionPrompts)
-            .sort()
-            .map((key) => extensionPrompts[key])
-            .filter(prompt => prompt?.scan)
-            .map(prompt => String(prompt.resolvedValue ?? prompt.scanText ?? prompt.value ?? '').trim())
-            .filter(Boolean);
-
-        if (injects.length) {
-            return injects;
-        }
-    }
-
-    return Array.isArray(payload.injects) ? payload.injects.filter(Boolean) : [];
-}
+                }
+            }
 
             if (entry.characterFilter?.tags?.length > 0) {
                 const includesTag = currentCharacterTags.some(tag => entry.characterFilter.tags.includes(tag));

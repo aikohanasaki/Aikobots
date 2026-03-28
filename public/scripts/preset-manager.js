@@ -1,6 +1,7 @@
 import { Fuse, lodash } from '../lib.js';
 
 import {
+    CHAT_COMPLETIONS_ONLY,
     amount_gen,
     characters,
     eventSource,
@@ -42,6 +43,7 @@ import {
 import { download, ensurePlainObject, equalsIgnoreCaseAndAccents, getSanitizedFilename, parseJsonFile, waitUntilCondition } from './utils.js';
 
 const presetManagers = {};
+const CHAT_COMPLETIONS_ONLY_PRESET_MANAGERS = new Set(['openai', 'reasoning']);
 
 /**
  * Automatically select a preset for current API based on character or group name.
@@ -102,6 +104,11 @@ function registerPresetManagers() {
     $('select[data-preset-manager-for]').each((_, e) => {
         const forData = $(e).data('preset-manager-for');
         for (const apiId of forData.split(',')) {
+            if (CHAT_COMPLETIONS_ONLY && !CHAT_COMPLETIONS_ONLY_PRESET_MANAGERS.has(apiId)) {
+                console.debug(`Skipping preset manager for API: ${apiId} (chat-completions-only mode)`);
+                continue;
+            }
+
             console.debug(`Registering preset manager for API: ${apiId}`);
             presetManagers[apiId] = new PresetManager($(e), apiId);
         }
@@ -206,6 +213,23 @@ class PresetManager {
         },
     };
 
+    static masterSectionApis = {
+        'instruct': 'instruct',
+        'context': 'context',
+        'sysprompt': 'sysprompt',
+        'preset': 'textgenerationwebui',
+        'reasoning': 'reasoning',
+    };
+
+    static isMasterSectionAvailable(key) {
+        const apiId = this.masterSectionApis[key];
+        return !apiId || !!getPresetManager(apiId);
+    }
+
+    static getAvailableMasterSections() {
+        return Object.fromEntries(Object.entries(this.masterSections).filter(([key]) => this.isMasterSectionAvailable(key)));
+    }
+
     static isPossiblyInstructData(data) {
         const instructProps = ['name', 'input_sequence', 'output_sequence'];
         return data && instructProps.every(prop => Object.keys(data).includes(prop));
@@ -250,36 +274,62 @@ class PresetManager {
         // Check for legacy file imports
         // 1. Instruct Template
         if (this.isPossiblyInstructData(data)) {
+            const manager = getPresetManager('instruct');
+            if (!manager) {
+                toastr.error(t`Instruct templates are not available in this build`);
+                return;
+            }
             toastr.info(t`Importing instruct template...`, t`Instruct template detected`);
-            return await getPresetManager('instruct').savePreset(data.name, data);
+            return await manager.savePreset(data.name, data);
         }
 
         // 2. Context Template
         if (this.isPossiblyContextData(data)) {
+            const manager = getPresetManager('context');
+            if (!manager) {
+                toastr.error(t`Context templates are not available in this build`);
+                return;
+            }
             toastr.info(t`Importing as context template...`, t`Context template detected`);
-            return await getPresetManager('context').savePreset(data.name, data);
+            return await manager.savePreset(data.name, data);
         }
 
         // 3. System Prompt
         if (this.isPossiblySystemPromptData(data)) {
+            const manager = getPresetManager('sysprompt');
+            if (!manager) {
+                toastr.error(t`System prompt templates are not available in this build`);
+                return;
+            }
             toastr.info(t`Importing as system prompt...`, t`System prompt detected`);
-            return await getPresetManager('sysprompt').savePreset(data.name, data);
+            return await manager.savePreset(data.name, data);
         }
 
         // 4. Text Completion settings
         if (this.isPossiblyTextCompletionData(data)) {
+            const manager = getPresetManager('textgenerationwebui');
+            if (!manager) {
+                toastr.error(t`Text completion presets are not available in this build`);
+                return;
+            }
             toastr.info(t`Importing as settings preset...`, t`Text Completion settings detected`);
-            return await getPresetManager('textgenerationwebui').savePreset(fileName, data);
+            return await manager.savePreset(fileName, data);
         }
 
         // 5. Reasoning Template
         if (this.isPossiblyReasoningData(data)) {
+            const manager = getPresetManager('reasoning');
+            if (!manager) {
+                toastr.error(t`Reasoning templates are not available in this build`);
+                return;
+            }
             toastr.info(t`Importing as reasoning template...`, t`Reasoning template detected`);
-            return await getPresetManager('reasoning').savePreset(data.name, data);
+            return await manager.savePreset(data.name, data);
         }
 
+        const masterSections = this.getAvailableMasterSections();
         const validSections = [];
-        for (const [key, section] of Object.entries(this.masterSections)) {
+        for (const [key, section] of Object.entries(masterSections)) {
             if (key in data && section.isValid(data[key])) {
                 validSections.push(key);
             }
@@ -291,7 +341,7 @@ class PresetManager {
         }
 
         const sectionNames = validSections.reduce((acc, key) => {
-            acc[key] = { key: key, name: this.masterSections[key].name, preset: data[key]?.name || '' };
+            acc[key] = { key: key, name: masterSections[key].name, preset: data[key]?.name || '' };
             return acc;
         }, {});
 
@@ -318,7 +368,7 @@ class PresetManager {
 
         for (const section of confirmedSections) {
             const sectionData = data[section];
-            const masterSection = this.masterSections[section];
+            const masterSection = masterSections[section];
             if (sectionData && masterSection) {
                 await masterSection.setData(sectionData);
                 importedSections.push(masterSection.name);
@@ -333,7 +383,8 @@ class PresetManager {
      * @returns {Promise<string>} JSON data
      */
     static async performMasterExport() {
-        const sectionNames = Object.entries(this.masterSections).reduce((acc, [key, section]) => {
+        const masterSections = this.getAvailableMasterSections();
+        const sectionNames = Object.entries(masterSections).reduce((acc, [key, section]) => {
             acc[key] = { key: key, name: section.name, checked: !['preset', 'srw'].includes(key) };
             return acc;
         }, {});
@@ -360,7 +411,7 @@ class PresetManager {
         }
 
         for (const section of confirmedSections) {
-            const masterSection = this.masterSections[section];
+            const masterSection = masterSections[section];
             if (masterSection) {
                 data[section] = masterSection.getData();
             }

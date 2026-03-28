@@ -103,6 +103,53 @@ export {
 let openai_messages_count = 0;
 let pendingTimedWorldInfo = null;
 
+function sanitizeForServerPayload(value, seen = new WeakSet()) {
+    if (value === null || value === undefined) {
+        return value;
+    }
+
+    const valueType = typeof value;
+    if (valueType === 'string' || valueType === 'number' || valueType === 'boolean') {
+        return value;
+    }
+
+    if (valueType === 'bigint') {
+        return Number(value);
+    }
+
+    if (valueType === 'function' || valueType === 'symbol') {
+        return undefined;
+    }
+
+    if (value instanceof Date) {
+        return value.toISOString();
+    }
+
+    if (Array.isArray(value)) {
+        return value.map(item => sanitizeForServerPayload(item, seen)).filter(item => item !== undefined);
+    }
+
+    if (valueType !== 'object') {
+        return undefined;
+    }
+
+    if (seen.has(value)) {
+        return undefined;
+    }
+    seen.add(value);
+
+    const result = {};
+    for (const [key, nestedValue] of Object.entries(value)) {
+        const sanitizedValue = sanitizeForServerPayload(nestedValue, seen);
+        if (sanitizedValue !== undefined) {
+            result[key] = sanitizedValue;
+        }
+    }
+
+    seen.delete(value);
+    return result;
+}
+
 function maybeNotifyWorldInfoOverflow(data) {
     if (world_info_overflow_alert && data?.x_sillytavern?.worldInfoOverflowed) {
         toastr.warning(t`World info budget reached.`, t`World Info`);
@@ -816,9 +863,9 @@ export async function buildServerAssemblyPayload({
         },
         selectedGroup: Boolean(selected_group),
         activeCharacter: promptManager?.activeCharacter ? { id: promptManager.activeCharacter.id } : null,
-        serviceSettings: structuredClone(promptManager?.serviceSettings || {}),
-        extensionSettings: structuredClone(extension_settings || {}),
-        oaiSettings: structuredClone(oai_settings),
+        serviceSettings: sanitizeForServerPayload(promptManager?.serviceSettings || {}),
+        extensionSettings: sanitizeForServerPayload(extension_settings || {}),
+        oaiSettings: sanitizeForServerPayload(oai_settings),
         powerUser: {
             pin_examples: Boolean(power_user.pin_examples),
             persona_description: power_user.persona_description || '',
@@ -865,37 +912,39 @@ export async function buildServerAssemblyPayload({
  * @param {boolean?} [options.quiet=false] Suppress toast messages
  */
 export function tryParseStreamingError(response, decoded, { quiet = false } = {}) {
+    let data;
     try {
-        const data = JSON.parse(decoded);
-
-        if (!data) {
-            return;
-        }
-
-        checkQuotaError(data, { quiet });
-        checkModerationError(data, { quiet });
-
-        // these do not throw correctly (equiv to Error("[object Object]"))
-        // if trying to fix "[object Object]" displayed to users, start here
-
-        if (data.error) {
-            !quiet && toastr.error(data.error.message || response.statusText, 'Chat Completion API');
-            throw new Error(data);
-        }
-
-        if (data.message) {
-            !quiet && toastr.error(data.message, 'Chat Completion API');
-            throw new Error(data);
-        }
-
-        if (data.detail) {
-            !quiet && toastr.error(data.detail?.error?.message || response.statusText, 'Chat Completion API');
-            throw new Error(data);
-        }
-    }
-    catch {
+        data = JSON.parse(decoded);
+    } catch {
         // No JSON. Do nothing.
+        return null;
     }
+
+    if (!data) {
+        return data;
+    }
+
+    checkQuotaError(data, { quiet });
+    checkModerationError(data, { quiet });
+
+    if (data.error) {
+        const message = data.error.message || response.statusText || `HTTP ${response.status}`;
+        !quiet && toastr.error(message, 'Chat Completion API');
+        throw new Error(message);
+    }
+
+    if (data.message) {
+        !quiet && toastr.error(data.message, 'Chat Completion API');
+        throw new Error(data.message);
+    }
+
+    if (data.detail) {
+        const message = data.detail?.error?.message || response.statusText || `HTTP ${response.status}`;
+        !quiet && toastr.error(message, 'Chat Completion API');
+        throw new Error(message);
+    }
+
+    return data;
 }
 
 /**
@@ -1965,8 +2014,14 @@ async function sendOpenAIRequest(type, messages, signal, { jsonSchema = null } =
     });
 
     if (!response.ok) {
-        tryParseStreamingError(response, await response.text());
-        throw new Error(`Got response status ${response.status}`);
+        const errorText = await response.text();
+        const parsed = tryParseStreamingError(response, errorText);
+        const fallbackMessage =
+            parsed?.error?.message ||
+            parsed?.message ||
+            errorText?.trim() ||
+            `Got response status ${response.status}`;
+        throw new Error(fallbackMessage);
     }
 
     if (Array.isArray(promptContext?.worldInfoRequest?.forcedActivations) && promptContext.worldInfoRequest.forcedActivations.length > 0) {

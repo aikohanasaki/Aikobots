@@ -244,7 +244,7 @@ import {
     getInstructStoppingSequences,
 } from './scripts/instruct-mode.js';
 import { initLocales, t } from './scripts/i18n.js';
-import { getFriendlyTokenizerName, getTokenCount, getTokenCountAsync, initTokenizers, saveTokenCache } from './scripts/tokenizers.js';
+import { getFriendlyTokenizerName, getTokenCount, getTokenCountAsync, getTokenizerModel, initTokenizers, saveTokenCache } from './scripts/tokenizers.js';
 import {
     user_avatar,
     getUserAvatars,
@@ -599,7 +599,7 @@ export let main_api;// = "kobold";
 /** @type {AbortController} */
 let abortController;
 
-const CHAT_COMPLETIONS_ONLY = true;
+export const CHAT_COMPLETIONS_ONLY = true;
 
 //css
 var css_send_form_display = $('<div id=send_form></div>').css('display');
@@ -656,6 +656,7 @@ function enforceChatCompletionsOnlyMode({ save = false } = {}) {
     $('#kobold_api, #kobold_horde, #kobold_api-settings, #kobold_api-presets').hide();
     $('#textgenerationwebui_api, #textgenerationwebui_api-settings, #textgenerationwebui_api-presets').hide();
     $('#novel_api, #novel_api-settings, #novel_api-presets, #ai_module_block_novel').hide();
+    setChatCompletionNullControlsDisabled(true);
 
     if (power_user?.instruct) {
         power_user.instruct.enabled = false;
@@ -1655,7 +1656,20 @@ export async function sendTextareaMessage() {
         await newAssistantChat({ temporary: false });
     }
 
-    return await Generate(generateType);
+    try {
+        return await Generate(generateType);
+    } catch (error) {
+        unblockGeneration(generateType);
+        console.error('sendTextareaMessage failed', error);
+
+        if (typeof error?.message === 'string' && error.message) {
+            toastr.error(error.message, t`Generation failed`, { timeOut: 10000, extendedTimeOut: 20000, preventDuplicates: true });
+        } else {
+            toastr.error(t`Check the browser console for details.`, t`Generation failed`, { timeOut: 10000, extendedTimeOut: 20000, preventDuplicates: true });
+        }
+
+        return;
+    }
 }
 
 /**
@@ -7497,6 +7511,27 @@ export async function openCharacterChat(file_name) {
     await createOrEditCharacter(new CustomEvent('newChat'));
 }
 
+function setChatCompletionNullControlsDisabled(disabled) {
+    const advancedFormatting = $('#AdvancedFormatting');
+    const nullEffectControls = advancedFormatting.find('[data-cc-null]');
+
+    nullEffectControls.attr('aria-disabled', disabled ? 'true' : 'false');
+    nullEffectControls.find('input, select, textarea, button').prop('disabled', disabled);
+
+    nullEffectControls
+        .find('.menu_button, .right_menu_button, .editor_maximize')
+        .toggleClass('disabled', disabled)
+        .attr('aria-disabled', disabled ? 'true' : 'false')
+        .css('pointer-events', disabled ? 'none' : '');
+
+    if (!disabled) {
+        nullEffectControls.find('.menu_button, .right_menu_button, .editor_maximize').removeAttr('tabindex');
+        return;
+    }
+
+    nullEffectControls.find('.menu_button, .right_menu_button, .editor_maximize').attr('tabindex', '-1');
+}
+
 ////////// OPTIMZED MAIN API CHANGE FUNCTION ////////////
 
 export function changeMainAPI() {
@@ -7605,6 +7640,7 @@ export function changeMainAPI() {
     }
 
     main_api = selectedVal;
+    setChatCompletionNullControlsDisabled(main_api === 'openai');
     setOnlineStatus('no_connection');
 
     if (main_api == 'koboldhorde') {
