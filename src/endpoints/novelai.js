@@ -11,6 +11,10 @@ const API_NOVELAI = 'https://api.novelai.net';
 const TEXT_NOVELAI = 'https://text.novelai.net';
 const IMAGE_NOVELAI = 'https://image.novelai.net';
 
+function sendLegacyBackendDisabled(response) {
+    return response.status(410).send({ error: { message: 'NovelAI text generation is disabled in chat-completions-only mode.' } });
+}
+
 // Constants for skip_cfg_above_sigma (Variety+) calculation
 const REFERENCE_PIXEL_COUNT = 1011712;   // 832 * 1216 reference image size
 const SIGMA_MAGIC_NUMBER = 19;           // Base sigma multiplier for V3 and V4 models
@@ -131,6 +135,7 @@ function calculateSkipCfgAboveSigma(width, height, modelName) {
 export const router = express.Router();
 
 router.post('/status', async function (req, res) {
+    return sendLegacyBackendDisabled(res);
     if (!req.body) return res.sendStatus(400);
     const api_key_novel = readSecret(req.user.directories, SECRET_KEYS.NOVEL);
 
@@ -166,6 +171,7 @@ router.post('/status', async function (req, res) {
 });
 
 router.post('/generate', async function (req, res) {
+    return sendLegacyBackendDisabled(res);
     if (!req.body) return res.sendStatus(400);
 
     const api_key_novel = readSecret(req.user.directories, SECRET_KEYS.NOVEL);

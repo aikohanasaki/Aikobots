@@ -53,7 +53,7 @@ function buildOutletValues(extensionPrompts = {}) {
         if (!match) {
             continue;
         }
-        outletValues[match[1]] = String(prompt?.resolvedValue ?? prompt?.value ?? '');
+        outletValues[match[1]] = String(prompt?.value ?? prompt?.resolvedValue ?? '');
     }
     return outletValues;
 }
@@ -61,6 +61,7 @@ function buildOutletValues(extensionPrompts = {}) {
 export function createMacroState(snapshot = {}, extensionPrompts = {}) {
     return {
         values: { ...(snapshot?.values || {}) },
+        registeredValues: { ...(snapshot?.registeredValues || {}) },
         localVariables: { ...(snapshot?.localVariables || {}) },
         globalVariables: { ...(snapshot?.globalVariables || {}) },
         chatId: String(snapshot?.chatId || ''),
@@ -82,11 +83,15 @@ export function evaluatePromptMacros(content, env = {}, { additional = {}, macro
     }
 
     const state = macroState || createMacroState();
+    const nonce = `${state.chatId || state.now.valueOf()}-${Math.random().toString(36).slice(2)}`;
     let originalUsed = false;
+    const filteredEnv = Object.fromEntries(Object.entries(env || {}).filter(([key]) => !String(key).startsWith('__')));
+    const filteredAdditional = Object.fromEntries(Object.entries(additional || {}).filter(([key]) => key !== 'original'));
     const runtimeEnv = {
         ...state.values,
-        ...Object.fromEntries(Object.entries(env || {}).filter(([key]) => !String(key).startsWith('__'))),
-        ...Object.fromEntries(Object.entries(additional || {}).filter(([key]) => key !== 'original')),
+        ...filteredEnv,
+        ...filteredAdditional,
+        ...state.registeredValues,
     };
 
     if (typeof additional?.original === 'string') {
@@ -101,7 +106,7 @@ export function evaluatePromptMacros(content, env = {}, { additional = {}, macro
 
     const getValue = (key) => {
         const value = runtimeEnv[key];
-        return sanitizeMacroValue(typeof value === 'function' ? value() : value);
+        return sanitizeMacroValue(typeof value === 'function' ? value(nonce) : value);
     };
 
     const getLocalVariable = (name) => parseVariableValue(state.localVariables[String(name).trim()]);

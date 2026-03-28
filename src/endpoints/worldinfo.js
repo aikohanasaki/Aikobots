@@ -28,6 +28,66 @@ const world_info_insertion_strategy = {
 };
 
 const KNOWN_DECORATORS = ['@@activate', '@@dont_activate'];
+const promptStateModuleMap = {
+    summary: '1_memory',
+    authorsNote: '2_floating_prompt',
+    vectorsMemory: '3_vectors',
+    vectorsDataBank: '4_vectors_data_bank',
+    smartContext: 'chromadb',
+};
+
+function inflatePromptState(promptState = {}, quietPrompt = '') {
+    const extensionPrompts = {};
+
+    for (const [moduleKey, legacyKey] of Object.entries(promptStateModuleMap)) {
+        if (!promptState?.modules?.[moduleKey]) {
+            continue;
+        }
+
+        extensionPrompts[legacyKey] = {
+            key: legacyKey,
+            value: String(promptState.modules[moduleKey]?.value ?? ''),
+            position: promptState.modules[moduleKey]?.position,
+            depth: promptState.modules[moduleKey]?.depth,
+            scan: Boolean(promptState.modules[moduleKey]?.scan),
+            role: Number(promptState.modules[moduleKey]?.role ?? 0),
+        };
+    }
+
+    for (const prompt of Array.isArray(promptState?.prompts) ? promptState.prompts : []) {
+        const key = String(prompt?.key || '');
+        if (!key) {
+            continue;
+        }
+
+        extensionPrompts[key] = {
+            key,
+            value: String(prompt?.value ?? ''),
+            position: prompt?.position,
+            depth: prompt?.depth,
+            scan: Boolean(prompt?.scan),
+            role: Number(prompt?.role ?? 0),
+        };
+    }
+
+    extensionPrompts.QUIET_PROMPT = {
+        key: 'QUIET_PROMPT',
+        value: String(quietPrompt || ''),
+        position: 0,
+        depth: 0,
+        scan: true,
+        role: 0,
+    };
+
+    return extensionPrompts;
+}
+
+function mergeExtensionPromptSources(promptState = {}, runtimePrompts = {}, quietPrompt = '') {
+    return {
+        ...inflatePromptState(promptState, quietPrompt),
+        ...(runtimePrompts && typeof runtimePrompts === 'object' ? runtimePrompts : {}),
+    };
+}
 
 function getStringHash(str, seed = 0) {
     if (typeof str !== 'string') {
@@ -176,7 +236,8 @@ export async function resolveSortedEntriesPayload(user, body = {}) {
 }
 
 export function prepareEntriesForScan(entries = [], env = {}) {
-    const macroState = createMacroState(env.macroSnapshot || {}, env.extensionPrompts || {});
+    const extensionPrompts = env.extensionPrompts || inflatePromptState(env.promptState || {}, env.quietPrompt || '');
+    const macroState = createMacroState(env.macroSnapshot || {}, extensionPrompts);
     const macroEnv = { ...env, __macroState: macroState };
     return entries.map((entry) => ({
         ...structuredClone(entry),
@@ -220,7 +281,7 @@ router.post('/get', async (request, response) => {
     }
 
     try {
-        const { data, metadata } = await getLorebookForManagement(request.user, request.body.name, true);
+        const { data, metadata } = await getLorebookForManagement(request.user, request.body.name, true, request.body.storage || null);
         return response.send({ ...data, name: metadata.name, storage: metadata.storage, ownerHandle: metadata.ownerHandle });
     } catch (error) {
         return sendLorebookError(response, error);
@@ -271,8 +332,8 @@ router.post('/import', async (request, response) => {
     }
 
     try {
-        const metadata = await saveLorebookForManagement(request.user, worldName, JSON.parse(fileContents));
-        return response.send({ name: metadata.name, storage: metadata.storage, ownerHandle: metadata.ownerHandle });
+        const metadata = await saveLorebookForManagement(request.user, worldName, JSON.parse(fileContents), request.body.storage || 'user');
+        return response.send({ name: metadata.name, storage: metadata.storage, ownerHandle: metadata.ownerHandle, shadowingSecure: Boolean(metadata.shadowingSecure) });
     } catch (error) {
         return sendLorebookError(response, error);
     }
@@ -296,8 +357,8 @@ router.post('/edit', async (request, response) => {
     }
 
     try {
-        const metadata = await saveLorebookForManagement(request.user, request.body.name, request.body.data);
-        return response.send({ ok: true, name: metadata.name, storage: metadata.storage, ownerHandle: metadata.ownerHandle });
+        const metadata = await saveLorebookForManagement(request.user, request.body.name, request.body.data, request.body.storage || 'user');
+        return response.send({ ok: true, name: metadata.name, storage: metadata.storage, ownerHandle: metadata.ownerHandle, shadowingSecure: Boolean(metadata.shadowingSecure) });
     } catch (error) {
         return sendLorebookError(response, error);
     }
@@ -349,14 +410,21 @@ router.post('/scan', (request, response) => {
 
         try {
             const payload = { ...request.body };
+            const effectiveExtensionPrompts = mergeExtensionPromptSources(
+                payload.promptState || {},
+                payload.extensionPrompts || {},
+                payload.quietPrompt || '',
+            );
             if (!Array.isArray(payload.sortedEntries)) {
                 const resolved = await resolveSortedEntriesPayload(request.user, payload);
                 payload.sortedEntries = prepareEntriesForScan(resolved.entries, {
                     ...(payload.substitutionEnv || {}),
                     macroSnapshot: payload.macroSnapshot || payload.substitutionEnv?.macroSnapshot,
-                    extensionPrompts: payload.extensionPrompts || payload.substitutionEnv?.extensionPrompts,
+                    extensionPrompts: effectiveExtensionPrompts,
                 });
             }
+
+            payload.extensionPrompts = effectiveExtensionPrompts;
 
             return response.send(await scanWorldInfo(payload));
         } catch (error) {

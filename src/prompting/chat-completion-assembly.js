@@ -34,6 +34,78 @@ const character_names_behavior = {
 };
 
 const DEFAULT_ORDER = 100;
+const promptStateModuleMap = {
+    summary: '1_memory',
+    authorsNote: '2_floating_prompt',
+    vectorsMemory: '3_vectors',
+    vectorsDataBank: '4_vectors_data_bank',
+    smartContext: 'chromadb',
+};
+
+function normalizePromptStateEntry(entry = {}) {
+    return {
+        key: String(entry.key || ''),
+        value: String(entry.value ?? ''),
+        position: entry.position === undefined ? undefined : Number(entry.position),
+        depth: entry.depth === undefined ? undefined : Number(entry.depth),
+        scan: Boolean(entry.scan),
+        role: Number(entry.role ?? extension_prompt_roles.SYSTEM),
+    };
+}
+
+function inflatePromptState(promptState = {}, quietPrompt = '') {
+    const extensionPrompts = {};
+
+    for (const [moduleKey, legacyKey] of Object.entries(promptStateModuleMap)) {
+        if (!promptState?.modules?.[moduleKey]) {
+            continue;
+        }
+
+        extensionPrompts[legacyKey] = normalizePromptStateEntry({
+            ...promptState.modules[moduleKey],
+            key: legacyKey,
+        });
+    }
+
+    for (const prompt of Array.isArray(promptState?.prompts) ? promptState.prompts : []) {
+        const normalized = normalizePromptStateEntry(prompt);
+        if (!normalized.key) {
+            continue;
+        }
+        extensionPrompts[normalized.key] = normalized;
+    }
+
+    extensionPrompts.QUIET_PROMPT = normalizePromptStateEntry({
+        key: 'QUIET_PROMPT',
+        value: quietPrompt || '',
+        position: extension_prompt_types.IN_PROMPT,
+        depth: 0,
+        scan: true,
+        role: extension_prompt_roles.SYSTEM,
+    });
+
+    return extensionPrompts;
+}
+
+function resolvePromptValues(extensionPrompts = {}, env = {}) {
+    return Object.fromEntries(Object.entries(extensionPrompts).map(([key, prompt]) => {
+        const value = String(prompt?.value ?? '');
+        const resolvedValue = substituteParams(value, env);
+        return [key, {
+            ...prompt,
+            value,
+            resolvedValue,
+            scanText: prompt?.scan ? resolvedValue : undefined,
+        }];
+    }));
+}
+
+function mergeExtensionPromptSources(promptState = {}, runtimePrompts = {}, quietPrompt = '') {
+    return {
+        ...inflatePromptState(promptState, quietPrompt),
+        ...(runtimePrompts && typeof runtimePrompts === 'object' ? runtimePrompts : {}),
+    };
+}
 
 class Prompt {
     constructor(prompt = {}) {
@@ -845,6 +917,7 @@ async function applyWorldInfoToContext(context) {
     });
     context.worldInfoTimedState = structuredClone(scanResult.timedWorldInfo || {});
     context.worldInfoRequest.timedWorldInfo = structuredClone(scanResult.timedWorldInfo || {});
+    context.worldInfoOverflowed = Boolean(scanResult.overflowed);
 
     context.worldInfoBefore = scanResult.worldInfoBefore || '';
     context.worldInfoAfter = scanResult.worldInfoAfter || '';
@@ -1395,7 +1468,7 @@ export async function assembleChatCompletionPrompt(payload = {}) {
         user: payload.userName || '',
         char: payload.charName || '',
         group: groupMacroValues.group || (groupNames.length ? groupNames.join(', ') : (payload.charName || '')),
-        charIfNotGroup: groupMacroValues.group || (groupNames.length ? groupNames.join(', ') : (payload.charName || '')),
+        charIfNotGroup: groupMacroValues.charIfNotGroup || groupMacroValues.group || (groupNames.length ? groupNames.join(', ') : (payload.charName || '')),
         groupNotMuted: groupMacroValues.groupNotMuted || (groupNames.length ? groupNames.join(', ') : (payload.charName || '')),
         notChar: groupMacroValues.notChar || payload.userName || '',
         description: payload.charDescription || '',
@@ -1412,6 +1485,13 @@ export async function assembleChatCompletionPrompt(payload = {}) {
         model,
     };
 
+    const rawExtensionPrompts = mergeExtensionPromptSources(
+        payload.promptState || {},
+        payload.extensionPrompts || {},
+        payload.quietPrompt,
+    );
+    const resolvedExtensionPrompts = resolvePromptValues(rawExtensionPrompts, env);
+
     const tokenHandler = new TokenHandler(model);
     const promptManager = new PromptManagerCore({
         serviceSettings: payload.serviceSettings || {},
@@ -1422,13 +1502,13 @@ export async function assembleChatCompletionPrompt(payload = {}) {
     const context = {
         ...payload,
         env,
-        macroState: createMacroState(payload.macroSnapshot || {}, payload.extensionPrompts || {}),
+        macroState: createMacroState(payload.macroSnapshot || {}, resolvedExtensionPrompts),
         tokenHandler,
         promptManager,
         serviceSettings: payload.serviceSettings || {},
         oaiSettings: payload.oaiSettings || {},
         powerUser: payload.powerUser || {},
-        extensionPrompts: payload.extensionPrompts || {},
+        extensionPrompts: resolvedExtensionPrompts,
         messages: Array.isArray(payload.messages) ? structuredClone(payload.messages) : [],
         messageExamples: Array.isArray(payload.messageExamples) ? structuredClone(payload.messageExamples) : [],
         canUseTools: Boolean(payload.canUseTools),
@@ -1458,5 +1538,6 @@ export async function assembleChatCompletionPrompt(payload = {}) {
         overriddenPrompts: prompts.overriddenPrompts,
         messagesState: serializeMessageNode(chatCompletion.getMessages()),
         timedWorldInfo: structuredClone(context.worldInfoTimedState || context.worldInfoRequest?.timedWorldInfo || {}),
+        worldInfoOverflowed: Boolean(context.worldInfoOverflowed),
     };
 }

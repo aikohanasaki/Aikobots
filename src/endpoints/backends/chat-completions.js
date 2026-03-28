@@ -29,7 +29,6 @@ import {
 import {
     convertClaudeMessages,
     convertGooglePrompt,
-    convertTextCompletionPrompt,
     convertCohereMessages,
     convertMistralMessages,
     convertAI21Messages,
@@ -1429,11 +1428,16 @@ async function prepareServerPromptContext(user, directories, promptContext) {
 
     const worldInfoRequest = promptContext.worldInfoRequest;
     if (worldInfoRequest && !Array.isArray(worldInfoRequest.sortedEntries)) {
+        const promptState = promptContext.promptState && typeof promptContext.promptState === 'object'
+            ? promptContext.promptState
+            : null;
         const resolved = await resolveSortedEntriesPayload(user, worldInfoRequest);
         worldInfoRequest.sortedEntries = prepareEntriesForScan(resolved.entries, {
             ...(worldInfoRequest.substitutionEnv || {}),
             macroSnapshot: worldInfoRequest.macroSnapshot || promptContext.macroSnapshot,
-            extensionPrompts: promptContext.extensionPrompts || {},
+            extensionPrompts: promptContext.extensionPrompts || undefined,
+            promptState,
+            quietPrompt: promptContext.quietPrompt || '',
         });
     }
 
@@ -1449,16 +1453,141 @@ function getPromptAssemblyErrorStatus(error) {
     return 500;
 }
 
-function setTimedWorldInfoHeader(response, timedWorldInfo) {
-    if (!timedWorldInfo || typeof timedWorldInfo !== 'object') {
+function attachWorldInfoResponseData(payload, timedWorldInfo, worldInfoOverflowed = false) {
+    if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
+        return payload;
+    }
+
+    const xSillyTavern = {
+        ...(payload.x_sillytavern && typeof payload.x_sillytavern === 'object' ? payload.x_sillytavern : {}),
+    };
+
+    if (timedWorldInfo && typeof timedWorldInfo === 'object') {
+        xSillyTavern.timedWorldInfo = timedWorldInfo;
+    }
+    if (worldInfoOverflowed) {
+        xSillyTavern.worldInfoOverflowed = true;
+    }
+
+    if (!Object.keys(xSillyTavern).length) {
+        return payload;
+    }
+
+    payload.x_sillytavern = {
+        ...xSillyTavern,
+    };
+    return payload;
+}
+
+function getSseEventData(eventBlock) {
+    if (!eventBlock) {
+        return '';
+    }
+
+    return eventBlock
+        .split(/\r?\n/)
+        .filter(line => line.startsWith('data:'))
+        .map(line => line.slice(5).trimStart())
+        .join('\n');
+}
+
+function writeWorldInfoSseEvent(response, timedWorldInfo, worldInfoOverflowed = false) {
+    if (response.writableEnded) {
         return;
     }
 
+    const xSillyTavern = {};
+    if (timedWorldInfo && typeof timedWorldInfo === 'object') {
+        xSillyTavern.timedWorldInfo = timedWorldInfo;
+    }
+    if (worldInfoOverflowed) {
+        xSillyTavern.worldInfoOverflowed = true;
+    }
+    if (!Object.keys(xSillyTavern).length) {
+        return;
+    }
+
+    response.write(`data: ${JSON.stringify({ x_sillytavern: xSillyTavern })}\n\n`);
+}
+
+async function forwardFetchResponseWithWorldInfo(from, to, timedWorldInfo, worldInfoOverflowed = false) {
+    let statusCode = from.status;
+    let statusText = from.statusText;
+
+    if (!from.ok) {
+        console.warn(`Streaming request failed with status ${statusCode} ${statusText}`);
+    }
+
+    if (statusCode === 401) {
+        statusCode = 400;
+    }
+
+    to.statusCode = statusCode;
+    to.statusMessage = statusText;
+    to.setHeader('Content-Type', from.headers.get('content-type') || 'text/event-stream; charset=utf-8');
+    to.setHeader('Cache-Control', from.headers.get('cache-control') || 'no-cache');
+    to.setHeader('Connection', 'keep-alive');
+
+    if (!from.body || !to.socket) {
+        writeWorldInfoSseEvent(to, timedWorldInfo, worldInfoOverflowed);
+        to.end();
+        return;
+    }
+
+    const decoder = new TextDecoder();
+    let buffer = '';
+    let timedWorldInfoSent = false;
+
+    const flushEventBlock = (eventBlock) => {
+        if (!eventBlock || to.writableEnded) {
+            return;
+        }
+
+        if (!timedWorldInfoSent && getSseEventData(eventBlock) === '[DONE]') {
+            writeWorldInfoSseEvent(to, timedWorldInfo, worldInfoOverflowed);
+            timedWorldInfoSent = true;
+        }
+
+        to.write(`${eventBlock}\n\n`);
+    };
+
+    to.socket.on('close', function () {
+        from.body.destroy();
+        if (!to.writableEnded) {
+            to.end();
+        }
+    });
+
     try {
-        const encoded = Buffer.from(JSON.stringify(timedWorldInfo), 'utf8').toString('base64');
-        response.setHeader('X-ST-Timed-World-Info', encoded);
+        for await (const chunk of from.body) {
+            buffer += decoder.decode(chunk, { stream: true });
+            const events = buffer.split(/\r?\n\r?\n/);
+            buffer = events.pop() ?? '';
+
+            for (const eventBlock of events) {
+                flushEventBlock(eventBlock);
+            }
+        }
+
+        buffer += decoder.decode();
+
+        if (buffer) {
+            flushEventBlock(buffer);
+        }
+
+        if (!timedWorldInfoSent) {
+            writeWorldInfoSseEvent(to, timedWorldInfo, worldInfoOverflowed);
+        }
+
+        console.info('Streaming request finished');
+        if (!to.writableEnded) {
+            to.end();
+        }
     } catch (error) {
-        console.warn('Failed to encode timed world info header', error);
+        console.error('Streaming request failed', error);
+        if (!to.writableEnded) {
+            to.end();
+        }
     }
 }
 
@@ -1858,12 +1987,15 @@ router.post('/generate', function (request, response) {
     }
 
     let assembledPromptContext = false;
+    let assembledTimedWorldInfo = null;
+    let assembledWorldInfoOverflowed = false;
     if (!Array.isArray(request.body.messages) && request.body.prompt_context && typeof request.body.prompt_context === 'object') {
         await prepareServerPromptContext(request.user, request.user.directories, request.body.prompt_context);
         const assembled = await assembleChatCompletionPrompt(request.body.prompt_context);
         request.body.messages = assembled.chat;
         response.setHeader('X-ST-Messages-Count', String(Number(assembled.messagesCount) || 0));
-        setTimedWorldInfoHeader(response, assembled.timedWorldInfo);
+        assembledTimedWorldInfo = assembled.timedWorldInfo;
+        assembledWorldInfoOverflowed = Boolean(assembled.worldInfoOverflowed);
         assembledPromptContext = true;
     }
 
@@ -1889,11 +2021,16 @@ router.post('/generate', function (request, response) {
         case CHAT_COMPLETION_SOURCES.AZURE_OPENAI: return sendAzureOpenAIRequest(request, response);
     }
 
+    const requestedTextCompletion = Boolean(request.body.model && TEXT_COMPLETION_MODELS.includes(request.body.model)) || typeof request.body.messages === 'string';
+    if (requestedTextCompletion) {
+        return response.status(410).send({ error: { message: 'Text completion is disabled in chat-completions-only mode.' } });
+    }
+
     let apiUrl;
     let apiKey;
     let headers;
     let bodyParams;
-    const isTextCompletion = Boolean(request.body.model && TEXT_COMPLETION_MODELS.includes(request.body.model)) || typeof request.body.messages === 'string';
+    const isTextCompletion = false;
 
     if (request.body.chat_completion_source === CHAT_COMPLETION_SOURCES.OPENAI) {
         apiUrl = new URL(request.body.reverse_proxy || API_OPENAI).toString();
@@ -2134,10 +2271,7 @@ router.post('/generate', function (request, response) {
         bodyParams['stop'] = request.body.stop;
     }
 
-    const textPrompt = isTextCompletion ? convertTextCompletionPrompt(request.body.messages) : '';
-    const endpointUrl = isTextCompletion && request.body.chat_completion_source !== CHAT_COMPLETION_SOURCES.OPENROUTER ?
-        `${apiUrl}/completions` :
-        `${apiUrl}/chat/completions`;
+    const endpointUrl = `${apiUrl}/chat/completions`;
 
     const controller = new AbortController();
     request.socket.removeAllListeners('close');
@@ -2145,7 +2279,7 @@ router.post('/generate', function (request, response) {
         controller.abort();
     });
 
-    if (!isTextCompletion && Array.isArray(request.body.tools) && request.body.tools.length > 0) {
+    if (Array.isArray(request.body.tools) && request.body.tools.length > 0) {
         bodyParams['tools'] = request.body.tools;
         bodyParams['tool_choice'] = request.body.tool_choice;
     }
@@ -2162,8 +2296,7 @@ router.post('/generate', function (request, response) {
     }
 
     const requestBody = {
-        'messages': isTextCompletion === false ? request.body.messages : undefined,
-        'prompt': isTextCompletion === true ? textPrompt : undefined,
+        'messages': request.body.messages,
         'model': request.body.model,
         'temperature': request.body.temperature,
         'max_tokens': request.body.max_tokens,
@@ -2173,7 +2306,7 @@ router.post('/generate', function (request, response) {
         'frequency_penalty': request.body.frequency_penalty,
         'top_p': request.body.top_p,
         'top_k': request.body.top_k,
-        'stop': isTextCompletion === false ? request.body.stop : undefined,
+        'stop': request.body.stop,
         'logit_bias': request.body.logit_bias,
         'seed': request.body.seed,
         'n': request.body.n,
@@ -2213,13 +2346,18 @@ router.post('/generate', function (request, response) {
 
             if (request.body.stream) {
                 console.info('Streaming request in progress');
-                forwardFetchResponse(fetchResponse, response);
+                if (!fetchResponse.ok) {
+                    forwardFetchResponse(fetchResponse, response);
+                    return;
+                }
+                await forwardFetchResponseWithWorldInfo(fetchResponse, response, assembledTimedWorldInfo, assembledWorldInfoOverflowed);
                 return;
             }
 
             if (fetchResponse.ok) {
                 /** @type {any} */
                 let json = await fetchResponse.json();
+                json = attachWorldInfoResponseData(json, assembledTimedWorldInfo, assembledWorldInfoOverflowed);
                 response.send(json);
                 console.debug('Chat Completion response:', json);
             } else {
@@ -2276,8 +2414,7 @@ router.post('/assemble', async function (request, response) {
 
         await prepareServerPromptContext(request.user, request.user.directories, request.body);
         const result = await assembleChatCompletionPrompt(request.body);
-        setTimedWorldInfoHeader(response, result.timedWorldInfo);
-        return response.send(result);
+        return response.send(attachWorldInfoResponseData(result, result.timedWorldInfo, result.worldInfoOverflowed));
     } catch (error) {
         console.error('Chat completion assembly failed', error);
         return response.status(getPromptAssemblyErrorStatus(error)).send(toPromptAssemblyErrorBody(error));
@@ -2292,15 +2429,14 @@ router.post('/assemble/compare', async function (request, response) {
 
         await prepareServerPromptContext(request.user, request.user.directories, request.body);
         const result = await assembleChatCompletionPrompt(request.body);
-        setTimedWorldInfoHeader(response, result.timedWorldInfo);
         const comparison = compareChatCompletionMessages(request.body.clientChat || [], result.chat, {
             maxDifferences: request.body.maxDifferences,
         });
 
-        return response.send({
+        return response.send(attachWorldInfoResponseData({
             ...result,
             comparison,
-        });
+        }, result.timedWorldInfo, result.worldInfoOverflowed));
     } catch (error) {
         console.error('Chat completion assembly comparison failed', error);
         return response.status(getPromptAssemblyErrorStatus(error)).send(toPromptAssemblyErrorBody(error));

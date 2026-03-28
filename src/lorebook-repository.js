@@ -4,7 +4,7 @@ import path from 'node:path';
 import sanitize from 'sanitize-filename';
 import { sync as writeFileAtomicSync } from 'write-file-atomic';
 
-import { getAllUserHandles, getUserDirectories } from './users.js';
+import { getUserDirectories } from './users.js';
 
 const SECURE_LOREBOOK_DIRECTORY = ['_secure', 'worlds'];
 const SECURE_INDEX_FILENAME = 'index.json';
@@ -183,26 +183,10 @@ function readLorebookFromRecord(record, allowDummy) {
     return readJsonFileSync(record.path);
 }
 
-async function assertSecureNameAvailableForPromotion(name, ownerHandle) {
+async function assertSecureNameAvailableForPromotion(name) {
     const secureRecord = getSecureIndexEntry(name);
     if (secureRecord) {
         throw new LorebookRepositoryError('LorebookAlreadySecure', `Lorebook "${name}" is already secure.`, 409);
-    }
-
-    const handles = await getAllUserHandles();
-    for (const handle of handles) {
-        if (handle === ownerHandle) {
-            continue;
-        }
-
-        const conflicting = getUserLorebookRecord(handle, name);
-        if (conflicting) {
-            throw new LorebookRepositoryError(
-                'LorebookNameConflict',
-                `Cannot promote "${name}" because another user's lorebook already uses that name.`,
-                409,
-            );
-        }
     }
 }
 
@@ -309,13 +293,29 @@ export async function listLorebooksForManagement(user) {
  * @param {string} name
  * @param {boolean} [allowDummy=false]
  */
-export async function getLorebookForManagement(user, name, allowDummy = false) {
+export async function getLorebookForManagement(user, name, allowDummy = false, storage = null) {
     const canonicalName = assertCanonicalName(name);
     const secureRecord = getSecureIndexEntry(canonicalName);
+    const preferredStorage = storage === 'secure' ? 'secure' : (storage === 'user' ? 'user' : null);
 
-    if (secureRecord) {
+    if (preferredStorage === 'secure') {
+        if (!secureRecord || !canManageSecureLorebook(user, secureRecord)) {
+            throw new LorebookRepositoryError('LorebookNotFound', `Lorebook "${canonicalName}" not found.`, 404);
+        }
+
+        return {
+            data: readLorebookFromRecord(secureRecord, allowDummy),
+            metadata: {
+                name: secureRecord.name,
+                storage: 'secure',
+                ownerHandle: secureRecord.ownerHandle,
+            },
+        };
+    }
+
+    if (!preferredStorage && secureRecord) {
         if (!canManageSecureLorebook(user, secureRecord)) {
-            throw new LorebookRepositoryError('LorebookAccessDenied', `Lorebook "${canonicalName}" is not accessible.`, 403);
+            throw new LorebookRepositoryError('LorebookNotFound', `Lorebook "${canonicalName}" not found.`, 404);
         }
 
         return {
@@ -367,13 +367,13 @@ export async function readLorebookForGeneration(user, name, allowDummy = false) 
         return dummyObject;
     }
 
-    const secureRecord = getSecureIndexEntry(canonicalName);
-    if (secureRecord) {
-        return readLorebookFromRecord(secureRecord, allowDummy);
+    const userRecord = getUserLorebookRecord(user.profile.handle, canonicalName);
+    if (userRecord) {
+        return readLorebookFromRecord(userRecord, allowDummy);
     }
 
-    const userRecord = getUserLorebookRecord(user.profile.handle, canonicalName);
-    return readLorebookFromRecord(userRecord, allowDummy);
+    const secureRecord = getSecureIndexEntry(canonicalName);
+    return readLorebookFromRecord(secureRecord, allowDummy);
 }
 
 /**
@@ -381,17 +381,14 @@ export async function readLorebookForGeneration(user, name, allowDummy = false) 
  * @param {string} name
  * @param {object} data
  */
-export async function saveLorebookForManagement(user, name, data) {
+export async function saveLorebookForManagement(user, name, data, storage = 'user') {
     const canonicalName = assertCanonicalName(name);
     const secureRecord = getSecureIndexEntry(canonicalName);
+    const preferredStorage = storage === 'secure' ? 'secure' : 'user';
 
-    if (secureRecord) {
-        if (!canManageSecureLorebook(user, secureRecord)) {
-            throw new LorebookRepositoryError(
-                'LorebookNameConflict',
-                `Cannot save "${canonicalName}" because that name is reserved by a secure lorebook.`,
-                409,
-            );
+    if (preferredStorage === 'secure') {
+        if (!secureRecord || !canManageSecureLorebook(user, secureRecord)) {
+            throw new LorebookRepositoryError('LorebookNotFound', `Lorebook "${canonicalName}" not found.`, 404);
         }
 
         writeSecureLorebook(canonicalName, data, secureRecord.ownerHandle, user.profile.handle, secureRecord);
@@ -407,6 +404,7 @@ export async function saveLorebookForManagement(user, name, data) {
         name: canonicalName,
         storage: 'user',
         ownerHandle: user.profile.handle,
+        shadowingSecure: Boolean(secureRecord && canManageSecureLorebook(user, secureRecord)),
     };
 }
 
@@ -455,7 +453,7 @@ export async function promoteLorebook(user, name) {
         throw new LorebookRepositoryError('LorebookNotFound', `Lorebook "${canonicalName}" not found.`, 404);
     }
 
-    await assertSecureNameAvailableForPromotion(canonicalName, user.profile.handle);
+    await assertSecureNameAvailableForPromotion(canonicalName);
 
     const data = readLorebookFromRecord(userRecord, false);
     writeSecureLorebook(canonicalName, data, user.profile.handle, user.profile.handle);

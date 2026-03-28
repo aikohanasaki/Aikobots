@@ -8,7 +8,12 @@ import { TEXTGEN_TYPES } from '../../constants.js';
 
 export const router = express.Router();
 
+function sendLegacyBackendDisabled(response) {
+    return response.status(410).send({ error: { message: 'Kobold generation is disabled in chat-completions-only mode.' } });
+}
+
 router.post('/generate', async function (request, response_generate) {
+    return sendLegacyBackendDisabled(response_generate);
     if (!request.body) return response_generate.sendStatus(400);
 
     if (request.body.api_server.indexOf('localhost') != -1) {
@@ -141,6 +146,7 @@ router.post('/generate', async function (request, response_generate) {
 });
 
 router.post('/status', async function (request, response) {
+    return sendLegacyBackendDisabled(response);
     if (!request.body) return response.sendStatus(400);
     let api_server = request.body.api_server;
     if (api_server.indexOf('localhost') != -1) {

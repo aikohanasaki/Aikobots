@@ -19,6 +19,10 @@ import { createHash } from 'node:crypto';
 
 export const router = express.Router();
 
+function sendLegacyBackendDisabled(response) {
+    return response.status(410).send({ error: { message: 'Text-completion backends are disabled in chat-completions-only mode.' } });
+}
+
 /**
  * Special boy's steaming routine. Wrap this abomination into proper SSE stream.
  * @param {import('node-fetch').Response} jsonStream JSON stream
@@ -96,6 +100,18 @@ async function abortKoboldCppRequest(request, url) {
 }
 
 //************** Ooba/OpenAI text completions API
+router.post('/status', async function (request, response) {
+    return sendLegacyBackendDisabled(response);
+});
+
+router.post('/props', async function (request, response) {
+    return sendLegacyBackendDisabled(response);
+});
+
+router.post('/generate', async function (request, response) {
+    return sendLegacyBackendDisabled(response);
+});
+
 router.post('/status', async function (request, response) {
     if (!request.body) return response.sendStatus(400);
 
@@ -632,7 +648,6 @@ tabby.post('/download', async function (request, response) {
         return response.sendStatus(500);
     }
 });
-
 router.use('/ollama', ollama);
 router.use('/llamacpp', llamacpp);
 router.use('/tabby', tabby);

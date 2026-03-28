@@ -222,29 +222,10 @@ router.post('/get', async (request, response) => {
         return response.sendStatus(500);
     }
 
-    // NovelAI Settings
-    const { fileContents: novelai_settings, fileNames: novelai_setting_names }
-        = readPresetsFromDirectory(request.user.directories.novelAI_Settings, {
-            sortFunction: sortByName(request.user.directories.novelAI_Settings),
-            removeFileExtension: true,
-        });
-
     // OpenAI Settings
     const { fileContents: openai_settings, fileNames: openai_setting_names }
         = readPresetsFromDirectory(request.user.directories.openAI_Settings, {
             sortFunction: sortByName(request.user.directories.openAI_Settings), removeFileExtension: true,
-        });
-
-    // TextGenerationWebUI Settings
-    const { fileContents: textgenerationwebui_presets, fileNames: textgenerationwebui_preset_names }
-        = readPresetsFromDirectory(request.user.directories.textGen_Settings, {
-            sortFunction: sortByName(request.user.directories.textGen_Settings), removeFileExtension: true,
-        });
-
-    //Kobold
-    const { fileContents: koboldai_settings, fileNames: koboldai_setting_names }
-        = readPresetsFromDirectory(request.user.directories.koboldAI_Settings, {
-            sortFunction: sortByName(request.user.directories.koboldAI_Settings), removeFileExtension: true,
         });
 
     const worldInfoItems = await listLorebooksForManagement(request.user);
@@ -254,27 +235,26 @@ router.post('/get', async (request, response) => {
     const movingUIPresets = readAndParseFromDirectory(request.user.directories.movingUI);
     const quickReplyPresets = readAndParseFromDirectory(request.user.directories.quickreplies);
 
-    const instruct = readAndParseFromDirectory(request.user.directories.instruct);
     const context = readAndParseFromDirectory(request.user.directories.context);
     const sysprompt = readAndParseFromDirectory(request.user.directories.sysprompt);
     const reasoning = readAndParseFromDirectory(request.user.directories.reasoning);
 
     response.send({
         settings,
-        koboldai_settings,
-        koboldai_setting_names,
+        koboldai_settings: [],
+        koboldai_setting_names: [],
         world_names,
         world_info_items: worldInfoItems,
-        novelai_settings,
-        novelai_setting_names,
+        novelai_settings: [],
+        novelai_setting_names: [],
         openai_settings,
         openai_setting_names,
-        textgenerationwebui_presets,
-        textgenerationwebui_preset_names,
+        textgenerationwebui_presets: [],
+        textgenerationwebui_preset_names: [],
         themes,
         movingUIPresets,
         quickReplyPresets,
-        instruct,
+        instruct: [],
         context,
         sysprompt,
         reasoning,

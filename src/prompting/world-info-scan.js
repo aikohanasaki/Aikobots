@@ -156,13 +156,19 @@ class WorldInfoBuffer {
     #depthBuffer = [];
     #recurseBuffer = [];
     #injectBuffer = [];
+    #forcedActivations = new Map();
     #skew = 0;
     #startDepth = 0;
 
-    constructor(messages, globalScanData, injects, settings) {
+    constructor(messages, globalScanData, injects, settings, forcedActivations = []) {
         this.#settings = settings;
         this.#globalScanData = globalScanData;
         this.#injectBuffer = Array.isArray(injects) ? injects.filter(Boolean) : [];
+        this.#forcedActivations = new Map(
+            (Array.isArray(forcedActivations) ? forcedActivations : [])
+                .filter(entry => entry && entry.world !== undefined && entry.uid !== undefined)
+                .map(entry => [`${entry.world}.${entry.uid}`, structuredClone(entry)]),
+        );
 
         for (let depth = 0; depth < MAX_SCAN_DEPTH; depth++) {
             if (messages[depth]) {
@@ -254,6 +260,10 @@ class WorldInfoBuffer {
 
     hasRecurse() {
         return this.#recurseBuffer.length > 0;
+    }
+
+    getExternallyActivated(entry) {
+        return this.#forcedActivations.get(`${entry.world}.${entry.uid}`);
     }
 
     advanceScan() {
@@ -577,7 +587,7 @@ export async function scanWorldInfo(payload = {}) {
     const isDryRun = Boolean(payload.isDryRun);
     const tokenCountCache = new Map();
 
-    const buffer = new WorldInfoBuffer(chat, globalScanData, injects, settings);
+    const buffer = new WorldInfoBuffer(chat, globalScanData, injects, settings, payload.forcedActivations);
     const timedEffects = new WorldInfoTimedEffects(chat.length, sortedEntries, structuredClone(payload.timedWorldInfo || {}), isDryRun);
     timedEffects.checkTimedEffects();
 
@@ -592,6 +602,7 @@ export async function scanWorldInfo(payload = {}) {
             outletEntries: {},
             allActivatedEntries: [],
             timedWorldInfo: timedEffects.getTimedWorldInfo(),
+            overflowed: false,
         };
     }
 
@@ -695,6 +706,12 @@ function getScanInjects(payload = {}) {
             }
 
             if (Array.isArray(entry.decorators) && entry.decorators.includes('@@dont_activate')) {
+                continue;
+            }
+
+            const externallyActivated = buffer.getExternallyActivated(entry);
+            if (externallyActivated) {
+                activatedNow.add(externallyActivated);
                 continue;
             }
 
@@ -896,6 +913,7 @@ function getScanInjects(payload = {}) {
         outletEntries: WIOutletEntries,
         allActivatedEntries: Array.from(allActivatedEntries.values()),
         timedWorldInfo: timedEffects.getTimedWorldInfo(),
+        overflowed: Boolean(tokenBudgetOverflowed),
     };
 
     timedEffects.setTimedEffects(result.allActivatedEntries);

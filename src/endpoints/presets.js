@@ -7,6 +7,12 @@ import { sync as writeFileAtomicSync } from 'write-file-atomic';
 
 import { getDefaultPresetFile, getDefaultPresets } from './content-manager.js';
 
+const DISABLED_PRESET_APIS = new Set(['kobold', 'koboldhorde', 'novel', 'textgenerationwebui', 'instruct']);
+
+function isDisabledPresetApi(apiId) {
+    return DISABLED_PRESET_APIS.has(String(apiId || ''));
+}
+
 /**
  * Gets the folder and extension for the preset settings based on the API source ID.
  * @param {string} apiId API source ID
@@ -45,6 +51,10 @@ router.post('/save', function (request, response) {
         return response.sendStatus(400);
     }
 
+    if (isDisabledPresetApi(request.body.apiId)) {
+        return response.status(410).send({ error: { message: 'Legacy preset APIs are disabled in chat-completions-only mode.' } });
+    }
+
     const settings = getPresetSettingsByAPI(request.body.apiId, request.user.directories);
     const filename = name + settings.extension;
 
@@ -61,6 +71,10 @@ router.post('/delete', function (request, response) {
     const name = sanitize(request.body.name);
     if (!name) {
         return response.sendStatus(400);
+    }
+
+    if (isDisabledPresetApi(request.body.apiId)) {
+        return response.status(410).send({ error: { message: 'Legacy preset APIs are disabled in chat-completions-only mode.' } });
     }
 
     const settings = getPresetSettingsByAPI(request.body.apiId, request.user.directories);
@@ -82,6 +96,10 @@ router.post('/delete', function (request, response) {
 
 router.post('/restore', function (request, response) {
     try {
+        if (isDisabledPresetApi(request.body.apiId)) {
+            return response.status(410).send({ error: { message: 'Legacy preset APIs are disabled in chat-completions-only mode.' } });
+        }
+
         const settings = getPresetSettingsByAPI(request.body.apiId, request.user.directories);
         const name = sanitize(request.body.name);
         const defaultPresets = getDefaultPresets(request.user.directories);

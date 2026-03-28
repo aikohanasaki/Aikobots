@@ -62,6 +62,7 @@ import {
     initWorldInfo,
     charUpdatePrimaryWorld,
     charSetAuxWorlds,
+    getForcedActivationEntriesSnapshot,
 } from './scripts/world-info.js';
 
 import {
@@ -598,6 +599,8 @@ export let main_api;// = "kobold";
 /** @type {AbortController} */
 let abortController;
 
+const CHAT_COMPLETIONS_ONLY = true;
+
 //css
 var css_send_form_display = $('<div id=send_form></div>').css('display');
 
@@ -636,6 +639,39 @@ export function getSlideToggleOptions() {
 $.ajaxPrefilter((options, originalOptions, xhr) => {
     xhr.setRequestHeader('X-CSRF-Token', token);
 });
+
+function enforceChatCompletionsOnlyMode({ save = false } = {}) {
+    if (!CHAT_COMPLETIONS_ONLY) {
+        return;
+    }
+
+    if (main_api !== 'openai') {
+        console.warn(`Forcing main_api from ${main_api} to openai`);
+    }
+
+    main_api = 'openai';
+    $('#main_api').val('openai').prop('disabled', true);
+    $('#main_api option:not([value="openai"])').remove();
+    $('#InstructSettingsColumn, #instructSettingsBlock, #InstructSequencesColumn').hide();
+    $('#kobold_api, #kobold_horde, #kobold_api-settings, #kobold_api-presets').hide();
+    $('#textgenerationwebui_api, #textgenerationwebui_api-settings, #textgenerationwebui_api-presets').hide();
+    $('#novel_api, #novel_api-settings, #novel_api-presets, #ai_module_block_novel').hide();
+
+    if (power_user?.instruct) {
+        power_user.instruct.enabled = false;
+    }
+    if (power_user) {
+        power_user.instruct_derived = false;
+    }
+
+    if (settings) {
+        settings.main_api = 'openai';
+    }
+
+    if (save) {
+        saveSettingsDebounced();
+    }
+}
 
 /**
  * Pings the STserver to check if it is reachable.
@@ -2855,24 +2891,32 @@ export function getServerMacroSnapshot() {
         'instructLastInput',
         'instructLastUserPrefix',
     ]);
+    const registeredMacroNames = new Set();
 
     for (const { key } of MacrosParser) {
         for (const alias of String(key || '').split('|').map(x => x.trim()).filter(Boolean)) {
             macroNames.add(alias);
+            registeredMacroNames.add(alias);
         }
     }
 
     const values = {};
+    const registeredValues = {};
     for (const macroName of macroNames) {
         const marker = `{{${macroName}}}`;
         const resolved = substituteParams(marker);
         if (resolved !== marker) {
-            values[macroName] = resolved;
+            if (registeredMacroNames.has(macroName)) {
+                registeredValues[macroName] = resolved;
+            } else {
+                values[macroName] = resolved;
+            }
         }
     }
 
     return {
         values,
+        registeredValues,
         localVariables: structuredClone(chat_metadata.variables || {}),
         globalVariables: structuredClone(extension_settings.variables.global || {}),
         chatId: chat_metadata['main_chat'] ?? getCurrentChatId() ?? '',
@@ -3124,6 +3168,57 @@ export async function getExtensionPromptSnapshot(source = extension_prompts) {
     }
 
     return snapshot;
+}
+
+/**
+ * Returns a filtered prompt-state payload for server-side chat-completion assembly.
+ * This is narrower than the client extension registry shape and only includes
+ * prompt data relevant to built-in generation behavior.
+ * @param {Record<string, any>} [source] Source prompt registry
+ * @returns {Promise<{ modules: Record<string, any>, prompts: any[] }>}
+ */
+export async function getServerPromptState(source = extension_prompts) {
+    const moduleKeyMap = {
+        '1_memory': 'summary',
+        '2_floating_prompt': 'authorsNote',
+        '3_vectors': 'vectorsMemory',
+        '4_vectors_data_bank': 'vectorsDataBank',
+        'chromadb': 'smartContext',
+    };
+
+    const promptState = {
+        modules: {},
+        prompts: [],
+    };
+
+    for (const key of Object.keys(source || {}).sort()) {
+        const prompt = source[key];
+
+        if (!await shouldIncludeExtensionPrompt(prompt)) {
+            continue;
+        }
+
+        const entry = {
+            key,
+            value: String(prompt?.value ?? ''),
+            position: prompt?.position === undefined ? undefined : Number(prompt.position),
+            depth: prompt?.depth === undefined ? undefined : Number(prompt.depth),
+            scan: Boolean(prompt?.scan),
+            role: Number(prompt?.role ?? extension_prompt_roles.SYSTEM),
+        };
+
+        const moduleKey = moduleKeyMap[key];
+        if (moduleKey) {
+            promptState.modules[moduleKey] = entry;
+            continue;
+        }
+
+        if (entry.scan || entry.position !== undefined) {
+            promptState.prompts.push(entry);
+        }
+    }
+
+    return promptState;
 }
 
 /**
@@ -4025,6 +4120,7 @@ function removeLastMessage() {
  * @returns {Promise<any>} Returns a promise that resolves when the text is done generating.
  */
 export async function Generate(type, { automatic_trigger, force_name2, quiet_prompt, quietToLoud, skipWIAN, force_chid, signal, quietImage, quietName, jsonSchema = null, depth = 0 } = {}, dryRun = false) {
+    enforceChatCompletionsOnlyMode();
     console.log('Generate entered');
     setGenerationProgress(0);
     generation_started = new Date();
@@ -5048,7 +5144,6 @@ export async function Generate(type, { automatic_trigger, force_name2, quiet_pro
                 mesExamples: mesExamples,
                 charDepthPrompt: charDepthPrompt,
                 creatorNotes: creatorNotes,
-                extensionPrompts: extension_prompts,
                 bias: promptBias,
                 type: type,
                 quietPrompt: quiet_prompt,
@@ -5072,6 +5167,7 @@ export async function Generate(type, { automatic_trigger, force_name2, quiet_pro
                     worldInfoCharacterStrategy: world_info_character_strategy,
                     currentCharacterFilename: getCharaFilename(),
                     currentCharacterTags: Array.isArray(tag_map?.[tagKey]) ? tag_map[tagKey] : [],
+                    forcedActivations: getForcedActivationEntriesSnapshot(),
                     timedWorldInfo: structuredClone(chat_metadata.timedWorldInfo || {}),
                     settings: {
                         world_info_depth,
@@ -5851,27 +5947,12 @@ export function setInContextMessages(msgInContextCount, type) {
  * @throws {Error|object}
  */
 export async function sendGenerationRequest(type, data, options = {}) {
-    if (main_api === 'openai') {
-        return await sendOpenAIRequest(type, data.prompt, abortController.signal, options);
+    if (main_api !== 'openai') {
+        throw new Error('Only chat-completions generation is supported.');
     }
 
-    if (main_api === 'koboldhorde') {
-        return await generateHorde(data.prompt, data, abortController.signal, true);
-    }
-
-    const response = await fetch(getGenerateUrl(main_api), {
-        method: 'POST',
-        headers: getRequestHeaders(),
-        cache: 'no-cache',
-        body: JSON.stringify(data),
-        signal: abortController.signal,
-    });
-
-    if (!response.ok) {
-        throw await response.json();
-    }
-
-    return await response.json();
+    const openAIRequest = data?.promptContext ? { promptContext: data.promptContext } : data.prompt;
+    return await sendOpenAIRequest(type, openAIRequest, abortController.signal, options);
 }
 
 /**
@@ -5886,18 +5967,11 @@ export async function sendStreamingRequest(type, data, options = {}) {
         throw new Error('Generation was aborted.');
     }
 
-    switch (main_api) {
-        case 'openai':
-            return await sendOpenAIRequest(type, data.prompt, streamingProcessor.abortController.signal, options);
-        case 'textgenerationwebui':
-            return await generateTextGenWithStreaming(data, streamingProcessor.abortController.signal);
-        case 'novel':
-            return await generateNovelWithStreaming(data, streamingProcessor.abortController.signal);
-        case 'kobold':
-            return await generateKoboldWithStreaming(data, streamingProcessor.abortController.signal);
-        default:
-            throw new Error('Streaming is enabled, but the current API does not support streaming.');
+    if (main_api !== 'openai') {
+        throw new Error('Only chat-completions generation is supported.');
     }
+
+    return await sendOpenAIRequest(type, data?.promptContext ? { promptContext: data.promptContext } : data.prompt, streamingProcessor.abortController.signal, options);
 }
 
 /**
@@ -7426,7 +7500,7 @@ export async function openCharacterChat(file_name) {
 ////////// OPTIMZED MAIN API CHANGE FUNCTION ////////////
 
 export function changeMainAPI() {
-    const selectedVal = $('#main_api').val();
+    const selectedVal = CHAT_COMPLETIONS_ONLY ? 'openai' : $('#main_api').val();
     //console.log(selectedVal);
     const apiElements = {
         'koboldhorde': {
@@ -7540,6 +7614,7 @@ export function changeMainAPI() {
     validateDisabledSamplers();
     setupChatCompletionPromptManager(oai_settings);
     forceCharacterEditorTokenize();
+    enforceChatCompletionsOnlyMode();
 }
 
 export function setUserName(value, { toastPersonaNameChange = true } = {}) {
@@ -7661,10 +7736,14 @@ export async function getSettings() {
 
         //Load which API we are using
         if (settings.main_api == undefined) {
-            settings.main_api = 'kobold';
+            settings.main_api = 'openai';
         }
 
         if (settings.main_api == 'poe') {
+            settings.main_api = 'openai';
+        }
+
+        if (CHAT_COMPLETIONS_ONLY && settings.main_api !== 'openai') {
             settings.main_api = 'openai';
         }
 
@@ -7672,6 +7751,7 @@ export async function getSettings() {
         $('#main_api').val(main_api);
         $(`#main_api option[value=${main_api}]`).attr('selected', 'true');
         changeMainAPI();
+        enforceChatCompletionsOnlyMode({ save: CHAT_COMPLETIONS_ONLY });
 
         //Load User's Name and Avatar
         initUserAvatar(settings.user_avatar);

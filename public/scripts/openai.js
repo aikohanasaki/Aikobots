@@ -15,9 +15,9 @@ import {
     Generate,
     getExtensionPrompt,
     getExtensionPromptMaxDepth,
-    getExtensionPromptSnapshot,
     getCurrentChatId,
     getServerMacroSnapshot,
+    getServerPromptState,
     getMediaDisplay,
     getMediaIndex,
     getRequestHeaders,
@@ -38,6 +38,7 @@ import {
 } from '../script.js';
 import { getGroupMacroValues, getGroupNames, selected_group } from './group-chats.js';
 import { extension_settings } from './extensions.js';
+import { clearForcedActivationEntries, world_info_overflow_alert } from './world-info.js';
 
 import {
     chatCompletionDefaultPrompts,
@@ -102,6 +103,12 @@ export {
 let openai_messages_count = 0;
 let pendingTimedWorldInfo = null;
 
+function maybeNotifyWorldInfoOverflow(data) {
+    if (world_info_overflow_alert && data?.x_sillytavern?.worldInfoOverflowed) {
+        toastr.warning(t`World info budget reached.`, t`World Info`);
+    }
+}
+
 const default_main_prompt = 'Write {{char}}\'s next reply in a fictional chat between {{charIfNotGroup}} and {{user}}.';
 const default_nsfw_prompt = '';
 const default_jailbreak_prompt = '';
@@ -146,33 +153,6 @@ const claude_max_temp = 1.0;
 const openrouter_website_model = 'OR_Website';
 const openai_max_stop_strings = 4;
 
-const textCompletionModels = [
-    'gpt-3.5-turbo-instruct',
-    'gpt-3.5-turbo-instruct-0914',
-    'text-davinci-003',
-    'text-davinci-002',
-    'text-davinci-001',
-    'text-curie-001',
-    'text-babbage-001',
-    'text-ada-001',
-    'code-davinci-002',
-    'code-davinci-001',
-    'code-cushman-002',
-    'code-cushman-001',
-    'text-davinci-edit-001',
-    'code-davinci-edit-001',
-    'text-embedding-ada-002',
-    'text-similarity-davinci-001',
-    'text-similarity-curie-001',
-    'text-similarity-babbage-001',
-    'text-similarity-ada-001',
-    'text-search-davinci-doc-001',
-    'text-search-curie-doc-001',
-    'text-search-babbage-doc-001',
-    'text-search-ada-doc-001',
-    'code-search-babbage-code-001',
-    'code-search-ada-code-001',
-];
 
 let biasCache = undefined;
 export let model_list = [];
@@ -739,908 +719,8 @@ export function parseExampleIntoIndividual(messageExampleString, appendNamesForG
     return result;
 }
 
-export function formatWorldInfo(value, { wiFormat = null } = {}) {
-    if (!value) {
-        return '';
-    }
-
-    const format = wiFormat ?? oai_settings.wi_format;
-
-    if (!format.trim()) {
-        return value;
-    }
-
-    return stringFormat(format, value);
-}
-
-/**
- * This function populates the injections in the conversation.
- *
- * @param {Prompt[]} prompts - Array containing injection prompts.
- * @param {Object[]} messages - Array containing all messages.
- * @returns {Promise<Object[]>} - Array containing all messages with injections.
- */
-async function populationInjectionPrompts(prompts, messages) {
-    let totalInsertedMessages = 0;
-
-    const roleTypes = {
-        'system': extension_prompt_roles.SYSTEM,
-        'user': extension_prompt_roles.USER,
-        'assistant': extension_prompt_roles.ASSISTANT,
-    };
-
-    const maxDepth = getExtensionPromptMaxDepth();
-    for (let i = 0; i <= maxDepth; i++) {
-        // Get prompts for current depth
-        const depthPrompts = prompts.filter(prompt => prompt.injection_depth === i && prompt.content);
-
-        const roleMessages = [];
-        const separator = '\n';
-        const wrap = false;
-
-        // Group prompts by priority
-        const extensionPromptsOrder = '100';
-        const orderGroups = {
-            [extensionPromptsOrder]: [],
-        };
-        for (const prompt of depthPrompts) {
-            const order = prompt.injection_order ?? 100;
-            if (!orderGroups[order]) {
-                orderGroups[order] = [];
-            }
-            orderGroups[order].push(prompt);
-        }
-
-        // Process each order group in order (b - a = low to high ; a - b = high to low)
-        const orders = Object.keys(orderGroups).sort((a, b) => +b - +a);
-        for (const order of orders) {
-            const orderPrompts = orderGroups[order];
-
-            // Order of priority for roles (most important go lower)
-            const roles = ['system', 'user', 'assistant'];
-            for (const role of roles) {
-                const rolePrompts = orderPrompts
-                    .filter(prompt => prompt.role === role)
-                    .map(x => x.content)
-                    .join(separator);
-
-                // Get extension prompt
-                const extensionPrompt = order === extensionPromptsOrder
-                    ? await getExtensionPrompt(extension_prompt_types.IN_CHAT, i, separator, roleTypes[role], wrap)
-                    : '';
-                const jointPrompt = [rolePrompts, extensionPrompt].filter(x => x).map(x => x.trim()).join(separator);
-
-                if (jointPrompt && jointPrompt.length) {
-                    roleMessages.push({ 'role': role, 'content': jointPrompt, injected: true });
-                }
-            }
-        }
-
-        if (roleMessages.length) {
-            const injectIdx = i + totalInsertedMessages;
-            messages.splice(injectIdx, 0, ...roleMessages);
-            totalInsertedMessages += roleMessages.length;
-        }
-    }
-
-    messages = messages.reverse();
-    return messages;
-}
-
-/**
- * Populates the chat history of the conversation.
- * @param {object[]} messages - Array containing all messages.
- * @param {import('./PromptManager').PromptCollection} prompts - Map object containing all prompts where the key is the prompt identifier and the value is the prompt object.
- * @param {ChatCompletion} chatCompletion - An instance of ChatCompletion class that will be populated with the prompts.
- * @param type
- * @param cyclePrompt
- */
-async function populateChatHistory(messages, prompts, chatCompletion, type = null, cyclePrompt = null) {
-    if (!prompts.has('chatHistory')) {
-        return;
-    }
-
-    chatCompletion.add(new MessageCollection('chatHistory'), prompts.index('chatHistory'));
-
-    // Reserve budget for new chat message
-    const newChat = selected_group ? oai_settings.new_group_chat_prompt : oai_settings.new_chat_prompt;
-    const newChatMessage = await Message.createAsync('system', substituteParams(newChat), 'newMainChat');
-    chatCompletion.reserveBudget(newChatMessage);
-
-    // Reserve budget for group nudge
-    let groupNudgeMessage = null;
-    const noGroupNudgeTypes = ['impersonate'];
-    if (selected_group && prompts.has('groupNudge') && !noGroupNudgeTypes.includes(type)) {
-        groupNudgeMessage = await Message.fromPromptAsync(prompts.get('groupNudge'));
-        chatCompletion.reserveBudget(groupNudgeMessage);
-    }
-
-    // Reserve budget for continue nudge
-    let continueMessageCollection = null;
-    if (type === 'continue' && cyclePrompt && !oai_settings.continue_prefill) {
-        const promptObject = {
-            identifier: 'continueNudge',
-            role: 'system',
-            content: substituteParamsExtended(oai_settings.continue_nudge_prompt, { lastChatMessage: String(cyclePrompt).trim() }),
-            system_prompt: true,
-        };
-        continueMessageCollection = new MessageCollection('continueNudge');
-        const continueMessageIndex = messages.findLastIndex(x => !x.injected);
-        if (continueMessageIndex >= 0) {
-            const continueMessage = messages.splice(continueMessageIndex, 1)[0];
-            const prompt = new Prompt(continueMessage);
-            const chatMessage = await Message.fromPromptAsync(promptManager.preparePrompt(prompt));
-            continueMessageCollection.add(chatMessage);
-        }
-        const continueNudgePrompt = new Prompt(promptObject);
-        const preparedNudgePrompt = promptManager.preparePrompt(continueNudgePrompt);
-        const continueNudgeMessage = await Message.fromPromptAsync(preparedNudgePrompt);
-        continueMessageCollection.add(continueNudgeMessage);
-        chatCompletion.reserveBudget(continueMessageCollection);
-    }
-
-    const lastChatPrompt = messages[messages.length - 1];
-    const message = await Message.createAsync('user', oai_settings.send_if_empty, 'emptyUserMessageReplacement');
-    if (lastChatPrompt && lastChatPrompt.role === 'assistant' && oai_settings.send_if_empty && chatCompletion.canAfford(message)) {
-        chatCompletion.insert(message, 'chatHistory');
-    }
-
-    const imageInlining = isImageInliningSupported();
-    const videoInlining = isVideoInliningSupported();
-    const audioInlining = isAudioInliningSupported();
-    const canUseTools = ToolManager.isToolCallingSupported();
-
-    // Insert chat messages as long as there is budget available
-    const chatPool = [...messages].reverse();
-    for (let index = 0; index < chatPool.length; index++) {
-        const chatPrompt = chatPool[index];
-
-        // We do not want to mutate the prompt
-        const prompt = new Prompt(chatPrompt);
-        prompt.identifier = `chatHistory-${messages.length - index}`;
-        const chatMessage = await Message.fromPromptAsync(promptManager.preparePrompt(prompt));
-
-        if (promptManager.serviceSettings.names_behavior === character_names_behavior.COMPLETION && prompt.name) {
-            const messageName = promptManager.isValidName(prompt.name) ? prompt.name : promptManager.sanitizeName(prompt.name);
-            await chatMessage.setName(messageName);
-        }
-
-        /**
-         * Inline a media attachment into the chat message.
-         * @param {MediaAttachment} media - The media attachment to inline.
-         */
-        async function inlineMediaAttachment(media) {
-            if (!media || !media.url) {
-                return;
-            }
-            if (!media.type) {
-                media.type = MEDIA_TYPE.IMAGE;
-            }
-            if (imageInlining && media.type === MEDIA_TYPE.IMAGE) {
-                await chatMessage.addImage(media.url);
-            }
-            if (videoInlining && media.type === MEDIA_TYPE.VIDEO) {
-                await chatMessage.addVideo(media.url);
-            }
-            if (audioInlining && media.type === MEDIA_TYPE.AUDIO) {
-                await chatMessage.addAudio(media.url);
-            }
-        }
-
-        if (Array.isArray(chatPrompt.media) && chatPrompt.media.length) {
-            if (chatPrompt.mediaDisplay === MEDIA_DISPLAY.LIST) {
-                for (const media of chatPrompt.media) {
-                    await inlineMediaAttachment(media);
-                }
-            }
-            if (chatPrompt.mediaDisplay === MEDIA_DISPLAY.GALLERY) {
-                const media = chatPrompt.media[chatPrompt.mediaIndex];
-                await inlineMediaAttachment(media);
-            }
-        }
-
-        if (canUseTools && Array.isArray(chatPrompt.invocations)) {
-            /** @type {import('./tool-calling.js').ToolInvocation[]} */
-            const invocations = chatPrompt.invocations;
-            const toolCallMessage = await Message.createAsync(chatMessage.role, undefined, 'toolCall-' + chatMessage.identifier);
-            const toolResultMessages = await Promise.all(invocations.slice().reverse().map((invocation) => Message.createAsync('tool', invocation.result || '[No content]', invocation.id)));
-            await toolCallMessage.setToolCalls(invocations);
-            if (chatCompletion.canAffordAll([toolCallMessage, ...toolResultMessages])) {
-                for (const resultMessage of toolResultMessages) {
-                    chatCompletion.insertAtStart(resultMessage, 'chatHistory');
-                }
-                chatCompletion.insertAtStart(toolCallMessage, 'chatHistory');
-            } else {
-                break;
-            }
-
-            continue;
-        }
-
-        if (chatCompletion.canAfford(chatMessage)) {
-            chatCompletion.insertAtStart(chatMessage, 'chatHistory');
-        } else {
-            break;
-        }
-    }
-
-    // Insert and free new chat
-    chatCompletion.freeBudget(newChatMessage);
-    chatCompletion.insertAtStart(newChatMessage, 'chatHistory');
-
-    // Reserve budget for group nudge
-    if (selected_group && groupNudgeMessage) {
-        chatCompletion.freeBudget(groupNudgeMessage);
-        chatCompletion.insertAtEnd(groupNudgeMessage, 'chatHistory');
-    }
-
-    // Insert and free continue nudge
-    if (type === 'continue' && continueMessageCollection) {
-        chatCompletion.freeBudget(continueMessageCollection);
-        chatCompletion.add(continueMessageCollection, -1);
-    }
-}
-
-/**
- * This function populates the dialogue examples in the conversation.
- *
- * @param {import('./PromptManager').PromptCollection} prompts - Map object containing all prompts where the key is the prompt identifier and the value is the prompt object.
- * @param {ChatCompletion} chatCompletion - An instance of ChatCompletion class that will be populated with the prompts.
- * @param {Object[]} messageExamples - Array containing all message examples.
- */
-async function populateDialogueExamples(prompts, chatCompletion, messageExamples) {
-    if (!prompts.has('dialogueExamples')) {
-        return;
-    }
-
-    chatCompletion.add(new MessageCollection('dialogueExamples'), prompts.index('dialogueExamples'));
-    if (Array.isArray(messageExamples) && messageExamples.length) {
-        const newExampleChat = await Message.createAsync('system', substituteParams(oai_settings.new_example_chat_prompt), 'newChat');
-        for (const dialogue of [...messageExamples]) {
-            const dialogueIndex = messageExamples.indexOf(dialogue);
-            const chatMessages = [];
-
-            for (let promptIndex = 0; promptIndex < dialogue.length; promptIndex++) {
-                const prompt = dialogue[promptIndex];
-                const role = 'system';
-                const content = prompt.content || '';
-                const identifier = `dialogueExamples ${dialogueIndex}-${promptIndex}`;
-
-                const chatMessage = await Message.createAsync(role, content, identifier);
-                await chatMessage.setName(prompt.name);
-                chatMessages.push(chatMessage);
-            }
-
-            if (!chatCompletion.canAffordAll([newExampleChat, ...chatMessages])) {
-                break;
-            }
-
-            chatCompletion.insert(newExampleChat, 'dialogueExamples');
-            for (const chatMessage of chatMessages) {
-                chatCompletion.insert(chatMessage, 'dialogueExamples');
-            }
-        }
-    }
-}
-
-/**
- * @param {number} position - Prompt position in the extensions object.
- * @returns {string|false} - The prompt position for prompt collection.
- */
-export function getPromptPosition(position) {
-    if (position == extension_prompt_types.BEFORE_PROMPT) {
-        return 'start';
-    }
-
-    if (position == extension_prompt_types.IN_PROMPT) {
-        return 'end';
-    }
-
-    return false;
-}
-
-/**
- * Gets a Chat Completion role based on the prompt role.
- * @param {number} role Role of the prompt.
- * @returns {string} Mapped role.
- */
-export function getPromptRole(role) {
-    switch (role) {
-        case extension_prompt_roles.SYSTEM:
-            return 'system';
-        case extension_prompt_roles.USER:
-            return 'user';
-        case extension_prompt_roles.ASSISTANT:
-            return 'assistant';
-        default:
-            return 'system';
-    }
-}
-
-/**
- * Populate a chat conversation by adding prompts to the conversation and managing system and user prompts.
- *
- * @param {import('./PromptManager.js').PromptCollection} prompts - PromptCollection containing all prompts where the key is the prompt identifier and the value is the prompt object.
- * @param {ChatCompletion} chatCompletion - An instance of ChatCompletion class that will be populated with the prompts.
- * @param {Object} options - An object with optional settings.
- * @param {string} options.bias - A bias to be added in the conversation.
- * @param {string} options.quietPrompt - Instruction prompt for extras
- * @param {string} options.quietImage - Image prompt for extras
- * @param {string} options.type - The type of the chat, can be 'impersonate'.
- * @param {string} options.cyclePrompt - The last prompt in the conversation.
- * @param {object[]} options.messages - Array containing all messages.
- * @param {object[]} options.messageExamples - Array containing all message examples.
- * @returns {Promise<void>}
- */
-async function populateChatCompletion(prompts, chatCompletion, { bias, quietPrompt, quietImage, type, cyclePrompt, messages, messageExamples }) {
-    // Helper function for preparing a prompt, that already exists within the prompt collection, for completion
-    const addToChatCompletion = async (source, target = null) => {
-        // We need the prompts array to determine a position for the source.
-        if (false === prompts.has(source)) return;
-
-        if (promptManager.isPromptDisabledForActiveCharacter(source) && source !== 'main') {
-            promptManager.log(`Skipping prompt ${source} because it is disabled`);
-            return;
-        }
-
-        const prompt = prompts.get(source);
-
-        if (prompt.injection_position === INJECTION_POSITION.ABSOLUTE) {
-            promptManager.log(`Skipping prompt ${source} because it is an absolute prompt`);
-            return;
-        }
-
-        const index = target ? prompts.index(target) : prompts.index(source);
-        const collection = new MessageCollection(source);
-        const message = await Message.fromPromptAsync(prompt);
-        collection.add(message);
-        chatCompletion.add(collection, index);
-    };
-
-    chatCompletion.reserveBudget(3); // every reply is primed with <|start|>assistant<|message|>
-    // Character and world information
-    await addToChatCompletion('worldInfoBefore');
-    await addToChatCompletion('main');
-    await addToChatCompletion('worldInfoAfter');
-    await addToChatCompletion('charDescription');
-    await addToChatCompletion('charPersonality');
-    await addToChatCompletion('scenario');
-    await addToChatCompletion('personaDescription');
-
-    // Collection of control prompts that will always be positioned last
-    chatCompletion.setOverriddenPrompts(prompts.overriddenPrompts);
-    const controlPrompts = new MessageCollection('controlPrompts');
-
-    const impersonateMessage = await Message.fromPromptAsync(prompts.get('impersonate')) ?? null;
-    if (type === 'impersonate') controlPrompts.add(impersonateMessage);
-
-    // Add quiet prompt to control prompts
-    // This should always be last, even in control prompts. Add all further control prompts BEFORE this prompt
-    const quietPromptMessage = await Message.fromPromptAsync(prompts.get('quietPrompt')) ?? null;
-    if (quietPromptMessage && quietPromptMessage.content) {
-        if (isImageInliningSupported() && quietImage) {
-            await quietPromptMessage.addImage(quietImage);
-        }
-
-        controlPrompts.add(quietPromptMessage);
-    }
-
-    chatCompletion.reserveBudget(controlPrompts);
-
-    // Add ordered system and user prompts
-    const systemPrompts = ['nsfw', 'jailbreak'];
-    const userRelativePrompts = prompts.collection
-        .filter((prompt) => false === prompt.system_prompt && prompt.injection_position !== INJECTION_POSITION.ABSOLUTE)
-        .reduce((acc, prompt) => {
-            acc.push(prompt.identifier);
-            return acc;
-        }, []);
-    const absolutePrompts = prompts.collection
-        .filter((prompt) => prompt.injection_position === INJECTION_POSITION.ABSOLUTE)
-        .reduce((acc, prompt) => {
-            acc.push(prompt);
-            return acc;
-        }, []);
-
-    for (const identifier of [...systemPrompts, ...userRelativePrompts]) {
-        await addToChatCompletion(identifier);
-    }
-
-    // Add enhance definition instruction
-    if (prompts.has('enhanceDefinitions')) await addToChatCompletion('enhanceDefinitions');
-
-    // Bias
-    if (bias && bias.trim().length) await addToChatCompletion('bias');
-
-    // Tavern Extras - Summary
-    if (prompts.has('summary')) {
-        const summary = prompts.get('summary');
-
-        if (summary.position) {
-            const message = await Message.fromPromptAsync(summary);
-            chatCompletion.insert(message, 'main', summary.position);
-        }
-    }
-
-    // Authors Note
-    if (prompts.has('authorsNote')) {
-        const authorsNote = prompts.get('authorsNote');
-
-        if (authorsNote.position) {
-            const message = await Message.fromPromptAsync(authorsNote);
-            chatCompletion.insert(message, 'main', authorsNote.position);
-        }
-    }
-
-    // Vectors Memory
-    if (prompts.has('vectorsMemory')) {
-        const vectorsMemory = prompts.get('vectorsMemory');
-
-        if (vectorsMemory.position) {
-            const message = await Message.fromPromptAsync(vectorsMemory);
-            chatCompletion.insert(message, 'main', vectorsMemory.position);
-        }
-    }
-
-    // Vectors Data Bank
-    if (prompts.has('vectorsDataBank')) {
-        const vectorsDataBank = prompts.get('vectorsDataBank');
-
-        if (vectorsDataBank.position) {
-            const message = await Message.fromPromptAsync(vectorsDataBank);
-            chatCompletion.insert(message, 'main', vectorsDataBank.position);
-        }
-    }
-
-    // Smart Context (ChromaDB)
-    if (prompts.has('smartContext')) {
-        const smartContext = prompts.get('smartContext');
-
-        if (smartContext.position) {
-            const message = await Message.fromPromptAsync(smartContext);
-            chatCompletion.insert(message, 'main', smartContext.position);
-        }
-    }
-
-    // Other relative extension prompts
-    for (const prompt of prompts.collection.filter(p => p.extension && p.position)) {
-        const message = await Message.fromPromptAsync(prompt);
-        chatCompletion.insert(message, 'main', prompt.position);
-    }
-
-    // Pre-allocation of tokens for tool data
-    if (ToolManager.canPerformToolCalls(type)) {
-        const toolData = {};
-        await ToolManager.registerFunctionToolsOpenAI(toolData);
-        const toolMessage = [{ role: 'user', content: JSON.stringify(toolData) }];
-        const toolTokens = await tokenHandler.countAsync(toolMessage);
-        chatCompletion.reserveBudget(toolTokens);
-    }
-
-    // Displace the message to be continued from its original position before performing in-chat injections
-    // In case if it is an assistant message, we want to prepend the users assistant prefill on the message
-    if (type === 'continue' && oai_settings.continue_prefill && messages.length) {
-        const chatMessage = messages.shift();
-        const isAssistantRole = chatMessage.role === 'assistant';
-        const supportsAssistantPrefill = oai_settings.chat_completion_source === chat_completion_sources.CLAUDE;
-        const namesInCompletion = oai_settings.names_behavior === character_names_behavior.COMPLETION;
-        const assistantPrefill = isAssistantRole && supportsAssistantPrefill ? substituteParams(oai_settings.assistant_prefill) : '';
-        const messageContent = [assistantPrefill, chatMessage.content].filter(x => x).join('\n\n');
-        const continueMessage = await Message.createAsync(chatMessage.role, messageContent, 'continuePrefill');
-        chatMessage.name && namesInCompletion && await continueMessage.setName(promptManager.sanitizeName(chatMessage.name));
-        controlPrompts.add(continueMessage);
-        chatCompletion.reserveBudget(continueMessage);
-    }
-
-    // Add in-chat injections
-    messages = await populationInjectionPrompts(absolutePrompts, messages);
-
-    // Decide whether dialogue examples should always be added
-    if (power_user.pin_examples) {
-        await populateDialogueExamples(prompts, chatCompletion, messageExamples);
-        await populateChatHistory(messages, prompts, chatCompletion, type, cyclePrompt);
-    } else {
-        await populateChatHistory(messages, prompts, chatCompletion, type, cyclePrompt);
-        await populateDialogueExamples(prompts, chatCompletion, messageExamples);
-    }
-
-    chatCompletion.freeBudget(controlPrompts);
-    if (controlPrompts.collection.length) chatCompletion.add(controlPrompts);
-}
-
-/**
- * Combines system prompts with prompt manager prompts
- *
- * @param {Object} options - An object with optional settings.
- * @param {string} options.scenario - The scenario or context of the dialogue.
- * @param {string} options.charPersonality - Description of the character's personality.
- * @param {string} options.name2 - The second name to be used in the messages.
- * @param {string} options.worldInfoBefore - The world info to be added before the main conversation.
- * @param {string} options.worldInfoAfter - The world info to be added after the main conversation.
- * @param {string} options.charDescription - Description of the character.
- * @param {string} options.quietPrompt - The quiet prompt to be used in the conversation.
- * @param {string} options.bias - The bias to be added in the conversation.
- * @param {Object} options.extensionPrompts - An object containing additional prompts.
- * @param {string} options.systemPromptOverride - Character card override of the main prompt
- * @param {string} options.jailbreakPromptOverride - Character card override of the PHI
- * @param {string} options.type - The type of generation that triggered the prompt
- * @returns {Promise<Object>} prompts - The prepared and merged system and user-defined prompts.
- */
-async function preparePromptsForChatCompletion({ scenario, charPersonality, name2, worldInfoBefore, worldInfoAfter, charDescription, quietPrompt, bias, extensionPrompts, systemPromptOverride, jailbreakPromptOverride, type }) {
-    const scenarioText = scenario && oai_settings.scenario_format ? substituteParams(oai_settings.scenario_format) : (scenario || '');
-    const charPersonalityText = charPersonality && oai_settings.personality_format ? substituteParams(oai_settings.personality_format) : (charPersonality || '');
-    const groupNudge = substituteParams(oai_settings.group_nudge_prompt);
-    const impersonationPrompt = oai_settings.impersonation_prompt ? substituteParams(oai_settings.impersonation_prompt) : '';
-
-    // Create entries for system prompts
-    const systemPrompts = [
-        // Ordered prompts for which a marker should exist
-        { role: 'system', content: formatWorldInfo(worldInfoBefore), identifier: 'worldInfoBefore' },
-        { role: 'system', content: formatWorldInfo(worldInfoAfter), identifier: 'worldInfoAfter' },
-        { role: 'system', content: charDescription, identifier: 'charDescription' },
-        { role: 'system', content: charPersonalityText, identifier: 'charPersonality' },
-        { role: 'system', content: scenarioText, identifier: 'scenario' },
-        // Unordered prompts without marker
-        { role: 'system', content: impersonationPrompt, identifier: 'impersonate' },
-        { role: 'system', content: quietPrompt, identifier: 'quietPrompt' },
-        { role: 'system', content: groupNudge, identifier: 'groupNudge' },
-        { role: 'assistant', content: bias, identifier: 'bias' },
-    ];
-
-    // Tavern Extras - Summary
-    const summary = extensionPrompts['1_memory'];
-    if (summary && summary.value) systemPrompts.push({
-        role: getPromptRole(summary.role),
-        content: summary.value,
-        identifier: 'summary',
-        position: getPromptPosition(summary.position),
-    });
-
-    // Authors Note
-    const authorsNote = extensionPrompts['2_floating_prompt'];
-    if (authorsNote && authorsNote.value) systemPrompts.push({
-        role: getPromptRole(authorsNote.role),
-        content: authorsNote.value,
-        identifier: 'authorsNote',
-        position: getPromptPosition(authorsNote.position),
-    });
-
-    // Vectors Memory
-    const vectorsMemory = extensionPrompts['3_vectors'];
-    if (vectorsMemory && vectorsMemory.value) systemPrompts.push({
-        role: 'system',
-        content: vectorsMemory.value,
-        identifier: 'vectorsMemory',
-        position: getPromptPosition(vectorsMemory.position),
-    });
-
-    const vectorsDataBank = extensionPrompts['4_vectors_data_bank'];
-    if (vectorsDataBank && vectorsDataBank.value) systemPrompts.push({
-        role: getPromptRole(vectorsDataBank.role),
-        content: vectorsDataBank.value,
-        identifier: 'vectorsDataBank',
-        position: getPromptPosition(vectorsDataBank.position),
-    });
-
-    // Smart Context (ChromaDB)
-    const smartContext = extensionPrompts['chromadb'];
-    if (smartContext && smartContext.value) systemPrompts.push({
-        role: 'system',
-        content: smartContext.value,
-        identifier: 'smartContext',
-        position: getPromptPosition(smartContext.position),
-    });
-
-    // Persona Description
-    if (power_user.persona_description && power_user.persona_description_position === persona_description_positions.IN_PROMPT) {
-        systemPrompts.push({ role: 'system', content: power_user.persona_description, identifier: 'personaDescription' });
-    }
-
-    const knownExtensionPrompts = [
-        '1_memory',
-        '2_floating_prompt',
-        '3_vectors',
-        '4_vectors_data_bank',
-        'chromadb',
-        'PERSONA_DESCRIPTION',
-        'QUIET_PROMPT',
-        'DEPTH_PROMPT',
-    ];
-
-    // Anything that is not a known extension prompt
-    for (const key in extensionPrompts) {
-        if (Object.hasOwn(extensionPrompts, key)) {
-            const prompt = extensionPrompts[key];
-            if (knownExtensionPrompts.includes(key)) continue;
-            if (!extensionPrompts[key].value) continue;
-            if (![extension_prompt_types.BEFORE_PROMPT, extension_prompt_types.IN_PROMPT].includes(prompt.position)) continue;
-
-            const hasFilter = typeof prompt.filter === 'function';
-            if (hasFilter && !await prompt.filter()) continue;
-
-            systemPrompts.push({
-                identifier: key.replace(/\W/g, '_'),
-                position: getPromptPosition(prompt.position),
-                role: getPromptRole(prompt.role),
-                content: prompt.value,
-                extension: true,
-            });
-        }
-    }
-
-    // This is the prompt order defined by the user
-    const prompts = promptManager.getPromptCollection(type);
-
-    // Merge system prompts with prompt manager prompts
-    systemPrompts.forEach(prompt => {
-        const collectionPrompt = prompts.get(prompt.identifier);
-
-        // Apply system prompt role/depth overrides if they set in the prompt manager
-        if (collectionPrompt) {
-            // In-Chat / Relative
-            prompt.injection_position = collectionPrompt.injection_position ?? prompt.injection_position;
-            // Depth for In-Chat
-            prompt.injection_depth = collectionPrompt.injection_depth ?? prompt.injection_depth;
-            // Priority for In-Chat
-            prompt.injection_order = collectionPrompt.injection_order ?? prompt.injection_order;
-            // Role (system, user, assistant)
-            prompt.role = collectionPrompt.role ?? prompt.role;
-        }
-
-        const newPrompt = promptManager.preparePrompt(prompt);
-        const markerIndex = prompts.index(prompt.identifier);
-
-        if (-1 !== markerIndex) prompts.collection[markerIndex] = newPrompt;
-        else prompts.add(newPrompt);
-    });
-
-    // Apply character-specific main prompt
-    const systemPrompt = prompts.get('main') ?? null;
-    const isSystemPromptDisabled = promptManager.isPromptDisabledForActiveCharacter('main');
-    if (systemPromptOverride && systemPrompt && systemPrompt.forbid_overrides !== true && !isSystemPromptDisabled) {
-        const mainOriginalContent = systemPrompt.content;
-        systemPrompt.content = systemPromptOverride;
-        const mainReplacement = promptManager.preparePrompt(systemPrompt, mainOriginalContent);
-        prompts.override(mainReplacement, prompts.index('main'));
-    }
-
-    // Apply character-specific jailbreak
-    const jailbreakPrompt = prompts.get('jailbreak') ?? null;
-    const isJailbreakPromptDisabled = promptManager.isPromptDisabledForActiveCharacter('jailbreak');
-    if (jailbreakPromptOverride && jailbreakPrompt && jailbreakPrompt.forbid_overrides !== true && !isJailbreakPromptDisabled) {
-        const jbOriginalContent = jailbreakPrompt.content;
-        jailbreakPrompt.content = jailbreakPromptOverride;
-        const jbReplacement = promptManager.preparePrompt(jailbreakPrompt, jbOriginalContent);
-        prompts.override(jbReplacement, prompts.index('jailbreak'));
-    }
-
-    return prompts;
-}
-
-/**
- * Take a configuration object and prepares messages for a chat with OpenAI's chat completion API.
- * Handles prompts, prepares chat history, manages token budget, and processes various user settings.
- *
- * @param {Object} content - System prompts provided by SillyTavern
- * @param {string} content.name2 - The second name to be used in the messages.
- * @param {string} content.charDescription - Description of the character.
- * @param {string} content.charPersonality - Description of the character's personality.
- * @param {string} content.scenario - The scenario or context of the dialogue.
- * @param {string} content.worldInfoBefore - The world info to be added before the main conversation.
- * @param {string} content.worldInfoAfter - The world info to be added after the main conversation.
- * @param {string} content.bias - The bias to be added in the conversation.
- * @param {string} content.type - The type of the chat, can be 'impersonate'.
- * @param {string} content.quietPrompt - The quiet prompt to be used in the conversation.
- * @param {string} content.quietImage - Image prompt for extras
- * @param {string} content.cyclePrompt - The last prompt used for chat message continuation.
- * @param {string} content.systemPromptOverride - The system prompt override.
- * @param {string} content.jailbreakPromptOverride - The jailbreak prompt override.
- * @param {object} content.extensionPrompts - An array of additional prompts.
- * @param {object[]} content.messages - An array of messages to be used as chat history.
- * @param {string[]} content.messageExamples - An array of messages to be used as dialogue examples.
- * @param dryRun - Whether this is a live call or not.
- * @returns {Promise<(any[]|boolean)[]>} An array where the first element is the prepared chat and the second element is a boolean flag.
- */
-export async function prepareOpenAIMessages({
-    name2,
-    charDescription,
-    charPersonality,
-    scenario,
-    worldInfoBefore,
-    worldInfoAfter,
-    bias,
-    type,
-    quietPrompt,
-    quietImage,
-    extensionPrompts,
-    cyclePrompt,
-    systemPromptOverride,
-    jailbreakPromptOverride,
-    messages,
-    messageExamples,
-}, dryRun) {
-    // Without a character selected, there is no way to accurately calculate tokens
-    if (!promptManager.activeCharacter && dryRun) return [null, false];
-
-    const chatCompletion = new ChatCompletion();
-    if (power_user.console_log_prompts) chatCompletion.enableLogging();
-
-    const userSettings = promptManager.serviceSettings;
-    chatCompletion.setTokenBudget(userSettings.openai_max_context, userSettings.openai_max_tokens);
-
-    try {
-        // Merge markers and ordered user prompts with system prompts
-        const prompts = await preparePromptsForChatCompletion({
-            scenario,
-            charPersonality,
-            name2,
-            worldInfoBefore,
-            worldInfoAfter,
-            charDescription,
-            quietPrompt,
-            bias,
-            extensionPrompts,
-            systemPromptOverride,
-            jailbreakPromptOverride,
-            type,
-        });
-
-        // Fill the chat completion with as much context as the budget allows
-        await populateChatCompletion(prompts, chatCompletion, { bias, quietPrompt, quietImage, type, cyclePrompt, messages, messageExamples });
-    } catch (error) {
-        if (error instanceof TokenBudgetExceededError) {
-            toastr.error(t`Mandatory prompts exceed the context size.`);
-            chatCompletion.log('Mandatory prompts exceed the context size.');
-            promptManager.error = t`Not enough free tokens for mandatory prompts. Raise your token limit or disable custom prompts.`;
-        } else if (error instanceof InvalidCharacterNameError) {
-            toastr.warning(t`An error occurred while counting tokens: Invalid character name`);
-            chatCompletion.log('Invalid character name');
-            promptManager.error = t`The name of at least one character contained whitespaces or special characters. Please check your user and character name.`;
-        } else {
-            toastr.error(t`An unknown error occurred while counting tokens. Further information may be available in console.`);
-            chatCompletion.log('----- Unexpected error while preparing prompts -----');
-            chatCompletion.log(error);
-            chatCompletion.log(error.stack);
-            chatCompletion.log('----------------------------------------------------');
-        }
-    } finally {
-        // Pass chat completion to prompt manager for inspection
-        promptManager.setChatCompletion(chatCompletion);
-
-        if (oai_settings.squash_system_messages && dryRun == false) {
-            await chatCompletion.squashSystemMessages();
-        }
-
-        // All information is up-to-date, render.
-        if (false === dryRun) promptManager.render(false);
-    }
-
-    const chat = chatCompletion.getChat();
-
-    const eventData = { chat, dryRun };
-    await eventSource.emit(event_types.CHAT_COMPLETION_PROMPT_READY, eventData);
-
-    openai_messages_count = chat.filter(x => !x?.tool_calls && ['user', 'assistant', 'tool'].includes(x?.role)).length || 0;
-
-    return [chat, promptManager.tokenHandler.counts];
-}
-
-export async function assembleOpenAIMessagesOnServer({
-    name2,
-    charDescription,
-    charPersonality,
-    persona,
-    scenario,
-    mesExamples,
-    charDepthPrompt,
-    creatorNotes,
-    worldInfoBefore,
-    worldInfoAfter,
-    bias,
-    type,
-    quietPrompt,
-    quietImage,
-    extensionPrompts,
-    cyclePrompt,
-    systemPromptOverride,
-    jailbreakPromptOverride,
-    messages,
-    messageExamples,
-} = {}) {
-    const payload = await buildServerAssemblyPayload({
-        name2,
-        charDescription,
-        charPersonality,
-        persona,
-        scenario,
-        mesExamples,
-        charDepthPrompt,
-        creatorNotes,
-        worldInfoBefore,
-        worldInfoAfter,
-        bias,
-        type,
-        quietPrompt,
-        quietImage,
-        extensionPrompts,
-        cyclePrompt,
-        systemPromptOverride,
-        jailbreakPromptOverride,
-        messages,
-        messageExamples,
-    });
-
-    const response = await fetch('/api/backends/chat-completions/assemble', {
-        method: 'POST',
-        headers: getRequestHeaders(),
-        body: JSON.stringify(payload),
-    });
-
-    if (!response.ok) {
-        const errorText = await response.text();
-        tryParseStreamingError(response, errorText);
-        throw new Error(errorText || `Prompt assembly failed with status ${response.status}`);
-    }
-
-    const data = await response.json();
-    const chat = Array.isArray(data?.chat) ? data.chat : [];
-    const hasMessagesCount = data?.messagesCount !== undefined && data?.messagesCount !== null;
-    openai_messages_count = hasMessagesCount
-        ? Number(data.messagesCount)
-        : chat.filter(x => !x?.tool_calls && ['user', 'assistant', 'tool'].includes(x?.role)).length || 0;
-
-    applyServerPromptManagerState(data);
-
-    await eventSource.emit(event_types.CHAT_COMPLETION_PROMPT_READY, { chat, dryRun: false });
-
-    return [chat, data?.counts || false];
-}
-
-function deserializeServerPromptManagerNode(node) {
-    if (!node || typeof node !== 'object') {
-        return null;
-    }
-
-    if (node.type === 'collection') {
-        const collection = new MessageCollection(node.identifier);
-        for (const child of Array.isArray(node.collection) ? node.collection : []) {
-            const deserializedChild = deserializeServerPromptManagerNode(child);
-            if (deserializedChild) {
-                collection.add(deserializedChild);
-            }
-        }
-        return collection;
-    }
-
-    if (node.type === 'message') {
-        const message = new Message(node.role, node.content, node.identifier);
-        message.name = node.name;
-        message.tokens = Number(node.tokens) || 0;
-        if (node.tool_calls) {
-            message.tool_calls = node.tool_calls;
-        }
-        return message;
-    }
-
-    return null;
-}
-
-function applyServerPromptManagerState(data = {}) {
-    if (!promptManager || !data?.messagesState) {
-        return;
-    }
-
-    const messages = deserializeServerPromptManagerNode(data.messagesState);
-    if (!(messages instanceof MessageCollection)) {
-        return;
-    }
-
-    promptManager.setMessages(messages);
-    promptManager.populateTokenCounts(messages);
-    promptManager.overriddenPrompts = Array.isArray(data.overriddenPrompts) ? data.overriddenPrompts : [];
-    promptManager.render(false);
-}
-
+// Runtime chat-completion assembly is server-owned. The legacy client builder
+// stays out of the live request path and has been removed from this module.
 function applyAssemblyResponseMetadata(response, type) {
     const messagesCountHeader = response.headers.get('X-ST-Messages-Count');
     if (messagesCountHeader === null) {
@@ -1656,21 +736,12 @@ function applyAssemblyResponseMetadata(response, type) {
     setInContextMessages(openai_messages_count, type);
 }
 
-function decodeTimedWorldInfoHeader(encoded) {
-    if (!encoded) {
-        return null;
+function applyTimedWorldInfoResponseData(data) {
+    const timedWorldInfo = data?.x_sillytavern?.timedWorldInfo;
+    if (timedWorldInfo && typeof timedWorldInfo === 'object') {
+        pendingTimedWorldInfo = structuredClone(timedWorldInfo);
     }
-
-    try {
-        return JSON.parse(atob(encoded));
-    } catch (error) {
-        console.warn('Failed to decode timed world info header', error);
-        return null;
-    }
-}
-
-function applyTimedWorldInfoResponseMetadata(response) {
-    pendingTimedWorldInfo = decodeTimedWorldInfoHeader(response.headers.get('X-ST-Timed-World-Info'));
+    maybeNotifyWorldInfoOverflow(data);
 }
 
 export function consumeOpenAITimedWorldInfo() {
@@ -1697,7 +768,7 @@ export async function buildServerAssemblyPayload({
     type,
     quietPrompt,
     quietImage,
-    extensionPrompts,
+    promptState = null,
     worldInfoRequest,
     cyclePrompt,
     systemPromptOverride,
@@ -1705,15 +776,9 @@ export async function buildServerAssemblyPayload({
     messages,
     messageExamples,
 } = {}) {
-    const resolvedExtensionPrompts = await getExtensionPromptSnapshot(extensionPrompts);
-    resolvedExtensionPrompts.QUIET_PROMPT = {
-        value: quietPrompt || '',
-        resolvedValue: quietPrompt || '',
-        position: extension_prompt_types.IN_PROMPT,
-        depth: 0,
-        scan: true,
-        role: extension_prompt_roles.SYSTEM,
-    };
+    const resolvedPromptState = promptState && typeof promptState === 'object'
+        ? structuredClone(promptState)
+        : await getServerPromptState();
     const groupMacroValues = getGroupMacroValues(name2);
     const macroSnapshot = getServerMacroSnapshot();
     const serializedCoreChat = Array.isArray(coreChat)
@@ -1777,7 +842,7 @@ export async function buildServerAssemblyPayload({
         type,
         quietPrompt,
         quietImage,
-        extensionPrompts: resolvedExtensionPrompts,
+        promptState: resolvedPromptState,
         macroSnapshot,
         worldInfoRequest: worldInfoRequest && typeof worldInfoRequest === 'object'
             ? { ...worldInfoRequest, macroSnapshot }
@@ -1789,29 +854,6 @@ export async function buildServerAssemblyPayload({
         messageExamples,
         canUseTools: ToolManager.isToolCallingSupported(),
         toolBudgetData,
-    };
-}
-
-export async function compareOpenAIMessagesWithServer(options = {}) {
-    const [clientChat, clientCounts] = await prepareOpenAIMessages(options, true);
-    const payload = await buildServerAssemblyPayload(options);
-    payload.clientChat = clientChat;
-
-    const response = await fetch('/api/backends/chat-completions/assemble/compare', {
-        method: 'POST',
-        headers: getRequestHeaders(),
-        body: JSON.stringify(payload),
-    });
-
-    if (!response.ok) {
-        throw new Error(`Prompt assembly comparison failed with status ${response.status}`);
-    }
-
-    const data = await response.json();
-    return {
-        ...data,
-        clientChat,
-        clientCounts,
     };
 }
 
@@ -2620,7 +1662,7 @@ async function sendOpenAIRequest(type, messages, signal, { jsonSchema = null } =
     const isAzureOpenAI = oai_settings.chat_completion_source == chat_completion_sources.AZURE_OPENAI;
     const isZai = oai_settings.chat_completion_source == chat_completion_sources.ZAI;
     const isNanoGPT = oai_settings.chat_completion_source == chat_completion_sources.NANOGPT;
-    const isTextCompletion = isOAI && textCompletionModels.includes(oai_settings.openai_model);
+    const isTextCompletion = false;
     const isQuiet = type === 'quiet';
     const isImpersonate = type === 'impersonate';
     const isContinue = type === 'continue';
@@ -2734,9 +1776,6 @@ async function sendOpenAIRequest(type, messages, signal, { jsonSchema = null } =
         generate_data['allow_fallbacks'] = oai_settings.openrouter_allow_fallbacks;
         generate_data['middleout'] = oai_settings.openrouter_middleout;
 
-        if (isTextCompletion) {
-            generate_data['stop'] = getStoppingStrings(isImpersonate, isContinue);
-        }
     }
 
     if (isGoogle || isVertexAI) {
@@ -2930,8 +1969,11 @@ async function sendOpenAIRequest(type, messages, signal, { jsonSchema = null } =
         throw new Error(`Got response status ${response.status}`);
     }
 
+    if (Array.isArray(promptContext?.worldInfoRequest?.forcedActivations) && promptContext.worldInfoRequest.forcedActivations.length > 0) {
+        clearForcedActivationEntries();
+    }
+
     applyAssemblyResponseMetadata(response, type);
-    applyTimedWorldInfoResponseMetadata(response);
 
     if (stream) {
         const eventStream = getEventSourceStream();
@@ -2950,6 +1992,14 @@ async function sendOpenAIRequest(type, messages, signal, { jsonSchema = null } =
                 tryParseStreamingError(response, rawData);
                 const parsed = JSON.parse(rawData);
 
+                if (parsed?.x_sillytavern) {
+                    if (parsed.x_sillytavern.timedWorldInfo && typeof parsed.x_sillytavern.timedWorldInfo === 'object') {
+                        pendingTimedWorldInfo = structuredClone(parsed.x_sillytavern.timedWorldInfo);
+                    }
+                    maybeNotifyWorldInfoOverflow(parsed);
+                    continue;
+                }
+
                 if (canMultiSwipe && Array.isArray(parsed?.choices) && parsed?.choices?.[0]?.index > 0) {
                     const swipeIndex = parsed.choices[0].index - 1;
                     // FIXME: state.reasoning should be an array to support multi-swipe
@@ -2966,6 +2016,7 @@ async function sendOpenAIRequest(type, messages, signal, { jsonSchema = null } =
     }
     else {
         const data = await response.json();
+        applyTimedWorldInfoResponseData(data);
 
         checkQuotaError(data);
         checkModerationError(data);
@@ -3074,11 +2125,7 @@ function parseChatCompletionLogprobs(data) {
             if (!data.choices?.length) {
                 return null;
             }
-            // OpenAI Text Completion API is treated as a chat completion source
-            // by SillyTavern, hence its presence in this function.
-            return textCompletionModels.includes(getChatCompletionModel())
-                ? parseOpenAITextLogprobs(data.choices[0]?.logprobs)
-                : parseOpenAIChatLogprobs(data.choices[0]?.logprobs);
+            return parseOpenAIChatLogprobs(data.choices[0]?.logprobs);
         default:
         // implement other chat completion sources here
     }
