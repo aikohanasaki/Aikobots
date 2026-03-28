@@ -23,6 +23,15 @@ const scan_state = {
 const DEFAULT_DEPTH = 4;
 const DEFAULT_WEIGHT = 100;
 const MAX_SCAN_DEPTH = 1000;
+const DEFAULT_GLOBAL_SCAN_DATA = Object.freeze({
+    trigger: 'normal',
+    personaDescription: '',
+    characterDescription: '',
+    characterPersonality: '',
+    characterDepthPrompt: '',
+    scenario: '',
+    creatorNotes: '',
+});
 
 function escapeRegex(string) {
     return String(string || '').replace(/[/\-\\^$*+?.()|[\]{}]/g, '\\$&');
@@ -597,7 +606,7 @@ function getScanInjects(payload = {}) {
 export async function scanWorldInfo(payload = {}) {
     const settings = payload.settings || {};
     const chat = Array.isArray(payload.chat) ? payload.chat.map(String) : [];
-    const globalScanData = payload.globalScanData || {};
+    const globalScanData = { ...DEFAULT_GLOBAL_SCAN_DATA, ...(payload.globalScanData || {}) };
     const sortedEntries = Array.isArray(payload.sortedEntries) ? structuredClone(payload.sortedEntries) : [];
     const injects = getScanInjects(payload);
     const currentCharacterFilename = String(payload.currentCharacterFilename || '');

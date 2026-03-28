@@ -1,7 +1,7 @@
 import { Fuse } from '../lib.js';
 
-import { saveSettings, substituteParams, getRequestHeaders, chat_metadata, this_chid, characters, saveCharacterDebounced, menu_type, eventSource, event_types, getExtensionPromptByName, getServerPromptState, main_api, saveMetadata, getCurrentChatId, extension_prompt_roles, create_save, createOrEditCharacter, name1 } from '../script.js';
-import { download, debounce, initScrollHeight, resetScrollHeight, parseJsonFile, extractDataFromPng, getFileBuffer, getCharaFilename, getSortableDelay, escapeRegex, PAGINATION_TEMPLATE, navigation_option, waitUntilCondition, isTrueBoolean, setValueByPath, flashHighlight, select2ModifyOptions, getSelect2OptionId, dynamicSelect2DataViaAjax, highlightRegex, select2ChoiceClickSubscribe, isFalseBoolean, getSanitizedFilename, checkOverwriteExistingData, getStringHash, parseStringArray, cancelDebounce, findChar, onlyUnique, equalsIgnoreCaseAndAccents, uuidv4, normalizeArray, getUniqueName } from './utils.js';
+import { saveSettings, substituteParams, getRequestHeaders, chat_metadata, this_chid, characters, saveCharacterDebounced, menu_type, eventSource, event_types, getServerMacroSnapshot, getServerPromptState, main_api, saveMetadata, getCurrentChatId, extension_prompt_roles, create_save, createOrEditCharacter, name1 } from '../script.js';
+import { download, debounce, initScrollHeight, resetScrollHeight, parseJsonFile, extractDataFromPng, getFileBuffer, getCharaFilename, getSortableDelay, PAGINATION_TEMPLATE, navigation_option, waitUntilCondition, isTrueBoolean, setValueByPath, flashHighlight, select2ModifyOptions, getSelect2OptionId, dynamicSelect2DataViaAjax, highlightRegex, select2ChoiceClickSubscribe, isFalseBoolean, getSanitizedFilename, checkOverwriteExistingData, getStringHash, parseStringArray, cancelDebounce, findChar, onlyUnique, equalsIgnoreCaseAndAccents, uuidv4, normalizeArray, getUniqueName } from './utils.js';
 import { extension_settings, getContext } from './extensions.js';
 import { NOTE_MODULE_NAME, metadata_keys, shouldWIAddPrompt } from './authors-note.js';
 import { isMobile } from './RossAscends-mods.js';
@@ -10,7 +10,7 @@ import { getTokenCountAsync, getTokenizerModel } from './tokenizers.js';
 import { power_user } from './power-user.js';
 import { getTagKeyForEntity } from './tags.js';
 import { debounce_timeout, GENERATION_TYPE_TRIGGERS } from './constants.js';
-import { getRegexedString, regex_placement } from './extensions/regex/engine.js';
+import { getRegexScripts, regex_placement } from './extensions/regex/engine.js';
 import { SlashCommandParser } from './slash-commands/SlashCommandParser.js';
 import { SlashCommand } from './slash-commands/SlashCommand.js';
 import { ARGUMENT_TYPE, SlashCommandArgument, SlashCommandNamedArgument } from './slash-commands/SlashCommandArgument.js';
@@ -328,17 +328,6 @@ async function moveWorldInfoStorage(name) {
  * @property {(value: any) => boolean} [arrayFilter] - Optional filter function for array fields to filter out unwanted values
  */
 // End typedef area
-
-/** @type {Readonly<WIGlobalScanData>} */
-const defaultGlobalScanData = Object.freeze({
-    trigger: 'normal',
-    personaDescription: '',
-    characterDescription: '',
-    characterPersonality: '',
-    characterDepthPrompt: '',
-    scenario: '',
-    creatorNotes: '',
-});
 
 /**
  * Represents a timed effects manager for World Info.
@@ -716,6 +705,12 @@ export function clearForcedActivationEntries() {
     forcedActivationEntries.clear();
 }
 
+export function getWorldInfoRegexScripts() {
+    return structuredClone(getRegexScripts({ allowedOnly: true }).filter(script =>
+        Array.isArray(script?.placement) && script.placement.includes(regex_placement.WORLD_INFO),
+    ));
+}
+
 /**
  * Gets the world info based on chat messages.
  * @param {string[]} chat - The chat messages to scan, in reverse order.
@@ -765,6 +760,7 @@ export async function getWorldInfoPrompt(chat, maxContext, isDryRun, globalScanD
 
 async function scanWorldInfoOnServer(chat, maxContext, isDryRun, globalScanData) {
     const context = getContext();
+    const macroSnapshot = getServerMacroSnapshot();
     const promptState = await getServerPromptState(context.extensionPrompts);
     const forcedActivations = getForcedActivationEntriesSnapshot();
 
@@ -783,6 +779,7 @@ async function scanWorldInfoOnServer(chat, maxContext, isDryRun, globalScanData)
             maxContext,
             isDryRun,
             globalScanData,
+            regexScripts: getWorldInfoRegexScripts(),
             selectedWorldInfo: selected_world_info,
             chatWorld: chat_metadata[METADATA_KEY] || '',
             personaWorld: power_user.persona_description_lorebook || '',
@@ -799,6 +796,7 @@ async function scanWorldInfoOnServer(chat, maxContext, isDryRun, globalScanData)
                 charDepthPrompt: globalScanData.characterDepthPrompt || '',
                 creatorNotes: globalScanData.creatorNotes || '',
             },
+            macroSnapshot,
             promptState,
             currentCharacterFilename,
             currentCharacterTags,

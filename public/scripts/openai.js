@@ -10,18 +10,12 @@ import {
     characters,
     event_types,
     eventSource,
-    extension_prompt_roles,
-    extension_prompt_types,
-    Generate,
-    getExtensionPrompt,
-    getExtensionPromptMaxDepth,
     getCurrentChatId,
     getServerMacroSnapshot,
     getServerPromptState,
     getMediaDisplay,
     getMediaIndex,
     getRequestHeaders,
-    getStoppingStrings,
     is_send_press,
     main_api,
     name1,
@@ -32,18 +26,14 @@ import {
     setInContextMessages,
     startStatusLoading,
     substituteParams,
-    substituteParamsExtended,
     system_message_types,
-    this_chid,
 } from '../script.js';
-import { getGroupMacroValues, getGroupNames, selected_group } from './group-chats.js';
+import { getGroupMacroValues, getGroupNames, groups, selected_group } from './group-chats.js';
 import { extension_settings } from './extensions.js';
 import { clearForcedActivationEntries, world_info_overflow_alert } from './world-info.js';
 
 import {
     chatCompletionDefaultPrompts,
-    INJECTION_POSITION,
-    Prompt,
     PromptManager,
     promptManagerDefaultPromptOrders,
 } from './PromptManager.js';
@@ -68,7 +58,6 @@ import {
     isValidUrl,
     parseJsonFile,
     resetScrollHeight,
-    stringFormat,
     textValueMatcher,
     uuidv4,
 } from './utils.js';
@@ -84,10 +73,9 @@ import { callGenericPopup, Popup, POPUP_RESULT, POPUP_TYPE } from './popup.js';
 import { t } from './i18n.js';
 import { ToolManager } from './tool-calling.js';
 import { accountStorage } from './util/AccountStorage.js';
-import { COMETAPI_IGNORE_PATTERNS, IGNORE_SYMBOL, MEDIA_DISPLAY, MEDIA_TYPE } from './constants.js';
+import { COMETAPI_IGNORE_PATTERNS, IGNORE_SYMBOL } from './constants.js';
 
 export {
-    openai_messages_count,
     oai_settings,
     loadOpenAISettings,
     setOpenAIMessages,
@@ -100,7 +88,6 @@ export {
     MessageCollection,
 };
 
-let openai_messages_count = 0;
 let pendingTimedWorldInfo = null;
 let lastServerAssemblyPromptContext = null;
 let lastServerAssemblyDebugDump = null;
@@ -860,8 +847,7 @@ function applyAssemblyResponseMetadata(response, type) {
         return;
     }
 
-    openai_messages_count = messagesCount;
-    setInContextMessages(openai_messages_count, type);
+    setInContextMessages(messagesCount, type);
 }
 
 function applyTimedWorldInfoResponseData(data) {
@@ -907,6 +893,15 @@ export async function buildServerAssemblyPayload({
     const resolvedPromptState = promptState && typeof promptState === 'object'
         ? structuredClone(promptState)
         : await getServerPromptState();
+    const selectedGroupData = selected_group ? groups.find(group => group.id === selected_group) : null;
+    const disabledGroupMembers = Array.isArray(selectedGroupData?.disabled_members) ? selectedGroupData.disabled_members : [];
+    const groupMembers = Array.isArray(selectedGroupData?.members)
+        ? selectedGroupData.members.map((avatar) => ({
+            avatar,
+            name: characters.find(character => character.avatar === avatar)?.name || '',
+            disabled: disabledGroupMembers.includes(avatar),
+        }))
+        : [];
     const groupMacroValues = getGroupMacroValues(name2);
     const macroSnapshot = getServerMacroSnapshot();
     const serializedCoreChat = Array.isArray(coreChat)
@@ -935,6 +930,9 @@ export async function buildServerAssemblyPayload({
         charName: name2,
         currentChatId: getCurrentChatId() || '',
         coreChat: serializedCoreChat,
+        groupId: selectedGroupData?.id || null,
+        groupName: selectedGroupData?.name || '',
+        groupMembers,
         groupNames: getGroupNames(),
         groupMacroValues,
         mediaSupport: {
@@ -2298,33 +2296,6 @@ function parseOpenAIChatLogprobs(logprobs) {
     });
 }
 
-/**
- * parseOpenAITextLogprobs receives a `logprobs` response from OpenAI's text
- * completion API and converts into the structure used by the Token Probabilities
- * view.
- * @param {{tokens: string[], token_logprobs: number[], top_logprobs: { token: string, logprob: number }[][]}} logprobs
- * @returns {import('./logprobs.js').TokenLogprobs[] | null} converted logprobs
- */
-function parseOpenAITextLogprobs(logprobs) {
-    const { tokens, token_logprobs, top_logprobs } = logprobs ?? {};
-
-    if (!Array.isArray(tokens)) {
-        return null;
-    }
-
-    return tokens.map((token, i) => {
-        // Add the chosen token to top_logprobs if it's not already there, then
-        // convert to a list of [token, logprob] pairs
-        /** @type {any[]} */
-        const topLogprobs = top_logprobs[i] ? Object.entries(top_logprobs[i]) : [];
-        const chosenTopToken = topLogprobs.some(([topToken]) => token === topToken);
-        if (!chosenTopToken) {
-            topLogprobs.push([token, token_logprobs[i]]);
-        }
-        return { token, topLogprobs };
-    });
-}
-
 async function calculateLogitBias() {
     const body = JSON.stringify(oai_settings.bias_presets[oai_settings.bias_preset_selected]);
     let result = {};
@@ -2422,14 +2393,6 @@ class TokenBudgetExceededError extends Error {
     constructor(identifier = '') {
         super(`Token budged exceeded. Message: ${identifier}`);
         this.name = 'TokenBudgetExceeded';
-    }
-}
-
-// Thrown when a character name is invalid
-class InvalidCharacterNameError extends Error {
-    constructor(identifier = '') {
-        super(`Invalid character name. Message: ${identifier}`);
-        this.name = 'InvalidCharacterName';
     }
 }
 

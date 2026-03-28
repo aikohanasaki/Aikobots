@@ -4,6 +4,7 @@ import path from 'node:path';
 import express from 'express';
 import sanitize from 'sanitize-filename';
 import { createMacroState, evaluatePromptMacros } from '../prompting/macro-evaluator.js';
+import { getRegexedString, regex_placement } from '../prompting/regex-runtime.js';
 import { scanWorldInfo } from '../prompting/world-info-scan.js';
 import {
     LorebookRepositoryError,
@@ -239,11 +240,18 @@ export function prepareEntriesForScan(entries = [], env = {}) {
     const extensionPrompts = env.extensionPrompts || inflatePromptState(env.promptState || {}, env.quietPrompt || '');
     const macroState = createMacroState(env.macroSnapshot || {}, extensionPrompts);
     const macroEnv = { ...env, __macroState: macroState };
+    const regexScripts = Array.isArray(env.regexScripts) ? env.regexScripts : [];
+    const atDepthPosition = Number(env.worldInfoPosition?.atDepth);
     return entries.map((entry) => ({
         ...structuredClone(entry),
         key: Array.isArray(entry.key) ? entry.key.map((key) => substituteParams(key, macroEnv)) : entry.key,
         keysecondary: Array.isArray(entry.keysecondary) ? entry.keysecondary.map((key) => substituteParams(key, macroEnv)) : entry.keysecondary,
-        content: substituteParams(entry.content || '', macroEnv),
+        content: substituteParams(getRegexedString(String(entry.content || ''), regex_placement.WORLD_INFO, regexScripts, macroEnv, {
+            isMarkdown: false,
+            isPrompt: true,
+            depth: entry.position === atDepthPosition ? (entry.depth ?? 4) : undefined,
+            macroState,
+        }), macroEnv),
     }));
 }
 
@@ -421,6 +429,8 @@ router.post('/scan', (request, response) => {
                     ...(payload.substitutionEnv || {}),
                     macroSnapshot: payload.macroSnapshot || payload.substitutionEnv?.macroSnapshot,
                     extensionPrompts: effectiveExtensionPrompts,
+                    regexScripts: payload.regexScripts,
+                    worldInfoPosition: payload.worldInfoPosition,
                 });
             }
 

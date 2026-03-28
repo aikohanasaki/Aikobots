@@ -13,7 +13,6 @@ import {
 import { humanizedDateTime, favsToHotswap, getMessageTimeStamp, dragElement, isMobile, initRossMods } from './scripts/RossAscends-mods.js';
 import { userStatsHandler, statMesProcess, initStats } from './scripts/stats.js';
 import {
-    generateKoboldWithStreaming,
     kai_settings,
     loadKoboldSettings,
     getKoboldGenerationData,
@@ -26,7 +25,6 @@ import {
 import {
     textgenerationwebui_settings as textgen_settings,
     loadTextGenSettings,
-    generateTextGenWithStreaming,
     getTextGenGenerationData,
     textgen_types,
     parseTextgenLogprobs,
@@ -38,6 +36,7 @@ import {
     world_info,
     getWorldInfoPrompt,
     getWorldInfoSettings,
+    getWorldInfoRegexScripts,
     setWorldInfoSettings,
     world_names,
     importEmbeddedWorldInfo,
@@ -122,7 +121,6 @@ import {
     sendOpenAIRequest,
     loadOpenAISettings,
     oai_settings,
-    openai_messages_count,
     chat_completion_sources,
     getChatCompletionModel,
     proxies,
@@ -132,7 +130,6 @@ import {
 } from './scripts/openai.js';
 
 import {
-    generateNovelWithStreaming,
     getNovelGenerationData,
     getKayraMaxContextTokens,
     loadNovelSettings,
@@ -675,13 +672,6 @@ export function getRequestHeaders({ omitContentType = false } = {}) {
     }
 
     return headers;
-}
-
-export function getSlideToggleOptions() {
-    return {
-        miliseconds: animation_duration * 1.5,
-        transitionFunction: animation_duration > 0 ? 'ease-in-out' : 'step-start',
-    };
 }
 
 $.ajaxPrefilter((options, originalOptions, xhr) => {
@@ -3299,20 +3289,6 @@ async function getAllExtensionPrompts() {
 }
 
 /**
- * Wrapper to fetch extension prompts by module name
- * @param {string} moduleName Module name
- * @returns {Promise<string>} Extension prompt
- */
-export async function getExtensionPromptByName(moduleName) {
-    if (!moduleName) {
-        return '';
-    }
-
-    const snapshot = await getExtensionPromptSnapshot({ [moduleName]: extension_prompts[moduleName] });
-    return snapshot[moduleName]?.resolvedValue || '';
-}
-
-/**
  * Gets the maximum depth of extension prompts.
  * @returns {number} Maximum depth of extension prompts
  */
@@ -5232,6 +5208,7 @@ export async function Generate(type, { automatic_trigger, force_name2, quiet_pro
                     maxContext: this_max_context,
                     isDryRun: dryRun,
                     globalScanData,
+                    regexScripts: getWorldInfoRegexScripts(),
                     selectedWorldInfo: selected_world_info,
                     chatWorld: chat_metadata[METADATA_KEY] || '',
                     personaWorld: power_user.persona_description_lorebook || '',
@@ -5921,30 +5898,6 @@ export function getMaxContextSize(overrideResponseLength = null) {
         this_max_context = oai_settings.openai_max_context - (overrideResponseLength || oai_settings.openai_max_tokens);
     }
     return this_max_context;
-}
-
-function parseTokenCounts(counts, thisPromptBits) {
-    /**
-     * @param {any[]} numbers
-     */
-    function getSum(...numbers) {
-        return numbers.map(x => Number(x)).filter(x => !Number.isNaN(x)).reduce((acc, val) => acc + val, 0);
-    }
-    const total = getSum(Object.values(counts));
-
-    thisPromptBits.push({
-        oaiStartTokens: (counts?.start + counts?.controlPrompts) || 0,
-        oaiPromptTokens: getSum(counts?.prompt, counts?.charDescription, counts?.charPersonality, counts?.scenario) || 0,
-        oaiBiasTokens: counts?.bias || 0,
-        oaiNudgeTokens: counts?.nudge || 0,
-        oaiJailbreakTokens: counts?.jailbreak || 0,
-        oaiImpersonateTokens: counts?.impersonate || 0,
-        oaiExamplesTokens: (counts?.dialogueExamples + counts?.examples) || 0,
-        oaiConversationTokens: (counts?.conversation + counts?.chatHistory) || 0,
-        oaiNsfwTokens: counts?.nsfw || 0,
-        oaiMainTokens: counts?.main || 0,
-        oaiTotalTokens: total,
-    });
 }
 
 function addChatsPreamble(mesSendString) {
@@ -8272,65 +8225,6 @@ async function messageEditDone(div) {
 }
 
 /**
- * Fetches the chat content for each chat file from the server and compiles them into a dictionary.
- * The function iterates over a provided list of chat metadata and requests the actual chat content
- * for each chat, either as an individual chat or a group chat based on the context.
- *
- * @param {Array} data - An array containing metadata about each chat such as file_name.
- * @param {boolean} isGroupChat - A flag indicating if the chat is a group chat.
- * @returns {Promise<Object>} chat_dict - A dictionary where each key is a file_name and the value is the
- * corresponding chat content fetched from the server.
- */
-export async function getChatsFromFiles(data, isGroupChat) {
-    const context = getContext();
-    let chat_dict = {};
-    let chat_list = Object.values(data).sort((a, b) => a['file_name'].localeCompare(b['file_name'])).reverse();
-
-    let chat_promise = chat_list.map(({ file_name }) => {
-        return new Promise(async (res, rej) => {
-            try {
-                const endpoint = isGroupChat ? '/api/chats/group/get' : '/api/chats/get';
-                const requestBody = isGroupChat
-                    ? JSON.stringify({ id: file_name })
-                    : JSON.stringify({
-                        ch_name: characters[context.characterId].name,
-                        file_name: file_name.replace('.jsonl', ''),
-                        avatar_url: characters[context.characterId].avatar,
-                    });
-
-                const chatResponse = await fetch(endpoint, {
-                    method: 'POST',
-                    headers: getRequestHeaders(),
-                    body: requestBody,
-                    cache: 'no-cache',
-                });
-
-                if (!chatResponse.ok) {
-                    return res();
-                    // continue;
-                }
-
-                const currentChat = await chatResponse.json();
-                if (!isGroupChat) {
-                    // remove the first message, which is metadata, only for individual chats
-                    currentChat.shift();
-                }
-                chat_dict[file_name] = currentChat;
-
-            } catch (error) {
-                console.error(error);
-            }
-
-            return res();
-        });
-    });
-
-    await Promise.all(chat_promise);
-
-    return chat_dict;
-}
-
-/**
  * Fetches the metadata of all past chats related to a specific character based on its avatar URL.
  * The function sends a POST request to the server to retrieve all chats for the character. It then
  * processes the received data, sorts it by the file name, and returns the sorted data.
@@ -10362,24 +10256,6 @@ function doCharListDisplaySwitch() {
     power_user.charListGrid = !power_user.charListGrid;
     document.body.classList.toggle('charListGrid', power_user.charListGrid);
     saveSettingsDebounced();
-}
-
-/**
- * Function to handle the deletion of a character, given a specific popup type and character ID.
- * If popup type equals "del_ch", it will proceed with deletion otherwise it will exit the function.
- * It fetches the delete character route, sending necessary parameters, and in case of success,
- * it proceeds to delete character from UI and saves settings.
- * In case of error during the fetch request, it logs the error details.
- *
- * @param {string} this_chid - The character ID to be deleted.
- * @param {boolean} delete_chats - Whether to delete chats or not.
- */
-export async function handleDeleteCharacter(this_chid, delete_chats) {
-    if (!characters[this_chid]) {
-        return;
-    }
-
-    await deleteCharacter(characters[this_chid].avatar, { deleteChats: delete_chats });
 }
 
 /**

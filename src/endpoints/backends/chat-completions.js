@@ -1436,8 +1436,10 @@ async function prepareServerPromptContext(user, directories, promptContext) {
             ...(worldInfoRequest.substitutionEnv || {}),
             macroSnapshot: worldInfoRequest.macroSnapshot || promptContext.macroSnapshot,
             extensionPrompts: promptContext.extensionPrompts || undefined,
+            regexScripts: worldInfoRequest.regexScripts,
             promptState,
             quietPrompt: promptContext.quietPrompt || '',
+            worldInfoPosition: worldInfoRequest.worldInfoPosition,
         });
     }
 

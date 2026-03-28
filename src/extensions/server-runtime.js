@@ -364,6 +364,14 @@ export async function runServerGenerationExtensions(directories, promptContext) 
             promptContext,
             chat: Array.isArray(promptContext.coreChat) ? promptContext.coreChat : [],
             currentChatId: promptContext.currentChatId || '',
+            selectedGroup: Boolean(promptContext.selectedGroup),
+            groupId: promptContext.groupId || null,
+            groupName: promptContext.groupName || '',
+            groupNames: Array.isArray(promptContext.groupNames) ? [...promptContext.groupNames] : [],
+            groupMembers: Array.isArray(promptContext.groupMembers) ? structuredClone(promptContext.groupMembers) : [],
+            disabledGroupMembers: Array.isArray(promptContext.groupMembers)
+                ? promptContext.groupMembers.filter(member => member?.disabled).map(member => String(member.avatar || ''))
+                : [],
             contextSize: Number(promptContext.worldInfoRequest?.maxContext) || 0,
             type: promptContext.type || 'normal',
             extensionSettings,
