@@ -5,7 +5,6 @@ import express from 'express';
 import sanitize from 'sanitize-filename';
 import { createMacroState, evaluatePromptMacros } from '../prompting/macro-evaluator.js';
 import { getRegexedString, regex_placement } from '../prompting/regex-runtime.js';
-import { scanWorldInfo } from '../prompting/world-info-scan.js';
 import { getHiddenLorebooksForCharacter } from '../hidden-lorebook-bindings.js';
 import {
     hasLorebookForGeneration,
@@ -83,13 +82,6 @@ function inflatePromptState(promptState = {}, quietPrompt = '') {
     };
 
     return extensionPrompts;
-}
-
-function mergeExtensionPromptSources(promptState = {}, runtimePrompts = {}, quietPrompt = '') {
-    return {
-        ...inflatePromptState(promptState, quietPrompt),
-        ...(runtimePrompts && typeof runtimePrompts === 'object' ? runtimePrompts : {}),
-    };
 }
 
 function getStringHash(str, seed = 0) {
@@ -203,23 +195,44 @@ export async function resolveSortedEntriesPayload(user, body = {}, options = {})
     const hasLorebook = options.hasLorebook ?? hasLorebookForGeneration;
 
     const selectedWorldSet = new Set(Array.isArray(selectedWorldInfo) ? selectedWorldInfo.filter(Boolean) : []);
-    const excludedCharacterBooks = new Set([chatWorld, personaWorld, ...selectedWorldSet].filter(Boolean));
     const visibleCharacterBooks = new Set([characterWorld, ...(Array.isArray(characterExtraBooks) ? characterExtraBooks : [])].filter(Boolean));
     const resolvedHiddenBooks = getHiddenBooks(currentCharacterFilename);
-    const hiddenCharacterBooks = new Set(
-        (Array.isArray(resolvedHiddenBooks) ? resolvedHiddenBooks : [])
-            .filter(Boolean)
-            .filter(worldName => !visibleCharacterBooks.has(worldName)),
-    );
+    const hiddenCharacterBooks = new Set((Array.isArray(resolvedHiddenBooks) ? resolvedHiddenBooks : []).filter(Boolean));
+    const claimedWorldNames = new Set();
 
-    const globalLore = (await Promise.all([...selectedWorldSet].map(worldName => readEntries(user, worldName)))).flat();
+    /**
+     * Claims lorebook names once so duplicate bindings do not load the same lorebook multiple times.
+     * Preserves the input order and the effective priority implied by the order of calls below.
+     * @param {Iterable<string>} worldNames
+     * @returns {string[]}
+     */
+    function claimWorldNames(worldNames) {
+        const claimed = [];
 
-    const visibleCharacterLore = (await Promise.all([...visibleCharacterBooks]
-        .filter(worldName => !excludedCharacterBooks.has(worldName))
+        for (const worldName of worldNames) {
+            if (!worldName || claimedWorldNames.has(worldName)) {
+                continue;
+            }
+
+            claimedWorldNames.add(worldName);
+            claimed.push(worldName);
+        }
+
+        return claimed;
+    }
+
+    const globalWorldNames = claimWorldNames(selectedWorldSet);
+    const chatWorldNames = claimWorldNames(chatWorld ? [chatWorld] : []);
+    const personaWorldNames = claimWorldNames(personaWorld ? [personaWorld] : []);
+    const visibleCharacterWorldNames = claimWorldNames(visibleCharacterBooks);
+    const hiddenCharacterWorldNames = claimWorldNames(hiddenCharacterBooks);
+
+    const globalLore = (await Promise.all(globalWorldNames.map(worldName => readEntries(user, worldName)))).flat();
+
+    const visibleCharacterLore = (await Promise.all(visibleCharacterWorldNames
         .map(worldName => readEntries(user, worldName)))).flat();
 
-    const hiddenCharacterLore = (await Promise.all([...hiddenCharacterBooks]
-        .filter(worldName => !excludedCharacterBooks.has(worldName))
+    const hiddenCharacterLore = (await Promise.all(hiddenCharacterWorldNames
         .map(async worldName => {
             if (!hasLorebook(user, worldName)) {
                 console.warn(`[WI] Hidden lorebook "${worldName}" not found for character "${currentCharacterFilename}". Skipping.`);
@@ -231,12 +244,12 @@ export async function resolveSortedEntriesPayload(user, body = {}, options = {})
 
     const characterLore = [...visibleCharacterLore, ...hiddenCharacterLore];
 
-    const chatLore = chatWorld && !selectedWorldSet.has(chatWorld)
-        ? await readEntries(user, chatWorld)
+    const chatLore = chatWorldNames.length
+        ? await readEntries(user, chatWorldNames[0])
         : [];
 
-    const personaLore = personaWorld && personaWorld !== chatWorld && !selectedWorldSet.has(personaWorld)
-        ? await readEntries(user, personaWorld)
+    const personaLore = personaWorldNames.length
+        ? await readEntries(user, personaWorldNames[0])
         : [];
 
     let entries = sortEntriesWithStrategy(globalLore, characterLore, worldInfoCharacterStrategy);
@@ -434,38 +447,4 @@ router.post('/sorted-entries', async (request, response) => {
     } catch (error) {
         return sendLorebookError(response, error);
     }
-});
-
-router.post('/scan', (request, response) => {
-    return (async () => {
-        if (!request.body) {
-            return response.sendStatus(400);
-        }
-
-        try {
-            const payload = { ...request.body };
-            const effectiveExtensionPrompts = mergeExtensionPromptSources(
-                payload.promptState || {},
-                payload.extensionPrompts || {},
-                payload.quietPrompt || '',
-            );
-            if (!Array.isArray(payload.sortedEntries)) {
-                const resolved = await resolveSortedEntriesPayload(request.user, payload);
-                payload.sortedEntries = prepareEntriesForScan(resolved.entries, {
-                    ...(payload.substitutionEnv || {}),
-                    macroSnapshot: payload.macroSnapshot || payload.substitutionEnv?.macroSnapshot,
-                    extensionPrompts: effectiveExtensionPrompts,
-                    regexScripts: payload.regexScripts,
-                    worldInfoPosition: payload.worldInfoPosition,
-                });
-            }
-
-            payload.extensionPrompts = effectiveExtensionPrompts;
-
-            return response.send(await scanWorldInfo(payload));
-        } catch (error) {
-            console.error('World info scan failed', error);
-            return response.status(500).send({ error: String(error?.message || error) });
-        }
-    })();
 });

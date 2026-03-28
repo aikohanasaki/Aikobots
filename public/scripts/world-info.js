@@ -1,14 +1,12 @@
 import { Fuse } from '../lib.js';
 
-import { saveSettings, substituteParams, getRequestHeaders, chat_metadata, this_chid, characters, saveCharacterDebounced, menu_type, eventSource, event_types, getServerMacroSnapshot, getServerPromptState, main_api, saveMetadata, getCurrentChatId, extension_prompt_roles, create_save, createOrEditCharacter, name1 } from '../script.js';
-import { download, debounce, initScrollHeight, resetScrollHeight, parseJsonFile, extractDataFromPng, getFileBuffer, getCharaFilename, getSortableDelay, PAGINATION_TEMPLATE, navigation_option, waitUntilCondition, isTrueBoolean, setValueByPath, flashHighlight, select2ModifyOptions, getSelect2OptionId, dynamicSelect2DataViaAjax, highlightRegex, select2ChoiceClickSubscribe, isFalseBoolean, getSanitizedFilename, checkOverwriteExistingData, getStringHash, parseStringArray, cancelDebounce, findChar, onlyUnique, equalsIgnoreCaseAndAccents, uuidv4, normalizeArray, getUniqueName } from './utils.js';
-import { extension_settings, getContext } from './extensions.js';
-import { NOTE_MODULE_NAME, metadata_keys, shouldWIAddPrompt } from './authors-note.js';
+import { saveSettings, substituteParams, getRequestHeaders, chat_metadata, this_chid, characters, saveCharacterDebounced, menu_type, eventSource, event_types, saveMetadata, getCurrentChatId, extension_prompt_roles, create_save, createOrEditCharacter, name1 } from '../script.js';
+import { download, debounce, initScrollHeight, resetScrollHeight, parseJsonFile, extractDataFromPng, getFileBuffer, getCharaFilename, getSortableDelay, PAGINATION_TEMPLATE, navigation_option, waitUntilCondition, isTrueBoolean, setValueByPath, flashHighlight, select2ModifyOptions, getSelect2OptionId, dynamicSelect2DataViaAjax, highlightRegex, select2ChoiceClickSubscribe, isFalseBoolean, getSanitizedFilename, checkOverwriteExistingData, parseStringArray, cancelDebounce, findChar, onlyUnique, equalsIgnoreCaseAndAccents, uuidv4, normalizeArray, getUniqueName } from './utils.js';
+import { getContext } from './extensions.js';
 import { isMobile } from './RossAscends-mods.js';
 import { FILTER_TYPES, FilterHelper } from './filters.js';
-import { getTokenCountAsync, getTokenizerModel } from './tokenizers.js';
+import { getTokenCountAsync } from './tokenizers.js';
 import { power_user } from './power-user.js';
-import { getTagKeyForEntity } from './tags.js';
 import { debounce_timeout, GENERATION_TYPE_TRIGGERS } from './constants.js';
 import { getRegexScripts, regex_placement } from './extensions/regex/engine.js';
 import { SlashCommandParser } from './slash-commands/SlashCommandParser.js';
@@ -65,7 +63,6 @@ const saveSettingsDebounced = debounce(() => {
     Object.assign(world_info, { globalSelect: selected_world_info });
     saveSettings();
 }, debounce_timeout.relaxed);
-const sortFn = (a, b) => b.order - a.order;
 let updateEditor = (navigation, flashOnNav = true) => { console.debug('Triggered WI navigation', navigation, flashOnNav); };
 
 // Do not optimize. updateEditor is a function that is updated by the displayWorldEntries with new data.
@@ -709,134 +706,6 @@ export function getWorldInfoRegexScripts() {
     return structuredClone(getRegexScripts({ allowedOnly: true }).filter(script =>
         Array.isArray(script?.placement) && script.placement.includes(regex_placement.WORLD_INFO),
     ));
-}
-
-/**
- * Gets the world info based on chat messages.
- * @param {string[]} chat - The chat messages to scan, in reverse order.
- * @param {number} maxContext - The maximum context size of the generation.
- * @param {boolean} isDryRun - If true, the function will not emit any events.
- * @param {WIGlobalScanData} globalScanData Chat independent context to be scanned
- * @returns {Promise<WIPromptResult>} The world info string and depth.
- */
-export async function getWorldInfoPrompt(chat, maxContext, isDryRun, globalScanData) {
-    let worldInfoString = '', worldInfoBefore = '', worldInfoAfter = '';
-    const activatedWorldInfo = await scanWorldInfoOnServer(chat, maxContext, isDryRun, globalScanData);
-    if (!isDryRun && activatedWorldInfo?.timedWorldInfo && typeof activatedWorldInfo.timedWorldInfo === 'object') {
-        chat_metadata.timedWorldInfo = activatedWorldInfo.timedWorldInfo;
-    }
-    if (!isDryRun && world_info_overflow_alert && activatedWorldInfo?.overflowed) {
-        toastr.warning(t`World info budget reached.`, t`World Info`);
-    }
-    if (!isDryRun) {
-        applyWorldInfoAuthorsNote(activatedWorldInfo?.ANBeforeEntries ?? [], activatedWorldInfo?.ANAfterEntries ?? []);
-    }
-
-    worldInfoBefore = activatedWorldInfo.worldInfoBefore;
-    worldInfoAfter = activatedWorldInfo.worldInfoAfter;
-    worldInfoString = worldInfoBefore + worldInfoAfter;
-
-    if (!isDryRun && activatedWorldInfo.allActivatedEntries) {
-        const arg = Array.isArray(activatedWorldInfo.allActivatedEntries)
-            ? activatedWorldInfo.allActivatedEntries
-            : Array.from(activatedWorldInfo.allActivatedEntries.values());
-
-        if (arg.length > 0) {
-        await eventSource.emit(event_types.WORLD_INFO_ACTIVATED, arg);
-        }
-    }
-
-    return {
-        worldInfoString,
-        worldInfoBefore,
-        worldInfoAfter,
-        worldInfoExamples: activatedWorldInfo.EMEntries ?? [],
-        worldInfoDepth: activatedWorldInfo.WIDepthEntries ?? [],
-        anBefore: activatedWorldInfo.ANBeforeEntries ?? [],
-        anAfter: activatedWorldInfo.ANAfterEntries ?? [],
-        outletEntries: activatedWorldInfo.outletEntries ?? {},
-    };
-}
-
-async function scanWorldInfoOnServer(chat, maxContext, isDryRun, globalScanData) {
-    const context = getContext();
-    const macroSnapshot = getServerMacroSnapshot();
-    const promptState = await getServerPromptState(context.extensionPrompts);
-    const forcedActivations = getForcedActivationEntriesSnapshot();
-
-    const tagKey = getTagKeyForEntity(this_chid);
-    const currentCharacterTags = Array.isArray(context.tagMap?.[tagKey]) ? context.tagMap[tagKey] : [];
-    const currentCharacterFilename = getCharaFilename();
-    const character = characters[this_chid];
-    const fileName = getCharaFilename(this_chid);
-    const extraCharLore = world_info.charLore?.find((entry) => entry.name === fileName);
-
-    const response = await fetch('/api/worldinfo/scan', {
-        method: 'POST',
-        headers: getRequestHeaders(),
-        body: JSON.stringify({
-            chat,
-            maxContext,
-            isDryRun,
-            globalScanData,
-            regexScripts: getWorldInfoRegexScripts(),
-            selectedWorldInfo: selected_world_info,
-            chatWorld: chat_metadata[METADATA_KEY] || '',
-            personaWorld: power_user.persona_description_lorebook || '',
-            characterWorld: character?.data?.extensions?.world || '',
-            characterExtraBooks: extraCharLore?.extraBooks || [],
-            worldInfoCharacterStrategy: world_info_character_strategy,
-            substitutionEnv: {
-                user: name1,
-                char: characters[this_chid]?.name || '',
-                description: globalScanData.characterDescription || '',
-                personality: globalScanData.characterPersonality || '',
-                scenario: globalScanData.scenario || '',
-                persona: globalScanData.personaDescription || '',
-                charDepthPrompt: globalScanData.characterDepthPrompt || '',
-                creatorNotes: globalScanData.creatorNotes || '',
-            },
-            macroSnapshot,
-            promptState,
-            currentCharacterFilename,
-            currentCharacterTags,
-            forcedActivations,
-            timedWorldInfo: structuredClone(chat_metadata.timedWorldInfo || {}),
-            settings: {
-                world_info_depth,
-                world_info_min_activations,
-                world_info_min_activations_depth_max,
-                world_info_budget,
-                world_info_recursive,
-                world_info_case_sensitive,
-                world_info_match_whole_words,
-                world_info_budget_cap,
-                world_info_use_group_scoring,
-                world_info_max_recursion_steps,
-            },
-            worldInfoPosition: world_info_position,
-            wiAnchorPosition: wi_anchor_position,
-            tokenizerModel: main_api === 'openai' ? getTokenizerModel() : '',
-        }),
-        cache: 'no-cache',
-    });
-
-    if (!response.ok) {
-        throw new Error(`World info scan failed with status ${response.status}`);
-    }
-
-    const result = await response.json();
-    clearForcedActivationEntries();
-    return result;
-}
-
-function applyWorldInfoAuthorsNote(anTopEntries, anBottomEntries) {
-    if (shouldWIAddPrompt) {
-        const context = getContext();
-        const originalAN = context.extensionPrompts[NOTE_MODULE_NAME].value;
-        const ANWithWI = `${anTopEntries.join('\n')}\n${originalAN}\n${anBottomEntries.join('\n')}`.replace(/(^\n)|(\n$)/g, '');
-        context.setExtensionPrompt(NOTE_MODULE_NAME, ANWithWI, chat_metadata[metadata_keys.position], chat_metadata[metadata_keys.depth], extension_settings.note.allowWIScan, chat_metadata[metadata_keys.role]);
-    }
 }
 
 export function setWorldInfoSettings(settings, data) {
@@ -4187,178 +4056,6 @@ export async function createNewWorldInfo(worldName, { interactive = false } = {}
     return true;
 }
 
-async function getCharacterLore() {
-    const character = characters[this_chid];
-    const name = character?.name;
-    /** @type {Set<string>} */
-    let worldsToSearch = new Set();
-
-    const baseWorldName = character?.data?.extensions?.world;
-    if (baseWorldName) {
-        worldsToSearch.add(baseWorldName);
-    }
-
-    // TODO: Maybe make the utility function not use the window context?
-    const fileName = getCharaFilename(this_chid);
-    const extraCharLore = world_info.charLore?.find((e) => e.name === fileName);
-    if (extraCharLore) {
-        worldsToSearch = new Set([...worldsToSearch, ...extraCharLore.extraBooks]);
-    }
-
-    if (!worldsToSearch.size) {
-        return [];
-    }
-
-    let entries = [];
-    for (const worldName of worldsToSearch) {
-        if (selected_world_info.includes(worldName)) {
-            console.debug(`[WI] Character ${name}'s world ${worldName} is already activated in global world info! Skipping...`);
-            continue;
-        }
-
-        if (chat_metadata[METADATA_KEY] === worldName) {
-            console.debug(`[WI] Character ${name}'s world ${worldName} is already activated in chat lore! Skipping...`);
-            continue;
-        }
-
-        if (power_user.persona_description_lorebook === worldName) {
-            console.debug(`[WI] Character ${name}'s world ${worldName} is already activated in persona lore! Skipping...`);
-            continue;
-        }
-
-        const data = await loadWorldInfo(worldName);
-        const newEntries = data ? Object.keys(data.entries).map((x) => data.entries[x]).map(({ uid, ...rest }) => ({ uid, world: worldName, ...rest })) : [];
-        entries = entries.concat(newEntries);
-
-        if (!newEntries.length) {
-            console.debug(`[WI] Character ${name}'s world ${worldName} could not be found or is empty`);
-        }
-    }
-
-    console.debug(`[WI] Character ${name}'s lore has ${entries.length} world info entries`, [...worldsToSearch]);
-    return entries;
-}
-
-async function getGlobalLore() {
-    if (!selected_world_info?.length) {
-        return [];
-    }
-
-    let entries = [];
-    for (const worldName of selected_world_info) {
-        const data = await loadWorldInfo(worldName);
-        const newEntries = data ? Object.keys(data.entries).map((x) => data.entries[x]).map(({ uid, ...rest }) => ({ uid, world: worldName, ...rest })) : [];
-        entries = entries.concat(newEntries);
-    }
-
-    console.debug(`[WI] Global world info has ${entries.length} entries`, selected_world_info);
-
-    return entries;
-}
-
-async function getChatLore() {
-    const chatWorld = chat_metadata[METADATA_KEY];
-
-    if (!chatWorld) {
-        return [];
-    }
-
-    if (selected_world_info.includes(chatWorld)) {
-        console.debug(`[WI] Chat world ${chatWorld} is already activated in global world info! Skipping...`);
-        return [];
-    }
-
-    const data = await loadWorldInfo(chatWorld);
-    const entries = data ? Object.keys(data.entries).map((x) => data.entries[x]).map(({ uid, ...rest }) => ({ uid, world: chatWorld, ...rest })) : [];
-
-    console.debug(`[WI] Chat lore has ${entries.length} entries`, [chatWorld]);
-
-    return entries;
-}
-
-async function getPersonaLore() {
-    const chatWorld = chat_metadata[METADATA_KEY];
-    const personaWorld = power_user.persona_description_lorebook;
-
-    if (!personaWorld) {
-        return [];
-    }
-
-    if (chatWorld === personaWorld) {
-        console.debug(`[WI] Persona world ${personaWorld} is already activated in chat world! Skipping...`);
-        return [];
-    }
-
-    if (selected_world_info.includes(personaWorld)) {
-        console.debug(`[WI] Persona world ${personaWorld} is already activated in global world info! Skipping...`);
-        return [];
-    }
-
-    const data = await loadWorldInfo(personaWorld);
-    const entries = data ? Object.keys(data.entries).map((x) => data.entries[x]).map(({ uid, ...rest }) => ({ uid, world: personaWorld, ...rest })) : [];
-
-    console.debug(`[WI] Persona lore has ${entries.length} entries`, [personaWorld]);
-
-    return entries;
-}
-
-async function getSortedEntriesLocally() {
-    try {
-        const [
-            globalLore,
-            characterLore,
-            chatLore,
-            personaLore,
-        ] = await Promise.all([
-            getGlobalLore(),
-            getCharacterLore(),
-            getChatLore(),
-            getPersonaLore(),
-        ]);
-
-        await eventSource.emit(event_types.WORLDINFO_ENTRIES_LOADED, { globalLore, characterLore, chatLore, personaLore });
-
-        let entries;
-
-        switch (Number(world_info_character_strategy)) {
-            case world_info_insertion_strategy.evenly:
-                entries = [...globalLore, ...characterLore].sort(sortFn);
-                break;
-            case world_info_insertion_strategy.character_first:
-                entries = [...characterLore.sort(sortFn), ...globalLore.sort(sortFn)];
-                break;
-            case world_info_insertion_strategy.global_first:
-                entries = [...globalLore.sort(sortFn), ...characterLore.sort(sortFn)];
-                break;
-            default:
-                console.error('[WI] Unknown WI insertion strategy:', world_info_character_strategy, 'defaulting to evenly');
-                entries = [...globalLore, ...characterLore].sort(sortFn);
-                break;
-        }
-
-        // Chat lore always goes first, then persona lore, then the rest
-        entries = [...chatLore.sort(sortFn), ...personaLore.sort(sortFn), ...entries];
-
-        // Calculate hash and parse decorators. Split maps to preserve old hashes.
-        entries = entries.map((entry) => {
-            const [decorators, content] = parseDecorators(entry.content || '');
-            return { ...entry, decorators, content };
-        }).map((entry) => {
-            const hash = getStringHash(JSON.stringify(entry));
-            return { ...entry, hash };
-        });
-
-        console.debug(`[WI] Found ${entries.length} world lore entries. Sorted by strategy`, Object.entries(world_info_insertion_strategy).find((x) => x[1] === world_info_character_strategy));
-
-        // Need to deep clone the entries to avoid modifying the cached data
-        return structuredClone(entries);
-    }
-    catch (e) {
-        console.error(e);
-        return [];
-    }
-}
-
 async function getSortedEntriesOnServer() {
     const character = characters[this_chid];
     const fileName = getCharaFilename(this_chid);
@@ -4398,8 +4095,8 @@ export async function getSortedEntries() {
     try {
         return await getSortedEntriesOnServer();
     } catch (error) {
-        console.warn('[WI] Falling back to client-side world info entry resolution.', error);
-        return getSortedEntriesLocally();
+        console.warn('[WI] Failed to resolve world info entries on server.', error);
+        return [];
     }
 }
 

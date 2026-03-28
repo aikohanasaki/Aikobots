@@ -34,7 +34,6 @@ import {
 
 import {
     world_info,
-    getWorldInfoPrompt,
     getWorldInfoSettings,
     getWorldInfoRegexScripts,
     setWorldInfoSettings,
@@ -3028,7 +3027,7 @@ export function getStoppingStrings(isImpersonate, isContinue) {
  * @typedef {object} GenerateQuietPromptParams
  * @prop {string} [quietPrompt] Instruction prompt for the AI
  * @prop {boolean} [quietToLoud] Whether the message should be sent in a foreground (loud) or background (quiet) mode
- * @prop {boolean} [skipWIAN] Whether to skip addition of World Info and Author's Note into the prompt
+ * @prop {boolean} [skipWIAN] Deprecated. Ignored by chat-completions generation.
  * @prop {string} [quietImage] Image to use for the quiet prompt
  * @prop {string} [quietName] Name to use for the quiet prompt (defaults to "System:")
  * @prop {number} [responseLength] Maximum response length. If unset, the global default value is used.
@@ -4142,7 +4141,7 @@ function removeLastMessage() {
  * @property {boolean} [force_name2] If a char name should be forced to add to the prompt's last line (Text Completion, non-Instruct only).
  * @property {string} [quiet_prompt] A system instruction to use for the quiet prompt.
  * @property {boolean} [quietToLoud] Whether the system instruction should be sent in background (quiet) or a foreground (loud) mode.
- * @property {boolean} [skipWIAN] Skip adding World Info and Author's Note to the prompt.
+ * @property {boolean} [skipWIAN] Deprecated. Ignored by chat-completions generation.
  * @property {number} [force_chid] Force character ID to use for the generation. Only works in groups.
  * @property {AbortSignal} [signal] Abort signal to cancel the generation. If not provided, will create a new AbortController.
  * @property {string} [quietImage] Image URL to use for the quiet prompt (defaults to empty string)
@@ -4487,6 +4486,13 @@ export async function Generate(type, { automatic_trigger, force_name2, quiet_pro
         force_name2 = false;
     }
 
+    if (skipWIAN === true) {
+        console.warn('[Generate] skipWIAN is deprecated and ignored. World Info is assembled server-side.');
+    }
+    if (main_api !== 'openai') {
+        console.warn(`[Generate] World Info generation is deprecated for "${main_api}" and will only be assembled for chat-completions.`);
+    }
+
     let mesExamplesArray = parseMesExamples(mesExamples, isInstruct);
 
     // Set non-WI AN
@@ -4494,7 +4500,6 @@ export async function Generate(type, { automatic_trigger, force_name2, quiet_pro
 
     const chatForWI = coreChat.map(x => world_info_include_names ? `${x.name}: ${x.mes}` : x.mes).reverse();
     const preliminaryOaiMessages = main_api === 'openai' ? setOpenAIMessages(coreChat) : [];
-    const useServerOpenAIGeneration = main_api === 'openai';
     /** @type {import('./scripts/world-info.js').WIGlobalScanData} */
     const globalScanData = {
         personaDescription: persona,
@@ -4508,64 +4513,12 @@ export async function Generate(type, { automatic_trigger, force_name2, quiet_pro
     let worldInfoString = '';
     let worldInfoBefore = '';
     let worldInfoAfter = '';
-    let worldInfoExamples = [];
-    let worldInfoDepth = [];
-    let outletEntries = {};
-    if (!useServerOpenAIGeneration) {
-        // Add WI to prompt (and also inject WI to AN value via hijack)
-        // Make quiet prompt available for WIAN
-        setExtensionPrompt(inject_ids.QUIET_PROMPT, quiet_prompt || '', extension_prompt_types.IN_PROMPT, 0, true);
-        ({ worldInfoString, worldInfoBefore, worldInfoAfter, worldInfoExamples, worldInfoDepth, outletEntries } = await getWorldInfoPrompt(chatForWI, this_max_context, dryRun, globalScanData));
-        setExtensionPrompt(inject_ids.QUIET_PROMPT, '', extension_prompt_types.IN_PROMPT, 0, true);
-    } else {
-        flushWIInjections();
-    }
-
-    // Add message example WI
-    if (!useServerOpenAIGeneration) {
-        for (const example of worldInfoExamples) {
-            const exampleMessage = example.content;
-
-            if (exampleMessage.length === 0) {
-                continue;
-            }
-
-            const formattedExample = baseChatReplace(exampleMessage, name1, name2);
-            const cleanedExample = parseMesExamples(formattedExample, isInstruct);
-
-            // Insert depending on before or after position
-            if (example.position === wi_anchor_position.before) {
-                mesExamplesArray.unshift(...cleanedExample);
-            } else {
-                mesExamplesArray.push(...cleanedExample);
-            }
-        }
-    }
 
     // At this point, the raw message examples can be created
     const mesExamplesRawArray = [...mesExamplesArray];
 
     if (mesExamplesArray && isInstruct) {
         mesExamplesArray = formatInstructModeExamples(mesExamplesArray, name1, name2);
-    }
-
-    if (skipWIAN !== true && !useServerOpenAIGeneration) {
-        console.log('skipWIAN not active, adding WIAN');
-        // Add all depth WI entries to prompt
-        flushWIInjections();
-        if (Array.isArray(worldInfoDepth)) {
-            worldInfoDepth.forEach((e) => {
-                const joinedEntries = e.entries.join('\n');
-                setExtensionPrompt(inject_ids.CUSTOM_WI_DEPTH_ROLE(e.depth, e.role), joinedEntries, extension_prompt_types.IN_CHAT, e.depth, false, e.role);
-            });
-        }
-        if (outletEntries && typeof outletEntries === 'object' && Object.keys(outletEntries).length > 0) {
-            Object.entries(outletEntries).forEach(([key, value]) => {
-                setExtensionPrompt(inject_ids.CUSTOM_WI_OUTLET(key), value.join('\n'), extension_prompt_types.NONE, 0);
-            });
-        }
-    } else {
-        console.log('skipping WIAN');
     }
 
     // Add persona description to prompt
@@ -5608,17 +5561,6 @@ async function doChatInject(messages, isContinue) {
     };
 }
 
-function flushWIInjections() {
-    const depthPrefix = inject_ids.CUSTOM_WI_DEPTH;
-    const outletPrefix = inject_ids.CUSTOM_WI_OUTLET('');
-
-    for (const key of Object.keys(extension_prompts)) {
-        if (key.startsWith(depthPrefix) || key.startsWith(outletPrefix)) {
-            delete extension_prompts[key];
-        }
-    }
-}
-
 /**
  * Unblocks the UI after a generation is complete.
  * @param {string} [type] Generation type (optional)
@@ -5634,7 +5576,6 @@ function unblockGeneration(type) {
     showSwipeButtons();
     setGenerationProgress(0);
     flushEphemeralStoppingStrings();
-    flushWIInjections();
 }
 
 export function getNextMessageId(type) {
