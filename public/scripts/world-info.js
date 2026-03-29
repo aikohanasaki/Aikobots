@@ -3982,13 +3982,13 @@ export async function deleteWorldInfo(worldInfoName) {
     return true;
 }
 
-function deleteWorldInfoOnOverwrite(existingName) {
+async function deleteWorldInfoOnOverwrite(existingName) {
     const lorebook = getWorldInfoItem(existingName);
     if (lorebook?.storage === 'secure') {
         return;
     }
 
-    void deleteWorldInfo(existingName);
+    await deleteWorldInfo(existingName);
 }
 
 export function getFreeWorldEntryUid(data) {

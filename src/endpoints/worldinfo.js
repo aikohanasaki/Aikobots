@@ -23,7 +23,7 @@ export const readWorldInfoFile = readUserWorldInfoFile;
 
 export const router = express.Router();
 
-const world_info_insertion_strategy = {
+export const world_info_insertion_strategy = {
     evenly: 0,
     character_first: 1,
     global_first: 2,
@@ -239,7 +239,14 @@ export async function resolveSortedEntriesPayload(user, body = {}, options = {})
                 return [];
             }
 
-            return readEntries(user, worldName);
+            try {
+                return await readEntries(user, worldName);
+            } catch (error) {
+                if (error instanceof LorebookRepositoryError && error.type === 'LorebookNotFound') {
+                    return [];
+                }
+                throw error;
+            }
         }))).flat();
 
     const characterLore = [...visibleCharacterLore, ...hiddenCharacterLore];
@@ -280,7 +287,9 @@ export function prepareEntriesForScan(entries = [], env = {}) {
     const macroState = createMacroState(env.macroSnapshot || {}, extensionPrompts);
     const macroEnv = { ...env, __macroState: macroState };
     const regexScripts = Array.isArray(env.regexScripts) ? env.regexScripts : [];
-    const atDepthPosition = Number(env.worldInfoPosition?.atDepth);
+    const atDepthPosition = env.worldInfoPosition?.atDepth != null
+        ? Number(env.worldInfoPosition.atDepth)
+        : null;
     return entries.map((entry) => ({
         ...structuredClone(entry),
         key: Array.isArray(entry.key) ? entry.key.map((key) => substituteParams(key, macroEnv)) : entry.key,
@@ -288,7 +297,7 @@ export function prepareEntriesForScan(entries = [], env = {}) {
         content: substituteParams(getRegexedString(String(entry.content || ''), regex_placement.WORLD_INFO, regexScripts, macroEnv, {
             isMarkdown: false,
             isPrompt: true,
-            depth: entry.position === atDepthPosition ? (entry.depth ?? 4) : undefined,
+            depth: atDepthPosition !== null && entry.position === atDepthPosition ? (entry.depth ?? 4) : undefined,
             macroState,
         }), macroEnv),
     }));

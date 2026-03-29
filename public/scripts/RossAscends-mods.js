@@ -56,7 +56,6 @@ var WIDrawerIcon = document.getElementById('WIDrawerIcon');
 var SelectedCharacterTab = document.getElementById('rm_button_selected_ch');
 
 var connection_made = false;
-var retry_delay = 500;
 let counterNonce = Date.now();
 
 const observerConfig = { childList: true, subtree: true };
@@ -345,7 +344,6 @@ function RA_checkOnlineStatus() {
             $('#API-status-top').removeClass('fa-plug-circle-exclamation redOverlayGlow');
             $('#API-status-top').addClass('fa-plug');
             connection_made = true;
-            retry_delay = 100;
 
             if (!is_send_press && !(selected_group && is_group_generating)) {
                 $('#send_but').removeClass('displayNone'); //on connect, send button shows
@@ -357,7 +355,7 @@ function RA_checkOnlineStatus() {
 }
 //Auto-connect to API (when set to kobold, API URL exists, and auto_connect is true)
 
-function RA_autoconnect(PrevApi) {
+function RA_autoconnect() {
     // secrets.js or script.js not loaded
     if (SECRET_KEYS === undefined || online_status === undefined) {
         setTimeout(RA_autoconnect, 100);
@@ -396,11 +394,6 @@ function RA_autoconnect(PrevApi) {
                 break;
         }
 
-        if (!connection_made) {
-            retry_delay = Math.min(retry_delay * 2, 30000); // double retry delay up to to 30 secs
-            // console.log('connection attempts: ' + RA_AC_retries + ' delay: ' + (retry_delay / 1000) + 's');
-            // setTimeout(RA_autoconnect, retry_delay);
-        }
     }
 }
 
@@ -681,8 +674,7 @@ export function initRossMods() {
     }
 
     $('#main_api').on('change', function () {
-        var PrevAPI = main_api;
-        setTimeout(() => RA_autoconnect(PrevAPI), 100);
+        setTimeout(() => RA_autoconnect(), 100);
     });
 
     $('#api_button').on('click', () => checkStatusDebounced());
@@ -798,9 +790,9 @@ export function initRossMods() {
         } else { accountStorage.setItem('LNavOpened', 'false'); }
     });
 
-    //save state of Left nav being open or closed
-    $('#WorldInfo').on('click', function () {
-        if (!$('#WorldInfo').hasClass('openIcon')) {
+    //save state of World Info nav being open or closed
+    $('#WIDrawerIcon').on('click', function () {
+        if (!$('#WIDrawerIcon').hasClass('openIcon')) {
             accountStorage.setItem('WINavOpened', 'true');
         } else { accountStorage.setItem('WINavOpened', 'false'); }
     });
@@ -948,10 +940,10 @@ export function initRossMods() {
 
     function isModifiedKeyboardEvent(event) {
         return (event instanceof KeyboardEvent &&
-            event.shiftKey ||
-            event.ctrlKey ||
-            event.altKey ||
-            event.metaKey);
+            (event.shiftKey ||
+                event.ctrlKey ||
+                event.altKey ||
+                event.metaKey));
     }
 
     $(document).on('keydown', async function (event) {
@@ -1132,7 +1124,7 @@ export function initRossMods() {
         }
 
         if (event.key == 'ArrowUp') { //edits last message if chatbar is empty and focused
-            console.log('got uparrow input');
+            console.debug('got uparrow input');
             if (
                 hotkeyTargets['send_textarea'].value === '' &&
                 chatbarInFocus === true &&

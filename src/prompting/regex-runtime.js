@@ -5,6 +5,7 @@ export const regex_placement = {
     USER_INPUT: 1,
     AI_OUTPUT: 2,
     SLASH_COMMAND: 3,
+    // 4 - sendAs (legacy)
     WORLD_INFO: 5,
     REASONING: 6,
 };
@@ -23,7 +24,7 @@ function regexFromString(input) {
         }
 
         if (match[3] && !/^(?!.*?(.).*?\1)[gmixXsuUAJ]+$/.test(match[3])) {
-            return RegExp(input);
+            return;
         }
 
         return new RegExp(match[2], match[3]);
@@ -102,18 +103,20 @@ export function runRegexScript(regexScript, rawString, env = {}, { characterOver
         const args = [...arguments];
         const replaceString = String(regexScript.replaceString || '').replace(/{{match}}/gi, '$0');
         const replaceWithGroups = replaceString.replaceAll(/\$(\d+)|\$<([^>]+)>/g, (_, num, groupName) => {
+            let groupValue;
+
             if (num) {
-                match = args[Number(num)];
+                groupValue = args[Number(num)];
             } else if (groupName) {
                 const groups = args[args.length - 1];
-                match = groups && typeof groups === 'object' && groups[groupName];
+                groupValue = groups && typeof groups === 'object' && groups[groupName];
             }
 
-            if (!match) {
+            if (!groupValue) {
                 return '';
             }
 
-            return filterString(match, regexScript.trimStrings, runtimeEnv, { characterOverride, macroState: state });
+            return filterString(groupValue, regexScript.trimStrings, runtimeEnv, { characterOverride, macroState: state });
         });
 
         return evaluatePromptMacros(replaceWithGroups, runtimeEnv, { macroState: state });

@@ -586,7 +586,6 @@ async function switchZenSliders() {
     if (power_user.enableZenSliders) {
         $('#clickSlidersTips').hide();
         $('#pro-settings-block input[type=\'number\']').hide();
-        $('#pro-settings-block input[type=\'number\']').hide();
         $('#pro-settings-block input[type=\'range\']:not(#max_context)') // exclude max context because its creation is handled by switchMaxContext()
             .hide()
             .each(function () {
@@ -600,9 +599,7 @@ async function switchZenSliders() {
 
     function revertOriginalSliders() {
         $('#pro-settings-block input[type=\'number\']').show();
-        $('#pro-settings-block input[type=\'range\']').each(function () {
-            $(this).show();
-        });
+        $('#pro-settings-block input[type=\'range\']').show();
         $('div[id$="_zenslider"]').remove();
     }
 
@@ -1630,6 +1627,13 @@ export async function loadPowerUserSettings(settings, data) {
 
     if (power_user.tokenizer === tokenizers.LEGACY) {
         power_user.tokenizer = tokenizers.GPT2;
+    }
+
+    const normalizedTokenizer = Number(power_user.tokenizer);
+    const hasTokenizerOption = Number.isInteger(normalizedTokenizer)
+        && $(`#tokenizer option[value="${normalizedTokenizer}"]`).length > 0;
+    if (!hasTokenizerOption) {
+        power_user.tokenizer = tokenizers.BEST_MATCH;
     }
 
     // Clean up old/legacy settings

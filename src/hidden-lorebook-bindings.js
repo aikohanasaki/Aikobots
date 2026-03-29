@@ -73,7 +73,14 @@ function setCachedRegistry(filePath, data, mtimeMs) {
 
 export function readHiddenLorebookBindings({ rootDir = process.cwd() } = {}) {
     const filePath = getRegistryPath(rootDir);
-    const stat = fs.existsSync(filePath) ? fs.statSync(filePath) : null;
+    let stat = null;
+    try {
+        stat = fs.statSync(filePath);
+    } catch (error) {
+        if (error?.code !== 'ENOENT') {
+            throw error;
+        }
+    }
     const cached = getCachedRegistry(filePath, stat);
 
     if (cached) {

@@ -64,7 +64,6 @@ import { findGroupMemberId, groups, is_group_generating, openGroupById, resetSel
 import { chat_completion_sources, oai_settings, promptManager, ZAI_ENDPOINT } from './openai.js';
 import { user_avatar } from './personas.js';
 import { addEphemeralStoppingString, chat_styles, context_presets, flushEphemeralStoppingStrings, power_user } from './power-user.js';
-import { SERVER_INPUTS, textgen_types, textgenerationwebui_settings } from './textgen-settings.js';
 import { decodeTextTokens, getAvailableTokenizers, getFriendlyTokenizerName, getTextTokens, getTokenCountAsync, selectTokenizer } from './tokenizers.js';
 import { debounce, delay, equalsIgnoreCaseAndAccents, findChar, getCharIndex, isFalseBoolean, isTrueBoolean, onlyUnique, regexFromString, showFontAwesomePicker, stringToRange, trimToEndSentence, trimToStartSentence, waitUntilCondition } from './utils.js';
 import { registerVariableCommands, resolveVariable } from './variables.js';
@@ -86,7 +85,6 @@ import { accountStorage } from './util/AccountStorage.js';
 import { SlashCommandDebugController } from './slash-commands/SlashCommandDebugController.js';
 import { SlashCommandScope } from './slash-commands/SlashCommandScope.js';
 import { t } from './i18n.js';
-import { kai_settings } from './kai-settings.js';
 import { instruct_presets, selectContextPreset, selectInstructPreset } from './instruct-mode.js';
 import { debounce_timeout } from './constants.js';
 export {
@@ -121,9 +119,8 @@ function closureToFilter(closure) {
 
 /**
  * @typedef {object} ConnectAPIMap
- * @property {string} selected - API name (e.g. "textgenerationwebui", "openai")
+ * @property {string} selected - API name (e.g. "openai")
  * @property {string?} [button] - CSS selector for the API button
- * @property {string?} [type] - API type, mostly used by text completion. (e.g. "openrouter")
  * @property {string?} [source] - API source, mostly used by chat completion. (e.g. "openai")
  */
 
@@ -136,29 +133,6 @@ export const UNIQUE_APIS = [];
 function setupConnectAPIMap() {
     /** @type {Record<string, ConnectAPIMap>} */
     const result = {
-        // Default APIs not contained inside text gen / chat gen
-        'kobold': {
-            selected: 'kobold',
-            button: '#api_button',
-        },
-        'horde': {
-            selected: 'koboldhorde',
-        },
-        'novel': {
-            selected: 'novel',
-            button: '#api_button_novel',
-        },
-        'koboldcpp': {
-            selected: 'textgenerationwebui',
-            button: '#api_button_textgenerationwebui',
-            type: textgen_types.KOBOLDCPP,
-        },
-        // KoboldCpp alias
-        'kcpp': {
-            selected: 'textgenerationwebui',
-            button: '#api_button_textgenerationwebui',
-            type: textgen_types.KOBOLDCPP,
-        },
         'openai': {
             selected: 'openai',
             button: '#api_button_openai',
@@ -182,22 +156,7 @@ function setupConnectAPIMap() {
             button: '#api_button_openai',
             source: chat_completion_sources.OPENROUTER,
         },
-        'openrouter-text': {
-            selected: 'textgenerationwebui',
-            button: '#api_button_textgenerationwebui',
-            type: textgen_types.OPENROUTER,
-        },
     };
-
-    // Fill connections map from textgen_types and chat_completion_sources
-    for (const textGenType of Object.values(textgen_types)) {
-        if (result[textGenType]) continue;
-        result[textGenType] = {
-            selected: 'textgenerationwebui',
-            button: '#api_button_textgenerationwebui',
-            type: textGenType,
-        };
-    }
 
     for (const chatCompletionSource of Object.values(chat_completion_sources)) {
         if (result[chatCompletionSource]) continue;
@@ -246,14 +205,6 @@ export function initDefaultSlashCommands() {
                         }
                     }
 
-                    if (config.type) {
-                        if (textgenerationwebui_settings.type === config.type) {
-                            return key;
-                        } else {
-                            continue;
-                        }
-                    }
-
                     return key;
                 }
 
@@ -278,12 +229,6 @@ export function initDefaultSlashCommands() {
             if (apiConfig.source && oai_settings.chat_completion_source !== apiConfig.source) {
                 $(`#chat_completion_source option[value='${apiConfig.source}']`).prop('selected', true);
                 $('#chat_completion_source').trigger('change');
-                connectionRequired = true;
-            }
-
-            if (apiConfig.type && textgenerationwebui_settings.type !== apiConfig.type) {
-                $(`#textgen_type option[value='${apiConfig.type}']`).prop('selected', true);
-                $('#textgen_type').trigger('change');
                 connectionRequired = true;
             }
 
@@ -2552,8 +2497,6 @@ export function initDefaultSlashCommands() {
                 enumList: [
                     new SlashCommandEnumValue('custom', 'custom OpenAI-compatible', enumTypes.getBasedOnIndex(UNIQUE_APIS.findIndex(x => x === 'openai')), 'O'),
                     new SlashCommandEnumValue('zai', 'Z.AI', enumTypes.getBasedOnIndex(UNIQUE_APIS.findIndex(x => x === 'zai')), 'Z'),
-                    new SlashCommandEnumValue('kobold', 'KoboldAI Classic', enumTypes.getBasedOnIndex(UNIQUE_APIS.findIndex(x => x === 'kobold')), 'K'),
-                    ...Object.values(textgen_types).map(api => new SlashCommandEnumValue(api, null, enumTypes.getBasedOnIndex(UNIQUE_APIS.findIndex(x => x === 'textgenerationwebui')), 'T')),
                 ],
             }),
             SlashCommandNamedArgument.fromProps({
@@ -2579,13 +2522,13 @@ export function initDefaultSlashCommands() {
         ],
         helpString: `
             <div>
-                ${t`Set the API url / server url for the currently selected API, including the port. If no argument is provided, it will return the current API url.`}
+                ${t`Set the API url / server url for the currently selected supported API. If no argument is provided, it will return the current API url.`}
             </div>
             <div>
                 ${t`If a manual API is provided to <b>set</b> the URL, make sure to set <code>connect=false</code>, as auto-connect only works for the currently selected API, or consider switching to it with <code>/api</code> first.`}
             </div>
             <div>
-                ${t`This slash command works for most of the Text Completion sources, KoboldAI Classic, and also Custom OpenAI compatible and Z.AI for the Chat Completion sources. If unsure which APIs are supported, check the auto-completion of the optional <code>api</code> argument of this command.`}
+                ${t`This slash command currently supports Custom OpenAI-compatible and Z.AI chat completion connections. If unsure which APIs are supported, check the auto-completion of the optional <code>api</code> argument of this command.`}
             </div>
         `,
     }));
@@ -4822,18 +4765,6 @@ function setBackgroundCallback(_, bg) {
 function getModelOptions(quiet) {
     const nullResult = { control: null, options: null };
     const modelSelectMap = [
-        { id: 'generic_model_textgenerationwebui', api: 'textgenerationwebui', type: textgen_types.GENERIC },
-        { id: 'custom_model_textgenerationwebui', api: 'textgenerationwebui', type: textgen_types.OOBA },
-        { id: 'model_togetherai_select', api: 'textgenerationwebui', type: textgen_types.TOGETHERAI },
-        { id: 'openrouter_model', api: 'textgenerationwebui', type: textgen_types.OPENROUTER },
-        { id: 'model_infermaticai_select', api: 'textgenerationwebui', type: textgen_types.INFERMATICAI },
-        { id: 'model_dreamgen_select', api: 'textgenerationwebui', type: textgen_types.DREAMGEN },
-        { id: 'mancer_model', api: 'textgenerationwebui', type: textgen_types.MANCER },
-        { id: 'vllm_model', api: 'textgenerationwebui', type: textgen_types.VLLM },
-        { id: 'aphrodite_model', api: 'textgenerationwebui', type: textgen_types.APHRODITE },
-        { id: 'ollama_model', api: 'textgenerationwebui', type: textgen_types.OLLAMA },
-        { id: 'tabby_model', api: 'textgenerationwebui', type: textgen_types.TABBY },
-        { id: 'featherless_model', api: 'textgenerationwebui', type: textgen_types.FEATHERLESS },
         { id: 'model_openai_select', api: 'openai', type: chat_completion_sources.OPENAI },
         { id: 'model_claude_select', api: 'openai', type: chat_completion_sources.CLAUDE },
         { id: 'model_openrouter_select', api: 'openai', type: chat_completion_sources.OPENROUTER },
@@ -4856,14 +4787,10 @@ function getModelOptions(quiet) {
         { id: 'model_fireworks_select', api: 'openai', type: chat_completion_sources.FIREWORKS },
         { id: 'model_cometapi_select', api: 'openai', type: chat_completion_sources.COMETAPI },
         { id: 'model_zai_select', api: 'openai', type: chat_completion_sources.ZAI },
-        { id: 'model_novel_select', api: 'novel', type: null },
-        { id: 'horde_model', api: 'koboldhorde', type: null },
     ];
 
     function getSubType() {
         switch (main_api) {
-            case 'textgenerationwebui':
-                return textgenerationwebui_settings.type;
             case 'openai':
                 return oai_settings.chat_completion_source;
             default:
@@ -5126,7 +5053,7 @@ function setPromptEntryCallback(args, targetState) {
 }
 
 /**
- * Sets the API URL and triggers the text generation web UI button click.
+ * Sets the API URL for supported chat-completion connections.
  *
  * @param {object} args - named args
  * @param {string?} [args.api=null] - the API name to set/get the URL for
@@ -5186,71 +5113,13 @@ async function setApiUrlCallback({ api = null, connect = 'true', quiet = 'false'
         return oai_settings.zai_endpoint || ZAI_ENDPOINT.COMMON;
     }
 
-    // Special handling for Kobold Classic API
-    const isCurrentlyKoboldClassic = main_api === 'kobold';
-    if (api === 'kobold' || (!api && isCurrentlyKoboldClassic)) {
-        if (!url) {
-            return kai_settings.api_server ?? '';
-        }
-
-        if (!isCurrentlyKoboldClassic && autoConnect) {
-            toastr.warning(t`Kobold Classic API is not the currently selected API, so we cannot do an auto-connect. Consider switching to it via /api beforehand.`);
-            return '';
-        }
-
-        $('#api_url_text').val(url).trigger('input');
-        // trigger blur debounced, so we hide the autocomplete menu
-        setTimeout(() => $('#api_url_text').trigger('blur'), 1);
-
-        if (autoConnect) {
-            $('#api_button').trigger('click');
-        }
-
-        return kai_settings.api_server ?? '';
-    }
-
-    // Do some checks and get the api type we are targeting with this command
-    if (api && !Object.values(textgen_types).includes(api)) {
-        !isQuiet && toastr.warning(t`API '${api}' is not a valid text_gen API.`);
-        return '';
-    }
-    if (!api && !Object.values(textgen_types).includes(textgenerationwebui_settings.type)) {
-        !isQuiet && toastr.warning(t`API '${textgenerationwebui_settings.type}' is not a valid text_gen API.`);
-        return '';
-    }
-    if (!api && main_api !== 'textgenerationwebui') {
-        !isQuiet && toastr.warning(t`API type '${main_api}' does not support setting the server URL.`);
-        return '';
-    }
-    if (api && url && autoConnect && api !== textgenerationwebui_settings.type) {
-        !isQuiet && toastr.warning(t`API '${api}' is not the currently selected API, so we cannot do an auto-connect. Consider switching to it via /api beforehand.`);
-        return '';
-    }
-    const type = api || textgenerationwebui_settings.type;
-
-    const inputSelector = SERVER_INPUTS[type];
-    if (!inputSelector) {
-        !isQuiet && toastr.warning(t`API '${type}' does not have a server url input.`);
+    if (api) {
+        !isQuiet && toastr.warning(t`API '${api}' does not support setting the server URL.`);
         return '';
     }
 
-    // If no url was provided, return the current one
-    if (!url) {
-        return textgenerationwebui_settings.server_urls[type] ?? '';
-    }
-
-    // else, we want to actually set the url
-    $(inputSelector).val(url).trigger('input');
-    // trigger blur debounced, so we hide the autocomplete menu
-    setTimeout(() => $(inputSelector).trigger('blur'), 1);
-
-    // Trigger the auto connect via connect button, if requested
-    if (autoConnect) {
-        $('#api_button_textgenerationwebui').trigger('click');
-    }
-
-    // We still re-acquire the value, as it might have been modified by the validation on connect
-    return textgenerationwebui_settings.server_urls[type] ?? '';
+    !isQuiet && toastr.warning(t`API type '${main_api}' does not support setting the server URL.`);
+    return '';
 }
 
 async function selectTokenizerCallback(_, name) {

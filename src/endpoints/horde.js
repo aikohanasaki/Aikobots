@@ -1,11 +1,9 @@
-import fetch from 'node-fetch';
 import express from 'express';
 import { AIHorde, ModelGenerationInputStableSamplers, ModelInterrogationFormTypes, HordeAsyncRequestStates } from '@zeldafan0225/ai_horde';
-import { getVersion, delay, Cache } from '../util.js';
+import { getVersion, delay } from '../util.js';
 import { readSecret, SECRET_KEYS } from './secrets.js';
 
 const ANONYMOUS_KEY = '0000000000';
-const cache = new Cache(60 * 1000);
 export const router = express.Router();
 
 /**
@@ -117,6 +115,8 @@ router.post('/caption-image', async (request, response) => {
             }
         }
 
+        console.warn('Image interrogation request timed out after maximum attempts.');
+        return response.sendStatus(504);
     } catch (error) {
         console.error(error);
         response.sendStatus(500);
@@ -198,7 +198,7 @@ router.post('/generate-image', async (request, response) => {
                     n: 1,
                 },
                 r2: false,
-                nsfw: request.body.nfsw,
+                nsfw: request.body.nsfw,
                 models: [request.body.model],
             },
             { token: api_key_horde });

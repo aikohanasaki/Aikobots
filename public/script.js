@@ -221,7 +221,6 @@ import { currentUser, setUserControls } from './scripts/user.js';
 import { POPUP_RESULT, POPUP_TYPE, Popup, callGenericPopup, fixToastrForDialogs } from './scripts/popup.js';
 import { renderTemplate, renderTemplateAsync } from './scripts/templates.js';
 import { initScrapers } from './scripts/scrapers.js';
-import { initCustomSelectedSamplers, validateDisabledSamplers } from './scripts/samplerSelect.js';
 import { DragAndDropHandler } from './scripts/dragdrop.js';
 import { INTERACTABLE_CONTROL_CLASS, initKeyboard } from './scripts/keyboard.js';
 import { initDynamicStyles } from './scripts/dynamic-styles.js';
@@ -252,11 +251,11 @@ import { SimpleMutex } from './scripts/util/SimpleMutex.js';
 import { AudioPlayer } from './scripts/audio-player.js';
 
 async function debugServerAssemblyToPrompt(promptContext = null) {
-    const dump = await debugServerAssemblyDump(promptContext);
-
     if (!isAdmin()) {
-        return dump;
+        throw new Error('Server assembly debugging is only available to admins.');
     }
+
+    const dump = await debugServerAssemblyDump(promptContext);
 
     if (!Array.isArray(itemizedPrompts)) {
         return dump;
@@ -741,7 +740,6 @@ async function firstLoadInit() {
     initReasoning();
     initWelcomeScreen();
     await initScrapers();
-    initCustomSelectedSamplers();
     initDataMaid();
     initItemizedPrompts();
     initAccessibility();
@@ -2525,7 +2523,7 @@ export function addOneMessage(mes, { type = 'normal', insertAfter = null, scroll
     }
 
     // Shows the Prompt display button for admins only.
-    let mesIdToFind = type === 'swipe' ? params.mesId - 1 : params.mesId;  //Number(newMessage.attr('mesId'));
+    const mesIdToFind = newMessageId;
     const promptButton = newMessage.find('.mes_prompt');
     promptButton.hide();
 
@@ -7234,7 +7232,6 @@ export function changeMainAPI() {
     main_api = selectedVal;
     setChatCompletionNullControlsDisabled(main_api === 'openai');
     setOnlineStatus('no_connection');
-    validateDisabledSamplers();
     setupChatCompletionPromptManager(oai_settings);
     forceCharacterEditorTokenize();
     enforceChatCompletionsOnlyMode();
@@ -7391,7 +7388,6 @@ export async function getSettings() {
             firstRun = false;
         }
     }
-    await validateDisabledSamplers();
     settingsReady = true;
     await eventSource.emit(event_types.SETTINGS_LOADED);
 }

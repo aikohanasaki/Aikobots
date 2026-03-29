@@ -1,7 +1,7 @@
 import { describe, expect, it, jest } from '@jest/globals';
 
 import { LorebookRepositoryError } from '../src/lorebook-repository.js';
-import { resolveSortedEntriesPayload } from '../src/endpoints/worldinfo.js';
+import { resolveSortedEntriesPayload, world_info_insertion_strategy } from '../src/endpoints/worldinfo.js';
 
 describe('resolveSortedEntriesPayload hidden bindings', () => {
     it('merges hidden bindings into character lore without duplicating visible lorebooks', async () => {
@@ -23,7 +23,7 @@ describe('resolveSortedEntriesPayload hidden bindings', () => {
                 characterWorld: 'Visible',
                 characterExtraBooks: ['VisibleExtra'],
                 currentCharacterFilename: 'char_a',
-                worldInfoCharacterStrategy: 1,
+                worldInfoCharacterStrategy: world_info_insertion_strategy.character_first,
             },
             {
                 readEntries: async (_user, name) => structuredClone(worldEntries[name] ?? []),
@@ -38,29 +38,30 @@ describe('resolveSortedEntriesPayload hidden bindings', () => {
 
     it('warns and skips missing hidden lorebooks safely', async () => {
         const warnSpy = jest.spyOn(console, 'warn').mockImplementation(() => {});
-
-        const result = await resolveSortedEntriesPayload(
-            { profile: { handle: 'tester' } },
-            {
-                currentCharacterFilename: 'char_a',
-            },
-            {
-                readEntries: async (_user, name) => {
-                    if (name === 'Missing') {
-                        throw new LorebookRepositoryError('LorebookNotFound', 'missing', 404);
-                    }
-
-                    return [];
+        try {
+            const result = await resolveSortedEntriesPayload(
+                { profile: { handle: 'tester' } },
+                {
+                    currentCharacterFilename: 'char_a',
                 },
-                getHiddenBooks: () => ['Missing'],
-                hasLorebook: () => false,
-            },
-        );
+                {
+                    readEntries: async (_user, name) => {
+                        if (name === 'Missing') {
+                            throw new LorebookRepositoryError('LorebookNotFound', 'missing', 404);
+                        }
 
-        expect(result.characterLore).toEqual([]);
-        expect(result.entries).toEqual([]);
-        expect(warnSpy).toHaveBeenCalledWith('[WI] Hidden lorebook "Missing" not found for character "char_a". Skipping.');
+                        return [];
+                    },
+                    getHiddenBooks: () => ['Missing'],
+                    hasLorebook: () => false,
+                },
+            );
 
-        warnSpy.mockRestore();
+            expect(result.characterLore).toEqual([]);
+            expect(result.entries).toEqual([]);
+            expect(warnSpy).toHaveBeenCalledWith('[WI] Hidden lorebook "Missing" not found for character "char_a". Skipping.');
+        } finally {
+            warnSpy.mockRestore();
+        }
     });
 });

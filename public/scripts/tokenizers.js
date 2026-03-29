@@ -51,8 +51,8 @@ export const ENCODE_TOKENIZERS = [
 ];
 
 /**
- * A list of Text Completion sources that support remote tokenization.
- * Populated in initTokenziers due to circular dependencies.
+ * Retained for compatibility with older tokenization flows.
+ * The legacy text-completion remote tokenizer paths are no longer populated.
  * @type {string[]}
  */
 export const TEXTGEN_TOKENIZERS = [];
@@ -794,20 +794,9 @@ function countTokensFromServer(endpoint, str, resolve) {
 
 function apiFailureTokenCount(str) {
     console.error('Error counting tokens');
-    let shouldTryAgain = false;
 
     if (!sessionStorage.getItem(TOKENIZER_WARNING_KEY)) {
-        const bestMatchBefore = getTokenizerBestMatch(main_api);
         sessionStorage.setItem(TOKENIZER_WARNING_KEY, String(true));
-        const bestMatchAfter = getTokenizerBestMatch(main_api);
-        if (bestMatchBefore !== bestMatchAfter) {
-            shouldTryAgain = true;
-        }
-    }
-
-    // Only try again if we guarantee not to be looped by the same error
-    if (shouldTryAgain && power_user.tokenizer === tokenizers.BEST_MATCH) {
-        return getTokenCount(str);
     }
 
     return guesstimate(str);

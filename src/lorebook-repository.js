@@ -316,7 +316,6 @@ export async function listLorebooksForManagement(user) {
     const secureRecords = new Map();
 
     for (const [name, metadata] of Object.entries(secureIndex.books)) {
-        const ownerHandle = String(metadata?.ownerHandle || '');
         const secureRecord = getSecureIndexEntry(name);
 
         if (!secureRecord) {
@@ -324,9 +323,6 @@ export async function listLorebooksForManagement(user) {
         }
 
         secureRecords.set(name, secureRecord);
-        if (!user.profile.admin && ownerHandle !== currentHandle) {
-            continue;
-        }
     }
 
     if (fs.existsSync(worldsDir)) {

@@ -930,6 +930,12 @@ function createRouteHandler(directoryFn) {
         try {
             const directory = directoryFn(req);
             const filePath = decodeURIComponent(req.params[0]);
+            const resolvedDirectory = path.resolve(directory);
+            const resolvedPath = path.resolve(directory, filePath);
+            const relativePath = path.relative(resolvedDirectory, resolvedPath);
+            if (relativePath.startsWith('..') || path.isAbsolute(relativePath)) {
+                return res.sendStatus(403);
+            }
             const exists = fs.existsSync(path.join(directory, filePath));
             if (!exists) {
                 return res.sendStatus(404);
@@ -953,6 +959,18 @@ function createExtensionsRouteHandler(directoryFn) {
         try {
             const directory = directoryFn(req);
             const filePath = decodeURIComponent(req.params[0]);
+            const resolvedDirectory = path.resolve(directory);
+            const resolvedPath = path.resolve(directory, filePath);
+            const relativePath = path.relative(resolvedDirectory, resolvedPath);
+
+            if (relativePath.startsWith('..') || path.isAbsolute(relativePath)) {
+                const resolvedGlobalDirectory = path.resolve(PUBLIC_DIRECTORIES.globalExtensions);
+                const resolvedGlobalPath = path.resolve(PUBLIC_DIRECTORIES.globalExtensions, filePath);
+                const globalRelativePath = path.relative(resolvedGlobalDirectory, resolvedGlobalPath);
+                if (globalRelativePath.startsWith('..') || path.isAbsolute(globalRelativePath)) {
+                    return res.sendStatus(403);
+                }
+            }
 
             const existsLocal = fs.existsSync(path.join(directory, filePath));
             if (existsLocal) {

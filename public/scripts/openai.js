@@ -115,7 +115,14 @@ function sanitizeForServerPayload(value, seen = new WeakSet()) {
     }
 
     if (Array.isArray(value)) {
-        return value.map(item => sanitizeForServerPayload(item, seen)).filter(item => item !== undefined);
+        if (seen.has(value)) {
+            return undefined;
+        }
+        seen.add(value);
+
+        const result = value.map(item => sanitizeForServerPayload(item, seen)).filter(item => item !== undefined);
+        seen.delete(value);
+        return result;
     }
 
     if (valueType !== 'object') {
@@ -140,8 +147,11 @@ function sanitizeForServerPayload(value, seen = new WeakSet()) {
 }
 
 function storeServerAssemblyPromptContext(promptContext) {
-    lastServerAssemblyPromptContext = promptContext && typeof promptContext === 'object'
-        ? structuredClone(promptContext)
+    const sanitizedPromptContext = promptContext && typeof promptContext === 'object'
+        ? sanitizeForServerPayload(promptContext)
+        : null;
+    lastServerAssemblyPromptContext = sanitizedPromptContext && typeof sanitizedPromptContext === 'object'
+        ? sanitizedPromptContext
         : null;
 }
 
@@ -162,11 +172,12 @@ export function getLastServerAssemblyDebugDump() {
 }
 
 export async function debugServerAssemblyDump(promptContext = null) {
-    const context = promptContext && typeof promptContext === 'object'
-        ? structuredClone(promptContext)
-        : (lastServerAssemblyPromptContext && typeof lastServerAssemblyPromptContext === 'object'
-            ? structuredClone(lastServerAssemblyPromptContext)
-            : null);
+    const sourceContext = promptContext && typeof promptContext === 'object'
+        ? promptContext
+        : lastServerAssemblyPromptContext;
+    const context = sourceContext && typeof sourceContext === 'object'
+        ? sanitizeForServerPayload(sourceContext)
+        : null;
 
     if (!context) {
         throw new Error('No promptContext is available for server assembly debug.');

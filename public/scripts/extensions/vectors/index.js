@@ -110,7 +110,6 @@ const settings = {
 const moduleWorker = new ModuleWorkerWrapper(synchronizeChat);
 const webllmProvider = new WebLlmVectorProvider();
 const cachedSummaries = new Map();
-const vectorApiRequiresUrl = [];
 
 /**
  * Gets the Collection ID for a file embedded in the chat.

@@ -33,8 +33,8 @@ export async function loadItemizedPrompts(chatId) {
         if (!itemizedPrompts) {
             itemizedPrompts = [];
         }
-    } catch {
-        console.log('Error loading itemized prompts for chat', chatId);
+    } catch (error) {
+        console.error('Error loading itemized prompts for chat', chatId, error);
         itemizedPrompts = [];
     }
 }
@@ -51,8 +51,8 @@ export async function saveItemizedPrompts(chatId) {
         }
 
         await promptStorage.setItem(chatId, itemizedPrompts);
-    } catch {
-        console.log('Error saving itemized prompts for chat', chatId);
+    } catch (error) {
+        console.error('Error saving itemized prompts for chat', chatId, error);
     }
 }
 
@@ -99,8 +99,8 @@ export async function clearItemizedPrompts() {
     try {
         await promptStorage.clear();
         itemizedPrompts = [];
-    } catch {
-        console.log('Error clearing itemized prompts');
+    } catch (error) {
+        console.error('Error clearing itemized prompts', error);
     }
 }
 
@@ -213,7 +213,8 @@ export async function itemizedParams(itemizedPrompts, thisPromptSet, incomingMes
         params.storyStringTokensPercentage = getPercentage(params.oaiPromptTokens, params.finalPromptTokens);
         params.ActualChatHistoryTokensPercentage = getPercentage(params.ActualChatHistoryTokens, params.finalPromptTokens);
         params.promptBiasTokensPercentage = getPercentage(params.oaiBiasTokens, params.finalPromptTokens);
-        params.worldInfoStringTokensPercentage = getPercentage(params.worldInfoTotalTokens, params.finalPromptTokens);
+        params.worldInfoTotalTokensPercentage = getPercentage(params.worldInfoTotalTokens, params.finalPromptTokens);
+        params.worldInfoStringTokensPercentage = params.worldInfoTotalTokensPercentage;
         params.allAnchorsTokensPercentage = getPercentage(params.allAnchorsTokens, params.finalPromptTokens);
         params.selectedTokenizer = getFriendlyTokenizerName(params.this_main_api).tokenizerName;
         params.oaiSystemTokens = params.oaiImpersonateTokens + params.oaiJailbreakTokens + params.oaiNudgeTokens + params.oaiStartTokens + params.oaiNsfwTokens + params.oaiMainTokens;
@@ -221,13 +222,13 @@ export async function itemizedParams(itemizedPrompts, thisPromptSet, incomingMes
     } else {
         //for non-OAI APIs
         //console.log('-- Counting non-OAI Tokens');
-        params.finalPromptTokens = await getTokenCountAsync(itemizedPrompts[thisPromptSet].finalPrompt);
-        params.storyStringTokens = await getTokenCountAsync(itemizedPrompts[thisPromptSet].storyString) - params.worldInfoStringTokens;
-        params.examplesStringTokens = await getTokenCountAsync(itemizedPrompts[thisPromptSet].examplesString);
-        params.mesSendStringTokens = await getTokenCountAsync(itemizedPrompts[thisPromptSet].mesSendString);
+        params.finalPromptTokens = await getTokenCountAsync(itemizedPrompt.finalPrompt);
+        params.storyStringTokens = await getTokenCountAsync(itemizedPrompt.storyString) - params.worldInfoStringTokens;
+        params.examplesStringTokens = await getTokenCountAsync(itemizedPrompt.examplesString);
+        params.mesSendStringTokens = await getTokenCountAsync(itemizedPrompt.mesSendString);
         params.ActualChatHistoryTokens = params.mesSendStringTokens - (params.allAnchorsTokens - (params.beforeScenarioAnchorTokens + params.afterScenarioAnchorTokens)) - params.worldInfoDepthTokens + power_user.token_padding;
-        params.instructionTokens = await getTokenCountAsync(itemizedPrompts[thisPromptSet].instruction);
-        params.promptBiasTokens = await getTokenCountAsync(itemizedPrompts[thisPromptSet].promptBias);
+        params.instructionTokens = await getTokenCountAsync(itemizedPrompt.instruction);
+        params.promptBiasTokens = await getTokenCountAsync(itemizedPrompt.promptBias);
         params.worldInfoTotalTokens = params.worldInfoStringTokens + params.worldInfoDepthTokens;
 
         params.totalTokensInPrompt =
@@ -240,16 +241,17 @@ export async function itemizedParams(itemizedPrompts, thisPromptSet, incomingMes
             //zeroDepthAnchorTokens +           //same as above, even if AN not on 0 depth
             params.promptBiasTokens;       //{{}}
         //- thisPrompt_padding;  //not sure this way of calculating is correct, but the math results in same value as 'finalPrompt'
-        params.thisPrompt_max_context = itemizedPrompts[thisPromptSet].this_max_context;
+        params.thisPrompt_max_context = itemizedPrompt.this_max_context;
         params.thisPrompt_actual = params.thisPrompt_max_context - params.thisPrompt_padding;
 
         //console.log('-- applying % on non-OAI tokens');
-        params.storyStringTokensPercentage = ((params.storyStringTokens / (params.totalTokensInPrompt)) * 100).toFixed(2);
-        params.ActualChatHistoryTokensPercentage = ((params.ActualChatHistoryTokens / (params.totalTokensInPrompt)) * 100).toFixed(2);
-        params.promptBiasTokensPercentage = ((params.promptBiasTokens / (params.totalTokensInPrompt)) * 100).toFixed(2);
-        params.worldInfoStringTokensPercentage = ((params.worldInfoTotalTokens / (params.totalTokensInPrompt)) * 100).toFixed(2);
-        params.allAnchorsTokensPercentage = ((params.allAnchorsTokens / (params.totalTokensInPrompt)) * 100).toFixed(2);
-        params.selectedTokenizer = itemizedPrompts[thisPromptSet]?.tokenizer || getFriendlyTokenizerName(params.this_main_api).tokenizerName;
+        params.storyStringTokensPercentage = getPercentage(params.storyStringTokens, params.totalTokensInPrompt);
+        params.ActualChatHistoryTokensPercentage = getPercentage(params.ActualChatHistoryTokens, params.totalTokensInPrompt);
+        params.promptBiasTokensPercentage = getPercentage(params.promptBiasTokens, params.totalTokensInPrompt);
+        params.worldInfoTotalTokensPercentage = getPercentage(params.worldInfoTotalTokens, params.totalTokensInPrompt);
+        params.worldInfoStringTokensPercentage = params.worldInfoTotalTokensPercentage;
+        params.allAnchorsTokensPercentage = getPercentage(params.allAnchorsTokens, params.totalTokensInPrompt);
+        params.selectedTokenizer = itemizedPrompt?.tokenizer || getFriendlyTokenizerName(params.this_main_api).tokenizerName;
     }
     return params;
 }

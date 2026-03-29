@@ -10,9 +10,10 @@ import { ARGUMENT_TYPE, SlashCommandArgument, SlashCommandNamedArgument } from '
 import { commonEnumProviders } from '../../slash-commands/SlashCommandCommonEnumsProvider.js';
 import { callGenericPopup, Popup, POPUP_TYPE } from '../../popup.js';
 import { MEDIA_DISPLAY, MEDIA_SOURCE, MEDIA_TYPE, SCROLL_BEHAVIOR } from '../../constants.js';
-export { MODULE_NAME };
 
 const MODULE_NAME = 'caption';
+
+export { MODULE_NAME };
 
 const PROMPT_DEFAULT = 'What\'s in this image?';
 const TEMPLATE_DEFAULT = '[{{user}} sends {{char}} a picture that contains: {{caption}}]';
@@ -62,7 +63,7 @@ function migrateSettings() {
 /**
  * Sets an image icon for the send button.
  */
-async function setImageIcon() {
+function setImageIcon() {
     try {
         const sendButton = $('#send_picture .extensionsMenuExtensionButton');
         sendButton.addClass('fa-image');
@@ -76,7 +77,7 @@ async function setImageIcon() {
 /**
  * Sets a spinner icon for the send button.
  */
-async function setSpinnerIcon() {
+function setSpinnerIcon() {
     try {
         const sendButton = $('#send_picture .extensionsMenuExtensionButton');
         sendButton.removeClass('fa-image');

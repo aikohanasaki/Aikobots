@@ -22,7 +22,6 @@ export async function getMultimodalCaption(base64Img, prompt) {
     throwIfInvalidModel(useReverseProxy);
 
     // OpenRouter has a payload limit of ~2MB. Google is 4MB, but we love democracy.
-    // Ooba requires all images to be JPEGs. Koboldcpp just asked nicely.
     const isCustom = extension_settings.caption.multimodal_api === 'custom';
     const base64Bytes = base64Img.length * 0.75;
     const compressionLimit = 2 * 1024 * 1024;
@@ -91,7 +90,6 @@ export async function getMultimodalCaption(base64Img, prompt) {
 }
 
 function throwIfInvalidModel(useReverseProxy) {
-    const multimodalModel = extension_settings.caption.multimodal_model;
     const multimodalApi = extension_settings.caption.multimodal_api;
 
     if (multimodalApi === 'openai' && !secret_state[SECRET_KEYS.OPENAI] && !useReverseProxy) {
@@ -362,12 +360,10 @@ export class ConnectionManagerRequestService {
             return false;
         }
 
-        // Some providers not need model, like koboldcpp. But I don't want to check by provider.
+        // Some providers don't need model. But I don't want to check by provider.
         switch (apiMap.selected) {
             case 'openai':
                 return !!apiMap.source;
-            case 'textgenerationwebui':
-                return !!apiMap.type;
         }
 
         return false;
@@ -399,12 +395,12 @@ export class ConnectionManagerRequestService {
     }
 
     /**
-     * Create profiles dropdown and updates select element accordingly. Use onChange, onCreate, unUpdate, onDelete callbacks for custom behaviour. e.g updating extension settings.
+     * Create profiles dropdown and updates select element accordingly. Use onChange, onCreate, onUpdate, onDelete callbacks for custom behaviour. e.g updating extension settings.
      * @param {string} selector
      * @param {string} initialSelectedProfileId
      * @param {(profile?: import('./connection-manager/index.js').ConnectionProfile) => Promise<void> | void} onChange - 3 cases. 1- When user selects new profile. 2- When user deletes selected profile. 3- When user updates selected profile.
      * @param {(profile: import('./connection-manager/index.js').ConnectionProfile) => Promise<void> | void} onCreate
-     * @param {(oldProfile: import('./connection-manager/index.js').ConnectionProfile, newProfile: import('./connection-manager/index.js').ConnectionProfile) => Promise<void> | void} unUpdate
+     * @param {(oldProfile: import('./connection-manager/index.js').ConnectionProfile, newProfile: import('./connection-manager/index.js').ConnectionProfile) => Promise<void> | void} onUpdate
      * @param {(profile: import('./connection-manager/index.js').ConnectionProfile) => Promise<void> | void} onDelete
      */
     static handleDropdown(
@@ -412,7 +408,7 @@ export class ConnectionManagerRequestService {
         initialSelectedProfileId,
         onChange = () => { },
         onCreate = () => { },
-        unUpdate = () => { },
+        onUpdate = () => { },
         onDelete = () => { },
     ) {
         const context = SillyTavern.getContext();
@@ -506,7 +502,7 @@ export class ConnectionManagerRequestService {
         context.eventSource.on(context.eventTypes.CONNECTION_PROFILE_UPDATED, async (oldProfile, newProfile) => {
             const currentSelected = dropdown.val();
             const isSelectedProfile = currentSelected === oldProfile.id;
-            await unUpdate(oldProfile, newProfile);
+            await onUpdate(oldProfile, newProfile);
 
             if (!this.isProfileSupported(newProfile)) {
                 if (isSelectedProfile) {

@@ -187,6 +187,9 @@ export function resolveSecretKey() {
                     return SECRET_KEYS.VERTEXAI;
                 case 'full':
                     return SECRET_KEYS.VERTEXAI_SERVICE_ACCOUNT;
+                default:
+                    console.warn(`Unknown vertexai_auth_mode: ${chatCompletionSettings.vertexai_auth_mode}`);
+                    break;
             }
         }
 
@@ -251,7 +254,7 @@ async function viewSecrets() {
         headers: getRequestHeaders(),
     });
 
-    if (response.status == 403) {
+    if (response.status === 403) {
         await Popup.show.text(t`Forbidden`, t`To view your API keys here, set the value of allowKeysExposure to true in config.yaml file and restart the SillyTavern server.`);
         return;
     }
@@ -459,10 +462,18 @@ async function checkOpenRouterAuth() {
         const query = new URLSearchParams(params.get('query'));
         const code = query.get('code');
         try {
-            const response = await fetch('https://openrouter.ai/api/v1/auth/keys', {
-                method: 'POST',
-                body: JSON.stringify({ code }),
-            });
+            const controller = new AbortController();
+            const timeoutId = setTimeout(() => controller.abort(), 30000);
+            let response;
+            try {
+                response = await fetch('https://openrouter.ai/api/v1/auth/keys', {
+                    method: 'POST',
+                    body: JSON.stringify({ code }),
+                    signal: controller.signal,
+                });
+            } finally {
+                clearTimeout(timeoutId);
+            }
 
             if (!response.ok) {
                 throw new Error('OpenRouter exchange error');
@@ -484,8 +495,12 @@ async function checkOpenRouterAuth() {
             } else {
                 throw new Error('OpenRouter token not saved');
             }
-        } catch (err) {
-            toastr.error('Could not verify OpenRouter token. Please try again.');
+        } catch (error) {
+            if (error instanceof DOMException && error.name === 'AbortError') {
+                error = new Error('OpenRouter exchange timed out');
+            }
+            console.error('OpenRouter OAuth flow failed', error);
+            toastr.error(error.message || 'Could not verify OpenRouter token. Please try again.');
             return;
         }
     }
@@ -843,14 +858,6 @@ function registerSecretSlashCommands() {
             if (!key) {
                 if (!quiet) {
                     toastr.error(t`No secret key provided, and the key can't be resolved for the currently selected API type.`);
-                }
-                return '';
-            }
-
-            const secrets = secret_state[key];
-            if (!Array.isArray(secrets) || secrets.length === 0) {
-                if (!quiet) {
-                    toastr.error(t`No saved secrets found for the key: ${key}`);
                 }
                 return '';
             }

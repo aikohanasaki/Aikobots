@@ -1587,6 +1587,8 @@ async function populateChatCompletion(prompts, chatCompletion, context) {
         'vectorsDataBank',
         'smartContext',
         'bias',
+        'nsfw',
+        'jailbreak',
     ]);
 
     const controlPrompts = new MessageCollection('controlPrompts');
@@ -1758,6 +1760,7 @@ export async function assembleChatCompletionPrompt(payload = {}) {
 
     return {
         chat,
+        // Legacy alias retained for existing consumers expecting `counts`.
         counts: itemization ? structuredClone(itemization) : false,
         itemization,
         messagesCount,

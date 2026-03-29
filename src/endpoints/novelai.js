@@ -4,7 +4,7 @@ import fetch from 'node-fetch';
 import express from 'express';
 
 import { readSecret, SECRET_KEYS } from './secrets.js';
-import { readAllChunks, extractFileFromZipBuffer, forwardFetchResponse } from '../util.js';
+import { readAllChunks, extractFileFromZipBuffer } from '../util.js';
 
 const API_NOVELAI = 'https://api.novelai.net';
 const IMAGE_NOVELAI = 'https://image.novelai.net';

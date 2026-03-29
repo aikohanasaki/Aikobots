@@ -75,7 +75,7 @@ router.post('/delete', function (request, response) {
 
 router.post('/restore', function (request, response) {
     try {
-    const settings = getPresetSettingsByAPI(request.body.apiId, request.user.directories);
+        const settings = getPresetSettingsByAPI(request.body.apiId, request.user.directories);
         const name = sanitize(request.body.name);
         const defaultPresets = getDefaultPresets(request.user.directories);
 

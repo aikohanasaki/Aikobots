@@ -92,7 +92,6 @@ function toggleReasoningAutoExpand() {
 export function extractReasoningFromData(data, {
     mainApi = null,
     ignoreShowThoughts = false,
-    textGenType = null,
     chatCompletionSource = null,
 } = {}) {
     switch (mainApi ?? main_api) {
@@ -398,7 +397,7 @@ export class ReasoningHandler {
      */
     #autoParseReasoningFromMessage(messageId, mesChanged, promptReasoning) {
         if (!power_user.reasoning.auto_parse)
-            return;
+            return mesChanged;
         if (!power_user.reasoning.prefix || !power_user.reasoning.suffix)
             return mesChanged;
 
@@ -676,13 +675,11 @@ export class PromptReasoning {
         // Combine parts with reasoning only
         if (isPrefix && !content) {
             const formattedReasoning = `${prefix}${reasoning}`;
-            if (isPrefix) {
-                this.prefixReasoning = reasoning;
-                this.prefixReasoningFormatted = formattedReasoning;
-                this.prefixLength = formattedReasoning.length;
-                this.prefixDuration = duration;
-                this.prefixIncomplete = true;
-            }
+            this.prefixReasoning = reasoning;
+            this.prefixReasoningFormatted = formattedReasoning;
+            this.prefixLength = formattedReasoning.length;
+            this.prefixDuration = duration;
+            this.prefixIncomplete = true;
             return formattedReasoning;
         }
 

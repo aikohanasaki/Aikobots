@@ -108,7 +108,7 @@ export function getContext() {
         characterId: this_chid,
         groupId: selected_group,
         chatId: selected_group
-            ? groups.find(x => x.id == selected_group)?.chat_id
+            ? groups.find(x => x.id === selected_group)?.chat_id
             : (characters[this_chid]?.chat),
         getCurrentChatId,
         getRequestHeaders,

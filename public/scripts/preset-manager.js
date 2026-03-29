@@ -343,7 +343,7 @@ class PresetManager {
         }
 
         const importedSections = [];
-        const confirmedSections = html.find('input:checked').map((_, el) => el instanceof HTMLInputElement && el.value).get();
+        const confirmedSections = html.find('input:checked').map((_, el) => el.value).get();
 
         if (confirmedSections.length === 0) {
             toastr.info(t`No sections selected for import`);
@@ -386,7 +386,7 @@ class PresetManager {
             return;
         }
 
-        const confirmedSections = html.find('input:checked').map((_, el) => el instanceof HTMLInputElement && el.value).get();
+        const confirmedSections = html.find('input:checked').map((_, el) => el.value).get();
         const data = {};
 
         if (confirmedSections.length === 0) {
@@ -456,9 +456,8 @@ class PresetManager {
      * @param {object} [options] Options for saving the preset
      * @param {boolean} [options.skipUpdate=false] If true, skips updating the preset list after saving.
      */
-    async updatePreset(option = { skipUpdate: false }) {
+    async updatePreset(options = { skipUpdate: false }) {
         const selected = $(this.select).find('option:selected');
-        console.log(selected);
 
         if (selected.val() == 'gui') {
             toastr.info(t`Cannot update GUI preset`);
@@ -466,7 +465,7 @@ class PresetManager {
         }
 
         const name = selected.text();
-        await this.savePreset(name, null, option);
+        await this.savePreset(name, null, options);
 
         const successToast = !this.isAdvancedFormatting() ? t`Preset updated` : t`Template updated`;
         toastr.success(successToast);
@@ -744,11 +743,6 @@ class PresetManager {
             }
         }
 
-        if (!this.isAdvancedFormatting() && this.apiId !== 'openai') {
-            settings['genamt'] = amount_gen;
-            settings['max_length'] = max_context;
-        }
-
         return settings;
     }
 
@@ -920,13 +914,14 @@ class PresetManager {
 async function presetCommandCallback(_, name) {
     const shouldReconnect = online_status !== 'no_connection';
     const presetManager = getPresetManager();
-    const allPresets = presetManager.getAllPresets();
-    const currentPreset = presetManager.getSelectedPresetName();
 
     if (!presetManager) {
         console.debug(`Preset Manager not found for API: ${main_api}`);
         return '';
     }
+
+    const allPresets = presetManager.getAllPresets();
+    const currentPreset = presetManager.getSelectedPresetName();
 
     if (!name) {
         console.log('No name provided for /preset command, using current preset');
@@ -960,7 +955,7 @@ async function presetCommandCallback(_, name) {
         const fuzzyMatch = fuse.search(name);
 
         if (!fuzzyMatch.length) {
-            console.warn(`WARN: Preset found with name ${name}`);
+            console.warn(`WARN: Preset not found with name ${name}`);
             return currentPreset;
         }
 

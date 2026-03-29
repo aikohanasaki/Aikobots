@@ -895,7 +895,7 @@ router.post('/importURL', async (request, response) => {
         let type;
 
         const isChub = host.includes('chub.ai') || host.includes('characterhub.org');
-        const isJannnyContent = host.includes('janitorai');
+        const isJannyContent = host.includes('janitorai');
         const isPygmalionContent = host.includes('pygmalion.chat');
         const isAICharacterCardsContent = host.includes('aicharactercards.com');
         const isRisu = host.includes('realm.risuai.net');
@@ -910,7 +910,7 @@ router.post('/importURL', async (request, response) => {
 
             type = 'character';
             result = await downloadPygmalionCharacter(uuid);
-        } else if (isJannnyContent) {
+        } else if (isJannyContent) {
             const uuid = getUuidFromUrl(url);
             if (!uuid) {
                 return response.sendStatus(404);
@@ -1026,7 +1026,7 @@ router.post('/importUUID', async (request, response) => {
         }
 
         if (result.fileType) response.set('Content-Type', result.fileType);
-        response.set('Content-Disposition', `attachment; filename="${result.fileName}"`);
+        response.set('Content-Disposition', `attachment; filename="${encodeURI(result.fileName)}"`);
         response.set('X-Custom-Content-Type', uuidType);
         return response.send(result.buffer);
     } catch (error) {

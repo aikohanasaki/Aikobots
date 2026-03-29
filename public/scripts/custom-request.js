@@ -6,31 +6,6 @@ import EventSourceStream from './sse-stream.js';
 
 // #region Type Definitions
 /**
- * @typedef {Object} TextCompletionRequestBase
- * @property {boolean?} [stream=false] - Whether to stream the response
- * @property {number} max_tokens - Maximum number of tokens to generate
- * @property {string} [model] - Optional model name
- * @property {string} api_type - Type of API to use
- * @property {string} [api_server] - Optional API server URL
- * @property {number} [temperature] - Optional temperature parameter
- * @property {number} [min_p] - Optional min_p parameter
- */
-
-/**
- * @typedef {Object} TextCompletionPayloadBase
- * @property {boolean?} [stream=false] - Whether to stream the response
- * @property {string} prompt - The text prompt for completion
- * @property {number} max_tokens - Maximum number of tokens to generate
- * @property {number} max_new_tokens - Alias for max_tokens
- * @property {string} [model] - Optional model name
- * @property {string} api_type - Type of API to use
- * @property {string} api_server - API server URL
- * @property {number} [temperature] - Optional temperature parameter
- */
-
-/** @typedef {Record<string, any> & TextCompletionPayloadBase} TextCompletionPayload */
-
-/**
  * @typedef {Object} ChatCompletionMessage
  * @property {string} role - The role of the message author (e.g., "user", "assistant", "system")
  * @property {string} content - The content of the message
@@ -120,7 +95,7 @@ export class ChatCompletionService {
             headers: getRequestHeaders(),
             cache: 'no-cache',
             body: JSON.stringify(data),
-            signal: signal ?? new AbortController().signal,
+            signal,
         });
 
         if (!data.stream) {
@@ -143,7 +118,12 @@ export class ChatCompletionService {
             };
             // Try parse JSON
             if (data.json_schema) {
-                result.content = JSON.parse(extractJsonFromData(json, { mainApi: this.TYPE, chatCompletionSource: data.chat_completion_source }));
+                try {
+                    result.content = JSON.parse(extractJsonFromData(json, { mainApi: this.TYPE, chatCompletionSource: data.chat_completion_source }));
+                } catch (error) {
+                    const message = error instanceof Error ? error.message : String(error);
+                    throw new Error(`Failed to parse JSON response: ${message}`, { cause: error });
+                }
             }
             return result;
         }

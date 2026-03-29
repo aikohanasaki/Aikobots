@@ -8,7 +8,6 @@ import {
     getHiddenLorebooksForCharacter,
     HIDDEN_LOREBOOK_BINDINGS_FILE,
     readHiddenLorebookBindings,
-    writeHiddenLorebookBindings,
 } from '../src/hidden-lorebook-bindings.js';
 
 const tempRoots = [];
@@ -34,7 +33,7 @@ describe('hidden lorebook bindings registry', () => {
         expect(getHiddenLorebooksForCharacter('char_a', { rootDir })).toEqual([]);
     });
 
-    it('normalizes entries and reloads manual file edits', () => {
+    it('normalizes entries when reading the registry', () => {
         const rootDir = createRootDir();
         const registryPath = path.join(rootDir, HIDDEN_LOREBOOK_BINDINGS_FILE);
 
@@ -45,6 +44,19 @@ describe('hidden lorebook bindings registry', () => {
         }, null, 4));
 
         expect(getHiddenLorebooksForCharacter('char_a', { rootDir })).toEqual(['Lorebook A', 'Lorebook B']);
+    });
+
+    it('reloads manual file edits when the registry changes on disk', () => {
+        const rootDir = createRootDir();
+        const registryPath = path.join(rootDir, HIDDEN_LOREBOOK_BINDINGS_FILE);
+
+        fs.writeFileSync(registryPath, JSON.stringify({
+            characters: {
+                char_a: ['Lorebook A'],
+            },
+        }, null, 4));
+
+        expect(getHiddenLorebooksForCharacter('char_a', { rootDir })).toEqual(['Lorebook A']);
 
         fs.writeFileSync(registryPath, JSON.stringify({
             characters: {
