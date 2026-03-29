@@ -1270,6 +1270,116 @@ export function escapeRegex(string) {
     return string.replace(/[/\-\\^$*+?.()|[\]{}]/g, '\\$&');
 }
 
+function parseRegexQuantifier(pattern, startIndex) {
+    const char = pattern[startIndex];
+    if (char === '*' || char === '+' || char === '?') {
+        return {
+            length: 1,
+            variable: true,
+        };
+    }
+
+    if (char !== '{') {
+        return null;
+    }
+
+    const match = pattern.slice(startIndex).match(/^\{(\d+)(,(\d*)?)?\}/);
+    if (!match) {
+        return null;
+    }
+
+    const lower = Number(match[1]);
+    const hasUpperBound = match[3] !== undefined && match[3] !== '';
+    const upper = hasUpperBound ? Number(match[3]) : null;
+    const variable = !match[2] ? false : upper === null || lower !== upper;
+    return {
+        length: match[0].length,
+        variable,
+    };
+}
+
+function isPotentiallyUnsafeRegexPattern(pattern) {
+    const stack = [{ containsVariableQuantifier: false, lastToken: null }];
+    let inCharacterClass = false;
+    let escaped = false;
+
+    for (let index = 0; index < pattern.length; index++) {
+        const char = pattern[index];
+        const current = stack[stack.length - 1];
+
+        if (escaped) {
+            escaped = false;
+            current.lastToken = { type: 'atom', containsVariableQuantifier: false };
+            continue;
+        }
+
+        if (char === '\\') {
+            escaped = true;
+            continue;
+        }
+
+        if (inCharacterClass) {
+            if (char === ']') {
+                inCharacterClass = false;
+                current.lastToken = { type: 'atom', containsVariableQuantifier: false };
+            }
+            continue;
+        }
+
+        if (char === '[') {
+            inCharacterClass = true;
+            continue;
+        }
+
+        const quantifier = parseRegexQuantifier(pattern, index);
+        if (quantifier) {
+            if (!current.lastToken) {
+                continue;
+            }
+
+            if (quantifier.variable) {
+                current.containsVariableQuantifier = true;
+                if (current.lastToken.type === 'group' && current.lastToken.containsVariableQuantifier) {
+                    return true;
+                }
+            }
+
+            current.lastToken = null;
+            index += quantifier.length - 1;
+            continue;
+        }
+
+        if (char === '(') {
+            stack.push({ containsVariableQuantifier: false, lastToken: null });
+            continue;
+        }
+
+        if (char === ')') {
+            if (stack.length === 1) {
+                continue;
+            }
+
+            const completedGroup = stack.pop();
+            stack[stack.length - 1].lastToken = {
+                type: 'group',
+                containsVariableQuantifier: completedGroup.containsVariableQuantifier,
+            };
+            continue;
+        }
+
+        if (char === '|') {
+            current.lastToken = null;
+            continue;
+        }
+
+        if (!'^{},'.includes(char)) {
+            current.lastToken = { type: 'atom', containsVariableQuantifier: false };
+        }
+    }
+
+    return false;
+}
+
 /**
  * Instantiates a regular expression from a string.
  * @param {string} input The input string.
@@ -1283,6 +1393,11 @@ export function regexFromString(input) {
 
         // Invalid flags
         if (m[3] && !/^(?!.*?(.).*?\1)[dgimsuvy]+$/.test(m[3])) {
+            return;
+        }
+
+        if (isPotentiallyUnsafeRegexPattern(m[2])) {
+            console.warn('regexFromString: Blocked regex pattern with nested variable quantifiers.');
             return;
         }
 
@@ -2277,7 +2392,8 @@ export function highlightRegex(regexStr) {
  * @param {object} options - Optional parameters
  * @param {boolean} [options.interactive=false] - Whether to show a confirmation dialog when needing to overwrite an existing data object
  * @param {string} [options.actionName='overwrite'] - The action name to display in the confirmation dialog
- * @param {(existingName:string)=>Promise<void>|void} [options.deleteAction=null] - Optional action to execute when deleting an existing data object on overwrite * @returns {Promise<boolean>} True if the user confirmed the overwrite or there is no overwrite needed, false otherwise
+ * @param {(existingName:string)=>Promise<void>|void} [options.deleteAction=null] - Optional action to execute when deleting an existing data object on overwrite
+ * @returns {Promise<boolean>} True if the user confirmed the overwrite or there is no overwrite needed, false otherwise
  */
 export async function checkOverwriteExistingData(type, existingNames, name, { interactive = false, actionName = 'Overwrite', deleteAction = null } = {}) {
     const existing = existingNames.find(x => equalsIgnoreCaseAndAccents(x, name));

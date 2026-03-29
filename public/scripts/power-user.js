@@ -1634,6 +1634,8 @@ export async function loadPowerUserSettings(settings, data) {
         && $(`#tokenizer option[value="${normalizedTokenizer}"]`).length > 0;
     if (!hasTokenizerOption) {
         power_user.tokenizer = tokenizers.BEST_MATCH;
+    } else {
+        power_user.tokenizer = normalizedTokenizer;
     }
 
     // Clean up old/legacy settings

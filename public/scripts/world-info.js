@@ -1,7 +1,7 @@
 import { Fuse } from '../lib.js';
 
 import { saveSettings, substituteParams, getRequestHeaders, chat_metadata, this_chid, characters, saveCharacterDebounced, menu_type, eventSource, event_types, saveMetadata, getCurrentChatId, extension_prompt_roles, create_save, createOrEditCharacter, name1 } from '../script.js';
-import { download, debounce, initScrollHeight, resetScrollHeight, parseJsonFile, extractDataFromPng, getFileBuffer, getCharaFilename, getSortableDelay, PAGINATION_TEMPLATE, navigation_option, waitUntilCondition, isTrueBoolean, setValueByPath, flashHighlight, select2ModifyOptions, getSelect2OptionId, dynamicSelect2DataViaAjax, highlightRegex, select2ChoiceClickSubscribe, isFalseBoolean, getSanitizedFilename, checkOverwriteExistingData, parseStringArray, cancelDebounce, findChar, onlyUnique, equalsIgnoreCaseAndAccents, uuidv4, normalizeArray, getUniqueName } from './utils.js';
+import { download, debounce, delay, initScrollHeight, resetScrollHeight, parseJsonFile, extractDataFromPng, getFileBuffer, getCharaFilename, getSortableDelay, PAGINATION_TEMPLATE, navigation_option, waitUntilCondition, isTrueBoolean, setValueByPath, flashHighlight, select2ModifyOptions, getSelect2OptionId, dynamicSelect2DataViaAjax, highlightRegex, select2ChoiceClickSubscribe, isFalseBoolean, getSanitizedFilename, checkOverwriteExistingData, parseStringArray, cancelDebounce, findChar, onlyUnique, equalsIgnoreCaseAndAccents, uuidv4, normalizeArray, getUniqueName } from './utils.js';
 import { getContext } from './extensions.js';
 import { isMobile } from './RossAscends-mods.js';
 import { FILTER_TYPES, FilterHelper } from './filters.js';
@@ -38,6 +38,7 @@ export let selected_world_info = [];
 export let world_names;
 let world_info_items = [];
 const worldInfoItemMap = new Map();
+let worldEditorLoadToken = 0;
 export let world_info_depth = 2;
 export let world_info_min_activations = 0; // if > 0, will continue seeking chat until minimum world infos are activated
 export let world_info_min_activations_depth_max = 0; // used when (world_info_min_activations > 0)
@@ -77,6 +78,7 @@ const DEFAULT_LOREBOOK_SETTINGS = Object.freeze({
     orderAdjustmentGroupOnly: false,
     characterOverrides: {},
     onlyWhenSpeaking: false,
+    randomTrim: false,
 });
 
 function normalizeWorldInfoItems(data = {}) {
@@ -190,6 +192,7 @@ function getLorebookOrderingSettings(data = {}) {
         orderAdjustmentGroupOnly: Boolean(raw.orderAdjustmentGroupOnly),
         characterOverrides: normalizeCharacterOverrides(raw.characterOverrides),
         onlyWhenSpeaking: Boolean(raw.onlyWhenSpeaking),
+        randomTrim: Boolean(raw.randomTrim),
     };
 }
 
@@ -208,6 +211,7 @@ function setLorebookOrderingSettings(data = {}, settings = {}) {
         characterOverrides: normalizeCharacterOverrides(settings.characterOverrides),
         orderAdjustmentGroupOnly: Boolean(settings.orderAdjustmentGroupOnly),
         onlyWhenSpeaking: Boolean(settings.onlyWhenSpeaking),
+        randomTrim: Boolean(settings.randomTrim),
     };
 
     const isDefaultSettings =
@@ -217,6 +221,7 @@ function setLorebookOrderingSettings(data = {}, settings = {}) {
         && nextSettings.orderAdjustment === 0
         && !nextSettings.orderAdjustmentGroupOnly
         && !nextSettings.onlyWhenSpeaking
+        && !nextSettings.randomTrim
         && Object.keys(nextSettings.characterOverrides).length === 0;
 
     if (isDefaultSettings) {
@@ -1684,6 +1689,27 @@ function registerWorldInfoSlashCommands() {
         `,
     }));
     SlashCommandParser.addCommandObject(SlashCommand.fromProps({
+        name: 'stlo',
+        callback: async (_args, value) => await openStloForLorebook(typeof value === 'string' ? value : ''),
+        unnamedArgumentList: [
+            SlashCommandArgument.fromProps({
+                description: 'lorebook name',
+                typeList: [ARGUMENT_TYPE.STRING],
+                isRequired: true,
+                enumProvider: commonEnumProviders.worlds,
+            }),
+        ],
+        helpString: `
+            <div>
+                Open native lorebook ordering settings for a specific lorebook.
+            </div>
+            <div>
+                <strong>Example:</strong>
+                <code>/stlo My Lorebook</code>
+            </div>
+        `,
+    }));
+    SlashCommandParser.addCommandObject(SlashCommand.fromProps({
         name: 'createentry',
         callback: createEntryCallback,
         aliases: ['createlore', 'createwi'],
@@ -1880,11 +1906,17 @@ function registerWorldInfoSlashCommands() {
  */
 export async function showWorldEditor(name) {
     if (!name) {
+        worldEditorLoadToken++;
         await hideWorldEditor();
         return;
     }
 
+    const loadToken = ++worldEditorLoadToken;
     const wiData = await loadWorldInfo(name);
+    if (loadToken !== worldEditorLoadToken) {
+        return;
+    }
+
     await displayWorldEntries(name, wiData);
 }
 
@@ -4207,6 +4239,324 @@ export async function getSortedEntries() {
     }
 }
 
+function findLorebookIndexByName(name = '') {
+    const target = String(name || '').trim().toLowerCase();
+    if (!target || !Array.isArray(world_names)) {
+        return -1;
+    }
+
+    return world_names.findIndex(worldName => String(worldName || '').trim().toLowerCase() === target);
+}
+
+async function selectLorebookByIndex(index) {
+    const selector = $('#world_editor_select');
+    if (!selector.length || !Array.isArray(world_names) || index < 0 || index >= world_names.length) {
+        return false;
+    }
+
+    selector.val(String(index)).trigger('change');
+    await delay(1);
+    return true;
+}
+
+async function openStloForLorebook(name = '') {
+    const trimmedName = String(name || '').trim();
+    if (!trimmedName) {
+        toastr.warning('Usage: /stlo <lorebook name>');
+        return '';
+    }
+
+    const lorebookIndex = findLorebookIndexByName(trimmedName);
+    if (lorebookIndex === -1) {
+        toastr.warning(`Lorebook not found: ${trimmedName}`);
+        return '';
+    }
+
+    await selectLorebookByIndex(lorebookIndex);
+    const lorebookName = world_names[lorebookIndex];
+    const data = await loadWorldInfo(lorebookName);
+    if (!data) {
+        toastr.warning(`Lorebook is not loaded: ${lorebookName}`);
+        return '';
+    }
+
+    await openLorebookOrderingDialog(lorebookName, data);
+    return '';
+}
+
+function getStloCharacterOverrideOptions() {
+    const options = new Map();
+
+    for (const character of characters) {
+        const key = String(character?.avatar || '').replace(/\.[^/.]+$/, '').trim();
+        if (!key || options.has(key)) {
+            continue;
+        }
+
+        const name = String(character?.name || '').trim();
+        const label = name && name !== key ? `${name} (${key})` : (name || key);
+        options.set(key, { key, label });
+    }
+
+    return Array.from(options.values()).sort((left, right) => left.label.localeCompare(right.label, undefined, { sensitivity: 'base' }));
+}
+
+function createStloOverridePriorityOptions(select, selectedValue = null) {
+    const options = [
+        { value: '', label: 'Default (3)' },
+        { value: '1', label: 'Lowest' },
+        { value: '2', label: 'Low' },
+        { value: '3', label: 'Default' },
+        { value: '4', label: 'High' },
+        { value: '5', label: 'Highest' },
+    ];
+
+    for (const optionData of options) {
+        const option = document.createElement('option');
+        option.value = optionData.value;
+        option.textContent = optionData.label;
+        option.selected = String(selectedValue ?? '') === optionData.value;
+        select.append(option);
+    }
+}
+
+function createStloOverrideBudgetModeOptions(select, selectedValue = 'default') {
+    const options = [
+        { value: 'default', label: 'Default' },
+        { value: 'percentage_context', label: 'Percent of context' },
+        { value: 'percentage_budget', label: 'Percent of WI budget' },
+        { value: 'fixed', label: 'Fixed tokens' },
+    ];
+
+    for (const optionData of options) {
+        const option = document.createElement('option');
+        option.value = optionData.value;
+        option.textContent = optionData.label;
+        option.selected = optionData.value === selectedValue;
+        select.append(option);
+    }
+}
+
+function updateStloOverrideEmptyState(rowsContainer, emptyState) {
+    emptyState.hidden = rowsContainer.childElementCount > 0;
+}
+
+function createStloOverrideRow(characterOptions, overrideKey = '', override = {}) {
+    const row = document.createElement('div');
+    row.className = 'stlo_override_row';
+    const normalizedOverrideKey = String(overrideKey || '').trim();
+    const knownOption = characterOptions.find(option => option.key.toLowerCase() === normalizedOverrideKey.toLowerCase());
+    const hasLegacyKey = Boolean(normalizedOverrideKey && !knownOption);
+    row.dataset.legacyKey = hasLegacyKey ? normalizedOverrideKey : '';
+
+    const characterField = document.createElement('label');
+    characterField.className = 'stlo_override_field stlo_override_identity_field';
+    const characterLabel = document.createElement('span');
+    characterLabel.textContent = 'Character';
+    const characterSelect = document.createElement('select');
+    characterSelect.className = 'text_pole textarea_compact stlo_override_character';
+    const placeholderOption = document.createElement('option');
+    placeholderOption.value = '';
+    placeholderOption.textContent = 'Select character';
+    characterSelect.append(placeholderOption);
+    for (const optionData of characterOptions) {
+        const option = document.createElement('option');
+        option.value = optionData.key;
+        option.textContent = optionData.label;
+        characterSelect.append(option);
+    }
+    characterField.append(characterLabel, characterSelect);
+    const legacyNotice = document.createElement('small');
+    legacyNotice.className = 'stlo_override_legacy_notice';
+    legacyNotice.hidden = !hasLegacyKey;
+    legacyNotice.textContent = hasLegacyKey
+        ? `Legacy override key "${normalizedOverrideKey}" no longer matches a known character. Select a character to migrate it, or remove this row to delete it.`
+        : '';
+    characterField.append(legacyNotice);
+
+    const priorityField = document.createElement('label');
+    priorityField.className = 'stlo_override_field';
+    const priorityLabel = document.createElement('span');
+    priorityLabel.textContent = 'Priority';
+    const prioritySelect = document.createElement('select');
+    prioritySelect.className = 'text_pole textarea_compact stlo_override_priority';
+    createStloOverridePriorityOptions(prioritySelect, override.priority ?? null);
+    priorityField.append(priorityLabel, prioritySelect);
+
+    const orderField = document.createElement('label');
+    orderField.className = 'stlo_override_field';
+    const orderLabel = document.createElement('span');
+    orderLabel.textContent = 'Order Adjustment';
+    const orderInput = document.createElement('input');
+    orderInput.type = 'number';
+    orderInput.step = '1';
+    orderInput.min = '-10000';
+    orderInput.max = '10000';
+    orderInput.className = 'text_pole textarea_compact stlo_override_order_adjustment';
+    orderInput.placeholder = '0';
+    orderInput.value = override.orderAdjustment !== undefined ? String(override.orderAdjustment) : '';
+    orderField.append(orderLabel, orderInput);
+
+    const budgetModeField = document.createElement('label');
+    budgetModeField.className = 'stlo_override_field';
+    const budgetModeLabel = document.createElement('span');
+    budgetModeLabel.textContent = 'Budget Mode';
+    const budgetModeSelect = document.createElement('select');
+    budgetModeSelect.className = 'text_pole textarea_compact stlo_override_budget_mode';
+    createStloOverrideBudgetModeOptions(budgetModeSelect, override.budgetMode || 'default');
+    budgetModeField.append(budgetModeLabel, budgetModeSelect);
+
+    const budgetValueField = document.createElement('label');
+    budgetValueField.className = 'stlo_override_field stlo_override_budget_value_field';
+    const budgetValueLabel = document.createElement('span');
+    budgetValueLabel.className = 'stlo_override_budget_value_label';
+    const budgetValueInput = document.createElement('input');
+    budgetValueInput.type = 'number';
+    budgetValueInput.step = '1';
+    budgetValueInput.min = '0';
+    budgetValueInput.className = 'text_pole textarea_compact stlo_override_budget_value';
+    budgetValueInput.placeholder = '0';
+    budgetValueInput.value = override.budget !== undefined && override.budget !== null ? String(override.budget) : '';
+    budgetValueField.append(budgetValueLabel, budgetValueInput);
+
+    const removeButton = document.createElement('button');
+    removeButton.type = 'button';
+    removeButton.className = 'menu_button stlo_override_remove';
+    removeButton.textContent = 'Remove';
+
+    row.append(
+        characterField,
+        priorityField,
+        orderField,
+        budgetModeField,
+        budgetValueField,
+        removeButton,
+    );
+
+    if (knownOption) {
+        characterSelect.value = knownOption.key;
+    } else {
+        characterSelect.value = '';
+    }
+
+    const syncRowState = () => {
+        const budgetMode = String(budgetModeSelect.value || 'default');
+        const usesBudgetValue = budgetMode !== 'default';
+        budgetValueField.hidden = !usesBudgetValue;
+        budgetValueInput.disabled = !usesBudgetValue;
+
+        if (budgetMode === 'percentage_context' || budgetMode === 'percentage_budget') {
+            budgetValueLabel.textContent = 'Budget %';
+            budgetValueInput.min = '1';
+            budgetValueInput.max = '100';
+            budgetValueInput.placeholder = '25';
+        } else if (budgetMode === 'fixed') {
+            budgetValueLabel.textContent = 'Budget Tokens';
+            budgetValueInput.min = '1';
+            budgetValueInput.removeAttribute('max');
+            budgetValueInput.placeholder = '500';
+        } else {
+            budgetValueLabel.textContent = 'Budget Value';
+            budgetValueInput.min = '0';
+            budgetValueInput.removeAttribute('max');
+            budgetValueInput.placeholder = '0';
+        }
+    };
+
+    characterSelect.addEventListener('change', syncRowState);
+    budgetModeSelect.addEventListener('change', syncRowState);
+    syncRowState();
+
+    return row;
+}
+
+function collectStloCharacterOverrides(rowsContainer) {
+    const overrides = {};
+    const seenKeys = new Set();
+
+    for (const row of rowsContainer.querySelectorAll('.stlo_override_row')) {
+        const characterSelect = row.querySelector('.stlo_override_character');
+        const prioritySelect = row.querySelector('.stlo_override_priority');
+        const orderInput = row.querySelector('.stlo_override_order_adjustment');
+        const budgetModeSelect = row.querySelector('.stlo_override_budget_mode');
+        const budgetValueInput = row.querySelector('.stlo_override_budget_value');
+        const legacyKey = String(row.dataset.legacyKey || '').trim();
+
+        const overrideKey = String(characterSelect.value || legacyKey || '').trim();
+        const priorityValue = String(prioritySelect.value || '');
+        const orderValue = String(orderInput.value || '').trim();
+        const budgetMode = String(budgetModeSelect.value || 'default');
+        const budgetValue = String(budgetValueInput.value || '').trim();
+        const hasConfiguredValue =
+            priorityValue !== ''
+            || orderValue !== ''
+            || budgetMode !== 'default'
+            || budgetValue !== '';
+
+        if (!overrideKey && !hasConfiguredValue) {
+            continue;
+        }
+
+        if (!overrideKey) {
+            toastr.error(t`Each character override needs a character.`, t`Lorebook Ordering`);
+            return null;
+        }
+
+        const normalizedKey = overrideKey.toLowerCase();
+        if (seenKeys.has(normalizedKey)) {
+            toastr.error(t`Character overrides cannot contain duplicates.`, t`Lorebook Ordering`);
+            return null;
+        }
+
+        const nextOverride = {};
+
+        if (priorityValue !== '') {
+            nextOverride.priority = Number(priorityValue);
+        }
+
+        if (orderValue !== '') {
+            const parsedOrderAdjustment = Number(orderValue);
+            if (!Number.isInteger(parsedOrderAdjustment) || parsedOrderAdjustment < -10000 || parsedOrderAdjustment > 10000) {
+                toastr.error(t`Order adjustment must be an integer between -10000 and 10000.`, t`Lorebook Ordering`);
+                return null;
+            }
+
+            if (parsedOrderAdjustment !== 0) {
+                nextOverride.orderAdjustment = parsedOrderAdjustment;
+            }
+        }
+
+        if (budgetMode === 'percentage_context' || budgetMode === 'percentage_budget') {
+            const percentage = Number(budgetValue);
+            if (!Number.isInteger(percentage) || percentage < 1 || percentage > 100) {
+                toastr.error(t`Budget percentage must be an integer between 1 and 100.`, t`Lorebook Ordering`);
+                return null;
+            }
+
+            nextOverride.budgetMode = budgetMode;
+            nextOverride.budget = percentage;
+        } else if (budgetMode === 'fixed') {
+            const fixedBudget = Number(budgetValue);
+            if (!Number.isInteger(fixedBudget) || fixedBudget <= 0) {
+                toastr.error(t`Fixed budget must be a positive integer.`, t`Lorebook Ordering`);
+                return null;
+            }
+
+            nextOverride.budgetMode = budgetMode;
+            nextOverride.budget = fixedBudget;
+        }
+
+        if (Object.keys(nextOverride).length === 0) {
+            continue;
+        }
+
+        overrides[overrideKey] = nextOverride;
+        seenKeys.add(normalizedKey);
+    }
+
+    return overrides;
+}
+
 async function openLorebookOrderingDialog(name, data) {
     if (!name || !data) {
         return;
@@ -4214,101 +4564,284 @@ async function openLorebookOrderingDialog(name, data) {
 
     const settings = getLorebookOrderingSettings(data);
     const container = document.createElement('div');
-    container.className = 'flex-container flexFlowColumn gap1';
+    container.className = 'stlo_popup flex-container flexFlowColumn gap1';
     container.innerHTML = `
-        <label class="flex-container flexFlowColumn gap0">
-            <span>Priority</span>
-            <select id="stlo_priority" class="text_pole textarea_compact">
-                <option value="">Default (3)</option>
-                <option value="1">Lowest</option>
-                <option value="2">Low</option>
-                <option value="3">Default</option>
-                <option value="4">High</option>
-                <option value="5">Highest</option>
-            </select>
-        </label>
-        <label class="flex-container flexFlowColumn gap0">
-            <span>Order Adjustment</span>
-            <input id="stlo_order_adjustment" class="text_pole textarea_compact" type="number" step="1" min="-10000" max="10000" />
-        </label>
-        <label class="checkbox_label flex-container alignitemscenter">
-            <input id="stlo_group_only" type="checkbox" />
-            <small>Apply order adjustment only in group chats</small>
-        </label>
-        <label class="checkbox_label flex-container alignitemscenter">
-            <input id="stlo_only_when_speaking" type="checkbox" />
-            <small>Only use this lorebook when the active speaker matches a character override</small>
-        </label>
-        <label class="flex-container flexFlowColumn gap0">
-            <span>Budget Mode</span>
-            <select id="stlo_budget_mode" class="text_pole textarea_compact">
-                <option value="default">Default</option>
-                <option value="percentage_context">Percent of context</option>
-                <option value="percentage_budget">Percent of WI budget</option>
-                <option value="fixed">Fixed tokens</option>
-            </select>
-        </label>
-        <label class="flex-container flexFlowColumn gap0">
-            <span>Budget Value</span>
-            <input id="stlo_budget_value" class="text_pole textarea_compact" type="number" step="1" min="0" />
-            <small>Ignored when budget mode is Default.</small>
-        </label>
-        <label class="flex-container flexFlowColumn gap0">
-            <span>Character Overrides JSON</span>
-            <textarea id="stlo_character_overrides" class="text_pole textarea_compact" rows="10" placeholder='{"char_filename":{"priority":5,"orderAdjustment":250,"budgetMode":"fixed","budget":400}}'></textarea>
-            <small>Keys can be character name, avatar basename, or filename. Override fields: priority, orderAdjustment, budgetMode, budget.</small>
-        </label>
+        <div class="stlo_popup_intro">
+            <h3 class="margin0">ST Lorebook Ordering</h3>
+            <small>Configure priority, order, budget, and group chat behavior for this lorebook.</small>
+        </div>
+        <section class="stlo_section">
+            <h4 class="margin0">Lorebook Priority</h4>
+            <small class="stlo_section_copy">Higher numbers process earlier. Priority 3 is the SillyTavern default.</small>
+            <label class="flex-container flexFlowColumn gap0">
+                <span>Priority</span>
+                <select id="stlo_priority" class="text_pole textarea_compact">
+                    <option value="">Default (3)</option>
+                    <option value="1">Lowest</option>
+                    <option value="2">Low</option>
+                    <option value="3">Default</option>
+                    <option value="4">High</option>
+                    <option value="5">Highest</option>
+                </select>
+            </label>
+        </section>
+        <section class="stlo_section">
+            <label class="checkbox_label stlo_checkbox_row stlo_feature_toggle">
+                <input id="stlo_order_adjustment_enabled" type="checkbox" />
+                <span class="stlo_checkbox_body">
+                    <strong>Enable Order Adjustment</strong>
+                    <small class="stlo_checkbox_text">Fine-tune processing order within this lorebook's priority level.</small>
+                </span>
+            </label>
+            <div class="stlo_field_grid">
+                <label class="flex-container flexFlowColumn gap0">
+                    <span>Order Adjustment</span>
+                    <input id="stlo_order_adjustment" class="text_pole textarea_compact" type="number" step="1" min="-10000" max="10000" />
+                    <small>Higher values process first. Range: -10000 to 10000.</small>
+                </label>
+                <label class="checkbox_label stlo_checkbox_row">
+                    <input id="stlo_group_only" type="checkbox" />
+                    <small class="stlo_checkbox_text">Only apply this adjustment in group chats.</small>
+                </label>
+            </div>
+        </section>
+        <section class="stlo_section">
+            <h4 class="margin0">Lorebook Budget</h4>
+            <small class="stlo_section_copy">Apply a lorebook-specific budget before global WI trimming.</small>
+            <div class="stlo_field_grid">
+                <label class="flex-container flexFlowColumn gap0">
+                    <span>Budget Mode</span>
+                    <select id="stlo_budget_mode" class="text_pole textarea_compact">
+                        <option value="default">Default</option>
+                        <option value="percentage_context">Percent of context</option>
+                        <option value="percentage_budget">Percent of WI budget</option>
+                        <option value="fixed">Fixed tokens</option>
+                    </select>
+                </label>
+                <label id="stlo_budget_value_field" class="flex-container flexFlowColumn gap0">
+                    <span id="stlo_budget_value_label">Budget Value</span>
+                    <input id="stlo_budget_value" class="text_pole textarea_compact" type="number" step="1" min="0" />
+                    <small id="stlo_budget_value_help">Ignored when budget mode is Default.</small>
+                </label>
+            </div>
+            <label class="checkbox_label stlo_checkbox_row">
+                <input id="stlo_random_trim" type="checkbox" />
+                <small class="stlo_checkbox_text">When this lorebook exceeds its budget, keep a random subset instead of the highest-order entries.</small>
+            </label>
+        </section>
+        <section class="stlo_section">
+            <label class="checkbox_label stlo_checkbox_row stlo_feature_toggle">
+                <input id="stlo_only_when_speaking" type="checkbox" />
+                <span class="stlo_checkbox_body">
+                    <strong>Group Chats: Only activate for specific characters</strong>
+                    <small class="stlo_checkbox_text">When enabled, this lorebook only activates if a character listed below is speaking. Single-character chats always use the default lorebook settings.</small>
+                </span>
+            </label>
+        </section>
+        <section class="stlo_section stlo_override_section">
+            <h4 class="margin0">Group Chat Overrides</h4>
+            <small class="stlo_section_copy">Characters listed here override the default lorebook settings only during their speaking turns in a group chat.</small>
+            <small class="stlo_section_copy">Default Priority: 3 - Normal. Characters not listed here use the default settings above.</small>
+            <div class="stlo_override_panel">
+                <div class="stlo_override_rows"></div>
+                <div class="stlo_override_empty_state">No character overrides configured.</div>
+                <button type="button" class="menu_button stlo_override_add">Add Override</button>
+                <small class="stlo_override_summary">Overrides are assigned through the character picker. Legacy unmatched overrides can be migrated or removed.</small>
+            </div>
+        </section>
     `;
 
     const prioritySelect = container.querySelector('#stlo_priority');
+    const orderAdjustmentEnabledInput = container.querySelector('#stlo_order_adjustment_enabled');
     const orderAdjustmentInput = container.querySelector('#stlo_order_adjustment');
     const groupOnlyInput = container.querySelector('#stlo_group_only');
     const onlyWhenSpeakingInput = container.querySelector('#stlo_only_when_speaking');
+    const randomTrimInput = container.querySelector('#stlo_random_trim');
     const budgetModeSelect = container.querySelector('#stlo_budget_mode');
+    const budgetValueField = container.querySelector('#stlo_budget_value_field');
+    const budgetValueLabel = container.querySelector('#stlo_budget_value_label');
+    const budgetValueHelp = container.querySelector('#stlo_budget_value_help');
     const budgetValueInput = container.querySelector('#stlo_budget_value');
-    const characterOverridesInput = container.querySelector('#stlo_character_overrides');
+    const overrideSection = container.querySelector('.stlo_override_section');
+    const overrideRows = container.querySelector('.stlo_override_rows');
+    const overrideEmptyState = container.querySelector('.stlo_override_empty_state');
+    const addOverrideButton = container.querySelector('.stlo_override_add');
+    const characterOptions = getStloCharacterOverrideOptions();
+    let isSubmitting = false;
+
+    const setSubmittingState = (submitting) => {
+        isSubmitting = submitting;
+        container.querySelectorAll('input, select, textarea, button').forEach(control => {
+            control.disabled = submitting;
+        });
+        syncOrderAdjustmentState();
+        syncBudgetState();
+
+        if (popup?.okButton) {
+            popup.okButton.classList.toggle('disabled', submitting);
+            popup.okButton.setAttribute('aria-disabled', String(submitting));
+            popup.okButton.style.pointerEvents = submitting ? 'none' : '';
+        }
+
+        if (popup?.cancelButton) {
+            popup.cancelButton.classList.toggle('disabled', submitting);
+            popup.cancelButton.setAttribute('aria-disabled', String(submitting));
+            popup.cancelButton.style.pointerEvents = submitting ? 'none' : '';
+        }
+    };
 
     prioritySelect.value = settings.priority === null ? '' : String(settings.priority);
+    orderAdjustmentEnabledInput.checked = Boolean(settings.orderAdjustment);
     orderAdjustmentInput.value = String(settings.orderAdjustment || 0);
     groupOnlyInput.checked = Boolean(settings.orderAdjustmentGroupOnly);
     onlyWhenSpeakingInput.checked = Boolean(settings.onlyWhenSpeaking);
+    randomTrimInput.checked = Boolean(settings.randomTrim);
     budgetModeSelect.value = settings.budgetMode || 'default';
     budgetValueInput.value = settings.budget === null ? '' : String(settings.budget);
-    characterOverridesInput.value = JSON.stringify(settings.characterOverrides || {}, null, 2);
+
+    const syncOrderAdjustmentState = () => {
+        const enabled = Boolean(orderAdjustmentEnabledInput.checked);
+        orderAdjustmentInput.disabled = !enabled || isSubmitting;
+        groupOnlyInput.disabled = !enabled || isSubmitting;
+    };
+
+    const syncBudgetState = () => {
+        const selectedBudgetMode = String(budgetModeSelect.value || 'default');
+        const usesBudgetValue = selectedBudgetMode !== 'default';
+        budgetValueField.hidden = !usesBudgetValue;
+        budgetValueInput.disabled = !usesBudgetValue || isSubmitting;
+
+        if (selectedBudgetMode === 'percentage_context' || selectedBudgetMode === 'percentage_budget') {
+            budgetValueLabel.textContent = 'Budget %';
+            budgetValueHelp.textContent = 'Enter an integer from 1 to 100.';
+            budgetValueInput.min = '1';
+            budgetValueInput.max = '100';
+            budgetValueInput.placeholder = '25';
+        } else if (selectedBudgetMode === 'fixed') {
+            budgetValueLabel.textContent = 'Budget Tokens';
+            budgetValueHelp.textContent = 'Enter a positive integer token limit.';
+            budgetValueInput.min = '1';
+            budgetValueInput.removeAttribute('max');
+            budgetValueInput.placeholder = '500';
+        } else {
+            budgetValueLabel.textContent = 'Budget Value';
+            budgetValueHelp.textContent = 'Ignored when budget mode is Default.';
+            budgetValueInput.min = '0';
+            budgetValueInput.removeAttribute('max');
+            budgetValueInput.placeholder = '0';
+        }
+    };
+
+    const syncGroupOverrideState = () => {
+        const enabled = Boolean(onlyWhenSpeakingInput.checked);
+        overrideSection.hidden = !enabled;
+        overrideSection.style.display = enabled ? '' : 'none';
+    };
+
+    orderAdjustmentEnabledInput.addEventListener('change', syncOrderAdjustmentState);
+    budgetModeSelect.addEventListener('change', syncBudgetState);
+    onlyWhenSpeakingInput.addEventListener('change', syncGroupOverrideState);
+
+    addOverrideButton.addEventListener('click', () => {
+        const row = createStloOverrideRow(characterOptions);
+        row.querySelector('.stlo_override_remove').addEventListener('click', () => {
+            row.remove();
+            updateStloOverrideEmptyState(overrideRows, overrideEmptyState);
+        });
+        overrideRows.append(row);
+        updateStloOverrideEmptyState(overrideRows, overrideEmptyState);
+    });
+
+    for (const [overrideKey, override] of Object.entries(settings.characterOverrides || {})) {
+        const row = createStloOverrideRow(characterOptions, overrideKey, override);
+        row.querySelector('.stlo_override_remove').addEventListener('click', () => {
+            row.remove();
+            updateStloOverrideEmptyState(overrideRows, overrideEmptyState);
+        });
+        overrideRows.append(row);
+    }
+
+    updateStloOverrideEmptyState(overrideRows, overrideEmptyState);
+    syncOrderAdjustmentState();
+    syncBudgetState();
+    syncGroupOverrideState();
 
     const popup = new Popup(container, POPUP_TYPE.CONFIRM, `Lorebook Ordering: ${name}`, {
         okButton: t`Save`,
         cancelButton: t`Cancel`,
+        allowVerticalScrolling: true,
+        onClosing: async (instance) => {
+            if (isSubmitting) {
+                return false;
+            }
+
+            if (instance.result !== POPUP_RESULT.AFFIRMATIVE) {
+                return true;
+            }
+
+            setSubmittingState(true);
+
+            const characterOverrides = collectStloCharacterOverrides(overrideRows);
+            if (characterOverrides === null) {
+                setSubmittingState(false);
+                return false;
+            }
+
+            const selectedBudgetMode = String(budgetModeSelect.value || 'default');
+            let validatedBudget = null;
+            if (selectedBudgetMode === 'percentage_context' || selectedBudgetMode === 'percentage_budget') {
+                const percentage = Number(budgetValueInput.value);
+                if (!Number.isInteger(percentage) || percentage < 1 || percentage > 100) {
+                    toastr.error(t`Budget percentage must be an integer between 1 and 100.`, t`Lorebook Ordering`);
+                    setSubmittingState(false);
+                    return false;
+                }
+                validatedBudget = percentage;
+            } else if (selectedBudgetMode === 'fixed') {
+                const fixedBudget = Number(budgetValueInput.value);
+                if (!Number.isInteger(fixedBudget) || fixedBudget <= 0) {
+                    toastr.error(t`Fixed budget must be a positive integer.`, t`Lorebook Ordering`);
+                    setSubmittingState(false);
+                    return false;
+                }
+                validatedBudget = fixedBudget;
+            }
+
+            const nextData = structuredClone(data);
+            setLorebookOrderingSettings(nextData, {
+                priority: prioritySelect.value === '' ? null : Number(prioritySelect.value),
+                orderAdjustment: orderAdjustmentEnabledInput.checked ? (Number(orderAdjustmentInput.value) || 0) : 0,
+                orderAdjustmentGroupOnly: Boolean(orderAdjustmentEnabledInput.checked && groupOnlyInput.checked),
+                onlyWhenSpeaking: Boolean(onlyWhenSpeakingInput.checked),
+                randomTrim: Boolean(randomTrimInput.checked),
+                budgetMode: selectedBudgetMode,
+                budget: validatedBudget,
+                characterOverrides,
+            });
+
+            try {
+                await saveWorldInfo(name, nextData, true);
+            } catch (error) {
+                console.warn('[WI] Failed to save lorebook ordering settings:', error);
+                setSubmittingState(false);
+                return false;
+            }
+
+            if (data.extensions && typeof data.extensions === 'object' && data.extensions.stlo) {
+                delete data.extensions.stlo;
+            }
+
+            if (nextData.stlo === undefined) {
+                delete data.stlo;
+            } else {
+                data.stlo = structuredClone(nextData.stlo);
+            }
+
+            toastr.success(t`Lorebook ordering updated.`, t`World Info`);
+            return true;
+        },
     });
-    const result = await popup.show();
-    if (result !== POPUP_RESULT.AFFIRMATIVE) {
-        return;
-    }
-
-    let characterOverrides = {};
-    const rawCharacterOverrides = String(characterOverridesInput.value || '').trim();
-    if (rawCharacterOverrides) {
-        try {
-            characterOverrides = JSON.parse(rawCharacterOverrides);
-        } catch (error) {
-            console.warn('[WI] Failed to parse character overrides JSON:', error);
-            toastr.error(t`Character overrides must be valid JSON.`, t`Lorebook Ordering`);
-            return;
-        }
-    }
-
-    setLorebookOrderingSettings(data, {
-        priority: prioritySelect.value === '' ? null : Number(prioritySelect.value),
-        orderAdjustment: Number(orderAdjustmentInput.value) || 0,
-        orderAdjustmentGroupOnly: Boolean(groupOnlyInput.checked),
-        onlyWhenSpeaking: Boolean(onlyWhenSpeakingInput.checked),
-        budgetMode: budgetModeSelect.value,
-        budget: budgetValueInput.value === '' ? null : Number(budgetValueInput.value),
-        characterOverrides,
-    });
-
-    await saveWorldInfo(name, data, true);
-    toastr.success(t`Lorebook ordering updated.`, t`World Info`);
+    await popup.show();
 }
 
 
@@ -5118,6 +5651,7 @@ export function initWorldInfo() {
         $('#world_info_search').val('');
         worldInfoFilter.setFilterData(FILTER_TYPES.WORLD_INFO_SEARCH, '', true);
         const selectedIndex = String($('#world_editor_select').find(':selected').val());
+        $('#world_lorebook_ordering').off('click').on('click', nullWorldInfo);
 
         if (selectedIndex === '') {
             updateWorldInfoStorageButton('');
@@ -5125,7 +5659,7 @@ export function initWorldInfo() {
         } else {
             const worldName = world_names[selectedIndex];
             updateWorldInfoStorageButton(worldName);
-            showWorldEditor(worldName);
+            await showWorldEditor(worldName);
         }
     });
 

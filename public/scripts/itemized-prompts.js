@@ -87,8 +87,8 @@ export async function deleteItemizedPrompts(chatId) {
         }
 
         await promptStorage.removeItem(chatId);
-    } catch {
-        console.log('Error deleting itemized prompts for chat', chatId);
+    } catch (error) {
+        console.error('Error deleting itemized prompts for chat', chatId, error);
     }
 }
 

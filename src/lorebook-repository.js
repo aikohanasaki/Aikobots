@@ -102,9 +102,10 @@ function readSecureIndex() {
     try {
         const parsed = readJsonFileSync(indexPath);
         if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+            const isValidBooks = parsed.books && typeof parsed.books === 'object' && !Array.isArray(parsed.books);
             return {
                 version: Number(parsed.version) || 1,
-                books: parsed.books && typeof parsed.books === 'object' && !Array.isArray(parsed.books) ? parsed.books : {},
+                books: isValidBooks ? parsed.books : {},
             };
         }
     } catch (error) {
@@ -119,6 +120,8 @@ function writeSecureIndex(index) {
 }
 
 function mutateSecureIndex(mutate) {
+    // This module assumes secure index writes are serialized by a single process.
+    // The read-modify-write flow here is not lock-safe across concurrent writers.
     const index = readSecureIndex();
     const result = mutate(index);
     writeSecureIndex(index);
@@ -224,6 +227,16 @@ function assertCanonicalName(name) {
     return canonicalName;
 }
 
+function isPlainObject(value) {
+    return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
+}
+
+function assertLorebookData(data, name) {
+    if (!isPlainObject(data) || !isPlainObject(data.entries)) {
+        throw new LorebookRepositoryError('LorebookInvalidData', `Lorebook "${name}" must be an object with an entries map.`, 400);
+    }
+}
+
 function readLorebookFromRecord(record, allowDummy) {
     const dummyObject = allowDummy ? { entries: {} } : null;
     if (!record?.path) {
@@ -237,7 +250,7 @@ function readLorebookFromRecord(record, allowDummy) {
     return tryReadJsonFileSync(record.path, dummyObject, 'lorebook file');
 }
 
-async function assertSecureNameAvailableForPromotion(name) {
+function assertSecureNameAvailableForPromotion(name) {
     const secureEntry = getSecureIndexMetadata(name);
     if (secureEntry) {
         throw new LorebookRepositoryError('LorebookAlreadySecure', `Lorebook "${name}" is already secure.`, 409);
@@ -340,9 +353,9 @@ export function readWorldInfoFile(directories, worldInfoName, allowDummy) {
 
 /**
  * @param {import('./users.js').User} user
- * @returns {Promise<LorebookListItem[]>}
+ * @returns {LorebookListItem[]}
  */
-export async function listLorebooksForManagement(user) {
+export function listLorebooksForManagement(user) {
     const currentHandle = user.profile.handle;
     const items = [];
     const seenNames = new Set();
@@ -382,7 +395,7 @@ export async function listLorebooksForManagement(user) {
     }
 
     if (user.profile.admin) {
-        for (const [name, secureRecord] of Array.from(secureRecords.entries()).sort(([left], [right]) => left.localeCompare(right))) {
+        for (const [name, secureRecord] of secureRecords.entries()) {
             if (seenNames.has(name)) {
                 console.warn(`[Lorebooks] Skipping duplicate manageable lorebook name "${name}" in secure storage.`);
                 continue;
@@ -401,28 +414,14 @@ export async function listLorebooksForManagement(user) {
  * @param {string} name
  * @param {boolean} [allowDummy=false]
  */
-export async function getLorebookForManagement(user, name, allowDummy = false, storage = null) {
+export function getLorebookForManagement(user, name, allowDummy = false, storage = null) {
     const canonicalName = assertCanonicalName(name);
     const secureRecord = getSecureIndexEntry(canonicalName);
     const preferredStorage = storage === 'secure' ? 'secure' : (storage === 'user' ? 'user' : null);
+    const shouldUseSecure = preferredStorage === 'secure' || (!preferredStorage && secureRecord);
 
-    if (preferredStorage === 'secure') {
+    if (shouldUseSecure) {
         if (!secureRecord || !canManageSecureLorebook(user, secureRecord)) {
-            throw new LorebookRepositoryError('LorebookNotFound', `Lorebook "${canonicalName}" not found.`, 404);
-        }
-
-        return {
-            data: readLorebookFromRecord(secureRecord, allowDummy),
-            metadata: {
-                name: secureRecord.name,
-                storage: 'secure',
-                ownerHandle: secureRecord.ownerHandle,
-            },
-        };
-    }
-
-    if (!preferredStorage && secureRecord) {
-        if (!canManageSecureLorebook(user, secureRecord)) {
             throw new LorebookRepositoryError('LorebookNotFound', `Lorebook "${canonicalName}" not found.`, 404);
         }
 
@@ -467,7 +466,7 @@ export async function getLorebookForManagement(user, name, allowDummy = false, s
  * @param {string} name
  * @param {boolean} [allowDummy=false]
  */
-export async function readLorebookForGeneration(user, name, allowDummy = false) {
+export function readLorebookForGeneration(user, name, allowDummy = false) {
     const canonicalName = getCanonicalLorebookName(name);
     const dummyObject = allowDummy ? { entries: {} } : null;
 
@@ -507,8 +506,9 @@ export function hasLorebookForGeneration(user, name) {
  * @param {string} name
  * @param {object} data
  */
-export async function saveLorebookForManagement(user, name, data, storage = 'user') {
+export function saveLorebookForManagement(user, name, data, storage = 'user') {
     const canonicalName = assertCanonicalName(name);
+    assertLorebookData(data, canonicalName);
     const secureRecord = getSecureIndexEntry(canonicalName);
     const preferredStorage = storage === 'secure' ? 'secure' : 'user';
 
@@ -531,6 +531,7 @@ export async function saveLorebookForManagement(user, name, data, storage = 'use
         name: canonicalName,
         storage: 'user',
         ownerHandle: user.profile.handle,
+        // True when an admin saves a user-storage lorebook that shadows another user's secure lorebook.
         shadowingSecure: Boolean(secureRecord && secureRecord.ownerHandle !== user.profile.handle && canManageSecureLorebook(user, secureRecord)),
     };
 }
@@ -539,7 +540,7 @@ export async function saveLorebookForManagement(user, name, data, storage = 'use
  * @param {import('./users.js').User} user
  * @param {string} name
  */
-export async function deleteLorebookForManagement(user, name) {
+export function deleteLorebookForManagement(user, name) {
     const canonicalName = assertCanonicalName(name);
     const secureRecord = getSecureIndexEntry(canonicalName);
 
@@ -584,7 +585,7 @@ export async function promoteLorebook(user, name) {
         throw new LorebookRepositoryError('LorebookNotFound', `Lorebook "${canonicalName}" not found.`, 404);
     }
 
-    await assertSecureNameAvailableForPromotion(canonicalName);
+    assertSecureNameAvailableForPromotion(canonicalName);
 
     createSecureLorebookLink(canonicalName, user.profile.handle);
     try {
@@ -613,7 +614,7 @@ export async function promoteLorebook(user, name) {
  * @param {import('./users.js').User} user
  * @param {string} name
  */
-export async function demoteLorebook(user, name) {
+export function demoteLorebook(user, name) {
     const canonicalName = assertCanonicalName(name);
     const secureRecord = getSecureIndexEntry(canonicalName);
 

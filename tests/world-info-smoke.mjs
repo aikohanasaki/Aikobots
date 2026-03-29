@@ -110,7 +110,7 @@ await runScenario('source bucket assignment does not change final ordering', asy
     );
 });
 
-await runScenario('single-character speaker filtering and overrides', async () => {
+await runScenario('single-character chats ignore speaker-only filtering and overrides', async () => {
     const worldEntries = {
         SpeakerOnly: [{
             uid: 1,
@@ -147,12 +147,12 @@ await runScenario('single-character speaker filtering and overrides', async () =
     );
 
     assert(
-        JSON.stringify(matched.entries.map(entry => entry.world)) === JSON.stringify(['SpeakerOnly', 'Baseline']),
-        `speaker match ordering failed: ${JSON.stringify(matched.entries.map(entry => entry.world))}`,
+        JSON.stringify(matched.entries.map(entry => entry.world)) === JSON.stringify(['Baseline', 'SpeakerOnly']),
+        `single-chat override application failed: ${JSON.stringify(matched.entries.map(entry => entry.world))}`,
     );
     assert(
-        JSON.stringify(unmatched.entries.map(entry => entry.world)) === JSON.stringify(['Baseline']),
-        `speaker filtering failed: ${JSON.stringify(unmatched.entries.map(entry => entry.world))}`,
+        JSON.stringify(unmatched.entries.map(entry => entry.world)) === JSON.stringify(['Baseline', 'SpeakerOnly']),
+        `single-chat speaker filtering failed: ${JSON.stringify(unmatched.entries.map(entry => entry.world))}`,
     );
 });
 
@@ -404,6 +404,49 @@ await runScenario('per-lorebook budgets are isolated across multiple lorebooks',
         JSON.stringify(activated) === JSON.stringify(['Alpha.1', 'Beta.3', 'Gamma.5']),
         `lorebook budget isolation failed: ${JSON.stringify(activated)}`,
     );
+});
+
+await runScenario('randomTrim keeps a random in-budget subset without changing native ordering logic', async () => {
+    const originalRandom = Math.random;
+    Math.random = () => 0;
+
+    try {
+        const result = await scanWorldInfo({
+            chat: [],
+            maxContext: 100,
+            settings: {
+                world_info_budget: 100,
+                world_info_budget_cap: 0,
+                world_info_recursive: false,
+            },
+            sortedEntries: [
+                {
+                    uid: 1,
+                    world: 'Alpha',
+                    order: 300,
+                    content: 'A'.repeat(20),
+                    decorators: ['@@activate'],
+                    lorebookSettings: { budgetMode: 'fixed', budget: 10, randomTrim: true },
+                },
+                {
+                    uid: 2,
+                    world: 'Alpha',
+                    order: 200,
+                    content: 'B'.repeat(20),
+                    decorators: ['@@activate'],
+                    lorebookSettings: { budgetMode: 'fixed', budget: 10, randomTrim: true },
+                },
+            ],
+        });
+
+        const activated = result.allActivatedEntries.map(entry => `${entry.world}.${entry.uid}`);
+        assert(
+            JSON.stringify(activated) === JSON.stringify(['Alpha.2']),
+            `randomTrim failed: ${JSON.stringify(activated)}`,
+        );
+    } finally {
+        Math.random = originalRandom;
+    }
 });
 
 await runScenario('ignoreBudget bypasses lorebook and global budgets', async () => {

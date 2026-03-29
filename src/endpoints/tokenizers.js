@@ -279,7 +279,7 @@ export const webTokenizers = [
  * @param {string} model Sentencepiece model name
  * @returns {SentencePieceTokenizer|null} Sentencepiece tokenizer
  */
-export function getSentencepiceTokenizer(model) {
+export function getSentencepieceTokenizer(model) {
     if (model.includes('llama')) {
         return spp_llama;
     }
@@ -310,6 +310,8 @@ export function getSentencepiceTokenizer(model) {
 
     return null;
 }
+
+export const getSentencepiceTokenizer = getSentencepieceTokenizer;
 
 /**
  * Gets the Web tokenizer by the model name.

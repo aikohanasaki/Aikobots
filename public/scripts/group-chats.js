@@ -309,15 +309,7 @@ export function getGroupNames() {
 }
 
 export function getGroupMacroValues(currentSpeaker = name2) {
-    if (!selected_group) {
-        return {
-            group: currentSpeaker || '',
-            groupNotMuted: currentSpeaker || '',
-            notChar: name1 || '',
-        };
-    }
-
-    const group = groups.find(x => x.id == selected_group);
+    const group = selected_group ? groups.find(x => x.id == selected_group) : null;
     if (!group || !Array.isArray(group.members)) {
         return {
             group: currentSpeaker || '',

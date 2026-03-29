@@ -34,6 +34,7 @@ const DEFAULT_LOREBOOK_SETTINGS = Object.freeze({
     orderAdjustmentGroupOnly: false,
     characterOverrides: {},
     onlyWhenSpeaking: false,
+    randomTrim: false,
 });
 const promptStateModuleMap = {
     summary: '1_memory',
@@ -246,6 +247,7 @@ function normalizeLorebookSettings(value) {
         orderAdjustmentGroupOnly: Boolean(settings.orderAdjustmentGroupOnly),
         characterOverrides: normalizeCharacterOverrides(settings.characterOverrides),
         onlyWhenSpeaking: Boolean(settings.onlyWhenSpeaking),
+        randomTrim: Boolean(settings.randomTrim),
     };
 }
 
@@ -282,11 +284,11 @@ function resolveLorebookSettings(entry, activeSpeaker = {}, isGroupChat = false)
         ...DEFAULT_LOREBOOK_SETTINGS,
         ...normalizeLorebookSettings(entry?.lorebookSettings),
     };
-    const activeSpeakerKeys = getActiveSpeakerKeys(activeSpeaker);
+    const activeSpeakerKeys = isGroupChat ? getActiveSpeakerKeys(activeSpeaker) : new Set();
     let matchedOverride = null;
 
     for (const [key, override] of Object.entries(base.characterOverrides || {})) {
-        if (activeSpeakerKeys.has(normalizeSpeakerIdentifier(key))) {
+        if (activeSpeakerKeys.has(key)) {
             matchedOverride = override;
             break;
         }
@@ -298,6 +300,7 @@ function resolveLorebookSettings(entry, activeSpeaker = {}, isGroupChat = false)
         budgetMode: base.budgetMode,
         orderAdjustment: base.orderAdjustment,
         onlyWhenSpeaking: base.onlyWhenSpeaking,
+        randomTrim: base.randomTrim,
     };
 
     if (matchedOverride) {
@@ -320,7 +323,7 @@ function resolveLorebookSettings(entry, activeSpeaker = {}, isGroupChat = false)
     }
 
     return {
-        excluded: Boolean(base.onlyWhenSpeaking && !matchedOverride),
+        excluded: Boolean(isGroupChat && base.onlyWhenSpeaking && !matchedOverride),
         settings: resolved,
     };
 }

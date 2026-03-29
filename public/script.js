@@ -3135,9 +3135,12 @@ async function shouldIncludeExtensionPrompt(prompt) {
         return false;
     }
 
-    const hasFilter = typeof prompt.filter === 'function';
-    if (hasFilter && !await prompt.filter()) {
-        return false;
+    if (typeof prompt.filter === 'boolean') {
+        return prompt.filter;
+    }
+
+    if (typeof prompt.filter === 'function') {
+        return Boolean(await prompt.filter());
     }
 
     return true;
@@ -6493,7 +6496,7 @@ export function syncSwipeToMes(messageId = null, swipeId = null) {
     targetMessage.gen_started = targetSwipeInfo?.gen_started;
     targetMessage.gen_finished = targetSwipeInfo?.gen_finished;
     targetMessage.extra = structuredClone(targetSwipeInfo?.extra) ?? {};
-    restoreTimedWorldInfoFromChat(targetMessageId);
+    restoreTimedWorldInfoFromChat();
 
     return true;
 }

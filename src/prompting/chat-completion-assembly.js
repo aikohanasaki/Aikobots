@@ -1,6 +1,6 @@
 import {
     countWebTokenizerTokens,
-    getSentencepiceTokenizer,
+    getSentencepieceTokenizer,
     getTiktokenTokenizer,
     getTokenizerModel,
     getWebTokenizer,
@@ -1223,7 +1223,7 @@ async function countTokensOpenAIAsync(messages, model, full = false) {
 
     if (tokenizerModel === 'llama' || tokenizerModel === 'mistral' || tokenizerModel === 'yi' || tokenizerModel === 'gemma' || tokenizerModel === 'gemini' || tokenizerModel === 'jamba') {
         const sentencepieceModel = tokenizerModel === 'gemini' ? 'gemma' : tokenizerModel;
-        return countSentencepieceArrayTokens(getSentencepiceTokenizer(sentencepieceModel), messageArray);
+        return countSentencepieceArrayTokens(getSentencepieceTokenizer(sentencepieceModel), messageArray);
     }
 
     let tokenCount = 0;

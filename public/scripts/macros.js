@@ -327,7 +327,7 @@ function getCurrentSwipeId() {
  * @returns {Macro}
  */
 function getBannedWordsMacro() {
-    const banPattern = /{{banned "(.*)"}}/gi;
+    const banPattern = /{{banned ".*"}}/gi;
     const banReplace = () => '';
 
     return { regex: banPattern, replace: banReplace };

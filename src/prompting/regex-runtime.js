@@ -16,6 +16,116 @@ export const substitute_find_regex = {
     ESCAPED: 2,
 };
 
+function parseRegexQuantifier(pattern, startIndex) {
+    const char = pattern[startIndex];
+    if (char === '*' || char === '+' || char === '?') {
+        return {
+            length: 1,
+            variable: true,
+        };
+    }
+
+    if (char !== '{') {
+        return null;
+    }
+
+    const match = pattern.slice(startIndex).match(/^\{(\d+)(,(\d*)?)?\}/);
+    if (!match) {
+        return null;
+    }
+
+    const lower = Number(match[1]);
+    const hasUpperBound = match[3] !== undefined && match[3] !== '';
+    const upper = hasUpperBound ? Number(match[3]) : null;
+    const variable = !match[2] ? false : upper === null || lower !== upper;
+    return {
+        length: match[0].length,
+        variable,
+    };
+}
+
+function isPotentiallyUnsafeRegexPattern(pattern) {
+    const stack = [{ containsVariableQuantifier: false, lastToken: null }];
+    let inCharacterClass = false;
+    let escaped = false;
+
+    for (let index = 0; index < pattern.length; index++) {
+        const char = pattern[index];
+        const current = stack[stack.length - 1];
+
+        if (escaped) {
+            escaped = false;
+            current.lastToken = { type: 'atom', containsVariableQuantifier: false };
+            continue;
+        }
+
+        if (char === '\\') {
+            escaped = true;
+            continue;
+        }
+
+        if (inCharacterClass) {
+            if (char === ']') {
+                inCharacterClass = false;
+                current.lastToken = { type: 'atom', containsVariableQuantifier: false };
+            }
+            continue;
+        }
+
+        if (char === '[') {
+            inCharacterClass = true;
+            continue;
+        }
+
+        const quantifier = parseRegexQuantifier(pattern, index);
+        if (quantifier) {
+            if (!current.lastToken) {
+                continue;
+            }
+
+            if (quantifier.variable) {
+                current.containsVariableQuantifier = true;
+                if (current.lastToken.type === 'group' && current.lastToken.containsVariableQuantifier) {
+                    return true;
+                }
+            }
+
+            current.lastToken = null;
+            index += quantifier.length - 1;
+            continue;
+        }
+
+        if (char === '(') {
+            stack.push({ containsVariableQuantifier: false, lastToken: null });
+            continue;
+        }
+
+        if (char === ')') {
+            if (stack.length === 1) {
+                continue;
+            }
+
+            const completedGroup = stack.pop();
+            stack[stack.length - 1].lastToken = {
+                type: 'group',
+                containsVariableQuantifier: completedGroup.containsVariableQuantifier,
+            };
+            continue;
+        }
+
+        if (char === '|') {
+            current.lastToken = null;
+            continue;
+        }
+
+        if (!'^{},'.includes(char)) {
+            current.lastToken = { type: 'atom', containsVariableQuantifier: false };
+        }
+    }
+
+    return false;
+}
+
 function regexFromString(input) {
     try {
         const match = String(input || '').match(/(\/?)(.+)\1([a-z]*)/i);
@@ -24,6 +134,11 @@ function regexFromString(input) {
         }
 
         if (match[3] && !/^(?!.*?(.).*?\1)[dgimsuvy]+$/.test(match[3])) {
+            return;
+        }
+
+        if (isPotentiallyUnsafeRegexPattern(match[2])) {
+            console.warn('runRegexScript: Blocked regex pattern with nested variable quantifiers.');
             return;
         }
 
@@ -77,6 +192,8 @@ export function runRegexScript(regexScript, rawString, env = {}, { characterOver
         return newString;
     }
 
+    // Regex scripts are user-authored power-user features and execute as trusted patterns.
+    // We do not currently sandbox or time-box RegExp execution in this runtime.
     const runtimeEnv = buildRuntimeEnv(env, characterOverride);
     const state = macroState || createMacroState(env.macroSnapshot || {}, env.extensionPrompts || {});
     const getRegexString = () => {

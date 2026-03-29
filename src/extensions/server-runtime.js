@@ -27,6 +27,7 @@ const character_names_behavior = {
 
 const NARRATOR_MESSAGE_TYPE = 'narrator';
 const moduleCache = new Map();
+const moduleLoadPromises = new Map();
 const MAX_MODULE_CACHE_SIZE = 100;
 
 function isDirectory(filePath) {
@@ -166,68 +167,87 @@ async function loadServerExtension(entry) {
     const stat = fs.statSync(entry.serverEntryPath);
     const cacheKey = `${entry.serverEntryPath}:${stat.mtimeMs}`;
     if (moduleCache.has(cacheKey)) {
-        return moduleCache.get(cacheKey);
+        const cached = moduleCache.get(cacheKey);
+        moduleCache.delete(cacheKey);
+        moduleCache.set(cacheKey, cached);
+        return cached;
     }
 
-    pruneModuleCache(entry.serverEntryPath);
-
-    const definition = {
-        generationInterceptors: [],
-        promptProviders: [],
-        macroProviders: [],
-    };
-
-    const registrationApi = {
-        registerGenerationInterceptor(interceptor) {
-            if (typeof interceptor === 'function') {
-                definition.generationInterceptors.push(interceptor);
-            }
-        },
-        registerPromptProvider(provider) {
-            if (typeof provider === 'function') {
-                definition.promptProviders.push(provider);
-            }
-        },
-        registerMacroProvider(provider) {
-            if (typeof provider === 'function') {
-                definition.macroProviders.push(provider);
-            }
-        },
-    };
-
-    const moduleUrl = `${pathToFileURL(entry.serverEntryPath).href}?mtime=${stat.mtimeMs}`;
-    const imported = await import(moduleUrl);
-    const setup = imported.setup || imported.register || imported.default;
-
-    if (typeof setup === 'function') {
-        await setup(registrationApi, {
-            id: entry.id,
-            settingsKey: entry.settingsKey,
-            manifest: entry.manifest,
-            scope: entry.scope,
-        });
-    } else {
-        if (Array.isArray(imported.generationInterceptors)) {
-            for (const interceptor of imported.generationInterceptors) {
-                registrationApi.registerGenerationInterceptor(interceptor);
-            }
-        }
-
-        if (Array.isArray(imported.promptProviders)) {
-            for (const provider of imported.promptProviders) {
-                registrationApi.registerPromptProvider(provider);
-            }
-        }
-
-        if (Array.isArray(imported.macroProviders)) {
-            for (const provider of imported.macroProviders) {
-                registrationApi.registerMacroProvider(provider);
-            }
-        }
+    if (moduleLoadPromises.has(cacheKey)) {
+        return moduleLoadPromises.get(cacheKey);
     }
 
-    moduleCache.set(cacheKey, definition);
-    return definition;
+    const loadPromise = (async () => {
+        pruneModuleCache(entry.serverEntryPath);
+
+        const definition = {
+            generationInterceptors: [],
+            promptProviders: [],
+            macroProviders: [],
+        };
+
+        const registrationApi = {
+            registerGenerationInterceptor(interceptor) {
+                if (typeof interceptor === 'function') {
+                    definition.generationInterceptors.push(interceptor);
+                }
+            },
+            registerPromptProvider(provider) {
+                if (typeof provider === 'function') {
+                    definition.promptProviders.push(provider);
+                }
+            },
+            registerMacroProvider(provider) {
+                if (typeof provider === 'function') {
+                    definition.macroProviders.push(provider);
+                }
+            },
+        };
+
+        const moduleUrl = `${pathToFileURL(entry.serverEntryPath).href}?mtime=${stat.mtimeMs}`;
+        const imported = await import(moduleUrl);
+        const setup = imported.setup || imported.register || imported.default;
+
+        if (typeof setup === 'function') {
+            await setup(registrationApi, {
+                id: entry.id,
+                settingsKey: entry.settingsKey,
+                manifest: entry.manifest,
+                scope: entry.scope,
+            });
+        } else {
+            if (Array.isArray(imported.generationInterceptors)) {
+                for (const interceptor of imported.generationInterceptors) {
+                    registrationApi.registerGenerationInterceptor(interceptor);
+                }
+            }
+
+            if (Array.isArray(imported.promptProviders)) {
+                for (const provider of imported.promptProviders) {
+                    registrationApi.registerPromptProvider(provider);
+                }
+            }
+
+            if (Array.isArray(imported.macroProviders)) {
+                for (const provider of imported.macroProviders) {
+                    registrationApi.registerMacroProvider(provider);
+                }
+            }
+        }
+
+        moduleCache.set(cacheKey, definition);
+        return definition;
+    })();
+
+    moduleLoadPromises.set(cacheKey, loadPromise);
+
+    try {
+        return await loadPromise;
+    } finally {
+        if (moduleLoadPromises.get(cacheKey) === loadPromise) {
+            moduleLoadPromises.delete(cacheKey);
+        }
+    }
 }
 
 function createRuntimeEnv(promptContext) {
@@ -354,6 +374,56 @@ function makeRemoveExtensionPrompt(promptContext, macroState) {
     };
 }
 
+function normalizeMacroName(name) {
+    if (typeof name !== 'string') {
+        return '';
+    }
+
+    const trimmed = name.trim();
+    if (!trimmed || trimmed.startsWith('{{') || trimmed.endsWith('}}')) {
+        return '';
+    }
+
+    return trimmed;
+}
+
+function registerRuntimeMacro(macroState, name, value) {
+    const normalizedName = normalizeMacroName(name);
+    if (!normalizedName) {
+        return false;
+    }
+
+    macroState.registeredValues[normalizedName] = value;
+    return true;
+}
+
+function removeRuntimeMacro(macroState, name) {
+    const normalizedName = normalizeMacroName(name);
+    if (!normalizedName) {
+        return false;
+    }
+
+    return delete macroState.registeredValues[normalizedName];
+}
+
+function applyMacroProviderResult(macroState, result) {
+    if (!result) {
+        return;
+    }
+
+    const entries = result instanceof Map
+        ? Array.from(result.entries())
+        : Array.isArray(result)
+            ? result.filter(item => Array.isArray(item) && item.length >= 2).map(([key, value]) => [key, value])
+            : typeof result === 'object'
+                ? Object.entries(result)
+                : [];
+
+    for (const [key, value] of entries) {
+        registerRuntimeMacro(macroState, key, value);
+    }
+}
+
 export async function runServerGenerationExtensions(directories, promptContext) {
     if (!promptContext || typeof promptContext !== 'object') {
         return { aborted: false, executedExtensions: [] };
@@ -403,7 +473,13 @@ export async function runServerGenerationExtensions(directories, promptContext) 
             extensionSettings,
             settings: extensionSettings[entry.settingsKey] || extensionSettings[entry.id] || {},
             getSettings(name = entry.settingsKey) {
-                return extensionSettings[name] || extensionSettings[entry.id] || {};
+                const requestedName = typeof name === 'string' ? name : entry.settingsKey;
+                const isCurrentExtension = requestedName === entry.settingsKey || requestedName === entry.id;
+                if (isCurrentExtension) {
+                    return extensionSettings[entry.settingsKey] || extensionSettings[entry.id] || {};
+                }
+
+                return extensionSettings[requestedName] || {};
             },
             getExtensionPrompt(key) {
                 return promptContext.extensionPrompts?.[key] || null;
@@ -414,16 +490,46 @@ export async function runServerGenerationExtensions(directories, promptContext) 
                 aborted = true;
                 exitImmediately = Boolean(immediately);
             },
+            registerMacro(name, value) {
+                return registerRuntimeMacro(macroState, name, value);
+            },
+            removeMacro(name) {
+                return removeRuntimeMacro(macroState, name);
+            },
+            getMacro(name) {
+                const normalizedName = normalizeMacroName(name);
+                if (!normalizedName) {
+                    return undefined;
+                }
+
+                return macroState.registeredValues[normalizedName] ?? macroState.values[normalizedName];
+            },
+            getMacros() {
+                return {
+                    ...macroState.values,
+                    ...macroState.registeredValues,
+                };
+            },
             substituteParams(content, additional = {}) {
                 refreshMacroOutletValues(macroState, promptContext.extensionPrompts || {});
                 return evaluatePromptMacros(String(content ?? ''), env, { additional, macroState });
             },
         };
 
-        for (const provider of definition.promptProviders) {
-            await provider(context);
+        for (const provider of definition.macroProviders) {
+            const result = await provider(context);
+            applyMacroProviderResult(macroState, result);
             if (exitImmediately) {
                 break;
+            }
+        }
+
+        if (!exitImmediately) {
+            for (const provider of definition.promptProviders) {
+                await provider(context);
+                if (exitImmediately) {
+                    break;
+                }
             }
         }
 

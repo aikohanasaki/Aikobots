@@ -51,7 +51,7 @@ import { prepareEntriesForScan, resolveSortedEntriesPayload } from '../worldinfo
 import { readSecret, SECRET_KEYS } from '../secrets.js';
 import {
     getTokenizerModel,
-    getSentencepiceTokenizer,
+    getSentencepieceTokenizer,
     getTiktokenTokenizer,
     sentencepieceTokenizers,
     TEXT_COMPLETION_MODELS,
@@ -1429,9 +1429,11 @@ async function prepareServerPromptContext(user, directories, promptContext) {
     const worldInfoRequest = promptContext.worldInfoRequest;
     if (worldInfoRequest && !Array.isArray(worldInfoRequest.sortedEntries)) {
         const promptState = promptContext.promptState && typeof promptContext.promptState === 'object'
+            && !Array.isArray(promptContext.promptState)
             ? promptContext.promptState
             : null;
         const resolved = await resolveSortedEntriesPayload(user, worldInfoRequest);
+        // Persist the prepared scan list on the request object so later assembly stages reuse it.
         worldInfoRequest.sortedEntries = prepareEntriesForScan(resolved.entries, {
             ...(worldInfoRequest.substitutionEnv || {}),
             macroSnapshot: worldInfoRequest.macroSnapshot || promptContext.macroSnapshot,
@@ -1898,7 +1900,7 @@ router.post('/bias', async function (request, response) {
         let encodeFunction;
 
         if (sentencepieceTokenizers.includes(model)) {
-            const tokenizer = getSentencepiceTokenizer(model);
+            const tokenizer = getSentencepieceTokenizer(model);
             const instance = await tokenizer?.get();
             if (!instance) {
                 console.error('Tokenizer not initialized:', model);
@@ -2032,7 +2034,6 @@ router.post('/generate', function (request, response) {
     let apiKey;
     let headers;
     let bodyParams;
-    const isTextCompletion = false;
 
     if (request.body.chat_completion_source === CHAT_COMPLETION_SOURCES.OPENAI) {
         apiUrl = new URL(request.body.reverse_proxy || API_OPENAI).toString();
@@ -2044,7 +2045,7 @@ router.post('/generate', function (request, response) {
         };
 
         // Adjust logprobs params for Chat Completions API, which expects { top_logprobs: number; logprobs: boolean; }
-        if (!isTextCompletion && bodyParams.logprobs > 0) {
+        if (bodyParams.logprobs > 0) {
             bodyParams.top_logprobs = bodyParams.logprobs;
             bodyParams.logprobs = true;
         }
@@ -2125,7 +2126,7 @@ router.post('/generate', function (request, response) {
         };
 
         // Adjust logprobs params for Chat Completions API, which expects { top_logprobs: number; logprobs: boolean; }
-        if (!isTextCompletion && bodyParams.logprobs > 0) {
+        if (bodyParams.logprobs > 0) {
             bodyParams.top_logprobs = bodyParams.logprobs;
             bodyParams.logprobs = true;
         }

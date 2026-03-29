@@ -496,11 +496,12 @@ async function checkOpenRouterAuth() {
                 throw new Error('OpenRouter token not saved');
             }
         } catch (error) {
-            if (error instanceof DOMException && error.name === 'AbortError') {
-                error = new Error('OpenRouter exchange timed out');
-            }
+            const isTimeout = error instanceof DOMException && error.name === 'AbortError';
+            const message = isTimeout
+                ? 'OpenRouter exchange timed out'
+                : (error.message || 'Could not verify OpenRouter token. Please try again.');
             console.error('OpenRouter OAuth flow failed', error);
-            toastr.error(error.message || 'Could not verify OpenRouter token. Please try again.');
+            toastr.error(message);
             return;
         }
     }

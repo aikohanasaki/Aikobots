@@ -153,6 +153,9 @@ class PresetManager {
             name: 'Chat Completion Preset',
             getData: () => {
                 const manager = getPresetManager('openai');
+                if (!manager) {
+                    return null;
+                }
                 const name = manager.getSelectedPresetName();
                 const data = manager.getPresetSettings(name);
                 data['name'] = name;
@@ -160,6 +163,9 @@ class PresetManager {
             },
             setData: (data) => {
                 const manager = getPresetManager('openai');
+                if (!manager) {
+                    return;
+                }
                 const name = data.name;
                 return manager.savePreset(name, data);
             },
@@ -231,7 +237,17 @@ class PresetManager {
     }
 
     static isPossiblyCompletionData(data) {
-        return data && typeof data === 'object' && ('name' in data || 'preset_settings_openai' in data);
+        const completionProps = [
+            'preset_settings_openai',
+            'chat_completion_source',
+            'openai_model',
+            'temperature',
+            'frequency_penalty',
+            'presence_penalty',
+            'top_p',
+            'max_tokens',
+        ];
+        return data && typeof data === 'object' && !Array.isArray(data) && completionProps.some(prop => prop in data);
     }
 
     static isPossiblyReasoningData(data) {

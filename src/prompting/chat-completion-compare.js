@@ -116,9 +116,10 @@ function compareValues(client, server, path, differences, state) {
 }
 
 export function compareChatCompletionMessages(clientChat = [], serverChat = [], { maxDifferences = 50 } = {}) {
+    const parsedMaxDifferences = Number(maxDifferences);
     const differences = [];
     const state = {
-        maxDifferences: Math.max(1, Number(maxDifferences) || 50),
+        maxDifferences: Math.max(1, Number.isFinite(parsedMaxDifferences) ? parsedMaxDifferences : 50),
         truncated: false,
         seenPairs: new WeakMap(),
     };

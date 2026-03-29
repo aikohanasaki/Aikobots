@@ -144,7 +144,7 @@ export function evaluatePromptMacros(content, env = {}, { additional = {}, macro
         { regex: /<CHAR>/gi, replace: () => getValue('char') },
         { regex: /<CHARIFNOTGROUP>/gi, replace: () => getValue('group') },
         { regex: /<GROUP>/gi, replace: () => getValue('group') },
-        { regex: /{{roll[ : ]([^}]+)}}/gi, replace: (_, formulaText) => {
+        { regex: /{{roll[: ]([^}]+)}}/gi, replace: (_, formulaText) => {
             let formula = String(formulaText || '').trim();
             if (isDigitsOnly(formula)) {
                 formula = `1d${formula}`;
@@ -205,7 +205,7 @@ export function evaluatePromptMacros(content, env = {}, { additional = {}, macro
         { regex: /{{lastSwipeId}}/gi, replace: () => sanitizeMacroValue(state.values.lastSwipeId ?? '') },
         { regex: /{{currentSwipeId}}/gi, replace: () => sanitizeMacroValue(state.values.currentSwipeId ?? '') },
         { regex: /{{reverse:(.+?)}}/gi, replace: (_, value) => Array.from(String(value ?? '')).reverse().join('') },
-        { regex: /\{\{\/\/([\s\S]*?)\}\}/gm, replace: () => '' },
+        { regex: /\{\{\/\/([\s\S]*?)\}\}/g, replace: () => '' },
         { regex: /{{time}}/gi, replace: () => state.now.format('LT') },
         { regex: /{{date}}/gi, replace: () => state.now.format('LL') },
         { regex: /{{weekday}}/gi, replace: () => state.now.format('dddd') },
@@ -228,7 +228,7 @@ export function evaluatePromptMacros(content, env = {}, { additional = {}, macro
             const list = String(listString || '').includes('::')
                 ? String(listString).split('::')
                 : splitEscapedList(listString);
-            if (!list.length) {
+            if (list.length === 1 && list[0] === '') {
                 return '';
             }
             const rng = seedrandom('added entropy.', { entropy: true });
@@ -238,7 +238,7 @@ export function evaluatePromptMacros(content, env = {}, { additional = {}, macro
             const list = String(listString || '').includes('::')
                 ? String(listString).split('::')
                 : splitEscapedList(listString);
-            if (!list.length) {
+            if (list.length === 1 && list[0] === '') {
                 return '';
             }
             const combinedSeedString = `${getStringHash(state.chatId)}-${getStringHash(rawContent)}-${offset}`;

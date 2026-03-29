@@ -326,3 +326,135 @@ select.keyselect+span.select2-container .select2-selection--multiple {
     overflow-y: auto;
     overflow-x: hidden;
 }
+
+.stlo_checkbox_row {
+    display: grid;
+    grid-template-columns: auto 1fr;
+    align-items: start;
+    column-gap: 8px;
+}
+
+.stlo_checkbox_row > input[type="checkbox"] {
+    align-self: start;
+    margin-top: 0.2em;
+}
+
+.stlo_checkbox_text {
+    display: block;
+    align-self: start;
+    margin: 0;
+}
+
+.stlo_popup_intro {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+.stlo_section {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    padding: 12px;
+    border: 1px solid var(--SmartThemeBorderColor);
+    border-radius: 8px;
+    background-color: var(--black30a);
+}
+
+.stlo_section_copy {
+    display: block;
+    opacity: 0.8;
+}
+
+.stlo_field_grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    gap: 10px;
+    align-items: start;
+}
+
+.stlo_feature_toggle {
+    width: 100%;
+}
+
+.stlo_checkbox_body {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+
+.stlo_checkbox_body > strong {
+    font-size: 0.95rem;
+}
+
+.stlo_override_section {
+    gap: 10px;
+}
+
+.stlo_override_panel {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.stlo_override_rows {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+.stlo_override_empty_state {
+    opacity: 0.7;
+    font-size: 0.9em;
+    margin-bottom: 8px;
+}
+
+.stlo_override_row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    align-items: flex-start;
+    padding: 10px;
+    border: 1px solid var(--SmartThemeBorderColor);
+    border-radius: 6px;
+    background-color: var(--black30a);
+}
+
+.stlo_override_field {
+    display: flex;
+    flex: 1 1 140px;
+    flex-direction: column;
+    gap: 2px;
+    min-width: 140px;
+}
+
+.stlo_override_identity_field {
+    flex-basis: 220px;
+}
+
+.stlo_override_field > .text_pole {
+    margin: 0;
+}
+
+.stlo_override_legacy_notice {
+    display: block;
+    color: var(--SmartThemeQuoteColor);
+    opacity: 0.9;
+}
+
+.stlo_override_remove {
+    align-self: flex-start;
+    margin-left: auto;
+    margin-top: 1.5rem;
+}
+
+.stlo_override_add {
+    margin-top: 4px;
+    margin-bottom: 8px;
+}
+
+@media (max-width: 900px) {
+    .stlo_override_remove {
+        margin-top: 0;
+    }
+}

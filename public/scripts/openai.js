@@ -103,7 +103,11 @@ function sanitizeForServerPayload(value, seen = new WeakSet()) {
     }
 
     if (valueType === 'bigint') {
-        return Number(value);
+        const maxSafeInteger = BigInt(Number.MAX_SAFE_INTEGER);
+        const minSafeInteger = BigInt(Number.MIN_SAFE_INTEGER);
+        return (value > maxSafeInteger || value < minSafeInteger)
+            ? String(value)
+            : Number(value);
     }
 
     if (valueType === 'function' || valueType === 'symbol') {
@@ -189,7 +193,7 @@ export async function debugServerAssemblyDump(promptContext = null) {
         body: JSON.stringify({
             ...context,
             includeItemization: true,
-            clientChat: Array.isArray(context.messages) ? structuredClone(context.messages) : [],
+            clientChat: Array.isArray(context.messages) ? context.messages : [],
         }),
     });
 
@@ -1754,7 +1758,7 @@ function getReasoningEffort() {
 /**
  * Send a chat completion request to backend
  * @param {string} type (impersonate, quiet, continue, etc)
- * @param {Array} messages
+ * @param {Array|{promptContext: object}} messages - Either an array of chat messages, or an object containing promptContext for server-side assembly
  * @param {AbortSignal?} signal
  * @param {import('../script.js').AdditionalRequestOptions} options
  * @returns {Promise<unknown>}
@@ -2094,26 +2098,30 @@ async function sendOpenAIRequest(type, messages, signal, { jsonSchema = null } =
     await eventSource.emit(event_types.CHAT_COMPLETION_SETTINGS_READY, generate_data);
 
     const generate_url = '/api/backends/chat-completions/generate';
-    const response = await fetch(generate_url, {
-        method: 'POST',
-        body: JSON.stringify(generate_data),
-        headers: getRequestHeaders(),
-        signal: signal,
-    });
+    const hasForcedActivations = Array.isArray(promptContext?.worldInfoRequest?.forcedActivations) && promptContext.worldInfoRequest.forcedActivations.length > 0;
+    let response;
+    try {
+        response = await fetch(generate_url, {
+            method: 'POST',
+            body: JSON.stringify(generate_data),
+            headers: getRequestHeaders(),
+            signal: signal,
+        });
 
-    if (!response.ok) {
-        const errorText = await response.text();
-        const parsed = tryParseStreamingError(response, errorText);
-        const fallbackMessage =
-            parsed?.error?.message ||
-            parsed?.message ||
-            errorText?.trim() ||
-            `Got response status ${response.status}`;
-        throw new Error(fallbackMessage);
-    }
-
-    if (Array.isArray(promptContext?.worldInfoRequest?.forcedActivations) && promptContext.worldInfoRequest.forcedActivations.length > 0) {
-        clearForcedActivationEntries();
+        if (!response.ok) {
+            const errorText = await response.text();
+            const parsed = tryParseStreamingError(response, errorText);
+            const fallbackMessage =
+                parsed?.error?.message ||
+                parsed?.message ||
+                errorText?.trim() ||
+                `Got response status ${response.status}`;
+            throw new Error(fallbackMessage);
+        }
+    } finally {
+        if (hasForcedActivations) {
+            clearForcedActivationEntries();
+        }
     }
 
     applyAssemblyResponseMetadata(response, type);

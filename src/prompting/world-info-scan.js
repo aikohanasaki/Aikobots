@@ -1,6 +1,6 @@
 import {
     countWebTokenizerTokens,
-    getSentencepiceTokenizer,
+    getSentencepieceTokenizer,
     getTiktokenTokenizer,
     getTokenizerModel,
     getWebTokenizer,
@@ -105,11 +105,14 @@ async function countTokensOpenAIAsync(messages, model, full = false) {
 
     if (tokenizerModel === 'llama' || tokenizerModel === 'mistral' || tokenizerModel === 'yi' || tokenizerModel === 'gemma' || tokenizerModel === 'gemini' || tokenizerModel === 'jamba') {
         const sentencepieceModel = tokenizerModel === 'gemini' ? 'gemma' : tokenizerModel;
-        return countSentencepieceArrayTokens(getSentencepiceTokenizer(sentencepieceModel), messageArray);
+        return countSentencepieceArrayTokens(getSentencepieceTokenizer(sentencepieceModel), messageArray);
     }
 
     let tokenCount = 0;
     const tokenizer = getTiktokenTokenizer(tokenizerModel);
+    if (!tokenizer) {
+        throw new Error(`Failed to load tokenizer: ${tokenizerModel}`);
+    }
     const modelName = String(model || '');
     const tokensPerName = modelName.includes('gpt-3.5-turbo-0301') ? -1 : 1;
     const tokensPerMessage = modelName.includes('gpt-3.5-turbo-0301') ? 4 : 3;
@@ -179,6 +182,59 @@ function calculateLorebookBudget(settings = {}, totalBudget = 0, maxContext = 0)
     }
 }
 
+function shuffleInPlace(arr = []) {
+    for (let i = arr.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [arr[i], arr[j]] = [arr[j], arr[i]];
+    }
+
+    return arr;
+}
+
+async function buildRandomTrimDropSet(newEntries, payload, tokenCountCache, lorebookBudgets, lorebookActivatedText) {
+    const byWorld = new Map();
+
+    for (const entry of newEntries) {
+        if (!entry?.world || entry.ignoreBudget || !entry.lorebookSettings?.randomTrim) {
+            continue;
+        }
+
+        const lorebookBudget = lorebookBudgets.get(entry.world) || 0;
+        if (!(lorebookBudget > 0)) {
+            continue;
+        }
+
+        if (!byWorld.has(entry.world)) {
+            byWorld.set(entry.world, []);
+        }
+
+        byWorld.get(entry.world).push(entry);
+    }
+
+    const dropSet = new Set();
+    for (const [world, entries] of byWorld.entries()) {
+        const lorebookBudget = lorebookBudgets.get(world) || 0;
+        const existingText = lorebookActivatedText.get(world) || '';
+        let usedTokens = existingText
+            ? await countWorldInfoTokens(existingText, payload, tokenCountCache)
+            : 0;
+
+        const shuffledEntries = shuffleInPlace(entries.slice());
+        for (const entry of shuffledEntries) {
+            const entryKey = `${entry.world}.${entry.uid}`;
+            const entryTokens = await countWorldInfoTokens(`${entry.content}\n`, payload, tokenCountCache);
+            if ((usedTokens + entryTokens) >= lorebookBudget) {
+                dropSet.add(entryKey);
+                continue;
+            }
+
+            usedTokens += entryTokens;
+        }
+    }
+
+    return dropSet;
+}
+
 class WorldInfoBuffer {
     #settings = null;
     #globalScanData = null;
@@ -187,7 +243,6 @@ class WorldInfoBuffer {
     #injectBuffer = [];
     #forcedActivations = new Map();
     #skew = 0;
-    #startDepth = 0;
 
     constructor(messages, globalScanData, injects, settings, forcedActivations = []) {
         this.#settings = settings;
@@ -216,7 +271,7 @@ class WorldInfoBuffer {
 
     get(entry, scanState) {
         let depth = entry.scanDepth ?? this.getDepth();
-        if (depth <= this.#startDepth) {
+        if (depth <= 0) {
             return '';
         }
 
@@ -230,7 +285,7 @@ class WorldInfoBuffer {
 
         const matcher = '\x01';
         const joiner = '\n' + matcher;
-        let result = matcher + this.#depthBuffer.slice(this.#startDepth, depth).join(joiner);
+        let result = matcher + this.#depthBuffer.slice(0, depth).join(joiner);
 
         if (entry.matchPersonaDescription && this.#globalScanData.personaDescription) {
             result += joiner + this.#globalScanData.personaDescription;
@@ -662,7 +717,7 @@ export async function scanWorldInfo(payload = {}) {
     let allActivatedText = '';
     const lorebookActivatedText = new Map();
 
-    let budget = Math.round((Number(settings.world_info_budget) || 0) * Number(payload.maxContext || 0) / 100) || 1;
+    let budget = Math.round((Number(settings.world_info_budget) || 0) * Number(payload.maxContext || 0) / 100);
     if (Number(settings.world_info_budget_cap) > 0 && budget > Number(settings.world_info_budget_cap)) {
         budget = Number(settings.world_info_budget_cap);
     }
@@ -824,6 +879,7 @@ export async function scanWorldInfo(payload = {}) {
         const admittedEntries = [];
 
         filterByInclusionGroups(newEntries, allActivatedEntries, buffer, scanState, timedEffects, settings);
+        const randomTrimDrops = await buildRandomTrimDropSet(newEntries, payload, tokenCountCache, lorebookBudgets, lorebookActivatedText);
 
         let newContent = '';
         let ignoresBudget = newEntries.filter(entry => entry.ignoreBudget).length;
@@ -845,6 +901,10 @@ export async function scanWorldInfo(payload = {}) {
             }
 
             const entryContent = `${entry.content}\n`;
+            if (randomTrimDrops.has(`${entry.world}.${entry.uid}`)) {
+                continue;
+            }
+
             if (!entry.ignoreBudget && lorebookBudgetOverflowed.has(entry.world)) {
                 continue;
             }
