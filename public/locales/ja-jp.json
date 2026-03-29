@@ -1444,4 +1444,9 @@
     "Stop Inspecting": "検査を停止",
     "Inspect Prompts": "プロンプトを検査",
     "Toggle prompt inspection": "プロンプト検査の切り替え"
+    ,
+    "Lorebook Ordering & Budget": "Lorebook Ordering & Budget",
+    "Move lorebook between user and secure storage": "Move lorebook between user and secure storage",
+    "Return lorebook to user storage": "Return lorebook to user storage",
+    "Promote lorebook to secure storage": "Promote lorebook to secure storage"
 }

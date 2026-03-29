@@ -27,6 +27,7 @@ const character_names_behavior = {
 
 const NARRATOR_MESSAGE_TYPE = 'narrator';
 const moduleCache = new Map();
+const MAX_MODULE_CACHE_SIZE = 100;
 
 function isDirectory(filePath) {
     try {
@@ -37,7 +38,11 @@ function isDirectory(filePath) {
 }
 
 function readJson(filePath) {
-    return JSON.parse(fs.readFileSync(filePath, 'utf8'));
+    try {
+        return JSON.parse(fs.readFileSync(filePath, 'utf8'));
+    } catch {
+        return null;
+    }
 }
 
 function getExtensionRoots(directories) {
@@ -81,6 +86,10 @@ function getManifestEntry(entryRoot, directoryEntry) {
     }
 
     const manifest = readJson(manifestPath);
+    if (!manifest) {
+        return null;
+    }
+
     const serverEntryPath = getServerEntryPath(extensionPath, manifest);
     if (!serverEntryPath) {
         return null;
@@ -128,11 +137,29 @@ function discoverServerExtensions(directories, extensionSettings = {}) {
             const deps = Array.isArray(entry.manifest.dependencies) ? entry.manifest.dependencies : [];
             return deps.every(dep => availableNames.has(dep) && !disabled.has(dep));
         })
-        .sort((a, b) => Number(a.manifest.loading_order || 0) - Number(b.manifest.loading_order || 0) || entryName(entry).localeCompare(entryName(b)));
+        .sort((a, b) => Number(a.manifest.loading_order || 0) - Number(b.manifest.loading_order || 0) || entryName(a).localeCompare(entryName(b)));
 }
 
 function entryName(entry) {
     return String(entry.manifest.display_name || entry.settingsKey || entry.id);
+}
+
+function pruneModuleCache(serverEntryPath) {
+    const cachePrefix = `${serverEntryPath}:`;
+
+    for (const key of Array.from(moduleCache.keys())) {
+        if (key.startsWith(cachePrefix)) {
+            moduleCache.delete(key);
+        }
+    }
+
+    while (moduleCache.size >= MAX_MODULE_CACHE_SIZE) {
+        const firstKey = moduleCache.keys().next().value;
+        if (!firstKey) {
+            break;
+        }
+        moduleCache.delete(firstKey);
+    }
 }
 
 async function loadServerExtension(entry) {
@@ -141,6 +168,8 @@ async function loadServerExtension(entry) {
     if (moduleCache.has(cacheKey)) {
         return moduleCache.get(cacheKey);
     }
+
+    pruneModuleCache(entry.serverEntryPath);
 
     const definition = {
         generationInterceptors: [],
@@ -222,12 +251,10 @@ function buildOpenAIMessagesFromCoreChat(promptContext) {
     const wrapInQuotes = Boolean(promptContext.oaiSettings?.wrap_in_quotes);
     const selectedGroup = Boolean(promptContext.selectedGroup);
     const userName = promptContext.userName || '';
-    let j = 0;
 
     for (let index = chat.length - 1; index >= 0; index--) {
-        const item = chat[j];
+        const item = chat[index];
         if (!item || item.extra?.ignore) {
-            j++;
             continue;
         }
 
@@ -267,7 +294,7 @@ function buildOpenAIMessagesFromCoreChat(promptContext) {
             ? mediaIndexValue
             : 0;
 
-        messages[index] = {
+        messages.push({
             role,
             content,
             name: item.name,
@@ -275,8 +302,7 @@ function buildOpenAIMessagesFromCoreChat(promptContext) {
             mediaDisplay,
             mediaIndex,
             invocations: item.extra?.tool_invocations,
-        };
-        j++;
+        });
     }
 
     return messages;

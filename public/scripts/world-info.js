@@ -252,7 +252,7 @@ function updateWorldInfoStorageButton(name = '') {
 
     if (!item) {
         button.addClass('disabled');
-        button.attr('title', 'Move lorebook between user and secure storage');
+        button.attr('title', t`Move lorebook between user and secure storage`);
         icon.removeClass('fa-lock fa-lock-open');
         icon.addClass('fa-shield-halved');
         return;
@@ -262,11 +262,11 @@ function updateWorldInfoStorageButton(name = '') {
     button.toggleClass('disabled', !canToggle);
 
     if (item.storage === 'secure') {
-        button.attr('title', 'Return lorebook to user storage');
+        button.attr('title', t`Return lorebook to user storage`);
         icon.removeClass('fa-lock-open fa-shield-halved');
         icon.addClass('fa-lock');
     } else {
-        button.attr('title', 'Promote lorebook to secure storage');
+        button.attr('title', t`Promote lorebook to secure storage`);
         icon.removeClass('fa-lock fa-shield-halved');
         icon.addClass('fa-lock-open');
     }
@@ -4290,7 +4290,8 @@ async function openLorebookOrderingDialog(name, data) {
     if (rawCharacterOverrides) {
         try {
             characterOverrides = JSON.parse(rawCharacterOverrides);
-        } catch {
+        } catch (error) {
+            console.warn('[WI] Failed to parse character overrides JSON:', error);
             toastr.error(t`Character overrides must be valid JSON.`, t`Lorebook Ordering`);
             return;
         }

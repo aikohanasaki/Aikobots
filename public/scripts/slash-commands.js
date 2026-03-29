@@ -427,13 +427,26 @@ export function initDefaultSlashCommands() {
         name: 'tempchat',
         callback: () => {
             return new Promise((resolve, reject) => {
-                const timeoutId = setTimeout(() => {
+                let settled = false;
+                const cleanup = () => {
+                    clearTimeout(timeoutId);
                     eventSource.removeListener(event_types.CHAT_CHANGED, eventCallback);
+                };
+                const timeoutId = setTimeout(() => {
+                    if (settled) {
+                        return;
+                    }
+                    settled = true;
+                    cleanup();
                     reject(t`Failed to open temporary chat`);
                 }, debounce_timeout.relaxed);
 
                 const eventCallback = async (chatId) => {
-                    clearTimeout(timeoutId);
+                    if (settled) {
+                        return;
+                    }
+                    settled = true;
+                    cleanup();
                     if (chatId) {
                         return reject(t`Not in a temporary chat`);
                     }
@@ -441,7 +454,7 @@ export function initDefaultSlashCommands() {
                     return resolve('');
                 };
 
-                eventSource.once(event_types.CHAT_CHANGED, eventCallback);
+                eventSource.on(event_types.CHAT_CHANGED, eventCallback);
                 $('#option_close_chat').trigger('click');
             });
         },

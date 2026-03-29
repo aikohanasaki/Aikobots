@@ -23,7 +23,7 @@ function regexFromString(input) {
             return;
         }
 
-        if (match[3] && !/^(?!.*?(.).*?\1)[gmixXsuUAJ]+$/.test(match[3])) {
+        if (match[3] && !/^(?!.*?(.).*?\1)[dgimsuvy]+$/.test(match[3])) {
             return;
         }
 
@@ -60,9 +60,8 @@ function buildRuntimeEnv(env = {}, characterOverride) {
     };
 }
 
-function filterString(rawString, trimStrings, env, { characterOverride, macroState } = {}) {
+function filterString(rawString, trimStrings, runtimeEnv, { macroState } = {}) {
     let finalString = rawString;
-    const runtimeEnv = buildRuntimeEnv(env, characterOverride);
 
     for (const trimString of Array.isArray(trimStrings) ? trimStrings : []) {
         const resolvedTrimString = evaluatePromptMacros(trimString, runtimeEnv, { macroState });
@@ -116,7 +115,7 @@ export function runRegexScript(regexScript, rawString, env = {}, { characterOver
                 return '';
             }
 
-            return filterString(groupValue, regexScript.trimStrings, runtimeEnv, { characterOverride, macroState: state });
+            return filterString(groupValue, regexScript.trimStrings, runtimeEnv, { macroState: state });
         });
 
         return evaluatePromptMacros(replaceWithGroups, runtimeEnv, { macroState: state });

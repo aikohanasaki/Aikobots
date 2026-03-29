@@ -22,6 +22,13 @@ const scaffoldIndexPath = path.join(scaffoldDirectory, 'index.json');
 const WHITELIST_GENERIC_URL_DOWNLOAD_SOURCES = getConfigValue('whitelistImportDomains', []);
 const USER_AGENT = 'SillyTavern';
 
+function getAttachmentContentDisposition(fileName) {
+    const originalName = String(fileName || 'download');
+    const asciiFallback = sanitize(originalName).replace(/["\\]/g, '_') || 'download';
+    const encodedName = encodeURIComponent(originalName);
+    return `attachment; filename="${asciiFallback}"; filename*=UTF-8''${encodedName}`;
+}
+
 /**
  * @typedef {Object} ContentItem
  * @property {string} filename
@@ -969,7 +976,7 @@ router.post('/importURL', async (request, response) => {
         }
 
         if (result.fileType) response.set('Content-Type', result.fileType);
-        response.set('Content-Disposition', `attachment; filename="${encodeURI(result.fileName)}"`);
+        response.set('Content-Disposition', getAttachmentContentDisposition(result.fileName));
         response.set('X-Custom-Content-Type', type);
         return response.send(result.buffer);
     } catch (error) {
@@ -1026,7 +1033,7 @@ router.post('/importUUID', async (request, response) => {
         }
 
         if (result.fileType) response.set('Content-Type', result.fileType);
-        response.set('Content-Disposition', `attachment; filename="${encodeURI(result.fileName)}"`);
+        response.set('Content-Disposition', getAttachmentContentDisposition(result.fileName));
         response.set('X-Custom-Content-Type', uuidType);
         return response.send(result.buffer);
     } catch (error) {

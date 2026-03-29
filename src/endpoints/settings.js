@@ -228,8 +228,14 @@ router.post('/get', async (request, response) => {
             sortFunction: sortByName(request.user.directories.openAI_Settings), removeFileExtension: true,
         });
 
-    const worldInfoItems = await listLorebooksForManagement(request.user);
-    const world_names = worldInfoItems.map(item => item.name);
+    let worldInfoItems = [];
+    let world_names = [];
+    try {
+        worldInfoItems = await listLorebooksForManagement(request.user) ?? [];
+        world_names = worldInfoItems.map(item => item.name);
+    } catch (error) {
+        console.error('Failed to load lorebooks for management:', error);
+    }
 
     const themes = readAndParseFromDirectory(request.user.directories.themes);
     const movingUIPresets = readAndParseFromDirectory(request.user.directories.movingUI);

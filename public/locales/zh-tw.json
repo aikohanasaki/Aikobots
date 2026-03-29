@@ -2761,4 +2761,9 @@
     "[title]Delete a ": "刪除 ",
     "[title]Rename a ": "重新命名 ",
     "completions note prefix": "完成提示前綴"
+    ,
+    "Lorebook Ordering & Budget": "Lorebook Ordering & Budget",
+    "Move lorebook between user and secure storage": "Move lorebook between user and secure storage",
+    "Return lorebook to user storage": "Return lorebook to user storage",
+    "Promote lorebook to secure storage": "Promote lorebook to secure storage"
 }

@@ -1,4 +1,4 @@
-function cloneComparable(value) {
+function cloneComparable(value, seen = new WeakSet()) {
     if (value === undefined) {
         return '[undefined]';
     }
@@ -8,14 +8,24 @@ function cloneComparable(value) {
     }
 
     if (Array.isArray(value)) {
-        return value.map(cloneComparable);
+        if (seen.has(value)) {
+            return '[circular]';
+        }
+
+        seen.add(value);
+        return value.map(item => cloneComparable(item, seen));
     }
 
     if (value && typeof value === 'object') {
+        if (seen.has(value)) {
+            return '[circular]';
+        }
+
+        seen.add(value);
         return Object.fromEntries(
             Object.keys(value)
                 .sort()
-                .map(key => [key, cloneComparable(value[key])]),
+                .map(key => [key, cloneComparable(value[key], seen)]),
         );
     }
 
@@ -31,9 +41,32 @@ function makeDifference(path, reason, client, server) {
     };
 }
 
+function hasSeenPair(seenPairs, client, server) {
+    if (!client || typeof client !== 'object' || !server || typeof server !== 'object') {
+        return false;
+    }
+
+    let seenServers = seenPairs.get(client);
+    if (!seenServers) {
+        seenServers = new WeakSet();
+        seenPairs.set(client, seenServers);
+    }
+
+    if (seenServers.has(server)) {
+        return true;
+    }
+
+    seenServers.add(server);
+    return false;
+}
+
 function compareValues(client, server, path, differences, state) {
     if (differences.length >= state.maxDifferences) {
         state.truncated = true;
+        return;
+    }
+
+    if (hasSeenPair(state.seenPairs, client, server)) {
         return;
     }
 
@@ -87,6 +120,7 @@ export function compareChatCompletionMessages(clientChat = [], serverChat = [], 
     const state = {
         maxDifferences: Math.max(1, Number(maxDifferences) || 50),
         truncated: false,
+        seenPairs: new WeakMap(),
     };
 
     compareValues(clientChat, serverChat, 'chat', differences, state);

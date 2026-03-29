@@ -657,22 +657,20 @@ async function validateReverseProxy() {
  * @returns {object[]} - Array containing all messages formatted for chat completion.
  */
 function setOpenAIMessages(chat) {
-    let j = 0;
     // clean openai msgs
     const messages = [];
     for (let i = chat.length - 1; i >= 0; i--) {
-        let role = chat[j]['is_user'] ? 'user' : 'assistant';
-        let content = chat[j]['mes'];
+        let role = chat[i]['is_user'] ? 'user' : 'assistant';
+        let content = chat[i]['mes'];
 
         // If this symbol flag is set, completely ignore the message.
         // This can be used to hide messages without affecting the number of messages in the chat.
-        if (chat[j].extra?.[IGNORE_SYMBOL]) {
-            j++;
+        if (chat[i].extra?.[IGNORE_SYMBOL]) {
             continue;
         }
 
         // 100% legal way to send a message as system
-        if (chat[j].extra?.type === system_message_types.NARRATOR) {
+        if (chat[i].extra?.type === system_message_types.NARRATOR) {
             role = 'system';
         }
 
@@ -681,13 +679,13 @@ function setOpenAIMessages(chat) {
             case character_names_behavior.NONE:
                 break;
             case character_names_behavior.DEFAULT:
-                if ((selected_group && chat[j].name !== name1) || (chat[j].force_avatar && chat[j].name !== name1 && chat[j].extra?.type !== system_message_types.NARRATOR)) {
-                    content = `${chat[j].name}: ${content}`;
+                if ((selected_group && chat[i].name !== name1) || (chat[i].force_avatar && chat[i].name !== name1 && chat[i].extra?.type !== system_message_types.NARRATOR)) {
+                    content = `${chat[i].name}: ${content}`;
                 }
                 break;
             case character_names_behavior.CONTENT:
-                if (chat[j].extra?.type !== system_message_types.NARRATOR) {
-                    content = `${chat[j].name}: ${content}`;
+                if (chat[i].extra?.type !== system_message_types.NARRATOR) {
+                    content = `${chat[i].name}: ${content}`;
                 }
                 break;
             case character_names_behavior.COMPLETION:
@@ -701,13 +699,12 @@ function setOpenAIMessages(chat) {
 
         // Apply the "wrap in quotes" option
         if (role == 'user' && oai_settings.wrap_in_quotes) content = `"${content}"`;
-        const name = chat[j]['name'];
-        const media = chat[j]?.extra?.media;
-        const mediaDisplay = getMediaDisplay(chat[j]);
-        const mediaIndex = getMediaIndex(chat[j]);
-        const invocations = chat[j]?.extra?.tool_invocations;
-        messages[i] = { 'role': role, 'content': content, name: name, 'media': media, 'mediaDisplay': mediaDisplay, 'mediaIndex': mediaIndex, 'invocations': invocations };
-        j++;
+        const name = chat[i]['name'];
+        const media = chat[i]?.extra?.media;
+        const mediaDisplay = getMediaDisplay(chat[i]);
+        const mediaIndex = getMediaIndex(chat[i]);
+        const invocations = chat[i]?.extra?.tool_invocations;
+        messages.push({ 'role': role, 'content': content, name: name, 'media': media, 'mediaDisplay': mediaDisplay, 'mediaIndex': mediaIndex, 'invocations': invocations });
     }
 
     return messages;

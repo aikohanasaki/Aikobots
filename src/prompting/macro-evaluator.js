@@ -58,6 +58,15 @@ function buildOutletValues(extensionPrompts = {}) {
     return outletValues;
 }
 
+const ESCAPED_COMMA_SENTINEL = '__ST_ESCAPED_COMMA_7F3F5E9A__';
+
+function splitEscapedList(listString) {
+    return String(listString || '')
+        .replace(/\\,/g, ESCAPED_COMMA_SENTINEL)
+        .split(',')
+        .map(item => item.trim().replaceAll(ESCAPED_COMMA_SENTINEL, ','));
+}
+
 export function createMacroState(snapshot = {}, extensionPrompts = {}) {
     return {
         values: { ...(snapshot?.values || {}) },
@@ -206,12 +215,19 @@ export function evaluatePromptMacros(content, env = {}, { additional = {}, macro
         { regex: /{{idle_duration}}/gi, replace: () => sanitizeMacroValue(state.values.idle_duration ?? '') },
         { regex: /{{time_UTC([-+]\d+)}}/gi, replace: (_, offset) => moment(state.now).utc().utcOffset(parseInt(offset, 10)).format('LT') },
         { regex: /{{outlet::(.+?)}}/gi, replace: (_, key) => sanitizeMacroValue(state.outletValues[String(key).trim()] ?? '') },
-        { regex: /{{timeDiff::(.*?)::(.*?)}}/gi, replace: (_, left, right) => moment.duration(moment(left).diff(moment(right))).humanize(true) },
+        { regex: /{{timeDiff::(.*?)::(.*?)}}/gi, replace: (_, left, right) => {
+            const leftMoment = moment(left);
+            const rightMoment = moment(right);
+            if (!leftMoment.isValid() || !rightMoment.isValid()) {
+                return '';
+            }
+            return moment.duration(leftMoment.diff(rightMoment)).humanize(true);
+        } },
         { regex: /{{banned "(.*)"}}/gi, replace: () => '' },
         { regex: /{{random\s?::?([^}]+)}}/gi, replace: (_, listString) => {
             const list = String(listString || '').includes('::')
                 ? String(listString).split('::')
-                : String(listString).replace(/\\,/g, '##COMMA##').split(',').map(item => item.trim().replace(/##COMMA##/g, ','));
+                : splitEscapedList(listString);
             if (!list.length) {
                 return '';
             }
@@ -221,7 +237,7 @@ export function evaluatePromptMacros(content, env = {}, { additional = {}, macro
         { regex: /{{pick\s?::?([^}]+)}}/gi, replace: (_, listString, offset) => {
             const list = String(listString || '').includes('::')
                 ? String(listString).split('::')
-                : String(listString).replace(/\\,/g, '##COMMA##').split(',').map(item => item.trim().replace(/##COMMA##/g, ','));
+                : splitEscapedList(listString);
             if (!list.length) {
                 return '';
             }
@@ -242,7 +258,8 @@ export function evaluatePromptMacros(content, env = {}, { additional = {}, macro
         try {
             result = result.replace(macro.regex, (...args) => postProcessFn(sanitizeMacroValue(macro.replace(...args))));
         } catch (error) {
-            console.warn(`Macro content can't be replaced: ${macro.regex} in ${result}`, error);
+            const truncated = result.length > 100 ? `${result.slice(0, 100)}...` : result;
+            console.warn(`Macro content can't be replaced: ${macro.regex} in ${truncated}`, error);
         }
     }
 

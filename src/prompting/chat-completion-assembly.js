@@ -26,6 +26,11 @@ const extension_prompt_roles = {
     ASSISTANT: 2,
 };
 
+const wi_anchor_position = {
+    before: 0,
+    after: 1,
+};
+
 const character_names_behavior = {
     NONE: -1,
     DEFAULT: 0,
@@ -748,14 +753,21 @@ function normalizeMimeType(contentType, fallbackMimeType) {
 }
 
 async function fetchMediaAsDataUrl(url, fallbackMimeType) {
-    const response = await fetch(url, { method: 'GET' });
-    if (!response.ok) {
-        throw new Error(`Failed to fetch media: ${response.status}`);
-    }
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 30000);
 
-    const contentType = normalizeMimeType(response.headers.get('content-type'), fallbackMimeType);
-    const body = Buffer.from(await response.arrayBuffer()).toString('base64');
-    return `data:${contentType};base64,${body}`;
+    try {
+        const response = await fetch(url, { method: 'GET', signal: controller.signal });
+        if (!response.ok) {
+            throw new Error(`Failed to fetch media: ${response.status}`);
+        }
+
+        const contentType = normalizeMimeType(response.headers.get('content-type'), fallbackMimeType);
+        const body = Buffer.from(await response.arrayBuffer()).toString('base64');
+        return `data:${contentType};base64,${body}`;
+    } finally {
+        clearTimeout(timeoutId);
+    }
 }
 
 function decodeDataUrl(dataUrl) {
@@ -1227,7 +1239,9 @@ async function countTokensOpenAIAsync(messages, model, full = false) {
             if (value === undefined || value === null) {
                 continue;
             }
-            tokenCount += tokenizer.encode(String(value)).length;
+
+            const stringValue = typeof value === 'string' ? value : JSON.stringify(value);
+            tokenCount += tokenizer.encode(stringValue).length;
             if (key === 'name') {
                 tokenCount += tokensPerName;
             }
@@ -1242,7 +1256,7 @@ async function countTokensOpenAIAsync(messages, model, full = false) {
     return tokenCount;
 }
 
-async function populationInjectionPrompts(prompts, messages, extensionPrompts, env) {
+async function populateInjectionPrompts(prompts, messages, extensionPrompts, env) {
     let totalInsertedMessages = 0;
     const maxDepth = getExtensionPromptMaxDepth(extensionPrompts);
 
@@ -1665,7 +1679,7 @@ async function populateChatCompletion(prompts, chatCompletion, context) {
         chatCompletion.reserveBudget(toolTokens);
     }
 
-    context.messages = await populationInjectionPrompts(prompts.collection.filter(prompt => prompt.injection_position === INJECTION_POSITION.ABSOLUTE), context.messages.slice(), context.extensionPrompts, context.env);
+    context.messages = await populateInjectionPrompts(prompts.collection.filter(prompt => prompt.injection_position === INJECTION_POSITION.ABSOLUTE), context.messages.slice(), context.extensionPrompts, context.env);
 
     if (context.powerUser.pin_examples) {
         await populateDialogueExamples(prompts, chatCompletion, context.messageExamples, context);

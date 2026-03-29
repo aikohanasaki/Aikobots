@@ -35,6 +35,7 @@ describe('compareChatCompletionMessages', () => {
         const result = compareChatCompletionMessages(clientChat, serverChat);
 
         expect(result.matches).toBe(false);
+        expect(result.differences).toHaveLength(1);
         expect(result.differences).toEqual([
             expect.objectContaining({
                 path: 'chat[0].tool_calls[0].function.name',

@@ -298,7 +298,13 @@ globalThis.SillyTavern = {
     libs,
     getContext,
     debugServerAssembly: debugServerAssemblyToPrompt,
-    getLastServerAssemblyDebugDump,
+    getLastServerAssemblyDebugDump: () => {
+        if (!isAdmin()) {
+            throw new Error('Server assembly debugging is only available to admins.');
+        }
+
+        return getLastServerAssemblyDebugDump();
+    },
 };
 
 export {
@@ -4968,6 +4974,7 @@ export async function Generate(type, { automatic_trigger, force_name2, quiet_pro
         case 'openai': {
             const tagKey = getTagKeyForEntity(this_chid);
             const extraCharLore = world_info.charLore?.find((entry) => entry.name === getCharaFilename(this_chid));
+            const activeCharacter = globalThis.promptManager?.activeCharacter ?? characters[this_chid];
             const promptContext = await buildServerAssemblyPayload({
                 coreChat,
                 name2: name2,
@@ -5001,9 +5008,9 @@ export async function Generate(type, { automatic_trigger, force_name2, quiet_pro
                     characterExtraBooks: extraCharLore?.extraBooks || [],
                     selectedGroup: Boolean(selected_group),
                     activeSpeaker: {
-                        name: promptManager?.activeCharacter?.name || name2 || '',
-                        avatar: promptManager?.activeCharacter?.avatar || characters[this_chid]?.avatar || '',
-                        filename: String(promptManager?.activeCharacter?.avatar || characters[this_chid]?.avatar || '').replace(/\.[^/.]+$/, '') || getCharaFilename(),
+                        name: activeCharacter?.name || name2 || '',
+                        avatar: activeCharacter?.avatar || characters[this_chid]?.avatar || '',
+                        filename: String(activeCharacter?.avatar || characters[this_chid]?.avatar || '').replace(/\.[^/.]+$/, '') || getCharaFilename(),
                     },
                     currentCharacterFilename: getCharaFilename(),
                     currentCharacterTags: Array.isArray(tag_map?.[tagKey]) ? tag_map[tagKey] : [],
@@ -5923,7 +5930,7 @@ function extractMultiSwipes(data, type) {
     }
 
     for (let i = 1; i < data.choices.length; i++) {
-        const text = data?.choices[i]?.message?.content ?? data?.choices[i]?.text ?? '';
+        const text = extractMessageFromData({ choices: [data.choices[i]] }, 'openai');
         const cleanedText = cleanUpMessage({
             getMessage: text,
             isImpersonate: false,
@@ -10712,6 +10719,7 @@ jQuery(async function () {
             chatElement.find(`.mes[mesid="${this_del_mes}"]`).nextAll('div').remove();
             chatElement.find(`.mes[mesid="${this_del_mes}"]`).remove();
             chat.length = this_del_mes;
+            restoreTimedWorldInfoFromChat();
             chat_metadata['tainted'] = true;
             await saveChatConditional();
             chatElement.scrollTop(chatElement[0].scrollHeight);

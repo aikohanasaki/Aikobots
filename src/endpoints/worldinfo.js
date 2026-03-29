@@ -145,6 +145,10 @@ function parseDecorators(content) {
         }
     }
 
+    if (newContent === content && lines.every(line => line.startsWith('@@'))) {
+        newContent = '';
+    }
+
     return [decorators, newContent];
 }
 

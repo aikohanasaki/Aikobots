@@ -45,6 +45,10 @@ function ensureDirectory(dir) {
 }
 
 function getSecureLorebookDirectory() {
+    if (!globalThis.DATA_ROOT) {
+        throw new Error('DATA_ROOT must be defined before using lorebook repository');
+    }
+
     return ensureDirectory(path.join(globalThis.DATA_ROOT, ...SECURE_LOREBOOK_DIRECTORY));
 }
 
@@ -79,6 +83,15 @@ function readJsonFileSync(filePath) {
     return JSON.parse(fs.readFileSync(filePath, 'utf8'));
 }
 
+function tryReadJsonFileSync(filePath, fallbackValue, label) {
+    try {
+        return readJsonFileSync(filePath);
+    } catch (error) {
+        console.warn(`[Lorebooks] Failed to read ${label}: ${filePath}`, error);
+        return fallbackValue;
+    }
+}
+
 function readSecureIndex() {
     const indexPath = getSecureIndexPath();
 
@@ -103,6 +116,13 @@ function readSecureIndex() {
 
 function writeSecureIndex(index) {
     writeFileAtomicSync(getSecureIndexPath(), JSON.stringify(index, null, 4), 'utf8');
+}
+
+function mutateSecureIndex(mutate) {
+    const index = readSecureIndex();
+    const result = mutate(index);
+    writeSecureIndex(index);
+    return result;
 }
 
 function getSecureIndexEntry(name) {
@@ -214,7 +234,7 @@ function readLorebookFromRecord(record, allowDummy) {
         return dummyObject;
     }
 
-    return readJsonFileSync(record.path);
+    return tryReadJsonFileSync(record.path, dummyObject, 'lorebook file');
 }
 
 async function assertSecureNameAvailableForPromotion(name) {
@@ -225,17 +245,17 @@ async function assertSecureNameAvailableForPromotion(name) {
 }
 
 function writeSecureLorebookMetadata(name, ownerHandle, actorHandle, existingMetadata = null) {
-    const index = readSecureIndex();
     const timestamp = new Date().toISOString();
     const canonicalName = assertCanonicalName(name);
-    index.books[canonicalName] = {
-        ownerHandle,
-        createdAt: existingMetadata?.createdAt || timestamp,
-        updatedAt: timestamp,
-        createdBy: existingMetadata?.createdBy || actorHandle,
-        updatedBy: actorHandle,
-    };
-    writeSecureIndex(index);
+    mutateSecureIndex(index => {
+        index.books[canonicalName] = {
+            ownerHandle,
+            createdAt: existingMetadata?.createdAt || timestamp,
+            updatedAt: timestamp,
+            createdBy: existingMetadata?.createdBy || actorHandle,
+            updatedBy: actorHandle,
+        };
+    });
 }
 
 function createSecureLorebookLink(name, ownerHandle) {
@@ -267,16 +287,31 @@ function createSecureLorebookLink(name, ownerHandle) {
 function removeSecureLorebook(name) {
     const canonicalName = assertCanonicalName(name);
     const filePath = getSecureLorebookPath(canonicalName);
-    const index = readSecureIndex();
-    delete index.books[canonicalName];
-    writeSecureIndex(index);
+    const removedMetadata = mutateSecureIndex(index => {
+        const metadata = index.books[canonicalName] || null;
+        delete index.books[canonicalName];
+        return metadata;
+    });
 
     try {
         fs.unlinkSync(filePath);
     } catch (error) {
-        if (error?.code !== 'ENOENT') {
-            throw error;
+        if (error?.code === 'ENOENT') {
+            return;
         }
+
+        try {
+            if (removedMetadata) {
+                mutateSecureIndex(index => {
+                    index.books[canonicalName] = removedMetadata;
+                });
+            }
+        } catch (restoreError) {
+            console.error(`[Lorebooks] Failed to restore secure lorebook index entry for "${canonicalName}" after demotion failed.`, restoreError);
+            throw new LorebookRepositoryError('LorebookStateRepairFailed', `Failed to demote secure lorebook "${canonicalName}" cleanly. Manual repair may be required.`, 500);
+        }
+
+        throw error;
     }
 }
 
@@ -300,7 +335,7 @@ export function readWorldInfoFile(directories, worldInfoName, allowDummy) {
         return dummyObject;
     }
 
-    return readJsonFileSync(filePath);
+    return tryReadJsonFileSync(filePath, dummyObject, 'world info file');
 }
 
 /**
@@ -521,7 +556,16 @@ export async function deleteLorebookForManagement(user, name) {
         throw new LorebookRepositoryError('LorebookNotFound', `Lorebook "${canonicalName}" not found.`, 404);
     }
 
-    fs.unlinkSync(userRecord.path);
+    try {
+        fs.unlinkSync(userRecord.path);
+    } catch (error) {
+        if (error?.code === 'ENOENT') {
+            throw new LorebookRepositoryError('LorebookNotFound', `Lorebook "${canonicalName}" not found.`, 404);
+        }
+
+        throw new LorebookRepositoryError('LorebookDeleteFailed', `Failed to delete lorebook "${canonicalName}".`, 500);
+    }
+
     return {
         name: canonicalName,
         storage: 'user',
@@ -543,7 +587,20 @@ export async function promoteLorebook(user, name) {
     await assertSecureNameAvailableForPromotion(canonicalName);
 
     createSecureLorebookLink(canonicalName, user.profile.handle);
-    writeSecureLorebookMetadata(canonicalName, user.profile.handle, user.profile.handle);
+    try {
+        writeSecureLorebookMetadata(canonicalName, user.profile.handle, user.profile.handle);
+    } catch (error) {
+        try {
+            fs.unlinkSync(getSecureLorebookPath(canonicalName));
+        } catch (cleanupError) {
+            if (cleanupError?.code !== 'ENOENT') {
+                console.error(`[Lorebooks] Failed to remove secure lorebook link for "${canonicalName}" after promotion metadata write failed.`, cleanupError);
+                throw new LorebookRepositoryError('LorebookStateRepairFailed', `Failed to promote secure lorebook "${canonicalName}" cleanly. Manual repair may be required.`, 500);
+            }
+        }
+
+        throw error;
+    }
 
     return {
         name: canonicalName,

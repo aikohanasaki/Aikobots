@@ -1546,4 +1546,9 @@
     "Sets the expression of the user sprite": "Establece la expresión del sprite de usuario",
     "Sets the user sprite set to use for the user sprite": "Establece el conjunto de sprites de usuario para usar en el sprite de usuario",
     "Toggles the user sprite on the VN UI": "Alterna el sprite de usuario en la interfaz VN"
+    ,
+    "Lorebook Ordering & Budget": "Lorebook Ordering & Budget",
+    "Move lorebook between user and secure storage": "Move lorebook between user and secure storage",
+    "Return lorebook to user storage": "Return lorebook to user storage",
+    "Promote lorebook to secure storage": "Promote lorebook to secure storage"
 }

@@ -48,7 +48,7 @@ function parseRegexFromString(input) {
         return null;
     }
 
-    pattern = pattern.replace('\\/', '/');
+    pattern = pattern.replace(/\\\//g, '/');
 
     try {
         return new RegExp(pattern, flags);
@@ -570,7 +570,7 @@ function filterByInclusionGroups(newEntries, allActivatedEntries, buffer, scanSt
             continue;
         }
 
-        if (Array.from(allActivatedEntries.values()).some(entry => entry.group === key)) {
+        if (Array.from(allActivatedEntries.values()).some(entry => entry.group && entry.group.split(/,\s*/).includes(key))) {
             removeAllBut(group, null);
             continue;
         }

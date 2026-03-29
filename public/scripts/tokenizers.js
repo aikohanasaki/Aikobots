@@ -266,13 +266,11 @@ function currentRemoteTokenizerAPI() {
  * @returns {number} Token count.
  */
 function callTokenizer(type, str) {
-    if (type === tokenizers.NONE) return guesstimate(str);
+    if (type === tokenizers.NONE || type === tokenizers.API_CURRENT) return guesstimate(str);
 
-        switch (type) {
-            case tokenizers.API_CURRENT:
-                return callTokenizer(currentRemoteTokenizerAPI(), str);
-            default: {
-                const endpointUrl = TOKENIZER_URLS[type]?.count;
+    switch (type) {
+        default: {
+            const endpointUrl = TOKENIZER_URLS[type]?.count;
             if (!endpointUrl) {
                 console.warn('Unknown tokenizer type', type);
                 return apiFailureTokenCount(str);
@@ -290,13 +288,11 @@ function callTokenizer(type, str) {
  */
 function callTokenizerAsync(type, str) {
     return new Promise(resolve => {
-        if (type === tokenizers.NONE) {
+        if (type === tokenizers.NONE || type === tokenizers.API_CURRENT) {
             return resolve(guesstimate(str));
         }
 
         switch (type) {
-            case tokenizers.API_CURRENT:
-                return callTokenizerAsync(currentRemoteTokenizerAPI(), str).then(resolve);
             default: {
                 const endpointUrl = TOKENIZER_URLS[type]?.count;
                 if (!endpointUrl) {

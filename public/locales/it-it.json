@@ -1439,4 +1439,9 @@
     "Join the SillyTavern Discord": "Unisciti al SillyTavern Discord",
     "Post a GitHub issue": "Pubblica un problema su GitHub",
     "Contact the developers": "Contatta gli sviluppatori"
+    ,
+    "Lorebook Ordering & Budget": "Lorebook Ordering & Budget",
+    "Move lorebook between user and secure storage": "Move lorebook between user and secure storage",
+    "Return lorebook to user storage": "Return lorebook to user storage",
+    "Promote lorebook to secure storage": "Promote lorebook to secure storage"
 }

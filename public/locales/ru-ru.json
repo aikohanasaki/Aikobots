@@ -2741,4 +2741,9 @@
     "Your browser or operating system doesn't support speech synthesis": "Ваш браузер либо ОС не поддерживают синтез речи",
     "Works best when: Pass Asterisks to TTS Engine is enabled, and both Only narrate quotes and Ignore *text, even 'quotes', inside asterisks* are disabled.": "Работает лучше всего, когда: одновременно включена опция \"Передавать звёздочки TTS-движку\", а также отключены обе опции: \"Не озвучивать *текст, даже \"в кавычках\", если он внутри звёздочек*\", и \"Озвучивать только текст \"в кавычках\"\"",
     "Available voices": "Доступные голоса"
+    ,
+    "Lorebook Ordering & Budget": "Lorebook Ordering & Budget",
+    "Move lorebook between user and secure storage": "Move lorebook between user and secure storage",
+    "Return lorebook to user storage": "Return lorebook to user storage",
+    "Promote lorebook to secure storage": "Promote lorebook to secure storage"
 }
