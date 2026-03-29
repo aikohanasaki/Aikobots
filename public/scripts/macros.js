@@ -1,7 +1,6 @@
 import { Handlebars, moment, seedrandom, droll } from '../lib.js';
 import { chat, chat_metadata, main_api, getMaxContextSize, getCurrentChatId, substituteParams, eventSource, event_types, extension_prompts } from '../script.js';
 import { timestampToMoment, isDigitsOnly, getStringHash, escapeRegex, uuidv4 } from './utils.js';
-import { textgenerationwebui_banned_in_macros } from './textgen-settings.js';
 import { getInstructMacros } from './instruct-mode.js';
 import { getVariableMacros } from './variables.js';
 import { isMobile } from './RossAscends-mods.js';
@@ -324,18 +323,11 @@ function getCurrentSwipeId() {
 
 /**
  * Replaces banned words in macros with an empty string.
- * Adds them to textgenerationwebui ban list.
  * @returns {Macro}
  */
 function getBannedWordsMacro() {
     const banPattern = /{{banned "(.*)"}}/gi;
-    const banReplace = (match, bannedWord) => {
-        if (main_api == 'textgenerationwebui') {
-            console.log('Found banned word in macros: ' + bannedWord);
-            textgenerationwebui_banned_in_macros.push(bannedWord);
-        }
-        return '';
-    };
+    const banReplace = () => '';
 
     return { regex: banPattern, replace: banReplace };
 }

@@ -5,7 +5,6 @@ import { getVersion, delay, Cache } from '../util.js';
 import { readSecret, SECRET_KEYS } from './secrets.js';
 
 const ANONYMOUS_KEY = '0000000000';
-const HORDE_TEXT_MODEL_METADATA_URL = 'https://raw.githubusercontent.com/db0/AI-Horde-text-model-reference/main/db.json';
 const cache = new Cache(60 * 1000);
 export const router = express.Router();
 
@@ -40,177 +39,16 @@ function sanitizeHordeImagePrompt(prompt) {
         return '';
     }
 
-    //to avoid flagging from some image models, always swap these words
     prompt = prompt.replace(/\b(girl)\b/gmi, 'woman');
     prompt = prompt.replace(/\b(boy)\b/gmi, 'man');
     prompt = prompt.replace(/\b(girls)\b/gmi, 'women');
     prompt = prompt.replace(/\b(boys)\b/gmi, 'men');
-    //always remove these high risk words from prompt, as they add little value to image gen while increasing the risk the prompt gets flagged
     prompt = prompt.replace(/\b(under.age|under.aged|underage|underaged|loli|pedo|pedophile|(\w+).year.old|(\w+).years.old|minor|prepubescent|minors|shota)\b/gmi, '');
-    //replace risky subject nouns with person
     prompt = prompt.replace(/\b(youngster|infant|baby|toddler|child|teen|kid|kiddie|kiddo|teenager|student|preteen|pre.teen)\b/gmi, 'person');
-    //remove risky adjectives and related words
     prompt = prompt.replace(/\b(young|younger|youthful|youth|small|smaller|smallest|girly|boyish|lil|tiny|teenaged|lit[tl]le|school.aged|school|highschool|kindergarten|teens|children|kids)\b/gmi, '');
 
     return prompt;
 }
-
-router.post('/text-workers', async (request, response) => {
-    try {
-        const cachedWorkers = cache.get('workers');
-
-        if (cachedWorkers && !request.body.force) {
-            return response.send(cachedWorkers);
-        }
-
-        const agent = await getClientAgent();
-        const fetchResult = await fetch('https://aihorde.net/api/v2/workers?type=text', {
-            headers: {
-                'Client-Agent': agent,
-            },
-        });
-        const data = await fetchResult.json();
-        cache.set('workers', data);
-        return response.send(data);
-    } catch (error) {
-        console.error(error);
-        response.sendStatus(500);
-    }
-});
-
-async function getHordeTextModelMetadata() {
-    const response = await fetch(HORDE_TEXT_MODEL_METADATA_URL);
-    return await response.json();
-}
-
-async function mergeModelsAndMetadata(models, metadata) {
-    return models.map(model => {
-        const metadataModel = metadata[model.name];
-        if (!metadataModel) {
-            return { ...model, is_whitelisted: false };
-        }
-        return { ...model, ...metadataModel, is_whitelisted: true };
-    });
-}
-
-router.post('/text-models', async (request, response) => {
-    try {
-        const cachedModels = cache.get('models');
-        if (cachedModels && !request.body.force) {
-            return response.send(cachedModels);
-        }
-
-        const agent = await getClientAgent();
-        const fetchResult = await fetch('https://aihorde.net/api/v2/status/models?type=text', {
-            headers: {
-                'Client-Agent': agent,
-            },
-        });
-
-        let data = await fetchResult.json();
-
-        // attempt to fetch and merge models metadata
-        try {
-            const metadata = await getHordeTextModelMetadata();
-            data = await mergeModelsAndMetadata(data, metadata);
-        }
-        catch (error) {
-            console.error('Failed to fetch metadata:', error);
-        }
-
-        cache.set('models', data);
-        return response.send(data);
-    } catch (error) {
-        console.error(error);
-        response.sendStatus(500);
-    }
-});
-
-router.post('/status', async (_, response) => {
-    try {
-        const agent = await getClientAgent();
-        const fetchResult = await fetch('https://aihorde.net/api/v2/status/heartbeat', {
-            headers: {
-                'Client-Agent': agent,
-            },
-        });
-
-        return response.send({ ok: fetchResult.ok });
-    } catch (error) {
-        console.error(error);
-        response.sendStatus(500);
-    }
-});
-
-router.post('/cancel-task', async (request, response) => {
-    try {
-        const taskId = request.body.taskId;
-        const agent = await getClientAgent();
-        const fetchResult = await fetch(`https://aihorde.net/api/v2/generate/text/status/${taskId}`, {
-            method: 'DELETE',
-            headers: {
-                'Client-Agent': agent,
-            },
-        });
-
-        const data = await fetchResult.json();
-        console.info(`Cancelled Horde task ${taskId}`);
-        return response.send(data);
-    } catch (error) {
-        console.error(error);
-        response.sendStatus(500);
-    }
-});
-
-router.post('/task-status', async (request, response) => {
-    try {
-        const taskId = request.body.taskId;
-        const agent = await getClientAgent();
-        const fetchResult = await fetch(`https://aihorde.net/api/v2/generate/text/status/${taskId}`, {
-            headers: {
-                'Client-Agent': agent,
-            },
-        });
-
-        const data = await fetchResult.json();
-        console.info(`Horde task ${taskId} status:`, data);
-        return response.send(data);
-    } catch (error) {
-        console.error(error);
-        response.sendStatus(500);
-    }
-});
-
-router.post('/generate-text', async (request, response) => {
-    const apiKey = readSecret(request.user.directories, SECRET_KEYS.HORDE) || ANONYMOUS_KEY;
-    const url = 'https://aihorde.net/api/v2/generate/text/async';
-    const agent = await getClientAgent();
-
-    console.debug(request.body);
-    try {
-        const result = await fetch(url, {
-            method: 'POST',
-            body: JSON.stringify(request.body),
-            headers: {
-                'Content-Type': 'application/json',
-                'apikey': apiKey,
-                'Client-Agent': agent,
-            },
-        });
-
-        if (!result.ok) {
-            const message = await result.text();
-            console.error('Horde returned an error:', message);
-            return response.send({ error: { message } });
-        }
-
-        const data = await result.json();
-        return response.send(data);
-    } catch (error) {
-        console.error(error);
-        return response.send({ error: true });
-    }
-});
 
 router.post('/sd-samplers', async (_, response) => {
     try {

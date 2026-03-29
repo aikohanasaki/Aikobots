@@ -86,14 +86,13 @@ import { SlashCommand } from './slash-commands/SlashCommand.js';
 import { ARGUMENT_TYPE, SlashCommandArgument, SlashCommandNamedArgument } from './slash-commands/SlashCommandArgument.js';
 import { SlashCommandParser } from './slash-commands/SlashCommandParser.js';
 import { tag_map, tags } from './tags.js';
-import { getTextGenServer, textgenerationwebui_settings } from './textgen-settings.js';
 import { tokenizers, getTextTokens, getTokenCount, getTokenCountAsync, getTokenizerModel } from './tokenizers.js';
 import { ToolManager } from './tool-calling.js';
 import { accountStorage } from './util/AccountStorage.js';
 import { timestampToMoment, uuidv4 } from './utils.js';
 import { getGlobalVariable, getLocalVariable, setGlobalVariable, setLocalVariable } from './variables.js';
 import { convertCharacterBook, loadWorldInfo, reloadEditor, saveWorldInfo, updateWorldInfoList } from './world-info.js';
-import { ChatCompletionService, TextCompletionService } from './custom-request.js';
+import { ChatCompletionService } from './custom-request.js';
 import { ConnectionManagerRequestService } from './extensions/shared.js';
 import { updateReasoningUI, parseReasoningFromString } from './reasoning.js';
 import { IGNORE_SYMBOL } from './constants.js';
@@ -204,7 +203,6 @@ export function getContext() {
         POPUP_TYPE,
         POPUP_RESULT,
         chatCompletionSettings: oai_settings,
-        textCompletionSettings: textgenerationwebui_settings,
         powerUserSettings: power_user,
         getCharacters,
         getCharacterCardFields,
@@ -239,14 +237,12 @@ export function getContext() {
         updateWorldInfoList,
         convertCharacterBook,
         CONNECT_API_MAP,
-        getTextGenServer,
         extractMessageFromData,
         getPresetManager,
         getChatCompletionModel,
         printMessages,
         clearChat,
         ChatCompletionService,
-        TextCompletionService,
         ConnectionManagerRequestService,
         updateReasoningUI,
         parseReasoningFromString,

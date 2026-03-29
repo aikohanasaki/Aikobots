@@ -7,13 +7,8 @@ import {
     eventSource,
     event_types,
     getRequestHeaders,
-    koboldai_setting_names,
-    koboldai_settings,
     main_api,
     max_context,
-    nai_settings,
-    novelai_setting_names,
-    novelai_settings,
     online_status,
     saveSettings,
     saveSettingsDebounced,
@@ -22,8 +17,6 @@ import {
 import { groups, selected_group } from './group-chats.js';
 import { t } from './i18n.js';
 import { instruct_presets } from './instruct-mode.js';
-import { kai_settings } from './kai-settings.js';
-import { convertNovelPreset } from './nai-settings.js';
 import { oai_settings, openai_setting_names, openai_settings } from './openai.js';
 import { POPUP_RESULT, POPUP_TYPE, Popup } from './popup.js';
 import { context_presets, getContextSettings, power_user } from './power-user.js';
@@ -35,11 +28,6 @@ import { SlashCommandEnumValue, enumTypes } from './slash-commands/SlashCommandE
 import { SlashCommandParser } from './slash-commands/SlashCommandParser.js';
 import { checkForSystemPromptInInstructTemplate, system_prompts } from './sysprompt.js';
 import { renderTemplateAsync } from './templates.js';
-import {
-    textgenerationwebui_settings as textgen_settings,
-    textgenerationwebui_preset_names,
-    textgenerationwebui_presets,
-} from './textgen-settings.js';
 import { download, ensurePlainObject, equalsIgnoreCaseAndAccents, getSanitizedFilename, parseJsonFile, waitUntilCondition } from './utils.js';
 
 const presetManagers = {};
@@ -83,11 +71,8 @@ function autoSelectPreset() {
  * @returns {PresetManager} Preset manager
  */
 export function getPresetManager(apiId = '') {
-    if (apiId === 'koboldhorde') {
-        apiId = 'kobold';
-    }
     if (!apiId) {
-        apiId = main_api == 'koboldhorde' ? 'kobold' : main_api;
+        apiId = main_api;
     }
 
     if (!Object.keys(presetManagers).includes(apiId)) {
@@ -165,20 +150,20 @@ class PresetManager {
             isValid: (data) => PresetManager.isPossiblySystemPromptData(data),
         },
         'preset': {
-            name: 'Text Completion Preset',
+            name: 'Chat Completion Preset',
             getData: () => {
-                const manager = getPresetManager('textgenerationwebui');
+                const manager = getPresetManager('openai');
                 const name = manager.getSelectedPresetName();
                 const data = manager.getPresetSettings(name);
                 data['name'] = name;
                 return data;
             },
             setData: (data) => {
-                const manager = getPresetManager('textgenerationwebui');
+                const manager = getPresetManager('openai');
                 const name = data.name;
                 return manager.savePreset(name, data);
             },
-            isValid: (data) => PresetManager.isPossiblyTextCompletionData(data),
+            isValid: (data) => PresetManager.isPossiblyCompletionData(data),
         },
         'reasoning': {
             name: 'Reasoning Formatting',
@@ -217,7 +202,7 @@ class PresetManager {
         'instruct': 'instruct',
         'context': 'context',
         'sysprompt': 'sysprompt',
-        'preset': 'textgenerationwebui',
+        'preset': 'openai',
         'reasoning': 'reasoning',
     };
 
@@ -245,9 +230,8 @@ class PresetManager {
         return data && sysPromptProps.every(prop => Object.keys(data).includes(prop));
     }
 
-    static isPossiblyTextCompletionData(data) {
-        const textCompletionProps = ['temp', 'top_k', 'top_p', 'rep_pen'];
-        return data && textCompletionProps.every(prop => Object.keys(data).includes(prop));
+    static isPossiblyCompletionData(data) {
+        return data && typeof data === 'object' && ('name' in data || 'preset_settings_openai' in data);
     }
 
     static isPossiblyReasoningData(data) {
@@ -305,14 +289,14 @@ class PresetManager {
             return await manager.savePreset(data.name, data);
         }
 
-        // 4. Text Completion settings
-        if (this.isPossiblyTextCompletionData(data)) {
-            const manager = getPresetManager('textgenerationwebui');
+        // 4. Chat Completion settings
+        if (this.isPossiblyCompletionData(data)) {
+            const manager = getPresetManager('openai');
             if (!manager) {
-                toastr.error(t`Text completion presets are not available in this build`);
+                toastr.error(t`Chat completion presets are not available in this build`);
                 return;
             }
-            toastr.info(t`Importing as settings preset...`, t`Text Completion settings detected`);
+            toastr.info(t`Importing as settings preset...`, t`Chat Completion settings detected`);
             return await manager.savePreset(fileName, data);
         }
 
@@ -519,10 +503,6 @@ class PresetManager {
             await checkForSystemPromptInInstructTemplate(name, settings);
         }
 
-        if (this.apiId === 'novel' && settings) {
-            settings = convertNovelPreset(settings);
-        }
-
         const preset = settings ?? this.getPresetSettings(name);
 
         const response = await fetch('/api/presets/save', {
@@ -584,22 +564,6 @@ class PresetManager {
         }
 
         switch (api) {
-            case 'koboldhorde':
-            case 'kobold':
-                presets = koboldai_settings;
-                preset_names = koboldai_setting_names;
-                settings = kai_settings;
-                break;
-            case 'novel':
-                presets = novelai_settings;
-                preset_names = novelai_setting_names;
-                settings = nai_settings;
-                break;
-            case 'textgenerationwebui':
-                presets = textgenerationwebui_presets;
-                preset_names = textgenerationwebui_preset_names;
-                settings = textgen_settings;
-                break;
             case 'openai':
                 presets = openai_settings;
                 preset_names = openai_setting_names;
@@ -636,7 +600,7 @@ class PresetManager {
      * Returns true if the API is keyed, meaning it uses a name to identify presets.
      */
     isKeyedApi() {
-        return this.apiId == 'textgenerationwebui' || this.isAdvancedFormatting();
+        return this.isAdvancedFormatting();
     }
 
     /**
@@ -694,13 +658,8 @@ class PresetManager {
     getPresetSettings(name) {
         function getSettingsByApiId(apiId) {
             switch (apiId) {
-                case 'koboldhorde':
-                case 'kobold':
-                    return kai_settings;
-                case 'novel':
-                    return nai_settings;
-                case 'textgenerationwebui':
-                    return textgen_settings;
+                case 'openai':
+                    return oai_settings;
                 case 'context': {
                     const context_preset = getContextSettings();
                     context_preset['name'] = name || power_user.context.preset;

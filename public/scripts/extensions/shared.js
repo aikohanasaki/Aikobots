@@ -3,7 +3,6 @@ import { extension_settings, openThirdPartyExtensionMenu } from '../extensions.j
 import { t } from '../i18n.js';
 import { oai_settings, proxies } from '../openai.js';
 import { SECRET_KEYS, secret_state } from '../secrets.js';
-import { textgen_types, textgenerationwebui_settings } from '../textgen-settings.js';
 import { getTokenCountAsync } from '../tokenizers.js';
 import { createThumbnail, isValidUrl } from '../utils.js';
 
@@ -24,26 +23,18 @@ export async function getMultimodalCaption(base64Img, prompt) {
 
     // OpenRouter has a payload limit of ~2MB. Google is 4MB, but we love democracy.
     // Ooba requires all images to be JPEGs. Koboldcpp just asked nicely.
-    const isOllama = extension_settings.caption.multimodal_api === 'ollama';
-    const isLlamaCpp = extension_settings.caption.multimodal_api === 'llamacpp';
     const isCustom = extension_settings.caption.multimodal_api === 'custom';
-    const isOoba = extension_settings.caption.multimodal_api === 'ooba';
-    const isKoboldCpp = extension_settings.caption.multimodal_api === 'koboldcpp';
-    const isVllm = extension_settings.caption.multimodal_api === 'vllm';
     const base64Bytes = base64Img.length * 0.75;
     const compressionLimit = 2 * 1024 * 1024;
     const safeMimeTypes = ['image/jpeg', 'image/png', 'image/webp'];
     const mimeType = base64Img?.split(';')?.[0]?.split(':')?.[1] || 'image/jpeg';
     const isImage = mimeType.startsWith('image/');
     const thumbnailNeeded = ['google', 'openrouter', 'mistral', 'groq', 'vertexai'].includes(extension_settings.caption.multimodal_api);
-    if ((isImage && thumbnailNeeded && base64Bytes > compressionLimit) || isOoba || isKoboldCpp) {
+    if (isImage && thumbnailNeeded && base64Bytes > compressionLimit) {
         const maxSide = 2048;
         base64Img = await createThumbnail(base64Img, maxSide, maxSide);
     } else if (isImage && !safeMimeTypes.includes(mimeType)) {
         base64Img = await createThumbnail(base64Img, null, null);
-    }
-    if (isOllama && base64Img.startsWith('data:image/')) {
-        base64Img = base64Img.split(',')[1];
     }
 
     const proxyUrl = useReverseProxy ? oai_settings.reverse_proxy : '';
@@ -65,48 +56,6 @@ export async function getMultimodalCaption(base64Img, prompt) {
         requestBody.vertexai_express_project_id = oai_settings.vertexai_express_project_id;
     }
 
-    if (isOllama) {
-        if (extension_settings.caption.multimodal_model === 'ollama_current') {
-            requestBody.model = textgenerationwebui_settings.ollama_model;
-        }
-
-        if (extension_settings.caption.multimodal_model === 'ollama_custom') {
-            requestBody.model = extension_settings.caption.ollama_custom_model;
-        }
-
-        requestBody.server_url = extension_settings.caption.alt_endpoint_enabled
-            ? extension_settings.caption.alt_endpoint_url
-            : textgenerationwebui_settings.server_urls[textgen_types.OLLAMA];
-    }
-
-    if (isVllm) {
-        if (extension_settings.caption.multimodal_model === 'vllm_current') {
-            requestBody.model = textgenerationwebui_settings.vllm_model;
-        }
-
-        requestBody.server_url = extension_settings.caption.alt_endpoint_enabled
-            ? extension_settings.caption.alt_endpoint_url
-            : textgenerationwebui_settings.server_urls[textgen_types.VLLM];
-    }
-
-    if (isLlamaCpp) {
-        requestBody.server_url = extension_settings.caption.alt_endpoint_enabled
-            ? extension_settings.caption.alt_endpoint_url
-            : textgenerationwebui_settings.server_urls[textgen_types.LLAMACPP];
-    }
-
-    if (isOoba) {
-        requestBody.server_url = extension_settings.caption.alt_endpoint_enabled
-            ? extension_settings.caption.alt_endpoint_url
-            : textgenerationwebui_settings.server_urls[textgen_types.OOBA];
-    }
-
-    if (isKoboldCpp) {
-        requestBody.server_url = extension_settings.caption.alt_endpoint_enabled
-            ? extension_settings.caption.alt_endpoint_url
-            : textgenerationwebui_settings.server_urls[textgen_types.KOBOLDCPP];
-    }
-
     if (isCustom) {
         requestBody.server_url = oai_settings.custom_url;
         requestBody.model = oai_settings.custom_model || 'gpt-4-turbo';
@@ -122,8 +71,6 @@ export async function getMultimodalCaption(base64Img, prompt) {
                 return '/api/google/caption-image';
             case 'anthropic':
                 return '/api/anthropic/caption-image';
-            case 'ollama':
-                return '/api/backends/text-completions/ollama/caption-image';
             default:
                 return '/api/openai/caption-image';
         }
@@ -144,14 +91,8 @@ export async function getMultimodalCaption(base64Img, prompt) {
 }
 
 function throwIfInvalidModel(useReverseProxy) {
-    const altEndpointEnabled = extension_settings.caption.alt_endpoint_enabled;
-    const altEndpointUrl = extension_settings.caption.alt_endpoint_url;
     const multimodalModel = extension_settings.caption.multimodal_model;
     const multimodalApi = extension_settings.caption.multimodal_api;
-
-    if (altEndpointEnabled && ['llamacpp', 'ooba', 'koboldcpp', 'vllm', 'ollama'].includes(multimodalApi) && !altEndpointUrl) {
-        throw new Error('Secondary endpoint URL is not set.');
-    }
 
     if (multimodalApi === 'openai' && !secret_state[SECRET_KEYS.OPENAI] && !useReverseProxy) {
         throw new Error('OpenAI API key is not set.');
@@ -203,38 +144,6 @@ function throwIfInvalidModel(useReverseProxy) {
 
     if (multimodalApi === 'xai' && !secret_state[SECRET_KEYS.XAI] && !useReverseProxy) {
         throw new Error('xAI API key is not set.');
-    }
-
-    if (multimodalApi === 'ollama' && !textgenerationwebui_settings.server_urls[textgen_types.OLLAMA] && !altEndpointEnabled) {
-        throw new Error('Ollama server URL is not set.');
-    }
-
-    if (multimodalApi === 'ollama' && multimodalModel === 'ollama_current' && !textgenerationwebui_settings.ollama_model) {
-        throw new Error('Ollama model is not set.');
-    }
-
-    if (multimodalApi === 'ollama' && multimodalModel === 'ollama_custom' && !extension_settings.caption.ollama_custom_model) {
-        throw new Error('Ollama custom model tag is not set.');
-    }
-
-    if (multimodalApi === 'llamacpp' && !textgenerationwebui_settings.server_urls[textgen_types.LLAMACPP] && !altEndpointEnabled) {
-        throw new Error('LlamaCPP server URL is not set.');
-    }
-
-    if (multimodalApi === 'ooba' && !textgenerationwebui_settings.server_urls[textgen_types.OOBA] && !altEndpointEnabled) {
-        throw new Error('Text Generation WebUI server URL is not set.');
-    }
-
-    if (multimodalApi === 'koboldcpp' && !textgenerationwebui_settings.server_urls[textgen_types.KOBOLDCPP] && !altEndpointEnabled) {
-        throw new Error('KoboldCpp server URL is not set.');
-    }
-
-    if (multimodalApi === 'vllm' && !textgenerationwebui_settings.server_urls[textgen_types.VLLM] && !altEndpointEnabled) {
-        throw new Error('vLLM server URL is not set.');
-    }
-
-    if (multimodalApi === 'vllm' && multimodalModel === 'vllm_current' && !textgenerationwebui_settings.vllm_model) {
-        throw new Error('vLLM model is not set.');
     }
 
     if (multimodalApi === 'custom' && !oai_settings.custom_url) {
@@ -360,14 +269,11 @@ export class ConnectionManagerRequestService {
         signal: null,
         extractData: true,
         includePreset: true,
-        includeInstruct: true,
-        instructSettings: {},
     };
 
     static getAllowedTypes() {
         return {
             openai: t`Chat Completion`,
-            textgenerationwebui: t`Text Completion`,
         };
     }
 
@@ -380,13 +286,11 @@ export class ConnectionManagerRequestService {
      * @param {AbortSignal?} [custom.signal]
      * @param {boolean?} [custom.extractData=true]
      * @param {boolean?} [custom.includePreset=true]
-     * @param {boolean?} [custom.includeInstruct=true]
-     * @param {Partial<InstructSettings>?} [custom.instructSettings] Override instruct settings
      * @param {Record<string, any>} [overridePayload] - Override payload for the request
      * @returns {Promise<import('../custom-request.js').ExtractedData | (() => AsyncGenerator<import('../custom-request.js').StreamResponse>)>} If not streaming, returns extracted data; if streaming, returns a function that creates an AsyncGenerator
      */
     static async sendRequest(profileId, prompt, maxTokens, custom = this.defaultSendRequestParams, overridePayload = {}) {
-        const { stream, signal, extractData, includePreset, includeInstruct, instructSettings } = { ...this.defaultSendRequestParams, ...custom };
+        const { stream, signal, extractData, includePreset } = { ...this.defaultSendRequestParams, ...custom };
 
         const context = SillyTavern.getContext();
         if (context.extensionSettings.disabledExtensions.includes('connection-manager')) {
@@ -419,25 +323,6 @@ export class ConnectionManagerRequestService {
                         ...overridePayload,
                     }, {
                         presetName: includePreset ? profile.preset : undefined,
-                    }, extractData, signal);
-                }
-                case 'textgenerationwebui': {
-                    if (!selectedApiMap.type) {
-                        throw new Error(`API type ${selectedApiMap.selected} does not support text completions`);
-                    }
-
-                    return await context.TextCompletionService.processRequest({
-                        stream,
-                        prompt,
-                        max_tokens: maxTokens,
-                        model: profile.model,
-                        api_type: selectedApiMap.type,
-                        api_server: profile['api-url'],
-                        ...overridePayload,
-                    }, {
-                        instructName: includeInstruct ? profile.instruct : undefined,
-                        presetName: includePreset ? profile.preset : undefined,
-                        instructSettings: includeInstruct ? instructSettings : undefined,
                     }, extractData, signal);
                 }
                 default: {

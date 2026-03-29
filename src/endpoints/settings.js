@@ -241,16 +241,10 @@ router.post('/get', async (request, response) => {
 
     response.send({
         settings,
-        koboldai_settings: [],
-        koboldai_setting_names: [],
         world_names,
         world_info_items: worldInfoItems,
-        novelai_settings: [],
-        novelai_setting_names: [],
         openai_settings,
         openai_setting_names,
-        textgenerationwebui_presets: [],
-        textgenerationwebui_preset_names: [],
         themes,
         movingUIPresets,
         quickReplyPresets,

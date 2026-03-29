@@ -43,10 +43,7 @@ export const CONTENT_TYPES = {
     AVATAR: 'avatar',
     THEME: 'theme',
     WORKFLOW: 'workflow',
-    KOBOLD_PRESET: 'kobold_preset',
     OPENAI_PRESET: 'openai_preset',
-    NOVEL_PRESET: 'novel_preset',
-    TEXTGEN_PRESET: 'textgen_preset',
     INSTRUCT: 'instruct',
     CONTEXT: 'context',
     MOVING_UI: 'moving_ui',
@@ -287,14 +284,8 @@ function getTargetByType(type, directories) {
             return directories.themes;
         case CONTENT_TYPES.WORKFLOW:
             return directories.comfyWorkflows;
-        case CONTENT_TYPES.KOBOLD_PRESET:
-            return directories.koboldAI_Settings;
         case CONTENT_TYPES.OPENAI_PRESET:
             return directories.openAI_Settings;
-        case CONTENT_TYPES.NOVEL_PRESET:
-            return directories.novelAI_Settings;
-        case CONTENT_TYPES.TEXTGEN_PRESET:
-            return directories.textGen_Settings;
         case CONTENT_TYPES.INSTRUCT:
             return directories.instruct;
         case CONTENT_TYPES.CONTEXT:

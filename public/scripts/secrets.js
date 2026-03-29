@@ -11,7 +11,6 @@ import { SlashCommandExecutor } from './slash-commands/SlashCommandExecutor.js';
 import { SlashCommandParser } from './slash-commands/SlashCommandParser.js';
 import { SlashCommandScope } from './slash-commands/SlashCommandScope.js';
 import { renderTemplateAsync } from './templates.js';
-import { textgen_types } from './textgen-settings.js';
 import { copyText, isTrueBoolean } from './utils.js';
 
 export const SECRET_KEYS = {
@@ -178,24 +177,8 @@ const getLabel = () => moment().format('L LT');
  * @returns {string|null} The secret key corresponding to the selected API, or null if no key is found.
  */
 export function resolveSecretKey() {
-    const { mainApi, chatCompletionSettings, textCompletionSettings } = SillyTavern.getContext();
+    const { mainApi, chatCompletionSettings } = SillyTavern.getContext();
     const chatCompletionSource = chatCompletionSettings.chat_completion_source;
-    const textCompletionType = textCompletionSettings.type;
-
-    if (mainApi === 'koboldhorde') {
-        return SECRET_KEYS.HORDE;
-    }
-
-    if (mainApi === 'novel') {
-        return SECRET_KEYS.NOVEL;
-    }
-
-    if (mainApi === 'textgenerationwebui') {
-        const [key] = Object.entries(textgen_types).find(([, value]) => value === textCompletionType) ?? [null];
-        if (key && SECRET_KEYS[key]) {
-            return SECRET_KEYS[key];
-        }
-    }
 
     if (mainApi === 'openai') {
         if (chatCompletionSource === chat_completion_sources.VERTEXAI) {

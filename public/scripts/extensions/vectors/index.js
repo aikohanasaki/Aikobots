@@ -27,7 +27,6 @@ import { getDataBankAttachments, getDataBankAttachmentsForSource, getFileAttachm
 import { debounce, getStringHash as calculateHash, waitUntilCondition, onlyUnique, splitRecursive, trimToStartSentence, trimToEndSentence, escapeHtml } from '../../utils.js';
 import { debounce_timeout } from '../../constants.js';
 import { getSortedEntries } from '../../world-info.js';
-import { textgen_types, textgenerationwebui_settings } from '../../textgen-settings.js';
 import { SlashCommandParser } from '../../slash-commands/SlashCommandParser.js';
 import { SlashCommand } from '../../slash-commands/SlashCommand.js';
 import { ARGUMENT_TYPE, SlashCommandArgument, SlashCommandNamedArgument } from '../../slash-commands/SlashCommandArgument.js';
@@ -51,7 +50,7 @@ export const EXTENSION_PROMPT_TAG = '3_vectors';
 export const EXTENSION_PROMPT_TAG_DB = '4_vectors_data_bank';
 
 // Force solo chunks for sources that don't support batching.
-const getBatchSize = () => ['transformers', 'ollama'].includes(settings.source) ? 1 : 5;
+const getBatchSize = () => settings.source === 'transformers' ? 1 : 5;
 
 const settings = {
     // For both
@@ -64,9 +63,6 @@ const settings = {
     electronhub_model: 'text-embedding-3-small',
     openrouter_model: 'openai/text-embedding-3-large',
     cohere_model: 'embed-english-v3.0',
-    ollama_model: 'mxbai-embed-large',
-    ollama_keep: false,
-    vllm_model: '',
     webllm_model: '',
     google_model: 'text-embedding-005',
     summarize: false,
@@ -114,7 +110,7 @@ const settings = {
 const moduleWorker = new ModuleWorkerWrapper(synchronizeChat);
 const webllmProvider = new WebLlmVectorProvider();
 const cachedSummaries = new Map();
-const vectorApiRequiresUrl = ['llamacpp', 'vllm', 'ollama', 'koboldcpp'];
+const vectorApiRequiresUrl = [];
 
 /**
  * Gets the Collection ID for a file embedded in the chat.
@@ -803,18 +799,6 @@ function getVectorsRequestBody(args = {}) {
         case 'cohere':
             body.model = extension_settings.vectors.cohere_model;
             break;
-        case 'ollama':
-            body.model = extension_settings.vectors.ollama_model;
-            body.apiUrl = settings.use_alt_endpoint ? settings.alt_endpoint_url : textgenerationwebui_settings.server_urls[textgen_types.OLLAMA];
-            body.keep = !!extension_settings.vectors.ollama_keep;
-            break;
-        case 'llamacpp':
-            body.apiUrl = settings.use_alt_endpoint ? settings.alt_endpoint_url : textgenerationwebui_settings.server_urls[textgen_types.LLAMACPP];
-            break;
-        case 'vllm':
-            body.apiUrl = settings.use_alt_endpoint ? settings.alt_endpoint_url : textgenerationwebui_settings.server_urls[textgen_types.VLLM];
-            body.model = extension_settings.vectors.vllm_model;
-            break;
         case 'webllm':
             body.model = extension_settings.vectors.webllm_model;
             break;
@@ -846,12 +830,6 @@ async function getAdditionalArgs(items) {
         case 'webllm':
             args.embeddings = await createWebLlmEmbeddings(items);
             break;
-        case 'koboldcpp': {
-            const { embeddings, model } = await createKoboldCppEmbeddings(items);
-            args.embeddings = embeddings;
-            args.model = model;
-            break;
-        }
     }
     return args;
 }
@@ -921,24 +899,6 @@ function throwIfSourceInvalid() {
         settings.source === 'nomicai' && !secret_state[SECRET_KEYS.NOMICAI] ||
         settings.source === 'cohere' && !secret_state[SECRET_KEYS.COHERE]) {
         throw new Error('Vectors: API key missing', { cause: 'api_key_missing' });
-    }
-
-    if (vectorApiRequiresUrl.includes(settings.source) && settings.use_alt_endpoint) {
-        if (!settings.alt_endpoint_url) {
-            throw new Error('Vectors: API URL missing', { cause: 'api_url_missing' });
-        }
-    }
-    else {
-        if (settings.source === 'ollama' && !textgenerationwebui_settings.server_urls[textgen_types.OLLAMA] ||
-            settings.source === 'vllm' && !textgenerationwebui_settings.server_urls[textgen_types.VLLM] ||
-            settings.source === 'koboldcpp' && !textgenerationwebui_settings.server_urls[textgen_types.KOBOLDCPP] ||
-            settings.source === 'llamacpp' && !textgenerationwebui_settings.server_urls[textgen_types.LLAMACPP]) {
-            throw new Error('Vectors: API URL missing', { cause: 'api_url_missing' });
-        }
-    }
-
-    if (settings.source === 'ollama' && !settings.ollama_model || settings.source === 'vllm' && !settings.vllm_model) {
-        throw new Error('Vectors: API model missing', { cause: 'api_model_missing' });
     }
 
     if (settings.source === 'extras' && !modules.includes('embeddings')) {
@@ -1129,14 +1089,9 @@ function toggleSettings() {
     $('#electronhub_vectorsModel').toggle(settings.source === 'electronhub');
     $('#openrouter_vectorsModel').toggle(settings.source === 'openrouter');
     $('#cohere_vectorsModel').toggle(settings.source === 'cohere');
-    $('#ollama_vectorsModel').toggle(settings.source === 'ollama');
-    $('#llamacpp_vectorsModel').toggle(settings.source === 'llamacpp');
-    $('#vllm_vectorsModel').toggle(settings.source === 'vllm');
     $('#nomicai_apiKey').toggle(settings.source === 'nomicai');
     $('#webllm_vectorsModel').toggle(settings.source === 'webllm');
-    $('#koboldcpp_vectorsModel').toggle(settings.source === 'koboldcpp');
     $('#google_vectorsModel').toggle(settings.source === 'palm' || settings.source === 'vertexai');
-    $('#vector_altEndpointUrl').toggle(vectorApiRequiresUrl.includes(settings.source));
     switch (settings.source) {
         case 'webllm':
             loadWebLlmModels();
@@ -1290,45 +1245,6 @@ async function createWebLlmEmbeddings(items) {
         }
         return result;
     });
-}
-
-/**
- * Creates KoboldCpp embeddings for a list of items.
- * @param {string[]} items Items to embed
- * @returns {Promise<{embeddings: Record<string, number[]>, model: string}>} Calculated embeddings
- */
-async function createKoboldCppEmbeddings(items) {
-    const response = await fetch('/api/backends/kobold/embed', {
-        method: 'POST',
-        headers: getRequestHeaders(),
-        body: JSON.stringify({
-            items: items,
-            server: settings.use_alt_endpoint ? settings.alt_endpoint_url : textgenerationwebui_settings.server_urls[textgen_types.KOBOLDCPP],
-        }),
-    });
-
-    if (!response.ok) {
-        throw new Error('Failed to get KoboldCpp embeddings');
-    }
-
-    const data = await response.json();
-    if (!Array.isArray(data.embeddings) || !data.model || data.embeddings.length !== items.length) {
-        throw new Error('Invalid response from KoboldCpp embeddings');
-    }
-
-    const embeddings = /** @type {Record<string, number[]>} */ ({});
-    for (let i = 0; i < data.embeddings.length; i++) {
-        if (!Array.isArray(data.embeddings[i]) || data.embeddings[i].length === 0) {
-            throw new Error('KoboldCpp returned an empty embedding. Reduce the chunk size and/or size threshold and try again.');
-        }
-
-        embeddings[items[i]] = data.embeddings[i];
-    }
-
-    return {
-        embeddings: embeddings,
-        model: data.model,
-    };
 }
 
 async function onPurgeClick() {
@@ -1605,16 +1521,6 @@ jQuery(async () => {
         saveSettingsDebounced();
         toggleSettings();
     });
-    $('#vector_altEndpointUrl_enabled').prop('checked', settings.use_alt_endpoint).on('input', () => {
-        settings.use_alt_endpoint = $('#vector_altEndpointUrl_enabled').prop('checked');
-        Object.assign(extension_settings.vectors, settings);
-        saveSettingsDebounced();
-    });
-    $('#vector_altEndpoint_address').val(settings.alt_endpoint_url).on('change', () => {
-        settings.alt_endpoint_url = String($('#vector_altEndpoint_address').val());
-        Object.assign(extension_settings.vectors, settings);
-        saveSettingsDebounced();
-    });
     $('#vectors_togetherai_model').val(settings.togetherai_model).on('change', () => {
         settings.togetherai_model = String($('#vectors_togetherai_model').val());
         Object.assign(extension_settings.vectors, settings);
@@ -1637,21 +1543,6 @@ jQuery(async () => {
     });
     $('#vectors_cohere_model').val(settings.cohere_model).on('change', () => {
         settings.cohere_model = String($('#vectors_cohere_model').val());
-        Object.assign(extension_settings.vectors, settings);
-        saveSettingsDebounced();
-    });
-    $('#vectors_ollama_model').val(settings.ollama_model).on('input', () => {
-        settings.ollama_model = String($('#vectors_ollama_model').val());
-        Object.assign(extension_settings.vectors, settings);
-        saveSettingsDebounced();
-    });
-    $('#vectors_vllm_model').val(settings.vllm_model).on('input', () => {
-        settings.vllm_model = String($('#vectors_vllm_model').val());
-        Object.assign(extension_settings.vectors, settings);
-        saveSettingsDebounced();
-    });
-    $('#vectors_ollama_keep').prop('checked', settings.ollama_keep).on('input', () => {
-        settings.ollama_keep = $('#vectors_ollama_keep').prop('checked');
         Object.assign(extension_settings.vectors, settings);
         saveSettingsDebounced();
     });
@@ -1842,13 +1733,6 @@ jQuery(async () => {
         settings.only_custom_boundary = !!$('#vectors_only_custom_boundary').prop('checked');
         Object.assign(extension_settings.vectors, settings);
         saveSettingsDebounced();
-    });
-
-    $('#vectors_ollama_pull').on('click', (e) => {
-        const presetModel = extension_settings.vectors.ollama_model || '';
-        e.preventDefault();
-        $('#ollama_download_model').trigger('click');
-        $('#dialogue_popup_input').val(presetModel);
     });
 
     $('#vectors_webllm_install').on('click', (e) => {

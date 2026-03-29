@@ -83,10 +83,7 @@ const STORAGE_KEYS = {
  * @property {string} chats - The directory where the chats are stored
  * @property {string} characters - The directory where the characters are stored
  * @property {string} backgrounds - The directory where the backgrounds are stored
- * @property {string} novelAI_Settings - The directory where the NovelAI settings are stored
- * @property {string} koboldAI_Settings - The directory where the KoboldAI settings are stored
  * @property {string} openAI_Settings - The directory where the OpenAI settings are stored
- * @property {string} textGen_Settings - The directory where the TextGen settings are stored
  * @property {string} themes - The directory where the themes are stored
  * @property {string} movingUI - The directory where the moving UI data is stored
  * @property {string} extensions - The directory where the extensions are stored
@@ -293,18 +290,8 @@ export async function migrateUserData() {
             file: false,
         },
         {
-            old: path.join(publicDirectory, 'KoboldAI Settings'),
-            new: userDirectories.koboldAI_Settings,
-            file: false,
-        },
-        {
             old: path.join(publicDirectory, 'movingUI'),
             new: userDirectories.movingUI,
-            file: false,
-        },
-        {
-            old: path.join(publicDirectory, 'NovelAI Settings'),
-            new: userDirectories.novelAI_Settings,
             file: false,
         },
         {
@@ -315,11 +302,6 @@ export async function migrateUserData() {
         {
             old: path.join(publicDirectory, 'QuickReplies'),
             new: userDirectories.quickreplies,
-            file: false,
-        },
-        {
-            old: path.join(publicDirectory, 'TextGen Settings'),
-            new: userDirectories.textGen_Settings,
             file: false,
         },
         {

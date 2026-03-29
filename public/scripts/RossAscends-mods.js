@@ -36,13 +36,11 @@ import {
 import { debounce, getStringHash, isValidUrl } from './utils.js';
 import { chat_completion_sources, oai_settings } from './openai.js';
 import { getTokenCountAsync } from './tokenizers.js';
-import { textgen_types, textgenerationwebui_settings as textgen_settings, getTextGenServer } from './textgen-settings.js';
 import { debounce_timeout } from './constants.js';
 
 import { Popup } from './popup.js';
 import { accountStorage } from './util/AccountStorage.js';
 import { getCurrentUserHandle } from './user.js';
-import { kai_settings } from './kai-settings.js';
 
 var RPanelPin = document.getElementById('rm_button_panel_pin');
 var LPanelPin = document.getElementById('lm_button_panel_pin');
@@ -367,30 +365,6 @@ function RA_autoconnect(PrevApi) {
     }
     if (online_status === 'no_connection' && power_user.auto_connect) {
         switch (main_api) {
-            case 'kobold':
-                if (kai_settings.api_server && isValidUrl(kai_settings.api_server)) {
-                    $('#api_button').trigger('click');
-                }
-                break;
-            case 'novel':
-                if (secret_state[SECRET_KEYS.NOVEL]) {
-                    $('#api_button_novel').trigger('click');
-                }
-                break;
-            case 'textgenerationwebui':
-                if ((textgen_settings.type === textgen_types.MANCER && secret_state[SECRET_KEYS.MANCER])
-                    || (textgen_settings.type === textgen_types.TOGETHERAI && secret_state[SECRET_KEYS.TOGETHERAI])
-                    || (textgen_settings.type === textgen_types.INFERMATICAI && secret_state[SECRET_KEYS.INFERMATICAI])
-                    || (textgen_settings.type === textgen_types.DREAMGEN && secret_state[SECRET_KEYS.DREAMGEN])
-                    || (textgen_settings.type === textgen_types.OPENROUTER && secret_state[SECRET_KEYS.OPENROUTER])
-                    || (textgen_settings.type === textgen_types.FEATHERLESS && secret_state[SECRET_KEYS.FEATHERLESS])
-                ) {
-                    $('#api_button_textgenerationwebui').trigger('click');
-                }
-                else if (isValidUrl(getTextGenServer())) {
-                    $('#api_button_textgenerationwebui').trigger('click');
-                }
-                break;
             case 'openai':
                 if (((secret_state[SECRET_KEYS.OPENAI] || oai_settings.reverse_proxy) && oai_settings.chat_completion_source == chat_completion_sources.OPENAI)
                     || ((secret_state[SECRET_KEYS.CLAUDE] || oai_settings.reverse_proxy) && oai_settings.chat_completion_source == chat_completion_sources.CLAUDE)

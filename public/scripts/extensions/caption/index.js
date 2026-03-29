@@ -4,7 +4,6 @@ import { appendMediaToMessage, chat_metadata, eventSource, event_types, getReque
 import { getMessageTimeStamp } from '../../RossAscends-mods.js';
 import { SECRET_KEYS, secret_state } from '../../secrets.js';
 import { getMultimodalCaption } from '../shared.js';
-import { textgen_types, textgenerationwebui_settings } from '../../textgen-settings.js';
 import { SlashCommandParser } from '../../slash-commands/SlashCommandParser.js';
 import { SlashCommand } from '../../slash-commands/SlashCommand.js';
 import { ARGUMENT_TYPE, SlashCommandArgument, SlashCommandNamedArgument } from '../../slash-commands/SlashCommandArgument.js';
@@ -477,8 +476,6 @@ jQuery(async function () {
                 // Handle multimodal sources
                 if (settings.source === 'multimodal') {
                     const api = settings.multimodal_api;
-                    const altEndpointEnabled = settings.alt_endpoint_enabled;
-                    const altEndpointUrl = settings.alt_endpoint_url;
 
                     // APIs that support reverse proxy
                     const reverseProxyApis = {
@@ -508,22 +505,6 @@ jQuery(async function () {
                     };
 
                     if (chatCompletionApis[api] && secret_state[chatCompletionApis[api]]) {
-                        return true;
-                    }
-
-                    const textCompletionApis = {
-                        'ollama': textgen_types.OLLAMA,
-                        'llamacpp': textgen_types.LLAMACPP,
-                        'ooba': textgen_types.OOBA,
-                        'koboldcpp': textgen_types.KOBOLDCPP,
-                        'vllm': textgen_types.VLLM,
-                    };
-
-                    if (textCompletionApis[api] && altEndpointEnabled && altEndpointUrl) {
-                        return true;
-                    }
-
-                    if (textCompletionApis[api] && !altEndpointEnabled && textgenerationwebui_settings.server_urls[textCompletionApis[api]]) {
                         return true;
                     }
 
@@ -661,14 +642,6 @@ jQuery(async function () {
         extension_settings.caption.auto_mode = !!$('#caption_auto_mode').prop('checked');
         saveSettingsDebounced();
     });
-    $('#caption_ollama_pull').on('click', (e) => {
-        const selectedModel = extension_settings.caption.multimodal_model;
-        const staticModels = { 'ollama_current': textgenerationwebui_settings.ollama_model, 'ollama_custom': extension_settings.caption.ollama_custom_model };
-        const presetModel = staticModels[selectedModel] || selectedModel;
-        e.preventDefault();
-        $('#ollama_download_model').trigger('click');
-        $('.popup .popup-input').val(presetModel);
-    });
     $('#caption_multimodal_api').on('change', async () => {
         const api = String($('#caption_multimodal_api').val());
         extension_settings.caption.multimodal_api = api;
@@ -680,20 +653,8 @@ jQuery(async function () {
         extension_settings.caption.multimodal_model = String($('#caption_multimodal_model').val());
         saveSettingsDebounced();
     });
-    $('#caption_altEndpoint_url').val(extension_settings.caption.alt_endpoint_url).on('input', () => {
-        extension_settings.caption.alt_endpoint_url = String($('#caption_altEndpoint_url').val());
-        saveSettingsDebounced();
-    });
-    $('#caption_altEndpoint_enabled').prop('checked', !!(extension_settings.caption.alt_endpoint_enabled)).on('input', () => {
-        extension_settings.caption.alt_endpoint_enabled = !!$('#caption_altEndpoint_enabled').prop('checked');
-        saveSettingsDebounced();
-    });
     $('#caption_show_in_chat').prop('checked', !!(extension_settings.caption.show_in_chat)).on('input', () => {
         extension_settings.caption.show_in_chat = !!$('#caption_show_in_chat').prop('checked');
-        saveSettingsDebounced();
-    });
-    $('#caption_ollama_custom_model').val(extension_settings.caption.ollama_custom_model || '').on('input', () => {
-        extension_settings.caption.ollama_custom_model = String($('#caption_ollama_custom_model').val()).trim();
         saveSettingsDebounced();
     });
     $('#caption_refresh_models').on('click', async () => {

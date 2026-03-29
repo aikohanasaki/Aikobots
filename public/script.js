@@ -12,25 +12,6 @@ import {
 
 import { humanizedDateTime, favsToHotswap, getMessageTimeStamp, dragElement, isMobile, initRossMods } from './scripts/RossAscends-mods.js';
 import { userStatsHandler, statMesProcess, initStats } from './scripts/stats.js';
-import {
-    kai_settings,
-    loadKoboldSettings,
-    getKoboldGenerationData,
-    kai_flags,
-    koboldai_settings,
-    koboldai_setting_names,
-    initKoboldSettings,
-} from './scripts/kai-settings.js';
-
-import {
-    textgenerationwebui_settings as textgen_settings,
-    loadTextGenSettings,
-    getTextGenGenerationData,
-    textgen_types,
-    parseTextgenLogprobs,
-    parseTabbyLogprobs,
-    initTextGenSettings,
-} from './scripts/textgen-settings.js';
 
 import {
     world_info,
@@ -129,34 +110,10 @@ import {
 } from './scripts/openai.js';
 
 import {
-    getNovelGenerationData,
-    getKayraMaxContextTokens,
-    loadNovelSettings,
-    nai_settings,
-    adjustNovelInstructionPrompt,
-    parseNovelAILogprobs,
-    novelai_settings,
-    novelai_setting_names,
-    initNovelAISettings,
-} from './scripts/nai-settings.js';
-
-import {
     initBookmarks,
     showBookmarksButtons,
     updateBookmarkDisplay,
 } from './scripts/bookmarks.js';
-
-import {
-    horde_settings,
-    loadHordeSettings,
-    generateHorde,
-    getStatusHorde,
-    getHordeModels,
-    adjustHordeGenerationParams,
-    isHordeGenerationNotAllowed,
-    MIN_LENGTH,
-    initHorde,
-} from './scripts/horde.js';
 
 import {
     debounce,
@@ -351,7 +308,6 @@ export {
     setUserAvatar,
     getUserAvatars,
     getUserAvatar,
-    nai_settings,
     isOdd,
     countOccurrences,
     renderTemplate,
@@ -364,10 +320,6 @@ export {
     replaceItemizedPromptText,
     deleteItemizedPrompts,
     findItemizedPromptSet,
-    koboldai_settings,
-    koboldai_setting_names,
-    novelai_settings,
-    novelai_setting_names,
     UNIQUE_APIS,
     CONNECT_API_MAP,
     system_messages,
@@ -639,7 +591,7 @@ export let max_context = 2048;
 var swipes = true;
 export let extension_prompts = {};
 
-export let main_api;// = "kobold";
+export let main_api;
 /** @type {AbortController} */
 let abortController;
 
@@ -647,8 +599,6 @@ export const CHAT_COMPLETIONS_ONLY = true;
 
 //css
 var css_send_form_display = $('<div id=send_form></div>').css('display');
-
-var kobold_horde_model = '';
 
 export let token;
 
@@ -760,9 +710,6 @@ async function firstLoadInit() {
     initChatUtilities();
     initDefaultSlashCommands();
     initOpenAI();
-    initTextGenSettings();
-    initKoboldSettings();
-    initNovelAISettings();
     initSystemPrompts();
     initExtensions();
     initExtensionSlashCommands();
@@ -783,7 +730,6 @@ async function firstLoadInit() {
     initAuthorsNote();
     await initPersonas();
     initWorldInfo();
-    initHorde();
     initRossMods();
     initStats();
     initCfg();
@@ -3439,13 +3385,10 @@ export function parseMesExamples(examplesStr, isInstruct) {
 
 export function isStreamingEnabled() {
     return (
-        (main_api == 'openai' &&
-            oai_settings.stream_openai &&
-            !(oai_settings.chat_completion_source == chat_completion_sources.OPENAI && ['o1-2024-12-17', 'o1'].includes(oai_settings.openai_model))
-        )
-        || (main_api == 'kobold' && kai_settings.streaming_kobold && kai_flags.can_use_streaming)
-        || (main_api == 'novel' && nai_settings.streaming_novel)
-        || (main_api == 'textgenerationwebui' && textgen_settings.streaming));
+        main_api === 'openai' &&
+        oai_settings.stream_openai &&
+        !(oai_settings.chat_completion_source == chat_completion_sources.OPENAI && ['o1-2024-12-17', 'o1'].includes(oai_settings.openai_model))
+    );
 }
 
 function showStopButton() {
@@ -3820,13 +3763,15 @@ class StreamingProcessor {
  * @returns {string | object[]} Prompt ready for use in generation. If using TC, this will be a string. If using CC, this will be an array of chat-style messages.
  */
 export function createRawPrompt(prompt, api, instructOverride, quietToLoud, systemPrompt, prefill) {
-    const isInstruct = power_user.instruct.enabled && api !== 'openai' && api !== 'novel' && !instructOverride;
+    if (api !== 'openai') {
+        throw new Error(`Unsupported API: ${api}`);
+    }
+
+    const isInstruct = false;
 
     // If the prompt was given as a string, convert to a message-style object assuming user role
     if (typeof prompt === 'string') {
-        const message = api === 'openai'
-            ? { role: 'user', content: prompt.trim() }
-            : { role: 'system', content: prompt };
+        const message = { role: 'user', content: prompt.trim() };
         prompt = [message];
     } else {  // checks for message-style object
         if (prompt.length === 0 && !systemPrompt) throw Error('No messages provided');
@@ -3841,33 +3786,19 @@ export function createRawPrompt(prompt, api, instructOverride, quietToLoud, syst
         if (message.role === 'user') name = message.name ?? name1;
         if (message.role === 'assistant') name = message.name ?? name2;
         if (message.role === 'system') name = message.name ?? '';
-        const prefix = isInstruct || api === 'openai' ? '' : (name ? `${name}: ` : '');
+        const prefix = '';
         message.content = prefix + substituteParams(message.content ?? '');
-        if (isInstruct) {  // instruct formatting for text completion
-            const isUser = message.role === 'user';
-            const isNarrator = message.role === 'system';
-            message.content = formatInstructModeChat(name, message.content, isUser, isNarrator, '', name1, name2, false);
-        }
     }
 
     // prepend system prompt, if provided
     if (systemPrompt) {
         systemPrompt = substituteParams(systemPrompt);
-        systemPrompt = isInstruct ? (formatInstructModeStoryString(systemPrompt) + '\n') : systemPrompt.trim();
-        prompt.unshift({ role: 'system', content: systemPrompt });
+        prompt.unshift({ role: 'system', content: systemPrompt.trim() });
     }
 
     // with Chat Completion, the prefill is an additional assistant message at the end.
     if (api === 'openai' && prefill) {
         prompt.push({ role: 'assistant', content: prefill });
-    }
-
-    // if text completion, convert to text prompt by concatenating all message contents and adding the prefill as a promptBias.
-    if (api !== 'openai') {
-        const joiner = isInstruct ? '' : '\n';
-        prompt = prompt.map(message => message.content).join(joiner);
-        prompt = api === 'novel' ? adjustNovelInstructionPrompt(prompt) : prompt;
-        prompt = prompt + (isInstruct ? formatInstructModePrompt(name2, false, prefill, name1, name2, true, quietToLoud) : `\n${prefill}`);  // add last line
     }
 
     return prompt;
@@ -3936,54 +3867,18 @@ export async function generateRaw({ prompt = '', api = null, instructOverride = 
         eventAbortController.signal.throwIfAborted();
 
         switch (api) {
-            case 'kobold':
-            case 'koboldhorde':
-                if (kai_settings.preset_settings === 'gui') {
-                    generateData = { prompt: prompt, gui_settings: true, max_length: amount_gen, max_context_length: max_context, api_server: kai_settings.api_server };
-                } else {
-                    const isHorde = api === 'koboldhorde';
-                    const koboldSettings = koboldai_settings[koboldai_setting_names[kai_settings.preset_settings]];
-                    generateData = getKoboldGenerationData(prompt.toString(), koboldSettings, amount_gen, max_context, isHorde, 'quiet');
-                }
-                TempResponseLength.restore(api);
-                break;
-            case 'novel': {
-                const novelSettings = novelai_settings[novelai_setting_names[nai_settings.preset_settings_novel]];
-                generateData = getNovelGenerationData(prompt, novelSettings, amount_gen, false, false, null, 'quiet');
-                TempResponseLength.restore(api);
-                break;
-            }
-            case 'textgenerationwebui':
-                generateData = await getTextGenGenerationData(prompt, amount_gen, false, false, null, 'quiet');
-                TempResponseLength.restore(api);
-                break;
             case 'openai': {
-                generateData = prompt;  // generateData is just the chat message object
+                generateData = prompt;
                 eventHook = TempResponseLength.setupEventHook(api);
             } break;
+            default:
+                throw new Error(`Unsupported API: ${api}`);
         }
 
         let data = {};
 
-        if (api === 'koboldhorde') {
-            data = await generateHorde(prompt.toString(), generateData, abortController.signal, false);
-        } else if (api === 'openai') {
+        if (api === 'openai') {
             data = await sendOpenAIRequest('quiet', generateData, abortController.signal, { jsonSchema });
-        } else {
-            const generateUrl = getGenerateUrl(api);
-            const response = await fetch(generateUrl, {
-                method: 'POST',
-                headers: getRequestHeaders(),
-                cache: 'no-cache',
-                body: JSON.stringify(generateData),
-                signal: abortController.signal,
-            });
-
-            if (!response.ok) {
-                throw await response.json();
-            }
-
-            data = await response.json();
         }
 
         // should only happen for text completions
@@ -4197,17 +4092,6 @@ export async function Generate(type, { automatic_trigger, force_name2, quiet_pro
     // Occurs only if the generation is not aborted due to slash commands execution
     await eventSource.emit(event_types.GENERATION_AFTER_COMMANDS, type, { automatic_trigger, force_name2, quiet_prompt, quietToLoud, skipWIAN, force_chid, signal, quietImage }, dryRun);
 
-    if (main_api == 'kobold' && kai_settings.streaming_kobold && !kai_flags.can_use_streaming) {
-        toastr.error(t`Streaming is enabled, but the version of Kobold used does not support token streaming.`, undefined, { timeOut: 10000, preventDuplicates: true });
-        unblockGeneration(type);
-        return Promise.resolve();
-    }
-
-    if (isHordeGenerationNotAllowed()) {
-        unblockGeneration(type);
-        return Promise.resolve();
-    }
-
     if (!dryRun) {
         // Ping server to make sure it is still alive
         const pingResult = await pingServer();
@@ -4258,7 +4142,7 @@ export async function Generate(type, { automatic_trigger, force_name2, quiet_pro
     //this function just gives special care to novel quiet instruction prompts
     if (quiet_prompt) {
         quiet_prompt = substituteParams(quiet_prompt);
-        quiet_prompt = main_api == 'novel' && !quietToLoud ? adjustNovelInstructionPrompt(quiet_prompt) : quiet_prompt;
+        quiet_prompt = quiet_prompt;
     }
 
     const hasBackendConnection = online_status !== 'no_connection';
@@ -4444,21 +4328,6 @@ export async function Generate(type, { automatic_trigger, force_name2, quiet_pro
         console.debug('Skipping extension interceptors for dry run');
     }
 
-    // Adjust token limit for Horde
-    let adjustedParams;
-    if (main_api == 'koboldhorde' && (horde_settings.auto_adjust_context_length || horde_settings.auto_adjust_response_length)) {
-        try {
-            adjustedParams = await adjustHordeGenerationParams(max_context, amount_gen);
-        }
-        catch {
-            unblockGeneration(type);
-            return Promise.resolve();
-        }
-        if (horde_settings.auto_adjust_context_length) {
-            this_max_context = (adjustedParams.maxContextLength - adjustedParams.maxLength);
-        }
-    }
-
     // Fetches the combined prompt for both negative and positive prompts
     const cfgGuidanceScale = getGuidanceScale();
     const useCfgPrompt = cfgGuidanceScale && cfgGuidanceScale.value !== 1;
@@ -4478,7 +4347,7 @@ export async function Generate(type, { automatic_trigger, force_name2, quiet_pro
 
     console.log(`Core/all messages: ${coreChat.length}/${chat.length}`);
 
-    if ((promptBias && !isUserPromptBias) || power_user.always_force_name2 || main_api == 'novel') {
+    if ((promptBias && !isUserPromptBias) || power_user.always_force_name2) {
         force_name2 = true;
     }
 
@@ -5079,7 +4948,6 @@ export async function Generate(type, { automatic_trigger, force_name2, quiet_pro
             generatedPromptCache,
             main: system,
             jailbreak,
-            naiPreamble: nai_settings.preamble,
         };
 
         // Before returning the combined prompt, give available context related information to all subscribers.
@@ -5095,44 +4963,11 @@ export async function Generate(type, { automatic_trigger, force_name2, quiet_pro
     await eventSource.emit(event_types.GENERATE_AFTER_COMBINE_PROMPTS, eventData);
     finalPrompt = eventData.prompt;
 
-    let maxLength = Number(amount_gen); // how many tokens the AI will be requested to generate
+    const maxLength = Number(amount_gen); // how many tokens the AI will be requested to generate
     let thisPromptBits = [];
 
     let generate_data;
     switch (main_api) {
-        case 'koboldhorde':
-        case 'kobold':
-            if (main_api == 'koboldhorde' && horde_settings.auto_adjust_response_length) {
-                maxLength = Math.min(maxLength, adjustedParams.maxLength);
-                maxLength = Math.max(maxLength, MIN_LENGTH); // prevent validation errors
-            }
-
-            generate_data = {
-                prompt: finalPrompt,
-                gui_settings: true,
-                max_length: maxLength,
-                max_context_length: max_context,
-                api_server: kai_settings.api_server,
-            };
-
-            if (kai_settings.preset_settings != 'gui') {
-                const isHorde = main_api == 'koboldhorde';
-                const presetSettings = koboldai_settings[koboldai_setting_names[kai_settings.preset_settings]];
-                const maxContext = (adjustedParams && horde_settings.auto_adjust_context_length) ? adjustedParams.maxContextLength : max_context;
-                generate_data = getKoboldGenerationData(finalPrompt, presetSettings, maxLength, maxContext, isHorde, type);
-            }
-            break;
-        case 'textgenerationwebui': {
-            const cfgValues = useCfgPrompt ? { guidanceScale: cfgGuidanceScale, negativePrompt: await getCombinedPrompt(true) } : null;
-            generate_data = await getTextGenGenerationData(finalPrompt, maxLength, isImpersonate, isContinue, cfgValues, type);
-            break;
-        }
-        case 'novel': {
-            const cfgValues = useCfgPrompt ? { guidanceScale: cfgGuidanceScale } : null;
-            const presetSettings = novelai_settings[novelai_setting_names[nai_settings.preset_settings_novel]];
-            generate_data = getNovelGenerationData(finalPrompt, presetSettings, maxLength, isImpersonate, isContinue, cfgValues, type);
-            break;
-        }
         case 'openai': {
             const tagKey = getTagKeyForEntity(this_chid);
             const extraCharLore = world_info.charLore?.find((entry) => entry.name === getCharaFilename(this_chid));
@@ -5192,6 +5027,8 @@ export async function Generate(type, { automatic_trigger, force_name2, quiet_pro
             generate_data = { promptContext };
             break;
         }
+        default:
+            throw new Error(`Unsupported API: ${main_api}`);
     }
 
     await eventSource.emit(event_types.GENERATE_AFTER_DATA, generate_data, dryRun);
@@ -5365,7 +5202,6 @@ export async function Generate(type, { automatic_trigger, force_name2, quiet_pro
         let title = extractTitleFromData(data);
         let reasoning = extractReasoningFromData(data);
         let imageUrls = extractImagesFromData(data);
-        kobold_horde_model = title;
 
         const swipes = extractMultiSwipes(data, type);
 
@@ -5807,44 +5643,11 @@ export function getMaxContextSize(overrideResponseLength = null) {
         overrideResponseLength = null;
     }
 
-    let this_max_context = 1487;
-    if (main_api == 'kobold' || main_api == 'koboldhorde' || main_api == 'textgenerationwebui') {
-        this_max_context = (max_context - (overrideResponseLength || amount_gen));
-    }
-    if (main_api == 'novel') {
-        this_max_context = Number(max_context);
-        if (nai_settings.model_novel.includes('clio')) {
-            this_max_context = Math.min(max_context, 8192);
-        }
-        if (nai_settings.model_novel.includes('kayra')) {
-            this_max_context = Math.min(max_context, 8192);
-
-            const subscriptionLimit = getKayraMaxContextTokens();
-            if (typeof subscriptionLimit === 'number' && this_max_context > subscriptionLimit) {
-                this_max_context = subscriptionLimit;
-                console.log(`NovelAI subscription limit reached. Max context size is now ${this_max_context}`);
-            }
-        }
-        if (nai_settings.model_novel.includes('erato')) {
-            // subscriber limits coming soon
-            this_max_context = Math.min(max_context, 8192);
-
-            // Added special tokens and whatnot
-            this_max_context -= 10;
-        }
-
-        this_max_context = this_max_context - (overrideResponseLength || amount_gen);
-    }
-    if (main_api == 'openai') {
-        this_max_context = oai_settings.openai_max_context - (overrideResponseLength || oai_settings.openai_max_tokens);
-    }
-    return this_max_context;
+    return oai_settings.openai_max_context - (overrideResponseLength || oai_settings.openai_max_tokens);
 }
 
 function addChatsPreamble(mesSendString) {
-    return main_api === 'novel'
-        ? substituteParams(nai_settings.preamble) + '\n' + mesSendString
-        : mesSendString;
+    return mesSendString;
 }
 
 function addChatsSeparator(mesSendString) {
@@ -5955,25 +5758,14 @@ export async function sendStreamingRequest(type, data, options = {}) {
  * @throws {Error} If the API is unknown
  */
 export function getGenerateUrl(api) {
-    switch (api) {
-        case 'kobold':
-            return '/api/backends/kobold/generate';
-        case 'koboldhorde':
-            return '/api/backends/koboldhorde/generate';
-        case 'textgenerationwebui':
-            return '/api/backends/text-completions/generate';
-        case 'novel':
-            return '/api/novelai/generate';
-        default:
-            throw new Error(`Unknown API: ${api}`);
+    if (api !== 'openai') {
+        throw new Error(`Unsupported API: ${api}`);
     }
+
+    return '/api/openai/generate';
 }
 
 function extractTitleFromData(data) {
-    if (main_api == 'koboldhorde') {
-        return data.workerName;
-    }
-
     return undefined;
 }
 
@@ -6018,38 +5810,8 @@ function extractImagesFromData(data, { mainApi = null, chatCompletionSource = nu
  * @param {string} continueFrom - for 'continue' generations, the prompt
  *  */
 function parseAndSaveLogprobs(data, continueFrom) {
-    /** @type {import('./scripts/logprobs.js').TokenLogprobs[] | null} */
-    let logprobs = null;
-
-    switch (main_api) {
-        case 'novel':
-            // parser only handles one token/logprob pair at a time
-            logprobs = data.logprobs?.map(parseNovelAILogprobs) || null;
-            break;
-        case 'openai':
-            // OAI and other chat completion APIs must handle this earlier in
-            // `sendOpenAIRequest`. `data` for these APIs is just a string with
-            // the text of the generated message, logprobs are not included.
-            return;
-        case 'textgenerationwebui':
-            switch (textgen_settings.type) {
-                case textgen_types.LLAMACPP: {
-                    logprobs = data?.completion_probabilities?.map(x => parseTextgenLogprobs(x.content, [x])) || null;
-                } break;
-                case textgen_types.KOBOLDCPP:
-                case textgen_types.VLLM:
-                case textgen_types.INFERMATICAI:
-                case textgen_types.APHRODITE:
-                case textgen_types.MANCER:
-                case textgen_types.TABBY: {
-                    logprobs = parseTabbyLogprobs(data) || null;
-                } break;
-            } break;
-        default:
-            return;
-    }
-
-    saveLogprobsForActiveMessage(logprobs, continueFrom);
+    // Chat-completion providers handle logprobs during request processing.
+    return;
 }
 
 /**
@@ -6065,14 +5827,6 @@ export function extractMessageFromData(data, activeApi = null) {
         }
 
         switch (activeApi ?? main_api) {
-            case 'kobold':
-                return data.results[0].text;
-            case 'koboldhorde':
-                return data.text;
-            case 'textgenerationwebui':
-                return data.choices?.[0]?.text ?? data.choices?.[0]?.message?.content ?? data.content ?? data.response ?? '';
-            case 'novel':
-                return data.output;
             case 'openai':
                 return data?.content?.find(p => p.type === 'text')?.text ?? data?.choices?.[0]?.message?.content ?? data?.choices?.[0]?.text ?? data?.text ?? data?.message?.content?.[0]?.text ?? data?.message?.tool_plan ?? '';
             default:
@@ -6156,28 +5910,26 @@ function extractMultiSwipes(data, type) {
         return swipes;
     }
 
-    if (main_api === 'openai' || (main_api === 'textgenerationwebui' && [textgen_types.MANCER, textgen_types.VLLM, textgen_types.APHRODITE, textgen_types.TABBY, textgen_types.INFERMATICAI].includes(textgen_settings.type))) {
-        if (!Array.isArray(data.choices)) {
-            return swipes;
-        }
+    if (!Array.isArray(data.choices)) {
+        return swipes;
+    }
 
-        const multiSwipeCount = data.choices.length - 1;
+    const multiSwipeCount = data.choices.length - 1;
 
-        if (multiSwipeCount <= 0) {
-            return swipes;
-        }
+    if (multiSwipeCount <= 0) {
+        return swipes;
+    }
 
-        for (let i = 1; i < data.choices.length; i++) {
-            const text = data?.choices[i]?.message?.content ?? data?.choices[i]?.text ?? '';
-            const cleanedText = cleanUpMessage({
-                getMessage: text,
-                isImpersonate: false,
-                isContinue: false,
-                displayIncompleteSentences: false,
-            });
+    for (let i = 1; i < data.choices.length; i++) {
+        const text = data?.choices[i]?.message?.content ?? data?.choices[i]?.text ?? '';
+        const cleanedText = cleanUpMessage({
+            getMessage: text,
+            isImpersonate: false,
+            isContinue: false,
+            displayIncompleteSentences: false,
+        });
 
-            swipes.push(cleanedText);
-        }
+        swipes.push(cleanedText);
     }
 
     return swipes;
@@ -6757,36 +6509,11 @@ function saveImageToMessage(img, mes) {
 }
 
 export function getGeneratingApi() {
-    switch (main_api) {
-        case 'openai':
-            return oai_settings.chat_completion_source || 'openai';
-        case 'textgenerationwebui':
-            return textgen_settings.type === textgen_types.OOBA ? 'textgenerationwebui' : textgen_settings.type;
-        default:
-            return main_api;
-    }
+    return oai_settings.chat_completion_source || 'openai';
 }
 
 function getGeneratingModel(mes) {
-    let model = '';
-    switch (main_api) {
-        case 'kobold':
-            model = online_status;
-            break;
-        case 'novel':
-            model = nai_settings.model_novel;
-            break;
-        case 'openai':
-            model = getChatCompletionModel();
-            break;
-        case 'textgenerationwebui':
-            model = online_status;
-            break;
-        case 'koboldhorde':
-            model = kobold_horde_model;
-            break;
-    }
-    return model;
+    return getChatCompletionModel();
 }
 
 /**
@@ -7495,118 +7222,18 @@ function setChatCompletionNullControlsDisabled(disabled) {
 ////////// OPTIMZED MAIN API CHANGE FUNCTION ////////////
 
 export function changeMainAPI() {
-    const selectedVal = CHAT_COMPLETIONS_ONLY ? 'openai' : $('#main_api').val();
-    //console.log(selectedVal);
-    const apiElements = {
-        'koboldhorde': {
-            apiStreaming: $('#NULL_SELECTOR'),
-            apiSettings: $('#kobold_api-settings'),
-            apiConnector: $('#kobold_horde'),
-            apiPresets: $('#kobold_api-presets'),
-            apiRanges: $('#range_block'),
-            maxContextElem: $('#max_context_block'),
-            amountGenElem: $('#amount_gen_block'),
-        },
-        'kobold': {
-            apiStreaming: $('#streaming_kobold_block'),
-            apiSettings: $('#kobold_api-settings'),
-            apiConnector: $('#kobold_api'),
-            apiPresets: $('#kobold_api-presets'),
-            apiRanges: $('#range_block'),
-            maxContextElem: $('#max_context_block'),
-            amountGenElem: $('#amount_gen_block'),
-        },
-        'textgenerationwebui': {
-            apiStreaming: $('#streaming_textgenerationwebui_block'),
-            apiSettings: $('#textgenerationwebui_api-settings'),
-            apiConnector: $('#textgenerationwebui_api'),
-            apiPresets: $('#textgenerationwebui_api-presets'),
-            apiRanges: $('#range_block_textgenerationwebui'),
-            maxContextElem: $('#max_context_block'),
-            amountGenElem: $('#amount_gen_block'),
-        },
-        'novel': {
-            apiStreaming: $('#streaming_novel_block'),
-            apiSettings: $('#novel_api-settings'),
-            apiConnector: $('#novel_api'),
-            apiPresets: $('#novel_api-presets'),
-            apiRanges: $('#range_block_novel'),
-            maxContextElem: $('#max_context_block'),
-            amountGenElem: $('#amount_gen_block'),
-        },
-        'openai': {
-            apiStreaming: $('#NULL_SELECTOR'),
-            apiSettings: $('#openai_settings'),
-            apiConnector: $('#openai_api'),
-            apiPresets: $('#openai_api-presets'),
-            apiRanges: $('#range_block_openai'),
-            maxContextElem: $('#max_context_block'),
-            amountGenElem: $('#amount_gen_block'),
-        },
-    };
-    //console.log('--- apiElements--- ');
-    //console.log(apiElements);
+    const selectedVal = 'openai';
 
-    //first, disable everything so the old elements stop showing
-    for (const apiName in apiElements) {
-        const apiObj = apiElements[apiName];
-        //do not hide items to then proceed to immediately show them.
-        if (selectedVal === apiName) {
-            continue;
-        }
-        apiObj.apiSettings.css('display', 'none');
-        apiObj.apiConnector.css('display', 'none');
-        apiObj.apiRanges.css('display', 'none');
-        apiObj.apiPresets.css('display', 'none');
-        apiObj.apiStreaming.css('display', 'none');
-    }
-
-    //then, find and enable the active item.
-    //This is split out of the loop so that different apis can share settings divs
-    let activeItem = apiElements[selectedVal];
-
-    activeItem.apiStreaming.css('display', 'block');
-    activeItem.apiSettings.css('display', 'block');
-    activeItem.apiConnector.css('display', 'block');
-    activeItem.apiRanges.css('display', 'block');
-    activeItem.apiPresets.css('display', 'block');
-
-    if (selectedVal === 'openai') {
-        activeItem.apiPresets.css('display', 'flex');
-    }
-
-    if (selectedVal === 'textgenerationwebui' || selectedVal === 'novel') {
-        console.debug('enabling amount_gen for ooba/novel');
-        activeItem.amountGenElem.find('input').prop('disabled', false);
-        activeItem.amountGenElem.css('opacity', 1.0);
-    }
-
-    //custom because streaming has been moved up under response tokens, which exists inside common settings block
-    if (selectedVal === 'novel') {
-        $('#ai_module_block_novel').css('display', 'block');
-    } else {
-        $('#ai_module_block_novel').css('display', 'none');
-    }
-
-    $('#prompt_cost_block').toggle(selectedVal === 'textgenerationwebui' && textgen_settings.type === textgen_types.OPENROUTER);
-
-    // Hide common settings for OpenAI
-    console.debug('value?', selectedVal);
-    if (selectedVal == 'openai') {
-        console.debug('hiding settings?');
-        $('#common-gen-settings-block').css('display', 'none');
-    } else {
-        $('#common-gen-settings-block').css('display', 'block');
-    }
+    $('#openai_settings').css('display', 'block');
+    $('#openai_api').css('display', 'block');
+    $('#range_block_openai').css('display', 'block');
+    $('#openai_api-presets').css('display', 'flex');
+    $('#common-gen-settings-block').css('display', 'none');
+    $('#prompt_cost_block').hide();
 
     main_api = selectedVal;
     setChatCompletionNullControlsDisabled(main_api === 'openai');
     setOnlineStatus('no_connection');
-
-    if (main_api == 'koboldhorde') {
-        getStatusHorde();
-        getHordeModels(true);
-    }
     validateDisabledSamplers();
     setupChatCompletionPromptManager(oai_settings);
     forceCharacterEditorTokenize();
@@ -7690,20 +7317,8 @@ export async function getSettings() {
         $('#swipes-checkbox').prop('checked', swipes); /// swipecode
         refreshSwipeButtons();
 
-        // Kobold
-        loadKoboldSettings(data, settings.kai_settings ?? settings, settings);
-
-        // Novel
-        loadNovelSettings(data, settings.nai_settings ?? settings);
-
-        // TextGen
-        await loadTextGenSettings(data, settings);
-
         // OpenAI
         loadOpenAISettings(data, settings.oai_settings ?? settings);
-
-        // Horde
-        loadHordeSettings(settings);
 
         // Load power user settings
         await loadPowerUserSettings(settings, data);
@@ -7812,15 +7427,11 @@ export async function saveSettings(loopCounter = 0) {
         max_context: max_context,
         main_api: main_api,
         world_info_settings: getWorldInfoSettings(),
-        textgenerationwebui_settings: textgen_settings,
         swipes: swipes,
-        horde_settings: horde_settings,
         power_user: power_user,
         extension_settings: extension_settings,
         tags: tags,
         tag_map: tag_map,
-        nai_settings: nai_settings,
-        kai_settings: kai_settings,
         oai_settings: oai_settings,
         background: background_settings,
         proxies: proxies,
@@ -9728,10 +9339,6 @@ export async function swipe(_event, direction, { source, repeated, message = cha
     }
     if (isStreamingEnabled() && streamingProcessor) {
         streamingProcessor.onStopStreaming();
-    }
-
-    if (isHordeGenerationNotAllowed()) {
-        return unblockGeneration();
     }
 
     //If the swipe is not being deleted.
