@@ -138,11 +138,16 @@ function discoverServerExtensions(directories, extensionSettings = {}) {
             const deps = Array.isArray(entry.manifest.dependencies) ? entry.manifest.dependencies : [];
             return deps.every(dep => availableNames.has(dep) && !disabled.has(dep));
         })
-        .sort((a, b) => Number(a.manifest.loading_order || 0) - Number(b.manifest.loading_order || 0) || entryName(a).localeCompare(entryName(b)));
+        .sort((a, b) => getLoadingOrder(a) - getLoadingOrder(b) || entryName(a).localeCompare(entryName(b)));
 }
 
 function entryName(entry) {
     return String(entry.manifest.display_name || entry.settingsKey || entry.id);
+}
+
+function getLoadingOrder(entry) {
+    const loadingOrder = Number(entry?.manifest?.loading_order);
+    return Number.isFinite(loadingOrder) ? loadingOrder : 0;
 }
 
 function pruneModuleCache(serverEntryPath) {
@@ -204,35 +209,39 @@ async function loadServerExtension(entry) {
             },
         };
 
-        const moduleUrl = `${pathToFileURL(entry.serverEntryPath).href}?mtime=${stat.mtimeMs}`;
-        const imported = await import(moduleUrl);
-        const setup = imported.setup || imported.register || imported.default;
+        try {
+            const moduleUrl = `${pathToFileURL(entry.serverEntryPath).href}?mtime=${stat.mtimeMs}`;
+            const imported = await import(moduleUrl);
+            const setup = imported.setup || imported.register || imported.default;
 
-        if (typeof setup === 'function') {
-            await setup(registrationApi, {
-                id: entry.id,
-                settingsKey: entry.settingsKey,
-                manifest: entry.manifest,
-                scope: entry.scope,
-            });
-        } else {
-            if (Array.isArray(imported.generationInterceptors)) {
-                for (const interceptor of imported.generationInterceptors) {
-                    registrationApi.registerGenerationInterceptor(interceptor);
+            if (typeof setup === 'function') {
+                await setup(registrationApi, {
+                    id: entry.id,
+                    settingsKey: entry.settingsKey,
+                    manifest: entry.manifest,
+                    scope: entry.scope,
+                });
+            } else {
+                if (Array.isArray(imported.generationInterceptors)) {
+                    for (const interceptor of imported.generationInterceptors) {
+                        registrationApi.registerGenerationInterceptor(interceptor);
+                    }
+                }
+
+                if (Array.isArray(imported.promptProviders)) {
+                    for (const provider of imported.promptProviders) {
+                        registrationApi.registerPromptProvider(provider);
+                    }
+                }
+
+                if (Array.isArray(imported.macroProviders)) {
+                    for (const provider of imported.macroProviders) {
+                        registrationApi.registerMacroProvider(provider);
+                    }
                 }
             }
-
-            if (Array.isArray(imported.promptProviders)) {
-                for (const provider of imported.promptProviders) {
-                    registrationApi.registerPromptProvider(provider);
-                }
-            }
-
-            if (Array.isArray(imported.macroProviders)) {
-                for (const provider of imported.macroProviders) {
-                    registrationApi.registerMacroProvider(provider);
-                }
-            }
+        } catch (error) {
+            console.error(`[server-runtime] Failed to load extension ${entry.id}:`, error);
         }
 
         moduleCache.set(cacheKey, definition);
@@ -303,7 +312,10 @@ function buildOpenAIMessagesFromCoreChat(promptContext) {
         content = content.replace(/\r/gm, '');
 
         if (role === 'user' && wrapInQuotes) {
-            content = `"${content}"`;
+            const alreadyQuoted = content.startsWith('"') && content.endsWith('"');
+            if (!alreadyQuoted) {
+                content = `"${content}"`;
+            }
         }
 
         const media = item.extra?.media;
@@ -458,7 +470,7 @@ export async function runServerGenerationExtensions(directories, promptContext) 
             manifest: entry.manifest,
             directories,
             promptContext,
-            chat: Array.isArray(promptContext.coreChat) ? promptContext.coreChat : [],
+            chat: Array.isArray(promptContext.coreChat) ? structuredClone(promptContext.coreChat) : [],
             currentChatId: promptContext.currentChatId || '',
             selectedGroup: Boolean(promptContext.selectedGroup),
             groupId: promptContext.groupId ?? null,

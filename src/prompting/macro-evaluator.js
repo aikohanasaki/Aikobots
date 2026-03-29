@@ -130,10 +130,11 @@ export function evaluatePromptMacros(content, env = {}, { additional = {}, macro
     };
     const addVariableValue = (currentValue, value) => {
         const increment = Number(value);
-        if (isNaN(increment) || isNaN(Number(currentValue))) {
+        const currentNumber = (currentValue == null || currentValue === '') ? 0 : Number(currentValue);
+        if (isNaN(increment) || isNaN(currentNumber)) {
             return String(currentValue || '') + String(value ?? '');
         }
-        return String(Number(currentValue || 0) + increment);
+        return String(currentNumber + increment);
     };
 
     const rawContent = String(content);
@@ -231,7 +232,7 @@ export function evaluatePromptMacros(content, env = {}, { additional = {}, macro
             if (list.length === 1 && list[0] === '') {
                 return '';
             }
-            const rng = seedrandom('added entropy.', { entropy: true });
+            const rng = seedrandom(undefined, { entropy: true });
             return list[Math.floor(rng() * list.length)] ?? '';
         } },
         { regex: /{{pick\s?::?([^}]+)}}/gi, replace: (_, listString, offset) => {
@@ -258,8 +259,7 @@ export function evaluatePromptMacros(content, env = {}, { additional = {}, macro
         try {
             result = result.replace(macro.regex, (...args) => postProcessFn(sanitizeMacroValue(macro.replace(...args))));
         } catch (error) {
-            const truncated = result.length > 100 ? `${result.slice(0, 100)}...` : result;
-            console.warn(`Macro content can't be replaced: ${macro.regex} in ${truncated}`, error);
+            console.warn(`Macro replacement failed for pattern: ${macro.regex.source}`, error);
         }
     }
 

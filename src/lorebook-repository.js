@@ -363,7 +363,7 @@ export function listLorebooksForManagement(user) {
     const secureIndex = readSecureIndex();
     const secureRecords = new Map();
 
-    for (const [name, metadata] of Object.entries(secureIndex.books)) {
+    for (const name of Object.keys(secureIndex.books)) {
         const secureRecord = getSecureIndexEntry(name);
 
         if (!secureRecord) {
@@ -413,6 +413,7 @@ export function listLorebooksForManagement(user) {
  * @param {import('./users.js').User} user
  * @param {string} name
  * @param {boolean} [allowDummy=false]
+ * @param {'user'|'secure'|null} [storage=null] Preferred storage location to read from
  */
 export function getLorebookForManagement(user, name, allowDummy = false, storage = null) {
     const canonicalName = assertCanonicalName(name);
@@ -505,6 +506,7 @@ export function hasLorebookForGeneration(user, name) {
  * @param {import('./users.js').User} user
  * @param {string} name
  * @param {object} data
+ * @param {'user'|'secure'} [storage='user'] Target storage location for the save
  */
 export function saveLorebookForManagement(user, name, data, storage = 'user') {
     const canonicalName = assertCanonicalName(name);
@@ -578,7 +580,7 @@ export function deleteLorebookForManagement(user, name) {
  * @param {import('./users.js').User} user
  * @param {string} name
  */
-export async function promoteLorebook(user, name) {
+export function promoteLorebook(user, name) {
     const canonicalName = assertCanonicalName(name);
     const userRecord = getUserLorebookRecord(user.profile.handle, canonicalName);
     if (!userRecord) {

@@ -254,11 +254,6 @@ export function getTokenizerBestMatch(forApi) {
     return forApi === 'openai' ? tokenizers.OPENAI : tokenizers.NONE;
 }
 
-// Get the current remote tokenizer API based on the current text generation API.
-function currentRemoteTokenizerAPI() {
-    return tokenizers.NONE;
-}
-
 /**
  * Calls the underlying tokenizer model to the token count for a string.
  * @param {number} type Tokenizer type.
@@ -865,7 +860,7 @@ function decodeTextTokensFromServer(endpoint, ids, resolve) {
 export function getTextTokens(tokenizerType, str) {
     switch (tokenizerType) {
         case tokenizers.API_CURRENT:
-            return getTextTokens(currentRemoteTokenizerAPI(), str);
+            return getTextTokens(tokenizers.NONE, str);
         default: {
             const tokenizerEndpoints = TOKENIZER_URLS[tokenizerType];
             if (!tokenizerEndpoints) {

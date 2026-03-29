@@ -2003,6 +2003,10 @@ router.post('/generate', function (request, response) {
         assembledPromptContext = true;
     }
 
+    if (!Array.isArray(request.body.messages) && typeof request.body.messages !== 'string') {
+        return response.status(400).send({ error: { message: 'messages array or prompt_context is required' } });
+    }
+
     if (Array.isArray(request.body.messages) && postProcessingType && (!request.body.prompt_context || assembledPromptContext)) {
         console.info('Applying custom prompt post-processing of type', postProcessingType);
         request.body.messages = postProcessPrompt(

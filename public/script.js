@@ -633,11 +633,14 @@ $.ajaxPrefilter((options, originalOptions, xhr) => {
 
 function enforceChatCompletionsOnlyMode({ save = false } = {}) {
     if (!CHAT_COMPLETIONS_ONLY) {
-        return;
+        return false;
     }
+
+    let changed = false;
 
     if (main_api !== 'openai') {
         console.warn(`Forcing main_api from ${main_api} to openai`);
+        changed = true;
     }
 
     main_api = 'openai';
@@ -650,19 +653,28 @@ function enforceChatCompletionsOnlyMode({ save = false } = {}) {
     setChatCompletionNullControlsDisabled(true);
 
     if (power_user?.instruct) {
-        power_user.instruct.enabled = false;
+        if (power_user.instruct.enabled) {
+            changed = true;
+            power_user.instruct.enabled = false;
+        }
     }
     if (power_user) {
-        power_user.instruct_derived = false;
+        if (power_user.instruct_derived) {
+            changed = true;
+            power_user.instruct_derived = false;
+        }
     }
 
-    if (settings) {
+    if (settings && settings.main_api !== 'openai') {
+        changed = true;
         settings.main_api = 'openai';
     }
 
-    if (save) {
+    if (save && changed) {
         saveSettingsDebounced();
     }
+
+    return changed;
 }
 
 /**
@@ -3489,6 +3501,10 @@ class StreamingProcessor {
     }
 
     async onStartStreaming(text) {
+        // Streaming replies receive timed WI metadata only after the SSE payload completes.
+        // Clear any leftover pending snapshot from an earlier request before creating the placeholder message.
+        consumeOpenAITimedWorldInfo();
+
         const continueOnReasoning = !!(this.type === 'continue' && this.promptReasoning.prefixReasoning);
         if (continueOnReasoning) {
             this.reasoningHandler.initContinue(this.promptReasoning);
@@ -3619,6 +3635,9 @@ class StreamingProcessor {
         addCopyToCodeBlocks(chatElement.find(`.mes[mesid="${messageId}"]`));
 
         await this.reasoningHandler.finish(messageId);
+
+        const timedWorldInfo = consumeOpenAITimedWorldInfo();
+        applyTimedWorldInfoToMessage(messageId, timedWorldInfo);
 
         if (Array.isArray(this.swipes) && this.swipes.length > 0) {
             const message = chat[messageId];
@@ -6185,7 +6204,7 @@ export async function saveReply({ type, getMessage, fromStreaming = false, title
         reasoning = '';
     }
 
-    const timedWorldInfo = consumeOpenAITimedWorldInfo();
+    const timedWorldInfo = fromStreaming ? null : consumeOpenAITimedWorldInfo();
 
     let oldMessage = '';
     const generationFinished = new Date();
@@ -6304,10 +6323,7 @@ export async function saveReply({ type, getMessage, fromStreaming = false, title
     if (!item.extra || typeof item.extra !== 'object') {
         item.extra = {};
     }
-    if (timedWorldInfo && typeof timedWorldInfo === 'object') {
-        item.extra.timedWorldInfo = structuredClone(timedWorldInfo);
-        chat_metadata.timedWorldInfo = structuredClone(timedWorldInfo);
-    }
+    applyTimedWorldInfoToMessage(chat.length - 1, timedWorldInfo);
     if (item['swipe_info'] === undefined) {
         item['swipe_info'] = [];
     }
@@ -6351,6 +6367,21 @@ export async function saveReply({ type, getMessage, fromStreaming = false, title
 
     statMesProcess(chat[chat.length - 1], type, characters, this_chid, oldMessage);
     return { type, getMessage };
+}
+
+function applyTimedWorldInfoToMessage(messageId, timedWorldInfo) {
+    if (!timedWorldInfo || typeof timedWorldInfo !== 'object') {
+        return;
+    }
+
+    const item = chat[messageId];
+    if (!item) {
+        return;
+    }
+
+    item.extra ??= {};
+    item.extra.timedWorldInfo = structuredClone(timedWorldInfo);
+    chat_metadata.timedWorldInfo = structuredClone(timedWorldInfo);
 }
 
 /**
@@ -7248,7 +7279,7 @@ export function changeMainAPI() {
     setOnlineStatus('no_connection');
     setupChatCompletionPromptManager(oai_settings);
     forceCharacterEditorTokenize();
-    enforceChatCompletionsOnlyMode();
+    return enforceChatCompletionsOnlyMode();
 }
 
 export function setUserName(value, { toastPersonaNameChange = true } = {}) {
@@ -7357,23 +7388,30 @@ export async function getSettings() {
         $('#amount_gen_counter').val(amount_gen);
 
         //Load which API we are using
+        let didNormalizeMainApi = false;
+
         if (settings.main_api == undefined) {
             settings.main_api = 'openai';
+            didNormalizeMainApi = true;
         }
 
         if (settings.main_api == 'poe') {
             settings.main_api = 'openai';
+            didNormalizeMainApi = true;
         }
 
         if (CHAT_COMPLETIONS_ONLY && settings.main_api !== 'openai') {
             settings.main_api = 'openai';
+            didNormalizeMainApi = true;
         }
 
         main_api = settings.main_api;
         $('#main_api').val(main_api);
         $(`#main_api option[value=${main_api}]`).attr('selected', 'true');
-        changeMainAPI();
-        enforceChatCompletionsOnlyMode({ save: CHAT_COMPLETIONS_ONLY });
+        const didEnforceChatCompletionsOnlyMode = changeMainAPI();
+        if (didNormalizeMainApi || didEnforceChatCompletionsOnlyMode) {
+            saveSettingsDebounced();
+        }
 
         //Load User's Name and Avatar
         initUserAvatar(settings.user_avatar);

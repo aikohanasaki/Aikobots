@@ -115,7 +115,12 @@ function getPercentage(value, total) {
 
 export async function itemizedParams(itemizedPrompts, thisPromptSet, incomingMesId) {
     const itemizedPrompt = itemizedPrompts[thisPromptSet];
-    const serverItemization = itemizedPrompt?.serverAssemblyDebugDump?.assembly?.itemization;
+    if (!itemizedPrompt) {
+        console.warn('itemizedPrompt not found at index', thisPromptSet);
+        return null;
+    }
+
+    const serverItemization = itemizedPrompt.serverAssemblyDebugDump?.assembly?.itemization;
     const params = {
         charDescriptionTokens: serverItemization ? toNumber(serverItemization.charDescriptionTokens) : await getTokenCountAsync(itemizedPrompt.charDescription),
         charPersonalityTokens: serverItemization ? toNumber(serverItemization.charPersonalityTokens) : await getTokenCountAsync(itemizedPrompt.charPersonality),
@@ -194,19 +199,18 @@ export async function itemizedParams(itemizedPrompts, thisPromptSet, incomingMes
                 params.beforeScenarioAnchorTokens +
                 params.afterScenarioAnchorTokens;
             params.thisPrompt_max_context = (oai_settings.openai_max_context - oai_settings.openai_max_tokens);
+            params.oaiStartTokens = toNumber(params.oaiStartTokens);
+            params.oaiPromptTokens = toNumber(params.oaiPromptTokens);
+            params.oaiMainTokens = toNumber(params.oaiMainTokens);
+            params.oaiNsfwTokens = toNumber(params.oaiNsfwTokens);
+            params.oaiBiasTokens = toNumber(params.oaiBiasTokens);
+            params.oaiImpersonateTokens = toNumber(params.oaiImpersonateTokens);
+            params.oaiJailbreakTokens = toNumber(params.oaiJailbreakTokens);
+            params.oaiNudgeTokens = toNumber(params.oaiNudgeTokens);
+            params.ActualChatHistoryTokens = toNumber(params.ActualChatHistoryTokens);
+            params.examplesStringTokens = toNumber(params.examplesStringTokens);
+            params.finalPromptTokens = toNumber(params.finalPromptTokens);
         }
-
-        params.oaiStartTokens = toNumber(params.oaiStartTokens);
-        params.oaiPromptTokens = toNumber(params.oaiPromptTokens);
-        params.oaiMainTokens = toNumber(params.oaiMainTokens);
-        params.oaiNsfwTokens = toNumber(params.oaiNsfwTokens);
-        params.oaiBiasTokens = toNumber(params.oaiBiasTokens);
-        params.oaiImpersonateTokens = toNumber(params.oaiImpersonateTokens);
-        params.oaiJailbreakTokens = toNumber(params.oaiJailbreakTokens);
-        params.oaiNudgeTokens = toNumber(params.oaiNudgeTokens);
-        params.ActualChatHistoryTokens = toNumber(params.ActualChatHistoryTokens);
-        params.examplesStringTokens = toNumber(params.examplesStringTokens);
-        params.finalPromptTokens = toNumber(params.finalPromptTokens);
         params.worldInfoTotalTokens = params.worldInfoStringTokens + params.worldInfoDepthTokens;
 
         params.oaiStartTokensPercentage = getPercentage(params.oaiStartTokens, params.finalPromptTokens);
@@ -251,7 +255,7 @@ export async function itemizedParams(itemizedPrompts, thisPromptSet, incomingMes
         params.worldInfoTotalTokensPercentage = getPercentage(params.worldInfoTotalTokens, params.totalTokensInPrompt);
         params.worldInfoStringTokensPercentage = params.worldInfoTotalTokensPercentage;
         params.allAnchorsTokensPercentage = getPercentage(params.allAnchorsTokens, params.totalTokensInPrompt);
-        params.selectedTokenizer = itemizedPrompt?.tokenizer || getFriendlyTokenizerName(params.this_main_api).tokenizerName;
+        params.selectedTokenizer = itemizedPrompt.tokenizer || getFriendlyTokenizerName(params.this_main_api).tokenizerName;
     }
     return params;
 }
@@ -289,6 +293,10 @@ export async function promptItemize(itemizedPrompts, requestedMesId) {
     }
 
     const params = await itemizedParams(itemizedPrompts, thisPromptSet, incomingMesId);
+    if (!params) {
+        console.warn(`could not build itemized prompt params for mesId ${incomingMesId}`);
+        return null;
+    }
     const flatten = (rawPrompt) => Array.isArray(rawPrompt) ? rawPrompt.map(x => x.content).join('\n') : rawPrompt;
 
     const template = params.this_main_api == 'openai'

@@ -69,6 +69,23 @@ function readAndParseFromDirectory(directoryPath, fileExtension = '.json') {
 }
 
 /**
+ * Reads a settings resource directory with a fallback value if the read fails.
+ * @template T
+ * @param {() => T} readFn Reader callback
+ * @param {T} fallbackValue Value to return on failure
+ * @param {string} label Log label
+ * @returns {T} Parsed resource data or fallback value
+ */
+function safeRead(readFn, fallbackValue, label) {
+    try {
+        return readFn();
+    } catch (error) {
+        console.error(`Failed to load ${label}:`, error);
+        return fallbackValue;
+    }
+}
+
+/**
  * Gets a sort function for sorting strings.
  * @param {*} _
  * @returns {(a: string, b: string) => number} Sort function
@@ -237,13 +254,13 @@ router.post('/get', async (request, response) => {
         console.error('Failed to load lorebooks for management:', error);
     }
 
-    const themes = readAndParseFromDirectory(request.user.directories.themes);
-    const movingUIPresets = readAndParseFromDirectory(request.user.directories.movingUI);
-    const quickReplyPresets = readAndParseFromDirectory(request.user.directories.quickreplies);
+    const themes = safeRead(() => readAndParseFromDirectory(request.user.directories.themes), [], 'themes');
+    const movingUIPresets = safeRead(() => readAndParseFromDirectory(request.user.directories.movingUI), [], 'moving UI presets');
+    const quickReplyPresets = safeRead(() => readAndParseFromDirectory(request.user.directories.quickreplies), [], 'quick reply presets');
 
-    const context = readAndParseFromDirectory(request.user.directories.context);
-    const sysprompt = readAndParseFromDirectory(request.user.directories.sysprompt);
-    const reasoning = readAndParseFromDirectory(request.user.directories.reasoning);
+    const context = safeRead(() => readAndParseFromDirectory(request.user.directories.context), [], 'context presets');
+    const sysprompt = safeRead(() => readAndParseFromDirectory(request.user.directories.sysprompt), [], 'system prompts');
+    const reasoning = safeRead(() => readAndParseFromDirectory(request.user.directories.reasoning), [], 'reasoning presets');
 
     response.send({
         settings,

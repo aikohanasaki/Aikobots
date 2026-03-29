@@ -162,6 +162,21 @@ async function countWorldInfoTokens(value, payload = {}, cache = new Map()) {
     return tokenCount;
 }
 
+async function primeWorldInfoTokenCounts(values, payload = {}, cache = new Map()) {
+    const tokenizerModel = String(payload.tokenizerModel || '');
+    const uncachedValues = [...new Set(
+        (Array.isArray(values) ? values : [])
+            .filter(Boolean)
+            .map(value => String(value)),
+    )].filter(value => !cache.has(`${tokenizerModel}\u0000${value}`));
+
+    if (!uncachedValues.length) {
+        return;
+    }
+
+    await Promise.all(uncachedValues.map(value => countWorldInfoTokens(value, payload, cache)));
+}
+
 function calculateLorebookBudget(settings = {}, totalBudget = 0, maxContext = 0) {
     const budgetMode = String(settings?.budgetMode || 'default').trim().toLowerCase();
     const budgetValue = Number(settings?.budget);
@@ -210,6 +225,11 @@ async function buildRandomTrimDropSet(newEntries, payload, tokenCountCache, lore
 
         byWorld.get(entry.world).push(entry);
     }
+
+    await primeWorldInfoTokenCounts([
+        ...Array.from(byWorld.keys(), world => lorebookActivatedText.get(world) || ''),
+        ...Array.from(byWorld.values()).flatMap(entries => entries.map(entry => `${entry.content}\n`)),
+    ], payload, tokenCountCache);
 
     const dropSet = new Set();
     for (const [world, entries] of byWorld.entries()) {
@@ -272,10 +292,6 @@ class WorldInfoBuffer {
     get(entry, scanState) {
         let depth = entry.scanDepth ?? this.getDepth();
         if (depth <= 0) {
-            return '';
-        }
-
-        if (depth < 0) {
             return '';
         }
 
@@ -879,6 +895,7 @@ export async function scanWorldInfo(payload = {}) {
         const admittedEntries = [];
 
         filterByInclusionGroups(newEntries, allActivatedEntries, buffer, scanState, timedEffects, settings);
+        await primeWorldInfoTokenCounts(newEntries.map(entry => `${entry.content}\n`), payload, tokenCountCache);
         const randomTrimDrops = await buildRandomTrimDropSet(newEntries, payload, tokenCountCache, lorebookBudgets, lorebookActivatedText);
 
         let newContent = '';

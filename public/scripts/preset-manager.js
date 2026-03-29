@@ -164,7 +164,7 @@ class PresetManager {
             setData: (data) => {
                 const manager = getPresetManager('openai');
                 if (!manager) {
-                    return;
+                    return Promise.resolve();
                 }
                 const name = data.name;
                 return manager.savePreset(name, data);
@@ -971,7 +971,7 @@ async function presetCommandCallback(_, name) {
         const fuzzyMatch = fuse.search(name);
 
         if (!fuzzyMatch.length) {
-            console.warn(`WARN: Preset not found with name ${name}`);
+            console.warn(`Preset not found with name ${name}`);
             return currentPreset;
         }
 
