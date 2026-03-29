@@ -256,8 +256,10 @@ function updateWorldInfoStorageButton(name = '') {
     const item = getWorldInfoItem(name);
 
     if (!item) {
+        const label = t`Move lorebook between user and secure storage`;
         button.addClass('disabled');
-        button.attr('title', t`Move lorebook between user and secure storage`);
+        button.attr('title', label);
+        button.attr('aria-label', label);
         icon.removeClass('fa-lock fa-lock-open');
         icon.addClass('fa-shield-halved');
         return;
@@ -267,11 +269,15 @@ function updateWorldInfoStorageButton(name = '') {
     button.toggleClass('disabled', !canToggle);
 
     if (item.storage === 'secure') {
-        button.attr('title', t`Return lorebook to user storage`);
+        const label = t`Return lorebook to user storage`;
+        button.attr('title', label);
+        button.attr('aria-label', label);
         icon.removeClass('fa-lock-open fa-shield-halved');
         icon.addClass('fa-lock');
     } else {
-        button.attr('title', t`Promote lorebook to secure storage`);
+        const label = t`Promote lorebook to secure storage`;
+        button.attr('title', label);
+        button.attr('aria-label', label);
         icon.removeClass('fa-lock fa-shield-halved');
         icon.addClass('fa-lock-open');
     }
@@ -315,10 +321,10 @@ async function moveWorldInfoStorage(name) {
 
     const movingToSecure = item.storage !== 'secure';
     const confirmed = await Popup.show.confirm(
-        movingToSecure ? `Make "${name}" a secure lorebook?` : `Remove lorebook security from "${name}"?`,
+        movingToSecure ? t`Make "${name}" a secure lorebook?` : t`Remove lorebook security from "${name}"?`,
         movingToSecure
-            ? 'This makes the lorebook usable for generation by all users. The lorebook remains only visible to you and admins.'
-            : 'This makes the lorebook private and only visible to you.',
+            ? t`This makes the lorebook usable for generation by all users. The lorebook remains only visible to you and admins.`
+            : t`This makes the lorebook private and only visible to you.`,
     );
 
     if (!confirmed) {
@@ -4262,13 +4268,13 @@ async function selectLorebookByIndex(index) {
 async function openStloForLorebook(name = '') {
     const trimmedName = String(name || '').trim();
     if (!trimmedName) {
-        toastr.warning('Usage: /stlo <lorebook name>');
+        toastr.warning(t`Usage: /stlo <lorebook name>`);
         return '';
     }
 
     const lorebookIndex = findLorebookIndexByName(trimmedName);
     if (lorebookIndex === -1) {
-        toastr.warning(`Lorebook not found: ${trimmedName}`);
+        toastr.warning(t`Lorebook not found: ${trimmedName}`);
         return '';
     }
 
@@ -4276,7 +4282,7 @@ async function openStloForLorebook(name = '') {
     const lorebookName = world_names[lorebookIndex];
     const data = await loadWorldInfo(lorebookName);
     if (!data) {
-        toastr.warning(`Lorebook is not loaded: ${lorebookName}`);
+        toastr.warning(t`Lorebook is not loaded: ${lorebookName}`);
         return '';
     }
 
@@ -4301,17 +4307,19 @@ function getStloCharacterOverrideOptions() {
     return Array.from(options.values()).sort((left, right) => left.label.localeCompare(right.label, undefined, { sensitivity: 'base' }));
 }
 
-function createStloOverridePriorityOptions(select, selectedValue = null) {
-    const options = [
-        { value: '', label: 'Default (3)' },
-        { value: '1', label: 'Lowest' },
-        { value: '2', label: 'Low' },
-        { value: '3', label: 'Default' },
-        { value: '4', label: 'High' },
-        { value: '5', label: 'Highest' },
+function getStloPriorityOptions() {
+    return [
+        { value: '', label: t`Default (3)` },
+        { value: '1', label: t`Lowest` },
+        { value: '2', label: t`Low` },
+        { value: '3', label: t`Default` },
+        { value: '4', label: t`High` },
+        { value: '5', label: t`Highest` },
     ];
+}
 
-    for (const optionData of options) {
+function createStloOverridePriorityOptions(select, selectedValue = null) {
+    for (const optionData of getStloPriorityOptions()) {
         const option = document.createElement('option');
         option.value = optionData.value;
         option.textContent = optionData.label;
@@ -4320,21 +4328,55 @@ function createStloOverridePriorityOptions(select, selectedValue = null) {
     }
 }
 
-function createStloOverrideBudgetModeOptions(select, selectedValue = 'default') {
-    const options = [
-        { value: 'default', label: 'Default' },
-        { value: 'percentage_context', label: 'Percent of context' },
-        { value: 'percentage_budget', label: 'Percent of WI budget' },
-        { value: 'fixed', label: 'Fixed tokens' },
+function getStloBudgetModeOptions() {
+    return [
+        { value: 'default', label: t`Default` },
+        { value: 'percentage_context', label: t`Percent of context` },
+        { value: 'percentage_budget', label: t`Percent of WI budget` },
+        { value: 'fixed', label: t`Fixed tokens` },
     ];
+}
 
-    for (const optionData of options) {
+function createStloOverrideBudgetModeOptions(select, selectedValue = 'default') {
+    for (const optionData of getStloBudgetModeOptions()) {
         const option = document.createElement('option');
         option.value = optionData.value;
         option.textContent = optionData.label;
         option.selected = optionData.value === selectedValue;
         select.append(option);
     }
+}
+
+function syncStloBudgetValuePresentation(labelElement, inputElement, helpElement, budgetMode) {
+    if (budgetMode === 'percentage_context' || budgetMode === 'percentage_budget') {
+        labelElement.textContent = t`Budget %`;
+        if (helpElement) {
+            helpElement.textContent = t`Enter an integer from 1 to 100.`;
+        }
+        inputElement.min = '1';
+        inputElement.max = '100';
+        inputElement.placeholder = '25';
+        return;
+    }
+
+    if (budgetMode === 'fixed') {
+        labelElement.textContent = t`Budget Tokens`;
+        if (helpElement) {
+            helpElement.textContent = t`Enter a positive integer token limit.`;
+        }
+        inputElement.min = '1';
+        inputElement.removeAttribute('max');
+        inputElement.placeholder = '500';
+        return;
+    }
+
+    labelElement.textContent = t`Budget Value`;
+    if (helpElement) {
+        helpElement.textContent = t`Ignored when budget mode is Default.`;
+    }
+    inputElement.min = '0';
+    inputElement.removeAttribute('max');
+    inputElement.placeholder = '0';
 }
 
 function updateStloOverrideEmptyState(rowsContainer, emptyState) {
@@ -4352,12 +4394,12 @@ function createStloOverrideRow(characterOptions, overrideKey = '', override = {}
     const characterField = document.createElement('label');
     characterField.className = 'stlo_override_field stlo_override_identity_field';
     const characterLabel = document.createElement('span');
-    characterLabel.textContent = 'Character';
+    characterLabel.textContent = t`Character`;
     const characterSelect = document.createElement('select');
     characterSelect.className = 'text_pole textarea_compact stlo_override_character';
     const placeholderOption = document.createElement('option');
     placeholderOption.value = '';
-    placeholderOption.textContent = 'Select character';
+    placeholderOption.textContent = t`Select character`;
     characterSelect.append(placeholderOption);
     for (const optionData of characterOptions) {
         const option = document.createElement('option');
@@ -4370,14 +4412,14 @@ function createStloOverrideRow(characterOptions, overrideKey = '', override = {}
     legacyNotice.className = 'stlo_override_legacy_notice';
     legacyNotice.hidden = !hasLegacyKey;
     legacyNotice.textContent = hasLegacyKey
-        ? `Legacy override key "${normalizedOverrideKey}" no longer matches a known character. Select a character to migrate it, or remove this row to delete it.`
+        ? t`Legacy override key "${normalizedOverrideKey}" no longer matches a known character. Select a character to migrate it, or remove this row to delete it.`
         : '';
     characterField.append(legacyNotice);
 
     const priorityField = document.createElement('label');
     priorityField.className = 'stlo_override_field';
     const priorityLabel = document.createElement('span');
-    priorityLabel.textContent = 'Priority';
+    priorityLabel.textContent = t`Priority`;
     const prioritySelect = document.createElement('select');
     prioritySelect.className = 'text_pole textarea_compact stlo_override_priority';
     createStloOverridePriorityOptions(prioritySelect, override.priority ?? null);
@@ -4386,7 +4428,7 @@ function createStloOverrideRow(characterOptions, overrideKey = '', override = {}
     const orderField = document.createElement('label');
     orderField.className = 'stlo_override_field';
     const orderLabel = document.createElement('span');
-    orderLabel.textContent = 'Order Adjustment';
+    orderLabel.textContent = t`Order Adjustment`;
     const orderInput = document.createElement('input');
     orderInput.type = 'number';
     orderInput.step = '1';
@@ -4400,7 +4442,7 @@ function createStloOverrideRow(characterOptions, overrideKey = '', override = {}
     const budgetModeField = document.createElement('label');
     budgetModeField.className = 'stlo_override_field';
     const budgetModeLabel = document.createElement('span');
-    budgetModeLabel.textContent = 'Budget Mode';
+    budgetModeLabel.textContent = t`Budget Mode`;
     const budgetModeSelect = document.createElement('select');
     budgetModeSelect.className = 'text_pole textarea_compact stlo_override_budget_mode';
     createStloOverrideBudgetModeOptions(budgetModeSelect, override.budgetMode || 'default');
@@ -4422,7 +4464,7 @@ function createStloOverrideRow(characterOptions, overrideKey = '', override = {}
     const removeButton = document.createElement('button');
     removeButton.type = 'button';
     removeButton.className = 'menu_button stlo_override_remove';
-    removeButton.textContent = 'Remove';
+    removeButton.textContent = t`Remove`;
 
     row.append(
         characterField,
@@ -4444,23 +4486,7 @@ function createStloOverrideRow(characterOptions, overrideKey = '', override = {}
         const usesBudgetValue = budgetMode !== 'default';
         budgetValueField.hidden = !usesBudgetValue;
         budgetValueInput.disabled = !usesBudgetValue;
-
-        if (budgetMode === 'percentage_context' || budgetMode === 'percentage_budget') {
-            budgetValueLabel.textContent = 'Budget %';
-            budgetValueInput.min = '1';
-            budgetValueInput.max = '100';
-            budgetValueInput.placeholder = '25';
-        } else if (budgetMode === 'fixed') {
-            budgetValueLabel.textContent = 'Budget Tokens';
-            budgetValueInput.min = '1';
-            budgetValueInput.removeAttribute('max');
-            budgetValueInput.placeholder = '500';
-        } else {
-            budgetValueLabel.textContent = 'Budget Value';
-            budgetValueInput.min = '0';
-            budgetValueInput.removeAttribute('max');
-            budgetValueInput.placeholder = '0';
-        }
+        syncStloBudgetValuePresentation(budgetValueLabel, budgetValueInput, null, budgetMode);
     };
 
     characterSelect.addEventListener('change', syncRowState);
@@ -4567,21 +4593,16 @@ async function openLorebookOrderingDialog(name, data) {
     container.className = 'stlo_popup flex-container flexFlowColumn gap1';
     container.innerHTML = `
         <div class="stlo_popup_intro">
-            <h3 class="margin0">ST Lorebook Ordering</h3>
-            <small>Configure priority, order, budget, and group chat behavior for this lorebook.</small>
+            <h3 class="margin0">${t`ST Lorebook Ordering`}</h3>
+            <small>${t`Configure priority, order, budget, and group chat behavior for this lorebook.`}</small>
         </div>
         <section class="stlo_section">
-            <h4 class="margin0">Lorebook Priority</h4>
-            <small class="stlo_section_copy">Higher numbers process earlier. Priority 3 is the SillyTavern default.</small>
+            <h4 class="margin0">${t`Lorebook Priority`}</h4>
+            <small class="stlo_section_copy">${t`Higher numbers process earlier. Priority 3 is the SillyTavern default.`}</small>
             <label class="flex-container flexFlowColumn gap0">
-                <span>Priority</span>
+                <span>${t`Priority`}</span>
                 <select id="stlo_priority" class="text_pole textarea_compact">
-                    <option value="">Default (3)</option>
-                    <option value="1">Lowest</option>
-                    <option value="2">Low</option>
-                    <option value="3">Default</option>
-                    <option value="4">High</option>
-                    <option value="5">Highest</option>
+                    ${getStloPriorityOptions().map(option => `<option value="${option.value}">${option.label}</option>`).join('')}
                 </select>
             </label>
         </section>
@@ -4589,64 +4610,61 @@ async function openLorebookOrderingDialog(name, data) {
             <label class="checkbox_label stlo_checkbox_row stlo_feature_toggle">
                 <input id="stlo_order_adjustment_enabled" type="checkbox" />
                 <span class="stlo_checkbox_body">
-                    <strong>Enable Order Adjustment</strong>
-                    <small class="stlo_checkbox_text">Fine-tune processing order within this lorebook's priority level.</small>
+                    <strong>${t`Enable Order Adjustment`}</strong>
+                    <small class="stlo_checkbox_text">${t`Fine-tune processing order within this lorebook's priority level.`}</small>
                 </span>
             </label>
             <div class="stlo_field_grid">
                 <label class="flex-container flexFlowColumn gap0">
-                    <span>Order Adjustment</span>
+                    <span>${t`Order Adjustment`}</span>
                     <input id="stlo_order_adjustment" class="text_pole textarea_compact" type="number" step="1" min="-10000" max="10000" />
-                    <small>Higher values process first. Range: -10000 to 10000.</small>
+                    <small>${t`Higher values process first. Range: -10000 to 10000.`}</small>
                 </label>
                 <label class="checkbox_label stlo_checkbox_row">
                     <input id="stlo_group_only" type="checkbox" />
-                    <small class="stlo_checkbox_text">Only apply this adjustment in group chats.</small>
+                    <small class="stlo_checkbox_text">${t`Only apply this adjustment in group chats.`}</small>
                 </label>
             </div>
         </section>
         <section class="stlo_section">
-            <h4 class="margin0">Lorebook Budget</h4>
-            <small class="stlo_section_copy">Apply a lorebook-specific budget before global WI trimming.</small>
+            <h4 class="margin0">${t`Lorebook Budget`}</h4>
+            <small class="stlo_section_copy">${t`Apply a lorebook-specific budget before global WI trimming.`}</small>
             <div class="stlo_field_grid">
                 <label class="flex-container flexFlowColumn gap0">
-                    <span>Budget Mode</span>
+                    <span>${t`Budget Mode`}</span>
                     <select id="stlo_budget_mode" class="text_pole textarea_compact">
-                        <option value="default">Default</option>
-                        <option value="percentage_context">Percent of context</option>
-                        <option value="percentage_budget">Percent of WI budget</option>
-                        <option value="fixed">Fixed tokens</option>
+                        ${getStloBudgetModeOptions().map(option => `<option value="${option.value}">${option.label}</option>`).join('')}
                     </select>
                 </label>
                 <label id="stlo_budget_value_field" class="flex-container flexFlowColumn gap0">
-                    <span id="stlo_budget_value_label">Budget Value</span>
+                    <span id="stlo_budget_value_label">${t`Budget Value`}</span>
                     <input id="stlo_budget_value" class="text_pole textarea_compact" type="number" step="1" min="0" />
-                    <small id="stlo_budget_value_help">Ignored when budget mode is Default.</small>
+                    <small id="stlo_budget_value_help">${t`Ignored when budget mode is Default.`}</small>
                 </label>
             </div>
             <label class="checkbox_label stlo_checkbox_row">
                 <input id="stlo_random_trim" type="checkbox" />
-                <small class="stlo_checkbox_text">When this lorebook exceeds its budget, keep a random subset instead of the highest-order entries.</small>
+                <small class="stlo_checkbox_text">${t`When this lorebook exceeds its budget, keep a random subset instead of the highest-order entries.`}</small>
             </label>
         </section>
         <section class="stlo_section">
             <label class="checkbox_label stlo_checkbox_row stlo_feature_toggle">
                 <input id="stlo_only_when_speaking" type="checkbox" />
                 <span class="stlo_checkbox_body">
-                    <strong>Group Chats: Only activate for specific characters</strong>
-                    <small class="stlo_checkbox_text">When enabled, this lorebook only activates if a character listed below is speaking. Single-character chats always use the default lorebook settings.</small>
+                    <strong>${t`Group Chats: Only activate for specific characters`}</strong>
+                    <small class="stlo_checkbox_text">${t`When enabled, this lorebook only activates if a character listed below is speaking. Single-character chats always use the default lorebook settings.`}</small>
                 </span>
             </label>
         </section>
         <section class="stlo_section stlo_override_section">
-            <h4 class="margin0">Group Chat Overrides</h4>
-            <small class="stlo_section_copy">Characters listed here override the default lorebook settings only during their speaking turns in a group chat.</small>
-            <small class="stlo_section_copy">Default Priority: 3 - Normal. Characters not listed here use the default settings above.</small>
+            <h4 class="margin0">${t`Group Chat Overrides`}</h4>
+            <small class="stlo_section_copy">${t`Characters listed here override the default lorebook settings only during their speaking turns in a group chat.`}</small>
+            <small class="stlo_section_copy">${t`Default Priority: 3 - Normal. Characters not listed here use the default settings above.`}</small>
             <div class="stlo_override_panel">
                 <div class="stlo_override_rows"></div>
-                <div class="stlo_override_empty_state">No character overrides configured.</div>
-                <button type="button" class="menu_button stlo_override_add">Add Override</button>
-                <small class="stlo_override_summary">Overrides are assigned through the character picker. Legacy unmatched overrides can be migrated or removed.</small>
+                <div class="stlo_override_empty_state">${t`No character overrides configured.`}</div>
+                <button type="button" class="menu_button stlo_override_add">${t`Add Override`}</button>
+                <small class="stlo_override_summary">${t`Overrides are assigned through the character picker. Legacy unmatched overrides can be migrated or removed.`}</small>
             </div>
         </section>
     `;
@@ -4710,26 +4728,7 @@ async function openLorebookOrderingDialog(name, data) {
         const usesBudgetValue = selectedBudgetMode !== 'default';
         budgetValueField.hidden = !usesBudgetValue;
         budgetValueInput.disabled = !usesBudgetValue || isSubmitting;
-
-        if (selectedBudgetMode === 'percentage_context' || selectedBudgetMode === 'percentage_budget') {
-            budgetValueLabel.textContent = 'Budget %';
-            budgetValueHelp.textContent = 'Enter an integer from 1 to 100.';
-            budgetValueInput.min = '1';
-            budgetValueInput.max = '100';
-            budgetValueInput.placeholder = '25';
-        } else if (selectedBudgetMode === 'fixed') {
-            budgetValueLabel.textContent = 'Budget Tokens';
-            budgetValueHelp.textContent = 'Enter a positive integer token limit.';
-            budgetValueInput.min = '1';
-            budgetValueInput.removeAttribute('max');
-            budgetValueInput.placeholder = '500';
-        } else {
-            budgetValueLabel.textContent = 'Budget Value';
-            budgetValueHelp.textContent = 'Ignored when budget mode is Default.';
-            budgetValueInput.min = '0';
-            budgetValueInput.removeAttribute('max');
-            budgetValueInput.placeholder = '0';
-        }
+        syncStloBudgetValuePresentation(budgetValueLabel, budgetValueInput, budgetValueHelp, selectedBudgetMode);
     };
 
     const syncGroupOverrideState = () => {
@@ -4766,7 +4765,7 @@ async function openLorebookOrderingDialog(name, data) {
     syncBudgetState();
     syncGroupOverrideState();
 
-    const popup = new Popup(container, POPUP_TYPE.CONFIRM, `Lorebook Ordering: ${name}`, {
+    const popup = new Popup(container, POPUP_TYPE.CONFIRM, t`Lorebook Ordering: ${name}`, {
         okButton: t`Save`,
         cancelButton: t`Cancel`,
         allowVerticalScrolling: true,
