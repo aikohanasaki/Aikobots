@@ -1,7 +1,7 @@
 import { describe, expect, it, jest } from '@jest/globals';
 
 import { LorebookRepositoryError } from '../src/lorebook-repository.js';
-import { resolveSortedEntriesPayload, world_info_insertion_strategy } from '../src/endpoints/worldinfo.js';
+import { resolveSortedEntriesPayload } from '../src/endpoints/worldinfo.js';
 
 describe('resolveSortedEntriesPayload hidden bindings', () => {
     it('merges hidden bindings into character lore without duplicating visible lorebooks', async () => {
@@ -23,7 +23,6 @@ describe('resolveSortedEntriesPayload hidden bindings', () => {
                 characterWorld: 'Visible',
                 characterExtraBooks: ['VisibleExtra'],
                 currentCharacterFilename: 'char_a',
-                worldInfoCharacterStrategy: world_info_insertion_strategy.character_first,
             },
             {
                 readEntries: async (_user, name) => structuredClone(worldEntries[name] ?? []),
@@ -63,5 +62,126 @@ describe('resolveSortedEntriesPayload hidden bindings', () => {
         } finally {
             warnSpy.mockRestore();
         }
+    });
+
+    it('sorts one unified pool by effective order instead of source precedence', async () => {
+        const worldEntries = {
+            Global: [{ uid: 1, world: 'Global', order: 900, content: 'global' }],
+            Visible: [{ uid: 2, world: 'Visible', order: 100, content: 'visible' }],
+            Chat: [{ uid: 3, world: 'Chat', order: 10, content: 'chat' }],
+            Persona: [{ uid: 4, world: 'Persona', order: 20, content: 'persona' }],
+        };
+
+        const result = await resolveSortedEntriesPayload(
+            { profile: { handle: 'tester' } },
+            {
+                selectedWorldInfo: ['Global'],
+                chatWorld: 'Chat',
+                personaWorld: 'Persona',
+                characterWorld: 'Visible',
+            },
+            {
+                readEntries: async (_user, name) => structuredClone(worldEntries[name] ?? []),
+                getHiddenBooks: () => [],
+                hasLorebook: (_user, name) => Boolean(worldEntries[name]),
+            },
+        );
+
+        expect(result.entries.map(entry => entry.world)).toEqual(['Global', 'Visible', 'Persona', 'Chat']);
+    });
+
+    it('applies speaker overrides and onlyWhenSpeaking before adding lorebooks to the pool', async () => {
+        const worldEntries = {
+            SpeakerBook: [{
+                uid: 1,
+                world: 'SpeakerBook',
+                order: 10,
+                content: 'speaker',
+                lorebookSettings: {
+                    onlyWhenSpeaking: true,
+                    characterOverrides: {
+                        hero: {
+                            priority: 5,
+                            orderAdjustment: 100,
+                        },
+                    },
+                },
+            }],
+            Other: [{ uid: 2, world: 'Other', order: 50, content: 'other' }],
+        };
+
+        const matched = await resolveSortedEntriesPayload(
+            { profile: { handle: 'tester' } },
+            {
+                selectedWorldInfo: ['SpeakerBook', 'Other'],
+                activeSpeaker: { filename: 'hero' },
+            },
+            {
+                readEntries: async (_user, name) => structuredClone(worldEntries[name] ?? []),
+                getHiddenBooks: () => [],
+                hasLorebook: (_user, name) => Boolean(worldEntries[name]),
+            },
+        );
+
+        const unmatched = await resolveSortedEntriesPayload(
+            { profile: { handle: 'tester' } },
+            {
+                selectedWorldInfo: ['SpeakerBook', 'Other'],
+                activeSpeaker: { filename: 'villain' },
+            },
+            {
+                readEntries: async (_user, name) => structuredClone(worldEntries[name] ?? []),
+                getHiddenBooks: () => [],
+                hasLorebook: (_user, name) => Boolean(worldEntries[name]),
+            },
+        );
+
+        expect(matched.entries.map(entry => entry.world)).toEqual(['SpeakerBook', 'Other']);
+        expect(unmatched.entries.map(entry => entry.world)).toEqual(['Other']);
+    });
+
+    it('applies orderAdjustmentGroupOnly only when the request is for a group response', async () => {
+        const worldEntries = {
+            GroupOnly: [{
+                uid: 1,
+                world: 'GroupOnly',
+                order: 10,
+                content: 'group-only',
+                lorebookSettings: {
+                    orderAdjustment: 500,
+                    orderAdjustmentGroupOnly: true,
+                },
+            }],
+            Baseline: [{ uid: 2, world: 'Baseline', order: 100, content: 'baseline' }],
+        };
+
+        const nonGroup = await resolveSortedEntriesPayload(
+            { profile: { handle: 'tester' } },
+            {
+                selectedWorldInfo: ['GroupOnly', 'Baseline'],
+                selectedGroup: false,
+            },
+            {
+                readEntries: async (_user, name) => structuredClone(worldEntries[name] ?? []),
+                getHiddenBooks: () => [],
+                hasLorebook: (_user, name) => Boolean(worldEntries[name]),
+            },
+        );
+
+        const group = await resolveSortedEntriesPayload(
+            { profile: { handle: 'tester' } },
+            {
+                selectedWorldInfo: ['GroupOnly', 'Baseline'],
+                selectedGroup: true,
+            },
+            {
+                readEntries: async (_user, name) => structuredClone(worldEntries[name] ?? []),
+                getHiddenBooks: () => [],
+                hasLorebook: (_user, name) => Boolean(worldEntries[name]),
+            },
+        );
+
+        expect(nonGroup.entries.map(entry => entry.world)).toEqual(['Baseline', 'GroupOnly']);
+        expect(group.entries.map(entry => entry.world)).toEqual(['GroupOnly', 'Baseline']);
     });
 });

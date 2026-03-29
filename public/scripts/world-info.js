@@ -22,12 +22,6 @@ import { t } from './i18n.js';
 import { accountStorage } from './util/AccountStorage.js';
 import { getOrCreatePersonaDescriptor, setPersonaDescription, user_avatar } from './personas.js';
 
-export const world_info_insertion_strategy = {
-    evenly: 0,
-    character_first: 1,
-    global_first: 2,
-};
-
 export const world_info_logic = {
     AND_ANY: 0,
     NOT_ALL: 1,
@@ -55,7 +49,6 @@ export let world_info_overflow_alert = false;
 export let world_info_case_sensitive = false;
 export let world_info_match_whole_words = false;
 export let world_info_use_group_scoring = false;
-export let world_info_character_strategy = world_info_insertion_strategy.character_first;
 export let world_info_budget_cap = 0;
 export let world_info_max_recursion_steps = 0;
 const saveWorldDebounced = debounce(async (name, data) => await _save(name, data), debounce_timeout.relaxed);
@@ -76,6 +69,15 @@ export const MAX_SCAN_DEPTH = 1000;
 const MAX_COMMENT_LENGTH = 100;
 const KNOWN_DECORATORS = ['@@activate', '@@dont_activate'];
 const forcedActivationEntries = new Map();
+const DEFAULT_LOREBOOK_SETTINGS = Object.freeze({
+    priority: null,
+    budget: null,
+    budgetMode: 'default',
+    orderAdjustment: 0,
+    orderAdjustmentGroupOnly: false,
+    characterOverrides: {},
+    onlyWhenSpeaking: false,
+});
 
 function normalizeWorldInfoItems(data = {}) {
     if (Array.isArray(data.world_info_items) && data.world_info_items.length > 0) {
@@ -122,6 +124,107 @@ function getWorldInfoItem(name) {
 
 function getLorebookStorageForRequest(name, fallback = 'user') {
     return getWorldInfoItem(name)?.storage === 'secure' ? 'secure' : fallback;
+}
+
+function normalizeLorebookPriority(value) {
+    if (value === null || value === undefined || value === '') {
+        return null;
+    }
+
+    const number = Number(value);
+    if (!Number.isFinite(number)) {
+        return null;
+    }
+
+    return Math.max(1, Math.min(5, Math.trunc(number)));
+}
+
+function normalizeLorebookBudgetMode(value) {
+    const mode = String(value || 'default').trim().toLowerCase();
+    return ['default', 'percentage_context', 'percentage_budget', 'fixed'].includes(mode)
+        ? mode
+        : 'default';
+}
+
+function normalizeLorebookBudgetValue(value) {
+    if (value === null || value === undefined || value === '') {
+        return null;
+    }
+
+    const number = Number(value);
+    return Number.isFinite(number) ? number : null;
+}
+
+function normalizeCharacterOverrides(value) {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) {
+        return {};
+    }
+
+    return Object.entries(value).reduce((result, [key, override]) => {
+        const normalizedKey = String(key || '').trim();
+        if (!normalizedKey || !override || typeof override !== 'object' || Array.isArray(override)) {
+            return result;
+        }
+
+        result[normalizedKey] = {
+            ...(override.priority !== undefined ? { priority: normalizeLorebookPriority(override.priority) } : {}),
+            ...(override.orderAdjustment !== undefined ? { orderAdjustment: Number(override.orderAdjustment) || 0 } : {}),
+            ...(override.budgetMode !== undefined ? { budgetMode: normalizeLorebookBudgetMode(override.budgetMode) } : {}),
+            ...(override.budget !== undefined ? { budget: normalizeLorebookBudgetValue(override.budget) } : {}),
+        };
+        return result;
+    }, {});
+}
+
+function getLorebookOrderingSettings(data = {}) {
+    const raw = data?.stlo && typeof data.stlo === 'object'
+        ? data.stlo
+        : (data?.extensions?.stlo && typeof data.extensions.stlo === 'object' ? data.extensions.stlo : {});
+
+    return {
+        ...DEFAULT_LOREBOOK_SETTINGS,
+        priority: normalizeLorebookPriority(raw.priority),
+        budget: normalizeLorebookBudgetValue(raw.budget),
+        budgetMode: normalizeLorebookBudgetMode(raw.budgetMode),
+        orderAdjustment: Number(raw.orderAdjustment) || 0,
+        orderAdjustmentGroupOnly: Boolean(raw.orderAdjustmentGroupOnly),
+        characterOverrides: normalizeCharacterOverrides(raw.characterOverrides),
+        onlyWhenSpeaking: Boolean(raw.onlyWhenSpeaking),
+    };
+}
+
+function setLorebookOrderingSettings(data = {}, settings = {}) {
+    if (data.extensions && typeof data.extensions === 'object' && data.extensions.stlo) {
+        delete data.extensions.stlo;
+    }
+
+    const nextSettings = {
+        ...DEFAULT_LOREBOOK_SETTINGS,
+        ...settings,
+        priority: normalizeLorebookPriority(settings.priority),
+        budget: normalizeLorebookBudgetValue(settings.budget),
+        budgetMode: normalizeLorebookBudgetMode(settings.budgetMode),
+        orderAdjustment: Number(settings.orderAdjustment) || 0,
+        characterOverrides: normalizeCharacterOverrides(settings.characterOverrides),
+        orderAdjustmentGroupOnly: Boolean(settings.orderAdjustmentGroupOnly),
+        onlyWhenSpeaking: Boolean(settings.onlyWhenSpeaking),
+    };
+
+    const isDefaultSettings =
+        nextSettings.priority === null
+        && nextSettings.budget === null
+        && nextSettings.budgetMode === 'default'
+        && nextSettings.orderAdjustment === 0
+        && !nextSettings.orderAdjustmentGroupOnly
+        && !nextSettings.onlyWhenSpeaking
+        && Object.keys(nextSettings.characterOverrides).length === 0;
+
+    if (isDefaultSettings) {
+        delete data.stlo;
+        return;
+    }
+
+    data.stlo = nextSettings;
 }
 
 function maybeWarnSecureShadowing(data, name) {
@@ -658,7 +761,6 @@ export function getWorldInfoSettings() {
         world_info_overflow_alert,
         world_info_case_sensitive,
         world_info_match_whole_words,
-        world_info_character_strategy,
         world_info_budget_cap,
         world_info_use_group_scoring,
         world_info_max_recursion_steps,
@@ -727,8 +829,6 @@ export function setWorldInfoSettings(settings, data) {
         world_info_case_sensitive = Boolean(settings.world_info_case_sensitive);
     if (settings.world_info_match_whole_words !== undefined)
         world_info_match_whole_words = Boolean(settings.world_info_match_whole_words);
-    if (settings.world_info_character_strategy !== undefined)
-        world_info_character_strategy = Number(settings.world_info_character_strategy);
     if (settings.world_info_budget_cap !== undefined)
         world_info_budget_cap = Number(settings.world_info_budget_cap);
     if (settings.world_info_use_group_scoring !== undefined)
@@ -776,9 +876,6 @@ export function setWorldInfoSettings(settings, data) {
     $('#world_info_case_sensitive').prop('checked', world_info_case_sensitive);
     $('#world_info_match_whole_words').prop('checked', world_info_match_whole_words);
     $('#world_info_use_group_scoring').prop('checked', world_info_use_group_scoring);
-
-    $(`#world_info_character_strategy option[value='${world_info_character_strategy}']`).prop('selected', true);
-    $('#world_info_character_strategy').val(world_info_character_strategy);
 
     $('#world_info_budget_cap').val(world_info_budget_cap);
     $('#world_info_budget_cap_counter').val(world_info_budget_cap);
@@ -2238,6 +2335,10 @@ async function displayWorldEntries(name, data, navigation = navigation_option.no
             return;
         }
         await renameWorldInfo(name, data);
+    });
+
+    $('#world_lorebook_ordering').off('click').on('click', async () => {
+        await openLorebookOrderingDialog(name, data);
     });
 
     $('#world_secure_toggle').off('click').on('click', async () => {
@@ -4060,6 +4161,7 @@ async function getSortedEntriesOnServer() {
     const character = characters[this_chid];
     const fileName = getCharaFilename(this_chid);
     const extraCharLore = world_info.charLore?.find((entry) => entry.name === fileName);
+    const context = getContext();
     const response = await fetch('/api/worldinfo/sorted-entries', {
         method: 'POST',
         headers: getRequestHeaders(),
@@ -4069,7 +4171,12 @@ async function getSortedEntriesOnServer() {
             personaWorld: power_user.persona_description_lorebook || '',
             characterWorld: character?.data?.extensions?.world || '',
             characterExtraBooks: extraCharLore?.extraBooks || [],
-            worldInfoCharacterStrategy: world_info_character_strategy,
+            selectedGroup: Boolean(context?.groupId),
+            activeSpeaker: {
+                name: character?.name || '',
+                avatar: character?.avatar || '',
+                filename: fileName,
+            },
             currentCharacterFilename: fileName,
         }),
         cache: 'no-cache',
@@ -4086,7 +4193,7 @@ async function getSortedEntriesOnServer() {
     const personaLore = Array.isArray(data?.personaLore) ? data.personaLore : [];
     const entries = Array.isArray(data?.entries) ? data.entries : [];
 
-    await eventSource.emit(event_types.WORLDINFO_ENTRIES_LOADED, { globalLore, characterLore, chatLore, personaLore });
+    await eventSource.emit(event_types.WORLDINFO_ENTRIES_LOADED, { globalLore, characterLore, chatLore, personaLore, entries });
 
     return structuredClone(entries);
 }
@@ -4098,6 +4205,109 @@ export async function getSortedEntries() {
         console.warn('[WI] Failed to resolve world info entries on server.', error);
         return [];
     }
+}
+
+async function openLorebookOrderingDialog(name, data) {
+    if (!name || !data) {
+        return;
+    }
+
+    const settings = getLorebookOrderingSettings(data);
+    const container = document.createElement('div');
+    container.className = 'flex-container flexFlowColumn gap1';
+    container.innerHTML = `
+        <label class="flex-container flexFlowColumn gap0">
+            <span>Priority</span>
+            <select id="stlo_priority" class="text_pole textarea_compact">
+                <option value="">Default (3)</option>
+                <option value="1">Lowest</option>
+                <option value="2">Low</option>
+                <option value="3">Default</option>
+                <option value="4">High</option>
+                <option value="5">Highest</option>
+            </select>
+        </label>
+        <label class="flex-container flexFlowColumn gap0">
+            <span>Order Adjustment</span>
+            <input id="stlo_order_adjustment" class="text_pole textarea_compact" type="number" step="1" min="-10000" max="10000" />
+        </label>
+        <label class="checkbox_label flex-container alignitemscenter">
+            <input id="stlo_group_only" type="checkbox" />
+            <small>Apply order adjustment only in group chats</small>
+        </label>
+        <label class="checkbox_label flex-container alignitemscenter">
+            <input id="stlo_only_when_speaking" type="checkbox" />
+            <small>Only use this lorebook when the active speaker matches a character override</small>
+        </label>
+        <label class="flex-container flexFlowColumn gap0">
+            <span>Budget Mode</span>
+            <select id="stlo_budget_mode" class="text_pole textarea_compact">
+                <option value="default">Default</option>
+                <option value="percentage_context">Percent of context</option>
+                <option value="percentage_budget">Percent of WI budget</option>
+                <option value="fixed">Fixed tokens</option>
+            </select>
+        </label>
+        <label class="flex-container flexFlowColumn gap0">
+            <span>Budget Value</span>
+            <input id="stlo_budget_value" class="text_pole textarea_compact" type="number" step="1" min="0" />
+            <small>Ignored when budget mode is Default.</small>
+        </label>
+        <label class="flex-container flexFlowColumn gap0">
+            <span>Character Overrides JSON</span>
+            <textarea id="stlo_character_overrides" class="text_pole textarea_compact" rows="10" placeholder='{"char_filename":{"priority":5,"orderAdjustment":250,"budgetMode":"fixed","budget":400}}'></textarea>
+            <small>Keys can be character name, avatar basename, or filename. Override fields: priority, orderAdjustment, budgetMode, budget.</small>
+        </label>
+    `;
+
+    const prioritySelect = container.querySelector('#stlo_priority');
+    const orderAdjustmentInput = container.querySelector('#stlo_order_adjustment');
+    const groupOnlyInput = container.querySelector('#stlo_group_only');
+    const onlyWhenSpeakingInput = container.querySelector('#stlo_only_when_speaking');
+    const budgetModeSelect = container.querySelector('#stlo_budget_mode');
+    const budgetValueInput = container.querySelector('#stlo_budget_value');
+    const characterOverridesInput = container.querySelector('#stlo_character_overrides');
+
+    prioritySelect.value = settings.priority === null ? '' : String(settings.priority);
+    orderAdjustmentInput.value = String(settings.orderAdjustment || 0);
+    groupOnlyInput.checked = Boolean(settings.orderAdjustmentGroupOnly);
+    onlyWhenSpeakingInput.checked = Boolean(settings.onlyWhenSpeaking);
+    budgetModeSelect.value = settings.budgetMode || 'default';
+    budgetValueInput.value = settings.budget === null ? '' : String(settings.budget);
+    characterOverridesInput.value = JSON.stringify(settings.characterOverrides || {}, null, 2);
+
+    const popup = new Popup(container, POPUP_TYPE.CONFIRM, `Lorebook Ordering: ${name}`, {
+        okButton: t`Save`,
+        cancelButton: t`Cancel`,
+    });
+    const result = await popup.show();
+    if (result !== POPUP_RESULT.AFFIRMATIVE) {
+        return;
+    }
+
+    let characterOverrides = {};
+    const rawCharacterOverrides = String(characterOverridesInput.value || '').trim();
+    if (rawCharacterOverrides) {
+        try {
+            characterOverrides = JSON.parse(rawCharacterOverrides);
+        } catch {
+            toastr.error(t`Character overrides must be valid JSON.`, t`Lorebook Ordering`);
+            return;
+        }
+    }
+
+    setLorebookOrderingSettings(data, {
+        priority: prioritySelect.value === '' ? null : Number(prioritySelect.value),
+        orderAdjustment: Number(orderAdjustmentInput.value) || 0,
+        orderAdjustmentGroupOnly: Boolean(groupOnlyInput.checked),
+        onlyWhenSpeaking: Boolean(onlyWhenSpeakingInput.checked),
+        budgetMode: budgetModeSelect.value,
+        budget: budgetValueInput.value === '' ? null : Number(budgetValueInput.value),
+        characterOverrides,
+    });
+
+    await saveWorldInfo(name, data, true);
+    toastr.success(t`Lorebook ordering updated.`, t`World Info`);
 }
 
 
@@ -4971,11 +5181,6 @@ export function initWorldInfo() {
 
     $('#world_info_match_whole_words').on('input', function () {
         world_info_match_whole_words = !!$(this).prop('checked');
-        saveSettings();
-    });
-
-    $('#world_info_character_strategy').on('change', function () {
-        world_info_character_strategy = Number($(this).val());
         saveSettings();
     });
 

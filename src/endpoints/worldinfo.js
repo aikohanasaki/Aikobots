@@ -23,13 +23,18 @@ export const readWorldInfoFile = readUserWorldInfoFile;
 
 export const router = express.Router();
 
-export const world_info_insertion_strategy = {
-    evenly: 0,
-    character_first: 1,
-    global_first: 2,
-};
-
 const KNOWN_DECORATORS = ['@@activate', '@@dont_activate'];
+const DEFAULT_LOREBOOK_PRIORITY = 3;
+const PRIORITY_BAND_SIZE = 10000;
+const DEFAULT_LOREBOOK_SETTINGS = Object.freeze({
+    priority: null,
+    budget: null,
+    budgetMode: 'default',
+    orderAdjustment: 0,
+    orderAdjustmentGroupOnly: false,
+    characterOverrides: {},
+    onlyWhenSpeaking: false,
+});
 const promptStateModuleMap = {
     summary: '1_memory',
     authorsNote: '2_floating_prompt',
@@ -148,9 +153,11 @@ function worldEntriesFromBook(worldInfo, worldName) {
         return [];
     }
 
+    const lorebookSettings = extractLorebookSettings(worldInfo);
+
     return Object.keys(worldInfo.entries)
         .map(key => worldInfo.entries[key])
-        .map(({ uid, ...rest }) => ({ uid, world: worldName, ...rest }));
+        .map(({ uid, ...rest }) => ({ uid, world: worldName, lorebookSettings, ...rest }));
 }
 
 async function readWorldEntries(user, worldName) {
@@ -158,20 +165,160 @@ async function readWorldEntries(user, worldName) {
     return worldEntriesFromBook(worldInfo, worldName);
 }
 
-function sortEntriesWithStrategy(globalLore, characterLore, strategy) {
-    const sortFn = (a, b) => (b.order ?? 0) - (a.order ?? 0);
+function normalizeSpeakerIdentifier(value) {
+    return String(value || '').trim().toLowerCase();
+}
 
-    switch (Number(strategy)) {
-        case world_info_insertion_strategy.evenly:
-            return [...globalLore, ...characterLore].sort(sortFn);
-        case world_info_insertion_strategy.character_first:
-            return [...characterLore.sort(sortFn), ...globalLore.sort(sortFn)];
-        case world_info_insertion_strategy.global_first:
-            return [...globalLore.sort(sortFn), ...characterLore.sort(sortFn)];
-        default:
-            console.error('[WI] Unknown WI insertion strategy:', strategy, 'defaulting to evenly');
-            return [...globalLore, ...characterLore].sort(sortFn);
+function stripExtension(value) {
+    return String(value || '').replace(/\.[^/.]+$/, '');
+}
+
+function normalizePriority(value) {
+    if (value === null || value === undefined || value === '') {
+        return DEFAULT_LOREBOOK_PRIORITY;
     }
+
+    const number = Number(value);
+    if (!Number.isFinite(number)) {
+        return DEFAULT_LOREBOOK_PRIORITY;
+    }
+
+    return Math.max(1, Math.min(5, Math.trunc(number)));
+}
+
+function normalizeBudgetMode(value) {
+    const mode = String(value || 'default').trim().toLowerCase();
+    return ['default', 'percentage_context', 'percentage_budget', 'fixed'].includes(mode)
+        ? mode
+        : 'default';
+}
+
+function normalizeOptionalNumber(value) {
+    if (value === null || value === undefined || value === '') {
+        return null;
+    }
+
+    const number = Number(value);
+    return Number.isFinite(number) ? number : null;
+}
+
+function normalizeCharacterOverrides(value) {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) {
+        return {};
+    }
+
+    return Object.entries(value).reduce((result, [key, override]) => {
+        const normalizedKey = normalizeSpeakerIdentifier(key);
+        if (!normalizedKey || !override || typeof override !== 'object' || Array.isArray(override)) {
+            return result;
+        }
+
+        const normalizedOverride = {};
+        if (override.priority !== undefined && override.priority !== null && override.priority !== '') {
+            normalizedOverride.priority = normalizePriority(override.priority);
+        }
+        if (override.orderAdjustment !== undefined && override.orderAdjustment !== null && override.orderAdjustment !== '') {
+            normalizedOverride.orderAdjustment = Number(override.orderAdjustment) || 0;
+        }
+        if (override.budget !== undefined) {
+            normalizedOverride.budget = normalizeOptionalNumber(override.budget);
+        }
+        if (override.budgetMode !== undefined) {
+            normalizedOverride.budgetMode = normalizeBudgetMode(override.budgetMode);
+        }
+
+        result[normalizedKey] = normalizedOverride;
+        return result;
+    }, {});
+}
+
+function normalizeLorebookSettings(value) {
+    const settings = value && typeof value === 'object' && !Array.isArray(value) ? value : {};
+    return {
+        priority: settings.priority === null ? null : normalizeOptionalNumber(settings.priority),
+        budget: normalizeOptionalNumber(settings.budget),
+        budgetMode: normalizeBudgetMode(settings.budgetMode),
+        orderAdjustment: Number(settings.orderAdjustment) || 0,
+        orderAdjustmentGroupOnly: Boolean(settings.orderAdjustmentGroupOnly),
+        characterOverrides: normalizeCharacterOverrides(settings.characterOverrides),
+        onlyWhenSpeaking: Boolean(settings.onlyWhenSpeaking),
+    };
+}
+
+function extractLorebookSettings(worldInfo) {
+    const topLevel = worldInfo && typeof worldInfo === 'object' ? worldInfo.stlo : null;
+    const extensionLevel = worldInfo?.extensions && typeof worldInfo.extensions === 'object' ? worldInfo.extensions.stlo : null;
+    return {
+        ...DEFAULT_LOREBOOK_SETTINGS,
+        ...normalizeLorebookSettings(topLevel ?? extensionLevel ?? {}),
+    };
+}
+
+function getActiveSpeakerKeys(activeSpeaker = {}) {
+    const keys = new Set();
+    const normalizedName = normalizeSpeakerIdentifier(activeSpeaker?.name);
+    const normalizedAvatar = normalizeSpeakerIdentifier(stripExtension(activeSpeaker?.avatar));
+    const normalizedFilename = normalizeSpeakerIdentifier(stripExtension(activeSpeaker?.filename));
+
+    if (normalizedName) {
+        keys.add(normalizedName);
+    }
+    if (normalizedAvatar) {
+        keys.add(normalizedAvatar);
+    }
+    if (normalizedFilename) {
+        keys.add(normalizedFilename);
+    }
+
+    return keys;
+}
+
+function resolveLorebookSettings(entry, activeSpeaker = {}, isGroupChat = false) {
+    const base = {
+        ...DEFAULT_LOREBOOK_SETTINGS,
+        ...normalizeLorebookSettings(entry?.lorebookSettings),
+    };
+    const activeSpeakerKeys = getActiveSpeakerKeys(activeSpeaker);
+    let matchedOverride = null;
+
+    for (const [key, override] of Object.entries(base.characterOverrides || {})) {
+        if (activeSpeakerKeys.has(normalizeSpeakerIdentifier(key))) {
+            matchedOverride = override;
+            break;
+        }
+    }
+
+    const resolved = {
+        priority: normalizePriority(base.priority),
+        budget: base.budget,
+        budgetMode: base.budgetMode,
+        orderAdjustment: base.orderAdjustment,
+        onlyWhenSpeaking: base.onlyWhenSpeaking,
+    };
+
+    if (matchedOverride) {
+        if (matchedOverride.priority !== undefined) {
+            resolved.priority = normalizePriority(matchedOverride.priority);
+        }
+        if (matchedOverride.orderAdjustment !== undefined) {
+            resolved.orderAdjustment = Number(matchedOverride.orderAdjustment) || 0;
+        }
+        if (matchedOverride.budget !== undefined) {
+            resolved.budget = normalizeOptionalNumber(matchedOverride.budget);
+        }
+        if (matchedOverride.budgetMode !== undefined) {
+            resolved.budgetMode = normalizeBudgetMode(matchedOverride.budgetMode);
+        }
+    }
+
+    if (base.orderAdjustmentGroupOnly && !isGroupChat) {
+        resolved.orderAdjustment = 0;
+    }
+
+    return {
+        excluded: Boolean(base.onlyWhenSpeaking && !matchedOverride),
+        settings: resolved,
+    };
 }
 
 function substituteParams(content, env = {}) {
@@ -188,7 +335,8 @@ export async function resolveSortedEntriesPayload(user, body = {}, options = {})
         characterWorld = '',
         characterExtraBooks = [],
         currentCharacterFilename = '',
-        worldInfoCharacterStrategy = world_info_insertion_strategy.character_first,
+        selectedGroup = false,
+        activeSpeaker = {},
     } = body;
     const readEntries = options.readEntries ?? readWorldEntries;
     const getHiddenBooks = options.getHiddenBooks ?? getHiddenLorebooksForCharacter;
@@ -259,19 +407,46 @@ export async function resolveSortedEntriesPayload(user, body = {}, options = {})
         ? await readEntries(user, personaWorldNames[0])
         : [];
 
-    let entries = sortEntriesWithStrategy(globalLore, characterLore, worldInfoCharacterStrategy);
-    const sortFn = (a, b) => (b.order ?? 0) - (a.order ?? 0);
-    entries = [...chatLore.sort(sortFn), ...personaLore.sort(sortFn), ...entries];
+    let entries = [...globalLore, ...characterLore, ...chatLore, ...personaLore]
+        .map((entry, index) => {
+            const resolved = resolveLorebookSettings(entry, activeSpeaker, Boolean(selectedGroup));
+            if (resolved.excluded) {
+                return null;
+            }
+
+            const originalOrder = Number.isFinite(Number(entry.order)) ? Number(entry.order) : 100;
+            const effectiveOrder = resolved.settings.priority * PRIORITY_BAND_SIZE
+                + resolved.settings.orderAdjustment
+                + Math.min(originalOrder, PRIORITY_BAND_SIZE - 1);
+
+            return {
+                ...entry,
+                lorebookSettings: resolved.settings,
+                order: effectiveOrder,
+                sourceIndex: index,
+            };
+        })
+        .filter(Boolean)
+        .sort((left, right) =>
+            (right.order ?? 0) - (left.order ?? 0)
+            || (left.uid ?? 0) - (right.uid ?? 0)
+            || String(left.world ?? '').localeCompare(String(right.world ?? ''))
+            || (left.sourceIndex ?? 0) - (right.sourceIndex ?? 0),
+        );
 
     entries = entries
         .map((entry) => {
             const [decorators, content] = parseDecorators(entry.content || '');
             return { ...entry, decorators, content };
         })
-        .map((entry) => ({
-            ...entry,
-            hash: getStringHash(JSON.stringify(entry)),
-        }));
+        .map((entry) => {
+            const { sourceIndex, ...rest } = entry;
+            void sourceIndex;
+            return {
+                ...rest,
+                hash: getStringHash(JSON.stringify(rest)),
+            };
+        });
 
     return {
         globalLore,

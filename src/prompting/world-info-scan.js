@@ -159,6 +159,26 @@ async function countWorldInfoTokens(value, payload = {}, cache = new Map()) {
     return tokenCount;
 }
 
+function calculateLorebookBudget(settings = {}, totalBudget = 0, maxContext = 0) {
+    const budgetMode = String(settings?.budgetMode || 'default').trim().toLowerCase();
+    const budgetValue = Number(settings?.budget);
+
+    if (!Number.isFinite(budgetValue) || budgetValue <= 0) {
+        return 0;
+    }
+
+    switch (budgetMode) {
+        case 'percentage_context':
+            return Math.floor((budgetValue / 100) * (Number(maxContext) || 0));
+        case 'percentage_budget':
+            return Math.floor((budgetValue / 100) * (Number(totalBudget) || 0));
+        case 'fixed':
+            return Math.floor(budgetValue);
+        default:
+            return 0;
+    }
+}
+
 class WorldInfoBuffer {
     #settings = null;
     #globalScanData = null;
@@ -635,14 +655,28 @@ export async function scanWorldInfo(payload = {}) {
 
     let scanState = scan_state.INITIAL;
     let tokenBudgetOverflowed = false;
+    const lorebookBudgetOverflowed = new Set();
     let count = 0;
     let allActivatedEntries = new Map();
     let failedProbabilityChecks = new Set();
     let allActivatedText = '';
+    const lorebookActivatedText = new Map();
 
     let budget = Math.round((Number(settings.world_info_budget) || 0) * Number(payload.maxContext || 0) / 100) || 1;
     if (Number(settings.world_info_budget_cap) > 0 && budget > Number(settings.world_info_budget_cap)) {
         budget = Number(settings.world_info_budget_cap);
+    }
+
+    const lorebookBudgets = new Map();
+    for (const entry of sortedEntries) {
+        if (!entry?.world || lorebookBudgets.has(entry.world)) {
+            continue;
+        }
+
+        const lorebookBudget = calculateLorebookBudget(entry.lorebookSettings, budget, payload.maxContext);
+        if (lorebookBudget > 0) {
+            lorebookBudgets.set(entry.world, lorebookBudget);
+        }
     }
 
     const availableRecursionDelayLevels = [...new Set(sortedEntries
@@ -787,6 +821,7 @@ export async function scanWorldInfo(payload = {}) {
         };
         const newEntries = [...activatedNow].sort(sortFn);
         const textToScanTokens = await countWorldInfoTokens(allActivatedText, payload, tokenCountCache);
+        const admittedEntries = [];
 
         filterByInclusionGroups(newEntries, allActivatedEntries, buffer, scanState, timedEffects, settings);
 
@@ -809,17 +844,33 @@ export async function scanWorldInfo(payload = {}) {
                 }
             }
 
-            newContent += `${entry.content}\n`;
-            if (!entry.ignoreBudget && (textToScanTokens + await countWorldInfoTokens(newContent, payload, tokenCountCache)) >= budget) {
-                tokenBudgetOverflowed = true;
+            const entryContent = `${entry.content}\n`;
+            if (!entry.ignoreBudget && lorebookBudgetOverflowed.has(entry.world)) {
                 continue;
             }
 
+            if (!entry.ignoreBudget) {
+                const lorebookBudget = lorebookBudgets.get(entry.world) || 0;
+                const lorebookText = lorebookActivatedText.get(entry.world) || '';
+                if (lorebookBudget > 0 && (await countWorldInfoTokens(lorebookText + entryContent, payload, tokenCountCache)) >= lorebookBudget) {
+                    lorebookBudgetOverflowed.add(entry.world);
+                    continue;
+                }
+
+                if ((textToScanTokens + await countWorldInfoTokens(newContent + entryContent, payload, tokenCountCache)) >= budget) {
+                    tokenBudgetOverflowed = true;
+                    continue;
+                }
+
+                lorebookActivatedText.set(entry.world, lorebookText + entryContent);
+            }
+
+            newContent += entryContent;
             allActivatedEntries.set(`${entry.world}.${entry.uid}`, entry);
+            admittedEntries.push(entry);
         }
 
-        const successfulNewEntries = newEntries.filter(entry => !failedProbabilityChecks.has(entry));
-        const successfulNewEntriesForRecursion = successfulNewEntries.filter(entry => !entry.preventRecursion);
+        const successfulNewEntriesForRecursion = admittedEntries.filter(entry => !entry.preventRecursion);
 
         if (settings.world_info_recursive && !tokenBudgetOverflowed && successfulNewEntriesForRecursion.length) {
             nextScanState = scan_state.RECURSION;
@@ -846,11 +897,14 @@ export async function scanWorldInfo(payload = {}) {
             currentRecursionDelayLevel = availableRecursionDelayLevels.shift();
         }
 
-        const text = successfulNewEntriesForRecursion.map(entry => entry.content).join('\n');
+        const recursionText = successfulNewEntriesForRecursion.map(entry => entry.content).join('\n');
+        const admittedText = admittedEntries.map(entry => entry.content).join('\n');
         scanState = nextScanState;
-        if (scanState && text) {
-            buffer.addRecurse(text);
-            allActivatedText = `${text}\n${allActivatedText}`;
+        if (recursionText) {
+            buffer.addRecurse(recursionText);
+        }
+        if (admittedText) {
+            allActivatedText = `${admittedText}\n${allActivatedText}`;
         }
     }
 

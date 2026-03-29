@@ -125,6 +125,7 @@
         "postinstall": "node post-install.js",
         "lint": "eslint \"src/**/*.js\" \"public/**/*.js\" ./*.js",
         "lint:fix": "eslint \"src/**/*.js\" \"public/**/*.js\" ./*.js --fix",
+        "smoke:worldinfo": "node tests/world-info-smoke.mjs",
         "plugins:update": "node plugins update",
         "plugins:install": "node plugins install"
     },
