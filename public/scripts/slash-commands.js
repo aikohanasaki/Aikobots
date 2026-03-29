@@ -124,10 +124,18 @@ function closureToFilter(closure) {
  * @property {string?} [source] - API source, mostly used by chat completion. (e.g. "openai")
  */
 
-/** @type {Record<string, ConnectAPIMap>} */
+/**
+ * Populated by setupConnectAPIMap() during slash command initialization.
+ * Consumers must not assume this map is ready before initDefaultSlashCommands() has run.
+ * @type {Record<string, ConnectAPIMap>}
+ */
 export const CONNECT_API_MAP = {};
 
-/** @type {string[]} */
+/**
+ * Populated by setupConnectAPIMap() during slash command initialization.
+ * Consumers must not assume this list is ready before initDefaultSlashCommands() has run.
+ * @type {string[]}
+ */
 export const UNIQUE_APIS = [];
 
 function setupConnectAPIMap() {
@@ -419,19 +427,22 @@ export function initDefaultSlashCommands() {
         name: 'tempchat',
         callback: () => {
             return new Promise((resolve, reject) => {
+                const timeoutId = setTimeout(() => {
+                    eventSource.removeListener(event_types.CHAT_CHANGED, eventCallback);
+                    reject(t`Failed to open temporary chat`);
+                }, debounce_timeout.relaxed);
+
                 const eventCallback = async (chatId) => {
+                    clearTimeout(timeoutId);
                     if (chatId) {
                         return reject(t`Not in a temporary chat`);
                     }
                     await newAssistantChat({ temporary: true });
                     return resolve('');
                 };
+
                 eventSource.once(event_types.CHAT_CHANGED, eventCallback);
                 $('#option_close_chat').trigger('click');
-                setTimeout(() => {
-                    reject(t`Failed to open temporary chat`);
-                    eventSource.removeListener(event_types.CHAT_CHANGED, eventCallback);
-                }, debounce_timeout.relaxed);
             });
         },
         helpString: t`Opens a temporary chat with Assistant.`,
@@ -2495,8 +2506,8 @@ export function initDefaultSlashCommands() {
                 description: t`API to set/get the URL for - if not provided, current API is used`,
                 typeList: [ARGUMENT_TYPE.STRING],
                 enumList: [
-                    new SlashCommandEnumValue('custom', 'custom OpenAI-compatible', enumTypes.getBasedOnIndex(UNIQUE_APIS.findIndex(x => x === 'openai')), 'O'),
-                    new SlashCommandEnumValue('zai', 'Z.AI', enumTypes.getBasedOnIndex(UNIQUE_APIS.findIndex(x => x === 'zai')), 'Z'),
+                    new SlashCommandEnumValue('custom', 'custom OpenAI-compatible', enumTypes.enum, 'O'),
+                    new SlashCommandEnumValue('zai', 'Z.AI', enumTypes.enum, 'Z'),
                 ],
             }),
             SlashCommandNamedArgument.fromProps({
@@ -3238,7 +3249,7 @@ async function buttonsCallback(args, text) {
         // Map custom buttons to results. Start at 2 because 1 and 0 are reserved for ok and cancel
         const resultToButtonMap = new Map(buttons.map((button, index) => [index + 2, button]));
 
-        return new Promise(async (resolve) => {
+        return new Promise((resolve) => {
             const safeValue = DOMPurify.sanitize(text || '');
 
             /** @type {Popup} */
@@ -3481,7 +3492,7 @@ async function inputCallback(args, prompt) {
 
     // Input will return null on nothing entered, and false on cancel clicked
     if (result === null || result === false) {
-        // Veryify if a cancel handler exists and it is valid
+        // Verify if a cancel handler exists and it is valid
         if (args?.onCancel) {
             if (!(args.onCancel instanceof SlashCommandClosure)) {
                 throw new Error(t`argument 'onCancel' must be a closure for command /input`);
@@ -4307,13 +4318,13 @@ async function openChat(chid) {
 async function continueChatCallback(args, prompt) {
     const shouldAwait = isTrueBoolean(args?.await);
 
-    const outerPromise = new Promise(async (resolve, reject) => {
+    const outerPromise = (async () => {
         try {
             await waitUntilCondition(() => !is_send_press && !is_group_generating, 10000, 100);
         } catch {
             console.warn('Timeout waiting for generation unlock');
             toastr.warning(t`Cannot run /continue command while the reply is being generated.`);
-            return reject();
+            throw new Error('Continue command timed out waiting for generation unlock.');
         }
 
         try {
@@ -4322,13 +4333,11 @@ async function continueChatCallback(args, prompt) {
 
             const options = prompt?.trim() ? { quiet_prompt: prompt.trim(), quietToLoud: true } : {};
             await Generate('continue', options);
-
-            resolve();
         } catch (error) {
             console.error('Error running /continue command:', error);
-            reject(error);
+            throw error;
         }
-    });
+    })();
 
     if (shouldAwait) {
         await outerPromise;

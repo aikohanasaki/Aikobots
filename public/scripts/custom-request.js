@@ -29,7 +29,7 @@ import EventSourceStream from './sse-stream.js';
 
 /**
  * @typedef {Object} ExtractedData
- * @property {string} content - Extracted content.
+ * @property {string | Object} content - Extracted content. When json_schema is used, this is a parsed JSON object.
  * @property {string} reasoning - Extracted reasoning.
  */
 

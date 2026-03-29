@@ -58,9 +58,12 @@ export const DEFAULT_USER = Object.freeze({
     salt: '',
 });
 
-export const UNSAFE_EXTENSIONS = [
+export const UNSAFE_EXTENSIONS = Object.freeze([
+    '.ade',
+    '.adp',
     '.application',
     '.bat',
+    '.chm',
     '.cmd',
     '.com',
     '.cpl',
@@ -99,6 +102,7 @@ export const UNSAFE_EXTENSIONS = [
     '.pot',
     '.potm',
     '.potx',
+    '.pl',
     '.ppam',
     '.pps',
     '.ppsm',
@@ -114,6 +118,8 @@ export const UNSAFE_EXTENSIONS = [
     '.psc2',
     '.py',
     '.reg',
+    '.rb',
+    '.sct',
     '.scf',
     '.scr',
     '.sh',
@@ -124,6 +130,7 @@ export const UNSAFE_EXTENSIONS = [
     '.vbe',
     '.vbs',
     '.ws',
+    '.wsf',
     '.xlam',
     '.xls',
     '.xlsm',
@@ -131,7 +138,7 @@ export const UNSAFE_EXTENSIONS = [
     '.xlt',
     '.xltm',
     '.xltx',
-];
+]);
 
 export const GEMINI_SAFETY = [
     {
