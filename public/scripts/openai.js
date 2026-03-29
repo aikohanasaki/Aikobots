@@ -4498,7 +4498,7 @@ async function onModelChange() {
         } else if (value.includes('gemma-3')) {
             $('#openai_max_context').attr('max', max_32k);
         } else {
-            $('#openai_max_context').attr('max', max_128k);
+            $('#openai_max_context').attr('max', max_1mil);
         }
         let makersuite_max_temp = (value.includes('vision') || value.includes('ultra') || value.includes('gemma')) ? 1.0 : 2.0;
         oai_settings.temp_openai = Math.min(makersuite_max_temp, oai_settings.temp_openai);
