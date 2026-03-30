@@ -153,6 +153,8 @@ export const power_user = {
     play_sound_unfocused: true,
     auto_save_msg_edits: false,
     confirm_message_delete: true,
+    strip_ai_thinking_from_response: false,
+    strip_ai_thinking_cleanup_mode: 'future_only',
 
     sort_field: 'name',
     sort_order: 'asc',
@@ -1552,6 +1554,12 @@ function getExampleMessagesBehavior() {
     return 'normal';
 }
 
+function toggleStripAiThinkingCleanupMode() {
+    const enabled = !!power_user.strip_ai_thinking_from_response;
+    $('#strip_ai_thinking_cleanup_mode_container').toggle(enabled);
+    $('#strip_ai_thinking_cleanup_mode').prop('disabled', !enabled);
+}
+
 //MARK: loadPowerUser
 export async function loadPowerUserSettings(settings, data) {
     const defaultStscript = JSON.parse(JSON.stringify(power_user.stscript));
@@ -1566,6 +1574,10 @@ export async function loadPowerUserSettings(settings, data) {
             delete settings.power_user.auto_sort_tags;
         }
         Object.assign(power_user, settings.power_user);
+    }
+
+    if (!['future_only', 'ask_clean_chat_on_open'].includes(String(power_user.strip_ai_thinking_cleanup_mode))) {
+        power_user.strip_ai_thinking_cleanup_mode = 'future_only';
     }
 
     if (power_user.stscript === undefined) {
@@ -1697,6 +1709,9 @@ export async function loadPowerUserSettings(settings, data) {
     $('#trim_sentences_checkbox').prop('checked', power_user.trim_sentences);
     $('#disable_group_trimming').prop('checked', power_user.disable_group_trimming);
     $('#markdown_escape_strings').val(power_user.markdown_escape_strings);
+    $('#strip_ai_thinking_from_response').prop('checked', power_user.strip_ai_thinking_from_response);
+    $('#strip_ai_thinking_cleanup_mode').val(power_user.strip_ai_thinking_cleanup_mode);
+    toggleStripAiThinkingCleanupMode();
     $('#fast_ui_mode').prop('checked', power_user.fast_ui_mode);
     $('#waifuMode').prop('checked', power_user.waifuMode);
     $('#movingUImode').prop('checked', power_user.movingUI);
@@ -4208,6 +4223,17 @@ jQuery(() => {
 
     $('#click_to_edit').on('input', function () {
         power_user.click_to_edit = !!$(this).prop('checked');
+        saveSettingsDebounced();
+    });
+
+    $('#strip_ai_thinking_from_response').on('input', function () {
+        power_user.strip_ai_thinking_from_response = !!$(this).prop('checked');
+        toggleStripAiThinkingCleanupMode();
+        saveSettingsDebounced();
+    });
+
+    $('#strip_ai_thinking_cleanup_mode').on('change', function () {
+        power_user.strip_ai_thinking_cleanup_mode = String($(this).val() || 'future_only');
         saveSettingsDebounced();
     });
 

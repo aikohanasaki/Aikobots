@@ -48,6 +48,15 @@ const UI = {
     $maxAdditions: $('#reasoning_max_additions'),
 };
 
+const THINK_TAG_REGEX = /<think\b[^>]*>[\s\S]*?<\/think>/gi;
+const THINK_TAG_DETECTION_REGEX = /<think\b[^>]*>[\s\S]*?<\/think>/i;
+const STRIP_AI_THINKING_CLEANUP_MODE = {
+    FUTURE_ONLY: 'future_only',
+    ASK_CLEAN_CHAT_ON_OPEN: 'ask_clean_chat_on_open',
+};
+
+let lastThinkingCleanupPromptChatId = null;
+
 /**
  * Enum representing the type of the reasoning for a message (where it came from)
  * @enum {string}
@@ -72,6 +81,144 @@ function getMessageFromJquery(element) {
     return { messageId: messageId, message, messageBlock };
 }
 
+function shouldStripAiThinkingFromResponses() {
+    return power_user.strip_ai_thinking_from_response === true;
+}
+
+function stripThinkTagsFromString(value) {
+    if (typeof value !== 'string' || !value) {
+        return typeof value === 'string' ? value : '';
+    }
+
+    const stripped = value.replace(THINK_TAG_REGEX, '');
+    return stripped === value ? value : trimSpaces(stripped);
+}
+
+function containsThinkTags(value) {
+    return typeof value === 'string' && THINK_TAG_DETECTION_REGEX.test(value);
+}
+
+function clearStoredReasoningFields(extra) {
+    if (!extra || typeof extra !== 'object') {
+        return false;
+    }
+
+    let changed = false;
+    for (const field of ['reasoning', 'reasoning_duration', 'reasoning_type', 'reasoning_display_text']) {
+        if (Object.hasOwn(extra, field)) {
+            delete extra[field];
+            changed = true;
+        }
+    }
+
+    return changed;
+}
+
+function stripThinkingFromMessage(message, { includeSwipes = true } = {}) {
+    if (!message || typeof message !== 'object') {
+        return false;
+    }
+
+    let changed = false;
+
+    if (typeof message.mes === 'string') {
+        const strippedMes = stripThinkTagsFromString(message.mes);
+        if (strippedMes !== message.mes) {
+            message.mes = strippedMes;
+            changed = true;
+        }
+    }
+
+    changed = clearStoredReasoningFields(message.extra) || changed;
+
+    if (includeSwipes && Array.isArray(message.swipes)) {
+        for (let index = 0; index < message.swipes.length; index++) {
+            const swipe = message.swipes[index];
+            if (typeof swipe !== 'string') {
+                continue;
+            }
+
+            const strippedSwipe = stripThinkTagsFromString(swipe);
+            if (strippedSwipe !== swipe) {
+                message.swipes[index] = strippedSwipe;
+                changed = true;
+            }
+        }
+    }
+
+    if (includeSwipes && Array.isArray(message.swipe_info)) {
+        for (const swipeInfo of message.swipe_info) {
+            changed = clearStoredReasoningFields(swipeInfo?.extra) || changed;
+        }
+    }
+
+    return changed;
+}
+
+function messageContainsThinking(message) {
+    if (!message || typeof message !== 'object') {
+        return false;
+    }
+
+    if (containsThinkTags(message.mes)) {
+        return true;
+    }
+
+    if (message.extra?.reasoning || message.extra?.reasoning_duration || message.extra?.reasoning_display_text) {
+        return true;
+    }
+
+    if (Array.isArray(message.swipes) && message.swipes.some(containsThinkTags)) {
+        return true;
+    }
+
+    if (Array.isArray(message.swipe_info) && message.swipe_info.some(swipeInfo => swipeInfo?.extra?.reasoning || swipeInfo?.extra?.reasoning_duration || swipeInfo?.extra?.reasoning_display_text)) {
+        return true;
+    }
+
+    return false;
+}
+
+async function maybePromptToCleanCurrentChat(chatId) {
+    if (!shouldStripAiThinkingFromResponses() || power_user.strip_ai_thinking_cleanup_mode !== STRIP_AI_THINKING_CLEANUP_MODE.ASK_CLEAN_CHAT_ON_OPEN) {
+        lastThinkingCleanupPromptChatId = null;
+        return;
+    }
+
+    const normalizedChatId = String(chatId || '');
+    if (!normalizedChatId || lastThinkingCleanupPromptChatId === normalizedChatId) {
+        return;
+    }
+
+    if (!chat.some(messageContainsThinking)) {
+        return;
+    }
+
+    lastThinkingCleanupPromptChatId = normalizedChatId;
+
+    const confirm = await Popup.show.confirm(
+        t`Strip AI Thinking`,
+        'Strip thinking from entire chat is enabled. Do you want to clean thinking tags from this entire chat?',
+    );
+
+    if (!confirm) {
+        return;
+    }
+
+    let changed = false;
+    for (let index = 0; index < chat.length; index++) {
+        changed = stripThinkingFromMessage(chat[index]) || changed;
+
+        if (document.querySelector(`.mes[mesid="${index}"]`) !== null) {
+            updateMessageBlock(index, chat[index]);
+        }
+    }
+
+    if (changed) {
+        await saveChatConditional();
+    }
+}
+
 /**
  * Toggles the auto-expand state of reasoning blocks.
  */
@@ -94,6 +241,10 @@ export function extractReasoningFromData(data, {
     ignoreShowThoughts = false,
     chatCompletionSource = null,
 } = {}) {
+    if (shouldStripAiThinkingFromResponses()) {
+        return '';
+    }
+
     switch (mainApi ?? main_api) {
         case 'openai':
             if (!ignoreShowThoughts && !oai_settings.show_thoughts) break;
@@ -344,6 +495,14 @@ export class ReasoningHandler {
         const extra = chat[messageId].extra;
 
         const reasoningChanged = extra.reasoning !== reasoning;
+
+        if (persist && shouldStripAiThinkingFromResponses()) {
+            this.reasoning = '';
+            this.reasoningDisplayText = null;
+            this.type = null;
+            return clearStoredReasoningFields(extra) || reasoningChanged;
+        }
+
         this.reasoning = getRegexedString(reasoning ?? '', regex_placement.REASONING);
 
         this.type = (this.#isParsingReasoning || this.#parsingReasoningMesStartIndex) ? ReasoningType.Parsed : ReasoningType.Model;
@@ -371,6 +530,25 @@ export class ReasoningHandler {
      */
     async process(messageId, mesChanged, promptReasoning) {
         mesChanged = this.#autoParseReasoningFromMessage(messageId, mesChanged, promptReasoning);
+
+        if (shouldStripAiThinkingFromResponses()) {
+            const message = chat[messageId];
+            if (message) {
+                stripThinkingFromMessage(message, { includeSwipes: false });
+            }
+
+            this.state = ReasoningState.None;
+            this.type = null;
+            this.reasoning = '';
+            this.reasoningDisplayText = null;
+            this.startTime = null;
+            this.endTime = null;
+
+            if (document.querySelector(`#chat .mes[mesid="${messageId}"]`) !== null) {
+                this.updateDom(messageId);
+            }
+            return;
+        }
 
         if (!this.reasoning && !this.#isHiddenReasoningModel)
             return;
@@ -454,6 +632,24 @@ export class ReasoningHandler {
      * @returns {Promise<void>}
      */
     async finish(messageId) {
+        if (shouldStripAiThinkingFromResponses()) {
+            if (chat[messageId]) {
+                stripThinkingFromMessage(chat[messageId], { includeSwipes: false });
+            }
+
+            this.state = ReasoningState.None;
+            this.type = null;
+            this.reasoning = '';
+            this.reasoningDisplayText = null;
+            this.startTime = null;
+            this.endTime = null;
+
+            if (document.querySelector(`#chat .mes[mesid="${messageId}"]`) !== null) {
+                this.updateDom(messageId);
+            }
+            return;
+        }
+
         if (this.state === ReasoningState.None) return;
 
         // Make sure the finish time is recorded if a reasoning was in process and it wasn't ended correctly during streaming
@@ -864,8 +1060,12 @@ function registerReasoningSlashCommands() {
                 message.extra = {};
             }
 
-            message.extra.reasoning = String(value ?? '');
-            message.extra.reasoning_type = ReasoningType.Manual;
+            if (shouldStripAiThinkingFromResponses()) {
+                stripThinkingFromMessage(message, { includeSwipes: false });
+            } else {
+                message.extra.reasoning = String(value ?? '');
+                message.extra.reasoning_type = ReasoningType.Manual;
+            }
             await saveChatConditional();
 
             closeMessageEditor('reasoning');
@@ -873,7 +1073,7 @@ function registerReasoningSlashCommands() {
 
             if (isTrueBoolean(String(args.collapse))) $(`#chat [mesid="${messageId}"] .mes_reasoning_details`).removeAttr('open');
             if (isFalseBoolean(String(args.collapse))) $(`#chat [mesid="${messageId}"] .mes_reasoning_details`).attr('open', '');
-            return message.extra.reasoning;
+            return shouldStripAiThinkingFromResponses() ? '' : message.extra.reasoning;
         },
     }));
 
@@ -998,6 +1198,11 @@ function setReasoningEventHandlers() {
      * @param {string} value Reasoning value
      */
     function updateReasoningFromValue(message, value) {
+        if (shouldStripAiThinkingFromResponses()) {
+            stripThinkingFromMessage(message, { includeSwipes: false });
+            return;
+        }
+
         const reasoning = getRegexedString(value, regex_placement.REASONING, { isEdit: true });
         message.extra.reasoning = reasoning;
         message.extra.reasoning_type = message.extra.reasoning_type ? ReasoningType.Edited : ReasoningType.Manual;
@@ -1155,9 +1360,7 @@ function setReasoningEventHandlers() {
         if (!message?.extra) {
             return;
         }
-        message.extra.reasoning = '';
-        delete message.extra.reasoning_type;
-        delete message.extra.reasoning_duration;
+        clearStoredReasoningFields(message.extra);
         await saveChatConditional();
         updateMessageBlock(messageId, message);
         const textarea = messageBlock.find('.reasoning_edit_textarea');
@@ -1199,6 +1402,10 @@ function setReasoningEventHandlers() {
  * @returns {string} Output string
  */
 export function removeReasoningFromString(str) {
+    if (shouldStripAiThinkingFromResponses()) {
+        return stripThinkTagsFromString(str);
+    }
+
     if (!power_user.reasoning.auto_parse) {
         return str;
     }
@@ -1257,6 +1464,21 @@ export function parseReasoningFromString(str, { strict = true } = {}) {
  * @property {string} reasoning_type Type of reasoning block
  */
 export function parseReasoningInSwipes(swipes, swipeInfoArray, duration) {
+    if (shouldStripAiThinkingFromResponses()) {
+        if (!Array.isArray(swipes) || !Array.isArray(swipeInfoArray) || swipes.length !== swipeInfoArray.length) {
+            return;
+        }
+
+        for (let index = 0; index < swipes.length; index++) {
+            if (typeof swipes[index] === 'string') {
+                swipes[index] = stripThinkTagsFromString(swipes[index]);
+            }
+
+            clearStoredReasoningFields(swipeInfoArray[index]?.extra);
+        }
+        return;
+    }
+
     if (!power_user.reasoning.auto_parse) {
         return;
     }
@@ -1278,19 +1500,34 @@ export function parseReasoningInSwipes(swipes, swipeInfoArray, duration) {
 }
 
 function registerReasoningAppEvents() {
-    const eventHandler = (/** @type {string} */ type, /** @type {number} */ idx) => {
-        if (!power_user.reasoning.auto_parse) {
-            return;
-        }
-
-        console.debug('[Reasoning] Auto-parsing reasoning block for message', idx);
-        const prefix = type === event_types.MESSAGE_RECEIVED ? PromptReasoning.getLatestPrefix() : '';
+    const eventHandler = async (/** @type {string} */ type, /** @type {number} */ idx) => {
         const message = chat[idx];
 
         if (!message) {
             console.warn('[Reasoning] Message not found', idx);
             return null;
         }
+
+        if (shouldStripAiThinkingFromResponses()) {
+            const contentUpdated = stripThinkingFromMessage(message, { includeSwipes: false });
+            if (contentUpdated) {
+                syncMesToSwipe(idx);
+                saveChatDebounced();
+
+                const messageRendered = document.querySelector(`.mes[mesid="${idx}"]`) !== null;
+                if (messageRendered) {
+                    updateMessageBlock(idx, message);
+                }
+            }
+            return null;
+        }
+
+        if (!power_user.reasoning.auto_parse) {
+            return;
+        }
+
+        console.debug('[Reasoning] Auto-parsing reasoning block for message', idx);
+        const prefix = type === event_types.MESSAGE_RECEIVED ? PromptReasoning.getLatestPrefix() : '';
 
         if (!message.mes || message.mes === '...') {
             console.debug('[Reasoning] Message content is empty or a placeholder', idx);
@@ -1348,8 +1585,12 @@ function registerReasoningAppEvents() {
         eventSource.on(event, () => PromptReasoning.clearLatest());
     }
 
+    eventSource.on(event_types.CHAT_CHANGED, async (chatId) => {
+        await maybePromptToCleanCurrentChat(chatId);
+    });
+
     eventSource.makeFirst(event_types.IMPERSONATE_READY, async () => {
-        if (!power_user.reasoning.auto_parse) {
+        if (!power_user.reasoning.auto_parse && !shouldStripAiThinkingFromResponses()) {
             return;
         }
 

@@ -2881,6 +2881,17 @@
                                     <input id="click_to_edit" type="checkbox" />
                                     <small data-i18n="Click to Edit">Click to Edit</small>
                                 </label>
+                                <label for="strip_ai_thinking_from_response" class="checkbox_label" title="Discard AI thinking blocks and saved reasoning data from future responses instead of keeping them in chat history.">
+                                    <input id="strip_ai_thinking_from_response" type="checkbox" />
+                                    <small>Strip AI Thinking From Response</small>
+                                </label>
+                                <div id="strip_ai_thinking_cleanup_mode_container" class="flex-container alignitemscenter" style="display:none;" title="Choose whether stripping only affects future responses or also asks to clean existing thinking from the current chat when it is opened.">
+                                    <label for="strip_ai_thinking_cleanup_mode"><small>Thinking Cleanup Mode</small></label>
+                                    <select id="strip_ai_thinking_cleanup_mode" class="widthNatural flex1 margin0">
+                                        <option value="future_only">Future messages only</option>
+                                        <option value="ask_clean_chat_on_open">Ask to clean entire chat on open</option>
+                                    </select>
+                                </div>
                             </div>
                         </div>
                     </div>
