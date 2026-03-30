@@ -24,6 +24,7 @@ import {
     setWorldInfoButtonClass,
     wi_anchor_position,
     selected_world_info,
+    getSecureWorldNames,
     world_info_depth,
     world_info_min_activations,
     world_info_min_activations_depth_max,
@@ -8764,6 +8765,8 @@ async function openCharacterWorldPopup() {
     const fileName = getCharaFilename(chid);
     const charName = (menu_type == 'create' ? create_save.name : characters[chid]?.data?.name) || 'Nameless';
     const worldId = (menu_type == 'create' ? create_save.world : characters[chid]?.data?.extensions?.world) || '';
+    const secureWorldNames = getSecureWorldNames();
+    const secureWorldNameSet = new Set(secureWorldNames);
     const template = $('#character_world_template .character_world').clone();
     template.find('.character_name').text(charName);
 
@@ -8779,8 +8782,14 @@ async function openCharacterWorldPopup() {
         const el = evt?.currentTarget ?? this;
         const selectedValues = $(el).val();
         const selected = Array.isArray(selectedValues) ? selectedValues : [];
+        const nextList = selected.map(i => secureWorldNames[Number(i)]).filter(Boolean);
+
+        if (menu_type == 'create') {
+            create_save.extra_books = nextList;
+            return;
+        }
+
         const fileName = getCharaFilename(null, {});
-        const nextList = selected.map(i => world_names[i]).filter(Boolean);
         charSetAuxWorlds(fileName, nextList);
     }
 
@@ -8794,9 +8803,19 @@ async function openCharacterWorldPopup() {
     // Append to extras dropdown.
     const extrasSelect = template.find('.character_extra_world_info_selector');
     const existingCharLore = world_info.charLore?.find((e) => e.name === fileName);
-    world_names.forEach((item, i) => {
-        const array = (menu_type == 'create' ? create_save.extra_books : existingCharLore?.extraBooks);
-        const isSelected = !!array?.includes(item);
+    const selectedExtraBooks = (menu_type == 'create' ? create_save.extra_books : existingCharLore?.extraBooks) ?? [];
+    const secureSelectedExtraBooks = selectedExtraBooks.filter(item => secureWorldNameSet.has(item));
+
+    if (secureSelectedExtraBooks.length !== selectedExtraBooks.length) {
+        if (menu_type == 'create') {
+            create_save.extra_books = secureSelectedExtraBooks;
+        } else {
+            charSetAuxWorlds(fileName, secureSelectedExtraBooks);
+        }
+    }
+
+    secureWorldNames.forEach((item, i) => {
+        const isSelected = secureSelectedExtraBooks.includes(item);
         extrasSelect.append(new Option(item, String(i), isSelected, isSelected));
     });
 
@@ -8811,7 +8830,7 @@ async function openCharacterWorldPopup() {
             if (!isMobile()) {
                 extrasSelect.select2({
                     width: '100%',
-                    placeholder: t`No auxiliary Lorebooks set. Click here to select.`,
+                    placeholder: t`Click here to select lorebooks.`,
                     allowClear: true,
                     closeOnSelect: false,
                     dropdownParent: popupDialog,

@@ -3684,7 +3684,7 @@
                                                 <div id="favorite_button" class="menu_button fa-solid fa-star" title="Add to Favorites" data-i18n="[title]Add to Favorites"></div>
                                                 <input type="hidden" id="fav_checkbox" name="fav" />
                                                 <div id="advanced_div" class="menu_button fa-solid fa-book " title="Advanced Definitions" data-i18n="[title]Advanced Definition"></div>
-                                                <div id="world_button" style="display:none" class="menu_button fa-solid fa-globe" title="Character Lore&#10;&#10;Click to load&#10;Shift-click to open 'Link to World Info' popup" data-i18n="[title]world_button_title"></div>
+                                                <div id="world_button" class="menu_button fa-solid fa-globe" title="Character Lore&#10;&#10;Click to load&#10;Shift/Alt-click or long-press to open 'Link to World Info' popup" data-i18n="[title]world_button_title"></div>
                                                 <div class="chat_lorebook_button menu_button fa-solid fa-passport" title="Chat Lore&#10;Alt+Click to open the lorebook" data-i18n="[title]Chat Lore Alt+Click to open the lorebook"></div>
                                                 <div id="char_connections_button" class="menu_button fa-solid fa-face-smile" title="Connected Personas" data-i18n="[title]Connected Personas"></div>
                                                 <div id="submit_character_review_button" class="menu_button fa-solid fa-paper-plane" title="Submit Character for Review" data-i18n="[title]Submit Character for Review" style="display:none"></div>
@@ -3698,6 +3698,9 @@
                                             <label class="flex1 height100p" for="char-management-dropdown">
                                                 <select id="char-management-dropdown" class="text_pole">
                                                     <option value="default" disabled selected data-i18n="More...">More...</option>
+                                                    <option id="set_character_world" data-i18n="Link to World Info">
+                                                        Link to World Info
+                                                    </option>
                                                     <option id="import_character_info" data-i18n="Import Card Lore">
                                                         Import Card Lore
                                                     </option>
@@ -4313,29 +4316,29 @@
                         <span class="character_name"></span>:
                     </h3>
                 </div>
-                <h4 data-i18n="Primary Lorebook">Primary Lorebook</h4>
-                <div class="range-block-counter justifyLeft flex-container flexFlowColumn margin-bot-10px">
-                    <span data-i18n="A selected World Info will be bound to this character as its own Lorebook.">A selected World Info will be bound to this character as its own Lorebook.</span>
-                    <span data-i18n="When generating an AI reply, it will be combined with the entries from a global World Info selector.">When generating an AI reply, it will be combined with the entries from a global World Info selector.</span>
-                    <span data-i18n="Exporting a character would also export the selected Lorebook file embedded in the JSON data.">Exporting a character would also export the selected Lorebook file embedded in the JSON data.</span>
-                </div>
-                <div class="range-block-range wide100p">
-                    <select class="character_world_info_selector wide100p">
-                        <option value="">--- None ---</option>
-                    </select>
-                </div>
                 <div class="range-block-title">
                     <h4>
-                        <span data-i18n="Additional Lorebooks">Additional Lorebooks</span>
+                        <span data-i18n="Linked Lorebooks">Linked Lorebooks</span>
                     </h4>
                 </div>
                 <div class="range-block-counter justifyLeft flex-container flexFlowColumn margin-bot-10px">
-                    <span data-i18n="Associate one or more auxillary Lorebooks with this character.">Associate one or more auxillary Lorebooks with this character.</span><br>
-                    <span data-i18n="NOTE: These choices are optional and won't be preserved on character export!">NOTE: These choices are optional and won't be preserved on character export!</span>
+                    <span data-i18n="Choose secure lorebooks to be used with this character.">Choose secure lorebooks to be used with this character.</span><br>
+                    <span data-i18n="These lorebooks will not be exported. Please ensure that these lorebooks are set as secure lorebooks.">These lorebooks will not be exported. Please ensure that these lorebooks are set as secure lorebooks.</span>
                 </div>
                 <div class="range-block-range wide100p">
                     <select class="character_extra_world_info_selector wide100p" multiple>
                         <option value="" data-i18n="-- World Info not found --">-- World Info not found --</option>
+                    </select>
+                </div>
+                <h4 data-i18n="Embedded Lorebook">Embedded Lorebook</h4>
+                <div class="range-block-counter justifyLeft flex-container flexFlowColumn margin-bot-10px">
+                    <span data-i18n="A selected World Info will be bound to this character as its own Lorebook.">Any lorebook selected here will be embedded in the character card. Only one lorebook can be embedded.</span>
+                    <span data-i18n="Exporting a character would also export the selected Lorebook file embedded in the JSON data.">Exporting a character will also export the selected Lorebook file embedded in the JSON data.</span>
+                    <span data-i18n="If you want to protect your character lorebook, leave this blank.">If you want to protect your character lorebook, leave this blank.</span>
+                </div>
+                <div class="range-block-range wide100p">
+                    <select class="character_world_info_selector wide100p">
+                        <option value="">--- None ---</option>
                     </select>
                 </div>
             </div>

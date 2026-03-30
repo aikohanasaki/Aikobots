@@ -257,6 +257,20 @@ function assertSecureNameAvailableForPromotion(name) {
     }
 }
 
+function assertSecurePromotionNameAllowed(user, canonicalName) {
+    if (user?.profile?.admin) {
+        if (!canonicalName.startsWith('9Z')) {
+            throw new LorebookRepositoryError('LorebookNameInvalid', 'Admin secure lorebooks must start with "9Z". Capitalization matters.', 400);
+        }
+        return;
+    }
+
+    const requiredPrefix = `Z-${user?.profile?.handle || ''}-`;
+    if (!canonicalName.startsWith(requiredPrefix) || canonicalName.length <= requiredPrefix.length) {
+        throw new LorebookRepositoryError('LorebookNameInvalid', `Secure lorebooks must start with "${requiredPrefix}". Use your username. Capitalization must match exactly.`, 400);
+    }
+}
+
 function writeSecureLorebookMetadata(name, ownerHandle, actorHandle, existingMetadata = null) {
     const timestamp = new Date().toISOString();
     const canonicalName = assertCanonicalName(name);
@@ -587,6 +601,7 @@ export function promoteLorebook(user, name) {
         throw new LorebookRepositoryError('LorebookNotFound', `Lorebook "${canonicalName}" not found.`, 404);
     }
 
+    assertSecurePromotionNameAllowed(user, canonicalName);
     assertSecureNameAvailableForPromotion(canonicalName);
 
     createSecureLorebookLink(canonicalName, user.profile.handle);
