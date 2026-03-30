@@ -1,4 +1,5 @@
 import { isAdmin } from './../../user.js';
+import { isMobile } from '../../RossAscends-mods.js';
 import { renderExtensionTemplateAsync } from '../../extensions.js';
 import { Popup } from '../../popup.js';
 import { executeSlashCommandsWithOptions } from '../../slash-commands.js';
@@ -206,10 +207,51 @@ function fillMultiSelect(select, options, values) {
     for (const option of options) {
         select.append(new Option(option.label, option.value, false, selectedValues.has(option.value)));
     }
+
+    select.val([...selectedValues]);
+
+    if (select.data('select2')) {
+        select.trigger('change.select2');
+    }
 }
 
 function getSelectedValues(select) {
     return normalizeStringArray(select.val());
+}
+
+function syncSelect2(select) {
+    if (select?.data('select2')) {
+        select.trigger('change.select2');
+    }
+}
+
+function initializeLorebookSelect2(panel) {
+    if (isMobile()) {
+        return;
+    }
+
+    const lorebookSelects = [
+        panel.templateAdd,
+        panel.templateRemove,
+        panel.characterTemplates,
+        panel.characterAdd,
+        panel.characterRemove,
+    ];
+
+    for (const select of lorebookSelects) {
+        if (select.data('select2')) {
+            continue;
+        }
+
+        const isTemplateSelector = select.is(panel.characterTemplates);
+        select.select2({
+            width: '100%',
+            placeholder: isTemplateSelector ? 'No templates selected. Click here to select.' : 'No lorebooks selected. Click here to select.',
+            searchInputPlaceholder: isTemplateSelector ? 'Search templates...' : 'Search lorebooks...',
+            allowClear: true,
+            closeOnSelect: false,
+        });
+    }
 }
 
 function setPanelStatus(panel, message, isError = false) {
@@ -220,6 +262,7 @@ function setPanelStatus(panel, message, isError = false) {
 function setPanelBusy(panel, isBusy) {
     panel.busy = isBusy;
     panel.root.find('button, select').prop('disabled', isBusy);
+    panel.root.find('select').each((_, element) => syncSelect2($(element)));
 }
 
 async function postJson(url, body) {
@@ -301,6 +344,8 @@ function renderTemplateEditor(panel) {
     panel.templateRemove.prop('disabled', panel.busy || !hasTemplate || lorebookOptions.length === 0);
     panel.templateRename.prop('disabled', panel.busy || !hasTemplate);
     panel.templateDelete.prop('disabled', panel.busy || !hasTemplate);
+    syncSelect2(panel.templateAdd);
+    syncSelect2(panel.templateRemove);
 }
 
 function renderCharacterEditor(panel) {
@@ -324,6 +369,9 @@ function renderCharacterEditor(panel) {
     panel.characterTemplates.prop('disabled', panel.busy || !hasCharacter || templateOptions.length === 0);
     panel.characterAdd.prop('disabled', panel.busy || !hasCharacter || lorebookOptions.length === 0);
     panel.characterRemove.prop('disabled', panel.busy || !hasCharacter || lorebookOptions.length === 0);
+    syncSelect2(panel.characterTemplates);
+    syncSelect2(panel.characterAdd);
+    syncSelect2(panel.characterRemove);
 }
 
 function renderCompiledPreview(panel) {
@@ -613,6 +661,7 @@ async function ensureHiddenTemplatesPanel() {
         busy: false,
     };
 
+    initializeLorebookSelect2(hiddenTemplatesPanel);
     bindHiddenTemplatesPanelEvents(hiddenTemplatesPanel);
     return hiddenTemplatesPanel;
 }

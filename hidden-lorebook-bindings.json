@@ -1,12 +1,7 @@
 {
     "characters": {
-        "ExampleCharacter": [
-            "Admin Only Lorebook",
-            "Shared Secrets"
-        ],
-        "char_a": [
-            "Hidden",
-            "VisibleExtra"
+        "Gage": [
+            "9Z Universal Commands"
         ]
     }
 }

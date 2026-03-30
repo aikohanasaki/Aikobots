@@ -1,4 +1,21 @@
 {
-    "templates": {},
-    "characters": {}
+    "templates": {
+        "Universal Commands": {
+            "add": [
+                "9Z Universal Commands"
+            ],
+            "remove": [
+                "LTM - Gage Testing"
+            ]
+        }
+    },
+    "characters": {
+        "Gage": {
+            "templates": [
+                "Universal Commands"
+            ],
+            "add": [],
+            "remove": []
+        }
+    }
 }
