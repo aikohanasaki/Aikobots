@@ -45,6 +45,7 @@ import { router as speechRouter } from './endpoints/speech.js';
 import { router as azureRouter } from './endpoints/azure.js';
 import { router as minimaxRouter } from './endpoints/minimax.js';
 import { router as dataMaidRouter } from './endpoints/data-maid.js';
+import { router as characterSubmissionsRouter } from './endpoints/character-submissions.js';
 
 /**
  * @typedef {object} ServerStartupResult
@@ -150,6 +151,7 @@ export function setupPrivateEndpoints(app) {
     app.use('/api/assets', assetsRouter);
     app.use('/api/files', filesRouter);
     app.use('/api/characters', charactersRouter);
+    app.use('/api/character-submissions', characterSubmissionsRouter);
     app.use('/api/chats', chatsRouter);
     app.use('/api/groups', groupsRouter);
     app.use('/api/worldinfo', worldInfoRouter);

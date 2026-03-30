@@ -70,6 +70,7 @@ async function getCurrentUser() {
 
         currentUser = await response.json();
         $('#admin_button').toggle(accountsEnabled && isAdmin());
+        $('.character_distribute_button').css('display', isAdmin() ? 'flex' : 'none');
     } catch (error) {
         console.error('Error getting current user:', error);
     }
@@ -93,6 +94,477 @@ async function getUsers() {
         return response.json();
     } catch (error) {
         console.error('Error getting users:', error);
+    }
+}
+
+/**
+ * Gets character submissions visible to the current user.
+ * @param {string} [status]
+ * @returns {Promise<object[]>}
+ */
+async function getCharacterSubmissions(status = '') {
+    try {
+        const response = await fetch('/api/character-submissions/list', {
+            method: 'POST',
+            headers: getRequestHeaders(),
+            body: JSON.stringify(status ? { status } : {}),
+        });
+
+        if (!response.ok) {
+            throw new Error('Failed to get character submissions');
+        }
+
+        return await response.json();
+    } catch (error) {
+        console.error('Error getting character submissions:', error);
+        return [];
+    }
+}
+
+/**
+ * Submits an existing character card for admin review.
+ * @param {string} sourceAvatar
+ * @returns {Promise<object | null>}
+ */
+async function submitCharacterSubmission(sourceAvatar) {
+    try {
+        const avatar = String(sourceAvatar || '').trim();
+        if (!avatar) {
+            throw new Error('Choose a character first.');
+        }
+
+        const response = await fetch('/api/character-submissions/submit', {
+            method: 'POST',
+            headers: getRequestHeaders(),
+            body: JSON.stringify({ sourceAvatar: avatar }),
+        });
+
+        const data = await response.json().catch(() => ({}));
+        if (!response.ok) {
+            throw new Error(data?.error || 'Failed to submit character');
+        }
+
+        return data;
+    } catch (error) {
+        console.error('Error submitting character:', error);
+        toastr.error(error.message || 'Unknown error', 'Failed to submit character');
+        return null;
+    }
+}
+
+/**
+ * Sends a review action for a submission.
+ * @param {object} payload
+ * @returns {Promise<object | null>}
+ */
+async function reviewCharacterSubmission(payload) {
+    try {
+        const response = await fetch('/api/character-submissions/review', {
+            method: 'POST',
+            headers: getRequestHeaders(),
+            body: JSON.stringify(payload),
+        });
+
+        const data = await response.json().catch(() => ({}));
+        if (!response.ok) {
+            throw new Error(data?.error || 'Failed to review character submission');
+        }
+
+        return data;
+    } catch (error) {
+        console.error('Error reviewing submission:', error);
+        toastr.error(error.message || 'Unknown error', 'Submission review failed');
+        return null;
+    }
+}
+
+/**
+ * Sends a distribution request for a character.
+ * @param {object} payload
+ * @returns {Promise<object | null>}
+ */
+async function distributeCharacterRequest(payload) {
+    try {
+        const response = await fetch('/api/characters/distribute', {
+            method: 'POST',
+            headers: getRequestHeaders(),
+            body: JSON.stringify(payload),
+        });
+
+        const data = await response.json().catch(() => ({}));
+        if (!response.ok) {
+            throw new Error(data?.error || 'Failed to distribute character');
+        }
+
+        return data;
+    } catch (error) {
+        console.error('Error distributing character:', error);
+        toastr.error(error.message || 'Unknown error', 'Character distribution failed');
+        return null;
+    }
+}
+
+/**
+ * Builds a user checklist for distribution/review dialogs.
+ * @param {import('../../src/users.js').UserViewModel[]} users
+ * @param {string[]} [selectedHandles]
+ * @returns {JQuery<HTMLElement>}
+ */
+function buildUserChecklist(users, selectedHandles = []) {
+    const wrapper = $('<div class="flex-container flexFlowColumn flexGap5"></div>');
+
+    for (const user of users) {
+        const label = $('<label class="flex-container alignItemsCenter flexGap10"></label>');
+        const input = $('<input type="checkbox" class="distribution-target">')
+            .val(user.handle)
+            .prop('checked', selectedHandles.includes(user.handle));
+
+        label.append(input);
+        label.append($('<span></span>').text(user.name));
+        label.append($('<small class="opacity50p"></small>').text(user.handle));
+        wrapper.append(label);
+    }
+
+    return wrapper;
+}
+
+/**
+ * Gets the currently-selected handles from a checklist container.
+ * @param {JQuery<HTMLElement>} container
+ * @returns {string[]}
+ */
+function getSelectedHandles(container) {
+    return container.find('.distribution-target:checked').map((_, element) => String($(element).val())).get();
+}
+
+/**
+ * Creates a human-friendly submission status label.
+ * @param {string} status
+ * @returns {string}
+ */
+function getSubmissionStatusLabel(status) {
+    switch (status) {
+        case 'approved':
+            return 'Approved';
+        case 'rejected':
+            return 'Rejected';
+        default:
+            return 'Pending Review';
+    }
+}
+
+/**
+ * Renders a submission card.
+ * @param {object} submission
+ * @param {object} [options]
+ * @param {boolean} [options.admin=false]
+ * @param {function} [options.onReview]
+ * @returns {JQuery<HTMLElement>}
+ */
+function buildSubmissionCard(submission, { admin = false, onReview = null } = {}) {
+    const card = $(`
+        <div class="submission_card flex-container flexGap10 alignItemsFlexStart">
+            <img class="submission_preview" alt="Character preview">
+            <div class="flex1 flex-container flexFlowColumn flexNoGap">
+                <div class="flex-container alignItemsCenter flexGap10">
+                    <h3 class="submission_name margin0"></h3>
+                    <small class="submission_status opacity50p"></small>
+                </div>
+                <div class="submission_meta">
+                    <div><span>Owner:</span> <span class="submission_owner"></span></div>
+                    <div><span>Submitted:</span> <span class="submission_submitted"></span></div>
+                    <div class="submission_reviewed_row"><span>Reviewed:</span> <span class="submission_reviewed"></span></div>
+                    <div class="submission_publish_row"><span>Published As:</span> <span class="submission_published"></span></div>
+                    <div class="submission_targets_row"><span>Targets:</span> <span class="submission_targets"></span></div>
+                </div>
+                <div class="submission_notes"></div>
+                <div class="submission_tags opacity50p"></div>
+            </div>
+            <div class="submission_actions flex-container flexFlowColumn"></div>
+        </div>
+    `);
+
+    card.find('.submission_preview').attr('src', submission.previewUrl);
+    card.find('.submission_name').text(submission.characterName || submission.submittedFilename || submission.id);
+    card.find('.submission_status').text(getSubmissionStatusLabel(submission.status));
+    card.find('.submission_owner').text(submission.ownerHandle);
+    card.find('.submission_submitted').text(new Date(submission.submittedAt).toLocaleString());
+    card.find('.submission_reviewed_row').toggle(Boolean(submission.reviewedAt));
+    card.find('.submission_reviewed').text(submission.reviewedAt ? `${new Date(submission.reviewedAt).toLocaleString()} by ${submission.reviewedBy || 'Unknown'}` : '');
+    card.find('.submission_publish_row').toggle(Boolean(submission.publishedFilename));
+    card.find('.submission_published').text(submission.publishedFilename || '');
+    card.find('.submission_targets_row').toggle(Array.isArray(submission.targetHandles) && submission.targetHandles.length > 0);
+    card.find('.submission_targets').text(Array.isArray(submission.targetHandles) ? submission.targetHandles.join(', ') : '');
+    card.find('.submission_notes')
+        .toggle(Boolean(submission.reviewNote || submission.creatorNotes))
+        .append(Boolean(submission.creatorNotes) ? $('<div class="submission_review_note"></div>').text(submission.creatorNotes) : '')
+        .append(Boolean(submission.reviewNote) ? $('<div class="submission_review_note opacity50p"></div>').text(`Review note: ${submission.reviewNote}`) : '');
+    card.find('.submission_tags').toggle(Array.isArray(submission.tags) && submission.tags.length > 0).text(Array.isArray(submission.tags) ? submission.tags.join(', ') : '');
+
+    if (admin && submission.status === 'pending' && typeof onReview === 'function') {
+        const reviewButton = $('<div class="menu_button menu_button_icon"><i class="fa-fw fa-solid fa-gavel"></i><span>Review</span></div>');
+        reviewButton.on('click', () => onReview(submission));
+        card.find('.submission_actions').append(reviewButton);
+    }
+
+    return card;
+}
+
+/**
+ * Renders a list of submission cards into a container.
+ * @param {JQuery<HTMLElement>} container
+ * @param {object[]} submissions
+ * @param {object} [options]
+ * @param {boolean} [options.admin=false]
+ * @param {function} [options.onReview]
+ */
+function renderSubmissionCards(container, submissions, { admin = false, onReview = null } = {}) {
+    container.empty();
+
+    if (!submissions.length) {
+        container.append('<div class="opacity50p">No submissions found.</div>');
+        return;
+    }
+
+    for (const submission of submissions) {
+        container.append(buildSubmissionCard(submission, { admin, onReview }));
+    }
+}
+
+/**
+ * Opens the user's submission status list.
+ * @returns {Promise<void>}
+ */
+async function openMySubmissionsPopup() {
+    const submissions = await getCharacterSubmissions();
+    const container = $('<div class="flex-container flexFlowColumn flexGap10"></div>');
+    container.append('<h3 class="margin0">My Submissions</h3>');
+    const list = $('<div class="flex-container flexFlowColumn flexGap10"></div>');
+    container.append(list);
+    renderSubmissionCards(list, submissions);
+    callGenericPopup(container, POPUP_TYPE.TEXT, '', { okButton: 'Close', wide: true, allowVerticalScrolling: true });
+}
+
+/**
+ * Submits the selected character for review.
+ * @param {{ name?: string, avatar?: string }} character
+ * @returns {Promise<object | null>}
+ */
+export async function submitSelectedCharacterForReview(character) {
+    const avatar = String(character?.avatar || '').trim();
+    if (!avatar || avatar === 'none') {
+        toastr.error('Choose a saved character first.', 'Submission unavailable');
+        return null;
+    }
+
+    const displayName = String(character?.name || avatar);
+    const container = $('<div class="flex-container flexFlowColumn flexGap10"></div>');
+    container.append('<h3 class="margin0">Submit Character</h3>');
+    const text = $('<div></div>');
+    text.append(document.createTextNode('Submit '));
+    text.append($('<strong></strong>').text(displayName));
+    text.append(document.createTextNode(' for admin review and distribution?'));
+    container.append(text);
+
+    const result = await callGenericPopup(container, POPUP_TYPE.CONFIRM, '', {
+        okButton: 'Submit',
+        cancelButton: 'Cancel',
+    });
+    if (result !== POPUP_RESULT.AFFIRMATIVE) {
+        return null;
+    }
+
+    const submission = await submitCharacterSubmission(avatar);
+    if (!submission) {
+        return null;
+    }
+
+    toastr.success(`Submitted ${submission.submittedFilename}`, 'Character submitted');
+    return submission;
+}
+
+/**
+ * Opens the review dialog for an admin.
+ * @param {object} submission
+ * @param {function} callback
+ * @returns {Promise<void>}
+ */
+async function openSubmissionReviewPopup(submission, callback) {
+    const users = (await getUsers() || []).filter(user => user.enabled);
+    let publishMode = 'selected';
+    let reviewNote = String(submission.reviewNote || '');
+    let publishedFilename = String((submission.publishedFilename || submission.characterName || submission.submittedFilename || '').replace(/\.png$/i, ''));
+    const checklist = buildUserChecklist(users, submission.targetHandles || []);
+
+    const container = $(`
+        <div class="flex-container flexFlowColumn flexGap10">
+            <div class="flex-container flexGap10 alignItemsFlexStart">
+                <img class="submission_preview" alt="Character preview">
+                <div class="flex1">
+                    <h3 class="margin0 submission-title"></h3>
+                    <div class="opacity50p">Owner: <span class="submission-owner"></span></div>
+                </div>
+            </div>
+            <label class="flex-container flexFlowColumn flexNoGap">
+                <span>Publish Mode</span>
+                <select class="text_pole review-publish-mode">
+                    <option value="selected">Selected Users</option>
+                    <option value="global">Global</option>
+                </select>
+            </label>
+            <label class="flex-container flexFlowColumn flexNoGap">
+                <span>Published Filename</span>
+                <input class="text_pole review-published-filename" type="text">
+            </label>
+            <div class="review-targets-block flex-container flexFlowColumn flexGap5">
+                <span>Recipients</span>
+            </div>
+            <label class="flex-container flexFlowColumn flexNoGap">
+                <span>Review Note</span>
+                <textarea class="text_pole review-note" rows="3"></textarea>
+            </label>
+        </div>
+    `);
+
+    container.find('.submission_preview').attr('src', submission.previewUrl);
+    container.find('.submission-title').text(submission.characterName || submission.submittedFilename);
+    container.find('.submission-owner').text(submission.ownerHandle);
+    container.find('.review-publish-mode').val(publishMode).on('change', function () {
+        publishMode = String($(this).val());
+        container.find('.review-targets-block').toggle(publishMode === 'selected');
+    });
+    container.find('.review-published-filename').val(publishedFilename).on('input', function () {
+        publishedFilename = String($(this).val());
+    });
+    container.find('.review-note').val(reviewNote).on('input', function () {
+        reviewNote = String($(this).val());
+    });
+    container.find('.review-targets-block').append(checklist).toggle(publishMode === 'selected');
+
+    const result = await callGenericPopup(container, POPUP_TYPE.CONFIRM, '', {
+        okButton: 'Approve & Publish',
+        cancelButton: 'Cancel',
+        wide: true,
+        allowVerticalScrolling: true,
+        customButtons: [{
+            text: 'Reject',
+            result: POPUP_RESULT.CUSTOM1,
+            classes: ['warning'],
+        }],
+    });
+
+    if (result === POPUP_RESULT.CANCELLED || result === POPUP_RESULT.NEGATIVE) {
+        return;
+    }
+
+    if (result === POPUP_RESULT.CUSTOM1) {
+        const rejected = await reviewCharacterSubmission({
+            id: submission.id,
+            action: 'reject',
+            reviewNote,
+        });
+
+        if (rejected) {
+            toastr.success('Submission rejected', 'Review updated');
+            callback();
+        }
+        return;
+    }
+
+    const targetHandles = getSelectedHandles(checklist);
+    if (publishMode === 'selected' && targetHandles.length === 0) {
+        toastr.error('Choose at least one recipient.', 'Review cancelled');
+        return;
+    }
+
+    const approved = await reviewCharacterSubmission({
+        id: submission.id,
+        action: 'approve',
+        publishMode,
+        targetHandles,
+        publishedFilename,
+        reviewNote,
+    });
+
+    if (approved) {
+        toastr.success(`Published ${approved.publishedFilename || approved.characterName}`, 'Submission approved');
+        callback();
+    }
+}
+
+/**
+ * Opens the admin distribution popup for an existing character card.
+ * @param {{ name: string, avatar: string }} character
+ * @returns {Promise<void>}
+ */
+export async function openCharacterDistributePopup(character) {
+    if (!isAdmin()) {
+        return;
+    }
+
+    const users = (await getUsers() || []).filter(user => user.enabled);
+    let publishMode = 'selected';
+    let publishedFilename = String(character?.name || '').trim();
+    const checklist = buildUserChecklist(users);
+
+    const container = $(`
+        <div class="flex-container flexFlowColumn flexGap10">
+            <h3 class="margin0">Distribute Character</h3>
+            <div class="opacity50p distribute-character-name"></div>
+            <label class="flex-container flexFlowColumn flexNoGap">
+                <span>Publish Mode</span>
+                <select class="text_pole distribute-publish-mode">
+                    <option value="selected">Selected Users</option>
+                    <option value="global">Global</option>
+                </select>
+            </label>
+            <label class="flex-container flexFlowColumn flexNoGap">
+                <span>Published Filename</span>
+                <input class="text_pole distribute-published-filename" type="text">
+            </label>
+            <div class="distribute-targets-block flex-container flexFlowColumn flexGap5">
+                <span>Recipients</span>
+            </div>
+        </div>
+    `);
+
+    container.find('.distribute-character-name').text(`${character.name} (${character.avatar})`);
+    container.find('.distribute-publish-mode').val(publishMode).on('change', function () {
+        publishMode = String($(this).val());
+        container.find('.distribute-targets-block').toggle(publishMode === 'selected');
+    });
+    container.find('.distribute-published-filename').val(publishedFilename).on('input', function () {
+        publishedFilename = String($(this).val());
+    });
+    container.find('.distribute-targets-block').append(checklist).toggle(publishMode === 'selected');
+
+    const result = await callGenericPopup(container, POPUP_TYPE.CONFIRM, '', {
+        okButton: 'Distribute',
+        cancelButton: 'Cancel',
+        wide: true,
+        allowVerticalScrolling: true,
+    });
+
+    if (result !== POPUP_RESULT.AFFIRMATIVE) {
+        return;
+    }
+
+    const targetHandles = getSelectedHandles(checklist);
+    if (publishMode === 'selected' && targetHandles.length === 0) {
+        toastr.error('Choose at least one recipient.', 'Distribution cancelled');
+        return;
+    }
+
+    const distribution = await distributeCharacterRequest({
+        sourceType: 'character',
+        sourceAvatar: character.avatar,
+        publishMode,
+        targetHandles,
+        publishedFilename,
+    });
+
+    if (distribution) {
+        toastr.success(`Distributed ${distribution.publishedFilename}`, 'Character published');
     }
 }
 
@@ -681,6 +1153,7 @@ async function openUserProfile() {
     template.find('.hasPassword').toggle(currentUser.password);
     template.find('.noPassword').toggle(!currentUser.password);
     template.find('.userSettingsSnapshotsButton').on('click', () => viewSettingsSnapshots());
+    template.find('.userSubmissionsButton').on('click', () => openMySubmissionsPopup());
     template.find('.userChangeNameButton').on('click', async () => changeName(currentUser.handle, currentUser.name, async () => {
         await getCurrentUser();
         template.find('.userName').text(currentUser.name);
@@ -823,6 +1296,14 @@ async function openAdminPanel() {
         }
     }
 
+    async function renderSubmissions() {
+        const submissions = await getCharacterSubmissions();
+        renderSubmissionCards(template.find('.submissionsList'), submissions, {
+            admin: true,
+            onReview: (submission) => openSubmissionReviewPopup(submission, renderSubmissions),
+        });
+    }
+
     const template = $(await renderTemplateAsync('admin'));
 
     template.find('.adminNav > button').on('click', function () {
@@ -848,9 +1329,12 @@ async function openAdminPanel() {
             renderUsers();
         });
     });
+    template.find('.manageSubmissionsButton').on('click', () => renderSubmissions());
+    template.find('.refreshSubmissionQueueButton').on('click', () => renderSubmissions());
 
     callGenericPopup(template, POPUP_TYPE.TEXT, '', { okButton: 'Close', wide: false, large: false, allowVerticalScrolling: true, allowHorizontalScrolling: false });
     renderUsers();
+    renderSubmissions();
 }
 
 /**

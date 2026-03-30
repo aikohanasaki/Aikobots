@@ -150,5 +150,9 @@
     {
         "filename": "presets/reasoning/OpenAI Harmony.json",
         "type": "reasoning"
+    },
+    {
+        "filename": "characters/Gage.png",
+        "type": "character"
     }
 ]

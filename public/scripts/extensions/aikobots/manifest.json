@@ -4,7 +4,7 @@
     "requires": [],
     "optional": [],
     "js": "aikobots.js",
-    "css": "",
+    "css": "aikobots.css",
     "author": "aikohanasaki",
     "version": "2.0.0",
     "homePage": "https://github.com/aikohanasaki/aikobots"

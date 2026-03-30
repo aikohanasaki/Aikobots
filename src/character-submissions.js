@@ -1,0 +1,453 @@
+import path from 'node:path';
+import fs from 'node:fs';
+import { promises as fsPromises } from 'node:fs';
+import crypto from 'node:crypto';
+
+import _ from 'lodash';
+import sanitize from 'sanitize-filename';
+import { sync as writeFileAtomicSync } from 'write-file-atomic';
+
+import { parse, write } from './character-card-parser.js';
+import { invalidateThumbnail } from './endpoints/thumbnails.js';
+import { getAllEnabledUsers, getUserDirectories } from './users.js';
+import { serverDirectory } from './server-directory.js';
+
+export const SUBMISSION_STATUSES = Object.freeze({
+    PENDING: 'pending',
+    APPROVED: 'approved',
+    REJECTED: 'rejected',
+});
+
+export const PUBLISH_MODES = Object.freeze({
+    SELECTED: 'selected',
+    GLOBAL: 'global',
+});
+
+export const DISTRIBUTION_SOURCE_TYPES = Object.freeze({
+    CHARACTER: 'character',
+    SUBMISSION: 'submission',
+});
+
+const DEFAULT_CONTENT_ROOT = path.join(serverDirectory, 'default', 'content');
+const DEFAULT_CONTENT_INDEX = path.join(DEFAULT_CONTENT_ROOT, 'index.json');
+
+/**
+ * Gets the submission root directory.
+ * @returns {string}
+ */
+function getSubmissionsRoot() {
+    return path.join(path.resolve(String(globalThis.DATA_ROOT || '.')), '_system', 'character-submissions');
+}
+
+/**
+ * @typedef {object} SubmissionRecord
+ * @property {string} id
+ * @property {'pending'|'approved'|'rejected'} status
+ * @property {string} ownerHandle
+ * @property {number} submittedAt
+ * @property {string} submittedFilename
+ * @property {number | null} reviewedAt
+ * @property {string | null} reviewedBy
+ * @property {string} reviewNote
+ * @property {'selected'|'global'|null} publishMode
+ * @property {string[]} targetHandles
+ * @property {string | null} publishedFilename
+ */
+
+/**
+ * Ensures the submission store exists.
+ * @returns {Promise<void>}
+ */
+export async function ensureSubmissionStore() {
+    await fsPromises.mkdir(getSubmissionsRoot(), { recursive: true });
+}
+
+/**
+ * Gets the submission paths for a submission id.
+ * @param {string} submissionId
+ * @returns {{basePath: string, cardPath: string, recordPath: string}}
+ */
+export function getSubmissionPaths(submissionId) {
+    const basePath = path.join(getSubmissionsRoot(), submissionId);
+    return {
+        basePath,
+        cardPath: path.join(basePath, 'card.png'),
+        recordPath: path.join(basePath, 'record.json'),
+    };
+}
+
+/**
+ * Normalizes a user-provided character file name.
+ * @param {string | undefined | null} value
+ * @param {string} fallback
+ * @returns {string}
+ */
+export function normalizeCharacterFileName(value, fallback = 'character') {
+    const parsedName = path.parse(String(value || fallback)).name || fallback;
+    const sanitizedName = sanitize(parsedName).trim();
+
+    if (!sanitizedName) {
+        throw new Error('Invalid character file name.');
+    }
+
+    return sanitizedName;
+}
+
+/**
+ * Reads the PNG card and parsed JSON metadata.
+ * @param {string} filePath
+ * @returns {Promise<{ rawBuffer: Buffer, card: object }>}
+ */
+async function readCharacterCardFile(filePath) {
+    const [rawBuffer, rawCard] = await Promise.all([
+        fsPromises.readFile(filePath),
+        parse(filePath, 'png'),
+    ]);
+
+    return {
+        rawBuffer,
+        card: JSON.parse(rawCard),
+    };
+}
+
+/**
+ * Writes a card object back into a PNG.
+ * @param {Buffer} rawBuffer
+ * @param {object} card
+ * @param {string} outputPath
+ * @returns {Promise<void>}
+ */
+async function writeCharacterCardFile(rawBuffer, card, outputPath) {
+    await fsPromises.mkdir(path.dirname(outputPath), { recursive: true });
+    const outputBuffer = write(rawBuffer, JSON.stringify(card));
+    writeFileAtomicSync(outputPath, outputBuffer);
+}
+
+/**
+ * Gets the character name stored in the card data.
+ * @param {object} card
+ * @returns {string}
+ */
+function getCharacterName(card) {
+    return String(_.get(card, 'data.name', _.get(card, 'name', '')) || '');
+}
+
+/**
+ * Gets the favorite state stored in a card.
+ * @param {object} card
+ * @returns {boolean}
+ */
+function getFavoriteState(card) {
+    return Boolean(_.get(card, 'data.extensions.fav', _.get(card, 'fav', false)));
+}
+
+/**
+ * Sets the favorite state in a card.
+ * @param {object} card
+ * @param {boolean} favorite
+ */
+function setFavoriteState(card, favorite) {
+    _.set(card, 'fav', favorite);
+    _.set(card, 'data.extensions.fav', favorite);
+}
+
+/**
+ * Removes chat/private session fields before sharing.
+ * @param {object} card
+ */
+function stripPrivateShareFields(card) {
+    _.unset(card, 'chat');
+    _.unset(card, 'data.extensions.chat');
+}
+
+/**
+ * Sets ownership metadata on a card.
+ * @param {object} card
+ * @param {{ ownerHandle: string, submissionId: string }} params
+ */
+function setSubmissionMetadata(card, { ownerHandle, submissionId }) {
+    _.set(card, 'data.extensions.aikobots.owner_handle', ownerHandle);
+    _.set(card, 'data.extensions.aikobots.submission_id', submissionId);
+}
+
+/**
+ * Gets the ownership metadata stored on a card.
+ * @param {object} card
+ * @returns {string}
+ */
+function getSubmissionOwnerHandle(card) {
+    return String(_.get(card, 'data.extensions.aikobots.owner_handle', '') || '').trim();
+}
+
+/**
+ * Writes/updates the managed content index for globally-published characters.
+ * @param {string} relativeFilename
+ * @returns {Promise<void>}
+ */
+async function upsertDefaultContentCharacter(relativeFilename) {
+    await fsPromises.mkdir(path.dirname(DEFAULT_CONTENT_INDEX), { recursive: true });
+
+    /** @type {{filename: string, type: string}[]} */
+    let contentIndex = [];
+    if (fs.existsSync(DEFAULT_CONTENT_INDEX)) {
+        try {
+            const raw = await fsPromises.readFile(DEFAULT_CONTENT_INDEX, 'utf8');
+            const parsed = JSON.parse(raw);
+            if (Array.isArray(parsed)) {
+                contentIndex = parsed;
+            }
+        } catch (error) {
+            console.warn('Failed to read default content index. Recreating it.', error);
+        }
+    }
+
+    const existingIndex = contentIndex.findIndex(item => item.filename === relativeFilename);
+    if (existingIndex === -1) {
+        contentIndex.push({ filename: relativeFilename, type: 'character' });
+    } else {
+        contentIndex[existingIndex].type = 'character';
+    }
+
+    writeFileAtomicSync(DEFAULT_CONTENT_INDEX, JSON.stringify(contentIndex, null, 4));
+}
+
+/**
+ * Resolves enabled publish targets. Falls back to the acting user in single-user mode.
+ * @param {string} actingUserHandle
+ * @returns {Promise<string[]>}
+ */
+async function getEnabledPublishTargets(actingUserHandle) {
+    const users = await getAllEnabledUsers();
+    const handles = users.map(user => user.handle);
+    return handles.length > 0 ? handles : [actingUserHandle];
+}
+
+/**
+ * Validates selected targets against enabled users.
+ * @param {string[]} targetHandles
+ * @param {string} actingUserHandle
+ * @returns {Promise<string[]>}
+ */
+async function validateSelectedTargets(targetHandles, actingUserHandle) {
+    const requested = [...new Set((Array.isArray(targetHandles) ? targetHandles : []).map(handle => String(handle || '').trim()).filter(Boolean))];
+    if (requested.length === 0) {
+        throw new Error('At least one target user is required.');
+    }
+
+    const enabledHandles = new Set(await getEnabledPublishTargets(actingUserHandle));
+    const invalidHandles = requested.filter(handle => !enabledHandles.has(handle));
+    if (invalidHandles.length > 0) {
+        throw new Error(`Invalid or disabled target users: ${invalidHandles.join(', ')}`);
+    }
+
+    return requested;
+}
+
+/**
+ * Copies a character to a destination while preserving/overriding the favorite state.
+ * @param {string} sourcePath
+ * @param {string} destinationPath
+ * @param {boolean} favoriteState
+ * @returns {Promise<void>}
+ */
+async function copyCharacterCard(sourcePath, destinationPath, favoriteState) {
+    const { rawBuffer, card } = await readCharacterCardFile(sourcePath);
+    setFavoriteState(card, favoriteState);
+    stripPrivateShareFields(card);
+    await writeCharacterCardFile(rawBuffer, card, destinationPath);
+}
+
+/**
+ * Gets a submission record by id.
+ * @param {string} submissionId
+ * @returns {Promise<SubmissionRecord>}
+ */
+export async function getSubmissionRecord(submissionId) {
+    const { recordPath } = getSubmissionPaths(submissionId);
+    const raw = await fsPromises.readFile(recordPath, 'utf8');
+    return JSON.parse(raw);
+}
+
+/**
+ * Writes a submission record to disk.
+ * @param {SubmissionRecord} record
+ * @returns {Promise<void>}
+ */
+export async function writeSubmissionRecord(record) {
+    const { basePath, recordPath } = getSubmissionPaths(record.id);
+    await fsPromises.mkdir(basePath, { recursive: true });
+    writeFileAtomicSync(recordPath, JSON.stringify(record, null, 4));
+}
+
+/**
+ * Creates a new character submission from an uploaded PNG.
+ * @param {{ uploadPath: string, ownerHandle: string, originalFilename: string }} params
+ * @returns {Promise<SubmissionRecord>}
+ */
+export async function createCharacterSubmission({ uploadPath, ownerHandle, originalFilename }) {
+    await ensureSubmissionStore();
+
+    const submissionId = crypto.randomUUID();
+    const submittedFilename = `${normalizeCharacterFileName(originalFilename, 'character')}.png`;
+    const { basePath, cardPath } = getSubmissionPaths(submissionId);
+    const { rawBuffer, card } = await readCharacterCardFile(uploadPath);
+    const existingOwnerHandle = getSubmissionOwnerHandle(card);
+
+    if (existingOwnerHandle && existingOwnerHandle !== ownerHandle) {
+        throw new Error(`This character is owned by ${existingOwnerHandle} and cannot be submitted by ${ownerHandle}.`);
+    }
+
+    setSubmissionMetadata(card, { ownerHandle, submissionId });
+    setFavoriteState(card, false);
+    stripPrivateShareFields(card);
+
+    await fsPromises.mkdir(basePath, { recursive: true });
+    await writeCharacterCardFile(rawBuffer, card, cardPath);
+
+    /** @type {SubmissionRecord} */
+    const record = {
+        id: submissionId,
+        status: SUBMISSION_STATUSES.PENDING,
+        ownerHandle,
+        submittedAt: Date.now(),
+        submittedFilename,
+        reviewedAt: null,
+        reviewedBy: null,
+        reviewNote: '',
+        publishMode: null,
+        targetHandles: [],
+        publishedFilename: null,
+    };
+
+    await writeSubmissionRecord(record);
+    return record;
+}
+
+/**
+ * Persists the character ownership metadata back to a source character file.
+ * @param {{ filePath: string, ownerHandle: string }} params
+ * @returns {Promise<void>}
+ */
+export async function persistCharacterSubmissionOwner({ filePath, ownerHandle }) {
+    const { rawBuffer, card } = await readCharacterCardFile(filePath);
+    const existingOwnerHandle = getSubmissionOwnerHandle(card);
+
+    if (existingOwnerHandle && existingOwnerHandle !== ownerHandle) {
+        throw new Error(`This character is owned by ${existingOwnerHandle} and cannot be submitted by ${ownerHandle}.`);
+    }
+
+    if (existingOwnerHandle === ownerHandle) {
+        return;
+    }
+
+    _.set(card, 'data.extensions.aikobots.owner_handle', ownerHandle);
+    await writeCharacterCardFile(rawBuffer, card, filePath);
+}
+
+/**
+ * Gets the card preview/summary metadata for a submission.
+ * @param {SubmissionRecord} record
+ * @returns {Promise<object>}
+ */
+export async function buildSubmissionSummary(record) {
+    const { cardPath } = getSubmissionPaths(record.id);
+    const { card } = await readCharacterCardFile(cardPath);
+
+    return {
+        ...record,
+        characterName: getCharacterName(card),
+        creator: String(_.get(card, 'data.creator', _.get(card, 'creator', '')) || ''),
+        creatorNotes: String(_.get(card, 'data.creator_notes', _.get(card, 'creatorcomment', '')) || ''),
+        tags: _.get(card, 'data.tags', _.get(card, 'tags', [])) || [],
+        ownerMetadata: String(_.get(card, 'data.extensions.aikobots.owner_handle', '')),
+    };
+}
+
+/**
+ * Lists submissions from the store.
+ * @returns {Promise<SubmissionRecord[]>}
+ */
+export async function listSubmissionRecords() {
+    await ensureSubmissionStore();
+    const entries = await fsPromises.readdir(getSubmissionsRoot(), { withFileTypes: true });
+    const records = [];
+
+    for (const entry of entries) {
+        if (!entry.isDirectory()) {
+            continue;
+        }
+
+        try {
+            const record = await getSubmissionRecord(entry.name);
+            records.push(record);
+        } catch (error) {
+            console.warn(`Skipping unreadable submission record: ${entry.name}`, error);
+        }
+    }
+
+    records.sort((a, b) => Number(b.submittedAt || 0) - Number(a.submittedAt || 0));
+    return records;
+}
+
+/**
+ * Determines whether a user can access a submission.
+ * @param {SubmissionRecord} record
+ * @param {{ handle: string, admin: boolean }} user
+ * @returns {boolean}
+ */
+export function canAccessSubmission(record, user) {
+    return Boolean(user.admin) || record.ownerHandle === user.handle;
+}
+
+/**
+ * Distributes a character PNG to selected users or globally.
+ * @param {{ sourcePath: string, publishedFilename?: string, publishMode: 'selected'|'global', targetHandles?: string[], actingUserHandle: string }} params
+ * @returns {Promise<{ publishedFilename: string, targetHandles: string[] }>}
+ */
+export async function distributeCharacterFile({ sourcePath, publishedFilename, publishMode, targetHandles = [], actingUserHandle }) {
+    if (!fs.existsSync(sourcePath)) {
+        throw new Error('Character source file was not found.');
+    }
+
+    const sourceName = normalizeCharacterFileName(publishedFilename, path.parse(sourcePath).name);
+    const outputFilename = `${sourceName}.png`;
+
+    /** @type {string[]} */
+    let recipients = [];
+    if (publishMode === PUBLISH_MODES.GLOBAL) {
+        recipients = await getEnabledPublishTargets(actingUserHandle);
+    } else if (publishMode === PUBLISH_MODES.SELECTED) {
+        recipients = await validateSelectedTargets(targetHandles, actingUserHandle);
+    } else {
+        throw new Error('Invalid publish mode.');
+    }
+
+    for (const handle of recipients) {
+        const directories = getUserDirectories(handle);
+        const destinationPath = path.join(directories.characters, outputFilename);
+
+        if (path.resolve(sourcePath) === path.resolve(destinationPath)) {
+            continue;
+        }
+
+        let favoriteState = false;
+        if (fs.existsSync(destinationPath)) {
+            const { card } = await readCharacterCardFile(destinationPath);
+            favoriteState = getFavoriteState(card);
+        }
+
+        await copyCharacterCard(sourcePath, destinationPath, favoriteState);
+        invalidateThumbnail(directories, 'avatar', outputFilename);
+    }
+
+    if (publishMode === PUBLISH_MODES.GLOBAL) {
+        const defaultContentPath = path.join(DEFAULT_CONTENT_ROOT, 'characters', outputFilename);
+        await copyCharacterCard(sourcePath, defaultContentPath, false);
+        await upsertDefaultContentCharacter(path.join('characters', outputFilename).replaceAll('\\', '/'));
+    }
+
+    return {
+        publishedFilename: outputFilename,
+        targetHandles: recipients,
+    };
+}

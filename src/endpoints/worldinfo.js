@@ -7,6 +7,11 @@ import { createMacroState, evaluatePromptMacros } from '../prompting/macro-evalu
 import { getRegexedString, regex_placement } from '../prompting/regex-runtime.js';
 import { getHiddenLorebooksForCharacter } from '../hidden-lorebook-bindings.js';
 import {
+    compileAndWriteHiddenLorebookTemplates,
+    readHiddenLorebookTemplates,
+    writeHiddenLorebookTemplates,
+} from '../hidden-lorebook-templates.js';
+import {
     hasLorebookForGeneration,
     LorebookRepositoryError,
     deleteLorebookForManagement,
@@ -18,6 +23,7 @@ import {
     readWorldInfoFile as readUserWorldInfoFile,
     saveLorebookForManagement,
 } from '../lorebook-repository.js';
+import { requireAdminMiddleware } from '../users.js';
 
 export const readWorldInfoFile = readUserWorldInfoFile;
 
@@ -625,6 +631,45 @@ router.post('/demote', async (request, response) => {
         return response.send({ ok: true, ...result });
     } catch (error) {
         return sendLorebookError(response, error);
+    }
+});
+
+router.post('/hidden-templates/get', requireAdminMiddleware, async (_request, response) => {
+    try {
+        const data = readHiddenLorebookTemplates();
+        return response.send({ ok: true, data });
+    } catch (error) {
+        return response.status(500).send({
+            error: {
+                message: String(error?.message || error),
+            },
+        });
+    }
+});
+
+router.post('/hidden-templates/save', requireAdminMiddleware, async (request, response) => {
+    try {
+        const data = writeHiddenLorebookTemplates(request.body ?? {});
+        return response.send({ ok: true, data });
+    } catch (error) {
+        return response.status(500).send({
+            error: {
+                message: String(error?.message || error),
+            },
+        });
+    }
+});
+
+router.post('/hidden-templates/compile', requireAdminMiddleware, async (_request, response) => {
+    try {
+        const result = compileAndWriteHiddenLorebookTemplates();
+        return response.send({ ok: true, ...result });
+    } catch (error) {
+        return response.status(500).send({
+            error: {
+                message: String(error?.message || error),
+            },
+        });
     }
 });
 

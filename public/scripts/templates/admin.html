@@ -3,6 +3,9 @@
         <button type="button" class="manageUsersButton menu_button menu_button_icon" data-target-tab="usersList">
             <h4 data-i18n="Manager Users">Manage Users</h4>
         </button>
+        <button type="button" class="manageSubmissionsButton menu_button menu_button_icon" data-target-tab="submissionQueue">
+            <h4 data-i18n="Submission Queue">Submission Queue</h4>
+        </button>
         <button type="button" class="newUserButton menu_button menu_button_icon" data-target-tab="registerNewUserBlock">
             <h4 data-i18n="New User">New User</h4>
         </button>
@@ -80,6 +83,15 @@
         </div>
     </div>
     <div class="navTab usersList flex-container flexFlowColumn">
+    </div>
+    <div class="navTab submissionQueue flex-container flexFlowColumn" style="display: none;">
+        <div class="flex-container justifyCenter marginBot10">
+            <div class="refreshSubmissionQueueButton menu_button menu_button_icon">
+                <i class="fa-fw fa-solid fa-rotate"></i>
+                <span data-i18n="Refresh Queue">Refresh Queue</span>
+            </div>
+        </div>
+        <div class="submissionsList flex-container flexFlowColumn"></div>
     </div>
     <div class="navTab registerNewUserBlock" style="display: none;">
         <form class="flex-container flexFlowColumn flexGap10 userCreateForm" action="javascript:void(0);">

@@ -194,7 +194,7 @@ router.post('/create', requireAdminMiddleware, async (request, response) => {
         console.info('Creating data directories for', newUser.handle);
         await ensurePublicDirectoriesExist();
         const directories = getUserDirectories(newUser.handle);
-        await checkForNewContent([directories], [CONTENT_TYPES.SETTINGS]);
+        await checkForNewContent([directories], [CONTENT_TYPES.SETTINGS, CONTENT_TYPES.CHARACTER]);
         return response.json({ handle: newUser.handle });
     } catch (error) {
         console.error('User create failed:', error);

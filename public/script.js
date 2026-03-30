@@ -216,7 +216,7 @@ import { BulkEditOverlay } from './scripts/BulkEditOverlay.js';
 import { appendFileContent, hasPendingFileAttachment, populateFileAttachment, decodeStyleTags, encodeStyleTags, isExternalMediaAllowed, preserveNeutralChat, restoreNeutralChat, formatCreatorNotes, initChatUtilities, addDOMPurifyHooks } from './scripts/chats.js';
 import { getPresetManager, initPresetManager } from './scripts/preset-manager.js';
 import { evaluateMacros, getLastMessageId, initMacros, MacrosParser } from './scripts/macros.js';
-import { currentUser, setUserControls } from './scripts/user.js';
+import { currentUser, openCharacterDistributePopup, setUserControls, submitSelectedCharacterForReview } from './scripts/user.js';
 import { POPUP_RESULT, POPUP_TYPE, Popup, callGenericPopup, fixToastrForDialogs } from './scripts/popup.js';
 import { renderTemplate, renderTemplateAsync } from './scripts/templates.js';
 import { initScrapers } from './scripts/scrapers.js';
@@ -927,6 +927,7 @@ function getCharacterBlock(item, id) {
     if (power_user.show_card_avatar_urls) {
         template.find('.ch_avatar_url').text(item.avatar);
     }
+    template.find('.character_distribute_button').css('display', isAdmin() ? 'flex' : 'none');
     template.find('.ch_fav_icon').css('display', 'none');
     template.toggleClass('is_fav', item.fav || item.fav == 'true');
     template.find('.ch_fav').val(item.fav);
@@ -8106,6 +8107,7 @@ export function select_selected_character(chid, { switchMenu = true } = {}) {
     $('#dupe_button').show();
     $('#create_button_label').css('display', 'none');
     $('#char_connections_button').show();
+    $('#submit_character_review_button').css('display', !selected_group ? 'flex' : 'none');
 
     // Hide the chat scenario button if we're peeking the group member defs
     $('#set_chat_character_settings').toggle(!selected_group);
@@ -8198,6 +8200,7 @@ function select_rm_create({ switchMenu = true } = {}) {
     $('#create_button').attr('value', 'Create');
     $('#dupe_button').hide();
     $('#char_connections_button').hide();
+    $('#submit_character_review_button').hide();
 
     //create text poles
     $('#rm_button_back').css('display', '');
@@ -10227,6 +10230,20 @@ jQuery(async function () {
         await selectCharacterById(id);
     });
 
+    $(document).on('click', '.character_distribute_button', async function (event) {
+        event.preventDefault();
+        event.stopPropagation();
+
+        const card = $(this).closest('.character_select');
+        const id = Number(card.attr('data-chid'));
+        if (Number.isNaN(id) || !characters[id]) {
+            toastr.warning('No character selected.');
+            return;
+        }
+
+        await openCharacterDistributePopup(characters[id]);
+    });
+
     $(document).on('click', '.bogus_folder_select', function () {
         const tagId = $(this).attr('tagid');
         console.debug('Bogus folder clicked', tagId);
@@ -11064,6 +11081,16 @@ jQuery(async function () {
         isExportPopupOpen = !isExportPopupOpen;
         $('#export_format_popup').toggle(isExportPopupOpen);
         exportPopper.update();
+    });
+
+    $('#submit_character_review_button').on('click', async function () {
+        if (this_chid === undefined || !characters[this_chid]) {
+            toastr.error('Choose a saved character first.', 'Submission unavailable');
+            return;
+        }
+
+        await createOrEditCharacter();
+        await submitSelectedCharacterForReview(characters[this_chid]);
     });
 
     $(document).on('click', '.export_format', async function () {

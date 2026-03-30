@@ -20,10 +20,11 @@ import { parse, read, write } from '../character-card-parser.js';
 import { readWorldInfoFile } from './worldinfo.js';
 import { invalidateThumbnail } from './thumbnails.js';
 import { importRisuSprites } from './sprites.js';
-import { getUserDirectories } from '../users.js';
+import { getUserDirectories, requireAdminMiddleware } from '../users.js';
 import { getChatInfo } from './chats.js';
 import { ByafParser } from '../byaf.js';
 import cacheBuster from '../middleware/cacheBuster.js';
+import { DISTRIBUTION_SOURCE_TYPES, PUBLISH_MODES, SUBMISSION_STATUSES, distributeCharacterFile, getSubmissionPaths, getSubmissionRecord } from '../character-submissions.js';
 
 // With 100 MB limit it would take roughly 3000 characters to reach this limit
 const memoryCacheCapacity = getConfigValue('performance.memoryCacheCapacity', '100mb');
@@ -1461,6 +1462,56 @@ router.post('/import', async function (request, response) {
     } catch (err) {
         console.error(err);
         response.send({ error: true });
+    }
+});
+
+router.post('/distribute', requireAdminMiddleware, async function (request, response) {
+    try {
+        const sourceType = String(request.body?.sourceType || '').trim();
+        const publishMode = String(request.body?.publishMode || '').trim();
+
+        if (![PUBLISH_MODES.SELECTED, PUBLISH_MODES.GLOBAL].includes(publishMode)) {
+            return response.status(400).json({ error: 'Invalid publish mode.' });
+        }
+
+        /** @type {string} */
+        let sourcePath = '';
+
+        if (sourceType === DISTRIBUTION_SOURCE_TYPES.CHARACTER) {
+            const sourceAvatar = sanitize(String(request.body?.sourceAvatar || ''));
+            if (!sourceAvatar) {
+                return response.status(400).json({ error: 'Missing source character.' });
+            }
+
+            sourcePath = path.join(request.user.directories.characters, sourceAvatar);
+        } else if (sourceType === DISTRIBUTION_SOURCE_TYPES.SUBMISSION) {
+            const submissionId = String(request.body?.submissionId || '').trim();
+            if (!submissionId) {
+                return response.status(400).json({ error: 'Missing submission id.' });
+            }
+
+            const submission = await getSubmissionRecord(submissionId);
+            if (submission.status !== SUBMISSION_STATUSES.APPROVED) {
+                return response.status(409).json({ error: 'Only approved submissions can be distributed.' });
+            }
+
+            sourcePath = getSubmissionPaths(submissionId).cardPath;
+        } else {
+            return response.status(400).json({ error: 'Invalid distribution source.' });
+        }
+
+        const distribution = await distributeCharacterFile({
+            sourcePath,
+            publishedFilename: request.body?.publishedFilename,
+            publishMode,
+            targetHandles: request.body?.targetHandles,
+            actingUserHandle: request.user.profile.handle,
+        });
+
+        return response.json(distribution);
+    } catch (error) {
+        console.error('Character distribution failed', error);
+        return response.status(400).json({ error: error.message || 'Character distribution failed.' });
     }
 });
 

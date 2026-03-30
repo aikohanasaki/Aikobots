@@ -3188,6 +3188,21 @@ input[type=search]:focus::-webkit-search-cancel-button {
     margin-bottom: 6px;
 }
 
+.character_card_actions {
+    margin-left: auto;
+    display: flex;
+    align-items: center;
+    flex: 0 0 auto;
+}
+
+.character_distribute_button {
+    display: none;
+}
+
+body #rm_print_characters_block .character_select .character_distribute_button {
+    display: flex;
+}
+
 .character_name_block_sub_line {
     position: absolute;
     right: 0px;
@@ -3254,6 +3269,33 @@ input[type=search]:focus::-webkit-search-cancel-button {
     overflow: hidden;
     text-wrap: nowrap;
     text-overflow: ellipsis;
+}
+
+#rm_print_characters_block .character_name_block .character_card_actions {
+    flex: 0 0 auto;
+    overflow: visible;
+}
+
+.submission_card {
+    padding: 10px;
+    border-radius: 10px;
+    background-color: var(--black30a);
+}
+
+.submission_preview {
+    width: 72px;
+    height: 108px;
+    object-fit: cover;
+    border-radius: 8px;
+}
+
+.submission_meta {
+    font-size: calc(var(--mainFontSize) * 0.85);
+    color: var(--grey30);
+}
+
+.submission_review_note {
+    white-space: pre-wrap;
 }
 
 .bogus_folder_select:hover,
