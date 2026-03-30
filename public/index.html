@@ -2,7 +2,7 @@
 <html>
 
 <head>
-    <title>Aikobots</title>
+    <title data-i18n="Aikobots">Aikobots</title>
     <base href="/">
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, viewport-fit=cover, initial-scale=1, maximum-scale=1.0, user-scalable=no, interactive-widget=resizes-content">
@@ -673,7 +673,7 @@
                                         </div>
                                         <div id="claude_function_prefill_warning">
                                             <i class="fa-solid fa-circle-info"></i>
-                                            <span>Prefills won't work when function calling is enabled and any tools are registered.</span>
+                                            <span data-i18n="Prefills won't work when function calling is enabled and any tools are registered.">Prefills won't work when function calling is enabled and any tools are registered.</span>
                                         </div>
                                         <label for="claude_use_sysprompt" class="checkbox_label widthFreeExpand">
                                             <input id="claude_use_sysprompt" type="checkbox" />
@@ -737,7 +737,7 @@
                 <div id="API-status-top" class="drawer-icon fa-solid fa-plug-circle-exclamation fa-fw closedIcon" title="API Connections" data-i18n="[title]API Connections;[no_connection_text]api_no_connection" no_connection_text="No connection..."></div>
             </div>
             <div id="rm_api_block" class="drawer-content closedDrawer">
-                <h3 class="margin0" id="title_api">API</h3>
+                <h3 class="margin0" id="title_api" data-i18n="API">API</h3>
                 <div class="flex-container flexFlowColumn">
                     <div id="main-API-selector-block">
                         <select id="main_api">
@@ -962,11 +962,11 @@
                                         <option value="gpt-3.5-turbo-0125">gpt-3.5-turbo-0125 (2024)</option>
                                         <option value="gpt-3.5-turbo-1106">gpt-3.5-turbo-1106 (2023)</option>
                                     </optgroup>
-                                    <optgroup label="Other">
+                                    <optgroup label="Other" data-i18n="[label]Other">
                                         <option value="babbage-002">babbage-002</option>
                                         <option value="davinci-002">davinci-002</option>
                                     </optgroup>
-                                    <optgroup id="openai_external_category" label="External">
+                                    <optgroup id="openai_external_category" label="External" data-i18n="[label]External">
                                     </optgroup>
                                 </select>
                                 <label for="openai_bypass_status_check" class="checkbox_label">
@@ -994,7 +994,7 @@
                             <div>
                                 <h4 data-i18n="Claude Model">Claude Model</h4>
                                 <select id="model_claude_select">
-                                    <optgroup label="Versions">
+                                    <optgroup label="Versions" data-i18n="[label]Versions">
                                         <option value="claude-sonnet-4-5">claude-sonnet-4-5</option>
                                         <option value="claude-sonnet-4-5-20250929">claude-sonnet-4-5-20250929</option>
                                         <option value="claude-haiku-4-5">claude-haiku-4-5</option>
@@ -1182,7 +1182,7 @@
                                     <optgroup label="Robotics-ER">
                                         <option value="gemini-robotics-er-1.5-preview">gemini-robotics-er-1.5-preview</option>
                                     </optgroup>
-                                    <optgroup id="google_other_models" label="Other"></optgroup>
+                                    <optgroup id="google_other_models" label="Other" data-i18n="[label]Other"></optgroup>
                                 </select>
                             </div>
                         </form>
@@ -1225,7 +1225,7 @@
                                         <span data-i18n="Project ID">Project ID:</span>
                                     </label>
                                     <div class="flex-container">
-                                        <input id="vertexai_express_project_id" name="vertexai_express_project_id" class="text_pole flex1" value="" type="text" autocomplete="off" placeholder="Enter your Project ID">
+                                        <input id="vertexai_express_project_id" name="vertexai_express_project_id" class="text_pole flex1" value="" type="text" autocomplete="off" data-i18n="[placeholder]Enter your Project ID" placeholder="Enter your Project ID">
                                     </div>
                                     <div class="toggle-description justifyLeft marginBot5">
                                         <small data-i18n="Project ID is required when selecting regions other than the default (us-central1). You can find this in a model 404 error message.">
@@ -1275,7 +1275,7 @@
                                         <span class="fa-solid fa-circle-question note-link-span"></span>
                                     </a>
                                 </label>
-                                <input id="vertexai_region" name="vertexai_region" class="text_pole flex1" value="us-central1" type="text" autocomplete="off" placeholder="e.g., global, us-central1, europe-west1, asia-northeast1" list="vertexai_region_suggestions">
+                                <input id="vertexai_region" name="vertexai_region" class="text_pole flex1" value="us-central1" type="text" autocomplete="off" data-i18n="[placeholder]e.g., global, us-central1, europe-west1, asia-northeast1" placeholder="e.g., global, us-central1, europe-west1, asia-northeast1" list="vertexai_region_suggestions">
 
                                 <datalist id="vertexai_region_suggestions">
                                     <option value="global">global</option>
@@ -1367,7 +1367,7 @@
                             </select>
                         </div>
                         <div id="siliconflow_form" data-source="siliconflow">
-                            <h4>SiliconFlow API Key</h4>
+                            <h4 data-i18n="SiliconFlow API Key">SiliconFlow API Key</h4>
                             <div class="flex-container">
                                 <input id="api_key_siliconflow" name="api_key_siliconflow" class="text_pole flex1" value="" type="text" autocomplete="off">
                                 <div title="Manage API keys" data-i18n="[title]Manage API keys" class="menu_button fa-solid fa-key fa-fw manage-api-keys" data-key="api_key_siliconflow"></div>
@@ -1375,7 +1375,7 @@
                             <div data-for="api_key_siliconflow" class="neutral_warning" data-i18n="For privacy reasons, your API key will be hidden after you click 'Connect'.">
                                 For privacy reasons, your API key will be hidden after you click 'Connect'.
                             </div>
-                            <h4>SiliconFlow Model</h4>
+                            <h4 data-i18n="SiliconFlow Model">SiliconFlow Model</h4>
                             <select id="model_siliconflow_select">
                                 <option value="" data-i18n="-- Connect to the API --">-- Connect to the API --</option>
                             </select>
@@ -1509,17 +1509,17 @@
                             </div>
                             <h4 data-i18n="Perplexity Model">Perplexity Model</h4>
                             <select id="model_perplexity_select">
-                                <optgroup label="Perplexity Sonar Models">
+                                <optgroup label="Perplexity Sonar Models" data-i18n="[label]Perplexity Sonar Models">
                                     <option value="sonar">sonar</option>
                                     <option value="sonar-pro">sonar-pro</option>
                                     <option value="sonar-reasoning">sonar-reasoning</option>
                                     <option value="sonar-reasoning-pro">sonar-reasoning-pro</option>
                                     <option value="sonar-deep-research">sonar-deep-research</option>
                                 </optgroup>
-                                <optgroup label="Offline Models">
+                                <optgroup label="Offline Models" data-i18n="[label]Offline Models">
                                     <option value="r1-1776">r1-1776</option>
                                 </optgroup>
-                                <optgroup label="Deprecated Models">
+                                <optgroup label="Deprecated Models" data-i18n="[label]Deprecated Models">
                                     <!-- These are scheduled for deprecation after 2/22/2025 -->
                                     <option value="llama-3.1-sonar-small-128k-online">llama-3.1-sonar-small-128k-online</option>
                                     <option value="llama-3.1-sonar-large-128k-online">llama-3.1-sonar-large-128k-online</option>
@@ -1542,7 +1542,7 @@
                             <div>
                                 <h4 data-i18n="Cohere Model">Cohere Model</h4>
                                 <select id="model_cohere_select">
-                                    <optgroup label="Stable">
+                                    <optgroup label="Stable" data-i18n="[label]Stable">
                                         <option value="c4ai-aya-23-8b">c4ai-aya-23-8b</option>
                                         <option value="c4ai-aya-23">c4ai-aya-23</option>
                                         <option value="c4ai-aya-expanse-8b">c4ai-aya-expanse-8b</option>
@@ -1559,7 +1559,7 @@
                                         <option value="command-a-03-2025">command-a-03-2025</option>
                                         <option value="command-a-vision-07-2025">command-a-vision-07-2025</option>
                                     </optgroup>
-                                    <optgroup label="Nightly">
+                                    <optgroup label="Nightly" data-i18n="[label]Nightly">
                                         <option value="command-light-nightly">command-light-nightly</option>
                                         <option value="command-nightly">command-nightly</option>
                                     </optgroup>
@@ -1759,12 +1759,12 @@
                             </h4>
                             <select id="custom_prompt_post_processing" class="text_pole" title="Applies additional processing to the prompt before sending it to the API." data-i18n="[title]Applies additional processing to the prompt before sending it to the API.">
                                 <option data-i18n="prompt_post_processing_none" value="">None</option>
-                                <optgroup label="With Tools">
+                                <optgroup label="With Tools" data-i18n="[label]With Tools">
                                     <option data-i18n="prompt_post_processing_merge_tools" value="merge_tools">Merge consecutive roles (with tools)</option>
                                     <option data-i18n="prompt_post_processing_semi_tools" value="semi_tools">Semi-strict (alternating roles; with tools)</option>
                                     <option data-i18n="prompt_post_processing_strict_tools" value="strict_tools">Strict (user first, alternating roles; with tools)</option>
                                 </optgroup>
-                                <optgroup label="No Tools">
+                                <optgroup label="No Tools" data-i18n="[label]No Tools">
                                     <option data-i18n="prompt_post_processing_merge" value="merge">Merge consecutive roles (no tools)</option>
                                     <option data-i18n="prompt_post_processing_semi" value="semi">Semi-strict (alternating roles; no tools)</option>
                                     <option data-i18n="prompt_post_processing_strict" value="strict">Strict (user first, alternating roles; no tools)</option>
@@ -2001,7 +2001,7 @@
                                 </small>
                             </label>
                             <div>
-                                <input type="text" id="instruct_activation_regex" class="text_pole textarea_compact" placeholder="e.g. /llama(-)?[3|3.1]/i">
+                                <input type="text" id="instruct_activation_regex" class="text_pole textarea_compact" data-i18n="[placeholder]e.g. /llama(-)?[3|3.1]/i" placeholder="e.g. /llama(-)?[3|3.1]/i">
                             </div>
                             <div>
                                 <label for="instruct_wrap" class="checkbox_label">
@@ -2207,7 +2207,7 @@
                             <div>
                                 <small>
                                     <span data-i18n="JSON serialized array of strings">JSON serialized array of strings</span>
-                                    <i class="fa-solid fa-question-circle opacity50p" title="e.g: [&quot;Ford&quot;, &quot;BMW&quot;, &quot;Fiat&quot;]"></i>
+                                    <i class="fa-solid fa-question-circle opacity50p" title="e.g: [&quot;Ford&quot;, &quot;BMW&quot;, &quot;Fiat&quot;]" data-i18n="[title]e.g: [&quot;Ford&quot;, &quot;BMW&quot;, &quot;Fiat&quot;]"></i>
                                 </small>
                             </div>
                             <div>
@@ -2229,8 +2229,8 @@
                                     </a>
                                 </h4>
                                 <select id="tokenizer">
-                                    <option value="99">Best match (recommended)</option>
-                                    <option value="0">None / Estimated</option>
+                                    <option value="99" data-i18n="Best match (recommended)">Best match (recommended)</option>
+                                    <option value="0" data-i18n="None / Estimated">None / Estimated</option>
                                     <option value="1">GPT-2</option>
                                     <!-- Option #2 was a legacy GPT-2/3 tokenizer -->
                                     <option value="3">Llama 1/2</option>
@@ -2748,11 +2748,11 @@
                                     <div class="flex-container flexFlowColumn flexNoGap">
                                         <div class="flex-container">
                                             <span data-i18n="Main Font:">Main Font:</span>
-                                            <input type="text" id="main-font-input" class="text_pole" placeholder="Main Font (e.g. Arial)">
+                                            <input type="text" id="main-font-input" class="text_pole" data-i18n="[placeholder]Main Font (e.g. Arial)" placeholder="Main Font (e.g. Arial)">
                                         </div>
                                         <div class="flex-container">
                                             <span data-i18n="Mono Font:">Mono Font:</span>
-                                            <input type="text" id="mono-font-input" class="text_pole" placeholder="Mono Font (e.g. Consolas)">
+                                            <input type="text" id="mono-font-input" class="text_pole" data-i18n="[placeholder]Mono Font (e.g. Consolas)" placeholder="Mono Font (e.g. Consolas)">
                                         </div>
                                     </div>
                                 </div>
@@ -2881,15 +2881,15 @@
                                     <input id="click_to_edit" type="checkbox" />
                                     <small data-i18n="Click to Edit">Click to Edit</small>
                                 </label>
-                                <label for="strip_ai_thinking_from_response" class="checkbox_label" title="Discard AI thinking blocks and saved reasoning data from future responses instead of keeping them in chat history.">
+                                <label for="strip_ai_thinking_from_response" class="checkbox_label" title="Discard AI thinking blocks and saved reasoning data from future responses instead of keeping them in chat history." data-i18n="[title]Discard AI thinking blocks and saved reasoning data from future responses instead of keeping them in chat history.">
                                     <input id="strip_ai_thinking_from_response" type="checkbox" />
-                                    <small>Strip AI Thinking From Response</small>
+                                    <small data-i18n="Strip AI Thinking From Response">Strip AI Thinking From Response</small>
                                 </label>
-                                <div id="strip_ai_thinking_cleanup_mode_container" class="flex-container alignitemscenter" style="display:none;" title="Choose whether stripping only affects future responses or also asks to clean existing thinking from the current chat when it is opened.">
-                                    <label for="strip_ai_thinking_cleanup_mode"><small>Thinking Cleanup Mode</small></label>
+                                <div id="strip_ai_thinking_cleanup_mode_container" class="flex-container alignitemscenter" style="display:none;" title="Choose whether stripping only affects future responses or also asks to clean existing thinking from the current chat when it is opened." data-i18n="[title]Choose whether stripping only affects future responses or also asks to clean existing thinking from the current chat when it is opened.">
+                                    <label for="strip_ai_thinking_cleanup_mode"><small data-i18n="Thinking Cleanup Mode">Thinking Cleanup Mode</small></label>
                                     <select id="strip_ai_thinking_cleanup_mode" class="widthNatural flex1 margin0">
-                                        <option value="future_only">Future messages only</option>
-                                        <option value="ask_clean_chat_on_open">Ask to clean entire chat on open</option>
+                                        <option value="future_only" data-i18n="Future messages only">Future messages only</option>
+                                        <option value="ask_clean_chat_on_open" data-i18n="Ask to clean entire chat on open">Ask to clean entire chat on open</option>
                                     </select>
                                 </div>
                             </div>
@@ -3244,7 +3244,7 @@
                                 </div>
                             </div>
                             <div name="AutoCompleteToggle" class="inline-drawer wide100p flexFlowColumn">
-                                <div class="inline-drawer-toggle inline-drawer-header userSettingsInnerExpandable" title="Options for the various autocomplete input boxes.">
+                                <div class="inline-drawer-toggle inline-drawer-header userSettingsInnerExpandable" title="Options for the various autocomplete input boxes." data-i18n="[title]Options for the various autocomplete input boxes.">
                                     <b><span data-i18n="AutoComplete Settings">AutoComplete Settings</span></b>
                                     <div class="fa-solid fa-circle-chevron-down inline-drawer-icon down"></div>
                                 </div>
@@ -3288,7 +3288,7 @@
                                             </div>
                                         </div>
                                     </div>
-                                    <div title="Determines which keys select an item from the AutoComplete suggestions">
+                                    <div title="Determines which keys select an item from the AutoComplete suggestions" data-i18n="[title]Determines which keys select an item from the AutoComplete suggestions">
                                         <label>
                                             <small data-i18n="Keyboard">Keyboard:</small>
                                         </label>
@@ -3299,7 +3299,7 @@
                                         </select>
                                     </div>
                                     <div class="flex-container flexFlowColumn gap0" title="Sets the font size of the autocomplete." data-i18n="[title]Sets the font size of the autocomplete.">
-                                        <label for="stscript_autocomplete_font_scale"><small>Font Scale</small></label>
+                                        <label for="stscript_autocomplete_font_scale"><small data-i18n="Font Scale">Font Scale</small></label>
                                         <input class="neo-range-slider" type="range" id="stscript_autocomplete_font_scale" min="0.5" max="2" step="0.01">
                                         <input class="neo-range-input" type="number" min="0.5" max="2" step="0.01" data-for="stscript_autocomplete_font_scale" id="stscript_autocomplete_font_scale_counter">
                                     </div>
@@ -4849,17 +4849,17 @@
         </div>
         <div id="completion_prompt_manager_popup" class="drawer-content" style="display:none;">
             <div id="completion_prompt_manager_popup_inspect">
-                <h3>Inspect</h3>
+                <h3 data-i18n="Inspect">Inspect</h3>
                 <div class="completion_prompt_manager_popup_entry">
                     <form class="completion_prompt_manager_popup_entry_form">
                         <div class="completion_prompt_manager_popup_entry_form_control">
                             <div class="completion_prompt_manager_popup_header">
                                 <label for="completion_prompt_manager_popup_entry_form_prompt">
-                                    <span>Prompt List</span>
+                                    <span data-i18n="Prompt List">Prompt List</span>
                                 </label>
                                 <a id="completion_prompt_manager_popup_close_button" title="close" data-i18n="[title]close" class="fa-solid fa-close menu_button"></a>
                             </div>
-                            <div class="text_muted">The list of prompts associated with this marker.</div>
+                            <div class="text_muted" data-i18n="The list of prompts associated with this marker.">The list of prompts associated with this marker.</div>
                             <div id="completion_prompt_manager_popup_entry_form_inspect_list"></div>
                         </div>
                     </form>
@@ -5288,7 +5288,7 @@
             <div class="mes_media_container mes_audio_container audio-player">
                 <audio class="mes_audio" preload="auto" hidden></audio>
                 <div class="audio-player-header">
-                    <div class="audio-player-title">Audio</div>
+                    <div class="audio-player-title" data-i18n="Audio">Audio</div>
                     <div class="right_menu_button mes_media_delete fa-fw fa-solid fa-trash-can" title="Delete" data-i18n="[title]Delete"></div>
                 </div>
                 <div class="audio-player-controls">
@@ -5385,7 +5385,7 @@
                     <div class="inline-drawer-content">
                         <small data-i18n="Will be automatically added as the author's note for this character. Will be used in groups, but can't be modified when a group chat is open.">Will be automatically added as the author's note for this character. Will be used in groups, but
                             can't be modified when a group chat is open.</small>
-                        <textarea id="extension_floating_chara" class="text_pole textarea_compact" rows="8" placeholder="Example:&#10;[Scenario: wacky adventures; Genre: romantic comedy; Style: verbose, creative]"></textarea>
+                        <textarea id="extension_floating_chara" class="text_pole textarea_compact" rows="8" data-i18n="[placeholder]Example:&#10;[Scenario: wacky adventures; Genre: romantic comedy; Style: verbose, creative]" placeholder="Example:&#10;[Scenario: wacky adventures; Genre: romantic comedy; Style: verbose, creative]"></textarea>
                         <div class="extension_token_counter">
                             <span data-i18n="extension_token_counter">Tokens:</span> <span id="extension_floating_chara_token_counter">0</span>
                         </div>
@@ -5417,7 +5417,7 @@
                     </div>
                     <div class="inline-drawer-content">
                         <small data-i18n="Will be automatically added as the Author's Note for all new chats.">Will be automatically added as the Author's Note for all new chats.</small>
-                        <textarea id="extension_floating_default" class="text_pole textarea_compact" rows="8" placeholder="Example:&#10;[Scenario: wacky adventures; Genre: romantic comedy; Style: verbose, creative]"></textarea>
+                        <textarea id="extension_floating_default" class="text_pole textarea_compact" rows="8" data-i18n="[placeholder]Example:&#10;[Scenario: wacky adventures; Genre: romantic comedy; Style: verbose, creative]" placeholder="Example:&#10;[Scenario: wacky adventures; Genre: romantic comedy; Style: verbose, creative]"></textarea>
                         <div class="extension_token_counter">
                             <span data-i18n="extension_token_counter">Tokens:</span> <span id="extension_floating_default_token_counter">0</span>
                         </div>
@@ -5666,8 +5666,8 @@
                         <input id="file_form_input" type="file" multiple hidden>
                         <input id="embed_file_input" type="file" multiple hidden>
                         <i class="fa-solid fa-file-alt"></i>
-                        <span class="file_name">File Name</span>
-                        <span class="file_size">File Size</span>
+                        <span class="file_name" data-i18n="File Name">File Name</span>
+                        <span class="file_size" data-i18n="File Size">File Size</span>
                         <button id="file_form_reset" type="reset" class="menu_button" title="Remove the file" data-i18n="[title]Remove the file">
                             <i class="fa fa-times"></i>
                         </button>
