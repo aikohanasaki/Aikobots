@@ -770,7 +770,17 @@ function setupChatCompletionPromptManager(openAiSettings) {
         return new Promise((resolve) => eventSource.once(event_types.SETTINGS_UPDATED, resolve));
     };
 
-    promptManager.tryGenerate = () => Promise.resolve();
+    promptManager.tryGenerate = async () => {
+        try {
+            const dump = await debugServerAssemblyDump();
+            promptManager.setAssemblyDebugData(dump?.assembly ?? null);
+        } catch (error) {
+            const message = error instanceof Error ? error.message : String(error);
+            if (message !== 'No promptContext is available for server assembly debug.') {
+                console.debug('Prompt manager token breakdown refresh failed.', error);
+            }
+        }
+    };
 
     promptManager.tokenHandler = tokenHandler;
 

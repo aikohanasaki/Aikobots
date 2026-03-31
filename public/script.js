@@ -8241,6 +8241,19 @@ function updateFavButtonState(state) {
     $('#favorite_button').toggleClass('fav_off', !state);
 }
 
+function getCharacterOwnerHandle(chid) {
+    if (chid === undefined || chid === null || !characters[chid]) {
+        return '';
+    }
+
+    return String(characters[chid]?.data?.extensions?.aikobots?.owner_handle || '').trim();
+}
+
+function canEditCharacterMetadata(chid) {
+    const ownerHandle = getCharacterOwnerHandle(chid);
+    return !ownerHandle || isAdmin() || currentUser?.handle === ownerHandle;
+}
+
 export async function setCharacterSettingsOverrides() {
     if (!selected_group && (this_chid === undefined || !characters[this_chid])) {
         console.warn('setCharacterSettingsOverrides() -- no selected group or character');
@@ -8692,8 +8705,17 @@ async function openCharacterWorldPopup() {
     const fileName = getCharaFilename(chid);
     const charName = (menu_type == 'create' ? create_save.name : characters[chid]?.data?.name) || 'Nameless';
     const worldId = (menu_type == 'create' ? create_save.world : characters[chid]?.data?.extensions?.world) || '';
+    const ownerHandle = menu_type == 'create'
+        ? ''
+        : getCharacterOwnerHandle(chid);
+    const canEditLoreLinks = menu_type == 'create'
+        || !ownerHandle
+        || canEditCharacterMetadata(chid);
     const secureWorldNames = getSecureWorldNames();
     const secureWorldNameSet = new Set(secureWorldNames);
+    const extrasPlaceholder = canEditLoreLinks
+        ? t`Click here to select lorebooks.`
+        : 'Read-only linked lorebooks.';
     const template = $('#character_world_template .character_world').clone();
     template.find('.character_name').text(charName);
 
@@ -8723,17 +8745,23 @@ async function openCharacterWorldPopup() {
     // --- Populate Dropdowns ---
     // Append to primary dropdown.
     const primarySelect = template.find('.character_world_info_selector');
+    if (!canEditLoreLinks && worldId && !world_names.includes(worldId)) {
+        primarySelect.append(new Option(worldId, worldId, true, true));
+    }
     world_names.forEach((item, i) => {
         primarySelect.append(new Option(item, String(i), item === worldId, item === worldId));
     });
+    primarySelect.prop('disabled', !canEditLoreLinks);
 
     // Append to extras dropdown.
     const extrasSelect = template.find('.character_extra_world_info_selector');
     const existingCharLore = world_info.charLore?.find((e) => e.name === fileName);
     const selectedExtraBooks = (menu_type == 'create' ? create_save.extra_books : existingCharLore?.extraBooks) ?? [];
-    const secureSelectedExtraBooks = selectedExtraBooks.filter(item => secureWorldNameSet.has(item));
+    const secureSelectedExtraBooks = canEditLoreLinks
+        ? selectedExtraBooks.filter(item => secureWorldNameSet.has(item))
+        : selectedExtraBooks.filter(Boolean).filter(onlyUnique);
 
-    if (secureSelectedExtraBooks.length !== selectedExtraBooks.length) {
+    if (canEditLoreLinks && secureSelectedExtraBooks.length !== selectedExtraBooks.length) {
         if (menu_type == 'create') {
             create_save.extra_books = secureSelectedExtraBooks;
         } else {
@@ -8741,23 +8769,35 @@ async function openCharacterWorldPopup() {
         }
     }
 
-    secureWorldNames.forEach((item, i) => {
+    const extraBookOptions = canEditLoreLinks ? secureWorldNames : secureSelectedExtraBooks;
+    extraBookOptions.forEach((item, i) => {
         const isSelected = secureSelectedExtraBooks.includes(item);
         extrasSelect.append(new Option(item, String(i), isSelected, isSelected));
     });
+    extrasSelect.prop('disabled', !canEditLoreLinks);
+
+    if (!canEditLoreLinks && ownerHandle) {
+        template.find('.range-block-title').first().after($(`
+            <div class="range-block-counter justifyLeft flex-container flexFlowColumn margin-bot-10px opacity50p">
+                <span>Editing lorebooks is locked for this character. Only the character's owner and site admins can change linked or embedded lorebooks.</span>
+            </div>
+        `));
+    }
 
     const popup = new Popup(template, POPUP_TYPE.TEXT, '', {
         onOpen: function (popup) {
             const popupDialog = $(popup.dlg);
 
-            primarySelect.on('change', handlePrimaryWorldSelect);
-            extrasSelect.on('change', handleExtrasWorldSelect);
+            if (canEditLoreLinks) {
+                primarySelect.on('change', handlePrimaryWorldSelect);
+                extrasSelect.on('change', handleExtrasWorldSelect);
+            }
 
             // Not needed on mobile.
             if (!isMobile()) {
                 extrasSelect.select2({
                     width: '100%',
-                    placeholder: t`Click here to select lorebooks.`,
+                    placeholder: extrasPlaceholder,
                     allowClear: true,
                     closeOnSelect: false,
                     dropdownParent: popupDialog,

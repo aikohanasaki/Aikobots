@@ -1588,6 +1588,56 @@ class PromptManager {
     }
 
     /**
+     * Rehydrates a serialized message tree returned by the server assembly debug endpoint.
+     *
+     * @param {object} node Serialized message or collection node
+     * @returns {Message | MessageCollection | null} Rehydrated message node
+     */
+    hydrateMessageNode(node) {
+        if (!node || typeof node !== 'object') {
+            return null;
+        }
+
+        if (node.type === 'collection') {
+            const collection = Array.isArray(node.collection)
+                ? node.collection.map(child => this.hydrateMessageNode(child)).filter(Boolean)
+                : [];
+            return new MessageCollection(node.identifier, ...collection);
+        }
+
+        if (node.type === 'message') {
+            const message = new Message(node.role, node.content, node.identifier);
+            message.name = node.name;
+            message.tokens = Number(node.tokens) || 0;
+            message.extension = Boolean(node.extension);
+            message.injected = Boolean(node.injected);
+            message.system_prompt = Boolean(node.systemPrompt);
+            message.tool_calls = node.tool_calls;
+            return message;
+        }
+
+        return null;
+    }
+
+    /**
+     * Applies server-side assembly debug data to the prompt manager.
+     *
+     * @param {object | null} assembly Server assembly payload
+     */
+    setAssemblyDebugData(assembly) {
+        const messages = this.hydrateMessageNode(assembly?.messagesState);
+
+        if (messages instanceof MessageCollection) {
+            this.setMessages(messages);
+            this.populateTokenCounts(messages);
+        }
+
+        this.overriddenPrompts = Array.isArray(assembly?.overriddenPrompts)
+            ? assembly.overriddenPrompts
+            : [];
+    }
+
+    /**
      * Populates the token handler
      *
      * @param {import('./openai.js').MessageCollection} messages
