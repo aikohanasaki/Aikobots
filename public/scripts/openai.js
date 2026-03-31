@@ -669,7 +669,7 @@ function setOpenAIMessages(chat) {
 
         // If this symbol flag is set, completely ignore the message.
         // This can be used to hide messages without affecting the number of messages in the chat.
-        if (chat[i].extra?.[IGNORE_SYMBOL]) {
+        if (chat[i].extra?.[IGNORE_SYMBOL] || chat[i].extra?.ignore) {
             continue;
         }
 

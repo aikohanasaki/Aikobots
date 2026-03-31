@@ -300,7 +300,7 @@ function buildChunkedChatPayload(filePath, {
         ? segments.messages.slice(startId, endId + 1)
         : [];
     const parentPromptMessages = segments.storage && !hydrateFull && (includeParentPromptCache || rangeStart === null)
-        ? segments.messages.slice(0, tailStartId).filter(message => !isPromptExcludedMessage(message))
+        ? segments.messages.slice(0, tailStartId).filter(isResidentParentPromptMessage)
         : undefined;
 
     return {
@@ -332,6 +332,10 @@ function isPromptExcludedMessage(message) {
     return Boolean(message?.extra?.ignore);
 }
 
+function isResidentParentPromptMessage(message) {
+    return !isPromptExcludedMessage(message) && (!message?.is_system || Array.isArray(message?.extra?.tool_invocations));
+}
+
 export function resolveSplitCoreChatPayload(chatsDirectory, coreChatPayload) {
     if (!coreChatPayload || typeof coreChatPayload !== 'object' || coreChatPayload.mode !== CHAT_STORAGE_MODE_SPLIT_TAIL) {
         return Array.isArray(coreChatPayload) ? coreChatPayload : [];
@@ -348,7 +352,7 @@ export function resolveSplitCoreChatPayload(chatsDirectory, coreChatPayload) {
         ? Math.max(0, Math.min(coreChatPayload.tailStartId, totalMessages))
         : Math.max(0, totalMessages - segments.tailMessages.length);
     const parentMessages = coreChatPayload.useParentUnhiddenMessages
-        ? segments.messages.slice(0, normalizedTailStartId).filter(message => !isPromptExcludedMessage(message))
+        ? segments.messages.slice(0, normalizedTailStartId).filter(isResidentParentPromptMessage)
         : [];
     const tailMessages = coreChatPayload.useTailContents === false
         ? []

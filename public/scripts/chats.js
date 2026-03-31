@@ -159,8 +159,10 @@ export async function hideChatMessageRange(start, end, unhide, nameFitler = null
     if (isNaN(start)) return;
     if (!end) end = start;
     const hide = !unhide;
+    let hydratedHistoricalMessages = false;
 
     for (let messageId = start; messageId <= end; messageId++) {
+        hydratedHistoricalMessages ||= isHistoricalChatMessage(messageId);
         if (await ensurePromptRelevantMessageEditable(messageId)) {
             continue;
         }
@@ -184,6 +186,10 @@ export async function hideChatMessageRange(start, end, unhide, nameFitler = null
     refreshSwipeButtons();
 
     await saveChatConditional();
+
+    if (hydratedHistoricalMessages) {
+        await reloadCurrentChat();
+    }
 }
 
 /**

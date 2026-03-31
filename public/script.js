@@ -1536,6 +1536,10 @@ function getLogicalChatForPromptAssembly() {
     ];
 }
 
+function isPromptExcludedChatMessage(message) {
+    return Boolean(message?.extra?.[IGNORE_SYMBOL] || message?.extra?.ignore);
+}
+
 function getCoreChatPayloadForAssembly(coreChat) {
     return coreChat;
 }
@@ -4688,16 +4692,17 @@ export async function Generate(type, { automatic_trigger, force_name2, quiet_pro
         setExtensionPrompt(inject_ids.DEPTH_PROMPT, depthPromptText, extension_prompt_types.IN_CHAT, depthPromptDepth, extension_settings.note.allowWIScan, depthPromptRole);
     }
 
+    const logicalChat = getLogicalChatForPromptAssembly();
+
     // First message in fresh 1-on-1 chat reacts to user/character settings changes
-    if (chat.length) {
-        chat[0].mes = substituteParams(chat[0].mes);
+    if (logicalChat.length) {
+        logicalChat[0].mes = substituteParams(logicalChat[0].mes);
     }
 
     // Collect messages with usable content
     const canUseTools = ToolManager.isToolCallingSupported();
     const canPerformToolCalls = !dryRun && ToolManager.canPerformToolCalls(type) && depth < ToolManager.RECURSE_LIMIT;
-    const logicalChat = getLogicalChatForPromptAssembly();
-    let coreChat = logicalChat.filter(x => !x.is_system || (canUseTools && Array.isArray(x.extra?.tool_invocations)));
+    let coreChat = logicalChat.filter(x => !isPromptExcludedChatMessage(x) && (!x.is_system || (canUseTools && Array.isArray(x.extra?.tool_invocations))));
     if (type === 'swipe') {
         coreChat.pop();
     }
@@ -5897,7 +5902,7 @@ function formatMessageHistoryItem(chatItem) {
 
     // If this symbol flag is set, completely ignore the message.
     // This can be used to hide messages without affecting the number of messages in the chat.
-    if (chatItem.extra?.[IGNORE_SYMBOL]) {
+    if (isPromptExcludedChatMessage(chatItem)) {
         return '';
     }
 
