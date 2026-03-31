@@ -1,7 +1,6 @@
 import { Handlebars, moment, seedrandom, droll } from '../lib.js';
 import { chat, chat_metadata, main_api, getMaxContextSize, getCurrentChatId, substituteParams, eventSource, event_types, extension_prompts } from '../script.js';
 import { timestampToMoment, isDigitsOnly, getStringHash, escapeRegex, uuidv4 } from './utils.js';
-import { getInstructMacros } from './instruct-mode.js';
 import { getVariableMacros } from './variables.js';
 import { isMobile } from './RossAscends-mods.js';
 import { inject_ids } from './constants.js';
@@ -508,7 +507,6 @@ export function evaluateMacros(content, env, postProcessFn) {
         { regex: /<CHARIFNOTGROUP>/gi, replace: () => typeof env.group === 'function' ? env.group() : env.group },
         { regex: /<GROUP>/gi, replace: () => typeof env.group === 'function' ? env.group() : env.group },
         getDiceRollMacro(),
-        ...getInstructMacros(env),
         ...getVariableMacros(),
         { regex: /{{newline}}/gi, replace: () => '\n' },
         { regex: /(?:\r?\n)*{{trim}}(?:\r?\n)*/gi, replace: () => '' },

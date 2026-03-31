@@ -189,13 +189,6 @@ import { getRegexedString, regex_placement } from './scripts/extensions/regex/en
 import { initLogprobs, saveLogprobsForActiveMessage } from './scripts/logprobs.js';
 import { FILTER_STATES, FILTER_TYPES, FilterHelper, isFilterState } from './scripts/filters.js';
 import { getCfgPrompt, getGuidanceScale, initCfg } from './scripts/cfg-scale.js';
-import {
-    force_output_sequence,
-    formatInstructModeChat,
-    formatInstructModePrompt,
-    formatInstructModeExamples,
-    getInstructStoppingSequences,
-} from './scripts/instruct-mode.js';
 import { initLocales, t } from './scripts/i18n.js';
 import { getFriendlyTokenizerName, getTokenCount, getTokenCountAsync, getTokenizerModel, initTokenizers, saveTokenCache } from './scripts/tokenizers.js';
 import {
@@ -649,24 +642,6 @@ function enforceChatCompletionsOnlyMode({ save = false } = {}) {
     main_api = 'openai';
     $('#main_api').val('openai').prop('disabled', true);
     $('#main_api option:not([value="openai"])').remove();
-    $('#InstructSettingsColumn, #instructSettingsBlock, #InstructSequencesColumn').hide();
-    $('#kobold_api, #kobold_horde, #kobold_api-settings, #kobold_api-presets').hide();
-    $('#textgenerationwebui_api, #textgenerationwebui_api-settings, #textgenerationwebui_api-presets').hide();
-    $('#novel_api, #novel_api-settings, #novel_api-presets, #ai_module_block_novel').hide();
-    setChatCompletionNullControlsDisabled(true);
-
-    if (power_user?.instruct) {
-        if (power_user.instruct.enabled) {
-            changed = true;
-            power_user.instruct.enabled = false;
-        }
-    }
-    if (power_user) {
-        if (power_user.instruct_derived) {
-            changed = true;
-            power_user.instruct_derived = false;
-        }
-    }
 
     if (settings && settings.main_api !== 'openai') {
         changed = true;
@@ -2948,15 +2923,7 @@ export function substituteParams(content, _name1, _name2, _original, _group, _re
         environment.personality = fields.personality || '';
         environment.scenario = fields.scenario || '';
         environment.persona = fields.persona || '';
-        environment.mesExamples = () => {
-            const isInstruct = power_user.instruct.enabled && main_api !== 'openai';
-            const mesExamplesArray = parseMesExamples(fields.mesExamples, isInstruct);
-            if (isInstruct) {
-                const instructExamples = formatInstructModeExamples(mesExamplesArray, name1, name2);
-                return instructExamples.join('');
-            }
-            return mesExamplesArray.join('');
-        };
+        environment.mesExamples = () => parseMesExamples(fields.mesExamples).join('');
         environment.mesExamplesRaw = fields.mesExamples || '';
         environment.charVersion = fields.version || '';
         environment.char_version = fields.version || '';
@@ -3019,28 +2986,6 @@ export function getServerMacroSnapshot() {
         'idle_duration',
         'isMobile',
         'lastGenerationType',
-        'instructStoryStringPrefix',
-        'instructStoryStringSuffix',
-        'instructInput',
-        'instructUserPrefix',
-        'instructUserSuffix',
-        'instructOutput',
-        'instructAssistantPrefix',
-        'instructSeparator',
-        'instructAssistantSuffix',
-        'instructSystemPrefix',
-        'instructSystemSuffix',
-        'instructFirstOutput',
-        'instructFirstAssistantPrefix',
-        'instructLastOutput',
-        'instructLastAssistantPrefix',
-        'instructStop',
-        'instructUserFiller',
-        'instructSystemInstructionPrefix',
-        'instructFirstInput',
-        'instructFirstUserPrefix',
-        'instructLastInput',
-        'instructLastUserPrefix',
     ]);
     const registeredMacroNames = new Set();
 
@@ -3108,7 +3053,6 @@ export function getStoppingStrings(isImpersonate, isContinue) {
         }
     }
 
-    result.push(...getInstructStoppingSequences());
     result.push(...getCustomStoppingStrings());
 
     if (power_user.single_line) {
@@ -3520,7 +3464,7 @@ export function getCharacterCardFields({ chid = null } = {}) {
  * @param {string} examplesStr
  * @returns {string[]} Examples array with block heading
  */
-export function parseMesExamples(examplesStr, isInstruct) {
+export function parseMesExamples(examplesStr) {
     if (!examplesStr || examplesStr.length === 0 || examplesStr === '<START>') {
         return [];
     }
@@ -3915,18 +3859,15 @@ class StreamingProcessor {
  * Constructs a prompt to be used for either Text Completion or Chat Completion. Input is format-agnostic.
  * @param {string | object[]} prompt Input prompt. Can be a string or an array of chat-style messages, i.e. [{role: '', content: ''}, ...]
  * @param {string} api API to use.
- * @param {boolean} instructOverride true to override instruct mode, false to use the default value
  * @param {boolean} quietToLoud true to generate a message in system mode, false to generate a message in character mode
  * @param {string} [systemPrompt] System prompt to use.
  * @param {string} [prefill] Prefill for the prompt.
- * @returns {string | object[]} Prompt ready for use in generation. If using TC, this will be a string. If using CC, this will be an array of chat-style messages.
+ * @returns {string | object[]} Prompt ready for use in generation as an array of chat-style messages.
  */
-export function createRawPrompt(prompt, api, instructOverride, quietToLoud, systemPrompt, prefill) {
+export function createRawPrompt(prompt, api, quietToLoud, systemPrompt, prefill) {
     if (api !== 'openai') {
         throw new Error(`Unsupported API: ${api}`);
     }
-
-    const isInstruct = false;
 
     // If the prompt was given as a string, convert to a message-style object assuming user role
     if (typeof prompt === 'string') {
@@ -3965,11 +3906,9 @@ export function createRawPrompt(prompt, api, instructOverride, quietToLoud, syst
 
 /**
  * Generates a message using the provided prompt.
- * If the prompt is an array of chat-style messages and not using chat completion, it will be converted to a text prompt.
  * @typedef {object} GenerateRawParams
  * @prop {string | object[]} [prompt] Prompt to generate a message from. Can be a string or an array of chat-style messages, i.e. [{role: '', content: ''}, ...]
  * @prop {string} [api] API to use. Main API is used if not specified.
- * @prop {boolean} [instructOverride] true to override instruct mode, false to use the default value
  * @prop {boolean} [quietToLoud] true to generate a message in system mode, false to generate a message in character mode
  * @prop {string} [systemPrompt] System prompt to use.
  * @prop {number} [responseLength] Maximum response length. If unset, the global default value is used.
@@ -3979,10 +3918,10 @@ export function createRawPrompt(prompt, api, instructOverride, quietToLoud, syst
  * @param {GenerateRawParams} params Parameters for generating a message
  * @returns {Promise<string>} Generated message
  */
-export async function generateRaw({ prompt = '', api = null, instructOverride = false, quietToLoud = false, systemPrompt = '', responseLength = null, trimNames = true, prefill = '', jsonSchema = null } = {}) {
+export async function generateRaw({ prompt = '', api = null, quietToLoud = false, systemPrompt = '', responseLength = null, trimNames = true, prefill = '', jsonSchema = null } = {}) {
     if (arguments.length > 0 && typeof arguments[0] !== 'object') {
         console.trace('generateRaw called with positional arguments. Please use an object instead.');
-        [prompt, api, instructOverride, quietToLoud, systemPrompt, responseLength, trimNames, prefill, jsonSchema] = arguments;
+        [prompt, api, quietToLoud, systemPrompt, responseLength, trimNames, prefill, jsonSchema] = arguments;
     }
 
     if (!api) {
@@ -3994,7 +3933,7 @@ export async function generateRaw({ prompt = '', api = null, instructOverride = 
     let eventHook = () => { };
 
     // construct final prompt from the input. Can either be a string or an array of chat-style messages.
-    prompt = createRawPrompt(prompt, api, instructOverride, quietToLoud, systemPrompt, prefill);
+    prompt = createRawPrompt(prompt, api, quietToLoud, systemPrompt, prefill);
 
     // Allow extensions to stop generation before it happens
     const eventAbortController = new AbortController();
@@ -4234,8 +4173,6 @@ export async function Generate(type, { automatic_trigger, force_name2, quiet_pro
         abortController = new AbortController();
     }
 
-    // OpenAI doesn't need instruct mode. Use OAI main prompt instead.
-    const isInstruct = power_user.instruct.enabled && main_api !== 'openai';
     const isImpersonate = type == 'impersonate';
 
     if (!(dryRun || type == 'regenerate' || type == 'swipe' || type == 'quiet')) {
@@ -4298,7 +4235,7 @@ export async function Generate(type, { automatic_trigger, force_name2, quiet_pro
     }
 
     //#########QUIET PROMPT STUFF##############
-    //this function just gives special care to novel quiet instruction prompts
+    // This function gives special care to quiet prompts.
     if (quiet_prompt) {
         quiet_prompt = substituteParams(quiet_prompt);
         quiet_prompt = quiet_prompt;
@@ -4521,7 +4458,7 @@ export async function Generate(type, { automatic_trigger, force_name2, quiet_pro
         console.warn(`[Generate] World Info generation is deprecated for "${main_api}" and will only be assembled for chat-completions.`);
     }
 
-    let mesExamplesArray = parseMesExamples(mesExamples, isInstruct);
+    let mesExamplesArray = parseMesExamples(mesExamples);
 
     // Set non-WI AN
     setFloatingPrompt();
@@ -4544,10 +4481,6 @@ export async function Generate(type, { automatic_trigger, force_name2, quiet_pro
 
     // At this point, the raw message examples can be created
     const mesExamplesRawArray = [...mesExamplesArray];
-
-    if (mesExamplesArray && isInstruct) {
-        mesExamplesArray = formatInstructModeExamples(mesExamplesArray, name1, name2);
-    }
 
     // Add persona description to prompt
     addPersonaDescriptionExtensionPrompt();
@@ -4611,30 +4544,12 @@ export async function Generate(type, { automatic_trigger, force_name2, quiet_pro
             continue;
         }
 
-        chat2[i] = formatMessageHistoryItem(coreChat[j], isInstruct, false);
-
-        if (j === 0 && isInstruct) {
-            // Reformat with the first output sequence (if any)
-            chat2[i] = formatMessageHistoryItem(coreChat[j], isInstruct, force_output_sequence.FIRST);
-        }
-
-        if (lastUserMessageIndex >= 0 && j === lastUserMessageIndex && isInstruct) {
-            // Reformat with the last input sequence (if any)
-            chat2[i] = formatMessageHistoryItem(coreChat[j], isInstruct, force_output_sequence.LAST);
-        }
+        chat2[i] = formatMessageHistoryItem(coreChat[j]);
 
         // Do not suffix the message for continuation
         if (i === 0 && isContinue) {
             // Pick something that's very unlikely to be in a message
             const FORMAT_TOKEN = '\u0000\ufffc\u0000\ufffd';
-
-            if (isInstruct) {
-                const originalMessage = String(coreChat[j].mes ?? '');
-                coreChat[j].mes = originalMessage.replaceAll(FORMAT_TOKEN, '') + FORMAT_TOKEN;
-                // Reformat with the last output sequence (if any)
-                chat2[i] = formatMessageHistoryItem(coreChat[j], isInstruct, force_output_sequence.LAST);
-                coreChat[j].mes = originalMessage;
-            }
 
             chat2[i] = chat2[i].includes(FORMAT_TOKEN)
                 ? chat2[i].slice(0, chat2[i].lastIndexOf(FORMAT_TOKEN))
@@ -4645,18 +4560,6 @@ export async function Generate(type, { automatic_trigger, force_name2, quiet_pro
         if (coreChat[j].is_user) {
             userMessageIndices.push(i);
         }
-    }
-
-    let addUserAlignment = isInstruct && power_user.instruct.user_alignment_message;
-    let userAlignmentMessage = '';
-
-    if (addUserAlignment) {
-        const alignmentMessage = {
-            name: name1,
-            mes: substituteParams(power_user.instruct.user_alignment_message),
-            is_user: true,
-        };
-        userAlignmentMessage = formatMessageHistoryItem(alignmentMessage, isInstruct, force_output_sequence.FIRST);
     }
 
     let oaiMessages = [];
@@ -4675,6 +4578,8 @@ export async function Generate(type, { automatic_trigger, force_name2, quiet_pro
     let examplesString = '';
     let chatString = addChatsPreamble(addChatsSeparator(''));
     let cyclePrompt = '';
+    const addUserAlignment = false;
+    const userAlignmentMessage = '';
 
     async function getMessagesTokenCount() {
         const encodeString = [
@@ -4835,13 +4740,9 @@ export async function Generate(type, { automatic_trigger, force_name2, quiet_pro
                 return;
             }
 
-            // Cohee: This removes a newline from the end of the last message in the context
-            // Last prompt line will add a newline if it's not a continuation
-            // In instruct mode it only removes it if wrap is enabled and it's not a quiet generation
+            // Cohee: This removes a newline from the end of the last message in the context.
             if (i === arrMes.length - 1 && type !== 'continue') {
-                if (!isInstruct || (power_user.instruct.wrap && type !== 'quiet')) {
-                    item = item.replace(/\n?$/, '');
-                }
+                item = item.replace(/\n?$/, '');
             }
 
             mesSend[mesSend.length] = { message: item, extensionPrompts: [] };
@@ -4869,44 +4770,16 @@ export async function Generate(type, { automatic_trigger, force_name2, quiet_pro
         // Add quiet generation prompt at depth 0
         if (quiet_prompt && quiet_prompt.length) {
 
-            // here name1 is forced for all quiet prompts..why?
-            const name = name1;
-            //checks if we are in instruct, if so, formats the chat as such, otherwise just adds the quiet prompt
-            const quietAppend = isInstruct ? formatInstructModeChat(name, quiet_prompt, false, true, '', name1, name2, false) : `\n${quiet_prompt}`;
-
-            //This begins to fix quietPrompts (particularly /sysgen) for instruct
-            //previously instruct input sequence was being appended to the last chat message w/o '\n'
-            //and no output sequence was added after the input's content.
-            //TODO: respect output_sequence vs last_output_sequence settings
-            //TODO: decide how to prompt this to clarify who is talking 'Narrator', 'System', etc.
-            if (isInstruct) {
-                lastMesString += quietAppend; // + power_user.instruct.output_sequence + '\n';
-            } else {
-                lastMesString += quietAppend;
-            }
-
-
-            // Ross: bailing out early prevents quiet prompts from respecting other instruct prompt toggles
-            // for sysgen, SD, and summary this is desireable as it prevents the AI from responding as char..
-            // but for idle prompting, we want the flexibility of the other prompt toggles, and to respect them as per settings in the extension
-            // need a detection for what the quiet prompt is being asked for...
+            lastMesString += `\n${quiet_prompt}`;
 
             // Bail out early?
-            if (!isInstruct && !quietToLoud) {
+            if (!quietToLoud) {
                 return lastMesString;
             }
         }
 
-
-        // Get instruct mode line
-        if (isInstruct && !isContinue) {
-            const name = (quiet_prompt && !quietToLoud && !isImpersonate) ? (quietName ?? 'System') : (isImpersonate ? name1 : name2);
-            const isQuiet = quiet_prompt && type == 'quiet';
-            lastMesString += formatInstructModePrompt(name, isImpersonate, promptBias, name1, name2, isQuiet, quietToLoud);
-        }
-
-        // Get non-instruct impersonation line
-        if (!isInstruct && isImpersonate && !isContinue) {
+        // Get impersonation line
+        if (isImpersonate && !isContinue) {
             const name = name1;
             if (!lastMesString.endsWith('\n')) {
                 lastMesString += '\n';
@@ -4917,7 +4790,7 @@ export async function Generate(type, { automatic_trigger, force_name2, quiet_pro
         // Add character's name
         // Force name append on continue (if not continuing on user message or first message)
         const isContinuingOnFirstMessage = chat.length === 1 && isContinue;
-        if (!isInstruct && force_name2 && !isContinuingOnFirstMessage) {
+        if (force_name2 && !isContinuingOnFirstMessage) {
             if (!lastMesString.endsWith('\n')) {
                 lastMesString += '\n';
             }
@@ -5008,7 +4881,7 @@ export async function Generate(type, { automatic_trigger, force_name2, quiet_pro
 
         // Add prompt bias after everything else
         // Always run with continue
-        if (!isInstruct && !isImpersonate) {
+        if (!isImpersonate) {
             if (promptBias.trim().length !== 0) {
                 finalMesSend[finalMesSend.length - 1].message +=
                     /\s/.test(finalMesSend[finalMesSend.length - 1].message.slice(-1))
@@ -5164,7 +5037,7 @@ export async function Generate(type, { automatic_trigger, force_name2, quiet_pro
     /**
      * Saves itemized prompt bits and calls streaming or non-streaming generation API.
      * @returns {Promise<void|*|Awaited<*>|String|{fromStream}|string|undefined|Object>}
-     * @throws {Error|object} Error with message text, or Error with response JSON (OAI/Horde), or the actual response JSON (novel|textgenerationwebui|kobold)
+     * @throws {Error|object} Error with message text, or Error with response JSON (OAI/Horde), or the actual response JSON
      */
     async function finishGenerating() {
         if (power_user.console_log_prompts) {
@@ -5434,7 +5307,7 @@ export async function Generate(type, { automatic_trigger, force_name2, quiet_pro
      * @throws {Error|object} Re-throws the exception
      */
     function onError(exception) {
-        // if the response JSON was thrown (novel|textgenerationwebui|kobold), show the error message
+        // If the response JSON was thrown, show the error message.
         if (typeof exception?.error?.message === 'string') {
             toastr.error(exception.error.message, t`Text generation error`, { timeOut: 10000, extendedTimeOut: 20000 });
         }
@@ -5669,10 +5542,8 @@ export function getBiasStrings(textareaText, type) {
 
 /**
  * @param {Object} chatItem Message history item.
- * @param {boolean} isInstruct Whether instruct mode is enabled.
- * @param {boolean|number} forceOutputSequence Whether to force the first/last output sequence for instruct mode.
  */
-function formatMessageHistoryItem(chatItem, isInstruct, forceOutputSequence) {
+function formatMessageHistoryItem(chatItem) {
     const isNarratorType = chatItem?.extra?.type === system_message_types.NARRATOR;
     const characterName = chatItem?.name ? chatItem.name : name2;
     const itemName = chatItem.is_user ? chatItem['name'] : characterName;
@@ -5686,10 +5557,6 @@ function formatMessageHistoryItem(chatItem, isInstruct, forceOutputSequence) {
 
     // Don't include a name if it's empty
     let textResult = chatItem?.name && shouldPrependName ? `${itemName}: ${chatItem.mes}\n` : `${chatItem.mes}\n`;
-
-    if (isInstruct) {
-        textResult = formatInstructModeChat(itemName, chatItem.mes, chatItem.is_user, isNarratorType, chatItem.force_avatar, name1, name2, forceOutputSequence);
-    }
 
     return textResult;
 }
@@ -6155,33 +6022,6 @@ export function cleanUpMessage({ getMessage, isImpersonate, isContinue, displayI
     if (getMessage.indexOf('<|endoftext|>') != -1) {
         getMessage = getMessage.substring(0, getMessage.indexOf('<|endoftext|>'));
     }
-    const isInstruct = power_user.instruct.enabled && main_api !== 'openai';
-    const isNotEmpty = (str) => str && str.trim() !== '';
-    if (isInstruct && power_user.instruct.stop_sequence) {
-        if (getMessage.indexOf(power_user.instruct.stop_sequence) != -1) {
-            getMessage = getMessage.substring(0, getMessage.indexOf(power_user.instruct.stop_sequence));
-        }
-    }
-    // Hana: Only use the first sequence (should be <|model|>)
-    // of the prompt before <|user|> (as KoboldAI Lite does it).
-    if (isInstruct && isNotEmpty(power_user.instruct.input_sequence)) {
-        if (getMessage.indexOf(power_user.instruct.input_sequence) != -1) {
-            getMessage = getMessage.substring(0, getMessage.indexOf(power_user.instruct.input_sequence));
-        }
-    }
-
-    // Remove instruct sequences leaking to the output
-    if (isInstruct && power_user.instruct.sequences_as_stop_strings) {
-        const sequences = [
-            { value: power_user.instruct.input_sequence, apply: isImpersonate && isNotEmpty(power_user.instruct.input_sequence) },
-            { value: power_user.instruct.output_sequence, apply: !isImpersonate && isNotEmpty(power_user.instruct.output_sequence) },
-            { value: power_user.instruct.last_output_sequence, apply: !isImpersonate && isNotEmpty(power_user.instruct.last_output_sequence) },
-        ];
-        for (const seq of sequences.filter(s => s.apply)) {
-            seq.value.split('\n').filter(line => line.trim() !== '').forEach(line => { getMessage = getMessage.replaceAll(line, ''); });
-        }
-    }
-
     // clean-up group message from excessive generations
     if (selected_group) {
         getMessage = cleanGroupMessage(getMessage);
@@ -7337,27 +7177,6 @@ export async function openCharacterChat(file_name) {
     await createOrEditCharacter(new CustomEvent('newChat'));
 }
 
-function setChatCompletionNullControlsDisabled(disabled) {
-    const advancedFormatting = $('#AdvancedFormatting');
-    const nullEffectControls = advancedFormatting.find('[data-cc-null]');
-
-    nullEffectControls.attr('aria-disabled', disabled ? 'true' : 'false');
-    nullEffectControls.find('input, select, textarea, button').prop('disabled', disabled);
-
-    nullEffectControls
-        .find('.menu_button, .right_menu_button, .editor_maximize')
-        .toggleClass('disabled', disabled)
-        .attr('aria-disabled', disabled ? 'true' : 'false')
-        .css('pointer-events', disabled ? 'none' : '');
-
-    if (!disabled) {
-        nullEffectControls.find('.menu_button, .right_menu_button, .editor_maximize').removeAttr('tabindex');
-        return;
-    }
-
-    nullEffectControls.find('.menu_button, .right_menu_button, .editor_maximize').attr('tabindex', '-1');
-}
-
 ////////// OPTIMZED MAIN API CHANGE FUNCTION ////////////
 
 export function changeMainAPI() {
@@ -7371,7 +7190,6 @@ export function changeMainAPI() {
     $('#prompt_cost_block').hide();
 
     main_api = selectedVal;
-    setChatCompletionNullControlsDisabled(main_api === 'openai');
     setOnlineStatus('no_connection');
     setupChatCompletionPromptManager(oai_settings);
     forceCharacterEditorTokenize();
@@ -10216,7 +10034,6 @@ API: ${getSettingsContents.main_api}
 API Type: ${getSettingsContents[getSettingsContents.main_api + '_settings'].type}
 API server: ${getSettingsContents.api_server}
 Model: ${getContextContents.onlineStatus}
-Instruct Template: ${power_user.instruct.preset}
 API Settings: ${JSON.stringify(getSettingsContents[getSettingsContents.main_api + '_settings'], null, 2)}
 \`\`\`
     `;

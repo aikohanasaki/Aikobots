@@ -2887,7 +2887,7 @@ async function generatePrompt(quietPrompt) {
     const processedReply = processReply(reply);
 
     if (!processedReply) {
-        toastr.error('Prompt generation produced no text. Make sure you\'re using a valid instruct template and try again', 'Image Generation');
+        toastr.error('Prompt generation produced no text. Check your prompt settings and try again', 'Image Generation');
         throw new Error('Prompt generation failed.');
     }
 

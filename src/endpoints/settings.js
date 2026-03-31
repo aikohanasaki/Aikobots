@@ -269,7 +269,6 @@ router.post('/get', async (request, response) => {
         themes,
         movingUIPresets,
         quickReplyPresets,
-        instruct: [],
         reasoning,
         enable_extensions: ENABLE_EXTENSIONS,
         enable_extensions_auto_update: ENABLE_EXTENSIONS_AUTO_UPDATE,

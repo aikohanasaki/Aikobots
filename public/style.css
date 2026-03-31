@@ -6160,18 +6160,45 @@ body:not(.movingUI) .drawer-content.maximized {
     width: max-content;
 }
 
-#AdvancedFormatting .autoSetHeight {
+#AdvancedPrompting .autoSetHeight {
     overflow-wrap: anywhere;
 }
 
-#SystemPromptColumn summary,
-#InstructSequencesColumn summary {
+#AdvancedPromptingLayout {
+    display: grid;
+    grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr);
+    gap: 10px;
+    align-items: start;
+}
+
+#PromptTemplatesColumn,
+#PromptUtilitiesColumn {
+    display: contents;
+}
+
+#PromptUtilitySettingsBlock,
+#utility_prompts_edit_drawer {
+    min-width: 0;
+}
+
+#PromptUtilitySettingsBlock {
+    grid-column: 1;
+    grid-row: 1;
+}
+
+#utility_prompts_edit_drawer {
+    grid-column: 2;
+    grid-row: 1;
+}
+
+#PromptUtilitySettingsBlock summary,
+#PromptUtilitySettingsBlock summary {
     font-size: 0.95em;
     cursor: pointer;
 }
 
-#SystemPromptColumn details,
-#InstructSequencesColumn details:not(:last-of-type) {
+#PromptUtilitySettingsBlock details,
+#PromptSequencesPanel details:not(:last-of-type) {
     margin-bottom: 5px;
 }
 

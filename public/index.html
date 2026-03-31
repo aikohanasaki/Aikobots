@@ -307,165 +307,6 @@
                                         </div>
                                     </div>
                                 </div>
-                                <div class="inline-drawer wide100p" style="display:none;" id="utility_prompts_edit_drawer">
-                                    <div class="inline-drawer-toggle inline-drawer-header">
-                                        <b data-i18n="Utility Prompts">Utility Prompts</b>
-                                        <div class="fa-solid fa-circle-chevron-down inline-drawer-icon down"></div>
-                                    </div>
-                                    <div class="inline-drawer-content">
-                                        <div class="range-block m-t-1">
-                                            <div class="range-block-title openai_restorable">
-                                                <span data-i18n="Impersonation prompt">Impersonation prompt</span>
-                                                <div id="impersonation_prompt_restore" data-i18n="[title]Restore default prompt" title="Restore default prompt" class="right_menu_button">
-                                                    <div class="fa-solid fa-clock-rotate-left"></div>
-                                                </div>
-                                            </div>
-                                            <div class="toggle-description justifyLeft" data-i18n="Prompt that is used for Impersonation function">
-                                                Prompt that is used for Impersonation function
-                                            </div>
-                                            <div class="wide100p">
-                                                <textarea id="impersonation_prompt_textarea" class="text_pole textarea_compact autoSetHeight" name="impersonation_prompt" rows="3" placeholder="&mdash;"></textarea>
-                                            </div>
-                                        </div>
-                                        <div class="range-block m-t-1">
-                                            <div class="range-block-title openai_restorable">
-                                                <span data-i18n="World Info Format Template">World Info format template</span>
-                                                <div id="wi_format_restore" data-i18n="[title]Restore default format" title="Restore default format" class="right_menu_button">
-                                                    <div class="fa-solid fa-clock-rotate-left"></div>
-                                                </div>
-                                            </div>
-                                            <div class="toggle-description justifyLeft">
-                                                <span data-i18n="Wraps activated World Info entries before inserting into the prompt.">Wraps activated World Info entries before inserting into the prompt.</span>
-                                                <span data-i18n="scenario_format_template_part_1">Use</span><code>{0}</code>
-                                                <span data-i18n="scenario_format_template_part_2">to mark a place where the content is inserted.</span>
-                                            </div>
-                                            <div class="wide100p">
-                                                <textarea id="wi_format_textarea" class="text_pole textarea_compact autoSetHeight" rows="3" placeholder="&mdash;"></textarea>
-                                            </div>
-                                        </div>
-                                        <div class="range-block m-t-1">
-                                            <div class="range-block-title openai_restorable">
-                                                <span data-i18n="Scenario Format Template">Scenario format template</span>
-                                                <div id="scenario_format_restore" data-i18n="[title]Restore default format" title="Restore default format" class="right_menu_button">
-                                                    <div class="fa-solid fa-clock-rotate-left"></div>
-                                                </div>
-                                            </div>
-                                            <div class="toggle-description justifyLeft">
-                                                <span data-i18n="scenario_format_template_part_1">Use</span> <code>{{scenario}}</code> <span data-i18n="scenario_format_template_part_2">to mark a place where the content is inserted.</span>
-                                            </div>
-                                            <div class="wide100p">
-                                                <textarea id="scenario_format_textarea" class="text_pole textarea_compact autoSetHeight" rows="3" placeholder="&mdash;"></textarea>
-                                            </div>
-                                        </div>
-                                        <div class="range-block m-t-1">
-                                            <div class="range-block-title openai_restorable">
-                                                <span data-i18n="Personality Format Template">Personality format template</span>
-                                                <div id="personality_format_restore" data-i18n="[title]Restore default format" title="Restore default format" class="right_menu_button">
-                                                    <div class="fa-solid fa-clock-rotate-left"></div>
-                                                </div>
-                                            </div>
-                                            <div class="toggle-description justifyLeft">
-                                                <span data-i18n="scenario_format_template_part_1">Use</span> <code>{{personality}}</code> <span data-i18n="scenario_format_template_part_2">to mark a place where the content is inserted.</span>
-                                            </div>
-                                            <div class="wide100p">
-                                                <textarea id="personality_format_textarea" class="text_pole textarea_compact autoSetHeight" rows="3" placeholder="&mdash;"></textarea>
-                                            </div>
-                                        </div>
-                                        <div class="range-block m-t-1">
-                                            <div class="range-block-title openai_restorable">
-                                                <span data-i18n="Group Nudge Prompt Template">Group Nudge prompt template</span>
-                                                <div id="group_nudge_prompt_restore" data-i18n="[title]Restore default format" title="Restore default format" class="right_menu_button">
-                                                    <div class="fa-solid fa-clock-rotate-left"></div>
-                                                </div>
-                                            </div>
-                                            <div class="toggle-description justifyLeft">
-                                                <span data-i18n="Sent at the end of the group chat history to force reply from a specific character.">
-                                                    Sent at the end of the group chat history to force reply from a specific character.
-                                                </span>
-                                            </div>
-                                            <div class="wide100p">
-                                                <textarea id="group_nudge_prompt_textarea" class="text_pole textarea_compact autoSetHeight" rows="3" placeholder="&mdash;"></textarea>
-                                            </div>
-                                        </div>
-                                        <div class="range-block m-t-1">
-                                            <div class="range-block-title openai_restorable">
-                                                <span data-i18n="New Chat">New Chat</span>
-                                                <div id="newchat_prompt_restore" data-i18n="[title]Restore new chat prompt" title="Restore new chat prompt" class="right_menu_button">
-                                                    <div class="fa-solid fa-clock-rotate-left"></div>
-                                                </div>
-                                            </div>
-                                            <div class="toggle-description justifyLeft">
-                                                <span data-i18n="Set at the beginning of the chat history to indicate that a new chat is about to start.">
-                                                    Set at the beginning of the chat history to indicate that a new chat is about to start.
-                                                </span>
-                                            </div>
-                                            <div class="wide100p">
-                                                <textarea id="newchat_prompt_textarea" class="text_pole textarea_compact autoSetHeight" name="new_chat" rows="3" placeholder="&mdash;"></textarea>
-                                            </div>
-                                        </div>
-                                        <div class="range-block m-t-1">
-                                            <div class="range-block-title openai_restorable">
-                                                <span data-i18n="New Group Chat">New Group Chat</span>
-                                                <div id="newgroupchat_prompt_restore" title="Restore default prompt" data-i18n="[title]Restore new group chat prompt" class="right_menu_button">
-                                                    <div class="fa-solid fa-clock-rotate-left"></div>
-                                                </div>
-                                            </div>
-                                            <div class="toggle-description justifyLeft">
-                                                <span data-i18n="Set at the beginning of the chat history to indicate that a new group chat is about to start.">
-                                                    Set at the beginning of the chat history to indicate that a new group chat is about to start.
-                                                </span>
-                                            </div>
-                                            <div class="wide100p">
-                                                <textarea id="newgroupchat_prompt_textarea" class="text_pole textarea_compact autoSetHeight" name="new_group_chat" rows="3" placeholder="&mdash;"></textarea>
-                                            </div>
-                                        </div>
-                                        <div class="range-block m-t-1">
-                                            <div class="range-block-title openai_restorable">
-                                                <span data-i18n="New Example Chat">New Example Chat</span>
-                                                <div id="newexamplechat_prompt_restore" title="Restore new example chat prompt" data-i18n="[title]Restore default prompt" class="right_menu_button">
-                                                    <div class="fa-solid fa-clock-rotate-left"></div>
-                                                </div>
-                                            </div>
-                                            <div class="toggle-description justifyLeft">
-                                                <span data-i18n="Set at the beginning of Dialogue examples to indicate that a new example chat is about to start.">
-                                                    Set at the beginning of Dialogue examples to indicate that a new example chat is about to start.
-                                                </span>
-                                            </div>
-                                            <div class="wide100p">
-                                                <textarea id="newexamplechat_prompt_textarea" class="text_pole textarea_compact autoSetHeight" name="new_example_chat" rows="3" placeholder="&mdash;"></textarea>
-                                            </div>
-                                        </div>
-                                        <div class="range-block m-t-1">
-                                            <div class="range-block-title openai_restorable">
-                                                <span data-i18n="Continue nudge">Continue nudge</span>
-                                                <div id="continue_nudge_prompt_restore" data-i18n="[title]Restore new chat prompt" title="Restore new chat prompt" class="right_menu_button">
-                                                    <div class="fa-solid fa-clock-rotate-left"></div>
-                                                </div>
-                                            </div>
-                                            <div class="toggle-description justifyLeft">
-                                                <span data-i18n="Set at the end of the chat history when the continue button is pressed.">
-                                                    Set at the end of the chat history when the continue button is pressed.
-                                                </span>
-                                            </div>
-                                            <div class="wide100p">
-                                                <textarea id="continue_nudge_prompt_textarea" class="text_pole textarea_compact autoSetHeight" name="continue_nudge" rows="3" placeholder="&mdash;"></textarea>
-                                            </div>
-                                        </div>
-                                        <div class="range-block m-t-1">
-                                            <div class="range-block-title justifyLeft" data-i18n="Replace empty message">
-                                                Replace empty message
-                                            </div>
-                                            <div class="toggle-description justifyLeft">
-                                                <span data-i18n="Send this text instead of nothing when the text box is empty.">
-                                                    Send this text instead of nothing when the text box is empty.
-                                                </span>
-                                            </div>
-                                            <div class="wide100p">
-                                                <textarea id="send_if_empty_textarea" class="text_pole textarea_compact autoSetHeight" name="send_if_empty" rows="3" placeholder="&mdash;"></textarea>
-                                            </div>
-                                        </div>
-                                    </div>
-                                </div>
                                 <div class="range-block" data-source="openai,openrouter,mistralai,custom,cohere,groq,electronhub,nanogpt,xai,pollinations,aimlapi,makersuite,vertexai,azure_openai">
                                     <div class="range-block-title justifyLeft" data-i18n="Seed">
                                         Seed
@@ -1082,10 +923,6 @@
                                     <span data-i18n="Allow fallback providers">Allow fallback providers</span>
                                 </label>
                             </div>
-                            <small class="marginTopBot5">
-                                <i class="fa-solid fa-lightbulb"></i>
-                                <span data-i18n="To use instruct formatting, switch the Chat Completion source to OpenRouter.">To use instruct formatting, switch the Chat Completion source to OpenRouter.</span>
-                            </small>
                         </form>
                         <form id="ai21_form" data-source="ai21" action="javascript:void(null);" method="post" enctype="multipart/form-data">
                             <h4 data-i18n="AI21 API Key">AI21 API Key</h4>
@@ -1795,230 +1632,36 @@
                 </div>
             </div>
         </div>
-        <div id="advanced-formatting-button" class="drawer">
+        <div id="advanced-prompting-button" class="drawer">
             <div class="drawer-toggle">
-                <div class="drawer-icon fa-solid fa-font fa-fw closedIcon" title="Prompt Formatting" data-i18n="[title]Prompt Formatting"></div>
+                <div class="drawer-icon fa-solid fa-font fa-fw closedIcon" title="Advanced Prompting" data-i18n="[title]Advanced Prompting"></div>
             </div>
-            <div id="AdvancedFormatting" class="drawer-content closedDrawer">
+            <div id="AdvancedPrompting" class="drawer-content closedDrawer">
                 <div class="flex-container alignItemsBaseline">
                     <h3 class="margin0 flex1 flex-container alignItemsBaseline">
-                        <span data-i18n="Prompt Formatting">
-                            Prompt Formatting
+                        <span data-i18n="Advanced Prompting">
+                            Advanced Prompting
                         </span>
 
                         <a href="https://docs.sillytavern.app/usage/core-concepts/advancedformatting/" class="notes-link" target="_blank">
                             <span class="fa-solid fa-circle-question note-link-span"></span>
                         </a>
                     </h3>
-                    <div class="flex-container" data-cc-null>
+                    <div class="flex-container">
                         <input id="af_master_import_file" type="file" hidden accept=".json" class="displayNone">
-                        <div id="af_master_import" class="menu_button menu_button_icon" title="Import Prompt Formatting settings" data-i18n="[title]Import Prompt Formatting settings">
+                        <div id="af_master_import" class="menu_button menu_button_icon" title="Import Advanced Prompting settings" data-i18n="[title]Import Advanced Prompting settings">
                             <i class="fa-solid fa-file-import"></i>
                             <span data-i18n="Master Import">Master Import</span>
                         </div>
-                        <div id="af_master_export" class="menu_button menu_button_icon" title="Export Prompt Formatting settings" data-i18n="[title]Export Prompt Formatting settings">
+                        <div id="af_master_export" class="menu_button menu_button_icon" title="Export Advanced Prompting settings" data-i18n="[title]Export Advanced Prompting settings">
                             <i class="fa-solid fa-file-export"></i>
                             <span data-i18n="Master Export">Master Export</span>
                         </div>
                     </div>
                 </div>
-                <div id="advanced-formatting-cc-notice" class="info-block warning">
-                    <i class="fa-solid fa-triangle-exclamation"></i>
-                    <span data-i18n="Grayed-out options have no effect when Chat Completion API is used.">
-                        Grayed-out options have no effect when Chat Completion API is used.
-                    </span>
-                </div>
-                <div class="flex-container spaceEvenly">
-                    <div id="InstructSettingsColumn" class="flex-container flexNoGap flexFlowColumn flex1" data-cc-null>
-                        <h4 class="standoutHeader title_restorable justifySpaceBetween">
-                            <div class="flex-container">
-                                <span data-i18n="Instruct Template">Instruct Template</span>
-                            </div>
-                            <div class="flex-container">
-                                <label for="instruct_derived" class="checkbox_label flex1" title="Derive from Model Metadata, if possible." data-i18n="[title]instruct_derived">
-                                    <input id="instruct_derived" type="checkbox" style="display:none;" />
-                                    <small><i class="fa-solid fa-bolt menu_button margin0"></i></small>
-                                </label>
-                                <label id="instruct_enabled_label" for="instruct_enabled" class="checkbox_label flex1" title="Enable Instruct Mode" data-i18n="[title]instruct_enabled">
-                                    <input id="instruct_enabled" type="checkbox" style="display:none;" />
-                                    <small><i class="fa-solid fa-power-off menu_button togglable margin0"></i></small>
-                                </label>
-                            </div>
-                        </h4>
-                        <div id="instructSettingsBlock">
-
-
-                            <div class="flex-container" title="Select your current Instruct Template" data-i18n="[title]Select your current Instruct Template">
-                                <select id="instruct_presets" data-preset-manager-for="instruct" class="flex1 text_pole"></select>
-                                <div class="flex-container margin0 justifyCenter gap3px">
-                                    <input type="file" hidden data-preset-manager-file="instruct" accept=".json, .settings">
-                                    <i data-preset-manager-update="instruct" class="menu_button fa-solid fa-save" title="Update current template" data-i18n="[title]Update current template"></i>
-                                    <i data-preset-manager-rename="instruct" class="menu_button fa-pencil fa-solid" title="Rename current template" data-i18n="[title]Rename current template"></i>
-                                    <i data-preset-manager-new="instruct" class="menu_button fa-solid fa-file-circle-plus" title="Save template as" data-i18n="[title]Save template as"></i>
-                                    <i data-preset-manager-import="instruct" class="displayNone menu_button fa-solid fa-file-import" title="Import template" data-i18n="[title]Import template"></i>
-                                    <i data-preset-manager-export="instruct" class="displayNone menu_button fa-solid fa-file-export" title="Export template" data-i18n="[title]Export template"></i>
-                                    <i data-preset-manager-restore="instruct" class="menu_button fa-solid fa-recycle" title="Restore current template" data-i18n="[title]Restore current template"></i>
-                                    <i data-preset-manager-delete="instruct" class="menu_button fa-solid fa-trash-can" title="Delete template" data-i18n="[title]Delete template"></i>
-                                </div>
-                            </div>
-                            <label>
-                                <small>
-                                    <span data-i18n="Activation Regex">Activation Regex</span>
-                                    <span class="fa-solid fa-circle-question" data-i18n="[title]instruct_template_activation_regex_desc" title="When connecting to an API or choosing a model, automatically activate this Instruct Template if the model name matches the provided regular expression."></span>
-                                </small>
-                            </label>
-                            <div>
-                                <input type="text" id="instruct_activation_regex" class="text_pole textarea_compact" data-i18n="[placeholder]e.g. /llama(-)?[3|3.1]/i" placeholder="e.g. /llama(-)?[3|3.1]/i">
-                            </div>
-                            <div>
-                                <label for="instruct_wrap" class="checkbox_label">
-                                    <input id="instruct_wrap" type="checkbox" />
-                                    <small data-i18n="Wrap Sequences with Newline">Wrap Sequences with Newline</small>
-                                </label>
-                                <label for="instruct_macro" class="checkbox_label">
-                                    <input id="instruct_macro" type="checkbox" />
-                                    <small data-i18n="Replace Macro in Sequences">Replace Macro in Sequences</small>
-                                </label>
-                                <label for="instruct_sequences_as_stop_strings" class="checkbox_label">
-                                    <input id="instruct_sequences_as_stop_strings" type="checkbox" />
-                                    <small data-i18n="Sequences as Stop Strings">Sequences as Stop Strings</small>
-                                </label>
-                                <label for="instruct_skip_examples" class="checkbox_label">
-                                    <input id="instruct_skip_examples" type="checkbox" />
-                                    <small data-i18n="Skip Example Dialogues Formatting">Skip Example Dialogues Formatting</small>
-                                </label>
-                                <div>
-                                    <small data-i18n="Include Names">
-                                        Include Names
-                                    </small>
-                                    <select id="instruct_names_behavior">
-                                        <option value="none" data-i18n="Never">Never</option>
-                                        <option value="force" data-i18n="Groups and Past Personas">Groups and Past Personas</option>
-                                        <option value="always" data-i18n="Always">Always</option>
-                                    </select>
-                                </div>
-                            </div>
-                        </div>
-                        <div id="InstructSequencesColumn" class="wide100p flexFlowColumn">
-                            <h4 class="standoutHeader title_restorable">
-                                <b>
-                                    <span data-i18n="Instruct Sequences">
-                                        Instruct Sequences
-                                    </span>
-                                </b>
-                            </h4>
-                            <!-- We keep some auto-open so the user would know what is going on in the picked template -->
-                            <details open>
-                                <summary>
-                                    <span data-i18n="Story String Sequences">Story String Sequences</span>
-                                    <small class="fa-solid fa-question-circle" title="Used in Default position only." data-i18n="[title]Used in Default position only."></small>
-                                </summary>
-                                <div class="flex-container">
-                                    <div class="flexAuto" title="Inserted before a Story String." data-i18n="[title]Inserted before a Story String.">
-                                        <label for="instruct_story_string_prefix">
-                                            <small data-i18n="Story String Prefix">Story String Prefix</small>
-                                        </label>
-                                        <div>
-                                            <textarea id="instruct_story_string_prefix" class="text_pole textarea_compact autoSetHeight"></textarea>
-                                        </div>
-                                    </div>
-                                    <div class="flexAuto" title="Inserted after a Story String." data-i18n="[title]Inserted after a Story String.">
-                                        <label for="instruct_story_string_suffix">
-                                            <small data-i18n="Story String Suffix">Story String Suffix</small>
-                                        </label>
-                                        <div>
-                                            <textarea id="instruct_story_string_suffix" class="text_pole wide100p textarea_compact autoSetHeight"></textarea>
-                                        </div>
-                                    </div>
-                                </div>
-                            </details>
-                            <details open>
-                                <summary data-i18n="User Message Sequences">User Message Sequences</summary>
-                                <div class="flex-container">
-                                    <div class="flexAuto" title="Inserted before a User message and as a last prompt line when impersonating." data-i18n="[title]Inserted before a User message and as a last prompt line when impersonating.">
-                                        <small data-i18n="User Prefix">User Message Prefix</small>
-                                        <textarea id="instruct_input_sequence" class="text_pole textarea_compact autoSetHeight"></textarea>
-                                    </div>
-                                    <div class="flexAuto" title="Inserted after a User message." data-i18n="[title]Inserted after a User message.">
-                                        <small data-i18n="User Suffix">User Message Suffix</small>
-                                        <textarea id="instruct_input_suffix" class="text_pole wide100p textarea_compact autoSetHeight"></textarea>
-                                    </div>
-                                </div>
-                            </details>
-                            <details open>
-                                <summary data-i18n="Assistant Message Sequences">Assistant Message Sequences</summary>
-                                <div class="flex-container">
-                                    <div class="flexAuto" title="Inserted before an Assistant message and as a last prompt line when generating an AI reply." data-i18n="[title]Inserted before an Assistant message and as a last prompt line when generating an AI reply.">
-                                        <small data-i18n="Assistant Prefix">Assistant Message Prefix</small>
-                                        <textarea id="instruct_output_sequence" class="text_pole wide100p textarea_compact autoSetHeight"></textarea>
-                                    </div>
-                                    <div class="flexAuto" title="Inserted after an Assistant message." data-i18n="[title]Inserted after an Assistant message.">
-                                        <small data-i18n="Assistant Suffix">Assistant Message Suffix</small>
-                                        <textarea id="instruct_output_suffix" class="text_pole wide100p textarea_compact autoSetHeight"></textarea>
-                                    </div>
-                                </div>
-                            </details>
-                            <details>
-                                <summary data-i18n="System Message Sequences">System Message Sequences</summary>
-                                <div class="flex-container">
-                                    <div class="flexAuto" id="instruct_system_sequence_block" title="Inserted before a System (added by slash commands or extensions) message." data-i18n="[title]Inserted before a System (added by slash commands or extensions) message.">
-                                        <small data-i18n="System Prefix">System Message Prefix</small>
-                                        <textarea id="instruct_system_sequence" class="text_pole textarea_compact autoSetHeight"></textarea>
-                                    </div>
-                                    <div class="flexAuto" id="instruct_system_suffix_block" title="Inserted after a System message." data-i18n="[title]Inserted after a System message.">
-                                        <small data-i18n="System Suffix">System Message Suffix</small>
-                                        <textarea id="instruct_system_suffix" class="text_pole wide100p textarea_compact autoSetHeight"></textarea>
-                                    </div>
-                                </div>
-                                <div class="flexBasis100p" title="If enabled, System Sequences will be the same as User Sequences." data-i18n="[title]If enabled, System Sequences will be the same as User Sequences.">
-                                    <label class="checkbox_label" for="instruct_system_same_as_user">
-                                        <input id="instruct_system_same_as_user" type="checkbox" />
-                                        <small data-i18n="System same as User">System same as User</small>
-                                    </label>
-                                </div>
-                            </details>
-                            <details>
-                                <summary data-i18n="Misc. Sequences">Misc. Sequences</summary>
-                                <div class="flex-container">
-                                    <div class="flexAuto" title="Inserted before the first Assistant's message." data-i18n="[title]Inserted before the first Assistant's message.">
-                                        <small data-i18n="First Assistant Prefix">First Assistant Prefix</small>
-                                        <textarea id="instruct_first_output_sequence" class="text_pole textarea_compact autoSetHeight"></textarea>
-                                    </div>
-                                    <div class="flexAuto" title="Inserted before the last Assistant's message or as a last prompt line when generating an AI reply (except a neutral/system role)." data-i18n="[title]instruct_last_output_sequence">
-                                        <small data-i18n="Last Assistant Prefix">Last Assistant Prefix</small>
-                                        <textarea id="instruct_last_output_sequence" class="text_pole wide100p textarea_compact autoSetHeight"></textarea>
-                                    </div>
-                                </div>
-                                <div class="flex-container">
-                                    <div class="flexAuto" title="Inserted before the first User's message." data-i18n="[title]Inserted before the first User's message.">
-                                        <small data-i18n="First User Prefix">First User Prefix</small>
-                                        <textarea id="instruct_first_input_sequence" class="text_pole textarea_compact autoSetHeight"></textarea>
-                                    </div>
-                                    <div class="flexAuto" title="Inserted before the last User's message." data-i18n="[title]instruct_last_input_sequence">
-                                        <small data-i18n="Last User Prefix">Last User Prefix</small>
-                                        <textarea id="instruct_last_input_sequence" class="text_pole wide100p textarea_compact autoSetHeight"></textarea>
-                                    </div>
-                                </div>
-                                <div class="flex-container">
-                                    <div class="flexAuto" title="Will be inserted as a last prompt line when using system/neutral generation." data-i18n="[title]Will be inserted as a last prompt line when using system/neutral generation.">
-                                        <small data-i18n="System Instruction Prefix">System Instruction Prefix</small>
-                                        <textarea id="instruct_last_system_sequence" class="text_pole textarea_compact autoSetHeight"></textarea>
-                                    </div>
-                                    <div class="flexAuto" title="If a stop sequence is generated, everything past it will be removed from the output (inclusive)." data-i18n="[title]If a stop sequence is generated, everything past it will be removed from the output (inclusive).">
-                                        <small data-i18n="Stop Sequence">Stop Sequence</small>
-                                        <textarea id="instruct_stop_sequence" class="text_pole textarea_compact autoSetHeight"></textarea>
-                                    </div>
-                                </div>
-                                <div class="flex-container">
-                                    <div class="flexAuto" title="Will be inserted at the start of the chat history if it doesn't start with a User message." data-i18n="[title]Will be inserted at the start of the chat history if it doesn't start with a User message.">
-                                        <small data-i18n="User Filler Message">User Filler Message</small>
-                                        <textarea id="instruct_user_alignment_message" class="text_pole textarea_compact autoSetHeight"></textarea>
-                                    </div>
-                                </div>
-                            </details>
-                        </div>
-                    </div>
-                    <div id="SystemPromptColumn" class="flex-container flexNoGap flexFlowColumn flex1">
+                <div id="AdvancedPromptingLayout" class="flex-container spaceEvenly">
+                    <div id="PromptTemplatesColumn" class="flex-container flexNoGap flexFlowColumn flex1">
+                        <div id="PromptUtilitySettingsBlock" class="flex-container flexNoGap flexFlowColumn wide100p">
                         <div>
                             <h4 class="range-block-title justifyLeft standoutHeader">
                                 <span data-i18n="Custom Stopping Strings">
@@ -2045,7 +1688,7 @@
                             </label>
                         </div>
 
-                        <div name="tokenizerSettingsBlock" data-cc-null>
+                        <div name="tokenizerSettingsBlock">
                             <div name="tokenizerSelectorBlock">
                                 <h4 class="standoutHeader"><span data-i18n="Tokenizer">Tokenizer</span>
                                     <a href="https://docs.sillytavern.app/usage/prompts/tokenizer/" class="notes-link" target="_blank">
@@ -2082,13 +1725,6 @@
                         </div>
                         <div>
                             <h4 class="standoutHeader" data-i18n="Miscellaneous">Miscellaneous</h4>
-                            <div name="bindModelPresetBlock" data-cc-null>
-                                <label for="bind_model_templates" class="checkbox_label">
-                                    <input id="bind_model_templates" type="checkbox" />
-                                    <small data-i18n="Bind Model to Templates">Bind Model to Templates</small>
-                                    <span class="fa-solid fa-circle-question" data-i18n="[title]bind_model_templates_desc" title="When connecting to an API or choosing a model, automatically activate the current prompt templates if the model name or its chat template matches the currently loaded model."></span>
-                                </label>
-                            </div>
                             <div>
                                 <small>
                                     <span data-i18n="Non-markdown strings">
@@ -2135,6 +1771,304 @@
                                         <option value="future_only" data-i18n="Future messages only">Future messages only</option>
                                         <option value="ask_clean_chat_on_open" data-i18n="Ask to clean entire chat on open">Ask to clean entire chat on open</option>
                                     </select>
+                                </div>
+                            </div>
+                            <div name="PromptAutomationBlock">
+                                <h4 class="standoutHeader" data-i18n="Automation">Automation</h4>
+                                <div class="inline-drawer wide100p flexFlowColumn">
+                                    <div class="inline-drawer-toggle inline-drawer-header" title="Automatically reject and re-generate AI message based on configurable criteria." data-i18n="[title]Automatically reject and re-generate AI message based on configurable criteria">
+                                        <b><span data-i18n="Auto-swipe">Auto-swipe</span></b>
+                                        <div class="fa-solid fa-circle-chevron-down inline-drawer-icon down"></div>
+                                    </div>
+                                    <div class="inline-drawer-content">
+                                        <label class="checkbox_label" for="auto_swipe" title="Enable the auto-swipe function. Settings in this section only have an effect when auto-swipe is enabled." data-i18n="[title]Enable the auto-swipe function. Settings in this section only have an effect when auto-swipe is enabled">
+                                            <input id="auto_swipe" type="checkbox" />
+                                            <small data-i18n="Enabled">Enabled</small>
+                                        </label>
+                                        <small data-i18n="Minimum generated message length">Minimum generated message length</small>
+                                        <input id="auto_swipe_minimum_length" name="auto_swipe_minimum_length" type="number" min="0" step="1" value="0" class="text_pole" title="If the generated message is shorter than these many characters, trigger an auto-swipe." data-i18n="[title]If the generated message is shorter than these many characters, trigger an auto-swipe">
+                                        <small data-i18n="Blacklisted words">Blacklisted words</small>
+                                        <div class="auto_swipe">
+                                            <textarea id="auto_swipe_blacklist" name="auto_swipe_blacklist" data-i18n="[placeholder]words you dont want generated separated by comma ','" placeholder="words you don't want generated separated by comma ','" class="text_pole textarea_compact" value="" autocomplete="off" rows="3"></textarea>
+                                            <small data-i18n="Blacklisted word count to swipe">Blacklisted word count to swipe</small>
+                                            <input id="auto_swipe_blacklist_threshold" name="auto_swipe_blacklist_threshold" type="number" min="0" step="1" value="1" class="text_pole" title="Minimum number of blacklisted words detected to trigger an auto-swipe." data-i18n="[title]Minimum number of blacklisted words detected to trigger an auto-swipe">
+                                        </div>
+                                    </div>
+                                </div>
+                                <div name="AutoContiueBlock" class="inline-drawer wide100p flexFlowColumn">
+                                    <div class="inline-drawer-toggle inline-drawer-header" data-i18n="[title]Automatically 'continue' a response if the model stopped before reaching a certain amount of tokens." title="Automatically 'continue' a response if the model stopped before reaching a certain amount of tokens.">
+                                        <b><span data-i18n="Auto-Continue">Auto-Continue</span></b>
+                                        <div class="fa-solid fa-circle-chevron-down inline-drawer-icon down"></div>
+                                    </div>
+                                    <div class="inline-drawer-content">
+                                        <div class="flex-container">
+                                            <label class="checkbox_label" for="auto_continue_enabled">
+                                                <input id="auto_continue_enabled" type="checkbox" />
+                                                <small data-i18n="Enabled">
+                                                    Enabled
+                                                </small>
+                                            </label>
+                                            <label class="checkbox_label" for="auto_continue_allow_chat_completions">
+                                                <input id="auto_continue_allow_chat_completions" type="checkbox" />
+                                                <small data-i18n="Allow for Chat Completion APIs">
+                                                    Allow for Chat Completion APIs
+                                                </small>
+                                            </label>
+                                        </div>
+                                        <div class="auto_continue_settings_block">
+                                            <label for="auto_continue_target_length">
+                                                <small data-i18n="Target length (tokens)">Target length (tokens)</small>
+                                                <input id="auto_continue_target_length" type="number" class="text_pole textarea_compact" min="0" max="1024" />
+                                            </label>
+                                        </div>
+                                    </div>
+                                </div>
+                                <div name="AutoCompleteToggle" class="inline-drawer wide100p flexFlowColumn">
+                                    <div class="inline-drawer-toggle inline-drawer-header" title="Options for the various autocomplete input boxes." data-i18n="[title]Options for the various autocomplete input boxes.">
+                                        <b><span data-i18n="AutoComplete Settings">AutoComplete Settings</span></b>
+                                        <div class="fa-solid fa-circle-chevron-down inline-drawer-icon down"></div>
+                                    </div>
+                                    <div class="inline-drawer-content">
+                                        <label for="stscript_autocomplete_state">
+                                            <small data-i18n="Visibility">Visibility</small>
+                                        </label>
+                                        <select id="stscript_autocomplete_state">
+                                            <option value="0" data-i18n="Don't show">Don't show</option>
+                                            <option value="1" data-i18n="Input length > 1">Input length > 1</option>
+                                            <option value="2" data-i18n="Always show">Always show</option>
+                                        </select>
+                                        <label class="checkbox_label" for="stscript_autocomplete_autoHide">
+                                            <input id="stscript_autocomplete_autoHide" type="checkbox" />
+                                            <small data-i18n="Automatically hide details">
+                                                Automatically hide details
+                                            </small>
+                                        </label>
+                                        <div class="flex-container">
+                                            <div class="flex1" title="Determines how entries are found for autocomplete." data-i18n="[title]Determines how entries are found for autocomplete.">
+                                                <label for="stscript_matching">
+                                                    <small data-i18n="Autocomplete Matching">Matching</small>
+                                                </label>
+                                                <select id="stscript_matching">
+                                                    <option data-i18n="Starts with" value="strict">Starts with</option>
+                                                    <option data-i18n="Includes" value="includes">Includes</option>
+                                                    <option data-i18n="Fuzzy" value="fuzzy">Fuzzy</option>
+                                                </select>
+                                            </div>
+                                            <div class="flex1" title="Sets the style of the autocomplete." data-i18n="[title]Sets the style of the autocomplete.">
+                                                <label for="stscript_autocomplete_style">
+                                                    <small data-i18n="Autocomplete Style">Style</small>
+                                                </label>
+                                                <div class="flex-container flexFlowRow alignItemsBaseline">
+                                                    <select id="stscript_autocomplete_style">
+                                                        <option data-i18n="Follow Theme" value="theme">Follow Theme</option>
+                                                        <option data-i18n="Dark" value="dark">Dark</option>
+                                                        <option data-i18n="Light" value="light">Light</option>
+                                                    </select>
+                                                    <!-- <div class="menu_button fa-solid fa-pen-to-square" title="Customize colors"></div> -->
+                                                </div>
+                                            </div>
+                                        </div>
+                                        <div title="Determines which keys select an item from the AutoComplete suggestions" data-i18n="[title]Determines which keys select an item from the AutoComplete suggestions">
+                                            <label>
+                                                <small data-i18n="Keyboard">Keyboard:</small>
+                                            </label>
+                                            <select id="stscript_autocomplete_select">
+                                                <option value="3" data-i18n="Select with Tab or Enter">Select with Tab or Enter</option>
+                                                <option value="1" data-i18n="Select with Tab">Select with Tab</option>
+                                                <option value="2" data-i18n="Select with Enter">Select with Enter</option>
+                                            </select>
+                                        </div>
+                                        <div class="flex-container flexFlowColumn gap0" title="Sets the font size of the autocomplete." data-i18n="[title]Sets the font size of the autocomplete.">
+                                            <label for="stscript_autocomplete_font_scale"><small data-i18n="Font Scale">Font Scale</small></label>
+                                            <input class="neo-range-slider" type="range" id="stscript_autocomplete_font_scale" min="0.5" max="2" step="0.01">
+                                            <input class="neo-range-input" type="number" min="0.5" max="2" step="0.01" data-for="stscript_autocomplete_font_scale" id="stscript_autocomplete_font_scale_counter">
+                                        </div>
+                                        <div title="Sets the width of the autocomplete." data-i18n="[title]Sets the width of the autocomplete.">
+                                            <label for="stscript_autocomplete_width">
+                                                <small data-i18n="Autocomplete Width">Width</small>
+                                            </label>
+                                            <div class="doubleRangeContainer">
+                                                <div class="doubleRangeInputContainer">
+                                                    <input type="range" id="stscript_autocomplete_width_left" min="0" max="2" step="1">
+                                                    <datalist id="stscript_autocomplete_width_left_values">
+                                                        <option value="0" label="input" title="chat input box" data-i18n="[title]chat input box"></option>
+                                                        <option value="1" label="chat" title="entire chat width" data-i18n="[title]entire chat width"></option>
+                                                        <option value="2" label="full" title="full window width" data-i18n="[title]full window width"></option>
+                                                    </datalist>
+                                                </div>
+                                                <div class="doubleRangeInputContainer">
+                                                    <input type="range" id="stscript_autocomplete_width_right" min="0" max="2" step="1">
+                                                    <datalist id="stscript_autocomplete_width_right_values">
+                                                        <option value="0" label="input" title="chat input box" data-i18n="[title]chat input box"></option>
+                                                        <option value="1" label="chat" title="entire chat width" data-i18n="[title]entire chat width"></option>
+                                                        <option value="2" label="full" title="full window width" data-i18n="[title]full window width"></option>
+                                                    </datalist>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    <div id="PromptUtilitiesColumn" class="flex-container flexNoGap flexFlowColumn flex1">
+                            <div class="inline-drawer wide100p flexFlowColumn" id="utility_prompts_edit_drawer">
+                                <div class="inline-drawer-toggle inline-drawer-header">
+                                    <b data-i18n="Utility Prompts">Utility Prompts</b>
+                                    <div class="fa-solid fa-circle-chevron-down inline-drawer-icon down"></div>
+                                </div>
+                                <div class="inline-drawer-content">
+                                    <div class="range-block m-t-1">
+                                        <div class="range-block-title openai_restorable">
+                                            <span data-i18n="Impersonation prompt">Impersonation prompt</span>
+                                            <div id="impersonation_prompt_restore" data-i18n="[title]Restore default prompt" title="Restore default prompt" class="right_menu_button">
+                                                <div class="fa-solid fa-clock-rotate-left"></div>
+                                            </div>
+                                        </div>
+                                        <div class="toggle-description justifyLeft" data-i18n="Prompt that is used for Impersonation function">
+                                            Prompt that is used for Impersonation function
+                                        </div>
+                                        <div class="wide100p">
+                                            <textarea id="impersonation_prompt_textarea" class="text_pole textarea_compact autoSetHeight" name="impersonation_prompt" rows="3" placeholder="&mdash;"></textarea>
+                                        </div>
+                                    </div>
+                                    <div class="range-block m-t-1">
+                                        <div class="range-block-title openai_restorable">
+                                            <span data-i18n="World Info Format Template">World Info format template</span>
+                                            <div id="wi_format_restore" data-i18n="[title]Restore default format" title="Restore default format" class="right_menu_button">
+                                                <div class="fa-solid fa-clock-rotate-left"></div>
+                                            </div>
+                                        </div>
+                                        <div class="toggle-description justifyLeft">
+                                            <span data-i18n="Wraps activated World Info entries before inserting into the prompt.">Wraps activated World Info entries before inserting into the prompt.</span>
+                                            <span data-i18n="scenario_format_template_part_1">Use</span><code>{0}</code>
+                                            <span data-i18n="scenario_format_template_part_2">to mark a place where the content is inserted.</span>
+                                        </div>
+                                        <div class="wide100p">
+                                            <textarea id="wi_format_textarea" class="text_pole textarea_compact autoSetHeight" rows="3" placeholder="&mdash;"></textarea>
+                                        </div>
+                                    </div>
+                                    <div class="range-block m-t-1">
+                                        <div class="range-block-title openai_restorable">
+                                            <span data-i18n="Scenario Format Template">Scenario format template</span>
+                                            <div id="scenario_format_restore" data-i18n="[title]Restore default format" title="Restore default format" class="right_menu_button">
+                                                <div class="fa-solid fa-clock-rotate-left"></div>
+                                            </div>
+                                        </div>
+                                        <div class="toggle-description justifyLeft">
+                                            <span data-i18n="scenario_format_template_part_1">Use</span> <code>{{scenario}}</code> <span data-i18n="scenario_format_template_part_2">to mark a place where the content is inserted.</span>
+                                        </div>
+                                        <div class="wide100p">
+                                            <textarea id="scenario_format_textarea" class="text_pole textarea_compact autoSetHeight" rows="3" placeholder="&mdash;"></textarea>
+                                        </div>
+                                    </div>
+                                    <div class="range-block m-t-1">
+                                        <div class="range-block-title openai_restorable">
+                                            <span data-i18n="Personality Format Template">Personality format template</span>
+                                            <div id="personality_format_restore" data-i18n="[title]Restore default format" title="Restore default format" class="right_menu_button">
+                                                <div class="fa-solid fa-clock-rotate-left"></div>
+                                            </div>
+                                        </div>
+                                        <div class="toggle-description justifyLeft">
+                                            <span data-i18n="scenario_format_template_part_1">Use</span> <code>{{personality}}</code> <span data-i18n="scenario_format_template_part_2">to mark a place where the content is inserted.</span>
+                                        </div>
+                                        <div class="wide100p">
+                                            <textarea id="personality_format_textarea" class="text_pole textarea_compact autoSetHeight" rows="3" placeholder="&mdash;"></textarea>
+                                        </div>
+                                    </div>
+                                    <div class="range-block m-t-1">
+                                        <div class="range-block-title openai_restorable">
+                                            <span data-i18n="Group Nudge Prompt Template">Group Nudge prompt template</span>
+                                            <div id="group_nudge_prompt_restore" data-i18n="[title]Restore default format" title="Restore default format" class="right_menu_button">
+                                                <div class="fa-solid fa-clock-rotate-left"></div>
+                                            </div>
+                                        </div>
+                                        <div class="toggle-description justifyLeft">
+                                            <span data-i18n="Sent at the end of the group chat history to force reply from a specific character.">
+                                                Sent at the end of the group chat history to force reply from a specific character.
+                                            </span>
+                                        </div>
+                                        <div class="wide100p">
+                                            <textarea id="group_nudge_prompt_textarea" class="text_pole textarea_compact autoSetHeight" rows="3" placeholder="&mdash;"></textarea>
+                                        </div>
+                                    </div>
+                                    <div class="range-block m-t-1">
+                                        <div class="range-block-title openai_restorable">
+                                            <span data-i18n="New Chat">New Chat</span>
+                                            <div id="newchat_prompt_restore" data-i18n="[title]Restore new chat prompt" title="Restore new chat prompt" class="right_menu_button">
+                                                <div class="fa-solid fa-clock-rotate-left"></div>
+                                            </div>
+                                        </div>
+                                        <div class="toggle-description justifyLeft">
+                                            <span data-i18n="Set at the beginning of the chat history to indicate that a new chat is about to start.">
+                                                Set at the beginning of the chat history to indicate that a new chat is about to start.
+                                            </span>
+                                        </div>
+                                        <div class="wide100p">
+                                            <textarea id="newchat_prompt_textarea" class="text_pole textarea_compact autoSetHeight" name="new_chat" rows="3" placeholder="&mdash;"></textarea>
+                                        </div>
+                                    </div>
+                                    <div class="range-block m-t-1">
+                                        <div class="range-block-title openai_restorable">
+                                            <span data-i18n="New Group Chat">New Group Chat</span>
+                                            <div id="newgroupchat_prompt_restore" title="Restore default prompt" data-i18n="[title]Restore new group chat prompt" class="right_menu_button">
+                                                <div class="fa-solid fa-clock-rotate-left"></div>
+                                            </div>
+                                        </div>
+                                        <div class="toggle-description justifyLeft">
+                                            <span data-i18n="Set at the beginning of the chat history to indicate that a new group chat is about to start.">
+                                                Set at the beginning of the chat history to indicate that a new group chat is about to start.
+                                            </span>
+                                        </div>
+                                        <div class="wide100p">
+                                            <textarea id="newgroupchat_prompt_textarea" class="text_pole textarea_compact autoSetHeight" name="new_group_chat" rows="3" placeholder="&mdash;"></textarea>
+                                        </div>
+                                    </div>
+                                    <div class="range-block m-t-1">
+                                        <div class="range-block-title openai_restorable">
+                                            <span data-i18n="New Example Chat">New Example Chat</span>
+                                            <div id="newexamplechat_prompt_restore" title="Restore new example chat prompt" data-i18n="[title]Restore default prompt" class="right_menu_button">
+                                                <div class="fa-solid fa-clock-rotate-left"></div>
+                                            </div>
+                                        </div>
+                                        <div class="toggle-description justifyLeft">
+                                            <span data-i18n="Set at the beginning of Dialogue examples to indicate that a new example chat is about to start.">
+                                                Set at the beginning of Dialogue examples to indicate that a new example chat is about to start.
+                                            </span>
+                                        </div>
+                                        <div class="wide100p">
+                                            <textarea id="newexamplechat_prompt_textarea" class="text_pole textarea_compact autoSetHeight" name="new_example_chat" rows="3" placeholder="&mdash;"></textarea>
+                                        </div>
+                                    </div>
+                                    <div class="range-block m-t-1">
+                                        <div class="range-block-title openai_restorable">
+                                            <span data-i18n="Continue nudge">Continue nudge</span>
+                                            <div id="continue_nudge_prompt_restore" data-i18n="[title]Restore new chat prompt" title="Restore new chat prompt" class="right_menu_button">
+                                                <div class="fa-solid fa-clock-rotate-left"></div>
+                                            </div>
+                                        </div>
+                                        <div class="toggle-description justifyLeft">
+                                            <span data-i18n="Set at the end of the chat history when the continue button is pressed.">
+                                                Set at the end of the chat history when the continue button is pressed.
+                                            </span>
+                                        </div>
+                                        <div class="wide100p">
+                                            <textarea id="continue_nudge_prompt_textarea" class="text_pole textarea_compact autoSetHeight" name="continue_nudge" rows="3" placeholder="&mdash;"></textarea>
+                                        </div>
+                                    </div>
+                                    <div class="range-block m-t-1">
+                                        <div class="range-block-title justifyLeft" data-i18n="Replace empty message">
+                                            Replace empty message
+                                        </div>
+                                        <div class="toggle-description justifyLeft">
+                                            <span data-i18n="Send this text instead of nothing when the text box is empty.">
+                                                Send this text instead of nothing when the text box is empty.
+                                            </span>
+                                        </div>
+                                        <div class="wide100p">
+                                            <textarea id="send_if_empty_textarea" class="text_pole textarea_compact autoSetHeight" name="send_if_empty" rows="3" placeholder="&mdash;"></textarea>
+                                        </div>
+                                    </div>
                                 </div>
                             </div>
                         </div>
@@ -2749,141 +2683,6 @@
                                     <input id="pin_styles" type="checkbox" />
                                     <small data-i18n="Pin greeting message styles">Pin greeting message styles</small>
                                 </label>
-                                <div class="inline-drawer wide100p flexFlowColumn">
-                                    <div class="inline-drawer-toggle inline-drawer-header userSettingsInnerExpandable" title="Automatically reject and re-generate AI message based on configurable criteria." data-i18n="[title]Automatically reject and re-generate AI message based on configurable criteria">
-                                        <b><span data-i18n="Auto-swipe">Auto-swipe</span></b>
-                                        <div class="fa-solid fa-circle-chevron-down inline-drawer-icon down"></div>
-                                    </div>
-                                    <div class="inline-drawer-content">
-                                        <label class="checkbox_label" for="auto_swipe" title="Enable the auto-swipe function. Settings in this section only have an effect when auto-swipe is enabled." data-i18n="[title]Enable the auto-swipe function. Settings in this section only have an effect when auto-swipe is enabled">
-                                            <input id="auto_swipe" type="checkbox" />
-                                            <small data-i18n="Enabled">Enabled</small>
-                                        </label>
-                                        <small data-i18n="Minimum generated message length">Minimum generated message length</small>
-                                        <input id="auto_swipe_minimum_length" name="auto_swipe_minimum_length" type="number" min="0" step="1" value="0" class="text_pole" title="If the generated message is shorter than these many characters, trigger an auto-swipe." data-i18n="[title]If the generated message is shorter than these many characters, trigger an auto-swipe">
-                                        <small data-i18n="Blacklisted words">Blacklisted words</small>
-                                        <div class="auto_swipe">
-                                            <textarea id="auto_swipe_blacklist" name="auto_swipe_blacklist" data-i18n="[placeholder]words you dont want generated separated by comma ','" placeholder="words you don't want generated separated by comma ','" class="text_pole textarea_compact" value="" autocomplete="off" rows="3"></textarea>
-                                            <small data-i18n="Blacklisted word count to swipe">Blacklisted word count to swipe</small>
-                                            <input id="auto_swipe_blacklist_threshold" name="auto_swipe_blacklist_threshold" type="number" min="0" step="1" value="1" class="text_pole" title="Minimum number of blacklisted words detected to trigger an auto-swipe." data-i18n="[title]Minimum number of blacklisted words detected to trigger an auto-swipe">
-                                        </div>
-                                    </div>
-                                </div>
-                                <div nane="AutoContiueBlock" class="inline-drawer wide100p flexFlowColumn">
-                                    <div class="inline-drawer-toggle inline-drawer-header userSettingsInnerExpandable" data-i18n="[title]Automatically 'continue' a response if the model stopped before reaching a certain amount of tokens." title="Automatically 'continue' a response if the model stopped before reaching a certain amount of tokens.">
-                                        <b><span data-i18n="Auto-Continue">Auto-Continue</span></b>
-                                        <div class="fa-solid fa-circle-chevron-down inline-drawer-icon down"></div>
-                                    </div>
-                                    <div class="inline-drawer-content">
-                                        <div class="flex-container">
-                                            <label class="checkbox_label" for="auto_continue_enabled">
-                                                <input id="auto_continue_enabled" type="checkbox" />
-                                                <small data-i18n="Enabled">
-                                                    Enabled
-                                                </small>
-                                            </label>
-                                            <label class="checkbox_label" for="auto_continue_allow_chat_completions">
-                                                <input id="auto_continue_allow_chat_completions" type="checkbox" />
-                                                <small data-i18n="Allow for Chat Completion APIs">
-                                                    Allow for Chat Completion APIs
-                                                </small>
-                                            </label>
-                                        </div>
-                                        <div class="auto_continue_settings_block">
-                                            <label for="auto_continue_target_length">
-                                                <small data-i18n="Target length (tokens)">Target length (tokens)</small>
-                                                <input id="auto_continue_target_length" type="number" class="text_pole textarea_compact" min="0" max="1024" />
-                                            </label>
-                                        </div>
-                                    </div>
-
-
-                                </div>
-                            </div>
-                            <div name="AutoCompleteToggle" class="inline-drawer wide100p flexFlowColumn">
-                                <div class="inline-drawer-toggle inline-drawer-header userSettingsInnerExpandable" title="Options for the various autocomplete input boxes." data-i18n="[title]Options for the various autocomplete input boxes.">
-                                    <b><span data-i18n="AutoComplete Settings">AutoComplete Settings</span></b>
-                                    <div class="fa-solid fa-circle-chevron-down inline-drawer-icon down"></div>
-                                </div>
-                                <div class="inline-drawer-content">
-                                    <label for="stscript_autocomplete_state">
-                                        <small data-i18n="Visibility">Visibility</small>
-                                    </label>
-                                    <select id="stscript_autocomplete_state">
-                                        <option value="0" data-i18n="Don't show">Don't show</option>
-                                        <option value="1" data-i18n="Input length > 1">Input length > 1</option>
-                                        <option value="2" data-i18n="Always show">Always show</option>
-                                    </select>
-                                    <label class="checkbox_label" for="stscript_autocomplete_autoHide">
-                                        <input id="stscript_autocomplete_autoHide" type="checkbox" />
-                                        <small data-i18n="Automatically hide details">
-                                            Automatically hide details
-                                        </small>
-                                    </label>
-                                    <div class="flex-container">
-                                        <div class="flex1" title="Determines how entries are found for autocomplete." data-i18n="[title]Determines how entries are found for autocomplete.">
-                                            <label for="stscript_matching">
-                                                <small data-i18n="Autocomplete Matching">Matching</small>
-                                            </label>
-                                            <select id="stscript_matching">
-                                                <option data-i18n="Starts with" value="strict">Starts with</option>
-                                                <option data-i18n="Includes" value="includes">Includes</option>
-                                                <option data-i18n="Fuzzy" value="fuzzy">Fuzzy</option>
-                                            </select>
-                                        </div>
-                                        <div class="flex1" title="Sets the style of the autocomplete." data-i18n="[title]Sets the style of the autocomplete.">
-                                            <label for="stscript_autocomplete_style">
-                                                <small data-i18n="Autocomplete Style">Style</small>
-                                            </label>
-                                            <div class="flex-container flexFlowRow alignItemsBaseline">
-                                                <select id="stscript_autocomplete_style">
-                                                    <option data-i18n="Follow Theme" value="theme">Follow Theme</option>
-                                                    <option data-i18n="Dark" value="dark">Dark</option>
-                                                    <option data-i18n="Light" value="light">Light</option>
-                                                </select>
-                                                <!-- <div class="menu_button fa-solid fa-pen-to-square" title="Customize colors"></div> -->
-                                            </div>
-                                        </div>
-                                    </div>
-                                    <div title="Determines which keys select an item from the AutoComplete suggestions" data-i18n="[title]Determines which keys select an item from the AutoComplete suggestions">
-                                        <label>
-                                            <small data-i18n="Keyboard">Keyboard:</small>
-                                        </label>
-                                        <select id="stscript_autocomplete_select">
-                                            <option value="3" data-i18n="Select with Tab or Enter">Select with Tab or Enter</option>
-                                            <option value="1" data-i18n="Select with Tab">Select with Tab</option>
-                                            <option value="2" data-i18n="Select with Enter">Select with Enter</option>
-                                        </select>
-                                    </div>
-                                    <div class="flex-container flexFlowColumn gap0" title="Sets the font size of the autocomplete." data-i18n="[title]Sets the font size of the autocomplete.">
-                                        <label for="stscript_autocomplete_font_scale"><small data-i18n="Font Scale">Font Scale</small></label>
-                                        <input class="neo-range-slider" type="range" id="stscript_autocomplete_font_scale" min="0.5" max="2" step="0.01">
-                                        <input class="neo-range-input" type="number" min="0.5" max="2" step="0.01" data-for="stscript_autocomplete_font_scale" id="stscript_autocomplete_font_scale_counter">
-                                    </div>
-                                    <div title="Sets the width of the autocomplete." data-i18n="[title]Sets the width of the autocomplete.">
-                                        <label for="stscript_autocomplete_width">
-                                            <small data-i18n="Autocomplete Width">Width</small>
-                                        </label>
-                                        <div class="doubleRangeContainer">
-                                            <div class="doubleRangeInputContainer">
-                                                <input type="range" id="stscript_autocomplete_width_left" min="0" max="2" step="1">
-                                                <datalist id="stscript_autocomplete_width_left_values">
-                                                    <option value="0" label="input" title="chat input box" data-i18n="[title]chat input box"></option>
-                                                    <option value="1" label="chat" title="entire chat width" data-i18n="[title]entire chat width"></option>
-                                                    <option value="2" label="full" title="full window width" data-i18n="[title]full window width"></option>
-                                                </datalist>
-                                            </div>
-                                            <div class="doubleRangeInputContainer">
-                                                <input type="range" id="stscript_autocomplete_width_right" min="0" max="2" step="1">
-                                                <datalist id="stscript_autocomplete_width_right_values">
-                                                    <option value="0" label="input" title="chat input box" data-i18n="[title]chat input box"></option>
-                                                    <option value="1" label="chat" title="entire chat width" data-i18n="[title]entire chat width"></option>
-                                                    <option value="2" label="full" title="full window width" data-i18n="[title]full window width"></option>
-                                                </datalist>
-                                            </div>
-                                        </div>
-                                    </div>
-                                </div>
                             </div>
                             <div name="STscriptToggles">
                                 <h4 data-i18n="STscript Settings">STscript Settings</h4>

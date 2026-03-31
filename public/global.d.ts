@@ -8,7 +8,6 @@ import { ReasoningMessageExtra } from './scripts/reasoning';
 
 declare global {
     // Custom types
-    type InstructSettings = typeof power_user.instruct;
     type ReasoningSettings = typeof power_user.reasoning;
     type ChatCompletionSettings = typeof oai_settings;
     type MessageTimestamp = string | number | Date;

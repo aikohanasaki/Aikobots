@@ -56,7 +56,6 @@ export const event_types = {
     GROUP_WRAPPER_STARTED: 'group_wrapper_started',
     GROUP_WRAPPER_FINISHED: 'group_wrapper_finished',
     WORLD_INFO_ACTIVATED: 'world_info_activated',
-    TEXT_COMPLETION_SETTINGS_READY: 'text_completion_settings_ready',
     CHAT_COMPLETION_SETTINGS_READY: 'chat_completion_settings_ready',
     CHAT_COMPLETION_PROMPT_READY: 'chat_completion_prompt_ready',
     CHARACTER_FIRST_MESSAGE_SELECTED: 'character_first_message_selected',

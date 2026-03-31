@@ -13,8 +13,6 @@ import { SentencePieceProcessor } from '@agnai/sentencepiece-js';
 import tiktoken from 'tiktoken';
 
 import { convertClaudePrompt } from '../prompt-converters.js';
-import { TEXTGEN_TYPES } from '../constants.js';
-import { setAdditionalHeaders } from '../additional-headers.js';
 import { getConfigValue, isValidUrl } from '../util.js';
 
 /**
@@ -1025,106 +1023,5 @@ router.post('/openai/count', async function (req, res) {
         const jsonBody = JSON.stringify(req.body);
         const num_tokens = Math.ceil(jsonBody.length / CHARS_PER_TOKEN);
         res.send({ 'token_count': num_tokens });
-    }
-});
-
-router.post('/remote/kobold/count', async function (request, response) {
-    if (!request.body) {
-        return response.sendStatus(400);
-    }
-    const text = String(request.body.text) || '';
-    const baseUrl = String(request.body.url);
-
-    try {
-        const args = {
-            method: 'POST',
-            body: JSON.stringify({ 'prompt': text }),
-            headers: { 'Content-Type': 'application/json' },
-        };
-
-        let url = String(baseUrl).replace(/\/$/, '');
-        url += '/extra/tokencount';
-
-        const result = await fetch(url, args);
-
-        if (!result.ok) {
-            console.warn(`API returned error: ${result.status} ${result.statusText}`);
-            return response.send({ error: true });
-        }
-
-        /** @type {any} */
-        const data = await result.json();
-        const count = data['value'];
-        const ids = data['ids'] ?? [];
-        return response.send({ count, ids });
-    } catch (error) {
-        console.error(error);
-        return response.send({ error: true });
-    }
-});
-
-router.post('/remote/textgenerationwebui/encode', async function (request, response) {
-    if (!request.body) {
-        return response.sendStatus(400);
-    }
-    const text = String(request.body.text) || '';
-    const baseUrl = String(request.body.url);
-    const vllmModel = String(request.body.vllm_model) || '';
-    const aphroditeModel = String(request.body.aphrodite_model) || '';
-
-    try {
-        const args = {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-        };
-
-        setAdditionalHeaders(request, args, baseUrl);
-
-        // Convert to string + remove trailing slash + /v1 suffix
-        let url = String(baseUrl).replace(/\/$/, '').replace(/\/v1$/, '');
-
-        switch (request.body.api_type) {
-            case TEXTGEN_TYPES.TABBY:
-                url += '/v1/token/encode';
-                args.body = JSON.stringify({ 'text': text });
-                break;
-            case TEXTGEN_TYPES.KOBOLDCPP:
-                url += '/api/extra/tokencount';
-                args.body = JSON.stringify({ 'prompt': text });
-                break;
-            case TEXTGEN_TYPES.LLAMACPP:
-                url += '/tokenize';
-                args.body = JSON.stringify({ 'content': text });
-                break;
-            case TEXTGEN_TYPES.VLLM:
-                url += '/tokenize';
-                args.body = JSON.stringify({ 'model': vllmModel, 'prompt': text });
-                break;
-            case TEXTGEN_TYPES.APHRODITE:
-                url += '/v1/tokenize';
-                args.body = JSON.stringify({ 'model': aphroditeModel, 'prompt': text });
-                break;
-            default:
-                url += '/v1/internal/encode';
-                args.body = JSON.stringify({ 'text': text });
-                break;
-        }
-
-        const result = await fetch(url, args);
-
-        if (!result.ok) {
-            console.warn(`API returned error: ${result.status} ${result.statusText}`);
-            return response.send({ error: true });
-        }
-
-        /** @type {any} */
-        const data = await result.json();
-        const count = (data?.length ?? data?.count ?? data?.value ?? data?.tokens?.length);
-        const ids = (data?.tokens ?? data?.ids ?? []);
-
-        return response.send({ count, ids });
-    } catch (error) {
-        console.error(error);
-        return response.send({ error: true });
     }
 });

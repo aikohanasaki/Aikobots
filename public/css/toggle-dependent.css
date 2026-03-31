@@ -515,10 +515,6 @@ label[for="trim_spaces"]:not(:has(input:checked)) small {
     display: none;
 }
 
-#banned_tokens_block_ooba:not(:has(#send_banned_tokens_textgenerationwebui:checked)) #banned_tokens_controls_ooba {
-    filter: brightness(0.5);
-}
-
 #bind_preset_to_connection:checked~.toggleOff {
     display: none;
 }
@@ -543,22 +539,4 @@ label[for="bind_preset_to_connection"]:has(input:checked) {
 
 #openai_settings [data-cc-toggle="false"]>.icon-unsupported {
     color: var(--golden);
-}
-
-#advanced-formatting-cc-notice {
-    display: none;
-    gap: 5px;
-    align-items: baseline;
-    margin: 5px 0;
-    padding: 5px 10px;
-}
-
-#top-settings-holder:has(#main_api option[value="openai"]:checked) #advanced-formatting-cc-notice {
-    display: flex;
-}
-
-#top-settings-holder:has(#main_api option[value="openai"]:checked) #AdvancedFormatting [data-cc-null] {
-    opacity: 0.5;
-    filter: grayscale(0.5);
-    cursor: not-allowed;
 }

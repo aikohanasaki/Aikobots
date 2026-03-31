@@ -51,8 +51,6 @@ const TC_COMMANDS = [
     'preset',
     'api-url',
     'model',
-    'instruct',
-    'instruct-state',
     'tokenizer',
     'stop-strings',
     'start-reply-with',
@@ -67,8 +65,6 @@ const FANCY_NAMES = {
     'preset': 'Settings Preset',
     'model': 'Model',
     'proxy': 'Proxy Preset',
-    'instruct-state': 'Instruct Mode',
-    'instruct': 'Instruct Template',
     'tokenizer': 'Tokenizer',
     'stop-strings': 'Custom Stopping Strings',
     'start-reply-with': 'Start Reply With',
@@ -154,8 +150,6 @@ const profilesProvider = () => [
  * @property {string} [preset] Settings Preset
  * @property {string} [model] Model
  * @property {string} [proxy] Proxy Preset
- * @property {string} [instruct] Instruct Template
- * @property {string} [instruct-state] Instruct Mode
  * @property {string} [tokenizer] Tokenizer
  * @property {string} [stop-strings] Custom Stopping Strings
  * @property {string} [start-reply-with] Start Reply With

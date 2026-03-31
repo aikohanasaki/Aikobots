@@ -490,7 +490,7 @@ textarea:disabled {
     filter: brightness(0.5);
 }
 
-#AdvancedFormatting .disabled {
+#AdvancedPrompting .disabled {
     filter: brightness(0.5);
 }
 

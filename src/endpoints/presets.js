@@ -17,8 +17,6 @@ function getPresetSettingsByAPI(apiId, directories) {
     switch (apiId) {
         case 'openai':
             return { folder: directories.openAI_Settings, extension: '.json' };
-        case 'instruct':
-            return { folder: directories.instruct, extension: '.json' };
         case 'reasoning':
             return { folder: directories.reasoning, extension: '.json' };
         default:

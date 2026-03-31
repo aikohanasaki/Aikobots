@@ -96,16 +96,30 @@
 }
 
 #look-and-feel-sections {
+    display: grid;
     gap: 10px;
     padding: 10px 0 15px;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    align-items: start;
 }
 
 #look-and-feel-sections .inline-drawer-content {
     gap: 8px;
 }
 
+#look-and-feel-sections > .look-and-feel-backgrounds-heading,
+#look-and-feel-sections > label[for="background_thumbnails_animation"] {
+    grid-column: 1 / -1;
+}
+
 .look-and-feel-backgrounds-heading {
     margin: 5px 0 0;
+}
+
+@media screen and (max-width: 1000px) {
+    #look-and-feel-sections {
+        grid-template-columns: minmax(0, 1fr);
+    }
 }
 
 #bg_menu_content,

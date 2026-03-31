@@ -611,7 +611,7 @@ export function getNovelGenerationData(finalPrompt, settings, maxLength, isImper
     };
 }
 
-// Check if the prefix needs to be overridden to use instruct mode
+// Check if the prefix needs to be overridden to use NovelAI's special prompt format.
 function selectPrefix(selected_prefix, finalPrompt) {
     let useInstruct = false;
     const clio = nai_settings.model_novel.includes('clio');
@@ -620,7 +620,7 @@ function selectPrefix(selected_prefix, finalPrompt) {
     const isNewModel = clio || kayra || erato;
 
     if (isNewModel) {
-        // NovelAI claims they scan backwards 1000 characters (not tokens!) to look for instruct brackets. That's really short.
+        // NovelAI claims they scan backwards 1000 characters (not tokens!) to look for special prompt brackets. That's really short.
         const tail = finalPrompt.slice(-1500);
         useInstruct = tail.includes('}');
         return useInstruct ? 'special_instruct' : selected_prefix;
@@ -709,21 +709,6 @@ function calculateLogitBias() {
 
     const result = getLogitBiasListResult(biasPreset, tokenizerType, getBiasObject);
     return result;
-}
-
-/**
- * Transforms instruction into compatible format for Novel AI if Novel AI instruct format not already detected.
- * 1. Instruction must begin and end with curly braces followed and preceded by a space.
- * 2. Instruction must not contain square brackets as it serves different purpose in NAI.
- * @param {string} prompt Original instruction prompt
- * @returns Processed prompt
- */
-export function adjustNovelInstructionPrompt(prompt) {
-    const stripedPrompt = prompt.replace(/[[\]]/g, '').trim();
-    if (!stripedPrompt.includes('{ ')) {
-        return `{ ${stripedPrompt} }`;
-    }
-    return stripedPrompt;
 }
 
 function tryParseStreamingError(response, decoded) {

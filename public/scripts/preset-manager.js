@@ -16,7 +16,6 @@ import {
 } from '../script.js';
 import { groups, selected_group } from './group-chats.js';
 import { t } from './i18n.js';
-import { instruct_presets } from './instruct-mode.js';
 import { oai_settings, openai_setting_names, openai_settings } from './openai.js';
 import { POPUP_RESULT, POPUP_TYPE, Popup } from './popup.js';
 import { power_user } from './power-user.js';
@@ -106,20 +105,6 @@ class PresetManager {
     }
 
     static masterSections = {
-        'instruct': {
-            name: 'Instruct Template',
-            getData: () => {
-                const manager = getPresetManager('instruct');
-                const name = manager.getSelectedPresetName();
-                return manager.getPresetSettings(name);
-            },
-            setData: (data) => {
-                const manager = getPresetManager('instruct');
-                const name = data.name;
-                return manager.savePreset(name, data);
-            },
-            isValid: (data) => PresetManager.isPossiblyInstructData(data),
-        },
         'preset': {
             name: 'Chat Completion Preset',
             getData: () => {
@@ -176,7 +161,6 @@ class PresetManager {
     };
 
     static masterSectionApis = {
-        'instruct': 'instruct',
         'preset': 'openai',
         'reasoning': 'reasoning',
     };
@@ -188,11 +172,6 @@ class PresetManager {
 
     static getAvailableMasterSections() {
         return Object.fromEntries(Object.entries(this.masterSections).filter(([key]) => this.isMasterSectionAvailable(key)));
-    }
-
-    static isPossiblyInstructData(data) {
-        const instructProps = ['name', 'input_sequence', 'output_sequence'];
-        return data && instructProps.every(prop => Object.keys(data).includes(prop));
     }
 
     static isPossiblyCompletionData(data) {
@@ -231,18 +210,7 @@ class PresetManager {
         }
 
         // Check for legacy file imports
-        // 1. Instruct Template
-        if (this.isPossiblyInstructData(data)) {
-            const manager = getPresetManager('instruct');
-            if (!manager) {
-                toastr.error(t`Instruct templates are not available in this build`);
-                return;
-            }
-            toastr.info(t`Importing instruct template...`, t`Instruct template detected`);
-            return await manager.savePreset(data.name, data);
-        }
-
-        // 2. Chat Completion settings
+        // 1. Chat Completion settings
         if (this.isPossiblyCompletionData(data)) {
             const manager = getPresetManager('openai');
             if (!manager) {
@@ -253,7 +221,7 @@ class PresetManager {
             return await manager.savePreset(fileName, data);
         }
 
-        // 3. Reasoning Template
+        // 2. Reasoning Template
         if (this.isPossiblyReasoningData(data)) {
             const manager = getPresetManager('reasoning');
             if (!manager) {
@@ -517,11 +485,6 @@ class PresetManager {
                 preset_names = openai_setting_names;
                 settings = oai_settings;
                 break;
-            case 'instruct':
-                presets = instruct_presets;
-                preset_names = instruct_presets.map(x => x.name);
-                settings = power_user.instruct;
-                break;
             case 'reasoning':
                 presets = reasoning_templates;
                 preset_names = reasoning_templates.map(x => x.name);
@@ -545,7 +508,7 @@ class PresetManager {
      * Returns true if the API is from Advanced Formatting group.
      */
     isAdvancedFormatting() {
-        return ['instruct', 'reasoning'].includes(this.apiId);
+        return this.apiId === 'reasoning';
     }
 
     /**
@@ -598,11 +561,6 @@ class PresetManager {
             switch (apiId) {
                 case 'openai':
                     return oai_settings;
-                case 'instruct': {
-                    const instruct_preset = structuredClone(power_user.instruct);
-                    instruct_preset['name'] = name || power_user.instruct.preset;
-                    return instruct_preset;
-                }
                 case 'reasoning': {
                     const reasoning_preset = structuredClone(power_user.reasoning);
                     reasoning_preset['name'] = name || power_user.reasoning.preset;
@@ -629,7 +587,6 @@ class PresetManager {
             'streaming_novel',
             'nai_preamble',
             'model_novel',
-            'streaming_kobold',
             'enabled',
             'seed',
             'legacy_api',

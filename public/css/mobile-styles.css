@@ -4,9 +4,21 @@
     #UI-Customization,
     #power-user-options-block,
     #look-and-feel-sections,
-    #InstructSettingsColumn,
-    #InstructSequencesColumn {
+    #AdvancedPromptingLayout,
+    #PromptTemplatesColumn,
+    #PromptUtilitiesColumn {
         flex-basis: 100%;
+    }
+
+    #AdvancedPromptingLayout {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr);
+    }
+
+    #PromptUtilitySettingsBlock,
+    #utility_prompts_edit_drawer {
+        grid-column: auto;
+        grid-row: auto;
     }
 
     #rm_button_panel_pin_div,

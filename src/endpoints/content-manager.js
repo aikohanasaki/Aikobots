@@ -51,7 +51,6 @@ export const CONTENT_TYPES = {
     THEME: 'theme',
     WORKFLOW: 'workflow',
     OPENAI_PRESET: 'openai_preset',
-    INSTRUCT: 'instruct',
     MOVING_UI: 'moving_ui',
     QUICK_REPLIES: 'quick_replies',
     REASONING: 'reasoning',
@@ -68,7 +67,7 @@ export function getDefaultPresets(directories) {
         const presets = [];
 
         for (const contentItem of contentIndex) {
-            if (contentItem.type.endsWith('_preset') || ['instruct', 'reasoning'].includes(contentItem.type)) {
+            if (contentItem.type.endsWith('_preset') || contentItem.type === 'reasoning') {
                 contentItem.name = path.parse(contentItem.filename).name;
                 contentItem.folder = getTargetByType(contentItem.type, directories);
                 presets.push(contentItem);
@@ -291,8 +290,6 @@ function getTargetByType(type, directories) {
             return directories.comfyWorkflows;
         case CONTENT_TYPES.OPENAI_PRESET:
             return directories.openAI_Settings;
-        case CONTENT_TYPES.INSTRUCT:
-            return directories.instruct;
         case CONTENT_TYPES.MOVING_UI:
             return directories.movingUI;
         case CONTENT_TYPES.QUICK_REPLIES:

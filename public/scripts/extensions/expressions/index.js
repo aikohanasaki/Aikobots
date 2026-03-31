@@ -6,7 +6,6 @@ import { getContext, getApiUrl, modules, extension_settings, ModuleWorkerWrapper
 import { loadMovingUIState, performFuzzySearch, power_user } from '../../power-user.js';
 import { onlyUnique, debounce, getCharaFilename, trimToEndSentence, trimToStartSentence, waitUntilCondition, findChar, isFalseBoolean } from '../../utils.js';
 import { hideMutedSprites, selected_group } from '../../group-chats.js';
-import { isJsonSchemaSupported } from '../../textgen-settings.js';
 import { debounce_timeout } from '../../constants.js';
 import { SlashCommandParser } from '../../slash-commands/SlashCommandParser.js';
 import { SlashCommand } from '../../slash-commands/SlashCommand.js';
@@ -961,42 +960,6 @@ function parseLlmResponse(emotionResponse, labels) {
 }
 
 /**
- * Gets the JSON schema for the LLM API.
- * @param {string[]} emotions A list of emotions to search for.
- * @returns {object} The JSON schema for the LLM API.
- */
-function getJsonSchema(emotions) {
-    return {
-        $schema: 'http://json-schema.org/draft-04/schema#',
-        type: 'object',
-        properties: {
-            emotion: {
-                type: 'string',
-                enum: emotions,
-            },
-        },
-        required: [
-            'emotion',
-        ],
-        additionalProperties: false,
-    };
-}
-
-function onTextGenSettingsReady(args) {
-    // Only call if inside an API call
-    if (inApiCall && extension_settings.expressions.api === EXPRESSION_API.llm && isJsonSchemaSupported()) {
-        const emotions = DEFAULT_EXPRESSIONS;
-        Object.assign(args, {
-            top_k: 1,
-            stop: [],
-            stopping_strings: [],
-            custom_token_bans: [],
-            json_schema: getJsonSchema(emotions),
-        });
-    }
-}
-
-/**
  * Retrieves the label of an expression via classification based on the provided text.
  * Optionally allows to override the expressions API being used.
  * @param {string} text - The text to classify and retrieve the expression label for.
@@ -1049,7 +1012,6 @@ export async function getExpressionLabel(text, expressionsApi = extension_settin
 
                 const expressionsList = await getExpressionsList({ filterAvailable: filterAvailable });
                 const prompt = substituteParamsExtended(customPrompt, { labels: expressionsList }) || await getLlmPrompt(expressionsList);
-                eventSource.once(event_types.TEXT_COMPLETION_SETTINGS_READY, onTextGenSettingsReady);
 
                 let emotionResponse;
                 try {

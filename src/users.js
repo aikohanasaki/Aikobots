@@ -85,7 +85,6 @@ const STORAGE_KEYS = {
  * @property {string} themes - The directory where the themes are stored
  * @property {string} movingUI - The directory where the moving UI data is stored
  * @property {string} extensions - The directory where the extensions are stored
- * @property {string} instruct - The directory where the instruct templates is stored
  * @property {string} quickreplies - The directory where the quick replies are stored
  * @property {string} assets - The directory where the assets are stored
  * @property {string} comfyWorkflows - The directory where the ComfyUI workflows are stored
@@ -273,11 +272,6 @@ export async function migrateUserData() {
         {
             old: path.join(publicDirectory, 'groups'),
             new: userDirectories.groups,
-            file: false,
-        },
-        {
-            old: path.join(publicDirectory, 'instruct'),
-            new: userDirectories.instruct,
             file: false,
         },
         {
