@@ -59,4 +59,3 @@ public/error/
 yarn.lock
 *.code-workspace
 test-results/
-/CHANGELOG-v2-vs-release.md
