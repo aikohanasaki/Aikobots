@@ -604,7 +604,9 @@ export function listLorebooksForManagement(user) {
     if (isAdmin) {
         for (const [name, secureRecord] of secureRecords.entries()) {
             if (seenNames.has(name)) {
-                console.warn(`[Lorebooks] Skipping duplicate manageable lorebook name "${name}" in secure storage.`);
+                if (secureRecord.ownerHandle !== currentHandle) {
+                    console.error(`[Lorebooks] Lorebook name conflict "${name}" exists in both local storage and secure storage owned by "${secureRecord.ownerHandle}".`);
+                }
                 continue;
             }
 

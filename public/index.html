@@ -1760,10 +1760,6 @@
                                         <input id="strip_ai_thinking_from_response" type="checkbox" />
                                         <small data-i18n="Strip AI Thinking From Response">Strip AI Thinking From Response</small>
                                     </label>
-                                    <div id="reasoning_settings_popup_button" title="Open reasoning settings." class="menu_button margin0" data-i18n="[title]Open reasoning settings.">
-                                        <i class="fa-solid fa-sliders margin-r5"></i>
-                                        <span data-i18n="Reasoning">Reasoning</span>
-                                    </div>
                                 </div>
                                 <div id="strip_ai_thinking_cleanup_mode_container" class="flex-container alignitemscenter" style="display:none;" title="Choose whether stripping only affects future responses or also asks to clean existing thinking from the current chat when it is opened." data-i18n="[title]Choose whether stripping only affects future responses or also asks to clean existing thinking from the current chat when it is opened.">
                                     <label for="strip_ai_thinking_cleanup_mode"><small data-i18n="Thinking Cleanup Mode">Thinking Cleanup Mode</small></label>
@@ -1771,6 +1767,77 @@
                                         <option value="future_only" data-i18n="Future messages only">Future messages only</option>
                                         <option value="ask_clean_chat_on_open" data-i18n="Ask to clean entire chat on open">Ask to clean entire chat on open</option>
                                     </select>
+                                </div>
+                                <h4 class="standoutHeader marginTopBot5">
+                                    <span data-i18n="Reasoning">Reasoning</span>
+                                </h4>
+                                <div>
+                                    <div class="flex-container alignItemsBaseline">
+                                        <label class="checkbox_label flex1" for="reasoning_auto_parse" title="Automatically parse reasoning blocks from main content between the reasoning prefix/suffix. Both fields must be defined and non-empty." data-i18n="[title]reasoning_auto_parse">
+                                            <input id="reasoning_auto_parse" type="checkbox" />
+                                            <small data-i18n="Auto-Parse">
+                                                Auto-Parse
+                                            </small>
+                                        </label>
+                                        <label class="checkbox_label flex1" for="reasoning_auto_expand" title="Automatically expand reasoning blocks." data-i18n="[title]reasoning_auto_expand">
+                                            <input id="reasoning_auto_expand" type="checkbox" />
+                                            <small data-i18n="Auto-Expand">
+                                                Auto-Expand
+                                            </small>
+                                        </label>
+                                        <label class="checkbox_label flex1" for="reasoning_show_hidden" title="Show reasoning time for models with hidden reasoning." data-i18n="[title]reasoning_show_hidden">
+                                            <input id="reasoning_show_hidden" type="checkbox" />
+                                            <small data-i18n="Show Hidden">
+                                                Show Hidden
+                                            </small>
+                                        </label>
+                                    </div>
+                                    <div class="flex-container alignItemsBaseline">
+                                        <label class="checkbox_label flex1" for="reasoning_add_to_prompts" title="Add existing reasoning blocks to prompts. To add a new reasoning block, use the message edit menu." data-i18n="[title]reasoning_add_to_prompts">
+                                            <input id="reasoning_add_to_prompts" type="checkbox" />
+                                            <small data-i18n="Add to Prompts">
+                                                Add to Prompts
+                                            </small>
+                                        </label>
+                                        <div class="flex1 flex-container alignItemsBaseline" title="Maximum number of reasoning blocks to be added per prompt, counting from the last message." data-i18n="[title]reasoning_max_additions">
+                                            <input id="reasoning_max_additions" class="text_pole textarea_compact widthUnset" type="number" min="0" max="999" />
+                                            <small data-i18n="Max">Max</small>
+                                        </div>
+                                    </div>
+                                    <details open>
+                                        <summary data-i18n="Reasoning Formatting">
+                                            Reasoning Formatting
+                                        </summary>
+                                        <div class="flex-container" title="Select your current Reasoning Template" data-i18n="[title]Select your current Reasoning Template">
+                                            <select id="reasoning_select" data-preset-manager-for="reasoning" class="flex1 text_pole"></select>
+                                            <div class="flex-container margin0 justifyCenter gap3px">
+                                                <input type="file" hidden data-preset-manager-file="reasoning" accept=".json, .settings">
+                                                <i data-preset-manager-update="reasoning" class="menu_button fa-solid fa-save" title="Update current template" data-i18n="[title]Update current template"></i>
+                                                <i data-preset-manager-rename="reasoning" class="menu_button fa-pencil fa-solid" title="Rename current template" data-i18n="[title]Rename current template"></i>
+                                                <i data-preset-manager-new="reasoning" class="menu_button fa-solid fa-file-circle-plus" title="Save template as" data-i18n="[title]Save template as"></i>
+                                                <i data-preset-manager-import="reasoning" class="displayNone menu_button fa-solid fa-file-import" title="Import template" data-i18n="[title]Import template"></i>
+                                                <i data-preset-manager-export="reasoning" class="displayNone menu_button fa-solid fa-file-export" title="Export template" data-i18n="[title]Export template"></i>
+                                                <i data-preset-manager-restore="reasoning" class="menu_button fa-solid fa-recycle" title="Restore current template" data-i18n="[title]Restore current template"></i>
+                                                <i data-preset-manager-delete="reasoning" class="menu_button fa-solid fa-trash-can" title="Delete template" data-i18n="[title]Delete template"></i>
+                                            </div>
+                                        </div>
+                                        <div class="flex-container">
+                                            <div class="flex1" title="Inserted before the reasoning content." data-i18n="[title]reasoning_prefix">
+                                                <small data-i18n="Prefix">Prefix</small>
+                                                <textarea id="reasoning_prefix" class="text_pole textarea_compact autoSetHeight"></textarea>
+                                            </div>
+                                            <div class="flex1" title="Inserted after the reasoning content." data-i18n="[title]reasoning_suffix">
+                                                <small data-i18n="Suffix">Suffix</small>
+                                                <textarea id="reasoning_suffix" class="text_pole textarea_compact autoSetHeight"></textarea>
+                                            </div>
+                                        </div>
+                                        <div class="flex-container">
+                                            <div class="flex1" title="Inserted between the reasoning and the message content." data-i18n="[title]reasoning_separator">
+                                                <small data-i18n="Separator">Separator</small>
+                                                <textarea id="reasoning_separator" class="text_pole textarea_compact autoSetHeight"></textarea>
+                                            </div>
+                                        </div>
+                                    </details>
                                 </div>
                             </div>
                             <div name="PromptAutomationBlock">
@@ -2324,81 +2391,6 @@
                     </div>
                 </div>
                 <div id="user-settings-block-content" class="flex-container spaceEvenly">
-                    <div id="reasoning_settings_popup_host" style="display:none;">
-                        <div id="reasoning_settings_popup_content">
-                            <h4 class="standoutHeader">
-                                <span data-i18n="Reasoning">Reasoning</span>
-                            </h4>
-                            <div>
-                                <div class="flex-container alignItemsBaseline">
-                                    <label class="checkbox_label flex1" for="reasoning_auto_parse" title="Automatically parse reasoning blocks from main content between the reasoning prefix/suffix. Both fields must be defined and non-empty." data-i18n="[title]reasoning_auto_parse">
-                                        <input id="reasoning_auto_parse" type="checkbox" />
-                                        <small data-i18n="Auto-Parse">
-                                            Auto-Parse
-                                        </small>
-                                    </label>
-                                    <label class="checkbox_label flex1" for="reasoning_auto_expand" title="Automatically expand reasoning blocks." data-i18n="[title]reasoning_auto_expand">
-                                        <input id="reasoning_auto_expand" type="checkbox" />
-                                        <small data-i18n="Auto-Expand">
-                                            Auto-Expand
-                                        </small>
-                                    </label>
-                                    <label class="checkbox_label flex1" for="reasoning_show_hidden" title="Show reasoning time for models with hidden reasoning." data-i18n="[title]reasoning_show_hidden">
-                                        <input id="reasoning_show_hidden" type="checkbox" />
-                                        <small data-i18n="Show Hidden">
-                                            Show Hidden
-                                        </small>
-                                    </label>
-                                </div>
-                                <div class="flex-container alignItemsBaseline">
-                                    <label class="checkbox_label flex1" for="reasoning_add_to_prompts" title="Add existing reasoning blocks to prompts. To add a new reasoning block, use the message edit menu." data-i18n="[title]reasoning_add_to_prompts">
-                                        <input id="reasoning_add_to_prompts" type="checkbox" />
-                                        <small data-i18n="Add to Prompts">
-                                            Add to Prompts
-                                        </small>
-                                    </label>
-                                    <div class="flex1 flex-container alignItemsBaseline" title="Maximum number of reasoning blocks to be added per prompt, counting from the last message." data-i18n="[title]reasoning_max_additions">
-                                        <input id="reasoning_max_additions" class="text_pole textarea_compact widthUnset" type="number" min="0" max="999" />
-                                        <small data-i18n="Max">Max</small>
-                                    </div>
-                                </div>
-                                <details open>
-                                    <summary data-i18n="Reasoning Formatting">
-                                        Reasoning Formatting
-                                    </summary>
-                                    <div class="flex-container" title="Select your current Reasoning Template" data-i18n="[title]Select your current Reasoning Template">
-                                        <select id="reasoning_select" data-preset-manager-for="reasoning" class="flex1 text_pole"></select>
-                                        <div class="flex-container margin0 justifyCenter gap3px">
-                                            <input type="file" hidden data-preset-manager-file="reasoning" accept=".json, .settings">
-                                            <i data-preset-manager-update="reasoning" class="menu_button fa-solid fa-save" title="Update current template" data-i18n="[title]Update current template"></i>
-                                            <i data-preset-manager-rename="reasoning" class="menu_button fa-pencil fa-solid" title="Rename current template" data-i18n="[title]Rename current template"></i>
-                                            <i data-preset-manager-new="reasoning" class="menu_button fa-solid fa-file-circle-plus" title="Save template as" data-i18n="[title]Save template as"></i>
-                                            <i data-preset-manager-import="reasoning" class="displayNone menu_button fa-solid fa-file-import" title="Import template" data-i18n="[title]Import template"></i>
-                                            <i data-preset-manager-export="reasoning" class="displayNone menu_button fa-solid fa-file-export" title="Export template" data-i18n="[title]Export template"></i>
-                                            <i data-preset-manager-restore="reasoning" class="menu_button fa-solid fa-recycle" title="Restore current template" data-i18n="[title]Restore current template"></i>
-                                            <i data-preset-manager-delete="reasoning" class="menu_button fa-solid fa-trash-can" title="Delete template" data-i18n="[title]Delete template"></i>
-                                        </div>
-                                    </div>
-                                    <div class="flex-container">
-                                        <div class="flex1" title="Inserted before the reasoning content." data-i18n="[title]reasoning_prefix">
-                                            <small data-i18n="Prefix">Prefix</small>
-                                            <textarea id="reasoning_prefix" class="text_pole textarea_compact autoSetHeight"></textarea>
-                                        </div>
-                                        <div class="flex1" title="Inserted after the reasoning content." data-i18n="[title]reasoning_suffix">
-                                            <small data-i18n="Suffix">Suffix</small>
-                                            <textarea id="reasoning_suffix" class="text_pole textarea_compact autoSetHeight"></textarea>
-                                        </div>
-                                    </div>
-                                    <div class="flex-container">
-                                        <div class="flex1" title="Inserted between the reasoning and the message content." data-i18n="[title]reasoning_separator">
-                                            <small data-i18n="Separator">Separator</small>
-                                            <textarea id="reasoning_separator" class="text_pole textarea_compact autoSetHeight"></textarea>
-                                        </div>
-                                    </div>
-                                </details>
-                            </div>
-                        </div>
-                    </div>
                     <div name="UserSettingsSecondColumn" id="UI-Customization" class="flex-container flexFlowColumn wide100p flexNoGap flex1">
                         <div name="CharacterHandlingToggles">
                             <h4 data-i18n="Character Handling">

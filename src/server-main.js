@@ -251,7 +251,7 @@ async function preSetupTasks() {
 
     // Print formatted header
     console.log();
-    console.log(`SillyTavern ${version.pkgVersion}`);
+    console.log(`Aikobots ${version.pkgVersion}`);
     if (version.gitBranch && version.commitDate) {
         const date = new Date(version.commitDate);
         const localDate = date.toLocaleString('en-US', { timeZoneName: 'short' });

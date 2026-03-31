@@ -6,7 +6,7 @@ import { getRegexedString, regex_placement } from './extensions/regex/engine.js'
 import { getCurrentLocale, t, translate } from './i18n.js';
 import { MacrosParser } from './macros.js';
 import { chat_completion_sources, getChatCompletionModel, oai_settings } from './openai.js';
-import { POPUP_TYPE, Popup } from './popup.js';
+import { Popup } from './popup.js';
 import { performFuzzySearch, power_user } from './power-user.js';
 import { getPresetManager } from './preset-manager.js';
 import { SlashCommand } from './slash-commands/SlashCommand.js';
@@ -56,8 +56,6 @@ const STRIP_AI_THINKING_CLEANUP_MODE = {
 };
 
 let lastThinkingCleanupPromptChatId = null;
-let reasoningSettingsPopup = null;
-
 /**
  * Enum representing the type of the reasoning for a message (where it came from)
  * @enum {string}
@@ -84,44 +82,6 @@ function getMessageFromJquery(element) {
 
 function shouldStripAiThinkingFromResponses() {
     return power_user.strip_ai_thinking_from_response === true;
-}
-
-function restoreReasoningSettingsPopupContent() {
-    const host = document.getElementById('reasoning_settings_popup_host');
-    const content = document.getElementById('reasoning_settings_popup_content');
-
-    if (host instanceof HTMLElement && content instanceof HTMLElement && content.parentElement !== host) {
-        host.append(content);
-    }
-}
-
-async function showReasoningSettingsPopup() {
-    if (reasoningSettingsPopup) {
-        return;
-    }
-
-    const content = document.getElementById('reasoning_settings_popup_content');
-    if (!(content instanceof HTMLElement)) {
-        return;
-    }
-
-    reasoningSettingsPopup = new Popup(content, POPUP_TYPE.DISPLAY, '', {
-        wide: true,
-        large: true,
-        leftAlign: true,
-        allowVerticalScrolling: true,
-        onClose: () => {
-            restoreReasoningSettingsPopupContent();
-            reasoningSettingsPopup = null;
-        },
-    });
-
-    try {
-        await reasoningSettingsPopup.show();
-    } finally {
-        restoreReasoningSettingsPopupContent();
-        reasoningSettingsPopup = null;
-    }
 }
 
 function stripThinkTagsFromString(value) {
@@ -1246,10 +1206,6 @@ function setReasoningEventHandlers() {
         message.extra.reasoning = reasoning;
         message.extra.reasoning_type = message.extra.reasoning_type ? ReasoningType.Edited : ReasoningType.Manual;
     }
-
-    $('#reasoning_settings_popup_button').on('click', function () {
-        void showReasoningSettingsPopup();
-    });
 
     $(document).on('click', '.mes_reasoning_details', function (e) {
         if (!e.target.closest('.mes_reasoning_actions') && !e.target.closest('.mes_reasoning_header')) {
