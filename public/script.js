@@ -243,7 +243,8 @@ import { clearItemizedPrompts, deleteItemizedPrompts, findItemizedPromptSet, ini
 import { getSystemMessageByType, initSystemMessages, SAFETY_CHAT, sendSystemMessage, system_message_types, system_messages } from './scripts/system-messages.js';
 import { event_types, eventSource } from './scripts/events.js';
 import { isAdmin } from './scripts/user.js';
-import { initializeAikobots } from './scripts/aikobots-core.js';
+import { initializeHiddenTemplates } from './scripts/hidden-templates.js';
+import { initializeModelTagInjection } from './scripts/model-tag-injection.js';
 import { initAccessibility } from './scripts/a11y.js';
 import { applyStreamFadeIn } from './scripts/util/stream-fadein.js';
 import { initDomHandlers } from './scripts/dom-handlers.js';
@@ -770,7 +771,8 @@ async function firstLoadInit() {
     doDailyExtensionUpdatesCheck();
     await hideLoader();
     await fixViewport();
-    await initializeAikobots();
+    initializeModelTagInjection();
+    await initializeHiddenTemplates();
     await eventSource.emit(event_types.APP_READY);
 }
 

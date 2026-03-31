@@ -1,9 +1,0 @@
-{
-    "display_name": "Aikobots Compatibility Shim",
-    "loading_order": 1,
-    "requires": [],
-    "optional": [],
-    "author": "aikohanasaki",
-    "version": "2.0.0",
-    "homePage": "https://github.com/aikohanasaki/aikobots"
-}
