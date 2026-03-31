@@ -1,9 +1,9 @@
 /*will apply to anything 1000px or less. this catches ipads, horizontal phones, and vertical phones)*/
 @media screen and (max-width: 1000px) {
 
-    #UI-Theme-Block,
     #UI-Customization,
     #power-user-options-block,
+    #look-and-feel-sections,
     #InstructSettingsColumn,
     #InstructSequencesColumn {
         flex-basis: 100%;

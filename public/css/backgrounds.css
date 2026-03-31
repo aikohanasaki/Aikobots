@@ -58,6 +58,10 @@
     width: 100%;
 }
 
+.bg-header-title {
+    margin-bottom: 5px;
+}
+
 .bg-header-row-1,
 .bg-header-row-2 {
     display: flex;
@@ -89,6 +93,19 @@
     overflow-x: hidden;
     padding: 0 5px 15px;
     position: relative;
+}
+
+#look-and-feel-sections {
+    gap: 10px;
+    padding: 10px 0 15px;
+}
+
+#look-and-feel-sections .inline-drawer-content {
+    gap: 8px;
+}
+
+.look-and-feel-backgrounds-heading {
+    margin: 5px 0 0;
 }
 
 #bg_menu_content,
