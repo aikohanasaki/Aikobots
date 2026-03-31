@@ -18,6 +18,7 @@ import { hideLoader, showLoader } from './loader.js';
 import { convertCharacterToPersona } from './personas.js';
 import { callGenericPopup, POPUP_TYPE } from './popup.js';
 import { createTagInput, getTagKeyForEntity, getTagsList, printTagList, tag_map, compareTagsForSort, removeTagFromMap, importTags, tag_import_setting } from './tags.js';
+import { isAdmin } from './user.js';
 
 /**
  * Static object representing the actions of the
@@ -109,10 +110,11 @@ class CharacterContextMenu {
      *
      * @param {string|string[]} characterKey
      * @param {boolean} [deleteChats]
+     * @param {boolean} [deleteForAllUsers]
      * @returns {Promise<void>}
      */
-    static delete = async (characterKey, deleteChats = false) => {
-        await deleteCharacter(characterKey, { deleteChats: deleteChats });
+    static delete = async (characterKey, deleteChats = false, deleteForAllUsers = false) => {
+        await deleteCharacter(characterKey, { deleteChats: deleteChats, deleteForAllUsers: deleteForAllUsers });
     };
 
     static #getCharacter = (characterId) => characters[characterId] ?? null;
@@ -814,6 +816,14 @@ class BulkEditOverlay {
      * @returns String containing the html for the popup content
      */
     static #getDeletePopupContentHtml = (characterIds) => {
+        const allUsersOption = isAdmin()
+            ? `
+                <label for="del_char_checkbox_all_users" class="checkbox_label justifyCenter">
+                    <input type="checkbox" id="del_char_checkbox_all_users" />
+                    <span>Delete for All Users</span>
+                </label>`
+            : '';
+
         return `
             <h3 class="marginBot5">Delete ${characterIds.length} characters?</h3>
             <span class="bulk_delete_note">
@@ -827,6 +837,7 @@ class BulkEditOverlay {
                     <input type="checkbox" id="del_char_checkbox" />
                     <span>Also delete the chat files</span>
                 </label>
+                ${allUsersOption}
             </div>`;
     };
 
@@ -845,11 +856,12 @@ class BulkEditOverlay {
                 if (!accept) return;
 
                 const deleteChats = checkbox.prop('checked') ?? false;
+                const deleteForAllUsers = popupContent.find('#del_char_checkbox_all_users').prop('checked') ?? false;
 
                 showLoader();
                 const toast = toastr.info('We\'re deleting your characters, please wait...', 'Working on it');
                 const avatarList = characterIds.map(id => characters[id]?.avatar).filter(a => a);
-                return CharacterContextMenu.delete(avatarList, deleteChats)
+                return CharacterContextMenu.delete(avatarList, deleteChats, deleteForAllUsers)
                     .then(() => this.browseState())
                     .finally(() => {
                         toastr.clear(toast);

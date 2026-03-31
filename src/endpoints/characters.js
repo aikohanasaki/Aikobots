@@ -20,7 +20,7 @@ import { parse, read, write } from '../character-card-parser.js';
 import { readWorldInfoFile } from './worldinfo.js';
 import { invalidateThumbnail } from './thumbnails.js';
 import { importRisuSprites } from './sprites.js';
-import { getUserDirectories, requireAdminMiddleware } from '../users.js';
+import { getAllEnabledUsers, getUserDirectories, requireAdminMiddleware } from '../users.js';
 import { getChatInfo } from './chats.js';
 import { ByafParser } from '../byaf.js';
 import cacheBuster from '../middleware/cacheBuster.js';
@@ -1286,27 +1286,66 @@ router.post('/delete', validateAvatarUrlMiddleware, async function (request, res
         return response.sendStatus(403);
     }
 
-    const avatarPath = path.join(request.user.directories.characters, request.body.avatar_url);
-    if (!fs.existsSync(avatarPath)) {
-        return response.sendStatus(400);
+    const deleteForAllUsers = request.body.delete_for_all_users == true;
+    if (deleteForAllUsers && !request.user.profile.admin) {
+        return response.status(403).json({ error: 'Only admins can delete a character for all users.' });
     }
 
-    fs.unlinkSync(avatarPath);
-    invalidateThumbnail(request.user.directories, 'avatar', request.body.avatar_url);
-    let dir_name = (request.body.avatar_url.replace('.png', ''));
+    const avatarUrl = request.body.avatar_url;
+    let dir_name = (avatarUrl.replace('.png', ''));
 
     if (!dir_name.length) {
         console.error('Malicious dirname prevented');
         return response.sendStatus(403);
     }
 
-    if (request.body.delete_chats == true) {
+    async function deleteCharacterFromDirectories(directories) {
+        const avatarPath = path.join(directories.characters, avatarUrl);
+        const avatarExists = fs.existsSync(avatarPath);
+
+        if (avatarExists) {
+            fs.unlinkSync(avatarPath);
+            invalidateThumbnail(directories, 'avatar', avatarUrl);
+        }
+
+        if (request.body.delete_chats == true) {
+            await fs.promises.rm(path.join(directories.chats, sanitize(dir_name)), { recursive: true, force: true });
+        }
+
+        return avatarExists;
+    }
+
+    if (deleteForAllUsers) {
         try {
-            await fs.promises.rm(path.join(request.user.directories.chats, sanitize(dir_name)), { recursive: true, force: true });
+            const users = await getAllEnabledUsers();
+            let deletedCount = 0;
+
+            for (const user of users) {
+                const directories = getUserDirectories(user.handle);
+                deletedCount += Number(await deleteCharacterFromDirectories(directories));
+            }
+
+            if (!deletedCount) {
+                return response.sendStatus(400);
+            }
         } catch (err) {
             console.error(err);
             return response.sendStatus(500);
         }
+
+        return response.sendStatus(200);
+    }
+
+    const avatarPath = path.join(request.user.directories.characters, avatarUrl);
+    if (!fs.existsSync(avatarPath)) {
+        return response.sendStatus(400);
+    }
+
+    try {
+        await deleteCharacterFromDirectories(request.user.directories);
+    } catch (err) {
+        console.error(err);
+        return response.sendStatus(500);
     }
 
     return response.sendStatus(200);
@@ -1527,6 +1566,15 @@ router.post('/duplicate', validateAvatarUrlMiddleware, async function (request, 
             console.error('file for dupe not found', filename);
             return response.sendStatus(404);
         }
+
+        const rawCharacterData = await readCharacterData(filename);
+        const characterCard = rawCharacterData ? JSON.parse(rawCharacterData) : null;
+        const ownerHandle = String(_.get(characterCard, 'data.extensions.aikobots.owner_handle', '') || '').trim();
+        const canDuplicate = !ownerHandle || Boolean(request.user.profile.admin) || request.user.profile.handle === ownerHandle;
+        if (!canDuplicate) {
+            return response.status(403).json({ error: `Only ${ownerHandle} and admins can duplicate this character.` });
+        }
+
         let suffix = 1;
         let newFilename = filename;
 

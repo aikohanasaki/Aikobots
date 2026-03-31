@@ -5658,6 +5658,12 @@ export async function duplicateCharacter() {
         return '';
     }
 
+    if (!canDuplicateCharacter(this_chid)) {
+        const ownerHandle = getCharacterOwnerHandle(this_chid);
+        toastr.info(`Only ${ownerHandle} and admins can duplicate this character.`, 'Character locked');
+        return '';
+    }
+
     const confirmMessage = $(await renderTemplateAsync('duplicateConfirm'));
     const confirm = await callGenericPopup(confirmMessage, POPUP_TYPE.CONFIRM);
 
@@ -8018,6 +8024,9 @@ export function select_selected_character(chid, { switchMenu = true } = {}) {
     //$("#character_import_button").css("display", "none");
     $('#create_button').attr('value', 'Save');              // what is the use case for this?
     $('#dupe_button').show();
+    $('#dupe_button')
+        .toggleClass('disabled', !canDuplicateCharacter(chid))
+        .attr('aria-disabled', !canDuplicateCharacter(chid) ? 'true' : 'false');
     $('#create_button_label').css('display', 'none');
     $('#char_connections_button').show();
     $('#submit_character_review_button').css('display', !selected_group ? 'flex' : 'none');
@@ -8252,6 +8261,10 @@ function getCharacterOwnerHandle(chid) {
 function canEditCharacterMetadata(chid) {
     const ownerHandle = getCharacterOwnerHandle(chid);
     return !ownerHandle || isAdmin() || currentUser?.handle === ownerHandle;
+}
+
+function canDuplicateCharacter(chid) {
+    return canEditCharacterMetadata(chid);
 }
 
 export async function setCharacterSettingsOverrides() {
@@ -9855,9 +9868,10 @@ function doCharListDisplaySwitch() {
  * @param {string|string[]} characterKey - The key (avatar) of the character to be deleted
  * @param {Object} [options] - Optional parameters for the deletion
  * @param {boolean} [options.deleteChats=true] - Whether to delete associated chats or not
+ * @param {boolean} [options.deleteForAllUsers=false] - Whether admins should delete the character for all users
  * @return {Promise<void>} - A promise that resolves when the character is successfully deleted
  */
-export async function deleteCharacter(characterKey, { deleteChats = true } = {}) {
+export async function deleteCharacter(characterKey, { deleteChats = true, deleteForAllUsers = false } = {}) {
     if (!Array.isArray(characterKey)) {
         characterKey = [characterKey];
     }
@@ -9888,7 +9902,7 @@ export async function deleteCharacter(characterKey, { deleteChats = true } = {})
         const chid = characters.indexOf(character);
         const pastChats = await getPastCharacterChats(chid);
 
-        const msg = { avatar_url: character.avatar, delete_chats: deleteChats };
+        const msg = { avatar_url: character.avatar, delete_chats: deleteChats, delete_for_all_users: deleteForAllUsers };
 
         const response = await fetch('/api/characters/delete', {
             method: 'POST',
@@ -9898,7 +9912,16 @@ export async function deleteCharacter(characterKey, { deleteChats = true } = {})
         });
 
         if (!response.ok) {
-            toastr.error(`${response.status} ${response.statusText}`, t`Failed to delete character`);
+            let errorMessage = `${response.status} ${response.statusText}`;
+
+            try {
+                const errorData = await response.json();
+                errorMessage = errorData?.error || errorData?.message || errorMessage;
+            } catch {
+                // Ignore malformed or empty error responses and fall back to the status text.
+            }
+
+            toastr.error(errorMessage, t`Failed to delete character`);
             continue;
         }
 
@@ -10455,15 +10478,19 @@ jQuery(async function () {
         }
 
         let deleteChats = false;
+        let deleteForAllUsers = false;
 
-        const confirm = await Popup.show.confirm(t`Delete the character?`, await renderTemplateAsync('deleteConfirm'), {
-            onClose: () => { deleteChats = !!$('#del_char_checkbox').prop('checked'); },
+        const confirm = await Popup.show.confirm(t`Delete the character?`, await renderTemplateAsync('deleteConfirm', { isAdmin: isAdmin() }), {
+            onClose: () => {
+                deleteChats = !!$('#del_char_checkbox').prop('checked');
+                deleteForAllUsers = !!$('#del_char_checkbox_all_users').prop('checked');
+            },
         });
         if (!confirm) {
             return;
         }
 
-        await deleteCharacter(characters[this_chid].avatar, { deleteChats: deleteChats });
+        await deleteCharacter(characters[this_chid].avatar, { deleteChats: deleteChats, deleteForAllUsers: deleteForAllUsers });
     });
 
     //////// OPTIMIZED ALL CHAR CREATION/EDITING TEXTAREA LISTENERS ///////////////
