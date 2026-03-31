@@ -89,6 +89,8 @@ const API_SILICONFLOW = 'https://api.siliconflow.com/v1';
 const MODULE_DIR = path.dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = path.resolve(MODULE_DIR, '../../../');
 const lastPromptDispatchSnapshots = new Map();
+const lastPromptDispatchSnapshotsByHandle = new Map();
+let lastPromptDispatchSnapshotGlobal = null;
 let cachedWorkspaceBranch = undefined;
 
 // blocked due to site policy, unblocking august 2026
@@ -1482,11 +1484,31 @@ function getPromptDispatchSnapshotKey(request) {
 }
 
 function storePromptDispatchSnapshot(request, snapshot) {
-    lastPromptDispatchSnapshots.set(getPromptDispatchSnapshotKey(request), clonePromptDispatchSnapshot(snapshot));
+    const clonedSnapshot = clonePromptDispatchSnapshot(snapshot);
+    const handle = String(request?.user?.profile?.handle || 'anonymous');
+
+    lastPromptDispatchSnapshots.set(getPromptDispatchSnapshotKey(request), clonedSnapshot);
+    lastPromptDispatchSnapshotsByHandle.set(handle, clonePromptDispatchSnapshot(clonedSnapshot));
+    lastPromptDispatchSnapshotGlobal = clonePromptDispatchSnapshot(clonedSnapshot);
 }
 
 function getStoredPromptDispatchSnapshot(request) {
-    return clonePromptDispatchSnapshot(lastPromptDispatchSnapshots.get(getPromptDispatchSnapshotKey(request)));
+    const exactMatch = lastPromptDispatchSnapshots.get(getPromptDispatchSnapshotKey(request));
+    if (exactMatch) {
+        return clonePromptDispatchSnapshot(exactMatch);
+    }
+
+    const handle = String(request?.user?.profile?.handle || 'anonymous');
+    const handleMatch = lastPromptDispatchSnapshotsByHandle.get(handle);
+    if (handleMatch) {
+        return clonePromptDispatchSnapshot(handleMatch);
+    }
+
+    if (getConfigValue('dev.promptParityAllowAllUsers', false, 'boolean')) {
+        return clonePromptDispatchSnapshot(lastPromptDispatchSnapshotGlobal);
+    }
+
+    return null;
 }
 
 /**
@@ -2392,7 +2414,16 @@ router.post('/generate', function (request, response) {
         bodyParams['stop'] = request.body.stop;
     }
 
-    const endpointUrl = `${apiUrl}/chat/completions`;
+    let endpointUrl;
+    try {
+        endpointUrl = new URL(`${trimTrailingSlash(String(apiUrl || ''))}/chat/completions`).toString();
+    } catch {
+        return response.status(400).send({
+            error: {
+                message: 'Invalid chat completion endpoint URL. Use a full absolute URL such as https://api.openai.com/v1 or http://127.0.0.1:1/v1.',
+            },
+        });
+    }
 
     const controller = new AbortController();
     request.socket.removeAllListeners('close');
