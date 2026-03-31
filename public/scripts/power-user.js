@@ -202,6 +202,7 @@ export const power_user = {
     prefer_character_prompt: true,
     prefer_character_jailbreak: true,
     quick_continue: false,
+    quick_regenerate: false,
     quick_impersonate: false,
     continue_on_send: false,
     trim_spaces: true,
@@ -1530,8 +1531,10 @@ export async function loadPowerUserSettings(settings, data) {
     $('#trim_spaces').prop('checked', power_user.trim_spaces);
     $('#continue_on_send').prop('checked', power_user.continue_on_send);
     $('#quick_continue').prop('checked', power_user.quick_continue);
-    $('#quick_impersonate').prop('checked', power_user.quick_continue);
+    $('#quick_regenerate').prop('checked', power_user.quick_regenerate);
+    $('#quick_impersonate').prop('checked', power_user.quick_impersonate);
     $('#mes_continue').css('display', power_user.quick_continue ? '' : 'none');
+    $('#mes_regenerate').css('display', power_user.quick_regenerate ? '' : 'none');
     $('#mes_impersonate').css('display', power_user.quick_impersonate ? '' : 'none');
     $('#gestures-checkbox').prop('checked', power_user.gestures);
     $('#auto_swipe').prop('checked', power_user.auto_swipe);
@@ -3516,6 +3519,13 @@ jQuery(() => {
         const value = !!$(this).prop('checked');
         power_user.quick_continue = value;
         $('#mes_continue').css('display', value ? '' : 'none');
+        saveSettingsDebounced();
+    });
+
+    $('#quick_regenerate').on('input', function () {
+        const value = !!$(this).prop('checked');
+        power_user.quick_regenerate = value;
+        $('#mes_regenerate').css('display', value ? '' : 'none');
         saveSettingsDebounced();
     });
 

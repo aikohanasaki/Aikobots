@@ -10513,14 +10513,14 @@ jQuery(async function () {
     $('#send_textarea').on('focusin focus click', () => {
         S_TAPreviouslyFocused = true;
     });
-    $('#send_but, #option_regenerate, #option_continue, #mes_continue, #mes_impersonate').on('click', () => {
+    $('#send_but, #option_regenerate, #option_continue, #mes_continue, #mes_regenerate, #mes_impersonate').on('click', () => {
         if (S_TAPreviouslyFocused) {
             $('#send_textarea').trigger('focus');
         }
     });
     $(document).on('click', event => {
         if ($(':focus').attr('id') !== 'send_textarea') {
-            var validIDs = ['options_button', 'send_but', 'mes_impersonate', 'mes_continue', 'send_textarea', 'option_regenerate', 'option_continue'];
+            var validIDs = ['options_button', 'send_but', 'mes_impersonate', 'mes_regenerate', 'mes_continue', 'send_textarea', 'option_regenerate', 'option_continue'];
             if (!validIDs.includes($(event.target).attr('id'))) {
                 S_TAPreviouslyFocused = false;
             }
@@ -10556,6 +10556,10 @@ jQuery(async function () {
 
     $('#mes_continue').on('click', function () {
         $('#option_continue').trigger('click');
+    });
+
+    $('#mes_regenerate').on('click', function () {
+        $('#option_regenerate').trigger('click');
     });
 
     const userInputGenerateMutex = new SimpleMutex(sendTextareaMessage);
