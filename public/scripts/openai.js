@@ -932,7 +932,7 @@ export async function buildServerAssemblyPayload({
             extra: message?.extra
                 ? {
                     ...message.extra,
-                    ignore: Boolean(message.extra?.[IGNORE_SYMBOL]),
+                    ignore: Boolean(message.extra?.[IGNORE_SYMBOL] || message.extra?.ignore),
                 }
                 : undefined,
         }))
