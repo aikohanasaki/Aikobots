@@ -82,8 +82,6 @@ export {
     setOpenAIMessageExamples,
     setupChatCompletionPromptManager,
     sendOpenAIRequest,
-    fetchLastServerDispatchSnapshot,
-    getLastServerDispatchSnapshot,
     TokenHandler,
     IdentifierNotFoundError,
     Message,

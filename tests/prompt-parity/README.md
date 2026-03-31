@@ -1,6 +1,15 @@
 # Prompt Parity Workflow
 
+If you want the beginner-friendly version, start with [RUNNING-THE-TESTS.md](/c:/Users/ai/Aikobots%20Code/Aikobots/tests/prompt-parity/RUNNING-THE-TESTS.md).
+
 Use the same case from [cases.json](/c:/Users/ai/Aikobots%20Code/Aikobots/tests/prompt-parity/cases.json) in both `release` and `v2`.
+
+For non-admin users on local dev installs, enable this in `config.yaml` and restart before running the workflow:
+
+```yaml
+dev:
+  promptParityAllowAllUsers: true
+```
 
 ## Run A Case
 

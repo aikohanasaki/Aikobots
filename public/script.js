@@ -303,13 +303,7 @@ globalThis.SillyTavern = {
 
         return getLastServerAssemblyDebugDump();
     },
-    getLastServerDispatchSnapshot: async () => {
-        if (!isAdmin()) {
-            throw new Error('Prompt dispatch snapshots are only available to admins.');
-        }
-
-        return await fetchLastServerDispatchSnapshot();
-    },
+    getLastServerDispatchSnapshot: async () => await fetchLastServerDispatchSnapshot(),
 };
 
 export {

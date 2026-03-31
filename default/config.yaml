@@ -124,6 +124,11 @@ hostWhitelist:
 ## Set to 0 to expire session when the browser is closed
 ## Set to a negative number to disable session expiration
 sessionTimeout: -1
+# Development-only toggles
+dev:
+  # Allows non-admin users to export prompt parity dispatch snapshots for manual and Playwright-based testing.
+  # Leave this false outside local development.
+  promptParityAllowAllUsers: false
 # Disable CSRF protection - NOT RECOMMENDED
 disableCsrfProtection: false
 # Disable startup security checks - NOT RECOMMENDED

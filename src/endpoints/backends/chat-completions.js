@@ -1489,6 +1489,17 @@ function getStoredPromptDispatchSnapshot(request) {
     return clonePromptDispatchSnapshot(lastPromptDispatchSnapshots.get(getPromptDispatchSnapshotKey(request)));
 }
 
+/**
+ * @param {import('express').Request} request
+ * @returns {boolean}
+ */
+function canAccessPromptParitySnapshot(request) {
+    return Boolean(
+        request.user?.profile?.admin ||
+        getConfigValue('dev.promptParityAllowAllUsers', false, 'boolean'),
+    );
+}
+
 function detectWorkspaceBranch() {
     if (cachedWorkspaceBranch !== undefined) {
         return cachedWorkspaceBranch;
@@ -2556,7 +2567,7 @@ router.post('/assemble/compare', async function (request, response) {
 });
 
 router.get('/debug/last-dispatch', async function (request, response) {
-    if (!request.user?.profile?.admin) {
+    if (!canAccessPromptParitySnapshot(request)) {
         return response.sendStatus(403);
     }
 
