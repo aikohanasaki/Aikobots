@@ -243,7 +243,7 @@ import { clearItemizedPrompts, deleteItemizedPrompts, findItemizedPromptSet, ini
 import { getSystemMessageByType, initSystemMessages, SAFETY_CHAT, sendSystemMessage, system_message_types, system_messages } from './scripts/system-messages.js';
 import { event_types, eventSource } from './scripts/events.js';
 import { isAdmin } from './scripts/user.js';
-import { initializeAikobots } from './scripts/extensions/aikobots/aikobots.js';
+import { initializeAikobots } from './scripts/aikobots-core.js';
 import { initAccessibility } from './scripts/a11y.js';
 import { applyStreamFadeIn } from './scripts/util/stream-fadein.js';
 import { initDomHandlers } from './scripts/dom-handlers.js';
@@ -426,6 +426,9 @@ let isExportPopupOpen = false;
 // Saved here for performance reasons
 const messageTemplate = $('#message_template .mes');
 export const chatElement = $('#chat');
+const TOP_HISTORY_CONTROL_ID = 'show_more_messages';
+const BOTTOM_HISTORY_CONTROL_ID = 'show_newer_messages';
+const FALLBACK_CHAT_WINDOW_SIZE = 200;
 
 let dialogueResolve = null;
 let dialogueCloseStop = false;
@@ -438,6 +441,8 @@ let fav_ch_checked = false;
 let scrollLock = false;
 export let abortStatusCheck = new AbortController();
 export let charDragDropHandler = null;
+let visibleChatStartId = null;
+let visibleChatEndId = null;
 export let chatDragDropHandler = null;
 
 /** @type {debounce_timeout} The debounce timeout used for chat/settings save. debounce_timeout.long: 1.000 ms */
@@ -1416,30 +1421,143 @@ export async function replaceCurrentChat() {
     }
 }
 
-export async function showMoreMessages(messagesToLoad = null) {
-    const firstDisplayedMesId = chatElement.children('.mes').first().attr('mesid');
-    let messageId = Number(firstDisplayedMesId);
-    let count = messagesToLoad || power_user.chat_truncation || Number.MAX_SAFE_INTEGER;
+function getConfiguredChatWindowSize(count = null) {
+    const candidate = Number(count);
+    if (Number.isFinite(candidate) && candidate > 0) {
+        return candidate;
+    }
 
-    // If there are no messages displayed, or the message somehow has no mesid, we default to one higher than last message id,
-    // so the first "new" message being shown will be the last available message
-    if (isNaN(messageId)) {
+    const configured = Number(power_user.chat_truncation);
+    if (Number.isFinite(configured) && configured > 0) {
+        return configured;
+    }
+
+    return FALLBACK_CHAT_WINDOW_SIZE;
+}
+
+function setVisibleChatRange(startId = null, endId = null) {
+    const normalizedStart = Number(startId);
+    const normalizedEnd = Number(endId);
+
+    if (!Number.isFinite(normalizedStart) || !Number.isFinite(normalizedEnd) || normalizedStart < 0 || normalizedEnd < normalizedStart) {
+        visibleChatStartId = null;
+        visibleChatEndId = null;
+        return;
+    }
+
+    visibleChatStartId = normalizedStart;
+    visibleChatEndId = normalizedEnd;
+}
+
+function syncVisibleChatRangeFromDom() {
+    const firstMessageId = Number(chatElement.children('.mes').first().attr('mesid'));
+    const lastMessageId = Number(chatElement.children('.mes').last().attr('mesid'));
+
+    if (!Number.isFinite(firstMessageId) || !Number.isFinite(lastMessageId)) {
+        setVisibleChatRange(null, null);
+        return;
+    }
+
+    setVisibleChatRange(firstMessageId, lastMessageId);
+}
+
+function removeHistoryControls() {
+    chatElement.children(`#${TOP_HISTORY_CONTROL_ID}, #${BOTTOM_HISTORY_CONTROL_ID}`).remove();
+}
+
+function updateHistoryControls() {
+    removeHistoryControls();
+
+    if (!Number.isFinite(visibleChatStartId) || !Number.isFinite(visibleChatEndId)) {
+        return;
+    }
+
+    if (visibleChatStartId > 0) {
+        chatElement.prepend(`<div id="${TOP_HISTORY_CONTROL_ID}" class="chat_history_button">Show more messages</div>`);
+    }
+
+    if (visibleChatEndId < chat.length - 1) {
+        chatElement.append(`<div id="${BOTTOM_HISTORY_CONTROL_ID}" class="chat_history_button">Show newer messages</div>`);
+    }
+}
+
+function finalizeRenderedMessageWindow() {
+    chatElement.find('.mes').removeClass('last_mes');
+    chatElement.find('.mes').last().addClass('last_mes');
+    refreshSwipeButtons();
+    applyStylePins();
+    updateHistoryControls();
+}
+
+export async function renderMessageWindow(startId = 0, count = null) {
+    closeMessageEditor();
+    removeHistoryControls();
+    chatElement.children('.mes').remove();
+
+    if (!chat.length) {
+        setVisibleChatRange(null, null);
+        return;
+    }
+
+    const normalizedStartId = clamp(Number(startId) || 0, 0, Math.max(0, chat.length - 1));
+    const windowSize = getConfiguredChatWindowSize(count);
+    const endId = Math.min(chat.length - 1, normalizedStartId + windowSize - 1);
+
+    for (let i = normalizedStartId; i <= endId; i++) {
+        addOneMessage(chat[i], { scroll: false, forceId: i, showSwipes: false });
+    }
+
+    setVisibleChatRange(normalizedStartId, endId);
+    finalizeRenderedMessageWindow();
+    await eventSource.emit(event_types.MORE_MESSAGES_LOADED);
+}
+
+export async function jumpToMessageWindow(messageId, count = null) {
+    const normalizedMessageId = Number(messageId);
+    if (!Number.isFinite(normalizedMessageId) || normalizedMessageId < 0 || normalizedMessageId >= chat.length) {
+        return $();
+    }
+
+    const firstDisplayedMessageId = getFirstDisplayedMessageId();
+    const lastDisplayedMessageId = getLastDisplayedMessageId();
+    const isVisible = Number.isFinite(firstDisplayedMessageId)
+        && Number.isFinite(lastDisplayedMessageId)
+        && normalizedMessageId >= firstDisplayedMessageId
+        && normalizedMessageId <= lastDisplayedMessageId;
+
+    if (!isVisible) {
+        await renderMessageWindow(normalizedMessageId, count);
+    }
+
+    return chatElement.find(`.mes[mesid="${normalizedMessageId}"]`);
+}
+
+export async function showMoreMessages(messagesToLoad = null) {
+    let messageId = getFirstDisplayedMessageId();
+    let count = getConfiguredChatWindowSize(messagesToLoad);
+
+    if (!Number.isFinite(messageId)) {
         messageId = getLastMessageId() + 1;
     }
 
     console.debug('Inserting messages before', messageId, 'count', count, 'chat length', chat.length);
     const prevHeight = chatElement.prop('scrollHeight');
-    const isButtonInView = isElementInViewport($('#show_more_messages')[0]);
+    const isButtonInView = isElementInViewport($(`#${TOP_HISTORY_CONTROL_ID}`)[0]);
+    const anchorId = messageId >= chat.length ? null : messageId;
+
+    removeHistoryControls();
 
     while (messageId > 0 && count > 0) {
-        let newMessageId = messageId - 1;
-        addOneMessage(chat[newMessageId], { insertBefore: messageId >= chat.length ? null : messageId, scroll: false, forceId: newMessageId });
+        const newMessageId = messageId - 1;
+        addOneMessage(chat[newMessageId], { insertBefore: anchorId, scroll: false, forceId: newMessageId, showSwipes: false });
         count--;
         messageId--;
     }
 
-    if (messageId == 0) {
-        $('#show_more_messages').remove();
+    if (chatElement.children('.mes').length > 0) {
+        setVisibleChatRange(messageId, getLastDisplayedMessageId() ?? messageId);
+    } else {
+        syncVisibleChatRangeFromDom();
     }
 
     if (isButtonInView) {
@@ -1447,28 +1565,47 @@ export async function showMoreMessages(messagesToLoad = null) {
         chatElement.scrollTop(newHeight - prevHeight);
     }
 
-    applyStylePins();
+    finalizeRenderedMessageWindow();
+    await eventSource.emit(event_types.MORE_MESSAGES_LOADED);
+}
+
+export async function showNewerMessages(messagesToLoad = null) {
+    let messageId = getLastDisplayedMessageId();
+    let count = getConfiguredChatWindowSize(messagesToLoad);
+
+    if (!Number.isFinite(messageId)) {
+        await renderMessageWindow(Math.max(0, chat.length - count), count);
+        return;
+    }
+
+    removeHistoryControls();
+
+    while (messageId < chat.length - 1 && count > 0) {
+        const newMessageId = messageId + 1;
+        addOneMessage(chat[newMessageId], { scroll: false, forceId: newMessageId, showSwipes: false });
+        count--;
+        messageId++;
+    }
+
+    if (chatElement.children('.mes').length > 0) {
+        setVisibleChatRange(getFirstDisplayedMessageId() ?? messageId, messageId);
+    } else {
+        syncVisibleChatRangeFromDom();
+    }
+
+    finalizeRenderedMessageWindow();
     await eventSource.emit(event_types.MORE_MESSAGES_LOADED);
 }
 
 export async function printMessages() {
     let startIndex = 0;
-    let count = power_user.chat_truncation || Number.MAX_SAFE_INTEGER;
+    let count = getConfiguredChatWindowSize();
 
     if (chat.length > count) {
         startIndex = chat.length - count;
-        chatElement.append('<div id="show_more_messages">Show more messages</div>');
     }
 
-    for (let i = startIndex; i < chat.length; i++) {
-        const item = chat[i];
-        addOneMessage(item, { scroll: false, forceId: i, showSwipes: false });
-    }
-
-    chatElement.find('.mes').removeClass('last_mes');
-    chatElement.find('.mes').last().addClass('last_mes');
-    refreshSwipeButtons();
-    applyStylePins();
+    await renderMessageWindow(startIndex, count);
     scrollChatToBottom();
     delay(debounce_timeout.short).then(() => scrollOnMediaLoad());
 }
@@ -1534,6 +1671,7 @@ export async function clearChat() {
         $('.zoomed_avatar[forChar]').remove();
     } else { console.debug('saw no avatars'); }
 
+    setVisibleChatRange(null, null);
     await saveItemizedPrompts(getCurrentChatId());
     itemizedPrompts.length = 0;
 }
@@ -1541,6 +1679,8 @@ export async function clearChat() {
 export async function deleteLastMessage() {
     chat.length = chat.length - 1;
     chatElement.children('.mes').last().remove();
+    syncVisibleChatRangeFromDom();
+    updateHistoryControls();
     restoreTimedWorldInfoFromChat();
     await eventSource.emit(event_types.MESSAGE_DELETED, chat.length);
 }
@@ -1660,6 +1800,11 @@ export async function sendTextareaMessage() {
         return await Generate(generateType);
     } catch (error) {
         unblockGeneration(generateType);
+
+        if (abortController?.signal?.aborted || error?.name === 'AbortError') {
+            return;
+        }
+
         console.error('sendTextareaMessage failed', error);
 
         if (typeof error?.message === 'string' && error.message) {
@@ -5207,7 +5352,10 @@ export async function Generate(type, { automatic_trigger, force_name2, quiet_pro
      * @throws {Error} Throws an error if the response data contains an error message
      */
     async function onSuccess(data) {
-        if (!data) return;
+        if (!data) {
+            consumeOpenAITimedWorldInfo();
+            return;
+        }
 
         if (data?.fromStream) {
             return data;
@@ -5227,6 +5375,7 @@ export async function Generate(type, { automatic_trigger, force_name2, quiet_pro
 
         if (jsonSchema) {
             unblockGeneration(type);
+            consumeOpenAITimedWorldInfo();
             return extractJsonFromData(data);
         }
 
@@ -5269,9 +5418,11 @@ export async function Generate(type, { automatic_trigger, force_name2, quiet_pro
         if (isImpersonate) {
             $('#send_textarea').val(getMessage)[0].dispatchEvent(new Event('input', { bubbles: true }));
             await eventSource.emit(event_types.IMPERSONATE_READY, getMessage);
+            consumeOpenAITimedWorldInfo();
         }
         else if (type == 'quiet') {
             unblockGeneration(type);
+            consumeOpenAITimedWorldInfo();
             return getMessage;
         }
         else {
@@ -5342,6 +5493,7 @@ export async function Generate(type, { automatic_trigger, force_name2, quiet_pro
             toastr.error(exception.error.message, t`Text generation error`, { timeOut: 10000, extendedTimeOut: 20000 });
         }
 
+        consumeOpenAITimedWorldInfo();
         unblockGeneration(type);
         console.log(exception);
         streamingProcessor = null;
@@ -5785,17 +5937,17 @@ export async function sendStreamingRequest(type, data, options = {}) {
 }
 
 /**
- * Gets the generation endpoint URL for the specified API.
- * @param {string} api API name
+ * Gets the generation endpoint URL for the specified API or chat-completion source.
+ * @param {string} api API name or chat-completion source
  * @returns {string} Generation URL
  * @throws {Error} If the API is unknown
  */
 export function getGenerateUrl(api) {
-    if (api !== 'openai') {
-        throw new Error(`Unsupported API: ${api}`);
+    if (Object.values(chat_completion_sources).includes(api)) {
+        return '/api/backends/chat-completions/generate';
     }
 
-    return '/api/openai/generate';
+    throw new Error(`Unsupported API: ${api}`);
 }
 
 function extractTitleFromData(data) {
@@ -5962,7 +6114,9 @@ function extractMultiSwipes(data, type) {
             displayIncompleteSentences: false,
         });
 
-        swipes.push(cleanedText);
+        if (cleanedText) {
+            swipes.push(cleanedText);
+        }
     }
 
     return swipes;
@@ -8670,6 +8824,7 @@ async function importCharacterChat(formData, { refresh = true } = {}) {
 
 export function updateViewMessageIds(startIndex = null) {
     const minId = startIndex ?? getFirstDisplayedMessageId();
+    const messageCount = chatElement.find('.mes').length;
 
     chatElement.find('.mes').each(function (index, element) {
         $(element).attr('mesid', minId + index);
@@ -8679,13 +8834,27 @@ export function updateViewMessageIds(startIndex = null) {
     chatElement.find('.mes').removeClass('last_mes');
     chatElement.find('.mes').last().addClass('last_mes');
 
+    setVisibleChatRange(messageCount > 0 ? minId : null, messageCount > 0 ? minId + messageCount - 1 : null);
+    updateHistoryControls();
     updateEditArrowClasses();
 }
 
 export function getFirstDisplayedMessageId() {
-    const allIds = Array.from(document.querySelectorAll('#chat .mes')).map(el => Number(el.getAttribute('mesid'))).filter(x => !isNaN(x));
-    const minId = Math.min(...allIds);
-    return minId;
+    if (Number.isFinite(visibleChatStartId)) {
+        return visibleChatStartId;
+    }
+
+    const mesId = Number(chatElement.children('.mes').first().attr('mesid'));
+    return Number.isFinite(mesId) ? mesId : null;
+}
+
+export function getLastDisplayedMessageId() {
+    if (Number.isFinite(visibleChatEndId)) {
+        return visibleChatEndId;
+    }
+
+    const mesId = Number(chatElement.children('.mes').last().attr('mesid'));
+    return Number.isFinite(mesId) ? mesId : null;
 }
 
 export function updateEditArrowClasses() {
@@ -8967,6 +9136,7 @@ function addAlternateGreeting(template, greeting, index, getArray, popup) {
 /**
  * Creates or edits a character based on the form data.
  * @param {Event} [e] Event that triggered the function call.
+ * @returns {Promise<boolean>} Whether the character was saved successfully.
  */
 export async function createOrEditCharacter(e) {
     $('#rm_info_avatar').html('');
@@ -8985,11 +9155,11 @@ export async function createOrEditCharacter(e) {
     if ($('#form_create').attr('actiontype') == 'createcharacter') {
         if (String($('#character_name_pole').val()).length === 0) {
             toastr.error(t`Name is required`);
-            return;
+            return false;
         }
         if (is_group_generating || is_send_press) {
             toastr.error(t`Cannot create characters while generating. Stop the request and try again.`, t`Creation aborted`);
-            return;
+            return false;
         }
         try {
             //if the character name text area isn't empty (only posible when creating a new character)
@@ -9079,9 +9249,11 @@ export async function createOrEditCharacter(e) {
 
             crop_data = undefined;
 
+            return true;
         } catch (error) {
             console.error('Error creating character', error);
             toastr.error(t`Failed to create character`);
+            return false;
         }
     } else {
         try {
@@ -9138,9 +9310,12 @@ export async function createOrEditCharacter(e) {
                 await eventSource.emit(event_types.CHARACTER_MESSAGE_RENDERED, messageId, 'first_message');
                 await saveChatConditional();
             }
+
+            return true;
         } catch (error) {
             console.log(error);
             toastr.error(t`Something went wrong while saving the character, or the image file provided was in an invalid format. Double check that the image is not a webp.`);
+            return false;
         }
     }
 }
@@ -10250,6 +10425,11 @@ jQuery(async function () {
     });
 
     $(document).on('click', '.character_distribute_button', async function (event) {
+        if (!isAdmin()) {
+            toastr.error(t`Only admins can distribute characters.`);
+            return;
+        }
+
         event.preventDefault();
         event.stopPropagation();
 
@@ -11108,7 +11288,11 @@ jQuery(async function () {
             return;
         }
 
-        await createOrEditCharacter();
+        const saved = await createOrEditCharacter();
+        if (!saved) {
+            return;
+        }
+
         await submitSelectedCharacterForReview(characters[this_chid]);
     });
 
@@ -11653,6 +11837,9 @@ jQuery(async function () {
 
     $(document).on('mouseup touchend', '#show_more_messages', async function () {
         await showMoreMessages();
+    });
+    $(document).on('mouseup touchend', '#show_newer_messages', async function () {
+        await showNewerMessages();
     });
 
     $(document).on('click', '.open_characters_library', async function () {

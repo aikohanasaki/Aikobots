@@ -8,6 +8,10 @@ import { getUserDirectories } from './users.js';
 
 const SECURE_LOREBOOK_DIRECTORY = ['_secure', 'worlds'];
 const SECURE_INDEX_FILENAME = 'index.json';
+const SECURE_INDEX_LOCK_SUFFIX = '.lock';
+const SECURE_INDEX_LOCK_RETRY_MS = 50;
+const SECURE_INDEX_LOCK_TIMEOUT_MS = 10_000;
+const SECURE_INDEX_LOCK_STALE_MS = 60_000;
 
 export class LorebookRepositoryError extends Error {
     /**
@@ -58,6 +62,10 @@ function getSecureLorebookPath(name) {
 
 function getSecureIndexPath() {
     return path.join(getSecureLorebookDirectory(), SECURE_INDEX_FILENAME);
+}
+
+function getSecureIndexLockPath() {
+    return `${getSecureIndexPath()}${SECURE_INDEX_LOCK_SUFFIX}`;
 }
 
 function getSecureIndexMetadata(name) {
@@ -119,13 +127,83 @@ function writeSecureIndex(index) {
     writeFileAtomicSync(getSecureIndexPath(), JSON.stringify(index, null, 4), 'utf8');
 }
 
+function sleepSync(ms) {
+    if (ms <= 0) {
+        return;
+    }
+
+    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+}
+
+function isSecureIndexLockStale(lockPath) {
+    try {
+        const stats = fs.statSync(lockPath);
+        return Date.now() - stats.mtimeMs > SECURE_INDEX_LOCK_STALE_MS;
+    } catch (error) {
+        if (error?.code === 'ENOENT') {
+            return false;
+        }
+
+        throw error;
+    }
+}
+
+function removeSecureIndexLock(lockPath) {
+    try {
+        fs.rmdirSync(lockPath);
+    } catch (error) {
+        if (error?.code === 'ENOENT') {
+            return;
+        }
+
+        if (error?.code === 'ENOTEMPTY') {
+            fs.rmSync(lockPath, { recursive: true, force: false });
+            return;
+        }
+
+        throw error;
+    }
+}
+
+function acquireSecureIndexWriteLock() {
+    const lockPath = getSecureIndexLockPath();
+    ensureDirectory(path.dirname(lockPath));
+    const deadline = Date.now() + SECURE_INDEX_LOCK_TIMEOUT_MS;
+
+    while (true) {
+        try {
+            fs.mkdirSync(lockPath);
+            return () => removeSecureIndexLock(lockPath);
+        } catch (error) {
+            if (error?.code !== 'EEXIST') {
+                throw error;
+            }
+
+            if (isSecureIndexLockStale(lockPath)) {
+                removeSecureIndexLock(lockPath);
+                continue;
+            }
+
+            if (Date.now() >= deadline) {
+                throw new LorebookRepositoryError('LorebookIndexBusy', 'Timed out waiting to update the secure lorebook index.', 503);
+            }
+
+            sleepSync(SECURE_INDEX_LOCK_RETRY_MS);
+        }
+    }
+}
+
 function mutateSecureIndex(mutate) {
-    // This module assumes secure index writes are serialized by a single process.
-    // The read-modify-write flow here is not lock-safe across concurrent writers.
-    const index = readSecureIndex();
-    const result = mutate(index);
-    writeSecureIndex(index);
-    return result;
+    // Only writers acquire the lock so readers can continue to inspect the index.
+    const release = acquireSecureIndexWriteLock();
+    try {
+        const index = readSecureIndex();
+        const result = mutate(index);
+        writeSecureIndex(index);
+        return result;
+    } finally {
+        release();
+    }
 }
 
 function getSecureIndexEntry(name) {
@@ -200,17 +278,18 @@ function getUserLorebookRecord(handle, name) {
     };
 }
 
-function buildListItem(record, currentHandle) {
+function buildListItem(record, currentHandle, isAdmin) {
     const isSecure = record.storage === 'secure';
     const canManage = currentHandle === record.ownerHandle;
+    const canManageSecure = isAdmin || canManage;
     return {
         name: record.name,
         storage: record.storage,
         ownerHandle: record.ownerHandle,
-        canEdit: canManage || isSecure,
+        canEdit: isSecure ? canManageSecure : canManage,
         canDelete: !isSecure && canManage,
         canPromote: !isSecure && canManage,
-        canDemote: isSecure,
+        canDemote: isSecure && canManageSecure,
     };
 }
 
@@ -371,6 +450,7 @@ export function readWorldInfoFile(directories, worldInfoName, allowDummy) {
  */
 export function listLorebooksForManagement(user) {
     const currentHandle = user.profile.handle;
+    const isAdmin = Boolean(user.profile.admin);
     const items = [];
     const seenNames = new Set();
     const worldsDir = user.directories.worlds;
@@ -403,19 +483,19 @@ export function listLorebooksForManagement(user) {
                     ownerHandle: currentHandle,
                 };
 
-            items.push(buildListItem(effectiveRecord, currentHandle));
+            items.push(buildListItem(effectiveRecord, currentHandle, isAdmin));
             seenNames.add(name);
         }
     }
 
-    if (user.profile.admin) {
+    if (isAdmin) {
         for (const [name, secureRecord] of secureRecords.entries()) {
             if (seenNames.has(name)) {
                 console.warn(`[Lorebooks] Skipping duplicate manageable lorebook name "${name}" in secure storage.`);
                 continue;
             }
 
-            items.push(buildListItem(secureRecord, currentHandle));
+            items.push(buildListItem(secureRecord, currentHandle, isAdmin));
             seenNames.add(name);
         }
     }

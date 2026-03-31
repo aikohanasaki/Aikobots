@@ -23,9 +23,9 @@ import {
     generateRaw,
     getCurrentChatDetails,
     getCurrentChatId,
-    getFirstDisplayedMessageId,
     getThumbnailUrl,
     is_send_press,
+    jumpToMessageWindow,
     main_api,
     name1,
     name2,
@@ -2839,28 +2839,17 @@ export function initDefaultSlashCommands() {
                 return '';
             }
 
-            // Load more messages if needed
-            const firstDisplayedMessageId = getFirstDisplayedMessageId();
-            if (isFinite(firstDisplayedMessageId) && messageIndex < firstDisplayedMessageId) {
-                const needToLoadCount = firstDisplayedMessageId - messageIndex;
-                await showMoreMessages(needToLoadCount);
-                await delay(1);
-            }
-
             const chatContainer = document.getElementById('chat');
-            const messageElement = document.querySelector(`#chat .mes[mesid="${messageIndex}"]`);
+            const target = await jumpToMessageWindow(messageIndex);
+            const messageElement = target.get(0);
 
             if (messageElement instanceof HTMLElement && chatContainer instanceof HTMLElement) {
-                const elementRect = messageElement.getBoundingClientRect();
-                const containerRect = chatContainer.getBoundingClientRect();
-
-                const scrollPosition = elementRect.top - containerRect.top + chatContainer.scrollTop;
                 chatContainer.scrollTo({
-                    top: scrollPosition,
+                    top: messageElement.offsetTop,
                     behavior: 'smooth',
                 });
 
-                flashHighlight($(messageElement), 2000);
+                flashHighlight(target, 2000);
             } else {
                 toastr.warning(t`Could not find element for message ${messageIndex}. It might not be rendered yet or the index is invalid.`);
                 console.warn(`WARN: Element not found for message index ${messageIndex} in /chat-jump.`);

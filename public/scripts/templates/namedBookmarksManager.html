@@ -1,0 +1,53 @@
+<div class="st-bookmarks-manager flex-container flexFlowColumn flexGap10">
+    <h3 class="margin0">🔖 Bookmarks ({{bookmarks.length}}/{{maxBookmarks}})</h3>
+
+    <div class="info-block warning margin0">
+        Older bookmarks may require the chat window to jump and redraw around that message.
+    </div>
+
+    <div class="flex-container justifyCenter">
+        <button id="named-bookmarks-sort-toggle" type="button" class="menu_button menu_button_icon inline-flex interactable">
+            {{#if sortAscending}}
+                <i class="fa-solid fa-sort-asc"></i>
+                <span>Sort bookmarks in ascending order</span>
+            {{else}}
+                <i class="fa-solid fa-sort-desc"></i>
+                <span>Sort bookmarks in descending order</span>
+            {{/if}}
+        </button>
+    </div>
+
+    <div class="marginBot10">
+        <small>Status indicators: 🟢 = Visible, 🟡 = Jump required, 🔴 = Larger jump</small>
+    </div>
+
+    {{#if bookmarks.length}}
+        <div class="flex-container flexFlowColumn named-bookmarks-list">
+            {{#each bookmarks}}
+                <div class="named-bookmark-item flex-container alignItemsCenter padding8 marginTopBot5 st-bookmarks-row" data-message-num="{{messageNum}}" data-title="{{title}}">
+                    <div class="named-bookmark-main flex1 cursor-pointer marginTopBot5" data-index="{{@index}}" title="{{loadStatus.tooltip}}">
+                        <span class="named-bookmark-indicator">{{loadStatus.indicator}}</span>
+                        <strong>#{{messageNum}}</strong>
+                        <span>-</span>
+                        <span>{{title}}</span>
+                    </div>
+                    <div class="named-bookmark-actions flex-container flexNoGap">
+                        <button type="button" class="menu_button fa-solid fa-edit interactable named-bookmark-edit" data-index="{{@index}}" title="Edit bookmark"></button>
+                        <button type="button" class="menu_button fa-solid fa-trash interactable red_button named-bookmark-delete" data-index="{{@index}}" title="Delete bookmark"></button>
+                    </div>
+                </div>
+            {{/each}}
+        </div>
+    {{else}}
+        <div class="info-block warning margin0">
+            <span>No bookmarks found. Create your first bookmark to get started!</span>
+        </div>
+    {{/if}}
+
+    <div class="flex-container justifyCenter marginTop5">
+        <button id="named-bookmarks-create" type="button" class="menu_button menu_button_icon inline-flex interactable">
+            <i class="fa-solid fa-plus"></i>
+            <span>Create New Bookmark</span>
+        </button>
+    </div>
+</div>

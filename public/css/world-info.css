@@ -1,3 +1,8 @@
+:root {
+    --stlo-field-min-width: 220px;
+    --stlo-field-small-width: 140px;
+}
+
 .world_info_select_block {
     display: flex;
     flex-direction: row;
@@ -368,7 +373,7 @@ select.keyselect+span.select2-container .select2-selection--multiple {
 
 .stlo_field_grid {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    grid-template-columns: repeat(auto-fit, minmax(var(--stlo-field-min-width), 1fr));
     gap: 10px;
     align-items: start;
 }
@@ -388,6 +393,8 @@ select.keyselect+span.select2-container .select2-selection--multiple {
 }
 
 .stlo_override_section {
+    display: flex;
+    flex-direction: column;
     gap: 10px;
 }
 
@@ -422,14 +429,14 @@ select.keyselect+span.select2-container .select2-selection--multiple {
 
 .stlo_override_field {
     display: flex;
-    flex: 1 1 140px;
+    flex: 1 1 var(--stlo-field-small-width);
     flex-direction: column;
     gap: 2px;
-    min-width: 140px;
+    min-width: var(--stlo-field-small-width);
 }
 
 .stlo_override_identity_field {
-    flex-basis: 220px;
+    flex-basis: var(--stlo-field-min-width);
 }
 
 .stlo_override_field > .text_pole {
@@ -448,9 +455,27 @@ select.keyselect+span.select2-container .select2-selection--multiple {
     margin-top: 1.5rem;
 }
 
+.stlo_override_remove:hover {
+    opacity: 0.8;
+}
+
+.stlo_override_remove:focus-visible {
+    outline: 2px solid var(--SmartThemeQuoteColor);
+    outline-offset: 2px;
+}
+
 .stlo_override_add {
     margin-top: 4px;
     margin-bottom: 8px;
+}
+
+.stlo_override_add:hover {
+    opacity: 0.9;
+}
+
+.stlo_override_add:focus-visible {
+    outline: 2px solid var(--SmartThemeQuoteColor);
+    outline-offset: 2px;
 }
 
 @media (max-width: 900px) {

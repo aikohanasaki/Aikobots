@@ -16,6 +16,7 @@ import {
     setEditedMessageId,
     chat,
     getFirstDisplayedMessageId,
+    jumpToMessageWindow,
     showMoreMessages,
     saveSettings,
     saveChatConditional,
@@ -2834,17 +2835,7 @@ async function doRandomChat(_, tagName) {
  * @returns JQuery<HTMLElement>
  */
 async function loadUntilMesId(mesId) {
-    let target;
-
-    while (getFirstDisplayedMessageId() > mesId && getFirstDisplayedMessageId() !== 0) {
-        await showMoreMessages();
-        await delay(1);
-        target = $('#chat').find(`.mes[mesid=${mesId}]`);
-
-        if (target.length) {
-            break;
-        }
-    }
+    const target = await jumpToMessageWindow(mesId);
 
     if (!target.length) {
         toastr.error(`Could not find message with ID: ${mesId}`);

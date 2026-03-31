@@ -11,7 +11,9 @@ import {
     chat,
     saveChatConditional,
     saveItemizedPrompts,
+    jumpToMessageWindow,
 } from '../script.js';
+import { saveMetadataDebounced } from './extensions.js';
 import { humanizedDateTime } from './RossAscends-mods.js';
 import {
     DEFAULT_AUTO_MODE_DELAY,
@@ -25,7 +27,7 @@ import {
 } from './group-chats.js';
 import { hideLoader, showLoader } from './loader.js';
 import { getLastMessageId } from './macros.js';
-import { Popup } from './popup.js';
+import { Popup, POPUP_RESULT, POPUP_TYPE } from './popup.js';
 import { SlashCommand } from './slash-commands/SlashCommand.js';
 import { ARGUMENT_TYPE, SlashCommandArgument, SlashCommandNamedArgument } from './slash-commands/SlashCommandArgument.js';
 import { commonEnumProviders } from './slash-commands/SlashCommandCommonEnumsProvider.js';
@@ -35,11 +37,432 @@ import { renderTemplateAsync } from './templates.js';
 import { t } from './i18n.js';
 
 import {
+    flashHighlight,
     getUniqueName,
     isTrueBoolean,
 } from './utils.js';
 
 const bookmarkNameToken = 'Checkpoint #';
+const MAX_NAMED_BOOKMARKS = 75;
+const LARGE_JUMP_BOOKMARK_THRESHOLD = 500;
+
+let currentNamedBookmarksPopup = null;
+let namedBookmarksSortAscending = true;
+let currentNamedBookmarks = [];
+
+function hasActiveChatContext() {
+    return selected_group || this_chid !== undefined;
+}
+
+function normalizeNamedBookmarkEntry(entry) {
+    const messageNum = Number(entry?.messageNum);
+    const title = String(entry?.title ?? '').trim();
+
+    if (!Number.isInteger(messageNum) || messageNum < 0 || !title) {
+        return null;
+    }
+
+    return { messageNum, title };
+}
+
+function getNamedBookmarks() {
+    const bookmarks = Array.isArray(chat_metadata?.bookmarks) ? chat_metadata.bookmarks : [];
+    return bookmarks.map(normalizeNamedBookmarkEntry).filter(Boolean);
+}
+
+function setNamedBookmarks(bookmarks) {
+    const normalized = bookmarks
+        .map(normalizeNamedBookmarkEntry)
+        .filter(Boolean)
+        .sort((a, b) => a.messageNum - b.messageNum);
+
+    chat_metadata.bookmarks = normalized;
+    saveMetadataDebounced();
+    return normalized;
+}
+
+function sortNamedBookmarks(bookmarks, ascending = namedBookmarksSortAscending) {
+    return bookmarks.sort((a, b) => ascending ? a.messageNum - b.messageNum : b.messageNum - a.messageNum);
+}
+
+function getNamedBookmarkLoadStatus(messageNum) {
+    const renderedMessages = $('#chat').children('.mes');
+    if (!renderedMessages.length) {
+        return {
+            indicator: '🔴',
+            tooltip: 'Chat messages are not rendered yet.',
+        };
+    }
+
+    const firstDisplayedMessageId = Number(renderedMessages.first().attr('mesid'));
+    const lastDisplayedMessageId = Number(renderedMessages.last().attr('mesid'));
+    if (Number.isFinite(firstDisplayedMessageId) && Number.isFinite(lastDisplayedMessageId)
+        && messageNum >= firstDisplayedMessageId && messageNum <= lastDisplayedMessageId) {
+        return {
+            indicator: '🟢',
+            tooltip: 'Message is visible in the current chat window.',
+        };
+    }
+
+    const nearestDisplayedMessageId = Number.isFinite(firstDisplayedMessageId) && messageNum < firstDisplayedMessageId
+        ? firstDisplayedMessageId
+        : lastDisplayedMessageId;
+    const distance = Math.abs(messageNum - nearestDisplayedMessageId);
+
+    if (distance >= LARGE_JUMP_BOOKMARK_THRESHOLD) {
+        return {
+            indicator: '🔴',
+            tooltip: `Requires a larger jump of ${distance} messages.`,
+        };
+    }
+
+    return {
+        indicator: '🟡',
+        tooltip: `Requires a jump of ${distance} messages.`,
+    };
+}
+
+async function renderNamedBookmarksManager() {
+    const bookmarks = sortNamedBookmarks(getNamedBookmarks(), namedBookmarksSortAscending)
+        .map(bookmark => ({
+            ...bookmark,
+            loadStatus: getNamedBookmarkLoadStatus(bookmark.messageNum),
+        }));
+
+    currentNamedBookmarks = bookmarks;
+
+    return await renderTemplateAsync('namedBookmarksManager', {
+        bookmarks,
+        maxBookmarks: MAX_NAMED_BOOKMARKS,
+        sortAscending: namedBookmarksSortAscending,
+    });
+}
+
+async function refreshNamedBookmarksPopup() {
+    if (!currentNamedBookmarksPopup || !currentNamedBookmarksPopup.dlg.hasAttribute('open')) {
+        return;
+    }
+
+    const content = await renderNamedBookmarksManager();
+    if (!content) {
+        return;
+    }
+
+    currentNamedBookmarksPopup.content.innerHTML = content;
+    currentNamedBookmarksPopup.dlg.classList.add('wide_dialogue_popup', 'large_dialogue_popup', 'vertical_scrolling_dialogue_popup');
+    currentNamedBookmarksPopup.content.style.overflowY = 'auto';
+}
+
+async function showNamedBookmarksPopup() {
+    if (!hasActiveChatContext()) {
+        toastr.info('No character selected.', 'Bookmarks');
+        return;
+    }
+
+    if (currentNamedBookmarksPopup?.dlg?.hasAttribute('open')) {
+        await refreshNamedBookmarksPopup();
+        return;
+    }
+
+    const content = await renderNamedBookmarksManager();
+    if (!content) {
+        return;
+    }
+
+    const popup = new Popup(content, POPUP_TYPE.TEXT, '', {
+        okButton: t`Close`,
+        wide: true,
+        large: true,
+        allowVerticalScrolling: true,
+        customButtons: [{
+            text: t`Refresh`,
+            classes: ['menu_button_icon'],
+            action: () => refreshNamedBookmarksPopup(),
+        }],
+        onClose: () => {
+            currentNamedBookmarksPopup = null;
+            currentNamedBookmarks = [];
+        },
+    });
+
+    currentNamedBookmarksPopup = popup;
+    popup.content.addEventListener('click', onNamedBookmarksPopupClick);
+    await popup.show();
+}
+
+async function showNamedBookmarkEditorPopup({ header, messageNum = '', title = '', okButton = 'Save' } = {}) {
+    const content = await renderTemplateAsync('namedBookmarkEditor', {
+        header,
+        messageNum,
+        title,
+    });
+    if (!content) {
+        return null;
+    }
+
+    let editorValue = null;
+    const popup = new Popup(content, POPUP_TYPE.CONFIRM, '', {
+        okButton,
+        cancelButton: t`Cancel`,
+        onOpen: (popup) => {
+            popup.dlg.querySelector('#named_bookmark_title')?.focus();
+        },
+        onClosing: (popup) => {
+            if (popup.result !== POPUP_RESULT.AFFIRMATIVE) {
+                return true;
+            }
+
+            const popupDialog = $(popup.dlg);
+            const nextMessageNum = Number(popupDialog.find('#named_bookmark_message').val());
+            const nextTitle = String(popupDialog.find('#named_bookmark_title').val() ?? '').trim();
+
+            if (!Number.isInteger(nextMessageNum) || nextMessageNum < 0) {
+                toastr.error('Invalid message number', 'Bookmarks');
+                return false;
+            }
+
+            if (nextMessageNum >= chat.length) {
+                toastr.error('Message number does not exist', 'Bookmarks');
+                return false;
+            }
+
+            if (!nextTitle) {
+                toastr.error('Title is required', 'Bookmarks');
+                return false;
+            }
+
+            editorValue = {
+                messageNum: nextMessageNum,
+                title: nextTitle,
+            };
+            return true;
+        },
+    });
+
+    const result = await popup.show();
+    return result === POPUP_RESULT.AFFIRMATIVE ? editorValue : null;
+}
+
+async function createNamedBookmark(messageNum, title) {
+    if (!hasActiveChatContext()) {
+        return { success: false, error: 'No character selected.' };
+    }
+
+    if (!chat.length) {
+        return { success: false, error: 'No messages available to bookmark.' };
+    }
+
+    if (!Number.isInteger(messageNum) || messageNum < 0) {
+        return { success: false, error: 'Invalid message number.' };
+    }
+
+    if (messageNum >= chat.length) {
+        return { success: false, error: 'Message number does not exist.' };
+    }
+
+    const normalizedTitle = String(title ?? '').trim();
+    if (!normalizedTitle) {
+        return { success: false, error: 'Title is required.' };
+    }
+
+    const bookmarks = getNamedBookmarks();
+    if (bookmarks.length >= MAX_NAMED_BOOKMARKS) {
+        return { success: false, error: `Maximum ${MAX_NAMED_BOOKMARKS} bookmarks reached.` };
+    }
+
+    const bookmark = { messageNum, title: normalizedTitle };
+    setNamedBookmarks([...bookmarks, bookmark]);
+
+    return { success: true, bookmark };
+}
+
+async function updateNamedBookmark(originalMessageNum, originalTitle, nextMessageNum, nextTitle) {
+    const bookmarks = getNamedBookmarks();
+    const bookmarkIndex = bookmarks.findIndex(bookmark => bookmark.messageNum === originalMessageNum && bookmark.title === originalTitle);
+    if (bookmarkIndex === -1) {
+        return { success: false, error: 'Bookmark not found.' };
+    }
+
+    if (!Number.isInteger(nextMessageNum) || nextMessageNum < 0) {
+        return { success: false, error: 'Invalid message number.' };
+    }
+
+    if (nextMessageNum >= chat.length) {
+        return { success: false, error: 'Message number does not exist.' };
+    }
+
+    const normalizedTitle = String(nextTitle ?? '').trim();
+    if (!normalizedTitle) {
+        return { success: false, error: 'Title is required.' };
+    }
+
+    bookmarks[bookmarkIndex] = {
+        messageNum: nextMessageNum,
+        title: normalizedTitle,
+    };
+    setNamedBookmarks(bookmarks);
+
+    return { success: true };
+}
+
+async function deleteNamedBookmark(messageNum, title) {
+    const bookmarks = getNamedBookmarks();
+    const bookmarkIndex = bookmarks.findIndex(bookmark => bookmark.messageNum === messageNum && bookmark.title === title);
+    if (bookmarkIndex === -1) {
+        return { success: false, error: 'Bookmark not found.' };
+    }
+
+    bookmarks.splice(bookmarkIndex, 1);
+    setNamedBookmarks(bookmarks);
+
+    return { success: true };
+}
+
+async function navigateToNamedBookmark(messageNum) {
+    if (!Number.isInteger(messageNum) || messageNum < 0 || messageNum >= chat.length) {
+        toastr.error(`Bookmark points to deleted message ${messageNum}`, 'Bookmarks');
+        return false;
+    }
+
+    if (currentNamedBookmarksPopup) {
+        await currentNamedBookmarksPopup.completeCancelled();
+    }
+
+    const target = await jumpToMessageWindow(messageNum);
+    const messageElement = target.get(0);
+    const chatContainer = document.getElementById('chat');
+
+    if (!(messageElement instanceof HTMLElement) || !(chatContainer instanceof HTMLElement)) {
+        toastr.warning(`Could not find message ${messageNum}.`, 'Bookmarks');
+        return false;
+    }
+
+    chatContainer.scrollTo({
+        top: messageElement.offsetTop,
+        behavior: 'smooth',
+    });
+    flashHighlight(target, 2000);
+    return true;
+}
+
+async function promptCreateNamedBookmark(messageNum = chat.length - 1) {
+    if (!chat.length) {
+        toastr.error('No messages available to bookmark.', 'Bookmarks');
+        return null;
+    }
+
+    const bookmark = await showNamedBookmarkEditorPopup({
+        header: t`Create Bookmark`,
+        messageNum,
+        okButton: t`Create`,
+    });
+    if (!bookmark) {
+        return null;
+    }
+
+    const result = await createNamedBookmark(bookmark.messageNum, bookmark.title);
+    if (!result.success) {
+        toastr.error(result.error, 'Bookmarks');
+        return null;
+    }
+
+    await refreshNamedBookmarksPopup();
+    toastr.success(`Bookmark "${result.bookmark.title}" created`, 'Bookmarks');
+    return result.bookmark;
+}
+
+async function promptEditNamedBookmark(index) {
+    const bookmark = currentNamedBookmarks[index];
+    if (!bookmark) {
+        toastr.error('Bookmark not found.', 'Bookmarks');
+        return;
+    }
+
+    const nextBookmark = await showNamedBookmarkEditorPopup({
+        header: t`Edit Bookmark`,
+        messageNum: bookmark.messageNum,
+        title: bookmark.title,
+        okButton: t`Save`,
+    });
+    if (!nextBookmark) {
+        return;
+    }
+
+    const result = await updateNamedBookmark(bookmark.messageNum, bookmark.title, nextBookmark.messageNum, nextBookmark.title);
+    if (!result.success) {
+        toastr.error(result.error, 'Bookmarks');
+        return;
+    }
+
+    await refreshNamedBookmarksPopup();
+    toastr.success(`Bookmark "${nextBookmark.title}" updated`, 'Bookmarks');
+}
+
+async function promptDeleteNamedBookmark(index) {
+    const bookmark = currentNamedBookmarks[index];
+    if (!bookmark) {
+        toastr.error('Bookmark not found.', 'Bookmarks');
+        return;
+    }
+
+    const confirmation = await Popup.show.confirm(t`Delete Bookmark`, `Delete bookmark "${bookmark.messageNum} - ${bookmark.title}"?`);
+    if (confirmation !== POPUP_RESULT.AFFIRMATIVE) {
+        return;
+    }
+
+    const result = await deleteNamedBookmark(bookmark.messageNum, bookmark.title);
+    if (!result.success) {
+        toastr.error(result.error, 'Bookmarks');
+        return;
+    }
+
+    await refreshNamedBookmarksPopup();
+    toastr.success(`Bookmark "${bookmark.title}" deleted`, 'Bookmarks');
+}
+
+async function onNamedBookmarksPopupClick(event) {
+    if (!(event.target instanceof Element)) {
+        return;
+    }
+
+    const sortButton = event.target.closest('#named-bookmarks-sort-toggle');
+    if (sortButton) {
+        event.preventDefault();
+        namedBookmarksSortAscending = !namedBookmarksSortAscending;
+        await refreshNamedBookmarksPopup();
+        return;
+    }
+
+    const createButton = event.target.closest('#named-bookmarks-create');
+    if (createButton) {
+        event.preventDefault();
+        await promptCreateNamedBookmark();
+        return;
+    }
+
+    const editButton = event.target.closest('.named-bookmark-edit');
+    if (editButton instanceof HTMLElement) {
+        event.preventDefault();
+        await promptEditNamedBookmark(Number(editButton.dataset.index));
+        return;
+    }
+
+    const deleteButton = event.target.closest('.named-bookmark-delete');
+    if (deleteButton instanceof HTMLElement) {
+        event.preventDefault();
+        await promptDeleteNamedBookmark(Number(deleteButton.dataset.index));
+        return;
+    }
+
+    const bookmarkBody = event.target.closest('.named-bookmark-main');
+    if (bookmarkBody instanceof HTMLElement) {
+        event.preventDefault();
+        const bookmark = currentNamedBookmarks[Number(bookmarkBody.dataset.index)];
+        if (bookmark) {
+            await navigateToNamedBookmark(bookmark.messageNum);
+        }
+    }
+}
 
 /**
  * Gets the names of existing chats for the current character or group.
@@ -120,6 +543,8 @@ function getMainChatName() {
 
 export function showBookmarksButtons() {
     try {
+        $('#option_manage_bookmarks').toggle(hasActiveChatContext());
+
         if (selected_group) {
             $('#option_convert_to_group').hide();
         } else {
@@ -143,6 +568,7 @@ export function showBookmarksButtons() {
     catch {
         $('#option_back_to_main').hide();
         $('#option_new_bookmark').hide();
+        $('#option_manage_bookmarks').hide();
         $('#option_convert_to_group').hide();
     }
 }
@@ -456,6 +882,149 @@ function registerBookmarksSlashCommands() {
         </div>`,
     }));
     SlashCommandParser.addCommandObject(SlashCommand.fromProps({
+        name: 'bookmarkset',
+        callback: async (_, text) => {
+            const args = String(text ?? '').trim().split(/\s+/);
+
+            if (args.length < 2) {
+                toastr.error('Usage: /bookmarkset <message_number> <title>', 'Bookmarks');
+                return '';
+            }
+
+            const messageNum = Number(args.shift());
+            if (!validateMessageId(messageNum, 'Bookmarks')) return '';
+
+            const title = args.join(' ').trim();
+            const result = await createNamedBookmark(messageNum, title);
+            if (!result.success) {
+                toastr.error(result.error, 'Bookmarks');
+                return '';
+            }
+
+            toastr.success(`Bookmark "${result.bookmark.title}" created`, 'Bookmarks');
+            await refreshNamedBookmarksPopup();
+            return '';
+        },
+        unnamedArgumentList: [
+            SlashCommandArgument.fromProps({
+                description: 'message number and title',
+                typeList: [ARGUMENT_TYPE.STRING],
+                isRequired: true,
+            }),
+        ],
+        helpString: `
+        <div>
+            Create a named bookmark for a specific message.
+        </div>
+        <div>
+            <strong>Example:</strong> <pre><code>/bookmarkset 42 Important reveal</code></pre>
+        </div>`,
+    }));
+    SlashCommandParser.addCommandObject(SlashCommand.fromProps({
+        name: 'bookmarklist',
+        callback: async () => {
+            await showNamedBookmarksPopup();
+            return '';
+        },
+        helpString: `
+        <div>
+            Open the bookmarks manager for the current chat.
+        </div>`,
+    }));
+    SlashCommandParser.addCommandObject(SlashCommand.fromProps({
+        name: 'bookmarkgo',
+        callback: async (_, text) => {
+            const query = String(text ?? '').trim();
+            if (!query) {
+                toastr.error('Usage: /bookmarkgo <title_or_message_number>', 'Bookmarks');
+                return '';
+            }
+
+            const bookmarks = getNamedBookmarks();
+            if (!bookmarks.length) {
+                toastr.error('No bookmarks found.', 'Bookmarks');
+                return '';
+            }
+
+            let bookmark = null;
+            const messageNum = Number(query);
+            if (Number.isInteger(messageNum)) {
+                bookmark = bookmarks.find(entry => entry.messageNum === messageNum) ?? null;
+            }
+
+            if (!bookmark) {
+                const normalizedQuery = query.toLowerCase();
+                bookmark = bookmarks.find(entry => entry.title.toLowerCase().includes(normalizedQuery)) ?? null;
+            }
+
+            if (!bookmark) {
+                toastr.error(`Bookmark not found: ${query}`, 'Bookmarks');
+                return '';
+            }
+
+            await navigateToNamedBookmark(bookmark.messageNum);
+            return '';
+        },
+        unnamedArgumentList: [
+            SlashCommandArgument.fromProps({
+                description: 'bookmark title or message number',
+                typeList: [ARGUMENT_TYPE.STRING],
+                isRequired: true,
+            }),
+        ],
+        helpString: `
+        <div>
+            Jump to a bookmark by message number or title match.
+        </div>`,
+    }));
+    SlashCommandParser.addCommandObject(SlashCommand.fromProps({
+        name: 'bookmark-import',
+        callback: async (_, text) => {
+            const json = String(text ?? '').trim();
+            if (!json) {
+                toastr.error('Usage: /bookmark-import [{"messageNum":5,"title":"Title"}]', 'Bookmarks');
+                return '';
+            }
+
+            try {
+                const parsed = JSON.parse(json);
+                if (!Array.isArray(parsed)) {
+                    toastr.error('Must be an array of bookmarks.', 'Bookmarks');
+                    return '';
+                }
+
+                const importedBookmarks = parsed
+                    .map(normalizeNamedBookmarkEntry)
+                    .filter(Boolean)
+                    .slice(0, MAX_NAMED_BOOKMARKS);
+
+                setNamedBookmarks(importedBookmarks);
+
+                if (importedBookmarks.length !== parsed.length) {
+                    toastr.warning('Some imported bookmarks were skipped.', 'Bookmarks');
+                }
+
+                toastr.success(`Imported ${importedBookmarks.length} bookmarks`, 'Bookmarks');
+                await refreshNamedBookmarksPopup();
+            } catch {
+                toastr.error('Invalid JSON format.', 'Bookmarks');
+            }
+
+            return '';
+        },
+        unnamedArgumentList: [
+            SlashCommandArgument.fromProps({
+                description: 'JSON array of bookmarks',
+                typeList: [ARGUMENT_TYPE.STRING],
+                isRequired: true,
+            }),
+        ],
+        helpString: `
+        <div>
+            Import named bookmarks from a JSON array.
+        </div>`,
+    }));
+    SlashCommandParser.addCommandObject(SlashCommand.fromProps({
         name: 'checkpoint-create',
         returns: 'Name of the new checkpoint',
         callback: async (args, text) => {
@@ -617,6 +1186,7 @@ function registerBookmarksSlashCommands() {
 
 export function initBookmarks() {
     $('#option_new_bookmark').on('click', saveBookmarkMenu);
+    $('#option_manage_bookmarks').on('click', showNamedBookmarksPopup);
     $('#option_back_to_main').on('click', backToMainChat);
     $('#option_convert_to_group').on('click', convertSoloToGroupChat);
 
@@ -655,6 +1225,13 @@ export function initBookmarks() {
         const mesId = $(this).closest('.mes').attr('mesid');
         if (mesId !== undefined) {
             await createNewBookmark(Number(mesId));
+        }
+    });
+
+    $(document).on('click', '.mes_add_bookmark', async function () {
+        const mesId = $(this).closest('.mes').attr('mesid');
+        if (mesId !== undefined) {
+            await promptCreateNamedBookmark(Number(mesId));
         }
     });
 

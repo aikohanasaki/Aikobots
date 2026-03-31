@@ -674,7 +674,7 @@ export function initRossMods() {
     }
 
     $('#main_api').on('change', function () {
-        setTimeout(() => RA_autoconnect(), 100);
+        setTimeout(RA_autoconnect, 100);
     });
 
     $('#api_button').on('click', () => checkStatusDebounced());

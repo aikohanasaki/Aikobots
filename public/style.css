@@ -4425,6 +4425,148 @@ input[type="range"]::-webkit-slider-thumb {
     display: none;
 }
 
+#aikobots_hidden_templates_container {
+    width: 100%;
+    margin-top: 12px;
+}
+
+.aikobots_hidden_templates_panel {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    width: 100%;
+}
+
+.aikobots_hidden_templates_header {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+.aikobots_hidden_templates_toolbar {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    align-items: center;
+}
+
+#aikobots_chat_popout {
+    flex: 0 0 auto;
+}
+
+.aikobots_hidden_templates_status {
+    min-height: 24px;
+    flex: 1 1 220px;
+    padding: 6px 10px;
+    border-radius: 6px;
+    background: rgba(255, 255, 255, 0.06);
+    font-size: 0.9em;
+}
+
+.aikobots_hidden_templates_grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+    gap: 12px;
+}
+
+.aikobots_hidden_templates_section {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    padding: 12px;
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 8px;
+    background: rgba(255, 255, 255, 0.03);
+}
+
+.aikobots_hidden_templates_section_header {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: space-between;
+    gap: 8px;
+    align-items: center;
+}
+
+.aikobots_hidden_templates_actions {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+}
+
+.aikobots_hidden_templates_field {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+.aikobots_multi_select {
+    min-height: 150px;
+}
+
+#aikobots_hidden_templates_container .aikobots_hidden_templates_panel .select2-container {
+    width: 100%;
+}
+
+.aikobots_hidden_templates_panel .select2-container--default .select2-selection--multiple {
+    min-height: 38px;
+}
+
+.aikobots_hidden_templates_panel .select2-container--default .select2-selection--multiple .select2-selection__rendered {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+    padding: 4px 8px 8px;
+}
+
+.aikobots_hidden_templates_preview_copy {
+    font-size: 0.9em;
+    opacity: 0.8;
+}
+
+.aikobots_hidden_templates_preview {
+    margin: 0;
+    min-height: 90px;
+    max-height: 280px;
+    overflow: auto;
+    padding: 10px;
+    border-radius: 6px;
+    background: rgba(0, 0, 0, 0.25);
+    white-space: pre-wrap;
+    word-break: break-word;
+}
+
+.aikobots_hidden_templates_preview:focus-visible {
+    outline: 2px solid rgba(255, 255, 255, 0.5);
+    outline-offset: 2px;
+}
+
+.named-bookmarks-list {
+    gap: 6px;
+}
+
+.st-bookmarks-row {
+    border: 1px solid var(--SmartThemeBorderColor);
+    border-radius: 6px;
+    background-color: var(--SmartThemeChatTintColor);
+    gap: 8px;
+}
+
+.st-bookmarks-row:hover {
+    background: color-mix(in srgb, var(--SmartThemeQuoteColor, #e18a24) 10%, var(--SmartThemeChatTintColor) 90%);
+}
+
+.named-bookmark-main {
+    padding: 4px 8px;
+}
+
+.named-bookmark-main:hover {
+    color: var(--SmartThemeQuoteColor);
+}
+
+.named-bookmark-indicator {
+    margin-right: 6px;
+}
+
 .mes_edit_buttons {
     display: none;
     flex-direction: row;
@@ -5900,17 +6042,20 @@ body:not(.movingUI) .drawer-content.maximized {
     align-self: center;
 }
 
-#show_more_messages {
+.chat_history_button {
     text-align: center;
     margin: 10px auto;
     font-weight: 500;
-    order: -1;
     cursor: pointer;
     padding: 0.5em 1em;
     background-color: var(--SmartThemeBlurTintColor);
     width: fit-content;
     border-radius: 10px;
     outline: 1px solid var(--SmartThemeBorderColor);
+}
+
+#show_more_messages {
+    order: -1;
 }
 
 .draggable img {
