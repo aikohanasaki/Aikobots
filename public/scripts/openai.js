@@ -82,6 +82,8 @@ export {
     setOpenAIMessageExamples,
     setupChatCompletionPromptManager,
     sendOpenAIRequest,
+    fetchLastServerDispatchSnapshot,
+    getLastServerDispatchSnapshot,
     TokenHandler,
     IdentifierNotFoundError,
     Message,
@@ -91,6 +93,7 @@ export {
 let pendingTimedWorldInfo = null;
 let lastServerAssemblyPromptContext = null;
 let lastServerAssemblyDebugDump = null;
+let lastServerDispatchSnapshot = null;
 
 function sanitizeForServerPayload(value, seen = new WeakSet()) {
     if (value === null || value === undefined) {
@@ -171,8 +174,24 @@ function cloneServerAssemblyDebugDump(dump) {
         : null;
 }
 
+function storeServerDispatchSnapshot(snapshot) {
+    lastServerDispatchSnapshot = snapshot && typeof snapshot === 'object'
+        ? snapshot
+        : null;
+}
+
+function cloneServerDispatchSnapshot(snapshot) {
+    return snapshot && typeof snapshot === 'object'
+        ? structuredClone(snapshot)
+        : null;
+}
+
 export function getLastServerAssemblyDebugDump() {
     return cloneServerAssemblyDebugDump(lastServerAssemblyDebugDump);
+}
+
+export function getLastServerDispatchSnapshot() {
+    return cloneServerDispatchSnapshot(lastServerDispatchSnapshot);
 }
 
 export async function debugServerAssemblyDump(promptContext = null) {
@@ -231,6 +250,33 @@ export async function debugServerAssemblyDump(promptContext = null) {
     console.groupEnd();
 
     return cloneServerAssemblyDebugDump(dump);
+}
+
+export async function fetchLastServerDispatchSnapshot() {
+    const response = await fetch('/api/backends/chat-completions/debug/last-dispatch', {
+        method: 'GET',
+        headers: getRequestHeaders(),
+    });
+
+    const responseText = await response.text();
+    let data = null;
+    try {
+        data = responseText ? JSON.parse(responseText) : null;
+    } catch {
+        data = null;
+    }
+
+    if (!response.ok) {
+        const message =
+            data?.error?.message ||
+            data?.message ||
+            responseText?.trim() ||
+            `Got response status ${response.status}`;
+        throw new Error(message);
+    }
+
+    storeServerDispatchSnapshot(data);
+    return cloneServerDispatchSnapshot(data);
 }
 
 function maybeNotifyWorldInfoOverflow(data) {

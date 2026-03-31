@@ -1,8 +1,11 @@
 import process from 'node:process';
 import util from 'node:util';
+import fs from 'node:fs';
+import path from 'node:path';
 import express from 'express';
 import fetch from 'node-fetch';
 import urlJoin from 'url-join';
+import { fileURLToPath } from 'node:url';
 
 import {
     AIMLAPI_HEADERS,
@@ -83,6 +86,10 @@ const API_COMETAPI = 'https://api.cometapi.com/v1';
 const API_ZAI_COMMON = 'https://api.z.ai/api/paas/v4';
 const API_ZAI_CODING = 'https://api.z.ai/api/coding/paas/v4';
 const API_SILICONFLOW = 'https://api.siliconflow.com/v1';
+const MODULE_DIR = path.dirname(fileURLToPath(import.meta.url));
+const REPO_ROOT = path.resolve(MODULE_DIR, '../../../');
+const lastPromptDispatchSnapshots = new Map();
+let cachedWorkspaceBranch = undefined;
 
 // blocked due to site policy, unblocking august 2026
 const BLOCKED_CUSTOM_ENDPOINT_HOSTNAME = 'voidai.app';
@@ -1462,6 +1469,94 @@ function getPromptAssemblyErrorStatus(error) {
     return 500;
 }
 
+function clonePromptDispatchSnapshot(snapshot) {
+    return snapshot && typeof snapshot === 'object'
+        ? structuredClone(snapshot)
+        : null;
+}
+
+function getPromptDispatchSnapshotKey(request) {
+    const handle = String(request?.user?.profile?.handle || 'anonymous');
+    const sessionId = String(request?.sessionID || request?.session?.id || 'no-session');
+    return `${handle}::${sessionId}`;
+}
+
+function storePromptDispatchSnapshot(request, snapshot) {
+    lastPromptDispatchSnapshots.set(getPromptDispatchSnapshotKey(request), clonePromptDispatchSnapshot(snapshot));
+}
+
+function getStoredPromptDispatchSnapshot(request) {
+    return clonePromptDispatchSnapshot(lastPromptDispatchSnapshots.get(getPromptDispatchSnapshotKey(request)));
+}
+
+function detectWorkspaceBranch() {
+    if (cachedWorkspaceBranch !== undefined) {
+        return cachedWorkspaceBranch;
+    }
+
+    try {
+        const dotGitPath = path.join(REPO_ROOT, '.git');
+        if (!fs.existsSync(dotGitPath)) {
+            cachedWorkspaceBranch = null;
+            return cachedWorkspaceBranch;
+        }
+
+        let gitDir = dotGitPath;
+        if (fs.statSync(dotGitPath).isFile()) {
+            const dotGitContents = fs.readFileSync(dotGitPath, 'utf8');
+            const gitDirMatch = dotGitContents.match(/^gitdir:\s*(.+)$/m);
+            if (!gitDirMatch) {
+                cachedWorkspaceBranch = null;
+                return cachedWorkspaceBranch;
+            }
+            gitDir = path.resolve(REPO_ROOT, gitDirMatch[1].trim());
+        }
+
+        const headPath = path.join(gitDir, 'HEAD');
+        if (!fs.existsSync(headPath)) {
+            cachedWorkspaceBranch = null;
+            return cachedWorkspaceBranch;
+        }
+
+        const headContents = fs.readFileSync(headPath, 'utf8').trim();
+        const refMatch = headContents.match(/^ref:\s+refs\/heads\/(.+)$/);
+        cachedWorkspaceBranch = refMatch ? refMatch[1] : null;
+        return cachedWorkspaceBranch;
+    } catch {
+        cachedWorkspaceBranch = null;
+        return cachedWorkspaceBranch;
+    }
+}
+
+function getPromptParityCaseId(request) {
+    return request.body?.prompt_parity_case_id
+        || request.body?.prompt_context?.caseId
+        || request.body?.prompt_context?.case_id
+        || null;
+}
+
+function createPromptDispatchSnapshot(request, requestPayload, assembled = null) {
+    return {
+        caseId: getPromptParityCaseId(request),
+        branch: detectWorkspaceBranch(),
+        capturedAt: new Date().toISOString(),
+        type: request.body?.type || request.body?.prompt_context?.type || null,
+        source: request.body?.chat_completion_source || null,
+        model: requestPayload?.model || null,
+        messages: Array.isArray(requestPayload?.messages) ? structuredClone(requestPayload.messages) : [],
+        stop: Array.isArray(requestPayload?.stop) ? structuredClone(requestPayload.stop) : null,
+        tools: Array.isArray(requestPayload?.tools) ? structuredClone(requestPayload.tools) : null,
+        tool_choice: requestPayload?.tool_choice ?? null,
+        max_tokens: requestPayload?.max_tokens ?? null,
+        max_completion_tokens: requestPayload?.max_completion_tokens ?? null,
+        reasoning_effort: request.body?.reasoning_effort ?? requestPayload?.reasoning_effort ?? requestPayload?.reasoning?.effort ?? null,
+        custom_prompt_post_processing: request.body?.custom_prompt_post_processing ?? null,
+        worldInfo: structuredClone(assembled?.worldInfo || null),
+        itemization: structuredClone(assembled?.itemization || null),
+        requestPayload: structuredClone(requestPayload || {}),
+    };
+}
+
 function attachWorldInfoResponseData(payload, timedWorldInfo, worldInfoOverflowed = false) {
     if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
         return payload;
@@ -1998,13 +2093,16 @@ router.post('/generate', function (request, response) {
     let assembledPromptContext = false;
     let assembledTimedWorldInfo = null;
     let assembledWorldInfoOverflowed = false;
+    let assembledPromptSnapshot = null;
     if (!Array.isArray(request.body.messages) && request.body.prompt_context && typeof request.body.prompt_context === 'object') {
+        request.body.prompt_context.includeItemization = true;
         await prepareServerPromptContext(request.user, request.user.directories, request.body.prompt_context);
         const assembled = await assembleChatCompletionPrompt(request.body.prompt_context);
         request.body.messages = assembled.chat;
         response.setHeader('X-ST-Messages-Count', String(Number(assembled.messagesCount) || 0));
         assembledTimedWorldInfo = assembled.timedWorldInfo;
         assembledWorldInfoOverflowed = Boolean(assembled.worldInfoOverflowed);
+        assembledPromptSnapshot = assembled;
         assembledPromptContext = true;
     }
 
@@ -2329,6 +2427,8 @@ router.post('/generate', function (request, response) {
         excludeKeysByYaml(requestBody, request.body.custom_exclude_body);
     }
 
+    storePromptDispatchSnapshot(request, createPromptDispatchSnapshot(request, requestBody, assembledPromptSnapshot));
+
     /** @type {import('node-fetch').RequestInit} */
     const config = {
         method: 'post',
@@ -2453,6 +2553,19 @@ router.post('/assemble/compare', async function (request, response) {
         console.error('Chat completion assembly comparison failed', error);
         return response.status(getPromptAssemblyErrorStatus(error)).send(toPromptAssemblyErrorBody(error));
     }
+});
+
+router.get('/debug/last-dispatch', async function (request, response) {
+    if (!request.user?.profile?.admin) {
+        return response.sendStatus(403);
+    }
+
+    const snapshot = getStoredPromptDispatchSnapshot(request);
+    if (!snapshot) {
+        return response.status(404).send({ error: { message: 'No prompt dispatch snapshot is available for this session.' } });
+    }
+
+    return response.send(snapshot);
 });
 
 const multimodalModels = express.Router();

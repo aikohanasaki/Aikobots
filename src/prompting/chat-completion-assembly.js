@@ -1122,6 +1122,7 @@ async function applyWorldInfoToContext(context) {
     context.worldInfoTimedState = structuredClone(scanResult.timedWorldInfo || {});
     context.worldInfoRequest.timedWorldInfo = structuredClone(scanResult.timedWorldInfo || {});
     context.worldInfoOverflowed = Boolean(scanResult.overflowed);
+    context.worldInfoDebug = structuredClone(scanResult.worldInfo || null);
 
     context.worldInfoBefore = scanResult.worldInfoBefore || '';
     context.worldInfoAfter = scanResult.worldInfoAfter || '';
@@ -1783,5 +1784,6 @@ export async function assembleChatCompletionPrompt(payload = {}) {
         messagesState: serializeMessageNode(chatCompletion.getMessages()),
         timedWorldInfo: structuredClone(context.worldInfoTimedState || context.worldInfoRequest?.timedWorldInfo || {}),
         worldInfoOverflowed: Boolean(context.worldInfoOverflowed),
+        worldInfo: structuredClone(context.worldInfoDebug || null),
     };
 }

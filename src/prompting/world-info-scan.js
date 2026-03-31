@@ -255,6 +255,124 @@ async function buildRandomTrimDropSet(newEntries, payload, tokenCountCache, lore
     return dropSet;
 }
 
+function getWorldInfoEntryKey(entry = {}) {
+    return `${entry?.world ?? ''}.${entry?.uid ?? ''}`;
+}
+
+function getScanStateLabel(scanState) {
+    switch (scanState) {
+        case scan_state.INITIAL:
+            return 'initial';
+        case scan_state.RECURSION:
+            return 'recursion';
+        case scan_state.MIN_ACTIVATIONS:
+            return 'min_activations';
+        default:
+            return 'none';
+    }
+}
+
+function getWorldInfoPlacement(entry = {}, payload = {}) {
+    const worldInfoPosition = payload.worldInfoPosition || {};
+
+    switch (entry.position) {
+        case worldInfoPosition.before:
+            return 'before';
+        case worldInfoPosition.after:
+            return 'after';
+        case worldInfoPosition.EMTop:
+            return 'example_before';
+        case worldInfoPosition.EMBottom:
+            return 'example_after';
+        case worldInfoPosition.ANTop:
+            return 'authors_note_before';
+        case worldInfoPosition.ANBottom:
+            return 'authors_note_after';
+        case worldInfoPosition.atDepth:
+            return `depth:${entry.depth ?? DEFAULT_DEPTH}:${entry.role ?? 0}`;
+        case worldInfoPosition.outlet:
+            return entry.outletName ? `outlet:${entry.outletName}` : 'outlet';
+        default:
+            return 'unknown';
+    }
+}
+
+function compareWorldInfoDebugEntries(a, b) {
+    return (Number(a.decisionIndex) || 0) - (Number(b.decisionIndex) || 0)
+        || (Number(a.activationIndex) || 0) - (Number(b.activationIndex) || 0)
+        || (Number(b.order) || 0) - (Number(a.order) || 0)
+        || String(a.key || '').localeCompare(String(b.key || ''));
+}
+
+async function buildWorldInfoDebugSummary(entryDebugMap, payload, tokenCountCache, budget, lorebookBudgets, lorebookActivatedText, timedState, overflowed) {
+    const entryDebugList = Array.from(entryDebugMap.values());
+    const uniqueContents = entryDebugList
+        .map(item => item?.entry?.content ? `${item.entry.content}\n` : '')
+        .filter(Boolean);
+    await primeWorldInfoTokenCounts(uniqueContents, payload, tokenCountCache);
+
+    const activatedEntries = await Promise.all(entryDebugList.map(async item => {
+        const entry = item.entry || {};
+        const content = entry.content ? `${entry.content}\n` : '';
+
+        return {
+            key: getWorldInfoEntryKey(entry),
+            book: entry.world ?? null,
+            uid: entry.uid ?? null,
+            displayName: entry.comment ?? entry.displayName ?? entry.name ?? null,
+            comment: entry.comment ?? null,
+            content: entry.content ?? '',
+            placement: getWorldInfoPlacement(entry, payload),
+            order: Number(entry.order ?? 0),
+            role: entry.role ?? null,
+            depth: entry.depth ?? null,
+            outletName: entry.outletName ?? null,
+            activationSource: item.activationSource ?? null,
+            activationReason: item.activationReason ?? null,
+            matchedPrimaryKey: item.matchedPrimaryKey ?? null,
+            matchedSecondaryKeys: Array.isArray(item.matchedSecondaryKeys) ? item.matchedSecondaryKeys : [],
+            scanState: item.scanState ?? null,
+            status: item.status ?? 'candidate',
+            probability: entry.useProbability ? Number(entry.probability ?? 0) : null,
+            ignoreBudget: Boolean(entry.ignoreBudget),
+            preventRecursion: Boolean(entry.preventRecursion),
+            tokens: content ? await countWorldInfoTokens(content, payload, tokenCountCache) : 0,
+            activationIndex: Number(item.activationIndex ?? 0),
+            decisionIndex: Number(item.decisionIndex ?? 0),
+        };
+    }));
+
+    activatedEntries.sort(compareWorldInfoDebugEntries);
+
+    const admittedEntries = activatedEntries.filter(entry => entry.status === 'admitted');
+    const lorebookUsage = await Promise.all(Array.from(lorebookBudgets.entries()).map(async ([book, limit]) => {
+        const text = lorebookActivatedText.get(book) || '';
+        const used = text ? await countWorldInfoTokens(text, payload, tokenCountCache) : 0;
+        return { book, used, limit };
+    }));
+    lorebookUsage.sort((a, b) => String(a.book).localeCompare(String(b.book)));
+
+    const globalUsedText = admittedEntries.map(entry => entry.content).filter(Boolean).join('\n');
+    const globalUsed = globalUsedText ? await countWorldInfoTokens(globalUsedText, payload, tokenCountCache) : 0;
+
+    return {
+        activatedEntries,
+        beforeEntries: admittedEntries.filter(entry => entry.placement === 'before'),
+        afterEntries: admittedEntries.filter(entry => entry.placement === 'after'),
+        depthEntries: admittedEntries.filter(entry => entry.placement.startsWith('depth:')),
+        exampleEntries: admittedEntries.filter(entry => entry.placement.startsWith('example_')),
+        timedState: structuredClone(timedState || {}),
+        overflowed: Boolean(overflowed),
+        budgetUsed: {
+            global: {
+                used: globalUsed,
+                limit: Number(budget) || 0,
+            },
+            lorebooks: lorebookUsage,
+        },
+    };
+}
+
 class WorldInfoBuffer {
     #settings = null;
     #globalScanData = null;
@@ -708,6 +826,45 @@ export async function scanWorldInfo(payload = {}) {
     const buffer = new WorldInfoBuffer(chat, globalScanData, injects, settings, payload.forcedActivations);
     const timedEffects = new WorldInfoTimedEffects(chat.length, sortedEntries, structuredClone(payload.timedWorldInfo || {}), isDryRun);
     timedEffects.checkTimedEffects();
+    const entryDebug = new Map();
+    let activationIndex = 0;
+    let decisionIndex = 0;
+
+    const recordEntryDebug = (entry, patch = {}) => {
+        if (!entry || entry.world === undefined || entry.uid === undefined) {
+            return;
+        }
+
+        const key = getWorldInfoEntryKey(entry);
+        const existing = entryDebug.get(key) || {
+            entry,
+            activationIndex: activationIndex++,
+            decisionIndex: Number.MAX_SAFE_INTEGER,
+        };
+
+        existing.entry = existing.entry || entry;
+        if (patch.activationSource && !existing.activationSource) {
+            existing.activationSource = patch.activationSource;
+        }
+        if (patch.activationReason && !existing.activationReason) {
+            existing.activationReason = patch.activationReason;
+        }
+        if (patch.matchedPrimaryKey && !existing.matchedPrimaryKey) {
+            existing.matchedPrimaryKey = patch.matchedPrimaryKey;
+        }
+        if (Array.isArray(patch.matchedSecondaryKeys) && patch.matchedSecondaryKeys.length && !existing.matchedSecondaryKeys?.length) {
+            existing.matchedSecondaryKeys = patch.matchedSecondaryKeys;
+        }
+        if (patch.scanState && !existing.scanState) {
+            existing.scanState = patch.scanState;
+        }
+        if (patch.status) {
+            existing.status = patch.status;
+            existing.decisionIndex = decisionIndex++;
+        }
+
+        entryDebug.set(key, existing);
+    };
 
     if (sortedEntries.length === 0) {
         return {
@@ -721,6 +878,19 @@ export async function scanWorldInfo(payload = {}) {
             allActivatedEntries: [],
             timedWorldInfo: timedEffects.getTimedWorldInfo(),
             overflowed: false,
+            worldInfo: {
+                activatedEntries: [],
+                beforeEntries: [],
+                afterEntries: [],
+                depthEntries: [],
+                exampleEntries: [],
+                timedState: timedEffects.getTimedWorldInfo(),
+                overflowed: false,
+                budgetUsed: {
+                    global: { used: 0, limit: 0 },
+                    lorebooks: [],
+                },
+            },
         };
     }
 
@@ -815,6 +985,11 @@ export async function scanWorldInfo(payload = {}) {
             }
 
             if (Array.isArray(entry.decorators) && entry.decorators.includes('@@activate')) {
+                recordEntryDebug(entry, {
+                    activationSource: 'decorator',
+                    activationReason: '@@activate',
+                    scanState: getScanStateLabel(scanState),
+                });
                 activatedNow.add(entry);
                 continue;
             }
@@ -825,11 +1000,21 @@ export async function scanWorldInfo(payload = {}) {
 
             const externallyActivated = buffer.getExternallyActivated(entry);
             if (externallyActivated) {
+                recordEntryDebug(externallyActivated, {
+                    activationSource: 'external',
+                    activationReason: 'forced_activation',
+                    scanState: getScanStateLabel(scanState),
+                });
                 activatedNow.add(externallyActivated);
                 continue;
             }
 
             if (entry.constant || isSticky) {
+                recordEntryDebug(entry, {
+                    activationSource: isSticky ? 'sticky' : 'constant',
+                    activationReason: isSticky ? 'timed_sticky' : 'constant',
+                    scanState: getScanStateLabel(scanState),
+                });
                 activatedNow.add(entry);
                 continue;
             }
@@ -846,6 +1031,12 @@ export async function scanWorldInfo(payload = {}) {
 
             const hasSecondaryKeywords = entry.selective && Array.isArray(entry.keysecondary) && entry.keysecondary.length;
             if (!hasSecondaryKeywords) {
+                recordEntryDebug(entry, {
+                    activationSource: 'primary_key',
+                    activationReason: 'keyword_match',
+                    matchedPrimaryKey: primaryKeyMatch,
+                    scanState: getScanStateLabel(scanState),
+                });
                 activatedNow.add(entry);
                 continue;
             }
@@ -881,6 +1072,13 @@ export async function scanWorldInfo(payload = {}) {
             }
 
             if (matched) {
+                recordEntryDebug(entry, {
+                    activationSource: 'selective',
+                    activationReason: 'keyword_match',
+                    matchedPrimaryKey: primaryKeyMatch,
+                    matchedSecondaryKeys: entry.keysecondary.filter(keysecondary => keysecondary && buffer.matchKeys(textToScan, String(keysecondary).trim(), entry)),
+                    scanState: getScanStateLabel(scanState),
+                });
                 activatedNow.add(entry);
             }
         }
@@ -913,16 +1111,19 @@ export async function scanWorldInfo(payload = {}) {
                 const rollValue = Math.random() * 100;
                 if (rollValue > entry.probability) {
                     failedProbabilityChecks.add(entry);
+                    recordEntryDebug(entry, { status: 'dropped_probability' });
                     continue;
                 }
             }
 
             const entryContent = `${entry.content}\n`;
             if (randomTrimDrops.has(`${entry.world}.${entry.uid}`)) {
+                recordEntryDebug(entry, { status: 'dropped_trim' });
                 continue;
             }
 
             if (!entry.ignoreBudget && lorebookBudgetOverflowed.has(entry.world)) {
+                recordEntryDebug(entry, { status: 'dropped_lorebook_budget' });
                 continue;
             }
 
@@ -931,11 +1132,13 @@ export async function scanWorldInfo(payload = {}) {
                 const lorebookText = lorebookActivatedText.get(entry.world) || '';
                 if (lorebookBudget > 0 && (await countWorldInfoTokens(lorebookText + entryContent, payload, tokenCountCache)) >= lorebookBudget) {
                     lorebookBudgetOverflowed.add(entry.world);
+                    recordEntryDebug(entry, { status: 'dropped_lorebook_budget' });
                     continue;
                 }
 
                 if ((textToScanTokens + await countWorldInfoTokens(newContent + entryContent, payload, tokenCountCache)) >= budget) {
                     tokenBudgetOverflowed = true;
+                    recordEntryDebug(entry, { status: 'dropped_budget' });
                     continue;
                 }
 
@@ -945,6 +1148,7 @@ export async function scanWorldInfo(payload = {}) {
             newContent += entryContent;
             allActivatedEntries.set(`${entry.world}.${entry.uid}`, entry);
             admittedEntries.push(entry);
+            recordEntryDebug(entry, { status: 'admitted' });
         }
 
         const successfulNewEntriesForRecursion = admittedEntries.filter(entry => !entry.preventRecursion);
@@ -1058,6 +1262,16 @@ export async function scanWorldInfo(payload = {}) {
 
     timedEffects.setTimedEffects(result.allActivatedEntries);
     timedEffects.cleanUp();
+    result.worldInfo = await buildWorldInfoDebugSummary(
+        entryDebug,
+        payload,
+        tokenCountCache,
+        budget,
+        lorebookBudgets,
+        lorebookActivatedText,
+        timedEffects.getTimedWorldInfo(),
+        result.overflowed,
+    );
 
     return result;
 }

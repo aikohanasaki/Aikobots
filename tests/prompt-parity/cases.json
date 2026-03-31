@@ -1,0 +1,1010 @@
+{
+  "version": 1,
+  "cases": [
+    {
+      "id": "baseline-single-turn",
+      "title": "Baseline single turn",
+      "category": "baseline",
+      "type": "normal",
+      "input": "Give a short in-character greeting.",
+      "setup": ["Start a fresh one-on-one chat.", "Use default prompt settings and no extra lorebooks."],
+      "mutations": [],
+      "toggles": ["Server prompt assembly enabled."],
+      "chatSeed": [],
+      "expectedSignals": ["Final payload contains one new user turn.", "No activated world info entries."],
+      "tags": ["baseline", "both"],
+      "notes": "Control case for message ordering and empty WI state.",
+      "availability": "both"
+    },
+    {
+      "id": "baseline-multi-turn",
+      "title": "Baseline multi turn",
+      "category": "baseline",
+      "type": "normal",
+      "input": "Respond to the latest question without summarizing prior turns.",
+      "setup": ["Use a regular private chat with default prompt settings."],
+      "mutations": [],
+      "toggles": ["Server prompt assembly enabled."],
+      "chatSeed": [
+        { "role": "user", "content": "How are you settling into town?" },
+        { "role": "assistant", "content": "I am still learning who lives on each street." },
+        { "role": "user", "content": "What has surprised you most so far?" }
+      ],
+      "expectedSignals": ["History ordering is preserved.", "No hidden turns are omitted because none exist."],
+      "tags": ["baseline", "history"],
+      "notes": "Checks ordinary multi-turn assembly.",
+      "availability": "both"
+    },
+    {
+      "id": "baseline-empty-send-fallback",
+      "title": "Empty send fallback",
+      "category": "baseline",
+      "type": "normal",
+      "input": "",
+      "setup": ["Enable the normal send-if-empty behavior.", "Use a chat whose latest visible turn is assistant."],
+      "mutations": [],
+      "toggles": ["Default empty-send replacement enabled."],
+      "chatSeed": [
+        { "role": "assistant", "content": "I am waiting for your next instruction." }
+      ],
+      "expectedSignals": ["A fallback user message is inserted before dispatch.", "No WI activation depends on user input."],
+      "tags": ["baseline", "empty-send"],
+      "notes": "Useful for comparing send_if_empty handling.",
+      "availability": "both"
+    },
+    {
+      "id": "baseline-continue",
+      "title": "Continue generation",
+      "category": "baseline",
+      "type": "continue",
+      "input": "",
+      "setup": ["Use continue mode in a normal chat.", "Leave continue prompt defaults unchanged."],
+      "mutations": [],
+      "toggles": ["Continue mode active."],
+      "chatSeed": [
+        { "role": "assistant", "content": "The map was folded into four precise quarters, and on its back someone had written" }
+      ],
+      "expectedSignals": ["Continue nudge appears instead of a normal user turn.", "Dispatch payload reflects continue-specific shaping."],
+      "tags": ["baseline", "continue"],
+      "notes": "Compare continue-mode prompt shaping and prefill behavior.",
+      "availability": "both"
+    },
+    {
+      "id": "baseline-quiet",
+      "title": "Quiet generation",
+      "category": "baseline",
+      "type": "quiet",
+      "input": "Summarize the current situation in one sentence.",
+      "setup": ["Use quiet generation from an existing chat."],
+      "mutations": [],
+      "toggles": ["Quiet prompt enabled."],
+      "chatSeed": [
+        { "role": "user", "content": "We reached the observatory after dusk." },
+        { "role": "assistant", "content": "The lens chamber was still warm." }
+      ],
+      "expectedSignals": ["Quiet prompt enters control prompts.", "Streaming may be disabled depending on provider."],
+      "tags": ["baseline", "quiet"],
+      "notes": "Compare quiet-specific system shaping.",
+      "availability": "both"
+    },
+    {
+      "id": "baseline-impersonate",
+      "title": "Impersonate generation",
+      "category": "baseline",
+      "type": "impersonate",
+      "input": "Describe what you do next.",
+      "setup": ["Use impersonate mode in a private chat.", "Keep default impersonation prompt enabled."],
+      "mutations": [],
+      "toggles": ["Impersonate mode active."],
+      "chatSeed": [
+        { "role": "assistant", "content": "The courtyard is empty except for a fountain." }
+      ],
+      "expectedSignals": ["Impersonation control prompt appears.", "User perspective shaping differs from normal generation."],
+      "tags": ["baseline", "impersonate"],
+      "notes": "Compare impersonation prompt insertion and ordering.",
+      "availability": "both"
+    },
+    {
+      "id": "persona-description-inline",
+      "title": "Persona description in prompt",
+      "category": "persona",
+      "type": "normal",
+      "input": "Reply as if you know my habits already.",
+      "setup": ["Enable persona description and place it in prompt.", "Use a persona with a distinctive detail."],
+      "mutations": [],
+      "toggles": ["Persona description in prompt."],
+      "chatSeed": [],
+      "expectedSignals": ["Persona description is present in system prompt sections.", "No duplicate persona text appears in chat history."],
+      "tags": ["persona", "prompt"],
+      "notes": "Compares persona placement rather than user-visible output.",
+      "availability": "both"
+    },
+    {
+      "id": "scenario-formatting",
+      "title": "Scenario formatting",
+      "category": "persona",
+      "type": "normal",
+      "input": "Ask about the weather in this setting.",
+      "setup": ["Populate scenario text.", "Use a non-default scenario format template."],
+      "mutations": [],
+      "toggles": ["Scenario format customized."],
+      "chatSeed": [],
+      "expectedSignals": ["Scenario text is formatted once with the configured wrapper.", "No stale scenario text remains from prior settings."],
+      "tags": ["scenario", "formatting"],
+      "notes": "Useful when comparing custom formatting regressions.",
+      "availability": "both"
+    },
+    {
+      "id": "personality-formatting",
+      "title": "Personality formatting",
+      "category": "persona",
+      "type": "normal",
+      "input": "Answer in a way that reflects the character personality.",
+      "setup": ["Populate character personality text.", "Use a non-default personality format."],
+      "mutations": [],
+      "toggles": ["Personality format customized."],
+      "chatSeed": [],
+      "expectedSignals": ["Personality text lands in its own system section.", "Formatting matches the configured template."],
+      "tags": ["personality", "formatting"],
+      "notes": "Separates personality formatting from description handling.",
+      "availability": "both"
+    },
+    {
+      "id": "persona-in-prompt-vs-out",
+      "title": "Persona position toggle",
+      "category": "persona",
+      "type": "normal",
+      "input": "Reference one of my stated preferences.",
+      "setup": ["Prepare a persona description with a distinctive preference.", "Run once with persona in prompt and once with it elsewhere."],
+      "mutations": [],
+      "toggles": ["Persona position changed between runs."],
+      "chatSeed": [],
+      "expectedSignals": ["Dispatch payload changes when persona position changes.", "History messages should not absorb the persona text."],
+      "tags": ["persona", "toggle"],
+      "notes": "Intended as a same-branch toggle comparison case.",
+      "availability": "both"
+    },
+    {
+      "id": "group-chat-default-nudge",
+      "title": "Group chat nudge",
+      "category": "group",
+      "type": "normal",
+      "input": "Only one character should answer this prompt.",
+      "setup": ["Use a group chat with at least three members.", "Keep default group nudge enabled."],
+      "mutations": [],
+      "toggles": ["Group chat mode active."],
+      "chatSeed": [
+        { "role": "user", "content": "Who saw the lantern first?" }
+      ],
+      "expectedSignals": ["Group chat prompt and group nudge are inserted.", "Selected speaker behavior is visible in the payload."],
+      "tags": ["group", "nudge"],
+      "notes": "Checks group-only control prompts and naming context.",
+      "availability": "both"
+    },
+    {
+      "id": "group-chat-completion-names",
+      "title": "Completion names behavior",
+      "category": "group",
+      "type": "normal",
+      "input": "Answer in character and preserve speaker names.",
+      "setup": ["Use a group chat.", "Set names behavior to completion mode."],
+      "mutations": [],
+      "toggles": ["Completion names behavior enabled."],
+      "chatSeed": [
+        { "role": "assistant", "name": "Kara", "content": "The lighthouse lamp was still burning." },
+        { "role": "user", "content": "Who trimmed it last?" }
+      ],
+      "expectedSignals": ["Assistant or system messages carry name fields where supported.", "Name sanitization is consistent across branches."],
+      "tags": ["group", "names"],
+      "notes": "Compare name field placement and sanitization.",
+      "availability": "both"
+    },
+    {
+      "id": "dialogue-examples-unpinned",
+      "title": "Dialogue examples after history",
+      "category": "examples",
+      "type": "normal",
+      "input": "Use the demonstrated style.",
+      "setup": ["Add example dialogue blocks.", "Leave pin examples disabled."],
+      "mutations": [],
+      "toggles": ["Pin examples disabled."],
+      "chatSeed": [],
+      "expectedSignals": ["Example chat appears after normal chat history.", "New example chat marker is present if budget allows."],
+      "tags": ["examples", "ordering"],
+      "notes": "Compares example ordering when examples are not pinned.",
+      "availability": "both"
+    },
+    {
+      "id": "dialogue-examples-pinned",
+      "title": "Dialogue examples pinned",
+      "category": "examples",
+      "type": "normal",
+      "input": "Use the demonstrated style.",
+      "setup": ["Add example dialogue blocks.", "Enable pin examples."],
+      "mutations": [],
+      "toggles": ["Pin examples enabled."],
+      "chatSeed": [],
+      "expectedSignals": ["Example chat appears before normal history.", "Budget tradeoffs differ from the unpinned case."],
+      "tags": ["examples", "pinning"],
+      "notes": "Checks prompt ordering changes caused by pinning examples.",
+      "availability": "both"
+    },
+    {
+      "id": "prompt-manager-main-override",
+      "title": "Main prompt override",
+      "category": "prompt-manager",
+      "type": "normal",
+      "input": "Reply according to the override only.",
+      "setup": ["Configure a main prompt override with unmistakable text.", "Keep the main prompt override allowed."],
+      "mutations": [],
+      "toggles": ["Main prompt override active."],
+      "chatSeed": [],
+      "expectedSignals": ["The override replaces the normal main prompt content.", "Overridden prompt metadata is recorded in assembly output."],
+      "tags": ["prompt-manager", "override"],
+      "notes": "Primary override parity case.",
+      "availability": "both"
+    },
+    {
+      "id": "prompt-manager-jailbreak-disabled",
+      "title": "Disabled jailbreak prompt",
+      "category": "prompt-manager",
+      "type": "normal",
+      "input": "Reply normally.",
+      "setup": ["Disable the jailbreak prompt for the active character.", "Set a jailbreak override anyway."],
+      "mutations": [],
+      "toggles": ["Character-level jailbreak disable active."],
+      "chatSeed": [],
+      "expectedSignals": ["Disabled jailbreak prompt does not appear.", "Override is ignored when forbids or disable state applies."],
+      "tags": ["prompt-manager", "disable"],
+      "notes": "Compares disabled prompt handling against override code paths.",
+      "availability": "both"
+    },
+    {
+      "id": "prompt-manager-system-disabled",
+      "title": "Disabled system prompt",
+      "category": "prompt-manager",
+      "type": "normal",
+      "input": "Reply while the main system prompt is disabled.",
+      "setup": ["Disable a non-main prompt and a dynamic extension prompt.", "Use a recognizable disabled prompt body."],
+      "mutations": [],
+      "toggles": ["Prompt disable state active."],
+      "chatSeed": [],
+      "expectedSignals": ["Disabled prompts do not survive into the final payload.", "Remaining prompt ordering is stable."],
+      "tags": ["prompt-manager", "system"],
+      "notes": "Focuses on omission rather than override.",
+      "availability": "both"
+    },
+    {
+      "id": "regex-extension-injection",
+      "title": "Regex and extension prompt injection",
+      "category": "extensions",
+      "type": "normal",
+      "input": "Mention the codename once.",
+      "setup": ["Enable a regex script or extension prompt that injects text when a codename appears.", "Use a clear injected marker."],
+      "mutations": [],
+      "toggles": ["Regex or extension prompt injection enabled."],
+      "chatSeed": [],
+      "expectedSignals": ["Injected prompt text is present in the assembled payload.", "Injected placement is consistent with configured position."],
+      "tags": ["regex", "extension-prompt"],
+      "notes": "Good for checking pre-LLM post-processing differences.",
+      "availability": "both"
+    },
+    {
+      "id": "macro-expansion-char-persona",
+      "title": "Macro expansion",
+      "category": "extensions",
+      "type": "normal",
+      "input": "Use the setting that references both names.",
+      "setup": ["Configure prompts that use user, char, and group macros.", "Use values that are easy to spot after expansion."],
+      "mutations": [],
+      "toggles": ["Macro-bearing prompts active."],
+      "chatSeed": [],
+      "expectedSignals": ["Expanded macro values appear in final prompt text.", "No unresolved macro placeholders remain."],
+      "tags": ["macros", "extensions"],
+      "notes": "Compare final expanded strings, not source templates.",
+      "availability": "both"
+    },
+    {
+      "id": "depth-prompt-injection",
+      "title": "Depth prompt injection",
+      "category": "extensions",
+      "type": "normal",
+      "input": "Ask a question that should trigger depth prompt handling.",
+      "setup": ["Enable a depth prompt with visible content."],
+      "mutations": [],
+      "toggles": ["Depth prompt active."],
+      "chatSeed": [
+        { "role": "assistant", "content": "We should inspect the lower vault." },
+        { "role": "user", "content": "What do you expect to find there?" }
+      ],
+      "expectedSignals": ["Depth prompt is inserted at the configured depth position.", "Depth prompt order matches itemization when available."],
+      "tags": ["depth", "extensions"],
+      "notes": "Compares in-chat prompt injection rather than system wrapper prompts.",
+      "availability": "both"
+    },
+    {
+      "id": "extension-prompt-before",
+      "title": "Extension prompt before main",
+      "category": "extensions",
+      "type": "normal",
+      "input": "Reply while honoring the prepended extension prompt.",
+      "setup": ["Enable an extension prompt at BEFORE_PROMPT with a unique marker."],
+      "mutations": [],
+      "toggles": ["Extension prompt before main enabled."],
+      "chatSeed": [],
+      "expectedSignals": ["Extension prompt lands before the main prompt block.", "Marker survives final assembly."],
+      "tags": ["extensions", "before-prompt"],
+      "notes": "Useful for comparing prompt ordering around main.",
+      "availability": "both"
+    },
+    {
+      "id": "extension-prompt-in-chat",
+      "title": "Extension prompt in chat",
+      "category": "extensions",
+      "type": "normal",
+      "input": "Trigger the extension prompt that injects into chat history.",
+      "setup": ["Enable an IN_CHAT extension prompt with a unique marker."],
+      "mutations": [],
+      "toggles": ["In-chat extension prompt enabled."],
+      "chatSeed": [
+        { "role": "user", "content": "What did we hide in the cellar?" }
+      ],
+      "expectedSignals": ["Injected message appears in chat history at configured depth or order.", "Prompt order is stable across branches."],
+      "tags": ["extensions", "in-chat"],
+      "notes": "Checks absolute injection path rather than system prompts.",
+      "availability": "both"
+    },
+    {
+      "id": "tool-history-single-call",
+      "title": "Single tool call history",
+      "category": "tools",
+      "type": "normal",
+      "input": "Continue from the last tool result only.",
+      "setup": ["Use a chat with one previous function tool call and a tool result."],
+      "mutations": [],
+      "toggles": ["Tool use enabled."],
+      "chatSeed": [
+        { "role": "assistant", "content": "Let me check that.", "name": "tool-call-history" },
+        { "role": "tool", "name": "weather_lookup", "content": "{\"temperature\": \"12C\", \"wind\": \"east\"}" }
+      ],
+      "expectedSignals": ["Tool call and tool result are replayed into the payload.", "Tool role ordering is preserved."],
+      "tags": ["tools", "history"],
+      "notes": "Compare tool history materialization before dispatch.",
+      "availability": "both"
+    },
+    {
+      "id": "tool-history-multi-call",
+      "title": "Multiple tool calls",
+      "category": "tools",
+      "type": "normal",
+      "input": "Summarize the tool outputs before replying.",
+      "setup": ["Use a chat with multiple prior tool invocations on one assistant turn."],
+      "mutations": [],
+      "toggles": ["Tool use enabled."],
+      "chatSeed": [
+        { "role": "assistant", "content": "I will gather both records." },
+        { "role": "tool", "name": "archive_lookup", "content": "{\"ledger\": \"found\"}" },
+        { "role": "tool", "name": "map_lookup", "content": "{\"route\": \"eastern stair\"}" }
+      ],
+      "expectedSignals": ["Multiple tool results are replayed in stable order.", "No tool payload is lost during post-processing."],
+      "tags": ["tools", "multi"],
+      "notes": "Tool ordering parity case.",
+      "availability": "both"
+    },
+    {
+      "id": "media-list-images",
+      "title": "Media list attachments",
+      "category": "media",
+      "type": "normal",
+      "input": "Comment on the attached images.",
+      "setup": ["Use a user message with multiple image attachments in list mode.", "Pick a model or provider path that supports inline media."],
+      "mutations": [],
+      "toggles": ["Inline media enabled."],
+      "chatSeed": [
+        { "role": "user", "content": "Look at these artifacts." }
+      ],
+      "expectedSignals": ["All list attachments are represented in the dispatch payload where supported.", "Attachment ordering is preserved."],
+      "tags": ["media", "list"],
+      "notes": "Only compare on providers that actually support media in chat payloads.",
+      "availability": "both"
+    },
+    {
+      "id": "media-gallery-selection",
+      "title": "Media gallery selection",
+      "category": "media",
+      "type": "normal",
+      "input": "Comment only on the selected gallery item.",
+      "setup": ["Use a message with gallery media and select a nonzero gallery index.", "Pick a media-capable provider."],
+      "mutations": [],
+      "toggles": ["Gallery display mode active."],
+      "chatSeed": [
+        { "role": "user", "content": "Describe the currently selected photo." }
+      ],
+      "expectedSignals": ["Only the selected gallery item is attached inline.", "Changing gallery selection changes the payload."],
+      "tags": ["media", "gallery"],
+      "notes": "Gallery selection parity case.",
+      "availability": "both"
+    },
+    {
+      "id": "model-openai-gpt5-reasoning",
+      "title": "GPT-5 reasoning effort",
+      "category": "models",
+      "type": "normal",
+      "input": "Solve the puzzle step by step.",
+      "setup": ["Use an OpenAI GPT-5-class model path.", "Set a non-default reasoning effort."],
+      "mutations": [],
+      "toggles": ["Reasoning effort enabled."],
+      "chatSeed": [],
+      "expectedSignals": ["Reasoning effort shaping is preserved in the dispatch payload.", "Message content remains otherwise stable."],
+      "tags": ["models", "reasoning"],
+      "notes": "Compare reasoning_effort or equivalent shaped field.",
+      "availability": "both"
+    },
+    {
+      "id": "model-openrouter-claude-system",
+      "title": "OpenRouter Claude shaping",
+      "category": "models",
+      "type": "normal",
+      "input": "Reply with one concise paragraph.",
+      "setup": ["Use an OpenRouter Claude model.", "Enable any configured Claude caching or transforms that the branch supports."],
+      "mutations": [],
+      "toggles": ["OpenRouter Claude path active."],
+      "chatSeed": [],
+      "expectedSignals": ["Claude-specific dispatch shaping is visible.", "System and cache-oriented fields match branch behavior."],
+      "tags": ["models", "openrouter", "claude"],
+      "notes": "Provider shaping compare case.",
+      "availability": "both"
+    },
+    {
+      "id": "model-o1-request-shaping",
+      "title": "o1 request shaping",
+      "category": "models",
+      "type": "normal",
+      "input": "Think carefully before answering.",
+      "setup": ["Use an o1-class model path.", "Leave all other settings as default."],
+      "mutations": [],
+      "toggles": ["o1 model path active."],
+      "chatSeed": [],
+      "expectedSignals": ["Dispatch payload uses the provider-specific token field that branch expects.", "Streaming behavior may differ from baseline."],
+      "tags": ["models", "o1"],
+      "notes": "Checks request-body shaping, not output quality.",
+      "availability": "both"
+    },
+    {
+      "id": "model-claude-prefill-continue",
+      "title": "Claude continue prefill",
+      "category": "models",
+      "type": "continue",
+      "input": "",
+      "setup": ["Use a Claude-family model.", "Enable continue prefill."],
+      "mutations": [],
+      "toggles": ["Claude continue prefill enabled."],
+      "chatSeed": [
+        { "role": "assistant", "content": "The signal returned at dawn, carrying only three words:" }
+      ],
+      "expectedSignals": ["Assistant prefill content appears in the dispatch payload.", "Continue-mode shaping differs from normal mode."],
+      "tags": ["models", "claude", "continue"],
+      "notes": "Compare provider-specific continue shaping.",
+      "availability": "both"
+    },
+    {
+      "id": "wi-basic-before",
+      "title": "World info before",
+      "category": "world-info",
+      "type": "normal",
+      "input": "Ask about the moonwell.",
+      "setup": ["Enable a lorebook entry keyed on moonwell.", "Place the entry before the main prompt."],
+      "mutations": [],
+      "toggles": ["World info enabled."],
+      "chatSeed": [],
+      "expectedSignals": ["Activated entry appears in worldInfo.beforeEntries.", "Placement is before prompt and status is admitted."],
+      "tags": ["world-info", "before"],
+      "notes": "Core activated-WI compare case.",
+      "availability": "both"
+    },
+    {
+      "id": "wi-basic-after",
+      "title": "World info after",
+      "category": "world-info",
+      "type": "normal",
+      "input": "Ask about the observatory cellar.",
+      "setup": ["Enable a lorebook entry keyed on observatory cellar.", "Place the entry after the main prompt."],
+      "mutations": [],
+      "toggles": ["World info enabled."],
+      "chatSeed": [],
+      "expectedSignals": ["Activated entry appears in worldInfo.afterEntries.", "Placement is after prompt and status is admitted."],
+      "tags": ["world-info", "after"],
+      "notes": "Compares after-placement WI insertion.",
+      "availability": "both"
+    },
+    {
+      "id": "wi-depth-injection",
+      "title": "World info at depth",
+      "category": "world-info",
+      "type": "normal",
+      "input": "Mention the sealed annex.",
+      "setup": ["Enable an at-depth lorebook entry keyed on sealed annex.", "Use a visible depth and role."],
+      "mutations": [],
+      "toggles": ["Depth WI enabled."],
+      "chatSeed": [
+        { "role": "assistant", "content": "We have not entered the annex in years." },
+        { "role": "user", "content": "Why was it sealed?" }
+      ],
+      "expectedSignals": ["Activated entry appears in worldInfo.depthEntries.", "Depth placement metadata includes depth and role."],
+      "tags": ["world-info", "depth"],
+      "notes": "Checks depth WI normalization.",
+      "availability": "both"
+    },
+    {
+      "id": "wi-example-injection-before",
+      "title": "World info example before",
+      "category": "world-info",
+      "type": "normal",
+      "input": "Ask for an answer in the showcased style.",
+      "setup": ["Enable a lorebook entry that injects example dialogue before examples.", "Use a visible marker in the example content."],
+      "mutations": [],
+      "toggles": ["Example WI enabled."],
+      "chatSeed": [],
+      "expectedSignals": ["Activated entry appears in worldInfo.exampleEntries.", "Placement reflects example-before behavior."],
+      "tags": ["world-info", "examples"],
+      "notes": "Checks example-message WI placement.",
+      "availability": "both"
+    },
+    {
+      "id": "wi-example-injection-after",
+      "title": "World info example after",
+      "category": "world-info",
+      "type": "normal",
+      "input": "Ask for an answer in the showcased style.",
+      "setup": ["Enable a lorebook entry that injects example dialogue after examples.", "Use a visible marker in the example content."],
+      "mutations": [],
+      "toggles": ["Example WI enabled."],
+      "chatSeed": [],
+      "expectedSignals": ["Activated entry appears in worldInfo.exampleEntries.", "Placement reflects example-after behavior."],
+      "tags": ["world-info", "examples"],
+      "notes": "Second example WI placement case.",
+      "availability": "both"
+    },
+    {
+      "id": "wi-authors-note-top-bottom",
+      "title": "World info authors note placement",
+      "category": "world-info",
+      "type": "normal",
+      "input": "Mention the watchman cipher.",
+      "setup": ["Enable one AN-top and one AN-bottom WI entry.", "Keep authors note enabled."],
+      "mutations": [],
+      "toggles": ["Authors note WI enabled."],
+      "chatSeed": [],
+      "expectedSignals": ["Both entries are activated with distinct placement labels.", "Authors note text reflects top and bottom insertion."],
+      "tags": ["world-info", "authors-note"],
+      "notes": "Checks placement normalization outside before or after.",
+      "availability": "both"
+    },
+    {
+      "id": "wi-recursion-chain",
+      "title": "World info recursion chain",
+      "category": "world-info",
+      "type": "normal",
+      "input": "Mention the first keyword only.",
+      "setup": ["Enable recursive WI with a known two-step chain.", "Keep recursion limit above one."],
+      "mutations": [],
+      "toggles": ["Recursive WI enabled."],
+      "chatSeed": [],
+      "expectedSignals": ["Initial entry activates and causes a recursive second activation.", "worldInfo.activatedEntries shows both admitted entries."],
+      "tags": ["world-info", "recursion"],
+      "notes": "Compare recursion behavior and ordering.",
+      "availability": "both"
+    },
+    {
+      "id": "wi-probability-drop",
+      "title": "World info probability drop",
+      "category": "world-info",
+      "type": "normal",
+      "input": "Mention the keyed term once.",
+      "setup": ["Enable a probabilistic WI entry with a visibly low probability.", "Repeat the case until the probability path is exercised if needed."],
+      "mutations": [],
+      "toggles": ["Probability-based WI enabled."],
+      "chatSeed": [],
+      "expectedSignals": ["worldInfo.activatedEntries records a dropped_probability status when the roll fails.", "Dropped entry does not appear in final message content."],
+      "tags": ["world-info", "probability"],
+      "notes": "Compare dropped probability reporting.",
+      "availability": "both"
+    },
+    {
+      "id": "wi-forced-activation",
+      "title": "Forced world info activation",
+      "category": "world-info",
+      "type": "normal",
+      "input": "Generate after a forced activation is set.",
+      "setup": ["Force-activate a specific lorebook entry that would not key naturally.", "Use an unmistakable entry marker."],
+      "mutations": [],
+      "toggles": ["Forced activation present."],
+      "chatSeed": [],
+      "expectedSignals": ["Activated entry records an external or forced activation source.", "Entry appears even without a natural key match."],
+      "tags": ["world-info", "forced"],
+      "notes": "Compare forced activation normalization.",
+      "availability": "both"
+    },
+    {
+      "id": "wi-hidden-lorebook-binding",
+      "title": "Hidden lorebook binding",
+      "category": "world-info",
+      "type": "normal",
+      "input": "Mention the binding keyword.",
+      "setup": ["Enable a hidden or indirectly bound lorebook entry.", "Use a visible marker in the entry text."],
+      "mutations": [],
+      "toggles": ["Hidden or bound lorebook active."],
+      "chatSeed": [],
+      "expectedSignals": ["Activated entry still appears in normalized worldInfo output.", "Branch differences in hidden-book origin remain visible if present."],
+      "tags": ["world-info", "hidden-book"],
+      "notes": "Fork-only differences should be tagged, not treated as prompt failures.",
+      "availability": "both"
+    },
+    {
+      "id": "wi-budget-overflow-global",
+      "title": "Global world info overflow",
+      "category": "world-info",
+      "type": "normal",
+      "input": "Mention several keyed concepts in one turn.",
+      "setup": ["Set a small global WI budget.", "Enable multiple high-priority entries that all key at once."],
+      "mutations": [],
+      "toggles": ["Tight global WI budget."],
+      "chatSeed": [],
+      "expectedSignals": ["worldInfo.overflowed becomes true.", "At least one activated entry records dropped_budget."],
+      "tags": ["world-info", "budget", "overflow"],
+      "notes": "Compare overflow flag and dropped budget reasons.",
+      "availability": "both"
+    },
+    {
+      "id": "wi-budget-overflow-per-book",
+      "title": "Per-lorebook budget overflow",
+      "category": "world-info",
+      "type": "normal",
+      "input": "Mention several keyed concepts from the same lorebook.",
+      "setup": ["Set a tight fixed or percentage lorebook budget.", "Enable multiple entries from the same lorebook."],
+      "mutations": [],
+      "toggles": ["Per-book budget enabled."],
+      "chatSeed": [],
+      "expectedSignals": ["worldInfo.activatedEntries records dropped_lorebook_budget.", "Other lorebooks can still admit entries if budget allows."],
+      "tags": ["world-info", "budget", "lorebook"],
+      "notes": "Compares per-book budget handling separately from global overflow.",
+      "availability": "both"
+    },
+    {
+      "id": "hide-middle-message",
+      "title": "Hide middle message",
+      "category": "mutations",
+      "type": "normal",
+      "input": "Respond without using the hidden clue.",
+      "setup": ["Create a three-turn conversation where the middle turn contains a lorebook keyword."],
+      "mutations": ["Hide the middle user or assistant message.", "Generate without unhiding it."],
+      "toggles": ["Message hiding available."],
+      "chatSeed": [
+        { "role": "user", "content": "We passed the moonwell at dusk." },
+        { "role": "assistant", "content": "The moonwell was dry and silent." },
+        { "role": "user", "content": "What stood out to you?" }
+      ],
+      "expectedSignals": ["Hidden message no longer contributes to chat history.", "WI activation may change if the hidden turn held the key."],
+      "tags": ["mutations", "hide"],
+      "notes": "Primary hide parity case.",
+      "availability": "both"
+    },
+    {
+      "id": "hide-latest-message",
+      "title": "Hide latest prompt-relevant message",
+      "category": "mutations",
+      "type": "normal",
+      "input": "Respond after hiding the latest visible clue.",
+      "setup": ["Prepare a chat whose latest visible message includes a strong WI key."],
+      "mutations": ["Hide the latest prompt-relevant message.", "Generate immediately after hiding."],
+      "toggles": ["Message hiding available."],
+      "chatSeed": [
+        { "role": "assistant", "content": "The watchman cipher is etched beneath the bell." },
+        { "role": "user", "content": "Can you decode the watchman cipher?" }
+      ],
+      "expectedSignals": ["Latest hidden turn is omitted from dispatch history.", "Activated WI entries can drop relative to the unhidden control run."],
+      "tags": ["mutations", "hide", "latest"],
+      "notes": "Checks hiding close to the generation edge.",
+      "availability": "both"
+    },
+    {
+      "id": "unhide-message",
+      "title": "Unhide message",
+      "category": "mutations",
+      "type": "normal",
+      "input": "Generate after restoring the message.",
+      "setup": ["Start from a chat where one key-bearing message is already hidden."],
+      "mutations": ["Unhide the previously hidden message.", "Generate immediately after unhiding."],
+      "toggles": ["Message hiding available."],
+      "chatSeed": [
+        { "role": "user", "content": "The moonwell ledger is missing.", "hidden": true },
+        { "role": "assistant", "content": "I thought the ledger stayed in the apse." }
+      ],
+      "expectedSignals": ["Unhidden content returns to history.", "Any WI keyed only by that message can reactivate."],
+      "tags": ["mutations", "unhide"],
+      "notes": "Checks hide-state restoration.",
+      "availability": "both"
+    },
+    {
+      "id": "hide-edit-unhide",
+      "title": "Hide, edit, unhide",
+      "category": "mutations",
+      "type": "normal",
+      "input": "Generate after the hidden message is edited and restored.",
+      "setup": ["Prepare a message whose text changes WI activation when edited."],
+      "mutations": ["Hide the message.", "Edit the hidden message to replace the key phrase.", "Unhide the message.", "Generate."],
+      "toggles": ["Message hiding and editing available."],
+      "chatSeed": [
+        { "role": "user", "content": "The first draft mentions moonwell." },
+        { "role": "assistant", "content": "I will remember that phrasing." }
+      ],
+      "expectedSignals": ["Restored edited content, not the old content, reaches dispatch.", "WI activation follows the edited text."],
+      "tags": ["mutations", "hide", "edit"],
+      "notes": "Explicitly covers hide, edit, and unhide sequencing.",
+      "availability": "both"
+    },
+    {
+      "id": "edit-user-message",
+      "title": "Edit user message",
+      "category": "mutations",
+      "type": "normal",
+      "input": "Generate after editing a user turn.",
+      "setup": ["Prepare a user turn with a replaceable keyword."],
+      "mutations": ["Edit an earlier user message before generating."],
+      "toggles": ["Message editing available."],
+      "chatSeed": [
+        { "role": "user", "content": "The draft says moonwell." },
+        { "role": "assistant", "content": "Noted." }
+      ],
+      "expectedSignals": ["Edited user content is reflected in final messages.", "WI activation tracks the new user text."],
+      "tags": ["mutations", "edit", "user"],
+      "notes": "Basic message edit case.",
+      "availability": "both"
+    },
+    {
+      "id": "edit-assistant-message",
+      "title": "Edit assistant message",
+      "category": "mutations",
+      "type": "normal",
+      "input": "Generate after editing an assistant turn.",
+      "setup": ["Prepare an assistant message with a replaceable keyword."],
+      "mutations": ["Edit an earlier assistant message before generating."],
+      "toggles": ["Message editing available."],
+      "chatSeed": [
+        { "role": "assistant", "content": "The original answer mentions moonwell." },
+        { "role": "user", "content": "Can you revisit that answer?" }
+      ],
+      "expectedSignals": ["Edited assistant content is reflected in history.", "WI activation tracks the edited assistant text."],
+      "tags": ["mutations", "edit", "assistant"],
+      "notes": "Assistant-side edit parity case.",
+      "availability": "both"
+    },
+    {
+      "id": "edit-system-narrator-message",
+      "title": "Edit narrator or system-style message",
+      "category": "mutations",
+      "type": "normal",
+      "input": "Generate after editing a narrator-like turn.",
+      "setup": ["Prepare a narrator or system-style message that influences context."],
+      "mutations": ["Edit the narrator-style message before generating."],
+      "toggles": ["Narrator or system-style messages enabled."],
+      "chatSeed": [
+        { "role": "narrator", "content": "Scene note: the moonwell key is hidden in the rafters." },
+        { "role": "user", "content": "What should we inspect first?" }
+      ],
+      "expectedSignals": ["Edited narrator content appears in the assembled context if that message class is included.", "WI activation follows the edited text when applicable."],
+      "tags": ["mutations", "edit", "narrator"],
+      "notes": "Covers nonstandard history roles.",
+      "availability": "both"
+    },
+    {
+      "id": "delete-middle-message",
+      "title": "Delete middle message",
+      "category": "mutations",
+      "type": "normal",
+      "input": "Generate after deleting the clue-bearing middle turn.",
+      "setup": ["Create a chat where the middle turn matters for WI or prompt assembly."],
+      "mutations": ["Delete the middle message before generating."],
+      "toggles": ["Message deletion available."],
+      "chatSeed": [
+        { "role": "user", "content": "We found the moonwell ledger." },
+        { "role": "assistant", "content": "The ledger named the sixth arch." },
+        { "role": "user", "content": "What does the sixth arch imply?" }
+      ],
+      "expectedSignals": ["Deleted message is absent from the final payload.", "WI activation changes if the deleted message carried the key."],
+      "tags": ["mutations", "delete"],
+      "notes": "Primary delete parity case.",
+      "availability": "both"
+    },
+    {
+      "id": "delete-latest-user-message",
+      "title": "Delete latest user message",
+      "category": "mutations",
+      "type": "normal",
+      "input": "Generate after deleting the latest user turn.",
+      "setup": ["Use a chat where the latest user turn changes WI activation."],
+      "mutations": ["Delete the latest user message.", "Generate from the new latest state."],
+      "toggles": ["Message deletion available."],
+      "chatSeed": [
+        { "role": "assistant", "content": "The ledger mentioned a moonwell." },
+        { "role": "user", "content": "What does the moonwell entry mean?" }
+      ],
+      "expectedSignals": ["Deleted latest user turn is absent from final messages.", "History tail and any empty-send behavior may shift."],
+      "tags": ["mutations", "delete", "user"],
+      "notes": "Checks deletion at the history tail.",
+      "availability": "both"
+    },
+    {
+      "id": "delete-latest-assistant-message",
+      "title": "Delete latest assistant message",
+      "category": "mutations",
+      "type": "normal",
+      "input": "Generate after removing the previous assistant answer.",
+      "setup": ["Use a chat whose latest assistant turn affects context or continue behavior."],
+      "mutations": ["Delete the latest assistant message before generating."],
+      "toggles": ["Message deletion available."],
+      "chatSeed": [
+        { "role": "assistant", "content": "The moonwell entry points east." },
+        { "role": "user", "content": "Are you certain?" }
+      ],
+      "expectedSignals": ["Deleted assistant turn disappears from final history.", "Promptable tail state changes relative to control."],
+      "tags": ["mutations", "delete", "assistant"],
+      "notes": "Assistant-tail deletion case.",
+      "availability": "both"
+    },
+    {
+      "id": "swipe-default-selection",
+      "title": "Default swipe selection",
+      "category": "swipes",
+      "type": "normal",
+      "input": "Generate using the current default swipe.",
+      "setup": ["Use a message with multiple swipes.", "Leave swipe selection at index 0."],
+      "mutations": [],
+      "toggles": ["Swipe-capable message present."],
+      "chatSeed": [
+        {
+          "role": "assistant",
+          "content": "Default swipe mentions the moonwell.",
+          "swipeIndex": 0,
+          "swipes": [
+            "Default swipe mentions the moonwell.",
+            "Second swipe mentions the watchman cipher.",
+            "Third swipe mentions the sealed annex."
+          ]
+        }
+      ],
+      "expectedSignals": ["Selected swipe content is the one that reaches final history.", "Inactive swipes do not appear in payload text."],
+      "tags": ["swipes", "default"],
+      "notes": "Baseline swipe case.",
+      "availability": "both"
+    },
+    {
+      "id": "swipe-switch-nonzero",
+      "title": "Switch to nonzero swipe",
+      "category": "swipes",
+      "type": "normal",
+      "input": "Generate after choosing another swipe.",
+      "setup": ["Use a message with at least three swipes."],
+      "mutations": ["Switch the selected swipe from index 0 to index 1 before generating."],
+      "toggles": ["Swipe-capable message present."],
+      "chatSeed": [
+        {
+          "role": "assistant",
+          "content": "Default swipe mentions the moonwell.",
+          "swipeIndex": 0,
+          "swipes": [
+            "Default swipe mentions the moonwell.",
+            "Second swipe mentions the watchman cipher.",
+            "Third swipe mentions the sealed annex."
+          ]
+        }
+      ],
+      "expectedSignals": ["The newly selected swipe replaces the default text in final history.", "WI activation follows the selected swipe content."],
+      "tags": ["swipes", "selection"],
+      "notes": "Primary swipe selection parity case.",
+      "availability": "both"
+    },
+    {
+      "id": "swipe-edit-selected",
+      "title": "Edit selected swipe",
+      "category": "swipes",
+      "type": "normal",
+      "input": "Generate after editing the selected swipe.",
+      "setup": ["Use a swipe-capable assistant message."],
+      "mutations": ["Select a nonzero swipe.", "Edit the selected swipe text before generating."],
+      "toggles": ["Swipe editing available."],
+      "chatSeed": [
+        {
+          "role": "assistant",
+          "content": "Default swipe mentions the moonwell.",
+          "swipeIndex": 1,
+          "swipes": [
+            "Default swipe mentions the moonwell.",
+            "Second swipe mentions the watchman cipher."
+          ]
+        }
+      ],
+      "expectedSignals": ["Edited swipe text, not the pre-edit text, reaches dispatch.", "Current message text stays aligned with selected swipe."],
+      "tags": ["swipes", "edit"],
+      "notes": "Covers selected-swipe editing semantics.",
+      "availability": "both"
+    },
+    {
+      "id": "swipe-delete-selected",
+      "title": "Delete selected swipe",
+      "category": "swipes",
+      "type": "normal",
+      "input": "Generate after deleting the selected swipe.",
+      "setup": ["Use a swipe-capable assistant message with at least two swipes."],
+      "mutations": ["Select a nonzero swipe.", "Delete the selected swipe before generating."],
+      "toggles": ["Swipe deletion available."],
+      "chatSeed": [
+        {
+          "role": "assistant",
+          "content": "Second swipe mentions the watchman cipher.",
+          "swipeIndex": 1,
+          "swipes": [
+            "Default swipe mentions the moonwell.",
+            "Second swipe mentions the watchman cipher."
+          ]
+        }
+      ],
+      "expectedSignals": ["Selection moves to the surviving swipe per app behavior.", "Final history reflects the post-delete selected swipe."],
+      "tags": ["swipes", "delete", "selected"],
+      "notes": "Checks selected-swipe deletion behavior.",
+      "availability": "both"
+    },
+    {
+      "id": "swipe-delete-nonselected",
+      "title": "Delete non-selected swipe",
+      "category": "swipes",
+      "type": "normal",
+      "input": "Generate after deleting an inactive swipe.",
+      "setup": ["Use a swipe-capable assistant message with three swipes.", "Keep selection on index 0 or 1."],
+      "mutations": ["Delete a non-selected swipe before generating."],
+      "toggles": ["Swipe deletion available."],
+      "chatSeed": [
+        {
+          "role": "assistant",
+          "content": "Default swipe mentions the moonwell.",
+          "swipeIndex": 0,
+          "swipes": [
+            "Default swipe mentions the moonwell.",
+            "Second swipe mentions the watchman cipher.",
+            "Third swipe mentions the sealed annex."
+          ]
+        }
+      ],
+      "expectedSignals": ["Final history content does not change if the selected swipe survives.", "Snapshot still reflects swipe list mutation only indirectly."],
+      "tags": ["swipes", "delete", "nonselected"],
+      "notes": "Should be a no-change prompt case if selection does not move.",
+      "availability": "both"
+    },
+    {
+      "id": "swipe-switch-hide-unhide",
+      "title": "Switch swipe then hide and unhide",
+      "category": "swipes",
+      "type": "normal",
+      "input": "Generate after restoring the selected swipe message.",
+      "setup": ["Use a swipe-capable message whose swipes key different WI entries."],
+      "mutations": ["Switch to a nonzero swipe.", "Hide that message.", "Unhide it.", "Generate."],
+      "toggles": ["Swipe and hide features available."],
+      "chatSeed": [
+        {
+          "role": "assistant",
+          "content": "Default swipe mentions the moonwell.",
+          "swipeIndex": 0,
+          "swipes": [
+            "Default swipe mentions the moonwell.",
+            "Second swipe mentions the watchman cipher."
+          ]
+        },
+        { "role": "user", "content": "Answer based on the restored line." }
+      ],
+      "expectedSignals": ["Selected swipe state survives hide and unhide.", "Final history reflects the restored selected swipe rather than the default swipe."],
+      "tags": ["swipes", "hide", "unhide"],
+      "notes": "Explicitly covers swipe plus hide or unhide interaction.",
+      "availability": "both"
+    }
+  ]
+}

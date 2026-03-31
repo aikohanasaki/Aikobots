@@ -1,0 +1,134 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "required": ["version", "cases"],
+  "properties": {
+    "version": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "cases": {
+      "type": "array",
+      "minItems": 50,
+      "items": {
+        "$ref": "#/$defs/case"
+      }
+    }
+  },
+  "$defs": {
+    "chatSeedEntry": {
+      "type": "object",
+      "required": ["role", "content"],
+      "properties": {
+        "role": {
+          "type": "string",
+          "enum": ["system", "user", "assistant", "tool", "narrator"]
+        },
+        "name": {
+          "type": "string"
+        },
+        "content": {
+          "type": "string"
+        },
+        "hidden": {
+          "type": "boolean"
+        },
+        "swipeIndex": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "swipes": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "case": {
+      "type": "object",
+      "required": [
+        "id",
+        "title",
+        "category",
+        "type",
+        "input",
+        "setup",
+        "mutations",
+        "toggles",
+        "chatSeed",
+        "expectedSignals",
+        "tags",
+        "notes",
+        "availability"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[a-z0-9-]+$"
+        },
+        "title": {
+          "type": "string",
+          "minLength": 1
+        },
+        "category": {
+          "type": "string",
+          "minLength": 1
+        },
+        "type": {
+          "type": "string",
+          "enum": ["normal", "continue", "impersonate", "quiet"]
+        },
+        "input": {
+          "type": "string"
+        },
+        "setup": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "mutations": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "toggles": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "chatSeed": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/chatSeedEntry"
+          }
+        },
+        "expectedSignals": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "tags": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "notes": {
+          "type": "string"
+        },
+        "availability": {
+          "type": "string",
+          "enum": ["both", "v2-only", "release-only"]
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}
