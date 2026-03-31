@@ -12,6 +12,12 @@ import {
     saveChatConditional,
     saveItemizedPrompts,
     jumpToMessageWindow,
+    getTotalChatMessages,
+    isChatMessageLoaded,
+    isSplitTailChat,
+    isChatFullyHydrated,
+    hydrateCurrentChatForEditing,
+    isHistoricalChatMessage,
 } from '../script.js';
 import { saveMetadataDebounced } from './extensions.js';
 import { humanizedDateTime } from './RossAscends-mods.js';
@@ -87,20 +93,30 @@ function sortNamedBookmarks(bookmarks, ascending = namedBookmarksSortAscending) 
 
 function getNamedBookmarkLoadStatus(messageNum) {
     const renderedMessages = $('#chat').children('.mes');
-    if (!renderedMessages.length) {
-        return {
-            indicator: '🔴',
-            tooltip: 'Chat messages are not rendered yet.',
-        };
-    }
-
     const firstDisplayedMessageId = Number(renderedMessages.first().attr('mesid'));
     const lastDisplayedMessageId = Number(renderedMessages.last().attr('mesid'));
-    if (Number.isFinite(firstDisplayedMessageId) && Number.isFinite(lastDisplayedMessageId)
-        && messageNum >= firstDisplayedMessageId && messageNum <= lastDisplayedMessageId) {
+    if (renderedMessages.length
+        && Number.isFinite(firstDisplayedMessageId)
+        && Number.isFinite(lastDisplayedMessageId)
+        && messageNum >= firstDisplayedMessageId
+        && messageNum <= lastDisplayedMessageId) {
         return {
             indicator: '🟢',
             tooltip: 'Message is visible in the current chat window.',
+        };
+    }
+
+    if (isChatMessageLoaded(messageNum)) {
+        return {
+            indicator: '🟡',
+            tooltip: 'Message is loaded but not visible in the current chat window.',
+        };
+    }
+
+    if (!renderedMessages.length) {
+        return {
+            indicator: '🔴',
+            tooltip: 'Message requires loading a historical chunk.',
         };
     }
 
@@ -221,10 +237,10 @@ async function showNamedBookmarkEditorPopup({ header, messageNum = '', title = '
                 return false;
             }
 
-            if (nextMessageNum >= chat.length) {
-                toastr.error('Message number does not exist', 'Bookmarks');
-                return false;
-            }
+    if (nextMessageNum >= getTotalChatMessages()) {
+        toastr.error('Message number does not exist', 'Bookmarks');
+        return false;
+    }
 
             if (!nextTitle) {
                 toastr.error('Title is required', 'Bookmarks');
@@ -256,7 +272,7 @@ async function createNamedBookmark(messageNum, title) {
         return { success: false, error: 'Invalid message number.' };
     }
 
-    if (messageNum >= chat.length) {
+    if (messageNum >= getTotalChatMessages()) {
         return { success: false, error: 'Message number does not exist.' };
     }
 
@@ -287,7 +303,7 @@ async function updateNamedBookmark(originalMessageNum, originalTitle, nextMessag
         return { success: false, error: 'Invalid message number.' };
     }
 
-    if (nextMessageNum >= chat.length) {
+    if (nextMessageNum >= getTotalChatMessages()) {
         return { success: false, error: 'Message number does not exist.' };
     }
 
@@ -319,7 +335,7 @@ async function deleteNamedBookmark(messageNum, title) {
 }
 
 async function navigateToNamedBookmark(messageNum) {
-    if (!Number.isInteger(messageNum) || messageNum < 0 || messageNum >= chat.length) {
+    if (!Number.isInteger(messageNum) || messageNum < 0 || messageNum >= getTotalChatMessages()) {
         toastr.error(`Bookmark points to deleted message ${messageNum}`, 'Bookmarks');
         return false;
     }
@@ -589,20 +605,49 @@ export async function createBranch(mesId) {
         return;
     }
 
-    if (mesId < 0 || mesId >= chat.length) {
+    if (mesId < 0 || mesId >= getTotalChatMessages()) {
         toastr.warning('Invalid message ID.', 'Branch creation failed');
         return;
+    }
+
+    if (isHistoricalChatMessage(mesId)) {
+        const hydrated = await hydrateCurrentChatForEditing();
+        if (!hydrated) {
+            return null;
+        }
     }
 
     const lastMes = chat[mesId];
     const mainChat = selected_group ? groups?.find(x => x.id == selected_group)?.chat_id : characters[this_chid].chat;
     const newMetadata = { main_chat: mainChat };
+    const targetChatMetadata = { ...chat_metadata, ...newMetadata };
     let name = `Branch #${mesId} - ${humanizedDateTime()}`;
 
     if (selected_group) {
         await saveGroupBookmarkChat(selected_group, name, newMetadata, mesId);
     } else {
-        await saveChat({ chatName: name, withMetadata: newMetadata, mesId });
+        if (isSplitTailChat() && !isChatFullyHydrated()) {
+            const response = await fetch('/api/chats/save-prefix', {
+                method: 'POST',
+                headers: getRequestHeaders(),
+                body: JSON.stringify({
+                    avatar_url: characters[this_chid].avatar,
+                    source_file: characters[this_chid].chat,
+                    target_file: name,
+                    prefix_end_id: mesId,
+                    header_overrides: {
+                        chat_metadata: targetChatMetadata,
+                    },
+                }),
+            });
+
+            if (!response.ok) {
+                toastr.error('Checkpoint could not be created.', 'Branch creation failed');
+                return null;
+            }
+        } else {
+            await saveChat({ chatName: name, withMetadata: newMetadata, mesId });
+        }
     }
     // append to branches list if it exists
     // otherwise create it
@@ -633,6 +678,12 @@ export async function createNewBookmark(mesId, { forceName = null } = {}) {
         toastr.warning('The chat is empty.', 'Create Checkpoint');
         return null;
     }
+    if (isHistoricalChatMessage(mesId)) {
+        const hydrated = await hydrateCurrentChatForEditing();
+        if (!hydrated) {
+            return null;
+        }
+    }
     if (!chat[mesId]) {
         toastr.warning('Invalid message ID.', 'Create Checkpoint');
         return null;
@@ -653,12 +704,34 @@ export async function createNewBookmark(mesId, { forceName = null } = {}) {
 
     const mainChat = selected_group ? groups?.find(x => x.id == selected_group)?.chat_id : characters[this_chid].chat;
     const newMetadata = { main_chat: mainChat };
+    const targetChatMetadata = { ...chat_metadata, ...newMetadata };
     await saveItemizedPrompts(name);
 
     if (selected_group) {
         await saveGroupBookmarkChat(selected_group, name, newMetadata, mesId);
     } else {
-        await saveChat({ chatName: name, withMetadata: newMetadata, mesId });
+        if (isSplitTailChat() && !isChatFullyHydrated()) {
+            const response = await fetch('/api/chats/save-prefix', {
+                method: 'POST',
+                headers: getRequestHeaders(),
+                body: JSON.stringify({
+                    avatar_url: characters[this_chid].avatar,
+                    source_file: characters[this_chid].chat,
+                    target_file: name,
+                    prefix_end_id: mesId,
+                    header_overrides: {
+                        chat_metadata: targetChatMetadata,
+                    },
+                }),
+            });
+
+            if (!response.ok) {
+                toastr.error('Checkpoint could not be created.', 'Create Checkpoint');
+                return null;
+            }
+        } else {
+            await saveChat({ chatName: name, withMetadata: newMetadata, mesId });
+        }
     }
 
     lastMes.extra['bookmark_link'] = name;

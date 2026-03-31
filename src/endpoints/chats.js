@@ -22,8 +22,325 @@ const isBackupEnabled = !!getConfigValue('backups.chat.enabled', true, 'boolean'
 const maxTotalChatBackups = Number(getConfigValue('backups.chat.maxTotalBackups', -1, 'number'));
 const throttleInterval = Number(getConfigValue('backups.chat.throttleInterval', 10_000, 'number'));
 const checkIntegrity = !!getConfigValue('backups.chat.checkIntegrity', true, 'boolean');
+const CHAT_STORAGE_KEY = 'chat_storage';
+const CHAT_STORAGE_MODE_SPLIT_TAIL = 'split-tail';
+const CHAT_HEAD_FILE_SUFFIX = '.head.jsonl';
+const LONG_CHAT_DISPLAY_MIN = 20;
+const LONG_CHAT_DISPLAY_MAX = 200;
+const LONG_CHAT_BUFFER_GAP = 50;
+const LONG_CHAT_BUFFER_MIN = LONG_CHAT_DISPLAY_MIN + LONG_CHAT_BUFFER_GAP;
+const LONG_CHAT_BUFFER_MAX = 500;
+const LONG_CHAT_DISPLAY_DEFAULT = 100;
+const LONG_CHAT_BUFFER_DEFAULT = 200;
 
 export const CHAT_BACKUPS_PREFIX = 'chat_';
+
+function isHeadChatFile(fileName) {
+    return String(fileName).endsWith(CHAT_HEAD_FILE_SUFFIX);
+}
+
+function getSplitHeadPath(filePath) {
+    const parsedPath = path.parse(filePath);
+    return path.join(parsedPath.dir, `${parsedPath.name}${CHAT_HEAD_FILE_SUFFIX}`);
+}
+
+function stripChatStorage(header) {
+    if (!header || !_.isObject(header)) {
+        return header;
+    }
+
+    const result = { ...header };
+    delete result[CHAT_STORAGE_KEY];
+    return result;
+}
+
+function getChatStorage(header) {
+    const storage = header?.[CHAT_STORAGE_KEY];
+    return storage?.mode === CHAT_STORAGE_MODE_SPLIT_TAIL ? storage : null;
+}
+
+function clampLongChatValue(value, min, max, fallback) {
+    const numeric = Number(value);
+    if (!Number.isFinite(numeric)) {
+        return fallback;
+    }
+
+    return Math.min(max, Math.max(min, Math.round(numeric)));
+}
+
+function normalizeLongChatConfig({ displayCount = LONG_CHAT_DISPLAY_DEFAULT, bufferMax = LONG_CHAT_BUFFER_DEFAULT } = {}) {
+    let normalizedDisplayCount = clampLongChatValue(
+        displayCount,
+        LONG_CHAT_DISPLAY_MIN,
+        LONG_CHAT_DISPLAY_MAX,
+        LONG_CHAT_DISPLAY_DEFAULT,
+    );
+    let normalizedBufferMax = clampLongChatValue(
+        bufferMax,
+        LONG_CHAT_BUFFER_MIN,
+        LONG_CHAT_BUFFER_MAX,
+        LONG_CHAT_BUFFER_DEFAULT,
+    );
+
+    if (normalizedBufferMax < normalizedDisplayCount + LONG_CHAT_BUFFER_GAP) {
+        normalizedBufferMax = Math.min(LONG_CHAT_BUFFER_MAX, normalizedDisplayCount + LONG_CHAT_BUFFER_GAP);
+        normalizedDisplayCount = Math.min(normalizedDisplayCount, normalizedBufferMax - LONG_CHAT_BUFFER_GAP);
+    }
+
+    normalizedDisplayCount = clampLongChatValue(
+        normalizedDisplayCount,
+        LONG_CHAT_DISPLAY_MIN,
+        Math.min(LONG_CHAT_DISPLAY_MAX, normalizedBufferMax - LONG_CHAT_BUFFER_GAP),
+        LONG_CHAT_DISPLAY_DEFAULT,
+    );
+    normalizedBufferMax = clampLongChatValue(
+        normalizedBufferMax,
+        Math.max(LONG_CHAT_BUFFER_MIN, normalizedDisplayCount + LONG_CHAT_BUFFER_GAP),
+        LONG_CHAT_BUFFER_MAX,
+        LONG_CHAT_BUFFER_DEFAULT,
+    );
+
+    return {
+        displayCount: normalizedDisplayCount,
+        bufferMax: normalizedBufferMax,
+    };
+}
+
+function serializeJsonl(data) {
+    return data.map(x => JSON.stringify(x)).join('\n');
+}
+
+function readJsonlObjects(filePath) {
+    if (!fs.existsSync(filePath)) {
+        return [];
+    }
+
+    const data = fs.readFileSync(filePath, 'utf8');
+    if (!data) {
+        return [];
+    }
+
+    return data
+        .split('\n')
+        .map(line => tryParse(line))
+        .filter(x => x);
+}
+
+function getChatSegments(filePath) {
+    const tailObjects = readJsonlObjects(filePath);
+
+    if (!tailObjects.length) {
+        return {
+            header: null,
+            storage: null,
+            headPath: getSplitHeadPath(filePath),
+            headMessages: [],
+            tailMessages: [],
+            messages: [],
+        };
+    }
+
+    const header = tailObjects[0];
+    const storage = getChatStorage(header);
+    const headPath = storage?.head_file
+        ? path.join(path.dirname(filePath), storage.head_file)
+        : getSplitHeadPath(filePath);
+    const headObjects = storage ? readJsonlObjects(headPath) : [];
+    const headMessages = headObjects.slice(1);
+    const tailMessages = tailObjects.slice(1);
+
+    return {
+        header,
+        storage,
+        headPath,
+        headMessages,
+        tailMessages,
+        messages: [...headMessages, ...tailMessages],
+    };
+}
+
+function getLogicalChatData(filePath) {
+    const segments = getChatSegments(filePath);
+
+    if (!segments.header) {
+        return [];
+    }
+
+    return [stripChatStorage(segments.header), ...segments.messages];
+}
+
+function getLogicalChatMessages(filePath) {
+    const [, ...messages] = getLogicalChatData(filePath);
+    return messages;
+}
+
+function writeLogicalChat(filePath, header, messages, { displayCount = LONG_CHAT_DISPLAY_DEFAULT, bufferMax = LONG_CHAT_BUFFER_DEFAULT, tailStartId = null } = {}) {
+    const { displayCount: normalizedDisplayCount, bufferMax: normalizedBufferMax } = normalizeLongChatConfig({ displayCount, bufferMax });
+    const baseHeader = stripChatStorage(header);
+    const fullJsonl = serializeJsonl([baseHeader, ...messages]);
+    const headPath = getSplitHeadPath(filePath);
+    const totalMessages = messages.length;
+    let nextTailStartId = Number.isInteger(tailStartId) ? tailStartId : null;
+
+    if (nextTailStartId !== null) {
+        nextTailStartId = Math.min(Math.max(0, nextTailStartId), totalMessages);
+        const tailCount = Math.max(0, totalMessages - nextTailStartId);
+        if (tailCount > normalizedBufferMax) {
+            nextTailStartId = Math.max(0, totalMessages - normalizedDisplayCount);
+        }
+    } else if (totalMessages > normalizedBufferMax) {
+        nextTailStartId = Math.max(0, totalMessages - normalizedDisplayCount);
+    }
+
+    if (nextTailStartId !== null && nextTailStartId > 0 && nextTailStartId < totalMessages) {
+        const headMessages = messages.slice(0, nextTailStartId);
+        const tailMessages = messages.slice(nextTailStartId);
+        const storage = {
+            mode: CHAT_STORAGE_MODE_SPLIT_TAIL,
+            head_file: path.basename(headPath),
+            head_count: headMessages.length,
+            tail_count: tailMessages.length,
+        };
+        const headerWithStorage = { ...baseHeader, [CHAT_STORAGE_KEY]: storage };
+        const headHeader = {
+            split_part: 'head',
+            parent_file: path.basename(filePath),
+            message_count: headMessages.length,
+        };
+
+        writeFileAtomicSync(headPath, serializeJsonl([headHeader, ...headMessages]), 'utf8');
+        writeFileAtomicSync(filePath, serializeJsonl([headerWithStorage, ...tailMessages]), 'utf8');
+
+        return {
+            fullJsonl,
+            storageMode: CHAT_STORAGE_MODE_SPLIT_TAIL,
+            headCount: headMessages.length,
+            tailCount: tailMessages.length,
+            tailStartId: headMessages.length,
+            tailEndId: totalMessages > 0 ? totalMessages - 1 : -1,
+            compacted: tailStartId !== null && nextTailStartId !== tailStartId,
+        };
+    } else {
+        if (fs.existsSync(headPath)) {
+            fs.unlinkSync(headPath);
+        }
+
+        writeFileAtomicSync(filePath, fullJsonl, 'utf8');
+
+        return {
+            fullJsonl,
+            storageMode: 'full',
+            headCount: 0,
+            tailCount: totalMessages,
+            tailStartId: 0,
+            tailEndId: totalMessages > 0 ? totalMessages - 1 : -1,
+            compacted: false,
+        };
+    }
+}
+
+function ensureSplitTailStorage(filePath, { displayCount = LONG_CHAT_DISPLAY_DEFAULT, bufferMax = LONG_CHAT_BUFFER_DEFAULT } = {}) {
+    const segments = getChatSegments(filePath);
+    if (!segments.header || segments.storage || segments.messages.length <= normalizeLongChatConfig({ displayCount, bufferMax }).bufferMax) {
+        return false;
+    }
+
+    writeLogicalChat(filePath, segments.header, segments.messages, {
+        displayCount,
+        bufferMax,
+        tailStartId: Math.max(0, segments.messages.length - normalizeLongChatConfig({ displayCount, bufferMax }).displayCount),
+    });
+    return true;
+}
+
+function buildChunkedChatPayload(filePath, { rangeStart = null, count = null, hydrateFull = false, displayCount = LONG_CHAT_DISPLAY_DEFAULT, bufferMax = LONG_CHAT_BUFFER_DEFAULT } = {}) {
+    const config = normalizeLongChatConfig({ displayCount, bufferMax });
+    const segments = getChatSegments(filePath);
+    const header = stripChatStorage(segments.header);
+    const totalMessages = segments.messages.length;
+    const tailCount = segments.tailMessages.length || totalMessages;
+    const tailStartId = totalMessages > tailCount ? (totalMessages - tailCount) : 0;
+    const tailEndId = totalMessages > 0 ? totalMessages - 1 : -1;
+
+    if (!header) {
+        return {
+            mode: 'full',
+            header: null,
+            messages: [],
+            totalMessages: 0,
+            loadedRangeStart: 0,
+            loadedRangeEnd: -1,
+            tailStartId: 0,
+            tailEndId: -1,
+            headCount: 0,
+            tailCount: 0,
+        };
+    }
+
+    let startId = 0;
+    let endId = totalMessages - 1;
+
+    if (!hydrateFull && segments.storage) {
+        const normalizedCount = Math.max(1, Number(count) || tailCount || config.displayCount);
+        startId = Number.isInteger(rangeStart)
+            ? rangeStart
+            : tailStartId;
+        startId = Math.max(0, Math.min(startId, Math.max(0, totalMessages - 1)));
+        endId = Math.min(totalMessages - 1, startId + normalizedCount - 1);
+    }
+
+    const messages = totalMessages > 0
+        ? segments.messages.slice(startId, endId + 1)
+        : [];
+
+    return {
+        mode: segments.storage ? CHAT_STORAGE_MODE_SPLIT_TAIL : 'full',
+        header,
+        messages,
+        totalMessages,
+        loadedRangeStart: totalMessages > 0 ? startId : 0,
+        loadedRangeEnd: totalMessages > 0 ? endId : -1,
+        tailStartId,
+        tailEndId,
+        headCount: segments.headMessages.length,
+        tailCount,
+        displayCount: config.displayCount,
+        isHydrated: hydrateFull || !segments.storage,
+    };
+}
+
+function getCharacterChatFilePath(chatsDirectory, avatarUrl, fileName) {
+    const directoryName = String(avatarUrl || '').replace('.png', '');
+    const normalizedFileName = String(fileName || '').endsWith('.jsonl')
+        ? String(fileName)
+        : `${String(fileName)}.jsonl`;
+    return path.join(chatsDirectory, directoryName, sanitize(normalizedFileName));
+}
+
+export function resolveSplitCoreChatPayload(chatsDirectory, coreChatPayload) {
+    if (!coreChatPayload || typeof coreChatPayload !== 'object' || coreChatPayload.mode !== CHAT_STORAGE_MODE_SPLIT_TAIL) {
+        return Array.isArray(coreChatPayload) ? coreChatPayload : [];
+    }
+
+    const filePath = getCharacterChatFilePath(chatsDirectory, coreChatPayload.avatarUrl, coreChatPayload.currentChatId);
+    if (!fs.existsSync(filePath)) {
+        return [];
+    }
+
+    const segments = getChatSegments(filePath);
+    const totalMessages = segments.messages.length;
+    const normalizedTailStartId = Number.isInteger(coreChatPayload.tailStartId)
+        ? Math.max(0, Math.min(coreChatPayload.tailStartId, totalMessages))
+        : Math.max(0, totalMessages - segments.tailMessages.length);
+    const parentMessages = coreChatPayload.useParentUnhiddenMessages
+        ? segments.messages.slice(0, normalizedTailStartId).filter(message => !message?.extra?.ignore)
+        : [];
+    const tailMessages = coreChatPayload.useTailContents === false
+        ? []
+        : segments.messages.slice(normalizedTailStartId);
+
+    return [...parentMessages, ...tailMessages];
+}
 
 /**
  * Saves a chat to the backups directory.
@@ -375,7 +692,29 @@ export async function getChatInfo(pathToFile, additionalData = {}, isGroup = fal
     return new Promise(async (res) => {
         const parsedPath = path.parse(pathToFile);
         const stats = await fs.promises.stat(pathToFile);
-        const fileSizeInKB = `${(stats.size / 1024).toFixed(2)}kb`;
+
+        if (isGroup) {
+            const fileObjects = readJsonlObjects(pathToFile);
+            const lastMessage = fileObjects.at(-1);
+            const chatData = {
+                file_id: parsedPath.name,
+                file_name: parsedPath.base,
+                file_size: `${(stats.size / 1024).toFixed(2)}kb`,
+                chat_items: fileObjects.length,
+                mes: lastMessage?.mes || '[The chat is empty]',
+                last_mes: lastMessage?.send_date || stats.mtimeMs,
+                ...additionalData,
+            };
+
+            return res(chatData);
+        }
+
+        const segments = getChatSegments(pathToFile);
+        const headStats = segments.storage && fs.existsSync(segments.headPath)
+            ? await fs.promises.stat(segments.headPath)
+            : null;
+        const totalSize = stats.size + (headStats?.size || 0);
+        const fileSizeInKB = `${(totalSize / 1024).toFixed(2)}kb`;
 
         const chatData = {
             file_id: parsedPath.name,
@@ -398,41 +737,21 @@ export async function getChatInfo(pathToFile, additionalData = {}, isGroup = fal
             return;
         }
 
-        const fileStream = fs.createReadStream(pathToFile);
-        const rl = readline.createInterface({
-            input: fileStream,
-            crlfDelay: Infinity,
-        });
+        if (withMetadata && segments.header && _.isObject(segments.header.chat_metadata)) {
+            chatData.chat_metadata = segments.header.chat_metadata;
+        }
 
-        let lastLine;
-        let itemCounter = 0;
-        rl.on('line', (line) => {
-            if (withMetadata && itemCounter === 0) {
-                const jsonData = tryParse(line);
-                if (jsonData && _.isObject(jsonData.chat_metadata)) {
-                    chatData.chat_metadata = jsonData.chat_metadata;
-                }
-            }
-            itemCounter++;
-            lastLine = line;
-        });
-        rl.on('close', () => {
-            rl.close();
+        const lastMessage = segments.messages.at(-1);
 
-            if (lastLine) {
-                const jsonData = tryParse(lastLine);
-                if (jsonData && (jsonData.name || jsonData.character_name || jsonData.chat_metadata)) {
-                    chatData.chat_items = isGroup ? itemCounter : (itemCounter - 1);
-                    chatData.mes = jsonData['mes'] || '[The message is empty]';
-                    chatData.last_mes = jsonData['send_date'] || stats.mtimeMs;
-
-                    res(chatData);
-                } else {
-                    console.warn('Found an invalid or corrupted chat file:', pathToFile);
-                    res({});
-                }
-            }
-        });
+        if (lastMessage || segments.header) {
+            chatData.chat_items = segments.messages.length;
+            chatData.mes = lastMessage?.mes || '[The message is empty]';
+            chatData.last_mes = lastMessage?.send_date || stats.mtimeMs;
+            res(chatData);
+        } else {
+            console.warn('Found an invalid or corrupted chat file:', pathToFile);
+            res({});
+        }
     });
 }
 
@@ -441,8 +760,11 @@ export const router = express.Router();
 router.post('/save', validateAvatarUrlMiddleware, async function (request, response) {
     try {
         const directoryName = String(request.body.avatar_url).replace('.png', '');
-        const chatData = request.body.chat;
-        const jsonlData = chatData.map(JSON.stringify).join('\n');
+        const chatData = Array.isArray(request.body.chat) ? request.body.chat : [];
+        const config = normalizeLongChatConfig({
+            displayCount: request.body.display_count,
+            bufferMax: request.body.buffer_max,
+        });
         const fileName = `${String(request.body.file_name)}.jsonl`;
         const filePath = path.join(request.user.directories.chats, directoryName, sanitize(fileName));
         if (checkIntegrity && !request.body.force) {
@@ -453,9 +775,60 @@ router.post('/save', validateAvatarUrlMiddleware, async function (request, respo
                 return response.status(400).send({ error: 'integrity' });
             }
         }
-        writeFileAtomicSync(filePath, jsonlData, 'utf8');
-        getBackupFunction(request.user.profile.handle)(request.user.directories.backups, directoryName, jsonlData);
-        return response.send({ result: 'ok' });
+
+        let logicalChatData = chatData;
+        let requestedTailStartId = null;
+        const existingSegments = fs.existsSync(filePath) ? getChatSegments(filePath) : null;
+        const existingTailStartId = existingSegments?.storage?.head_count;
+
+        if (request.body.save_mode === 'tail') {
+            const existingChat = getLogicalChatData(filePath);
+            const absoluteStartId = Number(request.body.absolute_start_id);
+
+            if (!Number.isInteger(absoluteStartId) || absoluteStartId < 0 || existingChat.length === 0 || absoluteStartId > (existingChat.length - 1)) {
+                return response.status(400).send({ error: 'invalid_tail_save' });
+            }
+
+            logicalChatData = [
+                chatData[0] ?? existingChat[0],
+                ...existingChat.slice(1, absoluteStartId + 1),
+                ...chatData.slice(1),
+            ];
+            requestedTailStartId = absoluteStartId;
+        } else if (Number.isInteger(existingTailStartId)) {
+            requestedTailStartId = existingTailStartId;
+        } else if (chatData.length > (config.bufferMax + 1)) {
+            requestedTailStartId = Math.max(0, chatData.length - 1 - config.displayCount);
+        }
+
+        const header = logicalChatData[0];
+        const messages = logicalChatData.slice(1);
+        const writeResult = writeLogicalChat(filePath, header, messages, {
+            displayCount: config.displayCount,
+            bufferMax: config.bufferMax,
+            tailStartId: requestedTailStartId,
+        });
+        getBackupFunction(request.user.profile.handle)(request.user.directories.backups, directoryName, writeResult.fullJsonl);
+
+        const refreshRequired = writeResult.compacted
+            || (existingSegments?.storage?.mode ?? 'full') !== writeResult.storageMode;
+
+        return response.send({
+            result: 'ok',
+            storage_mode: writeResult.storageMode,
+            tailStartId: writeResult.tailStartId,
+            tailEndId: writeResult.tailEndId,
+            headCount: writeResult.headCount,
+            tailCount: writeResult.tailCount,
+            payload: refreshRequired
+                ? buildChunkedChatPayload(filePath, {
+                    count: writeResult.storageMode === CHAT_STORAGE_MODE_SPLIT_TAIL ? writeResult.tailCount : messages.length,
+                    hydrateFull: writeResult.storageMode !== CHAT_STORAGE_MODE_SPLIT_TAIL,
+                    displayCount: config.displayCount,
+                    bufferMax: config.bufferMax,
+                })
+                : null,
+        });
     } catch (error) {
         console.error(error);
         return response.send(error);
@@ -486,15 +859,61 @@ router.post('/get', validateAvatarUrlMiddleware, function (request, response) {
             return response.send({});
         }
 
-        const data = fs.readFileSync(filePath, 'utf8');
-        const lines = data.split('\n');
+        if (request.body.chunked) {
+            const config = normalizeLongChatConfig({
+                displayCount: request.body.display_count,
+                bufferMax: request.body.buffer_max,
+            });
+            ensureSplitTailStorage(filePath, config);
+            const rangeStart = request.body.range_start === undefined ? null : Number(request.body.range_start);
+            const count = request.body.count === undefined ? null : Number(request.body.count);
+            const hydrateFull = request.body.hydrate_full === true;
+            return response.send(buildChunkedChatPayload(filePath, {
+                rangeStart,
+                count,
+                hydrateFull,
+                displayCount: config.displayCount,
+                bufferMax: config.bufferMax,
+            }));
+        }
 
-        // Iterate through the array of strings and parse each line as JSON
-        const jsonData = lines.map((l) => { try { return JSON.parse(l); } catch (_) { return; } }).filter(x => x);
-        return response.send(jsonData);
+        return response.send(getLogicalChatData(filePath));
     } catch (error) {
         console.error(error);
         return response.send({});
+    }
+});
+
+router.post('/save-prefix', validateAvatarUrlMiddleware, function (request, response) {
+    try {
+        const dirName = String(request.body.avatar_url).replace('.png', '');
+        const directoryPath = path.join(request.user.directories.chats, dirName);
+        const sourceFileName = `${String(request.body.source_file)}.jsonl`;
+        const targetFileName = `${String(request.body.target_file)}.jsonl`;
+        const sourcePath = path.join(directoryPath, sanitize(sourceFileName));
+        const targetPath = path.join(directoryPath, sanitize(targetFileName));
+        const prefixEndId = Number(request.body.prefix_end_id);
+        const headerOverrides = _.isObject(request.body.header_overrides) ? request.body.header_overrides : {};
+
+        if (!fs.existsSync(sourcePath) || !Number.isInteger(prefixEndId) || prefixEndId < 0) {
+            return response.sendStatus(400);
+        }
+
+        const logicalChat = getLogicalChatData(sourcePath);
+        const sourceHeader = logicalChat[0];
+        const messages = logicalChat.slice(1);
+
+        if (!sourceHeader || prefixEndId >= messages.length) {
+            return response.sendStatus(400);
+        }
+
+        const targetHeader = { ...sourceHeader, ...headerOverrides };
+        const writeResult = writeLogicalChat(targetPath, targetHeader, messages.slice(0, prefixEndId + 1));
+        getBackupFunction(request.user.profile.handle)(request.user.directories.backups, dirName, writeResult.fullJsonl);
+        return response.send({ ok: true });
+    } catch (error) {
+        console.error(error);
+        return response.sendStatus(500);
     }
 });
 
@@ -520,6 +939,18 @@ router.post('/rename', validateAvatarUrlMiddleware, async function (request, res
 
         fs.copyFileSync(pathToOriginalFile, pathToRenamedFile);
         fs.unlinkSync(pathToOriginalFile);
+
+        const originalHeadPath = getSplitHeadPath(pathToOriginalFile);
+        const renamedHeadPath = getSplitHeadPath(pathToRenamedFile);
+        if (fs.existsSync(originalHeadPath)) {
+            fs.copyFileSync(originalHeadPath, renamedHeadPath);
+            fs.unlinkSync(originalHeadPath);
+            const logicalChat = getLogicalChatData(pathToRenamedFile);
+            if (logicalChat.length > 0) {
+                writeLogicalChat(pathToRenamedFile, logicalChat[0], logicalChat.slice(1));
+            }
+        }
+
         console.info('Successfully renamed chat file.');
         return response.send({ ok: true, sanitizedFileName });
     } catch (error) {
@@ -545,6 +976,10 @@ router.post('/delete', validateAvatarUrlMiddleware, function (request, response)
         }
 
         fs.unlinkSync(filePath);
+        const headPath = getSplitHeadPath(filePath);
+        if (fs.existsSync(headPath)) {
+            fs.unlinkSync(headPath);
+        }
         console.info(`Deleted chat file: ${filePath}`);
         return response.send('ok');
     } catch (error) {
@@ -573,7 +1008,7 @@ router.post('/export', validateAvatarUrlMiddleware, async function (request, res
         // Short path for JSONL files
         if (request.body.format === 'jsonl') {
             try {
-                const rawFile = fs.readFileSync(filename, 'utf8');
+                const rawFile = serializeJsonl(getLogicalChatData(filename));
                 const successMessage = {
                     message: `Chat saved to ${exportfilename}`,
                     result: rawFile,
@@ -591,31 +1026,24 @@ router.post('/export', validateAvatarUrlMiddleware, async function (request, res
             }
         }
 
-        const readStream = fs.createReadStream(filename);
-        const rl = readline.createInterface({
-            input: readStream,
-        });
         let buffer = '';
-        rl.on('line', (line) => {
-            const data = JSON.parse(line);
-            // Skip non-printable/prompt-hidden messages
+        for (const data of getLogicalChatMessages(filename)) {
             if (data.is_system) {
-                return;
+                continue;
             }
             if (data.mes) {
                 const name = data.name;
                 const message = (data?.extra?.display_text || data?.mes || '').replace(/\r?\n/g, '\n');
                 buffer += (`${name}: ${message}\n\n`);
             }
-        });
-        rl.on('close', () => {
-            const successMessage = {
-                message: `Chat saved to ${exportfilename}`,
-                result: buffer,
-            };
-            console.info(`Chat exported as ${exportfilename}`);
-            return response.status(200).json(successMessage);
-        });
+        }
+
+        const successMessage = {
+            message: `Chat saved to ${exportfilename}`,
+            result: buffer,
+        };
+        console.info(`Chat exported as ${exportfilename}`);
+        return response.status(200).json(successMessage);
     } catch (err) {
         console.error('chat export failed.', err);
         return response.sendStatus(400);
@@ -845,13 +1273,15 @@ router.post('/search', validateAvatarUrlMiddleware, function (request, response)
             }
 
             chatFiles = fs.readdirSync(directoryPath)
-                .filter(file => file.endsWith('.jsonl'))
+                .filter(file => file.endsWith('.jsonl') && !isHeadChatFile(file))
                 .map(fileName => {
                     const filePath = path.join(directoryPath, fileName);
                     const stats = fs.statSync(filePath);
+                    const headPath = getSplitHeadPath(filePath);
+                    const headStats = fs.existsSync(headPath) ? fs.statSync(headPath) : null;
                     return {
                         file_name: fileName,
-                        file_size: formatBytes(stats.size),
+                        file_size: formatBytes(stats.size + (headStats?.size || 0)),
                         path: filePath,
                     };
                 });
@@ -861,9 +1291,7 @@ router.post('/search', validateAvatarUrlMiddleware, function (request, response)
 
         // Search logic
         for (const chatFile of chatFiles) {
-            const data = fs.readFileSync(chatFile.path, 'utf8');
-            const messages = data.split('\n')
-                .map(line => { try { return JSON.parse(line); } catch (_) { return null; } })
+            const messages = getLogicalChatMessages(chatFile.path)
                 .filter(x => x && typeof x.mes === 'string');
 
             if (query && messages.length === 0) {
@@ -929,7 +1357,7 @@ router.post('/recent', async function (request, response) {
                 const pathStats = await fs.promises.stat(pathToChats);
                 if (pathStats.isDirectory()) {
                     const chatFiles = await fs.promises.readdir(pathToChats);
-                    const jsonlFiles = chatFiles.filter(file => path.extname(file) === '.jsonl');
+                    const jsonlFiles = chatFiles.filter(file => path.extname(file) === '.jsonl' && !isHeadChatFile(file));
 
                     for (const file of jsonlFiles) {
                         const filePath = path.join(pathToChats, file);
@@ -969,7 +1397,7 @@ router.post('/recent', async function (request, response) {
 
         const getRootChatFiles = async () => {
             const dirents = await fs.promises.readdir(request.user.directories.chats, { withFileTypes: true });
-            const chatFiles = dirents.filter(e => e.isFile() && path.extname(e.name) === '.jsonl').map(e => e.name);
+            const chatFiles = dirents.filter(e => e.isFile() && path.extname(e.name) === '.jsonl' && !isHeadChatFile(e.name)).map(e => e.name);
 
             for (const file of chatFiles) {
                 const filePath = path.join(request.user.directories.chats, file);

@@ -936,7 +936,7 @@ export async function buildServerAssemblyPayload({
                 }
                 : undefined,
         }))
-        : [];
+        : (coreChat && typeof coreChat === 'object' ? structuredClone(coreChat) : []);
 
     let toolBudgetData = null;
     if (ToolManager.canPerformToolCalls(type)) {

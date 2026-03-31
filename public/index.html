@@ -2542,6 +2542,28 @@
                                         <input class="neo-range-input" type="number" min="5" max="100" step="5" data-for="streaming_fps" id="streaming_fps_counter">
                                     </div>
                                 </div>
+
+                                <h4 data-i18n="Long Chat Handling">Long Chat Handling</h4>
+                                <div class="flex-container">
+                                    <div class="alignitemscenter flex-container flexFlowColumn flexBasis48p flexGrow flexShrink gap0">
+                                        <small>
+                                            <span>Start by showing the last X messages</span>
+                                            <div class="fa-solid fa-circle-info opacity50p" title="When you open a long chat, SillyTavern will only show this many of the newest messages at first. Older messages can still be loaded when needed."></div>
+                                        </small>
+                                        <input class="neo-range-slider" type="range" id="long_chat_display_count" name="long_chat_display_count" min="20" max="200" step="5">
+                                        <input class="neo-range-input" type="number" min="20" max="200" step="5" data-for="long_chat_display_count" id="long_chat_display_count_counter">
+                                    </div>
+
+                                    <div class="alignitemscenter flex-container flexFlowColumn flexBasis48p flexGrow flexShrink gap0">
+                                        <small>
+                                            <span>Messages to keep in buffer</span>
+                                            <div class="fa-solid fa-circle-info opacity50p" title="This is how many recent messages SillyTavern keeps in the writable chat buffer before it moves older buffered messages into long-term chat storage."></div>
+                                        </small>
+                                        <input class="neo-range-slider" type="range" id="long_chat_buffer_max" name="long_chat_buffer_max" min="70" max="500" step="5">
+                                        <input class="neo-range-input" type="number" min="70" max="500" step="5" data-for="long_chat_buffer_max" id="long_chat_buffer_max_counter">
+                                    </div>
+                                </div>
+
                                 <div id="examples-behavior-block">
                                     <label for="example_messages_behavior">
                                         <small data-i18n="Example Messages Behavior">
@@ -2554,6 +2576,7 @@
                                         <option value="strip" data-i18n="Never include examples">Never include examples</option>
                                     </select>
                                 </div>
+
                                 <div>
                                     <label for="image_overswipe">
                                         <small data-i18n="Image Swipe Behavior:">
@@ -2565,6 +2588,7 @@
                                         <option value="rollover" data-i18n="Roll over">Roll over</option>
                                     </select>
                                 </div>
+
                                 <div class="flex-container alignitemscenter">
                                     <small data-i18n="Send on Enter">
                                         Enter to Send:
@@ -2575,24 +2599,28 @@
                                         <option value="1" data-i18n="Enabled">Enabled</option>
                                     </select>
                                 </div>
+
                                 <label class="checkbox_label" for="continue_on_send">
                                     <input id="continue_on_send" type="checkbox" />
                                     <small data-i18n="Press Send to continue">
                                         "Send" to Continue
                                     </small>
                                 </label>
+
                                 <label class="checkbox_label" for="quick_continue" title="Show a button in the input area to ask the AI to continue (extend) its last message." data-i18n="[title]Show a button in the input area to ask the AI to continue (extend) its last message">
                                     <input id="quick_continue" type="checkbox" />
                                     <small data-i18n="Quick 'Continue' button">
                                         Quick "Continue" button
                                     </small>
                                 </label>
+
                                 <label class="checkbox_label" for="quick_impersonate" title="Show a button in the input area to ask the AI to impersonate your character for a single message." data-i18n="[title]Show a button in the input area to ask the AI to impersonate your character for a single message">
                                     <input id="quick_impersonate" type="checkbox" />
                                     <small data-i18n="Quick 'Impersonate' button">
                                         Quick "Impersonate" button
                                     </small>
                                 </label>
+                                
                                 <div class="checkbox-container flex-container">
                                     <label class="checkbox_label" for="swipes-checkbox" title="Show arrow buttons on the last in-chat message to generate alternative AI responses. Both PC and mobile." data-i18n="[title]Show arrow buttons on the last in-chat message to generate alternative AI responses. Both PC and mobile">
                                         <input id="swipes-checkbox" type="checkbox" />

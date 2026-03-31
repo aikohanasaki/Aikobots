@@ -47,6 +47,7 @@ import { assembleChatCompletionPrompt } from '../../prompting/chat-completion-as
 import { compareChatCompletionMessages } from '../../prompting/chat-completion-compare.js';
 import { runServerGenerationExtensions } from '../../extensions/server-runtime.js';
 import { prepareEntriesForScan, resolveSortedEntriesPayload } from '../worldinfo.js';
+import { resolveSplitCoreChatPayload } from '../chats.js';
 
 import { readSecret, SECRET_KEYS } from '../secrets.js';
 import {
@@ -1419,6 +1420,10 @@ export const router = express.Router();
 async function prepareServerPromptContext(user, directories, promptContext) {
     if (!promptContext || typeof promptContext !== 'object') {
         return { aborted: false, executedExtensions: [] };
+    }
+
+    if (!Array.isArray(promptContext.coreChat) && promptContext.coreChat && typeof promptContext.coreChat === 'object') {
+        promptContext.coreChat = resolveSplitCoreChatPayload(directories.chats, promptContext.coreChat);
     }
 
     const runtimeResult = await runServerGenerationExtensions(directories, promptContext);
