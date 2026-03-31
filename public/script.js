@@ -79,7 +79,6 @@ import {
     getCustomStoppingStrings,
     MAX_CONTEXT_DEFAULT,
     MAX_RESPONSE_DEFAULT,
-    renderStoryString,
     sortEntitiesList,
     registerDebugFunction,
     flushEphemeralStoppingStrings,
@@ -195,7 +194,6 @@ import {
     formatInstructModeChat,
     formatInstructModePrompt,
     formatInstructModeExamples,
-    formatInstructModeStoryString,
     getInstructStoppingSequences,
 } from './scripts/instruct-mode.js';
 import { initLocales, t } from './scripts/i18n.js';
@@ -226,7 +224,6 @@ import { INTERACTABLE_CONTROL_CLASS, initKeyboard } from './scripts/keyboard.js'
 import { initDynamicStyles } from './scripts/dynamic-styles.js';
 import { initInputMarkdown } from './scripts/input-md-formatting.js';
 import { AbortReason } from './scripts/util/AbortReason.js';
-import { initSystemPrompts } from './scripts/sysprompt.js';
 import { registerExtensionSlashCommands as initExtensionSlashCommands } from './scripts/extensions-slashcommands.js';
 import { ToolManager } from './scripts/tool-calling.js';
 import { addShowdownPatch } from './scripts/util/showdown-patch.js';
@@ -733,7 +730,6 @@ async function firstLoadInit() {
     initChatUtilities();
     initDefaultSlashCommands();
     initOpenAI();
-    initSystemPrompts();
     initExtensions();
     initExtensionSlashCommands();
     ToolManager.initToolSlashCommands();
@@ -3025,12 +3021,6 @@ export function getServerMacroSnapshot() {
         'idle_duration',
         'isMobile',
         'lastGenerationType',
-        'systemPrompt',
-        'defaultSystemPrompt',
-        'instructSystem',
-        'instructSystemPrompt',
-        'chatSeparator',
-        'chatStart',
         'instructStoryStringPrefix',
         'instructStoryStringSuffix',
         'instructInput',
@@ -3097,28 +3087,26 @@ export function getServerMacroSnapshot() {
 export function getStoppingStrings(isImpersonate, isContinue) {
     const result = [];
 
-    if (power_user.context.names_as_stop_strings) {
-        const charString = `\n${name2}:`;
-        const userString = `\n${name1}:`;
-        result.push(isImpersonate ? charString : userString);
+    const charString = `\n${name2}:`;
+    const userString = `\n${name1}:`;
+    result.push(isImpersonate ? charString : userString);
 
-        result.push(userString);
+    result.push(userString);
 
-        if (isContinue && Array.isArray(chat) && chat[chat.length - 1]?.is_user) {
-            result.push(charString);
-        }
+    if (isContinue && Array.isArray(chat) && chat[chat.length - 1]?.is_user) {
+        result.push(charString);
+    }
 
-        // Add group members as stopping strings if generating for a specific group member or user. (Allow slash commands to work around name stopping string restrictions)
-        if (selected_group && (name2 || isImpersonate)) {
-            const group = groups.find(x => x.id === selected_group);
+    // Add group members as stopping strings if generating for a specific group member or user. (Allow slash commands to work around name stopping string restrictions)
+    if (selected_group && (name2 || isImpersonate)) {
+        const group = groups.find(x => x.id === selected_group);
 
-            if (group && Array.isArray(group.members)) {
-                const names = group.members
+        if (group && Array.isArray(group.members)) {
+            const names = group.members
                     .map(x => characters.find(y => y.avatar == x))
                     .filter(x => x && x.name && x.name !== name2)
                     .map(x => `\n${x.name}:`);
-                result.push(...names);
-            }
+            result.push(...names);
         }
     }
 
@@ -3543,8 +3531,7 @@ export function parseMesExamples(examplesStr, isInstruct) {
         examplesStr = '<START>\n' + examplesStr.trim();
     }
 
-    const exampleSeparator = power_user.context.example_separator ? `${substituteParams(power_user.context.example_separator)}\n` : '';
-    const blockHeading = (main_api === 'openai' || isInstruct) ? '<START>\n' : exampleSeparator;
+    const blockHeading = '<START>\n';
     const splitExamples = examplesStr.split(/<START>/gi).slice(1).map(block => `${blockHeading}${block.trim()}\n`);
 
     return splitExamples;
@@ -4567,17 +4554,9 @@ export async function Generate(type, { automatic_trigger, force_name2, quiet_pro
     // Add persona description to prompt
     addPersonaDescriptionExtensionPrompt();
 
-    // Prepare the system prompt for Text Completion APIs
+    // Legacy text-completion prompt assembly is disabled in chat-completions-only mode.
     if (main_api !== 'openai') {
-        if (power_user.sysprompt.enabled) {
-            system = power_user.prefer_character_prompt && system
-                ? substituteParams(system, name1, name2, (power_user.sysprompt.content ?? ''))
-                : baseChatReplace(power_user.sysprompt.content, name1, name2);
-            system = isInstruct ? substituteParams(system, name1, name2, power_user.sysprompt.content) : system;
-        } else {
-            // Nullify if it's not enabled
-            system = '';
-        }
+        system = '';
     }
 
     // Collect before / after story string injections
@@ -4602,21 +4581,8 @@ export async function Generate(type, { automatic_trigger, force_name2, quiet_pro
         mesExamplesRaw: mesExamplesRawArray.join(''),
     };
 
-    // Render the story string and combine with injections
-    const storyString = renderStoryString(storyStringParams);
-    let combinedStoryString = isInstruct ? formatInstructModeStoryString(storyString) : storyString;
-
-    // Inject the story string as in-chat prompt (if needed)
-    const applyStoryStringInject = main_api !== 'openai' && power_user.context.story_string_position === extension_prompt_types.IN_CHAT;
-    if (applyStoryStringInject) {
-        const depth = power_user.context.story_string_depth ?? 1;
-        const role = power_user.context.story_string_role ?? extension_prompt_roles.SYSTEM;
-        setExtensionPrompt(inject_ids.STORY_STRING, combinedStoryString, extension_prompt_types.IN_CHAT, depth, false, role);
-        // Remove to prevent duplication
-        combinedStoryString = '';
-    } else {
-        setExtensionPrompt(inject_ids.STORY_STRING, '', extension_prompt_types.IN_CHAT, 0);
-    }
+    let combinedStoryString = '';
+    setExtensionPrompt(inject_ids.STORY_STRING, '', extension_prompt_types.IN_CHAT, 0);
 
     // Story string rendered, safe to remove
     if (power_user.strip_examples) {
@@ -4630,26 +4596,6 @@ export async function Generate(type, { automatic_trigger, force_name2, quiet_pro
         const injectionData = await doChatInject(coreChat, isContinue);
         injectedIndices = injectionData.indices;
         systemInjectedIndices = injectionData.systemIndices;
-    }
-
-    if (main_api !== 'openai' && power_user.sysprompt.enabled) {
-        jailbreak = power_user.prefer_character_jailbreak && jailbreak
-            ? substituteParams(jailbreak, name1, name2, (power_user.sysprompt.post_history ?? ''))
-            : baseChatReplace(power_user.sysprompt.post_history, name1, name2);
-
-        // Only inject the jb if there is one
-        if (jailbreak) {
-            // When continuing generation of previous output, last user message precedes the message to continue
-            if (isContinue) {
-                coreChat.splice(coreChat.length - 1, 0, { mes: jailbreak, is_user: true });
-            }
-            else {
-                // This operation will result in the injectedIndices indexes being off by one
-                coreChat.push({ mes: jailbreak, is_user: true });
-                // Add +1 to the elements to correct for the new PHI/Jailbreak message.
-                injectedIndices.forEach(shiftUpByOne);
-            }
-        }
     }
 
     let chat2 = [];
@@ -5262,7 +5208,7 @@ export async function Generate(type, { automatic_trigger, force_name2, quiet_pro
             padding: power_user.token_padding,
             main_api: main_api,
             serverPromptAssembly: isServerAssembledOpenAI,
-            instruction: main_api !== 'openai' && power_user.sysprompt.enabled ? substituteParams(power_user.prefer_character_prompt && system ? system : power_user.sysprompt.content) : '',
+            instruction: '',
             userPersona: (power_user.persona_description_position == persona_description_positions.IN_PROMPT ? (persona || '') : ''),
             tokenizer: getFriendlyTokenizerName(main_api).tokenizerName || '',
             presetName: getPresetManager()?.getSelectedPresetName() || '',
@@ -5838,13 +5784,7 @@ function addChatsPreamble(mesSendString) {
 }
 
 function addChatsSeparator(mesSendString) {
-    if (power_user.context.chat_start) {
-        return substituteParams(power_user.context.chat_start + '\n') + mesSendString;
-    }
-
-    else {
-        return mesSendString;
-    }
+    return mesSendString;
 }
 
 export async function duplicateCharacter() {
@@ -10278,7 +10218,6 @@ API: ${getSettingsContents.main_api}
 API Type: ${getSettingsContents[getSettingsContents.main_api + '_settings'].type}
 API server: ${getSettingsContents.api_server}
 Model: ${getContextContents.onlineStatus}
-Context Template: ${power_user.context.preset}
 Instruct Template: ${power_user.instruct.preset}
 API Settings: ${JSON.stringify(getSettingsContents[getSettingsContents.main_api + '_settings'], null, 2)}
 \`\`\`

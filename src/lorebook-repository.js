@@ -38,9 +38,68 @@ export class LorebookRepositoryError extends Error {
  * @property {boolean} canDemote
  */
 
+function hasTrailingJsonExtension(name) {
+    return /\.json$/i.test(String(name || '').trim());
+}
+
+function stripTrailingJsonExtension(name) {
+    return String(name || '').replace(/\.json$/i, '');
+}
+
 function getCanonicalLorebookName(name) {
-    const normalized = path.parse(sanitize(`${String(name || '').trim()}.json`)).name;
-    return normalized;
+    const sanitizedName = sanitize(String(name || '').trim());
+    return stripTrailingJsonExtension(sanitizedName);
+}
+
+function getLegacyLorebookName(canonicalName) {
+    return canonicalName ? `${canonicalName}.json` : '';
+}
+
+function getLorebookPathFromCanonical(directory, canonicalName) {
+    return path.join(directory, `${canonicalName}.json`);
+}
+
+function getLegacyLorebookPathFromCanonical(directory, canonicalName) {
+    const legacyName = getLegacyLorebookName(canonicalName);
+    return legacyName ? getLorebookPathFromCanonical(directory, legacyName) : '';
+}
+
+function normalizeSecureIndexBooks(books) {
+    const sourceBooks = books && typeof books === 'object' && !Array.isArray(books) ? books : {};
+    const normalizedBooks = {};
+
+    for (const [name, metadata] of Object.entries(sourceBooks)) {
+        if (hasTrailingJsonExtension(name)) {
+            continue;
+        }
+
+        const canonicalName = getCanonicalLorebookName(name);
+        if (!canonicalName) {
+            continue;
+        }
+
+        normalizedBooks[canonicalName] = metadata;
+    }
+
+    for (const [name, metadata] of Object.entries(sourceBooks)) {
+        if (!hasTrailingJsonExtension(name)) {
+            continue;
+        }
+
+        const canonicalName = getCanonicalLorebookName(name);
+        if (!canonicalName) {
+            continue;
+        }
+
+        if (normalizedBooks[canonicalName]) {
+            console.warn(`[Lorebooks] Found both canonical and legacy secure index entries for "${canonicalName}". Keeping the canonical entry.`);
+            continue;
+        }
+
+        normalizedBooks[canonicalName] = metadata;
+    }
+
+    return normalizedBooks;
 }
 
 function ensureDirectory(dir) {
@@ -57,7 +116,7 @@ function getSecureLorebookDirectory() {
 }
 
 function getSecureLorebookPath(name) {
-    return path.join(getSecureLorebookDirectory(), `${getCanonicalLorebookName(name)}.json`);
+    return getLorebookPathFromCanonical(getSecureLorebookDirectory(), getCanonicalLorebookName(name));
 }
 
 function getSecureIndexPath() {
@@ -113,7 +172,7 @@ function readSecureIndex() {
             const isValidBooks = parsed.books && typeof parsed.books === 'object' && !Array.isArray(parsed.books);
             return {
                 version: Number(parsed.version) || 1,
-                books: isValidBooks ? parsed.books : {},
+                books: normalizeSecureIndexBooks(isValidBooks ? parsed.books : {}),
             };
         }
     } catch (error) {
@@ -125,6 +184,41 @@ function readSecureIndex() {
 
 function writeSecureIndex(index) {
     writeFileAtomicSync(getSecureIndexPath(), JSON.stringify(index, null, 4), 'utf8');
+}
+
+function repairLegacyLorebookFile(directory, canonicalName, label) {
+    if (!canonicalName || !directory || !fs.existsSync(directory)) {
+        return;
+    }
+
+    const canonicalPath = getLorebookPathFromCanonical(directory, canonicalName);
+    const legacyPath = getLegacyLorebookPathFromCanonical(directory, canonicalName);
+    if (!legacyPath || !fs.existsSync(legacyPath)) {
+        return;
+    }
+
+    if (fs.existsSync(canonicalPath)) {
+        console.warn(`[Lorebooks] Found both canonical and legacy ${label} files for "${canonicalName}". Leaving legacy file in place for manual cleanup.`);
+        return;
+    }
+
+    fs.renameSync(legacyPath, canonicalPath);
+}
+
+function repairLegacyLorebookDirectory(directory, label) {
+    if (!directory || !fs.existsSync(directory)) {
+        return;
+    }
+
+    const legacyFiles = fs.readdirSync(directory).filter(file => /\.json\.json$/i.test(file));
+    for (const file of legacyFiles) {
+        const canonicalName = getCanonicalLorebookName(path.parse(file).name);
+        if (!canonicalName) {
+            continue;
+        }
+
+        repairLegacyLorebookFile(directory, canonicalName, label);
+    }
 }
 
 function sleepSync(ms) {
@@ -206,6 +300,28 @@ function mutateSecureIndex(mutate) {
     }
 }
 
+function createSecureLorebookSymlink(linkPath, targetPath, canonicalName) {
+    ensureDirectory(path.dirname(linkPath));
+    const relativeTargetPath = path.relative(path.dirname(linkPath), targetPath) || path.basename(targetPath);
+
+    try {
+        fs.symlinkSync(relativeTargetPath, linkPath, 'file');
+    } catch (error) {
+        if (error?.code === 'EEXIST') {
+            throw new LorebookRepositoryError('LorebookAlreadySecure', `Lorebook "${canonicalName}" already has a secure link.`, 409);
+        }
+
+        if (error?.code === 'EPERM' || error?.code === 'EACCES') {
+            const message = process.platform === 'win32'
+                ? 'Could not create the secure lorebook link. On Windows, enable Developer Mode or run the server with permission to create symlinks.'
+                : 'Could not create the secure lorebook link. Check filesystem permissions and symlink support.';
+            throw new LorebookRepositoryError('LorebookSymlinkCreationFailed', message, 500);
+        }
+
+        throw error;
+    }
+}
+
 function getSecureIndexEntry(name) {
     const secureEntry = getSecureIndexMetadata(name);
     if (!secureEntry) {
@@ -214,6 +330,7 @@ function getSecureIndexEntry(name) {
 
     const { name: canonicalName, metadata, path: filePath } = secureEntry;
     let stats;
+    repairLegacyLorebookFile(getSecureLorebookDirectory(), canonicalName, 'secure lorebook');
 
     try {
         stats = fs.lstatSync(filePath);
@@ -256,7 +373,7 @@ function getUserLorebookPath(handle, name) {
         return '';
     }
 
-    return path.join(getUserDirectories(handle).worlds, `${canonicalName}.json`);
+    return getLorebookPathFromCanonical(getUserDirectories(handle).worlds, canonicalName);
 }
 
 function getUserLorebookRecord(handle, name) {
@@ -265,7 +382,9 @@ function getUserLorebookRecord(handle, name) {
         return null;
     }
 
-    const filePath = getUserLorebookPath(handle, canonicalName);
+    const worldsDir = getUserDirectories(handle).worlds;
+    repairLegacyLorebookFile(worldsDir, canonicalName, 'lorebook');
+    const filePath = getLorebookPathFromCanonical(worldsDir, canonicalName);
     if (!fs.existsSync(filePath)) {
         return null;
     }
@@ -304,6 +423,12 @@ function assertCanonicalName(name) {
     }
 
     return canonicalName;
+}
+
+function assertLorebookSaveNameAllowed(name) {
+    if (hasTrailingJsonExtension(name)) {
+        throw new LorebookRepositoryError('LorebookInvalidName', 'World/Lorebook names must not end with ".json". Enter the name without the file extension.', 400);
+    }
 }
 
 function isPlainObject(value) {
@@ -373,21 +498,7 @@ function createSecureLorebookLink(name, ownerHandle) {
         throw new LorebookRepositoryError('LorebookNotFound', `Lorebook "${canonicalName}" not found.`, 404);
     }
 
-    ensureDirectory(path.dirname(linkPath));
-    const relativeTargetPath = path.relative(path.dirname(linkPath), targetPath) || path.basename(targetPath);
-
-    try {
-        fs.symlinkSync(relativeTargetPath, linkPath, 'file');
-    } catch (error) {
-        if (error?.code === 'EPERM' || error?.code === 'EACCES') {
-            const message = process.platform === 'win32'
-                ? 'Could not create the secure lorebook link. On Windows, enable Developer Mode or run the server with permission to create symlinks.'
-                : 'Could not create the secure lorebook link. Check filesystem permissions and symlink support.';
-            throw new LorebookRepositoryError('LorebookSymlinkCreationFailed', message, 500);
-        }
-
-        throw error;
-    }
+    createSecureLorebookSymlink(linkPath, targetPath, canonicalName);
 }
 
 function removeSecureLorebook(name) {
@@ -436,7 +547,8 @@ export function readWorldInfoFile(directories, worldInfoName, allowDummy) {
         return dummyObject;
     }
 
-    const filePath = path.join(directories.worlds, `${canonicalName}.json`);
+    repairLegacyLorebookFile(directories.worlds, canonicalName, 'world info');
+    const filePath = getLorebookPathFromCanonical(directories.worlds, canonicalName);
     if (!fs.existsSync(filePath)) {
         return dummyObject;
     }
@@ -468,6 +580,7 @@ export function listLorebooksForManagement(user) {
     }
 
     if (fs.existsSync(worldsDir)) {
+        repairLegacyLorebookDirectory(worldsDir, 'lorebook');
         const worldFiles = fs.readdirSync(worldsDir)
             .filter(file => path.extname(file).toLowerCase() === '.json')
             .sort((a, b) => a.localeCompare(b));
@@ -603,6 +716,7 @@ export function hasLorebookForGeneration(user, name) {
  * @param {'user'|'secure'} [storage='user'] Target storage location for the save
  */
 export function saveLorebookForManagement(user, name, data, storage = 'user') {
+    assertLorebookSaveNameAllowed(name);
     const canonicalName = assertCanonicalName(name);
     assertLorebookData(data, canonicalName);
     const secureRecord = getSecureIndexEntry(canonicalName);

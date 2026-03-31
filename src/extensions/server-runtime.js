@@ -456,111 +456,125 @@ export async function runServerGenerationExtensions(directories, promptContext) 
     const setExtensionPrompt = makeSetExtensionPrompt(promptContext, macroState);
     const removeExtensionPrompt = makeRemoveExtensionPrompt(promptContext, macroState);
 
-    for (const entry of manifestEntries) {
-        const definition = await loadServerExtension(entry);
-        if (!definition.generationInterceptors.length && !definition.promptProviders.length && !definition.macroProviders.length) {
-            continue;
-        }
+    try {
+        for (const entry of manifestEntries) {
+            const definition = await loadServerExtension(entry);
+            if (!definition.generationInterceptors.length && !definition.promptProviders.length && !definition.macroProviders.length) {
+                continue;
+            }
 
-        executedExtensions.push(entry.id);
+            executedExtensions.push(entry.id);
 
-        const context = {
-            id: entry.id,
-            settingsKey: entry.settingsKey,
-            manifest: entry.manifest,
-            directories,
-            promptContext,
-            chat: Array.isArray(promptContext.coreChat) ? structuredClone(promptContext.coreChat) : [],
-            currentChatId: promptContext.currentChatId || '',
-            selectedGroup: Boolean(promptContext.selectedGroup),
-            groupId: promptContext.groupId ?? null,
-            groupName: promptContext.groupName || '',
-            groupNames: Array.isArray(promptContext.groupNames) ? [...promptContext.groupNames] : [],
-            groupMembers: Array.isArray(promptContext.groupMembers) ? structuredClone(promptContext.groupMembers) : [],
-            disabledGroupMembers: Array.isArray(promptContext.groupMembers)
-                ? promptContext.groupMembers.filter(member => member?.disabled === true).map(member => String(member.avatar || ''))
-                : [],
-            contextSize: Number(promptContext.worldInfoRequest?.maxContext) || 0,
-            type: promptContext.type || 'normal',
-            extensionSettings,
-            settings: extensionSettings[entry.settingsKey] || extensionSettings[entry.id] || {},
-            getSettings(name = entry.settingsKey) {
-                const requestedName = typeof name === 'string' ? name : entry.settingsKey;
-                const isCurrentExtension = requestedName === entry.settingsKey || requestedName === entry.id;
-                if (isCurrentExtension) {
-                    return extensionSettings[entry.settingsKey] || extensionSettings[entry.id] || {};
+            const context = {
+                id: entry.id,
+                settingsKey: entry.settingsKey,
+                manifest: entry.manifest,
+                directories,
+                promptContext,
+                chat: Array.isArray(promptContext.coreChat) ? structuredClone(promptContext.coreChat) : [],
+                currentChatId: promptContext.currentChatId || '',
+                selectedGroup: Boolean(promptContext.selectedGroup),
+                groupId: promptContext.groupId ?? null,
+                groupName: promptContext.groupName || '',
+                groupNames: Array.isArray(promptContext.groupNames) ? [...promptContext.groupNames] : [],
+                groupMembers: Array.isArray(promptContext.groupMembers) ? structuredClone(promptContext.groupMembers) : [],
+                disabledGroupMembers: Array.isArray(promptContext.groupMembers)
+                    ? promptContext.groupMembers.filter(member => member?.disabled === true).map(member => String(member.avatar || ''))
+                    : [],
+                contextSize: Number(promptContext.worldInfoRequest?.maxContext) || 0,
+                type: promptContext.type || 'normal',
+                extensionSettings,
+                settings: extensionSettings[entry.settingsKey] || extensionSettings[entry.id] || {},
+                getSettings(name = entry.settingsKey) {
+                    const requestedName = typeof name === 'string' ? name : entry.settingsKey;
+                    const isCurrentExtension = requestedName === entry.settingsKey || requestedName === entry.id;
+                    if (isCurrentExtension) {
+                        return extensionSettings[entry.settingsKey] || extensionSettings[entry.id] || {};
+                    }
+
+                    return extensionSettings[requestedName] || {};
+                },
+                getExtensionPrompt(key) {
+                    return promptContext.extensionPrompts?.[key] || null;
+                },
+                setExtensionPrompt,
+                removeExtensionPrompt,
+                abort(immediately = false) {
+                    aborted = true;
+                    exitImmediately = Boolean(immediately);
+                },
+                registerMacro(name, value) {
+                    return registerRuntimeMacro(macroState, name, value);
+                },
+                removeMacro(name) {
+                    return removeRuntimeMacro(macroState, name);
+                },
+                getMacro(name) {
+                    const normalizedName = normalizeMacroName(name);
+                    if (!normalizedName) {
+                        return undefined;
+                    }
+
+                    return macroState.registeredValues[normalizedName] ?? macroState.values[normalizedName];
+                },
+                getMacros() {
+                    return {
+                        ...macroState.values,
+                        ...macroState.registeredValues,
+                    };
+                },
+                substituteParams(content, additional = {}) {
+                    refreshMacroOutletValues(macroState, promptContext.extensionPrompts || {});
+                    return evaluatePromptMacros(String(content ?? ''), env, { additional, macroState });
+                },
+            };
+
+            for (const provider of definition.macroProviders) {
+                try {
+                    const result = await provider(context);
+                    applyMacroProviderResult(macroState, result);
+                } catch (error) {
+                    console.error(`[server-runtime] Macro provider failed for ${entry.id}:`, error);
                 }
-
-                return extensionSettings[requestedName] || {};
-            },
-            getExtensionPrompt(key) {
-                return promptContext.extensionPrompts?.[key] || null;
-            },
-            setExtensionPrompt,
-            removeExtensionPrompt,
-            abort(immediately = false) {
-                aborted = true;
-                exitImmediately = Boolean(immediately);
-            },
-            registerMacro(name, value) {
-                return registerRuntimeMacro(macroState, name, value);
-            },
-            removeMacro(name) {
-                return removeRuntimeMacro(macroState, name);
-            },
-            getMacro(name) {
-                const normalizedName = normalizeMacroName(name);
-                if (!normalizedName) {
-                    return undefined;
+                if (exitImmediately) {
+                    break;
                 }
+            }
 
-                return macroState.registeredValues[normalizedName] ?? macroState.values[normalizedName];
-            },
-            getMacros() {
-                return {
-                    ...macroState.values,
-                    ...macroState.registeredValues,
-                };
-            },
-            substituteParams(content, additional = {}) {
-                refreshMacroOutletValues(macroState, promptContext.extensionPrompts || {});
-                return evaluatePromptMacros(String(content ?? ''), env, { additional, macroState });
-            },
-        };
+            if (!exitImmediately) {
+                for (const provider of definition.promptProviders) {
+                    try {
+                        await provider(context);
+                    } catch (error) {
+                        console.error(`[server-runtime] Prompt provider failed for ${entry.id}:`, error);
+                    }
+                    if (exitImmediately) {
+                        break;
+                    }
+                }
+            }
 
-        for (const provider of definition.macroProviders) {
-            const result = await provider(context);
-            applyMacroProviderResult(macroState, result);
+            if (!exitImmediately) {
+                for (const interceptor of definition.generationInterceptors) {
+                    try {
+                        await interceptor(context);
+                    } catch (error) {
+                        console.error(`[server-runtime] Generation interceptor failed for ${entry.id}:`, error);
+                    }
+                    if (exitImmediately) {
+                        break;
+                    }
+                }
+            }
+
             if (exitImmediately) {
                 break;
             }
         }
-
-        if (!exitImmediately) {
-            for (const provider of definition.promptProviders) {
-                await provider(context);
-                if (exitImmediately) {
-                    break;
-                }
-            }
+    } finally {
+        if (Array.isArray(promptContext.coreChat)) {
+            rebuildPromptContextFromCoreChat(promptContext);
         }
-
-        if (!exitImmediately) {
-            for (const interceptor of definition.generationInterceptors) {
-                await interceptor(context);
-                if (exitImmediately) {
-                    break;
-                }
-            }
-        }
-
-        if (exitImmediately) {
-            break;
-        }
-    }
-
-    if (Array.isArray(promptContext.coreChat)) {
-        rebuildPromptContextFromCoreChat(promptContext);
     }
 
     return {

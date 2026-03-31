@@ -979,10 +979,10 @@ function registerBookmarksSlashCommands() {
     }));
     SlashCommandParser.addCommandObject(SlashCommand.fromProps({
         name: 'bookmark-import',
-        callback: async (_, text) => {
+        callback: async (args, text) => {
             const json = String(text ?? '').trim();
             if (!json) {
-                toastr.error('Usage: /bookmark-import [{"messageNum":5,"title":"Title"}]', 'Bookmarks');
+                toastr.error('Usage: /bookmark-import mode=overwrite [{"messageNum":5,"title":"Title"}]', 'Bookmarks');
                 return '';
             }
 
@@ -993,18 +993,30 @@ function registerBookmarksSlashCommands() {
                     return '';
                 }
 
-                const importedBookmarks = parsed
+                const mode = String(args.mode ?? 'overwrite').toLowerCase() === 'merge' ? 'merge' : 'overwrite';
+                const existingBookmarks = mode === 'merge' ? getNamedBookmarks() : [];
+                const normalizedBookmarks = parsed
                     .map(normalizeNamedBookmarkEntry)
-                    .filter(Boolean)
+                    .filter(Boolean);
+                const importedBookmarks = [...existingBookmarks, ...normalizedBookmarks]
                     .slice(0, MAX_NAMED_BOOKMARKS);
+                const invalidCount = parsed.length - normalizedBookmarks.length;
+                const truncatedCount = existingBookmarks.length + normalizedBookmarks.length - importedBookmarks.length;
 
                 setNamedBookmarks(importedBookmarks);
 
-                if (importedBookmarks.length !== parsed.length) {
-                    toastr.warning('Some imported bookmarks were skipped.', 'Bookmarks');
+                if (invalidCount > 0) {
+                    toastr.warning(`${invalidCount} imported bookmark${invalidCount === 1 ? '' : 's'} ${invalidCount === 1 ? 'was' : 'were'} skipped due to invalid format.`, 'Bookmarks');
                 }
 
-                toastr.success(`Imported ${importedBookmarks.length} bookmarks`, 'Bookmarks');
+                if (truncatedCount > 0) {
+                    toastr.warning(`Truncated import by ${truncatedCount} bookmark${truncatedCount === 1 ? '' : 's'} due to the ${MAX_NAMED_BOOKMARKS} bookmark limit.`, 'Bookmarks');
+                }
+
+                const appliedCount = mode === 'merge'
+                    ? Math.max(importedBookmarks.length - existingBookmarks.length, 0)
+                    : importedBookmarks.length;
+                toastr.success(`${mode === 'merge' ? 'Merged' : 'Imported'} ${appliedCount} bookmark${appliedCount === 1 ? '' : 's'}.`, 'Bookmarks');
                 await refreshNamedBookmarksPopup();
             } catch {
                 toastr.error('Invalid JSON format.', 'Bookmarks');
@@ -1012,6 +1024,16 @@ function registerBookmarksSlashCommands() {
 
             return '';
         },
+        namedArgumentList: [
+            SlashCommandNamedArgument.fromProps({
+                name: 'mode',
+                description: 'Whether to overwrite existing bookmarks or merge imported bookmarks into them',
+                typeList: [ARGUMENT_TYPE.STRING],
+                enumList: ['overwrite', 'merge'],
+                defaultValue: 'overwrite',
+                forceEnum: true,
+            }),
+        ],
         unnamedArgumentList: [
             SlashCommandArgument.fromProps({
                 description: 'JSON array of bookmarks',
@@ -1022,6 +1044,12 @@ function registerBookmarksSlashCommands() {
         helpString: `
         <div>
             Import named bookmarks from a JSON array.
+        </div>
+        <div>
+            By default this replaces the current bookmark list. Use <code>mode=merge</code> to append imported bookmarks instead.
+        </div>
+        <div>
+            Imports are capped at <code>${MAX_NAMED_BOOKMARKS}</code> bookmarks total, and invalid entries are skipped.
         </div>`,
     }));
     SlashCommandParser.addCommandObject(SlashCommand.fromProps({

@@ -33,14 +33,12 @@ export const USER_DIRECTORY_TEMPLATE = Object.freeze({
     movingUI: 'movingUI',
     extensions: 'extensions',
     instruct: 'instruct',
-    context: 'context',
     quickreplies: 'QuickReplies',
     assets: 'assets',
     comfyWorkflows: 'user/workflows',
     files: 'user/files',
     vectors: 'vectors',
     backups: 'backups',
-    sysprompt: 'sysprompt',
     reasoning: 'reasoning',
 });
 

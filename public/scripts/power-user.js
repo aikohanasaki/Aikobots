@@ -1,4 +1,4 @@
-import { Fuse, Handlebars } from '../lib.js';
+import { Fuse } from '../lib.js';
 
 import {
     saveSettingsDebounced,
@@ -28,8 +28,6 @@ import {
     doNewChat,
     online_status,
     messageFormatting,
-    extension_prompt_types,
-    extension_prompt_roles,
     deleteMessage,
 } from '../script.js';
 import { isMobile, initMovingUI, favsToHotswap } from './RossAscends-mods.js';
@@ -38,10 +36,8 @@ import {
     resetSelectedGroup,
 } from './group-chats.js';
 import {
-    instruct_presets,
     loadInstructMode,
     names_behavior_types,
-    selectInstructPreset,
     updateBindModelTemplatesState,
 } from './instruct-mode.js';
 
@@ -50,7 +46,7 @@ import { tokenizers } from './tokenizers.js';
 import { BIAS_CACHE } from './logit-bias.js';
 import { renderTemplateAsync } from './templates.js';
 
-import { countOccurrences, debounce, delay, download, getFileText, getSanitizedFilename, getStringHash, isOdd, isTrueBoolean, onlyUnique, resetScrollHeight, shuffle, sortMoments, stringToRange, timestampToMoment } from './utils.js';
+import { countOccurrences, debounce, delay, download, getFileText, getSanitizedFilename, isOdd, isTrueBoolean, onlyUnique, shuffle, sortMoments, stringToRange, timestampToMoment } from './utils.js';
 import { FILTER_TYPES } from './filters.js';
 import { PARSER_FLAG, SlashCommandParser } from './slash-commands/SlashCommandParser.js';
 import { SlashCommand } from './slash-commands/SlashCommand.js';
@@ -59,9 +55,7 @@ import { AUTOCOMPLETE_SELECT_KEY, AUTOCOMPLETE_STATE, AUTOCOMPLETE_WIDTH } from 
 import { SlashCommandEnumValue, enumTypes } from './slash-commands/SlashCommandEnumValue.js';
 import { commonEnumProviders, enumIcons } from './slash-commands/SlashCommandCommonEnumsProvider.js';
 import { POPUP_TYPE, callGenericPopup, fixToastrForDialogs } from './popup.js';
-import { loadSystemPrompts } from './sysprompt.js';
 import { fuzzySearchCategories } from './filters.js';
-import { accountStorage } from './util/AccountStorage.js';
 import { DEFAULT_REASONING_TEMPLATE, loadReasoningTemplates } from './reasoning.js';
 import { bindModelTemplates } from './chat-templates.js';
 import { IMAGE_OVERSWIPE, MEDIA_DISPLAY } from './constants.js';
@@ -83,10 +77,6 @@ const MAX_RESPONSE_UNLOCKED = 64 * 1024;
 const unlockedMaxContextStep = 512;
 const maxContextMin = 512;
 const maxContextStep = 64;
-
-const defaultStoryString = '{{#if system}}{{system}}\n{{/if}}{{#if description}}{{description}}\n{{/if}}{{#if personality}}{{char}}\'s personality: {{personality}}\n{{/if}}{{#if scenario}}Scenario: {{scenario}}\n{{/if}}{{#if persona}}{{persona}}\n{{/if}}';
-const defaultExampleSeparator = '***';
-const defaultChatStart = '***';
 const defaultToastPosition = 'toast-top-center';
 
 const avatar_styles = {
@@ -245,7 +235,6 @@ export const power_user = {
         macro: true,
         names_behavior: names_behavior_types.FORCE,
         activation_regex: '',
-        bind_to_context: false,
         user_alignment_message: '',
         system_same_as_user: false,
         /** @deprecated Use output_suffix instead */
@@ -253,32 +242,11 @@ export const power_user = {
         sequences_as_stop_strings: true,
     },
 
-    context: {
-        preset: 'Default',
-        story_string: defaultStoryString,
-        chat_start: defaultChatStart,
-        example_separator: defaultExampleSeparator,
-        use_stop_strings: true,
-        names_as_stop_strings: true,
-        story_string_position: extension_prompt_types.IN_PROMPT,
-        story_string_role: extension_prompt_roles.SYSTEM,
-        story_string_depth: 1,
-    },
-
     instruct_derived: false,
-    context_derived: false,
-    context_size_derived: false,
-    /** User-defined model identifier / chat template hash to instruct/context template mappings */
+    /** User-defined model identifier / chat template hash to instruct template mappings */
     model_templates_mappings: {},
     /** The chat template hash of the currently loaded model, if any; used when deriving mappings */
     chat_template_hash: '',
-
-    sysprompt: {
-        enabled: true,
-        name: 'Neutral - Chat',
-        content: 'Write {{char}}\'s next reply in a fictional chat between {{char}} and {{user}}.',
-        post_history: '',
-    },
 
     reasoning: {
         name: DEFAULT_REASONING_TEMPLATE,
@@ -350,28 +318,6 @@ export const power_user = {
 
 let themes = [];
 let movingUIPresets = [];
-export let context_presets = [];
-
-const storage_keys = {
-    storyStringValidationCache: 'StoryStringValidationCache',
-};
-
-const contextControls = [
-    // Power user context scoped settings
-    { id: 'context_story_string', property: 'story_string', isCheckbox: false, isGlobalSetting: false },
-    { id: 'context_example_separator', property: 'example_separator', isCheckbox: false, isGlobalSetting: false },
-    { id: 'context_chat_start', property: 'chat_start', isCheckbox: false, isGlobalSetting: false },
-    { id: 'context_use_stop_strings', property: 'use_stop_strings', isCheckbox: true, isGlobalSetting: false, defaultValue: false },
-    { id: 'context_names_as_stop_strings', property: 'names_as_stop_strings', isCheckbox: true, isGlobalSetting: false, defaultValue: true },
-    { id: 'context_story_string_position', property: 'story_string_position', isCheckbox: false, isGlobalSetting: false, defaultValue: extension_prompt_types.IN_PROMPT, trigger: true },
-    { id: 'context_story_string_depth', property: 'story_string_depth', isCheckbox: false, isGlobalSetting: false, defaultValue: 1 },
-    { id: 'context_story_string_role', property: 'story_string_role', isCheckbox: false, isGlobalSetting: false, defaultValue: extension_prompt_roles.SYSTEM },
-
-    // Existing power user settings
-    { id: 'always-force-name2-checkbox', property: 'always_force_name2', isCheckbox: true, isGlobalSetting: true, defaultValue: true },
-    { id: 'trim_sentences_checkbox', property: 'trim_sentences', isCheckbox: true, isGlobalSetting: true, defaultValue: false },
-    { id: 'single_line', property: 'single_line', isCheckbox: true, isGlobalSetting: true, defaultValue: false },
-];
 
 let browser_has_focus = true;
 const debug_functions = [];
@@ -1566,6 +1512,14 @@ export async function loadPowerUserSettings(settings, data) {
     const defaultStscript = JSON.parse(JSON.stringify(power_user.stscript));
     // Load from settings.json
     if (settings.power_user !== undefined) {
+        delete settings.power_user.context;
+        delete settings.power_user.context_derived;
+        delete settings.power_user.context_size_derived;
+        delete settings.power_user.sysprompt;
+        if (settings.power_user.instruct && typeof settings.power_user.instruct === 'object') {
+            delete settings.power_user.instruct.bind_to_context;
+        }
+
         // Migrate old preference to a new setting
         if (settings.power_user.click_to_edit === undefined && settings.power_user.chat_display === chat_styles.DOCUMENT) {
             settings.power_user.click_to_edit = true;
@@ -1619,11 +1573,6 @@ export async function loadPowerUserSettings(settings, data) {
 
     if (data.movingUIPresets !== undefined) {
         movingUIPresets = data.movingUIPresets;
-    }
-
-
-    if (data.context !== undefined) {
-        context_presets = data.context;
     }
 
     if (typeof power_user.chat_display !== 'number') {
@@ -1691,8 +1640,6 @@ export async function loadPowerUserSettings(settings, data) {
     $('#example_messages_behavior').val(getExampleMessagesBehavior());
     $(`#example_messages_behavior option[value="${getExampleMessagesBehavior()}"]`).prop('selected', true);
     $('#instruct_derived').parent().find('i').toggleClass('toggleEnabled', !!power_user.instruct_derived);
-    $('#context_derived').parent().find('i').toggleClass('toggleEnabled', !!power_user.context_derived);
-    $('#context_size_derived').prop('checked', !!power_user.context_size_derived);
 
     $('#console_log_prompts').prop('checked', power_user.console_log_prompts);
     $('#request_token_probabilities').prop('checked', power_user.request_token_probabilities);
@@ -1840,8 +1787,6 @@ export async function loadPowerUserSettings(settings, data) {
     switchCompactInputArea();
     reloadMarkdownProcessor();
     await loadInstructMode(data);
-    await loadContextSettings();
-    await loadSystemPrompts(data);
     await loadReasoningTemplates(data);
     loadMaxContextUnlocked();
     switchWaifuMode();
@@ -1954,173 +1899,6 @@ function switchMaxContextSize() {
         CreateZenSliders($('#rep_pen_decay_textgenerationwebui'));
     }
 }
-
-// Fetch a compiled object of all preset settings
-export function getContextSettings() {
-    let compiledSettings = {};
-
-    contextControls.forEach((control) => {
-        let value = control.isGlobalSetting ? power_user[control.property] : power_user.context[control.property];
-
-        // Force to a boolean if the setting is a checkbox
-        if (control.isCheckbox) {
-            value = !!value;
-        }
-
-        compiledSettings[control.property] = value;
-    });
-
-    return compiledSettings;
-}
-
-// TODO: Maybe add a refresh button to reset settings to preset
-// TODO: Add "global state" if a preset doesn't set the power_user checkboxes
-async function loadContextSettings() {
-    /**
-     * Auto-fix missing fields in the story string
-     * @param {ContextSettings} contextSettings Context settings instance
-     */
-    function autoFixStoryString(contextSettings) {
-        // Already migrated, no need to fix
-        if (!contextSettings || Object.hasOwn(contextSettings, 'story_string_position')) {
-            return;
-        }
-
-        let storyString = contextSettings.story_string || '';
-
-        /**
-         * @param {string} field Missing field name
-         * @param {'start'|'end'} position Position of auto-fix
-         */
-        function autoFixMissingField(field, position) {
-            if (storyString.includes(`{{${field}}}`)) {
-                return;
-            }
-
-            console.warn(`[Story String Validation] Story String is missing a field: ${field}. Adding it at the ${position}.`);
-            const fieldTemplate = `{{#if ${field}}}{{${field}}}\n{{/if}}`;
-            const firstCurlyPosition = storyString.includes('{{') ? storyString.indexOf('{{') : 0;
-            const lastCurlyPosition = storyString.includes('}}') ? storyString.lastIndexOf('}}') + '}}'.length : storyString.length;
-            const lastTrimPosition = storyString.includes('{{trim}}') ? storyString.lastIndexOf('{{trim}}') : storyString.length;
-            const endPosition = Math.min(lastTrimPosition, lastCurlyPosition);
-            storyString = position === 'start'
-                ? storyString.substring(0, firstCurlyPosition) + fieldTemplate + storyString.substring(firstCurlyPosition)
-                : storyString.substring(0, endPosition) + fieldTemplate + storyString.substring(endPosition);
-        }
-
-        autoFixMissingField('anchorBefore', 'start');
-        autoFixMissingField('anchorAfter', 'end');
-
-        contextSettings.story_string = storyString;
-    }
-
-    // Migrate story string to add missing fields
-    autoFixStoryString(power_user.context);
-
-    contextControls.forEach(control => {
-        const $element = $(`#${control.id}`);
-
-        if (control.isGlobalSetting) {
-            return;
-        }
-
-        if (control.defaultValue !== undefined && power_user.context[control.property] === undefined) {
-            power_user.context[control.property] = control.defaultValue;
-        }
-
-        if (control.isCheckbox) {
-            $element.prop('checked', power_user.context[control.property]);
-        } else {
-            $element.val(power_user.context[control.property]);
-        }
-        console.debug(`Setting ${$element.prop('id')} to ${power_user.context[control.property]}`);
-
-        // If the setting already exists, no need to duplicate it
-        // TODO: Maybe check the power_user object for the setting instead of a flag?
-        $element.on('input', async function () {
-            let value = control.isCheckbox ? !!$(this).prop('checked') : $(this).val();
-            if (typeof control.defaultValue === 'number') {
-                value = Number(value);
-            }
-            if (control.isGlobalSetting) {
-                power_user[control.property] = value;
-            } else {
-                power_user.context[control.property] = value;
-            }
-            console.debug(`Setting ${$element.prop('id')} to ${value}`);
-            if (!CSS.supports('field-sizing', 'content') && $(this).is('textarea')) {
-                await resetScrollHeight($(this));
-            }
-            saveSettingsDebounced();
-        });
-
-        if (control.trigger) {
-            $element.trigger('input');
-        }
-    });
-
-    context_presets.forEach((preset) => {
-        const name = preset.name;
-        const option = document.createElement('option');
-        option.value = name;
-        option.innerText = name;
-        option.selected = name === power_user.context.preset;
-        $('#context_presets').append(option);
-    });
-
-    $('#context_presets').on('change', function () {
-        const name = String($(this).find(':selected').text());
-        const preset = context_presets.find(x => x.name === name);
-
-        if (!preset) {
-            return;
-        }
-
-        // Migrate story string to add missing fields
-        autoFixStoryString(preset);
-
-        power_user.context.preset = name;
-
-        contextControls.forEach(control => {
-            const presetValue = preset[control.property] ?? control.defaultValue;
-
-            if (presetValue !== undefined) {
-                if (control.isGlobalSetting) {
-                    power_user[control.property] = presetValue;
-                } else {
-                    power_user.context[control.property] = presetValue;
-                }
-
-                const $element = $(`#${control.id}`);
-
-                if (control.isCheckbox) {
-                    $element
-                        .prop('checked', control.isGlobalSetting ? power_user[control.property] : power_user.context[control.property])
-                        .trigger('input');
-                } else {
-                    $element.val(control.isGlobalSetting ? power_user[control.property] : power_user.context[control.property]);
-                    $element.trigger('input');
-                }
-            }
-        });
-
-        if (power_user.instruct.bind_to_context) {
-            // Select matching instruct preset
-            for (const instruct_preset of instruct_presets) {
-                // If instruct preset matches the context template
-                if (instruct_preset.name === name) {
-                    selectInstructPreset(instruct_preset.name, { isAuto: true });
-                    break;
-                }
-            }
-        }
-
-        updateBindModelTemplatesState();
-
-        saveSettingsDebounced();
-    });
-}
-
 
 /**
  * Common function to perform fuzzy search with optional caching
@@ -2255,101 +2033,6 @@ export function fuzzySearchGroups(searchValue, fuzzySearchCaches = null) {
 
     return performFuzzySearch(fuzzySearchCategories.groups, groups, keys, searchValue, fuzzySearchCaches);
 }
-
-/**
- * Renders a story string template with the given parameters.
- * @param {object} params Template parameters.
- * @param {object} [options] Additional options.
- * @param {string} [options.customStoryString] Custom story string template.
- * @param {InstructSettings} [options.customInstructSettings] Custom instruct settings.
- * @param {ContextSettings} [options.customContextSettings] Custom context settings.
- * @returns {string} The rendered story string.
- */
-export function renderStoryString(params, { customStoryString = null, customInstructSettings = null, customContextSettings = null } = {}) {
-    try {
-        const instructSettings = structuredClone(customInstructSettings ?? power_user.instruct);
-        const contextSettings = structuredClone(customContextSettings ?? power_user.context);
-        const storyString = customStoryString ?? contextSettings.story_string;
-        const storyStringPosition = contextSettings.story_string_position ?? extension_prompt_types.IN_PROMPT;
-
-        // Validate and log possible warnings/errors
-        validateStoryString(storyString, params);
-
-        // compile the story string template into a function, with no HTML escaping
-        const compiledTemplate = Handlebars.compile(storyString, { noEscape: true });
-
-        // render the story string template with the given params
-        let output = compiledTemplate(params);
-
-        // substitute {{macro}} params that are not defined in the story string
-        output = substituteParams(output, params.user, params.char);
-
-        // remove leading newlines
-        output = output.replace(/^\n+/, '');
-
-        // add a newline to the end of the story string if it doesn't have one
-        if (output.length > 0 && !output.endsWith('\n') && storyStringPosition !== extension_prompt_types.IN_CHAT) {
-            if (!instructSettings.enabled || (instructSettings.wrap && !instructSettings.story_string_suffix)) {
-                output += '\n';
-            }
-        }
-
-        return output;
-    } catch (e) {
-        toastr.error('Check the story string template for validity', 'Error rendering story string');
-        console.error('Error rendering story string', e);
-        throw e; // rethrow the error
-    }
-}
-
-/**
- * Validate the story string for possible warnings or issues
- *
- * @param {string} storyString - The story string
- * @param {Object} params - The story string parameters
- */
-function validateStoryString(storyString, params) {
-    /** @type {{hashCache: {[hash: string]: {fieldsWarned: {[key: string]: boolean}}}}} */
-    const cache = JSON.parse(accountStorage.getItem(storage_keys.storyStringValidationCache)) ?? { hashCache: {} };
-
-    const hash = getStringHash(storyString);
-
-    // Initialize the cache for the current hash if it doesn't exist
-    if (!cache.hashCache[hash]) {
-        cache.hashCache[hash] = { fieldsWarned: {} };
-    }
-
-    const currentCache = cache.hashCache[hash];
-    const fieldsToWarn = [];
-
-    function validateMissingField(field, fallbackLegacyField = null) {
-        const contains = storyString.includes(`{{${field}}}`) || (!!fallbackLegacyField && storyString.includes(`{{${fallbackLegacyField}}}`));
-        if (!contains && params[field]) {
-            const wasLogged = currentCache.fieldsWarned[field];
-            if (!wasLogged) {
-                fieldsToWarn.push(field);
-                currentCache.fieldsWarned[field] = true;
-            }
-            console.warn(`The story string does not contain {{${field}}}, but it would contain content:\n`, params[field]);
-        }
-    }
-
-    validateMissingField('description');
-    validateMissingField('personality');
-    validateMissingField('persona');
-    validateMissingField('scenario');
-    // validateMissingField('system');
-    validateMissingField('wiBefore', 'loreBefore');
-    validateMissingField('wiAfter', 'loreAfter');
-
-    if (fieldsToWarn.length > 0) {
-        const fieldsList = fieldsToWarn.map(field => `{{${field}}}`).join(', ');
-        toastr.warning(`The story string does not contain the following fields, but they would contain content: ${fieldsList}`, 'Story String Validation');
-    }
-
-    accountStorage.setItem(storage_keys.storyStringValidationCache, JSON.stringify(cache));
-}
-
 
 const sortFunc = (a, b) => power_user.sort_order == 'asc' ? compareFunc(a, b) : compareFunc(b, a);
 const compareFunc = (first, second) => {
@@ -3398,16 +3081,6 @@ jQuery(() => {
         saveSettingsDebounced();
     });
 
-    $('#context_derived').on('input', function () {
-        const value = !!$(this).prop('checked');
-        power_user.context_derived = value;
-        saveSettingsDebounced();
-    });
-
-    $('#context_derived').on('change', function () {
-        $('#context_derived').parent().find('i').toggleClass('toggleEnabled', !!power_user.context_derived);
-    });
-
     $('#instruct_derived').on('input', function () {
         const value = !!$(this).prop('checked');
         power_user.instruct_derived = value;
@@ -3416,21 +3089,6 @@ jQuery(() => {
 
     $('#instruct_derived').on('change', function () {
         $('#instruct_derived').parent().find('i').toggleClass('toggleEnabled', !!power_user.instruct_derived);
-    });
-
-    $('#context_size_derived').on('input', function () {
-        const value = !!$(this).prop('checked');
-        power_user.context_size_derived = value;
-        saveSettingsDebounced();
-    });
-
-    $('#context_size_derived').on('change', function () {
-        $('#context_size_derived').prop('checked', !!power_user.context_size_derived);
-    });
-
-    $('#context_story_string_position').on('input', function () {
-        const value = Number($(this).val());
-        $('#context_story_string_inject_settings').toggle(value === extension_prompt_types.IN_CHAT);
     });
 
     $('#bind_model_templates').on('input', function () {

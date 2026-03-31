@@ -51,10 +51,7 @@ const TC_COMMANDS = [
     'preset',
     'api-url',
     'model',
-    'sysprompt',
-    'sysprompt-state',
     'instruct',
-    'context',
     'instruct-state',
     'tokenizer',
     'stop-strings',
@@ -70,11 +67,8 @@ const FANCY_NAMES = {
     'preset': 'Settings Preset',
     'model': 'Model',
     'proxy': 'Proxy Preset',
-    'sysprompt-state': 'Use System Prompt',
-    'sysprompt': 'System Prompt Name',
     'instruct-state': 'Instruct Mode',
     'instruct': 'Instruct Template',
-    'context': 'Context Template',
     'tokenizer': 'Tokenizer',
     'stop-strings': 'Custom Stopping Strings',
     'start-reply-with': 'Start Reply With',
@@ -161,15 +155,12 @@ const profilesProvider = () => [
  * @property {string} [model] Model
  * @property {string} [proxy] Proxy Preset
  * @property {string} [instruct] Instruct Template
- * @property {string} [context] Context Template
  * @property {string} [instruct-state] Instruct Mode
  * @property {string} [tokenizer] Tokenizer
  * @property {string} [stop-strings] Custom Stopping Strings
  * @property {string} [start-reply-with] Start Reply With
  * @property {string} [reasoning-template] Reasoning Template
  * @property {string} [prompt-post-processing] Prompt Post-Processing
- * @property {string} [sysprompt] System Prompt Name
- * @property {string} [sysprompt-state] Use System Prompt
  * @property {string} [api-url] Server URL
  * @property {string} [secret-id] Secret ID
  * @property {string} [regex-preset] Regex Preset ID

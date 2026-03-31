@@ -266,7 +266,7 @@ class Message {
         }
 
         this.content.push({ type: 'video_url', video_url: { url: video } });
-        this.tokens += 263 * 40;
+        this.tokens += 263 * 40; // Estimated tokens per video: ~263 frames × 40 tokens/frame
     }
 
     async addAudio(audio) {
@@ -279,7 +279,7 @@ class Message {
         }
 
         this.content.push({ type: 'audio_url', audio_url: { url: audio } });
-        this.tokens += 32 * 300;
+        this.tokens += 32 * 300; // Estimated tokens per audio: ~32 tokens/sec × 300 sec max
     }
 
     getTokens() {
@@ -1574,7 +1574,7 @@ async function populateChatCompletion(prompts, chatCompletion, context) {
         chatCompletion.add(collection, prompts.index(identifier));
     };
 
-    chatCompletion.reserveBudget(3);
+    chatCompletion.reserveBudget(3); // Reserve tokens for message framing overhead
     await addToChatCompletion('worldInfoBefore');
     chatCompletion.add(new MessageCollection('main'), prompts.index('main'));
     await addToChatCompletion('main');

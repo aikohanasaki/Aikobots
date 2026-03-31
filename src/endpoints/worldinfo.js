@@ -548,7 +548,9 @@ router.post('/delete', async (request, response) => {
 router.post('/import', async (request, response) => {
     if (!request.file) return response.sendStatus(400);
 
-    const filename = `${path.parse(sanitize(request.file.originalname)).name}.json`;
+    const importedName = path.parse(sanitize(request.file.originalname)).name;
+    const removedTrailingJsonSuffix = /\.json$/i.test(importedName);
+    const worldName = importedName.replace(/\.json$/i, '');
 
     let fileContents = null;
 
@@ -569,15 +571,19 @@ router.post('/import', async (request, response) => {
         return response.status(400).send('Is not a valid world info file');
     }
 
-    const worldName = path.parse(filename).name;
-
     if (!worldName) {
         return response.status(400).send('World file must have a name');
     }
 
     try {
         const metadata = await saveLorebookForManagement(request.user, worldName, JSON.parse(fileContents), request.body.storage || 'user');
-        return response.send({ name: metadata.name, storage: metadata.storage, ownerHandle: metadata.ownerHandle, shadowingSecure: Boolean(metadata.shadowingSecure) });
+        return response.send({
+            name: metadata.name,
+            storage: metadata.storage,
+            ownerHandle: metadata.ownerHandle,
+            shadowingSecure: Boolean(metadata.shadowingSecure),
+            removedTrailingJsonSuffix,
+        });
     } catch (error) {
         return sendLorebookError(response, error);
     }

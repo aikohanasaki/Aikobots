@@ -27,7 +27,6 @@ import {
     getCookieSessionName,
     ensurePublicDirectoriesExist,
     getUserDirectoriesList,
-    migrateSystemPrompts,
     migrateUserData,
     requireLoginMiddleware,
     setUserDataMiddleware,
@@ -412,7 +411,6 @@ initUserStorage(globalThis.DATA_ROOT)
     .then(setDnsResolutionOrder)
     .then(ensurePublicDirectoriesExist)
     .then(migrateUserData)
-    .then(migrateSystemPrompts)
     .then(verifySecuritySettings)
     .then(preSetupTasks)
     .then(apply404Middleware)

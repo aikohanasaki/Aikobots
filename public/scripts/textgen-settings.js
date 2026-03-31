@@ -16,7 +16,7 @@ import {
 } from '../script.js';
 import { deriveTemplatesFromChatTemplate } from './chat-templates.js';
 import { t } from './i18n.js';
-import { autoSelectInstructPreset, selectContextPreset, selectInstructPreset } from './instruct-mode.js';
+import { autoSelectInstructPreset, selectInstructPreset } from './instruct-mode.js';
 import { BIAS_CACHE, createNewLogitBiasEntry, displayLogitBias, getLogitBiasListResult } from './logit-bias.js';
 import { power_user, registerDebugFunction } from './power-user.js';
 import { getActiveManualApiSamplers, loadApiSelectedSamplers, isSamplerManualPriorityEnabled } from './samplerSelect.js';
@@ -624,11 +624,9 @@ async function getStatusTextgen() {
         supportsTokenization ? sessionStorage.setItem(TOKENIZER_SUPPORTED_KEY, 'true') : sessionStorage.removeItem(TOKENIZER_SUPPORTED_KEY);
 
         const wantsInstructDerivation = !autoSelected && (power_user.instruct.enabled && power_user.instruct_derived);
-        const wantsContextDerivation = !autoSelected && power_user.context_derived;
-        const wantsContextSize = power_user.context_size_derived;
         const supportsChatTemplate = [textgen_types.KOBOLDCPP, textgen_types.LLAMACPP].includes(settings.type);
 
-        if (supportsChatTemplate && (wantsInstructDerivation || wantsContextDerivation || wantsContextSize)) {
+        if (supportsChatTemplate && wantsInstructDerivation) {
             const response = await fetch('/api/backends/text-completions/props', {
                 method: 'POST',
                 headers: getRequestHeaders(),
@@ -643,26 +641,10 @@ async function getStatusTextgen() {
                 if (data) {
                     const { chat_template, chat_template_hash } = data;
                     power_user.chat_template_hash = chat_template_hash;
-
-                    if (wantsContextSize && 'default_generation_settings' in data) {
-                        const backend_max_context = data['default_generation_settings']['n_ctx'];
-                        const old_value = max_context;
-                        if (max_context !== backend_max_context) {
-                            setGenerationParamsFromPreset({ max_length: backend_max_context });
-                        }
-                        if (old_value !== max_context) {
-                            console.log(`Auto-switched max context from ${old_value} to ${max_context}`);
-                            toastr.info(`${old_value} ⇒ ${max_context}`, 'Context Size Changed');
-                        }
-                    }
                     console.log(`We have chat template ${chat_template.split('\n')[0]}...`);
                     const savedTemplate = power_user.model_templates_mappings[chat_template_hash];
                     const derivedTemplate = await deriveTemplatesFromChatTemplate(chat_template, chat_template_hash);
-                    const { context, instruct } = savedTemplate ?? derivedTemplate;
-
-                    if (wantsContextDerivation && context) {
-                        selectContextPreset(context, { isAuto: true });
-                    }
+                    const { instruct } = savedTemplate ?? derivedTemplate;
                     if (wantsInstructDerivation && power_user.instruct.enabled && instruct) {
                         selectInstructPreset(instruct, { isAuto: true });
                     }

@@ -19,14 +19,13 @@ import { t } from './i18n.js';
 import { instruct_presets } from './instruct-mode.js';
 import { oai_settings, openai_setting_names, openai_settings } from './openai.js';
 import { POPUP_RESULT, POPUP_TYPE, Popup } from './popup.js';
-import { context_presets, getContextSettings, power_user } from './power-user.js';
+import { power_user } from './power-user.js';
 import { reasoning_templates } from './reasoning.js';
 import { SlashCommand } from './slash-commands/SlashCommand.js';
 import { ARGUMENT_TYPE, SlashCommandArgument } from './slash-commands/SlashCommandArgument.js';
 import { enumIcons } from './slash-commands/SlashCommandCommonEnumsProvider.js';
 import { SlashCommandEnumValue, enumTypes } from './slash-commands/SlashCommandEnumValue.js';
 import { SlashCommandParser } from './slash-commands/SlashCommandParser.js';
-import { checkForSystemPromptInInstructTemplate, system_prompts } from './sysprompt.js';
 import { renderTemplateAsync } from './templates.js';
 import { download, ensurePlainObject, equalsIgnoreCaseAndAccents, getSanitizedFilename, parseJsonFile, waitUntilCondition } from './utils.js';
 
@@ -121,34 +120,6 @@ class PresetManager {
             },
             isValid: (data) => PresetManager.isPossiblyInstructData(data),
         },
-        'context': {
-            name: 'Context Template',
-            getData: () => {
-                const manager = getPresetManager('context');
-                const name = manager.getSelectedPresetName();
-                return manager.getPresetSettings(name);
-            },
-            setData: (data) => {
-                const manager = getPresetManager('context');
-                const name = data.name;
-                return manager.savePreset(name, data);
-            },
-            isValid: (data) => PresetManager.isPossiblyContextData(data),
-        },
-        'sysprompt': {
-            name: 'System Prompt',
-            getData: () => {
-                const manager = getPresetManager('sysprompt');
-                const name = manager.getSelectedPresetName();
-                return manager.getPresetSettings(name);
-            },
-            setData: (data) => {
-                const manager = getPresetManager('sysprompt');
-                const name = data.name;
-                return manager.savePreset(name, data);
-            },
-            isValid: (data) => PresetManager.isPossiblySystemPromptData(data),
-        },
         'preset': {
             name: 'Chat Completion Preset',
             getData: () => {
@@ -206,8 +177,6 @@ class PresetManager {
 
     static masterSectionApis = {
         'instruct': 'instruct',
-        'context': 'context',
-        'sysprompt': 'sysprompt',
         'preset': 'openai',
         'reasoning': 'reasoning',
     };
@@ -224,16 +193,6 @@ class PresetManager {
     static isPossiblyInstructData(data) {
         const instructProps = ['name', 'input_sequence', 'output_sequence'];
         return data && instructProps.every(prop => Object.keys(data).includes(prop));
-    }
-
-    static isPossiblyContextData(data) {
-        const contextProps = ['name', 'story_string'];
-        return data && contextProps.every(prop => Object.keys(data).includes(prop));
-    }
-
-    static isPossiblySystemPromptData(data) {
-        const sysPromptProps = ['name', 'content'];
-        return data && sysPromptProps.every(prop => Object.keys(data).includes(prop));
     }
 
     static isPossiblyCompletionData(data) {
@@ -283,29 +242,7 @@ class PresetManager {
             return await manager.savePreset(data.name, data);
         }
 
-        // 2. Context Template
-        if (this.isPossiblyContextData(data)) {
-            const manager = getPresetManager('context');
-            if (!manager) {
-                toastr.error(t`Context templates are not available in this build`);
-                return;
-            }
-            toastr.info(t`Importing as context template...`, t`Context template detected`);
-            return await manager.savePreset(data.name, data);
-        }
-
-        // 3. System Prompt
-        if (this.isPossiblySystemPromptData(data)) {
-            const manager = getPresetManager('sysprompt');
-            if (!manager) {
-                toastr.error(t`System prompt templates are not available in this build`);
-                return;
-            }
-            toastr.info(t`Importing as system prompt...`, t`System prompt detected`);
-            return await manager.savePreset(data.name, data);
-        }
-
-        // 4. Chat Completion settings
+        // 2. Chat Completion settings
         if (this.isPossiblyCompletionData(data)) {
             const manager = getPresetManager('openai');
             if (!manager) {
@@ -316,7 +253,7 @@ class PresetManager {
             return await manager.savePreset(fileName, data);
         }
 
-        // 5. Reasoning Template
+        // 3. Reasoning Template
         if (this.isPossiblyReasoningData(data)) {
             const manager = getPresetManager('reasoning');
             if (!manager) {
@@ -514,10 +451,6 @@ class PresetManager {
      * @param {boolean} [options.skipUpdate=false] If true, skips updating the preset list after saving.
      */
     async savePreset(name, settings, { skipUpdate = false } = {}) {
-        if (this.apiId === 'instruct' && settings) {
-            await checkForSystemPromptInInstructTemplate(name, settings);
-        }
-
         const preset = settings ?? this.getPresetSettings(name);
 
         const response = await fetch('/api/presets/save', {
@@ -584,20 +517,10 @@ class PresetManager {
                 preset_names = openai_setting_names;
                 settings = oai_settings;
                 break;
-            case 'context':
-                presets = context_presets;
-                preset_names = context_presets.map(x => x.name);
-                settings = power_user.context;
-                break;
             case 'instruct':
                 presets = instruct_presets;
                 preset_names = instruct_presets.map(x => x.name);
                 settings = power_user.instruct;
-                break;
-            case 'sysprompt':
-                presets = system_prompts;
-                preset_names = system_prompts.map(x => x.name);
-                settings = power_user.sysprompt;
                 break;
             case 'reasoning':
                 presets = reasoning_templates;
@@ -622,7 +545,7 @@ class PresetManager {
      * Returns true if the API is from Advanced Formatting group.
      */
     isAdvancedFormatting() {
-        return ['context', 'instruct', 'sysprompt', 'reasoning'].includes(this.apiId);
+        return ['instruct', 'reasoning'].includes(this.apiId);
     }
 
     /**
@@ -675,20 +598,10 @@ class PresetManager {
             switch (apiId) {
                 case 'openai':
                     return oai_settings;
-                case 'context': {
-                    const context_preset = getContextSettings();
-                    context_preset['name'] = name || power_user.context.preset;
-                    return context_preset;
-                }
                 case 'instruct': {
                     const instruct_preset = structuredClone(power_user.instruct);
                     instruct_preset['name'] = name || power_user.instruct.preset;
                     return instruct_preset;
-                }
-                case 'sysprompt': {
-                    const sysprompt_preset = structuredClone(power_user.sysprompt);
-                    sysprompt_preset['name'] = name || power_user.sysprompt.preset;
-                    return sysprompt_preset;
                 }
                 case 'reasoning': {
                     const reasoning_preset = structuredClone(power_user.reasoning);
@@ -718,7 +631,6 @@ class PresetManager {
             'model_novel',
             'streaming_kobold',
             'enabled',
-            'bind_to_context',
             'seed',
             'legacy_api',
             'mancer_model',

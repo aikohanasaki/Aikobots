@@ -52,10 +52,8 @@ export const CONTENT_TYPES = {
     WORKFLOW: 'workflow',
     OPENAI_PRESET: 'openai_preset',
     INSTRUCT: 'instruct',
-    CONTEXT: 'context',
     MOVING_UI: 'moving_ui',
     QUICK_REPLIES: 'quick_replies',
-    SYSPROMPT: 'sysprompt',
     REASONING: 'reasoning',
 };
 
@@ -70,7 +68,7 @@ export function getDefaultPresets(directories) {
         const presets = [];
 
         for (const contentItem of contentIndex) {
-            if (contentItem.type.endsWith('_preset') || ['instruct', 'context', 'sysprompt', 'reasoning'].includes(contentItem.type)) {
+            if (contentItem.type.endsWith('_preset') || ['instruct', 'reasoning'].includes(contentItem.type)) {
                 contentItem.name = path.parse(contentItem.filename).name;
                 contentItem.folder = getTargetByType(contentItem.type, directories);
                 presets.push(contentItem);
@@ -295,14 +293,10 @@ function getTargetByType(type, directories) {
             return directories.openAI_Settings;
         case CONTENT_TYPES.INSTRUCT:
             return directories.instruct;
-        case CONTENT_TYPES.CONTEXT:
-            return directories.context;
         case CONTENT_TYPES.MOVING_UI:
             return directories.movingUI;
         case CONTENT_TYPES.QUICK_REPLIES:
             return directories.quickreplies;
-        case CONTENT_TYPES.SYSPROMPT:
-            return directories.sysprompt;
         case CONTENT_TYPES.REASONING:
             return directories.reasoning;
         default:

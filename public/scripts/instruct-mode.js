@@ -1,11 +1,10 @@
 'use strict';
 
-import { extension_prompt_types, name1, name2, online_status, saveSettingsDebounced, substituteParams } from '../script.js';
+import { name1, name2, online_status, saveSettingsDebounced, substituteParams } from '../script.js';
 import { selected_group } from './group-chats.js';
 import { parseExampleIntoIndividual } from './openai.js';
 import {
     power_user,
-    context_presets,
 } from './power-user.js';
 import { onlyUnique, regexFromString, resetScrollHeight } from './utils.js';
 
@@ -40,7 +39,6 @@ const controls = [
     { id: 'instruct_first_input_sequence', property: 'first_input_sequence', isCheckbox: false },
     { id: 'instruct_last_input_sequence', property: 'last_input_sequence', isCheckbox: false },
     { id: 'instruct_activation_regex', property: 'activation_regex', isCheckbox: false },
-    { id: 'instruct_bind_to_context', property: 'bind_to_context', isCheckbox: true },
     { id: 'instruct_skip_examples', property: 'skip_examples', isCheckbox: true },
     { id: 'instruct_names_behavior', property: 'names_behavior', isCheckbox: false },
     { id: 'instruct_system_same_as_user', property: 'system_same_as_user', isCheckbox: true, trigger: true },
@@ -118,7 +116,6 @@ export async function loadInstructMode(data) {
     $('#instruct_enabled').parent().find('i').toggleClass('toggleEnabled', !!power_user.instruct.enabled);
     $('#instructSettingsBlock, #InstructSequencesColumn').toggleClass('disabled', !power_user.instruct.enabled);
     $('#instruct_derived').parent().find('i').toggleClass('toggleEnabled', !!power_user.instruct_derived);
-    $('#instruct_bind_to_context').parent().find('i').toggleClass('toggleEnabled', !!power_user.instruct.bind_to_context);
 
     controls.forEach(control => {
         const $element = $(`#${control.id}`);
@@ -157,42 +154,17 @@ export async function loadInstructMode(data) {
 }
 
 /**
- * Updates the bind model template state based on the current model, instruct and context preset.
+ * Updates the bind model template state based on the current model and instruct preset.
  */
 export function updateBindModelTemplatesState() {
     const bindModelTemplates = power_user.model_templates_mappings[online_status] ?? power_user.model_templates_mappings[power_user.chat_template_hash];
-    const bindingsMatch = (bindModelTemplates && power_user.context.preset === bindModelTemplates['context'] && (!power_user.instruct.enabled || power_user.instruct.preset === bindModelTemplates['instruct'])) ?? false;
+    const bindingsMatch = (bindModelTemplates && (!power_user.instruct.enabled || power_user.instruct.preset === bindModelTemplates['instruct'])) ?? false;
     const currentState = $('#bind_model_templates').prop('checked');
     if (bindingsMatch === currentState) {
         // No change needed
         return;
     }
     $('#bind_model_templates').prop('checked', bindingsMatch);
-}
-
-/**
- * Select context template if not already selected.
- * @param {string} preset Preset name.
- * @param {object} [options={}] Optional arguments.
- * @param {boolean} [options.quiet=false] Suppress toast messages.
- * @param {boolean} [options.isAuto=false] Is auto-select.
- */
-export function selectContextPreset(preset, { quiet = false, isAuto = false } = {}) {
-    const presetExists = context_presets.some(x => x.name === preset);
-    if (!presetExists) {
-        console.warn(`Context template "${preset}" not found`);
-        return;
-    }
-
-    // If context template is not already selected, select it
-    if (preset !== power_user.context.preset) {
-        $('#context_presets').val(preset).trigger('change');
-        !quiet && toastr.info(`Context Template: "${preset}" ${isAuto ? 'auto-' : ''}selected`);
-    }
-
-    updateBindModelTemplatesState();
-
-    saveSettingsDebounced();
 }
 
 /**
@@ -237,12 +209,9 @@ export function autoSelectInstructPreset(modelId) {
     const modelTemplatesMap = power_user.model_templates_mappings[modelId];
 
     if (modelTemplatesMap) {
-        const { instruct, context } = modelTemplatesMap;
+        const { instruct } = modelTemplatesMap;
         if (instruct) {
             selectInstructPreset(instruct, { isAuto: true });
-        }
-        if (context) {
-            selectContextPreset(context, { isAuto: true });
         }
         return true;
     } else {
@@ -276,18 +245,6 @@ export function autoSelectInstructPreset(modelId) {
         }
     }
 
-    // If no match was found, auto-select instruct preset
-    if (!foundMatch && power_user.instruct.bind_to_context) {
-        for (const instruct_preset of instruct_presets) {
-            // If instruct preset matches the context template
-            if (instruct_preset.name === power_user.context.preset) {
-                selectInstructPreset(instruct_preset.name, { isAuto: true });
-                foundMatch = true;
-                break;
-            }
-        }
-    }
-
     return foundMatch;
 }
 
@@ -295,10 +252,9 @@ export function autoSelectInstructPreset(modelId) {
  * Converts instruct mode sequences to an array of stopping strings.
  * @param {Object} options
  * @param {InstructSettings?} [options.customInstruct=null] - Custom instruct settings.
- * @param {boolean?} [options.useStopStrings] - Decides whether to use "Chat Start" and "Example Separator"
  * @returns {string[]} Array of instruct mode stopping strings.
  */
-export function getInstructStoppingSequences({ customInstruct = null, useStopStrings = null } = {}) {
+export function getInstructStoppingSequences({ customInstruct = null } = {}) {
     const instruct = structuredClone(customInstruct ?? power_user.instruct);
 
     /**
@@ -351,16 +307,6 @@ export function getInstructStoppingSequences({ customInstruct = null, useStopStr
         }
 
         combined_sequence.join('\n').split('\n').filter(onlyUnique).forEach(addInstructSequence);
-    }
-
-    if (useStopStrings ?? power_user.context.use_stop_strings) {
-        if (power_user.context.chat_start) {
-            result.push(`\n${substituteParams(power_user.context.chat_start)}`);
-        }
-
-        if (power_user.context.example_separator) {
-            result.push(`\n${substituteParams(power_user.context.example_separator)}`);
-        }
     }
 
     return result;
@@ -468,40 +414,6 @@ export function formatInstructModeSystemPrompt(systemPrompt, _customInstruct = n
 }
 
 /**
- * Formats instruct mode story string.
- * @param {string} storyString Story string and anchors
- * @param {object} [params]
- * @param {ContextSettings} [params.customContext] Custom context settings.
- * @param {InstructSettings} [params.customInstruct] Custom instruct mode settings.
- * @returns {string} Formatted instruct mode story string.
- */
-export function formatInstructModeStoryString(storyString, { customContext = null, customInstruct = null } = {}) {
-    if (!storyString) {
-        return '';
-    }
-
-    const instructSettings = structuredClone(customInstruct ?? power_user.instruct);
-    const contextSettings = structuredClone(customContext ?? power_user.context);
-    const storyStringPosition = contextSettings.story_string_position ?? extension_prompt_types.IN_PROMPT;
-
-    // Only wrap if not in-chat position (it will be wrapped by message sequences instead)
-    const applySequences = storyStringPosition !== extension_prompt_types.IN_CHAT;
-    const separator = instructSettings.wrap ? '\n' : '';
-    if (applySequences && instructSettings.story_string_prefix) {
-        // TODO: Replace with a proper 'System' prompt entity name input
-        const prefix = substituteParams(instructSettings.story_string_prefix).replace(/{{name}}/gi, 'System');
-        storyString = prefix + separator + storyString;
-    }
-
-    if (applySequences && instructSettings.story_string_suffix) {
-        const suffix = substituteParams(instructSettings.story_string_suffix);
-        storyString = storyString + suffix;
-    }
-
-    return storyString;
-}
-
-/**
  * Formats example messages according to instruct mode settings.
  * @param {string[]} mesExamplesArray Example messages array.
  * @param {string} name1 User name.
@@ -509,7 +421,7 @@ export function formatInstructModeStoryString(storyString, { customContext = nul
  * @returns {string[]} Formatted example messages string.
  */
 export function formatInstructModeExamples(mesExamplesArray, name1, name2) {
-    const blockHeading = power_user.context.example_separator ? `${substituteParams(power_user.context.example_separator)}\n` : '';
+    const blockHeading = '<START>\n';
 
     if (power_user.instruct.skip_examples) {
         return mesExamplesArray.map(x => x.replace(/<START>\n/i, blockHeading));
@@ -651,20 +563,6 @@ export function formatInstructModePrompt(name, isImpersonate, promptBias, name1,
 }
 
 /**
- * Select context template matching instruct preset.
- * @param {string} name Preset name.
- */
-function selectMatchingContextTemplate(name) {
-    for (const context_preset of context_presets) {
-        // If context template matches the instruct preset
-        if (context_preset.name === name) {
-            selectContextPreset(context_preset.name, { isAuto: true });
-            break;
-        }
-    }
-}
-
-/**
  * Replaces instruct mode macros in the given input string.
  * @param {Object<string, *>} env - Map of macro names to the values they'll be substituted with. If the param
  * values are functions, those functions will be called and their return values are used.
@@ -749,28 +647,6 @@ export function getInstructMacros(env) {
             value: power_user.instruct.last_input_sequence || power_user.instruct.input_sequence,
             enabled: power_user.instruct.enabled,
         },
-        // System prompt macros
-        {
-            key: 'systemPrompt',
-            value: power_user.prefer_character_prompt && env.charPrompt ? env.charPrompt : power_user.sysprompt.content,
-            enabled: power_user.sysprompt.enabled,
-        },
-        {
-            key: 'defaultSystemPrompt|instructSystem|instructSystemPrompt',
-            value: power_user.sysprompt.content,
-            enabled: power_user.sysprompt.enabled,
-        },
-        // Context template macros
-        {
-            key: 'chatSeparator',
-            value: power_user.context.example_separator,
-            enabled: true,
-        },
-        {
-            key: 'chatStart',
-            value: power_user.context.chat_start,
-            enabled: true,
-        },
     ];
 
     const macros = [];
@@ -805,23 +681,10 @@ jQuery(() => {
         //color toggle for the main switch
         $('#instruct_enabled').parent().find('i').toggleClass('toggleEnabled', !!power_user.instruct.enabled);
         $('#instructSettingsBlock, #InstructSequencesColumn').toggleClass('disabled', !power_user.instruct.enabled);
-
-        if (!power_user.instruct.bind_to_context) {
-            return;
-        }
-
-        // When instruct mode gets enabled, select context template matching selected instruct preset
-        if (power_user.instruct.enabled) {
-            selectMatchingContextTemplate(power_user.instruct.preset);
-        }
     });
 
     $('#instruct_derived').on('change', function () {
         $('#instruct_derived').parent().find('i').toggleClass('toggleEnabled', !!power_user.instruct_derived);
-    });
-
-    $('#instruct_bind_to_context').on('change', function () {
-        $('#instruct_bind_to_context').parent().find('i').toggleClass('toggleEnabled', !!power_user.instruct.bind_to_context);
     });
 
     $('#instruct_presets').on('change', function () {
@@ -852,11 +715,6 @@ jQuery(() => {
                 }
             }
         });
-
-        if (power_user.instruct.bind_to_context) {
-            // Select matching context template
-            selectMatchingContextTemplate(name);
-        }
 
         updateBindModelTemplatesState();
     });

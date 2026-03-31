@@ -63,7 +63,7 @@ import { getRegexedString, regex_placement } from './extensions/regex/engine.js'
 import { findGroupMemberId, groups, is_group_generating, openGroupById, resetSelectedGroup, saveGroupChat, selected_group, getGroupMembers } from './group-chats.js';
 import { chat_completion_sources, oai_settings, promptManager, ZAI_ENDPOINT } from './openai.js';
 import { user_avatar } from './personas.js';
-import { addEphemeralStoppingString, chat_styles, context_presets, flushEphemeralStoppingStrings, power_user } from './power-user.js';
+import { addEphemeralStoppingString, chat_styles, flushEphemeralStoppingStrings, power_user } from './power-user.js';
 import { decodeTextTokens, getAvailableTokenizers, getFriendlyTokenizerName, getTextTokens, getTokenCountAsync, selectTokenizer } from './tokenizers.js';
 import { debounce, delay, equalsIgnoreCaseAndAccents, findChar, getCharIndex, isFalseBoolean, isTrueBoolean, onlyUnique, regexFromString, showFontAwesomePicker, stringToRange, trimToEndSentence, trimToStartSentence, waitUntilCondition } from './utils.js';
 import { registerVariableCommands, resolveVariable } from './variables.js';
@@ -85,7 +85,7 @@ import { accountStorage } from './util/AccountStorage.js';
 import { SlashCommandDebugController } from './slash-commands/SlashCommandDebugController.js';
 import { SlashCommandScope } from './slash-commands/SlashCommandScope.js';
 import { t } from './i18n.js';
-import { instruct_presets, selectContextPreset, selectInstructPreset } from './instruct-mode.js';
+import { instruct_presets, selectInstructPreset } from './instruct-mode.js';
 import { debounce_timeout } from './constants.js';
 export {
     executeSlashCommands, executeSlashCommandsWithOptions, getSlashCommandsHelp, registerSlashCommand,
@@ -569,46 +569,6 @@ export function initDefaultSlashCommands() {
             newState ? enableInstructCallback() : disableInstructCallback();
             return String(power_user.instruct.enabled);
         },
-    }));
-    SlashCommandParser.addCommandObject(SlashCommand.fromProps({
-        name: 'context',
-        callback: async function (args, name) {
-            if (!name) {
-                return power_user.context.preset;
-            }
-
-            const quiet = isTrueBoolean(args?.quiet?.toString());
-            const contextNames = context_presets.map(preset => preset.name);
-            const fuse = new Fuse(contextNames);
-            const result = fuse.search(name?.toString() ?? '');
-
-            if (result.length === 0) {
-                !quiet && toastr.warning(t`Context template '${name}' not found`);
-                return '';
-            }
-
-            const foundName = result[0].item;
-            selectContextPreset(foundName, { quiet: quiet });
-            return foundName;
-        },
-        returns: t`template name`,
-        namedArgumentList: [
-            SlashCommandNamedArgument.fromProps({
-                name: 'quiet',
-                description: t`Suppress the toast message on template change`,
-                typeList: [ARGUMENT_TYPE.BOOLEAN],
-                defaultValue: 'false',
-                enumList: commonEnumProviders.boolean('trueFalse')(),
-            }),
-        ],
-        unnamedArgumentList: [
-            SlashCommandArgument.fromProps({
-                description: t`context template name`,
-                typeList: [ARGUMENT_TYPE.STRING],
-                enumProvider: () => context_presets.map(preset => new SlashCommandEnumValue(preset.name, null, enumTypes.enum, enumIcons.preset)),
-            }),
-        ],
-        helpString: t`Selects context template by name. Gets the current template if no name is provided`,
     }));
     SlashCommandParser.addCommandObject(SlashCommand.fromProps({
         name: 'chat-manager',

@@ -11,14 +11,12 @@ import storage from 'node-persist';
 import express from 'express';
 import mime from 'mime-types';
 import archiver from 'archiver';
-import _ from 'lodash';
 import { sync as writeFileAtomicSync } from 'write-file-atomic';
 import sanitize from 'sanitize-filename';
 
 import { USER_DIRECTORY_TEMPLATE, DEFAULT_USER, PUBLIC_DIRECTORIES, SETTINGS_FILE, UPLOADS_DIRECTORY } from './constants.js';
 import { getConfigValue, color, delay, generateTimestamp, invalidateFirefoxCache } from './util.js';
 import { readSecret, writeSecret } from './endpoints/secrets.js';
-import { getContentOfType } from './endpoints/content-manager.js';
 import { serverDirectory } from './server-directory.js';
 
 export const KEY_PREFIX = 'user:';
@@ -88,14 +86,12 @@ const STORAGE_KEYS = {
  * @property {string} movingUI - The directory where the moving UI data is stored
  * @property {string} extensions - The directory where the extensions are stored
  * @property {string} instruct - The directory where the instruct templates is stored
- * @property {string} context - The directory where the context templates is stored
  * @property {string} quickreplies - The directory where the quick replies are stored
  * @property {string} assets - The directory where the assets are stored
  * @property {string} comfyWorkflows - The directory where the ComfyUI workflows are stored
  * @property {string} files - The directory where the uploaded files are stored
  * @property {string} vectors - The directory where the vectors are stored
  * @property {string} backups - The directory where the backups are stored
- * @property {string} sysprompt - The directory where the system prompt data is stored
  * @property {string} reasoning - The directory where the reasoning templates are stored
  */
 
@@ -270,11 +266,6 @@ export async function migrateUserData() {
             file: false,
         },
         {
-            old: path.join(publicDirectory, 'context'),
-            new: userDirectories.context,
-            file: false,
-        },
-        {
             old: path.join(publicDirectory, 'group chats'),
             new: userDirectories.groupChats,
             file: false,
@@ -407,63 +398,6 @@ export async function migrateUserData() {
     }
 
     console.log(color.green('Migration completed!'));
-}
-
-export async function migrateSystemPrompts() {
-    /**
-     * Gets the default system prompts.
-     * @returns {Promise<any[]>} - The list of default system prompts
-     */
-    async function getDefaultSystemPrompts() {
-        try {
-            return getContentOfType('sysprompt', 'json');
-        } catch {
-            return [];
-        }
-    }
-
-    const directories = await getUserDirectoriesList();
-    for (const directory of directories) {
-        try {
-            const migrateMarker = path.join(directory.sysprompt, '.migrated');
-            if (fs.existsSync(migrateMarker)) {
-                continue;
-            }
-            const backupsPath = path.join(directory.backups, '_sysprompt');
-            fs.mkdirSync(backupsPath, { recursive: true });
-            const defaultPrompts = await getDefaultSystemPrompts();
-            const instucts = fs.readdirSync(directory.instruct);
-            let migratedPrompts = [];
-            for (const instruct of instucts) {
-                const instructPath = path.join(directory.instruct, instruct);
-                const sysPromptPath = path.join(directory.sysprompt, instruct);
-                if (path.extname(instruct) === '.json' && !fs.existsSync(sysPromptPath)) {
-                    const instructData = JSON.parse(fs.readFileSync(instructPath, 'utf8'));
-                    if ('system_prompt' in instructData && 'name' in instructData) {
-                        const backupPath = path.join(backupsPath, `${instructData.name}.json`);
-                        fs.cpSync(instructPath, backupPath, { force: true });
-                        const syspromptData = { name: instructData.name, content: instructData.system_prompt };
-                        migratedPrompts.push(syspromptData);
-                        delete instructData.system_prompt;
-                        writeFileAtomicSync(instructPath, JSON.stringify(instructData, null, 4));
-                    }
-                }
-            }
-            // Only leave unique contents
-            migratedPrompts = _.uniqBy(migratedPrompts, 'content');
-            // Only leave contents that are not in the default prompts
-            migratedPrompts = migratedPrompts.filter(x => !defaultPrompts.some(y => y.content === x.content));
-            for (const sysPromptData of migratedPrompts) {
-                sysPromptData.name = `[Migrated] ${sysPromptData.name}`;
-                const syspromptPath = path.join(directory.sysprompt, `${sysPromptData.name}.json`);
-                writeFileAtomicSync(syspromptPath, JSON.stringify(sysPromptData, null, 4));
-                console.log(`Migrated system prompt ${sysPromptData.name} for ${directory.root.split(path.sep).pop()}`);
-            }
-            writeFileAtomicSync(migrateMarker, '');
-        } catch (error) {
-            console.error('Error migrating system prompts:', error);
-        }
-    }
 }
 
 /**
@@ -963,11 +897,13 @@ function createExtensionsRouteHandler(directoryFn) {
             const resolvedPath = path.resolve(directory, filePath);
             const relativePath = path.relative(resolvedDirectory, resolvedPath);
 
-            if (!relativePath.startsWith('..') && !path.isAbsolute(relativePath)) {
-                const existsLocal = fs.existsSync(path.join(directory, filePath));
-                if (existsLocal) {
-                    return res.sendFile(filePath, { root: directory });
-                }
+            if (relativePath.startsWith('..') || path.isAbsolute(relativePath)) {
+                return res.sendStatus(403);
+            }
+
+            const existsLocal = fs.existsSync(path.join(directory, filePath));
+            if (existsLocal) {
+                return res.sendFile(filePath, { root: directory });
             }
 
             const resolvedGlobalDirectory = path.resolve(PUBLIC_DIRECTORIES.globalExtensions);

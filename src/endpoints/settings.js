@@ -258,8 +258,6 @@ router.post('/get', async (request, response) => {
     const movingUIPresets = safeRead(() => readAndParseFromDirectory(request.user.directories.movingUI), [], 'moving UI presets');
     const quickReplyPresets = safeRead(() => readAndParseFromDirectory(request.user.directories.quickreplies), [], 'quick reply presets');
 
-    const context = safeRead(() => readAndParseFromDirectory(request.user.directories.context), [], 'context presets');
-    const sysprompt = safeRead(() => readAndParseFromDirectory(request.user.directories.sysprompt), [], 'system prompts');
     const reasoning = safeRead(() => readAndParseFromDirectory(request.user.directories.reasoning), [], 'reasoning presets');
 
     response.send({
@@ -272,8 +270,6 @@ router.post('/get', async (request, response) => {
         movingUIPresets,
         quickReplyPresets,
         instruct: [],
-        context,
-        sysprompt,
         reasoning,
         enable_extensions: ENABLE_EXTENSIONS,
         enable_extensions_auto_update: ENABLE_EXTENSIONS_AUTO_UPDATE,

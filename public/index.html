@@ -1829,135 +1829,6 @@
                     </span>
                 </div>
                 <div class="flex-container spaceEvenly">
-                    <div id="ContextSettings" class="flex-container flexNoGap flexFlowColumn flex1">
-                        <div>
-                            <h4 class="standoutHeader title_restorable" data-cc-null>
-                                <div>
-                                    <span data-i18n="Context Template">Context Template</span>
-                                </div>
-                                <div class="flex-container">
-                                    <label for="context_derived" class="checkbox_label flex1" title="Derive from Model Metadata, if possible." data-i18n="[title]context_derived">
-                                        <input id="context_derived" type="checkbox" style="display:none;" />
-                                        <small><i class="fa-solid fa-bolt menu_button margin0"></i></small>
-                                    </label>
-                                </div>
-                            </h4>
-                            <div class="flex-container" title="Select your current Context Template" data-i18n="[title]Select your current Context Template" data-cc-null>
-                                <select id="context_presets" data-preset-manager-for="context" class="flex1 text_pole"></select>
-                                <div class="flex-container justifyCenter gap3px">
-                                    <input type="file" hidden data-preset-manager-file="context" accept=".json, .settings">
-                                    <i data-preset-manager-update="context" class="menu_button fa-solid fa-save" title="Update current template" data-i18n="[title]Update current template"></i>
-                                    <i data-preset-manager-rename="context" class="menu_button fa-pencil fa-solid" title="Rename current template" data-i18n="[title]Rename current template"></i>
-                                    <i data-preset-manager-new="context" class="menu_button fa-solid fa-file-circle-plus" title="Save template as" data-i18n="[title]Save template as"></i>
-                                    <i data-preset-manager-import="context" class="displayNone menu_button fa-solid fa-file-import" title="Import template" data-i18n="[title]Import template"></i>
-                                    <i data-preset-manager-export="context" class="displayNone menu_button fa-solid fa-file-export" title="Export template" data-i18n="[title]Export template"></i>
-                                    <i data-preset-manager-restore="context" class="menu_button fa-solid fa-recycle" title="Restore current template" data-i18n="[title]Restore current template"></i>
-                                    <i id="context_delete_preset" data-preset-manager-delete="context" class="menu_button fa-solid fa-trash-can" title="Delete the template" data-i18n="[title]Delete the template"></i>
-                                </div>
-                            </div>
-                            <div>
-                                <div data-cc-null>
-                                    <label for="context_story_string" class="flex-container">
-                                        <small data-i18n="Story String">Story String</small>
-                                        <i class="editor_maximize fa-solid fa-maximize right_menu_button" data-for="context_story_string" title="Expand the editor" data-i18n="[title]Expand the editor"></i>
-                                    </label>
-                                    <textarea id="context_story_string" class="text_pole textarea_compact autoSetHeight"></textarea>
-                                </div>
-                                <div class="flex-container flexFlowColumn" data-cc-null>
-                                    <div id="context_story_string_position_block">
-                                        <label for="context_story_string_position">
-                                            <small data-i18n="Position:">Position:</small>
-                                        </label>
-                                        <select id="context_story_string_position" class="text_pole">
-                                            <option value="0" data-i18n="Default (top of context)">Default (top of context)</option>
-                                            <option value="1" data-i18n="In-chat @ Depth">In-chat @ Depth</option>
-                                        </select>
-                                    </div>
-                                    <div id="context_story_string_inject_settings" class="flex-container">
-                                        <div class="flex1">
-                                            <label for="context_story_string_depth">
-                                                <small data-i18n="Depth:">Depth:</small>
-                                            </label>
-                                            <input type="number" id="context_story_string_depth" class="text_pole" min="0" max="">
-                                        </div>
-                                        <div class="flex1">
-                                            <label for="context_story_string_role">
-                                                <small data-i18n="Role:">Role:</small>
-                                            </label>
-                                            <select id="context_story_string_role" class="text_pole">
-                                                <option data-i18n="System" value="0">System</option>
-                                                <option data-i18n="User" value="1">User</option>
-                                                <option data-i18n="Assistant" value="2">Assistant</option>
-                                            </select>
-                                        </div>
-                                    </div>
-                                </div>
-                                <div class="flex-container" data-cc-null>
-                                    <div class="flex1">
-                                        <label for="context_example_separator">
-                                            <small data-i18n="Example Separator">Example Separator</small>
-                                        </label>
-                                        <div>
-                                            <textarea id="context_example_separator" class="text_pole textarea_compact autoSetHeight"></textarea>
-                                        </div>
-                                    </div>
-                                    <div class="flex1">
-                                        <label for="context_chat_start">
-                                            <small data-i18n="Chat Start">Chat Start</small>
-                                        </label>
-                                        <div>
-                                            <textarea id="context_chat_start" class="text_pole textarea_compact autoSetHeight"></textarea>
-                                        </div>
-                                    </div>
-                                </div>
-                                <div>
-                                    <h4 class="standoutHeader">
-                                        <span data-i18n="Context Formatting">
-                                            Context Formatting
-                                        </span>
-                                    </h4>
-
-                                    <label class="checkbox_label" for="always-force-name2-checkbox" data-cc-null>
-                                        <input id="always-force-name2-checkbox" type="checkbox" />
-                                        <small data-i18n="Always add character's name to prompt">
-                                            Always add character's name to prompt
-                                        </small>
-                                    </label>
-                                    <label class="checkbox_label" for="single_line" data-cc-null>
-                                        <input id="single_line" type="checkbox" />
-                                        <small data-i18n="Generate only one line per request">
-                                            Generate only one line per request
-                                        </small>
-                                    </label>
-                                    <label class="checkbox_label" for="collapse-newlines-checkbox" data-cc-null>
-                                        <input id="collapse-newlines-checkbox" type="checkbox" />
-                                        <small data-i18n="Collapse Consecutive Newlines">
-                                            Collapse Consecutive Newlines
-                                        </small>
-                                    </label>
-                                    <label class="checkbox_label" for="trim_spaces">
-                                        <input id="trim_spaces" type="checkbox" />
-                                        <small data-i18n="Trim spaces">Trim spaces</small>
-                                        <i class="fa-sm fa-solid fa-exclamation-triangle warning" title="Disabling is not recommended." data-i18n="[title]Disabling is not recommended."></i>
-                                    </label>
-                                    <label class="checkbox_label" for="trim_sentences_checkbox">
-                                        <input id="trim_sentences_checkbox" type="checkbox" />
-                                        <small data-i18n="Trim Incomplete Sentences">
-                                            Trim Incomplete Sentences
-                                        </small>
-                                    </label>
-                                    <label class="checkbox_label" title="Add Chat Start and Example Separator to a list of stopping strings." data-i18n="[title]Add Chat Start and Example Separator to a list of stopping strings." data-cc-null>
-                                        <input id="context_use_stop_strings" type="checkbox" />
-                                        <small data-i18n="Separators as Stop Strings">Separators as Stop Strings</small>
-                                    </label>
-                                    <label class="checkbox_label" title="Add Character and User names to a list of stopping strings." data-i18n="[title]Add Character and User names to a list of stopping strings." data-cc-null>
-                                        <input id="context_names_as_stop_strings" type="checkbox" />
-                                        <small data-i18n="Names as Stop Strings">Names as Stop Strings</small>
-                                    </label>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
                     <div id="InstructSettingsColumn" class="flex-container flexNoGap flexFlowColumn flex1" data-cc-null>
                         <h4 class="standoutHeader title_restorable justifySpaceBetween">
                             <div class="flex-container">
@@ -1967,10 +1838,6 @@
                                 <label for="instruct_derived" class="checkbox_label flex1" title="Derive from Model Metadata, if possible." data-i18n="[title]instruct_derived">
                                     <input id="instruct_derived" type="checkbox" style="display:none;" />
                                     <small><i class="fa-solid fa-bolt menu_button margin0"></i></small>
-                                </label>
-                                <label for="instruct_bind_to_context" class="checkbox_label flex1" title="Bind to Context&#10;If enabled, Context templates will be automatically selected based on selected Instruct template name or by preference." data-i18n="[title]instruct_bind_to_context">
-                                    <input id="instruct_bind_to_context" type="checkbox" style="display:none;" />
-                                    <small><i class="fa-solid fa-link menu_button margin0"></i></small>
                                 </label>
                                 <label id="instruct_enabled_label" for="instruct_enabled" class="checkbox_label flex1" title="Enable Instruct Mode" data-i18n="[title]instruct_enabled">
                                     <input id="instruct_enabled" type="checkbox" style="display:none;" />
@@ -2152,49 +2019,6 @@
                         </div>
                     </div>
                     <div id="SystemPromptColumn" class="flex-container flexNoGap flexFlowColumn flex1">
-                        <h4 class="standoutHeader title_restorable justifySpaceBetween" data-cc-null>
-                            <div class="flex-container">
-                                <span data-i18n="System Prompt">System Prompt</span>
-                            </div>
-                            <div class="flex-container">
-                                <label id="sysprompt_enabled_label" for="sysprompt_enabled" class="checkbox_label flex1" title="Enable System Prompt" data-i18n="[title]sysprompt_enabled">
-                                    <input id="sysprompt_enabled" type="checkbox" style="display:none;" />
-                                    <small><i class="fa-solid fa-power-off menu_button togglable margin0"></i></small>
-                                </label>
-                            </div>
-                        </h4>
-                        <div id="SystemPromptBlock" class="marginBot10" data-cc-null>
-                            <div class="flex-container" title="Select your current System Prompt" data-i18n="[title]Select your current System Prompt">
-                                <select id="sysprompt_select" data-preset-manager-for="sysprompt" class="flex1 text_pole"></select>
-                                <div class="flex-container margin0 justifyCenter gap3px">
-                                    <input type="file" hidden data-preset-manager-file="sysprompt" accept=".json, .settings">
-                                    <i data-preset-manager-update="sysprompt" class="menu_button fa-solid fa-save" title="Update current prompt" data-i18n="[title]Update current prompt"></i>
-                                    <i data-preset-manager-rename="sysprompt" class="menu_button fa-pencil fa-solid" title="Rename current prompt" data-i18n="[title]Rename current prompt"></i>
-                                    <i data-preset-manager-new="sysprompt" class="menu_button fa-solid fa-file-circle-plus" title="Save prompt as" data-i18n="[title]Save prompt as"></i>
-                                    <i data-preset-manager-import="sysprompt" class="displayNone menu_button fa-solid fa-file-import" title="Import template" data-i18n="[title]Import template"></i>
-                                    <i data-preset-manager-export="sysprompt" class="displayNone menu_button fa-solid fa-file-export" title="Export template" data-i18n="[title]Export template"></i>
-                                    <i data-preset-manager-restore="sysprompt" class="menu_button fa-solid fa-recycle" title="Restore current prompt" data-i18n="[title]Restore current prompt"></i>
-                                    <i data-preset-manager-delete="sysprompt" class="menu_button fa-solid fa-trash-can" title="Delete prompt" data-i18n="[title]Delete prompt"></i>
-                                </div>
-                            </div>
-
-                            <div>
-                                <label for="sysprompt_content" class="flex-container">
-                                    <small data-i18n="Prompt Content">Prompt Content</small>
-                                    <i class="editor_maximize fa-solid fa-maximize right_menu_button" data-for="sysprompt_content" title="Expand the editor" data-i18n="[title]Expand the editor"></i>
-                                </label>
-                                <textarea id="sysprompt_content" class="text_pole textarea_compact autoSetHeight"></textarea>
-                            </div>
-
-                            <div>
-                                <label for="sysprompt_post_history" class="flex-container">
-                                    <small data-i18n="Post-History Instructions">Post-History Instructions</small>
-                                    <i class="editor_maximize fa-solid fa-maximize right_menu_button" data-for="sysprompt_post_history" title="Expand the editor" data-i18n="[title]Expand the editor"></i>
-                                </label>
-                                <textarea id="sysprompt_post_history" class="text_pole textarea_compact autoSetHeight"></textarea>
-                            </div>
-                        </div>
-
                         <div>
                             <h4 class="range-block-title justifyLeft standoutHeader">
                                 <span data-i18n="Custom Stopping Strings">

@@ -246,6 +246,38 @@ function maybeWarnSecureShadowing(data, name) {
     }
 }
 
+function hasTrailingJsonLorebookSuffix(name) {
+    return /\.json$/i.test(String(name || '').trim());
+}
+
+function stripTrailingJsonLorebookSuffix(name) {
+    return String(name || '').replace(/\.json$/i, '');
+}
+
+function getImportLorebookBaseName(fileName) {
+    const normalizedFileName = String(fileName || '');
+    const extensionIndex = normalizedFileName.lastIndexOf('.');
+    return extensionIndex > 0 ? normalizedFileName.slice(0, extensionIndex) : normalizedFileName;
+}
+
+function warnTrailingJsonLorebookName(title = t`World Info`) {
+    toastr.warning(
+        t`World/Lorebook names must not end with ".json". Enter the name without the file extension.`,
+        title,
+    );
+}
+
+function maybeNotifyImportedJsonSuffixRemoval(originalName, finalName, removedTrailingJsonSuffix) {
+    if (!removedTrailingJsonSuffix) {
+        return;
+    }
+
+    toastr.info(
+        t`Removed the trailing ".json" from imported lorebook name "${originalName}" and saved it as "${finalName}" to avoid a ".json.json" file.`,
+        t`World Info`,
+    );
+}
+
 function hasBoundWorldInfo(name) {
     return Boolean(String(name || '').trim());
 }
@@ -4034,6 +4066,10 @@ async function renameWorldInfo(name, data) {
         toastr.warning(t`Name not accepted, as it is the same as before (ignoring case and accents).`, t`Rename World Info`);
         return;
     }
+    if (hasTrailingJsonLorebookSuffix(newName)) {
+        warnTrailingJsonLorebookName(t`Rename World Info`);
+        return;
+    }
 
     const entryPreviouslySelected = selected_world_info.findIndex((e) => e === oldName);
 
@@ -4176,6 +4212,10 @@ export async function createNewWorldInfo(worldName, { interactive = false } = {}
     const worldInfoTemplate = { entries: {} };
 
     if (!worldName) {
+        return false;
+    }
+    if (hasTrailingJsonLorebookSuffix(worldName)) {
+        warnTrailingJsonLorebookName(t`World Info`);
         return false;
     }
 
@@ -5179,7 +5219,14 @@ export async function importEmbeddedWorldInfo(skipPopup = false) {
         return;
     }
 
-    const bookName = characters[chid]?.data?.character_book?.name || `${characters[chid]?.name}'s Lorebook`;
+    const originalBookName = characters[chid]?.data?.character_book?.name || `${characters[chid]?.name}'s Lorebook`;
+    const removedTrailingJsonSuffix = hasTrailingJsonLorebookSuffix(originalBookName);
+    const bookName = await getSanitizedFilename(stripTrailingJsonLorebookSuffix(originalBookName));
+
+    if (!bookName) {
+        toastr.error(t`Imported lorebook must have a valid name.`, t`World Info`);
+        return;
+    }
 
     if (!skipPopup) {
         const confirmation = await Popup.show.confirm(t`Are you sure you want to import '${bookName}'?`, world_names.includes(bookName) ? t`It will overwrite the World/Lorebook with the same name.` : '');
@@ -5194,6 +5241,7 @@ export async function importEmbeddedWorldInfo(skipPopup = false) {
     await updateWorldInfoList();
     $('#character_world').val(bookName).trigger('change');
 
+    maybeNotifyImportedJsonSuffixRemoval(originalBookName, bookName, removedTrailingJsonSuffix);
     toastr.success(t`The world '${bookName}' has been imported and linked to the character successfully.`, t`World/Lorebook imported`);
 
     const newIndex = world_names.indexOf(bookName);
@@ -5331,8 +5379,13 @@ export async function importWorldInfo(file) {
         return;
     }
 
-    const worldName = file.name.substr(0, file.name.lastIndexOf('.'));
-    const sanitizedWorldName = await getSanitizedFilename(worldName);
+    const originalWorldName = getImportLorebookBaseName(file.name);
+    const removedTrailingJsonSuffix = hasTrailingJsonLorebookSuffix(originalWorldName);
+    const sanitizedWorldName = await getSanitizedFilename(stripTrailingJsonLorebookSuffix(originalWorldName));
+    if (!sanitizedWorldName) {
+        toastr.error(t`World file must have a name.`, t`World Info`);
+        return false;
+    }
     formData.append('storage', getLorebookStorageForRequest(sanitizedWorldName));
     const allowed = await checkOverwriteExistingData('World Info', world_names, sanitizedWorldName, { interactive: true, actionName: 'Import', deleteAction: deleteWorldInfoOnOverwrite });
     if (!allowed) {
@@ -5362,6 +5415,7 @@ export async function importWorldInfo(file) {
                 $('#world_editor_select').val(newIndex).trigger('change');
             }
 
+            maybeNotifyImportedJsonSuffixRemoval(originalWorldName, data.name, Boolean(data.removedTrailingJsonSuffix || removedTrailingJsonSuffix));
             toastr.success(t`World Info "${data.name}" imported successfully!`);
         }
     } catch (error) {

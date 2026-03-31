@@ -111,11 +111,10 @@ const substr_derivations = [
 ];
 
 const parse_derivation = derivation => (typeof derivation === 'string') ? {
-    'context': derivation,
     'instruct': derivation,
 } : derivation;
 
-const not_found = { context: null, instruct: null };
+const not_found = { instruct: null };
 
 export async function deriveTemplatesFromChatTemplate(chat_template, hash) {
     if (chat_template.trim() === '') {
@@ -148,7 +147,6 @@ export async function bindModelTemplates(power_user, online_status) {
         ?? power_user.model_templates_mappings[chatTemplateHash]
         ?? {};
     const bindingsMatch = bindModelTemplates
-        && power_user.context.preset == bindModelTemplates['context']
         && (!power_user.instruct.enabled || power_user.instruct.preset === bindModelTemplates['instruct']);
 
     const bound = [];
@@ -157,19 +155,8 @@ export async function bindModelTemplates(power_user, online_status) {
         // unmap current preset
         delete power_user.model_templates_mappings[chatTemplateHash];
         delete power_user.model_templates_mappings[online_status];
-        toastr.info(t`Context preset for ${online_status} will use defaults when loaded the next time.`);
+        toastr.info(t`Instruct preset for ${online_status} will use defaults when loaded the next time.`);
     } else {
-        if (power_user.context_derived) {
-            if (power_user.context.preset !== bindModelTemplates['context']) {
-                bound.push(`${power_user.context.preset} context preset`);
-                // toastr.info(`Bound ${power_user.context.preset} preset to currently loaded model and all models that share its chat template.`);
-
-                // map current preset to current chat template hash
-                bindModelTemplates['context'] = power_user.context.preset;
-            }
-        } else {
-            toastr.warning(t`Note: Context derivation is disabled. Not including context preset.`);
-        }
         if (power_user.instruct.enabled) {
             if (power_user.instruct_derived) {
                 if (power_user.instruct.preset !== bindModelTemplates['instruct']) {
