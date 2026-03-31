@@ -253,7 +253,14 @@ function ensureSplitTailStorage(filePath, { displayCount = LONG_CHAT_DISPLAY_DEF
     return true;
 }
 
-function buildChunkedChatPayload(filePath, { rangeStart = null, count = null, hydrateFull = false, displayCount = LONG_CHAT_DISPLAY_DEFAULT, bufferMax = LONG_CHAT_BUFFER_DEFAULT } = {}) {
+function buildChunkedChatPayload(filePath, {
+    rangeStart = null,
+    count = null,
+    hydrateFull = false,
+    displayCount = LONG_CHAT_DISPLAY_DEFAULT,
+    bufferMax = LONG_CHAT_BUFFER_DEFAULT,
+    includeParentPromptCache = false,
+} = {}) {
     const config = normalizeLongChatConfig({ displayCount, bufferMax });
     const segments = getChatSegments(filePath);
     const header = stripChatStorage(segments.header);
@@ -292,11 +299,15 @@ function buildChunkedChatPayload(filePath, { rangeStart = null, count = null, hy
     const messages = totalMessages > 0
         ? segments.messages.slice(startId, endId + 1)
         : [];
+    const parentPromptMessages = segments.storage && !hydrateFull && (includeParentPromptCache || rangeStart === null)
+        ? segments.messages.slice(0, tailStartId).filter(message => !isPromptExcludedMessage(message))
+        : undefined;
 
     return {
         mode: segments.storage ? CHAT_STORAGE_MODE_SPLIT_TAIL : 'full',
         header,
         messages,
+        parentPromptMessages,
         totalMessages,
         loadedRangeStart: totalMessages > 0 ? startId : 0,
         loadedRangeEnd: totalMessages > 0 ? endId : -1,
@@ -317,6 +328,10 @@ function getCharacterChatFilePath(chatsDirectory, avatarUrl, fileName) {
     return path.join(chatsDirectory, directoryName, sanitize(normalizedFileName));
 }
 
+function isPromptExcludedMessage(message) {
+    return Boolean(message?.extra?.ignore);
+}
+
 export function resolveSplitCoreChatPayload(chatsDirectory, coreChatPayload) {
     if (!coreChatPayload || typeof coreChatPayload !== 'object' || coreChatPayload.mode !== CHAT_STORAGE_MODE_SPLIT_TAIL) {
         return Array.isArray(coreChatPayload) ? coreChatPayload : [];
@@ -333,7 +348,7 @@ export function resolveSplitCoreChatPayload(chatsDirectory, coreChatPayload) {
         ? Math.max(0, Math.min(coreChatPayload.tailStartId, totalMessages))
         : Math.max(0, totalMessages - segments.tailMessages.length);
     const parentMessages = coreChatPayload.useParentUnhiddenMessages
-        ? segments.messages.slice(0, normalizedTailStartId).filter(message => !message?.extra?.ignore)
+        ? segments.messages.slice(0, normalizedTailStartId).filter(message => !isPromptExcludedMessage(message))
         : [];
     const tailMessages = coreChatPayload.useTailContents === false
         ? []
@@ -826,6 +841,7 @@ router.post('/save', validateAvatarUrlMiddleware, async function (request, respo
                     hydrateFull: writeResult.storageMode !== CHAT_STORAGE_MODE_SPLIT_TAIL,
                     displayCount: config.displayCount,
                     bufferMax: config.bufferMax,
+                    includeParentPromptCache: writeResult.storageMode === CHAT_STORAGE_MODE_SPLIT_TAIL,
                 })
                 : null,
         });
@@ -874,6 +890,7 @@ router.post('/get', validateAvatarUrlMiddleware, function (request, response) {
                 hydrateFull,
                 displayCount: config.displayCount,
                 bufferMax: config.bufferMax,
+                includeParentPromptCache: request.body.include_parent_prompt_cache === true,
             }));
         }
 

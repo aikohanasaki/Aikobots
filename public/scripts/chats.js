@@ -29,6 +29,8 @@ import {
     getMediaIndex,
     getMediaDisplay,
     chatElement,
+    hydrateCurrentChatForEditing,
+    isHistoricalChatMessage,
 } from '../script.js';
 import { selected_group } from './group-chats.js';
 import { power_user } from './power-user.js';
@@ -80,6 +82,14 @@ const ATTACHMENT_SOURCE = {
     CHARACTER: 'character',
     CHAT: 'chat',
 };
+
+async function ensurePromptRelevantMessageEditable(messageId) {
+    if (!isHistoricalChatMessage(messageId)) {
+        return true;
+    }
+
+    return hydrateCurrentChatForEditing();
+}
 
 /**
  * @type {Record<string, ConverterFunction>} File converters
@@ -149,6 +159,13 @@ export async function hideChatMessageRange(start, end, unhide, nameFitler = null
     if (isNaN(start)) return;
     if (!end) end = start;
     const hide = !unhide;
+
+    for (let messageId = start; messageId <= end; messageId++) {
+        if (await ensurePromptRelevantMessageEditable(messageId)) {
+            continue;
+        }
+        return;
+    }
 
     for (let messageId = start; messageId <= end; messageId++) {
         const message = chat[messageId];
@@ -399,6 +416,12 @@ async function deleteMessageFile(messageBlock, messageId, fileIndex) {
         console.warn('Invalid message ID or file index');
         return;
     }
+
+    if (!await ensurePromptRelevantMessageEditable(messageId)) {
+        return;
+    }
+
+    messageBlock = chatElement.find(`.mes[mesid="${messageId}"]`);
 
     const confirm = await callGenericPopup('Are you sure you want to delete this file?', POPUP_TYPE.CONFIRM);
 
@@ -984,6 +1007,12 @@ async function deleteMessageMedia(messageId, mediaIndex, messageBlock) {
         console.warn('Invalid message ID or media index');
         return;
     }
+
+    if (!await ensurePromptRelevantMessageEditable(messageId)) {
+        return;
+    }
+
+    messageBlock = chatElement.find(`.mes[mesid="${messageId}"]`);
 
     const deleteUrls = [];
     const deleteFromServerId = 'delete_media_files_checkbox';

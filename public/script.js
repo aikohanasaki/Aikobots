@@ -452,6 +452,8 @@ function getDefaultChatLoadState() {
         tailEndId: -1,
         headCount: 0,
         tailCount: 0,
+        parentPromptCache: [],
+        parentPromptCacheTailStartId: 0,
         currentView: 'tail',
         isHydrated: true,
     };
@@ -1482,10 +1484,15 @@ function syncSplitTailStateAfterMutation() {
         return;
     }
 
+    const previousTailStartId = chatLoadState.tailStartId;
     chatLoadState.tailEndId = Math.max(-1, getTotalChatMessages() - 1);
     chatLoadState.tailStartId = Math.min(chatLoadState.tailStartId, Math.max(0, getTotalChatMessages()));
     chatLoadState.headCount = chatLoadState.tailStartId;
     chatLoadState.tailCount = Math.max(0, getTotalChatMessages() - chatLoadState.tailStartId);
+
+    if (chatLoadState.tailStartId < previousTailStartId) {
+        setParentPromptCache(chatLoadState.parentPromptCache.slice(0, chatLoadState.tailStartId), chatLoadState.tailStartId);
+    }
 }
 
 function getDenseChatMessages(startId, endId) {
@@ -1500,20 +1507,37 @@ function getDenseChatMessages(startId, endId) {
     return messages;
 }
 
-function getCoreChatPayloadForAssembly(coreChat) {
+function setParentPromptCache(messages, tailStartId) {
+    const normalizedTailStartId = Math.max(0, Number(tailStartId) || 0);
+    chatLoadState.parentPromptCache = Array.isArray(messages)
+        ? messages.map(message => {
+            ensureMessageMediaIsArray(message);
+            return message;
+        })
+        : [];
+    chatLoadState.parentPromptCacheTailStartId = normalizedTailStartId;
+}
+
+function getLogicalChatForPromptAssembly() {
     if (!isSplitTailChat() || isChatFullyHydrated() || selected_group) {
-        return coreChat;
+        return chat;
     }
 
-    return {
-        mode: CHAT_STORAGE_MODE_SPLIT_TAIL,
-        currentChatId: getCurrentChatId() || '',
-        avatarUrl: characters[this_chid]?.avatar || '',
-        tailStartId: chatLoadState.tailStartId,
-        tailEndId: Math.max(chatLoadState.tailEndId, getTotalChatMessages() - 1),
-        useParentUnhiddenMessages: true,
-        useTailContents: true,
-    };
+    if (chatLoadState.parentPromptCacheTailStartId !== chatLoadState.tailStartId) {
+        console.warn('Resident parent prompt cache is out of sync with tailStartId.', {
+            cachedTailStartId: chatLoadState.parentPromptCacheTailStartId,
+            tailStartId: chatLoadState.tailStartId,
+        });
+    }
+
+    return [
+        ...chatLoadState.parentPromptCache,
+        ...getDenseChatMessages(chatLoadState.tailStartId, getTotalChatMessages() - 1),
+    ];
+}
+
+function getCoreChatPayloadForAssembly(coreChat) {
+    return coreChat;
 }
 
 function applyChunkedChatPayload(response, { replace = false, currentView = null } = {}) {
@@ -1551,10 +1575,16 @@ function applyChunkedChatPayload(response, { replace = false, currentView = null
     chatLoadState.isHydrated = response?.isHydrated !== false;
     chatLoadState.currentView = currentView ?? (loadedRangeStart < chatLoadState.tailStartId ? 'history' : 'tail');
 
+    if (Array.isArray(response?.parentPromptMessages) && isSplitTailChat() && !isChatFullyHydrated()) {
+        setParentPromptCache(response.parentPromptMessages, chatLoadState.tailStartId);
+    } else if (!isSplitTailChat() || isChatFullyHydrated()) {
+        setParentPromptCache([], 0);
+    }
+
     return header;
 }
 
-async function fetchChunkedChat({ rangeStart = null, count = null, hydrateFull = false } = {}) {
+async function fetchChunkedChat({ rangeStart = null, count = null, hydrateFull = false, includeParentPromptCache = false } = {}) {
     await unshallowCharacter(this_chid);
 
     const requestedCount = Number.isFinite(Number(count))
@@ -1574,6 +1604,7 @@ async function fetchChunkedChat({ rangeStart = null, count = null, hydrateFull =
             display_count: getConfiguredLongChatDisplayCount(),
             buffer_max: getConfiguredLongChatBufferMax(),
             hydrate_full: hydrateFull,
+            include_parent_prompt_cache: includeParentPromptCache,
         }),
         dataType: 'json',
         contentType: 'application/json',
@@ -4665,7 +4696,8 @@ export async function Generate(type, { automatic_trigger, force_name2, quiet_pro
     // Collect messages with usable content
     const canUseTools = ToolManager.isToolCallingSupported();
     const canPerformToolCalls = !dryRun && ToolManager.canPerformToolCalls(type) && depth < ToolManager.RECURSE_LIMIT;
-    let coreChat = chat.filter(x => !x.is_system || (canUseTools && Array.isArray(x.extra?.tool_invocations)));
+    const logicalChat = getLogicalChatForPromptAssembly();
+    let coreChat = logicalChat.filter(x => !x.is_system || (canUseTools && Array.isArray(x.extra?.tool_invocations)));
     if (type === 'swipe') {
         coreChat.pop();
     }
@@ -7422,7 +7454,7 @@ export async function unshallowCharacter(characterId) {
 export async function getChat() {
     //console.log('/api/chats/get -- entered for -- ' + characters[this_chid].name);
     try {
-        const response = await fetchChunkedChat();
+        const response = await fetchChunkedChat({ includeParentPromptCache: true });
         if (response?.header) {
             const header = applyChunkedChatPayload(response, { replace: true, currentView: 'tail' });
             chat_create_date = header?.create_date ?? humanizedDateTime();
