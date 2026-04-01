@@ -1,6 +1,0 @@
-{
-    "name": "DeepSeek",
-    "prefix": "<think>\n",
-    "suffix": "\n</think>",
-    "separator": "\n\n"
-}
