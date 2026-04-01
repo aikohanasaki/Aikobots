@@ -11,7 +11,10 @@ import {
     readHiddenLorebookTemplates,
     writeHiddenLorebookTemplates,
 } from '../src/hidden-lorebook-templates.js';
-import { readHiddenLorebookBindings } from '../src/hidden-lorebook-bindings.js';
+import {
+    HIDDEN_LOREBOOK_REGISTRY_DIRECTORY,
+    readHiddenLorebookBindings,
+} from '../src/hidden-lorebook-bindings.js';
 
 const tempRoots = [];
 
@@ -143,7 +146,7 @@ describe('hidden lorebook templates registry', () => {
 
     it('reloads manual source edits when the source file changes on disk', () => {
         const rootDir = createRootDir();
-        const registryPath = path.join(rootDir, HIDDEN_LOREBOOK_TEMPLATES_FILE);
+        const registryPath = path.join(rootDir, ...HIDDEN_LOREBOOK_REGISTRY_DIRECTORY, HIDDEN_LOREBOOK_TEMPLATES_FILE);
 
         writeHiddenLorebookTemplates({
             templates: {

@@ -4,11 +4,26 @@ import path from 'node:path';
 import { sync as writeFileAtomicSync } from 'write-file-atomic';
 
 export const HIDDEN_LOREBOOK_BINDINGS_FILE = 'hidden-lorebook-bindings.json';
+export const HIDDEN_LOREBOOK_REGISTRY_DIRECTORY = ['_system', 'hidden-lorebooks'];
 
 const cache = new Map();
 
-function getRegistryPath(rootDir = process.cwd()) {
-    return path.join(rootDir, HIDDEN_LOREBOOK_BINDINGS_FILE);
+function getRegistryRootDir(rootDir = globalThis.DATA_ROOT || process.cwd()) {
+    return path.resolve(String(rootDir || '.'));
+}
+
+function getRegistryDirectory(rootDir = globalThis.DATA_ROOT || process.cwd()) {
+    return path.join(getRegistryRootDir(rootDir), ...HIDDEN_LOREBOOK_REGISTRY_DIRECTORY);
+}
+
+function getRegistryPath(rootDir = globalThis.DATA_ROOT || process.cwd()) {
+    return path.join(getRegistryDirectory(rootDir), HIDDEN_LOREBOOK_BINDINGS_FILE);
+}
+
+function ensureRegistryDirectory(rootDir = globalThis.DATA_ROOT || process.cwd()) {
+    const directoryPath = getRegistryDirectory(rootDir);
+    fs.mkdirSync(directoryPath, { recursive: true });
+    return directoryPath;
 }
 
 function normalizeLorebookNames(value) {
@@ -71,7 +86,7 @@ function setCachedRegistry(filePath, data, mtimeMs) {
     });
 }
 
-export function readHiddenLorebookBindings({ rootDir = process.cwd() } = {}) {
+export function readHiddenLorebookBindings({ rootDir = globalThis.DATA_ROOT || process.cwd() } = {}) {
     const filePath = getRegistryPath(rootDir);
     let stat = null;
     try {
@@ -106,7 +121,8 @@ export function readHiddenLorebookBindings({ rootDir = process.cwd() } = {}) {
     }
 }
 
-export function writeHiddenLorebookBindings(data = {}, { rootDir = process.cwd() } = {}) {
+export function writeHiddenLorebookBindings(data = {}, { rootDir = globalThis.DATA_ROOT || process.cwd() } = {}) {
+    ensureRegistryDirectory(rootDir);
     const filePath = getRegistryPath(rootDir);
     const normalized = normalizeHiddenLorebookBindings(data);
     writeFileAtomicSync(filePath, JSON.stringify(normalized, null, 4), 'utf8');
@@ -115,7 +131,7 @@ export function writeHiddenLorebookBindings(data = {}, { rootDir = process.cwd()
     return normalized;
 }
 
-export function getHiddenLorebooksForCharacter(characterKey, { rootDir = process.cwd() } = {}) {
+export function getHiddenLorebooksForCharacter(characterKey, { rootDir = globalThis.DATA_ROOT || process.cwd() } = {}) {
     const normalizedKey = normalizeCharacterKey(characterKey);
     if (!normalizedKey) {
         return [];

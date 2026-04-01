@@ -7,6 +7,7 @@ import { afterEach, describe, expect, it } from '@jest/globals';
 import {
     getHiddenLorebooksForCharacter,
     HIDDEN_LOREBOOK_BINDINGS_FILE,
+    HIDDEN_LOREBOOK_REGISTRY_DIRECTORY,
     readHiddenLorebookBindings,
 } from '../src/hidden-lorebook-bindings.js';
 
@@ -35,7 +36,8 @@ describe('hidden lorebook bindings registry', () => {
 
     it('normalizes entries when reading the registry', () => {
         const rootDir = createRootDir();
-        const registryPath = path.join(rootDir, HIDDEN_LOREBOOK_BINDINGS_FILE);
+        const registryPath = path.join(rootDir, ...HIDDEN_LOREBOOK_REGISTRY_DIRECTORY, HIDDEN_LOREBOOK_BINDINGS_FILE);
+        fs.mkdirSync(path.dirname(registryPath), { recursive: true });
 
         fs.writeFileSync(registryPath, JSON.stringify({
             characters: {
@@ -48,7 +50,8 @@ describe('hidden lorebook bindings registry', () => {
 
     it('reloads manual file edits when the registry changes on disk', () => {
         const rootDir = createRootDir();
-        const registryPath = path.join(rootDir, HIDDEN_LOREBOOK_BINDINGS_FILE);
+        const registryPath = path.join(rootDir, ...HIDDEN_LOREBOOK_REGISTRY_DIRECTORY, HIDDEN_LOREBOOK_BINDINGS_FILE);
+        fs.mkdirSync(path.dirname(registryPath), { recursive: true });
 
         fs.writeFileSync(registryPath, JSON.stringify({
             characters: {

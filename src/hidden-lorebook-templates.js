@@ -3,14 +3,31 @@ import path from 'node:path';
 
 import { sync as writeFileAtomicSync } from 'write-file-atomic';
 
-import { writeHiddenLorebookBindings } from './hidden-lorebook-bindings.js';
+import {
+    HIDDEN_LOREBOOK_REGISTRY_DIRECTORY,
+    writeHiddenLorebookBindings,
+} from './hidden-lorebook-bindings.js';
 
 export const HIDDEN_LOREBOOK_TEMPLATES_FILE = 'hidden-lorebook-templates.json';
 
 const cache = new Map();
 
-function getRegistryPath(rootDir = process.cwd()) {
-    return path.join(rootDir, HIDDEN_LOREBOOK_TEMPLATES_FILE);
+function getRegistryRootDir(rootDir = globalThis.DATA_ROOT || process.cwd()) {
+    return path.resolve(String(rootDir || '.'));
+}
+
+function getRegistryDirectory(rootDir = globalThis.DATA_ROOT || process.cwd()) {
+    return path.join(getRegistryRootDir(rootDir), ...HIDDEN_LOREBOOK_REGISTRY_DIRECTORY);
+}
+
+function getRegistryPath(rootDir = globalThis.DATA_ROOT || process.cwd()) {
+    return path.join(getRegistryDirectory(rootDir), HIDDEN_LOREBOOK_TEMPLATES_FILE);
+}
+
+function ensureRegistryDirectory(rootDir = globalThis.DATA_ROOT || process.cwd()) {
+    const directoryPath = getRegistryDirectory(rootDir);
+    fs.mkdirSync(directoryPath, { recursive: true });
+    return directoryPath;
 }
 
 function compareStrings(a, b) {
@@ -123,7 +140,7 @@ function setCachedRegistry(filePath, data, mtimeMs) {
     });
 }
 
-export function readHiddenLorebookTemplates({ rootDir = process.cwd() } = {}) {
+export function readHiddenLorebookTemplates({ rootDir = globalThis.DATA_ROOT || process.cwd() } = {}) {
     const filePath = getRegistryPath(rootDir);
     let stat = null;
     try {
@@ -158,7 +175,8 @@ export function readHiddenLorebookTemplates({ rootDir = process.cwd() } = {}) {
     }
 }
 
-export function writeHiddenLorebookTemplates(data = {}, { rootDir = process.cwd() } = {}) {
+export function writeHiddenLorebookTemplates(data = {}, { rootDir = globalThis.DATA_ROOT || process.cwd() } = {}) {
+    ensureRegistryDirectory(rootDir);
     const filePath = getRegistryPath(rootDir);
     const normalized = normalizeHiddenLorebookTemplates(data);
     writeFileAtomicSync(filePath, JSON.stringify(normalized, null, 4), 'utf8');
@@ -226,7 +244,7 @@ export function compileHiddenLorebookTemplateRegistry(data = {}) {
     };
 }
 
-export function compileAndWriteHiddenLorebookTemplates({ rootDir = process.cwd() } = {}) {
+export function compileAndWriteHiddenLorebookTemplates({ rootDir = globalThis.DATA_ROOT || process.cwd() } = {}) {
     const source = readHiddenLorebookTemplates({ rootDir });
     const result = compileHiddenLorebookTemplateRegistry(source);
     const compiled = writeHiddenLorebookBindings(result.compiled, { rootDir });

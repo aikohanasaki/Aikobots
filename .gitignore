@@ -50,6 +50,11 @@ public/css/user.css
 public/error/
 /plugins/
 /data
+!/data/
+!/data/_system/
+!/data/_system/hidden-lorebooks/
+!/data/_system/hidden-lorebooks/hidden-lorebook-bindings.json
+!/data/_system/hidden-lorebooks/hidden-lorebook-templates.json
 /default/scaffold
 /default/content/
 /certs

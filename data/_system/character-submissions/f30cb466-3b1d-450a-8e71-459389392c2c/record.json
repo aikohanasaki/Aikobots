@@ -1,0 +1,16 @@
+{
+    "id": "f30cb466-3b1d-450a-8e71-459389392c2c",
+    "status": "approved",
+    "ownerHandle": "default-user",
+    "submittedAt": 1774884080084,
+    "submittedFilename": "Gage.png",
+    "reviewedAt": 1774884129805,
+    "reviewedBy": "default-user",
+    "reviewNote": "",
+    "publishMode": "global",
+    "targetHandles": [
+        "default-user",
+        "tester"
+    ],
+    "publishedFilename": "Gage.png"
+}
