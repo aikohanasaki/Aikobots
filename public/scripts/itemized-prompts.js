@@ -158,6 +158,9 @@ export async function itemizedParams(itemizedPrompts, thisPromptSet, incomingMes
     }
 
     if (params.this_main_api == 'openai') {
+        const oaiMaxContext = toNumber(oai_settings.openai_max_context);
+        const oaiMaxTokens = toNumber(oai_settings.openai_max_tokens);
+
         //for OAI API
         //console.log('-- Counting OAI Tokens');
         if (serverItemization && itemizedPrompt.serverPromptAssembly) {
@@ -172,19 +175,19 @@ export async function itemizedParams(itemizedPrompts, thisPromptSet, incomingMes
             params.oaiImpersonateTokens = toNumber(serverItemization.oaiImpersonateTokens);
             params.oaiNsfwTokens = toNumber(serverItemization.oaiNsfwTokens);
             params.finalPromptTokens = toNumber(serverItemization.finalPromptTokens);
-            params.thisPrompt_max_context = toNumber(serverItemization.maxContext) || (oai_settings.openai_max_context - oai_settings.openai_max_tokens);
+            params.thisPrompt_max_context = toNumber(serverItemization.maxContext) || (oaiMaxContext - oaiMaxTokens);
         } else {
             //params.finalPromptTokens = itemizedPrompts[thisPromptSet].oaiTotalTokens;
-            params.oaiMainTokens = itemizedPrompt.oaiMainTokens;
-            params.oaiStartTokens = itemizedPrompt.oaiStartTokens;
-            params.ActualChatHistoryTokens = itemizedPrompt.oaiConversationTokens;
-            params.examplesStringTokens = itemizedPrompt.oaiExamplesTokens;
-            params.oaiPromptTokens = itemizedPrompt.oaiPromptTokens - (params.afterScenarioAnchorTokens + params.beforeScenarioAnchorTokens) + params.examplesStringTokens;
-            params.oaiBiasTokens = itemizedPrompt.oaiBiasTokens;
-            params.oaiJailbreakTokens = itemizedPrompt.oaiJailbreakTokens;
-            params.oaiNudgeTokens = itemizedPrompt.oaiNudgeTokens;
-            params.oaiImpersonateTokens = itemizedPrompt.oaiImpersonateTokens;
-            params.oaiNsfwTokens = itemizedPrompt.oaiNsfwTokens;
+            params.oaiMainTokens = toNumber(itemizedPrompt.oaiMainTokens);
+            params.oaiStartTokens = toNumber(itemizedPrompt.oaiStartTokens);
+            params.ActualChatHistoryTokens = toNumber(itemizedPrompt.oaiConversationTokens);
+            params.examplesStringTokens = toNumber(itemizedPrompt.oaiExamplesTokens);
+            params.oaiBiasTokens = toNumber(itemizedPrompt.oaiBiasTokens);
+            params.oaiJailbreakTokens = toNumber(itemizedPrompt.oaiJailbreakTokens);
+            params.oaiNudgeTokens = toNumber(itemizedPrompt.oaiNudgeTokens);
+            params.oaiImpersonateTokens = toNumber(itemizedPrompt.oaiImpersonateTokens);
+            params.oaiNsfwTokens = toNumber(itemizedPrompt.oaiNsfwTokens);
+            params.oaiPromptTokens = toNumber(itemizedPrompt.oaiPromptTokens) - (params.afterScenarioAnchorTokens + params.beforeScenarioAnchorTokens) + params.examplesStringTokens;
             params.finalPromptTokens =
                 params.oaiStartTokens +
                 params.oaiPromptTokens +
@@ -198,18 +201,7 @@ export async function itemizedParams(itemizedPrompts, thisPromptSet, incomingMes
                 params.worldInfoStringTokens +
                 params.beforeScenarioAnchorTokens +
                 params.afterScenarioAnchorTokens;
-            params.thisPrompt_max_context = (oai_settings.openai_max_context - oai_settings.openai_max_tokens);
-            params.oaiStartTokens = toNumber(params.oaiStartTokens);
-            params.oaiPromptTokens = toNumber(params.oaiPromptTokens);
-            params.oaiMainTokens = toNumber(params.oaiMainTokens);
-            params.oaiNsfwTokens = toNumber(params.oaiNsfwTokens);
-            params.oaiBiasTokens = toNumber(params.oaiBiasTokens);
-            params.oaiImpersonateTokens = toNumber(params.oaiImpersonateTokens);
-            params.oaiJailbreakTokens = toNumber(params.oaiJailbreakTokens);
-            params.oaiNudgeTokens = toNumber(params.oaiNudgeTokens);
-            params.ActualChatHistoryTokens = toNumber(params.ActualChatHistoryTokens);
-            params.examplesStringTokens = toNumber(params.examplesStringTokens);
-            params.finalPromptTokens = toNumber(params.finalPromptTokens);
+            params.thisPrompt_max_context = oaiMaxContext - oaiMaxTokens;
         }
         params.worldInfoTotalTokens = params.worldInfoStringTokens + params.worldInfoDepthTokens;
 

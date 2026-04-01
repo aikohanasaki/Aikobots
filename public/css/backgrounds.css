@@ -108,7 +108,7 @@
 }
 
 #look-and-feel-sections > .look-and-feel-backgrounds-heading,
-#look-and-feel-sections > label[for="background_thumbnails_animation"] {
+#look-and-feel-sections > .look-and-feel-full-span {
     grid-column: 1 / -1;
 }
 

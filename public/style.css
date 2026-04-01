@@ -3197,6 +3197,11 @@ input[type=search]:focus::-webkit-search-cancel-button {
 
 .character_distribute_button {
     display: none;
+    appearance: none;
+    background: none;
+    border: 0;
+    color: inherit;
+    font: inherit;
 }
 
 body #rm_print_characters_block .character_select .character_distribute_button {
@@ -6043,6 +6048,10 @@ body:not(.movingUI) .drawer-content.maximized {
 }
 
 .chat_history_button {
+    appearance: none;
+    border: 0;
+    color: inherit;
+    font: inherit;
     text-align: center;
     margin: 10px auto;
     font-weight: 500;

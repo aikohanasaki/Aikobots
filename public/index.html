@@ -3045,7 +3045,7 @@
                         <h3 data-i18n="Backgrounds" class="wide100p textAlignCenter look-and-feel-backgrounds-heading">
                             Backgrounds
                         </h3>
-                        <label data-i18n="[title]Allow animations for WEBP backgrounds. This is only a change for the selection menu." for="background_thumbnails_animation" class="checkbox_label" title="Allow animations for WEBP backgrounds. This is only a change for the selection menu.">
+                        <label data-i18n="[title]Allow animations for WEBP backgrounds. This is only a change for the selection menu." for="background_thumbnails_animation" class="checkbox_label look-and-feel-full-span" title="Allow animations for WEBP backgrounds. This is only a change for the selection menu.">
                             <input id="background_thumbnails_animation" type="checkbox" />
                             <small data-i18n="Animated background thumbnails">Animated background thumbnails</small>
                         </label>
@@ -3351,7 +3351,9 @@
                                                 <div id="world_button" class="menu_button fa-solid fa-globe" title="Character Lore&#10;&#10;Click to load&#10;Shift/Alt-click or long-press to open 'Link to World Info' popup" data-i18n="[title]world_button_title"></div>
                                                 <div class="chat_lorebook_button menu_button fa-solid fa-passport" title="Chat Lore&#10;Alt+Click to open the lorebook" data-i18n="[title]Chat Lore Alt+Click to open the lorebook"></div>
                                                 <div id="char_connections_button" class="menu_button fa-solid fa-face-smile" title="Connected Personas" data-i18n="[title]Connected Personas"></div>
-                                                <div id="submit_character_review_button" class="menu_button fa-solid fa-paper-plane" title="Submit Character for Review" data-i18n="[title]Submit Character for Review" style="display:none"></div>
+                                                <button id="submit_character_review_button" type="button" class="menu_button" title="Submit Character for Review" aria-label="Submit Character for Review" data-i18n="[title]Submit Character for Review;[aria-label]Submit Character for Review" style="display:none">
+                                                    <i class="fa-solid fa-paper-plane" aria-hidden="true"></i>
+                                                </button>
                                                 <div id="export_button" class="menu_button fa-solid fa-file-export " title="Export and Download" data-i18n="[title]Export and Download"></div>
                                                 <div id="dupe_button" class="menu_button fa-solid fa-clone " title="Duplicate Character" data-i18n="[title]Duplicate Character"></div>
                                                 <label for="create_button" id="create_button_label" class="menu_button fa-solid fa-user-check" title="Create Character" data-i18n="[title]Create Character">
@@ -3996,13 +3998,13 @@
                 </div>
                 <h4 data-i18n="Embedded Lorebook">Embedded Lorebook</h4>
                 <div class="range-block-counter justifyLeft flex-container flexFlowColumn margin-bot-10px">
-                    <span data-i18n="A selected World Info will be bound to this character as its own Lorebook.">Any lorebook selected here will be embedded in the character card. Only one lorebook can be embedded.</span>
-                    <span data-i18n="Exporting a character would also export the selected Lorebook file embedded in the JSON data.">Exporting a character will also export the selected Lorebook file embedded in the JSON data.</span>
+                    <span data-i18n="Any lorebook selected here will be embedded in the character card. Only one lorebook can be embedded.">Any lorebook selected here will be embedded in the character card. Only one lorebook can be embedded.</span>
+                    <span data-i18n="Exporting a character will also export the selected Lorebook file embedded in the JSON data.">Exporting a character will also export the selected Lorebook file embedded in the JSON data.</span>
                     <span data-i18n="If you want to protect your character lorebook, leave this blank.">If you want to protect your character lorebook, leave this blank.</span>
                 </div>
                 <div class="range-block-range wide100p">
                     <select class="character_world_info_selector wide100p">
-                        <option value="">--- None ---</option>
+                        <option value="" data-i18n="--- None ---">--- None ---</option>
                     </select>
                 </div>
             </div>
@@ -4477,9 +4479,9 @@
                         <small class="ch_additional_info character_version"></small>
                         <small class="ch_additional_info ch_avatar_url"></small>
                         <div class="character_card_actions">
-                            <div class="character_distribute_button right_menu_button" title="Distribute character" data-i18n="[title]Distribute character">
-                                <i class="fa-fw fa-solid fa-share-nodes"></i>
-                            </div>
+                            <button type="button" class="character_distribute_button right_menu_button" title="Distribute character" aria-label="Distribute character" data-i18n="[title]Distribute character;[aria-label]Distribute character">
+                                <i class="fa-fw fa-solid fa-share-nodes" aria-hidden="true"></i>
+                            </button>
                         </div>
                     </div>
                     <i class="ch_fav_icon fa-solid fa-star"></i>

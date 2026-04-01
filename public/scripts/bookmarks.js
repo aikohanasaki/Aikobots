@@ -71,15 +71,28 @@ function normalizeNamedBookmarkEntry(entry) {
     return { messageNum, title };
 }
 
+function dedupeNamedBookmarks(bookmarks) {
+    const seen = new Set();
+    return bookmarks.filter(bookmark => {
+        const key = `${bookmark.messageNum}\u0000${bookmark.title}`;
+        if (seen.has(key)) {
+            return false;
+        }
+
+        seen.add(key);
+        return true;
+    });
+}
+
 function getNamedBookmarks() {
     const bookmarks = Array.isArray(chat_metadata?.bookmarks) ? chat_metadata.bookmarks : [];
-    return bookmarks.map(normalizeNamedBookmarkEntry).filter(Boolean);
+    return dedupeNamedBookmarks(bookmarks.map(normalizeNamedBookmarkEntry).filter(Boolean));
 }
 
 function setNamedBookmarks(bookmarks) {
-    const normalized = bookmarks
+    const normalized = dedupeNamedBookmarks(bookmarks
         .map(normalizeNamedBookmarkEntry)
-        .filter(Boolean)
+        .filter(Boolean))
         .sort((a, b) => a.messageNum - b.messageNum);
 
     chat_metadata.bookmarks = normalized;
@@ -237,10 +250,10 @@ async function showNamedBookmarkEditorPopup({ header, messageNum = '', title = '
                 return false;
             }
 
-    if (nextMessageNum >= getTotalChatMessages()) {
-        toastr.error('Message number does not exist', 'Bookmarks');
-        return false;
-    }
+            if (nextMessageNum >= getTotalChatMessages()) {
+                toastr.error('Message number does not exist', 'Bookmarks');
+                return false;
+            }
 
             if (!nextTitle) {
                 toastr.error('Title is required', 'Bookmarks');
@@ -1071,15 +1084,21 @@ function registerBookmarksSlashCommands() {
                 const normalizedBookmarks = parsed
                     .map(normalizeNamedBookmarkEntry)
                     .filter(Boolean);
-                const importedBookmarks = [...existingBookmarks, ...normalizedBookmarks]
+                const dedupedBookmarks = dedupeNamedBookmarks([...existingBookmarks, ...normalizedBookmarks]);
+                const importedBookmarks = dedupedBookmarks
                     .slice(0, MAX_NAMED_BOOKMARKS);
                 const invalidCount = parsed.length - normalizedBookmarks.length;
-                const truncatedCount = existingBookmarks.length + normalizedBookmarks.length - importedBookmarks.length;
+                const duplicateCount = existingBookmarks.length + normalizedBookmarks.length - dedupedBookmarks.length;
+                const truncatedCount = dedupedBookmarks.length - importedBookmarks.length;
 
                 setNamedBookmarks(importedBookmarks);
 
                 if (invalidCount > 0) {
                     toastr.warning(`${invalidCount} imported bookmark${invalidCount === 1 ? '' : 's'} ${invalidCount === 1 ? 'was' : 'were'} skipped due to invalid format.`, 'Bookmarks');
+                }
+
+                if (duplicateCount > 0) {
+                    toastr.warning(`${duplicateCount} duplicate bookmark${duplicateCount === 1 ? '' : 's'} ${duplicateCount === 1 ? 'was' : 'were'} skipped during import.`, 'Bookmarks');
                 }
 
                 if (truncatedCount > 0) {

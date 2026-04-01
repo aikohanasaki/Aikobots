@@ -247,10 +247,14 @@ import { initDomHandlers } from './scripts/dom-handlers.js';
 import { SimpleMutex } from './scripts/util/SimpleMutex.js';
 import { AudioPlayer } from './scripts/audio-player.js';
 
-async function debugServerAssemblyToPrompt(promptContext = null) {
+function requireAdminServerAssemblyDebugAccess() {
     if (!isAdmin()) {
         throw new Error('Server assembly debugging is only available to admins.');
     }
+}
+
+async function debugServerAssemblyToPrompt(promptContext = null) {
+    requireAdminServerAssemblyDebugAccess();
 
     const dump = await debugServerAssemblyDump(promptContext);
 
@@ -297,13 +301,13 @@ globalThis.SillyTavern = {
     getContext,
     debugServerAssembly: debugServerAssemblyToPrompt,
     getLastServerAssemblyDebugDump: () => {
-        if (!isAdmin()) {
-            throw new Error('Server assembly debugging is only available to admins.');
-        }
-
+        requireAdminServerAssemblyDebugAccess();
         return getLastServerAssemblyDebugDump();
     },
-    getLastServerDispatchSnapshot: async () => await fetchLastServerDispatchSnapshot(),
+    getLastServerDispatchSnapshot: async () => {
+        requireAdminServerAssemblyDebugAccess();
+        return fetchLastServerDispatchSnapshot();
+    },
 };
 
 export {
@@ -445,6 +449,26 @@ export let charDragDropHandler = null;
 let visibleChatStartId = null;
 let visibleChatEndId = null;
 export let chatDragDropHandler = null;
+let historyWindowNavigationQueue = Promise.resolve();
+let isRunningHistoryWindowNavigation = false;
+
+function serializeHistoryWindowNavigation(callback) {
+    if (isRunningHistoryWindowNavigation) {
+        return callback();
+    }
+
+    const run = historyWindowNavigationQueue.then(async () => {
+        isRunningHistoryWindowNavigation = true;
+        try {
+            return await callback();
+        } finally {
+            isRunningHistoryWindowNavigation = false;
+        }
+    });
+
+    historyWindowNavigationQueue = run.catch(() => {});
+    return run;
+}
 
 function getDefaultChatLoadState() {
     return {
@@ -1474,6 +1498,10 @@ export function isChatMessageLoaded(messageId) {
         return false;
     }
 
+    if (!isSplitTailChat() || isChatFullyHydrated()) {
+        return true;
+    }
+
     return chatLoadState.loadedRanges.some(range => normalizedMessageId >= range.start && normalizedMessageId <= range.end);
 }
 
@@ -1491,10 +1519,7 @@ function syncSplitTailStateAfterMutation() {
     chatLoadState.tailStartId = Math.min(chatLoadState.tailStartId, Math.max(0, getTotalChatMessages()));
     chatLoadState.headCount = chatLoadState.tailStartId;
     chatLoadState.tailCount = Math.max(0, getTotalChatMessages() - chatLoadState.tailStartId);
-
-    if (chatLoadState.tailStartId < previousTailStartId) {
-        setParentPromptCache(chatLoadState.parentPromptCache.slice(0, chatLoadState.tailStartId), chatLoadState.tailStartId);
-    }
+    syncParentPromptCacheForTailStartChange(chatLoadState.tailStartId, previousTailStartId);
 }
 
 function getDenseChatMessages(startId, endId) {
@@ -1518,6 +1543,34 @@ function setParentPromptCache(messages, tailStartId) {
         })
         : [];
     chatLoadState.parentPromptCacheTailStartId = normalizedTailStartId;
+}
+
+function syncParentPromptCacheForTailStartChange(nextTailStartId, previousTailStartId = chatLoadState.tailStartId) {
+    const normalizedPreviousTailStartId = Math.max(0, Number(previousTailStartId) || 0);
+    const normalizedNextTailStartId = Math.max(0, Number(nextTailStartId) || 0);
+
+    if (normalizedNextTailStartId === normalizedPreviousTailStartId) {
+        if (chatLoadState.parentPromptCacheTailStartId !== normalizedNextTailStartId) {
+            chatLoadState.parentPromptCacheTailStartId = normalizedNextTailStartId;
+        }
+        return;
+    }
+
+    if (normalizedNextTailStartId < normalizedPreviousTailStartId) {
+        setParentPromptCache(chatLoadState.parentPromptCache.slice(0, normalizedNextTailStartId), normalizedNextTailStartId);
+        return;
+    }
+
+    if (chatLoadState.parentPromptCacheTailStartId !== normalizedPreviousTailStartId) {
+        console.warn('Resident parent prompt cache is out of sync before tailStartId advancement.', {
+            cachedTailStartId: chatLoadState.parentPromptCacheTailStartId,
+            previousTailStartId: normalizedPreviousTailStartId,
+            nextTailStartId: normalizedNextTailStartId,
+        });
+    }
+
+    const promotedMessages = getDenseChatMessages(normalizedPreviousTailStartId, normalizedNextTailStartId - 1);
+    setParentPromptCache([...chatLoadState.parentPromptCache, ...promotedMessages], normalizedNextTailStartId);
 }
 
 function getLogicalChatForPromptAssembly() {
@@ -1644,34 +1697,38 @@ async function ensureChatRangeLoaded(startId, count = null) {
 }
 
 export async function returnToLiveTailView() {
-    if (!isSplitTailChat() || isChatFullyHydrated()) {
-        return;
-    }
+    return serializeHistoryWindowNavigation(async () => {
+        if (!isSplitTailChat() || isChatFullyHydrated()) {
+            return;
+        }
 
-    const count = getConfiguredLongChatDisplayCount();
-    const startId = Math.max(chatLoadState.tailStartId, chatLoadState.tailEndId - count + 1);
-    await ensureChatRangeLoaded(startId, count);
-    chatLoadState.currentView = 'tail';
-    await renderMessageWindow(startId, count);
-    scrollChatToBottom();
+        const count = getConfiguredLongChatDisplayCount();
+        const startId = Math.max(chatLoadState.tailStartId, chatLoadState.tailEndId - count + 1);
+        await ensureChatRangeLoaded(startId, count);
+        chatLoadState.currentView = 'tail';
+        await renderMessageWindow(startId, count);
+        scrollChatToBottom();
+    });
 }
 
 export async function hydrateCurrentChatForEditing() {
-    if (!isSplitTailChat() || isChatFullyHydrated()) {
+    return serializeHistoryWindowNavigation(async () => {
+        if (!isSplitTailChat() || isChatFullyHydrated()) {
+            return true;
+        }
+
+        const previousStartId = getFirstDisplayedMessageId();
+        const previousCount = Math.max(1, chatElement.find('.mes').length || getConfiguredChatWindowSize());
+        const response = await fetchChunkedChat({ hydrateFull: true, count: getTotalChatMessages() });
+        applyChunkedChatPayload(response, { replace: true, currentView: chatLoadState.currentView });
+        chatLoadState.isHydrated = true;
+
+        const renderStart = Number.isFinite(previousStartId)
+            ? clamp(previousStartId, 0, Math.max(0, getTotalChatMessages() - 1))
+            : Math.max(0, getTotalChatMessages() - previousCount);
+        await renderMessageWindow(renderStart, previousCount);
         return true;
-    }
-
-    const previousStartId = getFirstDisplayedMessageId();
-    const previousCount = Math.max(1, chatElement.find('.mes').length || getConfiguredChatWindowSize());
-    const response = await fetchChunkedChat({ hydrateFull: true, count: getTotalChatMessages() });
-    applyChunkedChatPayload(response, { replace: true, currentView: chatLoadState.currentView });
-    chatLoadState.isHydrated = true;
-
-    const renderStart = Number.isFinite(previousStartId)
-        ? clamp(previousStartId, 0, Math.max(0, getTotalChatMessages() - 1))
-        : Math.max(0, getTotalChatMessages() - previousCount);
-    await renderMessageWindow(renderStart, previousCount);
-    return true;
+    });
 }
 
 async function ensureMessageEditable(messageId, actionLabel = 'modify this message') {
@@ -1747,16 +1804,16 @@ function updateHistoryControls() {
     }
 
     if (isSplitTailChat() && !isChatFullyHydrated() && chatLoadState.currentView === 'history') {
-        chatElement.prepend(`<div id="${HYDRATE_CHAT_CONTROL_ID}" class="chat_history_button">Load full chat for editing</div>`);
-        chatElement.prepend(`<div id="${RETURN_TO_TAIL_CONTROL_ID}" class="chat_history_button">Return to live tail</div>`);
+        chatElement.prepend(`<button id="${HYDRATE_CHAT_CONTROL_ID}" type="button" class="chat_history_button">Load full chat for editing</button>`);
+        chatElement.prepend(`<button id="${RETURN_TO_TAIL_CONTROL_ID}" type="button" class="chat_history_button">Return to live tail</button>`);
     }
 
     if (visibleChatStartId > 0) {
-        chatElement.prepend(`<div id="${TOP_HISTORY_CONTROL_ID}" class="chat_history_button">Show more messages</div>`);
+        chatElement.prepend(`<button id="${TOP_HISTORY_CONTROL_ID}" type="button" class="chat_history_button">Show more messages</button>`);
     }
 
     if (visibleChatEndId < chat.length - 1) {
-        chatElement.append(`<div id="${BOTTOM_HISTORY_CONTROL_ID}" class="chat_history_button">Show newer messages</div>`);
+        chatElement.append(`<button id="${BOTTOM_HISTORY_CONTROL_ID}" type="button" class="chat_history_button">Show newer messages</button>`);
     }
 }
 
@@ -1769,146 +1826,154 @@ function finalizeRenderedMessageWindow() {
 }
 
 export async function renderMessageWindow(startId = 0, count = null) {
-    closeMessageEditor();
-    removeHistoryControls();
-    chatElement.children('.mes').remove();
+    return serializeHistoryWindowNavigation(async () => {
+        closeMessageEditor();
+        removeHistoryControls();
+        chatElement.children('.mes').remove();
 
-    if (!chat.length) {
-        setVisibleChatRange(null, null);
-        return;
-    }
-
-    const normalizedStartId = clamp(Number(startId) || 0, 0, Math.max(0, chat.length - 1));
-    const windowSize = getConfiguredChatWindowSize(count);
-    const endId = Math.min(chat.length - 1, normalizedStartId + windowSize - 1);
-
-    await ensureChatRangeLoaded(normalizedStartId, windowSize);
-
-    for (let i = normalizedStartId; i <= endId; i++) {
-        if (!chat[i]) {
-            continue;
+        if (!chat.length) {
+            setVisibleChatRange(null, null);
+            return;
         }
-        addOneMessage(chat[i], { scroll: false, forceId: i, showSwipes: false });
-    }
 
-    if (isSplitTailChat() && !isChatFullyHydrated()) {
-        chatLoadState.currentView = normalizedStartId < chatLoadState.tailStartId ? 'history' : 'tail';
-    }
+        const normalizedStartId = clamp(Number(startId) || 0, 0, Math.max(0, chat.length - 1));
+        const windowSize = getConfiguredChatWindowSize(count);
+        const endId = Math.min(chat.length - 1, normalizedStartId + windowSize - 1);
 
-    setVisibleChatRange(normalizedStartId, endId);
-    finalizeRenderedMessageWindow();
-    await eventSource.emit(event_types.MORE_MESSAGES_LOADED);
+        await ensureChatRangeLoaded(normalizedStartId, windowSize);
+
+        for (let i = normalizedStartId; i <= endId; i++) {
+            if (!chat[i]) {
+                continue;
+            }
+            addOneMessage(chat[i], { scroll: false, forceId: i, showSwipes: false });
+        }
+
+        if (isSplitTailChat() && !isChatFullyHydrated()) {
+            chatLoadState.currentView = normalizedStartId < chatLoadState.tailStartId ? 'history' : 'tail';
+        }
+
+        setVisibleChatRange(normalizedStartId, endId);
+        finalizeRenderedMessageWindow();
+        await eventSource.emit(event_types.MORE_MESSAGES_LOADED);
+    });
 }
 
 export async function jumpToMessageWindow(messageId, count = null) {
-    const normalizedMessageId = Number(messageId);
-    if (!Number.isFinite(normalizedMessageId) || normalizedMessageId < 0 || normalizedMessageId >= chat.length) {
-        return $();
-    }
+    return serializeHistoryWindowNavigation(async () => {
+        const normalizedMessageId = Number(messageId);
+        if (!Number.isFinite(normalizedMessageId) || normalizedMessageId < 0 || normalizedMessageId >= chat.length) {
+            return $();
+        }
 
-    const firstDisplayedMessageId = getFirstDisplayedMessageId();
-    const lastDisplayedMessageId = getLastDisplayedMessageId();
-    const isVisible = Number.isFinite(firstDisplayedMessageId)
-        && Number.isFinite(lastDisplayedMessageId)
-        && normalizedMessageId >= firstDisplayedMessageId
-        && normalizedMessageId <= lastDisplayedMessageId;
+        const firstDisplayedMessageId = getFirstDisplayedMessageId();
+        const lastDisplayedMessageId = getLastDisplayedMessageId();
+        const isVisible = Number.isFinite(firstDisplayedMessageId)
+            && Number.isFinite(lastDisplayedMessageId)
+            && normalizedMessageId >= firstDisplayedMessageId
+            && normalizedMessageId <= lastDisplayedMessageId;
 
-    if (!isVisible) {
-        const windowSize = getConfiguredChatWindowSize(count);
-        const startId = clamp(
-            normalizedMessageId - Math.floor(windowSize / 2),
-            0,
-            Math.max(0, chat.length - windowSize),
-        );
-        await ensureChatRangeLoaded(startId, windowSize);
-        await renderMessageWindow(startId, windowSize);
-    }
+        if (!isVisible) {
+            const windowSize = getConfiguredChatWindowSize(count);
+            const startId = clamp(
+                normalizedMessageId - Math.floor(windowSize / 2),
+                0,
+                Math.max(0, chat.length - windowSize),
+            );
+            await ensureChatRangeLoaded(startId, windowSize);
+            await renderMessageWindow(startId, windowSize);
+        }
 
-    return chatElement.find(`.mes[mesid="${normalizedMessageId}"]`);
+        return chatElement.find(`.mes[mesid="${normalizedMessageId}"]`);
+    });
 }
 
 export async function showMoreMessages(messagesToLoad = null) {
-    let messageId = getFirstDisplayedMessageId();
-    let count = getConfiguredChatWindowSize(messagesToLoad);
+    return serializeHistoryWindowNavigation(async () => {
+        let messageId = getFirstDisplayedMessageId();
+        let count = getConfiguredChatWindowSize(messagesToLoad);
 
-    if (!Number.isFinite(messageId)) {
-        messageId = getLastMessageId() + 1;
-    }
-
-    console.debug('Inserting messages before', messageId, 'count', count, 'chat length', chat.length);
-    const prevHeight = chatElement.prop('scrollHeight');
-    const isButtonInView = isElementInViewport($(`#${TOP_HISTORY_CONTROL_ID}`)[0]);
-    const anchorId = messageId >= chat.length ? null : messageId;
-    const loadStartId = Math.max(0, messageId - count);
-
-    await ensureChatRangeLoaded(loadStartId, count);
-
-    removeHistoryControls();
-
-    while (messageId > 0 && count > 0) {
-        const newMessageId = messageId - 1;
-        if (!chat[newMessageId]) {
-            break;
+        if (!Number.isFinite(messageId)) {
+            messageId = getLastMessageId() + 1;
         }
-        addOneMessage(chat[newMessageId], { insertBefore: anchorId, scroll: false, forceId: newMessageId, showSwipes: false });
-        count--;
-        messageId--;
-    }
 
-    if (chatElement.children('.mes').length > 0) {
-        setVisibleChatRange(messageId, getLastDisplayedMessageId() ?? messageId);
-    } else {
-        syncVisibleChatRangeFromDom();
-    }
+        console.debug('Inserting messages before', messageId, 'count', count, 'chat length', chat.length);
+        const prevHeight = chatElement.prop('scrollHeight');
+        const isButtonInView = isElementInViewport($(`#${TOP_HISTORY_CONTROL_ID}`)[0]);
+        const anchorId = messageId >= chat.length ? null : messageId;
+        const loadStartId = Math.max(0, messageId - count);
 
-    if (isSplitTailChat() && !isChatFullyHydrated()) {
-        chatLoadState.currentView = Number.isFinite(visibleChatStartId) && visibleChatStartId < chatLoadState.tailStartId ? 'history' : 'tail';
-    }
+        await ensureChatRangeLoaded(loadStartId, count);
 
-    if (isButtonInView) {
-        const newHeight = chatElement.prop('scrollHeight');
-        chatElement.scrollTop(newHeight - prevHeight);
-    }
+        removeHistoryControls();
 
-    finalizeRenderedMessageWindow();
-    await eventSource.emit(event_types.MORE_MESSAGES_LOADED);
+        while (messageId > 0 && count > 0) {
+            const newMessageId = messageId - 1;
+            if (!chat[newMessageId]) {
+                break;
+            }
+            addOneMessage(chat[newMessageId], { insertBefore: anchorId, scroll: false, forceId: newMessageId, showSwipes: false });
+            count--;
+            messageId--;
+        }
+
+        if (chatElement.children('.mes').length > 0) {
+            setVisibleChatRange(messageId, getLastDisplayedMessageId() ?? messageId);
+        } else {
+            syncVisibleChatRangeFromDom();
+        }
+
+        if (isSplitTailChat() && !isChatFullyHydrated()) {
+            chatLoadState.currentView = Number.isFinite(visibleChatStartId) && visibleChatStartId < chatLoadState.tailStartId ? 'history' : 'tail';
+        }
+
+        if (isButtonInView) {
+            const newHeight = chatElement.prop('scrollHeight');
+            chatElement.scrollTop(newHeight - prevHeight);
+        }
+
+        finalizeRenderedMessageWindow();
+        await eventSource.emit(event_types.MORE_MESSAGES_LOADED);
+    });
 }
 
 export async function showNewerMessages(messagesToLoad = null) {
-    let messageId = getLastDisplayedMessageId();
-    let count = getConfiguredChatWindowSize(messagesToLoad);
+    return serializeHistoryWindowNavigation(async () => {
+        let messageId = getLastDisplayedMessageId();
+        let count = getConfiguredChatWindowSize(messagesToLoad);
 
-    if (!Number.isFinite(messageId)) {
-        await renderMessageWindow(Math.max(0, chat.length - count), count);
-        return;
-    }
-
-    removeHistoryControls();
-
-    await ensureChatRangeLoaded(messageId + 1, count);
-
-    while (messageId < chat.length - 1 && count > 0) {
-        const newMessageId = messageId + 1;
-        if (!chat[newMessageId]) {
-            break;
+        if (!Number.isFinite(messageId)) {
+            await renderMessageWindow(Math.max(0, chat.length - count), count);
+            return;
         }
-        addOneMessage(chat[newMessageId], { scroll: false, forceId: newMessageId, showSwipes: false });
-        count--;
-        messageId++;
-    }
 
-    if (chatElement.children('.mes').length > 0) {
-        setVisibleChatRange(getFirstDisplayedMessageId() ?? messageId, messageId);
-    } else {
-        syncVisibleChatRangeFromDom();
-    }
+        removeHistoryControls();
 
-    if (isSplitTailChat() && !isChatFullyHydrated()) {
-        chatLoadState.currentView = Number.isFinite(visibleChatStartId) && visibleChatStartId < chatLoadState.tailStartId ? 'history' : 'tail';
-    }
+        await ensureChatRangeLoaded(messageId + 1, count);
 
-    finalizeRenderedMessageWindow();
-    await eventSource.emit(event_types.MORE_MESSAGES_LOADED);
+        while (messageId < chat.length - 1 && count > 0) {
+            const newMessageId = messageId + 1;
+            if (!chat[newMessageId]) {
+                break;
+            }
+            addOneMessage(chat[newMessageId], { scroll: false, forceId: newMessageId, showSwipes: false });
+            count--;
+            messageId++;
+        }
+
+        if (chatElement.children('.mes').length > 0) {
+            setVisibleChatRange(getFirstDisplayedMessageId() ?? messageId, messageId);
+        } else {
+            syncVisibleChatRangeFromDom();
+        }
+
+        if (isSplitTailChat() && !isChatFullyHydrated()) {
+            chatLoadState.currentView = Number.isFinite(visibleChatStartId) && visibleChatStartId < chatLoadState.tailStartId ? 'history' : 'tail';
+        }
+
+        finalizeRenderedMessageWindow();
+        await eventSource.emit(event_types.MORE_MESSAGES_LOADED);
+    });
 }
 
 export async function printMessages() {
@@ -7185,6 +7250,8 @@ export async function saveChat({ chatName, withMetadata, mesId, force = false } 
         [chatName, withMetadata, mesId, force] = arguments;
     }
 
+    const normalizedMesId = Number.isInteger(Number(mesId)) ? Number(mesId) : undefined;
+
     const metadata = { ...chat_metadata, ...(withMetadata || {}) };
     const fileName = chatName ?? characters[this_chid]?.chat;
 
@@ -7206,19 +7273,23 @@ export async function saveChat({ chatName, withMetadata, mesId, force = false } 
         }
     });
 
+    if (normalizedMesId !== undefined && isSplitTailChat() && !isChatFullyHydrated()) {
+        await hydrateCurrentChatForEditing();
+    }
+
     let trimmedChat = [];
     let saveMode = undefined;
     let absoluteStartId = undefined;
 
-    if (isSplitTailChat() && !isChatFullyHydrated() && chatName === undefined && mesId === undefined) {
+    if (isSplitTailChat() && !isChatFullyHydrated() && chatName === undefined && normalizedMesId === undefined) {
         absoluteStartId = chatLoadState.tailStartId;
         trimmedChat = getDenseChatMessages(absoluteStartId, getTotalChatMessages() - 1);
         saveMode = 'tail';
     } else {
-        const denseChat = getDenseChatMessages(0, getTotalChatMessages() - 1);
-        trimmedChat = (mesId !== undefined && mesId >= 0 && mesId < denseChat.length)
-            ? denseChat.slice(0, Number(mesId) + 1)
-            : denseChat;
+        const endId = normalizedMesId !== undefined
+            ? Math.min(normalizedMesId, getTotalChatMessages() - 1)
+            : getTotalChatMessages() - 1;
+        trimmedChat = getDenseChatMessages(0, endId);
     }
 
     const chatToSave = [{
@@ -7256,6 +7327,7 @@ export async function saveChat({ chatName, withMetadata, mesId, force = false } 
                     await printMessages();
                     scrollChatToBottom();
                 } else {
+                    const previousTailStartId = chatLoadState.tailStartId;
                     chatLoadState.storageMode = responseData?.storage_mode === CHAT_STORAGE_MODE_SPLIT_TAIL
                         ? CHAT_STORAGE_MODE_SPLIT_TAIL
                         : chatLoadState.storageMode;
@@ -7271,6 +7343,7 @@ export async function saveChat({ chatName, withMetadata, mesId, force = false } 
                     if (Number.isInteger(responseData?.tailCount)) {
                         chatLoadState.tailCount = responseData.tailCount;
                     }
+                    syncParentPromptCacheForTailStartChange(chatLoadState.tailStartId, previousTailStartId);
                 }
             }
             return;
@@ -7470,9 +7543,7 @@ export async function getChat() {
             chat_create_date = header?.create_date ?? humanizedDateTime();
             chat_metadata = header?.chat_metadata ?? {};
         } else {
-            chat.length = 0;
-            resetChatLoadState();
-            chat_create_date = humanizedDateTime();
+            throw new Error('Unexpected chunked chat payload');
         }
         if (!chat_metadata['integrity']) {
             chat_metadata['integrity'] = uuidv4();
@@ -7488,8 +7559,9 @@ export async function getChat() {
             $('#send_textarea').trigger('click').trigger('focus');
         }, 200);
     } catch (error) {
-        await getChatResult();
-        console.log(error);
+        console.error('Failed to load chat', error);
+        toastr.error(t`Could not load this chat.`, t`Chat load failed`);
+        return;
     }
 }
 
@@ -9168,14 +9240,6 @@ async function openCharacterWorldPopup() {
     const secureSelectedExtraBooks = canEditLoreLinks
         ? selectedExtraBooks.filter(item => secureWorldNameSet.has(item))
         : selectedExtraBooks.filter(Boolean).filter(onlyUnique);
-
-    if (canEditLoreLinks && secureSelectedExtraBooks.length !== selectedExtraBooks.length) {
-        if (menu_type == 'create') {
-            create_save.extra_books = secureSelectedExtraBooks;
-        } else {
-            charSetAuxWorlds(fileName, secureSelectedExtraBooks);
-        }
-    }
 
     const extraBookOptions = canEditLoreLinks ? secureWorldNames : secureSelectedExtraBooks;
     extraBookOptions.forEach((item, i) => {
@@ -11515,9 +11579,11 @@ jQuery(async function () {
             return;
         }
 
-        const saved = await createOrEditCharacter();
-        if (!saved) {
-            return;
+        if (canEditCharacterMetadata(this_chid)) {
+            const saved = await createOrEditCharacter();
+            if (!saved) {
+                return;
+            }
         }
 
         await submitSelectedCharacterForReview(characters[this_chid]);
@@ -12062,16 +12128,16 @@ jQuery(async function () {
         $('#avatar-and-name-block').slideToggle();
     });
 
-    $(document).on('mouseup touchend', '#show_more_messages', async function () {
+    $(document).on('click', '#show_more_messages', async function () {
         await showMoreMessages();
     });
-    $(document).on('mouseup touchend', '#show_newer_messages', async function () {
+    $(document).on('click', '#show_newer_messages', async function () {
         await showNewerMessages();
     });
-    $(document).on('mouseup touchend', `#${RETURN_TO_TAIL_CONTROL_ID}`, async function () {
+    $(document).on('click', `#${RETURN_TO_TAIL_CONTROL_ID}`, async function () {
         await returnToLiveTailView();
     });
-    $(document).on('mouseup touchend', `#${HYDRATE_CHAT_CONTROL_ID}`, async function () {
+    $(document).on('click', `#${HYDRATE_CHAT_CONTROL_ID}`, async function () {
         await hydrateCurrentChatForEditing();
     });
 

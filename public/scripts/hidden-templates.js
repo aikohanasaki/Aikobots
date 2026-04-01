@@ -9,6 +9,9 @@ import { eventSource, event_types, getRequestHeaders, characters, this_chid } fr
 let hiddenTemplatesPanel = null;
 let panelRefreshTimer = null;
 let panelEventsBound = false;
+let hiddenTemplatesPanelRefreshPromise = null;
+let hiddenTemplatesPanelRefreshPending = false;
+let hiddenTemplatesPanelRefreshPendingQuiet = true;
 
 function compareStrings(a, b) {
     return String(a).localeCompare(String(b));
@@ -252,31 +255,51 @@ function setPanelBusy(panel, isBusy) {
     panel.busy = isBusy;
     panel.root.find('button, select').prop('disabled', isBusy);
     panel.root.find('select').each((_, element) => syncSelect2($(element)));
+
+    if (!isBusy && panel === hiddenTemplatesPanel && hiddenTemplatesPanelRefreshPending) {
+        void maybeRunHiddenTemplatesPanelRefresh();
+    }
 }
 
-async function postJson(url, body) {
-    const response = await fetch(url, {
-        method: 'POST',
-        headers: getRequestHeaders(),
-        ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
-    });
+async function postJson(url, body, timeoutMs = 30000) {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(new Error(`Request timed out after ${timeoutMs}ms.`)), timeoutMs);
 
-    const text = await response.text();
-    let parsed = null;
+    try {
+        const response = await fetch(url, {
+            method: 'POST',
+            headers: getRequestHeaders(),
+            ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
+            signal: controller.signal,
+        });
 
-    if (text) {
-        try {
-            parsed = JSON.parse(text);
-        } catch {
-            parsed = null;
+        const text = await response.text();
+        let parsed = null;
+
+        if (text) {
+            try {
+                parsed = JSON.parse(text);
+            } catch {
+                parsed = null;
+            }
         }
-    }
 
-    if (!response.ok) {
-        throw new Error(parsed?.error?.message || parsed?.message || text || response.statusText);
-    }
+        if (!response.ok) {
+            throw new Error(parsed?.error?.message || parsed?.message || text || response.statusText);
+        }
 
-    return parsed;
+        return parsed;
+    } catch (error) {
+        if (controller.signal.aborted) {
+            throw controller.signal.reason instanceof Error
+                ? controller.signal.reason
+                : new Error(`Request timed out after ${timeoutMs}ms.`);
+        }
+
+        throw error;
+    } finally {
+        clearTimeout(timeoutId);
+    }
 }
 
 async function fetchTemplateSource() {
@@ -400,7 +423,7 @@ async function compileSource(panel) {
     setPanelStatus(panel, message);
 }
 
-async function refreshHiddenTemplatesPanel({ quiet = false } = {}) {
+async function runHiddenTemplatesPanelRefresh({ quiet = false } = {}) {
     if (!hiddenTemplatesPanel) {
         return;
     }
@@ -435,6 +458,35 @@ async function refreshHiddenTemplatesPanel({ quiet = false } = {}) {
     }
 }
 
+async function maybeRunHiddenTemplatesPanelRefresh() {
+    if (!hiddenTemplatesPanel || hiddenTemplatesPanelRefreshPromise || hiddenTemplatesPanel.busy || !hiddenTemplatesPanelRefreshPending) {
+        return;
+    }
+
+    while (hiddenTemplatesPanel && hiddenTemplatesPanelRefreshPending && !hiddenTemplatesPanel.busy) {
+        const quiet = hiddenTemplatesPanelRefreshPendingQuiet;
+        hiddenTemplatesPanelRefreshPending = false;
+        hiddenTemplatesPanelRefreshPendingQuiet = true;
+        hiddenTemplatesPanelRefreshPromise = runHiddenTemplatesPanelRefresh({ quiet });
+
+        try {
+            await hiddenTemplatesPanelRefreshPromise;
+        } finally {
+            hiddenTemplatesPanelRefreshPromise = null;
+        }
+    }
+}
+
+async function refreshHiddenTemplatesPanel({ quiet = false } = {}) {
+    if (!hiddenTemplatesPanel) {
+        return;
+    }
+
+    hiddenTemplatesPanelRefreshPending = true;
+    hiddenTemplatesPanelRefreshPendingQuiet &&= quiet;
+    await maybeRunHiddenTemplatesPanelRefresh();
+}
+
 function scheduleHiddenTemplatesPanelRefresh() {
     if (!hiddenTemplatesPanel) {
         return;
@@ -452,10 +504,6 @@ function bindHiddenTemplatesPanelEvents(panel) {
     });
 
     panel.refreshButton.on('click', async () => {
-        if (panel.busy) {
-            return;
-        }
-
         await refreshHiddenTemplatesPanel();
     });
 

@@ -346,9 +346,9 @@ async function postSetupTasks(result) {
         }
     }
 
-    setWindowTitle('SillyTavern WebServer');
+    setWindowTitle('Aikobots WebServer');
 
-    let logListen = 'SillyTavern is listening on';
+    let logListen = 'Aikobots is listening on';
 
     if (result.useIPv6 && !result.v6Failed) {
         logListen += color.green(
@@ -362,7 +362,7 @@ async function postSetupTasks(result) {
         );
     }
 
-    const goToLog = `Go to: ${color.blue(browserLaunchUrl)} to open SillyTavern`;
+    const goToLog = `Go to: ${color.blue(browserLaunchUrl)} to open Aikobots`;
     const plainGoToLog = removeColorFormatting(goToLog);
 
     console.log(logListen);

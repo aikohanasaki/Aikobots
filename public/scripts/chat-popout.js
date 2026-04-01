@@ -214,6 +214,10 @@ function buildChatPopoutHtml(chatHtml) {
                     messageText.focus();
 
                     const selection = window.getSelection();
+                    if (!selection) {
+                        return;
+                    }
+
                     const range = document.createRange();
                     range.selectNodeContents(messageText);
                     range.collapse(false);
