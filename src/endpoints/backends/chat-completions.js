@@ -1471,6 +1471,29 @@ function getPromptAssemblyErrorStatus(error) {
     return 500;
 }
 
+function rewriteSystemMessagesForO1Model(model, chatCompletionSource, messages) {
+    const normalizedModel = String(model || '');
+    const normalizedSource = String(chatCompletionSource || '');
+    if (
+        !normalizedModel.startsWith('o1') ||
+        ![
+            CHAT_COMPLETION_SOURCES.OPENAI,
+            CHAT_COMPLETION_SOURCES.AZURE_OPENAI,
+        ].includes(normalizedSource) ||
+        !Array.isArray(messages)
+    ) {
+        return messages;
+    }
+
+    for (const message of messages) {
+        if (message?.role === 'system') {
+            message.role = 'user';
+        }
+    }
+
+    return messages;
+}
+
 function clonePromptDispatchSnapshot(snapshot) {
     return snapshot && typeof snapshot === 'object'
         ? structuredClone(snapshot)
@@ -2131,6 +2154,7 @@ router.post('/generate', function (request, response) {
         request.body.prompt_context.includeItemization = true;
         await prepareServerPromptContext(request.user, request.user.directories, request.body.prompt_context);
         const assembled = await assembleChatCompletionPrompt(request.body.prompt_context);
+        rewriteSystemMessagesForO1Model(request.body.prompt_context.model, request.body.prompt_context.chatCompletionSource, assembled.chat);
         request.body.messages = assembled.chat;
         response.setHeader('X-ST-Messages-Count', String(Number(assembled.messagesCount) || 0));
         assembledTimedWorldInfo = assembled.timedWorldInfo;
@@ -2150,6 +2174,8 @@ router.post('/generate', function (request, response) {
             postProcessingType,
             getPromptNames(request));
     }
+
+    rewriteSystemMessagesForO1Model(request.body.model, request.body.chat_completion_source, request.body.messages);
 
     switch (request.body.chat_completion_source) {
         case CHAT_COMPLETION_SOURCES.CLAUDE: return sendClaudeRequest(request, response);
@@ -2568,6 +2594,7 @@ router.post('/assemble', async function (request, response) {
 
         await prepareServerPromptContext(request.user, request.user.directories, request.body);
         const result = await assembleChatCompletionPrompt(request.body);
+        rewriteSystemMessagesForO1Model(request.body.model, request.body.chatCompletionSource, result.chat);
         return response.send(attachWorldInfoResponseData(result, result.timedWorldInfo, result.worldInfoOverflowed));
     } catch (error) {
         console.error('Chat completion assembly failed', error);
@@ -2583,6 +2610,7 @@ router.post('/assemble/compare', async function (request, response) {
 
         await prepareServerPromptContext(request.user, request.user.directories, request.body);
         const result = await assembleChatCompletionPrompt(request.body);
+        rewriteSystemMessagesForO1Model(request.body.model, request.body.chatCompletionSource, result.chat);
         const comparison = compareChatCompletionMessages(request.body.clientChat || [], result.chat, {
             maxDifferences: request.body.maxDifferences,
         });

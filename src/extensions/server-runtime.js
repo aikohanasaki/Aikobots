@@ -312,10 +312,7 @@ function buildOpenAIMessagesFromCoreChat(promptContext) {
         content = content.replace(/\r/gm, '');
 
         if (role === 'user' && wrapInQuotes) {
-            const alreadyQuoted = content.startsWith('"') && content.endsWith('"');
-            if (!alreadyQuoted) {
-                content = `"${content}"`;
-            }
+            content = `"${content}"`;
         }
 
         const media = item.extra?.media;

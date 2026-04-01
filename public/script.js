@@ -3782,9 +3782,12 @@ export function getCharacterCardFields({ chid = null } = {}) {
         return result;
     }
 
-    const scenarioText = chat_metadata['scenario'] || character.scenario || '';
-    const exampleDialog = chat_metadata['mes_example'] || character.mes_example || '';
-    const systemPrompt = chat_metadata['system_prompt'] || character.data?.system_prompt || '';
+    const hasChatScenarioOverride = Object.prototype.hasOwnProperty.call(chat_metadata, 'scenario');
+    const hasChatExamplesOverride = Object.prototype.hasOwnProperty.call(chat_metadata, 'mes_example');
+    const hasChatSystemPromptOverride = Object.prototype.hasOwnProperty.call(chat_metadata, 'system_prompt');
+    const scenarioText = hasChatScenarioOverride ? String(chat_metadata['scenario'] ?? '') : (character.scenario || '');
+    const exampleDialog = hasChatExamplesOverride ? String(chat_metadata['mes_example'] ?? '') : (character.mes_example || '');
+    const systemPrompt = hasChatSystemPromptOverride ? String(chat_metadata['system_prompt'] ?? '') : (character.data?.system_prompt || '');
 
     result.description = baseChatReplace(character.description?.trim(), name1, name2);
     result.personality = baseChatReplace(character.personality?.trim(), name1, name2);

@@ -1865,6 +1865,10 @@ async function sendOpenAIRequest(type, messages, signal, { jsonSchema = null } =
     const useLogprobs = !!power_user.request_token_probabilities;
     const canMultiSwipe = oai_settings.n > 1 && !isContinue && !isImpersonate && !isQuiet && (isOAI || isAzureOpenAI || isCustom || isXAI || isAimlapi || isMoonshot);
 
+    if (canMultiSwipe && promptContext && typeof promptContext === 'object') {
+        delete promptContext.toolBudgetData;
+    }
+
     if (isCustom && isVoidaiAppUrl(oai_settings.custom_url)) {
         toastr.error(t`The domain voidai.app is blocked as a custom API endpoint.`);
         throw new Error('Blocked custom endpoint (voidai.app).');

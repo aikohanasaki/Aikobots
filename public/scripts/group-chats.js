@@ -520,8 +520,10 @@ export function getGroupCharacterCards(groupId, characterId) {
         return `${prefix}${value}${suffix}`;
     }
 
-    const scenarioOverride = String(chat_metadata['scenario'] || '');
-    const mesExamplesOverride = String(chat_metadata['mes_example'] || '');
+    const hasScenarioOverride = Object.prototype.hasOwnProperty.call(chat_metadata, 'scenario');
+    const hasMesExamplesOverride = Object.prototype.hasOwnProperty.call(chat_metadata, 'mes_example');
+    const scenarioOverride = hasScenarioOverride ? String(chat_metadata['scenario'] ?? '') : '';
+    const mesExamplesOverride = hasMesExamplesOverride ? String(chat_metadata['mes_example'] ?? '') : '';
 
     let descriptions = [];
     let personalities = [];
@@ -549,8 +551,12 @@ export function getGroupCharacterCards(groupId, characterId) {
 
     const description = descriptions.filter(x => x.length).join('\n');
     const personality = personalities.filter(x => x.length).join('\n');
-    const scenario = baseChatReplace(scenarioOverride?.trim(), name1, name2) || scenarios.filter(x => x.length).join('\n');
-    const mesExamples = baseChatReplace(mesExamplesOverride?.trim(), name1, name2) || mesExamplesArray.filter(x => x.length).join('\n');
+    const scenario = hasScenarioOverride
+        ? baseChatReplace(scenarioOverride.trim(), name1, name2)
+        : scenarios.filter(x => x.length).join('\n');
+    const mesExamples = hasMesExamplesOverride
+        ? baseChatReplace(mesExamplesOverride.trim(), name1, name2)
+        : mesExamplesArray.filter(x => x.length).join('\n');
 
     return { description, personality, scenario, mesExamples };
 }
