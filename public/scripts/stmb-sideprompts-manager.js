@@ -79,6 +79,50 @@ function validateSidePromptsFileV2(data) {
     return true;
 }
 
+function looksLikeV1SidePrompts(data) {
+    if (!data || typeof data !== 'object' || !data.prompts || typeof data.prompts !== 'object') {
+        return false;
+    }
+    return Object.values(data.prompts).some(prompt => prompt && typeof prompt === 'object' && 'type' in prompt && !('triggers' in prompt));
+}
+
+function migrateV1toV2(data) {
+    const migrated = {
+        version: 2,
+        prompts: {},
+    };
+    const createdAt = nowIso();
+
+    for (const [key, prompt] of Object.entries(data.prompts || {})) {
+        const type = String(prompt?.type || '').toLowerCase();
+        const next = {
+            key,
+            name: String(prompt?.name || 'Untitled Side Prompt'),
+            enabled: Boolean(prompt?.enabled),
+            prompt: String(prompt?.prompt ?? ''),
+            responseFormat: String(prompt?.responseFormat ?? ''),
+            settings: { ...(prompt?.settings || {}) },
+            triggers: { commands: ['sideprompt'] },
+            createdAt: String(prompt?.createdAt || createdAt),
+            updatedAt: createdAt,
+        };
+
+        if (type === 'tracker') {
+            const visibleMessages = Math.max(1, Number(prompt?.settings?.intervalVisibleMessages ?? 50));
+            next.triggers.onInterval = { visibleMessages };
+        } else if (type === 'plotpoints') {
+            next.triggers.onAfterMemory = { enabled: true };
+        } else if (type === 'scoreboard' && prompt?.settings?.withMemories) {
+            next.triggers.onAfterMemory = { enabled: true };
+        }
+
+        normalizeTemplateTriggers(next);
+        migrated.prompts[key] = next;
+    }
+
+    return migrated;
+}
+
 function getBuiltinTemplates() {
     const createdAt = nowIso();
     const prompts = {};
@@ -221,7 +265,10 @@ export async function loadSidePrompts() {
         } else {
             const text = await response.text();
             const parsed = JSON.parse(text);
-            if (!validateSidePromptsFileV2(parsed)) {
+            if (looksLikeV1SidePrompts(parsed)) {
+                data = migrateV1toV2(parsed);
+                await saveDoc(data);
+            } else if (!validateSidePromptsFileV2(parsed)) {
                 data = createBaseDoc();
                 await saveDoc(data);
             } else {
@@ -251,6 +298,11 @@ export async function listTemplates() {
         return rightUpdated.localeCompare(leftUpdated);
     });
     return templates;
+}
+
+export async function getTemplate(key) {
+    const data = await loadSidePrompts();
+    return data.prompts?.[String(key || '')] || null;
 }
 
 export async function findTemplateByName(name) {
@@ -328,6 +380,124 @@ export async function upsertTemplate(input) {
     data.prompts[key] = next;
     await saveDoc(data);
     return key;
+}
+
+export async function duplicateTemplate(sourceKey) {
+    const data = await loadSidePrompts();
+    const source = data.prompts?.[String(sourceKey || '')];
+    if (!source) {
+        throw new Error(`Template "${sourceKey}" not found`);
+    }
+
+    const copyName = `${source.name} (Copy)`;
+    let key = safeSlug(copyName);
+    let suffix = 2;
+    while (data.prompts[key]) {
+        key = safeSlug(`${copyName} ${suffix}`);
+        suffix++;
+    }
+
+    const timestamp = nowIso();
+    data.prompts[key] = {
+        ...source,
+        key,
+        name: copyName,
+        createdAt: timestamp,
+        updatedAt: timestamp,
+    };
+    await saveDoc(data);
+    return key;
+}
+
+export async function removeTemplate(key) {
+    const data = await loadSidePrompts();
+    const normalizedKey = String(key || '').trim();
+    if (!data.prompts[normalizedKey]) {
+        throw new Error(`Template "${normalizedKey}" not found`);
+    }
+    delete data.prompts[normalizedKey];
+    await saveDoc(data);
+}
+
+export async function exportSidePromptsJson() {
+    const data = await loadSidePrompts();
+    return JSON.stringify(data, null, 2);
+}
+
+export async function importSidePromptsJson(text) {
+    const parsed = JSON.parse(String(text || '{}'));
+    let incoming = null;
+    if (validateSidePromptsFileV2(parsed)) {
+        incoming = parsed;
+    } else if (looksLikeV1SidePrompts(parsed)) {
+        incoming = migrateV1toV2(parsed);
+    } else {
+        throw new Error('Invalid side prompts file structure');
+    }
+
+    const existing = await loadSidePrompts();
+    const merged = {
+        version: Math.max(2, Number(existing.version ?? 2), Number(incoming.version ?? 2)),
+        prompts: { ...(existing.prompts || {}) },
+    };
+
+    let added = 0;
+    let renamed = 0;
+    const strippedDetails = [];
+    for (const [key, prompt] of Object.entries(incoming.prompts || {})) {
+        const desiredKey = String(key || '').trim();
+        const baseName = String(prompt?.name || desiredKey || 'Untitled Side Prompt');
+        let nextKey = desiredKey || safeSlug(baseName);
+        let suffix = 2;
+        while (merged.prompts[nextKey]) {
+            nextKey = safeSlug(`${baseName} ${suffix}`);
+            suffix++;
+        }
+        if (nextKey !== desiredKey) {
+            renamed++;
+        }
+
+        const next = {
+            key: nextKey,
+            name: baseName,
+            enabled: Boolean(prompt?.enabled),
+            prompt: String(prompt?.prompt ?? ''),
+            responseFormat: String(prompt?.responseFormat ?? ''),
+            settings: { ...(prompt?.settings || {}) },
+            triggers: prompt?.triggers ? { ...prompt.triggers } : { commands: ['sideprompt'] },
+            createdAt: String(prompt?.createdAt || nowIso()),
+            updatedAt: nowIso(),
+        };
+        const { strippedAutoTriggers } = normalizeTemplateTriggers(next);
+        if (strippedAutoTriggers.length > 0) {
+            strippedDetails.push({
+                name: next.name,
+                triggers: strippedAutoTriggers,
+            });
+        }
+        merged.prompts[nextKey] = next;
+        added++;
+    }
+
+    await saveDoc(merged);
+    return { added, renamed, strippedDetails };
+}
+
+export async function recreateBuiltInSidePrompts(mode = 'overwrite') {
+    const data = await loadSidePrompts();
+    const builtins = getBuiltinTemplates();
+    if (mode !== 'overwrite') {
+        throw new Error('Only overwrite mode is supported');
+    }
+
+    let replaced = 0;
+    for (const [key, prompt] of Object.entries(builtins)) {
+        data.prompts[key] = prompt;
+        replaced++;
+    }
+
+    await saveDoc(data);
+    return { replaced };
 }
 
 export async function listByTrigger(kind) {

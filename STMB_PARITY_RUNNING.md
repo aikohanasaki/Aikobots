@@ -8,14 +8,14 @@ This file is updated subsystem by subsystem during the audit. Only sections that
 
 | Item | Status | Note |
 | --- | --- | --- |
-| Settings defaults match STMB exactly. | Partial | Raw defaults and builtin profile initialization were aligned, but Aikobots still persists prompt preset storage in settings unlike STMB's manager/file flow. |
-| Settings migration/import is idempotent. | Partial | Builtin `current_st` invariants, duplicate builtin cleanup, and legacy dynamic migration are now normalized; full import/export parity still needs CRUD/UI verification. |
-| Profile CRUD behavior matches STMB. | Partial | Core profile normalization is closer, but popup-driven CRUD parity is not audited yet. |
+| Settings defaults match STMB exactly. | Partial | Raw defaults and builtin profile initialization were aligned, and summary prompts are now file-backed with legacy migration support; remaining settings-surface differences still need verification. |
+| Settings migration/import is idempotent. | Partial | Builtin `current_st` invariants, duplicate builtin cleanup, legacy dynamic migration, and summary prompt first-run migration are now normalized; broader runtime verification is still pending. |
+| Profile CRUD behavior matches STMB. | Partial | New/edit/delete/export/import are now wired into the settings popup with builtin-profile protections, but the full reference profile manager surface and prompt-manager integration are still narrower locally. |
 | `current_st` / dynamic profile behavior matches STMB. | Partial | Builtin profile invariants now match STMB normalization; advanced popup/runtime override surfaces still need verification. |
-| Custom/full-manual profile behavior matches STMB. | Partial | Connection override shaping exists; edit/create popup flow parity remains open. |
-| Provider/model/temperature/endpoint/apiKey overrides match STMB. | Partial | Core override shaping is present; end-to-end profile edit/runtime parity still needs direct comparison. |
-| Regex selection behavior matches STMB. | Partial | Memory flow now applies selected outgoing/incoming regex in STMB order; end-to-end verification is still pending. |
-| Lorebook routing/manual mode behavior matches STMB. | Partial | Silent manual-mode fallback to chat-bound lorebook was removed; lorebook selection popup parity is still missing. |
+| Custom/full-manual profile behavior matches STMB. | Partial | Connection override shaping exists, and profile edit/create now exposes provider/model/endpoint/apiKey fields; broader runtime parity still needs direct comparison. |
+| Provider/model/temperature/endpoint/apiKey overrides match STMB. | Partial | Core override shaping is present, the main settings popup now exposes these fields through profile CRUD, and STMB's max-token override is now reapplied in memory/summary/sideprompt generation; end-to-end runtime parity still needs direct comparison. |
+| Regex selection behavior matches STMB. | Partial | Memory flow now applies selected outgoing/incoming regex in STMB order, and the settings UI now uses a dedicated regex selection popup closer to STMB; full manager parity is still pending. |
+| Lorebook routing/manual mode behavior matches STMB. | Partial | Silent manual-mode fallback to chat-bound lorebook was removed, and missing/unbound lorebooks now enter a recovery popup flow closer to STMB; the popup now exposes manual lorebook controls, but the full reference flow is still broader. |
 
 ## 2. Scene System
 
@@ -23,8 +23,8 @@ This file is updated subsystem by subsystem during the audit. Only sections that
 | --- | --- | --- |
 | Scene marker placement/removal matches STMB. | Exact | Local toggle logic matches STMB's `calculateNewSceneState` semantics. |
 | Start/end marker validation matches STMB. | Exact | Validation and single-message scene allowance match STMB. |
-| `scenememory` behavior matches STMB. | Partial | Main range parsing and scene-set messaging were tightened; full parity still needs deeper command/runtime verification. |
-| `nextmemory` behavior matches STMB. | Partial | Empty-chat and no-new-message surface text now matches STMB more closely; lorebook validation and busy-state flow still need checking. |
+| `scenememory` behavior matches STMB. | Partial | Main range parsing, deterministic validation, and scene-set messaging now match STMB more closely; final runtime verification is still pending. |
+| `nextmemory` behavior matches STMB. | Partial | Empty-chat, no-new-message, lorebook preflight, and busy-state surfaces are now closer to STMB; final runtime verification is still pending. |
 | Deleted-message handling shifts markers exactly like STMB. | Partial | Core shift logic is aligned; notification behavior and full regression coverage remain open. |
 | Highest processed message tracking matches STMB. | Partial | Runtime tracking exists; slash-surface and deletion edge cases still need final verification. |
 | Group chat behavior matches STMB. | Partial | State now resolves from active chat context and uses group names for scene requests; full group-chat parity remains to be verified. |
@@ -34,7 +34,7 @@ This file is updated subsystem by subsystem during the audit. Only sections that
 
 | Item | Status | Note |
 | --- | --- | --- |
-| Prompt preset bodies match STMB exactly. | Partial | Built-in prompt content appears aligned, but prompt-manager storage architecture still differs. |
+| Prompt preset bodies match STMB exactly. | Partial | Built-in prompt content appears aligned, and summary prompts are now loaded from a dedicated file-backed manager with legacy migration; browser/runtime verification is still pending. |
 | Prompt selection/custom prompt override behavior matches STMB. | Partial | Preset vs custom prompt precedence exists; popup-driven flow parity still needs audit. |
 | Scene compilation input matches STMB. | Partial | Prompt assembly now uses STMB-style transcript formatting; further verification is needed. |
 | Previous-memory context behavior matches STMB. | Partial | Prompt assembly now includes STMB-style previous scene context blocks and keywords; end-to-end verification is still pending. |
@@ -65,8 +65,8 @@ This file is updated subsystem by subsystem during the audit. Only sections that
 | Order calculation matches STMB. | Partial | Core order logic is aligned, but end-to-end persistence still needs more regression checks. |
 | Metadata roundtrip matches STMB. | Partial | Extra memory-only `STMB_*` fields were removed; remaining roundtrip behavior still needs summary/side-prompt review. |
 | `STMemoryBooks` / `stmemorybooks` / scene range / tracker metadata fields match STMB. | Partial | Memory-entry fields are closer now; tracker/checkpoint fields remain unaudited. |
-| Secure vs user lorebook routing matches Aikobots expectations without breaking STMB semantics. | Partial | Routing is present through `/api/stmb`, but manual-mode and write-path edge cases still need verification. |
-| Cache invalidation/read-after-write behavior is correct. | Partial | Save path now invalidates cache and reapplies STMB-like refresh/auto-hide client effects; runtime validation is still pending. |
+| Secure vs user lorebook routing matches Aikobots expectations without breaking STMB semantics. | Partial | Routing is present through `/api/stmb`, and missing/unbound lorebooks now use an STMB-like recovery flow instead of hard-failing, but broader write-path verification is still pending. |
+| Cache invalidation/read-after-write behavior is correct. | Partial | Save paths now invalidate cache, memories reapply STMB-like refresh/auto-hide client effects, summary commits refresh the editor again, and sideprompt/tracker writes now refresh the editor more like STMB; runtime validation is still pending. |
 
 ## 6. Summaries / Consolidation
 
@@ -74,11 +74,69 @@ This file is updated subsystem by subsystem during the audit. Only sections that
 | --- | --- | --- |
 | Tier definitions match STMB. | Exact | Tier map and labels align with STMB's `summaryTiers.js`. |
 | Eligibility rules match STMB. | Partial | Core source-entry filtering and legacy summary migration align, but full runtime validation is still pending. |
-| Summary prompts match STMB. | Partial | Built-in prompt bodies appear aligned, but prompt-manager/storage flow still differs. |
-| Sequential summary analysis behavior matches STMB. | Partial | Previous-summary context and chronological briefs are present; end-to-end parity remains to be verified. |
+| Summary prompts match STMB. | Partial | Built-in prompt bodies appear aligned, the memory prompt manager is file-backed, and consolidation prompts now use a dedicated file-backed `stmb-arc-prompts.json` cache with the stale settings-backed resolver removed; browser/runtime validation is still open. |
+| Sequential summary analysis behavior matches STMB. | Partial | Previous-summary context, chronological briefs, selected-source filtering, parse-retry, token-budget trimming, max-pass controls, and repair-path source preservation are now closer; browser/runtime validation is still pending. |
 | `member_ids` semantics match STMB. | Partial | Ambiguous multi-summary cases are rejected and member ID resolution matches STMB closely; broader manual-repair/runtime coverage is still pending. |
 | Ambiguous multi-summary cases are handled like STMB. | Partial | Parser rejects multiple summaries without `member_ids`; UI-level repair messaging still needs matching. |
-| Commit behavior and disabling originals match STMB. | Partial | Commit path, tier numbering, and `disabledBySummaryId` behavior are aligned in core shape; popup/editor refresh flow still needs runtime verification. |
+| Commit behavior and disabling originals match STMB. | Partial | Commit path, tier numbering, selected-source disabling, editor refresh, and `disabledBySummaryId` behavior are aligned more closely now; broader runtime verification is still pending. |
 | Auto-summary trigger behavior matches STMB. | Partial | Runtime trigger checks now exist for single chats and `GROUP_WRAPPER_FINISHED`, and manual-mode lorebook select/postpone flow is now present; full lorebook-validation parity still needs verification. |
 | Manual summary repair popup flow matches STMB. | Partial | Failed-summary repair popup now supports extracted fields, corrected JSON application, missing-context messaging, and original/pre-retry raw display; broader runtime parity is still open. |
-| Auto-consolidation prompt flow matches STMB. | Missing | No local equivalent of STMB's auto-consolidation prompt/runtime yet. |
+| Auto-consolidation prompt flow matches STMB. | Partial | Prompt gating, duplicate-prompt suppression, post-memory trigger, next-tier chaining, no-lorebook popup rendering, and multi-pass consolidation controls are now closer; dedicated arc prompt-manager UI parity is still open. |
+
+## 7. Side Prompts / Trackers
+
+| Item | Status | Note |
+| --- | --- | --- |
+| Template schema matches STMB. | Partial | Stored V2 schema and trigger normalization are close, but full file/import migration parity is still unaudited. |
+| Built-in templates match STMB. | Partial | Core built-ins appear aligned, but I have not finished a field-by-field audit of every template body yet. |
+| Macro parsing and substitution match STMB. | Partial | Runtime macro parsing, quoting, autocomplete suggestions, and substitution are now close to STMB; more end-to-end validation is still needed. |
+| Manual `/sideprompt` command behavior matches STMB. | Partial | Manual flow is now toast-driven with STMB-like range tips, compile-failure messages, cancel/success toasts, and missing-lorebook recovery prompts; deeper runtime verification is still needed. |
+| Interval tracker behavior matches STMB. | Partial | Checkpoint semantics and preview serialization are closer; deeper runtime verification is still needed. |
+| Post-memory trigger behavior matches STMB. | Partial | Side prompts now inherit the current memory profile unless a template override replaces it, and after-memory runs now process in concurrent waves with receipt-order previews, batched wave saves, and aggregate notifications closer to STMB; broader runtime verification is still pending. |
+| Overwrite-by-title tracker semantics match STMB. | Partial | Unified title lookup and checkpoint metadata are present, but broader legacy-title/runtime coverage remains open. |
+| Checkpoint metadata semantics match STMB. | Partial | `STMB_sp_*` and legacy tracker fields are written, but full roundtrip verification is still pending. |
+| Preview/retry/cancel/manual behavior matches STMB. | Partial | Preview queue serialization and manual/after-memory retry-cancel handling are closer to STMB, preview retries now keep the same token-override settings path, and after-memory approvals now persist in wave batches; broader runtime verification is still pending. |
+| Side prompt profile override behavior matches STMB. | Partial | Template override profiles and parent-memory profile fallback now align more closely; broader runtime verification is still pending. |
+
+## 8. Slash Commands and Runtime
+
+| Item | Status | Note |
+| --- | --- | --- |
+| `creatememory` | Partial | The command now matches STMB's direct no-scene-marker fast-fail toast more closely, and the runtime once again enforces the `allowSceneOverlap` setting before generation; broader runtime verification is still pending. |
+| `scenememory` | Partial | Help text, validation taxonomy, and main range messages now align more closely with STMB; final runtime verification is still pending. |
+| `nextmemory` | Partial | Empty/no-new-message, lorebook preflight, and busy-state behavior are now closer to STMB; final runtime verification is still pending. |
+| `sideprompt` | Partial | Command help text, autocomplete, macro suggestions, and toast flow are now closer to STMB, but runtime parity still depends on finishing sideprompt subsystem audit. |
+| `sideprompt-on` | Partial | Help text, `all` handling, update-event dispatch, and direct not-found error text now match STMB more closely; final autocomplete/runtime validation is still pending. |
+| `sideprompt-off` | Partial | Help text, `all` handling, update-event dispatch, and direct not-found error text now match STMB more closely; final autocomplete/runtime validation is still pending. |
+| `stmb-highest` | Partial | Return semantics match STMB, but end-to-end slash/runtime verification is still pending. |
+| `stmb-set-highest` | Partial | Main error/success/clamp text now matches STMB more closely, and the main settings popup refreshes its memory-status block after command writes like STMB; broader runtime verification is still open. |
+| `stmb-stop` | Partial | Stop text, in-flight detection, toast clearing, and preview popup closing are aligned more closely, but full generation/review/repair cancellation parity still needs validation. |
+
+## 9. UI / Popup Surfaces
+
+| Item | Status | Note |
+| --- | --- | --- |
+| Main STMB entry points exist. | Partial | The extension menu now opens a persisted settings popup for core STMB fields, token-saving controls, profile CRUD, summary prompt management, consolidation prompt management, and side prompt management, but the full reference settings surface is still broader. |
+| Memory preview popup matches STMB flow. | Partial | Preview/edit/retry/cancel behavior is much closer, including serialized sideprompt previews; broader runtime validation is still needed. |
+| Failed memory repair popup matches STMB flow. | Partial | Raw-response repair flow exists, but the full STMB popup surface is still not matched exactly. |
+| Summary consolidation popup matches STMB flow. | Partial | The popup now preserves summary-entry settings, renders candidate checklists by tier, honors selected source entries, exposes max-items/token/max-pass controls, uses a file-backed arc prompt cache, and still renders without a lorebook like STMB; browser/runtime validation is still pending. |
+| Failed summary repair popup matches STMB flow. | Partial | The popup supports extracted fields, corrected JSON application, and original/pre-retry raw display, but the full STMB surface is still not matched. |
+| Side prompt manager/editor popup matches STMB flow. | Partial | A local manager/editor popup now exists with create/edit/duplicate/delete, import/export, built-in restore, trigger/lorebook/profile settings, runtime-macro trigger stripping, keyword-macro validation, and max-concurrency controls; final runtime/UI parity still needs browser validation. |
+| Inline scene buttons and state styling match STMB closely. | Partial | Core inline scene controls exist and track scene state, but no final visual/style parity pass has been done. |
+
+## 10. Architecture / Ownership
+
+| Item | Status | Note |
+| --- | --- | --- |
+| Confirm what is now server-owned vs client-owned. | Partial | Prompt preparation and lorebook writes are mostly server-owned through `/api/stmb`; client still owns orchestration, popup flow, and some parse/error handling. |
+| Ensure client orchestration is thin. | Partial | Client orchestration is thinner than before, but there is still meaningful runtime logic in `stmb.js` and `stmb-sideprompts.js`. |
+| Ensure no business logic accidentally moved into UI-only handlers. | Partial | Overlap blocking now lives in a pure helper instead of only in UI flow, but a dedicated audit is still needed for the remaining popup/runtime boundaries. |
+| Ensure `/api/stmb` and client runtime do not duplicate conflicting logic. | Partial | The stale settings-backed consolidation prompt resolver was removed, reducing one duplicate source of truth; memory/summary parsing and some runtime validation still exist on both sides and need a final ownership review. |
+
+## 11. Validation
+
+| Item | Status | Note |
+| --- | --- | --- |
+| Build a parity matrix mapping each STMB product function to implementation status. | Partial | Initial matrix created in `STMB_PARITY_MATRIX.md`; it still needs expansion for the unported settings/profile-manager subsystems. |
+| Add or update focused tests where possible. | Partial | Core tests now also cover selected summary-source resolution and label pluralization, but runtime/UI coverage is still thin. |
+| Do static bug-hunting after each subsystem pass. | Partial | Static syntax checks were run after each recent pass, but browser/runtime QA is still pending. |

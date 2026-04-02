@@ -431,6 +431,12 @@ export function getSummaryTierLabel(tier) {
     return getSummaryTierConfig(tier).label;
 }
 
+export function pluralizeSummaryLabel(label) {
+    const normalized = String(label || '').trim();
+    if (!normalized) return '';
+    return /y$/i.test(normalized) ? `${normalized.slice(0, -1)}ies` : `${normalized}s`;
+}
+
 export function getSummaryTypeKey(tier) {
     return getSummaryTierConfig(tier).key;
 }
@@ -461,15 +467,6 @@ export function normalizeSummaryMinChildren(value, fallback = DEFAULT_MIN_CHILDR
     }
 
     return DEFAULT_MIN_CHILDREN;
-}
-
-export function getSummaryPrompt(settings, presetKey = 'arc_default') {
-    const overrides = settings?.arcPromptPresets && typeof settings.arcPromptPresets === 'object'
-        ? settings.arcPromptPresets
-        : settings?.summaryArcPromptPresets && typeof settings.summaryArcPromptPresets === 'object'
-            ? settings.summaryArcPromptPresets
-            : {};
-    return overrides[presetKey] || STMB_DEFAULT_SUMMARY_PROMPTS[presetKey] || STMB_DEFAULT_SUMMARY_PROMPTS.arc_default;
 }
 
 export function isSummaryEntry(entry) {
@@ -558,6 +555,16 @@ export function identifyEligibleSummarySourceEntries(entries, targetTier) {
             const rightSequence = parseSequenceFromTitle(right.comment || right.title || '') ?? Number(right.uid) ?? 0;
             return leftSequence - rightSequence;
         });
+}
+
+export function resolveSelectedSummarySourceEntries(entries, targetTier, selectedEntryIds = null) {
+    const eligibleEntries = identifyEligibleSummarySourceEntries(entries, targetTier);
+    if (!Array.isArray(selectedEntryIds)) {
+        return eligibleEntries;
+    }
+
+    const selectedIds = new Set(selectedEntryIds.map(value => String(value)));
+    return eligibleEntries.filter(entry => selectedIds.has(String(entry?.uid)));
 }
 
 export function resolveSummaryPromptPlaceholders(promptText, { targetTier = 1, childTier = null, parentTier = null } = {}) {

@@ -239,6 +239,39 @@ function createLorebookEntry(lorebookData) {
     return entry;
 }
 
+function upsertLorebookEntryByTitleData(lorebookData, {
+    title,
+    content = '',
+    defaults = {},
+    metadataUpdates = {},
+    entryOverrides = {},
+}) {
+    let entry = Object.values(lorebookData.entries).find(candidate => String(candidate?.comment || '') === title);
+    let created = false;
+    if (!entry) {
+        entry = createLorebookEntry(lorebookData);
+        entry.vectorized = Boolean(defaults.vectorized);
+        entry.selective = Boolean(defaults.selective);
+        if (typeof defaults.order === 'number') entry.order = defaults.order;
+        if (typeof defaults.position === 'number') entry.position = defaults.position;
+        entry.key = Array.isArray(entry.key) ? entry.key : [];
+        entry.keysecondary = Array.isArray(entry.keysecondary) ? entry.keysecondary : [];
+        entry.disable = false;
+        created = true;
+    }
+
+    entry.comment = title;
+    entry.content = content;
+    for (const [key, value] of Object.entries(metadataUpdates)) {
+        entry[key] = value;
+    }
+    for (const [key, value] of Object.entries(entryOverrides)) {
+        entry[key] = value;
+    }
+
+    return { created, entry };
+}
+
 function getLorebookContext(request) {
     const lorebookName = String(request.body?.lorebookName || '').trim();
     if (!lorebookName) {
@@ -809,28 +842,13 @@ router.post('/upsert-entry-by-title', async (request, response) => {
         );
         ensureEntriesObject(lorebookData);
 
-        let entry = Object.values(lorebookData.entries).find(candidate => String(candidate?.comment || '') === title);
-        let created = false;
-        if (!entry) {
-            entry = createLorebookEntry(lorebookData);
-            entry.vectorized = Boolean(defaults.vectorized);
-            entry.selective = Boolean(defaults.selective);
-            if (typeof defaults.order === 'number') entry.order = defaults.order;
-            if (typeof defaults.position === 'number') entry.position = defaults.position;
-            entry.key = Array.isArray(entry.key) ? entry.key : [];
-            entry.keysecondary = Array.isArray(entry.keysecondary) ? entry.keysecondary : [];
-            entry.disable = false;
-            created = true;
-        }
-
-        entry.comment = title;
-        entry.content = content;
-        for (const [key, value] of Object.entries(metadataUpdates)) {
-            entry[key] = value;
-        }
-        for (const [key, value] of Object.entries(entryOverrides)) {
-            entry[key] = value;
-        }
+        const { created, entry } = upsertLorebookEntryByTitleData(lorebookData, {
+            title,
+            content,
+            defaults,
+            metadataUpdates,
+            entryOverrides,
+        });
 
         const savedMetadata = await saveLorebookForManagement(request.user, metadata.name, lorebookData, metadata.storage);
         return response.send({
@@ -839,6 +857,63 @@ router.post('/upsert-entry-by-title', async (request, response) => {
             storage: savedMetadata.storage,
             created,
             entry,
+        });
+    } catch (error) {
+        return sendStmbError(response, error);
+    }
+});
+
+router.post('/upsert-entries-batch', async (request, response) => {
+    const lorebookContext = getLorebookContext(request);
+    const items = Array.isArray(request.body?.items) ? request.body.items : null;
+
+    if (!lorebookContext || !items) {
+        return response.status(400).send({
+            error: {
+                type: 'StmbBadRequest',
+                message: 'lorebookName and items are required.',
+            },
+        });
+    }
+
+    for (const item of items) {
+        if (!String(item?.title || '').trim()) {
+            return response.status(400).send({
+                error: {
+                    type: 'StmbBadRequest',
+                    message: 'Every batch item requires a title.',
+                },
+            });
+        }
+    }
+
+    try {
+        const { data: lorebookData, metadata } = await getLorebookForManagement(
+            request.user,
+            lorebookContext.lorebookName,
+            true,
+            lorebookContext.storage,
+        );
+        ensureEntriesObject(lorebookData);
+
+        const results = [];
+        for (const item of items) {
+            const result = upsertLorebookEntryByTitleData(lorebookData, {
+                title: String(item.title || '').trim(),
+                content: item.content != null ? String(item.content) : '',
+                defaults: item.defaults || {},
+                metadataUpdates: item.metadataUpdates || {},
+                entryOverrides: item.entryOverrides || {},
+            });
+            results.push(result);
+        }
+
+        const savedMetadata = await saveLorebookForManagement(request.user, metadata.name, lorebookData, metadata.storage);
+        return response.send({
+            ok: true,
+            lorebookName: savedMetadata.name,
+            storage: savedMetadata.storage,
+            results,
         });
     } catch (error) {
         return sendStmbError(response, error);

@@ -137,6 +137,82 @@ export async function showLorebookPickerPopup(lorebookNames = [], options = {}) 
     return String(popup.dlg?.querySelector('#stmb-lorebook-picker')?.value || '').trim() || null;
 }
 
+export async function showLorebookRecoveryPopup(data = {}) {
+    const manualMode = Boolean(data?.manualMode);
+    const lorebookName = String(data?.lorebookName || '').trim();
+    const allowCreate = Boolean(data?.allowCreate);
+    const hasExistingLorebooks = Boolean(data?.hasExistingLorebooks);
+    const reason = String(data?.reason || 'unassigned');
+    const retryText = String(data?.retryText || '').trim();
+
+    let problemText = '';
+    if (reason === 'unassigned') {
+        problemText = manualMode
+            ? 'No manual lorebook is currently selected for this chat.'
+            : 'No chat-bound lorebook is currently selected.';
+    } else if (reason === 'loadFailed') {
+        problemText = manualMode
+            ? `The configured manual lorebook "${escapeHtml(lorebookName)}" could not be loaded.`
+            : `The chat-bound lorebook "${escapeHtml(lorebookName)}" could not be loaded.`;
+    } else {
+        problemText = manualMode
+            ? `The configured manual lorebook "${escapeHtml(lorebookName)}" was not found.`
+            : `The chat-bound lorebook "${escapeHtml(lorebookName)}" was not found.`;
+    }
+
+    let actionText = '';
+    if (allowCreate && hasExistingLorebooks) {
+        actionText = 'Create a replacement lorebook or select an existing one, then retry memory generation.';
+    } else if (allowCreate) {
+        actionText = 'Create a new lorebook to continue.';
+    } else if (hasExistingLorebooks) {
+        actionText = manualMode
+            ? 'Select an existing lorebook for this chat, then retry memory generation.'
+            : 'Select an existing lorebook in SillyTavern, then retry memory generation.';
+    } else {
+        actionText = 'No existing lorebooks are available to select.';
+    }
+
+    const html = `
+        <div class="stmb-lorebook-recovery-popup">
+            <h4>Memory Lorebook Missing</h4>
+            <div class="world_entry_form_control">
+                <p>${problemText}</p>
+                <p>${actionText}</p>
+                ${hasExistingLorebooks && retryText ? `<p>${escapeHtml(retryText)}</p>` : ''}
+            </div>
+        </div>
+    `;
+
+    safePlayMessageSound();
+    const popup = new Popup(DOMPurify.sanitize(html), POPUP_TYPE.TEXT, '', {
+        okButton: false,
+        cancelButton: 'Cancel',
+        leftAlign: true,
+        customButtons: [
+            ...(allowCreate ? [{
+                text: 'Create New Lorebook',
+                result: POPUP_RESULT.CUSTOM1,
+                appendAtEnd: true,
+            }] : []),
+            ...(hasExistingLorebooks ? [{
+                text: 'Select Existing Lorebook',
+                result: POPUP_RESULT.CUSTOM2,
+                appendAtEnd: true,
+            }] : []),
+        ],
+    });
+
+    const result = await popup.show();
+    if (result === POPUP_RESULT.CUSTOM1 && allowCreate) {
+        return { action: 'create' };
+    }
+    if (result === POPUP_RESULT.CUSTOM2 && hasExistingLorebooks) {
+        return { action: 'select' };
+    }
+    return { action: 'cancel' };
+}
+
 export async function showAutoConsolidationPromptPopup(data = {}) {
     const html = `
         <div class="stmb-auto-consolidation-popup">
@@ -160,10 +236,40 @@ export async function showAutoConsolidationPromptPopup(data = {}) {
 export async function showSummaryConsolidationOptionsPopup(data = {}) {
     const targetTier = Number(data?.initialTargetTier ?? 1);
     const tierOptions = Array.isArray(data?.tierOptions) ? data.tierOptions : [];
-    const presets = Array.isArray(data?.presets) ? data.presets : [];
+    const tierConfigs = Array.isArray(data?.tierConfigs) ? data.tierConfigs : [];
+    const tierConfigMap = new Map(tierConfigs.map(config => [Number(config?.value), config]));
+    let presets = Array.isArray(data?.presets) ? data.presets : [];
+    const initialEntrySettings = data?.summaryEntrySettings && typeof data.summaryEntrySettings === 'object'
+        ? data.summaryEntrySettings
+        : {};
+    const hasLorebook = data?.hasLorebook !== false;
+    const readInt = (value, fallback) => {
+        const parsed = Number(value);
+        if (Number.isFinite(parsed)) {
+            return Math.trunc(parsed);
+        }
+        return Math.trunc(Number(fallback) || 0);
+    };
+    const getTierConfig = tier => tierConfigMap.get(Number(tier)) || {
+        value: Number(tier) || targetTier,
+        label: `Tier ${Number(tier) || targetTier}`,
+        sourceLabel: 'Memory',
+        sourcePlural: 'Memories',
+        requiredMin: Number(data?.requiredMin ?? 5),
+        candidates: [],
+    };
+    const renderPresetOptions = (selectedKey = null) => presets
+        .map(option => `<option value="${escapeHtml(String(option.value))}" ${String(option.value) === String(selectedKey || data?.defaultPresetKey || 'arc_default') ? 'selected' : ''}>${escapeHtml(String(option.label))}</option>`)
+        .join('');
     const html = `
         <div class="stmb-summary-consolidation-popup">
             <h3>Consolidate Memories</h3>
+            ${hasLorebook ? '' : `
+                <div class="world_entry_form_control opacity70p">
+                    <div>No memory lorebook is currently assigned.</div>
+                    <div>You can review consolidation options, but Run will still require an assigned lorebook.</div>
+                </div>
+            `}
             <div class="world_entry_form_control">
                 <label for="stmb-summary-tier">Summary Tier</label>
                 <select id="stmb-summary-tier" class="text_pole" style="width:100%">
@@ -172,13 +278,88 @@ export async function showSummaryConsolidationOptionsPopup(data = {}) {
             </div>
             <div class="world_entry_form_control">
                 <label for="stmb-summary-preset">Preset</label>
-                <select id="stmb-summary-preset" class="text_pole" style="width:100%">
-                    ${presets.map(option => `<option value="${escapeHtml(String(option.value))}" ${String(option.value) === String(data?.defaultPresetKey || 'arc_default') ? 'selected' : ''}>${escapeHtml(String(option.label))}</option>`).join('')}
-                </select>
+                <div class="flex-container flexGap10" style="align-items:center;">
+                    <select id="stmb-summary-preset" class="text_pole" style="width:100%">
+                        ${renderPresetOptions()}
+                    </select>
+                    ${data?.allowPresetRebuild ? '<button id="stmb-summary-preset-rebuild" class="menu_button whitespacenowrap" type="button">Rebuild from built-ins</button>' : ''}
+                </div>
             </div>
             <div class="world_entry_form_control">
                 <label for="stmb-summary-required-min">Minimum eligible source entries</label>
                 <input id="stmb-summary-required-min" type="number" min="1" step="1" class="text_pole" style="width:100%" value="${escapeHtml(String(data?.requiredMin ?? 5))}">
+            </div>
+            <div class="world_entry_form_control">
+                <label for="stmb-summary-max-items-per-pass">Maximum source entries per pass</label>
+                <input id="stmb-summary-max-items-per-pass" type="number" min="1" max="100" step="1" class="text_pole" style="width:100%" value="${escapeHtml(String(data?.maxItemsPerPass ?? 15))}">
+            </div>
+            <div class="world_entry_form_control">
+                <label for="stmb-summary-token-target">Token Budget</label>
+                <input id="stmb-summary-token-target" type="number" min="1000" max="150000" step="100" class="text_pole" style="width:100%" value="${escapeHtml(String(data?.tokenTarget ?? 30000))}">
+            </div>
+            <div class="world_entry_form_control">
+                <label for="stmb-summary-max-passes">Automatic summary attempts</label>
+                <input id="stmb-summary-max-passes" type="number" min="1" max="50" step="1" class="text_pole" style="width:100%" value="${escapeHtml(String(data?.maxPasses ?? 10))}">
+            </div>
+            <div class="world_entry_form_control">
+                <h4 class="stmb-section-title">Lorebook Entry Settings</h4>
+                <small class="opacity70p">These settings control how generated summaries are saved into the lorebook.</small>
+            </div>
+            <div class="world_entry_form_control">
+                <label for="stmb-summary-entry-const-vect">Activation Mode</label>
+                <select id="stmb-summary-entry-const-vect" class="text_pole" style="width:100%">
+                    <option value="link" ${String(initialEntrySettings.constVectMode || 'link') === 'link' ? 'selected' : ''}>Vectorized (Default)</option>
+                    <option value="blue" ${String(initialEntrySettings.constVectMode || '') === 'blue' ? 'selected' : ''}>Constant</option>
+                    <option value="green" ${String(initialEntrySettings.constVectMode || '') === 'green' ? 'selected' : ''}>Normal</option>
+                </select>
+            </div>
+            <div class="world_entry_form_control">
+                <label for="stmb-summary-entry-position">Insertion Position</label>
+                <select id="stmb-summary-entry-position" class="text_pole" style="width:100%">
+                    <option value="0" ${Number(initialEntrySettings.position ?? 0) === 0 ? 'selected' : ''}>↑Char</option>
+                    <option value="1" ${Number(initialEntrySettings.position ?? 0) === 1 ? 'selected' : ''}>↓Char</option>
+                    <option value="5" ${Number(initialEntrySettings.position ?? 0) === 5 ? 'selected' : ''}>↑EM</option>
+                    <option value="6" ${Number(initialEntrySettings.position ?? 0) === 6 ? 'selected' : ''}>↓EM</option>
+                    <option value="2" ${Number(initialEntrySettings.position ?? 0) === 2 ? 'selected' : ''}>↑AN</option>
+                    <option value="3" ${Number(initialEntrySettings.position ?? 0) === 3 ? 'selected' : ''}>↓AN</option>
+                    <option value="7" ${Number(initialEntrySettings.position ?? 0) === 7 ? 'selected' : ''}>Outlet</option>
+                </select>
+            </div>
+            <div id="stmb-summary-entry-outlet-name-container" class="world_entry_form_control ${Number(initialEntrySettings.position ?? 0) === 7 ? '' : 'displayNone'}">
+                <label for="stmb-summary-entry-outlet-name">Outlet Name</label>
+                <input id="stmb-summary-entry-outlet-name" class="text_pole" style="width:100%" value="${escapeHtml(String(initialEntrySettings.outletName || ''))}">
+            </div>
+            <div class="world_entry_form_control">
+                <label><strong>Insertion Order</strong></label>
+                <div style="display:flex; flex-direction:column; gap:6px; margin-top:6px">
+                    <label class="checkbox_label">
+                        <input type="radio" name="stmb-summary-order-mode" value="auto" ${String(initialEntrySettings.orderMode || 'auto') === 'auto' ? 'checked' : ''}>
+                        <span>Auto (uses summary #)</span>
+                    </label>
+                    <label class="checkbox_label">
+                        <input type="radio" name="stmb-summary-order-mode" value="reverse" ${String(initialEntrySettings.orderMode || '') === 'reverse' ? 'checked' : ''}>
+                        <span>Reverse (only use with Outlets)</span>
+                        <input id="stmb-summary-reverse-start" type="number" min="100" max="9999" step="1" class="text_pole ${String(initialEntrySettings.orderMode || '') === 'reverse' ? '' : 'displayNone'}" style="margin-left:auto; width:110px" value="${escapeHtml(String(initialEntrySettings.reverseStart ?? 9999))}">
+                    </label>
+                    <label class="checkbox_label">
+                        <input type="radio" name="stmb-summary-order-mode" value="manual" ${String(initialEntrySettings.orderMode || '') === 'manual' ? 'checked' : ''}>
+                        <span>Manual</span>
+                        <input id="stmb-summary-order-value" type="number" min="0" max="9999" step="1" class="text_pole ${String(initialEntrySettings.orderMode || '') === 'manual' ? '' : 'displayNone'}" style="margin-left:auto; width:110px" value="${escapeHtml(String(initialEntrySettings.orderValue ?? 100))}">
+                    </label>
+                </div>
+            </div>
+            <div class="world_entry_form_control">
+                <label><strong>Recursion Settings</strong></label>
+                <div class="buttons_block justifyCenter">
+                    <label class="checkbox_label">
+                        <input id="stmb-summary-entry-prevent-recursion" type="checkbox" ${initialEntrySettings.preventRecursion ? 'checked' : ''}>
+                        <span>Prevent Recursion</span>
+                    </label>
+                    <label class="checkbox_label">
+                        <input id="stmb-summary-entry-delay-recursion" type="checkbox" ${initialEntrySettings.delayUntilRecursion ? 'checked' : ''}>
+                        <span>Delay Until Recursion</span>
+                    </label>
+                </div>
             </div>
             <div class="world_entry_form_control">
                 <label class="checkbox_label">
@@ -186,8 +367,14 @@ export async function showSummaryConsolidationOptionsPopup(data = {}) {
                     <span>Disable selected source entries after creating summaries</span>
                 </label>
             </div>
-            <div class="world_entry_form_control opacity70p">
-                <div id="stmb-summary-candidate-count">${escapeHtml(String(data?.candidateInfo || ''))}</div>
+            <div class="world_entry_form_control">
+                <div id="stmb-summary-lock-status" class="opacity70p marginBot5"></div>
+                <div class="flex-container flexGap10 marginBot5">
+                    <button id="stmb-summary-select-all" class="menu_button" type="button">Select All</button>
+                    <button id="stmb-summary-deselect-all" class="menu_button" type="button">Deselect All</button>
+                </div>
+                <div id="stmb-summary-source-list" style="max-height:300px; overflow-y:auto; border:1px solid var(--SmartHover2); padding:6px"></div>
+                <small id="stmb-summary-tip" class="opacity70p">Tip: uncheck source entries that should not be included.</small>
             </div>
         </div>
     `;
@@ -199,19 +386,185 @@ export async function showSummaryConsolidationOptionsPopup(data = {}) {
         wide: true,
         large: true,
         allowVerticalScrolling: true,
+        onClose: () => {
+            try {
+                persistSelections();
+            } catch (error) {
+                console.warn('STMB consolidation popup persistence failed', error);
+            }
+        },
     });
+
+    const dialog = popup.dlg;
+    const getCurrentTier = () => Number(dialog?.querySelector('#stmb-summary-tier')?.value ?? targetTier);
+    const getActiveTierConfig = () => getTierConfig(getCurrentTier());
+    const readSummaryEntrySettings = () => ({
+        constVectMode: String(dialog?.querySelector('#stmb-summary-entry-const-vect')?.value || initialEntrySettings.constVectMode || 'link'),
+        position: readInt(dialog?.querySelector('#stmb-summary-entry-position')?.value, initialEntrySettings.position ?? 0),
+        outletName: String(dialog?.querySelector('#stmb-summary-entry-outlet-name')?.value || '').trim(),
+        orderMode: String(dialog?.querySelector('input[name="stmb-summary-order-mode"]:checked')?.value || initialEntrySettings.orderMode || 'auto'),
+        orderValue: readInt(dialog?.querySelector('#stmb-summary-order-value')?.value, initialEntrySettings.orderValue ?? 100),
+        reverseStart: readInt(dialog?.querySelector('#stmb-summary-reverse-start')?.value, initialEntrySettings.reverseStart ?? 9999),
+        preventRecursion: Boolean(dialog?.querySelector('#stmb-summary-entry-prevent-recursion')?.checked),
+        delayUntilRecursion: Boolean(dialog?.querySelector('#stmb-summary-entry-delay-recursion')?.checked),
+    });
+    const persistSelections = () => {
+        if (typeof data?.onPersist !== 'function') {
+            return null;
+        }
+        const activeConfig = getActiveTierConfig();
+        const payload = {
+            targetTier: getCurrentTier(),
+            requiredMin: readInt(dialog?.querySelector('#stmb-summary-required-min')?.value, activeConfig.requiredMin ?? data?.requiredMin ?? 5),
+            summaryEntrySettings: readSummaryEntrySettings(),
+        };
+        data.onPersist(payload);
+        return payload;
+    };
+    const syncEntrySettingsVisibility = () => {
+        const position = readInt(dialog?.querySelector('#stmb-summary-entry-position')?.value, initialEntrySettings.position ?? 0);
+        const orderMode = String(dialog?.querySelector('input[name="stmb-summary-order-mode"]:checked')?.value || initialEntrySettings.orderMode || 'auto');
+        dialog?.querySelector('#stmb-summary-entry-outlet-name-container')?.classList.toggle('displayNone', position !== 7);
+        dialog?.querySelector('#stmb-summary-reverse-start')?.classList.toggle('displayNone', orderMode !== 'reverse');
+        dialog?.querySelector('#stmb-summary-order-value')?.classList.toggle('displayNone', orderMode !== 'manual');
+    };
+    const renderTierState = ({ preserveSelection = false } = {}) => {
+        const config = getActiveTierConfig();
+        const requiredInput = dialog?.querySelector('#stmb-summary-required-min');
+        const listEl = dialog?.querySelector('#stmb-summary-source-list');
+        const tipEl = dialog?.querySelector('#stmb-summary-tip');
+        const statusEl = dialog?.querySelector('#stmb-summary-lock-status');
+        const selectedBefore = preserveSelection
+            ? new Set(Array.from(dialog?.querySelectorAll('.stmb-summary-source-item') || []).filter(input => input.checked).map(input => String(input.value)))
+            : null;
+        const requiredMin = readInt(requiredInput?.value, config.requiredMin ?? data?.requiredMin ?? 5);
+        if (requiredInput) {
+            requiredInput.value = String(requiredMin);
+        }
+
+        if (tipEl) {
+            tipEl.textContent = `Tip: uncheck ${String(config.sourcePlural || 'source entries').toLowerCase()} that should not be included.`;
+        }
+        if (statusEl) {
+            statusEl.textContent = `Need ${requiredMin} eligible ${String(config.sourcePlural || 'source entries').toLowerCase()}, have ${(config.candidates || []).length}.`;
+            statusEl.className = (config.candidates || []).length < requiredMin
+                ? 'info-block warning marginBot5'
+                : 'info-block marginBot5';
+        }
+        if (listEl) {
+            listEl.innerHTML = '';
+            for (const candidate of config.candidates || []) {
+                const row = document.createElement('label');
+                row.className = 'flex-container flexGap10';
+                row.style.alignItems = 'center';
+                row.style.margin = '2px 0';
+                row.innerHTML = `<input type="checkbox" class="stmb-summary-source-item" value="${escapeHtml(String(candidate.uid))}" ${selectedBefore ? (selectedBefore.has(String(candidate.uid)) ? 'checked' : '') : 'checked'}> <span>${escapeHtml(String(candidate.title || candidate.comment || `#${candidate.uid}`))}</span>`;
+                listEl.appendChild(row);
+            }
+        }
+
+        const selectedCount = Array.from(dialog?.querySelectorAll('.stmb-summary-source-item') || []).filter(input => input.checked).length;
+        if (popup.okButton) {
+            const locked = selectedCount < requiredMin;
+            popup.okButton.style.pointerEvents = locked ? 'none' : '';
+            popup.okButton.style.opacity = locked ? '0.5' : '';
+            popup.okButton.title = locked ? `Need at least ${requiredMin} selected ${String(config.sourcePlural || 'source entries').toLowerCase()}` : '';
+        }
+    };
+    const refreshPresetOptions = (selectedKey = null) => {
+        const presetSelect = dialog?.querySelector('#stmb-summary-preset');
+        if (!presetSelect) {
+            return;
+        }
+        presetSelect.innerHTML = renderPresetOptions(selectedKey);
+    };
+
+    dialog?.querySelector('#stmb-summary-tier')?.addEventListener('change', () => {
+        const config = getActiveTierConfig();
+        const requiredInput = dialog?.querySelector('#stmb-summary-required-min');
+        if (requiredInput) {
+            requiredInput.value = String(config.requiredMin ?? data?.requiredMin ?? 5);
+        }
+        renderTierState();
+        persistSelections();
+    });
+    dialog?.querySelector('#stmb-summary-required-min')?.addEventListener('input', () => {
+        renderTierState({ preserveSelection: true });
+        persistSelections();
+    });
+    dialog?.querySelector('#stmb-summary-select-all')?.addEventListener('click', event => {
+        event.preventDefault();
+        dialog?.querySelectorAll('.stmb-summary-source-item').forEach(input => {
+            input.checked = true;
+        });
+        renderTierState({ preserveSelection: true });
+    });
+    dialog?.querySelector('#stmb-summary-deselect-all')?.addEventListener('click', event => {
+        event.preventDefault();
+        dialog?.querySelectorAll('.stmb-summary-source-item').forEach(input => {
+            input.checked = false;
+        });
+        renderTierState({ preserveSelection: true });
+    });
+    dialog?.addEventListener('change', event => {
+        if (event.target?.matches?.('.stmb-summary-source-item')) {
+            renderTierState({ preserveSelection: true });
+            return;
+        }
+        if (event.target?.matches?.([
+            '#stmb-summary-entry-const-vect',
+            '#stmb-summary-entry-position',
+            '#stmb-summary-entry-outlet-name',
+            '#stmb-summary-reverse-start',
+            '#stmb-summary-order-value',
+            '#stmb-summary-entry-prevent-recursion',
+            '#stmb-summary-entry-delay-recursion',
+            'input[name="stmb-summary-order-mode"]',
+        ].join(', '))) {
+            syncEntrySettingsVisibility();
+            persistSelections();
+        }
+    });
+    if (data?.allowPresetRebuild && typeof data?.onPresetRebuild === 'function') {
+        dialog?.querySelector('#stmb-summary-preset-rebuild')?.addEventListener('click', async event => {
+            event.preventDefault();
+            const selectedKey = String(dialog?.querySelector('#stmb-summary-preset')?.value || data?.defaultPresetKey || 'arc_default');
+            try {
+                const nextPresets = await data.onPresetRebuild();
+                if (Array.isArray(nextPresets)) {
+                    presets = nextPresets;
+                    refreshPresetOptions(selectedKey);
+                }
+            } catch (error) {
+                toastr.error(error?.message || 'Failed to rebuild presets', 'STMB');
+            }
+        });
+    }
+
+    syncEntrySettingsVisibility();
+    renderTierState();
 
     const result = await popup.show();
     if (result !== POPUP_RESULT.AFFIRMATIVE) {
         return { action: 'cancel' };
     }
 
+    const activeConfig = getActiveTierConfig();
+    const selectedEntryIds = Array.from(dialog?.querySelectorAll('.stmb-summary-source-item') || [])
+        .filter(input => input.checked)
+        .map(input => String(input.value));
+
     return {
         action: 'run',
-        targetTier: Number(popup.dlg?.querySelector('#stmb-summary-tier')?.value ?? targetTier),
-        presetKey: String(popup.dlg?.querySelector('#stmb-summary-preset')?.value || data?.defaultPresetKey || 'arc_default'),
-        requiredMin: Number(popup.dlg?.querySelector('#stmb-summary-required-min')?.value ?? data?.requiredMin ?? 5),
-        disableOriginals: Boolean(popup.dlg?.querySelector('#stmb-summary-disable-originals')?.checked),
+        targetTier: getCurrentTier(),
+        presetKey: String(dialog?.querySelector('#stmb-summary-preset')?.value || data?.defaultPresetKey || 'arc_default'),
+        requiredMin: readInt(dialog?.querySelector('#stmb-summary-required-min')?.value, activeConfig.requiredMin ?? data?.requiredMin ?? 5),
+        maxItemsPerPass: readInt(dialog?.querySelector('#stmb-summary-max-items-per-pass')?.value, data?.maxItemsPerPass ?? 15),
+        tokenTarget: readInt(dialog?.querySelector('#stmb-summary-token-target')?.value, data?.tokenTarget ?? 30000),
+        maxPasses: readInt(dialog?.querySelector('#stmb-summary-max-passes')?.value, data?.maxPasses ?? 10),
+        disableOriginals: Boolean(dialog?.querySelector('#stmb-summary-disable-originals')?.checked),
+        selectedEntryIds,
+        summaryEntrySettings: readSummaryEntrySettings(),
     };
 }
 

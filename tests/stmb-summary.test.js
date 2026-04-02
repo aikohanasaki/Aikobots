@@ -8,6 +8,8 @@ import {
     getDefaultSummaryTitleFormat,
     identifyEligibleSummarySourceEntries,
     parseSummaryJsonResponse,
+    pluralizeSummaryLabel,
+    resolveSelectedSummarySourceEntries,
 } from '../public/scripts/stmb-summary.js';
 
 describe('stmb summary helpers', () => {
@@ -100,6 +102,11 @@ describe('stmb summary helpers', () => {
         expect(formatSummaryTitle(1, getDefaultSummaryTitleFormat(1), 'Arc One', 3)).toBe('[ARC 003] - Arc One');
     });
 
+    it('pluralizes tier labels like the reference UI', () => {
+        expect(pluralizeSummaryLabel('Memory')).toBe('Memories');
+        expect(pluralizeSummaryLabel('Arc')).toBe('Arcs');
+    });
+
     it('creates managed summary lorebook payloads', () => {
         const payload = createManagedSummaryEntryData(
             { title: 'Arc One', summary: 'Summary text', keywords: ['apple'] },
@@ -120,5 +127,16 @@ describe('stmb summary helpers', () => {
         ]);
 
         expect(briefs.map(brief => brief.id)).toEqual(['10', '11']);
+    });
+
+    it('preserves eligible ordering when resolving selected source entries', () => {
+        const entries = {
+            10: { uid: 10, stmemorybooks: true, comment: '[001] - Opening', content: 'Scene one' },
+            11: { uid: 11, stmemorybooks: true, comment: '[002] - Followup', content: 'Scene two' },
+            12: { uid: 12, stmemorybooks: true, disable: true, comment: '[003] - Disabled', content: 'Scene three' },
+        };
+
+        const resolved = resolveSelectedSummarySourceEntries(entries, 1, ['11', '10', '12']);
+        expect(resolved.map(entry => entry.uid)).toEqual([10, 11]);
     });
 });

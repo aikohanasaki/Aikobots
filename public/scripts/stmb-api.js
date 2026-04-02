@@ -65,6 +65,11 @@ export async function upsertStmbEntryByTitle(payload, options = {}) {
     return signal ? postStmbWithSignal('upsert-entry-by-title', payload, signal) : postStmb('upsert-entry-by-title', payload);
 }
 
+export async function upsertStmbEntriesBatch(payload, options = {}) {
+    const { signal = null } = options;
+    return signal ? postStmbWithSignal('upsert-entries-batch', payload, signal) : postStmb('upsert-entries-batch', payload);
+}
+
 async function postStmbWithSignal(path, payload, signal) {
     const response = await fetch(`/api/stmb/${path}`, {
         method: 'POST',

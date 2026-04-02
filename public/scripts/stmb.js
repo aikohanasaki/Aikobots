@@ -9,23 +9,31 @@ import {
     name2,
     saveSettingsDebounced,
 } from '../script.js';
+import { DOMPurify } from '../lib.js';
 import { getContext, saveMetadataDebounced } from './extensions.js';
-import { commitStmbSummaries, generateStmbSummary, generateStmbText, prepareStmbMemoryMessages, prepareStmbSummaryPrompt, saveStmbMemoryEntry } from './stmb-api.js';
+import { commitStmbSummaries, generateStmbSummary, generateStmbText, prepareStmbMemoryMessages, saveStmbMemoryEntry } from './stmb-api.js';
 import { closeActiveMemoryPreviewPopups, showAdvancedOptionsPopup, showAutoConsolidationPromptPopup, showAutoSummaryDecisionPopup, showConfirmationPopup, showFailedAIResponsePopup, showFailedSummaryResponsePopup, showLorebookPickerPopup, showMemoryPreviewPopup, showSummaryConsolidationOptionsPopup } from './stmb-popups.js';
+import { Popup, POPUP_RESULT, POPUP_TYPE } from './popup.js';
 import { SlashCommandParser } from './slash-commands/SlashCommandParser.js';
 import { SlashCommand } from './slash-commands/SlashCommand.js';
 import { ARGUMENT_TYPE, SlashCommandArgument } from './slash-commands/SlashCommandArgument.js';
+import { SlashCommandEnumValue } from './slash-commands/SlashCommandEnumValue.js';
 import { executeSlashCommands } from './slash-commands.js';
 import { groups, selected_group } from './group-chats.js';
 import { getRegexScripts, runRegexScript } from './extensions/regex/engine.js';
-import { createNewWorldInfo, getLorebookStorageForRequest, loadWorldInfo, METADATA_KEY, reloadEditor, world_names, worldInfoCache } from './world-info.js';
+import { getLorebookStorageForRequest, loadWorldInfo, METADATA_KEY, reloadEditor, world_names, worldInfoCache } from './world-info.js';
 import { buildOpenAIGenerateData, oai_settings } from './openai.js';
 import {
     applyStmbProfileToGenerateData,
+    applyStmbMaxTokensToGenerateData,
     compiledSceneToText,
-    getPresetPrompt,
+    createDefaultStmbProfile,
+    findOverlappingManagedMemoryEntry,
+    normalizeLorebookEntrySettings,
+    STMB_DEFAULT_PROMPTS,
     STMB_DEFAULT_MEMORY_SCHEMA,
     STMB_DEFAULT_TITLE_FORMAT,
+    STMB_DEFAULT_TITLE_FORMATS,
     STMB_METADATA_KEY,
     compileScene,
     getActiveStmbProfile,
@@ -36,11 +44,11 @@ import {
 } from './stmb-core.js';
 import {
     STMB_SUMMARY_RESPONSE_SCHEMA,
-    STMB_DEFAULT_SUMMARY_PROMPTS,
+    buildBriefsFromEntries,
+    buildSummaryAnalysisPrompt,
     createSummaryCandidatesFromResponse,
     getDefaultSummaryMinChildren,
     getDefaultSummaryTitleFormat,
-    getSummaryPrompt,
     getSummaryTierLabel,
     getSourceTierForTarget,
     identifyEligibleSummarySourceEntries,
@@ -48,6 +56,8 @@ import {
     migrateLorebookSummarySchema,
     normalizeSummaryMinChildren,
     parseSummaryJsonResponse,
+    pluralizeSummaryLabel,
+    resolveSelectedSummarySourceEntries,
 } from './stmb-summary.js';
 import {
     evaluateTrackers,
@@ -56,6 +66,50 @@ import {
     runSidePrompt,
     toggleSidePromptEnabled,
 } from './stmb-sideprompts.js';
+import {
+    firstRunInitArcPromptPresets,
+    duplicateArcPromptPresetFile,
+    exportArcPromptPresetsJsonFile,
+    getCachedArcPromptDisplayName,
+    getCachedArcPromptText,
+    importArcPromptPresetsJsonFile,
+    listCachedArcPromptPresets,
+    recreateBuiltInArcPromptOverridesFile,
+    removeArcPromptPresetFile,
+    upsertArcPromptPresetFile,
+} from './stmb-arc-prompt-manager.js';
+import {
+    duplicateSummaryPromptPresetFile,
+    exportSummaryPromptPresetsJsonFile,
+    firstRunInitSummaryPromptPresets,
+    getCachedSummaryPromptDisplayName,
+    getCachedSummaryPromptText,
+    importSummaryPromptPresetsJsonFile,
+    listCachedSummaryPromptPresets,
+    recreateBuiltInSummaryPromptOverridesFile,
+    removeSummaryPromptPresetFile,
+    upsertSummaryPromptPresetFile,
+} from './stmb-summary-prompt-manager.js';
+import {
+    applySidePromptMacros,
+    buildSidePromptMacroSuggestion,
+    collectTemplateRuntimeMacros,
+    extractMacroTokens,
+    formatQuotedSidePromptName,
+    parseSidePromptCommandInput,
+} from './stmb-sideprompt-macros.js';
+import {
+    duplicateTemplate,
+    exportSidePromptsJson,
+    getTemplate,
+    importSidePromptsJson,
+    listTemplates,
+    recreateBuiltInSidePrompts,
+    removeTemplate,
+    upsertTemplate,
+} from './stmb-sideprompts-manager.js';
+import { escapeHtml } from './utils.js';
+import { ensureResolvedLorebookName, isStmbLorebookHandledError } from './stmb-lorebook.js';
 import { createStmbTask, getActiveStmbTaskCount, hasActiveStmbTasks, isStmbAbortError, stopAllStmbTasks, throwIfStmbAborted } from './stmb-tasks.js';
 import { getTokenCountAsync } from './tokenizers.js';
 
@@ -67,6 +121,98 @@ let sceneButtonsBound = false;
 let slashCommandsRegistered = false;
 let lastFailedSummaryError = null;
 let lastFailedSummaryContext = null;
+let stmbUiBound = false;
+let sidePromptNameCache = [];
+let activeSettingsPopupDialog = null;
+
+function isManualSidePromptEnabled(template) {
+    const commands = template?.triggers?.commands;
+    return Array.isArray(commands) && commands.some(command => String(command).toLowerCase() === 'sideprompt');
+}
+
+async function refreshSidePromptCache() {
+    try {
+        const templates = await listTemplates();
+        sidePromptNameCache = (templates || []).map(template => ({
+            name: template.name,
+            runtimeMacros: collectTemplateRuntimeMacros(template),
+            manualEnabled: isManualSidePromptEnabled(template),
+        }));
+    } catch (error) {
+        console.warn('STMB side prompt cache refresh failed', error);
+    }
+}
+
+window.addEventListener('stmb-sideprompts-updated', refreshSidePromptCache);
+try {
+    refreshSidePromptCache();
+} catch {
+    // noop
+}
+
+function findCachedSidePromptByName(name, entries = sidePromptNameCache) {
+    const target = String(name || '').toLowerCase();
+    return entries.find(entry => entry.name.toLowerCase() === target) || null;
+}
+
+function buildSidePromptNameSuggestions(rawInput, options = {}) {
+    const { manualOnly = false } = options;
+    const input = String(rawInput || '').trimStart();
+    const filter = input.startsWith('"') || input.startsWith('\'')
+        ? input.slice(1).toLowerCase()
+        : input.toLowerCase();
+    const entries = manualOnly
+        ? sidePromptNameCache.filter(entry => entry.manualEnabled)
+        : sidePromptNameCache;
+
+    return entries.map(entry => new SlashCommandEnumValue(
+        formatQuotedSidePromptName(entry.name),
+        entry.runtimeMacros.length
+            ? `Required macros: ${entry.runtimeMacros.join(', ')}`
+            : 'No required runtime macros',
+        'name',
+        '📝',
+        () => !filter || entry.name.toLowerCase().includes(filter),
+    ));
+}
+
+function buildSidePromptMacroSuggestions(rawInput, draft, entry) {
+    const provided = new Set(Object.keys(draft.runtimeMacros || {}));
+    const remaining = (entry?.runtimeMacros || []).filter(token => !provided.has(token));
+    return remaining.map(token => new SlashCommandEnumValue(
+        `${token}=""`,
+        `Required macro for "${entry.name}"`,
+        'macro',
+        '{}',
+        () => true,
+        () => buildSidePromptMacroSuggestion(rawInput, draft, token),
+        true,
+    ));
+}
+
+const sidePromptTemplateEnumProvider = (executor, options = {}) => {
+    const { manualOnly = false } = options;
+    const rawInput = String(executor?.unnamedArgumentList?.[0]?.value || '');
+    const draft = parseSidePromptCommandInput(rawInput, { allowIncomplete: true });
+    const entries = manualOnly
+        ? sidePromptNameCache.filter(entry => entry.manualEnabled)
+        : sidePromptNameCache;
+
+    if (draft.nameClosed) {
+        const entry = findCachedSidePromptByName(draft.name, entries);
+        if (entry) {
+            return buildSidePromptMacroSuggestions(rawInput, draft, entry);
+        }
+    }
+
+    return buildSidePromptNameSuggestions(rawInput, { manualOnly });
+};
+
+const manualSidePromptTemplateEnumProvider = executor =>
+    sidePromptTemplateEnumProvider(executor, { manualOnly: true });
+
+const allSidePromptTemplateEnumProvider = executor =>
+    sidePromptTemplateEnumProvider(executor, { manualOnly: false });
 
 function cloneRegexScriptEnabled(script) {
     try {
@@ -122,7 +268,7 @@ function getEffectivePromptText(profile) {
         return profile.prompt;
     }
 
-    return getPresetPrompt(stmbSettings, profile?.preset);
+    return getCachedSummaryPromptText(profile?.preset, stmbSettings);
 }
 
 function getProfileDisplayName(profile) {
@@ -139,6 +285,2490 @@ function getProfileTemperatureDisplay(profile) {
     return profile?.connection?.api === 'current_st'
         ? 'Current SillyTavern temperature'
         : (profile?.connection?.temperature ?? 'Current SillyTavern temperature');
+}
+
+function getSettingsRegexOptions() {
+    try {
+        const scripts = getRegexScripts({ allowedOnly: false }) || [];
+        return scripts.map((script, index) => {
+            const key = `idx:${index}`;
+            const name = String(script?.scriptName || 'Untitled');
+            const disabled = Boolean(script?.disabled);
+            return {
+                key,
+                label: `${name}${disabled ? ' (disabled)' : ''}`,
+            };
+        });
+    } catch (error) {
+        console.warn('STMB regex option enumeration failed', error);
+        return [];
+    }
+}
+
+function renderSettingsMultiOptions(options, selectedValues = []) {
+    const selected = new Set((selectedValues || []).map(String));
+    return options.map(option => `<option value="${escapeHtml(String(option.key))}" ${selected.has(String(option.key)) ? 'selected' : ''}>${escapeHtml(String(option.label || option.key))}</option>`).join('');
+}
+
+function renderSummaryTierOptions(selectedValues = []) {
+    const selected = new Set((selectedValues || []).map(value => String(Number(value))));
+    return Array.from({ length: 6 }, (_, index) => {
+        const tier = index + 1;
+        return `<option value="${tier}" ${selected.has(String(tier)) ? 'selected' : ''}>${escapeHtml(getSummaryTierLabel(tier))}</option>`;
+    }).join('');
+}
+
+async function getSettingsPopupSceneData() {
+    const markers = getSceneMarkers();
+    const hasScene = Number.isInteger(markers.sceneStart) && Number.isInteger(markers.sceneEnd);
+    const highestProcessed = getHighestProcessedMessageId();
+    const data = {
+        hasScene,
+        highestProcessed,
+        highestProcessedManuallySet: Boolean(markers.highestMemoryProcessedManuallySet),
+        sceneStart: markers.sceneStart,
+        sceneEnd: markers.sceneEnd,
+        startSpeaker: '',
+        endSpeaker: '',
+        startExcerpt: '',
+        endExcerpt: '',
+        messageCount: 0,
+        estimatedTokens: null,
+    };
+
+    if (!hasScene) {
+        return data;
+    }
+
+    try {
+        const range = getCurrentSceneRange();
+        const compiledScene = compileScene(chat, buildSceneRequest(range));
+        const startMessage = chat[range.sceneStart];
+        const endMessage = chat[range.sceneEnd];
+        const excerpt = message => {
+            const content = String(message?.mes || '');
+            return content.length > 140 ? `${content.slice(0, 140)}...` : content;
+        };
+
+        data.startSpeaker = String(startMessage?.name || 'Unknown');
+        data.endSpeaker = String(endMessage?.name || 'Unknown');
+        data.startExcerpt = excerpt(startMessage);
+        data.endExcerpt = excerpt(endMessage);
+        data.messageCount = compiledScene?.metadata?.messageCount ?? Math.max(0, range.sceneEnd - range.sceneStart + 1);
+        data.estimatedTokens = await getTokenCountAsync(compiledSceneToText(compiledScene));
+    } catch (error) {
+        console.warn('STMB scene popup data compilation failed', error);
+        data.messageCount = Math.max(0, Number(data.sceneEnd) - Number(data.sceneStart) + 1);
+    }
+
+    return data;
+}
+
+function buildSettingsPopupHtml(sceneData, currentUiConnection, regexOptions) {
+    const settings = stmbSettings;
+    const moduleSettings = getModuleSettings();
+    const selectedProfileIndex = Number.isFinite(Number(settings.defaultProfile)) ? Number(settings.defaultProfile) : 0;
+    const selectedProfile = getActiveStmbProfile(settings, selectedProfileIndex);
+    const currentTitleFormat = String(settings.titleFormat || STMB_DEFAULT_TITLE_FORMAT);
+    const titleFormats = Array.isArray(STMB_DEFAULT_TITLE_FORMATS) ? STMB_DEFAULT_TITLE_FORMATS : [];
+    const usesCustomTitleFormat = !titleFormats.includes(currentTitleFormat);
+    const activeLorebook = resolveLorebookName();
+    const manualMode = Boolean(moduleSettings.manualModeEnabled);
+
+    return `
+        <div class="stmb-settings-popup">
+            <h2>Memory Books Settings</h2>
+            <div id="stmb-settings-scene-section">${buildSettingsPopupSceneSectionHtml(sceneData)}</div>
+
+            <div id="stmb-settings-memory-status" class="info-block marginBot10">${buildSettingsPopupMemoryStatusHtml(sceneData)}</div>
+
+            <h3 class="stmb-section-title">Preferences</h3>
+            <div class="world_entry_form_control">
+                <label class="checkbox_label"><input type="checkbox" id="stmb-settings-always-use-default" ${moduleSettings.alwaysUseDefault ? 'checked' : ''}> <span>Always use default profile (no confirmation prompt)</span></label>
+                <label class="checkbox_label"><input type="checkbox" id="stmb-settings-show-memory-previews" ${moduleSettings.showMemoryPreviews ? 'checked' : ''}> <span>Show memory previews</span></label>
+                <label class="checkbox_label"><input type="checkbox" id="stmb-settings-show-notifications" ${moduleSettings.showNotifications ? 'checked' : ''}> <span>Show notifications</span></label>
+                <label class="checkbox_label"><input type="checkbox" id="stmb-settings-allow-scene-overlap" ${moduleSettings.allowSceneOverlap ? 'checked' : ''}> <span>Allow scene overlap</span></label>
+                <label class="checkbox_label"><input type="checkbox" id="stmb-settings-refresh-editor" ${moduleSettings.refreshEditor !== false ? 'checked' : ''}> <span>Refresh lorebook editor after adding memories</span></label>
+                <label class="checkbox_label"><input type="checkbox" id="stmb-settings-unhide-before-memory" ${moduleSettings.unhideBeforeMemory ? 'checked' : ''}> <span>Unhide hidden messages for memory generation</span></label>
+            </div>
+
+            <div class="world_entry_form_control">
+                <label for="stmb-settings-max-tokens">Max Response Tokens</label>
+                <input type="number" id="stmb-settings-max-tokens" class="text_pole" min="0" step="1" value="${escapeHtml(String(moduleSettings.maxTokens ?? 4000))}">
+            </div>
+            <div class="world_entry_form_control">
+                <label for="stmb-settings-token-warning-threshold">Token Warning Threshold</label>
+                <input type="number" id="stmb-settings-token-warning-threshold" class="text_pole" min="1000" max="200000" step="1000" value="${escapeHtml(String(moduleSettings.tokenWarningThreshold ?? 50000))}">
+            </div>
+            <div class="world_entry_form_control">
+                <label for="stmb-settings-default-memory-count">Default Previous Memories Count</label>
+                <input type="number" id="stmb-settings-default-memory-count" class="text_pole" min="0" max="7" step="1" value="${escapeHtml(String(moduleSettings.defaultMemoryCount ?? 0))}">
+            </div>
+
+            <h3 class="stmb-section-title">Token Saving (Hide/Unhide Messages)</h3>
+            <div class="world_entry_form_control">
+                <label for="stmb-settings-auto-hide-mode">Auto-hide messages after adding memory</label>
+                <select id="stmb-settings-auto-hide-mode" class="text_pole">
+                    <option value="none" ${String(moduleSettings.autoHideMode || 'all').toLowerCase() === 'none' ? 'selected' : ''}>Do not auto-hide</option>
+                    <option value="all" ${String(moduleSettings.autoHideMode || 'all').toLowerCase() === 'all' ? 'selected' : ''}>Auto-hide all messages up to the last memory</option>
+                    <option value="last" ${String(moduleSettings.autoHideMode || 'all').toLowerCase() === 'last' ? 'selected' : ''}>Auto-hide only messages in the last memory</option>
+                </select>
+            </div>
+            <div class="world_entry_form_control">
+                <label for="stmb-settings-unhidden-entries-count">Messages to leave unhidden</label>
+                <input type="number" id="stmb-settings-unhidden-entries-count" class="text_pole" min="0" max="50" step="1" value="${escapeHtml(String(moduleSettings.unhiddenEntriesCount ?? 2))}">
+            </div>
+
+            <div class="world_entry_form_control">
+                <label class="checkbox_label"><input type="checkbox" id="stmb-settings-use-regex" ${moduleSettings.useRegex ? 'checked' : ''}> <span>Use regex (advanced)</span></label>
+            </div>
+            <div id="stmb-settings-regex-section" class="world_entry_form_control" style="display:${moduleSettings.useRegex ? 'block' : 'none'}">
+                <div class="buttons_block justifyCenter gap10px whitespacenowrap">
+                    <div id="stmb-settings-configure-regex" class="menu_button interactable">Configure regex…</div>
+                </div>
+                <small id="stmb-settings-regex-summary" class="opacity50p">Selected outgoing: ${escapeHtml(String((moduleSettings.selectedRegexOutgoing || []).length))} | selected incoming: ${escapeHtml(String((moduleSettings.selectedRegexIncoming || []).length))}</small>
+            </div>
+
+            <h3 class="stmb-section-title">Current Lorebook Configuration</h3>
+            <div class="info-block">
+                <small class="opacity50p">Mode</small>
+                <h5 id="stmb-settings-mode-badge">${manualMode ? 'Manual' : 'Automatic (Chat-bound)'}</h5>
+                <small class="opacity50p">Active Lorebook</small>
+                <h5 id="stmb-settings-active-lorebook" class="${activeLorebook ? '' : 'opacity50p'}">${activeLorebook ? escapeHtml(activeLorebook) : 'None selected'}</h5>
+                <div id="stmb-settings-manual-buttons" class="buttons_block marginTop5 justifyCenter gap10px whitespacenowrap" style="display:${manualMode ? 'flex' : 'none'}">
+                    <div id="stmb-settings-select-lorebook" class="menu_button interactable">Select Lorebook</div>
+                    <div id="stmb-settings-clear-lorebook" class="menu_button interactable">Clear Selection</div>
+                </div>
+                <div id="stmb-settings-automatic-info" class="marginTop5 ${manualMode ? 'displayNone' : ''}">
+                    <small class="opacity50p">${activeLorebook ? `Using chat-bound lorebook "${escapeHtml(activeLorebook)}"` : 'No chat-bound lorebook. Memory creation will prompt for recovery when needed.'}</small>
+                </div>
+            </div>
+
+            <div class="world_entry_form_control">
+                <label class="checkbox_label"><input type="checkbox" id="stmb-settings-manual-mode-enabled" ${manualMode ? 'checked' : ''} ${moduleSettings.autoCreateLorebook ? 'disabled' : ''}> <span>Enable Manual Lorebook Mode</span></label>
+            </div>
+            <div class="world_entry_form_control">
+                <label class="checkbox_label"><input type="checkbox" id="stmb-settings-auto-create-lorebook" ${moduleSettings.autoCreateLorebook ? 'checked' : ''} ${manualMode ? 'disabled' : ''}> <span>Auto-create lorebook if none exists</span></label>
+            </div>
+            <div class="world_entry_form_control">
+                <label for="stmb-settings-lorebook-name-template">Lorebook Name Template</label>
+                <input type="text" id="stmb-settings-lorebook-name-template" class="text_pole" value="${escapeHtml(String(moduleSettings.lorebookNameTemplate || 'LTM - {{char}} - {{chat}}'))}" ${moduleSettings.autoCreateLorebook ? '' : 'disabled'}>
+            </div>
+
+            <h3 class="stmb-section-title">Automatic Memories</h3>
+            <div class="world_entry_form_control">
+                <label class="checkbox_label"><input type="checkbox" id="stmb-settings-auto-summary-enabled" ${moduleSettings.autoSummaryEnabled ? 'checked' : ''}> <span>Auto-create memory summaries</span></label>
+            </div>
+            <div class="world_entry_form_control">
+                <label for="stmb-settings-auto-summary-interval">Auto-Summary Interval</label>
+                <input type="number" id="stmb-settings-auto-summary-interval" class="text_pole" min="10" max="200" step="1" value="${escapeHtml(String(moduleSettings.autoSummaryInterval ?? 50))}">
+            </div>
+            <div class="world_entry_form_control">
+                <label for="stmb-settings-auto-summary-buffer">Auto-Summary Buffer</label>
+                <input type="number" id="stmb-settings-auto-summary-buffer" class="text_pole" min="0" max="50" step="1" value="${escapeHtml(String(moduleSettings.autoSummaryBuffer ?? 2))}">
+            </div>
+            <div class="world_entry_form_control">
+                <label class="checkbox_label"><input type="checkbox" id="stmb-settings-auto-consolidation-prompt-enabled" ${moduleSettings.autoConsolidationPromptEnabled ? 'checked' : ''}> <span>Prompt for consolidation when a tier is ready</span></label>
+            </div>
+            <div class="world_entry_form_control">
+                <label for="stmb-settings-auto-consolidation-target-tier">Auto-Consolidation Tiers</label>
+                <select id="stmb-settings-auto-consolidation-target-tier" class="text_pole" multiple size="6">${renderSummaryTierOptions(normalizeAutoConsolidationTargetTiers(moduleSettings.autoConsolidationTargetTiers ?? moduleSettings.autoConsolidationTargetTier))}</select>
+            </div>
+
+            <h3 class="stmb-section-title">Memory Profiles</h3>
+            <div class="world_entry_form_control">
+                <label for="stmb-settings-title-format-select">Memory Title Format</label>
+                <select id="stmb-settings-title-format-select" class="text_pole">
+                    ${titleFormats.map(format => `<option value="${escapeHtml(format)}" ${!usesCustomTitleFormat && format === currentTitleFormat ? 'selected' : ''}>${escapeHtml(format)}</option>`).join('')}
+                    <option value="custom" ${usesCustomTitleFormat ? 'selected' : ''}>Custom Title Format...</option>
+                </select>
+                <input type="text" id="stmb-settings-custom-title-format" class="text_pole marginTop5 ${usesCustomTitleFormat ? '' : 'displayNone'}" value="${escapeHtml(currentTitleFormat)}" placeholder="Enter custom format">
+                <small class="opacity50p">Use [0], [00], [000] for numbering. Available tags: {{title}}, {{scene}}, {{char}}, {{user}}, {{messages}}, {{profile}}, {{date}}, {{time}}</small>
+            </div>
+
+            <div class="world_entry_form_control">
+                <label for="stmb-settings-profile-select">Default Profile</label>
+                <select id="stmb-settings-profile-select" class="text_pole">
+                    ${(settings.profiles || []).map((profile, index) => `<option value="${index}" ${index === selectedProfileIndex ? 'selected' : ''}>${escapeHtml(getProfileDisplayName(profile))}${index === selectedProfileIndex ? ' (Default)' : ''}</option>`).join('')}
+                </select>
+            </div>
+            <input type="file" id="stmb-settings-import-file" accept=".json" class="displayNone">
+            <div class="buttons_block marginTop5 justifyCenter gap10px whitespacenowrap">
+                <div id="stmb-settings-profile-new" class="menu_button interactable">New Profile</div>
+                <div id="stmb-settings-profile-edit" class="menu_button interactable">Edit Profile</div>
+                <div id="stmb-settings-profile-delete" class="menu_button interactable">Delete Profile</div>
+                <div id="stmb-settings-profile-export" class="menu_button interactable">Export Profiles</div>
+                <div id="stmb-settings-profile-import" class="menu_button interactable">Import Profiles</div>
+            </div>
+
+            <div id="stmb-settings-profile-summary" class="padding10 marginBot10">
+                <div class="marginBot5">Profile Settings:</div>
+                <div>Provider: <span id="stmb-settings-summary-api">${escapeHtml(String(selectedProfile?.connection?.api === 'current_st' ? currentUiConnection.api : (selectedProfile?.connection?.api || 'openai')))}</span></div>
+                <div>Model: <span id="stmb-settings-summary-model">${escapeHtml(String(getProfileModelDisplay(selectedProfile) || 'Current SillyTavern model'))}</span></div>
+                <div>Temperature: <span id="stmb-settings-summary-temp">${escapeHtml(String(getProfileTemperatureDisplay(selectedProfile)))}</span></div>
+                <div>Title Format: <span id="stmb-settings-summary-title">${escapeHtml(String(selectedProfile?.titleFormat || settings.titleFormat || STMB_DEFAULT_TITLE_FORMAT))}</span></div>
+                <details class="marginTop10">
+                    <summary>View Prompt</summary>
+                    <div class="padding10 marginTop5 stmb-box">
+                        <pre><code id="stmb-settings-summary-prompt">${escapeHtml(String(getEffectivePromptText(selectedProfile) || ''))}</code></pre>
+                    </div>
+                </details>
+            </div>
+            <div class="buttons_block marginTop5 justifyCenter gap10px whitespacenowrap">
+                <div id="stmb-settings-open-prompt-manager" class="menu_button interactable">Open Summary Prompt Manager</div>
+                <div id="stmb-settings-open-arc-prompt-manager" class="menu_button interactable">Open Consolidation Prompt Manager</div>
+                <div id="stmb-settings-open-sideprompt-manager" class="menu_button interactable">Open Side Prompt Manager</div>
+            </div>
+
+            <div class="info-block">
+                Summary prompt management, consolidation prompt management, side prompt management, profile CRUD, and regex selection are now wired into this settings surface. Full STMB popup parity is still broader.
+            </div>
+        </div>
+    `;
+}
+
+function buildSettingsPopupSceneSectionHtml(sceneData) {
+    if (!sceneData?.hasScene) {
+        return `
+            <div class="info-block warning marginBot10">
+                No scene markers set. Use the inline scene buttons in chat messages to mark a start and end point.
+            </div>
+        `;
+    }
+
+    return `
+        <div class="padding10 marginBot10">
+            <div class="marginBot5">Current Scene:</div>
+            <div class="padding10 marginTop5 stmb-box">
+                <pre><code>Start: Message #${escapeHtml(String(sceneData.sceneStart))} (${escapeHtml(sceneData.startSpeaker || 'Unknown')})
+${escapeHtml(sceneData.startExcerpt || '')}
+
+End: Message #${escapeHtml(String(sceneData.sceneEnd))} (${escapeHtml(sceneData.endSpeaker || 'Unknown')})
+${escapeHtml(sceneData.endExcerpt || '')}
+
+Messages: ${escapeHtml(String(sceneData.messageCount || 0))} | Estimated tokens: ${escapeHtml(String(sceneData.estimatedTokens ?? '?'))}</code></pre>
+            </div>
+        </div>
+    `;
+}
+
+function buildSettingsPopupMemoryStatusHtml(sceneData) {
+    return Number.isInteger(sceneData?.highestProcessed)
+        ? `Memory Status: ${sceneData.highestProcessedManuallySet ? 'last processed message manually set to' : 'processed up to message'} #${escapeHtml(String(sceneData.highestProcessed))}.`
+        : 'Memory Status: no memories have been processed for this chat yet.';
+}
+
+async function refreshOpenSettingsPopupSceneState() {
+    const dialog = activeSettingsPopupDialog;
+    if (!(dialog instanceof HTMLElement) || !dialog.isConnected) {
+        if (activeSettingsPopupDialog === dialog) {
+            activeSettingsPopupDialog = null;
+        }
+        return;
+    }
+
+    const sceneData = await getSettingsPopupSceneData();
+    const sceneSection = dialog.querySelector('#stmb-settings-scene-section');
+    const memoryStatus = dialog.querySelector('#stmb-settings-memory-status');
+
+    if (sceneSection) {
+        sceneSection.innerHTML = DOMPurify.sanitize(buildSettingsPopupSceneSectionHtml(sceneData));
+    }
+    if (memoryStatus) {
+        memoryStatus.innerHTML = DOMPurify.sanitize(buildSettingsPopupMemoryStatusHtml(sceneData));
+    }
+}
+
+function updateSettingsPopupDynamicState(dialog, currentUiConnection) {
+    if (!dialog) {
+        return;
+    }
+
+    const moduleSettings = getModuleSettings();
+    const manualMode = Boolean(moduleSettings.manualModeEnabled);
+    const activeLorebook = resolveLorebookName();
+    const titleFormatSelect = dialog.querySelector('#stmb-settings-title-format-select');
+    const customTitleInput = dialog.querySelector('#stmb-settings-custom-title-format');
+    const profileSelect = dialog.querySelector('#stmb-settings-profile-select');
+    const selectedProfile = getActiveStmbProfile(stmbSettings, Number(profileSelect?.value ?? stmbSettings.defaultProfile ?? 0));
+    const automaticInfo = dialog.querySelector('#stmb-settings-automatic-info');
+    const regexSection = dialog.querySelector('#stmb-settings-regex-section');
+    const currentDefaultProfile = Number(profileSelect?.value ?? stmbSettings.defaultProfile ?? 0);
+
+    const modeBadge = dialog.querySelector('#stmb-settings-mode-badge');
+    if (modeBadge) {
+        modeBadge.textContent = manualMode ? 'Manual' : 'Automatic (Chat-bound)';
+    }
+
+    const activeLorebookEl = dialog.querySelector('#stmb-settings-active-lorebook');
+    if (activeLorebookEl) {
+        activeLorebookEl.textContent = activeLorebook || 'None selected';
+        activeLorebookEl.classList.toggle('opacity50p', !activeLorebook);
+    }
+
+    const manualButtons = dialog.querySelector('#stmb-settings-manual-buttons');
+    if (manualButtons) {
+        manualButtons.style.display = manualMode ? 'flex' : 'none';
+    }
+
+    if (automaticInfo) {
+        automaticInfo.classList.toggle('displayNone', manualMode);
+        automaticInfo.innerHTML = `<small class="opacity50p">${manualMode
+            ? ''
+            : (activeLorebook
+                ? `Using chat-bound lorebook "${escapeHtml(activeLorebook)}"`
+                : 'No chat-bound lorebook. Memory creation will prompt for recovery when needed.')}</small>`;
+    }
+
+    const manualModeCheckbox = dialog.querySelector('#stmb-settings-manual-mode-enabled');
+    const autoCreateCheckbox = dialog.querySelector('#stmb-settings-auto-create-lorebook');
+    const lorebookTemplateInput = dialog.querySelector('#stmb-settings-lorebook-name-template');
+    if (manualModeCheckbox) {
+        manualModeCheckbox.disabled = Boolean(moduleSettings.autoCreateLorebook);
+    }
+    if (autoCreateCheckbox) {
+        autoCreateCheckbox.disabled = manualMode;
+    }
+    if (lorebookTemplateInput) {
+        lorebookTemplateInput.disabled = !moduleSettings.autoCreateLorebook;
+    }
+
+    if (regexSection) {
+        regexSection.style.display = moduleSettings.useRegex ? 'block' : 'none';
+    }
+    const regexSummary = dialog.querySelector('#stmb-settings-regex-summary');
+    if (regexSummary) {
+        regexSummary.textContent = `Selected outgoing: ${(moduleSettings.selectedRegexOutgoing || []).length} | selected incoming: ${(moduleSettings.selectedRegexIncoming || []).length}`;
+    }
+
+    if (customTitleInput && titleFormatSelect) {
+        const usingCustom = titleFormatSelect.value === 'custom';
+        customTitleInput.classList.toggle('displayNone', !usingCustom);
+    }
+
+    if (profileSelect) {
+        Array.from(profileSelect.options).forEach(option => {
+            const optionIndex = Number(option.value);
+            const profile = stmbSettings.profiles?.[optionIndex];
+            option.textContent = `${getProfileDisplayName(profile)}${optionIndex === currentDefaultProfile ? ' (Default)' : ''}`;
+        });
+    }
+
+    const apiEl = dialog.querySelector('#stmb-settings-summary-api');
+    if (apiEl) {
+        apiEl.textContent = String(selectedProfile?.connection?.api === 'current_st' ? currentUiConnection.api : (selectedProfile?.connection?.api || 'openai'));
+    }
+    const modelEl = dialog.querySelector('#stmb-settings-summary-model');
+    if (modelEl) {
+        modelEl.textContent = String(getProfileModelDisplay(selectedProfile) || 'Current SillyTavern model');
+    }
+    const tempEl = dialog.querySelector('#stmb-settings-summary-temp');
+    if (tempEl) {
+        tempEl.textContent = String(getProfileTemperatureDisplay(selectedProfile));
+    }
+    const titleEl = dialog.querySelector('#stmb-settings-summary-title');
+    if (titleEl) {
+        titleEl.textContent = String(selectedProfile?.titleFormat || stmbSettings.titleFormat || STMB_DEFAULT_TITLE_FORMAT);
+    }
+    const promptEl = dialog.querySelector('#stmb-settings-summary-prompt');
+    if (promptEl) {
+        promptEl.textContent = String(getEffectivePromptText(selectedProfile) || '');
+    }
+}
+
+function readSelectedValues(selectElement) {
+    return Array.from(selectElement?.selectedOptions || []).map(option => String(option.value));
+}
+
+async function showRegexSelectionPopup() {
+    const regexOptions = getSettingsRegexOptions();
+    const moduleSettings = getModuleSettings();
+    const popup = new Popup(DOMPurify.sanitize(`
+        <div class="stmb-regex-selection-popup">
+            <h3>Regex selection</h3>
+            <div class="world_entry_form_control">
+                <small class="opacity70p">Selecting a regex here will run it REGARDLESS of whether it is enabled or disabled.</small>
+            </div>
+            <div class="world_entry_form_control">
+                <h4>Run regex before sending to AI</h4>
+                <select id="stmb-regex-popup-outgoing" class="text_pole" multiple size="${Math.max(4, Math.min(10, regexOptions.length || 4))}" style="width:100%">
+                    ${renderSettingsMultiOptions(regexOptions, moduleSettings.selectedRegexOutgoing)}
+                </select>
+            </div>
+            <div class="world_entry_form_control">
+                <h4>Run regex before adding to lorebook (before previews)</h4>
+                <select id="stmb-regex-popup-incoming" class="text_pole" multiple size="${Math.max(4, Math.min(10, regexOptions.length || 4))}" style="width:100%">
+                    ${renderSettingsMultiOptions(regexOptions, moduleSettings.selectedRegexIncoming)}
+                </select>
+            </div>
+        </div>
+    `), POPUP_TYPE.TEXT, '', {
+        wide: true,
+        large: true,
+        allowVerticalScrolling: true,
+        okButton: 'Save',
+        cancelButton: 'Close',
+    });
+
+    setTimeout(() => {
+        try {
+            if (window.jQuery && typeof window.jQuery.fn.select2 === 'function') {
+                const $parent = window.jQuery(popup.dlg);
+                window.jQuery('#stmb-regex-popup-outgoing').select2({
+                    width: '100%',
+                    placeholder: 'Select outgoing regex…',
+                    closeOnSelect: false,
+                    dropdownParent: $parent,
+                });
+                window.jQuery('#stmb-regex-popup-incoming').select2({
+                    width: '100%',
+                    placeholder: 'Select incoming regex…',
+                    closeOnSelect: false,
+                    dropdownParent: $parent,
+                });
+            }
+        } catch (error) {
+            console.warn('STMB regex selection Select2 initialization failed', error);
+        }
+    }, 0);
+
+    const result = await popup.show();
+    if (result !== POPUP_RESULT.AFFIRMATIVE) {
+        return false;
+    }
+
+    moduleSettings.selectedRegexOutgoing = readSelectedValues(popup.dlg?.querySelector('#stmb-regex-popup-outgoing'));
+    moduleSettings.selectedRegexIncoming = readSelectedValues(popup.dlg?.querySelector('#stmb-regex-popup-incoming'));
+    stmbSettings = normalizeStmbSettings(stmbSettings);
+    saveSettingsDebounced();
+    return true;
+}
+
+const STMB_PROFILE_PROVIDER_OPTIONS = Object.freeze([
+    ['current_st', 'Current SillyTavern Settings'],
+    ['ai21', 'AI21'],
+    ['aimlapi', 'AI/ML API'],
+    ['claude', 'Anthropic/Claude'],
+    ['azure_openai', 'Azure OpenAI'],
+    ['cohere', 'Cohere'],
+    ['cometapi', 'Comet API'],
+    ['deepseek', 'DeepSeek'],
+    ['electronhub', 'Electron Hub'],
+    ['fireworks', 'Fireworks'],
+    ['makersuite', 'Google AI Studio'],
+    ['groq', 'Groq'],
+    ['mistralai', 'MistralAI'],
+    ['moonshot', 'Moonshot'],
+    ['nanogpt', 'NanoGPT'],
+    ['openai', 'OpenAI'],
+    ['openrouter', 'OpenRouter'],
+    ['perplexity', 'Perplexity'],
+    ['pollinations', 'Pollinations'],
+    ['siliconflow', 'SiliconFlow'],
+    ['vertexai', 'Vertex AI'],
+    ['xai', 'xAI'],
+    ['zai', 'Z.AI'],
+    ['custom', 'Custom OpenAI-Compatible API'],
+    ['full-manual', 'Full Manual Configuration'],
+]);
+
+const STMB_SUMMARY_PROMPT_DISPLAY_NAMES = Object.freeze({
+    summary: 'Summary - Detailed beat-by-beat summaries in narrative prose',
+    summarize: 'Summarize - Bullet-point format',
+    synopsis: 'Synopsis - Long and comprehensive (beats, interactions, details) with headings',
+    sumup: 'Sum Up - Concise story beats in narrative prose',
+    minimal: 'Minimal - Brief 1-2 sentence summary',
+    northgate: 'Northgate - Intended for creative writing. By Northgate on ST Discord',
+    aelemar: 'Aelemar - Focuses on plot points and character memories. By Aelemar on ST Discord',
+    comprehensive: 'Comprehensive - Synopsis plus improved keywords extraction',
+});
+
+function toTitleCase(text) {
+    return String(text || '').replace(/\w\S*/g, token => token.charAt(0).toUpperCase() + token.slice(1).toLowerCase());
+}
+
+function safeSlug(text) {
+    return String(text || '')
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, '-')
+        .replace(/^-+|-+$/g, '')
+        .slice(0, 50) || 'custom-prompt';
+}
+
+function getProfilePresetKeys(settings = stmbSettings) {
+    return listCachedSummaryPromptPresets(settings).map(preset => preset.key);
+}
+
+function getSummaryPromptDisplayName(key) {
+    return getCachedSummaryPromptDisplayName(key, stmbSettings);
+}
+
+function listSummaryPromptPresets() {
+    return listCachedSummaryPromptPresets(stmbSettings);
+}
+
+function getSummaryPromptText(key) {
+    return getCachedSummaryPromptText(key, stmbSettings);
+}
+
+async function upsertSummaryPromptPreset(key, prompt, displayName = null) {
+    return await upsertSummaryPromptPresetFile(key, prompt, displayName);
+}
+
+async function duplicateSummaryPromptPreset(key) {
+    return await duplicateSummaryPromptPresetFile(key);
+}
+
+async function removeSummaryPromptPreset(key) {
+    await removeSummaryPromptPresetFile(key);
+}
+
+async function recreateBuiltInSummaryPromptOverrides() {
+    return await recreateBuiltInSummaryPromptOverridesFile();
+}
+
+async function exportSummaryPromptPresetsJson() {
+    return await exportSummaryPromptPresetsJsonFile();
+}
+
+async function importSummaryPromptPresetsJson(text) {
+    await importSummaryPromptPresetsJsonFile(text);
+}
+
+function listArcPromptPresets() {
+    return listCachedArcPromptPresets(stmbSettings);
+}
+
+function getArcPromptDisplayName(key) {
+    return getCachedArcPromptDisplayName(key, stmbSettings);
+}
+
+function getArcPromptText(key) {
+    return getCachedArcPromptText(key, stmbSettings);
+}
+
+async function upsertArcPromptPreset(key, prompt, displayName = null) {
+    return await upsertArcPromptPresetFile(key, prompt, displayName);
+}
+
+async function duplicateArcPromptPreset(key) {
+    return await duplicateArcPromptPresetFile(key);
+}
+
+async function removeArcPromptPreset(key) {
+    await removeArcPromptPresetFile(key);
+}
+
+async function exportArcPromptPresetsJson() {
+    return await exportArcPromptPresetsJsonFile();
+}
+
+async function importArcPromptPresetsJson(text) {
+    await importArcPromptPresetsJsonFile(text);
+}
+
+function buildSummaryPromptManagerRowsHtml(presets, selectedPresetKey = null) {
+    return `
+        <table class="table table-striped" style="width:100%">
+            <tbody>
+                ${presets.map(preset => `
+                    <tr data-preset-key="${escapeHtml(preset.key)}" style="${preset.key === selectedPresetKey ? 'background-color: var(--cobalt30a);' : ''}">
+                        <td>${escapeHtml(preset.displayName)}${preset.isBuiltIn ? ' <small class="opacity50p">(Built-in)</small>' : ''}</td>
+                        <td class="textAlignRight">
+                            <button class="menu_button stmb-pm-action stmb-pm-action-edit" data-action="edit">Edit</button>
+                            <button class="menu_button stmb-pm-action stmb-pm-action-duplicate" data-action="duplicate">Duplicate</button>
+                            <button class="menu_button stmb-pm-action stmb-pm-action-delete" data-action="delete">Delete</button>
+                        </td>
+                    </tr>
+                `).join('')}
+            </tbody>
+        </table>
+    `;
+}
+
+function refreshSummaryPromptManagerList(dialog, selectedPresetKey = null) {
+    if (!dialog) {
+        return;
+    }
+    const searchTerm = String(dialog.querySelector('#stmb-prompt-search')?.value || '').trim().toLowerCase();
+    const presets = listSummaryPromptPresets().filter(preset => !searchTerm || preset.displayName.toLowerCase().includes(searchTerm));
+    const list = dialog.querySelector('#stmb-preset-list');
+    if (list) {
+        list.innerHTML = buildSummaryPromptManagerRowsHtml(presets, selectedPresetKey);
+    }
+    const applyButton = dialog.querySelector('#stmb-pm-apply');
+    if (applyButton) {
+        applyButton.disabled = !selectedPresetKey;
+    }
+}
+
+async function openSummaryPromptEditPopup({ presetKey = null, duplicate = false } = {}) {
+    const sourceKey = presetKey ? String(presetKey) : null;
+    const sourcePrompt = sourceKey ? getSummaryPromptText(sourceKey) : '';
+    const sourceDisplayName = sourceKey ? getSummaryPromptDisplayName(sourceKey) : '';
+    const defaultDisplayName = duplicate
+        ? `${sourceDisplayName} (Copy)`
+        : (sourceDisplayName || 'My Custom Preset');
+    const popup = new Popup(DOMPurify.sanitize(`
+        <div class="stmb-summary-prompt-editor">
+            <h3>${sourceKey ? (duplicate ? 'Duplicate Preset' : 'Edit Preset') : 'Create New Preset'}</h3>
+            <div class="world_entry_form_control">
+                <label for="stmb-pm-edit-display-name">Display Name</label>
+                <input id="stmb-pm-edit-display-name" class="text_pole" value="${escapeHtml(defaultDisplayName)}">
+            </div>
+            <div class="world_entry_form_control">
+                <label for="stmb-pm-edit-prompt">Prompt</label>
+                <textarea id="stmb-pm-edit-prompt" class="text_pole textarea_compact" rows="12">${escapeHtml(sourcePrompt)}</textarea>
+            </div>
+        </div>
+    `), POPUP_TYPE.TEXT, '', {
+        okButton: sourceKey && !duplicate ? 'Save' : 'Create',
+        cancelButton: 'Cancel',
+        wide: true,
+        large: true,
+        allowVerticalScrolling: true,
+    });
+
+    const result = await popup.show();
+    if (result !== POPUP_RESULT.AFFIRMATIVE) {
+        return null;
+    }
+
+    const displayName = String(popup.dlg?.querySelector('#stmb-pm-edit-display-name')?.value || '').trim();
+    const prompt = String(popup.dlg?.querySelector('#stmb-pm-edit-prompt')?.value || '').trim();
+    if (!prompt) {
+        throw new Error('Prompt cannot be empty');
+    }
+
+    const nextKey = duplicate ? null : sourceKey;
+    return await upsertSummaryPromptPreset(nextKey, prompt, displayName || null);
+}
+
+async function openArcPromptEditPopup({ presetKey = null, duplicate = false } = {}) {
+    const sourceKey = presetKey ? String(presetKey) : null;
+    const sourcePrompt = sourceKey ? getArcPromptText(sourceKey) : '';
+    const sourceDisplayName = sourceKey ? getArcPromptDisplayName(sourceKey) : '';
+    const defaultDisplayName = duplicate
+        ? `${sourceDisplayName} (Copy)`
+        : (sourceDisplayName || 'My Consolidation Preset');
+    const popup = new Popup(DOMPurify.sanitize(`
+        <div class="stmb-arc-prompt-editor">
+            <h3>${sourceKey ? (duplicate ? 'Duplicate Consolidation Preset' : 'Edit Consolidation Preset') : 'Create New Consolidation Preset'}</h3>
+            <div class="world_entry_form_control">
+                <label for="stmb-apm-edit-display-name">Display Name</label>
+                <input id="stmb-apm-edit-display-name" class="text_pole" value="${escapeHtml(defaultDisplayName)}">
+            </div>
+            <div class="world_entry_form_control">
+                <label for="stmb-apm-edit-prompt">Prompt</label>
+                <textarea id="stmb-apm-edit-prompt" class="text_pole textarea_compact" rows="12">${escapeHtml(sourcePrompt)}</textarea>
+            </div>
+        </div>
+    `), POPUP_TYPE.TEXT, '', {
+        okButton: sourceKey && !duplicate ? 'Save' : 'Create',
+        cancelButton: 'Cancel',
+        wide: true,
+        large: true,
+        allowVerticalScrolling: true,
+    });
+
+    const result = await popup.show();
+    if (result !== POPUP_RESULT.AFFIRMATIVE) {
+        return null;
+    }
+
+    const displayName = String(popup.dlg?.querySelector('#stmb-apm-edit-display-name')?.value || '').trim();
+    const prompt = String(popup.dlg?.querySelector('#stmb-apm-edit-prompt')?.value || '').trim();
+    if (!prompt) {
+        throw new Error('Prompt cannot be empty');
+    }
+
+    const nextKey = duplicate ? null : sourceKey;
+    return await upsertArcPromptPreset(nextKey, prompt, displayName || null);
+}
+
+async function applySummaryPromptPresetToSelectedProfile(presetKey) {
+    if (!presetKey) {
+        throw new Error('Select a preset first');
+    }
+    const settingsProfileSelect = document.querySelector('#stmb-settings-profile-select');
+    const selectedIndex = Number(settingsProfileSelect?.value ?? stmbSettings.defaultProfile ?? 0);
+    const profile = stmbSettings.profiles?.[selectedIndex];
+    if (!profile) {
+        throw new Error('Selected profile not found');
+    }
+    if (typeof profile.prompt === 'string' && profile.prompt.trim()) {
+        const confirm = await Popup.show.confirm('Clear Custom Prompt?', 'This profile has a custom prompt override. Clear it so the selected preset is used?');
+        if (!confirm) {
+            return false;
+        }
+        delete profile.prompt;
+    }
+    profile.preset = String(presetKey);
+    stmbSettings = normalizeStmbSettings(stmbSettings);
+    saveSettingsDebounced();
+    return true;
+}
+
+async function showSummaryPromptManagerPopup({ onChange = null } = {}) {
+    let selectedPresetKey = null;
+    const popup = new Popup(DOMPurify.sanitize(`
+        <div class="stmb-summary-prompt-manager">
+            <h3>Summary Prompt Manager</h3>
+            <div class="world_entry_form_control">
+                <p>Manage your summary generation prompts. All presets are editable.</p>
+            </div>
+            <div class="world_entry_form_control">
+                <input type="text" id="stmb-prompt-search" class="text_pole" placeholder="Search presets..." aria-label="Search presets">
+            </div>
+            <div id="stmb-preset-list" class="padding10 marginBot10" style="max-height: 400px; overflow-y: auto;"></div>
+            <div class="buttons_block justifyCenter gap10px whitespacenowrap">
+                <button id="stmb-pm-new" class="menu_button whitespacenowrap">New Preset</button>
+                <button id="stmb-pm-export" class="menu_button whitespacenowrap">Export JSON</button>
+                <button id="stmb-pm-import" class="menu_button whitespacenowrap">Import JSON</button>
+                <button id="stmb-pm-recreate-builtins" class="menu_button whitespacenowrap">Recreate Built-in Prompts</button>
+                <button id="stmb-pm-apply" class="menu_button whitespacenowrap" disabled>Apply to Selected Profile</button>
+            </div>
+            <small>When creating a new prompt, start from one of the built-in prompts and keep the JSON response instructions intact.</small>
+            <input type="file" id="stmb-pm-import-file" accept=".json" style="display:none">
+        </div>
+    `), POPUP_TYPE.TEXT, '', {
+        wide: true,
+        large: true,
+        allowVerticalScrolling: true,
+        okButton: false,
+        cancelButton: 'Close',
+    });
+
+    const notifyChange = async () => {
+        if (typeof onChange === 'function') {
+            await onChange();
+        }
+    };
+
+    popup.dlg?.addEventListener('click', async event => {
+        const actionButton = event.target.closest('.stmb-pm-action');
+        if (actionButton) {
+            const row = actionButton.closest('tr[data-preset-key]');
+            selectedPresetKey = String(row?.dataset?.presetKey || '');
+            try {
+                if (actionButton.classList.contains('stmb-pm-action-edit')) {
+                    await openSummaryPromptEditPopup({ presetKey: selectedPresetKey });
+                    toastr.success('Preset updated successfully', 'STMB');
+                } else if (actionButton.classList.contains('stmb-pm-action-duplicate')) {
+                    await duplicateSummaryPromptPreset(selectedPresetKey);
+                    toastr.success('Preset duplicated successfully', 'STMB');
+                } else if (actionButton.classList.contains('stmb-pm-action-delete')) {
+                    const confirm = await Popup.show.confirm('Delete Preset', `Are you sure you want to delete "${escapeHtml(getSummaryPromptDisplayName(selectedPresetKey))}"?`);
+                    if (!confirm) {
+                        return;
+                    }
+                    await removeSummaryPromptPreset(selectedPresetKey);
+                    toastr.success('Preset deleted successfully', 'STMB');
+                    selectedPresetKey = null;
+                }
+                refreshSummaryPromptManagerList(popup.dlg, selectedPresetKey);
+                await notifyChange();
+            } catch (error) {
+                toastr.error(error?.message || 'Prompt manager action failed', 'STMB');
+            }
+            return;
+        }
+
+        const row = event.target.closest('tr[data-preset-key]');
+        if (row) {
+            selectedPresetKey = String(row.dataset.presetKey || '');
+            refreshSummaryPromptManagerList(popup.dlg, selectedPresetKey);
+            return;
+        }
+
+        if (event.target.closest('#stmb-pm-new')) {
+            try {
+                selectedPresetKey = await openSummaryPromptEditPopup({});
+                if (selectedPresetKey) {
+                    toastr.success('Preset created successfully', 'STMB');
+                    refreshSummaryPromptManagerList(popup.dlg, selectedPresetKey);
+                    await notifyChange();
+                }
+            } catch (error) {
+                toastr.error(error?.message || 'Failed to create preset', 'STMB');
+            }
+            return;
+        }
+
+        if (event.target.closest('#stmb-pm-export')) {
+            try {
+                const blob = new Blob([await exportSummaryPromptPresetsJson()], { type: 'application/json' });
+                const url = URL.createObjectURL(blob);
+                const link = document.createElement('a');
+                link.href = url;
+                link.download = 'stmb-summary-prompts.json';
+                link.click();
+                URL.revokeObjectURL(url);
+                toastr.success('Prompts exported successfully', 'STMB');
+            } catch (error) {
+                toastr.error(error?.message || 'Failed to export prompts', 'STMB');
+            }
+            return;
+        }
+
+        if (event.target.closest('#stmb-pm-import')) {
+            popup.dlg?.querySelector('#stmb-pm-import-file')?.click();
+            return;
+        }
+
+        if (event.target.closest('#stmb-pm-recreate-builtins')) {
+            const confirm = await Popup.show.confirm('Recreate Built-in Prompts', 'This removes overrides for all built-in summary presets. Custom presets are not affected.');
+            if (!confirm) {
+                return;
+            }
+            const result = await recreateBuiltInSummaryPromptOverrides();
+            selectedPresetKey = null;
+            refreshSummaryPromptManagerList(popup.dlg, selectedPresetKey);
+            toastr.success(`Removed ${result.removed} built-in overrides`, 'STMB');
+            await notifyChange();
+            return;
+        }
+
+        if (event.target.closest('#stmb-pm-apply')) {
+            try {
+                const applied = await applySummaryPromptPresetToSelectedProfile(selectedPresetKey);
+                if (applied) {
+                    toastr.success('Preset applied to profile', 'STMB');
+                    await notifyChange();
+                }
+            } catch (error) {
+                toastr.error(error?.message || 'Failed to apply preset', 'STMB');
+            }
+        }
+    });
+
+    popup.dlg?.querySelector('#stmb-prompt-search')?.addEventListener('input', () => {
+        refreshSummaryPromptManagerList(popup.dlg, selectedPresetKey);
+    });
+
+    popup.dlg?.querySelector('#stmb-pm-import-file')?.addEventListener('change', async event => {
+        const file = event.target.files?.[0];
+        event.target.value = '';
+        if (!file) {
+            return;
+        }
+        try {
+            await importSummaryPromptPresetsJson(await file.text());
+            selectedPresetKey = null;
+            refreshSummaryPromptManagerList(popup.dlg, selectedPresetKey);
+            toastr.success('Prompts imported successfully', 'STMB');
+            await notifyChange();
+        } catch (error) {
+            toastr.error(error?.message || 'Failed to import prompts', 'STMB');
+        }
+    });
+
+    refreshSummaryPromptManagerList(popup.dlg, selectedPresetKey);
+    await popup.show();
+}
+
+function refreshArcPromptManagerList(dialog, selectedPresetKey = null) {
+    if (!dialog) {
+        return;
+    }
+    const searchTerm = String(dialog.querySelector('#stmb-apm-search')?.value || '').trim().toLowerCase();
+    const presets = listArcPromptPresets().filter(preset => !searchTerm || preset.displayName.toLowerCase().includes(searchTerm));
+    const list = dialog.querySelector('#stmb-apm-list');
+    if (list) {
+        list.innerHTML = buildSummaryPromptManagerRowsHtml(presets, selectedPresetKey);
+    }
+}
+
+async function showArcPromptManagerPopup({ onChange = null } = {}) {
+    await firstRunInitArcPromptPresets(stmbSettings);
+    let selectedPresetKey = null;
+    const popup = new Popup(DOMPurify.sanitize(`
+        <div class="stmb-arc-prompt-manager">
+            <h3>Consolidation Prompt Manager</h3>
+            <div class="world_entry_form_control">
+                <p>Manage your consolidation analysis prompts. All presets are editable.</p>
+            </div>
+            <div class="world_entry_form_control">
+                <input type="text" id="stmb-apm-search" class="text_pole" placeholder="Search consolidation presets..." aria-label="Search consolidation presets">
+            </div>
+            <div id="stmb-apm-list" class="padding10 marginBot10" style="max-height: 400px; overflow-y: auto;"></div>
+            <div class="buttons_block justifyCenter gap10px whitespacenowrap">
+                <button id="stmb-apm-new" class="menu_button whitespacenowrap">New Consolidation Preset</button>
+                <button id="stmb-apm-export" class="menu_button whitespacenowrap">Export JSON</button>
+                <button id="stmb-apm-import" class="menu_button whitespacenowrap">Import JSON</button>
+                <button id="stmb-apm-recreate-builtins" class="menu_button whitespacenowrap">Recreate Built-in Consolidation Prompts</button>
+            </div>
+            <small>These presets are used by Consolidate Memories and auto-consolidation.</small>
+            <input type="file" id="stmb-apm-import-file" accept=".json" style="display:none">
+        </div>
+    `), POPUP_TYPE.TEXT, '', {
+        wide: true,
+        large: true,
+        allowVerticalScrolling: true,
+        okButton: false,
+        cancelButton: 'Close',
+    });
+
+    const notifyChange = async () => {
+        try {
+            window.dispatchEvent(new CustomEvent('stmb-arc-presets-updated'));
+        } catch {
+            // noop
+        }
+        if (typeof onChange === 'function') {
+            await onChange();
+        }
+    };
+
+    popup.dlg?.addEventListener('click', async event => {
+        const actionButton = event.target.closest('.stmb-pm-action');
+        if (actionButton) {
+            const row = actionButton.closest('tr[data-preset-key]');
+            selectedPresetKey = String(row?.dataset?.presetKey || '');
+            try {
+                if (actionButton.classList.contains('stmb-pm-action-edit')) {
+                    await openArcPromptEditPopup({ presetKey: selectedPresetKey });
+                    toastr.success('Consolidation preset updated successfully', 'STMB');
+                } else if (actionButton.classList.contains('stmb-pm-action-duplicate')) {
+                    await duplicateArcPromptPreset(selectedPresetKey);
+                    toastr.success('Consolidation preset duplicated successfully', 'STMB');
+                } else if (actionButton.classList.contains('stmb-pm-action-delete')) {
+                    const confirm = await Popup.show.confirm('Delete Consolidation Preset', `Are you sure you want to delete "${escapeHtml(getArcPromptDisplayName(selectedPresetKey))}"?`);
+                    if (!confirm) {
+                        return;
+                    }
+                    await removeArcPromptPreset(selectedPresetKey);
+                    toastr.success('Consolidation preset deleted successfully', 'STMB');
+                    selectedPresetKey = null;
+                }
+                refreshArcPromptManagerList(popup.dlg, selectedPresetKey);
+                await notifyChange();
+            } catch (error) {
+                toastr.error(error?.message || 'Consolidation prompt manager action failed', 'STMB');
+            }
+            return;
+        }
+
+        const row = event.target.closest('tr[data-preset-key]');
+        if (row) {
+            selectedPresetKey = String(row.dataset.presetKey || '');
+            refreshArcPromptManagerList(popup.dlg, selectedPresetKey);
+            return;
+        }
+
+        if (event.target.closest('#stmb-apm-new')) {
+            try {
+                selectedPresetKey = await openArcPromptEditPopup({});
+                if (selectedPresetKey) {
+                    toastr.success('Consolidation preset created successfully', 'STMB');
+                    refreshArcPromptManagerList(popup.dlg, selectedPresetKey);
+                    await notifyChange();
+                }
+            } catch (error) {
+                toastr.error(error?.message || 'Failed to create consolidation preset', 'STMB');
+            }
+            return;
+        }
+
+        if (event.target.closest('#stmb-apm-export')) {
+            try {
+                const blob = new Blob([await exportArcPromptPresetsJson()], { type: 'application/json' });
+                const url = URL.createObjectURL(blob);
+                const link = document.createElement('a');
+                link.href = url;
+                link.download = 'stmb-arc-prompts.json';
+                link.click();
+                URL.revokeObjectURL(url);
+                toastr.success('Consolidation prompts exported successfully', 'STMB');
+            } catch (error) {
+                toastr.error(error?.message || 'Failed to export consolidation prompts', 'STMB');
+            }
+            return;
+        }
+
+        if (event.target.closest('#stmb-apm-import')) {
+            popup.dlg?.querySelector('#stmb-apm-import-file')?.click();
+            return;
+        }
+
+        if (event.target.closest('#stmb-apm-recreate-builtins')) {
+            const confirm = await Popup.show.confirm(
+                'Recreate Built-in Consolidation Prompts',
+                'This removes overrides for all built-in consolidation presets. Custom presets are not affected.',
+            );
+            if (!confirm) {
+                return;
+            }
+            const result = await recreateBuiltInArcPromptOverridesFile();
+            selectedPresetKey = null;
+            refreshArcPromptManagerList(popup.dlg, selectedPresetKey);
+            toastr.success(`Removed ${result.removed} built-in consolidation prompt overrides`, 'STMB');
+            await notifyChange();
+        }
+    });
+
+    popup.dlg?.querySelector('#stmb-apm-search')?.addEventListener('input', () => {
+        refreshArcPromptManagerList(popup.dlg, selectedPresetKey);
+    });
+
+    popup.dlg?.querySelector('#stmb-apm-import-file')?.addEventListener('change', async event => {
+        const file = event.target.files?.[0];
+        event.target.value = '';
+        if (!file) {
+            return;
+        }
+        try {
+            await importArcPromptPresetsJson(await file.text());
+            selectedPresetKey = null;
+            refreshArcPromptManagerList(popup.dlg, selectedPresetKey);
+            toastr.success('Consolidation prompts imported successfully', 'STMB');
+            await notifyChange();
+        } catch (error) {
+            toastr.error(error?.message || 'Failed to import consolidation prompts', 'STMB');
+        }
+    });
+
+    refreshArcPromptManagerList(popup.dlg, selectedPresetKey);
+    await popup.show();
+}
+
+function getSidePromptTriggerBadges(template) {
+    const badges = [];
+    if (template?.enabled) {
+        badges.push('Enabled');
+    }
+    if (template?.triggers?.onInterval && Number(template.triggers.onInterval.visibleMessages) >= 1) {
+        badges.push(`Interval:${Math.max(1, Number(template.triggers.onInterval.visibleMessages))}`);
+    }
+    if (template?.triggers?.onAfterMemory?.enabled) {
+        badges.push('AfterMemory');
+    }
+    if (isManualSidePromptEnabled(template)) {
+        badges.push('Manual');
+    }
+    return badges;
+}
+
+function getSidePromptMacroToastOptions() {
+    return {
+        timeOut: 0,
+        extendedTimeOut: 0,
+        tapToDismiss: true,
+        closeButton: true,
+    };
+}
+
+function formatStrippedSidePromptTriggerLabel(triggerKey) {
+    if (triggerKey === 'onInterval') {
+        return 'Run on visible message interval';
+    }
+    if (triggerKey === 'onAfterMemory') {
+        return 'Run automatically after memory';
+    }
+    return String(triggerKey || '');
+}
+
+function showSidePromptRuntimeMacroImportNormalizationToast(strippedDetails) {
+    if (!Array.isArray(strippedDetails) || strippedDetails.length === 0) {
+        return;
+    }
+
+    const details = strippedDetails
+        .map(({ name, triggers }) => `"${String(name || 'Untitled Side Prompt')}" (${Array.isArray(triggers) ? triggers.map(formatStrippedSidePromptTriggerLabel).join(', ') : ''})`)
+        .join('; ');
+
+    toastr.warning(
+        `Stripped automatic triggers from imported side prompts because they contain custom runtime macros: ${details}.`,
+        'STMB',
+        getSidePromptMacroToastOptions(),
+    );
+}
+
+function isStandardSidePromptKeywordMacro(token) {
+    const unresolved = extractMacroTokens(applySidePromptMacros(String(token || '')));
+    return !unresolved.includes(token);
+}
+
+function validateSidePromptKeywordsMacroConfig({ prompt, responseFormat, keywordsTemplate }) {
+    const normalizedKeywords = String(keywordsTemplate || '').trim();
+    if (!normalizedKeywords) {
+        return { ok: true };
+    }
+
+    const allowedMacros = new Set([
+        ...extractMacroTokens(prompt),
+        ...extractMacroTokens(responseFormat),
+    ]);
+    const disallowedMacros = extractMacroTokens(normalizedKeywords).filter(token => !allowedMacros.has(token) && !isStandardSidePromptKeywordMacro(token));
+    if (disallowedMacros.length === 0) {
+        return { ok: true };
+    }
+
+    toastr.error(
+        `Lorebook Entry Keywords may only use ST standard macros or macros already defined in Prompt or Response Format: ${disallowedMacros.join(', ')}.`,
+        'STMB',
+    );
+    return { ok: false, disallowedMacros };
+}
+
+function validateSidePromptRuntimeMacroTriggerConfig({ name, prompt, responseFormat, titleOverride, intervalOn, afterOn }) {
+    const runtimeMacros = collectTemplateRuntimeMacros({
+        prompt,
+        responseFormat,
+        settings: {
+            lorebook: {
+                entryTitleOverride: String(titleOverride || ''),
+            },
+        },
+    });
+    if (runtimeMacros.length === 0) {
+        return { runtimeMacros, strippedAutoTriggers: [] };
+    }
+
+    const strippedAutoTriggers = [];
+    if (intervalOn) strippedAutoTriggers.push('Run on visible message interval');
+    if (afterOn) strippedAutoTriggers.push('Run automatically after memory');
+    if (strippedAutoTriggers.length > 0) {
+        const displayName = String(name || 'Untitled Side Prompt');
+        const usage = `/sideprompt "${displayName}" ${runtimeMacros.map(token => `${token}="value"`).join(' ')}`;
+        toastr.warning(
+            `Stripped ${strippedAutoTriggers.join(', ')} from "${displayName}" because it contains custom runtime macros: ${runtimeMacros.join(', ')}. Run it manually with ${usage}.`,
+            'STMB',
+            getSidePromptMacroToastOptions(),
+        );
+    }
+
+    return { runtimeMacros, strippedAutoTriggers };
+}
+
+function isBuiltinSidePromptKey(key) {
+    return ['plotpoints', 'status', 'cast-of-characters', 'assess'].includes(String(key || '').trim());
+}
+
+function buildSidePromptManagerRowsHtml(templates, selectedTemplateKey = null) {
+    return `
+        <table class="table table-striped" style="width:100%">
+            <tbody>
+                ${templates.map(template => `
+                    <tr data-template-key="${escapeHtml(template.key)}" style="${template.key === selectedTemplateKey ? 'background-color: var(--cobalt30a);' : ''}">
+                        <td>
+                            <div>${escapeHtml(template.name || 'Untitled Side Prompt')}${isBuiltinSidePromptKey(template.key) ? ' <small class="opacity50p">(Built-in)</small>' : ''}</div>
+                            <small class="opacity50p">${escapeHtml(getSidePromptTriggerBadges(template).join(' | ') || 'No triggers configured')}</small>
+                        </td>
+                        <td class="textAlignRight">
+                            <button class="menu_button stmb-spm-action stmb-spm-action-edit" data-action="edit">Edit</button>
+                            <button class="menu_button stmb-spm-action stmb-spm-action-duplicate" data-action="duplicate">Duplicate</button>
+                            <button class="menu_button stmb-spm-action stmb-spm-action-delete" data-action="delete">Delete</button>
+                        </td>
+                    </tr>
+                `).join('')}
+            </tbody>
+        </table>
+    `;
+}
+
+async function refreshSidePromptManagerList(dialog, selectedTemplateKey = null) {
+    if (!dialog) {
+        return;
+    }
+
+    const searchTerm = String(dialog.querySelector('#stmb-sp-search')?.value || '').trim().toLowerCase();
+    const templates = await listTemplates();
+    const filtered = templates.filter(template => {
+        if (!searchTerm) return true;
+        const name = String(template?.name || '').toLowerCase();
+        const badges = getSidePromptTriggerBadges(template).join(' ').toLowerCase();
+        return name.includes(searchTerm) || badges.includes(searchTerm);
+    });
+
+    const list = dialog.querySelector('#stmb-sp-list');
+    if (list) {
+        list.innerHTML = buildSidePromptManagerRowsHtml(filtered, selectedTemplateKey);
+    }
+}
+
+function buildSidePromptProfileOptionsHtml(selectedIndex) {
+    return (stmbSettings.profiles || []).map((profile, index) => `
+        <option value="${index}" ${index === selectedIndex ? 'selected' : ''}>${escapeHtml(getProfileDisplayName(profile))}</option>
+    `).join('');
+}
+
+function buildSidePromptEditorHtml(template = null, options = {}) {
+    const mode = String(options.mode || (template ? 'edit' : 'new'));
+    const triggers = template?.triggers && typeof template.triggers === 'object' ? template.triggers : {};
+    const settings = template?.settings && typeof template.settings === 'object' ? template.settings : {};
+    const lorebook = settings?.lorebook && typeof settings.lorebook === 'object' ? settings.lorebook : {};
+    const intervalEnabled = Boolean(triggers.onInterval && Number(triggers.onInterval.visibleMessages) >= 1);
+    const intervalValue = intervalEnabled ? Math.max(1, Number(triggers.onInterval.visibleMessages)) : 50;
+    const afterMemoryEnabled = Boolean(triggers.onAfterMemory?.enabled);
+    const manualEnabled = template ? isManualSidePromptEnabled(template) : true;
+    const overrideProfileEnabled = Boolean(settings.overrideProfileEnabled);
+    const overrideProfileIndex = Number.isFinite(Number(settings.overrideProfileIndex))
+        ? Number(settings.overrideProfileIndex)
+        : Number(stmbSettings.defaultProfile ?? 0);
+    const previousMemoriesCount = Number.isFinite(Number(settings.previousMemoriesCount))
+        ? Math.max(0, Math.min(7, Math.trunc(Number(settings.previousMemoriesCount))))
+        : 0;
+    const lorebookMode = ['link', 'green', 'blue'].includes(String(lorebook.constVectMode || ''))
+        ? String(lorebook.constVectMode)
+        : 'link';
+    const lorebookPosition = Number.isFinite(Number(lorebook.position)) ? Number(lorebook.position) : 0;
+    const manualOrder = String(lorebook.orderMode || 'auto') === 'manual';
+    const orderValue = Number.isFinite(Number(lorebook.orderValue)) ? Number(lorebook.orderValue) : 100;
+
+    return `
+        <div class="stmb-sideprompt-editor-popup">
+            <h3>${mode === 'new' ? 'New Side Prompt' : 'Edit Side Prompt'}</h3>
+            ${template?.key ? `<div class="world_entry_form_control"><small class="opacity50p">Key: <code>${escapeHtml(template.key)}</code></small></div>` : ''}
+            <div class="world_entry_form_control">
+                <label for="stmb-sp-editor-name">Name</label>
+                <input id="stmb-sp-editor-name" class="text_pole" value="${escapeHtml(String(template?.name || ''))}" placeholder="${template ? '' : 'My Side Prompt'}">
+            </div>
+            <div class="world_entry_form_control">
+                <label class="checkbox_label"><input type="checkbox" id="stmb-sp-editor-enabled" ${template?.enabled ? 'checked' : ''}> <span>Enabled</span></label>
+            </div>
+            <div class="world_entry_form_control">
+                <h4>Triggers</h4>
+                <label class="checkbox_label"><input type="checkbox" id="stmb-sp-editor-trigger-interval" ${intervalEnabled ? 'checked' : ''}> <span>Run on visible message interval</span></label>
+                <div id="stmb-sp-editor-interval-container" style="display:${intervalEnabled ? 'block' : 'none'}; margin-left: 28px;">
+                    <label for="stmb-sp-editor-interval">Interval (visible messages)</label>
+                    <input id="stmb-sp-editor-interval" type="number" min="1" step="1" class="text_pole" value="${escapeHtml(String(intervalValue))}">
+                </div>
+                <label class="checkbox_label"><input type="checkbox" id="stmb-sp-editor-trigger-after-memory" ${afterMemoryEnabled ? 'checked' : ''}> <span>Run automatically after memory</span></label>
+                <label class="checkbox_label"><input type="checkbox" id="stmb-sp-editor-trigger-manual" ${manualEnabled ? 'checked' : ''}> <span>Allow manual run via /sideprompt</span></label>
+            </div>
+            <div class="world_entry_form_control">
+                <label for="stmb-sp-editor-previous-memories">Previous memories for context</label>
+                <input id="stmb-sp-editor-previous-memories" type="number" min="0" max="7" step="1" class="text_pole" value="${escapeHtml(String(previousMemoriesCount))}">
+                <small class="opacity50p">Number of previous memory entries to include before scene text (0 = none).</small>
+            </div>
+            <div class="world_entry_form_control">
+                <label for="stmb-sp-editor-prompt">Prompt</label>
+                <textarea id="stmb-sp-editor-prompt" class="text_pole textarea_compact" rows="10">${escapeHtml(String(template?.prompt || ''))}</textarea>
+            </div>
+            <div class="world_entry_form_control">
+                <label for="stmb-sp-editor-response-format">Response Format (optional)</label>
+                <textarea id="stmb-sp-editor-response-format" class="text_pole textarea_compact" rows="6">${escapeHtml(String(template?.responseFormat || ''))}</textarea>
+            </div>
+            <div class="world_entry_form_control">
+                <h4>Lorebook Entry Settings</h4>
+                <label for="stmb-sp-editor-title-override">Lorebook Entry Title Override</label>
+                <input id="stmb-sp-editor-title-override" class="text_pole" value="${escapeHtml(String(lorebook.entryTitleOverride || ''))}" placeholder="Optional title template">
+                <label for="stmb-sp-editor-keywords" class="marginTop5">Lorebook Entry Keywords</label>
+                <input id="stmb-sp-editor-keywords" class="text_pole" value="${escapeHtml(String(lorebook.entryKeywords || ''))}" placeholder="Optional comma-separated keywords">
+            </div>
+            <div class="world_entry_form_control">
+                <label for="stmb-sp-editor-lorebook-mode">Activation Mode</label>
+                <select id="stmb-sp-editor-lorebook-mode" class="text_pole">
+                    <option value="link" ${lorebookMode === 'link' ? 'selected' : ''}>Vectorized</option>
+                    <option value="green" ${lorebookMode === 'green' ? 'selected' : ''}>Normal</option>
+                    <option value="blue" ${lorebookMode === 'blue' ? 'selected' : ''}>Constant</option>
+                </select>
+            </div>
+            <div class="world_entry_form_control">
+                <label for="stmb-sp-editor-lorebook-position">Insertion Position</label>
+                <select id="stmb-sp-editor-lorebook-position" class="text_pole">
+                    <option value="0" ${lorebookPosition === 0 ? 'selected' : ''}>↑Char</option>
+                    <option value="1" ${lorebookPosition === 1 ? 'selected' : ''}>↓Char</option>
+                    <option value="5" ${lorebookPosition === 5 ? 'selected' : ''}>↑EM</option>
+                    <option value="6" ${lorebookPosition === 6 ? 'selected' : ''}>↓EM</option>
+                    <option value="2" ${lorebookPosition === 2 ? 'selected' : ''}>↑AN</option>
+                    <option value="3" ${lorebookPosition === 3 ? 'selected' : ''}>↓AN</option>
+                    <option value="7" ${lorebookPosition === 7 ? 'selected' : ''}>Outlet</option>
+                </select>
+            </div>
+            <div id="stmb-sp-editor-outlet-container" class="world_entry_form_control" style="display:${lorebookPosition === 7 ? 'block' : 'none'}">
+                <label for="stmb-sp-editor-outlet-name">Outlet Name</label>
+                <input id="stmb-sp-editor-outlet-name" class="text_pole" value="${escapeHtml(String(lorebook.outletName || ''))}">
+            </div>
+            <div class="world_entry_form_control">
+                <h5>Insertion Order</h5>
+                <label class="radio_label"><input type="radio" name="stmb-sp-editor-order-mode" id="stmb-sp-editor-order-auto" value="auto" ${manualOrder ? '' : 'checked'}> <span>Auto (uses memory #)</span></label>
+                <label class="radio_label"><input type="radio" name="stmb-sp-editor-order-mode" id="stmb-sp-editor-order-manual" value="manual" ${manualOrder ? 'checked' : ''}> <span>Manual</span></label>
+            </div>
+            <div id="stmb-sp-editor-order-value-container" class="world_entry_form_control" style="display:${manualOrder ? 'block' : 'none'}">
+                <label for="stmb-sp-editor-order-value">Order Value</label>
+                <input id="stmb-sp-editor-order-value" type="number" step="1" class="text_pole" value="${escapeHtml(String(orderValue))}">
+            </div>
+            <div class="world_entry_form_control">
+                <label class="checkbox_label"><input type="checkbox" id="stmb-sp-editor-prevent-recursion" ${lorebook.preventRecursion !== false ? 'checked' : ''}> <span>Prevent Recursion</span></label>
+                <label class="checkbox_label"><input type="checkbox" id="stmb-sp-editor-delay-recursion" ${lorebook.delayUntilRecursion ? 'checked' : ''}> <span>Delay Until Recursion</span></label>
+                <label class="checkbox_label"><input type="checkbox" id="stmb-sp-editor-ignore-budget" ${lorebook.ignoreBudget ? 'checked' : ''}> <span>Ignore Budget</span></label>
+            </div>
+            <div class="world_entry_form_control">
+                <h4>Overrides</h4>
+                <label class="checkbox_label"><input type="checkbox" id="stmb-sp-editor-override-profile-enabled" ${overrideProfileEnabled ? 'checked' : ''}> <span>Override default memory profile</span></label>
+            </div>
+            <div id="stmb-sp-editor-override-profile-container" class="world_entry_form_control" style="display:${overrideProfileEnabled ? 'block' : 'none'}">
+                <label for="stmb-sp-editor-override-profile-index">Connection Profile</label>
+                <select id="stmb-sp-editor-override-profile-index" class="text_pole">
+                    ${buildSidePromptProfileOptionsHtml(overrideProfileIndex)}
+                </select>
+            </div>
+        </div>
+    `;
+}
+
+function attachSidePromptEditorHandlers(dialog) {
+    if (!dialog) {
+        return;
+    }
+
+    const intervalCheckbox = dialog.querySelector('#stmb-sp-editor-trigger-interval');
+    const intervalContainer = dialog.querySelector('#stmb-sp-editor-interval-container');
+    intervalCheckbox?.addEventListener('change', () => {
+        if (intervalContainer) {
+            intervalContainer.style.display = intervalCheckbox.checked ? 'block' : 'none';
+        }
+    });
+
+    const overrideCheckbox = dialog.querySelector('#stmb-sp-editor-override-profile-enabled');
+    const overrideContainer = dialog.querySelector('#stmb-sp-editor-override-profile-container');
+    overrideCheckbox?.addEventListener('change', () => {
+        if (overrideContainer) {
+            overrideContainer.style.display = overrideCheckbox.checked ? 'block' : 'none';
+        }
+    });
+
+    const positionSelect = dialog.querySelector('#stmb-sp-editor-lorebook-position');
+    const outletContainer = dialog.querySelector('#stmb-sp-editor-outlet-container');
+    positionSelect?.addEventListener('change', () => {
+        if (outletContainer) {
+            outletContainer.style.display = positionSelect.value === '7' ? 'block' : 'none';
+        }
+    });
+
+    const orderAuto = dialog.querySelector('#stmb-sp-editor-order-auto');
+    const orderManual = dialog.querySelector('#stmb-sp-editor-order-manual');
+    const orderValueContainer = dialog.querySelector('#stmb-sp-editor-order-value-container');
+    const syncOrderVisibility = () => {
+        if (orderValueContainer) {
+            orderValueContainer.style.display = orderManual?.checked ? 'block' : 'none';
+        }
+    };
+    orderAuto?.addEventListener('change', syncOrderVisibility);
+    orderManual?.addEventListener('change', syncOrderVisibility);
+}
+
+function readSidePromptEditorPayload(dialog, template = null) {
+    const prompt = String(dialog?.querySelector('#stmb-sp-editor-prompt')?.value || '').trim();
+    if (!prompt) {
+        throw new Error('Prompt cannot be empty');
+    }
+
+    const name = String(dialog?.querySelector('#stmb-sp-editor-name')?.value || '').trim();
+    const responseFormat = String(dialog?.querySelector('#stmb-sp-editor-response-format')?.value || '').trim();
+    const titleOverride = String(dialog?.querySelector('#stmb-sp-editor-title-override')?.value || '').trim();
+    const keywords = String(dialog?.querySelector('#stmb-sp-editor-keywords')?.value || '').trim();
+    if (!validateSidePromptKeywordsMacroConfig({ prompt, responseFormat, keywordsTemplate: keywords }).ok) {
+        throw new Error('Invalid lorebook entry keywords');
+    }
+    const intervalRequested = Boolean(dialog?.querySelector('#stmb-sp-editor-trigger-interval')?.checked);
+    const afterMemoryRequested = Boolean(dialog?.querySelector('#stmb-sp-editor-trigger-after-memory')?.checked);
+    const validation = validateSidePromptRuntimeMacroTriggerConfig({
+        name: name || template?.name || 'Untitled Side Prompt',
+        prompt,
+        responseFormat,
+        titleOverride,
+        intervalOn: intervalRequested,
+        afterOn: afterMemoryRequested,
+    });
+    const runtimeMacros = validation.runtimeMacros;
+
+    const triggers = {};
+    const allowAutoTriggers = runtimeMacros.length === 0;
+    if (intervalRequested && allowAutoTriggers) {
+        const intervalValue = Math.max(1, Number(dialog?.querySelector('#stmb-sp-editor-interval')?.value || 50));
+        triggers.onInterval = { visibleMessages: intervalValue };
+    }
+    if (afterMemoryRequested && allowAutoTriggers) {
+        triggers.onAfterMemory = { enabled: true };
+    }
+    if (dialog?.querySelector('#stmb-sp-editor-trigger-manual')?.checked || runtimeMacros.length > 0) {
+        triggers.commands = ['sideprompt'];
+    }
+
+    const previousMemoriesCount = Math.max(0, Math.min(7, Math.trunc(Number(dialog?.querySelector('#stmb-sp-editor-previous-memories')?.value || 0))));
+    const position = Number(dialog?.querySelector('#stmb-sp-editor-lorebook-position')?.value || 0);
+    const manualOrder = Boolean(dialog?.querySelector('#stmb-sp-editor-order-manual')?.checked);
+    const orderValue = Number(dialog?.querySelector('#stmb-sp-editor-order-value')?.value || 100);
+    const lorebook = {
+        constVectMode: String(dialog?.querySelector('#stmb-sp-editor-lorebook-mode')?.value || 'link'),
+        position: Number.isFinite(position) ? position : 0,
+        orderMode: manualOrder ? 'manual' : 'auto',
+        orderValue: Number.isFinite(orderValue) ? orderValue : 100,
+        preventRecursion: Boolean(dialog?.querySelector('#stmb-sp-editor-prevent-recursion')?.checked),
+        delayUntilRecursion: Boolean(dialog?.querySelector('#stmb-sp-editor-delay-recursion')?.checked),
+        ignoreBudget: Boolean(dialog?.querySelector('#stmb-sp-editor-ignore-budget')?.checked),
+    };
+
+    const outletName = String(dialog?.querySelector('#stmb-sp-editor-outlet-name')?.value || '').trim();
+    if (position === 7 && outletName) {
+        lorebook.outletName = outletName;
+    }
+    if (titleOverride) {
+        lorebook.entryTitleOverride = titleOverride;
+    }
+    if (keywords) {
+        lorebook.entryKeywords = keywords;
+    }
+
+    const settings = {
+        ...(template?.settings || {}),
+        previousMemoriesCount,
+        overrideProfileEnabled: Boolean(dialog?.querySelector('#stmb-sp-editor-override-profile-enabled')?.checked),
+        lorebook,
+    };
+    if (settings.overrideProfileEnabled) {
+        settings.overrideProfileIndex = Number(dialog?.querySelector('#stmb-sp-editor-override-profile-index')?.value || stmbSettings.defaultProfile || 0);
+    } else {
+        delete settings.overrideProfileIndex;
+    }
+
+    return {
+        payload: {
+            key: template?.key,
+            name,
+            enabled: Boolean(dialog?.querySelector('#stmb-sp-editor-enabled')?.checked),
+            prompt,
+            responseFormat,
+            settings,
+            triggers,
+        },
+        strippedAutoTriggers: validation.strippedAutoTriggers,
+    };
+}
+
+async function openSidePromptEditorPopup({ templateKey = null } = {}) {
+    const template = templateKey ? await getTemplate(templateKey) : null;
+    if (templateKey && !template) {
+        throw new Error(`Template "${templateKey}" not found`);
+    }
+
+    const popup = new Popup(DOMPurify.sanitize(buildSidePromptEditorHtml(template, { mode: template ? 'edit' : 'new' })), POPUP_TYPE.TEXT, '', {
+        okButton: template ? 'Save' : 'Create',
+        cancelButton: 'Cancel',
+        wide: true,
+        large: true,
+        allowVerticalScrolling: true,
+    });
+
+    attachSidePromptEditorHandlers(popup.dlg);
+    const result = await popup.show();
+    if (result !== POPUP_RESULT.AFFIRMATIVE) {
+        return null;
+    }
+
+    const { payload, strippedAutoTriggers } = readSidePromptEditorPayload(popup.dlg, template);
+    const savedKey = await upsertTemplate(payload);
+    window.dispatchEvent(new CustomEvent('stmb-sideprompts-updated'));
+    if (!template && payload.name.trim() === '') {
+        toastr.info('No name provided. Using "Untitled Side Prompt".', 'STMB');
+    }
+    if (template && payload.name.trim() === '') {
+        toastr.info('Name was empty. Keeping previous name.', 'STMB');
+    }
+    return savedKey;
+}
+
+async function showSidePromptManagerPopup({ onChange = null } = {}) {
+    let selectedTemplateKey = null;
+    const maxConcurrent = Math.max(1, Math.min(5, Number(stmbSettings?.moduleSettings?.sidePromptsMaxConcurrent ?? 2)));
+    const popup = new Popup(DOMPurify.sanitize(`
+        <div class="stmb-sideprompt-manager-popup">
+            <h3>Trackers & Side Prompts</h3>
+            <div class="world_entry_form_control">
+                <p>Create and manage side prompts for trackers and other behind-the-scenes functions.</p>
+            </div>
+            <div class="world_entry_form_control">
+                <input type="text" id="stmb-sp-search" class="text_pole" placeholder="Search side prompts..." aria-label="Search side prompts">
+            </div>
+            <div class="world_entry_form_control">
+                <label for="stmb-sp-max-concurrent">How many concurrent prompts to run at once</label>
+                <input type="number" id="stmb-sp-max-concurrent" class="text_pole" min="1" max="5" step="1" value="${escapeHtml(String(maxConcurrent))}">
+                <small class="opacity50p">Range 1-5. Defaults to 2.</small>
+            </div>
+            <div id="stmb-sp-list" class="padding10 marginBot10" style="max-height: 400px; overflow-y: auto;"></div>
+            <div class="buttons_block justifyCenter gap10px whitespacenowrap">
+                <button id="stmb-sp-new" class="menu_button whitespacenowrap">New</button>
+                <button id="stmb-sp-export" class="menu_button whitespacenowrap">Export JSON</button>
+                <button id="stmb-sp-import" class="menu_button whitespacenowrap">Import JSON</button>
+                <button id="stmb-sp-recreate-builtins" class="menu_button whitespacenowrap">Recreate Built-in Side Prompts</button>
+            </div>
+            <input type="file" id="stmb-sp-import-file" accept=".json" style="display:none">
+        </div>
+    `), POPUP_TYPE.TEXT, '', {
+        okButton: false,
+        cancelButton: 'Close',
+        wide: true,
+        large: true,
+        allowVerticalScrolling: true,
+    });
+
+    const notifyChange = async () => {
+        if (typeof onChange === 'function') {
+            await onChange();
+        }
+    };
+
+    popup.dlg?.querySelector('#stmb-sp-search')?.addEventListener('input', async () => {
+        await refreshSidePromptManagerList(popup.dlg, selectedTemplateKey);
+    });
+
+    popup.dlg?.querySelector('#stmb-sp-max-concurrent')?.addEventListener('change', async event => {
+        const target = event.target;
+        const value = Math.max(1, Math.min(5, Number(target?.value || 2)));
+        if (target) {
+            target.value = String(value);
+        }
+        stmbSettings.moduleSettings.sidePromptsMaxConcurrent = value;
+        stmbSettings = normalizeStmbSettings(stmbSettings);
+        saveSettingsDebounced();
+        await notifyChange();
+    });
+
+    popup.dlg?.addEventListener('click', async event => {
+        const target = event.target;
+        if (!(target instanceof HTMLElement)) {
+            return;
+        }
+
+        const actionButton = target.closest('.stmb-spm-action');
+        if (actionButton) {
+            const row = actionButton.closest('tr[data-template-key]');
+            selectedTemplateKey = String(row?.dataset?.templateKey || '');
+            try {
+                if (actionButton.classList.contains('stmb-spm-action-edit')) {
+                    await openSidePromptEditorPopup({ templateKey: selectedTemplateKey });
+                    toastr.success('Side prompt updated successfully', 'STMB');
+                } else if (actionButton.classList.contains('stmb-spm-action-duplicate')) {
+                    selectedTemplateKey = await duplicateTemplate(selectedTemplateKey);
+                    window.dispatchEvent(new CustomEvent('stmb-sideprompts-updated'));
+                    toastr.success('Side prompt duplicated successfully', 'STMB');
+                } else if (actionButton.classList.contains('stmb-spm-action-delete')) {
+                    const confirmed = await Popup.show.confirm('Delete Side Prompt', 'Are you sure you want to delete this template?');
+                    if (!confirmed) {
+                        return;
+                    }
+                    await removeTemplate(selectedTemplateKey);
+                    window.dispatchEvent(new CustomEvent('stmb-sideprompts-updated'));
+                    selectedTemplateKey = null;
+                    toastr.success('Side prompt deleted successfully', 'STMB');
+                }
+                await refreshSidePromptManagerList(popup.dlg, selectedTemplateKey);
+                await notifyChange();
+            } catch (error) {
+                toastr.error(error?.message || 'Side prompt manager action failed', 'STMB');
+            }
+            return;
+        }
+
+        const row = target.closest('tr[data-template-key]');
+        if (row) {
+            selectedTemplateKey = String(row.dataset.templateKey || '');
+            await refreshSidePromptManagerList(popup.dlg, selectedTemplateKey);
+            return;
+        }
+
+        if (target.closest('#stmb-sp-new')) {
+            try {
+                selectedTemplateKey = await openSidePromptEditorPopup({});
+                if (selectedTemplateKey) {
+                    toastr.success('Side prompt created successfully', 'STMB');
+                    await refreshSidePromptManagerList(popup.dlg, selectedTemplateKey);
+                    await notifyChange();
+                }
+            } catch (error) {
+                toastr.error(error?.message || 'Failed to create side prompt', 'STMB');
+            }
+            return;
+        }
+
+        if (target.closest('#stmb-sp-export')) {
+            try {
+                const blob = new Blob([await exportSidePromptsJson()], { type: 'application/json' });
+                const url = URL.createObjectURL(blob);
+                const link = document.createElement('a');
+                link.href = url;
+                link.download = 'stmb-side-prompts.json';
+                link.click();
+                URL.revokeObjectURL(url);
+                toastr.success('Side prompts exported successfully', 'STMB');
+            } catch (error) {
+                toastr.error(error?.message || 'Failed to export side prompts', 'STMB');
+            }
+            return;
+        }
+
+        if (target.closest('#stmb-sp-import')) {
+            popup.dlg?.querySelector('#stmb-sp-import-file')?.click();
+            return;
+        }
+
+        if (target.closest('#stmb-sp-recreate-builtins')) {
+            const confirmed = await Popup.show.confirm(
+                'Recreate Built-in Side Prompts',
+                'This will overwrite the built-in Side Prompts with the current local defaults. Custom prompts are not touched.',
+            );
+            if (!confirmed) {
+                return;
+            }
+            try {
+                const result = await recreateBuiltInSidePrompts('overwrite');
+                window.dispatchEvent(new CustomEvent('stmb-sideprompts-updated'));
+                selectedTemplateKey = null;
+                await refreshSidePromptManagerList(popup.dlg, selectedTemplateKey);
+                toastr.success(`Recreated ${result.replaced} built-in side prompts`, 'STMB');
+                await notifyChange();
+            } catch (error) {
+                toastr.error(error?.message || 'Failed to recreate built-in side prompts', 'STMB');
+            }
+        }
+    });
+
+    popup.dlg?.querySelector('#stmb-sp-import-file')?.addEventListener('change', async event => {
+        const file = event.target.files?.[0];
+        event.target.value = '';
+        if (!file) {
+            return;
+        }
+        try {
+            const result = await importSidePromptsJson(await file.text());
+            window.dispatchEvent(new CustomEvent('stmb-sideprompts-updated'));
+            selectedTemplateKey = null;
+            await refreshSidePromptManagerList(popup.dlg, selectedTemplateKey);
+            toastr.success(`Imported side prompts: ${result.added} added${result.renamed ? ` (${result.renamed} renamed due to key conflicts)` : ''}`, 'STMB');
+            showSidePromptRuntimeMacroImportNormalizationToast(result.strippedDetails);
+            await notifyChange();
+        } catch (error) {
+            toastr.error(error?.message || 'Failed to import side prompts', 'STMB');
+        }
+    });
+
+    await refreshSidePromptManagerList(popup.dlg, selectedTemplateKey);
+    await popup.show();
+}
+
+function getUniqueProfileName(name, ignoreIndex = null) {
+    const base = String(name || 'New Profile').trim() || 'New Profile';
+    const existing = new Set((stmbSettings.profiles || [])
+        .map((profile, index) => index === ignoreIndex ? null : String(profile?.name || '').trim())
+        .filter(Boolean));
+    if (!existing.has(base)) {
+        return base;
+    }
+
+    let counter = 1;
+    while (existing.has(`${base} (${counter})`)) {
+        counter++;
+    }
+    return `${base} (${counter})`;
+}
+
+function buildProfileEditorHtml(profile, options = {}) {
+    const mode = String(options.mode || 'edit');
+    const isBuiltin = Boolean(profile?.isBuiltinCurrentST);
+    const connection = profile?.connection && typeof profile.connection === 'object' ? profile.connection : {};
+    const currentTitleFormat = String(profile?.titleFormat || stmbSettings.titleFormat || STMB_DEFAULT_TITLE_FORMAT);
+    const titleFormats = Array.isArray(STMB_DEFAULT_TITLE_FORMATS) ? STMB_DEFAULT_TITLE_FORMATS : [];
+    const usesCustomTitleFormat = !titleFormats.includes(currentTitleFormat);
+    const presetKeys = getProfilePresetKeys();
+    const selectedPreset = String(profile?.preset || 'summary');
+    const promptOverride = typeof profile?.prompt === 'string' ? profile.prompt : '';
+    const orderMode = String(profile?.orderMode || 'auto');
+    const position = Number(profile?.position ?? 0);
+
+    return `
+        <div class="stmb-profile-editor-popup">
+            <h3>${mode === 'new' ? 'New Profile' : 'Edit Profile'}</h3>
+            <div class="world_entry_form_control">
+                <label for="stmb-profile-editor-name">Profile Name</label>
+                <input id="stmb-profile-editor-name" class="text_pole" value="${escapeHtml(String(profile?.name || 'New Profile'))}" ${isBuiltin ? 'disabled' : ''}>
+            </div>
+            <div class="world_entry_form_control">
+                <label for="stmb-profile-editor-api">API/Provider</label>
+                <select id="stmb-profile-editor-api" class="text_pole" ${isBuiltin ? 'disabled' : ''}>
+                    ${STMB_PROFILE_PROVIDER_OPTIONS.map(([value, label]) => `<option value="${escapeHtml(value)}" ${String(connection.api || 'current_st') === value ? 'selected' : ''}>${escapeHtml(label)}</option>`).join('')}
+                </select>
+            </div>
+            <div class="world_entry_form_control">
+                <label for="stmb-profile-editor-model">Model</label>
+                <input id="stmb-profile-editor-model" class="text_pole" value="${escapeHtml(String(connection.model || ''))}" ${String(connection.api || 'current_st') === 'current_st' ? 'disabled' : ''}>
+            </div>
+            <div class="world_entry_form_control">
+                <label for="stmb-profile-editor-temperature">Temperature</label>
+                <input id="stmb-profile-editor-temperature" type="number" min="0" max="2" step="0.1" class="text_pole" value="${escapeHtml(String(connection.temperature ?? 0.7))}" ${String(connection.api || 'current_st') === 'current_st' ? 'disabled' : ''}>
+            </div>
+            <div id="stmb-profile-editor-manual-section" class="${String(connection.api || 'current_st') === 'full-manual' ? '' : 'displayNone'}">
+                <div class="world_entry_form_control">
+                    <label for="stmb-profile-editor-endpoint">API Endpoint URL</label>
+                    <input id="stmb-profile-editor-endpoint" class="text_pole" value="${escapeHtml(String(connection.endpoint || ''))}">
+                </div>
+                <div class="world_entry_form_control">
+                    <label for="stmb-profile-editor-apikey">API Key</label>
+                    <input id="stmb-profile-editor-apikey" class="text_pole" type="password" value="${escapeHtml(String(connection.apiKey || ''))}">
+                </div>
+            </div>
+            <div class="world_entry_form_control">
+                <label for="stmb-profile-editor-preset">Memory Creation Method</label>
+                <select id="stmb-profile-editor-preset" class="text_pole">
+                    ${presetKeys.map(key => `<option value="${escapeHtml(key)}" ${key === selectedPreset ? 'selected' : ''}>${escapeHtml(getSummaryPromptDisplayName(key))}</option>`).join('')}
+                </select>
+            </div>
+            <div class="buttons_block justifyCenter gap10px whitespacenowrap marginTop5">
+                <div id="stmb-profile-editor-open-prompt-manager" class="menu_button interactable">Open Summary Prompt Manager</div>
+                <div id="stmb-profile-editor-refresh-presets" class="menu_button interactable">Refresh Presets</div>
+            </div>
+            <div class="world_entry_form_control">
+                <label for="stmb-profile-editor-prompt">Custom Prompt Override</label>
+                <textarea id="stmb-profile-editor-prompt" class="text_pole" rows="8" placeholder="Leave blank to use the selected preset">${escapeHtml(promptOverride)}</textarea>
+            </div>
+            <div class="world_entry_form_control">
+                <label for="stmb-profile-editor-title-format-select">Memory Title Format</label>
+                <select id="stmb-profile-editor-title-format-select" class="text_pole">
+                    ${titleFormats.map(format => `<option value="${escapeHtml(format)}" ${!usesCustomTitleFormat && format === currentTitleFormat ? 'selected' : ''}>${escapeHtml(format)}</option>`).join('')}
+                    <option value="custom" ${usesCustomTitleFormat ? 'selected' : ''}>Custom Title Format...</option>
+                </select>
+                <input id="stmb-profile-editor-custom-title-format" class="text_pole marginTop5 ${usesCustomTitleFormat ? '' : 'displayNone'}" value="${escapeHtml(currentTitleFormat)}" placeholder="Enter custom format">
+            </div>
+            <div class="world_entry_form_control">
+                <label for="stmb-profile-editor-const-vect">Activation Mode</label>
+                <select id="stmb-profile-editor-const-vect" class="text_pole">
+                    <option value="link" ${String(profile?.constVectMode || 'link') === 'link' ? 'selected' : ''}>Vectorized (Default)</option>
+                    <option value="blue" ${String(profile?.constVectMode || 'link') === 'blue' ? 'selected' : ''}>Constant</option>
+                    <option value="green" ${String(profile?.constVectMode || 'link') === 'green' ? 'selected' : ''}>Normal</option>
+                </select>
+            </div>
+            <div class="world_entry_form_control">
+                <label for="stmb-profile-editor-position">Insertion Position</label>
+                <select id="stmb-profile-editor-position" class="text_pole">
+                    <option value="0" ${position === 0 ? 'selected' : ''}>↑Char</option>
+                    <option value="1" ${position === 1 ? 'selected' : ''}>↓Char</option>
+                    <option value="5" ${position === 5 ? 'selected' : ''}>↑EM</option>
+                    <option value="6" ${position === 6 ? 'selected' : ''}>↓EM</option>
+                    <option value="2" ${position === 2 ? 'selected' : ''}>↑AN</option>
+                    <option value="3" ${position === 3 ? 'selected' : ''}>↓AN</option>
+                    <option value="7" ${position === 7 ? 'selected' : ''}>Outlet</option>
+                </select>
+            </div>
+            <div id="stmb-profile-editor-outlet-container" class="world_entry_form_control ${position === 7 ? '' : 'displayNone'}">
+                <label for="stmb-profile-editor-outlet-name">Outlet Name</label>
+                <input id="stmb-profile-editor-outlet-name" class="text_pole" value="${escapeHtml(String(profile?.outletName || ''))}">
+            </div>
+            <div class="world_entry_form_control">
+                <label for="stmb-profile-editor-order-mode">Insertion Order</label>
+                <select id="stmb-profile-editor-order-mode" class="text_pole">
+                    <option value="auto" ${orderMode === 'auto' ? 'selected' : ''}>Auto</option>
+                    <option value="reverse" ${orderMode === 'reverse' ? 'selected' : ''}>Reverse</option>
+                    <option value="manual" ${orderMode === 'manual' ? 'selected' : ''}>Manual</option>
+                </select>
+            </div>
+            <div id="stmb-profile-editor-order-value-container" class="world_entry_form_control ${orderMode === 'manual' ? '' : 'displayNone'}">
+                <label for="stmb-profile-editor-order-value">Manual Order Value</label>
+                <input id="stmb-profile-editor-order-value" type="number" min="1" max="9999" step="1" class="text_pole" value="${escapeHtml(String(profile?.orderValue ?? 100))}">
+            </div>
+            <div id="stmb-profile-editor-reverse-start-container" class="world_entry_form_control ${orderMode === 'reverse' ? '' : 'displayNone'}">
+                <label for="stmb-profile-editor-reverse-start">Reverse Start</label>
+                <input id="stmb-profile-editor-reverse-start" type="number" min="100" max="9999" step="1" class="text_pole" value="${escapeHtml(String(profile?.reverseStart ?? 9999))}">
+            </div>
+            <div class="world_entry_form_control">
+                <label class="checkbox_label"><input id="stmb-profile-editor-prevent-recursion" type="checkbox" ${profile?.preventRecursion ? 'checked' : ''}> <span>Prevent Recursion</span></label>
+                <label class="checkbox_label"><input id="stmb-profile-editor-delay-recursion" type="checkbox" ${profile?.delayUntilRecursion ? 'checked' : ''}> <span>Delay Until Recursion</span></label>
+            </div>
+        </div>
+    `;
+}
+
+function updateProfileEditorDynamicState(dialog) {
+    if (!dialog) {
+        return;
+    }
+
+    const apiSelect = dialog.querySelector('#stmb-profile-editor-api');
+    const titleFormatSelect = dialog.querySelector('#stmb-profile-editor-title-format-select');
+    const manualSection = dialog.querySelector('#stmb-profile-editor-manual-section');
+    const modelInput = dialog.querySelector('#stmb-profile-editor-model');
+    const temperatureInput = dialog.querySelector('#stmb-profile-editor-temperature');
+    const customTitleInput = dialog.querySelector('#stmb-profile-editor-custom-title-format');
+    const positionSelect = dialog.querySelector('#stmb-profile-editor-position');
+    const outletContainer = dialog.querySelector('#stmb-profile-editor-outlet-container');
+    const orderModeSelect = dialog.querySelector('#stmb-profile-editor-order-mode');
+    const orderValueContainer = dialog.querySelector('#stmb-profile-editor-order-value-container');
+    const reverseStartContainer = dialog.querySelector('#stmb-profile-editor-reverse-start-container');
+    const isCurrentSt = String(apiSelect?.value || 'current_st') === 'current_st';
+
+    if (manualSection) {
+        manualSection.classList.toggle('displayNone', String(apiSelect?.value || '') !== 'full-manual');
+    }
+    if (modelInput) {
+        modelInput.disabled = isCurrentSt;
+    }
+    if (temperatureInput) {
+        temperatureInput.disabled = isCurrentSt;
+    }
+    if (customTitleInput) {
+        customTitleInput.classList.toggle('displayNone', titleFormatSelect?.value !== 'custom');
+    }
+    if (outletContainer) {
+        outletContainer.classList.toggle('displayNone', String(positionSelect?.value || '0') !== '7');
+    }
+    if (orderValueContainer) {
+        orderValueContainer.classList.toggle('displayNone', String(orderModeSelect?.value || 'auto') !== 'manual');
+    }
+    if (reverseStartContainer) {
+        reverseStartContainer.classList.toggle('displayNone', String(orderModeSelect?.value || 'auto') !== 'reverse');
+    }
+}
+
+function buildProfileFromEditor(dialog, baseProfile = null) {
+    const profile = structuredClone(baseProfile || createDefaultStmbProfile());
+    const isBuiltin = Boolean(baseProfile?.isBuiltinCurrentST);
+    const titleFormatSelect = dialog.querySelector('#stmb-profile-editor-title-format-select');
+    const titleFormat = titleFormatSelect?.value === 'custom'
+        ? String(dialog.querySelector('#stmb-profile-editor-custom-title-format')?.value || '').trim()
+        : String(titleFormatSelect?.value || stmbSettings.titleFormat || STMB_DEFAULT_TITLE_FORMAT).trim();
+
+    profile.name = String(dialog.querySelector('#stmb-profile-editor-name')?.value || profile.name || 'New Profile').trim() || 'New Profile';
+    profile.preset = String(dialog.querySelector('#stmb-profile-editor-preset')?.value || 'summary').trim() || 'summary';
+    profile.connection = profile.connection && typeof profile.connection === 'object' ? profile.connection : {};
+    profile.connection.api = isBuiltin
+        ? 'current_st'
+        : String(dialog.querySelector('#stmb-profile-editor-api')?.value || profile.connection.api || 'current_st').trim();
+
+    const model = String(dialog.querySelector('#stmb-profile-editor-model')?.value || '').trim();
+    const temperature = Number(dialog.querySelector('#stmb-profile-editor-temperature')?.value ?? 0.7);
+    const endpoint = String(dialog.querySelector('#stmb-profile-editor-endpoint')?.value || '').trim();
+    const apiKey = String(dialog.querySelector('#stmb-profile-editor-apikey')?.value || '').trim();
+    if (model) profile.connection.model = model;
+    else delete profile.connection.model;
+    if (Number.isFinite(temperature)) profile.connection.temperature = temperature;
+    else delete profile.connection.temperature;
+    if (endpoint) profile.connection.endpoint = endpoint;
+    else delete profile.connection.endpoint;
+    if (apiKey) profile.connection.apiKey = apiKey;
+    else delete profile.connection.apiKey;
+
+    const promptOverride = String(dialog.querySelector('#stmb-profile-editor-prompt')?.value || '').trim();
+    if (promptOverride) profile.prompt = promptOverride;
+    else delete profile.prompt;
+
+    profile.titleFormat = titleFormat || stmbSettings.titleFormat || STMB_DEFAULT_TITLE_FORMAT;
+    profile.constVectMode = String(dialog.querySelector('#stmb-profile-editor-const-vect')?.value || 'link');
+    profile.position = Number(dialog.querySelector('#stmb-profile-editor-position')?.value ?? 0);
+    profile.outletName = String(dialog.querySelector('#stmb-profile-editor-outlet-name')?.value || '');
+    profile.orderMode = String(dialog.querySelector('#stmb-profile-editor-order-mode')?.value || 'auto');
+    profile.orderValue = Number(dialog.querySelector('#stmb-profile-editor-order-value')?.value ?? 100);
+    profile.reverseStart = Number(dialog.querySelector('#stmb-profile-editor-reverse-start')?.value ?? 9999);
+    profile.preventRecursion = Boolean(dialog.querySelector('#stmb-profile-editor-prevent-recursion')?.checked);
+    profile.delayUntilRecursion = Boolean(dialog.querySelector('#stmb-profile-editor-delay-recursion')?.checked);
+
+    if (isBuiltin) {
+        profile.isBuiltinCurrentST = true;
+        profile.name = 'Current SillyTavern Settings';
+        profile.connection.api = 'current_st';
+    } else {
+        delete profile.isBuiltinCurrentST;
+    }
+
+    return profile;
+}
+
+async function openProfileEditor(profileIndex = null) {
+    const isNew = profileIndex === null;
+    const baseProfile = isNew
+        ? {
+            ...createDefaultStmbProfile(),
+            name: getUniqueProfileName('New Profile'),
+            isBuiltinCurrentST: false,
+            connection: { api: 'current_st', temperature: 0.7 },
+        }
+        : structuredClone(stmbSettings.profiles[profileIndex] || getActiveStmbProfile(stmbSettings));
+    const popup = new Popup(DOMPurify.sanitize(buildProfileEditorHtml(baseProfile, { mode: isNew ? 'new' : 'edit' })), POPUP_TYPE.TEXT, '', {
+        okButton: isNew ? 'Create' : 'Save',
+        cancelButton: 'Cancel',
+        wide: true,
+        large: true,
+        allowVerticalScrolling: true,
+        onClosing: popupInstance => {
+            if (popupInstance?.result !== POPUP_RESULT.AFFIRMATIVE) {
+                return true;
+            }
+
+            const dialog = popupInstance.dlg;
+            const nextProfile = buildProfileFromEditor(dialog, baseProfile);
+            if (!nextProfile.name.trim()) {
+                toastr.error('Profile name is required', 'STMB');
+                return false;
+            }
+            if (nextProfile.connection?.api !== 'current_st' && !String(nextProfile.connection?.model || '').trim()) {
+                toastr.error('Model is required for non-current-st profiles', 'STMB');
+                return false;
+            }
+            if (nextProfile.connection?.api === 'full-manual' && !String(nextProfile.connection?.endpoint || '').trim()) {
+                toastr.error('Endpoint is required for full-manual profiles', 'STMB');
+                return false;
+            }
+            return true;
+        },
+    });
+
+    popup.dlg?.addEventListener('change', () => updateProfileEditorDynamicState(popup.dlg));
+    popup.dlg?.addEventListener('input', () => updateProfileEditorDynamicState(popup.dlg));
+    popup.dlg?.addEventListener('click', async event => {
+        const target = event.target;
+        if (!(target instanceof HTMLElement)) {
+            return;
+        }
+        if (target.closest('#stmb-profile-editor-open-prompt-manager')) {
+            await showSummaryPromptManagerPopup({
+                onChange: async () => {
+                    refreshProfileEditorPresetOptions(popup.dlg);
+                },
+            });
+            refreshProfileEditorPresetOptions(popup.dlg);
+            return;
+        }
+        if (target.closest('#stmb-profile-editor-refresh-presets')) {
+            refreshProfileEditorPresetOptions(popup.dlg);
+        }
+    });
+    updateProfileEditorDynamicState(popup.dlg);
+    refreshProfileEditorPresetOptions(popup.dlg);
+
+    const result = await popup.show();
+    if (result !== POPUP_RESULT.AFFIRMATIVE) {
+        return false;
+    }
+
+    const nextProfile = buildProfileFromEditor(popup.dlg, baseProfile);
+    nextProfile.name = getUniqueProfileName(nextProfile.name, isNew ? null : profileIndex);
+    if (isNew) {
+        stmbSettings.profiles.push(nextProfile);
+        stmbSettings.defaultProfile = stmbSettings.profiles.length - 1;
+    } else {
+        stmbSettings.profiles[profileIndex] = nextProfile;
+    }
+    stmbSettings = normalizeStmbSettings(stmbSettings);
+    saveSettingsDebounced();
+    return true;
+}
+
+async function deleteSelectedProfile(profileIndex) {
+    if (!Number.isInteger(profileIndex) || !stmbSettings.profiles[profileIndex]) {
+        return false;
+    }
+    if (stmbSettings.profiles.length <= 1) {
+        toastr.error('Cannot delete the last profile', 'STMB');
+        return false;
+    }
+    if (stmbSettings.profiles[profileIndex]?.isBuiltinCurrentST) {
+        toastr.error('Cannot delete the "Current SillyTavern Settings" profile', 'STMB');
+        return false;
+    }
+
+    const profileName = String(stmbSettings.profiles[profileIndex]?.name || 'Profile');
+    const result = await Popup.show.confirm('Delete Profile', `Delete profile "${escapeHtml(profileName)}"?`);
+    if (!result) {
+        return false;
+    }
+
+    stmbSettings.profiles.splice(profileIndex, 1);
+    if (stmbSettings.defaultProfile === profileIndex) {
+        stmbSettings.defaultProfile = 0;
+    } else if (stmbSettings.defaultProfile > profileIndex) {
+        stmbSettings.defaultProfile -= 1;
+    }
+    stmbSettings = normalizeStmbSettings(stmbSettings);
+    saveSettingsDebounced();
+    return true;
+}
+
+function exportProfilesToFile() {
+    const payload = {
+        profiles: stmbSettings.profiles,
+        exportDate: new Date().toISOString(),
+        version: 1,
+        moduleVersion: stmbSettings.migrationVersion || 1,
+    };
+    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
+    const link = document.createElement('a');
+    link.href = URL.createObjectURL(blob);
+    link.download = `stmemorybooks-profiles-${new Date().toISOString().slice(0, 10)}.json`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    setTimeout(() => URL.revokeObjectURL(link.href), 1000);
+}
+
+function importProfilesFromFile(file) {
+    return new Promise((resolve, reject) => {
+        if (!file) {
+            resolve(false);
+            return;
+        }
+
+        const reader = new FileReader();
+        reader.onload = () => {
+            try {
+                const importData = JSON.parse(String(reader.result || '{}'));
+                if (!Array.isArray(importData?.profiles)) {
+                    throw new Error('Invalid profile data format');
+                }
+
+                const existingNames = stmbSettings.profiles.map(profile => String(profile?.name || '').trim());
+                let importedCount = 0;
+                for (const rawProfile of importData.profiles) {
+                    const candidateSettings = normalizeStmbSettings({
+                        ...stmbSettings,
+                        profiles: [...stmbSettings.profiles, rawProfile],
+                        defaultProfile: stmbSettings.defaultProfile,
+                    });
+                    const normalizedProfile = candidateSettings.profiles[candidateSettings.profiles.length - 1];
+                    if (normalizedProfile?.isBuiltinCurrentST) {
+                        continue;
+                    }
+                    normalizedProfile.name = getUniqueProfileName(normalizedProfile.name, null);
+                    if (existingNames.includes(normalizedProfile.name)) {
+                        continue;
+                    }
+                    existingNames.push(normalizedProfile.name);
+                    stmbSettings.profiles.push(normalizedProfile);
+                    importedCount++;
+                }
+
+                if (importedCount > 0) {
+                    stmbSettings = normalizeStmbSettings(stmbSettings);
+                    saveSettingsDebounced();
+                }
+                resolve(importedCount > 0);
+            } catch (error) {
+                reject(error);
+            }
+        };
+        reader.onerror = () => reject(new Error('Failed to read import file'));
+        reader.readAsText(file);
+    });
+}
+
+function refreshSettingsPopupProfileSection(dialog, currentUiConnection) {
+    if (!dialog) {
+        return;
+    }
+
+    const profileSelect = dialog.querySelector('#stmb-settings-profile-select');
+    if (profileSelect) {
+        profileSelect.innerHTML = (stmbSettings.profiles || []).map((profile, index) => (
+            `<option value="${index}" ${index === stmbSettings.defaultProfile ? 'selected' : ''}>${escapeHtml(getProfileDisplayName(profile))}${index === stmbSettings.defaultProfile ? ' (Default)' : ''}</option>`
+        )).join('');
+        profileSelect.value = String(stmbSettings.defaultProfile ?? 0);
+    }
+
+    updateSettingsPopupDynamicState(dialog, currentUiConnection);
+}
+
+function refreshProfileEditorPresetOptions(dialog) {
+    if (!dialog) {
+        return;
+    }
+    const presetSelect = dialog.querySelector('#stmb-profile-editor-preset');
+    if (!presetSelect) {
+        return;
+    }
+    const selectedValue = String(presetSelect.value || 'summary');
+    presetSelect.innerHTML = getProfilePresetKeys().map(key => (
+        `<option value="${escapeHtml(key)}" ${key === selectedValue ? 'selected' : ''}>${escapeHtml(getSummaryPromptDisplayName(key))}</option>`
+    )).join('');
+    if (!Array.from(presetSelect.options).some(option => option.value === selectedValue)) {
+        presetSelect.value = 'summary';
+    }
+}
+
+function createMainEntryUi() {
+    if (stmbUiBound || $('#stmb-menu-item').length > 0) {
+        stmbUiBound = true;
+        return;
+    }
+
+    const menuItem = $(`
+        <div id="stmb-menu-item-container" class="extension_container interactable" tabindex="0">
+            <div id="stmb-menu-item" class="list-group-item flex-container flexGap5 interactable" tabindex="0">
+                <div class="fa-fw fa-solid fa-book extensionsMenuExtensionButton"></div>
+                <span>Memory Books</span>
+            </div>
+        </div>
+    `);
+    const extensionsMenu = $('#extensionsMenu');
+    if (extensionsMenu.length > 0) {
+        extensionsMenu.append(menuItem);
+        stmbUiBound = true;
+    } else {
+        setTimeout(() => {
+            if (!stmbUiBound) {
+                createMainEntryUi();
+            }
+        }, 250);
+    }
+}
+
+async function showMainEntryPopup() {
+    await firstRunInitArcPromptPresets(stmbSettings);
+    await firstRunInitSummaryPromptPresets(stmbSettings);
+    const sceneData = await getSettingsPopupSceneData();
+    const currentUiConnection = await getCurrentUiConnectionInfo();
+    const regexOptions = getSettingsRegexOptions();
+    const popup = new Popup(DOMPurify.sanitize(buildSettingsPopupHtml(sceneData, currentUiConnection, regexOptions)), POPUP_TYPE.TEXT, '', {
+        okButton: false,
+        cancelButton: 'Close',
+        wide: true,
+        large: true,
+        allowVerticalScrolling: true,
+        customButtons: [
+            {
+                text: 'Create Memory',
+                result: null,
+                classes: ['menu_button'],
+                action: async () => {
+                    try {
+                        const profileIndex = Number(popup.dlg?.querySelector('#stmb-settings-profile-select')?.value ?? stmbSettings.defaultProfile ?? 0);
+                        await createMemoryFromRange(getCurrentSceneRange(), { profileIndex });
+                    } catch (error) {
+                        showSlashCommandError(error?.message || 'Failed to create memory.', error);
+                    }
+                },
+            },
+            {
+                text: 'Consolidate Memories',
+                result: null,
+                classes: ['menu_button'],
+                action: async () => {
+                    const initialTargetTier = Number(readSelectedValues(popup.dlg?.querySelector('#stmb-settings-auto-consolidation-target-tier')).at(0) || 1);
+                    await showSummaryConsolidationPopup({ initialTargetTier });
+                },
+            },
+            {
+                text: 'Clear Scene',
+                result: null,
+                classes: ['menu_button'],
+                action: () => {
+                    clearSceneMarkers();
+                },
+            },
+        ],
+    });
+    activeSettingsPopupDialog = popup.dlg ?? null;
+
+    popup.dlg?.addEventListener('change', async event => {
+        const target = event.target;
+        if (!(target instanceof HTMLElement)) {
+            return;
+        }
+
+        const moduleSettings = stmbSettings.moduleSettings;
+        const persistSettings = () => {
+            stmbSettings = normalizeStmbSettings(stmbSettings);
+            saveSettingsDebounced();
+            updateSettingsPopupDynamicState(popup.dlg, currentUiConnection);
+        };
+
+        if (target.matches('#stmb-settings-always-use-default')) {
+            moduleSettings.alwaysUseDefault = target.checked;
+            persistSettings();
+            return;
+        }
+        if (target.matches('#stmb-settings-show-memory-previews')) {
+            moduleSettings.showMemoryPreviews = target.checked;
+            persistSettings();
+            return;
+        }
+        if (target.matches('#stmb-settings-show-notifications')) {
+            moduleSettings.showNotifications = target.checked;
+            persistSettings();
+            return;
+        }
+        if (target.matches('#stmb-settings-allow-scene-overlap')) {
+            moduleSettings.allowSceneOverlap = target.checked;
+            persistSettings();
+            return;
+        }
+        if (target.matches('#stmb-settings-refresh-editor')) {
+            moduleSettings.refreshEditor = target.checked;
+            persistSettings();
+            return;
+        }
+        if (target.matches('#stmb-settings-unhide-before-memory')) {
+            moduleSettings.unhideBeforeMemory = target.checked;
+            persistSettings();
+            return;
+        }
+        if (target.matches('#stmb-settings-max-tokens')) {
+            moduleSettings.maxTokens = Number(target.value);
+            persistSettings();
+            return;
+        }
+        if (target.matches('#stmb-settings-token-warning-threshold')) {
+            moduleSettings.tokenWarningThreshold = Number(target.value);
+            persistSettings();
+            return;
+        }
+        if (target.matches('#stmb-settings-default-memory-count')) {
+            moduleSettings.defaultMemoryCount = Number(target.value);
+            persistSettings();
+            return;
+        }
+        if (target.matches('#stmb-settings-auto-hide-mode')) {
+            moduleSettings.autoHideMode = String(target.value || 'all').toLowerCase();
+            persistSettings();
+            return;
+        }
+        if (target.matches('#stmb-settings-unhidden-entries-count')) {
+            moduleSettings.unhiddenEntriesCount = Number(target.value);
+            persistSettings();
+            return;
+        }
+        if (target.matches('#stmb-settings-use-regex')) {
+            moduleSettings.useRegex = target.checked;
+            persistSettings();
+            return;
+        }
+        if (target.matches('#stmb-settings-regex-outgoing')) {
+            moduleSettings.selectedRegexOutgoing = readSelectedValues(target);
+            persistSettings();
+            return;
+        }
+        if (target.matches('#stmb-settings-regex-incoming')) {
+            moduleSettings.selectedRegexIncoming = readSelectedValues(target);
+            persistSettings();
+            return;
+        }
+        if (target.matches('#stmb-settings-manual-mode-enabled')) {
+            if (target.checked) {
+                const state = getStmbState();
+                if (!String(state.manualLorebook || '').trim()) {
+                    const chatBoundLorebook = String(chat_metadata[METADATA_KEY] || '').trim();
+                    if (chatBoundLorebook) {
+                        const setupPopup = new Popup(DOMPurify.sanitize(`
+                            <div class="stmb-manual-lorebook-setup">
+                                <h4>Manual Lorebook Setup</h4>
+                                <p>You have a chat-bound lorebook "${escapeHtml(chatBoundLorebook)}".</p>
+                                <p>Would you like to use it for manual mode or select a different one?</p>
+                            </div>
+                        `), POPUP_TYPE.TEXT, '', {
+                            okButton: 'Use Chat-bound',
+                            cancelButton: 'Select Different',
+                        });
+                        const setupResult = await setupPopup.show();
+                        if (setupResult === POPUP_RESULT.AFFIRMATIVE) {
+                            state.manualLorebook = chatBoundLorebook;
+                            saveMetadataDebounced();
+                        } else {
+                            const selectedLorebook = await showLorebookPickerPopup(Array.isArray(world_names) ? world_names : [], {
+                                title: 'Select Lorebook',
+                                emptyMessage: 'No existing lorebooks are available.',
+                            });
+                            if (!selectedLorebook) {
+                                target.checked = false;
+                                return;
+                            }
+                            state.manualLorebook = selectedLorebook;
+                            saveMetadataDebounced();
+                        }
+                    } else {
+                        const selectedLorebook = await showLorebookPickerPopup(Array.isArray(world_names) ? world_names : [], {
+                            title: 'Select Lorebook',
+                            emptyMessage: 'No existing lorebooks are available.',
+                        });
+                        if (!selectedLorebook) {
+                            target.checked = false;
+                            return;
+                        }
+                        state.manualLorebook = selectedLorebook;
+                        saveMetadataDebounced();
+                    }
+                }
+                moduleSettings.autoCreateLorebook = false;
+            }
+            moduleSettings.manualModeEnabled = target.checked;
+            persistSettings();
+            return;
+        }
+        if (target.matches('#stmb-settings-auto-create-lorebook')) {
+            moduleSettings.autoCreateLorebook = target.checked;
+            if (target.checked) {
+                moduleSettings.manualModeEnabled = false;
+            }
+            persistSettings();
+            return;
+        }
+        if (target.matches('#stmb-settings-lorebook-name-template')) {
+            moduleSettings.lorebookNameTemplate = String(target.value || '');
+            persistSettings();
+            return;
+        }
+        if (target.matches('#stmb-settings-auto-summary-enabled')) {
+            moduleSettings.autoSummaryEnabled = target.checked;
+            persistSettings();
+            return;
+        }
+        if (target.matches('#stmb-settings-auto-summary-interval')) {
+            moduleSettings.autoSummaryInterval = Number(target.value);
+            persistSettings();
+            return;
+        }
+        if (target.matches('#stmb-settings-auto-summary-buffer')) {
+            moduleSettings.autoSummaryBuffer = Number(target.value);
+            persistSettings();
+            return;
+        }
+        if (target.matches('#stmb-settings-auto-consolidation-prompt-enabled')) {
+            moduleSettings.autoConsolidationPromptEnabled = target.checked;
+            persistSettings();
+            return;
+        }
+        if (target.matches('#stmb-settings-auto-consolidation-target-tier')) {
+            moduleSettings.autoConsolidationTargetTiers = readSelectedValues(target).map(value => Number(value)).filter(Number.isFinite);
+            persistSettings();
+            return;
+        }
+        if (target.matches('#stmb-settings-title-format-select')) {
+            if (target.value !== 'custom') {
+                stmbSettings.titleFormat = String(target.value || STMB_DEFAULT_TITLE_FORMAT);
+                persistSettings();
+            } else {
+                updateSettingsPopupDynamicState(popup.dlg, currentUiConnection);
+            }
+            return;
+        }
+        if (target.matches('#stmb-settings-custom-title-format')) {
+            stmbSettings.titleFormat = String(target.value || STMB_DEFAULT_TITLE_FORMAT);
+            persistSettings();
+            return;
+        }
+        if (target.matches('#stmb-settings-profile-select')) {
+            stmbSettings.defaultProfile = Number(target.value);
+            persistSettings();
+            return;
+        }
+        if (target.matches('#stmb-settings-import-file')) {
+            try {
+                const imported = await importProfilesFromFile(target.files?.[0] || null);
+                target.value = '';
+                if (imported) {
+                    refreshSettingsPopupProfileSection(popup.dlg, currentUiConnection);
+                    toastr.success('Profiles imported successfully', 'STMB');
+                }
+            } catch (error) {
+                target.value = '';
+                toastr.error(error?.message || 'Failed to import profiles', 'STMB');
+            }
+        }
+    });
+
+    popup.dlg?.addEventListener('click', async event => {
+        const target = event.target;
+        if (!(target instanceof HTMLElement)) {
+            return;
+        }
+
+        if (target.closest('#stmb-settings-select-lorebook')) {
+            const selectedLorebook = await showLorebookPickerPopup(Array.isArray(world_names) ? world_names : [], {
+                title: 'Select Lorebook',
+                emptyMessage: 'No existing lorebooks are available.',
+            });
+            if (selectedLorebook) {
+                getStmbState().manualLorebook = selectedLorebook;
+                saveMetadataDebounced();
+                updateSettingsPopupDynamicState(popup.dlg, currentUiConnection);
+            }
+            return;
+        }
+
+        if (target.closest('#stmb-settings-clear-lorebook')) {
+            delete getStmbState().manualLorebook;
+            saveMetadataDebounced();
+            updateSettingsPopupDynamicState(popup.dlg, currentUiConnection);
+            return;
+        }
+        if (target.closest('#stmb-settings-configure-regex')) {
+            try {
+                const saved = await showRegexSelectionPopup();
+                if (saved) {
+                    updateSettingsPopupDynamicState(popup.dlg, currentUiConnection);
+                    toastr.success('Regex selections saved', 'STMB');
+                }
+            } catch (error) {
+                toastr.error(error?.message || 'Failed to save regex selections', 'STMB');
+            }
+            return;
+        }
+        if (target.closest('#stmb-settings-open-prompt-manager')) {
+            await showSummaryPromptManagerPopup({
+                onChange: async () => {
+                    updateSettingsPopupDynamicState(popup.dlg, currentUiConnection);
+                },
+            });
+            updateSettingsPopupDynamicState(popup.dlg, currentUiConnection);
+            return;
+        }
+        if (target.closest('#stmb-settings-open-arc-prompt-manager')) {
+            await showArcPromptManagerPopup({
+                onChange: async () => {
+                    updateSettingsPopupDynamicState(popup.dlg, currentUiConnection);
+                },
+            });
+            updateSettingsPopupDynamicState(popup.dlg, currentUiConnection);
+            return;
+        }
+        if (target.closest('#stmb-settings-open-sideprompt-manager')) {
+            await showSidePromptManagerPopup({
+                onChange: async () => {
+                    updateSettingsPopupDynamicState(popup.dlg, currentUiConnection);
+                },
+            });
+            updateSettingsPopupDynamicState(popup.dlg, currentUiConnection);
+            return;
+        }
+
+        const selectedProfileIndex = Number(popup.dlg?.querySelector('#stmb-settings-profile-select')?.value ?? stmbSettings.defaultProfile ?? 0);
+        if (target.closest('#stmb-settings-profile-new')) {
+            if (await openProfileEditor(null)) {
+                refreshSettingsPopupProfileSection(popup.dlg, currentUiConnection);
+                toastr.success('Profile created successfully', 'STMB');
+            }
+            return;
+        }
+        if (target.closest('#stmb-settings-profile-edit')) {
+            if (await openProfileEditor(selectedProfileIndex)) {
+                refreshSettingsPopupProfileSection(popup.dlg, currentUiConnection);
+                toastr.success('Profile updated successfully', 'STMB');
+            }
+            return;
+        }
+        if (target.closest('#stmb-settings-profile-delete')) {
+            if (await deleteSelectedProfile(selectedProfileIndex)) {
+                refreshSettingsPopupProfileSection(popup.dlg, currentUiConnection);
+                toastr.success('Profile deleted successfully', 'STMB');
+            }
+            return;
+        }
+        if (target.closest('#stmb-settings-profile-export')) {
+            exportProfilesToFile();
+            toastr.success('Profiles exported successfully', 'STMB');
+            return;
+        }
+        if (target.closest('#stmb-settings-profile-import')) {
+            popup.dlg?.querySelector('#stmb-settings-import-file')?.click();
+        }
+    });
+
+    updateSettingsPopupDynamicState(popup.dlg, currentUiConnection);
+
+    try {
+        await popup.show();
+    } finally {
+        if (activeSettingsPopupDialog === popup.dlg) {
+            activeSettingsPopupDialog = null;
+        }
+    }
 }
 
 function buildScenePopupData(compiledScene, range, estimatedTokens) {
@@ -208,6 +2838,7 @@ function saveAdvancedProfile(baseProfile, popupResult, currentUiConnection) {
 }
 
 async function showAndGetMemorySettings(compiledScene, range, lorebookName, selectedProfileIndex = null) {
+    await firstRunInitSummaryPromptPresets(stmbSettings);
     const tokenThreshold = getModuleSettings().tokenWarningThreshold ?? 30000;
     const estimatedTokens = await getTokenCountAsync(compiledSceneToText(compiledScene));
     const sceneData = buildScenePopupData(compiledScene, range, estimatedTokens);
@@ -371,6 +3002,9 @@ function setSceneMarker(kind, messageId) {
     state.sceneEnd = nextEnd;
     saveMetadataDebounced();
     renderAllSceneButtons();
+    refreshOpenSettingsPopupSceneState().catch(error => {
+        console.warn('STMB settings popup scene refresh failed', error);
+    });
 }
 
 function setSceneRange(sceneStart, sceneEnd) {
@@ -379,6 +3013,9 @@ function setSceneRange(sceneStart, sceneEnd) {
     state.sceneEnd = Number(sceneEnd);
     saveMetadataDebounced();
     renderAllSceneButtons();
+    refreshOpenSettingsPopupSceneState().catch(error => {
+        console.warn('STMB settings popup scene refresh failed', error);
+    });
 }
 
 function clearSceneMarkers() {
@@ -387,6 +3024,9 @@ function clearSceneMarkers() {
     delete state.sceneEnd;
     saveMetadataDebounced();
     renderAllSceneButtons();
+    refreshOpenSettingsPopupSceneState().catch(error => {
+        console.warn('STMB settings popup scene refresh failed', error);
+    });
 }
 
 function getHighestProcessedMessageId() {
@@ -399,6 +3039,9 @@ function setHighestProcessedMessageId(messageId) {
     state.highestMemoryProcessed = Number(messageId);
     delete state.highestMemoryProcessedManuallySet;
     saveMetadataDebounced();
+    refreshOpenSettingsPopupSceneState().catch(error => {
+        console.warn('STMB settings popup scene refresh failed', error);
+    });
 }
 
 function ensureSceneButtonContainer(messageElement) {
@@ -722,6 +3365,9 @@ function validateSceneMarkers() {
 
     if (changed) {
         saveMetadataDebounced();
+        refreshOpenSettingsPopupSceneState().catch(error => {
+            console.warn('STMB settings popup scene refresh failed', error);
+        });
     }
     renderAllSceneButtons();
 }
@@ -817,27 +3463,17 @@ function renderLorebookNameFromTemplate() {
 }
 
 async function ensureLorebookName() {
-    const existing = resolveLorebookName();
-    if (existing) {
-        return existing;
-    }
-
-    if (getModuleSettings().manualModeEnabled) {
-        throw new Error('No manual lorebook selected');
-    }
-
-    if (!getModuleSettings().autoCreateLorebook) {
-        throw new Error('No chat-bound lorebook selected');
-    }
-
-    const lorebookName = renderLorebookNameFromTemplate();
-    const created = await createNewWorldInfo(lorebookName);
-    if (!created) {
-        throw new Error(`Failed to create lorebook "${lorebookName}"`);
-    }
-    chat_metadata[METADATA_KEY] = lorebookName;
-    saveMetadataDebounced();
-    return lorebookName;
+    return ensureResolvedLorebookName({
+        manualMode: getModuleSettings().manualModeEnabled,
+        getManualLorebook: () => getStmbState().manualLorebook,
+        setManualLorebook: async selectedLorebook => {
+            getStmbState().manualLorebook = String(selectedLorebook || '').trim();
+            saveMetadataDebounced();
+        },
+        autoCreateLorebook: getModuleSettings().autoCreateLorebook,
+        lorebookNameTemplate: getModuleSettings().lorebookNameTemplate || 'LTM - {{char}} - {{chat}}',
+        createContext: 'chat',
+    });
 }
 
 function getMemorySchema() {
@@ -885,7 +3521,10 @@ async function requestStructuredMemory(compiledScene, profile, lorebookName, sum
         jsonSchema: getMemorySchema(),
     });
     const result = await generateStmbText({
-        generateData: applyStmbProfileToGenerateData(generateData, profile, getStmbProviderDefaults()),
+        generateData: applyStmbMaxTokensToGenerateData(
+            applyStmbProfileToGenerateData(generateData, profile, getStmbProviderDefaults()),
+            getModuleSettings().maxTokens,
+        ),
     }, { signal });
 
     try {
@@ -902,14 +3541,197 @@ async function requestStructuredMemory(compiledScene, profile, lorebookName, sum
     }
 }
 
-async function requestStructuredSummary(prompt, profile, signal) {
+function serializeSummaryProviderResponse(providerResponse, fallback = '') {
+    if (typeof fallback === 'string' && fallback.trim()) {
+        return fallback.trim();
+    }
+    if (typeof providerResponse === 'string' && providerResponse.trim()) {
+        return providerResponse.trim();
+    }
+    try {
+        return JSON.stringify(providerResponse ?? {}, null, 2);
+    } catch {
+        return String(providerResponse ?? '').trim();
+    }
+}
+
+async function requestStructuredSummaryDetailed(prompt, profile, signal) {
     const { generateData } = await buildOpenAIGenerateData('quiet', buildSummaryPromptMessages(prompt), {
         jsonSchema: getSummarySchema(),
     });
     const result = await generateStmbSummary({
-        generateData: applyStmbProfileToGenerateData(generateData, profile, getStmbProviderDefaults()),
+        generateData: applyStmbMaxTokensToGenerateData(
+            applyStmbProfileToGenerateData(generateData, profile, getStmbProviderDefaults()),
+            getModuleSettings().maxTokens,
+        ),
     }, { signal });
-    return result.parsed;
+    return {
+        parsed: result.parsed,
+        providerResponse: result.providerResponse,
+        rawResponse: serializeSummaryProviderResponse(result.providerResponse),
+    };
+}
+
+async function requestStructuredSummaryWithRetry(prompt, profile, signal) {
+    try {
+        return await requestStructuredSummaryDetailed(prompt, profile, signal);
+    } catch (error) {
+        if (isStmbAbortError(error) || !error?.rawResponse) {
+            throw error;
+        }
+
+        const repairPrompt = `${prompt}\n\nReturn ONLY the JSON object, nothing else. Ensure arrays and commas are valid.`;
+        try {
+            const repaired = await requestStructuredSummaryDetailed(repairPrompt, profile, signal);
+            return {
+                ...repaired,
+                rawResponse: String(error.rawResponse || '').trim() || repaired.rawResponse,
+                retryRawResponse: repaired.rawResponse,
+            };
+        } catch (retryError) {
+            if (isStmbAbortError(retryError)) {
+                throw retryError;
+            }
+
+            const combined = new Error(String(retryError?.message || error?.message || 'Model did not return valid summary JSON'));
+            combined.name = retryError?.name || error?.name || 'StmbSummaryParseError';
+            combined.code = retryError?.code || error?.code || 'PARSE_FAILED';
+            combined.rawResponse = String(error?.rawResponse || '').trim();
+            combined.retryRawResponse = String(retryError?.rawResponse || '').trim();
+            combined.providerBody = String(retryError?.providerBody || error?.providerBody || '').trim();
+            throw combined;
+        }
+    }
+}
+
+async function estimateSummaryPromptTokens(prompt, estimatedOutput = 500) {
+    const inputTokens = await getTokenCountAsync(String(prompt || ''));
+    return {
+        input: Number.isFinite(Number(inputTokens)) ? Number(inputTokens) : 0,
+        total: (Number.isFinite(Number(inputTokens)) ? Number(inputTokens) : 0) + Math.max(0, Math.trunc(Number(estimatedOutput) || 0)),
+    };
+}
+
+async function runSequentialSummaryAnalysis(sourceEntries, options = {}, profile, signal) {
+    const {
+        presetKey = 'arc_default',
+        maxItemsPerPass = 15,
+        maxPasses = 10,
+        requiredMin = 1,
+        tokenTarget = getModuleSettings().tokenWarningThreshold ?? 30000,
+        targetTier = 1,
+        previousSummary = null,
+        previousOrder = null,
+    } = options;
+
+    const briefs = buildBriefsFromEntries(sourceEntries);
+    const remainingMap = new Map(briefs.map(brief => [String(brief.id), brief]));
+    const acceptedSummaries = [];
+    const singleSummaryPreset = presetKey === 'arc_alternate';
+    const maxPassesLocal = Object.prototype.hasOwnProperty.call(options, 'maxPasses')
+        ? Math.max(1, Math.trunc(Number(maxPasses) || 1))
+        : (singleSummaryPreset ? 1 : 10);
+    const maxItems = Math.max(1, Math.trunc(Number(maxItemsPerPass) || 15));
+    const minimumProgress = Math.max(1, Math.trunc(Number(requiredMin) || 1));
+    const baseTokenTarget = Math.max(1000, Math.trunc(Number(tokenTarget) || 30000));
+    const promptText = getCachedArcPromptText(presetKey, stmbSettings);
+
+    let previousSummaryText = typeof previousSummary === 'string' && previousSummary.trim() ? previousSummary.trim() : null;
+    let previousOrderValue = Number.isFinite(Number(previousOrder)) ? Math.trunc(Number(previousOrder)) : null;
+    let carryBriefs = [];
+    let lastRawResponse = '';
+    let lastRetryRawResponse = '';
+
+    for (let pass = 1; remainingMap.size > 0 && pass <= maxPassesLocal; pass++) {
+        throwIfStmbAborted(signal);
+
+        const remainingBriefs = Array.from(remainingMap.values()).sort((left, right) => left.order - right.order);
+        const batch = [];
+        for (const carry of carryBriefs) {
+            if (remainingMap.has(String(carry.id)) && batch.length < maxItems) {
+                batch.push(carry);
+            }
+        }
+        for (const brief of remainingBriefs) {
+            if (batch.length >= maxItems) {
+                break;
+            }
+            if (!batch.some(item => item.id === brief.id)) {
+                batch.push(brief);
+            }
+        }
+        if (batch.length === 0) {
+            break;
+        }
+
+        let prompt = buildSummaryAnalysisPrompt({
+            briefs: batch,
+            previousSummary: previousSummaryText,
+            previousOrder: previousOrderValue,
+            promptText,
+            targetTier,
+        });
+        let tokenEstimate = await estimateSummaryPromptTokens(prompt, 500);
+        while (tokenEstimate.total > baseTokenTarget && batch.length > 1) {
+            batch.pop();
+            prompt = buildSummaryAnalysisPrompt({
+                briefs: batch,
+                previousSummary: previousSummaryText,
+                previousOrder: previousOrderValue,
+                promptText,
+                targetTier,
+            });
+            tokenEstimate = await estimateSummaryPromptTokens(prompt, 500);
+        }
+
+        const batchEntryMap = new Map(sourceEntries.map(entry => [String(entry?.uid), entry]));
+        const batchEntries = batch
+            .map(brief => batchEntryMap.get(String(brief.id)))
+            .filter(Boolean);
+        if (batchEntries.length === 0) {
+            break;
+        }
+
+        const response = await requestStructuredSummaryWithRetry(prompt, profile, signal);
+        lastRawResponse = String(response.rawResponse || '').trim();
+        lastRetryRawResponse = String(response.retryRawResponse || '').trim();
+
+        const { summaryCandidates, leftovers } = createSummaryCandidatesFromResponse(response.parsed, batchEntries);
+        const consumedIds = new Set(
+            batchEntries
+                .map(entry => String(entry.uid))
+                .filter(id => !leftovers.includes(id)),
+        );
+
+        if (summaryCandidates.length > 0) {
+            for (let index = 0; index < summaryCandidates.length; index++) {
+                acceptedSummaries.push(summaryCandidates[index]);
+                previousSummaryText = summaryCandidates[index].summary;
+                previousOrderValue = pass * 10 + index;
+            }
+        }
+
+        if (consumedIds.size === 0) {
+            break;
+        }
+
+        for (const consumedId of consumedIds) {
+            remainingMap.delete(String(consumedId));
+        }
+
+        if (consumedIds.size < minimumProgress && pass > 1) {
+            break;
+        }
+
+        carryBriefs = batch.filter(brief => leftovers.includes(String(brief.id)));
+    }
+
+    return {
+        summaryCandidates: acceptedSummaries,
+        leftovers: Array.from(remainingMap.keys()),
+        rawResponse: lastRawResponse,
+        retryRawResponse: lastRetryRawResponse,
+    };
 }
 
 function installAbortHook() {
@@ -979,6 +3801,16 @@ async function applyPostSaveLorebookEffects(lorebookName, range) {
         }
     } catch (error) {
         console.warn('STMB auto-hide failed', error);
+    }
+}
+
+async function applyPostSummarySaveLorebookEffects(lorebookName) {
+    if (getModuleSettings().refreshEditor !== false) {
+        try {
+            await Promise.resolve(reloadEditor(lorebookName));
+        } catch (error) {
+            console.warn('STMB summary refreshEditor failed', error);
+        }
     }
 }
 
@@ -1057,6 +3889,211 @@ async function saveMemoryObjectToLorebook(memoryObject, { lorebookName, range, c
     };
 }
 
+function normalizeAutoConsolidationTargetTiers(value) {
+    const source = Array.isArray(value) ? value : [value];
+    return Array.from(new Set(
+        source
+            .map(item => Number(item))
+            .filter(item => Number.isFinite(item))
+            .map(item => Math.trunc(item))
+            .filter(item => item >= 1 && item <= 6),
+    ));
+}
+
+function clearAutoConsolidationPromptState(targetTier) {
+    const state = getStmbState();
+    const prefix = `${Math.min(6, Math.max(1, Math.trunc(Number(targetTier) || 1)))}:`;
+    if (typeof state.autoConsolidationLastPromptKey === 'string' && state.autoConsolidationLastPromptKey.startsWith(prefix)) {
+        delete state.autoConsolidationLastPromptKey;
+        saveMetadataDebounced();
+    }
+}
+
+function listSummaryConsolidationPresets() {
+    return listCachedArcPromptPresets(stmbSettings).map(preset => ({
+        value: preset.key,
+        label: preset.displayName,
+    }));
+}
+
+function persistSummaryConsolidationPopupSettings({ targetTier, requiredMin, summaryEntrySettings } = {}) {
+    const normalizedTargetTier = Math.min(6, Math.max(1, Math.trunc(Number(targetTier) || 1)));
+    const nextRequiredMin = normalizeSummaryMinChildren(
+        requiredMin,
+        getModuleSettings().summaryTierMinimums?.[normalizedTargetTier] ?? getDefaultSummaryMinChildren(normalizedTargetTier),
+    );
+    const nextSummaryEntrySettings = normalizeLorebookEntrySettings(
+        summaryEntrySettings || {},
+        getModuleSettings().summaryEntrySettings || {},
+    );
+
+    let changed = false;
+    if (getModuleSettings().summaryTierMinimums?.[normalizedTargetTier] !== nextRequiredMin) {
+        stmbSettings.moduleSettings.summaryTierMinimums[normalizedTargetTier] = nextRequiredMin;
+        changed = true;
+    }
+
+    if (JSON.stringify(getModuleSettings().summaryEntrySettings || {}) !== JSON.stringify(nextSummaryEntrySettings)) {
+        stmbSettings.moduleSettings.summaryEntrySettings = { ...nextSummaryEntrySettings };
+        changed = true;
+    }
+
+    if (changed) {
+        saveSettingsDebounced();
+    }
+
+    return {
+        targetTier: normalizedTargetTier,
+        requiredMin: nextRequiredMin,
+        summaryEntrySettings: nextSummaryEntrySettings,
+    };
+}
+
+async function showSummaryConsolidationPopup({ initialTargetTier = 1 } = {}) {
+    await firstRunInitArcPromptPresets(stmbSettings);
+    const lorebookName = resolveLorebookName();
+    if (!lorebookName) {
+        toastr.info('No memory lorebook currently assigned, no memories found.', 'STMB');
+    }
+
+    const lorebookData = lorebookName ? (await loadWorldInfo(lorebookName) || { entries: {} }) : { entries: {} };
+    if (!lorebookData.entries || typeof lorebookData.entries !== 'object') {
+        lorebookData.entries = {};
+    }
+
+    const normalizedTargetTier = Math.min(6, Math.max(1, Math.trunc(Number(initialTargetTier) || 1)));
+    const summaryEntrySettings = normalizeLorebookEntrySettings(getModuleSettings().summaryEntrySettings || {});
+
+    const popupResult = await showSummaryConsolidationOptionsPopup({
+        initialTargetTier: normalizedTargetTier,
+        tierOptions: Array.from({ length: 6 }, (_, index) => ({
+            value: index + 1,
+            label: getSummaryTierLabel(index + 1),
+        })),
+        tierConfigs: Array.from({ length: 6 }, (_, index) => {
+            const targetTier = index + 1;
+            const sourceTier = getSourceTierForTarget(targetTier);
+            return {
+                value: targetTier,
+                label: getSummaryTierLabel(targetTier),
+                sourceLabel: getSummaryTierLabel(sourceTier),
+                sourcePlural: pluralizeSummaryLabel(getSummaryTierLabel(sourceTier)),
+                requiredMin: normalizeSummaryMinChildren(
+                    getModuleSettings().summaryTierMinimums?.[targetTier],
+                    getDefaultSummaryMinChildren(targetTier),
+                ),
+                candidates: identifyEligibleSummarySourceEntries(lorebookData.entries, targetTier).map(entry => ({
+                    uid: entry.uid,
+                    title: entry.comment || entry.title || `#${entry.uid}`,
+                })),
+            };
+        }),
+        presets: listSummaryConsolidationPresets(),
+        defaultPresetKey: 'arc_default',
+        requiredMin: normalizeSummaryMinChildren(
+            getModuleSettings().summaryTierMinimums?.[normalizedTargetTier],
+            getDefaultSummaryMinChildren(normalizedTargetTier),
+        ),
+        maxItemsPerPass: 15,
+        maxPasses: 10,
+        tokenTarget: getModuleSettings().tokenWarningThreshold ?? 30000,
+        disableOriginals: true,
+        summaryEntrySettings,
+        hasLorebook: Boolean(lorebookName),
+        allowPresetRebuild: true,
+        onPresetRebuild: async () => {
+            const result = await recreateBuiltInArcPromptOverridesFile();
+            toastr.success(`Removed ${result.removed} built-in consolidation prompt overrides`, 'STMB');
+            return listSummaryConsolidationPresets();
+        },
+        onPersist: persistSummaryConsolidationPopupSettings,
+    });
+
+    if (popupResult.action !== 'run') {
+        return null;
+    }
+    if (!lorebookName) {
+        toastr.info('Summary consolidation requires a memory lorebook. No lorebook assigned.', 'STMB');
+        return null;
+    }
+
+    const persisted = persistSummaryConsolidationPopupSettings({
+        targetTier: popupResult.targetTier,
+        requiredMin: popupResult.requiredMin,
+        summaryEntrySettings: popupResult.summaryEntrySettings,
+    });
+
+    return createSummaryForTier(popupResult.targetTier, {
+        requiredMin: persisted.requiredMin,
+        presetKey: popupResult.presetKey,
+        maxItemsPerPass: popupResult.maxItemsPerPass,
+        maxPasses: popupResult.maxPasses,
+        tokenTarget: popupResult.tokenTarget,
+        disableOriginals: popupResult.disableOriginals,
+        selectedEntryIds: popupResult.selectedEntryIds,
+        summaryEntrySettings: persisted.summaryEntrySettings,
+    });
+}
+
+async function maybePromptAutoConsolidation(targetTier) {
+    try {
+        if (!getModuleSettings().autoConsolidationPromptEnabled) {
+            return;
+        }
+
+        const normalizedTargetTier = Math.min(6, Math.max(1, Math.trunc(Number(targetTier) || 1)));
+        const configuredTargetTiers = normalizeAutoConsolidationTargetTiers(
+            getModuleSettings().autoConsolidationTargetTiers,
+        );
+        if (!configuredTargetTiers.includes(normalizedTargetTier)) {
+            return;
+        }
+
+        const lorebookName = resolveLorebookName();
+        if (!lorebookName) {
+            return;
+        }
+
+        const lorebookData = await loadWorldInfo(lorebookName) || { entries: {} };
+        if (!lorebookData.entries || typeof lorebookData.entries !== 'object') {
+            lorebookData.entries = {};
+        }
+
+        const requiredMin = normalizeSummaryMinChildren(
+            getModuleSettings().summaryTierMinimums?.[normalizedTargetTier],
+            getDefaultSummaryMinChildren(normalizedTargetTier),
+        );
+        const eligibleEntries = identifyEligibleSummarySourceEntries(lorebookData.entries, normalizedTargetTier);
+        const eligibleCount = eligibleEntries.length;
+        if (eligibleCount < requiredMin) {
+            return;
+        }
+
+        const state = getStmbState();
+        const promptKey = `${normalizedTargetTier}:${eligibleCount}`;
+        if (state.autoConsolidationLastPromptKey === promptKey) {
+            return;
+        }
+        state.autoConsolidationLastPromptKey = promptKey;
+        saveMetadataDebounced();
+
+        const sourceLabel = getSummaryTierLabel(getSourceTierForTarget(normalizedTargetTier)).toLowerCase();
+        const sourcePlural = sourceLabel.endsWith('y') ? `${sourceLabel.slice(0, -1)}ies` : `${sourceLabel}s`;
+        const targetLabel = getSummaryTierLabel(normalizedTargetTier).toLowerCase();
+        const shouldOpen = await showAutoConsolidationPromptPopup({
+            eligibleCount,
+            requiredMin,
+            sourcePlural,
+            targetLabel,
+        });
+        if (shouldOpen) {
+            await showSummaryConsolidationPopup({ initialTargetTier: normalizedTargetTier });
+        }
+    } catch (error) {
+        console.error('STMB auto-consolidation prompt check failed', error);
+    }
+}
+
 async function applyManualFixedMemoryJson(correctedRaw, context) {
     const task = createStmbTask('STMB:manual-repair');
     try {
@@ -1095,6 +4132,8 @@ async function applyManualFixedMemoryJson(correctedRaw, context) {
                 }
             }
 
+            await maybePromptAutoConsolidation(1);
+
             return saved;
         }
     } finally {
@@ -1108,6 +4147,7 @@ async function commitSummaryCandidates(summaryCandidates, {
     titleFormat,
     migrated = false,
     disableOriginals = false,
+    summaryEntrySettings = null,
     signal = null,
 }) {
     throwIfStmbAborted(signal);
@@ -1119,11 +4159,12 @@ async function commitSummaryCandidates(summaryCandidates, {
         titleFormat,
         migrated,
         disableOriginals,
-        summaryEntrySettings: getModuleSettings().summaryEntrySettings || {},
+        summaryEntrySettings: summaryEntrySettings || getModuleSettings().summaryEntrySettings || {},
     }, { signal });
     throwIfStmbAborted(signal);
     worldInfoCache.delete(lorebookName);
     const createdEntries = Array.isArray(result?.createdEntries) ? result.createdEntries : [];
+    await applyPostSummarySaveLorebookEffects(lorebookName);
 
     if (getModuleSettings().showNotifications) {
         toastr.success(
@@ -1146,6 +4187,26 @@ async function createMemoryFromRange(range, options = {}) {
     assertRangeWithinCurrentChat(range);
 
     const lorebookName = await ensureLorebookName();
+    if (!getModuleSettings().allowSceneOverlap) {
+        const lorebookData = await loadWorldInfo(lorebookName) || { entries: {} };
+        if (!lorebookData.entries || typeof lorebookData.entries !== 'object') {
+            lorebookData.entries = {};
+        }
+
+        const overlappingMemory = findOverlappingManagedMemoryEntry(lorebookData.entries, range);
+        if (overlappingMemory) {
+            const existingRange = overlappingMemory.range;
+            console.error(
+                `STMemoryBooks: Scene overlap detected with memory: ${overlappingMemory.title} [${existingRange.start}-${existingRange.end}] vs new [${range.sceneStart}-${range.sceneEnd}]`,
+            );
+            toastr.error(
+                `Scene overlaps with existing memory: "${overlappingMemory.title}" (messages ${existingRange.start}-${existingRange.end})`,
+                'STMB',
+            );
+            return null;
+        }
+    }
+
     const compiledScene = compileScene(chat, buildSceneRequest(range));
     const effectiveSettings = await showAndGetMemorySettings(compiledScene, range, lorebookName, options.profileIndex ?? null);
     if (!effectiveSettings) {
@@ -1181,6 +4242,8 @@ async function createMemoryFromRange(range, options = {}) {
                         console.warn('STMB side prompts after memory failed', error);
                     }
                 }
+
+                await maybePromptAutoConsolidation(1);
 
                 return saved;
             } catch (error) {
@@ -1221,7 +4284,14 @@ export async function createSummaryForTier(targetTier, options = {}) {
     }
 
     const migrated = migrateLorebookSummarySchema(lorebookData);
-    const sourceEntries = identifyEligibleSummarySourceEntries(lorebookData.entries, normalizedTargetTier);
+    const selectedEntryIds = Array.isArray(options.selectedEntryIds)
+        ? options.selectedEntryIds.map(value => String(value))
+        : null;
+    const sourceEntries = resolveSelectedSummarySourceEntries(
+        lorebookData.entries,
+        normalizedTargetTier,
+        selectedEntryIds,
+    );
     const configuredMinimum = getModuleSettings().summaryTierMinimums?.[normalizedTargetTier];
     const requiredMinimum = normalizeSummaryMinChildren(
         options.requiredMin,
@@ -1239,21 +4309,30 @@ export async function createSummaryForTier(targetTier, options = {}) {
     const presetKey = typeof options.presetKey === 'string' && options.presetKey.trim()
         ? options.presetKey.trim()
         : 'arc_default';
-    const promptText = getSummaryPrompt(stmbSettings, presetKey);
+    const chosenSummaryEntrySettings = normalizeLorebookEntrySettings(
+        options.summaryEntrySettings || getModuleSettings().summaryEntrySettings || {},
+        getModuleSettings().summaryEntrySettings || {},
+    );
     const { signal, cleanup } = installAbortHook();
     try {
-        const promptResult = await prepareStmbSummaryPrompt({
-            sourceEntries,
+        const analysisResult = await runSequentialSummaryAnalysis(sourceEntries, {
+            presetKey,
+            maxItemsPerPass: Math.max(1, Math.trunc(Number(options.maxItemsPerPass) || 15)),
+            maxPasses: Math.max(1, Math.trunc(Number(options.maxPasses) || 10)),
+            requiredMin: requiredMinimum,
+            tokenTarget: Math.max(1000, Math.trunc(Number(options.tokenTarget) || (getModuleSettings().tokenWarningThreshold ?? 30000))),
+            targetTier: normalizedTargetTier,
             previousSummary: previousSummary?.content || null,
             previousOrder: previousSummary ? (parseSequenceFromTitle(previousSummary.comment || '') ?? null) : null,
-            promptText,
-            targetTier: normalizedTargetTier,
-        }, { signal });
-        const prompt = String(promptResult?.prompt || '');
-        const parsed = await requestStructuredSummary(prompt, profile, signal);
-        const { summaryCandidates } = createSummaryCandidatesFromResponse(parsed, sourceEntries);
+        }, profile, signal);
+        const { summaryCandidates, leftovers, rawResponse, retryRawResponse } = analysisResult;
         if (summaryCandidates.length === 0) {
-            throw new Error(`Model did not return a usable ${getSummaryTierLabel(normalizedTargetTier).toLowerCase()} summary`);
+            const emptyError = new Error(`Model did not return a usable ${getSummaryTierLabel(normalizedTargetTier).toLowerCase()} summary`);
+            emptyError.name = 'StmbSummaryParseError';
+            emptyError.code = 'SUMMARY_NO_USABLE_SUMMARIES';
+            emptyError.rawResponse = String(rawResponse || '').trim();
+            emptyError.retryRawResponse = String(retryRawResponse || '').trim();
+            throw emptyError;
         }
 
         const titleFormat = typeof options.titleFormat === 'string' && options.titleFormat.trim()
@@ -1265,13 +4344,20 @@ export async function createSummaryForTier(targetTier, options = {}) {
             titleFormat,
             migrated,
             disableOriginals: Boolean(options.disableOriginals),
+            summaryEntrySettings: chosenSummaryEntrySettings,
             signal,
         });
+
+        clearAutoConsolidationPromptState(normalizedTargetTier);
+        if (normalizedTargetTier < 6) {
+            await maybePromptAutoConsolidation(normalizedTargetTier + 1);
+        }
 
         return {
             lorebookName,
             targetTier: normalizedTargetTier,
             summaryCandidates,
+            leftovers,
             entries: createdEntries,
         };
     } catch (error) {
@@ -1285,6 +4371,11 @@ export async function createSummaryForTier(targetTier, options = {}) {
                 normalizedTargetTier,
                 titleFormat,
                 disableOriginals: Boolean(options.disableOriginals),
+                selectedEntryIds,
+                summaryEntrySettings: chosenSummaryEntrySettings,
+                maxItemsPerPass: Math.max(1, Math.trunc(Number(options.maxItemsPerPass) || 15)),
+                maxPasses: Math.max(1, Math.trunc(Number(options.maxPasses) || 10)),
+                tokenTarget: Math.max(1000, Math.trunc(Number(options.tokenTarget) || (getModuleSettings().tokenWarningThreshold ?? 30000))),
             };
             showFailedSummaryResponsePopup(error, {
                 onApply: async correctedRaw => {
@@ -1295,15 +4386,21 @@ export async function createSummaryForTier(targetTier, options = {}) {
                             normalizedTargetTier,
                             titleFormat,
                             disableOriginals: Boolean(options.disableOriginals),
+                            selectedEntryIds,
+                            summaryEntrySettings: chosenSummaryEntrySettings,
+                            maxItemsPerPass: Math.max(1, Math.trunc(Number(options.maxItemsPerPass) || 15)),
+                            maxPasses: Math.max(1, Math.trunc(Number(options.maxPasses) || 10)),
+                            tokenTarget: Math.max(1000, Math.trunc(Number(options.tokenTarget) || (getModuleSettings().tokenWarningThreshold ?? 30000))),
                         };
                         const freshLorebookData = await loadWorldInfo(context.lorebookName) || { entries: {} };
                         if (!freshLorebookData.entries || typeof freshLorebookData.entries !== 'object') {
                             freshLorebookData.entries = {};
                         }
                         const freshMigrated = migrateLorebookSummarySchema(freshLorebookData);
-                        const freshSourceEntries = identifyEligibleSummarySourceEntries(
+                        const freshSourceEntries = resolveSelectedSummarySourceEntries(
                             freshLorebookData.entries,
                             context.normalizedTargetTier,
+                            context.selectedEntryIds ?? null,
                         );
                         const correctedParsed = parseSummaryJsonResponse(correctedRaw);
                         const { summaryCandidates } = createSummaryCandidatesFromResponse(correctedParsed, freshSourceEntries);
@@ -1316,8 +4413,16 @@ export async function createSummaryForTier(targetTier, options = {}) {
                             titleFormat: context.titleFormat,
                             migrated: freshMigrated,
                             disableOriginals: Boolean(context.disableOriginals),
+                            summaryEntrySettings: normalizeLorebookEntrySettings(
+                                context.summaryEntrySettings || getModuleSettings().summaryEntrySettings || {},
+                                getModuleSettings().summaryEntrySettings || {},
+                            ),
                             signal: repairTask.signal,
                         });
+                        clearAutoConsolidationPromptState(context.normalizedTargetTier);
+                        if (context.normalizedTargetTier < 6) {
+                            await maybePromptAutoConsolidation(context.normalizedTargetTier + 1);
+                        }
                         return true;
                     } finally {
                         repairTask.cleanup();
@@ -1332,6 +4437,12 @@ export async function createSummaryForTier(targetTier, options = {}) {
 }
 
 function showSlashCommandError(message, error) {
+    if (isStmbLorebookHandledError(error)) {
+        if (error?.message) {
+            toastr.info(String(error.message), 'STMB');
+        }
+        return;
+    }
     if (isStmbAbortError(error)) {
         toastr.info('STMB generation stopped', 'STMB');
         return;
@@ -1344,6 +4455,13 @@ function showSlashCommandError(message, error) {
 }
 
 async function createMemoryCommand() {
+    const markers = getSceneMarkers() || {};
+    if (markers.sceneStart == null || markers.sceneEnd == null) {
+        console.error('STMemoryBooks: No scene markers set for createMemory command');
+        toastr.error('No scene markers set. Use chevron buttons to mark start and end points first.', 'STMB');
+        return '';
+    }
+
     try {
         await createMemoryFromRange(getCurrentSceneRange());
     } catch (error) {
@@ -1354,25 +4472,43 @@ async function createMemoryCommand() {
 }
 
 async function sceneMemoryCommand(_, rangeText) {
+    const rangeValue = String(rangeText || '').trim();
+    if (!rangeValue) {
+        toastr.error('Missing range argument. Use: /scenememory X-Y (e.g., /scenememory 10-15)', 'STMB');
+        return '';
+    }
+
+    const match = rangeValue.match(/^(\d+)\s*[-–—]\s*(\d+)$/);
+    if (!match) {
+        toastr.error('Invalid format. Use: /scenememory X-Y (e.g., /scenememory 10-15)', 'STMB');
+        return '';
+    }
+
+    const startId = Number(match[1]);
+    const endId = Number(match[2]);
+    if (!Number.isFinite(startId) || !Number.isFinite(endId)) {
+        toastr.error('Invalid message IDs parsed. Use: /scenememory X-Y (e.g., /scenememory 10-15)', 'STMB');
+        return '';
+    }
+
+    if (startId > endId) {
+        toastr.error('Start message cannot be greater than end message', 'STMB');
+        return '';
+    }
+
+    const lastIndex = chat.length - 1;
+    if (startId < 0 || endId > lastIndex) {
+        toastr.error(`Message IDs out of range. Valid range: 0-${lastIndex}`, 'STMB');
+        return '';
+    }
+
+    if (!chat[startId] || !chat[endId]) {
+        toastr.error('One or more specified messages do not exist', 'STMB');
+        return '';
+    }
+
     try {
-        const rangeValue = String(rangeText || '').trim();
-        if (!rangeValue) {
-            throw new Error('Missing range argument. Use: /scenememory X-Y (e.g., /scenememory 10-15)');
-        }
-
-        const match = rangeValue.match(/^(\d+)\s*[-–—]\s*(\d+)$/);
-        if (!match) {
-            throw new Error('Invalid format. Use: /scenememory X-Y (e.g., /scenememory 10-15)');
-        }
-
-        const startId = Number(match[1]);
-        const endId = Number(match[2]);
-        if (!Number.isFinite(startId) || !Number.isFinite(endId)) {
-            throw new Error('Invalid message IDs parsed. Use: /scenememory X-Y (e.g., /scenememory 10-15)');
-        }
-
         const range = { sceneStart: startId, sceneEnd: endId };
-        assertRangeWithinCurrentChat(range);
         setSceneRange(range.sceneStart, range.sceneEnd);
         const group = selected_group ? groups.find(item => item.id === selected_group) : null;
         const groupSuffix = group?.name ? ` in group "${group.name}"` : '';
@@ -1387,6 +4523,13 @@ async function sceneMemoryCommand(_, rangeText) {
 
 async function nextMemoryCommand() {
     try {
+        if (hasActiveStmbTasks()) {
+            toastr.info('Memory creation is already in progress', 'STMB');
+            return '';
+        }
+
+        await ensureLorebookName();
+
         if (chat.length === 0) {
             toastr.info('There are no messages to summarize yet.', 'STMB');
             return '';
@@ -1400,6 +4543,13 @@ async function nextMemoryCommand() {
             toastr.info('No new messages since the last memory.', 'STMB');
             return '';
         }
+        if (isStmbLorebookHandledError(error)) {
+            return '';
+        }
+        if (/lorebook/i.test(String(error?.message || ''))) {
+            toastr.error(`No lorebook available: ${error.message}`, 'STMB');
+            return '';
+        }
         showSlashCommandError(error?.message || 'Failed to create next memory.', error);
     }
 
@@ -1409,25 +4559,28 @@ async function nextMemoryCommand() {
 async function sidePromptCommand(_, rawInput) {
     const raw = String(rawInput || '').trim();
     if (!raw) {
-        toastr.info('SidePrompt guide: /sideprompt "Name" {{macro}}="value" [X-Y]', 'STMB');
+        toastr.info('SidePrompt guide: Choose a quoted template name, then fill any prompted macros. Usage: /sideprompt "Name" {{macro}}="value" [X-Y].', 'STMB');
+        return '';
+    }
+
+    return await runSidePrompt(raw, stmbSettings);
+}
+
+async function toggleSidePromptCommand(_, rawInput, enabled) {
+    const raw = String(rawInput || '').trim();
+    if (!raw) {
+        toastr.error(
+            enabled
+                ? 'Missing name. Use: /sideprompt-on "Name" OR /sideprompt-on all'
+                : 'Missing name. Use: /sideprompt-off "Name" OR /sideprompt-off all',
+            'STMB',
+        );
         return '';
     }
 
     try {
-        if (getActiveStmbTaskCount() > 0) {
-            throw new Error('STMB generation is already in progress');
-        }
-        await runSidePrompt(raw, stmbSettings);
-    } catch (error) {
-        showSlashCommandError(error?.message || 'Failed to run side prompt.', error);
-    }
-
-    return '';
-}
-
-async function toggleSidePromptCommand(_, rawInput, enabled) {
-    try {
-        const result = await toggleSidePromptEnabled(String(rawInput || '').trim(), enabled);
+        const result = await toggleSidePromptEnabled(raw, enabled);
+        window.dispatchEvent(new CustomEvent('stmb-sideprompts-updated'));
         if (result.all) {
             toastr.success(`${enabled ? 'Enabled' : 'Disabled'} ${result.changed} side prompt${result.changed === 1 ? '' : 's'}`, 'STMB');
         } else if (result.template) {
@@ -1438,7 +4591,12 @@ async function toggleSidePromptCommand(_, rawInput, enabled) {
             }
         }
     } catch (error) {
-        showSlashCommandError(error?.message || 'Failed to toggle side prompt.', error);
+        console.error('STMemoryBooks: sideprompt enable/disable failed:', error);
+        if (String(error?.message || '').startsWith('Side Prompt not found: ')) {
+            toastr.error(String(error.message), 'STMB');
+            return '';
+        }
+        toastr.error(`Failed to toggle side prompt: ${error?.message || 'Unknown error'}`, 'STMB');
     }
 
     return '';
@@ -1458,57 +4616,75 @@ async function getHighestProcessedCommand() {
 }
 
 async function setHighestProcessedCommand(_, value) {
-    try {
-        const raw = String(value || '').trim();
-        if (!raw) {
-            throw new Error('Missing argument. Use: /stmb-set-highest <N|none>');
-        }
-
-        const input = raw.toLowerCase();
-        if (input === 'none') {
-            delete getStmbState().highestMemoryProcessed;
-            delete getStmbState().highestMemoryProcessedManuallySet;
-            saveMetadataDebounced();
-            return '';
-        }
-
-        const parsed = Number.parseInt(input, 10);
-        if (!Number.isFinite(parsed) || Number.isNaN(parsed)) {
-            throw new Error('Invalid argument. Use: /stmb-set-highest <N|none>');
-        }
-
-        const lastIndex = chat.length - 1;
-        if (lastIndex < 0) {
-            throw new Error('There are no messages in this chat yet.');
-        }
-        if (parsed < 0) {
-            throw new Error(`Message IDs out of range. Valid range: 0-${lastIndex}`);
-        }
-
-        const state = getStmbState();
-        state.highestMemoryProcessed = Math.min(parsed, lastIndex);
-        state.highestMemoryProcessedManuallySet = true;
-        saveMetadataDebounced();
-    } catch (error) {
-        showSlashCommandError(error?.message || 'Failed to set highest processed message.', error);
+    const raw = String(value || '').trim();
+    if (!raw) {
+        toastr.error('Missing argument. Use: /stmb-set-highest <N|none>', 'STMB');
         return '';
     }
+
+    const input = raw.toLowerCase();
+    if (input === 'none') {
+        delete getStmbState().highestMemoryProcessed;
+        delete getStmbState().highestMemoryProcessedManuallySet;
+        saveMetadataDebounced();
+        await refreshOpenSettingsPopupSceneState();
+        toastr.success('Last processed message cleared (no memories processed).', 'STMB');
+        return '';
+    }
+
+    const parsed = Number.parseInt(input, 10);
+    if (!Number.isFinite(parsed) || Number.isNaN(parsed)) {
+        toastr.error('Invalid argument. Use: /stmb-set-highest <N|none>', 'STMB');
+        return '';
+    }
+
+    const lastIndex = chat.length - 1;
+    if (lastIndex < 0) {
+        toastr.error('There are no messages in this chat yet.', 'STMB');
+        return '';
+    }
+    if (parsed < 0) {
+        toastr.error(`Message IDs out of range. Valid range: 0-${lastIndex}`, 'STMB');
+        return '';
+    }
+
+    const state = getStmbState();
+    const clamped = Math.min(parsed, lastIndex);
+    if (clamped !== parsed) {
+        toastr.info(
+            `Highest message is ${lastIndex}, so last message processed has been set to ${lastIndex}.`,
+            'STMB',
+        );
+    }
+    state.highestMemoryProcessed = clamped;
+    state.highestMemoryProcessedManuallySet = true;
+    saveMetadataDebounced();
+    await refreshOpenSettingsPopupSceneState();
+    toastr.success(`Last processed message manually set to #${clamped}.`, 'STMB');
 
     return '';
 }
 
 async function stopStmbCommand() {
+    const before = getActiveStmbTaskCount();
     const { stoppedCount } = stopAllStmbTasks();
-    closeActiveMemoryPreviewPopups();
+    if (stoppedCount > 0 || before > 0) {
+        try {
+            toastr.clear();
+        } catch {
+            // noop
+        }
+        closeActiveMemoryPreviewPopups();
+    }
     if (activeRootTask) {
         activeRootTask = null;
     }
 
-    if (stoppedCount > 0) {
-        toastr.info(`Stopped ${stoppedCount} STMB task${stoppedCount === 1 ? '' : 's'}`, 'STMB');
-    } else {
-        toastr.info('No in-flight STMB tasks to stop', 'STMB');
-    }
+    const message = stoppedCount > 0 || before > 0
+        ? 'STMB generation manually stopped by user.'
+        : 'STMB stop issued, but no generation is in progress.';
+    toastr.info(message, 'STMB');
+    console.log(`STMemoryBooks: ${message}`);
 
     return '';
 }
@@ -1552,6 +4728,7 @@ function registerSlashCommands() {
                 description: 'Quoted template name, then any required {{macro}}="value" assignments, optionally followed by X-Y range',
                 typeList: [ARGUMENT_TYPE.STRING],
                 isRequired: true,
+                enumProvider: manualSidePromptTemplateEnumProvider,
             }),
         ],
         helpString: 'Run side prompt. Usage: /sideprompt "Name" {{macro}}="value" [X-Y]',
@@ -1565,6 +4742,10 @@ function registerSlashCommands() {
                 description: 'Template name (quote if contains spaces) or "all"',
                 typeList: [ARGUMENT_TYPE.STRING],
                 isRequired: true,
+                enumProvider: () => [
+                    new SlashCommandEnumValue('all'),
+                    ...allSidePromptTemplateEnumProvider(),
+                ],
             }),
         ],
         helpString: 'Enable a Side Prompt by name or all. Usage: /sideprompt-on "Name" | all',
@@ -1578,6 +4759,10 @@ function registerSlashCommands() {
                 description: 'Template name (quote if contains spaces) or "all"',
                 typeList: [ARGUMENT_TYPE.STRING],
                 isRequired: true,
+                enumProvider: () => [
+                    new SlashCommandEnumValue('all'),
+                    ...allSidePromptTemplateEnumProvider(),
+                ],
             }),
         ],
         helpString: 'Disable a Side Prompt by name or all. Usage: /sideprompt-off "Name" | all',
@@ -1617,10 +4802,25 @@ export function initStmb() {
         return;
     }
 
+    createMainEntryUi();
+    $(document).on('click', '#stmb-menu-item', () => {
+        showMainEntryPopup().catch(error => {
+            console.warn('STMB main entry popup failed', error);
+        });
+    });
     bindSceneButtons();
     registerSlashCommands();
+    firstRunInitArcPromptPresets(stmbSettings).catch(error => {
+        console.warn('STMB consolidation prompts init failed', error);
+    });
+    firstRunInitSummaryPromptPresets(stmbSettings).catch(error => {
+        console.warn('STMB summary prompts init failed', error);
+    });
     firstRunInitSidePrompts().catch(error => {
         console.warn('STMB side prompts init failed', error);
+    });
+    refreshSidePromptCache().catch(error => {
+        console.warn('STMB side prompt cache refresh failed during init', error);
     });
 
     eventSource.on(event_types.CHAT_CHANGED, () => {

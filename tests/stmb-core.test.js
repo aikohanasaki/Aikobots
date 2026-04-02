@@ -3,11 +3,14 @@ import { describe, expect, it } from '@jest/globals';
 import {
     STMB_DEFAULT_PROFILE_NAME,
     STMB_MANAGED_FLAG,
+    applyStmbMaxTokensToGenerateData,
     compileScene,
     createDefaultStmbSettings,
     createManagedLorebookEntryData,
+    findOverlappingManagedMemoryEntry,
     formatMemoryTitle,
     getNextManagedMemorySequenceNumber,
+    getRangeFromManagedMemoryEntry,
     identifyManagedMemoryEntries,
     importLegacyStmbSettings,
     normalizeStmbSettings,
@@ -81,6 +84,28 @@ describe('stmb core settings', () => {
         expect(settings.defaultProfile).toBe(0);
         expect(settings.profiles.filter(profile => profile.isBuiltinCurrentST)).toHaveLength(1);
         expect(settings.profiles[0].connection.api).toBe('current_st');
+    });
+
+    it('applies STMB max token overrides using the provider-specific token field', () => {
+        expect(applyStmbMaxTokensToGenerateData({
+            chat_completion_source: 'openai',
+            model: 'gpt-5-mini',
+            max_tokens: 123,
+        }, 4000)).toMatchObject({
+            chat_completion_source: 'openai',
+            model: 'gpt-5-mini',
+            max_completion_tokens: 4000,
+        });
+
+        expect(applyStmbMaxTokensToGenerateData({
+            chat_completion_source: 'claude',
+            model: 'claude-3-7-sonnet',
+            max_completion_tokens: 123,
+        }, 2048)).toMatchObject({
+            chat_completion_source: 'claude',
+            model: 'claude-3-7-sonnet',
+            max_tokens: 2048,
+        });
     });
 });
 
@@ -160,5 +185,22 @@ describe('stmb core parsing and persistence', () => {
         expect(payload.key).toEqual(['arrival', 'gate', 'dawn']);
         expect(payload.STMB_profile).toBeUndefined();
         expect(payload.STMB_createdAt).toBeUndefined();
+    });
+
+    it('reads managed memory scene ranges from STMB metadata', () => {
+        expect(getRangeFromManagedMemoryEntry({ STMB_start: 3, STMB_end: 8 })).toEqual({ start: 3, end: 8 });
+        expect(getRangeFromManagedMemoryEntry({ STMB_start: '3', STMB_end: 8 })).toBeNull();
+    });
+
+    it('finds overlapping managed memories using STMB scene metadata', () => {
+        const overlap = findOverlappingManagedMemoryEntry({
+            1: { uid: 1, comment: '[001] - Earlier', STMB_start: 2, STMB_end: 6, [STMB_MANAGED_FLAG]: true },
+            2: { uid: 2, comment: '[002] - Later', STMB_start: 10, STMB_end: 15, [STMB_MANAGED_FLAG]: true },
+            3: { uid: 3, comment: 'Ignored', STMB_start: 4, STMB_end: 9, [STMB_MANAGED_FLAG]: false },
+        }, { sceneStart: 5, sceneEnd: 8 });
+
+        expect(overlap).not.toBeNull();
+        expect(overlap.title).toBe('[001] - Earlier');
+        expect(overlap.range).toEqual({ start: 2, end: 6 });
     });
 });

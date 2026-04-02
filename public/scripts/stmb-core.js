@@ -316,7 +316,9 @@ export function createDefaultStmbSettings() {
         },
         titleFormat: STMB_DEFAULT_TITLE_FORMAT,
         promptPresets: {},
+        promptPresetMetadata: {},
         arcPromptPresets: {},
+        arcPromptPresetMetadata: {},
         profiles: [],
         defaultProfile: 0,
         migrationVersion: STMB_SETTINGS_VERSION,
@@ -519,9 +521,15 @@ export function importLegacyStmbSettings(legacySettings) {
         promptPresets: legacySettings.promptPresets && typeof legacySettings.promptPresets === 'object'
             ? { ...legacySettings.promptPresets }
             : { ...defaults.promptPresets },
+        promptPresetMetadata: legacySettings.promptPresetMetadata && typeof legacySettings.promptPresetMetadata === 'object'
+            ? { ...legacySettings.promptPresetMetadata }
+            : { ...defaults.promptPresetMetadata },
         arcPromptPresets: legacySettings.arcPromptPresets && typeof legacySettings.arcPromptPresets === 'object'
             ? { ...legacySettings.arcPromptPresets }
             : { ...defaults.arcPromptPresets },
+        arcPromptPresetMetadata: legacySettings.arcPromptPresetMetadata && typeof legacySettings.arcPromptPresetMetadata === 'object'
+            ? { ...legacySettings.arcPromptPresetMetadata }
+            : { ...defaults.arcPromptPresetMetadata },
         profiles: Array.isArray(legacySettings.profiles) ? legacySettings.profiles : defaults.profiles,
         defaultProfile: legacySettings.defaultProfile ?? defaults.defaultProfile,
         migrationVersion: Number.isFinite(Number(legacySettings.migrationVersion))
@@ -581,9 +589,15 @@ export function normalizeStmbSettings(rawSettings, legacySettings = null) {
         promptPresets: source.promptPresets && typeof source.promptPresets === 'object'
             ? { ...source.promptPresets }
             : { ...defaults.promptPresets },
+        promptPresetMetadata: source.promptPresetMetadata && typeof source.promptPresetMetadata === 'object'
+            ? { ...source.promptPresetMetadata }
+            : { ...defaults.promptPresetMetadata },
         arcPromptPresets: source.arcPromptPresets && typeof source.arcPromptPresets === 'object'
             ? { ...source.arcPromptPresets }
             : { ...defaults.arcPromptPresets },
+        arcPromptPresetMetadata: source.arcPromptPresetMetadata && typeof source.arcPromptPresetMetadata === 'object'
+            ? { ...source.arcPromptPresetMetadata }
+            : { ...defaults.arcPromptPresetMetadata },
         profiles: profileValidation.settings.profiles,
         defaultProfile,
         migrationVersion: Number.isFinite(Number(source.migrationVersion)) ? Number(source.migrationVersion) : defaults.migrationVersion,
@@ -742,6 +756,39 @@ export function applyStmbProfileToGenerateData(generateData, profile, providerDe
             delete next.logit_bias;
             delete next.stop;
         }
+    }
+
+    return next;
+}
+
+export function applyStmbMaxTokensToGenerateData(generateData, stmbMaxTokens) {
+    if (!generateData || typeof generateData !== 'object') {
+        return generateData;
+    }
+
+    const parsedMaxTokens = Number.parseInt(stmbMaxTokens, 10);
+    if (!Number.isFinite(parsedMaxTokens) || parsedMaxTokens <= 0) {
+        return generateData;
+    }
+
+    const next = { ...generateData };
+    const provider = String(next.chat_completion_source || '').toLowerCase();
+    const modelId = String(next.model || '').toLowerCase();
+    const usesMaxCompletionTokens = (provider === 'openai' || provider === 'azure_openai')
+        && /(gpt-5|gpt-4o|o1(-preview|-mini)?)/i.test(modelId);
+
+    if (usesMaxCompletionTokens) {
+        next.max_completion_tokens = parsedMaxTokens;
+        delete next.max_tokens;
+    } else {
+        next.max_tokens = parsedMaxTokens;
+        delete next.max_completion_tokens;
+    }
+
+    if (next.max_output_tokens != null) {
+        const parsedOutputTokens = Number.parseFloat(next.max_output_tokens);
+        const normalizedOutputTokens = Number.isFinite(parsedOutputTokens) ? Math.floor(parsedOutputTokens) : 0;
+        next.max_output_tokens = Math.min(normalizedOutputTokens, parsedMaxTokens);
     }
 
     return next;
@@ -1143,6 +1190,44 @@ export function identifyManagedMemoryEntries(entries) {
             const rightSequence = parseSequenceFromTitle(right.comment || right.title || '') ?? Number(right.uid) ?? 0;
             return leftSequence - rightSequence;
         });
+}
+
+export function getRangeFromManagedMemoryEntry(entry) {
+    if (typeof entry?.STMB_start === 'number' && typeof entry?.STMB_end === 'number') {
+        return { start: entry.STMB_start, end: entry.STMB_end };
+    }
+    return null;
+}
+
+export function findOverlappingManagedMemoryEntry(entries, range) {
+    const newStart = Number(range?.sceneStart);
+    const newEnd = Number(range?.sceneEnd);
+    if (!Number.isInteger(newStart) || !Number.isInteger(newEnd)) {
+        return null;
+    }
+
+    for (const entry of identifyManagedMemoryEntries(entries)) {
+        const existingRange = getRangeFromManagedMemoryEntry(entry);
+        if (!existingRange) {
+            continue;
+        }
+
+        const start = Number(existingRange.start);
+        const end = Number(existingRange.end);
+        if (!Number.isInteger(start) || !Number.isInteger(end)) {
+            continue;
+        }
+
+        if (newStart <= end && newEnd >= start) {
+            return {
+                entry,
+                title: String(entry?.comment || entry?.title || 'Untitled Memory'),
+                range: { start, end },
+            };
+        }
+    }
+
+    return null;
 }
 
 function computeLorebookEntryOrder(lorebookSettings, orderNumber) {
