@@ -8,7 +8,7 @@ This file is updated subsystem by subsystem during the audit. Only sections that
 
 | Item | Status | Note |
 | --- | --- | --- |
-| Settings defaults match STMB exactly. | Partial | Raw defaults and builtin profile initialization were aligned, and summary prompts are now file-backed with legacy migration support; remaining settings-surface differences still need verification. |
+| Settings defaults match STMB exactly. | Partial | Raw defaults and builtin profile initialization were aligned, and summary prompts are now file-backed with legacy migration support; however `maxTokens` still normalizes differently locally (`0` is preserved instead of resetting to STMB's default `4000`). |
 | Settings migration/import is idempotent. | Partial | Builtin `current_st` invariants, duplicate builtin cleanup, legacy dynamic migration, and summary prompt first-run migration are now normalized; broader runtime verification is still pending. |
 | Profile CRUD behavior matches STMB. | Partial | New/edit/delete/export/import are now wired into the settings popup with builtin-profile protections, but the full reference profile manager surface and prompt-manager integration are still narrower locally. |
 | `current_st` / dynamic profile behavior matches STMB. | Partial | Builtin profile invariants now match STMB normalization; advanced popup/runtime override surfaces still need verification. |
@@ -35,7 +35,7 @@ This file is updated subsystem by subsystem during the audit. Only sections that
 | Item | Status | Note |
 | --- | --- | --- |
 | Prompt preset bodies match STMB exactly. | Partial | Built-in prompt content appears aligned, and summary prompts are now loaded from a dedicated file-backed manager with legacy migration; browser/runtime verification is still pending. |
-| Prompt selection/custom prompt override behavior matches STMB. | Partial | Preset vs custom prompt precedence exists; popup-driven flow parity still needs audit. |
+| Prompt selection/custom prompt override behavior matches STMB. | Partial | Preset vs custom prompt precedence exists, but the local main settings surface still does not expose STMB's summary-order controls (`summaryOrderMode`, `summaryOrderValue`, `summaryReverseStart`) that feed consolidation behavior. |
 | Scene compilation input matches STMB. | Partial | Prompt assembly now uses STMB-style transcript formatting; further verification is needed. |
 | Previous-memory context behavior matches STMB. | Partial | Prompt assembly now includes STMB-style previous scene context blocks and keywords; end-to-end verification is still pending. |
 | Provider request shaping matches STMB profile semantics. | Partial | Core shaping exists and current patch restores STMB-like prompt text flow; transport still uses Aikobots chat-completions plumbing. |
@@ -90,8 +90,8 @@ This file is updated subsystem by subsystem during the audit. Only sections that
 | Template schema matches STMB. | Partial | Stored V2 schema and trigger normalization are close, but full file/import migration parity is still unaudited. |
 | Built-in templates match STMB. | Partial | Core built-ins appear aligned, but I have not finished a field-by-field audit of every template body yet. |
 | Macro parsing and substitution match STMB. | Partial | Runtime macro parsing, quoting, autocomplete suggestions, and substitution are now close to STMB; more end-to-end validation is still needed. |
-| Manual `/sideprompt` command behavior matches STMB. | Partial | Manual flow is now toast-driven with STMB-like range tips, compile-failure messages, cancel/success toasts, and missing-lorebook recovery prompts; deeper runtime verification is still needed. |
-| Interval tracker behavior matches STMB. | Partial | Checkpoint semantics and preview serialization are closer; deeper runtime verification is still needed. |
+| Manual `/sideprompt` command behavior matches STMB. | Partial | Manual flow is now toast-driven with STMB-like range tips, compile-failure messages, cancel/success toasts, and missing-lorebook recovery prompts, but hidden-range compilation still differs from STMB's temporary unhide/restore flow. |
+| Interval tracker behavior matches STMB. | Partial | Checkpoint semantics, preview serialization, token overrides, and editor refresh are closer, but local range compilation still does not mirror STMB's temporary unhide/restore behavior when hidden messages are present. |
 | Post-memory trigger behavior matches STMB. | Partial | Side prompts now inherit the current memory profile unless a template override replaces it, and after-memory runs now process in concurrent waves with receipt-order previews, batched wave saves, and aggregate notifications closer to STMB; broader runtime verification is still pending. |
 | Overwrite-by-title tracker semantics match STMB. | Partial | Unified title lookup and checkpoint metadata are present, but broader legacy-title/runtime coverage remains open. |
 | Checkpoint metadata semantics match STMB. | Partial | `STMB_sp_*` and legacy tracker fields are written, but full roundtrip verification is still pending. |
@@ -108,7 +108,7 @@ This file is updated subsystem by subsystem during the audit. Only sections that
 | `sideprompt` | Partial | Command help text, autocomplete, macro suggestions, and toast flow are now closer to STMB, but runtime parity still depends on finishing sideprompt subsystem audit. |
 | `sideprompt-on` | Partial | Help text, `all` handling, update-event dispatch, and direct not-found error text now match STMB more closely; final autocomplete/runtime validation is still pending. |
 | `sideprompt-off` | Partial | Help text, `all` handling, update-event dispatch, and direct not-found error text now match STMB more closely; final autocomplete/runtime validation is still pending. |
-| `stmb-highest` | Partial | Return semantics match STMB, but end-to-end slash/runtime verification is still pending. |
+| `stmb-highest` | Exact | Return semantics match STMB's direct `String(getHighestMemoryProcessed())` behavior. |
 | `stmb-set-highest` | Partial | Main error/success/clamp text now matches STMB more closely, and the main settings popup refreshes its memory-status block after command writes like STMB; broader runtime verification is still open. |
 | `stmb-stop` | Partial | Stop text, in-flight detection, toast clearing, and preview popup closing are aligned more closely, but full generation/review/repair cancellation parity still needs validation. |
 
@@ -140,3 +140,16 @@ This file is updated subsystem by subsystem during the audit. Only sections that
 | Build a parity matrix mapping each STMB product function to implementation status. | Partial | Initial matrix created in `STMB_PARITY_MATRIX.md`; it still needs expansion for the unported settings/profile-manager subsystems. |
 | Add or update focused tests where possible. | Partial | Core tests now also cover selected summary-source resolution and label pluralization, but runtime/UI coverage is still thin. |
 | Do static bug-hunting after each subsystem pass. | Partial | Static syntax checks were run after each recent pass, but browser/runtime QA is still pending. |
+
+## Semantic Parity Achieved
+
+These items have been reviewed side-by-side against the STMB reference and are currently at exact semantic parity in the implemented path.
+
+| Item | Reference basis | Local basis |
+| --- | --- | --- |
+| Scene marker placement/removal | `sceneManager.js` marker toggle helpers | `public/scripts/stmb.js` scene marker helpers |
+| Start/end marker validation | `sceneManager.js` validation helpers | `public/scripts/stmb.js` `assertRangeWithinCurrentChat` / `validateSceneMarkers` |
+| No silent fallback to plain text | `stmemory.js` structured parse path | `public/scripts/stmb.js` `requestStructuredMemory` + `public/scripts/stmb-core.js` parser path |
+| Summary tier definitions | `summaryTiers.js` | `public/scripts/stmb-summary.js` tier helpers |
+| Side prompt loose name lookup | `sidePromptsManager.js` `findTemplateByName` | `public/scripts/stmb-sideprompts-manager.js` `findTemplateByName` |
+| `/stmb-highest` return semantics | `index.js` `handleHighestMemoryProcessedCommand` | `public/scripts/stmb.js` `getHighestProcessedCommand` |
