@@ -128,7 +128,7 @@ export function getSecureWorldNames() {
     return world_info_items.filter(item => item.storage === 'secure').map(item => item.name);
 }
 
-function getLorebookStorageForRequest(name, fallback = 'user') {
+export function getLorebookStorageForRequest(name, fallback = 'user') {
     return getWorldInfoItem(name)?.storage === 'secure' ? 'secure' : fallback;
 }
 

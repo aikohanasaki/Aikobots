@@ -246,6 +246,7 @@ import { applyStreamFadeIn } from './scripts/util/stream-fadein.js';
 import { initDomHandlers } from './scripts/dom-handlers.js';
 import { SimpleMutex } from './scripts/util/SimpleMutex.js';
 import { AudioPlayer } from './scripts/audio-player.js';
+import { getStmbSettings, initStmb, loadStmbSettings } from './scripts/stmb.js';
 
 function requireAdminServerAssemblyDebugAccess() {
     if (!isAdmin()) {
@@ -788,6 +789,7 @@ async function firstLoadInit() {
     initDataMaid();
     initItemizedPrompts();
     initAccessibility();
+    initStmb();
     addDebugFunctions();
     doDailyExtensionUpdatesCheck();
     await hideLoader();
@@ -2057,13 +2059,14 @@ export async function clearChat() {
 }
 
 export async function deleteLastMessage() {
+    const deletedId = chat.length - 1;
     chat.length = chat.length - 1;
     syncSplitTailStateAfterMutation();
     chatElement.children('.mes').last().remove();
     syncVisibleChatRangeFromDom();
     updateHistoryControls();
     restoreTimedWorldInfoFromChat();
-    await eventSource.emit(event_types.MESSAGE_DELETED, chat.length);
+    await eventSource.emit(event_types.MESSAGE_DELETED, deletedId, chat.length);
 }
 
 /**
@@ -2131,7 +2134,7 @@ export async function deleteMessage(id, swipeDeletionIndex = undefined, askConfi
 
     refreshSwipeButtons();
 
-    await eventSource.emit(event_types.MESSAGE_DELETED, chat.length);
+    await eventSource.emit(event_types.MESSAGE_DELETED, id, chat.length);
 }
 
 export async function reloadCurrentChat() {
@@ -4680,10 +4683,11 @@ export async function Generate(type, { automatic_trigger, force_name2, quiet_pro
             //do nothing? why does this check exist?
         }
         else if (type !== 'quiet' && type !== 'swipe' && !isImpersonate && !dryRun && chat.length) {
+            const deletedId = chat.length - 1;
             chat.length = chat.length - 1;
             restoreTimedWorldInfoFromChat();
             await removeLastMessage();
-            await eventSource.emit(event_types.MESSAGE_DELETED, chat.length);
+            await eventSource.emit(event_types.MESSAGE_DELETED, deletedId, chat.length);
         }
     }
 
@@ -7801,6 +7805,7 @@ export async function getSettings() {
         active_group = settings.active_group;
 
         setWorldInfoSettings(settings.world_info_settings ?? settings, data);
+        loadStmbSettings(settings);
 
         selected_button = settings.selected_button;
 
@@ -7854,6 +7859,7 @@ export async function saveSettings(loopCounter = 0) {
         max_context: max_context,
         main_api: main_api,
         world_info_settings: getWorldInfoSettings(),
+        stmb_settings: getStmbSettings(),
         swipes: swipes,
         power_user: power_user,
         extension_settings: extension_settings,
@@ -11266,7 +11272,7 @@ jQuery(async function () {
             chat_metadata['tainted'] = true;
             await saveChatConditional();
             chatElement.scrollTop(chatElement[0].scrollHeight);
-            await eventSource.emit(event_types.MESSAGE_DELETED, chat.length);
+            await eventSource.emit(event_types.MESSAGE_DELETED, this_del_mes, chat.length);
             chatElement.find('.mes').removeClass('last_mes');
             chatElement.find('.mes').last().addClass('last_mes');
         } else {

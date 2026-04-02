@@ -46,6 +46,7 @@ import { router as azureRouter } from './endpoints/azure.js';
 import { router as minimaxRouter } from './endpoints/minimax.js';
 import { router as dataMaidRouter } from './endpoints/data-maid.js';
 import { router as characterSubmissionsRouter } from './endpoints/character-submissions.js';
+import { router as stmbRouter } from './endpoints/stmb.js';
 
 /**
  * @typedef {object} ServerStartupResult
@@ -173,6 +174,7 @@ export function setupPrivateEndpoints(app) {
     app.use('/api/azure', azureRouter);
     app.use('/api/minimax', minimaxRouter);
     app.use('/api/data-maid', dataMaidRouter);
+    app.use('/api/stmb', stmbRouter);
 }
 
 /**

@@ -1338,7 +1338,9 @@ async function sendElectronHubRequest(request, response) {
 async function sendAzureOpenAIRequest(request, response) {
     // 1. GATHER & VALIDATE SETTINGS
     const { azure_base_url, azure_deployment_name, azure_api_version } = request.body;
-    const apiKey = readSecret(request.user.directories, SECRET_KEYS.AZURE_OPENAI);
+    const apiKey = typeof request.body.azure_api_key === 'string'
+        ? request.body.azure_api_key
+        : readSecret(request.user.directories, SECRET_KEYS.AZURE_OPENAI);
     if (!azure_base_url || !azure_deployment_name || !azure_api_version || !apiKey) {
         return response.status(400).send({
             error: {
@@ -1880,7 +1882,9 @@ router.post('/status', async function (request, statusResponse) {
         }
     } else if (request.body.chat_completion_source === CHAT_COMPLETION_SOURCES.AZURE_OPENAI) {
         const { azure_base_url, azure_deployment_name, azure_api_version } = request.body;
-        const apiKey = readSecret(request.user.directories, SECRET_KEYS.AZURE_OPENAI);
+        const apiKey = typeof request.body.azure_api_key === 'string'
+            ? request.body.azure_api_key
+            : readSecret(request.user.directories, SECRET_KEYS.AZURE_OPENAI);
 
         // 1) Validate configuration from the frontend
         if (!apiKey || !azure_base_url || !azure_deployment_name || !azure_api_version) {
@@ -2125,7 +2129,7 @@ router.post('/bias', async function (request, response) {
 });
 
 
-router.post('/generate', function (request, response) {
+export async function handleChatCompletionsGenerate(request, response) {
     if (!request.body) return response.status(400).send({ error: true });
 
     return (async () => {
@@ -2284,7 +2288,9 @@ router.post('/generate', function (request, response) {
         }
     } else if (request.body.chat_completion_source === CHAT_COMPLETION_SOURCES.CUSTOM) {
         apiUrl = request.body.custom_url;
-        apiKey = readSecret(request.user.directories, SECRET_KEYS.CUSTOM);
+        apiKey = typeof request.body.custom_api_key === 'string'
+            ? request.body.custom_api_key
+            : readSecret(request.user.directories, SECRET_KEYS.CUSTOM);
         headers = {};
         bodyParams = {
             logprobs: request.body.logprobs,
@@ -2584,6 +2590,10 @@ router.post('/generate', function (request, response) {
             response.end();
         }
     });
+}
+
+router.post('/generate', function (request, response) {
+    return handleChatCompletionsGenerate(request, response);
 });
 
 router.post('/assemble', async function (request, response) {

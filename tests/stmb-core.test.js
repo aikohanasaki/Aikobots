@@ -1,0 +1,164 @@
+import { describe, expect, it } from '@jest/globals';
+
+import {
+    STMB_DEFAULT_PROFILE_NAME,
+    STMB_MANAGED_FLAG,
+    compileScene,
+    createDefaultStmbSettings,
+    createManagedLorebookEntryData,
+    formatMemoryTitle,
+    getNextManagedMemorySequenceNumber,
+    identifyManagedMemoryEntries,
+    importLegacyStmbSettings,
+    normalizeStmbSettings,
+    parseSceneRange,
+    parseStructuredMemoryResponse,
+} from '../public/scripts/stmb-core.js';
+
+describe('stmb core settings', () => {
+    it('imports legacy extension settings into the new core schema', () => {
+        const legacy = {
+            moduleSettings: {
+                alwaysUseDefault: true,
+                autoCreateLorebook: true,
+                titleFormat: '[00] {{title}}',
+            },
+            profiles: [
+                {
+                    name: 'Legacy',
+                    preset: 'minimal',
+                    connection: { api: 'openai', model: 'gpt-4o-mini', temperature: 0.4 },
+                },
+            ],
+        };
+
+        const result = importLegacyStmbSettings(legacy);
+        expect(result.moduleSettings.alwaysUseDefault).toBe(true);
+        expect(result.moduleSettings.autoCreateLorebook).toBe(true);
+        expect(result.titleFormat).toBe('[00] {{title}}');
+        expect(result.profiles[0].name).toBe('Legacy');
+        expect(result.profiles[0].preset).toBe('minimal');
+    });
+
+    it('matches the STMB raw default settings shape before normalization', () => {
+        const settings = createDefaultStmbSettings();
+        expect(settings.profiles).toHaveLength(0);
+    });
+
+    it('normalizes settings using the builtin current settings profile invariants', () => {
+        const settings = normalizeStmbSettings();
+        expect(settings.profiles).toHaveLength(1);
+        expect(settings.profiles[0].name).toBe(STMB_DEFAULT_PROFILE_NAME);
+        expect(settings.profiles[0].connection.api).toBe('current_st');
+        expect(settings.profiles[0].titleFormat).toBe('[000] - {{title}}');
+    });
+
+    it('disables auto-create when manual mode is enabled and fixes duplicate builtin profiles', () => {
+        const settings = normalizeStmbSettings({
+            moduleSettings: {
+                manualModeEnabled: true,
+                autoCreateLorebook: true,
+            },
+            titleFormat: '[000] - {{title}}',
+            defaultProfile: 9,
+            profiles: [
+                {
+                    name: 'Legacy Dynamic',
+                    useDynamicSTSettings: true,
+                    preset: 'summary',
+                    connection: { api: 'openai' },
+                },
+                {
+                    name: STMB_DEFAULT_PROFILE_NAME,
+                    isBuiltinCurrentST: true,
+                    preset: 'summary',
+                    connection: { api: 'current_st' },
+                },
+            ],
+        });
+
+        expect(settings.moduleSettings.autoCreateLorebook).toBe(false);
+        expect(settings.defaultProfile).toBe(0);
+        expect(settings.profiles.filter(profile => profile.isBuiltinCurrentST)).toHaveLength(1);
+        expect(settings.profiles[0].connection.api).toBe('current_st');
+    });
+});
+
+describe('stmb core scene handling', () => {
+    it('compiles only visible messages inside the selected range', () => {
+        const compiled = compileScene([
+            { name: 'Narrator', mes: 'hidden', is_system: true },
+            { name: 'User', mes: 'Hello', is_user: true },
+            { name: 'Bot', mes: 'Hi there' },
+        ], {
+            sceneStart: 0,
+            sceneEnd: 2,
+            chatId: 'chat-1',
+            characterName: 'Bot',
+            userName: 'User',
+        });
+
+        expect(compiled.metadata.hiddenMessagesSkipped).toBe(1);
+        expect(compiled.messages).toHaveLength(2);
+        expect(compiled.messages[0].mes).toBe('Hello');
+    });
+
+    it('rejects malformed scene ranges', () => {
+        expect(() => parseSceneRange('12')).toThrow('Scene range must be in x-y format');
+    });
+});
+
+describe('stmb core parsing and persistence', () => {
+    it('parses fenced json responses', () => {
+        const parsed = parseStructuredMemoryResponse('```json\n{"title":"Tea","content":"They talked.","keywords":["tea","table","rain"]}\n```');
+        expect(parsed.title).toBe('Tea');
+        expect(parsed.keywords).toEqual(['tea', 'table', 'rain']);
+    });
+
+    it('rejects malformed structured responses', () => {
+        expect(() => parseStructuredMemoryResponse('not json')).toThrow('did not contain a JSON block');
+    });
+
+    it('formats numbered titles and identifies managed entries in sequence order', () => {
+        const title = formatMemoryTitle('[000] - {{title}}', { title: 'Arrival' }, 7);
+        expect(title).toBe('[007] - Arrival');
+
+        const entries = {
+            1: { uid: 1, comment: '[010] - Later', [STMB_MANAGED_FLAG]: true },
+            2: { uid: 2, comment: '[002] - Earlier', [STMB_MANAGED_FLAG]: true },
+            3: { uid: 3, comment: 'Ignored', [STMB_MANAGED_FLAG]: false },
+        };
+
+        const managed = identifyManagedMemoryEntries(entries);
+        expect(managed).toHaveLength(2);
+        expect(managed[0].uid).toBe(2);
+        expect(managed[1].uid).toBe(1);
+    });
+
+    it('uses STMB title-based numbering instead of entry count', () => {
+        const next = getNextManagedMemorySequenceNumber({
+            1: { uid: 1, comment: '2026-04-01 [007] - Earlier', [STMB_MANAGED_FLAG]: true },
+            2: { uid: 2, comment: '2026-04-01 [003] - Older', [STMB_MANAGED_FLAG]: true },
+            3: { uid: 3, comment: 'Ignored', [STMB_MANAGED_FLAG]: false },
+        }, '{{date}} [000] - {{title}}');
+
+        expect(next).toBe(8);
+    });
+
+    it('creates managed lorebook payloads with only STMB memory metadata fields', () => {
+        const payload = createManagedLorebookEntryData(
+            { title: 'Arrival', content: 'They arrived.', keywords: ['arrival', 'gate', 'dawn'] },
+            { sceneStart: 4, sceneEnd: 9, messageCount: 6, chatId: 'chat-1', characterName: 'Bot', userName: 'User' },
+            { name: 'Profile A', titleFormat: '[000] - {{title}}' },
+            3,
+        );
+
+        expect(payload.comment).toContain('[003]');
+        expect(payload.STMB_start).toBe(4);
+        expect(payload.STMB_end).toBe(9);
+        expect(payload.stmemorybooks).toBe(true);
+        expect(payload.key).toEqual(['arrival', 'gate', 'dawn']);
+        expect(payload.STMB_profile).toBeUndefined();
+        expect(payload.STMB_createdAt).toBeUndefined();
+    });
+});

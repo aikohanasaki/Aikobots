@@ -77,6 +77,7 @@ import { COMETAPI_IGNORE_PATTERNS, IGNORE_SYMBOL } from './constants.js';
 
 export {
     oai_settings,
+    buildOpenAIGenerateData,
     loadOpenAISettings,
     setOpenAIMessages,
     setOpenAIMessageExamples,
@@ -1819,12 +1820,7 @@ function getReasoningEffort() {
  * @throws {Error}
  */
 
-async function sendOpenAIRequest(type, messages, signal, { jsonSchema = null } = {}) {
-    // Provide default abort signal
-    if (!signal) {
-        signal = new AbortController().signal;
-    }
-
+async function buildOpenAIGenerateData(type, messages, { jsonSchema = null } = {}) {
     const promptContext = !Array.isArray(messages) && messages && typeof messages === 'object' ? messages.promptContext : null;
     pendingTimedWorldInfo = null;
     storeServerAssemblyPromptContext(promptContext);
@@ -2155,8 +2151,28 @@ async function sendOpenAIRequest(type, messages, signal, { jsonSchema = null } =
 
     await eventSource.emit(event_types.CHAT_COMPLETION_SETTINGS_READY, generate_data);
 
+    return {
+        generateData: generate_data,
+        stream,
+        canMultiSwipe,
+        hasForcedActivations: Array.isArray(promptContext?.worldInfoRequest?.forcedActivations) && promptContext.worldInfoRequest.forcedActivations.length > 0,
+    };
+}
+
+async function sendOpenAIRequest(type, messages, signal, { jsonSchema = null } = {}) {
+    // Provide default abort signal
+    if (!signal) {
+        signal = new AbortController().signal;
+    }
+
+    const {
+        generateData: generate_data,
+        stream,
+        canMultiSwipe,
+        hasForcedActivations,
+    } = await buildOpenAIGenerateData(type, messages, { jsonSchema });
+
     const generate_url = '/api/backends/chat-completions/generate';
-    const hasForcedActivations = Array.isArray(promptContext?.worldInfoRequest?.forcedActivations) && promptContext.worldInfoRequest.forcedActivations.length > 0;
     let response;
     try {
         response = await fetch(generate_url, {
