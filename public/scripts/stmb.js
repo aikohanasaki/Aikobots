@@ -882,20 +882,35 @@ function getSummaryPromptText(key) {
     return getCachedSummaryPromptText(key, stmbSettings);
 }
 
+function emitSummaryPresetsUpdated() {
+    try {
+        window.dispatchEvent(new CustomEvent('stmb-presets-updated'));
+    } catch {
+        // noop
+    }
+}
+
 async function upsertSummaryPromptPreset(key, prompt, displayName = null) {
-    return await upsertSummaryPromptPresetFile(key, prompt, displayName);
+    const nextKey = await upsertSummaryPromptPresetFile(key, prompt, displayName);
+    emitSummaryPresetsUpdated();
+    return nextKey;
 }
 
 async function duplicateSummaryPromptPreset(key) {
-    return await duplicateSummaryPromptPresetFile(key);
+    const nextKey = await duplicateSummaryPromptPresetFile(key);
+    emitSummaryPresetsUpdated();
+    return nextKey;
 }
 
 async function removeSummaryPromptPreset(key) {
     await removeSummaryPromptPresetFile(key);
+    emitSummaryPresetsUpdated();
 }
 
 async function recreateBuiltInSummaryPromptOverrides() {
-    return await recreateBuiltInSummaryPromptOverridesFile();
+    const result = await recreateBuiltInSummaryPromptOverridesFile();
+    emitSummaryPresetsUpdated();
+    return result;
 }
 
 async function exportSummaryPromptPresetsJson() {
@@ -904,6 +919,7 @@ async function exportSummaryPromptPresetsJson() {
 
 async function importSummaryPromptPresetsJson(text) {
     await importSummaryPromptPresetsJsonFile(text);
+    emitSummaryPresetsUpdated();
 }
 
 function listArcPromptPresets() {
@@ -2046,6 +2062,7 @@ function buildProfileEditorHtml(profile, options = {}) {
     const presetKeys = getProfilePresetKeys();
     const selectedPreset = String(profile?.preset || 'summary');
     const promptOverride = typeof profile?.prompt === 'string' ? profile.prompt : '';
+    const hasLegacyCustomPrompt = Boolean(promptOverride.trim());
     const orderMode = String(profile?.orderMode || 'auto');
     const position = Number(profile?.position ?? 0);
 
@@ -2089,7 +2106,9 @@ function buildProfileEditorHtml(profile, options = {}) {
             <div class="buttons_block justifyCenter gap10px whitespacenowrap marginTop5">
                 <div id="stmb-profile-editor-open-prompt-manager" class="menu_button interactable">Open Summary Prompt Manager</div>
                 <div id="stmb-profile-editor-refresh-presets" class="menu_button interactable">Refresh Presets</div>
+                ${hasLegacyCustomPrompt ? '<div id="stmb-profile-editor-move-to-preset" class="menu_button interactable">Move Current Custom Prompt to Preset</div>' : ''}
             </div>
+            ${hasLegacyCustomPrompt ? `<div id="stmb-profile-editor-legacy-custom-prompt" class="displayNone">${escapeHtml(promptOverride)}</div>` : ''}
             <div class="world_entry_form_control">
                 <label for="stmb-profile-editor-prompt">Custom Prompt Override</label>
                 <textarea id="stmb-profile-editor-prompt" class="text_pole" rows="8" placeholder="Leave blank to use the selected preset">${escapeHtml(promptOverride)}</textarea>
@@ -2145,6 +2164,9 @@ function buildProfileEditorHtml(profile, options = {}) {
             <div class="world_entry_form_control">
                 <label class="checkbox_label"><input id="stmb-profile-editor-prevent-recursion" type="checkbox" ${profile?.preventRecursion ? 'checked' : ''}> <span>Prevent Recursion</span></label>
                 <label class="checkbox_label"><input id="stmb-profile-editor-delay-recursion" type="checkbox" ${profile?.delayUntilRecursion ? 'checked' : ''}> <span>Delay Until Recursion</span></label>
+            </div>
+            <div class="world_entry_form_control">
+                <label class="checkbox_label"><input id="stmb-profile-editor-convert-existing-recursion" type="checkbox" ${stmbSettings.moduleSettings?.convertExistingRecursion ? 'checked' : ''}> <span>Also convert recursion settings on existing entries</span></label>
             </div>
         </div>
     `;
@@ -2244,6 +2266,58 @@ function buildProfileFromEditor(dialog, baseProfile = null) {
     return profile;
 }
 
+async function moveLegacyProfilePromptToPreset(dialog) {
+    if (!dialog) {
+        return false;
+    }
+
+    const promptTextarea = dialog.querySelector('#stmb-profile-editor-prompt');
+    const prompt = String(promptTextarea?.value || '').trim();
+    if (!prompt) {
+        toastr.error('No custom prompt to migrate', 'STMB');
+        return false;
+    }
+
+    const profileName = String(dialog.querySelector('#stmb-profile-editor-name')?.value || 'Profile').trim() || 'Profile';
+    const displayName = `Custom: ${profileName}`;
+    const nextKey = await upsertSummaryPromptPreset(null, prompt, displayName);
+    const confirm = await Popup.show.confirm(
+        'Move to Preset',
+        'Create a preset from this profile\'s custom prompt, set the preset on this profile, and clear the custom prompt?',
+    );
+
+    if (!confirm) {
+        return false;
+    }
+
+    refreshProfileEditorPresetOptions(dialog, nextKey);
+    const presetSelect = dialog.querySelector('#stmb-profile-editor-preset');
+    if (presetSelect) {
+        presetSelect.value = nextKey;
+    }
+    if (promptTextarea) {
+        promptTextarea.value = '';
+    }
+
+    dialog.querySelector('#stmb-profile-editor-legacy-custom-prompt')?.remove();
+    dialog.querySelector('#stmb-profile-editor-move-to-preset')?.remove();
+    toastr.success('Preset created and selected. Remember to Save.', 'STMB');
+    return true;
+}
+
+function isImportableProfile(profile) {
+    if (!profile || typeof profile !== 'object') {
+        return false;
+    }
+    if (!profile.name || typeof profile.name !== 'string') {
+        return false;
+    }
+    if (profile.connection && typeof profile.connection !== 'object') {
+        return false;
+    }
+    return true;
+}
+
 async function openProfileEditor(profileIndex = null) {
     const isNew = profileIndex === null;
     const baseProfile = isNew
@@ -2283,7 +2357,16 @@ async function openProfileEditor(profileIndex = null) {
         },
     });
 
-    popup.dlg?.addEventListener('change', () => updateProfileEditorDynamicState(popup.dlg));
+    const handlePresetsUpdated = () => refreshProfileEditorPresetOptions(popup.dlg);
+    popup.dlg?.addEventListener('change', event => {
+        const target = event.target;
+        if (target instanceof HTMLElement && target.matches('#stmb-profile-editor-convert-existing-recursion')) {
+            stmbSettings.moduleSettings.convertExistingRecursion = target.checked;
+            stmbSettings = normalizeStmbSettings(stmbSettings);
+            saveSettingsDebounced();
+        }
+        updateProfileEditorDynamicState(popup.dlg);
+    });
     popup.dlg?.addEventListener('input', () => updateProfileEditorDynamicState(popup.dlg));
     popup.dlg?.addEventListener('click', async event => {
         const target = event.target;
@@ -2301,12 +2384,28 @@ async function openProfileEditor(profileIndex = null) {
         }
         if (target.closest('#stmb-profile-editor-refresh-presets')) {
             refreshProfileEditorPresetOptions(popup.dlg);
+            toastr.success('Preset list refreshed', 'STMB');
+            return;
+        }
+        if (target.closest('#stmb-profile-editor-move-to-preset')) {
+            try {
+                await moveLegacyProfilePromptToPreset(popup.dlg);
+            } catch (error) {
+                toastr.error(error?.message || 'Failed to move custom prompt to preset', 'STMB');
+            }
+            return;
         }
     });
+    window.addEventListener('stmb-presets-updated', handlePresetsUpdated);
     updateProfileEditorDynamicState(popup.dlg);
     refreshProfileEditorPresetOptions(popup.dlg);
 
-    const result = await popup.show();
+    let result;
+    try {
+        result = await popup.show();
+    } finally {
+        window.removeEventListener('stmb-presets-updated', handlePresetsUpdated);
+    }
     if (result !== POPUP_RESULT.AFFIRMATIVE) {
         return false;
     }
@@ -2333,7 +2432,7 @@ async function deleteSelectedProfile(profileIndex) {
         return false;
     }
     if (stmbSettings.profiles[profileIndex]?.isBuiltinCurrentST) {
-        toastr.error('Cannot delete the "Current SillyTavern Settings" profile', 'STMB');
+        toastr.error('Cannot delete the "Current SillyTavern Settings" profile - it is required for the extension to work', 'STMB');
         return false;
     }
 
@@ -2374,7 +2473,7 @@ function exportProfilesToFile() {
 function importProfilesFromFile(file) {
     return new Promise((resolve, reject) => {
         if (!file) {
-            resolve(false);
+            resolve({ importedCount: 0, skippedCount: 0 });
             return;
         }
 
@@ -2386,9 +2485,15 @@ function importProfilesFromFile(file) {
                     throw new Error('Invalid profile data format');
                 }
 
+                const validProfiles = importData.profiles.filter(isImportableProfile);
+                if (validProfiles.length === 0) {
+                    throw new Error('No valid profiles found in import file');
+                }
+
                 const existingNames = stmbSettings.profiles.map(profile => String(profile?.name || '').trim());
                 let importedCount = 0;
-                for (const rawProfile of importData.profiles) {
+                let skippedCount = 0;
+                for (const rawProfile of validProfiles) {
                     const candidateSettings = normalizeStmbSettings({
                         ...stmbSettings,
                         profiles: [...stmbSettings.profiles, rawProfile],
@@ -2396,12 +2501,14 @@ function importProfilesFromFile(file) {
                     });
                     const normalizedProfile = candidateSettings.profiles[candidateSettings.profiles.length - 1];
                     if (normalizedProfile?.isBuiltinCurrentST) {
+                        skippedCount++;
+                        continue;
+                    }
+                    if (existingNames.includes(normalizedProfile.name)) {
+                        skippedCount++;
                         continue;
                     }
                     normalizedProfile.name = getUniqueProfileName(normalizedProfile.name, null);
-                    if (existingNames.includes(normalizedProfile.name)) {
-                        continue;
-                    }
                     existingNames.push(normalizedProfile.name);
                     stmbSettings.profiles.push(normalizedProfile);
                     importedCount++;
@@ -2411,7 +2518,7 @@ function importProfilesFromFile(file) {
                     stmbSettings = normalizeStmbSettings(stmbSettings);
                     saveSettingsDebounced();
                 }
-                resolve(importedCount > 0);
+                resolve({ importedCount, skippedCount });
             } catch (error) {
                 reject(error);
             }
@@ -2437,7 +2544,7 @@ function refreshSettingsPopupProfileSection(dialog, currentUiConnection) {
     updateSettingsPopupDynamicState(dialog, currentUiConnection);
 }
 
-function refreshProfileEditorPresetOptions(dialog) {
+function refreshProfileEditorPresetOptions(dialog, preferredSelectedValue = null) {
     if (!dialog) {
         return;
     }
@@ -2445,12 +2552,14 @@ function refreshProfileEditorPresetOptions(dialog) {
     if (!presetSelect) {
         return;
     }
-    const selectedValue = String(presetSelect.value || 'summary');
+    const selectedValue = String(preferredSelectedValue || presetSelect.value || 'summary');
     presetSelect.innerHTML = getProfilePresetKeys().map(key => (
         `<option value="${escapeHtml(key)}" ${key === selectedValue ? 'selected' : ''}>${escapeHtml(getSummaryPromptDisplayName(key))}</option>`
     )).join('');
     if (!Array.from(presetSelect.options).some(option => option.value === selectedValue)) {
         presetSelect.value = 'summary';
+    } else {
+        presetSelect.value = selectedValue;
     }
 }
 
@@ -2751,11 +2860,16 @@ async function showMainEntryPopup() {
         }
         if (target.matches('#stmb-settings-import-file')) {
             try {
-                const imported = await importProfilesFromFile(target.files?.[0] || null);
+                const result = await importProfilesFromFile(target.files?.[0] || null);
                 target.value = '';
-                if (imported) {
+                if (result.importedCount > 0) {
                     refreshSettingsPopupProfileSection(popup.dlg, currentUiConnection);
-                    toastr.success('Profiles imported successfully', 'STMB');
+                    const duplicateText = result.skippedCount > 0
+                        ? ` (${result.skippedCount} duplicate${result.skippedCount === 1 ? '' : 's'} skipped)`
+                        : '';
+                    toastr.success(`Imported ${result.importedCount} profile${result.importedCount === 1 ? '' : 's'}${duplicateText}`, 'STMB profile import completed');
+                } else {
+                    toastr.warning('No new profiles imported - all profiles already exist', 'STMB');
                 }
             } catch (error) {
                 target.value = '';

@@ -298,6 +298,7 @@ export function createDefaultStmbSettings() {
             autoSummaryEnabled: false,
             autoSummaryInterval: 50,
             autoSummaryBuffer: 2,
+            convertExistingRecursion: false,
             autoConsolidationPromptEnabled: false,
             autoConsolidationTargetTiers: [1],
             autoCreateLorebook: false,
@@ -578,6 +579,7 @@ export function normalizeStmbSettings(rawSettings, legacySettings = null) {
         ? 100
         : Math.trunc(Number(moduleSettings.autoSummaryInterval));
     moduleSettings.autoSummaryBuffer = Number.isFinite(Number(moduleSettings.autoSummaryBuffer)) ? Math.max(0, Math.trunc(Number(moduleSettings.autoSummaryBuffer))) : defaults.moduleSettings.autoSummaryBuffer;
+    moduleSettings.convertExistingRecursion = Boolean(moduleSettings.convertExistingRecursion);
     moduleSettings.sidePromptsMaxConcurrent = Number.isFinite(Number(moduleSettings.sidePromptsMaxConcurrent))
         ? Math.max(1, Math.min(5, Math.trunc(Number(moduleSettings.sidePromptsMaxConcurrent))))
         : 2;

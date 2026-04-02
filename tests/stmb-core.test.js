@@ -122,12 +122,14 @@ describe('stmb core settings', () => {
                 tokenWarningThreshold: 999,
                 defaultMemoryCount: 99,
                 autoSummaryInterval: 5,
+                convertExistingRecursion: 1,
             },
         });
 
         expect(settings.moduleSettings.tokenWarningThreshold).toBe(50000);
         expect(settings.moduleSettings.defaultMemoryCount).toBe(7);
         expect(settings.moduleSettings.autoSummaryInterval).toBe(100);
+        expect(settings.moduleSettings.convertExistingRecursion).toBe(true);
     });
 
     it('normalizes profile prompt precedence and outlet routing like STMB', () => {
