@@ -14,7 +14,7 @@ This file is updated subsystem by subsystem during the audit. Only sections that
 | `current_st` / dynamic profile behavior matches STMB. | Exact | Builtin profile invariants and current-ST profile behavior passed manual testing through the dedicated profile editor. |
 | Custom/full-manual profile behavior matches STMB. | Exact | Full-manual endpoint requirements, field visibility, and save/reopen behavior passed manual testing in the dedicated profile editor. |
 | Provider/model/temperature/endpoint/apiKey overrides match STMB. | Exact | Provider/model/temperature/endpoint/apiKey override behavior passed manual testing in the dedicated profile editor and settings surface. |
-| Regex selection behavior matches STMB. | Partial | Memory flow now applies selected outgoing/incoming regex in STMB order, and the settings UI now uses a dedicated regex selection popup closer to STMB; full manager parity is still pending. |
+| Regex selection behavior matches STMB. | Exact | Memory flow applies selected outgoing/incoming regex in STMB order, and `showRegexSelectionPopup` now matches STMB's popup-local save/select2/toast semantics. |
 | Lorebook routing/manual mode behavior matches STMB. | Partial | Silent manual-mode fallback to chat-bound lorebook was removed, and missing/unbound lorebooks now enter a recovery popup flow closer to STMB; the popup now exposes manual lorebook controls, but the full reference flow is still broader. |
 
 ## 2. Scene System
@@ -152,6 +152,7 @@ These items have been reviewed side-by-side against the STMB reference and are c
 | Dedicated profile manager CRUD/import/export semantics | `profileManager.js` / `utils.js` | `public/scripts/stmb.js` profile editor helpers + `public/scripts/stmb-core.js` `sanitizeProfile` |
 | `current_st` / full-manual profile editor semantics | `profileManager.js` | `public/scripts/stmb.js` profile editor handlers |
 | Provider/model/temperature/endpoint/apiKey override behavior | `profileManager.js` | `public/scripts/stmb.js` profile editor handlers |
+| Regex selection popup semantics | `index.js` `showRegexSelectionPopup` | `public/scripts/stmb.js` `showRegexSelectionPopup` |
 | Scene marker placement/removal | `sceneManager.js` marker toggle helpers | `public/scripts/stmb.js` scene marker helpers |
 | Start/end marker validation | `sceneManager.js` validation helpers | `public/scripts/stmb.js` `assertRangeWithinCurrentChat` / `validateSceneMarkers` |
 | No silent fallback to plain text | `stmemory.js` structured parse path | `public/scripts/stmb.js` `requestStructuredMemory` + `public/scripts/stmb-core.js` parser path |

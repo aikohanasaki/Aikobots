@@ -814,11 +814,18 @@ async function showRegexSelectionPopup() {
         return false;
     }
 
-    moduleSettings.selectedRegexOutgoing = readSelectedValues(popup.dlg?.querySelector('#stmb-regex-popup-outgoing'));
-    moduleSettings.selectedRegexIncoming = readSelectedValues(popup.dlg?.querySelector('#stmb-regex-popup-incoming'));
-    stmbSettings = normalizeStmbSettings(stmbSettings);
-    saveSettingsDebounced();
-    return true;
+    try {
+        moduleSettings.selectedRegexOutgoing = readSelectedValues(popup.dlg?.querySelector('#stmb-regex-popup-outgoing'));
+        moduleSettings.selectedRegexIncoming = readSelectedValues(popup.dlg?.querySelector('#stmb-regex-popup-incoming'));
+        stmbSettings = normalizeStmbSettings(stmbSettings);
+        saveSettingsDebounced();
+        toastr.success('Regex selections saved', 'STMB');
+        return true;
+    } catch (error) {
+        console.warn('STMB regex selection save failed', error);
+        toastr.error('Failed to save regex selections', 'STMB');
+        return false;
+    }
 }
 
 const STMB_PROFILE_PROVIDER_OPTIONS = Object.freeze([
@@ -2917,10 +2924,9 @@ async function showMainEntryPopup() {
                 const saved = await showRegexSelectionPopup();
                 if (saved) {
                     updateSettingsPopupDynamicState(popup.dlg, currentUiConnection);
-                    toastr.success('Regex selections saved', 'STMB');
                 }
             } catch (error) {
-                toastr.error(error?.message || 'Failed to save regex selections', 'STMB');
+                toastr.error(error?.message || 'Failed to open regex selection popup', 'STMB');
             }
             return;
         }
