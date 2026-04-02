@@ -14,6 +14,7 @@ import { getContext, saveMetadataDebounced } from './extensions.js';
 import { commitStmbSummaries, generateStmbSummary, generateStmbText, prepareStmbMemoryMessages, saveStmbMemoryEntry } from './stmb-api.js';
 import { closeActiveMemoryPreviewPopups, showAdvancedOptionsPopup, showAutoConsolidationPromptPopup, showAutoSummaryDecisionPopup, showConfirmationPopup, showFailedAIResponsePopup, showFailedSummaryResponsePopup, showLorebookPickerPopup, showMemoryPreviewPopup, showSummaryConsolidationOptionsPopup } from './stmb-popups.js';
 import { Popup, POPUP_RESULT, POPUP_TYPE } from './popup.js';
+import { applyLocale, translate } from './i18n.js';
 import { SlashCommandParser } from './slash-commands/SlashCommandParser.js';
 import { SlashCommand } from './slash-commands/SlashCommand.js';
 import { ARGUMENT_TYPE, SlashCommandArgument } from './slash-commands/SlashCommandArgument.js';
@@ -968,22 +969,48 @@ async function importArcPromptPresetsJson(text) {
 }
 
 function buildSummaryPromptManagerRowsHtml(presets, selectedPresetKey = null) {
+    if (!Array.isArray(presets) || presets.length === 0) {
+        return `
+            <table style="width: 100%; border-collapse: collapse;">
+                <thead>
+                    <tr>
+                        <th data-i18n="STMemoryBooks_PromptManager_DisplayName">Display Name</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr>
+                        <td>
+                            <div class="opacity50p" data-i18n="STMemoryBooks_PromptManager_NoPresets">No presets available</div>
+                        </td>
+                    </tr>
+                </tbody>
+            </table>
+        `;
+    }
+
     return `
-        <table class="table table-striped" style="width:100%">
+        <table style="width: 100%; border-collapse: collapse;">
+            <thead>
+                <tr>
+                    <th data-i18n="STMemoryBooks_PromptManager_DisplayName">Display Name</th>
+                </tr>
+            </thead>
             <tbody>
                 ${presets.map(preset => `
-                    <tr data-preset-key="${escapeHtml(preset.key)}" style="${preset.key === selectedPresetKey ? 'background-color: var(--cobalt30a);' : ''}">
-                        <td>${escapeHtml(preset.displayName)}${preset.isBuiltIn ? ' <small class="opacity50p">(Built-in)</small>' : ''}</td>
-                        <td class="textAlignRight whitespacenowrap" style="display:flex; justify-content:flex-end; align-items:center; gap:6px; flex-wrap:nowrap;">
-                            <button class="menu_button stmb-pm-action stmb-pm-action-edit whitespacenowrap" data-action="edit" title="Edit" aria-label="Edit" style="display:inline-flex; align-items:center; justify-content:center; width:auto; min-width:0; margin:0;">
-                                <i class="fa-solid fa-pen-to-square"></i>
+                    <tr data-preset-key="${escapeHtml(preset.key)}" style="cursor: pointer; border-bottom: 1px solid var(--SmartThemeBorderColor); ${preset.key === selectedPresetKey ? 'background-color: var(--cobalt30a);' : ''}">
+                        <td style="padding: 8px;">
+                            <span class="stmb-preset-name">${escapeHtml(preset.displayName)}</span>
+                            <span class="stmb-inline-actions textAlignRight whitespacenowrap" style="float: right; display: inline-flex; align-items:center; gap: 10px; flex-wrap: nowrap;">
+                            <button class="menu_button stmb-action stmb-action-edit whitespacenowrap" data-action="edit" title="Edit" aria-label="Edit" data-i18n="[title]STMemoryBooks_Edit;[aria-label]STMemoryBooks_Edit" style="display:inline-flex; align-items:center; justify-content:center; width:auto; min-width:0; margin:0;">
+                                <i class="fa-solid fa-pen"></i>
                             </button>
-                            <button class="menu_button stmb-pm-action stmb-pm-action-duplicate whitespacenowrap" data-action="duplicate" title="Duplicate" aria-label="Duplicate" style="display:inline-flex; align-items:center; justify-content:center; width:auto; min-width:0; margin:0;">
+                            <button class="menu_button stmb-action stmb-action-duplicate whitespacenowrap" data-action="duplicate" title="Duplicate" aria-label="Duplicate" data-i18n="[title]STMemoryBooks_Duplicate;[aria-label]STMemoryBooks_Duplicate" style="display:inline-flex; align-items:center; justify-content:center; width:auto; min-width:0; margin:0;">
                                 <i class="fa-solid fa-copy"></i>
                             </button>
-                            <button class="menu_button stmb-pm-action stmb-pm-action-delete whitespacenowrap" data-action="delete" title="Delete" aria-label="Delete" style="display:inline-flex; align-items:center; justify-content:center; width:auto; min-width:0; margin:0;">
+                            <button class="menu_button stmb-action stmb-action-delete whitespacenowrap" data-action="delete" title="Delete" aria-label="Delete" data-i18n="[title]STMemoryBooks_Delete;[aria-label]STMemoryBooks_Delete" style="display:inline-flex; align-items:center; justify-content:center; width:auto; min-width:0; margin:0;">
                                 <i class="fa-solid fa-trash"></i>
                             </button>
+                            </span>
                         </td>
                     </tr>
                 `).join('')}
@@ -1001,6 +1028,11 @@ function refreshSummaryPromptManagerList(dialog, selectedPresetKey = null) {
     const list = dialog.querySelector('#stmb-preset-list');
     if (list) {
         list.innerHTML = buildSummaryPromptManagerRowsHtml(presets, selectedPresetKey);
+        try {
+            applyLocale(list);
+        } catch {
+            // noop
+        }
     }
     const applyButton = dialog.querySelector('#stmb-pm-apply');
     if (applyButton) {
@@ -1017,23 +1049,30 @@ async function openSummaryPromptEditPopup({ presetKey = null, duplicate = false 
         : (sourceDisplayName || 'My Custom Preset');
     const popup = new Popup(DOMPurify.sanitize(`
         <div class="stmb-summary-prompt-editor">
-            <h3>${sourceKey ? (duplicate ? 'Duplicate Preset' : 'Edit Preset') : 'Create New Preset'}</h3>
+            <h3 data-i18n="${sourceKey ? (duplicate ? 'STMemoryBooks_DuplicatePresetTitle' : 'STMemoryBooks_EditPresetTitle') : 'STMemoryBooks_CreateNewPresetTitle'}">${escapeHtml(sourceKey ? (duplicate ? translate('Duplicate Preset', 'STMemoryBooks_DuplicatePresetTitle') : translate('Edit Preset', 'STMemoryBooks_EditPresetTitle')) : translate('Create New Preset', 'STMemoryBooks_CreateNewPresetTitle'))}</h3>
             <div class="world_entry_form_control">
-                <label for="stmb-pm-edit-display-name">Display Name</label>
-                <input id="stmb-pm-edit-display-name" class="text_pole" value="${escapeHtml(defaultDisplayName)}">
+                <label for="stmb-pm-edit-display-name">
+                    <h4 data-i18n="STMemoryBooks_DisplayNameTitle">Display Name:</h4>
+                    <input id="stmb-pm-edit-display-name" class="text_pole" value="${escapeHtml(defaultDisplayName)}" data-i18n="[placeholder]STMemoryBooks_MyCustomPreset" placeholder="${escapeHtml(translate('My Custom Preset', 'STMemoryBooks_MyCustomPreset'))}">
+                </label>
             </div>
             <div class="world_entry_form_control">
-                <label for="stmb-pm-edit-prompt">Prompt</label>
-                <textarea id="stmb-pm-edit-prompt" class="text_pole textarea_compact" rows="12">${escapeHtml(sourcePrompt)}</textarea>
+                <label for="stmb-pm-edit-prompt">
+                    <h4 data-i18n="STMemoryBooks_PromptTitle">Prompt:</h4>
+                    <i class="editor_maximize fa-solid fa-maximize right_menu_button" data-for="stmb-pm-edit-prompt" title="Expand the editor" data-i18n="[title]STMemoryBooks_ExpandEditor"></i>
+                    <textarea id="stmb-pm-edit-prompt" class="text_pole textarea_compact" rows="10" data-i18n="[placeholder]STMemoryBooks_EnterPromptPlaceholder" placeholder="${escapeHtml(translate('Enter your prompt here...', 'STMemoryBooks_EnterPromptPlaceholder'))}">${escapeHtml(sourcePrompt)}</textarea>
+                </label>
             </div>
         </div>
     `), POPUP_TYPE.TEXT, '', {
-        okButton: sourceKey && !duplicate ? 'Save' : 'Create',
-        cancelButton: 'Cancel',
-        wide: true,
-        large: true,
-        allowVerticalScrolling: true,
+        okButton: sourceKey && !duplicate ? translate('Save', 'STMemoryBooks_Save') : translate('Create', 'STMemoryBooks_Create'),
+        cancelButton: translate('Cancel', 'STMemoryBooks_Cancel'),
     });
+    try {
+        applyLocale(popup.dlg);
+    } catch {
+        // noop
+    }
 
     const result = await popup.show();
     if (result !== POPUP_RESULT.AFFIRMATIVE) {
@@ -1043,7 +1082,7 @@ async function openSummaryPromptEditPopup({ presetKey = null, duplicate = false 
     const displayName = String(popup.dlg?.querySelector('#stmb-pm-edit-display-name')?.value || '').trim();
     const prompt = String(popup.dlg?.querySelector('#stmb-pm-edit-prompt')?.value || '').trim();
     if (!prompt) {
-        throw new Error('Prompt cannot be empty');
+        throw new Error(translate('Prompt cannot be empty', 'STMemoryBooks_PromptCannotBeEmpty'));
     }
 
     const nextKey = duplicate ? null : sourceKey;
@@ -1094,13 +1133,13 @@ async function openArcPromptEditPopup({ presetKey = null, duplicate = false } = 
 
 async function applySummaryPromptPresetToSelectedProfile(presetKey) {
     if (!presetKey) {
-        throw new Error('Select a preset first');
+        throw new Error(translate('Select a preset first', 'STMemoryBooks_SelectPresetFirst'));
     }
     const settingsProfileSelect = document.querySelector('#stmb-settings-profile-select');
     const selectedIndex = Number(settingsProfileSelect?.value ?? stmbSettings.defaultProfile ?? 0);
     const profile = stmbSettings.profiles?.[selectedIndex];
     if (!profile) {
-        throw new Error('Selected profile not found');
+        throw new Error(translate('Selected profile not found', 'STMemoryBooks_SelectedProfileNotFound'));
     }
     profile.preset = String(presetKey);
     stmbSettings = normalizeStmbSettings(stmbSettings);
@@ -1109,161 +1148,218 @@ async function applySummaryPromptPresetToSelectedProfile(presetKey) {
 }
 
 async function showSummaryPromptManagerPopup({ onChange = null } = {}) {
-    let selectedPresetKey = null;
-    const popup = new Popup(DOMPurify.sanitize(`
+    try {
+        await firstRunInitSummaryPromptPresets(stmbSettings);
+        let selectedPresetKey = null;
+        const popup = new Popup(DOMPurify.sanitize(`
         <div class="stmb-summary-prompt-manager">
-            <h3>Summary Prompt Manager</h3>
+            <h3 data-i18n="STMemoryBooks_PromptManager_Title">${escapeHtml(translate('🧩 Summary Prompt Manager', 'STMemoryBooks_PromptManager_Title'))}</h3>
             <div class="world_entry_form_control">
-                <p>Manage your summary generation prompts. All presets are editable.</p>
+                <p data-i18n="STMemoryBooks_PromptManager_Desc">${escapeHtml(translate('Manage your summary generation prompts. All presets are editable.', 'STMemoryBooks_PromptManager_Desc'))}</p>
             </div>
             <div class="world_entry_form_control">
-                <input type="text" id="stmb-prompt-search" class="text_pole" placeholder="Search presets..." aria-label="Search presets">
+                <input type="text" id="stmb-prompt-search" class="text_pole" placeholder="${escapeHtml(translate('Search presets...', 'STMemoryBooks_PromptManager_Search'))}" aria-label="${escapeHtml(translate('Search presets...', 'STMemoryBooks_PromptManager_Search'))}" data-i18n="[placeholder]STMemoryBooks_PromptManager_Search;[aria-label]STMemoryBooks_PromptManager_Search">
             </div>
             <div id="stmb-preset-list" class="padding10 marginBot10" style="max-height: 400px; overflow-y: auto;"></div>
             <div class="buttons_block justifyCenter gap10px whitespacenowrap">
-                <button id="stmb-pm-new" class="menu_button whitespacenowrap">New Preset</button>
-                <button id="stmb-pm-export" class="menu_button whitespacenowrap">Export JSON</button>
-                <button id="stmb-pm-import" class="menu_button whitespacenowrap">Import JSON</button>
-                <button id="stmb-pm-recreate-builtins" class="menu_button whitespacenowrap">Recreate Built-in Prompts</button>
-                <button id="stmb-pm-apply" class="menu_button whitespacenowrap" disabled>Apply to Selected Profile</button>
+                <button id="stmb-pm-new" class="menu_button whitespacenowrap" data-i18n="STMemoryBooks_PromptManager_New">${escapeHtml(translate('➕ New Preset', 'STMemoryBooks_PromptManager_New'))}</button>
+                <button id="stmb-pm-export" class="menu_button whitespacenowrap" data-i18n="STMemoryBooks_PromptManager_Export">${escapeHtml(translate('📤 Export JSON', 'STMemoryBooks_PromptManager_Export'))}</button>
+                <button id="stmb-pm-import" class="menu_button whitespacenowrap" data-i18n="STMemoryBooks_PromptManager_Import">${escapeHtml(translate('📥 Import JSON', 'STMemoryBooks_PromptManager_Import'))}</button>
+                <button id="stmb-pm-recreate-builtins" class="menu_button whitespacenowrap" data-i18n="STMemoryBooks_PromptManager_RecreateBuiltins">${escapeHtml(translate('♻️ Recreate Built-in Prompts', 'STMemoryBooks_PromptManager_RecreateBuiltins'))}</button>
+                <button id="stmb-pm-apply" class="menu_button whitespacenowrap" disabled data-i18n="STMemoryBooks_PromptManager_ApplyToProfile">${escapeHtml(translate('✅ Apply to Selected Profile', 'STMemoryBooks_PromptManager_ApplyToProfile'))}</button>
             </div>
-            <small>When creating a new prompt, start from one of the built-in prompts and keep the JSON response instructions intact.</small>
+            <small>${escapeHtml(translate('💡 When creating a new prompt, copy one of the other built-in prompts and then amend it. Don\'t change the "respond with JSON" instructions, 📕Memory Books uses that to process the returned result from the AI.', 'STMemoryBooks_PromptManager_Hint'))}</small>
             <input type="file" id="stmb-pm-import-file" accept=".json" style="display:none">
         </div>
-    `), POPUP_TYPE.TEXT, '', {
-        wide: true,
-        large: true,
-        allowVerticalScrolling: true,
-        okButton: false,
-        cancelButton: 'Close',
-    });
-
-    const notifyChange = async () => {
-        if (typeof onChange === 'function') {
-            await onChange();
+        `), POPUP_TYPE.TEXT, '', {
+            wide: true,
+            large: true,
+            allowVerticalScrolling: true,
+            okButton: false,
+            cancelButton: translate('Close', 'STMemoryBooks_Close'),
+        });
+        try {
+            applyLocale(popup.dlg);
+        } catch {
+            // noop
         }
-    };
 
-    popup.dlg?.addEventListener('click', async event => {
-        const actionButton = event.target.closest('.stmb-pm-action');
-        if (actionButton) {
-            const row = actionButton.closest('tr[data-preset-key]');
-            selectedPresetKey = String(row?.dataset?.presetKey || '');
-            try {
-                if (actionButton.classList.contains('stmb-pm-action-edit')) {
-                    await openSummaryPromptEditPopup({ presetKey: selectedPresetKey });
-                    toastr.success('Preset updated successfully', 'STMB');
-                } else if (actionButton.classList.contains('stmb-pm-action-duplicate')) {
-                    await duplicateSummaryPromptPreset(selectedPresetKey);
-                    toastr.success('Preset duplicated successfully', 'STMB');
-                } else if (actionButton.classList.contains('stmb-pm-action-delete')) {
-                    const confirm = await Popup.show.confirm('Delete Preset', `Are you sure you want to delete "${escapeHtml(getSummaryPromptDisplayName(selectedPresetKey))}"?`);
-                    if (!confirm) {
-                        return;
+        const notifyChange = async () => {
+            if (typeof onChange === 'function') {
+                await onChange();
+            }
+        };
+        const reopenManager = async () => {
+            popup.completeAffirmative();
+            await showSummaryPromptManagerPopup({ onChange });
+        };
+
+        popup.dlg?.addEventListener('click', async event => {
+            const actionButton = event.target.closest('.stmb-action');
+            if (actionButton) {
+                const row = actionButton.closest('tr[data-preset-key]');
+                selectedPresetKey = String(row?.dataset?.presetKey || '');
+                try {
+                    if (actionButton.classList.contains('stmb-action-edit')) {
+                        const savedKey = await openSummaryPromptEditPopup({ presetKey: selectedPresetKey });
+                        if (savedKey) {
+                            toastr.success(translate('Preset updated successfully', 'STMemoryBooks_PresetUpdatedSuccessfully'), 'Memory Books');
+                            await notifyChange();
+                            await reopenManager();
+                        }
+                    } else if (actionButton.classList.contains('stmb-action-duplicate')) {
+                        await duplicateSummaryPromptPreset(selectedPresetKey);
+                        toastr.success(translate('Preset duplicated successfully', 'STMemoryBooks_PresetDuplicatedSuccessfully'), 'Memory Books');
+                        await notifyChange();
+                        await reopenManager();
+                    } else if (actionButton.classList.contains('stmb-action-delete')) {
+                        const displayName = getSummaryPromptDisplayName(selectedPresetKey);
+                        const confirmPopup = new Popup(
+                            `<h3 data-i18n="STMemoryBooks_DeletePresetTitle">${escapeHtml(translate('Delete Preset', 'STMemoryBooks_DeletePresetTitle'))}</h3><p>${escapeHtml(translate('Are you sure you want to delete "{{name}}"?', 'STMemoryBooks_DeletePresetConfirm').replace('{{name}}', displayName))}</p>`,
+                            POPUP_TYPE.CONFIRM,
+                            '',
+                            {
+                                okButton: translate('Delete', 'STMemoryBooks_Delete'),
+                                cancelButton: translate('Cancel', 'STMemoryBooks_Cancel'),
+                            },
+                        );
+                        try {
+                            applyLocale(confirmPopup.dlg);
+                        } catch {
+                            // noop
+                        }
+                        const confirm = await confirmPopup.show();
+                        if (confirm !== POPUP_RESULT.AFFIRMATIVE) {
+                            return;
+                        }
+                        await removeSummaryPromptPreset(selectedPresetKey);
+                        toastr.success(translate('Preset deleted successfully', 'STMemoryBooks_PresetDeletedSuccessfully'), 'Memory Books');
+                        await notifyChange();
+                        await reopenManager();
                     }
-                    await removeSummaryPromptPreset(selectedPresetKey);
-                    toastr.success('Preset deleted successfully', 'STMB');
-                    selectedPresetKey = null;
+                } catch (error) {
+                    toastr.error(error?.message || translate('Prompt manager action failed', 'STMemoryBooks_PromptManagerActionFailed'), 'Memory Books');
                 }
-                refreshSummaryPromptManagerList(popup.dlg, selectedPresetKey);
-                await notifyChange();
-            } catch (error) {
-                toastr.error(error?.message || 'Prompt manager action failed', 'STMB');
-            }
-            return;
-        }
-
-        const row = event.target.closest('tr[data-preset-key]');
-        if (row) {
-            selectedPresetKey = String(row.dataset.presetKey || '');
-            refreshSummaryPromptManagerList(popup.dlg, selectedPresetKey);
-            return;
-        }
-
-        if (event.target.closest('#stmb-pm-new')) {
-            try {
-                selectedPresetKey = await openSummaryPromptEditPopup({});
-                if (selectedPresetKey) {
-                    toastr.success('Preset created successfully', 'STMB');
-                    refreshSummaryPromptManagerList(popup.dlg, selectedPresetKey);
-                    await notifyChange();
-                }
-            } catch (error) {
-                toastr.error(error?.message || 'Failed to create preset', 'STMB');
-            }
-            return;
-        }
-
-        if (event.target.closest('#stmb-pm-export')) {
-            try {
-                const blob = new Blob([await exportSummaryPromptPresetsJson()], { type: 'application/json' });
-                const url = URL.createObjectURL(blob);
-                const link = document.createElement('a');
-                link.href = url;
-                link.download = 'stmb-summary-prompts.json';
-                link.click();
-                URL.revokeObjectURL(url);
-                toastr.success('Prompts exported successfully', 'STMB');
-            } catch (error) {
-                toastr.error(error?.message || 'Failed to export prompts', 'STMB');
-            }
-            return;
-        }
-
-        if (event.target.closest('#stmb-pm-import')) {
-            popup.dlg?.querySelector('#stmb-pm-import-file')?.click();
-            return;
-        }
-
-        if (event.target.closest('#stmb-pm-recreate-builtins')) {
-            const confirm = await Popup.show.confirm('Recreate Built-in Prompts', 'This removes overrides for all built-in summary presets. Custom presets are not affected.');
-            if (!confirm) {
                 return;
             }
-            const result = await recreateBuiltInSummaryPromptOverrides();
-            selectedPresetKey = null;
-            refreshSummaryPromptManagerList(popup.dlg, selectedPresetKey);
-            toastr.success(`Removed ${result.removed} built-in overrides`, 'STMB');
-            await notifyChange();
-            return;
-        }
 
-        if (event.target.closest('#stmb-pm-apply')) {
-            try {
-                const applied = await applySummaryPromptPresetToSelectedProfile(selectedPresetKey);
-                if (applied) {
-                    toastr.success('Preset applied to profile', 'STMB');
-                    await notifyChange();
-                }
-            } catch (error) {
-                toastr.error(error?.message || 'Failed to apply preset', 'STMB');
+            const row = event.target.closest('tr[data-preset-key]');
+            if (row) {
+                selectedPresetKey = String(row.dataset.presetKey || '');
+                refreshSummaryPromptManagerList(popup.dlg, selectedPresetKey);
+                return;
             }
-        }
-    });
 
-    popup.dlg?.querySelector('#stmb-prompt-search')?.addEventListener('input', () => {
-        refreshSummaryPromptManagerList(popup.dlg, selectedPresetKey);
-    });
+            if (event.target.closest('#stmb-pm-new')) {
+                try {
+                    selectedPresetKey = await openSummaryPromptEditPopup({});
+                    if (selectedPresetKey) {
+                        toastr.success(translate('Preset created successfully', 'STMemoryBooks_PresetCreatedSuccessfully'), 'Memory Books');
+                        await notifyChange();
+                        await reopenManager();
+                    }
+                } catch (error) {
+                    toastr.error(error?.message || translate('Failed to create preset', 'STMemoryBooks_FailedToCreatePreset'), 'Memory Books');
+                }
+                return;
+            }
 
-    popup.dlg?.querySelector('#stmb-pm-import-file')?.addEventListener('change', async event => {
-        const file = event.target.files?.[0];
-        event.target.value = '';
-        if (!file) {
-            return;
-        }
-        try {
-            await importSummaryPromptPresetsJson(await file.text());
-            selectedPresetKey = null;
+            if (event.target.closest('#stmb-pm-export')) {
+                try {
+                    const blob = new Blob([await exportSummaryPromptPresetsJson()], { type: 'application/json' });
+                    const url = URL.createObjectURL(blob);
+                    const link = document.createElement('a');
+                    link.href = url;
+                    link.download = 'stmb-summary-prompts.json';
+                    link.click();
+                    URL.revokeObjectURL(url);
+                    toastr.success(translate('Prompts exported successfully', 'STMemoryBooks_PromptsExportedSuccessfully'), 'Memory Books');
+                } catch (error) {
+                    toastr.error(error?.message || translate('Failed to export prompts', 'STMemoryBooks_FailedToExportPrompts'), 'Memory Books');
+                }
+                return;
+            }
+
+            if (event.target.closest('#stmb-pm-import')) {
+                popup.dlg?.querySelector('#stmb-pm-import-file')?.click();
+                return;
+            }
+
+            if (event.target.closest('#stmb-pm-recreate-builtins')) {
+                try {
+                    const confirmPopup = new Popup(`
+                    <h3>${escapeHtml(translate('Recreate Built-in Prompts', 'STMemoryBooks_RecreateBuiltinsTitle'))}</h3>
+                    <div class="info-block warning">
+                        ${escapeHtml(translate('This will remove overrides for all built-in presets (summary, summarize, synopsis, sumup, minimal, northgate, aelemar, comprehensive). Any customizations to these built-ins will be lost. After this, built-ins will follow the current app locale.', 'STMemoryBooks_RecreateBuiltinsWarning'))}
+                    </div>
+                    <p class="opacity70p">${escapeHtml(translate('This does not affect your other custom presets.', 'STMemoryBooks_RecreateBuiltinsDoesNotAffectCustom'))}</p>
+                `, POPUP_TYPE.CONFIRM, '', {
+                        okButton: translate('Overwrite', 'STMemoryBooks_RecreateBuiltinsOverwrite'),
+                        cancelButton: translate('Cancel', 'STMemoryBooks_Cancel'),
+                    });
+                    try {
+                        applyLocale(confirmPopup.dlg);
+                    } catch {
+                        // noop
+                    }
+                    const confirm = await confirmPopup.show();
+                    if (confirm !== POPUP_RESULT.AFFIRMATIVE) {
+                        return;
+                    }
+                    const result = await recreateBuiltInSummaryPromptOverrides();
+                    toastr.success(`Removed ${result.removed || 0} built-in overrides`, 'Memory Books');
+                    await notifyChange();
+                    await reopenManager();
+                } catch (error) {
+                    toastr.error(error?.message || translate('Failed to recreate built-in prompts', 'STMemoryBooks_FailedToRecreateBuiltins'), 'Memory Books');
+                }
+                return;
+            }
+
+            if (event.target.closest('#stmb-pm-apply')) {
+                try {
+                    const applied = await applySummaryPromptPresetToSelectedProfile(selectedPresetKey);
+                    if (applied) {
+                        toastr.success(translate('Preset applied to profile', 'STMemoryBooks_PresetAppliedToProfile'), 'Memory Books');
+                        await notifyChange();
+                    }
+                } catch (error) {
+                    toastr.error(error?.message || translate('Failed to apply preset', 'STMemoryBooks_FailedToApplyPreset'), 'Memory Books');
+                }
+            }
+        });
+
+        popup.dlg?.querySelector('#stmb-prompt-search')?.addEventListener('input', () => {
             refreshSummaryPromptManagerList(popup.dlg, selectedPresetKey);
-            toastr.success('Prompts imported successfully', 'STMB');
-            await notifyChange();
-        } catch (error) {
-            toastr.error(error?.message || 'Failed to import prompts', 'STMB');
-        }
-    });
+        });
 
-    refreshSummaryPromptManagerList(popup.dlg, selectedPresetKey);
-    await popup.show();
+        popup.dlg?.querySelector('#stmb-pm-import-file')?.addEventListener('change', async event => {
+            const file = event.target.files?.[0];
+            event.target.value = '';
+            if (!file) {
+                return;
+            }
+            try {
+                await importSummaryPromptPresetsJson(await file.text());
+                toastr.success(translate('Prompts imported successfully', 'STMemoryBooks_PromptsImportedSuccessfully'), 'Memory Books');
+                await notifyChange();
+                await reopenManager();
+            } catch (error) {
+                toastr.error(error?.message ? `${translate('Failed to import prompts', 'STMemoryBooks_FailedToImportPrompts')}: ${error.message}` : translate('Failed to import prompts', 'STMemoryBooks_FailedToImportPrompts'), 'Memory Books');
+            }
+        });
+
+        refreshSummaryPromptManagerList(popup.dlg, selectedPresetKey);
+        try {
+            applyLocale(popup.dlg);
+        } catch {
+            // noop
+        }
+        await popup.show();
+    } catch (error) {
+        console.error('Memory Books: Error showing prompt manager:', error);
+        toastr.error(translate('Failed to open Summary Prompt Manager', 'STMemoryBooks_FailedToOpenSummaryPromptManager'), 'Memory Books');
+    }
 }
 
 function refreshArcPromptManagerList(dialog, selectedPresetKey = null) {

@@ -74,7 +74,7 @@ This file is updated subsystem by subsystem during the audit. Only sections that
 | --- | --- | --- |
 | Tier definitions match STMB. | Exact | Tier map and labels align with STMB's `summaryTiers.js`. |
 | Eligibility rules match STMB. | Partial | Core source-entry filtering and legacy summary migration align, but full runtime validation is still pending. |
-| Summary prompts match STMB. | Partial | Built-in prompt bodies appear aligned, the memory prompt manager is file-backed, and consolidation prompts now use a dedicated file-backed `stmb-arc-prompts.json` cache with the stale settings-backed resolver removed; browser/runtime validation is still open. |
+| Summary prompts match STMB. | Partial | The dedicated summary prompt manager is now at exact semantic parity except for the approved no-profile-custom-prompt deviation, built-in prompt bodies appear aligned, and consolidation prompts now use a dedicated file-backed `stmb-arc-prompts.json` cache; broader prompt/runtime validation is still open. |
 | Sequential summary analysis behavior matches STMB. | Partial | Previous-summary context, chronological briefs, selected-source filtering, parse-retry, token-budget trimming, max-pass controls, and repair-path source preservation are now closer; browser/runtime validation is still pending. |
 | `member_ids` semantics match STMB. | Partial | Ambiguous multi-summary cases are rejected and member ID resolution matches STMB closely; broader manual-repair/runtime coverage is still pending. |
 | Ambiguous multi-summary cases are handled like STMB. | Partial | Parser rejects multiple summaries without `member_ids`; UI-level repair messaging still needs matching. |
@@ -158,6 +158,7 @@ These items have been reviewed side-by-side against the STMB reference and are c
 | Start/end marker validation | `sceneManager.js` validation helpers | `public/scripts/stmb.js` `assertRangeWithinCurrentChat` / `validateSceneMarkers` |
 | No silent fallback to plain text | `stmemory.js` structured parse path | `public/scripts/stmb.js` `requestStructuredMemory` + `public/scripts/stmb-core.js` parser path |
 | Summary tier definitions | `summaryTiers.js` | `public/scripts/stmb-summary.js` tier helpers |
+| Summary prompt manager semantics | `summaryPromptManager.js` / `index.js` `showPromptManagerPopup` | `public/scripts/stmb-summary-prompt-manager.js` + `public/scripts/stmb.js` `showSummaryPromptManagerPopup` |
 | Side prompt loose name lookup | `sidePromptsManager.js` `findTemplateByName` | `public/scripts/stmb-sideprompts-manager.js` `findTemplateByName` |
 | `/stmb-highest` return semantics | `index.js` `handleHighestMemoryProcessedCommand` | `public/scripts/stmb.js` `getHighestProcessedCommand` |
 

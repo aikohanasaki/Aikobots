@@ -1,18 +1,43 @@
 import { getRequestHeaders } from '../script.js';
+import { translate } from './i18n.js';
 import { STMB_DEFAULT_PROMPTS } from './stmb-core.js';
 
 const SUMMARY_PROMPTS_FILE = 'stmb-summary-prompts.json';
 const SUMMARY_PROMPTS_VERSION = 1;
 
 const SUMMARY_PROMPT_DISPLAY_NAMES = Object.freeze({
-    summary: 'Summary - Detailed beat-by-beat summaries in narrative prose',
-    summarize: 'Summarize - Bullet-point format',
-    synopsis: 'Synopsis - Long and comprehensive (beats, interactions, details) with headings',
-    sumup: 'Sum Up - Concise story beats in narrative prose',
-    minimal: 'Minimal - Brief 1-2 sentence summary',
-    northgate: 'Northgate - Intended for creative writing. By Northgate on ST Discord',
-    aelemar: 'Aelemar - Focuses on plot points and character memories. By Aelemar on ST Discord',
-    comprehensive: 'Comprehensive - Synopsis plus improved keywords extraction',
+    summary: {
+        text: 'Summary - Detailed beat-by-beat summaries in narrative prose',
+        key: 'STMemoryBooks_DisplayName_summary',
+    },
+    summarize: {
+        text: 'Summarize - Bullet-point format',
+        key: 'STMemoryBooks_DisplayName_summarize',
+    },
+    synopsis: {
+        text: 'Synopsis - Long and comprehensive (beats, interactions, details) with headings',
+        key: 'STMemoryBooks_DisplayName_synopsis',
+    },
+    sumup: {
+        text: 'Sum Up - Concise story beats in narrative prose',
+        key: 'STMemoryBooks_DisplayName_sumup',
+    },
+    minimal: {
+        text: 'Minimal - Brief 1-2 sentence summary',
+        key: 'STMemoryBooks_DisplayName_minimal',
+    },
+    northgate: {
+        text: 'Northgate - Intended for creative writing. By Northgate on ST Discord',
+        key: 'STMemoryBooks_DisplayName_northgate',
+    },
+    aelemar: {
+        text: 'Aelemar - Focuses on plot points and character memories. By Aelemar on ST Discord',
+        key: 'STMemoryBooks_DisplayName_aelemar',
+    },
+    comprehensive: {
+        text: 'Comprehensive - Synopsis plus improved keywords extraction',
+        key: 'STMemoryBooks_DisplayName_comprehensive',
+    },
 });
 
 let cachedDoc = null;
@@ -31,7 +56,11 @@ function safeSlug(text) {
 
 function getDefaultDisplayName(key) {
     const normalizedKey = String(key || '').trim();
-    return SUMMARY_PROMPT_DISPLAY_NAMES[normalizedKey] || toTitleCase(normalizedKey.replace(/[-_]+/g, ' ')) || 'Custom Prompt';
+    const preset = SUMMARY_PROMPT_DISPLAY_NAMES[normalizedKey];
+    if (preset) {
+        return translate(preset.text, preset.key);
+    }
+    return toTitleCase(normalizedKey.replace(/[-_]+/g, ' ')) || 'Custom Prompt';
 }
 
 function validatePromptsFile(data) {
@@ -93,19 +122,6 @@ function buildInitialOverrides(settings = null) {
             updatedAt: typeof legacyPromptMetadata[key]?.updatedAt === 'string'
                 ? legacyPromptMetadata[key].updatedAt
                 : undefined,
-        };
-    }
-
-    for (const profile of Array.isArray(settings?.profiles) ? settings.profiles : []) {
-        const customPrompt = String(profile?.prompt || '').trim();
-        if (!customPrompt) continue;
-
-        const displayName = `Custom: ${String(profile?.name || 'Unnamed Profile').trim() || 'Unnamed Profile'}`;
-        const key = generateUniqueKey(displayName, overrides);
-        overrides[key] = {
-            displayName,
-            prompt: customPrompt,
-            createdAt: timestamp,
         };
     }
 
@@ -244,9 +260,6 @@ export function listCachedSummaryPromptPresets(fallbackSettings = null) {
     }
 
     items.sort((left, right) => {
-        if (!left.createdAt && !right.createdAt) {
-            return left.displayName.localeCompare(right.displayName);
-        }
         if (!left.createdAt) return 1;
         if (!right.createdAt) return -1;
         return new Date(right.createdAt) - new Date(left.createdAt);
