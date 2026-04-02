@@ -361,7 +361,6 @@ function sanitizeProfile(rawProfile) {
     const connection = profile.connection && typeof profile.connection === 'object' ? profile.connection : {};
     const connectionApi = typeof connection.api === 'string' && connection.api.trim() ? connection.api.trim() : fallback.connection.api;
     const position = normalizeLorebookPosition(profile.position, fallback.position);
-    const prompt = typeof profile.prompt === 'string' ? profile.prompt : '';
     const preset = typeof profile.preset === 'string' && profile.preset.trim() ? profile.preset.trim() : fallback.preset;
     const sanitized = {
         name: typeof profile.name === 'string' && profile.name.trim() ? profile.name.trim() : fallback.name,
@@ -385,10 +384,6 @@ function sanitizeProfile(rawProfile) {
     else if (connectionApi !== 'current_st') sanitized.connection.temperature = 0.7;
     if (typeof connection.endpoint === 'string') sanitized.connection.endpoint = connection.endpoint;
     if (typeof connection.apiKey === 'string') sanitized.connection.apiKey = connection.apiKey;
-    if (prompt) {
-        sanitized.prompt = prompt;
-        sanitized.preset = '';
-    }
     if (typeof profile.titleFormat === 'string' && profile.titleFormat.trim()) sanitized.titleFormat = profile.titleFormat;
     if (profile.useDynamicSTSettings !== undefined) sanitized.useDynamicSTSettings = Boolean(profile.useDynamicSTSettings);
 

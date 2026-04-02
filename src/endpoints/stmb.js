@@ -371,8 +371,8 @@ function buildMemoryPromptMessages(compiledScene, profile, worldInfo, stmbSettin
 }
 
 function buildMemoryPromptText(compiledScene, profile, worldInfo, stmbSettings = {}) {
-    const basePrompt = typeof profile?.prompt === 'string' && profile.prompt.trim()
-        ? profile.prompt
+    const basePrompt = typeof profile?.promptText === 'string' && profile.promptText.trim()
+        ? profile.promptText
         : getPresetPrompt(stmbSettings, profile?.preset);
     const presetPrompt = basePrompt
         .replace(/\{\{user\}\}/g, String(compiledScene?.metadata?.userName || 'User'))

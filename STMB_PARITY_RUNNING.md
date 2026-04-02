@@ -9,8 +9,8 @@ This file is updated subsystem by subsystem during the audit. Only sections that
 | Item | Status | Note |
 | --- | --- | --- |
 | Settings defaults match STMB exactly. | Partial | Core normalization now matches STMB for `maxTokens`, `tokenWarningThreshold`, `defaultMemoryCount`, `autoSummaryInterval`, and summary/arc order syncing; the remaining gap is broader end-to-end runtime verification rather than raw defaults. |
-| Settings migration/import is idempotent. | Partial | Builtin `current_st` invariants, duplicate builtin cleanup, legacy dynamic migration, prompt-vs-preset precedence, outlet-only `outletName` retention, `convertExistingRecursion` persistence, and summary prompt first-run migration are now normalized; broader runtime verification is still pending. |
-| Profile CRUD behavior matches STMB. | Partial | New/edit/delete/export/import now include legacy custom-prompt migration to presets, builtin-profile protections, duplicate-count import reporting, safe-name handling, live temperature/model/reverse-start sanitization, outlet-name cleanup, and prompt override precedence; the remaining gap is end-to-end browser/runtime verification of the dedicated manager flow. |
+| Settings migration/import is idempotent. | Partial | Builtin `current_st` invariants, duplicate builtin cleanup, legacy dynamic migration, outlet-only `outletName` retention, `convertExistingRecursion` persistence, and summary prompt first-run migration are now normalized; per-profile prompt overrides were intentionally removed by user request and broader runtime verification is still pending. |
+| Profile CRUD behavior matches STMB. | Partial | New/edit/delete/export/import now include builtin-profile protections, duplicate-count import reporting, safe-name handling, live temperature/model/reverse-start sanitization, required outlet names for Outlet placement, and explicit `Set As Default` behavior; per-profile prompt overrides were intentionally removed by user request, and the remaining gap is end-to-end browser/runtime verification of the dedicated manager flow. |
 | `current_st` / dynamic profile behavior matches STMB. | Partial | Builtin profile invariants and current-ST normalization now match STMB, but advanced popup/runtime override surfaces still need browser-level verification. |
 | Custom/full-manual profile behavior matches STMB. | Partial | Connection override shaping exists, and profile edit/create now exposes provider/model/endpoint/apiKey fields; broader runtime parity still needs direct comparison. |
 | Provider/model/temperature/endpoint/apiKey overrides match STMB. | Partial | Core override shaping is present, the main settings popup now exposes these fields through profile CRUD, and STMB's max-token override is now reapplied in memory/summary/sideprompt generation; end-to-end runtime parity still needs direct comparison. |
@@ -35,7 +35,7 @@ This file is updated subsystem by subsystem during the audit. Only sections that
 | Item | Status | Note |
 | --- | --- | --- |
 | Prompt preset bodies match STMB exactly. | Partial | Built-in prompt content appears aligned, and summary prompts are now loaded from a dedicated file-backed manager with legacy migration; browser/runtime verification is still pending. |
-| Prompt selection/custom prompt override behavior matches STMB. | Partial | Preset vs custom prompt precedence exists, but the local main settings surface still does not expose STMB's summary-order controls (`summaryOrderMode`, `summaryOrderValue`, `summaryReverseStart`) that feed consolidation behavior. |
+| Prompt selection/custom prompt override behavior matches STMB. | Partial | Profile preset selection works, but per-profile custom prompt overrides were intentionally removed by user request in favor of the dedicated prompt managers; the local main settings surface also still does not expose STMB's summary-order controls (`summaryOrderMode`, `summaryOrderValue`, `summaryReverseStart`) that feed consolidation behavior. |
 | Scene compilation input matches STMB. | Partial | Prompt assembly now uses STMB-style transcript formatting; further verification is needed. |
 | Previous-memory context behavior matches STMB. | Partial | Prompt assembly now includes STMB-style previous scene context blocks and keywords; end-to-end verification is still pending. |
 | Provider request shaping matches STMB profile semantics. | Partial | Core shaping exists and current patch restores STMB-like prompt text flow; transport still uses Aikobots chat-completions plumbing. |
@@ -116,7 +116,7 @@ This file is updated subsystem by subsystem during the audit. Only sections that
 
 | Item | Status | Note |
 | --- | --- | --- |
-| Main STMB entry points exist. | Partial | The extension menu now opens a persisted settings popup for core STMB fields, token-saving controls, profile CRUD, summary prompt management, consolidation prompt management, and side prompt management, but the full reference settings surface is still broader. |
+| Main STMB entry points exist. | Partial | The Memory Books menu entry now opens a persisted settings popup for core STMB fields, token-saving controls, profile CRUD, summary prompt management, consolidation prompt management, and side prompt management, but the full reference settings surface is still broader. |
 | Memory preview popup matches STMB flow. | Partial | Preview/edit/retry/cancel behavior is much closer, including serialized sideprompt previews; broader runtime validation is still needed. |
 | Failed memory repair popup matches STMB flow. | Partial | Raw-response repair flow exists, but the full STMB popup surface is still not matched exactly. |
 | Summary consolidation popup matches STMB flow. | Partial | The popup now preserves summary-entry settings, renders candidate checklists by tier, honors selected source entries, exposes max-items/token/max-pass controls, uses a file-backed arc prompt cache, and still renders without a lorebook like STMB; browser/runtime validation is still pending. |
@@ -149,10 +149,17 @@ These items have been reviewed side-by-side against the STMB reference and are c
 | --- | --- | --- |
 | Settings `maxTokens` normalization | `index.js` `validateSettings` | `public/scripts/stmb-core.js` `normalizeStmbSettings` |
 | Summary/arc order-field sync into `summaryEntrySettings` | `index.js` `validateSettings` | `public/scripts/stmb-core.js` `normalizeStmbSettings` |
-| Profile prompt override precedence over preset | `utils.js` `createProfileObject` | `public/scripts/stmb-core.js` `sanitizeProfile` |
 | Scene marker placement/removal | `sceneManager.js` marker toggle helpers | `public/scripts/stmb.js` scene marker helpers |
 | Start/end marker validation | `sceneManager.js` validation helpers | `public/scripts/stmb.js` `assertRangeWithinCurrentChat` / `validateSceneMarkers` |
 | No silent fallback to plain text | `stmemory.js` structured parse path | `public/scripts/stmb.js` `requestStructuredMemory` + `public/scripts/stmb-core.js` parser path |
 | Summary tier definitions | `summaryTiers.js` | `public/scripts/stmb-summary.js` tier helpers |
 | Side prompt loose name lookup | `sidePromptsManager.js` `findTemplateByName` | `public/scripts/stmb-sideprompts-manager.js` `findTemplateByName` |
 | `/stmb-highest` return semantics | `index.js` `handleHighestMemoryProcessedCommand` | `public/scripts/stmb.js` `getHighestProcessedCommand` |
+
+## Approved Deviations
+
+These are deliberate differences from STMB that were explicitly approved during the parity pass.
+
+| Item | Reason |
+| --- | --- |
+| Per-profile custom prompt overrides removed from Memory Books profiles | User approved deprecating profile-level custom prompts in favor of the dedicated prompt managers. |

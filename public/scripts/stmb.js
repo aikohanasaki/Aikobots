@@ -264,8 +264,8 @@ async function getCurrentUiConnectionInfo() {
 }
 
 function getEffectivePromptText(profile) {
-    if (typeof profile?.prompt === 'string' && profile.prompt.trim()) {
-        return profile.prompt;
+    if (typeof profile?.promptText === 'string' && profile.promptText.trim()) {
+        return profile.promptText;
     }
 
     return getCachedSummaryPromptText(profile?.preset, stmbSettings);
@@ -394,36 +394,38 @@ function buildSettingsPopupHtml(sceneData, currentUiConnection, regexOptions) {
                 <label class="checkbox_label"><input type="checkbox" id="stmb-settings-always-use-default" ${moduleSettings.alwaysUseDefault ? 'checked' : ''}> <span>Always use default profile (no confirmation prompt)</span></label>
                 <label class="checkbox_label"><input type="checkbox" id="stmb-settings-show-memory-previews" ${moduleSettings.showMemoryPreviews ? 'checked' : ''}> <span>Show memory previews</span></label>
                 <label class="checkbox_label"><input type="checkbox" id="stmb-settings-show-notifications" ${moduleSettings.showNotifications ? 'checked' : ''}> <span>Show notifications</span></label>
-                <label class="checkbox_label"><input type="checkbox" id="stmb-settings-allow-scene-overlap" ${moduleSettings.allowSceneOverlap ? 'checked' : ''}> <span>Allow scene overlap</span></label>
+                <label class="checkbox_label" title="Check this box to skip checking for overlapping memories/scenes."><input type="checkbox" id="stmb-settings-allow-scene-overlap" ${moduleSettings.allowSceneOverlap ? 'checked' : ''}> <span title="Check this box to skip checking for overlapping memories/scenes.">Allow scene overlap</span></label>
                 <label class="checkbox_label"><input type="checkbox" id="stmb-settings-refresh-editor" ${moduleSettings.refreshEditor !== false ? 'checked' : ''}> <span>Refresh lorebook editor after adding memories</span></label>
-                <label class="checkbox_label"><input type="checkbox" id="stmb-settings-unhide-before-memory" ${moduleSettings.unhideBeforeMemory ? 'checked' : ''}> <span>Unhide hidden messages for memory generation</span></label>
             </div>
 
             <div class="world_entry_form_control">
-                <label for="stmb-settings-max-tokens">Max Response Tokens</label>
-                <input type="number" id="stmb-settings-max-tokens" class="text_pole" min="0" step="1" value="${escapeHtml(String(moduleSettings.maxTokens ?? 4000))}">
+                <label for="stmb-settings-max-tokens" title="Maximum number of tokens to use for memory summaries.">Max Response Tokens</label>
+                <input type="number" id="stmb-settings-max-tokens" class="text_pole" min="0" step="1" value="${escapeHtml(String(moduleSettings.maxTokens ?? 4000))}" title="Maximum number of tokens to use for memory summaries.">
             </div>
             <div class="world_entry_form_control">
-                <label for="stmb-settings-token-warning-threshold">Token Warning Threshold</label>
-                <input type="number" id="stmb-settings-token-warning-threshold" class="text_pole" min="1000" max="200000" step="1000" value="${escapeHtml(String(moduleSettings.tokenWarningThreshold ?? 50000))}">
+                <label for="stmb-settings-token-warning-threshold" title="Show confirmation dialog when estimated input tokens exceed this threshold. Default: 30,000.">Token Warning Threshold</label>
+                <input type="number" id="stmb-settings-token-warning-threshold" class="text_pole" min="1000" max="200000" step="1000" value="${escapeHtml(String(moduleSettings.tokenWarningThreshold ?? 50000))}" title="Show confirmation dialog when estimated input tokens exceed this threshold. Default: 30,000.">
             </div>
             <div class="world_entry_form_control">
-                <label for="stmb-settings-default-memory-count">Default Previous Memories Count</label>
-                <input type="number" id="stmb-settings-default-memory-count" class="text_pole" min="0" max="7" step="1" value="${escapeHtml(String(moduleSettings.defaultMemoryCount ?? 0))}">
+                <label for="stmb-settings-default-memory-count" title="Default number of previous memories to include as context when creating new memories.">Default Previous Memories Count</label>
+                <input type="number" id="stmb-settings-default-memory-count" class="text_pole" min="0" max="7" step="1" value="${escapeHtml(String(moduleSettings.defaultMemoryCount ?? 0))}" title="Default number of previous memories to include as context when creating new memories.">
             </div>
 
             <h3 class="stmb-section-title">Token Saving (Hide/Unhide Messages)</h3>
             <div class="world_entry_form_control">
-                <label for="stmb-settings-auto-hide-mode">Auto-hide messages after adding memory</label>
-                <select id="stmb-settings-auto-hide-mode" class="text_pole">
+                <label for="stmb-settings-auto-hide-mode" title="Choose what messages to automatically hide after creating a memory.">Auto-hide messages after adding memory</label>
+                <select id="stmb-settings-auto-hide-mode" class="text_pole" title="Choose what messages to automatically hide after creating a memory.">
                     <option value="none" ${String(moduleSettings.autoHideMode || 'all').toLowerCase() === 'none' ? 'selected' : ''}>Do not auto-hide</option>
                     <option value="all" ${String(moduleSettings.autoHideMode || 'all').toLowerCase() === 'all' ? 'selected' : ''}>Auto-hide all messages up to the last memory</option>
                     <option value="last" ${String(moduleSettings.autoHideMode || 'all').toLowerCase() === 'last' ? 'selected' : ''}>Auto-hide only messages in the last memory</option>
                 </select>
             </div>
             <div class="world_entry_form_control">
-                <label for="stmb-settings-unhidden-entries-count">Messages to leave unhidden</label>
-                <input type="number" id="stmb-settings-unhidden-entries-count" class="text_pole" min="0" max="50" step="1" value="${escapeHtml(String(moduleSettings.unhiddenEntriesCount ?? 2))}">
+                <label for="stmb-settings-unhidden-entries-count" title="Number of recent messages to leave visible when auto-hiding (0 = hide all up to scene end).">Messages to leave unhidden</label>
+                <input type="number" id="stmb-settings-unhidden-entries-count" class="text_pole" min="0" max="50" step="1" value="${escapeHtml(String(moduleSettings.unhiddenEntriesCount ?? 2))}" title="Number of recent messages to leave visible when auto-hiding (0 = hide all up to scene end).">
+            </div>
+            <div class="world_entry_form_control">
+                <label class="checkbox_label" title="Unhide hidden messages for memory generation (runs /unhide X-Y)."><input type="checkbox" id="stmb-settings-unhide-before-memory" ${moduleSettings.unhideBeforeMemory ? 'checked' : ''}> <span title="Unhide hidden messages for memory generation (runs /unhide X-Y).">Unhide hidden messages for memory generation</span></label>
             </div>
 
             <div class="world_entry_form_control">
@@ -452,34 +454,34 @@ function buildSettingsPopupHtml(sceneData, currentUiConnection, regexOptions) {
             </div>
 
             <div class="world_entry_form_control">
-                <label class="checkbox_label"><input type="checkbox" id="stmb-settings-manual-mode-enabled" ${manualMode ? 'checked' : ''} ${moduleSettings.autoCreateLorebook ? 'disabled' : ''}> <span>Enable Manual Lorebook Mode</span></label>
+                <label class="checkbox_label" title="When enabled, you must specify a lorebook for memories instead of using the one bound to the chat."><input type="checkbox" id="stmb-settings-manual-mode-enabled" ${manualMode ? 'checked' : ''} ${moduleSettings.autoCreateLorebook ? 'disabled' : ''}> <span title="When enabled, you must specify a lorebook for memories instead of using the one bound to the chat.">Enable Manual Lorebook Mode</span></label>
             </div>
             <div class="world_entry_form_control">
-                <label class="checkbox_label"><input type="checkbox" id="stmb-settings-auto-create-lorebook" ${moduleSettings.autoCreateLorebook ? 'checked' : ''} ${manualMode ? 'disabled' : ''}> <span>Auto-create lorebook if none exists</span></label>
+                <label class="checkbox_label" title="When enabled, automatically creates and binds a lorebook to the chat if none exists."><input type="checkbox" id="stmb-settings-auto-create-lorebook" ${moduleSettings.autoCreateLorebook ? 'checked' : ''} ${manualMode ? 'disabled' : ''}> <span title="When enabled, automatically creates and binds a lorebook to the chat if none exists.">Auto-create lorebook if none exists</span></label>
             </div>
             <div class="world_entry_form_control">
-                <label for="stmb-settings-lorebook-name-template">Lorebook Name Template</label>
-                <input type="text" id="stmb-settings-lorebook-name-template" class="text_pole" value="${escapeHtml(String(moduleSettings.lorebookNameTemplate || 'LTM - {{char}} - {{chat}}'))}" ${moduleSettings.autoCreateLorebook ? '' : 'disabled'}>
+                <label for="stmb-settings-lorebook-name-template" title="Template for auto-created lorebook names. Supports {{char}}, {{user}}, {{chat}} placeholders.">Lorebook Name Template</label>
+                <input type="text" id="stmb-settings-lorebook-name-template" class="text_pole" value="${escapeHtml(String(moduleSettings.lorebookNameTemplate || 'LTM - {{char}} - {{chat}}'))}" ${moduleSettings.autoCreateLorebook ? '' : 'disabled'} title="Template for auto-created lorebook names. Supports {{char}}, {{user}}, {{chat}} placeholders.">
             </div>
 
             <h3 class="stmb-section-title">Automatic Memories</h3>
             <div class="world_entry_form_control">
-                <label class="checkbox_label"><input type="checkbox" id="stmb-settings-auto-summary-enabled" ${moduleSettings.autoSummaryEnabled ? 'checked' : ''}> <span>Auto-create memory summaries</span></label>
+                <label class="checkbox_label" title="Automatically run /nextmemory after a specified number of messages. Warning: enabling Auto-Summary may create one large memory from the existing backlog. Use /stmb-set-highest &lt;N|none&gt; to control the baseline."><input type="checkbox" id="stmb-settings-auto-summary-enabled" ${moduleSettings.autoSummaryEnabled ? 'checked' : ''}> <span title="Automatically run /nextmemory after a specified number of messages. Warning: enabling Auto-Summary may create one large memory from the existing backlog. Use /stmb-set-highest &lt;N|none&gt; to control the baseline.">Auto-create memory summaries</span></label>
             </div>
             <div class="world_entry_form_control">
-                <label for="stmb-settings-auto-summary-interval">Auto-Summary Interval</label>
-                <input type="number" id="stmb-settings-auto-summary-interval" class="text_pole" min="10" max="200" step="1" value="${escapeHtml(String(moduleSettings.autoSummaryInterval ?? 50))}">
+                <label for="stmb-settings-auto-summary-interval" title="Number of messages after which to automatically create a memory summary.">Auto-Summary Interval</label>
+                <input type="number" id="stmb-settings-auto-summary-interval" class="text_pole" min="10" max="200" step="1" value="${escapeHtml(String(moduleSettings.autoSummaryInterval ?? 50))}" title="Number of messages after which to automatically create a memory summary.">
             </div>
             <div class="world_entry_form_control">
-                <label for="stmb-settings-auto-summary-buffer">Auto-Summary Buffer</label>
-                <input type="number" id="stmb-settings-auto-summary-buffer" class="text_pole" min="0" max="50" step="1" value="${escapeHtml(String(moduleSettings.autoSummaryBuffer ?? 2))}">
+                <label for="stmb-settings-auto-summary-buffer" title="Delay auto-summary by X messages (belated generation). Default 2, max 50.">Auto-Summary Buffer</label>
+                <input type="number" id="stmb-settings-auto-summary-buffer" class="text_pole" min="0" max="50" step="1" value="${escapeHtml(String(moduleSettings.autoSummaryBuffer ?? 2))}" title="Delay auto-summary by X messages (belated generation). Default 2, max 50.">
             </div>
             <div class="world_entry_form_control">
-                <label class="checkbox_label"><input type="checkbox" id="stmb-settings-auto-consolidation-prompt-enabled" ${moduleSettings.autoConsolidationPromptEnabled ? 'checked' : ''}> <span>Prompt for consolidation when a tier is ready</span></label>
+                <label class="checkbox_label" title="Shows a yes/no prompt when any selected summary tier has enough eligible source entries. Uses each tier's saved minimum."><input type="checkbox" id="stmb-settings-auto-consolidation-prompt-enabled" ${moduleSettings.autoConsolidationPromptEnabled ? 'checked' : ''}> <span title="Shows a yes/no prompt when any selected summary tier has enough eligible source entries. Uses each tier's saved minimum.">Prompt for consolidation when a tier is ready</span></label>
             </div>
             <div class="world_entry_form_control">
-                <label for="stmb-settings-auto-consolidation-target-tier">Auto-Consolidation Tiers</label>
-                <select id="stmb-settings-auto-consolidation-target-tier" class="text_pole" multiple size="6">${renderSummaryTierOptions(normalizeAutoConsolidationTargetTiers(moduleSettings.autoConsolidationTargetTiers ?? moduleSettings.autoConsolidationTargetTier))}</select>
+                <label for="stmb-settings-auto-consolidation-target-tier" title="Choose which summary tiers should trigger the confirmation prompt.">Auto-Consolidation Tiers</label>
+                <select id="stmb-settings-auto-consolidation-target-tier" class="text_pole" multiple size="6" title="Choose which summary tiers should trigger the confirmation prompt.">${renderSummaryTierOptions(normalizeAutoConsolidationTargetTiers(moduleSettings.autoConsolidationTargetTiers ?? moduleSettings.autoConsolidationTargetTier))}</select>
             </div>
             <div class="world_entry_form_control">
                 <label for="stmb-settings-summary-order-mode">Default Summary Entry Order Mode</label>
@@ -500,28 +502,36 @@ function buildSettingsPopupHtml(sceneData, currentUiConnection, regexOptions) {
 
             <h3 class="stmb-section-title">Memory Profiles</h3>
             <div class="world_entry_form_control">
-                <label for="stmb-settings-title-format-select">Memory Title Format</label>
+                <label for="stmb-settings-title-format-select" title="Use [0], [00], [000] for auto-numbering. Available: {{title}}, {{scene}}, {{char}}, {{user}}, {{messages}}, {{profile}}, {{date}}, {{time}}.">Memory Title Format</label>
                 <select id="stmb-settings-title-format-select" class="text_pole">
                     ${titleFormats.map(format => `<option value="${escapeHtml(format)}" ${!usesCustomTitleFormat && format === currentTitleFormat ? 'selected' : ''}>${escapeHtml(format)}</option>`).join('')}
                     <option value="custom" ${usesCustomTitleFormat ? 'selected' : ''}>Custom Title Format...</option>
                 </select>
-                <input type="text" id="stmb-settings-custom-title-format" class="text_pole marginTop5 ${usesCustomTitleFormat ? '' : 'displayNone'}" value="${escapeHtml(currentTitleFormat)}" placeholder="Enter custom format">
-                <small class="opacity50p">Use [0], [00], [000] for numbering. Available tags: {{title}}, {{scene}}, {{char}}, {{user}}, {{messages}}, {{profile}}, {{date}}, {{time}}</small>
+                <input type="text" id="stmb-settings-custom-title-format" class="text_pole marginTop5 ${usesCustomTitleFormat ? '' : 'displayNone'}" value="${escapeHtml(currentTitleFormat)}" placeholder="Enter custom format" title="Use [0], [00], [000] for auto-numbering. Available: {{title}}, {{scene}}, {{char}}, {{user}}, {{messages}}, {{profile}}, {{date}}, {{time}}.">
             </div>
 
             <div class="world_entry_form_control">
-                <label for="stmb-settings-profile-select">Default Profile</label>
+                <label for="stmb-settings-profile-select">Profile</label>
                 <select id="stmb-settings-profile-select" class="text_pole">
-                    ${(settings.profiles || []).map((profile, index) => `<option value="${index}" ${index === selectedProfileIndex ? 'selected' : ''}>${escapeHtml(getProfileDisplayName(profile))}${index === selectedProfileIndex ? ' (Default)' : ''}</option>`).join('')}
+                    ${(settings.profiles || []).map((profile, index) => `<option value="${index}" ${index === selectedProfileIndex ? 'selected' : ''}>${escapeHtml(getProfileDisplayName(profile))}${index === settings.defaultProfile ? ' (Default)' : ''}</option>`).join('')}
                 </select>
             </div>
+            <div class="world_entry_form_control">
+                <div class="marginBot5">Profile Actions</div>
+                <div class="buttons_block marginTop5 justifyCenter gap10px whitespacenowrap">
+                    <div id="stmb-settings-profile-set-default" class="menu_button interactable">Set As Default</div>
+                    <div id="stmb-settings-profile-new" class="menu_button interactable">New Profile</div>
+                    <div id="stmb-settings-profile-edit" class="menu_button interactable">Edit Profile</div>
+                    <div id="stmb-settings-profile-delete" class="menu_button interactable">Delete Profile</div>
+                </div>
+            </div>
             <input type="file" id="stmb-settings-import-file" accept=".json" class="displayNone">
-            <div class="buttons_block marginTop5 justifyCenter gap10px whitespacenowrap">
-                <div id="stmb-settings-profile-new" class="menu_button interactable">New Profile</div>
-                <div id="stmb-settings-profile-edit" class="menu_button interactable">Edit Profile</div>
-                <div id="stmb-settings-profile-delete" class="menu_button interactable">Delete Profile</div>
-                <div id="stmb-settings-profile-export" class="menu_button interactable">Export Profiles</div>
-                <div id="stmb-settings-profile-import" class="menu_button interactable">Import Profiles</div>
+            <div class="world_entry_form_control">
+                <div class="marginBot5">Import / Export Profiles</div>
+                <div class="buttons_block marginTop5 justifyCenter gap10px whitespacenowrap">
+                    <div id="stmb-settings-profile-export" class="menu_button interactable">Export Profiles</div>
+                    <div id="stmb-settings-profile-import" class="menu_button interactable">Import Profiles</div>
+                </div>
             </div>
 
             <div id="stmb-settings-profile-summary" class="padding10 marginBot10">
@@ -537,14 +547,13 @@ function buildSettingsPopupHtml(sceneData, currentUiConnection, regexOptions) {
                     </div>
                 </details>
             </div>
-            <div class="buttons_block marginTop5 justifyCenter gap10px whitespacenowrap">
-                <div id="stmb-settings-open-prompt-manager" class="menu_button interactable">Open Summary Prompt Manager</div>
-                <div id="stmb-settings-open-arc-prompt-manager" class="menu_button interactable">Open Consolidation Prompt Manager</div>
-                <div id="stmb-settings-open-sideprompt-manager" class="menu_button interactable">Open Side Prompt Manager</div>
-            </div>
-
             <div class="info-block">
-                Summary prompt management, consolidation prompt management, side prompt management, profile CRUD, and regex selection are now wired into this settings surface. Full STMB popup parity is still broader.
+                <h4>Prompt Managers</h4>
+                <div class="buttons_block marginTop5 justifyCenter gap10px whitespacenowrap">
+                    <div id="stmb-settings-open-prompt-manager" class="menu_button interactable">Open Summary Prompt Manager</div>
+                    <div id="stmb-settings-open-arc-prompt-manager" class="menu_button interactable">Open Consolidation Prompt Manager</div>
+                    <div id="stmb-settings-open-sideprompt-manager" class="menu_button interactable">Open Side Prompt Manager</div>
+                </div>
             </div>
         </div>
     `;
@@ -638,7 +647,7 @@ function updateSettingsPopupDynamicState(dialog, currentUiConnection) {
     const selectedProfile = getActiveStmbProfile(stmbSettings, Number(profileSelect?.value ?? stmbSettings.defaultProfile ?? 0));
     const automaticInfo = dialog.querySelector('#stmb-settings-automatic-info');
     const regexSection = dialog.querySelector('#stmb-settings-regex-section');
-    const currentDefaultProfile = Number(profileSelect?.value ?? stmbSettings.defaultProfile ?? 0);
+    const currentDefaultProfile = Number(stmbSettings.defaultProfile ?? 0);
 
     const modeBadge = dialog.querySelector('#stmb-settings-mode-badge');
     if (modeBadge) {
@@ -961,10 +970,16 @@ function buildSummaryPromptManagerRowsHtml(presets, selectedPresetKey = null) {
                 ${presets.map(preset => `
                     <tr data-preset-key="${escapeHtml(preset.key)}" style="${preset.key === selectedPresetKey ? 'background-color: var(--cobalt30a);' : ''}">
                         <td>${escapeHtml(preset.displayName)}${preset.isBuiltIn ? ' <small class="opacity50p">(Built-in)</small>' : ''}</td>
-                        <td class="textAlignRight">
-                            <button class="menu_button stmb-pm-action stmb-pm-action-edit" data-action="edit">Edit</button>
-                            <button class="menu_button stmb-pm-action stmb-pm-action-duplicate" data-action="duplicate">Duplicate</button>
-                            <button class="menu_button stmb-pm-action stmb-pm-action-delete" data-action="delete">Delete</button>
+                        <td class="textAlignRight whitespacenowrap">
+                            <button class="menu_button stmb-pm-action stmb-pm-action-edit whitespacenowrap" data-action="edit" title="Edit" aria-label="Edit">
+                                <i class="fa-solid fa-pen-to-square"></i>
+                            </button>
+                            <button class="menu_button stmb-pm-action stmb-pm-action-duplicate whitespacenowrap" data-action="duplicate" title="Duplicate" aria-label="Duplicate">
+                                <i class="fa-solid fa-copy"></i>
+                            </button>
+                            <button class="menu_button stmb-pm-action stmb-pm-action-delete whitespacenowrap" data-action="delete" title="Delete" aria-label="Delete">
+                                <i class="fa-solid fa-trash"></i>
+                            </button>
                         </td>
                     </tr>
                 `).join('')}
@@ -1082,13 +1097,6 @@ async function applySummaryPromptPresetToSelectedProfile(presetKey) {
     const profile = stmbSettings.profiles?.[selectedIndex];
     if (!profile) {
         throw new Error('Selected profile not found');
-    }
-    if (typeof profile.prompt === 'string' && profile.prompt.trim()) {
-        const confirm = await Popup.show.confirm('Clear Custom Prompt?', 'This profile has a custom prompt override. Clear it so the selected preset is used?');
-        if (!confirm) {
-            return false;
-        }
-        delete profile.prompt;
     }
     profile.preset = String(presetKey);
     stmbSettings = normalizeStmbSettings(stmbSettings);
@@ -1542,10 +1550,16 @@ function buildSidePromptManagerRowsHtml(templates, selectedTemplateKey = null) {
                             <div>${escapeHtml(template.name || 'Untitled Side Prompt')}${isBuiltinSidePromptKey(template.key) ? ' <small class="opacity50p">(Built-in)</small>' : ''}</div>
                             <small class="opacity50p">${escapeHtml(getSidePromptTriggerBadges(template).join(' | ') || 'No triggers configured')}</small>
                         </td>
-                        <td class="textAlignRight">
-                            <button class="menu_button stmb-spm-action stmb-spm-action-edit" data-action="edit">Edit</button>
-                            <button class="menu_button stmb-spm-action stmb-spm-action-duplicate" data-action="duplicate">Duplicate</button>
-                            <button class="menu_button stmb-spm-action stmb-spm-action-delete" data-action="delete">Delete</button>
+                        <td class="textAlignRight whitespacenowrap">
+                            <button class="menu_button stmb-spm-action stmb-spm-action-edit whitespacenowrap" data-action="edit" title="Edit" aria-label="Edit">
+                                <i class="fa-solid fa-pen-to-square"></i>
+                            </button>
+                            <button class="menu_button stmb-spm-action stmb-spm-action-duplicate whitespacenowrap" data-action="duplicate" title="Duplicate" aria-label="Duplicate">
+                                <i class="fa-solid fa-copy"></i>
+                            </button>
+                            <button class="menu_button stmb-spm-action stmb-spm-action-delete whitespacenowrap" data-action="delete" title="Delete" aria-label="Delete">
+                                <i class="fa-solid fa-trash"></i>
+                            </button>
                         </td>
                     </tr>
                 `).join('')}
@@ -2061,8 +2075,6 @@ function buildProfileEditorHtml(profile, options = {}) {
     const usesCustomTitleFormat = !titleFormats.includes(currentTitleFormat);
     const presetKeys = getProfilePresetKeys();
     const selectedPreset = String(profile?.preset || 'summary');
-    const promptOverride = typeof profile?.prompt === 'string' ? profile.prompt : '';
-    const hasLegacyCustomPrompt = Boolean(promptOverride.trim());
     const orderMode = String(profile?.orderMode || 'auto');
     const position = Number(profile?.position ?? 0);
 
@@ -2106,12 +2118,6 @@ function buildProfileEditorHtml(profile, options = {}) {
             <div class="buttons_block justifyCenter gap10px whitespacenowrap marginTop5">
                 <div id="stmb-profile-editor-open-prompt-manager" class="menu_button interactable">Open Summary Prompt Manager</div>
                 <div id="stmb-profile-editor-refresh-presets" class="menu_button interactable">Refresh Presets</div>
-                ${hasLegacyCustomPrompt ? '<div id="stmb-profile-editor-move-to-preset" class="menu_button interactable">Move Current Custom Prompt to Preset</div>' : ''}
-            </div>
-            ${hasLegacyCustomPrompt ? `<div id="stmb-profile-editor-legacy-custom-prompt" class="displayNone">${escapeHtml(promptOverride)}</div>` : ''}
-            <div class="world_entry_form_control">
-                <label for="stmb-profile-editor-prompt">Custom Prompt Override</label>
-                <textarea id="stmb-profile-editor-prompt" class="text_pole" rows="8" placeholder="Leave blank to use the selected preset">${escapeHtml(promptOverride)}</textarea>
             </div>
             <div class="world_entry_form_control">
                 <label for="stmb-profile-editor-title-format-select">Memory Title Format</label>
@@ -2241,10 +2247,6 @@ function buildProfileFromEditor(dialog, baseProfile = null) {
     if (apiKey) profile.connection.apiKey = apiKey;
     else delete profile.connection.apiKey;
 
-    const promptOverride = String(dialog.querySelector('#stmb-profile-editor-prompt')?.value || '').trim();
-    if (promptOverride) profile.prompt = promptOverride;
-    else delete profile.prompt;
-
     profile.titleFormat = titleFormat || stmbSettings.titleFormat || STMB_DEFAULT_TITLE_FORMAT;
     profile.constVectMode = String(dialog.querySelector('#stmb-profile-editor-const-vect')?.value || 'link');
     profile.position = Number(dialog.querySelector('#stmb-profile-editor-position')?.value ?? 0);
@@ -2264,46 +2266,6 @@ function buildProfileFromEditor(dialog, baseProfile = null) {
     }
 
     return profile;
-}
-
-async function moveLegacyProfilePromptToPreset(dialog) {
-    if (!dialog) {
-        return false;
-    }
-
-    const promptTextarea = dialog.querySelector('#stmb-profile-editor-prompt');
-    const legacyPromptElement = dialog.querySelector('#stmb-profile-editor-legacy-custom-prompt');
-    const prompt = String(legacyPromptElement?.textContent || promptTextarea?.value || '').trim();
-    if (!prompt) {
-        toastr.error('No custom prompt to migrate', 'STMB');
-        return false;
-    }
-
-    const profileName = String(dialog.querySelector('#stmb-profile-editor-name')?.value || 'Profile').trim() || 'Profile';
-    const displayName = `Custom: ${profileName}`;
-    const nextKey = await upsertSummaryPromptPreset(null, prompt, displayName);
-    const confirm = await Popup.show.confirm(
-        'Move to Preset',
-        'Create a preset from this profile\'s custom prompt, set the preset on this profile, and clear the custom prompt?',
-    );
-
-    if (!confirm) {
-        return false;
-    }
-
-    refreshProfileEditorPresetOptions(dialog, nextKey);
-    const presetSelect = dialog.querySelector('#stmb-profile-editor-preset');
-    if (presetSelect) {
-        presetSelect.value = nextKey;
-    }
-    if (promptTextarea) {
-        promptTextarea.value = '';
-    }
-
-    dialog.querySelector('#stmb-profile-editor-legacy-custom-prompt')?.remove();
-    dialog.querySelector('#stmb-profile-editor-move-to-preset')?.remove();
-    toastr.success('Preset created and selected. Remember to Save.', 'STMB');
-    return true;
 }
 
 function isImportableProfile(profile) {
@@ -2352,6 +2314,10 @@ async function openProfileEditor(profileIndex = null) {
             }
             if (nextProfile.connection?.api === 'full-manual' && !String(nextProfile.connection?.endpoint || '').trim()) {
                 toastr.error('Endpoint is required for full-manual profiles', 'STMB');
+                return false;
+            }
+            if (Number(nextProfile.position) === 7 && !String(nextProfile.outletName || '').trim()) {
+                toastr.error('Outlet Name is required when Insertion Position is Outlet', 'STMB');
                 return false;
             }
             return true;
@@ -2422,14 +2388,6 @@ async function openProfileEditor(profileIndex = null) {
             toastr.success('Preset list refreshed', 'STMB');
             return;
         }
-        if (target.closest('#stmb-profile-editor-move-to-preset')) {
-            try {
-                await moveLegacyProfilePromptToPreset(popup.dlg);
-            } catch (error) {
-                toastr.error(error?.message || 'Failed to move custom prompt to preset', 'STMB');
-            }
-            return;
-        }
     });
     window.addEventListener('stmb-presets-updated', handlePresetsUpdated);
     updateProfileEditorDynamicState(popup.dlg);
@@ -2449,7 +2407,6 @@ async function openProfileEditor(profileIndex = null) {
     nextProfile.name = getUniqueProfileName(nextProfile.name, isNew ? null : profileIndex);
     if (isNew) {
         stmbSettings.profiles.push(nextProfile);
-        stmbSettings.defaultProfile = stmbSettings.profiles.length - 1;
     } else {
         stmbSettings.profiles[profileIndex] = nextProfile;
     }
@@ -2467,7 +2424,7 @@ async function deleteSelectedProfile(profileIndex) {
         return false;
     }
     if (stmbSettings.profiles[profileIndex]?.isBuiltinCurrentST) {
-        toastr.error('Cannot delete the "Current SillyTavern Settings" profile - it is required for the extension to work', 'STMB');
+        toastr.error('Cannot delete the "Current SillyTavern Settings" profile - it is required for Memory Books to work', 'STMB');
         return false;
     }
 
@@ -2563,17 +2520,22 @@ function importProfilesFromFile(file) {
     });
 }
 
-function refreshSettingsPopupProfileSection(dialog, currentUiConnection) {
+function refreshSettingsPopupProfileSection(dialog, currentUiConnection, selectedProfileIndex = null) {
     if (!dialog) {
         return;
     }
 
     const profileSelect = dialog.querySelector('#stmb-settings-profile-select');
     if (profileSelect) {
+        const currentSelectedIndex = Number(profileSelect.value);
+        const preferredIndex = Number.isFinite(Number(selectedProfileIndex))
+            ? Number(selectedProfileIndex)
+            : (Number.isFinite(currentSelectedIndex) ? currentSelectedIndex : Number(stmbSettings.defaultProfile ?? 0));
         profileSelect.innerHTML = (stmbSettings.profiles || []).map((profile, index) => (
-            `<option value="${index}" ${index === stmbSettings.defaultProfile ? 'selected' : ''}>${escapeHtml(getProfileDisplayName(profile))}${index === stmbSettings.defaultProfile ? ' (Default)' : ''}</option>`
+            `<option value="${index}">${escapeHtml(getProfileDisplayName(profile))}${index === stmbSettings.defaultProfile ? ' (Default)' : ''}</option>`
         )).join('');
-        profileSelect.value = String(stmbSettings.defaultProfile ?? 0);
+        const maxIndex = Math.max(0, (stmbSettings.profiles?.length || 1) - 1);
+        profileSelect.value = String(Math.max(0, Math.min(maxIndex, preferredIndex)));
     }
 
     updateSettingsPopupDynamicState(dialog, currentUiConnection);
@@ -2671,6 +2633,22 @@ async function showMainEntryPopup() {
         ],
     });
     activeSettingsPopupDialog = popup.dlg ?? null;
+
+    setTimeout(() => {
+        try {
+            if (window.jQuery && typeof window.jQuery.fn.select2 === 'function') {
+                const $parent = window.jQuery(popup.dlg);
+                window.jQuery('#stmb-settings-auto-consolidation-target-tier').select2({
+                    width: '100%',
+                    placeholder: 'Select tiers…',
+                    closeOnSelect: false,
+                    dropdownParent: $parent,
+                });
+            }
+        } catch (error) {
+            console.warn('STMB auto-consolidation Select2 initialization failed', error);
+        }
+    }, 0);
 
     popup.dlg?.addEventListener('change', async event => {
         const target = event.target;
@@ -2889,8 +2867,7 @@ async function showMainEntryPopup() {
             return;
         }
         if (target.matches('#stmb-settings-profile-select')) {
-            stmbSettings.defaultProfile = Number(target.value);
-            persistSettings();
+            updateSettingsPopupDynamicState(popup.dlg, currentUiConnection);
             return;
         }
         if (target.matches('#stmb-settings-import-file')) {
@@ -2979,23 +2956,31 @@ async function showMainEntryPopup() {
         }
 
         const selectedProfileIndex = Number(popup.dlg?.querySelector('#stmb-settings-profile-select')?.value ?? stmbSettings.defaultProfile ?? 0);
+        if (target.closest('#stmb-settings-profile-set-default')) {
+            stmbSettings.defaultProfile = selectedProfileIndex;
+            stmbSettings = normalizeStmbSettings(stmbSettings);
+            saveSettingsDebounced();
+            refreshSettingsPopupProfileSection(popup.dlg, currentUiConnection, selectedProfileIndex);
+            toastr.success(`Set "${getProfileDisplayName(stmbSettings.profiles?.[selectedProfileIndex])}" as default profile`, 'STMB');
+            return;
+        }
         if (target.closest('#stmb-settings-profile-new')) {
             if (await openProfileEditor(null)) {
-                refreshSettingsPopupProfileSection(popup.dlg, currentUiConnection);
+                refreshSettingsPopupProfileSection(popup.dlg, currentUiConnection, (stmbSettings.profiles?.length || 1) - 1);
                 toastr.success('Profile created successfully', 'STMB');
             }
             return;
         }
         if (target.closest('#stmb-settings-profile-edit')) {
             if (await openProfileEditor(selectedProfileIndex)) {
-                refreshSettingsPopupProfileSection(popup.dlg, currentUiConnection);
+                refreshSettingsPopupProfileSection(popup.dlg, currentUiConnection, selectedProfileIndex);
                 toastr.success('Profile updated successfully', 'STMB');
             }
             return;
         }
         if (target.closest('#stmb-settings-profile-delete')) {
             if (await deleteSelectedProfile(selectedProfileIndex)) {
-                refreshSettingsPopupProfileSection(popup.dlg, currentUiConnection);
+                refreshSettingsPopupProfileSection(popup.dlg, currentUiConnection, Math.max(0, selectedProfileIndex - 1));
                 toastr.success('Profile deleted successfully', 'STMB');
             }
             return;
@@ -3050,23 +3035,9 @@ async function getAvailableMemoryCount(lorebookName) {
     return identifyManagedMemoryEntries(lorebookData.entries).length;
 }
 
-function generateSafeProfileName(name) {
-    const base = String(name || 'New Profile').trim() || 'New Profile';
-    const existing = new Set((stmbSettings.profiles || []).map(profile => String(profile?.name || '').trim()).filter(Boolean));
-    if (!existing.has(base)) {
-        return base;
-    }
-
-    let counter = 1;
-    while (existing.has(`${base} (${counter})`)) {
-        counter++;
-    }
-    return `${base} (${counter})`;
-}
-
 function saveAdvancedProfile(baseProfile, popupResult, currentUiConnection) {
     const nextProfile = structuredClone(baseProfile || getActiveStmbProfile(stmbSettings));
-    nextProfile.name = generateSafeProfileName(popupResult.newProfileName);
+    nextProfile.name = getUniqueProfileName(popupResult.newProfileName);
     delete nextProfile.isBuiltinCurrentST;
     if (popupResult.overrideSettings) {
         nextProfile.connection = {
@@ -3074,12 +3045,6 @@ function saveAdvancedProfile(baseProfile, popupResult, currentUiConnection) {
             model: currentUiConnection.model,
             temperature: currentUiConnection.temperature,
         };
-    }
-    const basePrompt = String(getEffectivePromptText(baseProfile) || '').trim();
-    const nextPrompt = String(popupResult.promptText || '').trim();
-    if (nextPrompt && nextPrompt !== basePrompt) {
-        nextProfile.prompt = popupResult.promptText;
-        nextProfile.preset = '';
     }
     nextProfile.titleFormat = nextProfile.titleFormat || stmbSettings.titleFormat || STMB_DEFAULT_TITLE_FORMAT;
     stmbSettings.profiles.push(nextProfile);
@@ -3177,8 +3142,7 @@ async function showAndGetMemorySettings(compiledScene, range, lorebookName, sele
     const basePrompt = String(getEffectivePromptText(selectedProfile) || '').trim();
     const nextPrompt = String(advanced.promptText || '').trim();
     if (nextPrompt && nextPrompt !== basePrompt) {
-        effectiveProfile.prompt = advanced.promptText;
-        effectiveProfile.preset = '';
+        effectiveProfile.promptText = advanced.promptText;
     }
     if (advanced.overrideSettings) {
         effectiveProfile.connection = {
