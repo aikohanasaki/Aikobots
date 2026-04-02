@@ -1239,7 +1239,15 @@ export function findOverlappingManagedMemoryEntry(entries, range) {
         return null;
     }
 
-    for (const entry of identifyManagedMemoryEntries(entries)) {
+    const managedEntries = Object.values(entries || {})
+        .filter(entry => entry && entry[STMB_MANAGED_FLAG] === true)
+        .sort((left, right) => {
+            const leftSequence = parseSequenceFromTitle(left?.comment || left?.title || '') ?? Number(left?.uid) ?? 0;
+            const rightSequence = parseSequenceFromTitle(right?.comment || right?.title || '') ?? Number(right?.uid) ?? 0;
+            return leftSequence - rightSequence;
+        });
+
+    for (const entry of managedEntries) {
         const existingRange = getRangeFromManagedMemoryEntry(entry);
         if (!existingRange) {
             continue;
@@ -1250,6 +1258,10 @@ export function findOverlappingManagedMemoryEntry(entries, range) {
         if (!Number.isInteger(start) || !Number.isInteger(end)) {
             continue;
         }
+
+        console.debug(
+            `STMemoryBooks: OverlapCheck new=[${newStart}-${newEnd}] existing="${String(entry?.comment || entry?.title || 'Untitled Memory')}" [${start}-${end}] cond1(ns<=e)=${newStart <= end} cond2(ne>=s)=${newEnd >= start}`,
+        );
 
         if (newStart <= end && newEnd >= start) {
             return {

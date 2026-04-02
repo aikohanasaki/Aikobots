@@ -153,6 +153,7 @@ These items have been reviewed side-by-side against the STMB reference and are c
 | `current_st` / full-manual profile editor semantics | `profileManager.js` | `public/scripts/stmb.js` profile editor handlers |
 | Provider/model/temperature/endpoint/apiKey override behavior | `profileManager.js` | `public/scripts/stmb.js` profile editor handlers |
 | Regex selection popup semantics | `index.js` `showRegexSelectionPopup` | `public/scripts/stmb.js` `showRegexSelectionPopup` |
+| Scene overlap guard in memory initiation | `index.js` overlap check in `createMemory` | `public/scripts/stmb.js` `createMemoryFromRange` + `public/scripts/stmb-core.js` `findOverlappingManagedMemoryEntry` |
 | Scene marker placement/removal | `sceneManager.js` marker toggle helpers | `public/scripts/stmb.js` scene marker helpers |
 | Start/end marker validation | `sceneManager.js` validation helpers | `public/scripts/stmb.js` `assertRangeWithinCurrentChat` / `validateSceneMarkers` |
 | No silent fallback to plain text | `stmemory.js` structured parse path | `public/scripts/stmb.js` `requestStructuredMemory` + `public/scripts/stmb-core.js` parser path |

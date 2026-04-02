@@ -270,4 +270,15 @@ describe('stmb core parsing and persistence', () => {
         expect(overlap.title).toBe('[001] - Earlier');
         expect(overlap.range).toEqual({ start: 2, end: 6 });
     });
+
+    it('matches STMB overlap semantics for managed summary-like entries that still carry scene range metadata', () => {
+        const overlap = findOverlappingManagedMemoryEntry({
+            1: { uid: 1, comment: '[ARC 001] - Summary', STMB_start: 4, STMB_end: 8, stmbSummary: true, [STMB_MANAGED_FLAG]: true },
+            2: { uid: 2, comment: '[002] - Later', STMB_start: 20, STMB_end: 25, [STMB_MANAGED_FLAG]: true },
+        }, { sceneStart: 6, sceneEnd: 10 });
+
+        expect(overlap).not.toBeNull();
+        expect(overlap.title).toBe('[ARC 001] - Summary');
+        expect(overlap.range).toEqual({ start: 4, end: 8 });
+    });
 });
