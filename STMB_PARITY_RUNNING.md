@@ -10,10 +10,10 @@ This file is updated subsystem by subsystem during the audit. Only sections that
 | --- | --- | --- |
 | Settings defaults match STMB exactly. | Partial | Core normalization now matches STMB for `maxTokens`, `tokenWarningThreshold`, `defaultMemoryCount`, `autoSummaryInterval`, and summary/arc order syncing; the remaining gap is broader end-to-end runtime verification rather than raw defaults. |
 | Settings migration/import is idempotent. | Partial | Builtin `current_st` invariants, duplicate builtin cleanup, legacy dynamic migration, outlet-only `outletName` retention, `convertExistingRecursion` persistence, and summary prompt first-run migration are now normalized; per-profile prompt overrides were intentionally removed by user request and broader runtime verification is still pending. |
-| Profile CRUD behavior matches STMB. | Partial | New/edit/delete/export/import now include builtin-profile protections, duplicate-count import reporting, safe-name handling, live temperature/model/reverse-start sanitization, required outlet names for Outlet placement, and explicit `Set As Default` behavior; per-profile prompt overrides were intentionally removed by user request, and the remaining gap is end-to-end browser/runtime verification of the dedicated manager flow. |
-| `current_st` / dynamic profile behavior matches STMB. | Partial | Builtin profile invariants and current-ST normalization now match STMB, but advanced popup/runtime override surfaces still need browser-level verification. |
-| Custom/full-manual profile behavior matches STMB. | Partial | Connection override shaping exists, and profile edit/create now exposes provider/model/endpoint/apiKey fields; broader runtime parity still needs direct comparison. |
-| Provider/model/temperature/endpoint/apiKey overrides match STMB. | Partial | Core override shaping is present, the main settings popup now exposes these fields through profile CRUD, and STMB's max-token override is now reapplied in memory/summary/sideprompt generation; end-to-end runtime parity still needs direct comparison. |
+| Profile CRUD behavior matches STMB. | Exact | Dedicated profile-manager create/edit/delete/export/import flow has now passed manual testing, including safe-name handling, duplicate-count import reporting, outlet validation, builtin protections, and explicit `Set As Default`; per-profile prompt overrides remain intentionally removed by approved deviation. |
+| `current_st` / dynamic profile behavior matches STMB. | Exact | Builtin profile invariants and current-ST profile behavior passed manual testing through the dedicated profile editor. |
+| Custom/full-manual profile behavior matches STMB. | Exact | Full-manual endpoint requirements, field visibility, and save/reopen behavior passed manual testing in the dedicated profile editor. |
+| Provider/model/temperature/endpoint/apiKey overrides match STMB. | Exact | Provider/model/temperature/endpoint/apiKey override behavior passed manual testing in the dedicated profile editor and settings surface. |
 | Regex selection behavior matches STMB. | Partial | Memory flow now applies selected outgoing/incoming regex in STMB order, and the settings UI now uses a dedicated regex selection popup closer to STMB; full manager parity is still pending. |
 | Lorebook routing/manual mode behavior matches STMB. | Partial | Silent manual-mode fallback to chat-bound lorebook was removed, and missing/unbound lorebooks now enter a recovery popup flow closer to STMB; the popup now exposes manual lorebook controls, but the full reference flow is still broader. |
 
@@ -116,7 +116,7 @@ This file is updated subsystem by subsystem during the audit. Only sections that
 
 | Item | Status | Note |
 | --- | --- | --- |
-| Main STMB entry points exist. | Partial | The Memory Books menu entry now opens a persisted settings popup for core STMB fields, token-saving controls, profile CRUD, summary prompt management, consolidation prompt management, and side prompt management, but the full reference settings surface is still broader. |
+| Main STMB entry points exist. | Exact | The Memory Books menu entry and main settings popup now pass manual testing for the supported settings surface; the bottom-of-popup layout has an approved deviation from STMB. |
 | Memory preview popup matches STMB flow. | Partial | Preview/edit/retry/cancel behavior is much closer, including serialized sideprompt previews; broader runtime validation is still needed. |
 | Failed memory repair popup matches STMB flow. | Partial | Raw-response repair flow exists, but the full STMB popup surface is still not matched exactly. |
 | Summary consolidation popup matches STMB flow. | Partial | The popup now preserves summary-entry settings, renders candidate checklists by tier, honors selected source entries, exposes max-items/token/max-pass controls, uses a file-backed arc prompt cache, and still renders without a lorebook like STMB; browser/runtime validation is still pending. |
@@ -149,6 +149,9 @@ These items have been reviewed side-by-side against the STMB reference and are c
 | --- | --- | --- |
 | Settings `maxTokens` normalization | `index.js` `validateSettings` | `public/scripts/stmb-core.js` `normalizeStmbSettings` |
 | Summary/arc order-field sync into `summaryEntrySettings` | `index.js` `validateSettings` | `public/scripts/stmb-core.js` `normalizeStmbSettings` |
+| Dedicated profile manager CRUD/import/export semantics | `profileManager.js` / `utils.js` | `public/scripts/stmb.js` profile editor helpers + `public/scripts/stmb-core.js` `sanitizeProfile` |
+| `current_st` / full-manual profile editor semantics | `profileManager.js` | `public/scripts/stmb.js` profile editor handlers |
+| Provider/model/temperature/endpoint/apiKey override behavior | `profileManager.js` | `public/scripts/stmb.js` profile editor handlers |
 | Scene marker placement/removal | `sceneManager.js` marker toggle helpers | `public/scripts/stmb.js` scene marker helpers |
 | Start/end marker validation | `sceneManager.js` validation helpers | `public/scripts/stmb.js` `assertRangeWithinCurrentChat` / `validateSceneMarkers` |
 | No silent fallback to plain text | `stmemory.js` structured parse path | `public/scripts/stmb.js` `requestStructuredMemory` + `public/scripts/stmb-core.js` parser path |
@@ -163,3 +166,4 @@ These are deliberate differences from STMB that were explicitly approved during 
 | Item | Reason |
 | --- | --- |
 | Per-profile custom prompt overrides removed from Memory Books profiles | User approved deprecating profile-level custom prompts in favor of the dedicated prompt managers. |
+| Main settings popup bottom-section layout differs from STMB | User approved moving `Profile Settings`, removing the prompt-manager info box wrapper, and reorganizing the lower popup layout for Aikobots. |
