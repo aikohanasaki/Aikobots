@@ -8,10 +8,10 @@ This file is updated subsystem by subsystem during the audit. Only sections that
 
 | Item | Status | Note |
 | --- | --- | --- |
-| Settings defaults match STMB exactly. | Partial | Raw defaults and builtin profile initialization were aligned, and summary prompts are now file-backed with legacy migration support; however `maxTokens` still normalizes differently locally (`0` is preserved instead of resetting to STMB's default `4000`). |
-| Settings migration/import is idempotent. | Partial | Builtin `current_st` invariants, duplicate builtin cleanup, legacy dynamic migration, and summary prompt first-run migration are now normalized; broader runtime verification is still pending. |
-| Profile CRUD behavior matches STMB. | Partial | New/edit/delete/export/import are now wired into the settings popup with builtin-profile protections, but the full reference profile manager surface and prompt-manager integration are still narrower locally. |
-| `current_st` / dynamic profile behavior matches STMB. | Partial | Builtin profile invariants now match STMB normalization; advanced popup/runtime override surfaces still need verification. |
+| Settings defaults match STMB exactly. | Partial | Core normalization now matches STMB for `maxTokens`, `tokenWarningThreshold`, `defaultMemoryCount`, `autoSummaryInterval`, and summary/arc order syncing; the remaining gap is broader end-to-end runtime verification rather than raw defaults. |
+| Settings migration/import is idempotent. | Partial | Builtin `current_st` invariants, duplicate builtin cleanup, legacy dynamic migration, prompt-vs-preset precedence, outlet-only `outletName` retention, and summary prompt first-run migration are now normalized; broader runtime verification is still pending. |
+| Profile CRUD behavior matches STMB. | Partial | New/edit/delete/export/import are now wired into the settings popup with builtin-profile protections, prompt override precedence, and outlet-name cleanup matching STMB; the remaining gap is that the dedicated reference profile-manager surface is still broader locally. |
+| `current_st` / dynamic profile behavior matches STMB. | Partial | Builtin profile invariants and current-ST normalization now match STMB, but advanced popup/runtime override surfaces still need browser-level verification. |
 | Custom/full-manual profile behavior matches STMB. | Partial | Connection override shaping exists, and profile edit/create now exposes provider/model/endpoint/apiKey fields; broader runtime parity still needs direct comparison. |
 | Provider/model/temperature/endpoint/apiKey overrides match STMB. | Partial | Core override shaping is present, the main settings popup now exposes these fields through profile CRUD, and STMB's max-token override is now reapplied in memory/summary/sideprompt generation; end-to-end runtime parity still needs direct comparison. |
 | Regex selection behavior matches STMB. | Partial | Memory flow now applies selected outgoing/incoming regex in STMB order, and the settings UI now uses a dedicated regex selection popup closer to STMB; full manager parity is still pending. |
@@ -147,6 +147,9 @@ These items have been reviewed side-by-side against the STMB reference and are c
 
 | Item | Reference basis | Local basis |
 | --- | --- | --- |
+| Settings `maxTokens` normalization | `index.js` `validateSettings` | `public/scripts/stmb-core.js` `normalizeStmbSettings` |
+| Summary/arc order-field sync into `summaryEntrySettings` | `index.js` `validateSettings` | `public/scripts/stmb-core.js` `normalizeStmbSettings` |
+| Profile prompt override precedence over preset | `utils.js` `createProfileObject` | `public/scripts/stmb-core.js` `sanitizeProfile` |
 | Scene marker placement/removal | `sceneManager.js` marker toggle helpers | `public/scripts/stmb.js` scene marker helpers |
 | Start/end marker validation | `sceneManager.js` validation helpers | `public/scripts/stmb.js` `assertRangeWithinCurrentChat` / `validateSceneMarkers` |
 | No silent fallback to plain text | `stmemory.js` structured parse path | `public/scripts/stmb.js` `requestStructuredMemory` + `public/scripts/stmb-core.js` parser path |

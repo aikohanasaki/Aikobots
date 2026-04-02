@@ -86,6 +86,71 @@ describe('stmb core settings', () => {
         expect(settings.profiles[0].connection.api).toBe('current_st');
     });
 
+    it('normalizes non-positive maxTokens back to the STMB default', () => {
+        const settings = normalizeStmbSettings({
+            moduleSettings: {
+                maxTokens: 0,
+            },
+        });
+
+        expect(settings.moduleSettings.maxTokens).toBe(4000);
+    });
+
+    it('syncs legacy arc order fields into summary order fields and summaryEntrySettings', () => {
+        const settings = normalizeStmbSettings({
+            moduleSettings: {
+                arcOrderMode: 'reverse',
+                arcOrderValue: 321,
+                arcReverseStart: 8765,
+            },
+        });
+
+        expect(settings.moduleSettings.summaryOrderMode).toBe('reverse');
+        expect(settings.moduleSettings.summaryOrderValue).toBe(321);
+        expect(settings.moduleSettings.summaryReverseStart).toBe(8765);
+        expect(settings.moduleSettings.arcOrderMode).toBe('reverse');
+        expect(settings.moduleSettings.arcOrderValue).toBe(321);
+        expect(settings.moduleSettings.arcReverseStart).toBe(8765);
+        expect(settings.moduleSettings.summaryEntrySettings.orderMode).toBe('reverse');
+        expect(settings.moduleSettings.summaryEntrySettings.orderValue).toBe(321);
+        expect(settings.moduleSettings.summaryEntrySettings.reverseStart).toBe(8765);
+    });
+
+    it('matches STMB config bounds for token threshold, memory count, and auto-summary interval', () => {
+        const settings = normalizeStmbSettings({
+            moduleSettings: {
+                tokenWarningThreshold: 999,
+                defaultMemoryCount: 99,
+                autoSummaryInterval: 5,
+            },
+        });
+
+        expect(settings.moduleSettings.tokenWarningThreshold).toBe(50000);
+        expect(settings.moduleSettings.defaultMemoryCount).toBe(7);
+        expect(settings.moduleSettings.autoSummaryInterval).toBe(100);
+    });
+
+    it('normalizes profile prompt precedence and outlet routing like STMB', () => {
+        const settings = normalizeStmbSettings({
+            profiles: [
+                {
+                    name: 'Custom',
+                    preset: 'minimal',
+                    prompt: 'Use this prompt',
+                    position: 0,
+                    outletName: 'ignored-outlet',
+                    connection: { api: 'openai', model: 'gpt-4.1' },
+                },
+            ],
+        });
+
+        const profile = settings.profiles.find(entry => entry.name === 'Custom');
+        expect(profile).toBeDefined();
+        expect(profile.prompt).toBe('Use this prompt');
+        expect(profile.preset).toBe('');
+        expect(profile.outletName).toBe('');
+    });
+
     it('applies STMB max token overrides using the provider-specific token field', () => {
         expect(applyStmbMaxTokensToGenerateData({
             chat_completion_source: 'openai',

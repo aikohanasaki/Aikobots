@@ -359,16 +359,19 @@ function sanitizeProfile(rawProfile) {
     const profile = rawProfile && typeof rawProfile === 'object' ? rawProfile : {};
     const connection = profile.connection && typeof profile.connection === 'object' ? profile.connection : {};
     const connectionApi = typeof connection.api === 'string' && connection.api.trim() ? connection.api.trim() : fallback.connection.api;
+    const position = normalizeLorebookPosition(profile.position, fallback.position);
+    const prompt = typeof profile.prompt === 'string' ? profile.prompt : '';
+    const preset = typeof profile.preset === 'string' && profile.preset.trim() ? profile.preset.trim() : fallback.preset;
     const sanitized = {
         name: typeof profile.name === 'string' && profile.name.trim() ? profile.name.trim() : fallback.name,
         isBuiltinCurrentST: Boolean(profile.isBuiltinCurrentST),
-        preset: typeof profile.preset === 'string' && profile.preset.trim() ? profile.preset.trim() : fallback.preset,
+        preset,
         connection: {
             api: connectionApi,
         },
         constVectMode: typeof profile.constVectMode === 'string' && profile.constVectMode.trim() ? profile.constVectMode.trim() : fallback.constVectMode,
-        position: normalizeLorebookPosition(profile.position, fallback.position),
-        outletName: typeof profile.outletName === 'string' ? profile.outletName : fallback.outletName,
+        position,
+        outletName: position === 7 && typeof profile.outletName === 'string' ? profile.outletName.trim() : fallback.outletName,
         orderMode: typeof profile.orderMode === 'string' && profile.orderMode.trim() ? profile.orderMode.trim() : fallback.orderMode,
         orderValue: clampOrderValue(profile.orderValue, fallback.orderValue),
         reverseStart: clampReverseStart(profile.reverseStart, fallback.reverseStart),
@@ -381,7 +384,10 @@ function sanitizeProfile(rawProfile) {
     else if (connectionApi !== 'current_st') sanitized.connection.temperature = 0.7;
     if (typeof connection.endpoint === 'string') sanitized.connection.endpoint = connection.endpoint;
     if (typeof connection.apiKey === 'string') sanitized.connection.apiKey = connection.apiKey;
-    if (typeof profile.prompt === 'string') sanitized.prompt = profile.prompt;
+    if (prompt) {
+        sanitized.prompt = prompt;
+        sanitized.preset = '';
+    }
     if (typeof profile.titleFormat === 'string' && profile.titleFormat.trim()) sanitized.titleFormat = profile.titleFormat;
     if (profile.useDynamicSTSettings !== undefined) sanitized.useDynamicSTSettings = Boolean(profile.useDynamicSTSettings);
 
@@ -550,11 +556,27 @@ export function normalizeStmbSettings(rawSettings, legacySettings = null) {
         ...getPotentialModuleSettings(source),
     };
 
-    moduleSettings.maxTokens = Number.isFinite(Number(moduleSettings.maxTokens)) ? Math.max(0, Math.trunc(Number(moduleSettings.maxTokens))) : defaults.moduleSettings.maxTokens;
-    moduleSettings.tokenWarningThreshold = Number.isFinite(Number(moduleSettings.tokenWarningThreshold)) ? Math.max(0, Math.trunc(Number(moduleSettings.tokenWarningThreshold))) : defaults.moduleSettings.tokenWarningThreshold;
-    moduleSettings.defaultMemoryCount = Number.isFinite(Number(moduleSettings.defaultMemoryCount)) ? Math.max(0, Math.trunc(Number(moduleSettings.defaultMemoryCount))) : defaults.moduleSettings.defaultMemoryCount;
-    moduleSettings.unhiddenEntriesCount = Number.isFinite(Number(moduleSettings.unhiddenEntriesCount)) ? Math.max(0, Math.trunc(Number(moduleSettings.unhiddenEntriesCount))) : defaults.moduleSettings.unhiddenEntriesCount;
-    moduleSettings.autoSummaryInterval = Number.isFinite(Number(moduleSettings.autoSummaryInterval)) ? Math.max(1, Math.trunc(Number(moduleSettings.autoSummaryInterval))) : defaults.moduleSettings.autoSummaryInterval;
+    if (moduleSettings.maxTokens === undefined || moduleSettings.maxTokens === null) {
+        moduleSettings.maxTokens = defaults.moduleSettings.maxTokens;
+    } else {
+        const parsedMaxTokens = Number.parseInt(moduleSettings.maxTokens, 10);
+        moduleSettings.maxTokens = Number.isFinite(parsedMaxTokens) && parsedMaxTokens > 0
+            ? parsedMaxTokens
+            : defaults.moduleSettings.maxTokens;
+    }
+    const parsedTokenWarningThreshold = Number(moduleSettings.tokenWarningThreshold);
+    moduleSettings.tokenWarningThreshold = Number.isFinite(parsedTokenWarningThreshold) && parsedTokenWarningThreshold >= 1000
+        ? Math.trunc(parsedTokenWarningThreshold)
+        : defaults.moduleSettings.tokenWarningThreshold;
+    moduleSettings.defaultMemoryCount = Number.isFinite(Number(moduleSettings.defaultMemoryCount))
+        ? Math.max(0, Math.min(7, Math.trunc(Number(moduleSettings.defaultMemoryCount))))
+        : defaults.moduleSettings.defaultMemoryCount;
+    moduleSettings.unhiddenEntriesCount = moduleSettings.unhiddenEntriesCount === undefined || moduleSettings.unhiddenEntriesCount === null
+        ? defaults.moduleSettings.unhiddenEntriesCount
+        : moduleSettings.unhiddenEntriesCount;
+    moduleSettings.autoSummaryInterval = moduleSettings.autoSummaryInterval === undefined || Number(moduleSettings.autoSummaryInterval) < 10
+        ? 100
+        : Math.trunc(Number(moduleSettings.autoSummaryInterval));
     moduleSettings.autoSummaryBuffer = Number.isFinite(Number(moduleSettings.autoSummaryBuffer)) ? Math.max(0, Math.trunc(Number(moduleSettings.autoSummaryBuffer))) : defaults.moduleSettings.autoSummaryBuffer;
     moduleSettings.sidePromptsMaxConcurrent = Number.isFinite(Number(moduleSettings.sidePromptsMaxConcurrent))
         ? Math.max(1, Math.min(5, Math.trunc(Number(moduleSettings.sidePromptsMaxConcurrent))))
@@ -564,7 +586,21 @@ export function normalizeStmbSettings(rawSettings, legacySettings = null) {
         : defaults.moduleSettings.autoConsolidationTargetTiers.slice();
     moduleSettings.selectedRegexOutgoing = Array.isArray(moduleSettings.selectedRegexOutgoing) ? moduleSettings.selectedRegexOutgoing.map(String) : [];
     moduleSettings.selectedRegexIncoming = Array.isArray(moduleSettings.selectedRegexIncoming) ? moduleSettings.selectedRegexIncoming.map(String) : [];
-    moduleSettings.summaryEntrySettings = normalizeLorebookEntrySettings(moduleSettings.summaryEntrySettings, defaults.moduleSettings.summaryEntrySettings);
+    const legacySummaryOrderMode = moduleSettings.summaryOrderMode ?? moduleSettings.arcOrderMode ?? defaults.moduleSettings.summaryOrderMode;
+    const legacySummaryOrderValue = moduleSettings.summaryOrderValue ?? moduleSettings.arcOrderValue ?? defaults.moduleSettings.summaryOrderValue;
+    const legacySummaryReverseStart = moduleSettings.summaryReverseStart ?? moduleSettings.arcReverseStart ?? defaults.moduleSettings.summaryReverseStart;
+    moduleSettings.summaryEntrySettings = normalizeLorebookEntrySettings({
+        ...(moduleSettings.summaryEntrySettings || {}),
+        orderMode: moduleSettings.summaryEntrySettings?.orderMode ?? legacySummaryOrderMode,
+        orderValue: moduleSettings.summaryEntrySettings?.orderValue ?? legacySummaryOrderValue,
+        reverseStart: moduleSettings.summaryEntrySettings?.reverseStart ?? legacySummaryReverseStart,
+    }, defaults.moduleSettings.summaryEntrySettings);
+    moduleSettings.summaryOrderMode = moduleSettings.summaryEntrySettings.orderMode;
+    moduleSettings.summaryOrderValue = moduleSettings.summaryEntrySettings.orderValue;
+    moduleSettings.summaryReverseStart = moduleSettings.summaryEntrySettings.reverseStart;
+    moduleSettings.arcOrderMode = moduleSettings.summaryOrderMode;
+    moduleSettings.arcOrderValue = moduleSettings.summaryOrderValue;
+    moduleSettings.arcReverseStart = moduleSettings.summaryReverseStart;
     moduleSettings.summaryTierMinimums = normalizeSummaryTierMinimums(moduleSettings.summaryTierMinimums, defaults.moduleSettings.summaryTierMinimums);
     if (moduleSettings.manualModeEnabled && moduleSettings.autoCreateLorebook) {
         moduleSettings.autoCreateLorebook = false;

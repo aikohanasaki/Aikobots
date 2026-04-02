@@ -374,6 +374,13 @@ function buildSettingsPopupHtml(sceneData, currentUiConnection, regexOptions) {
     const usesCustomTitleFormat = !titleFormats.includes(currentTitleFormat);
     const activeLorebook = resolveLorebookName();
     const manualMode = Boolean(moduleSettings.manualModeEnabled);
+    const summaryOrderMode = String(moduleSettings.summaryOrderMode || moduleSettings.summaryEntrySettings?.orderMode || 'auto').toLowerCase();
+    const summaryOrderValue = Number.isFinite(Number(moduleSettings.summaryOrderValue))
+        ? Math.trunc(Number(moduleSettings.summaryOrderValue))
+        : Number(moduleSettings.summaryEntrySettings?.orderValue ?? 100);
+    const summaryReverseStart = Number.isFinite(Number(moduleSettings.summaryReverseStart))
+        ? Math.trunc(Number(moduleSettings.summaryReverseStart))
+        : Number(moduleSettings.summaryEntrySettings?.reverseStart ?? 9999);
 
     return `
         <div class="stmb-settings-popup">
@@ -474,6 +481,22 @@ function buildSettingsPopupHtml(sceneData, currentUiConnection, regexOptions) {
                 <label for="stmb-settings-auto-consolidation-target-tier">Auto-Consolidation Tiers</label>
                 <select id="stmb-settings-auto-consolidation-target-tier" class="text_pole" multiple size="6">${renderSummaryTierOptions(normalizeAutoConsolidationTargetTiers(moduleSettings.autoConsolidationTargetTiers ?? moduleSettings.autoConsolidationTargetTier))}</select>
             </div>
+            <div class="world_entry_form_control">
+                <label for="stmb-settings-summary-order-mode">Default Summary Entry Order Mode</label>
+                <select id="stmb-settings-summary-order-mode" class="text_pole">
+                    <option value="auto" ${summaryOrderMode === 'auto' ? 'selected' : ''}>Auto</option>
+                    <option value="manual" ${summaryOrderMode === 'manual' ? 'selected' : ''}>Manual</option>
+                    <option value="reverse" ${summaryOrderMode === 'reverse' ? 'selected' : ''}>Reverse</option>
+                </select>
+            </div>
+            <div id="stmb-settings-summary-order-value-row" class="world_entry_form_control" style="display:${summaryOrderMode === 'manual' ? 'block' : 'none'}">
+                <label for="stmb-settings-summary-order-value">Manual Summary Entry Order</label>
+                <input type="number" id="stmb-settings-summary-order-value" class="text_pole" min="0" max="9999" step="1" value="${escapeHtml(String(summaryOrderValue))}">
+            </div>
+            <div id="stmb-settings-summary-reverse-start-row" class="world_entry_form_control" style="display:${summaryOrderMode === 'reverse' ? 'block' : 'none'}">
+                <label for="stmb-settings-summary-reverse-start">Reverse Summary Start Order</label>
+                <input type="number" id="stmb-settings-summary-reverse-start" class="text_pole" min="100" max="9999" step="1" value="${escapeHtml(String(summaryReverseStart))}">
+            </div>
 
             <h3 class="stmb-section-title">Memory Profiles</h3>
             <div class="world_entry_form_control">
@@ -558,6 +581,28 @@ function buildSettingsPopupMemoryStatusHtml(sceneData) {
         : 'Memory Status: no memories have been processed for this chat yet.';
 }
 
+function syncSummaryOrderModuleSettings(moduleSettings, overrides = {}) {
+    if (!moduleSettings || typeof moduleSettings !== 'object') {
+        return normalizeLorebookEntrySettings(overrides);
+    }
+
+    const nextSummaryEntrySettings = normalizeLorebookEntrySettings({
+        ...(moduleSettings.summaryEntrySettings || {}),
+        orderMode: overrides.orderMode ?? moduleSettings.summaryOrderMode ?? moduleSettings.summaryEntrySettings?.orderMode,
+        orderValue: overrides.orderValue ?? moduleSettings.summaryOrderValue ?? moduleSettings.summaryEntrySettings?.orderValue,
+        reverseStart: overrides.reverseStart ?? moduleSettings.summaryReverseStart ?? moduleSettings.summaryEntrySettings?.reverseStart,
+    }, moduleSettings.summaryEntrySettings || {});
+
+    moduleSettings.summaryEntrySettings = { ...(moduleSettings.summaryEntrySettings || {}), ...nextSummaryEntrySettings };
+    moduleSettings.summaryOrderMode = nextSummaryEntrySettings.orderMode;
+    moduleSettings.summaryOrderValue = nextSummaryEntrySettings.orderValue;
+    moduleSettings.summaryReverseStart = nextSummaryEntrySettings.reverseStart;
+    moduleSettings.arcOrderMode = nextSummaryEntrySettings.orderMode;
+    moduleSettings.arcOrderValue = nextSummaryEntrySettings.orderValue;
+    moduleSettings.arcReverseStart = nextSummaryEntrySettings.reverseStart;
+    return nextSummaryEntrySettings;
+}
+
 async function refreshOpenSettingsPopupSceneState() {
     const dialog = activeSettingsPopupDialog;
     if (!(dialog instanceof HTMLElement) || !dialog.isConnected) {
@@ -636,9 +681,35 @@ function updateSettingsPopupDynamicState(dialog, currentUiConnection) {
     if (regexSection) {
         regexSection.style.display = moduleSettings.useRegex ? 'block' : 'none';
     }
+    const summaryOrderMode = String(moduleSettings.summaryOrderMode || moduleSettings.summaryEntrySettings?.orderMode || 'auto').toLowerCase();
+    const summaryOrderModeSelect = dialog.querySelector('#stmb-settings-summary-order-mode');
+    const summaryOrderValueInput = dialog.querySelector('#stmb-settings-summary-order-value');
+    const summaryReverseStartInput = dialog.querySelector('#stmb-settings-summary-reverse-start');
+    const summaryOrderValueRow = dialog.querySelector('#stmb-settings-summary-order-value-row');
+    const summaryReverseStartRow = dialog.querySelector('#stmb-settings-summary-reverse-start-row');
+    if (summaryOrderModeSelect) {
+        summaryOrderModeSelect.value = summaryOrderMode;
+    }
+    if (summaryOrderValueInput) {
+        summaryOrderValueInput.value = String(moduleSettings.summaryOrderValue ?? moduleSettings.summaryEntrySettings?.orderValue ?? 100);
+    }
+    if (summaryReverseStartInput) {
+        summaryReverseStartInput.value = String(moduleSettings.summaryReverseStart ?? moduleSettings.summaryEntrySettings?.reverseStart ?? 9999);
+    }
+    if (summaryOrderValueRow) {
+        summaryOrderValueRow.style.display = summaryOrderMode === 'manual' ? 'block' : 'none';
+    }
+    if (summaryReverseStartRow) {
+        summaryReverseStartRow.style.display = summaryOrderMode === 'reverse' ? 'block' : 'none';
+    }
     const regexSummary = dialog.querySelector('#stmb-settings-regex-summary');
     if (regexSummary) {
         regexSummary.textContent = `Selected outgoing: ${(moduleSettings.selectedRegexOutgoing || []).length} | selected incoming: ${(moduleSettings.selectedRegexIncoming || []).length}`;
+    }
+
+    const maxTokensInput = dialog.querySelector('#stmb-settings-max-tokens');
+    if (maxTokensInput) {
+        maxTokensInput.value = String(moduleSettings.maxTokens ?? STMB_DEFAULT_MAX_TOKENS);
     }
 
     if (customTitleInput && titleFormatSelect) {
@@ -2501,17 +2572,38 @@ async function showMainEntryPopup() {
             return;
         }
         if (target.matches('#stmb-settings-max-tokens')) {
-            moduleSettings.maxTokens = Number(target.value);
+            const value = Number(target.value);
+            moduleSettings.maxTokens = Number.isFinite(value) && value > 0 ? Math.trunc(value) : STMB_DEFAULT_MAX_TOKENS;
             persistSettings();
             return;
         }
         if (target.matches('#stmb-settings-token-warning-threshold')) {
-            moduleSettings.tokenWarningThreshold = Number(target.value);
+            const value = Number.parseInt(target.value, 10);
+            if (!Number.isFinite(value) || value < 1000 || value > 100000) {
+                return;
+            }
+            moduleSettings.tokenWarningThreshold = value;
             persistSettings();
             return;
         }
         if (target.matches('#stmb-settings-default-memory-count')) {
-            moduleSettings.defaultMemoryCount = Number(target.value);
+            const value = Number(target.value);
+            moduleSettings.defaultMemoryCount = Number.isFinite(value) ? Math.max(0, Math.min(7, Math.trunc(value))) : 0;
+            persistSettings();
+            return;
+        }
+        if (target.matches('#stmb-settings-summary-order-mode')) {
+            syncSummaryOrderModuleSettings(moduleSettings, { orderMode: String(target.value || 'auto').toLowerCase() });
+            persistSettings();
+            return;
+        }
+        if (target.matches('#stmb-settings-summary-order-value')) {
+            syncSummaryOrderModuleSettings(moduleSettings, { orderValue: Number(target.value) });
+            persistSettings();
+            return;
+        }
+        if (target.matches('#stmb-settings-summary-reverse-start')) {
+            syncSummaryOrderModuleSettings(moduleSettings, { reverseStart: Number(target.value) });
             persistSettings();
             return;
         }
@@ -2521,7 +2613,11 @@ async function showMainEntryPopup() {
             return;
         }
         if (target.matches('#stmb-settings-unhidden-entries-count')) {
-            moduleSettings.unhiddenEntriesCount = Number(target.value);
+            const value = Number.parseInt(target.value, 10);
+            if (!Number.isFinite(value) || value < 0 || value > 50) {
+                return;
+            }
+            moduleSettings.unhiddenEntriesCount = value;
             persistSettings();
             return;
         }
@@ -2600,7 +2696,7 @@ async function showMainEntryPopup() {
             return;
         }
         if (target.matches('#stmb-settings-lorebook-name-template')) {
-            moduleSettings.lorebookNameTemplate = String(target.value || '');
+            moduleSettings.lorebookNameTemplate = String(target.value || '').trim();
             persistSettings();
             return;
         }
@@ -2610,12 +2706,17 @@ async function showMainEntryPopup() {
             return;
         }
         if (target.matches('#stmb-settings-auto-summary-interval')) {
-            moduleSettings.autoSummaryInterval = Number(target.value);
+            const value = Number.parseInt(target.value, 10);
+            if (!Number.isFinite(value) || value < 10 || value > 200) {
+                return;
+            }
+            moduleSettings.autoSummaryInterval = value;
             persistSettings();
             return;
         }
         if (target.matches('#stmb-settings-auto-summary-buffer')) {
-            moduleSettings.autoSummaryBuffer = Number(target.value);
+            const value = Number(target.value);
+            moduleSettings.autoSummaryBuffer = Number.isFinite(value) ? Math.max(0, Math.min(50, Math.trunc(value))) : 0;
             persistSettings();
             return;
         }
@@ -3935,6 +4036,7 @@ function persistSummaryConsolidationPopupSettings({ targetTier, requiredMin, sum
 
     if (JSON.stringify(getModuleSettings().summaryEntrySettings || {}) !== JSON.stringify(nextSummaryEntrySettings)) {
         stmbSettings.moduleSettings.summaryEntrySettings = { ...nextSummaryEntrySettings };
+        syncSummaryOrderModuleSettings(stmbSettings.moduleSettings, nextSummaryEntrySettings);
         changed = true;
     }
 
