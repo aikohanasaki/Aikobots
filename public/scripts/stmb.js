@@ -2037,7 +2037,7 @@ async function showSidePromptManagerPopup({ onChange = null } = {}) {
 }
 
 function getUniqueProfileName(name, ignoreIndex = null) {
-    const base = String(name || 'New Profile').trim() || 'New Profile';
+    const base = (String(name || 'New Profile').trim().replace(/[<>:"/\\|?*]/g, '')) || 'New Profile';
     const existing = new Set((stmbSettings.profiles || [])
         .map((profile, index) => index === ignoreIndex ? null : String(profile?.name || '').trim())
         .filter(Boolean));
@@ -2272,7 +2272,8 @@ async function moveLegacyProfilePromptToPreset(dialog) {
     }
 
     const promptTextarea = dialog.querySelector('#stmb-profile-editor-prompt');
-    const prompt = String(promptTextarea?.value || '').trim();
+    const legacyPromptElement = dialog.querySelector('#stmb-profile-editor-legacy-custom-prompt');
+    const prompt = String(legacyPromptElement?.textContent || promptTextarea?.value || '').trim();
     if (!prompt) {
         toastr.error('No custom prompt to migrate', 'STMB');
         return false;
@@ -2368,6 +2369,40 @@ async function openProfileEditor(profileIndex = null) {
         updateProfileEditorDynamicState(popup.dlg);
     });
     popup.dlg?.addEventListener('input', () => updateProfileEditorDynamicState(popup.dlg));
+    popup.dlg?.querySelector('#stmb-profile-editor-temperature')?.addEventListener('input', event => {
+        const input = event.target;
+        if (!(input instanceof HTMLInputElement)) {
+            return;
+        }
+        const value = Number.parseFloat(input.value);
+        if (!Number.isNaN(value)) {
+            if (value < 0) input.value = '0';
+            if (value > 2) input.value = '2';
+        }
+    });
+    popup.dlg?.querySelector('#stmb-profile-editor-model')?.addEventListener('input', event => {
+        const input = event.target;
+        if (!(input instanceof HTMLInputElement)) {
+            return;
+        }
+        input.value = input.value.replace(/[<>]/g, '');
+    });
+    popup.dlg?.querySelector('#stmb-profile-editor-reverse-start')?.addEventListener('input', event => {
+        const input = event.target;
+        if (!(input instanceof HTMLInputElement)) {
+            return;
+        }
+        input.value = String(input.value ?? '').replace(/[^\d]/g, '');
+    });
+    popup.dlg?.querySelector('#stmb-profile-editor-reverse-start')?.addEventListener('blur', event => {
+        const input = event.target;
+        if (!(input instanceof HTMLInputElement)) {
+            return;
+        }
+        const parsed = Number.parseInt(input.value, 10);
+        const clamped = Number.isFinite(parsed) ? Math.max(100, Math.min(9999, Math.trunc(parsed))) : 9999;
+        input.value = String(clamped);
+    });
     popup.dlg?.addEventListener('click', async event => {
         const target = event.target;
         if (!(target instanceof HTMLElement)) {
