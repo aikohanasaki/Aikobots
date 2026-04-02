@@ -516,6 +516,19 @@ function buildSettingsPopupHtml(sceneData, currentUiConnection, regexOptions) {
                     ${(settings.profiles || []).map((profile, index) => `<option value="${index}" ${index === selectedProfileIndex ? 'selected' : ''}>${escapeHtml(getProfileDisplayName(profile))}${index === settings.defaultProfile ? ' (Default)' : ''}</option>`).join('')}
                 </select>
             </div>
+            <div id="stmb-settings-profile-summary" class="info-block marginBot10">
+                <div class="marginBot5">Profile Settings:</div>
+                <div>Provider: <span id="stmb-settings-summary-api">${escapeHtml(String(selectedProfile?.connection?.api === 'current_st' ? currentUiConnection.api : (selectedProfile?.connection?.api || 'openai')))}</span></div>
+                <div>Model: <span id="stmb-settings-summary-model">${escapeHtml(String(getProfileModelDisplay(selectedProfile) || 'Current SillyTavern model'))}</span></div>
+                <div>Temperature: <span id="stmb-settings-summary-temp">${escapeHtml(String(getProfileTemperatureDisplay(selectedProfile)))}</span></div>
+                <div>Title Format: <span id="stmb-settings-summary-title">${escapeHtml(String(selectedProfile?.titleFormat || settings.titleFormat || STMB_DEFAULT_TITLE_FORMAT))}</span></div>
+                <details class="marginTop10">
+                    <summary>View Prompt</summary>
+                    <div class="padding10 marginTop5 stmb-box">
+                        <pre><code id="stmb-settings-summary-prompt">${escapeHtml(String(getEffectivePromptText(selectedProfile) || ''))}</code></pre>
+                    </div>
+                </details>
+            </div>
             <div class="world_entry_form_control">
                 <div class="marginBot5">Profile Actions</div>
                 <div class="buttons_block marginTop5 justifyCenter gap10px whitespacenowrap">
@@ -533,27 +546,11 @@ function buildSettingsPopupHtml(sceneData, currentUiConnection, regexOptions) {
                     <div id="stmb-settings-profile-import" class="menu_button interactable">Import Profiles</div>
                 </div>
             </div>
-
-            <div id="stmb-settings-profile-summary" class="padding10 marginBot10">
-                <div class="marginBot5">Profile Settings:</div>
-                <div>Provider: <span id="stmb-settings-summary-api">${escapeHtml(String(selectedProfile?.connection?.api === 'current_st' ? currentUiConnection.api : (selectedProfile?.connection?.api || 'openai')))}</span></div>
-                <div>Model: <span id="stmb-settings-summary-model">${escapeHtml(String(getProfileModelDisplay(selectedProfile) || 'Current SillyTavern model'))}</span></div>
-                <div>Temperature: <span id="stmb-settings-summary-temp">${escapeHtml(String(getProfileTemperatureDisplay(selectedProfile)))}</span></div>
-                <div>Title Format: <span id="stmb-settings-summary-title">${escapeHtml(String(selectedProfile?.titleFormat || settings.titleFormat || STMB_DEFAULT_TITLE_FORMAT))}</span></div>
-                <details class="marginTop10">
-                    <summary>View Prompt</summary>
-                    <div class="padding10 marginTop5 stmb-box">
-                        <pre><code id="stmb-settings-summary-prompt">${escapeHtml(String(getEffectivePromptText(selectedProfile) || ''))}</code></pre>
-                    </div>
-                </details>
-            </div>
-            <div class="info-block">
-                <h4>Prompt Managers</h4>
-                <div class="buttons_block marginTop5 justifyCenter gap10px whitespacenowrap">
-                    <div id="stmb-settings-open-prompt-manager" class="menu_button interactable">Open Summary Prompt Manager</div>
-                    <div id="stmb-settings-open-arc-prompt-manager" class="menu_button interactable">Open Consolidation Prompt Manager</div>
-                    <div id="stmb-settings-open-sideprompt-manager" class="menu_button interactable">Open Side Prompt Manager</div>
-                </div>
+            <h3 class="stmb-section-title">Prompt Managers</h3>
+            <div class="buttons_block marginTop5 justifyCenter gap10px whitespacenowrap">
+                <div id="stmb-settings-open-prompt-manager" class="menu_button interactable">Open Summary Prompt Manager</div>
+                <div id="stmb-settings-open-arc-prompt-manager" class="menu_button interactable">Open Consolidation Prompt Manager</div>
+                <div id="stmb-settings-open-sideprompt-manager" class="menu_button interactable">Open Side Prompt Manager</div>
             </div>
         </div>
     `;
@@ -970,14 +967,14 @@ function buildSummaryPromptManagerRowsHtml(presets, selectedPresetKey = null) {
                 ${presets.map(preset => `
                     <tr data-preset-key="${escapeHtml(preset.key)}" style="${preset.key === selectedPresetKey ? 'background-color: var(--cobalt30a);' : ''}">
                         <td>${escapeHtml(preset.displayName)}${preset.isBuiltIn ? ' <small class="opacity50p">(Built-in)</small>' : ''}</td>
-                        <td class="textAlignRight whitespacenowrap">
-                            <button class="menu_button stmb-pm-action stmb-pm-action-edit whitespacenowrap" data-action="edit" title="Edit" aria-label="Edit">
+                        <td class="textAlignRight whitespacenowrap" style="display:flex; justify-content:flex-end; align-items:center; gap:6px; flex-wrap:nowrap;">
+                            <button class="menu_button stmb-pm-action stmb-pm-action-edit whitespacenowrap" data-action="edit" title="Edit" aria-label="Edit" style="display:inline-flex; align-items:center; justify-content:center; width:auto; min-width:0; margin:0;">
                                 <i class="fa-solid fa-pen-to-square"></i>
                             </button>
-                            <button class="menu_button stmb-pm-action stmb-pm-action-duplicate whitespacenowrap" data-action="duplicate" title="Duplicate" aria-label="Duplicate">
+                            <button class="menu_button stmb-pm-action stmb-pm-action-duplicate whitespacenowrap" data-action="duplicate" title="Duplicate" aria-label="Duplicate" style="display:inline-flex; align-items:center; justify-content:center; width:auto; min-width:0; margin:0;">
                                 <i class="fa-solid fa-copy"></i>
                             </button>
-                            <button class="menu_button stmb-pm-action stmb-pm-action-delete whitespacenowrap" data-action="delete" title="Delete" aria-label="Delete">
+                            <button class="menu_button stmb-pm-action stmb-pm-action-delete whitespacenowrap" data-action="delete" title="Delete" aria-label="Delete" style="display:inline-flex; align-items:center; justify-content:center; width:auto; min-width:0; margin:0;">
                                 <i class="fa-solid fa-trash"></i>
                             </button>
                         </td>
@@ -1550,14 +1547,14 @@ function buildSidePromptManagerRowsHtml(templates, selectedTemplateKey = null) {
                             <div>${escapeHtml(template.name || 'Untitled Side Prompt')}${isBuiltinSidePromptKey(template.key) ? ' <small class="opacity50p">(Built-in)</small>' : ''}</div>
                             <small class="opacity50p">${escapeHtml(getSidePromptTriggerBadges(template).join(' | ') || 'No triggers configured')}</small>
                         </td>
-                        <td class="textAlignRight whitespacenowrap">
-                            <button class="menu_button stmb-spm-action stmb-spm-action-edit whitespacenowrap" data-action="edit" title="Edit" aria-label="Edit">
+                        <td class="textAlignRight whitespacenowrap" style="display:flex; justify-content:flex-end; align-items:center; gap:6px; flex-wrap:nowrap;">
+                            <button class="menu_button stmb-spm-action stmb-spm-action-edit whitespacenowrap" data-action="edit" title="Edit" aria-label="Edit" style="display:inline-flex; align-items:center; justify-content:center; width:auto; min-width:0; margin:0;">
                                 <i class="fa-solid fa-pen-to-square"></i>
                             </button>
-                            <button class="menu_button stmb-spm-action stmb-spm-action-duplicate whitespacenowrap" data-action="duplicate" title="Duplicate" aria-label="Duplicate">
+                            <button class="menu_button stmb-spm-action stmb-spm-action-duplicate whitespacenowrap" data-action="duplicate" title="Duplicate" aria-label="Duplicate" style="display:inline-flex; align-items:center; justify-content:center; width:auto; min-width:0; margin:0;">
                                 <i class="fa-solid fa-copy"></i>
                             </button>
-                            <button class="menu_button stmb-spm-action stmb-spm-action-delete whitespacenowrap" data-action="delete" title="Delete" aria-label="Delete">
+                            <button class="menu_button stmb-spm-action stmb-spm-action-delete whitespacenowrap" data-action="delete" title="Delete" aria-label="Delete" style="display:inline-flex; align-items:center; justify-content:center; width:auto; min-width:0; margin:0;">
                                 <i class="fa-solid fa-trash"></i>
                             </button>
                         </td>
