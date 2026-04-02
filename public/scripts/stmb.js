@@ -3135,17 +3135,42 @@ async function getAvailableMemoryCount(lorebookName) {
 }
 
 function saveAdvancedProfile(baseProfile, popupResult, currentUiConnection) {
-    const nextProfile = structuredClone(baseProfile || getActiveStmbProfile(stmbSettings));
-    nextProfile.name = getUniqueProfileName(popupResult.newProfileName);
-    delete nextProfile.isBuiltinCurrentST;
-    if (popupResult.overrideSettings) {
-        nextProfile.connection = {
-            api: currentUiConnection.api,
-            model: currentUiConnection.model,
-            temperature: currentUiConnection.temperature,
-        };
+    const sourceProfile = baseProfile || getActiveStmbProfile(stmbSettings);
+    const sourceConnection = sourceProfile?.connection && typeof sourceProfile.connection === 'object'
+        ? sourceProfile.connection
+        : {};
+    const sourceApi = String(sourceConnection.api || 'openai').trim() || 'openai';
+    const sourceModel = String(sourceConnection.model || '').trim();
+    const sourceTemperature = Number(sourceConnection.temperature);
+
+    const overrideApi = String(currentUiConnection?.api || '').trim();
+    const overrideModel = String(currentUiConnection?.model || '').trim();
+    const overrideTemperature = Number(currentUiConnection?.temperature);
+
+    const nextProfile = {
+        name: getUniqueProfileName(popupResult.newProfileName),
+        connection: {
+            api: popupResult.overrideSettings && overrideApi ? overrideApi : sourceApi,
+            temperature: popupResult.overrideSettings && Number.isFinite(overrideTemperature)
+                ? Math.max(0, Math.min(2, overrideTemperature))
+                : (Number.isFinite(sourceTemperature) ? Math.max(0, Math.min(2, sourceTemperature)) : 0.7),
+        },
+        preset: String(sourceProfile?.preset || '').trim() || 'summary',
+        constVectMode: 'link',
+        position: 0,
+        orderMode: 'auto',
+        orderValue: 100,
+        reverseStart: 9999,
+        preventRecursion: true,
+        delayUntilRecursion: false,
+        titleFormat: String(sourceProfile?.titleFormat || stmbSettings.titleFormat || STMB_DEFAULT_TITLE_FORMAT).trim() || STMB_DEFAULT_TITLE_FORMAT,
+    };
+
+    const nextModel = popupResult.overrideSettings ? overrideModel : sourceModel;
+    if (nextModel) {
+        nextProfile.connection.model = nextModel;
     }
-    nextProfile.titleFormat = nextProfile.titleFormat || stmbSettings.titleFormat || STMB_DEFAULT_TITLE_FORMAT;
+
     stmbSettings.profiles.push(nextProfile);
     saveSettingsDebounced();
     return nextProfile;

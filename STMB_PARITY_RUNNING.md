@@ -150,6 +150,7 @@ These items have been reviewed side-by-side against the STMB reference and are c
 | Settings `maxTokens` normalization | `index.js` `validateSettings` | `public/scripts/stmb-core.js` `normalizeStmbSettings` |
 | Summary/arc order-field sync into `summaryEntrySettings` | `index.js` `validateSettings` | `public/scripts/stmb-core.js` `normalizeStmbSettings` |
 | Dedicated profile manager CRUD/import/export semantics | `profileManager.js` / `utils.js` | `public/scripts/stmb.js` profile editor helpers + `public/scripts/stmb-core.js` `sanitizeProfile` |
+| Advanced-options save-new-profile semantics | `confirmationPopup.js` `saveNewProfileFromAdvancedSettings` | `public/scripts/stmb.js` `saveAdvancedProfile` |
 | `current_st` / full-manual profile editor semantics | `profileManager.js` | `public/scripts/stmb.js` profile editor handlers |
 | Provider/model/temperature/endpoint/apiKey override behavior | `profileManager.js` | `public/scripts/stmb.js` profile editor handlers |
 | Regex selection popup semantics | `index.js` `showRegexSelectionPopup` | `public/scripts/stmb.js` `showRegexSelectionPopup` |
