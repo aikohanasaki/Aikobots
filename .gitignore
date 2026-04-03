@@ -22,4 +22,5 @@
 /.stmb-parity/
 /stmb-reference/
 AGENTS.md
-STMB_Parity*.md
+STMB_PARITY_MATRIX.md
+STMB_PARITY_RUNNING.md
