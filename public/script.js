@@ -56,16 +56,19 @@ import {
     regenerateGroup,
     group_generation_id,
     getGroupChat,
+    getGroupPastChats,
     renameGroupMember,
     createNewGroupChat,
     getGroupAvatar,
     editGroup,
     deleteGroupChat,
+    deleteGroupChatByName,
     renameGroupChat,
     importGroupChat,
     getGroupBlock,
     getGroupCharacterCards,
     getGroupDepthPrompts,
+    openGroupChat,
 } from './scripts/group-chats.js';
 
 import {
@@ -573,6 +576,618 @@ export function getCurrentChatId() {
     }
 }
 
+function normalizeTopChatFileName(name) {
+    return String(name ?? '').replace(/\.jsonl$/i, '');
+}
+
+function setTopChatActionDisabled(element, disabled) {
+    if (!element) {
+        return;
+    }
+
+    element.classList.toggle('not-in-chat', disabled);
+    element.setAttribute('aria-disabled', String(disabled));
+}
+
+function saveTopChatPanelsState() {
+    localStorage.setItem(TOP_CHAT_PANELS_STATE_KEY, JSON.stringify({
+        sidebarVisible: document.getElementById(TOP_CHAT_SIDEBAR_ID)?.classList.contains('visible') ?? false,
+        connectionProfilesVisible: topChatConnectionProfiles?.classList.contains('visible') ?? false,
+    }));
+}
+
+function getTopChatButtonHandlerElements() {
+    return [
+        topChatButtons.chatManager,
+        topChatButtons.newChat,
+        topChatButtons.renameChat,
+        topChatButtons.deleteChat,
+        topChatButtons.closeChat,
+    ];
+}
+
+function setTopChatAvailabilityState(hasChat) {
+    for (const button of getTopChatButtonHandlerElements()) {
+        setTopChatActionDisabled(button, !hasChat);
+    }
+}
+
+async function getTopChatChatFiles() {
+    if (!getCurrentChatId()) {
+        return [];
+    }
+
+    if (selected_group) {
+        return await getGroupPastChats(selected_group);
+    }
+
+    if (this_chid !== undefined) {
+        return await getPastCharacterChats();
+    }
+
+    return [];
+}
+
+async function getTopChatSelectorEntries() {
+    if (selected_group) {
+        const group = groups.find(x => x.id == selected_group);
+        return (group?.chats ?? []).map(normalizeTopChatFileName).sort((a, b) => a.localeCompare(b));
+    }
+
+    if (this_chid === undefined) {
+        return [];
+    }
+
+    const chats = await getPastCharacterChats();
+    return chats
+        .map(chat => normalizeTopChatFileName(chat.file_name))
+        .filter(onlyUnique)
+        .sort((a, b) => a.localeCompare(b));
+}
+
+async function openTopChatById(chatId) {
+    const normalizedChatId = normalizeTopChatFileName(chatId);
+    if (!normalizedChatId) {
+        return;
+    }
+
+    if (selected_group) {
+        await openGroupChat(selected_group, normalizedChatId);
+        return;
+    }
+
+    if (this_chid !== undefined) {
+        await openCharacterChat(normalizedChatId);
+    }
+}
+
+function getTopChatSidebarElement() {
+    return /** @type {HTMLDivElement | null} */ (document.getElementById(TOP_CHAT_SIDEBAR_ID));
+}
+
+function ensureTopChatSidebar() {
+    const existingSidebar = getTopChatSidebarElement();
+    if (existingSidebar) {
+        return existingSidebar;
+    }
+
+    const draggableTemplate = /** @type {HTMLTemplateElement} */ (document.getElementById('generic_draggable_template'));
+    const movingDivs = /** @type {HTMLDivElement} */ (document.getElementById('movingDivs'));
+    if (!draggableTemplate || !movingDivs) {
+        return null;
+    }
+
+    const fragment = /** @type {DocumentFragment} */ (draggableTemplate.content.cloneNode(true));
+    const draggable = /** @type {HTMLDivElement | null} */ (fragment.querySelector('.draggable'));
+    const title = /** @type {HTMLDivElement | null} */ (fragment.querySelector('.dragTitle'));
+    const closeButton = /** @type {HTMLDivElement | null} */ (fragment.querySelector('.dragClose'));
+    const dragHandle = /** @type {HTMLDivElement | null} */ (fragment.querySelector('.drag-grabber'));
+    if (!draggable || !title || !closeButton || !dragHandle) {
+        return null;
+    }
+
+    draggable.id = TOP_CHAT_SIDEBAR_ID;
+    title.textContent = 'Chats';
+    closeButton.id = `${TOP_CHAT_SIDEBAR_ID}_close`;
+    dragHandle.id = `${TOP_CHAT_SIDEBAR_ID}header`;
+    closeButton.addEventListener('click', () => {
+        void toggleTopChatSidebar(false);
+    });
+
+    const container = document.createElement('div');
+    container.id = TOP_CHAT_SIDEBAR_CONTAINER_ID;
+    draggable.append(container);
+
+    const loader = document.createElement('div');
+    loader.id = TOP_CHAT_SIDEBAR_LOADER_ID;
+    loader.classList.add('displayNone');
+    loader.innerHTML = '<i class="fa-2x fa-solid fa-gear fa-spin"></i>';
+    draggable.append(loader);
+
+    movingDivs.append(fragment);
+    loadMovingUIState();
+    dragElement($(draggable));
+    return draggable;
+}
+
+async function populateTopChatSidebar() {
+    const sidebar = ensureTopChatSidebar();
+    const container = /** @type {HTMLDivElement | null} */ (document.getElementById(TOP_CHAT_SIDEBAR_CONTAINER_ID));
+    const loader = /** @type {HTMLDivElement | null} */ (document.getElementById(TOP_CHAT_SIDEBAR_LOADER_ID));
+    if (!sidebar || !container || !loader) {
+        return;
+    }
+
+    if (!sidebar.classList.contains('visible')) {
+        container.innerHTML = '';
+        loader.classList.add('displayNone');
+        return;
+    }
+
+    const processToken = uuidv4();
+    topChatSidebarPopulateToken = processToken;
+    const currentChatId = normalizeTopChatFileName(getCurrentChatId());
+    const previousScrollTop = container.scrollTop;
+
+    loader.classList.remove('displayNone');
+    container.innerHTML = '';
+
+    const chats = (await getTopChatChatFiles()).map(chat => ({
+        ...chat,
+        file_name: normalizeTopChatFileName(chat.file_name),
+        mes: String(chat.mes ?? '').replace(/\s+/g, ' ').trim() || '[The chat is empty]',
+        last_mes: timestampToMoment(chat.last_mes || Date.now()),
+    })).sort((a, b) => sortMoments(a.last_mes, b.last_mes));
+
+    if (topChatSidebarPopulateToken !== processToken) {
+        return;
+    }
+
+    if (!chats.length) {
+        const emptyState = document.createElement('div');
+        emptyState.className = 'top_chat_sidebar_empty';
+        emptyState.textContent = 'No chats available.';
+        container.append(emptyState);
+        loader.classList.add('displayNone');
+        return;
+    }
+
+    for (const chat of chats) {
+        const item = document.createElement('div');
+        item.className = 'top_chat_sidebar_item';
+        item.classList.toggle('selected', chat.file_name === currentChatId);
+        item.addEventListener('click', async () => {
+            if (chat.file_name === currentChatId || item.classList.contains('selected')) {
+                return;
+            }
+
+            await openTopChatById(chat.file_name);
+        });
+
+        const nameRow = document.createElement('div');
+        nameRow.className = 'top_chat_sidebar_name_row';
+
+        const name = document.createElement('div');
+        name.className = 'top_chat_sidebar_name';
+        name.textContent = chat.file_name;
+        name.title = chat.file_name;
+
+        const date = document.createElement('small');
+        date.className = 'top_chat_sidebar_date';
+        date.textContent = chat.last_mes.format('l');
+        date.title = chat.last_mes.format('LL LT');
+        nameRow.append(name, date);
+
+        const messageRow = document.createElement('div');
+        messageRow.className = 'top_chat_sidebar_message_row';
+
+        const message = document.createElement('div');
+        message.className = 'top_chat_sidebar_message';
+        message.textContent = chat.mes;
+        message.title = chat.mes;
+
+        const stats = document.createElement('div');
+        stats.className = 'top_chat_sidebar_stats';
+
+        const counter = document.createElement('div');
+        counter.className = 'top_chat_sidebar_counter';
+
+        const counterIcon = document.createElement('i');
+        counterIcon.className = 'fa-solid fa-comment fa-xs';
+
+        const counterText = document.createElement('small');
+        counterText.textContent = String(chat.chat_items ?? 0);
+        counter.append(counterIcon, counterText);
+
+        const fileSize = document.createElement('small');
+        fileSize.className = 'top_chat_sidebar_file_size';
+        fileSize.textContent = String(chat.file_size ?? '');
+
+        stats.append(counter, fileSize);
+        messageRow.append(message, stats);
+
+        item.append(nameRow, messageRow);
+        container.append(item);
+    }
+
+    container.scrollTop = previousScrollTop;
+    const selectedItem = /** @type {HTMLElement | null} */ (container.querySelector('.selected'));
+    if (selectedItem && (selectedItem.offsetTop < container.scrollTop || selectedItem.offsetTop > container.scrollTop + container.clientHeight)) {
+        container.scrollTop = Math.max(0, selectedItem.offsetTop - container.clientHeight / 2);
+    }
+
+    loader.classList.add('displayNone');
+}
+
+async function toggleTopChatSidebar(forceVisible = undefined, { animate = true, save = true } = {}) {
+    const sidebar = ensureTopChatSidebar();
+    if (!sidebar) {
+        return;
+    }
+
+    const shouldShow = typeof forceVisible === 'boolean' ? forceVisible : !sidebar.classList.contains('visible');
+    topChatButtons.toggleSidebar?.classList.toggle('active', shouldShow);
+
+    if (shouldShow) {
+        sidebar.classList.add('visible');
+        if (animate) {
+            $(sidebar).stop(true, true).fadeIn(animation_duration);
+        } else {
+            $(sidebar).show();
+        }
+        await populateTopChatSidebar();
+    } else {
+        sidebar.classList.remove('visible');
+        if (animate) {
+            $(sidebar).stop(true, true).fadeOut(animation_duration);
+        } else {
+            $(sidebar).hide();
+        }
+        const container = document.getElementById(TOP_CHAT_SIDEBAR_CONTAINER_ID);
+        if (container) {
+            container.innerHTML = '';
+        }
+    }
+
+    if (save) {
+        saveTopChatPanelsState();
+    }
+}
+
+function syncTopChatConnectionProfilesSelect() {
+    if (!topChatConnectionProfilesSelect) {
+        return;
+    }
+
+    const mainSelect = /** @type {HTMLSelectElement | null} */ (document.getElementById('connection_profiles'));
+    if (mainSelect) {
+        topChatConnectionProfilesSelect.innerHTML = mainSelect.innerHTML;
+        topChatConnectionProfilesSelect.value = mainSelect.value;
+        topChatConnectionProfilesSelect.disabled = mainSelect.disabled;
+        return;
+    }
+
+    topChatConnectionProfilesSelect.innerHTML = '<option selected>No connection profiles</option>';
+    topChatConnectionProfilesSelect.disabled = true;
+}
+
+function getSelectOptionLabel(select, value) {
+    if (!(select instanceof HTMLSelectElement)) {
+        return '';
+    }
+
+    return Array.from(select.options).find(option => option.value === String(value))?.textContent?.trim() ?? '';
+}
+
+function getTopChatCurrentApiLabel() {
+    const source = getGeneratingApi();
+    const sourceSelect = /** @type {HTMLSelectElement | null} */ (document.getElementById('chat_completion_source'));
+    return getSelectOptionLabel(sourceSelect, source) || source;
+}
+
+function getTopChatCurrentModelLabel() {
+    const model = getChatCompletionModel();
+    if (!model) {
+        return String(online_status);
+    }
+
+    const apiBlock = document.getElementById('rm_api_block');
+    if (apiBlock) {
+        for (const select of apiBlock.querySelectorAll('select')) {
+            const label = getSelectOptionLabel(/** @type {HTMLSelectElement} */ (select), model);
+            if (label) {
+                return label;
+            }
+        }
+    }
+
+    return model;
+}
+
+async function updateTopChatConnectionProfileIcon() {
+    if (!topChatConnectionProfilesModelIcon) {
+        return;
+    }
+
+    topChatConnectionProfilesModelIcon.replaceChildren();
+    if (online_status === 'no_connection') {
+        return;
+    }
+
+    const modelName = getGeneratingApi();
+    if (!modelName) {
+        return;
+    }
+
+    await new Promise((resolve) => {
+        let settled = false;
+        const finish = () => {
+            if (!settled) {
+                settled = true;
+                resolve();
+            }
+        };
+
+        const image = new Image();
+        image.classList.add('icon-svg');
+        image.src = `/img/${modelName}.svg`;
+        image.onload = async () => {
+            topChatConnectionProfilesModelIcon.replaceChildren(image);
+            try {
+                await SVGInject(image);
+            } catch {
+                // Ignore broken SVG injections and keep the fallback image.
+            }
+            finish();
+        };
+        image.onerror = finish;
+        setTimeout(finish, 500);
+    });
+}
+
+async function refreshTopChatConnectionProfiles() {
+    syncTopChatConnectionProfilesSelect();
+
+    if (!topChatConnectionProfiles || !topChatConnectionProfilesStatus) {
+        return;
+    }
+
+    if (!topChatConnectionProfiles.classList.contains('visible')) {
+        return;
+    }
+
+    if (online_status === 'no_connection') {
+        topChatConnectionProfilesStatus.classList.add('offline');
+        topChatConnectionProfilesStatus.textContent = 'No connection...';
+        topChatConnectionProfilesModelIcon?.replaceChildren();
+        return;
+    }
+
+    topChatConnectionProfilesStatus.classList.remove('offline');
+    topChatConnectionProfilesStatus.textContent = `${getTopChatCurrentApiLabel()} - ${getTopChatCurrentModelLabel()}`;
+    await updateTopChatConnectionProfileIcon();
+}
+
+function bindTopChatConnectionProfilesSelect() {
+    if (isTopChatConnectionProfilesBound) {
+        syncTopChatConnectionProfilesSelect();
+        return;
+    }
+
+    waitUntilCondition(() => document.getElementById('connection_profiles') !== null, debounce_timeout.extended, 10).then(() => {
+        const mainSelect = /** @type {HTMLSelectElement | null} */ (document.getElementById('connection_profiles'));
+        if (!mainSelect || isTopChatConnectionProfilesBound) {
+            return;
+        }
+
+        isTopChatConnectionProfilesBound = true;
+        syncTopChatConnectionProfilesSelect();
+
+        topChatConnectionProfilesSelect?.addEventListener('change', () => {
+            mainSelect.value = topChatConnectionProfilesSelect.value;
+            mainSelect.dispatchEvent(new Event('change'));
+        });
+
+        mainSelect.addEventListener('change', () => {
+            syncTopChatConnectionProfilesSelect();
+            void refreshTopChatConnectionProfiles();
+        });
+
+        const observer = new MutationObserver(() => {
+            syncTopChatConnectionProfilesSelect();
+            void refreshTopChatConnectionProfiles();
+        });
+        observer.observe(mainSelect, { childList: true, subtree: true });
+    }).catch(() => {
+        syncTopChatConnectionProfilesSelect();
+    });
+}
+
+async function toggleTopChatConnectionProfiles(forceVisible = undefined, { save = true } = {}) {
+    if (!topChatConnectionProfiles) {
+        return;
+    }
+
+    const shouldShow = typeof forceVisible === 'boolean' ? forceVisible : !topChatConnectionProfiles.classList.contains('visible');
+    topChatConnectionProfiles.classList.toggle('visible', shouldShow);
+    topChatButtons.toggleConnectionProfiles?.classList.toggle('active', shouldShow);
+
+    if (shouldShow) {
+        await refreshTopChatConnectionProfiles();
+    }
+
+    if (save) {
+        saveTopChatPanelsState();
+    }
+}
+
+async function refreshTopChatBarState() {
+    const currentChatId = normalizeTopChatFileName(getCurrentChatId());
+    const hasChat = Boolean(currentChatId);
+    setTopChatAvailabilityState(hasChat);
+
+    if (!topChatBarChatNameSelect) {
+        return;
+    }
+
+    topChatBarChatNameSelect.innerHTML = '';
+    if (!hasChat) {
+        topChatBarChatNameSelect.innerHTML = '<option selected>No chat selected</option>';
+        topChatBarChatNameSelect.disabled = true;
+        await populateTopChatSidebar();
+        return;
+    }
+
+    const entries = await getTopChatSelectorEntries();
+    if (!entries.length) {
+        topChatBarChatNameSelect.innerHTML = `<option selected>${currentChatId}</option>`;
+        topChatBarChatNameSelect.disabled = true;
+    } else {
+        for (const entry of entries) {
+            const option = document.createElement('option');
+            option.value = entry;
+            option.textContent = entry;
+            option.selected = entry === currentChatId;
+            topChatBarChatNameSelect.append(option);
+        }
+
+        topChatBarChatNameSelect.disabled = false;
+    }
+
+    await populateTopChatSidebar();
+}
+
+function bindTopChatButton(element, handler) {
+    if (!element) {
+        return;
+    }
+
+    element.addEventListener('click', () => {
+        if (element.classList.contains('not-in-chat')) {
+            return;
+        }
+
+        void handler();
+    });
+
+    element.addEventListener('keydown', (event) => {
+        if (event.key === 'Enter' || event.key === ' ') {
+            event.preventDefault();
+            element.click();
+        }
+    });
+}
+
+async function renameCurrentTopChat() {
+    const currentChatId = normalizeTopChatFileName(getCurrentChatId());
+    if (!currentChatId) {
+        return;
+    }
+
+    const popupText = await renderTemplateAsync('chatRename');
+    const newChatName = await callGenericPopup(popupText, POPUP_TYPE.INPUT, currentChatId);
+    if (!newChatName || typeof newChatName !== 'string' || newChatName === currentChatId) {
+        return;
+    }
+
+    await renameChat(currentChatId, String(newChatName));
+}
+
+async function deleteCurrentTopChat() {
+    const currentChatId = normalizeTopChatFileName(getCurrentChatId());
+    if (!currentChatId) {
+        return;
+    }
+
+    const confirm = await callGenericPopup(t`Delete the Chat File?`, POPUP_TYPE.CONFIRM);
+    if (!confirm) {
+        return;
+    }
+
+    if (selected_group) {
+        await deleteGroupChatByName(selected_group, currentChatId);
+        return;
+    }
+
+    if (this_chid !== undefined) {
+        await deleteCharacterChatByName(String(this_chid), currentChatId);
+    }
+}
+
+function restoreTopChatPanelsState() {
+    const rawState = localStorage.getItem(TOP_CHAT_PANELS_STATE_KEY);
+    if (!rawState) {
+        return;
+    }
+
+    try {
+        const state = JSON.parse(rawState);
+        if (state?.sidebarVisible) {
+            void toggleTopChatSidebar(true, { animate: false, save: false });
+        }
+
+        if (state?.connectionProfilesVisible) {
+            void toggleTopChatConnectionProfiles(true, { save: false });
+        }
+    } catch {
+        // Ignore malformed persisted state.
+    }
+}
+
+function initTopChatUi() {
+    if (!topChatBarElement || !topChatBarChatNameSelect) {
+        return;
+    }
+
+    ensureTopChatSidebar();
+
+    bindTopChatButton(topChatButtons.toggleSidebar, async () => {
+        await toggleTopChatSidebar();
+    });
+    bindTopChatButton(topChatButtons.toggleConnectionProfiles, async () => {
+        await toggleTopChatConnectionProfiles();
+    });
+    bindTopChatButton(topChatButtons.chatManager, async () => {
+        document.getElementById('option_select_chat')?.click();
+    });
+    bindTopChatButton(topChatButtons.newChat, async () => {
+        document.getElementById('option_start_new_chat')?.click();
+    });
+    bindTopChatButton(topChatButtons.renameChat, renameCurrentTopChat);
+    bindTopChatButton(topChatButtons.deleteChat, deleteCurrentTopChat);
+    bindTopChatButton(topChatButtons.closeChat, async () => {
+        document.getElementById('option_close_chat')?.click();
+    });
+
+    topChatBarChatNameSelect.addEventListener('change', async () => {
+        await openTopChatById(topChatBarChatNameSelect.value);
+    });
+
+    const refreshTopChatUiDebounced = debounce(() => {
+        void refreshTopChatBarState();
+    }, debounce_timeout.short);
+    const refreshTopChatConnectionProfilesDebounced = debounce(() => {
+        void refreshTopChatConnectionProfiles();
+    }, debounce_timeout.short);
+
+    eventSource.on(event_types.CHAT_CHANGED, refreshTopChatUiDebounced);
+    eventSource.on(event_types.CHAT_DELETED, refreshTopChatUiDebounced);
+    eventSource.on(event_types.GROUP_CHAT_DELETED, refreshTopChatUiDebounced);
+    eventSource.on(event_types.ONLINE_STATUS_CHANGED, refreshTopChatConnectionProfilesDebounced);
+    eventSource.on(event_types.CONNECTION_PROFILE_LOADED, refreshTopChatConnectionProfilesDebounced);
+    eventSource.on(event_types.CHATCOMPLETION_SOURCE_CHANGED, refreshTopChatConnectionProfilesDebounced);
+    eventSource.on(event_types.CHATCOMPLETION_MODEL_CHANGED, refreshTopChatConnectionProfilesDebounced);
+    eventSource.on(event_types.MAIN_API_CHANGED, refreshTopChatConnectionProfilesDebounced);
+    eventSource.once(event_types.APP_READY, () => {
+        bindTopChatConnectionProfilesSelect();
+        restoreTopChatPanelsState();
+        void refreshTopChatConnectionProfiles();
+    });
+
+    void refreshTopChatBarState();
+    syncTopChatConnectionProfilesSelect();
+}
+
 export const talkativeness_default = 0.5;
 export const depth_prompt_depth_default = 4;
 export const depth_prompt_role_default = 'system';
@@ -652,6 +1267,27 @@ export const CHAT_COMPLETIONS_ONLY = true;
 
 //css
 var css_send_form_display = $('<div id=send_form></div>').css('display');
+const TOP_CHAT_PANELS_STATE_KEY = 'topBarPanelsState';
+const TOP_CHAT_SIDEBAR_ID = 'top_chat_sidebar';
+const TOP_CHAT_SIDEBAR_CONTAINER_ID = 'top_chat_sidebar_container';
+const TOP_CHAT_SIDEBAR_LOADER_ID = 'top_chat_sidebar_loader';
+const topChatBarElement = /** @type {HTMLDivElement} */ (document.getElementById('top_chat_bar'));
+const topChatBarChatNameSelect = /** @type {HTMLSelectElement} */ (document.getElementById('top_chat_bar_chat_name'));
+const topChatConnectionProfiles = /** @type {HTMLDivElement} */ (document.getElementById('top_chat_connection_profiles'));
+const topChatConnectionProfilesSelect = /** @type {HTMLSelectElement} */ (document.getElementById('top_chat_connection_profiles_select'));
+const topChatConnectionProfilesStatus = /** @type {HTMLDivElement} */ (document.getElementById('top_chat_connection_profiles_status'));
+const topChatConnectionProfilesModelIcon = /** @type {HTMLDivElement} */ (document.getElementById('top_chat_connection_profiles_model_icon'));
+const topChatButtons = {
+    toggleSidebar: /** @type {HTMLDivElement} */ (document.getElementById('top_chat_bar_toggle_sidebar')),
+    toggleConnectionProfiles: /** @type {HTMLDivElement} */ (document.getElementById('top_chat_bar_toggle_connection_profiles')),
+    chatManager: /** @type {HTMLDivElement} */ (document.getElementById('top_chat_bar_chat_manager')),
+    newChat: /** @type {HTMLDivElement} */ (document.getElementById('top_chat_bar_new_chat')),
+    renameChat: /** @type {HTMLDivElement} */ (document.getElementById('top_chat_bar_rename_chat')),
+    deleteChat: /** @type {HTMLDivElement} */ (document.getElementById('top_chat_bar_delete_chat')),
+    closeChat: /** @type {HTMLDivElement} */ (document.getElementById('top_chat_bar_close_chat')),
+};
+let isTopChatConnectionProfilesBound = false;
+let topChatSidebarPopulateToken = '';
 
 export let token;
 
@@ -785,6 +1421,7 @@ async function firstLoadInit() {
     initBulkEdit();
     initReasoning();
     initWelcomeScreen();
+    initTopChatUi();
     await initScrapers();
     initDataMaid();
     initItemizedPrompts();

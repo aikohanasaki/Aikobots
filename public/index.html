@@ -5320,6 +5320,26 @@
     </div>
     <div id="sheld">
         <div id="sheldheader" class="fa-solid fa-grip drag-grabber"></div>
+        <div id="top_chat_bar">
+            <div id="top_chat_bar_toggle_sidebar" class="top_chat_bar_button fa-fw fa-solid fa-box-archive" title="Toggle chat sidebar" tabindex="0"></div>
+            <div id="top_chat_bar_toggle_connection_profiles" class="top_chat_bar_button fa-fw fa-solid fa-plug" title="Show connection profiles" tabindex="0"></div>
+            <select id="top_chat_bar_chat_name" title="Current chat" disabled>
+                <option selected>No chat selected</option>
+            </select>
+            <div id="top_chat_bar_chat_manager" class="top_chat_bar_button fa-fw fa-solid fa-address-book" title="Manage chat files" tabindex="0"></div>
+            <div id="top_chat_bar_new_chat" class="top_chat_bar_button fa-fw fa-solid fa-comments" title="Start new chat" tabindex="0"></div>
+            <div id="top_chat_bar_rename_chat" class="top_chat_bar_button fa-fw fa-solid fa-edit" title="Rename chat" tabindex="0"></div>
+            <div id="top_chat_bar_delete_chat" class="top_chat_bar_button fa-fw fa-solid fa-trash" title="Delete chat" tabindex="0"></div>
+            <div id="top_chat_bar_close_chat" class="top_chat_bar_button fa-fw fa-solid fa-times" title="Close chat" tabindex="0"></div>
+        </div>
+        <div id="top_chat_connection_profiles">
+            <div id="top_chat_connection_profiles_icon" class="fa-fw fa-solid fa-network-wired"></div>
+            <select id="top_chat_connection_profiles_select" title="Switch connection profile" disabled>
+                <option selected>No connection profiles</option>
+            </select>
+            <div id="top_chat_connection_profiles_status" class="offline">No connection...</div>
+            <div id="top_chat_connection_profiles_model_icon"></div>
+        </div>
         <div id="chat">
         </div>
         <div id="form_sheld">
