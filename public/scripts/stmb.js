@@ -102,6 +102,7 @@ import {
 import {
     duplicateTemplate,
     exportSidePromptsJson,
+    getCachedTemplateSnapshot,
     getTemplate,
     importSidePromptsJson,
     listTemplates,
@@ -156,15 +157,24 @@ function findCachedSidePromptByName(name, entries = sidePromptNameCache) {
     return entries.find(entry => entry.name.toLowerCase() === target) || null;
 }
 
+function getCurrentSidePromptAutocompleteEntries(options = {}) {
+    const { manualOnly = false } = options;
+    const liveEntries = getCachedTemplateSnapshot().map(template => ({
+        name: template.name,
+        runtimeMacros: collectTemplateRuntimeMacros(template),
+        manualEnabled: isManualSidePromptEnabled(template),
+    }));
+    const entries = liveEntries.length > 0 ? liveEntries : sidePromptNameCache;
+    return manualOnly ? entries.filter(entry => entry.manualEnabled) : entries;
+}
+
 function buildSidePromptNameSuggestions(rawInput, options = {}) {
     const { manualOnly = false } = options;
     const input = String(rawInput || '').trimStart();
     const filter = input.startsWith('"') || input.startsWith('\'')
         ? input.slice(1).toLowerCase()
         : input.toLowerCase();
-    const entries = manualOnly
-        ? sidePromptNameCache.filter(entry => entry.manualEnabled)
-        : sidePromptNameCache;
+    const entries = getCurrentSidePromptAutocompleteEntries({ manualOnly });
 
     return entries.map(entry => new SlashCommandEnumValue(
         formatQuotedSidePromptName(entry.name),
@@ -195,9 +205,7 @@ const sidePromptTemplateEnumProvider = (executor, options = {}) => {
     const { manualOnly = false } = options;
     const rawInput = String(executor?.unnamedArgumentList?.[0]?.value || '');
     const draft = parseSidePromptCommandInput(rawInput, { allowIncomplete: true });
-    const entries = manualOnly
-        ? sidePromptNameCache.filter(entry => entry.manualEnabled)
-        : sidePromptNameCache;
+    const entries = getCurrentSidePromptAutocompleteEntries({ manualOnly });
 
     if (draft.nameClosed) {
         const entry = findCachedSidePromptByName(draft.name, entries);

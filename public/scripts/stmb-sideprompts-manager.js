@@ -300,6 +300,21 @@ export async function listTemplates() {
     return templates;
 }
 
+export function getCachedTemplateSnapshot() {
+    const prompts = cachedDoc?.prompts;
+    if (!prompts || typeof prompts !== 'object') {
+        return [];
+    }
+
+    const templates = Object.values(prompts);
+    templates.sort((left, right) => {
+        const leftUpdated = left.updatedAt || left.createdAt || '';
+        const rightUpdated = right.updatedAt || right.createdAt || '';
+        return rightUpdated.localeCompare(leftUpdated);
+    });
+    return templates;
+}
+
 export async function getTemplate(key) {
     const data = await loadSidePrompts();
     return data.prompts?.[String(key || '')] || null;
