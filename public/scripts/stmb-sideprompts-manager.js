@@ -127,8 +127,8 @@ function getBuiltinTemplates() {
     const createdAt = nowIso();
     const prompts = {};
 
-    const define = (name, prompt, responseFormat, settings, triggers) => {
-        const key = safeSlug(name);
+    const define = (name, prompt, responseFormat, settings, triggers, keyOverride = null) => {
+        const key = String(keyOverride || safeSlug(name)).trim() || safeSlug(name);
         prompts[key] = {
             key,
             name,
@@ -159,6 +159,7 @@ function getBuiltinTemplates() {
             },
         },
         { onAfterMemory: { enabled: true }, commands: ['sideprompt'] },
+        'cast',
     );
 
     define(
@@ -221,6 +222,26 @@ function getBuiltinTemplates() {
     return prompts;
 }
 
+function normalizeBuiltinTemplateKeys(document) {
+    const prompts = document?.prompts;
+    if (!prompts || typeof prompts !== 'object') {
+        return false;
+    }
+
+    if (!prompts.cast && prompts['cast-of-characters']) {
+        const legacy = prompts['cast-of-characters'];
+        prompts.cast = {
+            ...legacy,
+            key: 'cast',
+            updatedAt: nowIso(),
+        };
+        delete prompts['cast-of-characters'];
+        return true;
+    }
+
+    return false;
+}
+
 function createBaseDoc() {
     return {
         version: 2,
@@ -273,6 +294,9 @@ export async function loadSidePrompts() {
                 await saveDoc(data);
             } else {
                 data = parsed;
+                if (normalizeBuiltinTemplateKeys(data)) {
+                    await saveDoc(data);
+                }
             }
         }
     } catch {

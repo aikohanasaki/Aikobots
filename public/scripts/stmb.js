@@ -1645,7 +1645,7 @@ function validateSidePromptRuntimeMacroTriggerConfig({ name, prompt, responseFor
 }
 
 function isBuiltinSidePromptKey(key) {
-    return ['plotpoints', 'status', 'cast-of-characters', 'assess'].includes(String(key || '').trim());
+    return ['plotpoints', 'status', 'cast', 'assess'].includes(String(key || '').trim());
 }
 
 function buildSidePromptManagerRowsHtml(templates, selectedTemplateKey = null) {
@@ -2826,7 +2826,7 @@ async function showMainEntryPopup() {
                 action: async () => {
                     try {
                         const profileIndex = Number(popup.dlg?.querySelector('#stmb-settings-profile-select')?.value ?? stmbSettings.defaultProfile ?? 0);
-                        await createMemoryFromRange(getCurrentSceneRange(), { profileIndex });
+                        await initiateMemoryCreation({ range: getCurrentSceneRange(), profileIndex });
                     } catch (error) {
                         showSlashCommandError(error?.message || 'Failed to create memory.', error);
                     }
@@ -3612,11 +3612,14 @@ function buildSceneRequest(range) {
     const characterName = selected_group
         ? String(group?.name || name2 || '')
         : String(name2 || context?.characters?.[context.characterId]?.name || '');
+    const chatId = selected_group
+        ? String(group?.chat_id || context?.chatId || getCurrentChatId() || '')
+        : String(context?.chatId || getCurrentChatId() || '');
 
     return {
         sceneStart: range.sceneStart,
         sceneEnd: range.sceneEnd,
-        chatId: context?.chatId || getCurrentChatId() || '',
+        chatId,
         characterName,
         userName: String(name1 || ''),
     };
@@ -3688,28 +3691,6 @@ function validateMemoryCreationContext() {
     }
 
     return { context, group, isGroupChat };
-}
-
-async function runMemoryCreationPreflight(range) {
-    const memoryContext = validateMemoryCreationContext();
-    if (!memoryContext) {
-        return false;
-    }
-
-    if (hasActiveStmbTasks()) {
-        toastr.info('Memory creation is already in progress', 'STMB');
-        return false;
-    }
-
-    if (getModuleSettings().unhideBeforeMemory) {
-        try {
-            await executeSlashCommands(`/unhide ${range.sceneStart}-${range.sceneEnd}`);
-        } catch (error) {
-            console.warn('STMB /unhide preflight failed or is unavailable:', error);
-        }
-    }
-
-    return true;
 }
 
 async function resolveAutoSummaryLorebook() {
@@ -3822,7 +3803,7 @@ async function checkAutoSummaryTrigger() {
     }
 
     setSceneRange(sceneStart, sceneEnd);
-    await createMemoryFromRange({ sceneStart, sceneEnd }, { keepSceneMarkers: false });
+    await initiateMemoryCreation({ range: { sceneStart, sceneEnd }, keepSceneMarkers: false });
 }
 
 function validateSceneMarkers() {
@@ -3852,21 +3833,6 @@ function validateSceneMarkers() {
         }
     }
 
-    if (Number.isInteger(state.highestMemoryProcessed)) {
-        if (chatLength === 0) {
-            delete state.highestMemoryProcessed;
-            delete state.highestMemoryProcessedManuallySet;
-            changed = true;
-        } else if (state.highestMemoryProcessed < 0) {
-            delete state.highestMemoryProcessed;
-            delete state.highestMemoryProcessedManuallySet;
-            changed = true;
-        } else if (state.highestMemoryProcessed >= chatLength) {
-            state.highestMemoryProcessed = chatLength - 1;
-            changed = true;
-        }
-    }
-
     if (changed) {
         saveMetadataDebounced();
         refreshOpenSettingsPopupSceneState().catch(error => {
@@ -3887,44 +3853,54 @@ function handleMessageDeletion(deletedId) {
     let newStart = Number.isInteger(state.sceneStart) ? state.sceneStart : null;
     let newEnd = Number.isInteger(state.sceneEnd) ? state.sceneEnd : null;
     let changed = false;
+    let toastrMessage = '';
 
     if (newStart === id && newEnd === id) {
         newStart = null;
         newEnd = null;
         changed = true;
+        toastrMessage = 'Scene cleared due to start marker deletion';
     } else if (newStart !== null && newEnd !== null) {
         if (id < newStart) {
             newStart--;
             newEnd--;
             changed = true;
+            toastrMessage = 'Scene markers adjusted due to message deletion.';
         } else if (id === newStart) {
             newStart = null;
             if (newEnd > id) {
                 newEnd--;
             }
             changed = true;
+            toastrMessage = 'Scene end point cleared due to message deletion';
         } else if (id > newStart && id < newEnd) {
             newEnd--;
             changed = true;
+            toastrMessage = 'Scene markers adjusted due to message deletion.';
         } else if (id === newEnd) {
             newEnd = null;
             changed = true;
+            toastrMessage = 'Scene end point cleared due to message deletion';
         }
     } else if (newStart !== null) {
         if (id < newStart) {
             newStart--;
             changed = true;
+            toastrMessage = 'Scene markers adjusted due to message deletion.';
         } else if (id === newStart) {
             newStart = null;
             changed = true;
+            toastrMessage = 'Scene end point cleared due to message deletion';
         }
     } else if (newEnd !== null) {
         if (id < newEnd) {
             newEnd--;
             changed = true;
+            toastrMessage = 'Scene markers adjusted due to message deletion.';
         } else if (id === newEnd) {
             newEnd = null;
             changed = true;
+            toastrMessage = 'Scene end point cleared due to message deletion';
         }
     }
 
@@ -3932,16 +3908,8 @@ function handleMessageDeletion(deletedId) {
         state.sceneStart = newStart;
         state.sceneEnd = newEnd;
         saveMetadataDebounced();
-    }
-
-    if (Number.isInteger(state.highestMemoryProcessed)) {
-        if (id < state.highestMemoryProcessed) {
-            state.highestMemoryProcessed--;
-            saveMetadataDebounced();
-        } else if (id === state.highestMemoryProcessed) {
-            delete state.highestMemoryProcessed;
-            delete state.highestMemoryProcessedManuallySet;
-            saveMetadataDebounced();
+        if (getModuleSettings().showNotifications) {
+            toastr.warning(toastrMessage, 'STMB');
         }
     }
 
@@ -3978,6 +3946,20 @@ async function ensureLorebookName() {
         lorebookNameTemplate: getModuleSettings().lorebookNameTemplate || 'LTM - {{char}} - {{chat}}',
         createContext: 'chat',
     });
+}
+
+async function validateLorebookPreflight() {
+    try {
+        await ensureLorebookName();
+        return true;
+    } catch (error) {
+        if (isStmbLorebookHandledError(error)) {
+            return false;
+        }
+
+        toastr.error(`No lorebook available: ${String(error?.message || 'Unknown lorebook error')}`, 'STMB');
+        return false;
+    }
 }
 
 function getMemorySchema() {
@@ -4709,11 +4691,7 @@ async function commitSummaryCandidates(summaryCandidates, {
     return createdEntries;
 }
 
-async function createMemoryFromRange(range, options = {}) {
-    if (hasActiveStmbTasks()) {
-        throw new Error('Memory creation is already in progress');
-    }
-
+async function executeMemoryCreationFromRange(range, options = {}) {
     assertRangeWithinCurrentChat(range);
 
     const lorebookName = await ensureLorebookName();
@@ -4799,6 +4777,39 @@ async function createMemoryFromRange(range, options = {}) {
     } finally {
         cleanup();
     }
+}
+
+async function initiateMemoryCreation(options = {}) {
+    const range = options?.range ?? getCurrentSceneRange();
+    const keepSceneMarkers = Boolean(options?.keepSceneMarkers);
+    const profileIndex = options?.profileIndex ?? null;
+    const notifyIfBusy = Boolean(options?.notifyIfBusy);
+
+    assertRangeWithinCurrentChat(range);
+
+    if (!validateMemoryCreationContext()) {
+        return null;
+    }
+
+    if (hasActiveStmbTasks()) {
+        if (notifyIfBusy) {
+            toastr.info('Memory creation is already in progress', 'STMB');
+        }
+        return null;
+    }
+
+    if (getModuleSettings().unhideBeforeMemory) {
+        try {
+            await executeSlashCommands(`/unhide ${range.sceneStart}-${range.sceneEnd}`);
+        } catch (error) {
+            console.warn('STMB /unhide preflight failed or is unavailable:', error);
+        }
+    }
+
+    return executeMemoryCreationFromRange(range, {
+        keepSceneMarkers,
+        profileIndex,
+    });
 }
 
 export async function createSummaryForTier(targetTier, options = {}) {
@@ -4993,7 +5004,7 @@ async function createMemoryCommand() {
     }
 
     try {
-        await createMemoryFromRange(getCurrentSceneRange());
+        await initiateMemoryCreation({ range: getCurrentSceneRange() });
     } catch (error) {
         showSlashCommandError(error?.message || 'Failed to create memory.', error);
     }
@@ -5043,11 +5054,7 @@ async function sceneMemoryCommand(_, rangeText) {
         const group = selected_group ? groups.find(item => item.id === selected_group) : null;
         const groupSuffix = group?.name ? ` in group "${group.name}"` : '';
         toastr.info(`Scene set: messages ${range.sceneStart}-${range.sceneEnd}${groupSuffix}`, 'STMB');
-        const passedPreflight = await runMemoryCreationPreflight(range);
-        if (!passedPreflight) {
-            return '';
-        }
-        await createMemoryFromRange(range, { keepSceneMarkers: true });
+        await initiateMemoryCreation({ range, keepSceneMarkers: true });
     } catch (error) {
         showSlashCommandError(error?.message || 'Failed to create memory from scene range.', error);
     }
@@ -5062,7 +5069,10 @@ async function nextMemoryCommand() {
             return '';
         }
 
-        await ensureLorebookName();
+        const lorebookReady = await validateLorebookPreflight();
+        if (!lorebookReady) {
+            return '';
+        }
 
         if (chat.length === 0) {
             toastr.info('There are no messages to summarize yet.', 'STMB');
@@ -5071,7 +5081,7 @@ async function nextMemoryCommand() {
 
         const range = getNextMemoryRange();
         setSceneRange(range.sceneStart, range.sceneEnd);
-        await createMemoryFromRange(range, { keepSceneMarkers: true });
+        await initiateMemoryCreation({ range, keepSceneMarkers: true, notifyIfBusy: true });
     } catch (error) {
         if (error?.message === 'No new messages available for /nextmemory') {
             toastr.info('No new messages since the last memory.', 'STMB');

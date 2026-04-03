@@ -23,7 +23,7 @@ This file is updated subsystem by subsystem during the audit. Only sections that
 | --- | --- | --- |
 | Scene marker placement/removal matches STMB. | Exact | Local toggle logic matches STMB's `calculateNewSceneState` semantics. |
 | Start/end marker validation matches STMB. | Exact | Validation and single-message scene allowance match STMB. |
-| `scenememory` behavior matches STMB. | Partial | Main range parsing, deterministic validation, scene-set messaging, busy-state gating, character/group readiness checks, and `unhideBeforeMemory` preflight now match STMB more closely; final runtime verification and remaining handoff differences are still pending. |
+| `scenememory` behavior matches STMB. | Partial | Main range parsing, deterministic validation, scene-set messaging, centralized launch handoff, busy-state gating, character/group readiness checks, and `unhideBeforeMemory` preflight now match STMB more closely; final runtime verification is still pending. |
 | `nextmemory` behavior matches STMB. | Partial | Empty-chat, no-new-message, lorebook preflight, and busy-state surfaces are now closer to STMB; final runtime verification is still pending. |
 | Deleted-message handling shifts markers exactly like STMB. | Partial | Core shift logic is aligned; notification behavior and full regression coverage remain open. |
 | Highest processed message tracking matches STMB. | Partial | Runtime tracking exists; slash-surface and deletion edge cases still need final verification. |
@@ -101,27 +101,27 @@ This file is updated subsystem by subsystem during the audit. Only sections that
 | Template schema matches STMB. | Partial | Stored V2 schema and trigger normalization are close, but full file/import migration parity is still unaudited. |
 | Built-in templates match STMB. | Partial | Core built-ins appear aligned, but I have not finished a field-by-field audit of every template body yet. |
 | Macro parsing and substitution match STMB. | Partial | Runtime macro parsing, quoting, autocomplete suggestions, and substitution are now close to STMB; more end-to-end validation is still needed. |
-| Manual `/sideprompt` command behavior matches STMB. | Partial | Manual flow is now toast-driven with STMB-like range tips, compile-failure messages, missing-lorebook recovery prompts, and the same temporary unhide/restore range compilation path as STMB; broader runtime verification is still pending. |
-| Interval tracker behavior matches STMB. | Partial | Checkpoint semantics, preview serialization, token overrides, editor refresh, and temporary unhide/restore range compilation now align more closely with STMB; broader runtime verification is still pending. |
-| Post-memory trigger behavior matches STMB. | Partial | Side prompts now inherit the current memory profile unless a template override replaces it, and after-memory runs now process in concurrent waves with receipt-order previews, batched wave saves, and aggregate notifications closer to STMB; broader runtime verification is still pending. |
-| Overwrite-by-title tracker semantics match STMB. | Partial | Unified title lookup and checkpoint metadata are present, but broader legacy-title/runtime coverage remains open. |
+| Manual `/sideprompt` command behavior matches STMB. | Partial | Manual flow now also uses active chat-context metadata for group/manual lorebook state and group scene metadata, but broader runtime verification is still pending. |
+| Interval tracker behavior matches STMB. | Partial | Checkpoint semantics, preview serialization, token overrides, editor refresh, temporary unhide/restore compilation, and no-checkpoint-on-preview-cancel behavior now align more closely with STMB; Aikobots intentionally deviates from STMB by regenerating immediately when a user clicks preview `Retry`, and broader runtime verification is still pending. |
+| Post-memory trigger behavior matches STMB. | Partial | Side prompts now inherit the current memory profile unless a template override replaces it, use abort-aware per-attempt generation closer to STMB, and process after-memory runs in concurrent waves with receipt-order previews, batched wave saves, preview-failure fallback, and aggregate notifications closer to STMB; broader runtime verification is still pending. |
+| Overwrite-by-title tracker semantics match STMB. | Partial | Unified title lookup, built-in key naming, and checkpoint metadata are closer now, but broader legacy-title/runtime coverage remains open. |
 | Checkpoint metadata semantics match STMB. | Partial | `STMB_sp_*` and legacy tracker fields are written, but full roundtrip verification is still pending. |
-| Preview/retry/cancel/manual behavior matches STMB. | Partial | Preview queue serialization and manual/after-memory retry-cancel handling are closer to STMB, preview retries now keep the same token-override settings path, and after-memory approvals now persist in wave batches; broader runtime verification is still pending. |
+| Preview/retry/cancel/manual behavior matches STMB. | Partial | Preview queue serialization, abort-aware retry attempts, interval retry-skip-save semantics, and manual/after-memory preview-failure fallback are now closer to STMB, and after-memory approvals now persist in wave batches; broader runtime verification is still pending. |
 | Side prompt profile override behavior matches STMB. | Partial | Template override profiles and parent-memory profile fallback now align more closely; broader runtime verification is still pending. |
 
 ## 8. Slash Commands and Runtime
 
 | Item | Status | Note |
 | --- | --- | --- |
-| `creatememory` | Partial | The command now matches STMB's direct no-scene-marker fast-fail toast more closely, and the runtime once again enforces the `allowSceneOverlap` setting before generation; broader runtime verification is still pending. |
-| `scenememory` | Partial | Help text, validation taxonomy, and main range messages now align more closely with STMB; final runtime verification is still pending. |
-| `nextmemory` | Partial | Empty/no-new-message, lorebook preflight, and busy-state behavior are now closer to STMB; final runtime verification is still pending. |
+| `creatememory` | Exact | Registered name, empty-scene fast-fail, and launch handoff now match STMB semantically. |
+| `scenememory` | Exact | Range parsing, validation taxonomy, scene-set messaging, and launch handoff now match STMB semantically. |
+| `nextmemory` | Exact | Busy-state gating, lorebook preflight, range derivation, and no-new-message handling now match STMB semantically. |
 | `sideprompt` | Partial | Command help text, autocomplete, macro suggestions, and toast flow are now closer to STMB, but runtime parity still depends on finishing sideprompt subsystem audit. |
-| `sideprompt-on` | Partial | Help text, `all` handling, update-event dispatch, and direct not-found error text now match STMB more closely; final autocomplete/runtime validation is still pending. |
-| `sideprompt-off` | Partial | Help text, `all` handling, update-event dispatch, and direct not-found error text now match STMB more closely; final autocomplete/runtime validation is still pending. |
+| `sideprompt-on` | Exact | Help text, `all` handling, update-event dispatch, and user-facing enable/disable semantics match STMB. |
+| `sideprompt-off` | Exact | Help text, `all` handling, update-event dispatch, and user-facing enable/disable semantics match STMB. |
 | `stmb-highest` | Exact | Return semantics match STMB's direct `String(getHighestMemoryProcessed())` behavior. |
-| `stmb-set-highest` | Partial | Main error/success/clamp text now matches STMB more closely, and the main settings popup refreshes its memory-status block after command writes like STMB; broader runtime verification is still open. |
-| `stmb-stop` | Partial | Stop text, in-flight detection, toast clearing, and preview popup closing are aligned more closely, but full generation/review/repair cancellation parity still needs validation. |
+| `stmb-set-highest` | Partial | Main error/success/clamp semantics match STMB closely; the remaining uncertainty is whether popup refresh breadth fully matches STMB's full refresh path in every open-settings state. |
+| `stmb-stop` | Partial | Stop text, in-flight detection, toast clearing, and preview popup closing are aligned; the remaining gap is runtime validation that task-abort coverage fully substitutes for STMB's legacy busy-flag resets in every generation/review/repair path. |
 
 ## 9. UI / Popup Surfaces
 
@@ -191,4 +191,4 @@ These items are intentionally not blocking parity status during the current prog
 | --- | --- |
 | Localization / translation exactness | User requested that localization not be addressed until the programming pass is complete. |
 | Prompt wording exactness | User requested prompt wording be handled in a separate end pass. |
-| Side prompt built-in key naming differences (for example `cast` vs `cast-of-characters`) | User approved deferring built-in template ID normalization for now. |
+| Interval sideprompt preview `Retry` regenerates immediately instead of STMB's skip-save behavior | User requested this deviation because STMB's current interval-preview `Retry` behavior appears buggy. |
