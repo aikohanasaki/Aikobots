@@ -1285,14 +1285,41 @@ export function findOverlappingManagedMemoryEntry(entries, range) {
     return null;
 }
 
-function computeLorebookEntryOrder(lorebookSettings, orderNumber) {
-    const mode = String(lorebookSettings?.orderMode || 'auto').toLowerCase();
+function computeLorebookEntryOrder(lorebookSettings, orderNumber, options = {}) {
+    const modeRaw = String(lorebookSettings?.orderMode || 'auto').toLowerCase();
+    const mode = modeRaw === 'manual' || modeRaw === 'reverse' ? modeRaw : 'auto';
     const safeOrderNumber = Number.isFinite(Number(orderNumber)) ? Math.max(1, Math.trunc(Number(orderNumber))) : 1;
     const reverseStart = clampReverseStart(lorebookSettings?.reverseStart, 9999);
+    const rawOrder = mode === 'manual'
+        ? lorebookSettings?.orderValue
+        : mode === 'reverse'
+            ? reverseStart - (safeOrderNumber - 1)
+            : safeOrderNumber;
+    const rawOrderNum = Number(rawOrder);
+    const sourceLabel = mode === 'manual'
+        ? 'manual order value'
+        : mode === 'reverse'
+            ? `computed order (from ${options.orderNumberLabel || 'entry'} #${safeOrderNumber})`
+            : (options.orderNumberLabel || 'entry number');
 
-    if (mode === 'manual') return clampOrderValue(lorebookSettings?.orderValue, 100);
-    if (mode === 'reverse') return Math.min(9999, Math.max(0, reverseStart - (safeOrderNumber - 1)));
-    return safeOrderNumber;
+    let finalOrder = rawOrder;
+    if (!Number.isFinite(rawOrderNum)) {
+        finalOrder = mode === 'manual' ? 100 : safeOrderNumber;
+    } else if (rawOrderNum < 0 || rawOrderNum > 9999) {
+        const clampedNum = Math.min(9999, Math.max(0, Math.trunc(rawOrderNum)));
+        finalOrder = clampedNum;
+        if (typeof options.onOrderClamped === 'function') {
+            options.onOrderClamped({
+                source: sourceLabel,
+                requested: rawOrderNum,
+                clamped: clampedNum,
+            });
+        }
+    }
+
+    return Number.isFinite(Number(finalOrder))
+        ? Math.min(9999, Math.max(0, Math.trunc(Number(finalOrder))))
+        : (mode === 'manual' ? 100 : safeOrderNumber);
 }
 
 export function applyLorebookSettings(entry, profile, options = {}) {
@@ -1320,7 +1347,10 @@ export function applyLorebookSettings(entry, profile, options = {}) {
     if (config.position === 7 && config.outletName) target.outletName = config.outletName;
     else delete target.outletName;
 
-    target.order = computeLorebookEntryOrder(config, orderNumber);
+    target.order = computeLorebookEntryOrder(config, orderNumber, {
+        orderNumberLabel: options.orderNumberLabel || 'entry',
+        onOrderClamped: options.onOrderClamped,
+    });
     target.preventRecursion = config.preventRecursion;
     target.delayUntilRecursion = config.delayUntilRecursion;
     target.keysecondary = [];

@@ -4271,6 +4271,29 @@ async function applyPostSummarySaveLorebookEffects(lorebookName) {
     }
 }
 
+function showOrderClampNotifications(notifications = []) {
+    const seen = new Set();
+    for (const notification of Array.isArray(notifications) ? notifications : []) {
+        const source = String(notification?.source || '').trim();
+        const requested = Number(notification?.requested);
+        const clamped = Number(notification?.clamped);
+        if (!source || !Number.isFinite(requested) || !Number.isFinite(clamped)) {
+            continue;
+        }
+
+        const key = `${source}|${requested}|${clamped}`;
+        if (seen.has(key)) {
+            continue;
+        }
+        seen.add(key);
+
+        toastr.info(
+            `Order range is limited to 0-9999. Current ${source} is ${requested}; clamped to ${clamped}.`,
+            'STMB',
+        );
+    }
+}
+
 function normalizePreviewMemory(memoryObject) {
     return {
         title: String(memoryObject?.title || '').trim(),
@@ -4330,6 +4353,7 @@ async function saveMemoryObjectToLorebook(memoryObject, { lorebookName, range, c
     worldInfoCache.delete(lorebookName);
     await applyPostSaveLorebookEffects(lorebookName, range);
     throwIfStmbAborted(signal);
+    showOrderClampNotifications(result?.orderClampNotifications);
     setHighestProcessedMessageId(range.sceneEnd);
     if (!keepSceneMarkers || getModuleSettings().autoClearSceneAfterMemory) {
         clearSceneMarkers();
@@ -4623,6 +4647,7 @@ async function commitSummaryCandidates(summaryCandidates, {
     worldInfoCache.delete(lorebookName);
     const createdEntries = Array.isArray(result?.createdEntries) ? result.createdEntries : [];
     await applyPostSummarySaveLorebookEffects(lorebookName);
+    showOrderClampNotifications(result?.orderClampNotifications);
 
     if (getModuleSettings().showNotifications) {
         toastr.success(

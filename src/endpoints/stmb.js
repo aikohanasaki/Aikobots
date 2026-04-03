@@ -602,6 +602,7 @@ router.post('/save-memory', async (request, response) => {
             lorebookContext.storage,
         );
         ensureEntriesObject(lorebookData);
+        const orderClampNotifications = [];
 
         const sequenceNumber = getNextManagedMemorySequenceNumber(
             lorebookData.entries,
@@ -613,6 +614,7 @@ router.post('/save-memory', async (request, response) => {
         applyLorebookSettings(entry, profile, {
             orderNumber: parseSequenceFromTitle(entry.comment || entry.title || '') || 1,
             orderNumberLabel: 'memory',
+            onOrderClamped: notification => orderClampNotifications.push(notification),
         });
 
         const savedMetadata = await saveLorebookForManagement(request.user, metadata.name, lorebookData, metadata.storage);
@@ -622,6 +624,7 @@ router.post('/save-memory', async (request, response) => {
             storage: savedMetadata.storage,
             entry,
             sequenceNumber,
+            orderClampNotifications,
         });
     } catch (error) {
         return sendStmbError(response, error);
@@ -768,6 +771,7 @@ router.post('/commit-summaries', async (request, response) => {
 
         let nextSummaryNumber = getNextSummaryNumber(lorebookData, targetTier);
         const createdEntries = [];
+        const orderClampNotifications = [];
 
         for (const summaryCandidate of summaryCandidates) {
             const entry = createLorebookEntry(lorebookData);
@@ -780,6 +784,7 @@ router.post('/commit-summaries', async (request, response) => {
             applyLorebookSettings(entry, summaryEntrySettings, {
                 orderNumber: nextSummaryNumber,
                 orderNumberLabel: getSummaryTierLabel(targetTier).toLowerCase(),
+                onOrderClamped: notification => orderClampNotifications.push(notification),
             });
 
             if (disableOriginals) {
@@ -803,6 +808,7 @@ router.post('/commit-summaries', async (request, response) => {
                 lorebookName: savedMetadata.name,
                 storage: savedMetadata.storage,
                 createdEntries,
+                orderClampNotifications,
             });
         }
 
@@ -811,6 +817,7 @@ router.post('/commit-summaries', async (request, response) => {
             lorebookName: metadata.name,
             storage: metadata.storage,
             createdEntries,
+            orderClampNotifications,
         });
     } catch (error) {
         return sendStmbError(response, error);

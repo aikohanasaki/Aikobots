@@ -62,11 +62,22 @@ This file is updated subsystem by subsystem during the audit. Only sections that
 | --- | --- | --- |
 | Managed entry identification fields match STMB. | Partial | Memory saves now retain `stmemorybooks` and scene range fields only, but full side-prompt/tracker metadata audit is still pending. |
 | Title numbering and formats match STMB. | Exact | Stepped through against `addlore.js`: numbering conflict detection, format-aware extraction fallback, wrapped-token rendering, repeated token replacement, no-token format handling, and order derivation now follow STMB's decision path. |
-| Order calculation matches STMB. | Partial | Core order logic is aligned, but end-to-end persistence still needs more regression checks. |
+| Order calculation matches STMB. | Exact | Core order math, reverse/manual handling, and computed-order clamp notification semantics now follow STMB's `addlore.js` path. |
 | Metadata roundtrip matches STMB. | Partial | Extra memory-only `STMB_*` fields were removed; remaining roundtrip behavior still needs summary/side-prompt review. |
 | `STMemoryBooks` / `stmemorybooks` / scene range / tracker metadata fields match STMB. | Partial | Memory-entry fields are closer now; tracker/checkpoint fields remain unaudited. |
 | Secure vs user lorebook routing matches Aikobots expectations without breaking STMB semantics. | Partial | Routing is present through `/api/stmb`, and missing/unbound lorebooks now use an STMB-like recovery flow instead of hard-failing, but broader write-path verification is still pending. |
 | Cache invalidation/read-after-write behavior is correct. | Partial | Save paths now invalidate cache, memories reapply STMB-like refresh/auto-hide client effects, summary commits refresh the editor again, and sideprompt/tracker writes now refresh the editor more like STMB; runtime validation is still pending. |
+
+### `addlore.js` Focus Checklist
+
+| Item | Status | Disposition | Note |
+| --- | --- | --- | --- |
+| Title numbering helpers (`generateEntryTitle` / `getNextEntryNumber` / `extractNumberUsingFormat` / `extractNumberFromTitle`) | Exact | Closed | Stepped through against the reference; numbering conflict detection, format-aware fallback, wrapped-token rendering, repeated token replacement, no-token handling, and order derivation now match STMB semantics. |
+| Lorebook order computation (`computeLorebookEntryOrder` / `applyLorebookEntrySettings`) | Exact | Closed | Core order math, reverse/manual handling, and computed-order clamp notification semantics now match STMB's `addlore.js` behavior. |
+| Main save orchestration (`addMemoryToLorebook`) | Partial | Fix now | Local save is split between `/api/stmb/save-memory` and client post-save effects. Persistence is close, but this still needs end-to-end verification for notification timing, refresh-editor behavior, auto-hide behavior, highest-processed updates, and scene-marker clearing. |
+| Managed-entry helper semantics (`isMemoryEntry` / `identifyMemoryEntries`) | Partial | Fix now | STMB treats any `stmemorybooks === true` entry as a memory in its `addlore.js` helpers. Local numbering now matches that rule, but the reusable helper `identifyManagedMemoryEntries` still intentionally excludes summary/arc entries, so helper-level parity is not exact yet. |
+| Utility helpers (`validateTitleFormat`, `previewTitle`, `getLorebookStats`, `getEntryByTitle`) | Missing | Acceptable deviation for now | These reference helpers do not yet exist as matched first-class local APIs. They are not blocking the core English memory-save path, but they would matter if we want full `addlore.js` module-surface parity rather than only product-flow parity. |
+| Upsert-by-title helpers (`upsertLorebookEntryByTitle`, `upsertLorebookEntriesBatch`) | Partial | Acceptable deviation for now | Equivalent behavior exists through `/api/stmb` and sideprompt helpers, but ownership and surface shape differ from the reference module. Not blocking memory-save parity unless we decide the module API itself must match. |
 
 ## 6. Summaries / Consolidation
 
