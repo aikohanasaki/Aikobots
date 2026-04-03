@@ -2033,6 +2033,7 @@ async function openSidePromptEditorPopup({ templateKey = null } = {}) {
                 const savedKey = await upsertTemplate(payload);
                 popupInstance.stmbSavedKey = savedKey;
                 popupInstance.stmbStrippedAutoTriggers = strippedAutoTriggers;
+                await refreshSidePromptCache();
                 window.dispatchEvent(new CustomEvent('stmb-sideprompts-updated'));
                 if (!template && payload.name.trim() === '') {
                     toastr.info('No name provided. Using "Untitled Side Prompt".', 'STMB');
@@ -2132,6 +2133,7 @@ async function showSidePromptManagerPopup({ onChange = null } = {}) {
                     toastr.success('Side prompt updated successfully', 'STMB');
                 } else if (actionButton.classList.contains('stmb-sp-action-duplicate')) {
                     selectedTemplateKey = await duplicateTemplate(selectedTemplateKey);
+                    await refreshSidePromptCache();
                     window.dispatchEvent(new CustomEvent('stmb-sideprompts-updated'));
                     toastr.success('Side prompt duplicated successfully', 'STMB');
                 } else if (actionButton.classList.contains('stmb-sp-action-delete')) {
@@ -2147,6 +2149,7 @@ async function showSidePromptManagerPopup({ onChange = null } = {}) {
                         return;
                     }
                     await removeTemplate(selectedTemplateKey);
+                    await refreshSidePromptCache();
                     window.dispatchEvent(new CustomEvent('stmb-sideprompts-updated'));
                     selectedTemplateKey = null;
                     toastr.success('Side prompt deleted successfully', 'STMB');
@@ -2217,6 +2220,7 @@ async function showSidePromptManagerPopup({ onChange = null } = {}) {
                     return;
                 }
                 const result = await recreateBuiltInSidePrompts('overwrite');
+                await refreshSidePromptCache();
                 window.dispatchEvent(new CustomEvent('stmb-sideprompts-updated'));
                 selectedTemplateKey = null;
                 await refreshSidePromptManagerList(popup.dlg, selectedTemplateKey);
@@ -2236,6 +2240,7 @@ async function showSidePromptManagerPopup({ onChange = null } = {}) {
         }
         try {
             const result = await importSidePromptsJson(await file.text());
+            await refreshSidePromptCache();
             window.dispatchEvent(new CustomEvent('stmb-sideprompts-updated'));
             selectedTemplateKey = null;
             await refreshSidePromptManagerList(popup.dlg, selectedTemplateKey);
@@ -5025,6 +5030,7 @@ async function toggleSidePromptCommand(_, rawInput, enabled) {
 
     try {
         const result = await toggleSidePromptEnabled(raw, enabled);
+        await refreshSidePromptCache();
         window.dispatchEvent(new CustomEvent('stmb-sideprompts-updated'));
         if (result.all) {
             toastr.success(`${enabled ? 'Enabled' : 'Disabled'} ${result.changed} side prompt${result.changed === 1 ? '' : 's'}`, 'STMB');
