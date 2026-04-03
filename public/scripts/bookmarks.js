@@ -11,7 +11,6 @@ import {
     chat,
     saveChatConditional,
     saveItemizedPrompts,
-    jumpToMessageWindow,
     getTotalChatMessages,
     isChatMessageLoaded,
     isSplitTailChat,
@@ -21,6 +20,7 @@ import {
 } from '../script.js';
 import { saveMetadataDebounced } from './extensions.js';
 import { humanizedDateTime } from './RossAscends-mods.js';
+import { openChatPopoutWindow } from './chat-popout.js';
 import {
     DEFAULT_AUTO_MODE_DELAY,
     group_activation_strategy,
@@ -43,7 +43,6 @@ import { renderTemplateAsync } from './templates.js';
 import { t } from './i18n.js';
 
 import {
-    flashHighlight,
     getUniqueName,
     isTrueBoolean,
 } from './utils.js';
@@ -353,25 +352,8 @@ async function navigateToNamedBookmark(messageNum) {
         return false;
     }
 
-    if (currentNamedBookmarksPopup) {
-        await currentNamedBookmarksPopup.completeCancelled();
-    }
-
-    const target = await jumpToMessageWindow(messageNum);
-    const messageElement = target.get(0);
-    const chatContainer = document.getElementById('chat');
-
-    if (!(messageElement instanceof HTMLElement) || !(chatContainer instanceof HTMLElement)) {
-        toastr.warning(`Could not find message ${messageNum}.`, 'Bookmarks');
-        return false;
-    }
-
-    chatContainer.scrollTo({
-        top: messageElement.offsetTop,
-        behavior: 'smooth',
-    });
-    flashHighlight(target, 2000);
-    return true;
+    const popup = openChatPopoutWindow({ focusMessageId: messageNum });
+    return Boolean(popup);
 }
 
 async function promptCreateNamedBookmark(messageNum = chat.length - 1) {
@@ -451,6 +433,13 @@ async function promptDeleteNamedBookmark(index) {
 
 async function onNamedBookmarksPopupClick(event) {
     if (!(event.target instanceof Element)) {
+        return;
+    }
+
+    const popoutButton = event.target.closest('#named-bookmarks-popout');
+    if (popoutButton) {
+        event.preventDefault();
+        openChatPopoutWindow();
         return;
     }
 

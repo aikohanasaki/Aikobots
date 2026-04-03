@@ -7569,6 +7569,93 @@ export async function getChat() {
     }
 }
 
+/**
+ * Renders a message into a detached message element for read-only snapshots such as the popout reader.
+ * @param {ChatMessage} mes Message object
+ * @param {number} messageId Absolute message ID
+ * @returns {Promise<JQuery<HTMLElement>>} Detached rendered message element
+ */
+export async function renderDetachedMessage(mes, messageId) {
+    let messageText = mes?.extra?.display_text ?? mes?.mes;
+    const momentDate = timestampToMoment(mes?.send_date);
+    const timestamp = momentDate.isValid() ? momentDate.format('LL LT') : '';
+
+    let avatarImg = getThumbnailUrl('persona', user_avatar);
+    const isSystem = mes?.is_system;
+    const title = mes?.title;
+
+    if (!mes?.is_user) {
+        if (mes?.force_avatar) {
+            avatarImg = mes.force_avatar;
+        } else if (this_chid === undefined) {
+            avatarImg = system_avatar;
+        } else if (characters[this_chid]?.avatar !== 'none') {
+            avatarImg = getThumbnailUrl('avatar', characters[this_chid].avatar);
+        } else {
+            avatarImg = default_avatar;
+        }
+    } else if (mes?.force_avatar) {
+        avatarImg = mes.force_avatar;
+    }
+
+    const sanitizerOverrides = mes?.extra?.uses_system_ui ? { MESSAGE_ALLOW_SYSTEM_UI: true } : {};
+    messageText = messageFormatting(
+        messageText,
+        mes?.name,
+        isSystem,
+        mes?.is_user,
+        messageId,
+        sanitizerOverrides,
+        false,
+    );
+    const bias = messageFormatting(mes?.extra?.bias ?? '', '', false, false, -1, {}, false);
+    const bookmarkLink = mes?.extra?.bookmark_link ?? '';
+    const params = {
+        mesId: messageId,
+        swipeId: mes?.swipe_id ?? 0,
+        characterName: mes?.name,
+        isUser: mes?.is_user,
+        avatarImg,
+        bias,
+        isSystem,
+        title,
+        bookmarkLink,
+        forceAvatar: mes?.force_avatar,
+        timestamp,
+        extra: mes?.extra,
+        tokenCount: mes?.extra?.token_count ?? 0,
+        type: mes?.extra?.type ?? '',
+        ...formatGenerationTimer(mes?.gen_started, mes?.gen_finished, mes?.extra?.token_count, mes?.extra?.reasoning_duration, mes?.extra?.time_to_first_token),
+    };
+
+    const renderedMessage = getMessageFromTemplate(params);
+    const messageElement = $(renderedMessage);
+    const isSmallSys = mes?.extra?.isSmallSys;
+
+    if (isSmallSys === true) {
+        messageElement.addClass('smallSysMes');
+    }
+
+    if (Array.isArray(mes?.extra?.tool_invocations)) {
+        messageElement.addClass('toolCall');
+    }
+
+    messageElement.find('.mes_prompt').hide();
+    messageElement.find('.mes_text').append(messageText);
+    appendMediaToMessage(mes, messageElement, SCROLL_BEHAVIOR.NONE);
+    addCopyToCodeBlocks(messageElement);
+
+    if (!params.isUser && messageId !== 0 && messageId !== chat.length - 1) {
+        const swipesNum = chat[messageId]?.swipes?.length;
+        const swipeId = (chat[messageId]?.swipe_id ?? 0) + 1;
+        if (swipesNum) {
+            messageElement.find('.swipes-counter').text(formatSwipeCounter(swipeId, swipesNum));
+        }
+    }
+
+    return messageElement;
+}
+
 async function getChatResult() {
     name2 = characters[this_chid].name;
     let freshChat = false;

@@ -4455,10 +4455,6 @@ input[type="range"]::-webkit-slider-thumb {
     align-items: center;
 }
 
-#core_chat_popout {
-    flex: 0 0 auto;
-}
-
 .core_hidden_templates_status {
     min-height: 24px;
     flex: 1 1 220px;

@@ -1201,6 +1201,29 @@ router.post('/group/get', (request, response) => {
 
         // Iterate through the array of strings and parse each line as JSON
         const jsonData = lines.map(line => tryParse(line)).filter(x => x);
+
+        if (request.body.chunked) {
+            const totalMessages = jsonData.length;
+            const requestedStart = request.body.range_start === undefined ? Math.max(0, totalMessages - 50) : Number(request.body.range_start);
+            const requestedCount = request.body.count === undefined ? 50 : Number(request.body.count);
+            const loadedRangeStart = Number.isInteger(requestedStart) ? Math.max(0, Math.min(requestedStart, Math.max(0, totalMessages - 1))) : 0;
+            const count = Number.isInteger(requestedCount) && requestedCount > 0 ? requestedCount : 50;
+            const loadedRangeEnd = totalMessages > 0
+                ? Math.min(totalMessages - 1, loadedRangeStart + count - 1)
+                : -1;
+
+            return response.send({
+                mode: 'full',
+                isHydrated: true,
+                totalMessages,
+                loadedRangeStart,
+                loadedRangeEnd,
+                messages: loadedRangeEnd >= loadedRangeStart
+                    ? jsonData.slice(loadedRangeStart, loadedRangeEnd + 1)
+                    : [],
+            });
+        }
+
         return response.send(jsonData);
     } else {
         return response.send([]);

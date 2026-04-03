@@ -3,7 +3,6 @@ import { isMobile } from './RossAscends-mods.js';
 import { renderTemplateAsync } from './templates.js';
 import { Popup } from './popup.js';
 import { getCharaFilename } from './utils.js';
-import { openChatPopoutWindow } from './chat-popout.js';
 import { eventSource, event_types, getRequestHeaders, characters, this_chid } from '../script.js';
 
 let hiddenTemplatesPanel = null;
@@ -499,10 +498,6 @@ function scheduleHiddenTemplatesPanelRefresh() {
 }
 
 function bindHiddenTemplatesPanelEvents(panel) {
-    panel.chatPopoutButton.on('click', () => {
-        openChatPopoutWindow();
-    });
-
     panel.refreshButton.on('click', async () => {
         await refreshHiddenTemplatesPanel();
     });
@@ -698,12 +693,11 @@ async function ensureHiddenTemplatesPanel() {
     }
 
     const panelRoot = $(await renderTemplateAsync('hiddenLorebookTemplates'));
-    $('#wi-holder').append(panelRoot);
+    $('#wi-holder').prepend(panelRoot);
 
     hiddenTemplatesPanel = {
         root: panelRoot,
         status: panelRoot.find('#core_hidden_templates_status'),
-        chatPopoutButton: panelRoot.find('#core_chat_popout'),
         refreshButton: panelRoot.find('#core_hidden_templates_refresh'),
         saveButton: panelRoot.find('#core_hidden_templates_save'),
         compileButton: panelRoot.find('#core_hidden_templates_compile'),

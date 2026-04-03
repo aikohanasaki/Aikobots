@@ -1,4 +1,111 @@
-import { chatElement } from '../script.js';
+import { characters, chat, getRequestHeaders, getCurrentChatId, renderDetachedMessage, this_chid } from '../script.js';
+import { selected_group } from './group-chats.js';
+
+const READER_BATCH_SIZE = 50;
+const READER_THRESHOLD = 25;
+const READER_INITIAL_BATCH_SIZE = 20;
+
+function buildReaderContext() {
+    if (selected_group) {
+        const chatId = getCurrentChatId();
+        return chatId ? { type: 'group', chatId } : null;
+    }
+
+    const character = characters?.[Number(this_chid)];
+    if (!character?.chat || !character?.avatar) {
+        return null;
+    }
+
+    return {
+        type: 'character',
+        avatarUrl: character.avatar,
+        fileName: character.chat,
+        characterName: character.name,
+    };
+}
+
+async function fetchReaderChunk(context, { rangeStart = null, count = READER_BATCH_SIZE } = {}) {
+    if (!context) {
+        throw new Error('Reader context is not available.');
+    }
+
+    if (context.type === 'group') {
+        const payload = {
+            id: context.chatId,
+            chunked: true,
+            count,
+            ...(Number.isFinite(Number(rangeStart)) ? { range_start: Number(rangeStart) } : {}),
+        };
+        const response = await fetch('/api/chats/group/get', {
+            method: 'POST',
+            headers: getRequestHeaders(),
+            body: JSON.stringify(payload),
+        });
+
+        if (!response.ok) {
+            throw new Error('Failed to load group chat chunk.');
+        }
+
+        return await response.json();
+    }
+
+    const payload = {
+        ch_name: context.characterName,
+        file_name: context.fileName,
+        avatar_url: context.avatarUrl,
+        chunked: true,
+        count,
+        display_count: count,
+        buffer_max: Math.max(count, READER_BATCH_SIZE),
+        ...(Number.isFinite(Number(rangeStart)) ? { range_start: Number(rangeStart) } : {}),
+    };
+    const response = await fetch('/api/chats/get', {
+        method: 'POST',
+        headers: getRequestHeaders(),
+        body: JSON.stringify(payload),
+    });
+
+    if (!response.ok) {
+        throw new Error('Failed to load chat chunk.');
+    }
+
+    return await response.json();
+}
+
+async function renderReaderChunkHtml(messages = [], loadedRangeStart = 0) {
+    const htmlParts = [];
+
+    for (let index = 0; index < messages.length; index++) {
+        const absoluteId = loadedRangeStart + index;
+        const existingMessage = chat[absoluteId];
+
+        if (!existingMessage) {
+            chat[absoluteId] = messages[index];
+        }
+
+        const rendered = await renderDetachedMessage(messages[index], absoluteId);
+        htmlParts.push(rendered.prop('outerHTML'));
+
+        if (!existingMessage) {
+            delete chat[absoluteId];
+        }
+    }
+
+    return htmlParts.join('');
+}
+
+async function loadReaderChunk(context, { rangeStart = null, count = READER_BATCH_SIZE } = {}) {
+    const payload = await fetchReaderChunk(context, { rangeStart, count });
+    const loadedRangeStart = Number(payload?.loadedRangeStart) || 0;
+    const html = await renderReaderChunkHtml(Array.isArray(payload?.messages) ? payload.messages : [], loadedRangeStart);
+
+    return {
+        totalMessages: Number(payload?.totalMessages) || 0,
+        loadedRangeStart,
+        loadedRangeEnd: Number(payload?.loadedRangeEnd) || (loadedRangeStart - 1),
+        html,
+    };
+}
 
 function getPopupAssetUrls() {
     const toAbsoluteUrl = (path) => new URL(path, window.location.href).href;
@@ -10,10 +117,12 @@ function getPopupAssetUrls() {
     ];
 }
 
-function buildChatPopoutHtml(chatHtml) {
+function buildChatPopoutHtml({ focusMessageId = null, context = null } = {}) {
     const stylesheets = getPopupAssetUrls()
         .map(url => `<link rel="stylesheet" href="${url}">`)
         .join('');
+    const normalizedFocusMessageId = Number.isInteger(Number(focusMessageId)) ? Number(focusMessageId) : null;
+    const serializedContext = JSON.stringify(context ?? null).replace(/</g, '\\u003c');
 
     return `<!DOCTYPE html>
 <html>
@@ -55,6 +164,13 @@ function buildChatPopoutHtml(chatHtml) {
             max-width: 960px;
             width: 100%;
             margin: 0 auto;
+        }
+
+        .chat-popout-loading {
+            max-width: 960px;
+            margin: 0 auto 16px;
+            opacity: 0.8;
+            font-size: 0.95rem;
         }
 
         .chat-popout-end {
@@ -118,14 +234,25 @@ function buildChatPopoutHtml(chatHtml) {
             overflow: visible !important;
             height: auto !important;
         }
+
+        .chat-popout-target {
+            outline: 1px solid rgba(255, 255, 255, 0.35);
+            border-radius: 8px;
+            background: rgba(255, 255, 255, 0.06);
+        }
+
+        .chat-popout-end[data-hidden="true"] {
+            display: none;
+        }
     </style>
 </head>
 <body class="chat-popout">
     <div class="chat-popout-shell">
         <main class="chat-popout-log">
-            ${chatHtml}
+            <div id="chat-popout-loading" class="chat-popout-loading">Loading chat…</div>
+            <div id="chat"></div>
         </main>
-        <footer class="chat-popout-end">
+        <footer class="chat-popout-end" id="chat-popout-end" data-hidden="true">
             <strong>End of chat log</strong>
             Close this window to return to the main chat.
         </footer>
@@ -133,31 +260,108 @@ function buildChatPopoutHtml(chatHtml) {
     <script>
         (() => {
             const root = document.querySelector('.chat-popout-log');
+            const focusMessageId = ${normalizedFocusMessageId === null ? 'null' : normalizedFocusMessageId};
+            const context = ${serializedContext};
+            const batchSize = ${READER_BATCH_SIZE};
+            const initialBatchSize = ${READER_INITIAL_BATCH_SIZE};
+            const threshold = ${READER_THRESHOLD};
+            const chat = document.getElementById('chat');
+            const loading = document.getElementById('chat-popout-loading');
+            const footer = document.getElementById('chat-popout-end');
+            const state = {
+                totalMessages: 0,
+                loadedStart: null,
+                loadedEnd: null,
+                loadingBefore: false,
+                loadingAfter: false,
+            };
             if (!root) {
                 return;
             }
 
-            root.querySelectorAll('.mes_buttons > *, .extraMesButtons > *').forEach((action) => {
-                if (!(action instanceof HTMLElement)) {
+            if (!window.opener || window.opener.closed || !window.opener.ChatPopout?.loadChunk) {
+                if (loading) {
+                    loading.textContent = 'The main app window is not available.';
+                }
+                return;
+            }
+
+            const setLoadingText = (text) => {
+                if (loading) {
+                    loading.textContent = text;
+                }
+            };
+
+            const maybeToggleFooter = () => {
+                if (!footer) {
+                    return;
+                }
+                const atEnd = Number.isInteger(state.loadedEnd) && state.loadedEnd >= state.totalMessages - 1;
+                footer.dataset.hidden = atEnd ? 'false' : 'true';
+            };
+
+            const wireMessageUi = () => {
+                root.querySelectorAll('.mes_buttons > *, .extraMesButtons > *').forEach((action) => {
+                    if (!(action instanceof HTMLElement)) {
+                        return;
+                    }
+
+                    const keepAction = action.classList.contains('mes_copy') || action.classList.contains('mes_edit') || action.classList.contains('extraMesButtons');
+                    if (!keepAction) {
+                        action.remove();
+                    }
+                });
+
+                root.querySelectorAll('.extraMesButtons').forEach((container) => {
+                    if (!(container instanceof HTMLElement)) {
+                        return;
+                    }
+
+                    const remainingActions = container.querySelector('.mes_copy, .mes_edit');
+                    if (!remainingActions) {
+                        container.remove();
+                    }
+                });
+
+                root.querySelectorAll('.mes_text').forEach((messageText) => {
+                    if (!(messageText instanceof HTMLElement)) {
+                        return;
+                    }
+                    messageText.contentEditable = 'false';
+                    messageText.dataset.chatPopoutEditing = 'false';
+                    messageText.addEventListener('blur', () => stopEditing(messageText));
+                    messageText.addEventListener('keydown', (event) => {
+                        if (event.key === 'Escape') {
+                            event.preventDefault();
+                            stopEditing(messageText);
+                        }
+                    });
+                });
+            };
+
+            const highlightFocusMessage = () => {
+                root.querySelectorAll('.chat-popout-target').forEach((element) => element.classList.remove('chat-popout-target'));
+                if (!Number.isInteger(focusMessageId)) {
                     return;
                 }
 
-                const keepAction = action.classList.contains('mes_copy') || action.classList.contains('mes_edit') || action.classList.contains('extraMesButtons');
-                if (!keepAction) {
-                    action.remove();
+                const target = root.querySelector(\`.mes[mesid="\${focusMessageId}"]\`);
+                if (target instanceof HTMLElement) {
+                    target.classList.add('chat-popout-target');
                 }
-            });
+            };
 
-            root.querySelectorAll('.extraMesButtons').forEach((container) => {
-                if (!(container instanceof HTMLElement)) {
+            const scrollFocusIntoView = () => {
+                if (!Number.isInteger(focusMessageId)) {
                     return;
                 }
-
-                const remainingActions = container.querySelector('.mes_copy, .mes_edit');
-                if (!remainingActions) {
-                    container.remove();
+                const target = root.querySelector(\`.mes[mesid="\${focusMessageId}"]\`);
+                if (target instanceof HTMLElement) {
+                    requestAnimationFrame(() => {
+                        target.scrollIntoView({ block: 'center', behavior: 'smooth' });
+                    });
                 }
-            });
+            };
 
             const copyMessageText = async (text) => {
                 try {
@@ -181,17 +385,103 @@ function buildChatPopoutHtml(chatHtml) {
                 messageText.blur();
             };
 
-            root.querySelectorAll('.mes_text').forEach((messageText) => {
-                messageText.contentEditable = 'false';
-                messageText.dataset.chatPopoutEditing = 'false';
-                messageText.addEventListener('blur', () => stopEditing(messageText));
-                messageText.addEventListener('keydown', (event) => {
-                    if (event.key === 'Escape') {
-                        event.preventDefault();
-                        stopEditing(messageText);
+            const insertChunk = (chunk, direction) => {
+                if (!(chat instanceof HTMLElement)) {
+                    return;
+                }
+
+                if (!chunk?.html) {
+                    state.totalMessages = chunk?.totalMessages ?? state.totalMessages;
+                    maybeToggleFooter();
+                    return;
+                }
+
+                if (direction === 'before') {
+                    const previousHeight = chat.scrollHeight;
+                    chat.insertAdjacentHTML('afterbegin', chunk.html);
+                    const newHeight = chat.scrollHeight;
+                    root.scrollTop += newHeight - previousHeight;
+                    state.loadedStart = chunk.loadedRangeStart;
+                    state.loadedEnd = state.loadedEnd === null ? chunk.loadedRangeEnd : state.loadedEnd;
+                } else {
+                    chat.insertAdjacentHTML('beforeend', chunk.html);
+                    state.loadedStart = state.loadedStart === null ? chunk.loadedRangeStart : state.loadedStart;
+                    state.loadedEnd = chunk.loadedRangeEnd;
+                }
+
+                state.totalMessages = chunk.totalMessages;
+                wireMessageUi();
+                highlightFocusMessage();
+                maybeToggleFooter();
+            };
+
+            const loadMoreAfter = async () => {
+                if (state.loadingAfter || !Number.isInteger(state.loadedEnd) || state.loadedEnd >= state.totalMessages - 1) {
+                    return;
+                }
+
+                state.loadingAfter = true;
+                setLoadingText('Loading more messages…');
+
+                try {
+                    const chunk = await window.opener.ChatPopout.loadChunk(context, {
+                        rangeStart: state.loadedEnd + 1,
+                        count: batchSize,
+                    });
+                    insertChunk(chunk, 'after');
+                } finally {
+                    state.loadingAfter = false;
+                    setLoadingText('');
+                }
+            };
+
+            const loadMoreBefore = async () => {
+                if (state.loadingBefore || !Number.isInteger(state.loadedStart) || state.loadedStart <= 0) {
+                    return;
+                }
+
+                state.loadingBefore = true;
+                setLoadingText('Loading earlier messages…');
+
+                try {
+                    const nextStart = Math.max(0, state.loadedStart - batchSize);
+                    const chunk = await window.opener.ChatPopout.loadChunk(context, {
+                        rangeStart: nextStart,
+                        count: state.loadedStart - nextStart,
+                    });
+                    insertChunk(chunk, 'before');
+                } finally {
+                    state.loadingBefore = false;
+                    setLoadingText('');
+                }
+            };
+
+            const maybeLoadMore = () => {
+                if (!(chat instanceof HTMLElement)) {
+                    return;
+                }
+
+                const messages = Array.from(chat.querySelectorAll('.mes'));
+                if (!messages.length) {
+                    return;
+                }
+
+                const afterTrigger = messages[Math.max(0, messages.length - threshold)];
+                if (afterTrigger instanceof HTMLElement) {
+                    const rect = afterTrigger.getBoundingClientRect();
+                    if (rect.top <= window.innerHeight) {
+                        void loadMoreAfter();
                     }
-                });
-            });
+                }
+
+                const beforeTrigger = messages[Math.min(messages.length - 1, threshold - 1)];
+                if (beforeTrigger instanceof HTMLElement) {
+                    const rect = beforeTrigger.getBoundingClientRect();
+                    if (rect.bottom >= 0) {
+                        void loadMoreBefore();
+                    }
+                }
+            };
 
             root.addEventListener('pointerup', async (event) => {
                 const copyButton = event.target.closest('.mes_copy');
@@ -225,26 +515,43 @@ function buildChatPopoutHtml(chatHtml) {
                     selection.addRange(range);
                 }
             });
+
+            root.addEventListener('scroll', () => {
+                maybeLoadMore();
+            }, { passive: true });
+
+            const loadInitial = async () => {
+                try {
+                    const initialStart = Number.isInteger(focusMessageId)
+                        ? Math.max(0, focusMessageId - Math.floor(initialBatchSize / 2))
+                        : null;
+                    const chunk = await window.opener.ChatPopout.loadChunk(context, {
+                        rangeStart: initialStart,
+                        count: Number.isInteger(focusMessageId) ? initialBatchSize : batchSize,
+                    });
+                    insertChunk(chunk, 'after');
+                    setLoadingText('');
+                    scrollFocusIntoView();
+                    maybeLoadMore();
+                } catch (error) {
+                    console.error('[Chat Popout] Failed to initialize reader.', error);
+                    setLoadingText(error?.message || 'Failed to load chat.');
+                }
+            };
+
+            void loadInitial();
         })();
     </script>
 </body>
 </html>`;
 }
 
-export function openChatPopoutWindow() {
-    const sourceChat = chatElement.get(0);
-    if (!(sourceChat instanceof HTMLElement)) {
+export function openChatPopoutWindow({ focusMessageId = null } = {}) {
+    const context = buildReaderContext();
+    if (!context) {
         toastr.error('Chat log is not available right now.');
         return null;
     }
-
-    const chatSnapshot = sourceChat.cloneNode(true);
-    if (!(chatSnapshot instanceof HTMLElement)) {
-        toastr.error('Failed to copy the current chat log.');
-        return null;
-    }
-
-    chatSnapshot.querySelectorAll('#show_more_messages, #show_newer_messages').forEach(element => element.remove());
 
     const popup = window.open('', 'core-chat-popout', 'popup=yes,width=960,height=900,resizable=yes,scrollbars=yes');
     if (!popup) {
@@ -253,7 +560,7 @@ export function openChatPopoutWindow() {
     }
 
     popup.document.open();
-    popup.document.write(buildChatPopoutHtml(chatSnapshot.outerHTML));
+    popup.document.write(buildChatPopoutHtml({ focusMessageId, context }));
     popup.document.close();
     popup.focus();
     return popup;
@@ -262,4 +569,5 @@ export function openChatPopoutWindow() {
 globalThis.ChatPopout = {
     ...(globalThis.ChatPopout ?? {}),
     openWindow: openChatPopoutWindow,
+    loadChunk: loadReaderChunk,
 };

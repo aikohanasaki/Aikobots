@@ -90,8 +90,8 @@ This file is updated subsystem by subsystem during the audit. Only sections that
 | Template schema matches STMB. | Partial | Stored V2 schema and trigger normalization are close, but full file/import migration parity is still unaudited. |
 | Built-in templates match STMB. | Partial | Core built-ins appear aligned, but I have not finished a field-by-field audit of every template body yet. |
 | Macro parsing and substitution match STMB. | Partial | Runtime macro parsing, quoting, autocomplete suggestions, and substitution are now close to STMB; more end-to-end validation is still needed. |
-| Manual `/sideprompt` command behavior matches STMB. | Partial | Manual flow is now toast-driven with STMB-like range tips, compile-failure messages, cancel/success toasts, and missing-lorebook recovery prompts, but hidden-range compilation still differs from STMB's temporary unhide/restore flow. |
-| Interval tracker behavior matches STMB. | Partial | Checkpoint semantics, preview serialization, token overrides, and editor refresh are closer, but local range compilation still does not mirror STMB's temporary unhide/restore behavior when hidden messages are present. |
+| Manual `/sideprompt` command behavior matches STMB. | Partial | Manual flow is now toast-driven with STMB-like range tips, compile-failure messages, missing-lorebook recovery prompts, and the same temporary unhide/restore range compilation path as STMB; broader runtime verification is still pending. |
+| Interval tracker behavior matches STMB. | Partial | Checkpoint semantics, preview serialization, token overrides, editor refresh, and temporary unhide/restore range compilation now align more closely with STMB; broader runtime verification is still pending. |
 | Post-memory trigger behavior matches STMB. | Partial | Side prompts now inherit the current memory profile unless a template override replaces it, and after-memory runs now process in concurrent waves with receipt-order previews, batched wave saves, and aggregate notifications closer to STMB; broader runtime verification is still pending. |
 | Overwrite-by-title tracker semantics match STMB. | Partial | Unified title lookup and checkpoint metadata are present, but broader legacy-title/runtime coverage remains open. |
 | Checkpoint metadata semantics match STMB. | Partial | `STMB_sp_*` and legacy tracker fields are written, but full roundtrip verification is still pending. |
@@ -121,7 +121,7 @@ This file is updated subsystem by subsystem during the audit. Only sections that
 | Failed memory repair popup matches STMB flow. | Partial | Raw-response repair flow exists, but the full STMB popup surface is still not matched exactly. |
 | Summary consolidation popup matches STMB flow. | Partial | The popup now preserves summary-entry settings, renders candidate checklists by tier, honors selected source entries, exposes max-items/token/max-pass controls, uses a file-backed arc prompt cache, and still renders without a lorebook like STMB; browser/runtime validation is still pending. |
 | Failed summary repair popup matches STMB flow. | Partial | The popup supports extracted fields, corrected JSON application, and original/pre-retry raw display, but the full STMB surface is still not matched. |
-| Side prompt manager/editor popup matches STMB flow. | Partial | A local manager/editor popup now exists with create/edit/duplicate/delete, import/export, built-in restore, trigger/lorebook/profile settings, runtime-macro trigger stripping, keyword-macro validation, and max-concurrency controls; final runtime/UI parity still needs browser validation. |
+| Side prompt manager/editor popup matches STMB flow. | Partial | Manager/editor behavior is now much closer to STMB, including list structure, empty-state handling, inline actions, stronger recreate/delete confirmations, editor affordances, outlet validation, runtime-macro trigger stripping, keyword-macro validation, and max-concurrency controls. Localization, prompt wording, and built-in key naming are deferred globally; final browser/runtime validation is still needed. |
 | Inline scene buttons and state styling match STMB closely. | Partial | Core inline scene controls exist and track scene state, but no final visual/style parity pass has been done. |
 
 ## 10. Architecture / Ownership
@@ -171,3 +171,13 @@ These are deliberate differences from STMB that were explicitly approved during 
 | --- | --- |
 | Per-profile custom prompt overrides removed from Memory Books profiles | User approved deprecating profile-level custom prompts in favor of the dedicated prompt managers. |
 | Main settings popup bottom-section layout differs from STMB | User approved moving `Profile Settings`, removing the prompt-manager info box wrapper, and reorganizing the lower popup layout for Aikobots. |
+
+## Deferred Final-Pass Items
+
+These items are intentionally not blocking parity status during the current programming pass and will be handled together at the end.
+
+| Item | Reason |
+| --- | --- |
+| Localization / translation exactness | User requested that localization not be addressed until the programming pass is complete. |
+| Prompt wording exactness | User requested prompt wording be handled in a separate end pass. |
+| Side prompt built-in key naming differences (for example `cast` vs `cast-of-characters`) | User approved deferring built-in template ID normalization for now. |

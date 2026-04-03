@@ -7,6 +7,7 @@ import {
     name1,
     name2,
 } from '../script.js';
+import { executeSlashCommands } from './slash-commands.js';
 import { generateStmbText, prepareStmbSidePrompt, upsertStmbEntriesBatch, upsertStmbEntryByTitle } from './stmb-api.js';
 import { saveMetadataDebounced } from './extensions.js';
 import { getLorebookStorageForRequest, loadWorldInfo, METADATA_KEY, reloadEditor, worldInfoCache } from './world-info.js';
@@ -145,6 +146,50 @@ function countVisibleMessagesSince(exclusiveStart, inclusiveEnd) {
         if (message && !message.is_system) count++;
     }
     return count;
+}
+
+function collectHiddenRanges(start, end) {
+    const ranges = [];
+    let rangeStart = null;
+
+    for (let index = start; index <= end && index < chat.length; index++) {
+        const isHidden = Boolean(chat[index]?.is_system);
+        if (isHidden) {
+            if (rangeStart === null) {
+                rangeStart = index;
+            }
+            continue;
+        }
+        if (rangeStart !== null) {
+            ranges.push({ start: rangeStart, end: index - 1 });
+            rangeStart = null;
+        }
+    }
+
+    if (rangeStart !== null) {
+        ranges.push({ start: rangeStart, end });
+    }
+
+    return ranges;
+}
+
+function isEntireRangeHidden(start, end) {
+    for (let index = start; index <= end && index < chat.length; index++) {
+        if (!chat[index]?.is_system) {
+            return false;
+        }
+    }
+    return true;
+}
+
+async function restoreHiddenRanges(hiddenRanges) {
+    for (const range of hiddenRanges) {
+        try {
+            await executeSlashCommands(`/hide ${range.start}-${range.end}`);
+        } catch (error) {
+            console.warn(`STMB /hide restore failed for hidden range ${range.start}-${range.end}`, error);
+        }
+    }
 }
 
 function resolveLorebookName(settings) {
@@ -412,8 +457,43 @@ async function prepareSidePromptRun({ template, lorebookName, lorebookData, comp
     };
 }
 
-async function compileRange(sceneStart, sceneEnd) {
-    return compileScene(chat, buildSceneRequest(sceneStart, sceneEnd));
+async function compileRange(sceneStart, sceneEnd, settings = null) {
+    const shouldTemporarilyUnhide = Boolean(settings?.moduleSettings?.unhideBeforeMemory);
+    const hiddenRanges = shouldTemporarilyUnhide ? collectHiddenRanges(sceneStart, sceneEnd) : [];
+
+    if (shouldTemporarilyUnhide && hiddenRanges.length > 0) {
+        try {
+            await executeSlashCommands(`/unhide ${sceneStart}-${sceneEnd}`);
+        } catch (error) {
+            console.warn('STMB /unhide failed or unavailable for side prompt compile', error);
+        }
+    }
+
+    try {
+        return compileScene(chat, buildSceneRequest(sceneStart, sceneEnd));
+    } catch (error) {
+        const isHiddenOnlyFailure = String(error?.message || '').includes(`No visible messages in range ${sceneStart}-${sceneEnd}`);
+        if (shouldTemporarilyUnhide && hiddenRanges.length > 0 && isHiddenOnlyFailure) {
+            const unhiddenSnapshot = chat.slice();
+            for (const range of hiddenRanges) {
+                for (let index = range.start; index <= range.end && index < unhiddenSnapshot.length; index++) {
+                    const message = unhiddenSnapshot[index];
+                    if (message) {
+                        unhiddenSnapshot[index] = {
+                            ...message,
+                            is_system: false,
+                        };
+                    }
+                }
+            }
+            return compileScene(unhiddenSnapshot, buildSceneRequest(sceneStart, sceneEnd));
+        }
+        throw error;
+    } finally {
+        if (hiddenRanges.length > 0) {
+            await restoreHiddenRanges(hiddenRanges);
+        }
+    }
 }
 
 function ensureSidePromptTextNotBlank(text, template, trigger) {
@@ -573,7 +653,7 @@ export async function evaluateTrackers(settings, options = {}) {
             const boundedStart = Math.max(start, currentLast - 199);
             let compiledScene;
             try {
-                compiledScene = await compileRange(boundedStart, currentLast);
+                compiledScene = await compileRange(boundedStart, currentLast, settings);
             } catch {
                 continue;
             }
@@ -850,9 +930,13 @@ export async function runSidePrompt(rawInput, settings, options = {}) {
             }
 
             try {
-                compiledScene = await compileRange(sceneStart, sceneEnd);
-            } catch {
-                toastr.error('Failed to compile the specified range', 'STMB');
+                compiledScene = await compileRange(sceneStart, sceneEnd, settings);
+            } catch (error) {
+                if (!settings?.moduleSettings?.unhideBeforeMemory && isEntireRangeHidden(sceneStart, sceneEnd)) {
+                    toastr.error('Failed to compile the specified range. The selected messages are hidden and "Unhide hidden messages for memory generation" is off.', 'STMB');
+                } else {
+                    toastr.error('Failed to compile the specified range', 'STMB');
+                }
                 return '';
             }
         } else {
@@ -874,7 +958,7 @@ export async function runSidePrompt(rawInput, settings, options = {}) {
             const sceneStart = Math.max(0, lastMessageId + 1);
             const boundedStart = Math.max(sceneStart, currentLast - 199);
             try {
-                compiledScene = await compileRange(boundedStart, currentLast);
+                compiledScene = await compileRange(boundedStart, currentLast, settings);
             } catch {
                 toastr.error('Failed to compile messages for /sideprompt', 'STMB');
                 return '';

@@ -1641,25 +1641,57 @@ function isBuiltinSidePromptKey(key) {
 }
 
 function buildSidePromptManagerRowsHtml(templates, selectedTemplateKey = null) {
+    if (!Array.isArray(templates) || templates.length === 0) {
+        return `
+            <table style="width: 100%; border-collapse: collapse;">
+                <thead>
+                    <tr>
+                        <th style="text-align:center;">Name</th>
+                        <th style="width: 240px; text-align:center;">Triggers</th>
+                        <th style="width: 120px; text-align:center;">Actions</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr>
+                        <td colspan="3">
+                            <div class="opacity50p">No side prompts available</div>
+                        </td>
+                    </tr>
+                </tbody>
+            </table>
+        `;
+    }
+
     return `
-        <table class="table table-striped" style="width:100%">
+        <table style="width: 100%; border-collapse: collapse;">
+            <thead>
+                <tr>
+                    <th style="text-align:center;">Name</th>
+                    <th style="width: 240px; text-align:center;">Triggers</th>
+                    <th style="width: 120px; text-align:center;">Actions</th>
+                </tr>
+            </thead>
             <tbody>
                 ${templates.map(template => `
-                    <tr data-template-key="${escapeHtml(template.key)}" style="${template.key === selectedTemplateKey ? 'background-color: var(--cobalt30a);' : ''}">
-                        <td>
-                            <div>${escapeHtml(template.name || 'Untitled Side Prompt')}${isBuiltinSidePromptKey(template.key) ? ' <small class="opacity50p">(Built-in)</small>' : ''}</div>
-                            <small class="opacity50p">${escapeHtml(getSidePromptTriggerBadges(template).join(' | ') || 'No triggers configured')}</small>
+                    <tr data-template-key="${escapeHtml(template.key)}" style="cursor: pointer; border-bottom: 1px solid var(--SmartThemeBorderColor); ${template.key === selectedTemplateKey ? 'background-color: var(--cobalt30a);' : ''}">
+                        <td style="padding: 8px;">${escapeHtml(template.name || 'Untitled Side Prompt')}</td>
+                        <td style="padding: 8px;">
+                            ${getSidePromptTriggerBadges(template).length > 0
+            ? getSidePromptTriggerBadges(template).map(badge => `<span class="badge" style="margin-right:6px;">${escapeHtml(badge)}</span>`).join('')
+            : '<span class="opacity50p">None</span>'}
                         </td>
-                        <td class="textAlignRight whitespacenowrap" style="display:flex; justify-content:flex-end; align-items:center; gap:6px; flex-wrap:nowrap;">
-                            <button class="menu_button stmb-spm-action stmb-spm-action-edit whitespacenowrap" data-action="edit" title="Edit" aria-label="Edit" style="display:inline-flex; align-items:center; justify-content:center; width:auto; min-width:0; margin:0;">
-                                <i class="fa-solid fa-pen-to-square"></i>
+                        <td style="padding: 8px; text-align:right;">
+                            <span class="stmb-sp-inline-actions whitespacenowrap" style="display: inline-flex; gap: 10px;">
+                            <button class="menu_button stmb-sp-action stmb-sp-action-edit whitespacenowrap" data-action="edit" title="Edit" aria-label="Edit" style="display:inline-flex; align-items:center; justify-content:center; width:auto; min-width:0; margin:0;">
+                                <i class="fa-solid fa-pen"></i>
                             </button>
-                            <button class="menu_button stmb-spm-action stmb-spm-action-duplicate whitespacenowrap" data-action="duplicate" title="Duplicate" aria-label="Duplicate" style="display:inline-flex; align-items:center; justify-content:center; width:auto; min-width:0; margin:0;">
+                            <button class="menu_button stmb-sp-action stmb-sp-action-duplicate whitespacenowrap" data-action="duplicate" title="Duplicate" aria-label="Duplicate" style="display:inline-flex; align-items:center; justify-content:center; width:auto; min-width:0; margin:0;">
                                 <i class="fa-solid fa-copy"></i>
                             </button>
-                            <button class="menu_button stmb-spm-action stmb-spm-action-delete whitespacenowrap" data-action="delete" title="Delete" aria-label="Delete" style="display:inline-flex; align-items:center; justify-content:center; width:auto; min-width:0; margin:0;">
+                            <button class="menu_button stmb-sp-action stmb-sp-action-delete whitespacenowrap" data-action="delete" title="Delete" aria-label="Delete" style="display:inline-flex; align-items:center; justify-content:center; width:auto; min-width:0; margin:0; color:var(--redColor);">
                                 <i class="fa-solid fa-trash"></i>
                             </button>
+                            </span>
                         </td>
                     </tr>
                 `).join('')}
@@ -1685,6 +1717,11 @@ async function refreshSidePromptManagerList(dialog, selectedTemplateKey = null) 
     const list = dialog.querySelector('#stmb-sp-list');
     if (list) {
         list.innerHTML = buildSidePromptManagerRowsHtml(filtered, selectedTemplateKey);
+        try {
+            applyLocale(list);
+        } catch {
+            // noop
+        }
     }
 }
 
@@ -1718,78 +1755,97 @@ function buildSidePromptEditorHtml(template = null, options = {}) {
     const orderValue = Number.isFinite(Number(lorebook.orderValue)) ? Number(lorebook.orderValue) : 100;
 
     return `
-        <div class="stmb-sideprompt-editor-popup">
+        <div class="stmb-sideprompt-editor-popup" style="max-height: min(72vh, 900px); overflow-y: auto; padding-right: 6px; contain: layout paint;">
             <h3>${mode === 'new' ? 'New Side Prompt' : 'Edit Side Prompt'}</h3>
             ${template?.key ? `<div class="world_entry_form_control"><small class="opacity50p">Key: <code>${escapeHtml(template.key)}</code></small></div>` : ''}
             <div class="world_entry_form_control">
-                <label for="stmb-sp-editor-name">Name</label>
-                <input id="stmb-sp-editor-name" class="text_pole" value="${escapeHtml(String(template?.name || ''))}" placeholder="${template ? '' : 'My Side Prompt'}">
+                <label for="stmb-sp-editor-name">
+                    <h4>Name:</h4>
+                    <input id="stmb-sp-editor-name" class="text_pole" value="${escapeHtml(String(template?.name || ''))}" placeholder="${template ? '' : 'My Side Prompt'}">
+                </label>
             </div>
             <div class="world_entry_form_control">
                 <label class="checkbox_label"><input type="checkbox" id="stmb-sp-editor-enabled" ${template?.enabled ? 'checked' : ''}> <span>Enabled</span></label>
             </div>
             <div class="world_entry_form_control">
-                <h4>Triggers</h4>
+                <h4>Triggers:</h4>
                 <label class="checkbox_label"><input type="checkbox" id="stmb-sp-editor-trigger-interval" ${intervalEnabled ? 'checked' : ''}> <span>Run on visible message interval</span></label>
                 <div id="stmb-sp-editor-interval-container" style="display:${intervalEnabled ? 'block' : 'none'}; margin-left: 28px;">
-                    <label for="stmb-sp-editor-interval">Interval (visible messages)</label>
-                    <input id="stmb-sp-editor-interval" type="number" min="1" step="1" class="text_pole" value="${escapeHtml(String(intervalValue))}">
+                    <label for="stmb-sp-editor-interval">
+                        <h4 style="margin: 0 0 4px 0;">Interval (visible messages):</h4>
+                        <input id="stmb-sp-editor-interval" type="number" min="1" step="1" class="text_pole" value="${escapeHtml(String(intervalValue))}">
+                    </label>
                 </div>
                 <label class="checkbox_label"><input type="checkbox" id="stmb-sp-editor-trigger-after-memory" ${afterMemoryEnabled ? 'checked' : ''}> <span>Run automatically after memory</span></label>
                 <label class="checkbox_label"><input type="checkbox" id="stmb-sp-editor-trigger-manual" ${manualEnabled ? 'checked' : ''}> <span>Allow manual run via /sideprompt</span></label>
             </div>
             <div class="world_entry_form_control">
-                <label for="stmb-sp-editor-previous-memories">Previous memories for context</label>
-                <input id="stmb-sp-editor-previous-memories" type="number" min="0" max="7" step="1" class="text_pole" value="${escapeHtml(String(previousMemoriesCount))}">
-                <small class="opacity50p">Number of previous memory entries to include before scene text (0 = none).</small>
+                <label for="stmb-sp-editor-prompt">
+                    <h4>Prompt:</h4>
+                    <i class="editor_maximize fa-solid fa-maximize right_menu_button" data-for="stmb-sp-editor-prompt" title="Expand the editor"></i>
+                    <textarea id="stmb-sp-editor-prompt" class="text_pole textarea_compact" rows="10">${escapeHtml(String(template?.prompt || ''))}</textarea>
+                </label>
             </div>
             <div class="world_entry_form_control">
-                <label for="stmb-sp-editor-prompt">Prompt</label>
-                <textarea id="stmb-sp-editor-prompt" class="text_pole textarea_compact" rows="10">${escapeHtml(String(template?.prompt || ''))}</textarea>
+                <label for="stmb-sp-editor-response-format">
+                    <h4>Response Format (optional):</h4>
+                    <i class="editor_maximize fa-solid fa-maximize right_menu_button" data-for="stmb-sp-editor-response-format" title="Expand the editor"></i>
+                    <textarea id="stmb-sp-editor-response-format" class="text_pole textarea_compact" rows="6">${escapeHtml(String(template?.responseFormat || ''))}</textarea>
+                </label>
             </div>
             <div class="world_entry_form_control">
-                <label for="stmb-sp-editor-response-format">Response Format (optional)</label>
-                <textarea id="stmb-sp-editor-response-format" class="text_pole textarea_compact" rows="6">${escapeHtml(String(template?.responseFormat || ''))}</textarea>
+                <h4 class="stmb-section-title">Lorebook Entry Settings</h4>
+                <label for="stmb-sp-editor-title-override">
+                    <h5 style="margin: 8px 0 4px 0;">Lorebook Entry Title Override</h5>
+                    <small class="opacity70p">Optional. Standard ST macros and required runtime macros are resolved here, and STMB still appends (STMB SidePrompt).</small>
+                    <input id="stmb-sp-editor-title-override" class="text_pole" value="${escapeHtml(String(lorebook.entryTitleOverride || ''))}" placeholder="Optional title template (e.g., NPC {{npcname}})">
+                </label>
+                <label for="stmb-sp-editor-keywords" class="marginTop5">
+                    <h5 style="margin: 8px 0 4px 0;">Lorebook Entry Keywords</h5>
+                    <small class="opacity70p">Optional. If filled in, these keywords are applied to the upserted lorebook entry. You may only use macros already present in Prompt or Response Format.</small>
+                    <input id="stmb-sp-editor-keywords" class="text_pole" value="${escapeHtml(String(lorebook.entryKeywords || ''))}" placeholder="Optional comma-separated keywords" title="You can only use ST standard macros or macros already defined in Prompt or Response Format.">
+                </label>
             </div>
             <div class="world_entry_form_control">
-                <h4>Lorebook Entry Settings</h4>
-                <label for="stmb-sp-editor-title-override">Lorebook Entry Title Override</label>
-                <input id="stmb-sp-editor-title-override" class="text_pole" value="${escapeHtml(String(lorebook.entryTitleOverride || ''))}" placeholder="Optional title template">
-                <label for="stmb-sp-editor-keywords" class="marginTop5">Lorebook Entry Keywords</label>
-                <input id="stmb-sp-editor-keywords" class="text_pole" value="${escapeHtml(String(lorebook.entryKeywords || ''))}" placeholder="Optional comma-separated keywords">
+                <div class="flex-container" style="gap:12px; flex-wrap: wrap;">
+                    <label>
+                        <h5 style="margin: 0 0 4px 0;">Activation Mode</h5>
+                        <select id="stmb-sp-editor-lorebook-mode" class="text_pole">
+                            <option value="link" ${lorebookMode === 'link' ? 'selected' : ''}>Vectorized</option>
+                            <option value="green" ${lorebookMode === 'green' ? 'selected' : ''}>Normal</option>
+                            <option value="blue" ${lorebookMode === 'blue' ? 'selected' : ''}>Constant</option>
+                        </select>
+                    </label>
+                    <label>
+                        <h5 style="margin: 0 0 4px 0;">Insertion Position:</h5>
+                        <select id="stmb-sp-editor-lorebook-position" class="text_pole">
+                            <option value="0" ${lorebookPosition === 0 ? 'selected' : ''}>↑Char</option>
+                            <option value="1" ${lorebookPosition === 1 ? 'selected' : ''}>↓Char</option>
+                            <option value="5" ${lorebookPosition === 5 ? 'selected' : ''}>↑EM</option>
+                            <option value="6" ${lorebookPosition === 6 ? 'selected' : ''}>↓EM</option>
+                            <option value="2" ${lorebookPosition === 2 ? 'selected' : ''}>↑AN</option>
+                            <option value="3" ${lorebookPosition === 3 ? 'selected' : ''}>↓AN</option>
+                            <option value="7" ${lorebookPosition === 7 ? 'selected' : ''}>Outlet</option>
+                        </select>
+                        <div id="stmb-sp-editor-outlet-container" style="display:${lorebookPosition === 7 ? 'block' : 'none'}; margin-top: 8px;">
+                            <label for="stmb-sp-editor-outlet-name">
+                                <h5 style="margin: 0 0 4px 0;">Outlet Name:</h5>
+                                <input id="stmb-sp-editor-outlet-name" class="text_pole" value="${escapeHtml(String(lorebook.outletName || ''))}" placeholder="Outlet name">
+                            </label>
+                        </div>
+                    </label>
+                </div>
             </div>
             <div class="world_entry_form_control">
-                <label for="stmb-sp-editor-lorebook-mode">Activation Mode</label>
-                <select id="stmb-sp-editor-lorebook-mode" class="text_pole">
-                    <option value="link" ${lorebookMode === 'link' ? 'selected' : ''}>Vectorized</option>
-                    <option value="green" ${lorebookMode === 'green' ? 'selected' : ''}>Normal</option>
-                    <option value="blue" ${lorebookMode === 'blue' ? 'selected' : ''}>Constant</option>
-                </select>
-            </div>
-            <div class="world_entry_form_control">
-                <label for="stmb-sp-editor-lorebook-position">Insertion Position</label>
-                <select id="stmb-sp-editor-lorebook-position" class="text_pole">
-                    <option value="0" ${lorebookPosition === 0 ? 'selected' : ''}>↑Char</option>
-                    <option value="1" ${lorebookPosition === 1 ? 'selected' : ''}>↓Char</option>
-                    <option value="5" ${lorebookPosition === 5 ? 'selected' : ''}>↑EM</option>
-                    <option value="6" ${lorebookPosition === 6 ? 'selected' : ''}>↓EM</option>
-                    <option value="2" ${lorebookPosition === 2 ? 'selected' : ''}>↑AN</option>
-                    <option value="3" ${lorebookPosition === 3 ? 'selected' : ''}>↓AN</option>
-                    <option value="7" ${lorebookPosition === 7 ? 'selected' : ''}>Outlet</option>
-                </select>
-            </div>
-            <div id="stmb-sp-editor-outlet-container" class="world_entry_form_control" style="display:${lorebookPosition === 7 ? 'block' : 'none'}">
-                <label for="stmb-sp-editor-outlet-name">Outlet Name</label>
-                <input id="stmb-sp-editor-outlet-name" class="text_pole" value="${escapeHtml(String(lorebook.outletName || ''))}">
-            </div>
-            <div class="world_entry_form_control">
-                <h5>Insertion Order</h5>
+                <h5>Insertion Order:</h5>
                 <label class="radio_label"><input type="radio" name="stmb-sp-editor-order-mode" id="stmb-sp-editor-order-auto" value="auto" ${manualOrder ? '' : 'checked'}> <span>Auto (uses memory #)</span></label>
                 <label class="radio_label"><input type="radio" name="stmb-sp-editor-order-mode" id="stmb-sp-editor-order-manual" value="manual" ${manualOrder ? 'checked' : ''}> <span>Manual</span></label>
             </div>
             <div id="stmb-sp-editor-order-value-container" class="world_entry_form_control" style="display:${manualOrder ? 'block' : 'none'}">
-                <label for="stmb-sp-editor-order-value">Order Value</label>
-                <input id="stmb-sp-editor-order-value" type="number" step="1" class="text_pole" value="${escapeHtml(String(orderValue))}">
+                <label for="stmb-sp-editor-order-value">
+                    <h5>Order Value:</h5>
+                    <input id="stmb-sp-editor-order-value" type="number" step="1" class="text_pole" value="${escapeHtml(String(orderValue))}">
+                </label>
             </div>
             <div class="world_entry_form_control">
                 <label class="checkbox_label"><input type="checkbox" id="stmb-sp-editor-prevent-recursion" ${lorebook.preventRecursion !== false ? 'checked' : ''}> <span>Prevent Recursion</span></label>
@@ -1797,14 +1853,23 @@ function buildSidePromptEditorHtml(template = null, options = {}) {
                 <label class="checkbox_label"><input type="checkbox" id="stmb-sp-editor-ignore-budget" ${lorebook.ignoreBudget ? 'checked' : ''}> <span>Ignore Budget</span></label>
             </div>
             <div class="world_entry_form_control">
-                <h4>Overrides</h4>
+                <label for="stmb-sp-editor-previous-memories">
+                    <h5>Previous memories for context:</h5>
+                    <input id="stmb-sp-editor-previous-memories" type="number" min="0" max="7" step="1" class="text_pole" value="${escapeHtml(String(previousMemoriesCount))}">
+                </label>
+                <small class="opacity70p">Number of previous memory entries to include before scene text (0 = none).</small>
+            </div>
+            <div class="world_entry_form_control">
+                <h5>Overrides:</h5>
                 <label class="checkbox_label"><input type="checkbox" id="stmb-sp-editor-override-profile-enabled" ${overrideProfileEnabled ? 'checked' : ''}> <span>Override default memory profile</span></label>
             </div>
             <div id="stmb-sp-editor-override-profile-container" class="world_entry_form_control" style="display:${overrideProfileEnabled ? 'block' : 'none'}">
-                <label for="stmb-sp-editor-override-profile-index">Connection Profile</label>
-                <select id="stmb-sp-editor-override-profile-index" class="text_pole">
-                    ${buildSidePromptProfileOptionsHtml(overrideProfileIndex)}
-                </select>
+                <label for="stmb-sp-editor-override-profile-index">
+                    <h4>Connection Profile:</h4>
+                    <select id="stmb-sp-editor-override-profile-index" class="text_pole">
+                        ${buildSidePromptProfileOptionsHtml(overrideProfileIndex)}
+                    </select>
+                </label>
             </div>
         </div>
     `;
@@ -1820,6 +1885,9 @@ function attachSidePromptEditorHandlers(dialog) {
     intervalCheckbox?.addEventListener('change', () => {
         if (intervalContainer) {
             intervalContainer.style.display = intervalCheckbox.checked ? 'block' : 'none';
+        }
+        if (intervalCheckbox.checked) {
+            dialog.querySelector('#stmb-sp-editor-interval')?.focus();
         }
     });
 
@@ -1904,6 +1972,9 @@ function readSidePromptEditorPayload(dialog, template = null) {
     };
 
     const outletName = String(dialog?.querySelector('#stmb-sp-editor-outlet-name')?.value || '').trim();
+    if (position === 7 && !outletName) {
+        throw new Error('Outlet Name is required when Insertion Position is Outlet');
+    }
     if (position === 7 && outletName) {
         lorebook.outletName = outletName;
     }
@@ -1951,7 +2022,30 @@ async function openSidePromptEditorPopup({ templateKey = null } = {}) {
         cancelButton: 'Cancel',
         wide: true,
         large: true,
-        allowVerticalScrolling: true,
+        allowVerticalScrolling: false,
+        onClosing: async popupInstance => {
+            if (popupInstance?.result !== POPUP_RESULT.AFFIRMATIVE) {
+                return true;
+            }
+
+            try {
+                const { payload, strippedAutoTriggers } = readSidePromptEditorPayload(popupInstance.dlg, template);
+                const savedKey = await upsertTemplate(payload);
+                popupInstance.stmbSavedKey = savedKey;
+                popupInstance.stmbStrippedAutoTriggers = strippedAutoTriggers;
+                window.dispatchEvent(new CustomEvent('stmb-sideprompts-updated'));
+                if (!template && payload.name.trim() === '') {
+                    toastr.info('No name provided. Using "Untitled Side Prompt".', 'STMB');
+                }
+                if (template && payload.name.trim() === '') {
+                    toastr.info('Name was empty. Keeping previous name.', 'STMB');
+                }
+                return true;
+            } catch (error) {
+                toastr.error(error?.message || 'Failed to save side prompt', 'STMB');
+                return false;
+            }
+        },
     });
 
     attachSidePromptEditorHandlers(popup.dlg);
@@ -1960,16 +2054,7 @@ async function openSidePromptEditorPopup({ templateKey = null } = {}) {
         return null;
     }
 
-    const { payload, strippedAutoTriggers } = readSidePromptEditorPayload(popup.dlg, template);
-    const savedKey = await upsertTemplate(payload);
-    window.dispatchEvent(new CustomEvent('stmb-sideprompts-updated'));
-    if (!template && payload.name.trim() === '') {
-        toastr.info('No name provided. Using "Untitled Side Prompt".', 'STMB');
-    }
-    if (template && payload.name.trim() === '') {
-        toastr.info('Name was empty. Keeping previous name.', 'STMB');
-    }
-    return savedKey;
+    return popup.stmbSavedKey || null;
 }
 
 async function showSidePromptManagerPopup({ onChange = null } = {}) {
@@ -1985,9 +2070,9 @@ async function showSidePromptManagerPopup({ onChange = null } = {}) {
                 <input type="text" id="stmb-sp-search" class="text_pole" placeholder="Search side prompts..." aria-label="Search side prompts">
             </div>
             <div class="world_entry_form_control">
-                <label for="stmb-sp-max-concurrent">How many concurrent prompts to run at once</label>
+                <label for="stmb-sp-max-concurrent"><h4>How many concurrent prompts to run at once</h4></label>
                 <input type="number" id="stmb-sp-max-concurrent" class="text_pole" min="1" max="5" step="1" value="${escapeHtml(String(maxConcurrent))}">
-                <small class="opacity50p">Range 1-5. Defaults to 2.</small>
+                <small class="opacity70p">Range 1-5. Defaults to 2.</small>
             </div>
             <div id="stmb-sp-list" class="padding10 marginBot10" style="max-height: 400px; overflow-y: auto;"></div>
             <div class="buttons_block justifyCenter gap10px whitespacenowrap">
@@ -2034,21 +2119,31 @@ async function showSidePromptManagerPopup({ onChange = null } = {}) {
             return;
         }
 
-        const actionButton = target.closest('.stmb-spm-action');
+        const actionButton = target.closest('.stmb-sp-action');
         if (actionButton) {
             const row = actionButton.closest('tr[data-template-key]');
             selectedTemplateKey = String(row?.dataset?.templateKey || '');
             try {
-                if (actionButton.classList.contains('stmb-spm-action-edit')) {
-                    await openSidePromptEditorPopup({ templateKey: selectedTemplateKey });
+                if (actionButton.classList.contains('stmb-sp-action-edit')) {
+                    const savedKey = await openSidePromptEditorPopup({ templateKey: selectedTemplateKey });
+                    if (!savedKey) {
+                        return;
+                    }
                     toastr.success('Side prompt updated successfully', 'STMB');
-                } else if (actionButton.classList.contains('stmb-spm-action-duplicate')) {
+                } else if (actionButton.classList.contains('stmb-sp-action-duplicate')) {
                     selectedTemplateKey = await duplicateTemplate(selectedTemplateKey);
                     window.dispatchEvent(new CustomEvent('stmb-sideprompts-updated'));
                     toastr.success('Side prompt duplicated successfully', 'STMB');
-                } else if (actionButton.classList.contains('stmb-spm-action-delete')) {
-                    const confirmed = await Popup.show.confirm('Delete Side Prompt', 'Are you sure you want to delete this template?');
-                    if (!confirmed) {
+                } else if (actionButton.classList.contains('stmb-sp-action-delete')) {
+                    const templateName = String(row?.querySelector('td')?.textContent || '').trim() || 'this template';
+                    const confirmPopup = new Popup(
+                        `<h3>Delete Side Prompt</h3><p>Are you sure you want to delete "${escapeHtml(templateName)}"?</p>`,
+                        POPUP_TYPE.CONFIRM,
+                        '',
+                        { okButton: 'Delete', cancelButton: 'Cancel' },
+                    );
+                    const confirmed = await confirmPopup.show();
+                    if (confirmed !== POPUP_RESULT.AFFIRMATIVE) {
                         return;
                     }
                     await removeTemplate(selectedTemplateKey);
@@ -2107,14 +2202,20 @@ async function showSidePromptManagerPopup({ onChange = null } = {}) {
         }
 
         if (target.closest('#stmb-sp-recreate-builtins')) {
-            const confirmed = await Popup.show.confirm(
-                'Recreate Built-in Side Prompts',
-                'This will overwrite the built-in Side Prompts with the current local defaults. Custom prompts are not touched.',
-            );
-            if (!confirmed) {
-                return;
-            }
             try {
+                const confirmPopup = new Popup(
+                    `
+                        <h3>Recreate Built-in Side Prompts</h3>
+                        <div class="info-block warning">This will overwrite the built-in Side Prompts with the current local defaults. Custom prompts are not touched. This action cannot be undone.</div>
+                    `,
+                    POPUP_TYPE.CONFIRM,
+                    '',
+                    { okButton: 'Recreate', cancelButton: 'Cancel' },
+                );
+                const confirmed = await confirmPopup.show();
+                if (confirmed !== POPUP_RESULT.AFFIRMATIVE) {
+                    return;
+                }
                 const result = await recreateBuiltInSidePrompts('overwrite');
                 window.dispatchEvent(new CustomEvent('stmb-sideprompts-updated'));
                 selectedTemplateKey = null;
@@ -2142,11 +2243,16 @@ async function showSidePromptManagerPopup({ onChange = null } = {}) {
             showSidePromptRuntimeMacroImportNormalizationToast(result.strippedDetails);
             await notifyChange();
         } catch (error) {
-            toastr.error(error?.message || 'Failed to import side prompts', 'STMB');
+            toastr.error(error?.message ? `Failed to import side prompts: ${error.message}` : 'Failed to import side prompts', 'STMB');
         }
     });
 
     await refreshSidePromptManagerList(popup.dlg, selectedTemplateKey);
+    try {
+        applyLocale(popup.dlg);
+    } catch {
+        // noop
+    }
     await popup.show();
 }
 

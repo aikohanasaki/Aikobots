@@ -2,10 +2,14 @@
     <h3 class="margin0">🔖 Bookmarks ({{bookmarks.length}}/{{maxBookmarks}})</h3>
 
     <div class="info-block warning margin0">
-        Older bookmarks may require the chat window to jump and redraw around that message.
+        Click a bookmark to open it in a separate reader window. Older bookmarks may require a temporary chat redraw to prepare that popout.
     </div>
 
-    <div class="flex-container justifyCenter">
+    <div class="flex-container justifyCenter gap10px">
+        <button id="named-bookmarks-popout" type="button" class="menu_button menu_button_icon inline-flex interactable">
+            <i class="fa-solid fa-up-right-from-square"></i>
+            <span>Pop Out Chat</span>
+        </button>
         <button id="named-bookmarks-sort-toggle" type="button" class="menu_button menu_button_icon inline-flex interactable">
             {{#if sortAscending}}
                 <i class="fa-solid fa-sort-asc"></i>
