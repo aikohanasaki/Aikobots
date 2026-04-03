@@ -68,6 +68,7 @@ import {
     getGroupBlock,
     getGroupCharacterCards,
     getGroupDepthPrompts,
+    openGroupById,
     openGroupChat,
 } from './scripts/group-chats.js';
 
@@ -421,6 +422,8 @@ export const system_avatar = 'img/five.png';
 export const comment_avatar = 'img/quill.png';
 export const default_user_avatar = 'img/user-default.png';
 export let CLIENT_VERSION = 'Aikobots:UNKNOWN:Cohee#1207'; // For Horde header
+let manageChatsOwnerContext = null;
+let manageChatsOwnerSelectorInitialized = false;
 let optionsPopper = Popper.createPopper(document.getElementById('options_button'), document.getElementById('options'), {
     placement: 'top-start',
 });
@@ -8973,18 +8976,359 @@ export async function getPastCharacterChats(characterId = null) {
 }
 
 /**
- * Helper for `displayPastChats`, to make the same info consistently available for other functions
+ * @typedef {{ type: 'character' | 'group', id: string|number }} ManageChatsOwnerContext
  */
-export function getCurrentChatDetails() {
-    if (!characters[this_chid] && !selected_group) {
-        return { sessionName: '', group: null, characterName: '', avatarImgURL: '' };
+
+function normalizeManageChatsOwner(ownerContext) {
+    if (!ownerContext?.type || ownerContext?.id === undefined || ownerContext?.id === null || ownerContext?.id === '') {
+        return null;
     }
 
-    const group = selected_group ? groups.find(x => x.id === selected_group) : null;
-    const currentChat = selected_group ? group?.chat_id : characters[this_chid]['chat'];
-    const displayName = selected_group ? group?.name : characters[this_chid].name;
-    const avatarImg = selected_group ? group?.avatar_url : getThumbnailUrl('avatar', characters[this_chid]['avatar']);
-    return { sessionName: currentChat, group: group, characterName: displayName, avatarImgURL: avatarImg };
+    return {
+        type: ownerContext.type === 'group' ? 'group' : 'character',
+        id: ownerContext.type === 'group' ? String(ownerContext.id) : Number(ownerContext.id),
+    };
+}
+
+function isSameManageChatsOwner(left, right) {
+    const normalizedLeft = normalizeManageChatsOwner(left);
+    const normalizedRight = normalizeManageChatsOwner(right);
+    return !!normalizedLeft && !!normalizedRight
+        && normalizedLeft.type === normalizedRight.type
+        && String(normalizedLeft.id) === String(normalizedRight.id);
+}
+
+function serializeManageChatsOwnerValue(ownerContext) {
+    const normalizedOwner = normalizeManageChatsOwner(ownerContext);
+    return normalizedOwner ? `${normalizedOwner.type}:${normalizedOwner.id}` : '';
+}
+
+function parseManageChatsOwnerValue(value) {
+    const [type, ...rest] = String(value ?? '').split(':');
+    const id = rest.join(':');
+
+    if (!type || !id) {
+        return null;
+    }
+
+    return normalizeManageChatsOwner({ type, id });
+}
+
+function setManageChatsOwnerDataset(element, ownerContext) {
+    const normalizedOwner = normalizeManageChatsOwner(ownerContext);
+    if (!normalizedOwner) {
+        return;
+    }
+
+    $(element)
+        .attr('data-owner-type', normalizedOwner.type)
+        .attr('data-owner-id', String(normalizedOwner.id));
+}
+
+function getManageChatsOwnerFromElement(element) {
+    const target = $(element);
+    const ownerType = target.attr('data-owner-type') || target.closest('[data-owner-type]').attr('data-owner-type');
+    const ownerId = target.attr('data-owner-id') || target.closest('[data-owner-id]').attr('data-owner-id');
+    return parseManageChatsOwnerValue(`${ownerType}:${ownerId}`);
+}
+
+export function getCurrentManageChatsOwner() {
+    if (selected_group) {
+        return { type: 'group', id: String(selected_group) };
+    }
+
+    if (this_chid !== undefined && characters[this_chid]) {
+        return { type: 'character', id: Number(this_chid) };
+    }
+
+    return null;
+}
+
+function getManageChatsOwnerDetails(ownerContext = getCurrentManageChatsOwner()) {
+    const normalizedOwner = normalizeManageChatsOwner(ownerContext);
+    if (!normalizedOwner) {
+        return {
+            ownerContext: null,
+            sessionName: '',
+            group: null,
+            characterName: '',
+            avatarImgURL: '',
+            avatarUrl: '',
+            characterId: null,
+            groupId: null,
+            isGroup: false,
+        };
+    }
+
+    if (normalizedOwner.type === 'group') {
+        const group = groups.find(x => String(x.id) === String(normalizedOwner.id));
+        if (!group) {
+            return {
+                ownerContext: null,
+                sessionName: '',
+                group: null,
+                characterName: '',
+                avatarImgURL: '',
+                avatarUrl: '',
+                characterId: null,
+                groupId: null,
+                isGroup: true,
+            };
+        }
+
+        return {
+            ownerContext: normalizedOwner,
+            sessionName: group.chat_id || '',
+            group: group,
+            characterName: group.name || '',
+            avatarImgURL: group.avatar_url || default_avatar,
+            avatarUrl: '',
+            characterId: null,
+            groupId: String(group.id),
+            isGroup: true,
+        };
+    }
+
+    const character = characters[normalizedOwner.id];
+    if (!character) {
+        return {
+            ownerContext: null,
+            sessionName: '',
+            group: null,
+            characterName: '',
+            avatarImgURL: '',
+            avatarUrl: '',
+            characterId: null,
+            groupId: null,
+            isGroup: false,
+        };
+    }
+
+    return {
+        ownerContext: normalizedOwner,
+        sessionName: character.chat || '',
+        group: null,
+        characterName: character.name || '',
+        avatarImgURL: getThumbnailUrl('avatar', character.avatar),
+        avatarUrl: character.avatar,
+        characterId: Number(normalizedOwner.id),
+        groupId: null,
+        isGroup: false,
+    };
+}
+
+/**
+ * Helper for `displayPastChats`, to make the same info consistently available for other functions
+ * @param {ManageChatsOwnerContext?} [ownerContext]
+ */
+export function getCurrentChatDetails(ownerContext = getCurrentManageChatsOwner()) {
+    return getManageChatsOwnerDetails(ownerContext);
+}
+
+function populateManageChatsOwnerSelect(ownerContext = getCurrentManageChatsOwner()) {
+    const normalizedOwner = normalizeManageChatsOwner(ownerContext);
+    const selector = $('#manage_chats_owner_select');
+    const characterGroup = $('#manage_chats_owner_select_characters');
+    const groupGroup = $('#manage_chats_owner_select_groups');
+
+    characterGroup.empty();
+    groupGroup.empty();
+
+    characters.forEach((character, index) => {
+        if (!character) {
+            return;
+        }
+
+        characterGroup.append($('<option></option>')
+            .val(serializeManageChatsOwnerValue({ type: 'character', id: index }))
+            .text(character.name || String(character.avatar || index)));
+    });
+
+    groups.forEach((group) => {
+        if (!group) {
+            return;
+        }
+
+        groupGroup.append($('<option></option>')
+            .val(serializeManageChatsOwnerValue({ type: 'group', id: group.id }))
+            .text(group.name || String(group.id)));
+    });
+
+    const serializedOwner = serializeManageChatsOwnerValue(normalizedOwner);
+    selector.val(serializedOwner);
+    if (selector.hasClass('select2-hidden-accessible')) {
+        selector.trigger('change.select2');
+    }
+}
+
+function updateManageChatsHeader(ownerContext) {
+    const details = getManageChatsOwnerDetails(ownerContext);
+    manageChatsOwnerContext = details.ownerContext;
+    $('#ChatHistoryCharName').text(details.characterName ? `${details.characterName} ` : '');
+
+    if (details.characterId !== null) {
+        $('#chat_import_avatar_url').val(details.avatarUrl);
+        $('#chat_import_character_name').val(details.characterName);
+    } else {
+        $('#chat_import_avatar_url').val('');
+        $('#chat_import_character_name').val('');
+    }
+}
+
+function initManageChatsOwnerSelect() {
+    if (manageChatsOwnerSelectorInitialized) {
+        return;
+    }
+
+    const selector = $('#manage_chats_owner_select');
+    if (!selector.length) {
+        return;
+    }
+
+    if (!isMobile() && !selector.hasClass('select2-hidden-accessible')) {
+        selector.select2({
+            placeholder: t`--- Pick Owner ---`,
+            searchInputPlaceholder: t`Search...`,
+            allowClear: true,
+            closeOnSelect: true,
+            multiple: false,
+        });
+    }
+
+    selector.on('change', async function () {
+        const nextOwner = parseManageChatsOwnerValue($(this).val()) ?? getCurrentManageChatsOwner();
+        if (!nextOwner || isSameManageChatsOwner(nextOwner, manageChatsOwnerContext)) {
+            selector.val(serializeManageChatsOwnerValue(manageChatsOwnerContext));
+            if (selector.hasClass('select2-hidden-accessible')) {
+                selector.trigger('change.select2');
+            }
+            return;
+        }
+
+        await displayPastChats([], nextOwner);
+    });
+
+    manageChatsOwnerSelectorInitialized = true;
+}
+
+async function switchToManageChatsOwner(ownerContext) {
+    const normalizedOwner = normalizeManageChatsOwner(ownerContext);
+    if (!normalizedOwner) {
+        return false;
+    }
+
+    if (normalizedOwner.type === 'group') {
+        if (String(selected_group) === String(normalizedOwner.id)) {
+            return true;
+        }
+
+        return await openGroupById(String(normalizedOwner.id));
+    }
+
+    if (!selected_group && String(this_chid) === String(normalizedOwner.id)) {
+        return true;
+    }
+
+    await selectCharacterById(Number(normalizedOwner.id), { switchMenu: false });
+    return !selected_group && String(this_chid) === String(normalizedOwner.id);
+}
+
+export async function openManageChatsOwnerChat(ownerContext, fileName) {
+    const normalizedOwner = normalizeManageChatsOwner(ownerContext);
+    if (!normalizedOwner || !fileName) {
+        return;
+    }
+
+    const switched = await switchToManageChatsOwner(normalizedOwner);
+    if (!switched) {
+        return;
+    }
+
+    if (normalizedOwner.type === 'group') {
+        await openGroupChat(String(normalizedOwner.id), fileName);
+    } else {
+        await openCharacterChat(fileName);
+    }
+}
+
+async function createNewManageChatsOwnerChat(ownerContext) {
+    const switched = await switchToManageChatsOwner(ownerContext);
+    if (!switched) {
+        return;
+    }
+
+    await doNewChat({ deleteCurrentChat: false });
+}
+
+async function renameManageChatsOwnerChat(ownerContext, oldFileName, newName) {
+    const details = getManageChatsOwnerDetails(ownerContext);
+    if (!details.ownerContext) {
+        return;
+    }
+
+    await renameGroupOrCharacterChat({
+        characterId: details.characterId ?? undefined,
+        groupId: details.groupId ?? undefined,
+        oldFileName: oldFileName,
+        newFileName: newName,
+        loader: true,
+    });
+}
+
+async function deleteManageChatsOwnerChat(ownerContext, fileName) {
+    const details = getManageChatsOwnerDetails(ownerContext);
+    if (!details.ownerContext) {
+        return;
+    }
+
+    if (details.isGroup) {
+        if (String(selected_group) === String(details.groupId)) {
+            await deleteGroupChat(String(details.groupId), fileName);
+        } else {
+            await deleteGroupChatByName(String(details.groupId), fileName);
+        }
+        return;
+    }
+
+    if (!selected_group && String(this_chid) === String(details.characterId)) {
+        await delChat(`${fileName}.jsonl`);
+    } else if (details.characterId !== null) {
+        await deleteCharacterChatByName(details.characterId, fileName);
+    }
+}
+
+async function exportManageChatsOwnerChat(ownerContext, filename, format) {
+    const details = getManageChatsOwnerDetails(ownerContext);
+    if (!details.ownerContext) {
+        return;
+    }
+
+    await saveChatConditional();
+    const body = {
+        is_group: details.isGroup,
+        avatar_url: details.avatarUrl || null,
+        file: `${filename}.jsonl`,
+        exportfilename: `${filename}.${format}`,
+        format: format,
+    };
+
+    const response = await fetch('/api/chats/export', {
+        method: 'POST',
+        body: JSON.stringify(body),
+        headers: getRequestHeaders(),
+    });
+    const data = await response.json();
+
+    if (!response.ok) {
+        await delay(250);
+        toastr.error(`Error: ${data.message}`);
+        return;
+    }
+
+    const mimeType = format == 'txt' ? 'text/plain' : 'application/octet-stream';
+    await delay(250);
+    toastr.success(data.message);
+    download(data.result, body.exportfilename, mimeType);
 }
 
 /**
@@ -8993,46 +9337,54 @@ export function getCurrentChatDetails() {
  * the HTML. It also has a built-in search functionality that allows filtering the
  * displayed chats based on a search query.
  * @param {string[]} hightlightNames - An array of chat names to highlight
+ * @param {ManageChatsOwnerContext?} [ownerContext]
  */
-export async function displayPastChats(hightlightNames = []) {
+export async function displayPastChats(hightlightNames = [], ownerContext = getCurrentManageChatsOwner()) {
+    initManageChatsOwnerSelect();
+    const details = getManageChatsOwnerDetails(ownerContext);
+    if (!details.ownerContext) {
+        $('#select_chat_div').empty();
+        return;
+    }
+
     $('#select_chat_div').empty();
     $('#select_chat_search').val('').off('input');
+    populateManageChatsOwnerSelect(details.ownerContext);
+    updateManageChatsHeader(details.ownerContext);
 
-    const chatDetails = getCurrentChatDetails();
-    const currentChat = chatDetails.sessionName;
-    const displayName = chatDetails.characterName;
-    const avatarImg = chatDetails.avatarImgURL;
-
-    await displayChats('', currentChat, displayName, avatarImg, selected_group, hightlightNames);
+    await displayChats('', details, hightlightNames);
 
     const debouncedDisplay = debounce((searchQuery) => {
-        displayChats(searchQuery, currentChat, displayName, avatarImg, selected_group, []);
+        displayChats(searchQuery, getManageChatsOwnerDetails(details.ownerContext), []);
     });
 
-    // Define the search input listener
     $('#select_chat_search').on('input', function () {
         const searchQuery = $(this).val();
         debouncedDisplay(searchQuery);
     });
 
-    // UX convenience: Focus the search field when the Manage Chat Files view opens.
     setTimeout(function () {
         const textSearchElement = $('#select_chat_search');
         textSearchElement.trigger('click').trigger('focus').trigger('select');
     }, 200);
 }
 
-async function displayChats(searchQuery, currentChat, displayName, avatarImg, selected_group, highlightNames) {
+async function displayChats(searchQuery, chatDetails, highlightNames) {
     try {
-        const trimExtension = (fileName) => String(fileName).replace('.jsonl', '');
+        const ownerContext = normalizeManageChatsOwner(chatDetails?.ownerContext);
+        if (!ownerContext) {
+            $('#select_chat_div').empty();
+            return;
+        }
 
+        const trimExtension = (fileName) => String(fileName).replace('.jsonl', '');
         const response = await fetch('/api/chats/search', {
             method: 'POST',
             headers: getRequestHeaders(),
             body: JSON.stringify({
                 query: searchQuery,
-                avatar_url: selected_group ? null : characters[this_chid].avatar,
-                group_id: selected_group || null,
+                avatar_url: chatDetails.isGroup ? null : chatDetails.avatarUrl,
+                group_id: chatDetails.isGroup ? chatDetails.groupId : null,
             }),
         });
 
@@ -9046,10 +9398,13 @@ async function displayChats(searchQuery, currentChat, displayName, avatarImg, se
         filteredData.sort((a, b) => sortMoments(timestampToMoment(a.last_mes), timestampToMoment(b.last_mes)));
 
         for (const chat of filteredData) {
-            const isSelected = trimExtension(currentChat) === trimExtension(chat.file_name);
+            const isSelected = trimExtension(chatDetails.sessionName) === trimExtension(chat.file_name);
             const template = $('#past_chat_template .select_chat_block_wrapper').clone();
-            template.find('.select_chat_block').attr('file_name', chat.file_name);
-            template.find('.avatar img').attr('src', avatarImg);
+            const chatBlock = template.find('.select_chat_block');
+            chatBlock.attr('file_name', chat.file_name);
+            setManageChatsOwnerDataset(template, ownerContext);
+            setManageChatsOwnerDataset(chatBlock, ownerContext);
+            template.find('.avatar img').attr('src', chatDetails.avatarImgURL);
             template.find('.select_chat_block_filename').text(chat.file_name);
             template.find('.chat_file_size').text(`(${chat.file_size},`);
             template.find('.chat_messages_num').text(`${chat.message_count} 💬)`);
@@ -9057,8 +9412,12 @@ async function displayChats(searchQuery, currentChat, displayName, avatarImg, se
             template.find('.PastChat_cross').attr('file_name', chat.file_name);
             template.find('.chat_messages_date').text(timestampToMoment(chat.last_mes).format('lll'));
 
+            template.find('.renameChatButton, .exportRawChatButton, .exportChatButton, .PastChat_cross').each((_, element) => {
+                setManageChatsOwnerDataset(element, ownerContext);
+            });
+
             if (isSelected) {
-                template.find('.select_chat_block').attr('highlight', String(true));
+                chatBlock.attr('highlight', String(true));
             }
 
             $('#select_chat_div').append(template);
@@ -10911,6 +11270,8 @@ export async function doNewChat({ deleteCurrentChat = false } = {}) {
  */
 export async function renameGroupOrCharacterChat({ characterId, groupId, oldFileName, newFileName, loader }) {
     const currentChatId = getCurrentChatId();
+    const isCurrentGroup = !!groupId && String(groupId) === String(selected_group);
+    const isCurrentCharacter = characterId !== undefined && !selected_group && String(characterId) === String(this_chid);
     const body = {
         is_group: !!groupId,
         avatar_url: characters[characterId]?.avatar,
@@ -10953,13 +11314,16 @@ export async function renameGroupOrCharacterChat({ characterId, groupId, oldFile
         if (groupId) {
             await renameGroupChat(groupId, oldFileName, newFileName);
         }
-        else if (characterId !== undefined && String(characterId) === String(this_chid) && characters[characterId]?.chat === oldFileName) {
-            characters[characterId].chat = newFileName;
-            $('#selected_chat_pole').val(characters[characterId].chat);
-            await createOrEditCharacter();
+        else if (characterId !== undefined && characters[characterId]?.chat === oldFileName) {
+            await updateRemoteChatName(characterId, newFileName);
+
+            if (isCurrentCharacter) {
+                $('#selected_chat_pole').val(characters[characterId].chat);
+                await createOrEditCharacter();
+            }
         }
 
-        if (currentChatId) {
+        if ((isCurrentGroup || isCurrentCharacter) && currentChatId && currentChatId === oldFileName) {
             await reloadCurrentChat();
         }
     } catch {
@@ -11532,22 +11896,18 @@ jQuery(async function () {
      * @param {boolean} [fromSlashCommand=false] - Whether the deletion was triggered from a slash command.
      * @returns {Promise<void>}
      */
-    async function handleDeleteChat(chatFile, group, fromSlashCommand = false) {
+    async function handleDeleteChat(chatFile, ownerContext, fromSlashCommand = false) {
         // Close past chat popup.
         $('#select_chat_cross').trigger('click');
         showLoader();
-        if (group) {
-            await deleteGroupChat(group, chatFile);
-        } else {
-            await delChat(chatFile);
-        }
+        await deleteManageChatsOwnerChat(ownerContext, String(chatFile).replace(/\.jsonl$/i, ''));
 
         if (fromSlashCommand) {  // When called from `/delchat` command, don't re-open the history view.
             $('#options').hide();  // Hide option popup menu.
             hideLoader();
         } else {  // Open the history view again after 2 seconds (delay to avoid edge cases for deleting last chat).
-            setTimeout(function () {
-                $('#option_select_chat').trigger('click');
+            setTimeout(async function () {
+                await displayPastChats([], ownerContext);
                 $('#options').hide();  // Hide option popup menu.
                 hideLoader();
             }, 2000);
@@ -11557,17 +11917,18 @@ jQuery(async function () {
     $(document).on('click', '.PastChat_cross', async function (e, { fromSlashCommand = false } = {}) {
         e.stopPropagation();
         chat_file_for_del = $(this).attr('file_name');
+        const ownerContext = getManageChatsOwnerFromElement(this) ?? manageChatsOwnerContext ?? getCurrentManageChatsOwner();
         console.debug('detected cross click for' + chat_file_for_del);
 
         // Skip confirmation if called from a slash command.
         if (fromSlashCommand) {
-            await handleDeleteChat(chat_file_for_del, selected_group, true);
+            await handleDeleteChat(chat_file_for_del, ownerContext, true);
             return;
         }
 
         const result = await callGenericPopup('<h3>' + t`Delete the Chat File?` + '</h3>', POPUP_TYPE.CONFIRM);
         if (result === POPUP_RESULT.AFFIRMATIVE) {
-            await handleDeleteChat(chat_file_for_del, selected_group, false);
+            await handleDeleteChat(chat_file_for_del, ownerContext, false);
         }
     });
 
@@ -11617,7 +11978,7 @@ jQuery(async function () {
         }, animation_duration);
 
         if (popup_type == 'del_chat') {
-            await handleDeleteChat(chat_file_for_del, selected_group, fromSlashCommand);
+            await handleDeleteChat(chat_file_for_del, manageChatsOwnerContext ?? getCurrentManageChatsOwner(), fromSlashCommand);
         }
 
         if (dialogueResolve) {
@@ -11736,6 +12097,7 @@ jQuery(async function () {
 
     $(document).on('click', '.renameChatButton', async function (e) {
         e.stopPropagation();
+        const ownerContext = getManageChatsOwnerFromElement(this) ?? manageChatsOwnerContext ?? getCurrentManageChatsOwner();
         const oldFileNameFull = $(this).closest('.select_chat_block_wrapper').find('.select_chat_block_filename').text();
         const oldFileName = oldFileNameFull.replace('.jsonl', '');
 
@@ -11747,50 +12109,23 @@ jQuery(async function () {
             return;
         }
 
-        await renameChat(oldFileName, newName);
+        await renameManageChatsOwnerChat(ownerContext, oldFileName, newName);
 
         await delay(250);
-        $('#option_select_chat').trigger('click');
+        await displayPastChats([], ownerContext);
         $('#options').hide();
     });
 
     $(document).on('click', '.exportChatButton, .exportRawChatButton', async function (e) {
         e.stopPropagation();
         const format = $(this).data('format') || 'txt';
-        await saveChatConditional();
+        const ownerContext = getManageChatsOwnerFromElement(this) ?? manageChatsOwnerContext ?? getCurrentManageChatsOwner();
         const filenamefull = $(this).closest('.select_chat_block_wrapper').find('.select_chat_block_filename').text();
         console.log(`exporting ${filenamefull} in ${format} format`);
 
         const filename = filenamefull.replace('.jsonl', '');
-        const body = {
-            is_group: !!selected_group,
-            avatar_url: characters[this_chid]?.avatar,
-            file: `${filename}.jsonl`,
-            exportfilename: `${filename}.${format}`,
-            format: format,
-        };
-        console.log(body);
         try {
-            const response = await fetch('/api/chats/export', {
-                method: 'POST',
-                body: JSON.stringify(body),
-                headers: getRequestHeaders(),
-            });
-            const data = await response.json();
-            if (!response.ok) {
-                // display error message
-                console.log(data.message);
-                await delay(250);
-                toastr.error(`Error: ${data.message}`);
-                return;
-            } else {
-                const mimeType = format == 'txt' ? 'text/plain' : 'application/octet-stream';
-                // success, handle response data
-                console.log(data);
-                await delay(250);
-                toastr.success(data.message);
-                download(data.result, body.exportfilename, mimeType);
-            }
+            await exportManageChatsOwnerChat(ownerContext, filename, format);
         } catch (error) {
             // display error message
             console.log(`An error has occurred: ${error.message}`);
@@ -11953,7 +12288,7 @@ jQuery(async function () {
     });
 
     $('#newChatFromManageScreenButton').on('click', async function () {
-        await doNewChat({ deleteCurrentChat: false });
+        await createNewManageChatsOwnerChat(manageChatsOwnerContext ?? getCurrentManageChatsOwner());
         $('#select_chat_cross').trigger('click');
     });
 
@@ -12361,6 +12696,13 @@ jQuery(async function () {
             return;
         }
 
+        const ownerContext = manageChatsOwnerContext ?? getCurrentManageChatsOwner();
+        const ownerDetails = getManageChatsOwnerDetails(ownerContext);
+        if (!ownerDetails.ownerContext) {
+            targetElement.value = '';
+            return;
+        }
+
         const importedFileNames = [];
 
         for (const file of targetElement.files) {
@@ -12372,7 +12714,7 @@ jQuery(async function () {
                 continue;
             }
 
-            if (selected_group && format === 'json') {
+            if (ownerDetails.isGroup && format === 'json') {
                 toastr.warning(t`Only SillyTavern's own format is supported for group chat imports. Sorry!`);
                 continue;
             }
@@ -12381,9 +12723,12 @@ jQuery(async function () {
             formData.set('file_type', format);
             formData.set('avatar', file);
             formData.set('user_name', name1);
+            formData.set('avatar_url', ownerDetails.avatarUrl || '');
+            formData.set('character_name', ownerDetails.characterName || '');
 
-            const importFn = selected_group ? importGroupChat : importCharacterChat;
-            const result = await importFn(formData, { refresh: false });
+            const result = ownerDetails.isGroup
+                ? await importGroupChat(formData, { refresh: false, groupId: ownerDetails.groupId })
+                : await importCharacterChat(formData, { refresh: false });
             importedFileNames.push(...result);
         }
 
@@ -12391,7 +12736,7 @@ jQuery(async function () {
             toastr.success(t`Successfully imported ${importedFileNames.length} chat(s).`);
         }
 
-        await displayPastChats(importedFileNames);
+        await displayPastChats(importedFileNames, ownerDetails.ownerContext);
 
         targetElement.value = '';
     });

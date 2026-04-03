@@ -2119,9 +2119,10 @@ export async function deleteGroupChat(groupId, chatId, { jumpToNewChat = true } 
  * @param {FormData} formData Form data to send to the server
  * @param {object} [options={}] Options for the import
  * @param {boolean} [options.refresh] Whether to refresh the group chat list after import
+ * @param {string} [options.groupId] Target group id. Defaults to the currently selected group.
  * @returns {Promise<string[]>} List of imported file names
  */
-export async function importGroupChat(formData, { refresh = true } = {}) {
+export async function importGroupChat(formData, { refresh = true, groupId = selected_group } = {}) {
     const fetchResult = await fetch('/api/chats/group/import', {
         method: 'POST',
         headers: getRequestHeaders({ omitContentType: true }),
@@ -2133,11 +2134,11 @@ export async function importGroupChat(formData, { refresh = true } = {}) {
         const data = await fetchResult.json();
         if (data.res) {
             const chatId = data.res;
-            const group = groups.find(x => x.id == selected_group);
+            const group = groups.find(x => x.id == groupId);
 
             if (group) {
                 group.chats.push(chatId);
-                await editGroup(selected_group, true, true);
+                await editGroup(groupId, true, true);
                 if (refresh) {
                     await displayPastChats();
                 }

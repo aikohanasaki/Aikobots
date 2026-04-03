@@ -4,6 +4,7 @@ import {
     system_message_types,
     this_chid,
     openCharacterChat,
+    openManageChatsOwnerChat,
     chat_metadata,
     getRequestHeaders,
     getThumbnailUrl,
@@ -1315,7 +1316,11 @@ export function initBookmarks() {
 
         try {
             showLoader();
-            if (selected_group) {
+            const ownerType = $(this).attr('data-owner-type');
+            const ownerId = $(this).attr('data-owner-id');
+            if (ownerType && ownerId) {
+                await openManageChatsOwnerChat({ type: ownerType, id: ownerId }, fileName);
+            } else if (selected_group) {
                 await openGroupChat(selected_group, fileName);
             } else {
                 await openCharacterChat(fileName);
