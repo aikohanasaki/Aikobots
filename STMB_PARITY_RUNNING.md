@@ -8,8 +8,8 @@ This file is updated subsystem by subsystem during the audit. Only sections that
 
 | Item | Status | Note |
 | --- | --- | --- |
-| Settings defaults match STMB exactly. | Partial | Core normalization now matches STMB for `maxTokens`, `tokenWarningThreshold`, `defaultMemoryCount`, `autoSummaryInterval`, and summary/arc order syncing; the remaining gap is broader end-to-end runtime verification rather than raw defaults. |
-| Settings migration/import is idempotent. | Partial | Builtin `current_st` invariants, duplicate builtin cleanup, legacy dynamic migration, outlet-only `outletName` retention, `convertExistingRecursion` persistence, and summary prompt first-run migration are now normalized; per-profile prompt overrides were intentionally removed by user request and broader runtime verification is still pending. |
+| Settings defaults match STMB exactly. | Partial | Core normalization now matches STMB for `maxTokens`, `tokenWarningThreshold`, `defaultMemoryCount`, `autoSummaryInterval`, and summary/arc order syncing; the remaining gap is broader end-to-end runtime verification rather than raw defaults, and legacy settings-migration branches in STMB are out of scope. |
+| Settings migration/import is idempotent. | Partial | Steady-state import/normalization now preserves builtin `current_st` invariants, duplicate builtin cleanup, outlet-only `outletName` retention, `convertExistingRecursion` persistence, and summary prompt first-run migration; legacy STMB migration side effects are now treated as non-goal compatibility code, per-profile prompt overrides remain intentionally removed by user request, and broader runtime verification is still pending. |
 | Profile CRUD behavior matches STMB. | Exact | Dedicated profile-manager create/edit/delete/export/import flow has now passed manual testing, including safe-name handling, duplicate-count import reporting, outlet validation, builtin protections, and explicit `Set As Default`; per-profile prompt overrides remain intentionally removed by approved deviation. |
 | `current_st` / dynamic profile behavior matches STMB. | Exact | Builtin profile invariants and current-ST profile behavior passed manual testing through the dedicated profile editor. |
 | Custom/full-manual profile behavior matches STMB. | Exact | Full-manual endpoint requirements, field visibility, and save/reopen behavior passed manual testing in the dedicated profile editor. |
@@ -23,7 +23,7 @@ This file is updated subsystem by subsystem during the audit. Only sections that
 | --- | --- | --- |
 | Scene marker placement/removal matches STMB. | Exact | Local toggle logic matches STMB's `calculateNewSceneState` semantics. |
 | Start/end marker validation matches STMB. | Exact | Validation and single-message scene allowance match STMB. |
-| `scenememory` behavior matches STMB. | Partial | Main range parsing, deterministic validation, and scene-set messaging now match STMB more closely; final runtime verification is still pending. |
+| `scenememory` behavior matches STMB. | Partial | Main range parsing, deterministic validation, scene-set messaging, busy-state gating, character/group readiness checks, and `unhideBeforeMemory` preflight now match STMB more closely; final runtime verification and remaining handoff differences are still pending. |
 | `nextmemory` behavior matches STMB. | Partial | Empty-chat, no-new-message, lorebook preflight, and busy-state surfaces are now closer to STMB; final runtime verification is still pending. |
 | Deleted-message handling shifts markers exactly like STMB. | Partial | Core shift logic is aligned; notification behavior and full regression coverage remain open. |
 | Highest processed message tracking matches STMB. | Partial | Runtime tracking exists; slash-surface and deletion edge cases still need final verification. |

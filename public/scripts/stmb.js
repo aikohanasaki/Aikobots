@@ -3665,6 +3665,53 @@ function getNextMemoryRange() {
     return { sceneStart, sceneEnd };
 }
 
+function validateMemoryCreationContext() {
+    const context = getContext();
+    const group = selected_group ? groups.find(item => item.id === selected_group) : null;
+    const isGroupChat = Boolean(selected_group);
+
+    if (!isGroupChat) {
+        const activeCharacter = context?.characters?.[context.characterId];
+        if (!activeCharacter && !String(name2 || '').trim()) {
+            toastr.error(
+                'SillyTavern is still loading character data, please wait a few seconds and try again.',
+                'STMB',
+            );
+            return null;
+        }
+    } else if (!group?.name) {
+        toastr.error(
+            'Group chat data not available, please wait a few seconds and try again.',
+            'STMB',
+        );
+        return null;
+    }
+
+    return { context, group, isGroupChat };
+}
+
+async function runMemoryCreationPreflight(range) {
+    const memoryContext = validateMemoryCreationContext();
+    if (!memoryContext) {
+        return false;
+    }
+
+    if (hasActiveStmbTasks()) {
+        toastr.info('Memory creation is already in progress', 'STMB');
+        return false;
+    }
+
+    if (getModuleSettings().unhideBeforeMemory) {
+        try {
+            await executeSlashCommands(`/unhide ${range.sceneStart}-${range.sceneEnd}`);
+        } catch (error) {
+            console.warn('STMB /unhide preflight failed or is unavailable:', error);
+        }
+    }
+
+    return true;
+}
+
 async function resolveAutoSummaryLorebook() {
     if (!getModuleSettings().manualModeEnabled) {
         try {
@@ -4996,6 +5043,10 @@ async function sceneMemoryCommand(_, rangeText) {
         const group = selected_group ? groups.find(item => item.id === selected_group) : null;
         const groupSuffix = group?.name ? ` in group "${group.name}"` : '';
         toastr.info(`Scene set: messages ${range.sceneStart}-${range.sceneEnd}${groupSuffix}`, 'STMB');
+        const passedPreflight = await runMemoryCreationPreflight(range);
+        if (!passedPreflight) {
+            return '';
+        }
         await createMemoryFromRange(range, { keepSceneMarkers: true });
     } catch (error) {
         showSlashCommandError(error?.message || 'Failed to create memory from scene range.', error);
