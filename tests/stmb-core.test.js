@@ -15,6 +15,7 @@ import {
     importLegacyStmbSettings,
     normalizeStmbSettings,
     parseSceneRange,
+    parseSequenceFromTitle,
     parseStructuredMemoryResponse,
 } from '../public/scripts/stmb-core.js';
 
@@ -235,6 +236,48 @@ describe('stmb core parsing and persistence', () => {
         }, '{{date}} [000] - {{title}}');
 
         expect(next).toBe(8);
+    });
+
+    it('skips date-only digits when falling back to generic title parsing', () => {
+        expect(parseSequenceFromTitle('Recap 2026-04-02')).toBeNull();
+
+        const next = getNextManagedMemorySequenceNumber({
+            1: { uid: 1, comment: 'Recap 2026-04-01', [STMB_MANAGED_FLAG]: true },
+            2: { uid: 2, comment: 'Recap 2026-04-02', [STMB_MANAGED_FLAG]: true },
+        });
+
+        expect(next).toBe(1);
+    });
+
+    it('leaves custom title formats without numbering tokens unchanged', () => {
+        const title = formatMemoryTitle('{{title}} ({{scene}})', {
+            title: 'Arrival',
+            sceneStart: 4,
+            sceneEnd: 9,
+        }, 13);
+
+        expect(title).toBe('Arrival (Scene 4-9)');
+    });
+
+    it('replaces repeated numbering tokens of the same type across the whole title', () => {
+        const title = formatMemoryTitle('[000] / [000] {{title}}', { title: 'Arrival' }, 8);
+        expect(title).toBe('[008] / [008] Arrival');
+    });
+
+    it('renders wrapped numbering tokens like STMB', () => {
+        expect(formatMemoryTitle('[[000]] {{title}}', { title: 'Arrival' }, 8)).toBe('[008] Arrival');
+        expect(formatMemoryTitle('([000]) {{title}}', { title: 'Arrival' }, 8)).toBe('(008) Arrival');
+        expect(formatMemoryTitle('{[000]} {{title}}', { title: 'Arrival' }, 8)).toBe('{008} Arrival');
+        expect(formatMemoryTitle('#[000] {{title}}', { title: 'Arrival' }, 8)).toBe('#008 Arrival');
+    });
+
+    it('treats any stmemorybooks entry as a numbering conflict like STMB', () => {
+        const next = getNextManagedMemorySequenceNumber({
+            1: { uid: 1, comment: '[010] - Memory', [STMB_MANAGED_FLAG]: true },
+            2: { uid: 2, comment: '[099] - Tier summary', [STMB_MANAGED_FLAG]: true, stmbSummary: true },
+        }, '[000] - {{title}}');
+
+        expect(next).toBe(100);
     });
 
     it('creates managed lorebook payloads with only STMB memory metadata fields', () => {

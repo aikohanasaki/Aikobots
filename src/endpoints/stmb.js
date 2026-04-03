@@ -9,6 +9,7 @@ import {
     getNextManagedMemorySequenceNumber,
     getPresetPrompt,
     identifyManagedMemoryEntries,
+    parseSequenceFromTitle,
     compiledSceneToText,
     parseStructuredMemoryResponse,
 } from '../../public/scripts/stmb-core.js';
@@ -610,7 +611,7 @@ router.post('/save-memory', async (request, response) => {
         const entry = createLorebookEntry(lorebookData);
         Object.assign(entry, entryPayload);
         applyLorebookSettings(entry, profile, {
-            orderNumber: sequenceNumber,
+            orderNumber: parseSequenceFromTitle(entry.comment || entry.title || '') || 1,
             orderNumberLabel: 'memory',
         });
 

@@ -61,7 +61,7 @@ This file is updated subsystem by subsystem during the audit. Only sections that
 | Item | Status | Note |
 | --- | --- | --- |
 | Managed entry identification fields match STMB. | Partial | Memory saves now retain `stmemorybooks` and scene range fields only, but full side-prompt/tracker metadata audit is still pending. |
-| Title numbering and formats match STMB. | Partial | Memory numbering now follows STMB title-based extraction instead of entry-count append, but broader title-format coverage still needs verification. |
+| Title numbering and formats match STMB. | Exact | Stepped through against `addlore.js`: numbering conflict detection, format-aware extraction fallback, wrapped-token rendering, repeated token replacement, no-token format handling, and order derivation now follow STMB's decision path. |
 | Order calculation matches STMB. | Partial | Core order logic is aligned, but end-to-end persistence still needs more regression checks. |
 | Metadata roundtrip matches STMB. | Partial | Extra memory-only `STMB_*` fields were removed; remaining roundtrip behavior still needs summary/side-prompt review. |
 | `STMemoryBooks` / `stmemorybooks` / scene range / tracker metadata fields match STMB. | Partial | Memory-entry fields are closer now; tracker/checkpoint fields remain unaudited. |

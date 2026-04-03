@@ -1203,7 +1203,17 @@ export function parseSequenceFromTitle(title) {
 
     for (const match of text.matchAll(/(\d+)/g)) {
         const sequence = Number(match[1]);
-        if (Number.isFinite(sequence)) return sequence;
+        if (!Number.isFinite(sequence)) continue;
+
+        const fullMatch = match[0];
+        const index = match.index ?? 0;
+        const before = text.substring(Math.max(0, index - 10), index);
+        const after = text.substring(index + fullMatch.length, index + fullMatch.length + 10);
+        const isDateComponent = /\d{4}-\d{2}-\d{2}/.test(before + fullMatch + after)
+            || /\d{4}-\d{1,2}/.test(before + fullMatch)
+            || /-\d{1,2}-\d{1,2}/.test(fullMatch + after);
+
+        if (!isDateComponent) return sequence;
     }
 
     return null;
@@ -1421,14 +1431,14 @@ function formatLocalTimePart(date) {
 
 function applyNumberingPattern(format, sequenceNumber) {
     const numberPatterns = [
-        { regex: /\[\[(0+)\]\]/, render: digits => `[[${String(sequenceNumber).padStart(digits.length, '0')}]]` },
-        { regex: /\(\[(0+)\]\)/, render: digits => `([${String(sequenceNumber).padStart(digits.length, '0')}])` },
-        { regex: /\{\[(0+)\]\}/, render: digits => `{[${String(sequenceNumber).padStart(digits.length, '0')}]}` },
-        { regex: /#\[(0+)\]/, render: digits => `#[${String(sequenceNumber).padStart(digits.length, '0')}]` },
-        { regex: /\[(0+)\]/, render: digits => `[${String(sequenceNumber).padStart(digits.length, '0')}]` },
-        { regex: /\((0+)\)/, render: digits => `(${String(sequenceNumber).padStart(digits.length, '0')})` },
-        { regex: /\{(0+)\}/, render: digits => `{${String(sequenceNumber).padStart(digits.length, '0')}}` },
-        { regex: /#(0+)/, render: digits => `#${String(sequenceNumber).padStart(digits.length, '0')}` },
+        { regex: /\[\[(0+)\]\]/g, render: digits => `[${String(sequenceNumber).padStart(digits.length, '0')}]` },
+        { regex: /\(\[(0+)\]\)/g, render: digits => `(${String(sequenceNumber).padStart(digits.length, '0')})` },
+        { regex: /\{\[(0+)\]\}/g, render: digits => `{${String(sequenceNumber).padStart(digits.length, '0')}}` },
+        { regex: /#\[(0+)\]/g, render: digits => `#${String(sequenceNumber).padStart(digits.length, '0')}` },
+        { regex: /\[(0+)\]/g, render: digits => `[${String(sequenceNumber).padStart(digits.length, '0')}]` },
+        { regex: /\((0+)\)/g, render: digits => `(${String(sequenceNumber).padStart(digits.length, '0')})` },
+        { regex: /\{(0+)\}/g, render: digits => `{${String(sequenceNumber).padStart(digits.length, '0')}}` },
+        { regex: /#(0+)/g, render: digits => `#${String(sequenceNumber).padStart(digits.length, '0')}` },
     ];
 
     for (const pattern of numberPatterns) {
@@ -1436,7 +1446,7 @@ function applyNumberingPattern(format, sequenceNumber) {
         return format.replace(pattern.regex, (_, digits) => pattern.render(digits));
     }
 
-    return `[${String(sequenceNumber).padStart(3, '0')}] - ${format}`;
+    return format;
 }
 
 export function formatMemoryTitle(titleFormat, context, sequenceNumber) {
@@ -1459,7 +1469,8 @@ export function formatMemoryTitle(titleFormat, context, sequenceNumber) {
 }
 
 export function getNextManagedMemorySequenceNumber(entries, titleFormat = null) {
-    const existingNumbers = identifyManagedMemoryEntries(entries)
+    const existingNumbers = Object.values(entries || {})
+        .filter(entry => entry && entry[STMB_MANAGED_FLAG] === true)
         .map(entry => {
             const title = entry?.comment || entry?.title || '';
             return titleFormat
