@@ -7542,13 +7542,10 @@ export async function getChat() {
     //console.log('/api/chats/get -- entered for -- ' + characters[this_chid].name);
     try {
         const response = await fetchChunkedChat({ includeParentPromptCache: true });
-        if (response?.header) {
-            const header = applyChunkedChatPayload(response, { replace: true, currentView: 'tail' });
-            chat_create_date = header?.create_date ?? humanizedDateTime();
-            chat_metadata = header?.chat_metadata ?? {};
-        } else {
-            throw new Error('Unexpected chunked chat payload');
-        }
+        // A brand-new chat may not have a file on disk yet. Treat that as a valid empty chat.
+        const header = applyChunkedChatPayload(response, { replace: true, currentView: 'tail' });
+        chat_create_date = header?.create_date ?? humanizedDateTime();
+        chat_metadata = header?.chat_metadata ?? {};
         if (!chat_metadata['integrity']) {
             chat_metadata['integrity'] = uuidv4();
         }

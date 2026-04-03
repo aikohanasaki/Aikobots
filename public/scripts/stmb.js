@@ -4995,6 +4995,12 @@ function showSlashCommandError(message, error) {
     toastr.error(String(message || 'STMB command failed'), 'STMB');
 }
 
+function launchMemoryCreationInBackground(options, errorMessage) {
+    void initiateMemoryCreation(options).catch(error => {
+        showSlashCommandError(error?.message || errorMessage || 'Failed to create memory.', error);
+    });
+}
+
 async function createMemoryCommand() {
     const markers = getSceneMarkers() || {};
     if (markers.sceneStart == null || markers.sceneEnd == null) {
@@ -5003,11 +5009,7 @@ async function createMemoryCommand() {
         return '';
     }
 
-    try {
-        await initiateMemoryCreation({ range: getCurrentSceneRange() });
-    } catch (error) {
-        showSlashCommandError(error?.message || 'Failed to create memory.', error);
-    }
+    launchMemoryCreationInBackground({ range: getCurrentSceneRange() }, 'Failed to create memory.');
 
     return '';
 }
@@ -5048,16 +5050,12 @@ async function sceneMemoryCommand(_, rangeText) {
         return '';
     }
 
-    try {
-        const range = { sceneStart: startId, sceneEnd: endId };
-        setSceneRange(range.sceneStart, range.sceneEnd);
-        const group = selected_group ? groups.find(item => item.id === selected_group) : null;
-        const groupSuffix = group?.name ? ` in group "${group.name}"` : '';
-        toastr.info(`Scene set: messages ${range.sceneStart}-${range.sceneEnd}${groupSuffix}`, 'STMB');
-        await initiateMemoryCreation({ range, keepSceneMarkers: true });
-    } catch (error) {
-        showSlashCommandError(error?.message || 'Failed to create memory from scene range.', error);
-    }
+    const range = { sceneStart: startId, sceneEnd: endId };
+    setSceneRange(range.sceneStart, range.sceneEnd);
+    const group = selected_group ? groups.find(item => item.id === selected_group) : null;
+    const groupSuffix = group?.name ? ` in group "${group.name}"` : '';
+    toastr.info(`Scene set: messages ${range.sceneStart}-${range.sceneEnd}${groupSuffix}`, 'STMB');
+    launchMemoryCreationInBackground({ range, keepSceneMarkers: true }, 'Failed to create memory from scene range.');
 
     return '';
 }
@@ -5081,7 +5079,7 @@ async function nextMemoryCommand() {
 
         const range = getNextMemoryRange();
         setSceneRange(range.sceneStart, range.sceneEnd);
-        await initiateMemoryCreation({ range, keepSceneMarkers: true, notifyIfBusy: true });
+        launchMemoryCreationInBackground({ range, keepSceneMarkers: true, notifyIfBusy: true }, 'Failed to create next memory.');
     } catch (error) {
         if (error?.message === 'No new messages available for /nextmemory') {
             toastr.info('No new messages since the last memory.', 'STMB');

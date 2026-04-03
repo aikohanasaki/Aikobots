@@ -562,13 +562,11 @@ export function getGroupCharacterCards(groupId, characterId) {
 }
 
 async function getFirstCharacterMessage(character) {
-    let messageText = character.first_mes;
-
-    // if there are alternate greetings, pick one at random
-    if (Array.isArray(character.data?.alternate_greetings)) {
-        const messageTexts = [character.first_mes, ...character.data.alternate_greetings].filter(x => x);
-        messageText = messageTexts[Math.floor(Math.random() * messageTexts.length)];
-    }
+    const alternateGreetings = Array.isArray(character.data?.alternate_greetings) ? character.data.alternate_greetings : [];
+    const hasAlternateGreetings = alternateGreetings.length > 0;
+    const messageTexts = [character.first_mes, ...alternateGreetings].filter(x => x);
+    let selectedGreetingIndex = hasAlternateGreetings && messageTexts.length ? Math.floor(Math.random() * messageTexts.length) : 0;
+    let messageText = hasAlternateGreetings ? (messageTexts[selectedGreetingIndex] ?? character.first_mes) : character.first_mes;
 
     // Allow extensions to change the first message
     const eventArgs = { input: messageText, output: '', character: character };
@@ -587,6 +585,24 @@ async function getFirstCharacterMessage(character) {
     mes['mes'] = messageText
         ? substituteParams(messageText.trim(), name1, character.name)
         : '';
+
+    if (hasAlternateGreetings && messageTexts.length > 0) {
+        const swipes = messageTexts.map(greeting => substituteParams(greeting.trim(), name1, character.name));
+
+        if (eventArgs.output) {
+            swipes[selectedGreetingIndex] = mes['mes'];
+        }
+
+        mes['swipe_id'] = selectedGreetingIndex;
+        mes['swipes'] = swipes;
+        mes['swipe_info'] = swipes.map(_ => ({
+            send_date: mes['send_date'],
+            gen_started: void 0,
+            gen_finished: void 0,
+            extra: {},
+        }));
+    }
+
     mes['force_avatar'] =
         character.avatar != 'none'
             ? getThumbnailUrl('avatar', character.avatar)
