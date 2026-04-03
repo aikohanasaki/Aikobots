@@ -561,8 +561,6 @@ function getMainChatName() {
 
 export function showBookmarksButtons() {
     try {
-        $('#option_manage_bookmarks').toggle(hasActiveChatContext());
-
         if (selected_group) {
             $('#option_convert_to_group').hide();
         } else {
@@ -586,7 +584,6 @@ export function showBookmarksButtons() {
     catch {
         $('#option_back_to_main').hide();
         $('#option_new_bookmark').hide();
-        $('#option_manage_bookmarks').hide();
         $('#option_convert_to_group').hide();
     }
 }
