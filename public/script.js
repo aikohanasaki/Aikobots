@@ -608,7 +608,6 @@ function saveTopChatPanelsState() {
 
 function getTopChatButtonHandlerElements() {
     return [
-        topChatButtons.chatManager,
         topChatButtons.newChat,
         topChatButtons.renameChat,
         topChatButtons.deleteChat,
@@ -617,6 +616,8 @@ function getTopChatButtonHandlerElements() {
 }
 
 function setTopChatAvailabilityState(hasChat) {
+    setTopChatActionDisabled(topChatButtons.chatManager, false);
+
     for (const button of getTopChatButtonHandlerElements()) {
         setTopChatActionDisabled(button, !hasChat);
     }
