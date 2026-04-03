@@ -1323,19 +1323,29 @@ function saveModelList(data) {
     }
 
     if (oai_settings.chat_completion_source == chat_completion_sources.CUSTOM) {
-        $('.model_custom_select').empty();
-        $('.model_custom_select').append('<option value="">None</option>');
+        const customModelSelect = $('#model_custom_select');
+        const customModelDatalist = $('#model_custom_select_fill');
+
+        customModelSelect.empty();
+        customModelDatalist.empty();
+        customModelSelect.append('<option value="">None</option>');
+
         model_list.forEach((model) => {
-            $('.model_custom_select').append(
+            customModelSelect.append(
                 $('<option>', {
                     value: model.id,
                     text: model.id,
-                    selected: model.id == oai_settings.custom_model,
+                }));
+            customModelDatalist.append(
+                $('<option>', {
+                    value: model.id,
                 }));
         });
 
         if (!oai_settings.custom_model && model_list.length > 0) {
-            $('#model_custom_select').val(model_list[0].id).trigger('change');
+            customModelSelect.val(model_list[0].id).trigger('change');
+        } else {
+            syncCustomModelSelect();
         }
     }
 
@@ -1652,6 +1662,18 @@ function openRouterGroupByVendor(array) {
 
         return acc;
     }, new Map());
+}
+
+function syncCustomModelSelect() {
+    const select = $('#model_custom_select');
+    const customModel = String($('#custom_model_id').val() || oai_settings.custom_model || '');
+    const hasMatchingOption = customModel && select.find('option').filter((_, option) => option.value === customModel).length > 0;
+
+    select.val(hasMatchingOption ? customModel : '');
+
+    if (select.hasClass('select2-hidden-accessible')) {
+        select.trigger('change.select2');
+    }
 }
 
 function appendElectronHubOptions(model_list, groupModels = false) {
@@ -5934,6 +5956,7 @@ export function initOpenAI() {
 
     $('#custom_model_id').on('input', function () {
         oai_settings.custom_model = String($(this).val());
+        syncCustomModelSelect();
         saveSettingsDebounced();
     });
 
@@ -6061,6 +6084,13 @@ export function initOpenAI() {
             width: '100%',
             templateResult: getAimlapiModelTemplate,
         });
+        $('#model_custom_select').select2({
+            placeholder: t`Select a model`,
+            searchInputPlaceholder: t`Search models...`,
+            searchInputCssClass: 'text_pole',
+            width: '100%',
+            matcher: textValueMatcher,
+        });
         $('#model_electronhub_select').select2({
             placeholder: t`Select a model`,
             searchInputPlaceholder: t`Search models...`,
@@ -6069,6 +6099,7 @@ export function initOpenAI() {
             templateResult: getElectronHubModelTemplate,
             matcher: textValueMatcher,
         });
+        syncCustomModelSelect();
         $('#completion_prompt_manager_popup_entry_form_injection_trigger').select2({
             placeholder: t`All types (default)`,
             width: '100%',

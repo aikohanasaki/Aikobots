@@ -237,7 +237,7 @@ import { initBulkEdit } from './scripts/bulk-edit.js';
 import { getContext } from './scripts/st-context.js';
 import { extractReasoningFromData, initReasoning, parseReasoningInSwipes, PromptReasoning, ReasoningHandler, removeReasoningFromString, updateReasoningUI } from './scripts/reasoning.js';
 import { accountStorage } from './scripts/util/AccountStorage.js';
-import { initWelcomeScreen, openPermanentAssistantChat, openPermanentAssistantCard, getPermanentAssistantAvatar } from './scripts/welcome-screen.js';
+import { initWelcomeScreen, openPermanentAssistantChat, getPermanentAssistantAvatar } from './scripts/welcome-screen.js';
 import { initDataMaid } from './scripts/data-maid.js';
 import { clearItemizedPrompts, deleteItemizedPrompts, findItemizedPromptSet, initItemizedPrompts, itemizedParams, itemizedPrompts, loadItemizedPrompts, promptItemize, replaceItemizedPromptText, saveItemizedPrompts } from './scripts/itemized-prompts.js';
 import { getSystemMessageByType, initSystemMessages, SAFETY_CHAT, sendSystemMessage, system_message_types, system_messages } from './scripts/system-messages.js';
@@ -424,6 +424,13 @@ export const default_user_avatar = 'img/user-default.png';
 export let CLIENT_VERSION = 'Aikobots:UNKNOWN:Cohee#1207'; // For Horde header
 let manageChatsOwnerContext = null;
 let manageChatsOwnerSelectorInitialized = false;
+let manageChatsOwnerSelectorSyncing = false;
+let manageChatsMode = 'owners';
+let manageChatsOrphanEntries = [];
+let manageChatsSelectedOrphanKey = null;
+let manageChatsOrphanSelectorInitialized = false;
+let manageChatsOrphanSelectorSyncing = false;
+let manageChatsUiInitialized = false;
 let optionsPopper = Popper.createPopper(document.getElementById('options_button'), document.getElementById('options'), {
     placement: 'top-start',
 });
@@ -9032,12 +9039,16 @@ function getManageChatsOwnerFromElement(element) {
     return parseManageChatsOwnerValue(`${ownerType}:${ownerId}`);
 }
 
+function isManageChatsSelectableCharacter(character) {
+    return !!character && character.avatar !== getPermanentAssistantAvatar();
+}
+
 export function getCurrentManageChatsOwner() {
     if (selected_group) {
         return { type: 'group', id: String(selected_group) };
     }
 
-    if (this_chid !== undefined && characters[this_chid]) {
+    if (this_chid !== undefined && isManageChatsSelectableCharacter(characters[this_chid])) {
         return { type: 'character', id: Number(this_chid) };
     }
 
@@ -9090,7 +9101,7 @@ function getManageChatsOwnerDetails(ownerContext = getCurrentManageChatsOwner())
     }
 
     const character = characters[normalizedOwner.id];
-    if (!character) {
+    if (!isManageChatsSelectableCharacter(character)) {
         return {
             ownerContext: null,
             sessionName: '',
@@ -9125,6 +9136,177 @@ export function getCurrentChatDetails(ownerContext = getCurrentManageChatsOwner(
     return getManageChatsOwnerDetails(ownerContext);
 }
 
+function setManageChatsRowContext(element, context = {}) {
+    const target = $(element);
+    const rowType = String(context.rowType || '');
+    const orphanKey = context.orphanKey ? String(context.orphanKey) : '';
+    const groupId = context.groupId !== undefined && context.groupId !== null ? String(context.groupId) : '';
+
+    if (rowType) {
+        target.attr('data-manage-chats-row-type', rowType);
+    } else {
+        target.removeAttr('data-manage-chats-row-type');
+    }
+
+    if (orphanKey) {
+        target.attr('data-orphan-key', orphanKey);
+    } else {
+        target.removeAttr('data-orphan-key');
+    }
+
+    if (groupId) {
+        target.attr('data-group-id', groupId);
+    } else {
+        target.removeAttr('data-group-id');
+    }
+
+    if (context.ownerContext) {
+        setManageChatsOwnerDataset(target, context.ownerContext);
+    }
+}
+
+function getManageChatsRowContext(element) {
+    const target = $(element);
+    const rowType = target.attr('data-manage-chats-row-type') || target.closest('[data-manage-chats-row-type]').attr('data-manage-chats-row-type') || '';
+    const orphanKey = target.attr('data-orphan-key') || target.closest('[data-orphan-key]').attr('data-orphan-key') || '';
+    const groupId = target.attr('data-group-id') || target.closest('[data-group-id]').attr('data-group-id') || '';
+    const ownerContext = getManageChatsOwnerFromElement(target);
+
+    if (!rowType && !orphanKey && !groupId && !ownerContext) {
+        return null;
+    }
+
+    return {
+        rowType,
+        orphanKey: orphanKey || null,
+        groupId: groupId || null,
+        ownerContext,
+    };
+}
+
+function makeOrphanAvatarUrl(orphanKey) {
+    return orphanKey ? `${String(orphanKey)}.png` : '';
+}
+
+function toggleManageChatsSelect(selector, visible) {
+    const element = $(selector);
+    element.toggle(visible);
+    element.next('.select2-container').toggle(visible);
+}
+
+function refreshManageChatsModeUi() {
+    const isDeletedMode = manageChatsMode === 'deleted';
+    $('#manage_chats_mode_live').toggleClass('toggleEnabled', !isDeletedMode);
+    $('#manage_chats_mode_deleted').toggleClass('toggleEnabled', isDeletedMode);
+    toggleManageChatsSelect('#manage_chats_owner_select', !isDeletedMode);
+    toggleManageChatsSelect('#manage_chats_orphan_select', isDeletedMode);
+    $('#newChatFromManageScreenButton, #chat_import_button').toggle(!isDeletedMode);
+}
+
+async function fetchManageChatsOrphanEntries() {
+    const response = await fetch('/api/chats/orphaned', {
+        method: 'POST',
+        headers: getRequestHeaders(),
+    });
+
+    if (!response.ok) {
+        throw new Error('Failed to load orphaned chats');
+    }
+
+    const data = await response.json();
+    manageChatsOrphanEntries = Array.isArray(data) ? data : [];
+    return manageChatsOrphanEntries;
+}
+
+function findManageChatsOrphanEntry(orphanKey) {
+    return manageChatsOrphanEntries.find(entry => String(entry?.orphan_key) === String(orphanKey)) ?? null;
+}
+
+function populateManageChatsOrphanSelect(orphanKey = null) {
+    const selector = $('#manage_chats_orphan_select');
+    selector.find('option[value!=""]').remove();
+
+    manageChatsOrphanEntries.forEach((entry) => {
+        selector.append($('<option></option>')
+            .val(String(entry.orphan_key))
+            .text(String(entry.orphan_key)));
+    });
+
+    manageChatsOrphanSelectorSyncing = true;
+    selector.val(orphanKey ? String(orphanKey) : '').trigger('change');
+    manageChatsOrphanSelectorSyncing = false;
+}
+
+function updateManageChatsDeletedHeader(orphanKey) {
+    $('#ChatHistoryCharName').text(orphanKey ? `${orphanKey} ` : `${t`Choose a deleted character`} `);
+    $('#chat_import_avatar_url').val('');
+    $('#chat_import_character_name').val('');
+}
+
+function initManageChatsOrphanSelect() {
+    if (manageChatsOrphanSelectorInitialized) {
+        return;
+    }
+
+    const selector = $('#manage_chats_orphan_select');
+    if (!selector.length) {
+        return;
+    }
+
+    if (!isMobile() && !selector.hasClass('select2-hidden-accessible')) {
+        selector.select2({
+            placeholder: t`--- Pick Deleted Character ---`,
+            searchInputPlaceholder: t`Search...`,
+            allowClear: true,
+            closeOnSelect: true,
+            multiple: false,
+        });
+    }
+
+    selector.on('change', async function () {
+        if (manageChatsOrphanSelectorSyncing) {
+            return;
+        }
+
+        const nextOrphanKey = String($(this).find(':selected').val() || '').trim();
+        await displayDeletedCharacterChats(nextOrphanKey || null);
+    });
+
+    manageChatsOrphanSelectorInitialized = true;
+}
+
+function initManageChatsModeToggle() {
+    $('#manage_chats_mode_live').on('click', async function () {
+        if (manageChatsMode === 'owners') {
+            return;
+        }
+
+        manageChatsMode = 'owners';
+        await displayPastChats([], manageChatsOwnerContext ?? getCurrentManageChatsOwner());
+    });
+
+    $('#manage_chats_mode_deleted').on('click', async function () {
+        if (manageChatsMode === 'deleted') {
+            return;
+        }
+
+        manageChatsMode = 'deleted';
+        await displayDeletedCharacterChats(manageChatsSelectedOrphanKey);
+    });
+}
+
+function initManageChatsUi() {
+    if (manageChatsUiInitialized) {
+        return;
+    }
+
+    initManageChatsOwnerSelect();
+    initManageChatsOrphanSelect();
+    initManageChatsModeToggle();
+    refreshManageChatsModeUi();
+    manageChatsUiInitialized = true;
+}
+
 function populateManageChatsOwnerSelect(ownerContext = getCurrentManageChatsOwner()) {
     const normalizedOwner = normalizeManageChatsOwner(ownerContext);
     const selector = $('#manage_chats_owner_select');
@@ -9135,7 +9317,7 @@ function populateManageChatsOwnerSelect(ownerContext = getCurrentManageChatsOwne
     groupGroup.empty();
 
     characters.forEach((character, index) => {
-        if (!character) {
+        if (!isManageChatsSelectableCharacter(character)) {
             return;
         }
 
@@ -9155,16 +9337,15 @@ function populateManageChatsOwnerSelect(ownerContext = getCurrentManageChatsOwne
     });
 
     const serializedOwner = serializeManageChatsOwnerValue(normalizedOwner);
-    selector.val(serializedOwner);
-    if (selector.hasClass('select2-hidden-accessible')) {
-        selector.trigger('change.select2');
-    }
+    manageChatsOwnerSelectorSyncing = true;
+    selector.val(serializedOwner).trigger('change');
+    manageChatsOwnerSelectorSyncing = false;
 }
 
 function updateManageChatsHeader(ownerContext) {
     const details = getManageChatsOwnerDetails(ownerContext);
     manageChatsOwnerContext = details.ownerContext;
-    $('#ChatHistoryCharName').text(details.characterName ? `${details.characterName} ` : '');
+    $('#ChatHistoryCharName').text(details.characterName ? `${details.characterName} ` : `${t`Choose a character`} `);
 
     if (details.characterId !== null) {
         $('#chat_import_avatar_url').val(details.avatarUrl);
@@ -9196,12 +9377,17 @@ function initManageChatsOwnerSelect() {
     }
 
     selector.on('change', async function () {
-        const nextOwner = parseManageChatsOwnerValue($(this).val()) ?? getCurrentManageChatsOwner();
-        if (!nextOwner || isSameManageChatsOwner(nextOwner, manageChatsOwnerContext)) {
-            selector.val(serializeManageChatsOwnerValue(manageChatsOwnerContext));
-            if (selector.hasClass('select2-hidden-accessible')) {
-                selector.trigger('change.select2');
-            }
+        if (manageChatsOwnerSelectorSyncing) {
+            return;
+        }
+
+        const nextOwner = parseManageChatsOwnerValue($(this).val());
+        if (!nextOwner) {
+            await displayPastChats([], null);
+            return;
+        }
+
+        if (isSameManageChatsOwner(nextOwner, manageChatsOwnerContext)) {
             return;
         }
 
@@ -9297,6 +9483,366 @@ async function deleteManageChatsOwnerChat(ownerContext, fileName) {
     }
 }
 
+function escapeManageChatsHtml(value) {
+    return String(value ?? '')
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+}
+
+function formatManageChatsHtmlText(text) {
+    let formatted = escapeManageChatsHtml(text);
+    formatted = formatted.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
+    formatted = formatted.replace(/\*([^*]+)\*/g, '<em>$1</em>');
+    return formatted;
+}
+
+function toManageChatsAbsoluteAssetUrl(url) {
+    const value = String(url || '').trim();
+    if (!value) {
+        return '';
+    }
+
+    if (/^(?:https?:|data:|blob:|file:)/i.test(value)) {
+        return value;
+    }
+
+    if (value.startsWith('//')) {
+        return `${window.location.protocol}${value}`;
+    }
+
+    if (value.startsWith('/')) {
+        return `${window.location.origin}${value}`;
+    }
+
+    return `${window.location.origin}/${value.replace(/^\.?\//, '')}`;
+}
+
+function getManageChatsHtmlFallbackAvatar(rowContext) {
+    if (rowContext?.rowType === 'orphan-character') {
+        return toManageChatsAbsoluteAssetUrl(default_avatar);
+    }
+
+    const ownerDetails = getManageChatsOwnerDetails(rowContext?.ownerContext);
+    if (ownerDetails.ownerContext) {
+        return toManageChatsAbsoluteAssetUrl(ownerDetails.avatarImgURL || default_avatar);
+    }
+
+    return toManageChatsAbsoluteAssetUrl(default_avatar);
+}
+
+function getManageChatsHtmlOwnerLabel(rowContext) {
+    if (rowContext?.rowType === 'orphan-character' && rowContext.orphanKey) {
+        return String(rowContext.orphanKey);
+    }
+
+    const ownerDetails = getManageChatsOwnerDetails(rowContext?.ownerContext);
+    if (ownerDetails.ownerContext) {
+        return ownerDetails.characterName || String(ownerDetails.groupId || ownerDetails.characterId || '');
+    }
+
+    return t`Chat Export`;
+}
+
+async function fetchManageChatsHtmlExportMessages(rowContext, filename) {
+    if (rowContext?.rowType === 'orphan-character' && rowContext.orphanKey) {
+        const response = await fetch('/api/chats/get', {
+            method: 'POST',
+            headers: getRequestHeaders(),
+            body: JSON.stringify({
+                ch_name: rowContext.orphanKey,
+                file_name: filename,
+                avatar_url: makeOrphanAvatarUrl(rowContext.orphanKey),
+            }),
+            cache: 'no-cache',
+        });
+
+        if (!response.ok) {
+            throw new Error('Could not load deleted character chat.');
+        }
+
+        return await response.json();
+    }
+
+    const ownerDetails = getManageChatsOwnerDetails(rowContext?.ownerContext);
+    if (!ownerDetails.ownerContext) {
+        throw new Error('Chat owner is not available.');
+    }
+
+    if (ownerDetails.isGroup) {
+        const response = await fetch('/api/chats/group/get', {
+            method: 'POST',
+            headers: getRequestHeaders(),
+            body: JSON.stringify({ id: filename }),
+        });
+
+        if (!response.ok) {
+            throw new Error('Could not load group chat.');
+        }
+
+        return await response.json();
+    }
+
+    const response = await fetch('/api/chats/get', {
+        method: 'POST',
+        headers: getRequestHeaders(),
+        body: JSON.stringify({
+            ch_name: ownerDetails.characterName,
+            file_name: filename,
+            avatar_url: ownerDetails.avatarUrl,
+        }),
+        cache: 'no-cache',
+    });
+
+    if (!response.ok) {
+        throw new Error('Could not load character chat.');
+    }
+
+    return await response.json();
+}
+
+function buildManageChatsHtmlExport(rowContext, filename, messages) {
+    const ownerLabel = escapeManageChatsHtml(getManageChatsHtmlOwnerLabel(rowContext));
+    const chatTitle = escapeManageChatsHtml(filename);
+    const generatedDate = escapeManageChatsHtml(new Date().toLocaleString());
+    const fallbackAvatar = getManageChatsHtmlFallbackAvatar(rowContext);
+    const visibleMessages = Array.isArray(messages)
+        ? messages.filter(message => message && (message.mes || message.extra?.display_text))
+        : [];
+
+    let messageNumber = 1;
+    const bodyHtml = visibleMessages.map((message) => {
+        const rawText = String(message.extra?.display_text || message.mes || '');
+        const safeText = formatManageChatsHtmlText(rawText);
+        const displayName = escapeManageChatsHtml(message.name || (message.is_user ? name1 : getManageChatsHtmlOwnerLabel(rowContext)));
+        const timestamp = escapeManageChatsHtml(message.send_date || '');
+        const avatarUrl = toManageChatsAbsoluteAssetUrl(
+            message.force_avatar
+            || (message.original_avatar ? getThumbnailUrl('avatar', message.original_avatar) : '')
+            || (message.is_system ? system_avatar : '')
+            || (message.is_user ? default_user_avatar : '')
+            || fallbackAvatar,
+        ) || fallbackAvatar;
+        const safeAvatarUrl = escapeManageChatsHtml(avatarUrl);
+        const isThought = rawText.includes('▶ Thought');
+        const isOoc = rawText.includes('[OOC:') || rawText.includes('[Okia:');
+        let messageClass = 'message';
+
+        if (isOoc) {
+            messageClass += ' ooc-message';
+        } else if (message.is_system) {
+            messageClass += ' system-message';
+        }
+
+        const messageHtml = isThought
+            ? safeText.replace('▶ Thought', '<span class="thought-indicator">▶ Thought</span><br>')
+            : safeText;
+
+        return `
+            <div class="${messageClass}">
+                <span class="message-number">#${messageNumber++}</span>
+                <div class="avatar-container">
+                    <img class="avatar" src="${safeAvatarUrl}" alt="${displayName}" />
+                </div>
+                <div class="message-content">
+                    <div class="message-header">
+                        <span class="character-name">${displayName}</span>
+                        <span class="timestamp">${timestamp || 'No timestamp'}</span>
+                    </div>
+                    <div class="message-text">${messageHtml}</div>
+                </div>
+            </div>
+        `;
+    }).join('');
+
+    const emptyState = visibleMessages.length ? '' : `<div class="empty-state">${escapeManageChatsHtml(t`This chat is empty.`)}</div>`;
+
+    return `<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>${chatTitle} - Chat Export</title>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #1a1a1a, #2d2d2d);
+            color: #e0e0e0;
+            margin: 0;
+            padding: 20px;
+            min-height: 100vh;
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+
+        .header {
+            text-align: center;
+            margin-bottom: 30px;
+        }
+
+        .header h1 {
+            color: #df9fe0;
+            font-size: 2.5em;
+            margin-bottom: 10px;
+        }
+
+        .header p {
+            color: #b0b0b0;
+            font-size: 1.05em;
+        }
+
+        .content {
+            background: #2a2a2a;
+            border-radius: 10px;
+            padding: 30px;
+            box-shadow: 0 5px 15px rgba(0, 0, 0, 0.3);
+        }
+
+        .message {
+            display: flex;
+            gap: 15px;
+            margin-bottom: 25px;
+            padding: 15px;
+            background: #222222;
+            border-radius: 5px;
+            border-left: 3px solid #df9fe0;
+            position: relative;
+        }
+
+        .message-number {
+            position: absolute;
+            top: 10px;
+            left: 10px;
+            color: #8a8a8a;
+            font-size: 12px;
+            font-weight: bold;
+        }
+
+        .avatar-container {
+            flex-shrink: 0;
+            width: 60px;
+            height: 60px;
+        }
+
+        .avatar {
+            width: 60px;
+            height: 60px;
+            border-radius: 5px;
+            object-fit: cover;
+            border: 2px solid #3d3d3d;
+        }
+
+        .message-content {
+            flex-grow: 1;
+            padding-left: 10px;
+        }
+
+        .message-header {
+            display: flex;
+            align-items: center;
+            gap: 15px;
+            margin-bottom: 10px;
+            flex-wrap: wrap;
+        }
+
+        .character-name {
+            font-weight: bold;
+            font-size: 16px;
+            color: #df9fe0;
+        }
+
+        .timestamp {
+            color: #8a8a8a;
+            font-size: 12px;
+            font-style: italic;
+        }
+
+        .message-text {
+            line-height: 1.6;
+            white-space: pre-wrap;
+            word-wrap: break-word;
+        }
+
+        .message-text em {
+            color: #e6a1b1;
+            font-style: italic;
+        }
+
+        .message-text strong {
+            color: #df9fe0;
+            font-weight: bold;
+        }
+
+        .thought-indicator {
+            color: #6893cc;
+            font-size: 14px;
+        }
+
+        .ooc-message {
+            border-left-color: #6893cc;
+            background: #1a1a2e;
+        }
+
+        .system-message {
+            border-left-color: #ff6b6b;
+            background: #2d1b1b;
+        }
+
+        .empty-state {
+            color: #b0b0b0;
+            text-align: center;
+            padding: 30px 0;
+        }
+
+        @media print {
+            body {
+                background: white;
+                color: black;
+                padding: 0;
+            }
+
+            .content {
+                box-shadow: none;
+                background: transparent;
+            }
+
+            .message {
+                page-break-inside: avoid;
+                border: 1px solid #ddd;
+                background: #f9f9f9;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header class="header">
+            <h1>${chatTitle}</h1>
+            <p>${ownerLabel}</p>
+            <p>Exported ${generatedDate}</p>
+        </header>
+        <main class="content">
+            ${bodyHtml || emptyState}
+        </main>
+    </div>
+</body>
+</html>`;
+}
+
+async function exportManageChatsChatAsHtml(rowContext, filename) {
+    await saveChatConditional();
+    const messages = await fetchManageChatsHtmlExportMessages(rowContext, filename);
+    const html = buildManageChatsHtmlExport(rowContext, filename, messages);
+    download(html, `${filename}.html`, 'text/html');
+    await delay(250);
+    toastr.success(t`Chat saved to HTML`);
+}
+
 async function exportManageChatsOwnerChat(ownerContext, filename, format) {
     const details = getManageChatsOwnerDetails(ownerContext);
     if (!details.ownerContext) {
@@ -9331,6 +9877,267 @@ async function exportManageChatsOwnerChat(ownerContext, filename, format) {
     download(data.result, body.exportfilename, mimeType);
 }
 
+async function renameOrphanCharacterChat(orphanKey, oldFileName, newFileName) {
+    const response = await fetch('/api/chats/rename', {
+        method: 'POST',
+        headers: getRequestHeaders(),
+        body: JSON.stringify({
+            is_group: false,
+            avatar_url: makeOrphanAvatarUrl(orphanKey),
+            original_file: `${oldFileName}.jsonl`,
+            renamed_file: `${newFileName.trim()}.jsonl`,
+        }),
+    });
+
+    if (!response.ok) {
+        throw new Error('Unsuccessful request.');
+    }
+}
+
+async function deleteOrphanCharacterChat(orphanKey, fileName) {
+    const response = await fetch('/api/chats/delete', {
+        method: 'POST',
+        headers: getRequestHeaders(),
+        body: JSON.stringify({
+            chatfile: `${fileName}.jsonl`,
+            avatar_url: makeOrphanAvatarUrl(orphanKey),
+        }),
+    });
+
+    if (!response.ok) {
+        throw new Error('Failed to delete chat for deleted character.');
+    }
+}
+
+async function exportOrphanCharacterChat(orphanKey, filename, format) {
+    await saveChatConditional();
+    const body = {
+        is_group: false,
+        avatar_url: makeOrphanAvatarUrl(orphanKey),
+        file: `${filename}.jsonl`,
+        exportfilename: `${filename}.${format}`,
+        format: format,
+    };
+
+    const response = await fetch('/api/chats/export', {
+        method: 'POST',
+        body: JSON.stringify(body),
+        headers: getRequestHeaders(),
+    });
+    const data = await response.json();
+
+    if (!response.ok) {
+        throw new Error(data.message || 'Failed to export chat.');
+    }
+
+    const mimeType = format == 'txt' ? 'text/plain' : 'application/octet-stream';
+    await delay(250);
+    toastr.success(data.message);
+    download(data.result, body.exportfilename, mimeType);
+}
+
+export async function openManageChatsOrphanCharacterChat(orphanKey, fileName) {
+    if (!orphanKey || !fileName) {
+        return;
+    }
+
+    const response = await fetch('/api/chats/get', {
+        method: 'POST',
+        headers: getRequestHeaders(),
+        body: JSON.stringify({
+            ch_name: orphanKey,
+            file_name: fileName,
+            avatar_url: makeOrphanAvatarUrl(orphanKey),
+        }),
+        cache: 'no-cache',
+    });
+
+    if (!response.ok) {
+        toastr.error(t`Could not load deleted character chat.`);
+        return;
+    }
+
+    const messages = await response.json();
+    const container = $('<div class="flex-container flexFlowColumn gap8px"></div>');
+    container.append($('<div class="nameText"></div>').text(fileName));
+    container.append($('<div class="text_muted"></div>').text(orphanKey));
+
+    let hasVisibleMessages = false;
+    messages.forEach((message, index) => {
+        if (!message || (!message.mes && !message.extra?.display_text)) {
+            return;
+        }
+
+        hasVisibleMessages = true;
+        const displayName = message.name || (message.is_user ? name1 : orphanKey);
+        const block = $('<div class="flex-container flexFlowColumn gap4px"></div>');
+        block.append($('<div class="nameText"></div>').text(displayName));
+        block.append($('<div class="mes_text"></div>').html(messageFormatting(
+            message.extra?.display_text || message.mes || '',
+            displayName,
+            !!message.is_system,
+            !!message.is_user,
+            index,
+            {},
+            false,
+        )));
+        container.append(block);
+    });
+
+    if (!hasVisibleMessages) {
+        container.append($('<div class="text_muted"></div>').text(t`This chat is empty.`));
+    }
+
+    await callGenericPopup(container, POPUP_TYPE.TEXT, '', {
+        large: true,
+        wide: true,
+        allowVerticalScrolling: true,
+    });
+}
+
+function appendManageChatsRow(target, chat, options = {}) {
+    const template = $('#past_chat_template .select_chat_block_wrapper').clone();
+    const chatBlock = template.find('.select_chat_block');
+    chatBlock.attr('file_name', chat.file_name);
+    setManageChatsRowContext(template, options.rowContext);
+    setManageChatsRowContext(chatBlock, options.rowContext);
+    template.find('.avatar img').attr('src', options.avatarImgURL || default_avatar);
+    template.find('.select_chat_block_filename').text(chat.file_name);
+    template.find('.chat_file_size').text(`(${chat.file_size},`);
+    template.find('.chat_messages_num').text(`${chat.message_count} 💬)`);
+    template.find('.select_chat_block_mes').text(chat.preview_message || '');
+    template.find('.PastChat_cross').attr('file_name', chat.file_name);
+    template.find('.chat_messages_date').text(timestampToMoment(chat.last_mes).format('lll'));
+
+    template.find('.renameChatButton, .exportRawChatButton, .exportChatButton, .PastChat_cross').each((_, element) => {
+        setManageChatsRowContext(element, options.rowContext);
+    });
+
+    if (options.isSelected) {
+        chatBlock.attr('highlight', String(true));
+    }
+
+    target.append(template);
+
+    if (Array.isArray(options.highlightNames) && options.highlightNames.includes(chat.file_name)) {
+        const templateOffset = template.offset().top - template.parent().offset().top;
+        $('#select_chat_div').scrollTop(templateOffset);
+        flashHighlight(template, debounce_timeout.extended);
+    }
+}
+
+function filterManageChatsChats(chats, searchQuery, extraTexts = []) {
+    const fragments = String(searchQuery || '').trim().toLowerCase().split(/\s+/).filter(Boolean);
+    if (!fragments.length) {
+        return chats;
+    }
+
+    return chats.filter((chat) => {
+        const haystack = [
+            chat?.file_name,
+            chat?.preview_message,
+            ...extraTexts,
+        ].join('\n').toLowerCase();
+
+        return fragments.every(fragment => haystack.includes(fragment));
+    });
+}
+
+async function displayDeletedCharacterChats(orphanKey = manageChatsSelectedOrphanKey, highlightNames = []) {
+    manageChatsMode = 'deleted';
+    initManageChatsUi();
+    refreshManageChatsModeUi();
+    try {
+        await fetchManageChatsOrphanEntries();
+    } catch (error) {
+        console.error('Error loading deleted character chats:', error);
+        $('#select_chat_div').empty().append(`<div class="text_muted padding10px">${t`Could not load chats for deleted characters.`}</div>`);
+        $('#select_chat_search').val('').off('input');
+        return;
+    }
+    const nextOrphanKey = orphanKey && findManageChatsOrphanEntry(orphanKey)
+        ? String(orphanKey)
+        : (manageChatsOrphanEntries[0]?.orphan_key ? String(manageChatsOrphanEntries[0].orphan_key) : null);
+
+    manageChatsSelectedOrphanKey = nextOrphanKey;
+    populateManageChatsOrphanSelect(nextOrphanKey);
+    updateManageChatsDeletedHeader(nextOrphanKey);
+
+    $('#select_chat_div').empty();
+    $('#select_chat_search').val('').off('input');
+
+    if (!manageChatsOrphanEntries.length) {
+        $('#select_chat_div').append(`<div class="text_muted padding10px">${t`No chats for deleted characters were found.`}</div>`);
+        return;
+    }
+
+    if (!nextOrphanKey) {
+        $('#select_chat_div').append(`<div class="text_muted padding10px">${t`Choose a deleted character`}</div>`);
+        return;
+    }
+
+    const renderDeletedCharacterChats = (searchQuery = '') => {
+        const entry = findManageChatsOrphanEntry(manageChatsSelectedOrphanKey);
+        $('#select_chat_div').empty();
+
+        if (!entry) {
+            $('#select_chat_div').append(`<div class="text_muted padding10px">${t`Choose a deleted character`}</div>`);
+            return;
+        }
+
+        const directChats = filterManageChatsChats(entry.direct_chats || [], searchQuery, [entry.orphan_key]);
+        const relatedGroups = (entry.related_groups || []).map(group => ({
+            ...group,
+            chats: filterManageChatsChats(group.chats || [], searchQuery, [group.name, entry.orphan_key]),
+        })).filter(group => group.chats.length > 0 || !String(searchQuery || '').trim());
+
+        if (directChats.length) {
+            $('#select_chat_div').append(`<div class="manage_chats_section_title">${t`Character chats`}</div>`);
+            directChats.forEach((chat) => appendManageChatsRow($('#select_chat_div'), chat, {
+                avatarImgURL: default_avatar,
+                rowContext: { rowType: 'orphan-character', orphanKey: entry.orphan_key },
+                highlightNames,
+            }));
+        }
+
+        const groupsWithChats = relatedGroups.filter(group => (group.chats || []).length > 0);
+        if (groupsWithChats.length) {
+            $('#select_chat_div').append(`<div class="manage_chats_section_title">${t`Group chats`}</div>`);
+            groupsWithChats.forEach((group) => {
+                $('#select_chat_div').append($('<div class="manage_chats_group_title"></div>').text(group.name || group.id));
+                const groupDetails = getManageChatsOwnerDetails({ type: 'group', id: group.id });
+                const currentGroupChat = groupDetails.group?.chat_id || '';
+
+                group.chats.forEach((chat) => appendManageChatsRow($('#select_chat_div'), chat, {
+                    avatarImgURL: group.avatar_url || default_avatar,
+                    rowContext: {
+                        rowType: 'orphan-group',
+                        orphanKey: entry.orphan_key,
+                        groupId: group.id,
+                        ownerContext: { type: 'group', id: group.id },
+                    },
+                    highlightNames,
+                    isSelected: String(currentGroupChat).replace(/\.jsonl$/i, '') === String(chat.file_name).replace(/\.jsonl$/i, ''),
+                }));
+            });
+        }
+
+        if (!directChats.length && !groupsWithChats.length) {
+            $('#select_chat_div').append(`<div class="text_muted padding10px">${t`No chats matched your search.`}</div>`);
+        }
+    };
+
+    renderDeletedCharacterChats('');
+
+    const debouncedDisplay = debounce((searchQuery) => {
+        renderDeletedCharacterChats(searchQuery);
+    });
+
+    $('#select_chat_search').on('input', function () {
+        debouncedDisplay($(this).val());
+    });
+}
+
 /**
  * Displays the past chats for a character or a group based on the selected context.
  * The function first fetches the chats, processes them, and then displays them in
@@ -9340,17 +10147,22 @@ async function exportManageChatsOwnerChat(ownerContext, filename, format) {
  * @param {ManageChatsOwnerContext?} [ownerContext]
  */
 export async function displayPastChats(hightlightNames = [], ownerContext = getCurrentManageChatsOwner()) {
-    initManageChatsOwnerSelect();
+    manageChatsMode = 'owners';
+    initManageChatsUi();
+    refreshManageChatsModeUi();
     const details = getManageChatsOwnerDetails(ownerContext);
+    populateManageChatsOwnerSelect(details.ownerContext);
+    updateManageChatsHeader(details.ownerContext);
+
     if (!details.ownerContext) {
         $('#select_chat_div').empty();
+        $('#select_chat_search').val('').off('input');
+        $('#select_chat_div').append(`<div class="text_muted padding10px">${t`Choose a character`}</div>`);
         return;
     }
 
     $('#select_chat_div').empty();
     $('#select_chat_search').val('').off('input');
-    populateManageChatsOwnerSelect(details.ownerContext);
-    updateManageChatsHeader(details.ownerContext);
 
     await displayChats('', details, hightlightNames);
 
@@ -9399,34 +10211,16 @@ async function displayChats(searchQuery, chatDetails, highlightNames) {
 
         for (const chat of filteredData) {
             const isSelected = trimExtension(chatDetails.sessionName) === trimExtension(chat.file_name);
-            const template = $('#past_chat_template .select_chat_block_wrapper').clone();
-            const chatBlock = template.find('.select_chat_block');
-            chatBlock.attr('file_name', chat.file_name);
-            setManageChatsOwnerDataset(template, ownerContext);
-            setManageChatsOwnerDataset(chatBlock, ownerContext);
-            template.find('.avatar img').attr('src', chatDetails.avatarImgURL);
-            template.find('.select_chat_block_filename').text(chat.file_name);
-            template.find('.chat_file_size').text(`(${chat.file_size},`);
-            template.find('.chat_messages_num').text(`${chat.message_count} 💬)`);
-            template.find('.select_chat_block_mes').text(chat.preview_message);
-            template.find('.PastChat_cross').attr('file_name', chat.file_name);
-            template.find('.chat_messages_date').text(timestampToMoment(chat.last_mes).format('lll'));
-
-            template.find('.renameChatButton, .exportRawChatButton, .exportChatButton, .PastChat_cross').each((_, element) => {
-                setManageChatsOwnerDataset(element, ownerContext);
+            appendManageChatsRow($('#select_chat_div'), chat, {
+                avatarImgURL: chatDetails.avatarImgURL,
+                rowContext: {
+                    rowType: ownerContext.type === 'group' ? 'live-group' : 'live-character',
+                    ownerContext,
+                    groupId: ownerContext.type === 'group' ? ownerContext.id : null,
+                },
+                highlightNames,
+                isSelected,
             });
-
-            if (isSelected) {
-                chatBlock.attr('highlight', String(true));
-            }
-
-            $('#select_chat_div').append(template);
-
-            if (Array.isArray(highlightNames) && highlightNames.includes(chat.file_name)) {
-                const templateOffset = template.offset().top - template.parent().offset().top;
-                $('#select_chat_div').scrollTop(templateOffset);
-                flashHighlight(template, debounce_timeout.extended);
-            }
         }
     } catch (error) {
         console.error('Error loading chats:', error);
@@ -11892,22 +12686,83 @@ jQuery(async function () {
      * Handles the deletion of a chat file, including group chats.
      *
      * @param {string} chatFile - The name of the chat file to delete.
-     * @param {object} group - The group object if the chat is part of a group.
+     * @param {object} chatContext - Row/owner context for the target chat.
      * @param {boolean} [fromSlashCommand=false] - Whether the deletion was triggered from a slash command.
      * @returns {Promise<void>}
      */
-    async function handleDeleteChat(chatFile, ownerContext, fromSlashCommand = false) {
+    async function refreshManageChatsPopup(highlightNames = []) {
+        if (manageChatsMode === 'deleted') {
+            await displayDeletedCharacterChats(manageChatsSelectedOrphanKey, highlightNames);
+        } else {
+            await displayPastChats(highlightNames, manageChatsOwnerContext ?? getCurrentManageChatsOwner());
+        }
+    }
+
+    async function renameManageChatsChat(rowContext, oldFileName, newName) {
+        if (rowContext?.rowType === 'orphan-character' && rowContext.orphanKey) {
+            await renameOrphanCharacterChat(rowContext.orphanKey, oldFileName, newName);
+            return;
+        }
+
+        if (rowContext?.rowType === 'orphan-group' && !getManageChatsOwnerDetails(rowContext.ownerContext).ownerContext) {
+            toastr.warning(t`That group no longer exists.`);
+            await displayDeletedCharacterChats(manageChatsSelectedOrphanKey);
+            return;
+        }
+
+        const ownerContext = rowContext?.ownerContext ?? manageChatsOwnerContext ?? getCurrentManageChatsOwner();
+        await renameManageChatsOwnerChat(ownerContext, oldFileName, newName);
+    }
+
+    async function deleteManageChatsChat(rowContext, fileName) {
+        if (rowContext?.rowType === 'orphan-character' && rowContext.orphanKey) {
+            await deleteOrphanCharacterChat(rowContext.orphanKey, fileName);
+            return;
+        }
+
+        if (rowContext?.rowType === 'orphan-group' && !getManageChatsOwnerDetails(rowContext.ownerContext).ownerContext) {
+            toastr.warning(t`That group no longer exists.`);
+            await displayDeletedCharacterChats(manageChatsSelectedOrphanKey);
+            return;
+        }
+
+        const ownerContext = rowContext?.ownerContext ?? manageChatsOwnerContext ?? getCurrentManageChatsOwner();
+        await deleteManageChatsOwnerChat(ownerContext, fileName);
+    }
+
+    async function exportManageChatsChat(rowContext, fileName, format) {
+        if (format === 'html') {
+            await exportManageChatsChatAsHtml(rowContext, fileName);
+            return;
+        }
+
+        if (rowContext?.rowType === 'orphan-character' && rowContext.orphanKey) {
+            await exportOrphanCharacterChat(rowContext.orphanKey, fileName, format);
+            return;
+        }
+
+        if (rowContext?.rowType === 'orphan-group' && !getManageChatsOwnerDetails(rowContext.ownerContext).ownerContext) {
+            toastr.warning(t`That group no longer exists.`);
+            await displayDeletedCharacterChats(manageChatsSelectedOrphanKey);
+            return;
+        }
+
+        const ownerContext = rowContext?.ownerContext ?? manageChatsOwnerContext ?? getCurrentManageChatsOwner();
+        await exportManageChatsOwnerChat(ownerContext, fileName, format);
+    }
+
+    async function handleDeleteChat(chatFile, chatContext, fromSlashCommand = false) {
         // Close past chat popup.
         $('#select_chat_cross').trigger('click');
         showLoader();
-        await deleteManageChatsOwnerChat(ownerContext, String(chatFile).replace(/\.jsonl$/i, ''));
+        await deleteManageChatsChat(chatContext, String(chatFile).replace(/\.jsonl$/i, ''));
 
         if (fromSlashCommand) {  // When called from `/delchat` command, don't re-open the history view.
             $('#options').hide();  // Hide option popup menu.
             hideLoader();
         } else {  // Open the history view again after 2 seconds (delay to avoid edge cases for deleting last chat).
             setTimeout(async function () {
-                await displayPastChats([], ownerContext);
+                await refreshManageChatsPopup();
                 $('#options').hide();  // Hide option popup menu.
                 hideLoader();
             }, 2000);
@@ -11917,18 +12772,18 @@ jQuery(async function () {
     $(document).on('click', '.PastChat_cross', async function (e, { fromSlashCommand = false } = {}) {
         e.stopPropagation();
         chat_file_for_del = $(this).attr('file_name');
-        const ownerContext = getManageChatsOwnerFromElement(this) ?? manageChatsOwnerContext ?? getCurrentManageChatsOwner();
+        const rowContext = getManageChatsRowContext(this) ?? { ownerContext: getManageChatsOwnerFromElement(this) ?? manageChatsOwnerContext ?? getCurrentManageChatsOwner() };
         console.debug('detected cross click for' + chat_file_for_del);
 
         // Skip confirmation if called from a slash command.
         if (fromSlashCommand) {
-            await handleDeleteChat(chat_file_for_del, ownerContext, true);
+            await handleDeleteChat(chat_file_for_del, rowContext, true);
             return;
         }
 
         const result = await callGenericPopup('<h3>' + t`Delete the Chat File?` + '</h3>', POPUP_TYPE.CONFIRM);
         if (result === POPUP_RESULT.AFFIRMATIVE) {
-            await handleDeleteChat(chat_file_for_del, ownerContext, false);
+            await handleDeleteChat(chat_file_for_del, rowContext, false);
         }
     });
 
@@ -12097,7 +12952,7 @@ jQuery(async function () {
 
     $(document).on('click', '.renameChatButton', async function (e) {
         e.stopPropagation();
-        const ownerContext = getManageChatsOwnerFromElement(this) ?? manageChatsOwnerContext ?? getCurrentManageChatsOwner();
+        const rowContext = getManageChatsRowContext(this) ?? { ownerContext: getManageChatsOwnerFromElement(this) ?? manageChatsOwnerContext ?? getCurrentManageChatsOwner() };
         const oldFileNameFull = $(this).closest('.select_chat_block_wrapper').find('.select_chat_block_filename').text();
         const oldFileName = oldFileNameFull.replace('.jsonl', '');
 
@@ -12109,23 +12964,23 @@ jQuery(async function () {
             return;
         }
 
-        await renameManageChatsOwnerChat(ownerContext, oldFileName, newName);
+        await renameManageChatsChat(rowContext, oldFileName, newName);
 
         await delay(250);
-        await displayPastChats([], ownerContext);
+        await refreshManageChatsPopup();
         $('#options').hide();
     });
 
     $(document).on('click', '.exportChatButton, .exportRawChatButton', async function (e) {
         e.stopPropagation();
         const format = $(this).data('format') || 'txt';
-        const ownerContext = getManageChatsOwnerFromElement(this) ?? manageChatsOwnerContext ?? getCurrentManageChatsOwner();
+        const rowContext = getManageChatsRowContext(this) ?? { ownerContext: getManageChatsOwnerFromElement(this) ?? manageChatsOwnerContext ?? getCurrentManageChatsOwner() };
         const filenamefull = $(this).closest('.select_chat_block_wrapper').find('.select_chat_block_filename').text();
         console.log(`exporting ${filenamefull} in ${format} format`);
 
         const filename = filenamefull.replace('.jsonl', '');
         try {
-            await exportManageChatsOwnerChat(ownerContext, filename, format);
+            await exportManageChatsChat(rowContext, filename, format);
         } catch (error) {
             // display error message
             console.log(`An error has occurred: ${error.message}`);
@@ -12183,10 +13038,8 @@ jQuery(async function () {
         });
 
         if (id == 'option_select_chat') {
-            if (this_chid === undefined && !is_send_press && !selected_group) {
-                await openPermanentAssistantCard();
-            }
-            if ((selected_group && !is_group_generating) || (this_chid !== undefined && !is_send_press) || fromSlashCommand) {
+            const canOpenManageChats = fromSlashCommand || (selected_group && !is_group_generating) || (!selected_group && !is_send_press);
+            if (canOpenManageChats) {
                 await displayPastChats();
                 //this is just to avoid the shadow for past chat view when using /delchat
                 //however, the dialog popup still gets one..
@@ -12288,6 +13141,10 @@ jQuery(async function () {
     });
 
     $('#newChatFromManageScreenButton').on('click', async function () {
+        if (manageChatsMode === 'deleted') {
+            return;
+        }
+
         await createNewManageChatsOwnerChat(manageChatsOwnerContext ?? getCurrentManageChatsOwner());
         $('#select_chat_cross').trigger('click');
     });
@@ -12686,6 +13543,10 @@ jQuery(async function () {
     });
     //**************************CHAT IMPORT EXPORT*************************//
     $('#chat_import_button').on('click', function () {
+        if (manageChatsMode === 'deleted') {
+            return;
+        }
+
         $('#chat_import_file').trigger('click');
     });
 
@@ -12693,6 +13554,11 @@ jQuery(async function () {
         const targetElement = e.target;
         const formElement = document.getElementById('form_import_chat');
         if (!(targetElement instanceof HTMLInputElement) || !(formElement instanceof HTMLFormElement)) {
+            return;
+        }
+
+        if (manageChatsMode === 'deleted') {
+            targetElement.value = '';
             return;
         }
 

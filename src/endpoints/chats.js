@@ -1383,6 +1383,113 @@ router.post('/search', validateAvatarUrlMiddleware, function (request, response)
     }
 });
 
+router.post('/orphaned', async function (request, response) {
+    try {
+        const characterDirents = await fs.promises.readdir(request.user.directories.characters, { withFileTypes: true }).catch(() => []);
+        const liveCharacterKeys = new Set(
+            characterDirents
+                .filter(entry => entry.isFile() && path.extname(entry.name) === '.png')
+                .map(entry => path.parse(entry.name).name),
+        );
+
+        const chatDirents = await fs.promises.readdir(request.user.directories.chats, { withFileTypes: true }).catch(() => []);
+        const orphanDirectories = chatDirents
+            .filter(entry => entry.isDirectory() && !liveCharacterKeys.has(entry.name))
+            .map(entry => entry.name)
+            .sort((a, b) => a.localeCompare(b));
+
+        const groupDirents = await fs.promises.readdir(request.user.directories.groups, { withFileTypes: true }).catch(() => []);
+        const groups = [];
+
+        for (const entry of groupDirents) {
+            if (!entry.isFile() || path.extname(entry.name) !== '.json') {
+                continue;
+            }
+
+            try {
+                const filePath = path.join(request.user.directories.groups, entry.name);
+                const group = JSON.parse(await fs.promises.readFile(filePath, 'utf8'));
+                groups.push(group);
+            } catch (error) {
+                console.warn('Failed to read group while listing orphaned chats:', entry.name, error);
+            }
+        }
+
+        const toChatSummary = (chatData) => ({
+            file_name: chatData.file_name,
+            file_size: chatData.file_size,
+            message_count: chatData.chat_items ?? 0,
+            last_mes: chatData.last_mes,
+            preview_message: chatData.mes ?? '',
+        });
+
+        const orphanEntries = [];
+
+        for (const orphanKey of orphanDirectories) {
+            const avatarUrl = `${orphanKey}.png`;
+            const orphanChatDir = path.join(request.user.directories.chats, orphanKey);
+            const orphanChatFiles = await fs.promises.readdir(orphanChatDir, { withFileTypes: true }).catch(() => []);
+            const directChatFiles = orphanChatFiles
+                .filter(file => file.isFile() && path.extname(file.name) === '.jsonl' && !isHeadChatFile(file.name))
+                .map(file => file.name);
+
+            const directChats = (await Promise.allSettled(
+                directChatFiles.map(fileName => {
+                    const filePath = path.join(orphanChatDir, fileName);
+                    return getChatInfo(filePath, {}, false, false);
+                }),
+            ))
+                .filter(result => result.status === 'fulfilled' && result.value?.file_name)
+                .map(result => toChatSummary(result.value))
+                .sort((a, b) => new Date(b.last_mes).getTime() - new Date(a.last_mes).getTime());
+
+            const relatedGroups = [];
+
+            for (const group of groups) {
+                if (!Array.isArray(group?.members) || !group.members.includes(avatarUrl)) {
+                    continue;
+                }
+
+                const groupChats = (await Promise.allSettled(
+                    (Array.isArray(group.chats) ? group.chats : []).map(chatId => {
+                        const filePath = path.join(request.user.directories.groupChats, `${chatId}.jsonl`);
+                        if (!fs.existsSync(filePath)) {
+                            return Promise.resolve(null);
+                        }
+
+                        return getChatInfo(filePath, {}, true, false);
+                    }),
+                ))
+                    .filter(result => result.status === 'fulfilled' && result.value?.file_name)
+                    .map(result => toChatSummary(result.value))
+                    .sort((a, b) => new Date(b.last_mes).getTime() - new Date(a.last_mes).getTime());
+
+                if (groupChats.length > 0) {
+                    relatedGroups.push({
+                        id: String(group.id),
+                        name: String(group.name || group.id),
+                        avatar_url: group.avatar_url || '',
+                        chats: groupChats,
+                    });
+                }
+            }
+
+            if (directChats.length > 0 || relatedGroups.length > 0) {
+                orphanEntries.push({
+                    orphan_key: orphanKey,
+                    direct_chats: directChats,
+                    related_groups: relatedGroups,
+                });
+            }
+        }
+
+        return response.send(orphanEntries);
+    } catch (error) {
+        console.error('Orphaned chat browser error:', error);
+        return response.status(500).json({ error: true });
+    }
+});
+
 router.post('/recent', async function (request, response) {
     try {
         /** @type {{pngFile?: string, groupId?: string, filePath: string, mtime: number}[]} */

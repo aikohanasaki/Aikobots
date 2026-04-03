@@ -5,6 +5,7 @@ import {
     this_chid,
     openCharacterChat,
     openManageChatsOwnerChat,
+    openManageChatsOrphanCharacterChat,
     chat_metadata,
     getRequestHeaders,
     getThumbnailUrl,
@@ -1316,9 +1317,13 @@ export function initBookmarks() {
 
         try {
             showLoader();
+            const rowType = $(this).attr('data-manage-chats-row-type') || $(this).closest('[data-manage-chats-row-type]').attr('data-manage-chats-row-type');
+            const orphanKey = $(this).attr('data-orphan-key') || $(this).closest('[data-orphan-key]').attr('data-orphan-key');
             const ownerType = $(this).attr('data-owner-type');
             const ownerId = $(this).attr('data-owner-id');
-            if (ownerType && ownerId) {
+            if (rowType === 'orphan-character' && orphanKey) {
+                await openManageChatsOrphanCharacterChat(orphanKey, fileName);
+            } else if (ownerType && ownerId) {
                 await openManageChatsOwnerChat({ type: ownerType, id: ownerId }, fileName);
             } else if (selected_group) {
                 await openGroupChat(selected_group, fileName);
