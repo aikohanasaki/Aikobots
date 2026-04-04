@@ -253,7 +253,7 @@ export function getRegexedString(rawString, placement, regexScripts = [], env = 
         if (
             (script.markdownOnly && isMarkdown) ||
             (script.promptOnly && isPrompt) ||
-            (!script.markdownOnly && !script.promptOnly && !isMarkdown && !isPrompt)
+            (!script.markdownOnly && !script.promptOnly)
         ) {
             if (isEdit && !script.runOnEdit) {
                 continue;

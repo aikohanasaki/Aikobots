@@ -106,6 +106,34 @@ function normalizeLongChatConfig({ displayCount = LONG_CHAT_DISPLAY_DEFAULT, buf
     };
 }
 
+function normalizeChatTimestamp(value, fallback) {
+    if (typeof value === 'number' && Number.isFinite(value)) {
+        return value;
+    }
+
+    if (typeof value === 'string') {
+        const trimmed = value.trim();
+
+        if (trimmed) {
+            const numeric = Number(trimmed);
+            if (Number.isFinite(numeric)) {
+                return numeric;
+            }
+
+            const parsed = Date.parse(trimmed);
+            if (Number.isFinite(parsed)) {
+                return parsed;
+            }
+        }
+    }
+
+    return fallback;
+}
+
+function hasValidChatPayload(chat) {
+    return Array.isArray(chat) && _.isPlainObject(chat[0]);
+}
+
 function serializeJsonl(data) {
     return data.map(x => JSON.stringify(x)).join('\n');
 }
@@ -439,7 +467,8 @@ function getChatSearchResult(chatFile, fragments = []) {
     }
 
     const lastMessage = messages[messages.length - 1];
-    const lastMesDate = lastMessage?.send_date || Math.round(fs.statSync(chatFile.path).mtimeMs);
+    const fallbackTimestamp = Math.round(fs.statSync(chatFile.path).mtimeMs);
+    const lastMesDate = normalizeChatTimestamp(lastMessage?.send_date, fallbackTimestamp);
     const result = {
         file_name: chatFile.file_name,
         file_size: chatFile.file_size,
@@ -747,13 +776,14 @@ export async function getChatInfo(pathToFile, additionalData = {}, isGroup = fal
         if (isGroup) {
             const fileObjects = readJsonlObjects(pathToFile);
             const lastMessage = fileObjects.at(-1);
+            const fallbackTimestamp = Math.round(stats.mtimeMs);
             const chatData = {
                 file_id: parsedPath.name,
                 file_name: parsedPath.base,
                 file_size: `${(stats.size / 1024).toFixed(2)}kb`,
                 chat_items: fileObjects.length,
                 mes: lastMessage?.mes || '[The chat is empty]',
-                last_mes: lastMessage?.send_date || stats.mtimeMs,
+                last_mes: normalizeChatTimestamp(lastMessage?.send_date, fallbackTimestamp),
                 ...additionalData,
             };
 
@@ -773,7 +803,7 @@ export async function getChatInfo(pathToFile, additionalData = {}, isGroup = fal
             file_size: fileSizeInKB,
             chat_items: 0,
             mes: '[The chat is empty]',
-            last_mes: stats.mtimeMs,
+            last_mes: Math.round(stats.mtimeMs),
             ...additionalData,
         };
 
@@ -797,7 +827,7 @@ export async function getChatInfo(pathToFile, additionalData = {}, isGroup = fal
         if (lastMessage || segments.header) {
             chatData.chat_items = segments.messages.length;
             chatData.mes = lastMessage?.mes || '[The message is empty]';
-            chatData.last_mes = lastMessage?.send_date || stats.mtimeMs;
+            chatData.last_mes = normalizeChatTimestamp(lastMessage?.send_date, Math.round(stats.mtimeMs));
             res(chatData);
         } else {
             console.warn('Found an invalid or corrupted chat file:', pathToFile);
@@ -811,7 +841,11 @@ export const router = express.Router();
 router.post('/save', validateAvatarUrlMiddleware, async function (request, response) {
     try {
         const directoryName = String(request.body.avatar_url).replace('.png', '');
-        const chatData = Array.isArray(request.body.chat) ? request.body.chat : [];
+        if (!hasValidChatPayload(request.body.chat)) {
+            return response.status(400).send({ error: 'invalid_chat_payload' });
+        }
+
+        const chatData = request.body.chat;
         const config = normalizeLongChatConfig({
             displayCount: request.body.display_count,
             bufferMax: request.body.buffer_max,
@@ -1283,6 +1317,10 @@ router.post('/group/save', (request, response) => {
         return response.sendStatus(400);
     }
 
+    if (!hasValidChatPayload(request.body.chat)) {
+        return response.status(400).send({ error: 'invalid_chat_payload' });
+    }
+
     const id = request.body.id;
     const pathToFile = path.join(request.user.directories.groupChats, `${id}.jsonl`);
 
@@ -1374,7 +1412,7 @@ router.post('/search', validateAvatarUrlMiddleware, function (request, response)
         }
 
         // Sort by last message date descending
-        results.sort((a, b) => new Date(b.last_mes).getTime() - new Date(a.last_mes).getTime());
+        results.sort((a, b) => b.last_mes - a.last_mes);
         return response.send(results);
 
     } catch (error) {
@@ -1423,7 +1461,7 @@ router.post('/orphaned', async function (request, response) {
             file_name: chatData.file_name,
             file_size: chatData.file_size,
             message_count: chatData.chat_items ?? 0,
-            last_mes: chatData.last_mes,
+            last_mes: normalizeChatTimestamp(chatData.last_mes, 0),
             preview_message: chatData.mes ?? '',
         });
 
@@ -1451,7 +1489,7 @@ router.post('/orphaned', async function (request, response) {
                         }, fragments);
                     })
                     .filter(Boolean)
-                    .sort((a, b) => new Date(b.last_mes).getTime() - new Date(a.last_mes).getTime())
+                    .sort((a, b) => b.last_mes - a.last_mes)
                 : (await Promise.allSettled(
                     directChatFiles.map(fileName => {
                         const filePath = path.join(orphanChatDir, fileName);
@@ -1460,7 +1498,7 @@ router.post('/orphaned', async function (request, response) {
                 ))
                     .filter(result => result.status === 'fulfilled' && result.value?.file_name)
                     .map(result => toChatSummary(result.value))
-                    .sort((a, b) => new Date(b.last_mes).getTime() - new Date(a.last_mes).getTime());
+                    .sort((a, b) => b.last_mes - a.last_mes);
 
             const relatedGroups = [];
 
@@ -1485,7 +1523,7 @@ router.post('/orphaned', async function (request, response) {
                             }, fragments);
                         })
                         .filter(Boolean)
-                        .sort((a, b) => new Date(b.last_mes).getTime() - new Date(a.last_mes).getTime())
+                        .sort((a, b) => b.last_mes - a.last_mes)
                     : (await Promise.allSettled(
                         (Array.isArray(group.chats) ? group.chats : []).map(chatId => {
                             const filePath = path.join(request.user.directories.groupChats, `${chatId}.jsonl`);
@@ -1498,7 +1536,7 @@ router.post('/orphaned', async function (request, response) {
                     ))
                         .filter(result => result.status === 'fulfilled' && result.value?.file_name)
                         .map(result => toChatSummary(result.value))
-                        .sort((a, b) => new Date(b.last_mes).getTime() - new Date(a.last_mes).getTime());
+                        .sort((a, b) => b.last_mes - a.last_mes);
 
                 if (groupChats.length > 0) {
                     relatedGroups.push({

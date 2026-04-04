@@ -1,4 +1,8 @@
 reviews:
+  path_instructions:
+    - path: "**/*"
+      instructions: |
+        - Do not comment on localization/i18n topics (wording, translation keys, locale parity, or localization QA) unless explicitly asked.
   path_filters:
   - "!.github/**"
   - "!.vscode/**"
@@ -7,16 +11,16 @@ reviews:
   - "!default/content/**"
   - "!default/scaffold/**"
   - "!docker/**"
-  - "!locales/**"
+  - "!**/locales/**"
   - "!node_modules/**"
   - "!plugins/**"
   - "!public/locales/**"
   - "!public/sounds/**"
   - "!public/css/bg_load.css"
-  - "!public/scripts/extensions/third-party/"
+  - "!public/scripts/extensions/third-party/**"
   - "!public/stats.json"
   - "!public/css/user.css"
-  - "!public/error/"
+  - "!public/error/**"
   - "!stmb-reference/**"
   - "!tests/**"
   - "!.coderabbit.yaml"
