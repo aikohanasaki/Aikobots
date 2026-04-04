@@ -74,6 +74,7 @@ const STORAGE_KEYS = {
  * @property {string} thumbnailsPersona - The directory where the persona thumbnails are stored
  * @property {string} worlds - The directory where the WI are stored
  * @property {string} user - The directory where the user's public data is stored
+ * @property {string} messages - The directory where the user's messages are stored
  * @property {string} avatars - The directory where the avatars are stored
  * @property {string} userImages - The directory where the images are stored
  * @property {string} groups - The directory where the groups are stored

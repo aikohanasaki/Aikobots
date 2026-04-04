@@ -21,6 +21,7 @@ export const USER_DIRECTORY_TEMPLATE = Object.freeze({
     thumbnailsPersona: 'thumbnails/persona',
     worlds: 'worlds',
     user: 'user',
+    messages: 'messages',
     avatars: 'User Avatars',
     userImages: 'user/images',
     groups: 'groups',

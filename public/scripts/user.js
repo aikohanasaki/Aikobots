@@ -1,4 +1,4 @@
-import { getRequestHeaders } from '../script.js';
+import { getRequestHeaders, messageFormatting } from '../script.js';
 import { POPUP_RESULT, POPUP_TYPE, callGenericPopup } from './popup.js';
 import { renderTemplateAsync } from './templates.js';
 import { ensureImageFormatSupported, getBase64Async, humanFileSize } from './utils.js';
@@ -11,6 +11,7 @@ export let accountsEnabled = false;
 
 // Extend the session every 10 minutes
 const SESSION_EXTEND_INTERVAL = 10 * 60 * 1000;
+const MESSAGE_SUMMARY_INTERVAL = 60 * 1000;
 
 /**
  * Enable or disable user account controls in the UI.
@@ -23,6 +24,8 @@ export async function setUserControls(isEnabled) {
     if (!isEnabled) {
         $('#logout_button').hide();
         $('#admin_button').hide();
+        $('#messages_button').hide();
+        setMessagesBadge(false);
         return;
     }
 
@@ -70,9 +73,148 @@ async function getCurrentUser() {
 
         currentUser = await response.json();
         $('#admin_button').toggle(accountsEnabled && isAdmin());
+        $('#messages_button').toggle(accountsEnabled);
         $('.character_distribute_button').css('display', isAdmin() ? 'flex' : 'none');
+        await refreshMessagesSummary();
     } catch (error) {
         console.error('Error getting current user:', error);
+    }
+}
+
+function setMessagesBadge(hasUnread) {
+    $('#messages_button .messages_badge_dot').toggle(Boolean(hasUnread));
+}
+
+async function refreshMessagesSummary() {
+    if (!accountsEnabled || !currentUser) {
+        setMessagesBadge(false);
+        return null;
+    }
+
+    try {
+        const response = await fetch('/api/users/messages/summary', {
+            headers: getRequestHeaders(),
+        });
+
+        if (!response.ok) {
+            throw new Error('Failed to get message summary');
+        }
+
+        const data = await response.json();
+        setMessagesBadge(Boolean(data?.hasUnread));
+        return data;
+    } catch (error) {
+        console.error('Error getting message summary:', error);
+        return null;
+    }
+}
+
+async function getUserMessageThread() {
+    const response = await fetch('/api/users/messages/thread', {
+        headers: getRequestHeaders(),
+    });
+
+    const data = await response.json().catch(() => ({}));
+
+    if (!response.ok) {
+        throw new Error(data?.error || 'Failed to get message thread');
+    }
+
+    return data;
+}
+
+async function sendUserMessage(body) {
+    const response = await fetch('/api/users/messages/thread', {
+        method: 'POST',
+        headers: getRequestHeaders(),
+        body: JSON.stringify({ body }),
+    });
+
+    if (!response.ok) {
+        const data = await response.json().catch(() => ({}));
+        throw new Error(data?.error || 'Failed to send message');
+    }
+}
+
+async function getAdminMessageThreads() {
+    const response = await fetch('/api/users/messages/admin/threads', {
+        headers: getRequestHeaders(),
+    });
+
+    const data = await response.json().catch(() => ([]));
+
+    if (!response.ok) {
+        throw new Error(data?.error || 'Failed to get admin message threads');
+    }
+
+    return data;
+}
+
+async function getAdminMessageThread(handle) {
+    const response = await fetch(`/api/users/messages/admin/threads/${encodeURIComponent(handle)}`, {
+        headers: getRequestHeaders(),
+    });
+
+    const data = await response.json().catch(() => ({}));
+
+    if (!response.ok) {
+        throw new Error(data?.error || 'Failed to get admin message thread');
+    }
+
+    return data;
+}
+
+async function sendAdminMessage(handle, body) {
+    const response = await fetch(`/api/users/messages/admin/threads/${encodeURIComponent(handle)}`, {
+        method: 'POST',
+        headers: getRequestHeaders(),
+        body: JSON.stringify({ body }),
+    });
+
+    if (!response.ok) {
+        const data = await response.json().catch(() => ({}));
+        throw new Error(data?.error || 'Failed to send admin message');
+    }
+}
+
+function getMessageHtml(message) {
+    if (typeof message?.html === 'string' && message.html.length) {
+        return message.html;
+    }
+
+    try {
+        return messageFormatting(String(message?.body || ''), '', false, message?.senderRole === 'user', -1, {}, false);
+    } catch {
+        return $('<div></div>').text(String(message?.body || '')).html();
+    }
+}
+
+function renderMessageThread(container, messages = [], currentHandle = '') {
+    container.empty();
+
+    if (!messages.length) {
+        container.append('<div class="userMessagesThreadEmpty">No messages yet.</div>');
+        return;
+    }
+
+    for (const message of messages) {
+        const row = $('<div class="userMessageRow"></div>');
+        row.toggleClass('is-own', message.senderHandle === currentHandle);
+
+        const meta = $('<div class="userMessageMeta"></div>');
+        meta.append($('<span></span>').text(message.senderName || message.senderHandle || 'Unknown'));
+        meta.append($('<span></span>').text(new Date(message.createdAt).toLocaleString()));
+
+        const body = $('<div class="userMessageBody mes_text"></div>');
+        body.html(getMessageHtml(message));
+
+        row.append(meta, body);
+        container.append(row);
+    }
+
+    const element = container.get(0);
+    if (element) {
+        element.scrollTop = element.scrollHeight;
     }
 }
 
@@ -1207,6 +1349,58 @@ async function openUserProfile() {
     callGenericPopup(template, POPUP_TYPE.TEXT, '', popupOptions);
 }
 
+async function openUserMessagesPopup() {
+    const template = $(await renderTemplateAsync('userMessages'));
+    const threadContainer = template.find('.userMessagesThread');
+    const composer = template.find('.userMessagesComposer');
+    const sendButton = template.find('.userMessagesSendButton');
+
+    async function loadThread() {
+        try {
+            const thread = await getUserMessageThread();
+            renderMessageThread(threadContainer, thread.messages, currentUser?.handle);
+            await refreshMessagesSummary();
+        } catch (error) {
+            console.error('Error loading user messages:', error);
+            toastr.error(error.message || 'Unknown error', 'Failed to load messages');
+        }
+    }
+
+    async function sendMessage() {
+        const body = String(composer.val() || '');
+
+        try {
+            sendButton.addClass('disabled');
+            await sendUserMessage(body);
+            composer.val('');
+            await loadThread();
+        } catch (error) {
+            console.error('Error sending user message:', error);
+            toastr.error(error.message || 'Unknown error', 'Failed to send message');
+        } finally {
+            sendButton.removeClass('disabled');
+        }
+    }
+
+    sendButton.on('click', () => sendMessage());
+    composer.on('keydown', async (event) => {
+        if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) {
+            event.preventDefault();
+            await sendMessage();
+        }
+    });
+
+    callGenericPopup(template, POPUP_TYPE.TEXT, '', {
+        okButton: 'Close',
+        wide: true,
+        large: false,
+        allowVerticalScrolling: true,
+        allowHorizontalScrolling: false,
+    });
+
+    await loadThread();
+}
+
 /**
  * Crop and upload an avatar image.
  * @param {string} handle User handle
@@ -1249,7 +1443,19 @@ async function changeAvatar(handle, avatar) {
     }
 }
 
-async function openAdminPanel() {
+async function openAdminPanel(initialTab = 'usersList') {
+    let selectedMessageHandle = '';
+    let threadSummaries = [];
+
+    function showAdminTab(target) {
+        template.find('.adminNav > button').each(function () {
+            $(this).toggleClass('active', String($(this).data('target-tab')) === target);
+        });
+        template.find('.navTab').each(function () {
+            $(this).toggle(this.classList.contains(target));
+        });
+    }
+
     async function renderUsers() {
         const users = await getUsers();
         template.find('.usersList').empty();
@@ -1304,13 +1510,110 @@ async function openAdminPanel() {
         });
     }
 
+    function paintMessageSummaries() {
+        const list = template.find('.adminMessagesList');
+        list.empty();
+
+        if (!threadSummaries.length) {
+            list.append('<div class="userMessagesThreadEmpty">No user threads available.</div>');
+            return;
+        }
+
+        for (const summary of threadSummaries) {
+            const item = $('<div class="adminMessageListItem"></div>');
+            item.toggleClass('is-active', summary.userHandle === selectedMessageHandle);
+            item.append($('<div class="flex-container justifySpaceBetween alignItemsCenter"></div>')
+                .append($('<strong></strong>').text(summary.userName))
+                .append($('<small class="opacity70p"></small>').text(summary.userHandle)));
+            item.append($('<div class="adminMessageListPreview"></div>').text(summary.lastPreview || 'No messages yet.'));
+            item.append($('<div class="adminMessageListTimestamp"></div>').text(summary.lastMessageAt ? new Date(summary.lastMessageAt).toLocaleString() : ''));
+
+            if (summary.hasUnread) {
+                item.append('<span class="adminMessageListItemUnreadDot"></span>');
+            }
+
+            item.on('click', async () => {
+                selectedMessageHandle = summary.userHandle;
+                await renderSelectedAdminThread(summary.userHandle);
+            });
+
+            list.append(item);
+        }
+    }
+
+    async function loadMessageSummaries() {
+        try {
+            threadSummaries = await getAdminMessageThreads();
+
+            if (!threadSummaries.some(summary => summary.userHandle === selectedMessageHandle)) {
+                selectedMessageHandle = threadSummaries.find(summary => summary.hasUnread)?.userHandle || threadSummaries[0]?.userHandle || '';
+            }
+
+            paintMessageSummaries();
+            await refreshMessagesSummary();
+        } catch (error) {
+            console.error('Error loading admin message summaries:', error);
+            toastr.error(error.message || 'Unknown error', 'Failed to load messages');
+        }
+    }
+
+    async function renderSelectedAdminThread(handle, reloadSummaries = true) {
+        const paneTitle = template.find('.adminMessagesPaneTitle');
+        const threadContainer = template.find('.adminMessagesThread');
+
+        if (!handle) {
+            paneTitle.text('Messages');
+            threadContainer.html('<div class="userMessagesThreadEmpty">Select a user to view messages.</div>');
+            return;
+        }
+
+        try {
+            const summary = threadSummaries.find(item => item.userHandle === handle);
+            const thread = await getAdminMessageThread(handle);
+            paneTitle.text(summary ? `${summary.userName} (${handle})` : handle);
+            renderMessageThread(threadContainer, thread.messages, currentUser?.handle);
+
+            if (reloadSummaries) {
+                await loadMessageSummaries();
+            } else {
+                paintMessageSummaries();
+                await refreshMessagesSummary();
+            }
+        } catch (error) {
+            console.error('Error loading admin thread:', error);
+            toastr.error(error.message || 'Unknown error', 'Failed to load messages');
+        }
+    }
+
+    async function sendAdminMessageFromComposer() {
+        if (!selectedMessageHandle) {
+            toastr.warning('Select a user thread first.', 'No thread selected');
+            return;
+        }
+
+        const composer = template.find('.adminMessagesComposer');
+        const sendButton = template.find('.adminMessagesSendButton');
+        const body = String(composer.val() || '');
+
+        try {
+            sendButton.addClass('disabled');
+            await sendAdminMessage(selectedMessageHandle, body);
+            composer.val('');
+            await loadMessageSummaries();
+            await renderSelectedAdminThread(selectedMessageHandle, false);
+        } catch (error) {
+            console.error('Error sending admin message:', error);
+            toastr.error(error.message || 'Unknown error', 'Failed to send message');
+        } finally {
+            sendButton.removeClass('disabled');
+        }
+    }
+
     const template = $(await renderTemplateAsync('admin'));
 
     template.find('.adminNav > button').on('click', function () {
         const target = String($(this).data('target-tab'));
-        template.find('.navTab').each(function () {
-            $(this).toggle(this.classList.contains(target));
-        });
+        showAdminTab(target);
     });
 
     template.find('.createUserDisplayName').on('input', async function () {
@@ -1331,10 +1634,31 @@ async function openAdminPanel() {
     });
     template.find('.manageSubmissionsButton').on('click', () => renderSubmissions());
     template.find('.refreshSubmissionQueueButton').on('click', () => renderSubmissions());
+    template.find('.manageMessagesButton').on('click', async () => {
+        await loadMessageSummaries();
+        await renderSelectedAdminThread(selectedMessageHandle, false);
+    });
+    template.find('.refreshMessagesButton').on('click', async () => {
+        await loadMessageSummaries();
+        await renderSelectedAdminThread(selectedMessageHandle, false);
+    });
+    template.find('.adminMessagesSendButton').on('click', () => sendAdminMessageFromComposer());
+    template.find('.adminMessagesComposer').on('keydown', async (event) => {
+        if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) {
+            event.preventDefault();
+            await sendAdminMessageFromComposer();
+        }
+    });
 
-    callGenericPopup(template, POPUP_TYPE.TEXT, '', { okButton: 'Close', wide: false, large: false, allowVerticalScrolling: true, allowHorizontalScrolling: false });
+    callGenericPopup(template, POPUP_TYPE.TEXT, '', { okButton: 'Close', wide: true, large: false, allowVerticalScrolling: true, allowHorizontalScrolling: false });
     renderUsers();
     renderSubmissions();
+    await loadMessageSummaries();
+    showAdminTab(initialTab);
+
+    if (initialTab === 'messagesTab') {
+        await renderSelectedAdminThread(selectedMessageHandle, false);
+    }
 }
 
 /**
@@ -1406,6 +1730,14 @@ jQuery(() => {
     $('#admin_button').on('click', () => {
         openAdminPanel();
     });
+    $('#messages_button').on('click', () => {
+        if (isAdmin()) {
+            openAdminPanel('messagesTab');
+            return;
+        }
+
+        openUserMessagesPopup();
+    });
     $('#account_button').on('click', () => {
         openUserProfile();
     });
@@ -1414,4 +1746,14 @@ jQuery(() => {
             await extendUserSession();
         }
     }, SESSION_EXTEND_INTERVAL);
+    setInterval(async () => {
+        if (currentUser) {
+            await refreshMessagesSummary();
+        }
+    }, MESSAGE_SUMMARY_INTERVAL);
+    window.addEventListener('focus', () => {
+        if (currentUser) {
+            refreshMessagesSummary();
+        }
+    });
 });
