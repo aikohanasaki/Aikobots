@@ -661,6 +661,7 @@ export class ToolManager {
             chat_completion_sources.COMETAPI,
             chat_completion_sources.ELECTRONHUB,
             chat_completion_sources.NAVY,
+            chat_completion_sources.ZANITY,
             chat_completion_sources.AZURE_OPENAI,
             chat_completion_sources.ZAI,
             chat_completion_sources.SILICONFLOW,

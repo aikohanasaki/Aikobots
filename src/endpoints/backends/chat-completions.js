@@ -16,6 +16,7 @@ import {
     OPENAI_REASONING_EFFORT_MODELS,
     OPENROUTER_HEADERS,
     VERTEX_SAFETY,
+    ZANITY_ENDPOINT,
     ZAI_ENDPOINT,
 } from '../../constants.js';
 import {
@@ -84,6 +85,8 @@ const API_POLLINATIONS = 'https://text.pollinations.ai/openai';
 const API_MOONSHOT = 'https://api.moonshot.ai/v1';
 const API_FIREWORKS = 'https://api.fireworks.ai/inference/v1';
 const API_COMETAPI = 'https://api.cometapi.com/v1';
+const API_ZANITY_STANDARD = 'https://api.zanity.xyz/v1';
+const API_ZANITY_ALTERNATE = 'https://api.zanity.xyz/rp';
 const API_ZAI_COMMON = 'https://api.z.ai/api/paas/v4';
 const API_ZAI_CODING = 'https://api.z.ai/api/coding/paas/v4';
 const API_SILICONFLOW = 'https://api.siliconflow.com/v1';
@@ -130,6 +133,14 @@ function isNavyChatModel(model) {
 
     const endpoint = typeof model.endpoint === 'string' ? model.endpoint : '';
     return endpoint.includes('/chat/completions');
+}
+
+/**
+ * @param {string} endpoint
+ * @returns {string}
+ */
+function getZanityApiUrl(endpoint) {
+    return endpoint === ZANITY_ENDPOINT.ALTERNATE ? API_ZANITY_ALTERNATE : API_ZANITY_STANDARD;
 }
 
 /**
@@ -1824,6 +1835,10 @@ router.post('/status', async function (request, statusResponse) {
         apiUrl = API_NAVY;
         apiKey = readSecret(request.user.directories, SECRET_KEYS.NAVY);
         headers = {};
+    } else if (request.body.chat_completion_source === CHAT_COMPLETION_SOURCES.ZANITY) {
+        apiUrl = getZanityApiUrl(request.body.zanity_endpoint);
+        apiKey = readSecret(request.user.directories, SECRET_KEYS.ZANITY);
+        headers = {};
     } else if (request.body.chat_completion_source === CHAT_COMPLETION_SOURCES.NANOGPT) {
         apiUrl = API_NANOGPT;
         apiKey = readSecret(request.user.directories, SECRET_KEYS.NANOGPT);
@@ -2429,6 +2444,14 @@ export async function handleChatCompletionsGenerate(request, response) {
             reasoning_effort: request.body.reasoning_effort,
         };
         throw new Error('This provider is temporarily disabled.');
+    } else if (request.body.chat_completion_source === CHAT_COMPLETION_SOURCES.ZANITY) {
+        apiUrl = getZanityApiUrl(request.body.zanity_endpoint);
+        apiKey = readSecret(request.user.directories, SECRET_KEYS.ZANITY);
+        headers = {};
+        bodyParams = {};
+        if (request.body.json_schema) {
+            setJsonObjectFormat(bodyParams, request.body.messages, request.body.json_schema);
+        }
     } else if (request.body.chat_completion_source === CHAT_COMPLETION_SOURCES.ZAI) {
         apiUrl = request.body.zai_endpoint === ZAI_ENDPOINT.CODING ? API_ZAI_CODING : API_ZAI_COMMON;
         apiKey = readSecret(request.user.directories, SECRET_KEYS.ZAI);

@@ -355,6 +355,7 @@ export const chat_completion_sources = {
     FIREWORKS: 'fireworks',
     COMETAPI: 'cometapi',
     AZURE_OPENAI: 'azure_openai',
+    ZANITY: 'zanity',
     ZAI: 'zai',
     SILICONFLOW: 'siliconflow',
 };
@@ -404,6 +405,11 @@ export const reasoning_effort_types = {
 export const ZAI_ENDPOINT = {
     COMMON: 'common',
     CODING: 'coding',
+};
+
+export const ZANITY_ENDPOINT = {
+    STANDARD: 'standard',
+    ALTERNATE: 'alternate',
 };
 
 const sensitiveFields = [
@@ -461,6 +467,8 @@ export const settingsToUpdate = {
     moonshot_model: ['#model_moonshot_select', 'moonshot_model', false, true],
     fireworks_model: ['#model_fireworks_select', 'fireworks_model', false, true],
     cometapi_model: ['#model_cometapi_select', 'cometapi_model', false, true],
+    zanity_model: ['#model_zanity_select', 'zanity_model', false, true],
+    zanity_endpoint: ['#zanity_endpoint', 'zanity_endpoint', false, true],
     custom_model: ['#custom_model_id', 'custom_model', false, true],
     custom_url: ['#custom_api_url_text', 'custom_url', false, true],
     custom_include_body: ['#custom_include_body', 'custom_include_body', false, true],
@@ -573,6 +581,8 @@ const default_settings = {
     fireworks_model: 'accounts/fireworks/models/kimi-k2-instruct',
     zai_model: 'glm-4.6',
     zai_endpoint: ZAI_ENDPOINT.COMMON,
+    zanity_model: '',
+    zanity_endpoint: ZANITY_ENDPOINT.STANDARD,
     azure_base_url: '',
     azure_deployment_name: '',
     azure_api_version: '2024-02-15-preview',
@@ -1186,6 +1196,8 @@ export function getChatCompletionModel(source = null) {
             return oai_settings.fireworks_model;
         case chat_completion_sources.AZURE_OPENAI:
             return oai_settings.azure_openai_model;
+        case chat_completion_sources.ZANITY:
+            return oai_settings.zanity_model;
         case chat_completion_sources.ZAI:
             return oai_settings.zai_model;
         default:
@@ -1449,6 +1461,24 @@ function saveModelList(data) {
         }
 
         $('#model_navy_select').val(oai_settings.navy_model).trigger('change');
+    }
+
+    if (oai_settings.chat_completion_source == chat_completion_sources.ZANITY) {
+        $('#model_zanity_select').empty();
+        model_list.forEach((model) => {
+            $('#model_zanity_select').append(
+                $('<option>', {
+                    value: model.id,
+                    text: model.id,
+                }));
+        });
+
+        const selectedModel = model_list.find(model => model.id === oai_settings.zanity_model);
+        if (model_list.length > 0 && (!selectedModel || !oai_settings.zanity_model)) {
+            oai_settings.zanity_model = model_list[0].id;
+        }
+
+        $('#model_zanity_select').val(oai_settings.zanity_model).trigger('change');
     }
 
     if (oai_settings.chat_completion_source == chat_completion_sources.NANOGPT) {
@@ -1881,6 +1911,7 @@ function getReasoningEffort() {
         chat_completion_sources.COMETAPI,
         chat_completion_sources.ELECTRONHUB,
         chat_completion_sources.NAVY,
+        chat_completion_sources.ZANITY,
     ];
 
     if (!reasoningEffortSources.includes(oai_settings.chat_completion_source)) {
@@ -1970,6 +2001,7 @@ async function buildOpenAIGenerateData(type, messages, { jsonSchema = null } = {
     const isAimlapi = oai_settings.chat_completion_source == chat_completion_sources.AIMLAPI;
     const isElectronHub = oai_settings.chat_completion_source == chat_completion_sources.ELECTRONHUB;
     const isNavy = oai_settings.chat_completion_source == chat_completion_sources.NAVY;
+    const isZanity = oai_settings.chat_completion_source == chat_completion_sources.ZANITY;
     const isXAI = oai_settings.chat_completion_source == chat_completion_sources.XAI;
     const isPollinations = oai_settings.chat_completion_source == chat_completion_sources.POLLINATIONS;
     const isMoonshot = oai_settings.chat_completion_source == chat_completion_sources.MOONSHOT;
@@ -2187,6 +2219,11 @@ async function buildOpenAIGenerateData(type, messages, { jsonSchema = null } = {
         generate_data['top_k'] = Number(oai_settings.top_k_openai);
     }
 
+    if (isZanity) {
+        generate_data['top_k'] = Number(oai_settings.top_k_openai);
+        generate_data['zanity_endpoint'] = oai_settings.zanity_endpoint || ZANITY_ENDPOINT.STANDARD;
+    }
+
     // https://docs.z.ai/api-reference/llm/chat-completion
     if (isZai) {
         generate_data['top_p'] = generate_data.top_p || 0.01;
@@ -2214,6 +2251,7 @@ async function buildOpenAIGenerateData(type, messages, { jsonSchema = null } = {
         chat_completion_sources.GROQ,
         chat_completion_sources.ELECTRONHUB,
         chat_completion_sources.NAVY,
+        chat_completion_sources.ZANITY,
         chat_completion_sources.NANOGPT,
         chat_completion_sources.XAI,
         chat_completion_sources.POLLINATIONS,
@@ -2439,7 +2477,7 @@ export function getStreamingReply(data, state, { chatCompletionSource = null, ov
             state.reasoning += (data.choices?.filter(x => x?.delta?.reasoning)?.[0]?.delta?.reasoning || '');
         }
         return data.choices?.[0]?.delta?.content ?? data.choices?.[0]?.message?.content ?? data.choices?.[0]?.text ?? '';
-    } else if ([chat_completion_sources.CUSTOM, chat_completion_sources.POLLINATIONS, chat_completion_sources.AIMLAPI, chat_completion_sources.MOONSHOT, chat_completion_sources.COMETAPI, chat_completion_sources.ELECTRONHUB, chat_completion_sources.NAVY, chat_completion_sources.NANOGPT, chat_completion_sources.ZAI, chat_completion_sources.SILICONFLOW].includes(chat_completion_source)) {
+    } else if ([chat_completion_sources.CUSTOM, chat_completion_sources.POLLINATIONS, chat_completion_sources.AIMLAPI, chat_completion_sources.MOONSHOT, chat_completion_sources.COMETAPI, chat_completion_sources.ELECTRONHUB, chat_completion_sources.NAVY, chat_completion_sources.ZANITY, chat_completion_sources.NANOGPT, chat_completion_sources.ZAI, chat_completion_sources.SILICONFLOW].includes(chat_completion_source)) {
         if (show_thoughts) {
             state.reasoning +=
                 data.choices?.filter(x => x?.delta?.reasoning_content)?.[0]?.delta?.reasoning_content ??
@@ -3576,6 +3614,10 @@ async function getStatusOpen() {
         data.azure_api_version = oai_settings.azure_api_version;
     }
 
+    if (oai_settings.chat_completion_source === chat_completion_sources.ZANITY) {
+        data.zanity_endpoint = oai_settings.zanity_endpoint || ZANITY_ENDPOINT.STANDARD;
+    }
+
     const canBypass = (oai_settings.chat_completion_source === chat_completion_sources.OPENAI && oai_settings.bypass_status_check) || oai_settings.chat_completion_source === chat_completion_sources.CUSTOM;
     if (canBypass) {
         setOnlineStatus(t`Status check bypassed`);
@@ -3653,6 +3695,8 @@ async function saveOpenAIPreset(name, settings, triggerUi = true) {
         moonshot_model: settings.moonshot_model,
         fireworks_model: settings.fireworks_model,
         cometapi_model: settings.cometapi_model,
+        zanity_model: settings.zanity_model,
+        zanity_endpoint: settings.zanity_endpoint,
         zai_model: settings.zai_model,
         zai_endpoint: settings.zai_endpoint,
         custom_model: settings.custom_model,
@@ -4620,6 +4664,15 @@ async function onModelChange() {
         oai_settings.navy_model = value;
     }
 
+    if ($(this).is('#model_zanity_select')) {
+        if (!value) {
+            console.debug('Null Zanity model selected. Ignoring.');
+            return;
+        }
+        console.log('Zanity model changed to', value);
+        oai_settings.zanity_model = value;
+    }
+
     if ($(this).is('#model_nanogpt_select')) {
         if (!value) {
             console.debug('Null NanoGPT model selected. Ignoring.');
@@ -4907,6 +4960,14 @@ async function onModelChange() {
         calculateNavyTokenMultiplier();
     }
 
+    if (oai_settings.chat_completion_source == chat_completion_sources.ZANITY) {
+        $('#openai_max_context').attr('max', oai_settings.max_context_unlocked ? unlocked_max : max_128k);
+        oai_settings.openai_max_context = Math.min(Number($('#openai_max_context').attr('max')), oai_settings.openai_max_context);
+        $('#openai_max_context').val(oai_settings.openai_max_context).trigger('input');
+        oai_settings.temp_openai = Math.min(oai_max_temp, oai_settings.temp_openai);
+        $('#temp_openai').attr('max', oai_max_temp).val(oai_settings.temp_openai).trigger('input');
+    }
+
     if (oai_settings.chat_completion_source === chat_completion_sources.NANOGPT) {
         const maxContext = getNanoGptMaxContext(oai_settings.nanogpt_model, oai_settings.max_context_unlocked);
         $('#openai_max_context').attr('max', maxContext);
@@ -5101,6 +5162,7 @@ async function onConnectButtonClick(e) {
         [chat_completion_sources.SILICONFLOW]: { key: SECRET_KEYS.SILICONFLOW, selector: '#api_key_siliconflow', proxy: false },
         [chat_completion_sources.ELECTRONHUB]: { key: SECRET_KEYS.ELECTRONHUB, selector: '#api_key_electronhub', proxy: false },
         [chat_completion_sources.NAVY]: { key: SECRET_KEYS.NAVY, selector: '#api_key_navy', proxy: false },
+        [chat_completion_sources.ZANITY]: { key: SECRET_KEYS.ZANITY, selector: '#api_key_zanity', proxy: false },
         [chat_completion_sources.NANOGPT]: { key: SECRET_KEYS.NANOGPT, selector: '#api_key_nanogpt', proxy: false },
         [chat_completion_sources.DEEPSEEK]: { key: SECRET_KEYS.DEEPSEEK, selector: '#api_key_deepseek', proxy: true },
         [chat_completion_sources.XAI]: { key: SECRET_KEYS.XAI, selector: '#api_key_xai', proxy: true },
@@ -5190,6 +5252,9 @@ function toggleChatCompletionForms() {
     }
     else if (oai_settings.chat_completion_source == chat_completion_sources.NAVY) {
         $('#model_navy_select').trigger('change');
+    }
+    else if (oai_settings.chat_completion_source == chat_completion_sources.ZANITY) {
+        $('#model_zanity_select').trigger('change');
     }
     else if (oai_settings.chat_completion_source == chat_completion_sources.NANOGPT) {
         $('#model_nanogpt_select').trigger('change');
@@ -6248,6 +6313,13 @@ export function initOpenAI() {
             templateResult: getNavyModelTemplate,
             matcher: textValueMatcher,
         });
+        $('#model_zanity_select').select2({
+            placeholder: t`Select a model`,
+            searchInputPlaceholder: t`Search models...`,
+            searchInputCssClass: 'text_pole',
+            width: '100%',
+            matcher: textValueMatcher,
+        });
         syncCustomModelSelect();
         $('#completion_prompt_manager_popup_entry_form_injection_trigger').select2({
             placeholder: t`All types (default)`,
@@ -6289,6 +6361,10 @@ export function initOpenAI() {
         oai_settings.vertexai_express_project_id = String($(this).val());
         saveSettingsDebounced();
     });
+    $('#zanity_endpoint').on('input', function () {
+        oai_settings.zanity_endpoint = String($(this).val());
+        saveSettingsDebounced();
+    });
     $('#zai_endpoint').on('input', function () {
         oai_settings.zai_endpoint = String($(this).val());
         saveSettingsDebounced();
@@ -6309,6 +6385,7 @@ export function initOpenAI() {
     $('#model_siliconflow_select').on('change', onModelChange);
     $('#model_electronhub_select').on('change', onModelChange);
     $('#model_navy_select').on('change', onModelChange);
+    $('#model_zanity_select').on('change', onModelChange);
     $('#model_nanogpt_select').on('change', onModelChange);
     $('#model_deepseek_select').on('change', onModelChange);
     $('#model_aimlapi_select').on('change', onModelChange);

@@ -207,6 +207,7 @@ export const CHAT_COMPLETION_SOURCES = {
     FIREWORKS: 'fireworks',
     COMETAPI: 'cometapi',
     AZURE_OPENAI: 'azure_openai',
+    ZANITY: 'zanity',
     ZAI: 'zai',
     SILICONFLOW: 'siliconflow',
 };
@@ -517,4 +518,9 @@ export const MEDIA_EXTENSIONS = [
 export const ZAI_ENDPOINT = {
     COMMON: 'common',
     CODING: 'coding',
+};
+
+export const ZANITY_ENDPOINT = {
+    STANDARD: 'standard',
+    ALTERNATE: 'alternate',
 };

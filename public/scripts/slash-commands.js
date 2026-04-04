@@ -61,7 +61,7 @@ import { hideChatMessageRange } from './chats.js';
 import { getContext, saveMetadataDebounced } from './extensions.js';
 import { getRegexedString, regex_placement } from './extensions/regex/engine.js';
 import { findGroupMemberId, groups, is_group_generating, openGroupById, resetSelectedGroup, saveGroupChat, selected_group, getGroupMembers } from './group-chats.js';
-import { chat_completion_sources, oai_settings, promptManager, ZAI_ENDPOINT } from './openai.js';
+import { chat_completion_sources, oai_settings, promptManager, ZAI_ENDPOINT, ZANITY_ENDPOINT } from './openai.js';
 import { user_avatar } from './personas.js';
 import { addEphemeralStoppingString, chat_styles, flushEphemeralStoppingStrings, power_user } from './power-user.js';
 import { decodeTextTokens, getAvailableTokenizers, getFriendlyTokenizerName, getTextTokens, getTokenCountAsync, selectTokenizer } from './tokenizers.js';
@@ -4641,6 +4641,7 @@ function getModelOptions(quiet) {
         { id: 'model_siliconflow_select', api: 'openai', type: chat_completion_sources.SILICONFLOW },
         { id: 'model_electronhub_select', api: 'openai', type: chat_completion_sources.ELECTRONHUB },
         { id: 'model_navy_select', api: 'openai', type: chat_completion_sources.NAVY },
+        { id: 'model_zanity_select', api: 'openai', type: chat_completion_sources.ZANITY },
         { id: 'model_nanogpt_select', api: 'openai', type: chat_completion_sources.NANOGPT },
         { id: 'model_deepseek_select', api: 'openai', type: chat_completion_sources.DEEPSEEK },
         { id: 'model_aimlapi_select', api: 'openai', type: chat_completion_sources.AIMLAPI },
@@ -4974,6 +4975,32 @@ async function setApiUrlCallback({ api = null, connect = 'true', quiet = 'false'
         }
 
         return oai_settings.zai_endpoint || ZAI_ENDPOINT.COMMON;
+    }
+
+    const isCurrentlyZanity = main_api === 'openai' && oai_settings.chat_completion_source === chat_completion_sources.ZANITY;
+    if (api === chat_completion_sources.ZANITY || (!api && isCurrentlyZanity)) {
+        if (!url) {
+            return oai_settings.zanity_endpoint || ZANITY_ENDPOINT.STANDARD;
+        }
+
+        const permittedValues = Object.values(ZANITY_ENDPOINT);
+        if (!permittedValues.includes(url)) {
+            !isQuiet && toastr.warning(t`Valid options are: ${permittedValues.join(', ')}`, t`Zanity endpoint '${url}' is not a valid option.`);
+            return '';
+        }
+
+        if (!isCurrentlyZanity && autoConnect) {
+            toastr.warning(t`Zanity is not the currently selected API, so we cannot do an auto-connect. Consider switching to it via /api beforehand.`);
+            return '';
+        }
+
+        $('#zanity_endpoint').val(url).trigger('input');
+
+        if (autoConnect) {
+            $('#api_button_openai').trigger('click');
+        }
+
+        return oai_settings.zanity_endpoint || ZANITY_ENDPOINT.STANDARD;
     }
 
     if (api) {
