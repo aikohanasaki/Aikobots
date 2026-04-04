@@ -191,12 +191,19 @@ router.post('/review', requireAdminMiddleware, async (request, response) => {
             return response.status(400).json({ error: 'Invalid publish mode.' });
         }
 
+        const targetHandles = Array.isArray(request.body?.targetHandles)
+            ? request.body.targetHandles.map(handle => String(handle || '').trim()).filter(Boolean)
+            : [];
+        const publishedFilename = request.body?.publishedFilename
+            ? sanitize(String(request.body.publishedFilename))
+            : undefined;
+
         const { cardPath } = getSubmissionPaths(record.id);
         const distribution = await distributeCharacterFile({
             sourcePath: cardPath,
-            publishedFilename: request.body?.publishedFilename,
+            publishedFilename,
             publishMode,
-            targetHandles: request.body?.targetHandles,
+            targetHandles,
             actingUserHandle: request.user.profile.handle,
         });
 

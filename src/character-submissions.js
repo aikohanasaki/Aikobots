@@ -5,7 +5,7 @@ import crypto from 'node:crypto';
 
 import _ from 'lodash';
 import sanitize from 'sanitize-filename';
-import { sync as writeFileAtomicSync } from 'write-file-atomic';
+import writeFileAtomic from 'write-file-atomic';
 
 import { parse, write } from './character-card-parser.js';
 import { invalidateThumbnail } from './endpoints/thumbnails.js';
@@ -35,6 +35,7 @@ export const DISTRIBUTION_SOURCE_TYPES = Object.freeze({
 
 const DEFAULT_CONTENT_ROOT = path.join(serverDirectory, 'default', 'content');
 const DEFAULT_CONTENT_INDEX = path.join(DEFAULT_CONTENT_ROOT, 'index.json');
+const SUBMISSION_ID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 let defaultContentIndexWriteQueue = Promise.resolve();
 
 /**
@@ -86,7 +87,19 @@ export async function ensureSubmissionStore() {
  * @returns {{basePath: string, cardPath: string, recordPath: string}}
  */
 export function getSubmissionPaths(submissionId) {
-    const basePath = path.join(getSubmissionsRoot(), submissionId);
+    const root = path.resolve(getSubmissionsRoot());
+    const id = String(submissionId || '').trim();
+
+    if (!SUBMISSION_ID_REGEX.test(id)) {
+        throw new Error('Invalid submission id.');
+    }
+
+    const basePath = path.resolve(root, id);
+    const relativePath = path.relative(root, basePath);
+    if (!relativePath || relativePath.startsWith('..') || path.isAbsolute(relativePath)) {
+        throw new Error('Invalid submission id.');
+    }
+
     return {
         basePath,
         cardPath: path.join(basePath, 'card.png'),
@@ -138,7 +151,7 @@ async function readCharacterCardFile(filePath) {
 async function writeCharacterCardFile(rawBuffer, card, outputPath) {
     await fsPromises.mkdir(path.dirname(outputPath), { recursive: true });
     const outputBuffer = write(rawBuffer, JSON.stringify(card));
-    writeFileAtomicSync(outputPath, outputBuffer);
+    await writeFileAtomic(outputPath, outputBuffer);
 }
 
 /**
@@ -227,7 +240,7 @@ async function upsertDefaultContentCharacter(relativeFilename) {
             contentIndex[existingIndex].type = 'character';
         }
 
-        writeFileAtomicSync(DEFAULT_CONTENT_INDEX, JSON.stringify(contentIndex, null, 4));
+        await writeFileAtomic(DEFAULT_CONTENT_INDEX, JSON.stringify(contentIndex, null, 4));
     });
 }
 
@@ -296,7 +309,7 @@ export async function getSubmissionRecord(submissionId) {
 export async function writeSubmissionRecord(record) {
     const { basePath, recordPath } = getSubmissionPaths(record.id);
     await fsPromises.mkdir(basePath, { recursive: true });
-    writeFileAtomicSync(recordPath, JSON.stringify(record, null, 4));
+    await writeFileAtomic(recordPath, JSON.stringify(record, null, 4));
 }
 
 /**

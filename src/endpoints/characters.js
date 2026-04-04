@@ -1531,7 +1531,19 @@ router.post('/distribute', requireAdminMiddleware, async function (request, resp
                 return response.status(400).json({ error: 'Missing submission id.' });
             }
 
-            const submission = await getSubmissionRecord(submissionId);
+            let submission;
+            try {
+                submission = await getSubmissionRecord(submissionId);
+            } catch (error) {
+                if (error?.message === 'Invalid submission id.') {
+                    return response.status(400).json({ error: 'Invalid submission id.' });
+                }
+                if (error?.code === 'ENOENT') {
+                    return response.status(404).json({ error: 'Submission not found.' });
+                }
+                throw error;
+            }
+
             if (submission.status !== SUBMISSION_STATUSES.APPROVED) {
                 return response.status(409).json({ error: 'Only approved submissions can be distributed.' });
             }
