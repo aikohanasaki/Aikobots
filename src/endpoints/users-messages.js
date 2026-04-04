@@ -79,20 +79,27 @@ async function appendThreadRecord(userHandle, record) {
 
 async function appendThreadMetaIfMissing(userHandle) {
     const filePath = getThreadFilePath(userHandle);
-
-    try {
-        await fsPromises.access(filePath);
-        return;
-    } catch {
-        // File does not exist yet.
-    }
-
-    await appendThreadRecord(userHandle, {
+    const threadMetaRecord = `${JSON.stringify({
         type: 'thread_meta',
         threadId: THREAD_ID,
         userHandle,
         createdAt: Date.now(),
-    });
+    })}\n`;
+
+    await ensureMessagesDirectory(userHandle);
+
+    let handle;
+
+    try {
+        handle = await fsPromises.open(filePath, 'wx');
+        await handle.writeFile(threadMetaRecord, 'utf8');
+    } catch (error) {
+        if (error?.code !== 'EEXIST') {
+            throw error;
+        }
+    } finally {
+        await handle?.close();
+    }
 }
 
 async function parseThread(userHandle) {

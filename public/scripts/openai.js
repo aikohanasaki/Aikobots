@@ -3580,6 +3580,7 @@ async function getStatusOpen() {
         chat_completion_sources.AI21,
         chat_completion_sources.VERTEXAI,
         chat_completion_sources.PERPLEXITY,
+        chat_completion_sources.ZANITY,
         chat_completion_sources.ZAI,
     ];
     if (noValidateSources.includes(oai_settings.chat_completion_source)) {

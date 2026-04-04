@@ -752,6 +752,48 @@ function normalizeMimeType(contentType, fallbackMimeType) {
     return normalized || fallbackMimeType;
 }
 
+const MAX_FETCHED_MEDIA_BYTES = 10 * 1024 * 1024;
+
+async function readResponseBodyWithLimit(response, controller, maxBytes) {
+    const contentLength = Number(response.headers.get('content-length'));
+    if (Number.isFinite(contentLength) && contentLength > maxBytes) {
+        throw new Error(`Media too large: ${contentLength} bytes`);
+    }
+
+    if (!response.body?.getReader) {
+        const arrayBuffer = await response.arrayBuffer();
+        if (arrayBuffer.byteLength > maxBytes) {
+            throw new Error(`Media too large: ${arrayBuffer.byteLength} bytes`);
+        }
+        return Buffer.from(arrayBuffer);
+    }
+
+    const reader = response.body.getReader();
+    const chunks = [];
+    let totalBytes = 0;
+
+    try {
+        while (true) {
+            const { done, value } = await reader.read();
+            if (done) {
+                break;
+            }
+
+            totalBytes += value.byteLength;
+            if (totalBytes > maxBytes) {
+                controller.abort();
+                throw new Error(`Media too large: ${totalBytes} bytes`);
+            }
+
+            chunks.push(Buffer.from(value));
+        }
+    } finally {
+        reader.releaseLock();
+    }
+
+    return Buffer.concat(chunks, totalBytes);
+}
+
 async function fetchMediaAsDataUrl(url, fallbackMimeType) {
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), 30000);
@@ -763,7 +805,7 @@ async function fetchMediaAsDataUrl(url, fallbackMimeType) {
         }
 
         const contentType = normalizeMimeType(response.headers.get('content-type'), fallbackMimeType);
-        const body = Buffer.from(await response.arrayBuffer()).toString('base64');
+        const body = (await readResponseBodyWithLimit(response, controller, MAX_FETCHED_MEDIA_BYTES)).toString('base64');
         return `data:${contentType};base64,${body}`;
     } finally {
         clearTimeout(timeoutId);

@@ -235,14 +235,15 @@ export function evaluatePromptMacros(content, env = {}, { additional = {}, macro
             const rng = seedrandom(undefined, { entropy: true });
             return list[Math.floor(rng() * list.length)] ?? '';
         } },
-        { regex: /{{pick\s?::?([^}]+)}}/gi, replace: (_, listString, offset) => {
+        { regex: /{{pick\s?::?([^}]+)}}/gi, replace: (_, listString, matchOffset) => {
             const list = String(listString || '').includes('::')
                 ? String(listString).split('::')
                 : splitEscapedList(listString);
             if (list.length === 1 && list[0] === '') {
                 return '';
             }
-            const combinedSeedString = `${getStringHash(state.chatId)}-${getStringHash(rawContent)}-${offset}`;
+            // Match offset differentiates multiple {{pick}} macros within the same content.
+            const combinedSeedString = `${getStringHash(state.chatId)}-${getStringHash(rawContent)}-${matchOffset}`;
             const finalSeed = getStringHash(combinedSeedString);
             const rng = seedrandom(finalSeed);
             return list[Math.floor(rng() * list.length)] ?? '';
