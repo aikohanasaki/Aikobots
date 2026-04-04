@@ -75,6 +75,7 @@ const API_MAKERSUITE = 'https://generativelanguage.googleapis.com';
 const API_VERTEX_AI = 'https://us-central1-aiplatform.googleapis.com';
 const API_AI21 = 'https://api.ai21.com/studio/v1';
 const API_ELECTRONHUB = 'https://api.electronhub.ai/v1';
+const API_NAVY = 'https://api.navy/v1';
 const API_NANOGPT = 'https://nano-gpt.com/api/v1';
 const API_DEEPSEEK = 'https://api.deepseek.com/beta';
 const API_XAI = 'https://api.x.ai/v1';
@@ -116,6 +117,19 @@ function isVoidaiAppUrl(urlString) {
     } catch {
         return false;
     }
+}
+
+/**
+ * @param {any} model
+ * @returns {boolean}
+ */
+function isNavyChatModel(model) {
+    if (!model || typeof model !== 'object') {
+        return false;
+    }
+
+    const endpoint = typeof model.endpoint === 'string' ? model.endpoint : '';
+    return endpoint.includes('/chat/completions');
 }
 
 /**
@@ -1806,6 +1820,10 @@ router.post('/status', async function (request, statusResponse) {
         apiUrl = API_ELECTRONHUB;
         apiKey = readSecret(request.user.directories, SECRET_KEYS.ELECTRONHUB);
         headers = {};
+    } else if (request.body.chat_completion_source === CHAT_COMPLETION_SOURCES.NAVY) {
+        apiUrl = API_NAVY;
+        apiKey = readSecret(request.user.directories, SECRET_KEYS.NAVY);
+        headers = {};
     } else if (request.body.chat_completion_source === CHAT_COMPLETION_SOURCES.NANOGPT) {
         apiUrl = API_NANOGPT;
         apiKey = readSecret(request.user.directories, SECRET_KEYS.NANOGPT);
@@ -1981,10 +1999,12 @@ router.post('/status', async function (request, statusResponse) {
         });
         const response = await fetch(modelsUrl, {
             method: 'GET',
-            headers: {
-                'Authorization': 'Bearer ' + apiKey,
-                ...headers,
-            },
+            headers: request.body.chat_completion_source === CHAT_COMPLETION_SOURCES.NAVY
+                ? { ...headers }
+                : {
+                    'Authorization': 'Bearer ' + apiKey,
+                    ...headers,
+                },
         });
 
         if (response.ok) {
@@ -1993,6 +2013,13 @@ router.post('/status', async function (request, statusResponse) {
 
             if (request.body.chat_completion_source === CHAT_COMPLETION_SOURCES.POLLINATIONS && Array.isArray(data)) {
                 data = { data: data.map(model => ({ id: model.name, ...model })) };
+            }
+
+            if (request.body.chat_completion_source === CHAT_COMPLETION_SOURCES.NAVY && Array.isArray(data?.data)) {
+                data = {
+                    ...data,
+                    data: data.data.filter(isNavyChatModel),
+                };
             }
 
             statusResponse.send(data);
@@ -2423,6 +2450,14 @@ export async function handleChatCompletionsGenerate(request, response) {
         bodyParams = {};
         if (request.body.json_schema) {
             setJsonObjectFormat(bodyParams, request.body.messages, request.body.json_schema);
+        }
+    } else if (request.body.chat_completion_source === CHAT_COMPLETION_SOURCES.NAVY) {
+        apiUrl = API_NAVY;
+        apiKey = readSecret(request.user.directories, SECRET_KEYS.NAVY);
+        headers = {};
+        bodyParams = {};
+        if (request.body.reasoning_effort) {
+            bodyParams.reasoning_effort = request.body.reasoning_effort;
         }
     } else {
         console.warn('This chat completion source is not supported yet.');

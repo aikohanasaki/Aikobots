@@ -852,6 +852,7 @@ const STMB_PROFILE_PROVIDER_OPTIONS = Object.freeze([
     ['groq', 'Groq'],
     ['mistralai', 'MistralAI'],
     ['moonshot', 'Moonshot'],
+    ['navy', 'Navy'],
     ['nanogpt', 'NanoGPT'],
     ['openai', 'OpenAI'],
     ['openrouter', 'OpenRouter'],

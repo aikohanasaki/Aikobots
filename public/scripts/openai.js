@@ -345,6 +345,7 @@ export const chat_completion_sources = {
     PERPLEXITY: 'perplexity',
     GROQ: 'groq',
     ELECTRONHUB: 'electronhub',
+    NAVY: 'navy',
     NANOGPT: 'nanogpt',
     DEEPSEEK: 'deepseek',
     AIMLAPI: 'aimlapi',
@@ -449,6 +450,7 @@ export const settingsToUpdate = {
     groq_model: ['#model_groq_select', 'groq_model', false, true],
     siliconflow_model: ['#model_siliconflow_select', 'siliconflow_model', false, true],
     electronhub_model: ['#model_electronhub_select', 'electronhub_model', false, true],
+    navy_model: ['#model_navy_select', 'navy_model', false, true],
     electronhub_sort_models: ['#electronhub_sort_models', 'electronhub_sort_models', false, true],
     electronhub_group_models: ['#electronhub_group_models', 'electronhub_group_models', false, true],
     nanogpt_model: ['#model_nanogpt_select', 'nanogpt_model', false, true],
@@ -558,6 +560,7 @@ const default_settings = {
     groq_model: 'llama-3.3-70b-versatile',
     siliconflow_model: 'deepseek-ai/DeepSeek-V3',
     electronhub_model: 'gpt-4o-mini',
+    navy_model: 'gpt-5',
     electronhub_sort_models: 'alphabetically',
     electronhub_group_models: false,
     nanogpt_model: 'gpt-4o-mini',
@@ -1163,6 +1166,8 @@ export function getChatCompletionModel(source = null) {
             return oai_settings.siliconflow_model;
         case chat_completion_sources.ELECTRONHUB:
             return oai_settings.electronhub_model;
+        case chat_completion_sources.NAVY:
+            return oai_settings.navy_model;
         case chat_completion_sources.NANOGPT:
             return oai_settings.nanogpt_model;
         case chat_completion_sources.DEEPSEEK:
@@ -1288,6 +1293,42 @@ function calculateElectronHubCost() {
     $('#electronhub_max_prompt_cost').text(cost);
 }
 
+function isNavyChatModel(model) {
+    return typeof model?.endpoint === 'string' && model.endpoint.includes('/chat/completions');
+}
+
+function formatNavyTokenMultiplier(model) {
+    const multiplier = Number(model?.token_multiplier);
+    return Number.isFinite(multiplier) ? `${multiplier}x` : 'Unknown';
+}
+
+function getNavyModelTemplate(option) {
+    const model = model_list.find(x => x.id === option?.element?.value);
+
+    if (!option.id || !model) {
+        return option.text;
+    }
+
+    const multiplier = formatNavyTokenMultiplier(model);
+    const premiumIcon = model?.premium ? '<i class="fa-solid fa-crown fa-sm" title="This model requires a paid plan"></i>' : '';
+    const planText = model?.premium && model?.required_plan ? ` | <small>${DOMPurify.sanitize(String(model.required_plan))}</small>` : '';
+
+    return $((`
+        <div class="flex-container alignItemsBaseline" title="${DOMPurify.sanitize(model.id)}">
+            <strong>${DOMPurify.sanitize(model.id)}</strong> | <small>${multiplier}</small>${planText}${premiumIcon ? ` | ${premiumIcon}` : ''}
+        </div>
+    `));
+}
+
+function calculateNavyTokenMultiplier() {
+    if (oai_settings.chat_completion_source !== chat_completion_sources.NAVY) {
+        return;
+    }
+
+    const model = model_list.find(x => x.id === oai_settings.navy_model);
+    $('#navy_token_multiplier').text(formatNavyTokenMultiplier(model));
+}
+
 function saveModelList(data) {
     model_list = data.map((model) => ({ ...model }));
     model_list.sort((a, b) => a?.id && b?.id && a.id.localeCompare(b.id));
@@ -1393,6 +1434,21 @@ function saveModelList(data) {
         }
 
         $('#model_electronhub_select').val(oai_settings.electronhub_model).trigger('change');
+    }
+
+    if (oai_settings.chat_completion_source == chat_completion_sources.NAVY) {
+        model_list = model_list.filter(isNavyChatModel);
+        model_list = model_list.sort((a, b) => a.id.localeCompare(b.id));
+
+        $('#model_navy_select').empty();
+        appendNavyOptions(navyGroupByVendor(model_list));
+
+        const selectedModel = model_list.find(model => model.id === oai_settings.navy_model);
+        if (model_list.length > 0 && (!selectedModel || !oai_settings.navy_model)) {
+            oai_settings.navy_model = model_list[0].id;
+        }
+
+        $('#model_navy_select').val(oai_settings.navy_model).trigger('change');
     }
 
     if (oai_settings.chat_completion_source == chat_completion_sources.NANOGPT) {
@@ -1703,6 +1759,23 @@ function appendElectronHubOptions(model_list, groupModels = false) {
 
 }
 
+function appendNavyOptions(groupedModels) {
+    groupedModels.forEach((models, vendor) => {
+        const optgroup = $('<optgroup>').attr('label', vendor);
+
+        models.forEach((model) => {
+            optgroup.append(
+                $('<option>', {
+                    value: model.id,
+                    text: model.id,
+                }),
+            );
+        });
+
+        $('#model_navy_select').append(optgroup);
+    });
+}
+
 function electronHubSortBy(data, property = 'alphabetically') {
     return data.sort((a, b) => {
         if (property === 'context_length') {
@@ -1727,6 +1800,19 @@ function electronHubGroupByVendor(array) {
 
         acc.get(vendor).push(curr);
 
+        return acc;
+    }, new Map());
+}
+
+function navyGroupByVendor(array) {
+    return array.reduce((acc, curr) => {
+        const vendor = String(curr?.owned_by || 'Other').trim() || 'Other';
+
+        if (!acc.has(vendor)) {
+            acc.set(vendor, []);
+        }
+
+        acc.get(vendor).push(curr);
         return acc;
     }, new Map());
 }
@@ -1794,6 +1880,7 @@ function getReasoningEffort() {
         chat_completion_sources.PERPLEXITY,
         chat_completion_sources.COMETAPI,
         chat_completion_sources.ELECTRONHUB,
+        chat_completion_sources.NAVY,
     ];
 
     if (!reasoningEffortSources.includes(oai_settings.chat_completion_source)) {
@@ -1801,6 +1888,19 @@ function getReasoningEffort() {
     }
 
     function resolveReasoningEffort() {
+        if (oai_settings.chat_completion_source === chat_completion_sources.NAVY) {
+            switch (oai_settings.reasoning_effort) {
+                case reasoning_effort_types.auto:
+                    return undefined;
+                case reasoning_effort_types.min:
+                    return 'minimal';
+                case reasoning_effort_types.max:
+                    return 'xhigh';
+                default:
+                    return oai_settings.reasoning_effort;
+            }
+        }
+
         switch (oai_settings.reasoning_effort) {
             case reasoning_effort_types.auto:
                 return undefined;
@@ -1869,6 +1969,7 @@ async function buildOpenAIGenerateData(type, messages, { jsonSchema = null } = {
     const isDeepSeek = oai_settings.chat_completion_source == chat_completion_sources.DEEPSEEK;
     const isAimlapi = oai_settings.chat_completion_source == chat_completion_sources.AIMLAPI;
     const isElectronHub = oai_settings.chat_completion_source == chat_completion_sources.ELECTRONHUB;
+    const isNavy = oai_settings.chat_completion_source == chat_completion_sources.NAVY;
     const isXAI = oai_settings.chat_completion_source == chat_completion_sources.XAI;
     const isPollinations = oai_settings.chat_completion_source == chat_completion_sources.POLLINATIONS;
     const isMoonshot = oai_settings.chat_completion_source == chat_completion_sources.MOONSHOT;
@@ -2082,6 +2183,10 @@ async function buildOpenAIGenerateData(type, messages, { jsonSchema = null } = {
         generate_data['top_k'] = Number(oai_settings.top_k_openai);
     }
 
+    if (isNavy) {
+        generate_data['top_k'] = Number(oai_settings.top_k_openai);
+    }
+
     // https://docs.z.ai/api-reference/llm/chat-completion
     if (isZai) {
         generate_data['top_p'] = generate_data.top_p || 0.01;
@@ -2108,6 +2213,7 @@ async function buildOpenAIGenerateData(type, messages, { jsonSchema = null } = {
         chat_completion_sources.COHERE,
         chat_completion_sources.GROQ,
         chat_completion_sources.ELECTRONHUB,
+        chat_completion_sources.NAVY,
         chat_completion_sources.NANOGPT,
         chat_completion_sources.XAI,
         chat_completion_sources.POLLINATIONS,
@@ -2333,7 +2439,7 @@ export function getStreamingReply(data, state, { chatCompletionSource = null, ov
             state.reasoning += (data.choices?.filter(x => x?.delta?.reasoning)?.[0]?.delta?.reasoning || '');
         }
         return data.choices?.[0]?.delta?.content ?? data.choices?.[0]?.message?.content ?? data.choices?.[0]?.text ?? '';
-    } else if ([chat_completion_sources.CUSTOM, chat_completion_sources.POLLINATIONS, chat_completion_sources.AIMLAPI, chat_completion_sources.MOONSHOT, chat_completion_sources.COMETAPI, chat_completion_sources.ELECTRONHUB, chat_completion_sources.NANOGPT, chat_completion_sources.ZAI, chat_completion_sources.SILICONFLOW].includes(chat_completion_source)) {
+    } else if ([chat_completion_sources.CUSTOM, chat_completion_sources.POLLINATIONS, chat_completion_sources.AIMLAPI, chat_completion_sources.MOONSHOT, chat_completion_sources.COMETAPI, chat_completion_sources.ELECTRONHUB, chat_completion_sources.NAVY, chat_completion_sources.NANOGPT, chat_completion_sources.ZAI, chat_completion_sources.SILICONFLOW].includes(chat_completion_source)) {
         if (show_thoughts) {
             state.reasoning +=
                 data.choices?.filter(x => x?.delta?.reasoning_content)?.[0]?.delta?.reasoning_content ??
@@ -3541,6 +3647,7 @@ async function saveOpenAIPreset(name, settings, triggerUi = true) {
         pollinations_model: settings.pollinations_model,
         aimlapi_model: settings.aimlapi_model,
         electronhub_model: settings.electronhub_model,
+        navy_model: settings.navy_model,
         electronhub_sort_models: settings.electronhub_sort_models,
         electronhub_group_models: settings.electronhub_group_models,
         moonshot_model: settings.moonshot_model,
@@ -4366,6 +4473,16 @@ function getElectronHubMaxContext(model, isUnlocked) {
 }
 
 /**
+ * Get the maximum context size for the Navy model.
+ * Navy's models endpoint does not publish context limits yet.
+ * @param {boolean} isUnlocked Whether context limits are unlocked
+ * @returns {number} Maximum context size in tokens
+ */
+function getNavyMaxContext(isUnlocked) {
+    return isUnlocked ? unlocked_max : max_128k;
+}
+
+/**
  * Get the maximum context size for the NanoGPT model
  * @param {string} model Model identifier
  * @param {boolean} isUnlocked Whether context limits are unlocked
@@ -4492,6 +4609,15 @@ async function onModelChange() {
         }
         console.log('ElectronHub model changed to', value);
         oai_settings.electronhub_model = value;
+    }
+
+    if ($(this).is('#model_navy_select')) {
+        if (!value) {
+            console.debug('Null Navy model selected. Ignoring.');
+            return;
+        }
+        console.log('Navy model changed to', value);
+        oai_settings.navy_model = value;
     }
 
     if ($(this).is('#model_nanogpt_select')) {
@@ -4770,6 +4896,17 @@ async function onModelChange() {
         calculateElectronHubCost();
     }
 
+    if (oai_settings.chat_completion_source == chat_completion_sources.NAVY) {
+        const maxContext = getNavyMaxContext(oai_settings.max_context_unlocked);
+        $('#openai_max_context').attr('max', maxContext);
+        oai_settings.openai_max_context = Math.min(Number($('#openai_max_context').attr('max')), oai_settings.openai_max_context);
+        $('#openai_max_context').val(oai_settings.openai_max_context).trigger('input');
+        oai_settings.temp_openai = Math.min(oai_max_temp, oai_settings.temp_openai);
+        $('#temp_openai').attr('max', oai_max_temp).val(oai_settings.temp_openai).trigger('input');
+
+        calculateNavyTokenMultiplier();
+    }
+
     if (oai_settings.chat_completion_source === chat_completion_sources.NANOGPT) {
         const maxContext = getNanoGptMaxContext(oai_settings.nanogpt_model, oai_settings.max_context_unlocked);
         $('#openai_max_context').attr('max', maxContext);
@@ -4963,6 +5100,7 @@ async function onConnectButtonClick(e) {
         [chat_completion_sources.GROQ]: { key: SECRET_KEYS.GROQ, selector: '#api_key_groq', proxy: false },
         [chat_completion_sources.SILICONFLOW]: { key: SECRET_KEYS.SILICONFLOW, selector: '#api_key_siliconflow', proxy: false },
         [chat_completion_sources.ELECTRONHUB]: { key: SECRET_KEYS.ELECTRONHUB, selector: '#api_key_electronhub', proxy: false },
+        [chat_completion_sources.NAVY]: { key: SECRET_KEYS.NAVY, selector: '#api_key_navy', proxy: false },
         [chat_completion_sources.NANOGPT]: { key: SECRET_KEYS.NANOGPT, selector: '#api_key_nanogpt', proxy: false },
         [chat_completion_sources.DEEPSEEK]: { key: SECRET_KEYS.DEEPSEEK, selector: '#api_key_deepseek', proxy: true },
         [chat_completion_sources.XAI]: { key: SECRET_KEYS.XAI, selector: '#api_key_xai', proxy: true },
@@ -5049,6 +5187,9 @@ function toggleChatCompletionForms() {
     }
     else if (oai_settings.chat_completion_source == chat_completion_sources.ELECTRONHUB) {
         $('#model_electronhub_select').trigger('change');
+    }
+    else if (oai_settings.chat_completion_source == chat_completion_sources.NAVY) {
+        $('#model_navy_select').trigger('change');
     }
     else if (oai_settings.chat_completion_source == chat_completion_sources.NANOGPT) {
         $('#model_nanogpt_select').trigger('change');
@@ -6099,6 +6240,14 @@ export function initOpenAI() {
             templateResult: getElectronHubModelTemplate,
             matcher: textValueMatcher,
         });
+        $('#model_navy_select').select2({
+            placeholder: t`Select a model`,
+            searchInputPlaceholder: t`Search models...`,
+            searchInputCssClass: 'text_pole',
+            width: '100%',
+            templateResult: getNavyModelTemplate,
+            matcher: textValueMatcher,
+        });
         syncCustomModelSelect();
         $('#completion_prompt_manager_popup_entry_form_injection_trigger').select2({
             placeholder: t`All types (default)`,
@@ -6159,6 +6308,7 @@ export function initOpenAI() {
     $('#model_groq_select').on('change', onModelChange);
     $('#model_siliconflow_select').on('change', onModelChange);
     $('#model_electronhub_select').on('change', onModelChange);
+    $('#model_navy_select').on('change', onModelChange);
     $('#model_nanogpt_select').on('change', onModelChange);
     $('#model_deepseek_select').on('change', onModelChange);
     $('#model_aimlapi_select').on('change', onModelChange);
