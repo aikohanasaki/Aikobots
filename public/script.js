@@ -430,6 +430,7 @@ let manageChatsOrphanEntries = [];
 let manageChatsSelectedOrphanKey = null;
 let manageChatsOrphanSelectorInitialized = false;
 let manageChatsOrphanSelectorSyncing = false;
+let manageChatsDeletedSearchRequestId = 0;
 let manageChatsUiInitialized = false;
 let optionsPopper = Popper.createPopper(document.getElementById('options_button'), document.getElementById('options'), {
     placement: 'top-start',
@@ -9197,17 +9198,27 @@ function toggleManageChatsSelect(selector, visible) {
 
 function refreshManageChatsModeUi() {
     const isDeletedMode = manageChatsMode === 'deleted';
-    $('#manage_chats_mode_live').toggleClass('toggleEnabled', !isDeletedMode);
-    $('#manage_chats_mode_deleted').toggleClass('toggleEnabled', isDeletedMode);
+    $('#manage_chats_mode_switch_label').text(isDeletedMode
+        ? t`Switch to Current Chats`
+        : t`Switch to Deleted Characters`);
     toggleManageChatsSelect('#manage_chats_owner_select', !isDeletedMode);
     toggleManageChatsSelect('#manage_chats_orphan_select', isDeletedMode);
     $('#newChatFromManageScreenButton, #chat_import_button').toggle(!isDeletedMode);
 }
 
-async function fetchManageChatsOrphanEntries() {
+async function fetchManageChatsOrphanEntries({ query = '', orphanKey = null, updateCache = true } = {}) {
+    const payload = {};
+    if (String(query || '').trim()) {
+        payload.query = String(query);
+    }
+    if (String(orphanKey || '').trim()) {
+        payload.orphan_key = String(orphanKey);
+    }
+
     const response = await fetch('/api/chats/orphaned', {
         method: 'POST',
         headers: getRequestHeaders(),
+        body: JSON.stringify(payload),
     });
 
     if (!response.ok) {
@@ -9215,8 +9226,11 @@ async function fetchManageChatsOrphanEntries() {
     }
 
     const data = await response.json();
-    manageChatsOrphanEntries = Array.isArray(data) ? data : [];
-    return manageChatsOrphanEntries;
+    const entries = Array.isArray(data) ? data : [];
+    if (updateCache) {
+        manageChatsOrphanEntries = entries;
+    }
+    return entries;
 }
 
 function findManageChatsOrphanEntry(orphanKey) {
@@ -9277,17 +9291,10 @@ function initManageChatsOrphanSelect() {
 }
 
 function initManageChatsModeToggle() {
-    $('#manage_chats_mode_live').on('click', async function () {
-        if (manageChatsMode === 'owners') {
-            return;
-        }
-
-        manageChatsMode = 'owners';
-        await displayPastChats([], manageChatsOwnerContext ?? getCurrentManageChatsOwner());
-    });
-
-    $('#manage_chats_mode_deleted').on('click', async function () {
+    $('#manage_chats_mode_switch').on('click', async function () {
         if (manageChatsMode === 'deleted') {
+            manageChatsMode = 'owners';
+            await displayPastChats([], manageChatsOwnerContext ?? getCurrentManageChatsOwner());
             return;
         }
 
@@ -10077,20 +10084,43 @@ async function displayDeletedCharacterChats(orphanKey = manageChatsSelectedOrpha
         return;
     }
 
-    const renderDeletedCharacterChats = (searchQuery = '') => {
-        const entry = findManageChatsOrphanEntry(manageChatsSelectedOrphanKey);
-        $('#select_chat_div').empty();
+    const renderDeletedCharacterChats = async (searchQuery = '') => {
+        const requestId = ++manageChatsDeletedSearchRequestId;
+        const trimmedQuery = String(searchQuery || '').trim();
+        let entries = manageChatsOrphanEntries;
 
-        if (!entry) {
-            $('#select_chat_div').append(`<div class="text_muted padding10px">${t`Choose a deleted character`}</div>`);
+        if (trimmedQuery) {
+            try {
+                entries = await fetchManageChatsOrphanEntries({
+                    query: trimmedQuery,
+                    orphanKey: manageChatsSelectedOrphanKey,
+                    updateCache: false,
+                });
+            } catch (error) {
+                if (requestId !== manageChatsDeletedSearchRequestId) {
+                    return;
+                }
+
+                console.error('Error searching deleted character chats:', error);
+                $('#select_chat_div').empty().append(`<div class="text_muted padding10px">${t`Could not load chats for deleted characters.`}</div>`);
+                return;
+            }
+        }
+
+        if (requestId !== manageChatsDeletedSearchRequestId) {
             return;
         }
 
-        const directChats = filterManageChatsChats(entry.direct_chats || [], searchQuery, [entry.orphan_key]);
-        const relatedGroups = (entry.related_groups || []).map(group => ({
-            ...group,
-            chats: filterManageChatsChats(group.chats || [], searchQuery, [group.name, entry.orphan_key]),
-        })).filter(group => group.chats.length > 0 || !String(searchQuery || '').trim());
+        const entry = entries.find(item => String(item?.orphan_key) === String(manageChatsSelectedOrphanKey)) ?? null;
+        $('#select_chat_div').empty();
+
+        if (!entry) {
+            $('#select_chat_div').append(`<div class="text_muted padding10px">${trimmedQuery ? t`No chats matched your search.` : t`Choose a deleted character`}</div>`);
+            return;
+        }
+
+        const directChats = entry.direct_chats || [];
+        const relatedGroups = entry.related_groups || [];
 
         if (directChats.length) {
             $('#select_chat_div').append(`<div class="manage_chats_section_title">${t`Character chats`}</div>`);
@@ -10128,10 +10158,10 @@ async function displayDeletedCharacterChats(orphanKey = manageChatsSelectedOrpha
         }
     };
 
-    renderDeletedCharacterChats('');
+    await renderDeletedCharacterChats('');
 
     const debouncedDisplay = debounce((searchQuery) => {
-        renderDeletedCharacterChats(searchQuery);
+        void renderDeletedCharacterChats(searchQuery);
     });
 
     $('#select_chat_search').on('input', function () {

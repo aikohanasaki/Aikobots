@@ -5060,8 +5060,7 @@ h5 {
     flex-wrap: wrap;
 }
 
-#manage_chats_mode_live,
-#manage_chats_mode_deleted {
+#manage_chats_mode_switch {
     white-space: nowrap;
 }
 

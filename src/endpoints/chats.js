@@ -426,6 +426,38 @@ function getPreviewMessage(messages) {
         : lastMessage;
 }
 
+function getSearchFragments(query) {
+    return String(query || '').trim().toLowerCase().split(/\s+/).filter(Boolean);
+}
+
+function getChatSearchResult(chatFile, fragments = []) {
+    const messages = getLogicalChatMessages(chatFile.path)
+        .filter(message => message && typeof message.mes === 'string');
+
+    if (fragments.length && messages.length === 0) {
+        return null;
+    }
+
+    const lastMessage = messages[messages.length - 1];
+    const lastMesDate = lastMessage?.send_date || Math.round(fs.statSync(chatFile.path).mtimeMs);
+    const result = {
+        file_name: chatFile.file_name,
+        file_size: chatFile.file_size,
+        message_count: messages.length,
+        last_mes: lastMesDate,
+        preview_message: getPreviewMessage(messages),
+    };
+
+    if (!fragments.length) {
+        return result;
+    }
+
+    const text = [path.parse(chatFile.path).name, ...messages.map(message => message?.mes)].join('\n').toLowerCase();
+    const hasMatch = fragments.every(fragment => text.includes(fragment));
+
+    return hasMatch ? result : null;
+}
+
 process.on('exit', () => {
     for (const func of backupFunctions.values()) {
         func.flush();
@@ -1268,6 +1300,7 @@ router.post('/group/save', (request, response) => {
 router.post('/search', validateAvatarUrlMiddleware, function (request, response) {
     try {
         const { query, avatar_url, group_id } = request.body;
+        const fragments = getSearchFragments(query);
         let chatFiles = [];
 
         if (group_id) {
@@ -1333,43 +1366,10 @@ router.post('/search', validateAvatarUrlMiddleware, function (request, response)
 
         const results = [];
 
-        // Search logic
         for (const chatFile of chatFiles) {
-            const messages = getLogicalChatMessages(chatFile.path)
-                .filter(x => x && typeof x.mes === 'string');
-
-            if (query && messages.length === 0) {
-                continue;
-            }
-
-            const lastMessage = messages[messages.length - 1];
-            const lastMesDate = lastMessage?.send_date || Math.round(fs.statSync(chatFile.path).mtimeMs);
-
-            // If no search query, just return metadata
-            if (!query) {
-                results.push({
-                    file_name: chatFile.file_name,
-                    file_size: chatFile.file_size,
-                    message_count: messages.length,
-                    last_mes: lastMesDate,
-                    preview_message: getPreviewMessage(messages),
-                });
-                continue;
-            }
-
-            // Search through title and messages of the chat
-            const fragments = query.trim().toLowerCase().split(/\s+/).filter(x => x);
-            const text = [path.parse(chatFile.path).name, ...messages.map(message => message?.mes)].join('\n').toLowerCase();
-            const hasMatch = fragments.every(fragment => text.includes(fragment));
-
-            if (hasMatch) {
-                results.push({
-                    file_name: chatFile.file_name,
-                    file_size: chatFile.file_size,
-                    message_count: messages.length,
-                    last_mes: lastMesDate,
-                    preview_message: getPreviewMessage(messages),
-                });
+            const searchResult = getChatSearchResult(chatFile, fragments);
+            if (searchResult) {
+                results.push(searchResult);
             }
         }
 
@@ -1385,6 +1385,9 @@ router.post('/search', validateAvatarUrlMiddleware, function (request, response)
 
 router.post('/orphaned', async function (request, response) {
     try {
+        const query = request.body?.query;
+        const orphanKeyFilter = String(request.body?.orphan_key || '').trim();
+        const fragments = getSearchFragments(query);
         const characterDirents = await fs.promises.readdir(request.user.directories.characters, { withFileTypes: true }).catch(() => []);
         const liveCharacterKeys = new Set(
             characterDirents
@@ -1395,6 +1398,7 @@ router.post('/orphaned', async function (request, response) {
         const chatDirents = await fs.promises.readdir(request.user.directories.chats, { withFileTypes: true }).catch(() => []);
         const orphanDirectories = chatDirents
             .filter(entry => entry.isDirectory() && !liveCharacterKeys.has(entry.name))
+            .filter(entry => !orphanKeyFilter || entry.name === orphanKeyFilter)
             .map(entry => entry.name)
             .sort((a, b) => a.localeCompare(b));
 
@@ -1433,15 +1437,30 @@ router.post('/orphaned', async function (request, response) {
                 .filter(file => file.isFile() && path.extname(file.name) === '.jsonl' && !isHeadChatFile(file.name))
                 .map(file => file.name);
 
-            const directChats = (await Promise.allSettled(
-                directChatFiles.map(fileName => {
-                    const filePath = path.join(orphanChatDir, fileName);
-                    return getChatInfo(filePath, {}, false, false);
-                }),
-            ))
-                .filter(result => result.status === 'fulfilled' && result.value?.file_name)
-                .map(result => toChatSummary(result.value))
-                .sort((a, b) => new Date(b.last_mes).getTime() - new Date(a.last_mes).getTime());
+            const directChats = fragments.length
+                ? directChatFiles
+                    .map(fileName => {
+                        const filePath = path.join(orphanChatDir, fileName);
+                        const stats = fs.statSync(filePath);
+                        const headPath = getSplitHeadPath(filePath);
+                        const headStats = fs.existsSync(headPath) ? fs.statSync(headPath) : null;
+                        return getChatSearchResult({
+                            file_name: fileName,
+                            file_size: formatBytes(stats.size + (headStats?.size || 0)),
+                            path: filePath,
+                        }, fragments);
+                    })
+                    .filter(Boolean)
+                    .sort((a, b) => new Date(b.last_mes).getTime() - new Date(a.last_mes).getTime())
+                : (await Promise.allSettled(
+                    directChatFiles.map(fileName => {
+                        const filePath = path.join(orphanChatDir, fileName);
+                        return getChatInfo(filePath, {}, false, false);
+                    }),
+                ))
+                    .filter(result => result.status === 'fulfilled' && result.value?.file_name)
+                    .map(result => toChatSummary(result.value))
+                    .sort((a, b) => new Date(b.last_mes).getTime() - new Date(a.last_mes).getTime());
 
             const relatedGroups = [];
 
@@ -1450,19 +1469,36 @@ router.post('/orphaned', async function (request, response) {
                     continue;
                 }
 
-                const groupChats = (await Promise.allSettled(
-                    (Array.isArray(group.chats) ? group.chats : []).map(chatId => {
-                        const filePath = path.join(request.user.directories.groupChats, `${chatId}.jsonl`);
-                        if (!fs.existsSync(filePath)) {
-                            return Promise.resolve(null);
-                        }
+                const groupChats = fragments.length
+                    ? (Array.isArray(group.chats) ? group.chats : [])
+                        .map(chatId => {
+                            const filePath = path.join(request.user.directories.groupChats, `${chatId}.jsonl`);
+                            if (!fs.existsSync(filePath)) {
+                                return null;
+                            }
 
-                        return getChatInfo(filePath, {}, true, false);
-                    }),
-                ))
-                    .filter(result => result.status === 'fulfilled' && result.value?.file_name)
-                    .map(result => toChatSummary(result.value))
-                    .sort((a, b) => new Date(b.last_mes).getTime() - new Date(a.last_mes).getTime());
+                            const stats = fs.statSync(filePath);
+                            return getChatSearchResult({
+                                file_name: `${chatId}.jsonl`,
+                                file_size: formatBytes(stats.size),
+                                path: filePath,
+                            }, fragments);
+                        })
+                        .filter(Boolean)
+                        .sort((a, b) => new Date(b.last_mes).getTime() - new Date(a.last_mes).getTime())
+                    : (await Promise.allSettled(
+                        (Array.isArray(group.chats) ? group.chats : []).map(chatId => {
+                            const filePath = path.join(request.user.directories.groupChats, `${chatId}.jsonl`);
+                            if (!fs.existsSync(filePath)) {
+                                return Promise.resolve(null);
+                            }
+
+                            return getChatInfo(filePath, {}, true, false);
+                        }),
+                    ))
+                        .filter(result => result.status === 'fulfilled' && result.value?.file_name)
+                        .map(result => toChatSummary(result.value))
+                        .sort((a, b) => new Date(b.last_mes).getTime() - new Date(a.last_mes).getTime());
 
                 if (groupChats.length > 0) {
                     relatedGroups.push({
