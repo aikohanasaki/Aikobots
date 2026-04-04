@@ -90,6 +90,8 @@ export {
 };
 
 let pendingTimedWorldInfo = null;
+let pendingWorldInfoSummary = null;
+let pendingWorldInfoReport = null;
 let lastServerAssemblyPromptContext = null;
 let lastServerAssemblyDebugDump = null;
 let lastServerDispatchSnapshot = null;
@@ -935,6 +937,14 @@ function applyTimedWorldInfoResponseData(data) {
     if (timedWorldInfo && typeof timedWorldInfo === 'object') {
         pendingTimedWorldInfo = structuredClone(timedWorldInfo);
     }
+    const worldInfoSummary = data?.x_sillytavern?.worldInfoSummary;
+    if (worldInfoSummary && typeof worldInfoSummary === 'object') {
+        pendingWorldInfoSummary = structuredClone(worldInfoSummary);
+    }
+    const worldInfoReport = data?.x_sillytavern?.worldInfoReport;
+    if (worldInfoReport && typeof worldInfoReport === 'object') {
+        pendingWorldInfoReport = structuredClone(worldInfoReport);
+    }
     maybeNotifyWorldInfoOverflow(data);
 }
 
@@ -943,6 +953,21 @@ export function consumeOpenAITimedWorldInfo() {
         ? structuredClone(pendingTimedWorldInfo)
         : null;
     pendingTimedWorldInfo = null;
+    return value;
+}
+
+export function consumeOpenAIWorldInfoResponseData() {
+    const value = {
+        worldInfoSummary: pendingWorldInfoSummary && typeof pendingWorldInfoSummary === 'object'
+            ? structuredClone(pendingWorldInfoSummary)
+            : null,
+        worldInfoReport: pendingWorldInfoReport && typeof pendingWorldInfoReport === 'object'
+            ? structuredClone(pendingWorldInfoReport)
+            : null,
+    };
+
+    pendingWorldInfoSummary = null;
+    pendingWorldInfoReport = null;
     return value;
 }
 
@@ -1976,6 +2001,8 @@ function getReasoningEffort() {
 async function buildOpenAIGenerateData(type, messages, { jsonSchema = null } = {}) {
     const promptContext = !Array.isArray(messages) && messages && typeof messages === 'object' ? messages.promptContext : null;
     pendingTimedWorldInfo = null;
+    pendingWorldInfoSummary = null;
+    pendingWorldInfoReport = null;
     storeServerAssemblyPromptContext(promptContext);
 
     if (!promptContext && !Array.isArray(messages)) {
@@ -2384,10 +2411,7 @@ async function sendOpenAIRequest(type, messages, signal, { jsonSchema = null } =
                 const parsed = JSON.parse(rawData);
 
                 if (parsed?.x_sillytavern) {
-                    if (parsed.x_sillytavern.timedWorldInfo && typeof parsed.x_sillytavern.timedWorldInfo === 'object') {
-                        pendingTimedWorldInfo = structuredClone(parsed.x_sillytavern.timedWorldInfo);
-                    }
-                    maybeNotifyWorldInfoOverflow(parsed);
+                    applyTimedWorldInfoResponseData(parsed);
                     continue;
                 }
 

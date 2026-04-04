@@ -456,14 +456,24 @@ export function getDefaultSummaryMinChildren(tier) {
 }
 
 export function normalizeSummaryMinChildren(value, fallback = DEFAULT_MIN_CHILDREN) {
-    const parsed = Number(value);
-    if (Number.isFinite(parsed)) {
-        return Math.max(MIN_SUMMARY_CHILDREN, Math.trunc(parsed));
+    const normalizeCandidate = candidate => {
+        const parsed = Number(candidate);
+        if (!Number.isFinite(parsed)) {
+            return null;
+        }
+
+        const normalized = Math.trunc(parsed);
+        return normalized === 0 ? 0 : Math.max(MIN_SUMMARY_CHILDREN, normalized);
+    };
+
+    const normalizedValue = normalizeCandidate(value);
+    if (normalizedValue !== null) {
+        return normalizedValue;
     }
 
-    const fallbackParsed = Number(fallback);
-    if (Number.isFinite(fallbackParsed)) {
-        return Math.max(MIN_SUMMARY_CHILDREN, Math.trunc(fallbackParsed));
+    const normalizedFallback = normalizeCandidate(fallback);
+    if (normalizedFallback !== null) {
+        return normalizedFallback;
     }
 
     return DEFAULT_MIN_CHILDREN;
@@ -688,11 +698,11 @@ export function createSummaryCandidatesFromResponse(parsedResponse, sourceEntrie
     const summaries = Array.isArray(parsedResponse?.summaries) ? parsedResponse.summaries : [];
 
     if (summaries.length > 1) {
-        const hasAnyMemberIds = summaries.some(item => Array.isArray(item?.member_ids) && item.member_ids.length > 0);
-        if (!hasAnyMemberIds) {
+        const hasMissingMemberIds = summaries.some(item => !Array.isArray(item?.member_ids) || item.member_ids.length === 0);
+        if (hasMissingMemberIds) {
             throw makeSummaryParseError(
                 'AMBIGUOUS_MEMBER_IDS',
-                'Multiple summaries require member_ids to avoid ambiguous assignment.',
+                'Every summary in a multi-summary response must provide member_ids to avoid ambiguous assignment.',
                 JSON.stringify(parsedResponse ?? {}),
             );
         }
@@ -713,19 +723,19 @@ export function createSummaryCandidatesFromResponse(parsedResponse, sourceEntrie
         if (resolved) unassignedIds.add(resolved);
     }
 
-    const assignedIds = briefs
-        .map(brief => String(brief.id))
-        .filter(id => !unassignedIds.has(id));
-
     const summaryCandidates = [];
     for (const item of summaries) {
         let memberIds = Array.isArray(item.member_ids)
             ? item.member_ids.map(resolveId).filter(Boolean)
             : [];
         if (memberIds.length === 0) {
-            memberIds = assignedIds.slice();
+            throw makeSummaryParseError(
+                'AMBIGUOUS_MEMBER_IDS',
+                'A multi-summary response contained missing or unresolvable member_ids.',
+                JSON.stringify(parsedResponse ?? {}),
+            );
         }
-        memberIds = Array.from(new Set(memberIds));
+        memberIds = Array.from(new Set(memberIds)).filter(id => !unassignedIds.has(id));
         if (memberIds.length === 0) continue;
 
         summaryCandidates.push({

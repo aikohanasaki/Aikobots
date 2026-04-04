@@ -1,5 +1,5 @@
 import { getRequestHeaders, messageFormatting } from '../script.js';
-import { POPUP_RESULT, POPUP_TYPE, callGenericPopup } from './popup.js';
+import { POPUP_RESULT, POPUP_TYPE, Popup, callGenericPopup } from './popup.js';
 import { renderTemplateAsync } from './templates.js';
 import { ensureImageFormatSupported, getBase64Async, humanFileSize } from './utils.js';
 
@@ -321,6 +321,32 @@ async function reviewCharacterSubmission(payload) {
 }
 
 /**
+ * Sends a cleanup action for a submission.
+ * @param {object} payload
+ * @returns {Promise<object | null>}
+ */
+async function cleanupCharacterSubmission(payload) {
+    try {
+        const response = await fetch('/api/character-submissions/cleanup', {
+            method: 'POST',
+            headers: getRequestHeaders(),
+            body: JSON.stringify(payload),
+        });
+
+        const data = await response.json().catch(() => ({}));
+        if (!response.ok) {
+            throw new Error(data?.error || 'Failed to clean up character submission');
+        }
+
+        return data;
+    } catch (error) {
+        console.error('Error cleaning up submission:', error);
+        toastr.error(error.message || 'Unknown error', 'Submission cleanup failed');
+        return null;
+    }
+}
+
+/**
  * Sends a distribution request for a character.
  * @param {object} payload
  * @returns {Promise<object | null>}
@@ -426,7 +452,9 @@ function buildSubmissionCard(submission, { admin = false, onReview = null } = {}
         </div>
     `);
 
-    card.find('.submission_preview').attr('src', submission.previewUrl);
+    card.find('.submission_preview')
+        .attr('src', submission.hasStoredCard === false ? '' : submission.previewUrl)
+        .toggle(submission.hasStoredCard !== false);
     card.find('.submission_name').text(submission.characterName || submission.submittedFilename || submission.id);
     card.find('.submission_status').text(getSubmissionStatusLabel(submission.status));
     card.find('.submission_owner').text(submission.ownerHandle);
@@ -443,10 +471,12 @@ function buildSubmissionCard(submission, { admin = false, onReview = null } = {}
         .append(Boolean(submission.reviewNote) ? $('<div class="submission_review_note opacity50p"></div>').text(`Review note: ${submission.reviewNote}`) : '');
     card.find('.submission_tags').toggle(Array.isArray(submission.tags) && submission.tags.length > 0).text(Array.isArray(submission.tags) ? submission.tags.join(', ') : '');
 
-    if (admin && submission.status === 'pending' && typeof onReview === 'function') {
-        const reviewButton = $('<div class="menu_button menu_button_icon"><i class="fa-fw fa-solid fa-gavel"></i><span>Review</span></div>');
-        reviewButton.on('click', () => onReview(submission));
-        card.find('.submission_actions').append(reviewButton);
+    if (admin && typeof onReview === 'function') {
+        const actionButton = submission.status === 'pending' && submission.hasStoredCard !== false
+            ? $('<div class="menu_button menu_button_icon"><i class="fa-fw fa-solid fa-gavel"></i><span>Review</span></div>')
+            : $('<div class="menu_button menu_button_icon"><i class="fa-fw fa-solid fa-box-archive"></i><span>Manage</span></div>');
+        actionButton.on('click', () => onReview(submission));
+        card.find('.submission_actions').append(actionButton);
     }
 
     return card;
@@ -533,10 +563,13 @@ export async function submitSelectedCharacterForReview(character) {
  */
 async function openSubmissionReviewPopup(submission, callback) {
     const users = (await getUsers() || []).filter(user => user.enabled);
-    let publishMode = 'selected';
+    let publishMode = submission.publishMode || 'selected';
     let reviewNote = String(submission.reviewNote || '');
     let publishedFilename = String((submission.publishedFilename || submission.characterName || submission.submittedFilename || '').replace(/\.png$/i, ''));
     const checklist = buildUserChecklist(users, submission.targetHandles || []);
+    const REVIEW_POPUP_RESULT_REJECT = POPUP_RESULT.CUSTOM1;
+    const REVIEW_POPUP_RESULT_DELETE_ASSET = POPUP_RESULT.CUSTOM2;
+    const REVIEW_POPUP_RESULT_DELETE_ALL = POPUP_RESULT.CUSTOM3;
 
     const container = $(`
         <div class="flex-container flexFlowColumn flexGap10">
@@ -545,16 +578,18 @@ async function openSubmissionReviewPopup(submission, callback) {
                 <div class="flex1">
                     <h3 class="margin0 submission-title"></h3>
                     <div class="opacity50p">Owner: <span class="submission-owner"></span></div>
+                    <div class="opacity50p">Status: <span class="submission-status"></span></div>
+                    <div class="opacity50p review-stored-card-status"></div>
                 </div>
             </div>
-            <label class="flex-container flexFlowColumn flexNoGap">
+            <label class="flex-container flexFlowColumn flexNoGap review-publish-mode-block">
                 <span>Publish Mode</span>
                 <select class="text_pole review-publish-mode">
                     <option value="selected">Selected Users</option>
                     <option value="global">Global</option>
                 </select>
             </label>
-            <label class="flex-container flexFlowColumn flexNoGap">
+            <label class="flex-container flexFlowColumn flexNoGap review-published-filename-block">
                 <span>Published Filename</span>
                 <input class="text_pole review-published-filename" type="text">
             </label>
@@ -568,9 +603,13 @@ async function openSubmissionReviewPopup(submission, callback) {
         </div>
     `);
 
-    container.find('.submission_preview').attr('src', submission.previewUrl);
+    container.find('.submission_preview')
+        .attr('src', submission.hasStoredCard === false ? '' : submission.previewUrl)
+        .toggle(submission.hasStoredCard !== false);
     container.find('.submission-title').text(submission.characterName || submission.submittedFilename);
     container.find('.submission-owner').text(submission.ownerHandle);
+    container.find('.submission-status').text(getSubmissionStatusLabel(submission.status));
+    container.find('.review-stored-card-status').text(submission.hasStoredCard === false ? 'Stored card asset has already been deleted.' : '');
     container.find('.review-publish-mode').val(publishMode).on('change', function () {
         publishMode = String($(this).val());
         container.find('.review-targets-block').toggle(publishMode === 'selected');
@@ -582,24 +621,39 @@ async function openSubmissionReviewPopup(submission, callback) {
         reviewNote = String($(this).val());
     });
     container.find('.review-targets-block').append(checklist).toggle(publishMode === 'selected');
+    const isPending = submission.status === 'pending';
+    const canApprove = isPending && submission.hasStoredCard !== false;
+    container.find('.review-publish-mode-block, .review-published-filename-block, .review-targets-block').toggle(canApprove);
 
     const result = await callGenericPopup(container, POPUP_TYPE.CONFIRM, '', {
-        okButton: 'Approve & Publish',
+        okButton: canApprove ? 'Approve & Publish' : false,
         cancelButton: 'Cancel',
         wide: true,
         allowVerticalScrolling: true,
-        customButtons: [{
-            text: 'Reject',
-            result: POPUP_RESULT.CUSTOM1,
-            classes: ['warning'],
-        }],
+        customButtons: [
+            ...(isPending ? [{
+                text: 'Reject',
+                result: REVIEW_POPUP_RESULT_REJECT,
+                classes: ['warning'],
+            }] : []),
+            {
+                text: 'Delete Stored Asset',
+                result: REVIEW_POPUP_RESULT_DELETE_ASSET,
+                classes: ['warning'],
+            },
+            {
+                text: 'Delete Submission',
+                result: REVIEW_POPUP_RESULT_DELETE_ALL,
+                classes: ['warning'],
+            },
+        ],
     });
 
     if (result === POPUP_RESULT.CANCELLED || result === POPUP_RESULT.NEGATIVE) {
         return;
     }
 
-    if (result === POPUP_RESULT.CUSTOM1) {
+    if (result === REVIEW_POPUP_RESULT_REJECT) {
         const rejected = await reviewCharacterSubmission({
             id: submission.id,
             action: 'reject',
@@ -608,6 +662,38 @@ async function openSubmissionReviewPopup(submission, callback) {
 
         if (rejected) {
             toastr.success('Submission rejected', 'Review updated');
+            callback();
+        }
+        return;
+    }
+
+    if (result === REVIEW_POPUP_RESULT_DELETE_ASSET || result === REVIEW_POPUP_RESULT_DELETE_ALL) {
+        const deleteMode = result === REVIEW_POPUP_RESULT_DELETE_ASSET ? 'asset' : 'all';
+        const confirm = await Popup.show.confirm(
+            deleteMode === 'asset' ? 'Delete Stored Asset' : 'Delete Submission',
+            deleteMode === 'asset'
+                ? 'Delete only the stored submission PNG copy? The user source card will not be touched.'
+                : 'Delete this submission record and its stored PNG copy? This cannot be undone.',
+            {
+                okButton: deleteMode === 'asset' ? 'Delete Asset' : 'Delete Submission',
+                cancelButton: 'Cancel',
+            },
+        );
+
+        if (confirm !== POPUP_RESULT.AFFIRMATIVE) {
+            return;
+        }
+
+        const cleaned = await cleanupCharacterSubmission({
+            id: submission.id,
+            deleteMode,
+        });
+
+        if (cleaned) {
+            toastr.success(
+                deleteMode === 'asset' ? 'Stored submission asset deleted' : 'Submission deleted',
+                'Submission cleanup complete',
+            );
             callback();
         }
         return;

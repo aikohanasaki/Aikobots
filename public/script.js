@@ -103,6 +103,7 @@ import {
     setOpenAIMessageExamples,
     setOpenAIMessages,
     setupChatCompletionPromptManager,
+    consumeOpenAIWorldInfoResponseData,
     buildServerAssemblyPayload,
     consumeOpenAITimedWorldInfo,
     debugServerAssemblyDump,
@@ -258,6 +259,54 @@ function requireAdminServerAssemblyDebugAccess() {
     }
 }
 
+function showPromptInspectorButtonForMessage(messageId) {
+    const targetMesId = Number(messageId);
+    if (Number.isFinite(targetMesId) && targetMesId >= 0) {
+        chatElement.find(`.mes[mesid="${targetMesId}"] .mes_prompt`).show();
+    }
+}
+
+function applyServerAssemblyToPromptRecord(targetPrompt, assembly, { promptContext = null, createdAt = null } = {}) {
+    if (!targetPrompt || !assembly || typeof assembly !== 'object') {
+        return false;
+    }
+
+    targetPrompt.rawPrompt = Array.isArray(assembly.chat)
+        ? structuredClone(assembly.chat)
+        : '';
+    targetPrompt.serverAssemblyDebugDump = {
+        createdAt: createdAt || new Date().toISOString(),
+        promptContext: promptContext && typeof promptContext === 'object' ? structuredClone(promptContext) : null,
+        assembly: structuredClone(assembly),
+    };
+    targetPrompt.messagesCount = assembly.messagesCount ?? targetPrompt.messagesCount ?? null;
+    targetPrompt.examplesCount = assembly.examplesCount ?? targetPrompt.examplesCount ?? null;
+    return true;
+}
+
+async function storeLastServerDispatchSnapshotToPrompt(messageId) {
+    if (!isAdmin() || !Array.isArray(itemizedPrompts)) {
+        return null;
+    }
+
+    const targetPrompt = itemizedPrompts.find(item => Number(item?.mesId) === Number(messageId) && item?.serverPromptAssembly);
+    if (!targetPrompt) {
+        return null;
+    }
+
+    const snapshot = await fetchLastServerDispatchSnapshot();
+    if (!snapshot?.assembly || typeof snapshot.assembly !== 'object') {
+        return snapshot;
+    }
+
+    applyServerAssemblyToPromptRecord(targetPrompt, snapshot.assembly, {
+        createdAt: snapshot.capturedAt,
+    });
+    showPromptInspectorButtonForMessage(messageId);
+    await saveItemizedPrompts(getCurrentChatId());
+    return snapshot;
+}
+
 async function debugServerAssemblyToPrompt(promptContext = null) {
     requireAdminServerAssemblyDebugAccess();
 
@@ -284,18 +333,13 @@ async function debugServerAssemblyToPrompt(promptContext = null) {
         return dump;
     }
 
-    targetPrompt.rawPrompt = Array.isArray(dump?.assembly?.chat)
-        ? structuredClone(dump.assembly.chat)
-        : '';
-    targetPrompt.serverAssemblyDebugDump = structuredClone(dump);
-    targetPrompt.messagesCount = dump?.assembly?.messagesCount ?? targetPrompt.messagesCount ?? null;
-    targetPrompt.examplesCount = dump?.assembly?.examplesCount ?? targetPrompt.examplesCount ?? null;
+    applyServerAssemblyToPromptRecord(targetPrompt, dump?.assembly, {
+        promptContext: dump?.promptContext,
+        createdAt: dump?.createdAt,
+    });
 
     const targetMesId = Number(targetPrompt.mesId);
-    if (Number.isFinite(targetMesId) && targetMesId >= 0) {
-        chatElement.find(`.mes[mesid="${targetMesId}"] .mes_prompt`).show();
-    }
-
+    showPromptInspectorButtonForMessage(targetMesId);
     await saveItemizedPrompts(getCurrentChatId());
     return dump;
 }
@@ -466,18 +510,24 @@ let visibleChatEndId = null;
 export let chatDragDropHandler = null;
 let historyWindowNavigationQueue = Promise.resolve();
 let isRunningHistoryWindowNavigation = false;
+let activeHistoryWindowNavigationToken = null;
 
-function serializeHistoryWindowNavigation(callback) {
-    if (isRunningHistoryWindowNavigation) {
-        return callback();
+function serializeHistoryWindowNavigation(callback, navigationToken = null) {
+    if (navigationToken && navigationToken === activeHistoryWindowNavigationToken) {
+        return callback(navigationToken);
     }
 
     const run = historyWindowNavigationQueue.then(async () => {
+        const token = {};
         isRunningHistoryWindowNavigation = true;
+        activeHistoryWindowNavigationToken = token;
         try {
-            return await callback();
+            return await callback(token);
         } finally {
             isRunningHistoryWindowNavigation = false;
+            if (activeHistoryWindowNavigationToken === token) {
+                activeHistoryWindowNavigationToken = null;
+            }
         }
     });
 
@@ -2347,8 +2397,8 @@ async function ensureChatRangeLoaded(startId, count = null) {
     return true;
 }
 
-export async function returnToLiveTailView() {
-    return serializeHistoryWindowNavigation(async () => {
+export async function returnToLiveTailView(navigationToken = null) {
+    return serializeHistoryWindowNavigation(async (activeNavigationToken) => {
         if (!isSplitTailChat() || isChatFullyHydrated()) {
             return;
         }
@@ -2357,13 +2407,13 @@ export async function returnToLiveTailView() {
         const startId = Math.max(chatLoadState.tailStartId, chatLoadState.tailEndId - count + 1);
         await ensureChatRangeLoaded(startId, count);
         chatLoadState.currentView = 'tail';
-        await renderMessageWindow(startId, count);
+        await renderMessageWindow(startId, count, activeNavigationToken);
         scrollChatToBottom();
-    });
+    }, navigationToken);
 }
 
-export async function hydrateCurrentChatForEditing() {
-    return serializeHistoryWindowNavigation(async () => {
+export async function hydrateCurrentChatForEditing(navigationToken = null) {
+    return serializeHistoryWindowNavigation(async (activeNavigationToken) => {
         if (!isSplitTailChat() || isChatFullyHydrated()) {
             return true;
         }
@@ -2377,9 +2427,9 @@ export async function hydrateCurrentChatForEditing() {
         const renderStart = Number.isFinite(previousStartId)
             ? clamp(previousStartId, 0, Math.max(0, getTotalChatMessages() - 1))
             : Math.max(0, getTotalChatMessages() - previousCount);
-        await renderMessageWindow(renderStart, previousCount);
+        await renderMessageWindow(renderStart, previousCount, activeNavigationToken);
         return true;
-    });
+    }, navigationToken);
 }
 
 async function ensureMessageEditable(messageId, actionLabel = 'modify this message') {
@@ -2476,7 +2526,7 @@ function finalizeRenderedMessageWindow() {
     updateHistoryControls();
 }
 
-export async function renderMessageWindow(startId = 0, count = null) {
+export async function renderMessageWindow(startId = 0, count = null, navigationToken = null) {
     return serializeHistoryWindowNavigation(async () => {
         closeMessageEditor();
         removeHistoryControls();
@@ -2507,11 +2557,11 @@ export async function renderMessageWindow(startId = 0, count = null) {
         setVisibleChatRange(normalizedStartId, endId);
         finalizeRenderedMessageWindow();
         await eventSource.emit(event_types.MORE_MESSAGES_LOADED);
-    });
+    }, navigationToken);
 }
 
-export async function jumpToMessageWindow(messageId, count = null) {
-    return serializeHistoryWindowNavigation(async () => {
+export async function jumpToMessageWindow(messageId, count = null, navigationToken = null) {
+    return serializeHistoryWindowNavigation(async (activeNavigationToken) => {
         const normalizedMessageId = Number(messageId);
         if (!Number.isFinite(normalizedMessageId) || normalizedMessageId < 0 || normalizedMessageId >= chat.length) {
             return $();
@@ -2532,14 +2582,14 @@ export async function jumpToMessageWindow(messageId, count = null) {
                 Math.max(0, chat.length - windowSize),
             );
             await ensureChatRangeLoaded(startId, windowSize);
-            await renderMessageWindow(startId, windowSize);
+            await renderMessageWindow(startId, windowSize, activeNavigationToken);
         }
 
         return chatElement.find(`.mes[mesid="${normalizedMessageId}"]`);
-    });
+    }, navigationToken);
 }
 
-export async function showMoreMessages(messagesToLoad = null) {
+export async function showMoreMessages(messagesToLoad = null, navigationToken = null) {
     return serializeHistoryWindowNavigation(async () => {
         let messageId = getFirstDisplayedMessageId();
         let count = getConfiguredChatWindowSize(messagesToLoad);
@@ -2585,16 +2635,16 @@ export async function showMoreMessages(messagesToLoad = null) {
 
         finalizeRenderedMessageWindow();
         await eventSource.emit(event_types.MORE_MESSAGES_LOADED);
-    });
+    }, navigationToken);
 }
 
-export async function showNewerMessages(messagesToLoad = null) {
-    return serializeHistoryWindowNavigation(async () => {
+export async function showNewerMessages(messagesToLoad = null, navigationToken = null) {
+    return serializeHistoryWindowNavigation(async (activeNavigationToken) => {
         let messageId = getLastDisplayedMessageId();
         let count = getConfiguredChatWindowSize(messagesToLoad);
 
         if (!Number.isFinite(messageId)) {
-            await renderMessageWindow(Math.max(0, chat.length - count), count);
+            await renderMessageWindow(Math.max(0, chat.length - count), count, activeNavigationToken);
             return;
         }
 
@@ -2624,7 +2674,7 @@ export async function showNewerMessages(messagesToLoad = null) {
 
         finalizeRenderedMessageWindow();
         await eventSource.emit(event_types.MORE_MESSAGES_LOADED);
-    });
+    }, navigationToken);
 }
 
 export async function printMessages() {
@@ -4153,6 +4203,7 @@ export async function generateQuietPrompt({ quietPrompt = '', quietToLoud = fals
     }
 
     const responseLengthCustomized = typeof responseLength === 'number' && responseLength > 0;
+    let responseLengthSession = null;
     let eventHook = () => { };
     try {
         /** @type {GenerateOptions} */
@@ -4167,17 +4218,19 @@ export async function generateQuietPrompt({ quietPrompt = '', quietToLoud = fals
             jsonSchema: jsonSchema ?? null,
         };
         if (responseLengthCustomized) {
-            TempResponseLength.save(main_api, responseLength);
-            eventHook = TempResponseLength.setupEventHook(main_api);
+            responseLengthSession = TempResponseLength.save(main_api, responseLength);
+            eventHook = TempResponseLength.setupEventHook(responseLengthSession);
         }
         let result = await Generate('quiet', generateOptions);
         result = trimToSentence ? trimToEndSentence(result) : result;
         result = removeReasoning ? removeReasoningFromString(result) : result;
         return result;
     } finally {
-        if (responseLengthCustomized && TempResponseLength.isCustomized()) {
-            TempResponseLength.restore(main_api);
-            TempResponseLength.removeEventHook(main_api, eventHook);
+        if (responseLengthSession) {
+            if (TempResponseLength.isCustomized(responseLengthSession)) {
+                TempResponseLength.restore(responseLengthSession);
+            }
+            TempResponseLength.removeEventHook(responseLengthSession, eventHook);
         }
     }
 }
@@ -4650,9 +4703,10 @@ class StreamingProcessor {
     }
 
     async onStartStreaming(text) {
-        // Streaming replies receive timed WI metadata only after the SSE payload completes.
+        // Streaming replies receive WI metadata only after the SSE payload completes.
         // Clear any leftover pending snapshot from an earlier request before creating the placeholder message.
         consumeOpenAITimedWorldInfo();
+        consumeOpenAIWorldInfoResponseData();
 
         const continueOnReasoning = !!(this.type === 'continue' && this.promptReasoning.prefixReasoning);
         if (continueOnReasoning) {
@@ -4786,7 +4840,14 @@ class StreamingProcessor {
         await this.reasoningHandler.finish(messageId);
 
         const timedWorldInfo = consumeOpenAITimedWorldInfo();
+        const worldInfoResponseData = consumeOpenAIWorldInfoResponseData();
         applyTimedWorldInfoToMessage(messageId, timedWorldInfo);
+        applyWorldInfoResponseDataToMessage(messageId, worldInfoResponseData);
+        try {
+            await storeLastServerDispatchSnapshotToPrompt(messageId);
+        } catch (error) {
+            console.error('Failed to store server dispatch snapshot for prompt inspection', error);
+        }
 
         if (Array.isArray(this.swipes) && this.swipes.length > 0) {
             const message = chat[messageId];
@@ -5001,6 +5062,7 @@ export async function generateRaw({ prompt = '', api = null, quietToLoud = false
 
     const abortController = new AbortController();
     const responseLengthCustomized = typeof responseLength === 'number' && responseLength > 0;
+    let responseLengthSession = null;
     let eventHook = () => { };
 
     // construct final prompt from the input. Can either be a string or an array of chat-style messages.
@@ -5013,7 +5075,7 @@ export async function generateRaw({ prompt = '', api = null, quietToLoud = false
 
     try {
         if (responseLengthCustomized) {
-            TempResponseLength.save(api, responseLength);
+            responseLengthSession = TempResponseLength.save(api, responseLength);
         }
         /** @type {object|any[]} */
         let generateData = {};
@@ -5038,7 +5100,9 @@ export async function generateRaw({ prompt = '', api = null, quietToLoud = false
         switch (api) {
             case 'openai': {
                 generateData = prompt;
-                eventHook = TempResponseLength.setupEventHook(api);
+                if (responseLengthSession) {
+                    eventHook = TempResponseLength.setupEventHook(responseLengthSession);
+                }
             } break;
             default:
                 throw new Error(`Unsupported API: ${api}`);
@@ -5079,75 +5143,147 @@ export async function generateRaw({ prompt = '', api = null, quietToLoud = false
         return message;
     } finally {
         eventSource.removeListener(event_types.GENERATION_STOPPED, abortHook);
-        if (responseLengthCustomized && TempResponseLength.isCustomized()) {
-            TempResponseLength.restore(api);
-            TempResponseLength.removeEventHook(api, eventHook);
+        if (responseLengthSession) {
+            if (TempResponseLength.isCustomized(responseLengthSession)) {
+                TempResponseLength.restore(responseLengthSession);
+            }
+            TempResponseLength.removeEventHook(responseLengthSession, eventHook);
         }
     }
 }
 
 class TempResponseLength {
-    static #originalResponseLength = -1;
-    static #lastApi = null;
+    static #nextSessionId = 0;
+    static #activeSessions = new Map();
+    static #baseResponseLength = new Map();
 
-    static isCustomized() {
-        return this.#originalResponseLength > -1;
+    static #getSettingKey(api) {
+        return api === 'openai' ? 'openai' : 'default';
+    }
+
+    static #getCurrentResponseLength(settingKey) {
+        return settingKey === 'openai' ? oai_settings.openai_max_tokens : amount_gen;
+    }
+
+    static #setCurrentResponseLength(settingKey, responseLength) {
+        if (settingKey === 'openai') {
+            oai_settings.openai_max_tokens = responseLength;
+        } else {
+            amount_gen = responseLength;
+        }
+    }
+
+    static #getActiveSessions(settingKey) {
+        if (!this.#activeSessions.has(settingKey)) {
+            this.#activeSessions.set(settingKey, []);
+        }
+
+        return this.#activeSessions.get(settingKey);
+    }
+
+    static isCustomized(session = null) {
+        if (!session) {
+            return Array.from(this.#activeSessions.values()).some(sessions => sessions.length > 0);
+        }
+
+        const sessions = this.#activeSessions.get(session.settingKey);
+        return sessions?.some(activeSession => activeSession.id === session.id) ?? false;
     }
 
     /**
      * Save the current response length for the specified API.
      * @param {string} api API identifier
      * @param {number} responseLength New response length
+     * @returns {{ id: number, api: string, settingKey: string, responseLength: number }} Saved response length session
      */
     static save(api, responseLength) {
-        if (api === 'openai') {
-            this.#originalResponseLength = oai_settings.openai_max_tokens;
-            oai_settings.openai_max_tokens = responseLength;
-        } else {
-            this.#originalResponseLength = amount_gen;
-            amount_gen = responseLength;
+        const settingKey = this.#getSettingKey(api);
+        const sessions = this.#getActiveSessions(settingKey);
+        if (sessions.length === 0) {
+            this.#baseResponseLength.set(settingKey, this.#getCurrentResponseLength(settingKey));
         }
 
-        this.#lastApi = api;
-        console.log('[TempResponseLength] Saved original response length:', TempResponseLength.#originalResponseLength);
+        const session = {
+            id: ++this.#nextSessionId,
+            api: api,
+            settingKey: settingKey,
+            responseLength: responseLength,
+        };
+
+        sessions.push(session);
+        this.#setCurrentResponseLength(settingKey, responseLength);
+
+        console.log('[TempResponseLength] Saved response length session:', session.id, 'base:', this.#baseResponseLength.get(settingKey), 'current:', responseLength);
+        return session;
     }
 
     /**
      * Restore the original response length for the specified API.
-     * @param {string|null} api API identifier
+     * @param {{ id: number, api: string, settingKey: string, responseLength: number }} session Response length session
      * @returns {void}
      */
-    static restore(api) {
-        if (this.#originalResponseLength === -1) {
+    static restore(session) {
+        if (!session) {
             return;
         }
-        if (!api && this.#lastApi) {
-            api = this.#lastApi;
-        }
-        if (api === 'openai') {
-            oai_settings.openai_max_tokens = this.#originalResponseLength;
-        } else {
-            amount_gen = this.#originalResponseLength;
+
+        const sessions = this.#activeSessions.get(session.settingKey);
+        if (!sessions?.length) {
+            return;
         }
 
-        console.log('[TempResponseLength] Restored original response length:', this.#originalResponseLength);
-        this.#originalResponseLength = -1;
-        this.#lastApi = null;
+        const sessionIndex = sessions.findIndex(activeSession => activeSession.id === session.id);
+        if (sessionIndex === -1) {
+            return;
+        }
+
+        sessions.splice(sessionIndex, 1);
+
+        const nextResponseLength = sessions.length > 0
+            ? sessions[sessions.length - 1].responseLength
+            : this.#baseResponseLength.get(session.settingKey);
+
+        if (typeof nextResponseLength === 'number') {
+            this.#setCurrentResponseLength(session.settingKey, nextResponseLength);
+        }
+
+        if (sessions.length === 0) {
+            this.#activeSessions.delete(session.settingKey);
+            this.#baseResponseLength.delete(session.settingKey);
+        }
+
+        console.log('[TempResponseLength] Restored response length session:', session.id, 'current:', nextResponseLength);
+    }
+
+    static restoreAll() {
+        for (const [settingKey, sessions] of this.#activeSessions.entries()) {
+            if (sessions.length === 0) {
+                continue;
+            }
+
+            const baseResponseLength = this.#baseResponseLength.get(settingKey);
+            if (typeof baseResponseLength === 'number') {
+                this.#setCurrentResponseLength(settingKey, baseResponseLength);
+            }
+        }
+
+        this.#activeSessions.clear();
+        this.#baseResponseLength.clear();
     }
 
     /**
      * Sets up an event hook to restore the original response length when the event is emitted.
-     * @param {string} api API identifier
+     * @param {{ id: number, api: string, settingKey: string, responseLength: number }} session Response length session
      * @returns {function(): void} Event hook function
      */
-    static setupEventHook(api) {
+    static setupEventHook(session) {
         const eventHook = () => {
-            if (this.isCustomized()) {
-                this.restore(api);
+            if (this.isCustomized(session)) {
+                this.restore(session);
             }
         };
 
-        switch (api) {
+        switch (session?.api) {
             case 'openai':
                 eventSource.once(event_types.CHAT_COMPLETION_SETTINGS_READY, eventHook);
                 break;
@@ -5161,11 +5297,11 @@ class TempResponseLength {
 
     /**
      * Removes the event hook for the specified API.
-     * @param {string} api API identifier
+     * @param {{ id: number, api: string, settingKey: string, responseLength: number }} session Response length session
      * @param {function(): void} eventHook Previously set up event hook
      */
-    static removeEventHook(api, eventHook) {
-        switch (api) {
+    static removeEventHook(session, eventHook) {
+        switch (session?.api) {
             case 'openai':
                 eventSource.removeListener(event_types.CHAT_COMPLETION_SETTINGS_READY, eventHook);
                 break;
@@ -6247,6 +6383,7 @@ export async function Generate(type, { automatic_trigger, force_name2, quiet_pro
     async function onSuccess(data) {
         if (!data) {
             consumeOpenAITimedWorldInfo();
+            consumeOpenAIWorldInfoResponseData();
             return;
         }
 
@@ -6269,6 +6406,7 @@ export async function Generate(type, { automatic_trigger, force_name2, quiet_pro
         if (jsonSchema) {
             unblockGeneration(type);
             consumeOpenAITimedWorldInfo();
+            consumeOpenAIWorldInfoResponseData();
             return extractJsonFromData(data);
         }
 
@@ -6312,10 +6450,12 @@ export async function Generate(type, { automatic_trigger, force_name2, quiet_pro
             $('#send_textarea').val(getMessage)[0].dispatchEvent(new Event('input', { bubbles: true }));
             await eventSource.emit(event_types.IMPERSONATE_READY, getMessage);
             consumeOpenAITimedWorldInfo();
+            consumeOpenAIWorldInfoResponseData();
         }
         else if (type == 'quiet') {
             unblockGeneration(type);
             consumeOpenAITimedWorldInfo();
+            consumeOpenAIWorldInfoResponseData();
             return getMessage;
         }
         else {
@@ -6387,6 +6527,7 @@ export async function Generate(type, { automatic_trigger, force_name2, quiet_pro
         }
 
         consumeOpenAITimedWorldInfo();
+        consumeOpenAIWorldInfoResponseData();
         unblockGeneration(type);
         console.log(exception);
         streamingProcessor = null;
@@ -6774,7 +6915,7 @@ export function setInContextMessages(msgInContextCount, type) {
 
     if (lastMessageBlock.length === 0) {
         const firstMessageId = getFirstDisplayedMessageId();
-        chatElement.find(`.mes[mesid="${firstMessageId}"`).addClass('lastInContext');
+        chatElement.find(`.mes[mesid="${firstMessageId}"]`).addClass('lastInContext');
     }
 
     // Update last id to chat. No metadata save on purpose, gets hopefully saved via another call
@@ -7221,6 +7362,7 @@ export async function saveReply({ type, getMessage, fromStreaming = false, title
     }
 
     const timedWorldInfo = fromStreaming ? null : consumeOpenAITimedWorldInfo();
+    const worldInfoResponseData = fromStreaming ? null : consumeOpenAIWorldInfoResponseData();
 
     let oldMessage = '';
     const generationFinished = new Date();
@@ -7340,6 +7482,12 @@ export async function saveReply({ type, getMessage, fromStreaming = false, title
         item.extra = {};
     }
     applyTimedWorldInfoToMessage(chat.length - 1, timedWorldInfo);
+    applyWorldInfoResponseDataToMessage(chat.length - 1, worldInfoResponseData);
+    try {
+        await storeLastServerDispatchSnapshotToPrompt(chat.length - 1);
+    } catch (error) {
+        console.error('Failed to store server dispatch snapshot for prompt inspection', error);
+    }
     if (item['swipe_info'] === undefined) {
         item['swipe_info'] = [];
     }
@@ -7400,6 +7548,35 @@ function applyTimedWorldInfoToMessage(messageId, timedWorldInfo) {
     chat_metadata.timedWorldInfo = structuredClone(timedWorldInfo);
 }
 
+function applyWorldInfoResponseDataToMessage(messageId, worldInfoResponseData) {
+    if (!worldInfoResponseData || typeof worldInfoResponseData !== 'object') {
+        return;
+    }
+
+    const item = chat[messageId];
+    if (!item) {
+        return;
+    }
+
+    const worldInfoSummary = worldInfoResponseData.worldInfoSummary;
+    const worldInfoReport = worldInfoResponseData.worldInfoReport;
+    if ((!worldInfoSummary || typeof worldInfoSummary !== 'object') && (!worldInfoReport || typeof worldInfoReport !== 'object')) {
+        return;
+    }
+
+    item.extra ??= {};
+
+    if (worldInfoSummary && typeof worldInfoSummary === 'object') {
+        item.extra.worldInfoSummary = structuredClone(worldInfoSummary);
+        chat_metadata.worldInfoSummary = structuredClone(worldInfoSummary);
+    }
+
+    if (worldInfoReport && typeof worldInfoReport === 'object') {
+        item.extra.worldInfoReport = structuredClone(worldInfoReport);
+        chat_metadata.worldInfoReport = structuredClone(worldInfoReport);
+    }
+}
+
 /**
  * Syncs the current message and all its data into the swipe data at the given message ID (or the last message if no ID is given).
  *
@@ -7453,6 +7630,8 @@ export function syncMesToSwipe(messageId = null) {
 }
 
 function restoreTimedWorldInfoFromChat(messageId = null) {
+    restoreWorldInfoResponseDataFromChat(messageId);
+
     if (!Array.isArray(chat) || chat.length === 0) {
         delete chat_metadata.timedWorldInfo;
         return false;
@@ -7472,6 +7651,44 @@ function restoreTimedWorldInfoFromChat(messageId = null) {
     }
 
     delete chat_metadata.timedWorldInfo;
+    return false;
+}
+
+function restoreWorldInfoResponseDataFromChat(messageId = null) {
+    if (!Array.isArray(chat) || chat.length === 0) {
+        delete chat_metadata.worldInfoSummary;
+        delete chat_metadata.worldInfoReport;
+        return false;
+    }
+
+    const startIndex = Math.min(
+        typeof messageId === 'number' ? messageId : chat.length - 1,
+        chat.length - 1,
+    );
+
+    for (let index = startIndex; index >= 0; index--) {
+        const summarySnapshot = chat[index]?.extra?.worldInfoSummary;
+        const reportSnapshot = chat[index]?.extra?.worldInfoReport;
+
+        if ((summarySnapshot && typeof summarySnapshot === 'object') || (reportSnapshot && typeof reportSnapshot === 'object')) {
+            if (summarySnapshot && typeof summarySnapshot === 'object') {
+                chat_metadata.worldInfoSummary = structuredClone(summarySnapshot);
+            } else {
+                delete chat_metadata.worldInfoSummary;
+            }
+
+            if (reportSnapshot && typeof reportSnapshot === 'object') {
+                chat_metadata.worldInfoReport = structuredClone(reportSnapshot);
+            } else {
+                delete chat_metadata.worldInfoReport;
+            }
+
+            return true;
+        }
+    }
+
+    delete chat_metadata.worldInfoSummary;
+    delete chat_metadata.worldInfoReport;
     return false;
 }
 
@@ -8577,7 +8794,7 @@ export async function saveSettings(loopCounter = 0) {
             return;
         }
         console.error('Response length is currently being overridden, but the save loop has reached the maximum number of retries');
-        TempResponseLength.restore(null);
+        TempResponseLength.restoreAll();
     }
 
     const payload = {

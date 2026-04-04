@@ -1646,7 +1646,7 @@ function validateSidePromptRuntimeMacroTriggerConfig({ name, prompt, responseFor
 }
 
 function isBuiltinSidePromptKey(key) {
-    return ['plotpoints', 'status', 'cast', 'assess'].includes(String(key || '').trim());
+    return ['plotpoints', 'status', 'cast-of-characters', 'assess'].includes(String(key || '').trim());
 }
 
 function buildSidePromptManagerRowsHtml(templates, selectedTemplateKey = null) {

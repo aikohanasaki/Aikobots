@@ -92,6 +92,7 @@ const API_ZAI_CODING = 'https://api.z.ai/api/coding/paas/v4';
 const API_SILICONFLOW = 'https://api.siliconflow.com/v1';
 const MODULE_DIR = path.dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = path.resolve(MODULE_DIR, '../../../');
+const MAX_PROMPT_DISPATCH_SNAPSHOTS = 100;
 const lastPromptDispatchSnapshots = new Map();
 const lastPromptDispatchSnapshotsByHandle = new Map();
 let lastPromptDispatchSnapshotGlobal = null;
@@ -1533,23 +1534,47 @@ function getPromptDispatchSnapshotKey(request) {
     return `${handle}::${sessionId}`;
 }
 
+function setPromptDispatchSnapshotCacheEntry(cache, key, value) {
+    if (cache.has(key)) {
+        cache.delete(key);
+    }
+
+    cache.set(key, value);
+
+    while (cache.size > MAX_PROMPT_DISPATCH_SNAPSHOTS) {
+        const oldestKey = cache.keys().next().value;
+        cache.delete(oldestKey);
+    }
+}
+
+function getPromptDispatchSnapshotCacheEntry(cache, key) {
+    if (!cache.has(key)) {
+        return undefined;
+    }
+
+    const value = cache.get(key);
+    cache.delete(key);
+    cache.set(key, value);
+    return value;
+}
+
 function storePromptDispatchSnapshot(request, snapshot) {
     const clonedSnapshot = clonePromptDispatchSnapshot(snapshot);
     const handle = String(request?.user?.profile?.handle || 'anonymous');
 
-    lastPromptDispatchSnapshots.set(getPromptDispatchSnapshotKey(request), clonedSnapshot);
-    lastPromptDispatchSnapshotsByHandle.set(handle, clonePromptDispatchSnapshot(clonedSnapshot));
+    setPromptDispatchSnapshotCacheEntry(lastPromptDispatchSnapshots, getPromptDispatchSnapshotKey(request), clonedSnapshot);
+    setPromptDispatchSnapshotCacheEntry(lastPromptDispatchSnapshotsByHandle, handle, clonePromptDispatchSnapshot(clonedSnapshot));
     lastPromptDispatchSnapshotGlobal = clonePromptDispatchSnapshot(clonedSnapshot);
 }
 
 function getStoredPromptDispatchSnapshot(request) {
-    const exactMatch = lastPromptDispatchSnapshots.get(getPromptDispatchSnapshotKey(request));
+    const exactMatch = getPromptDispatchSnapshotCacheEntry(lastPromptDispatchSnapshots, getPromptDispatchSnapshotKey(request));
     if (exactMatch) {
         return clonePromptDispatchSnapshot(exactMatch);
     }
 
     const handle = String(request?.user?.profile?.handle || 'anonymous');
-    const handleMatch = lastPromptDispatchSnapshotsByHandle.get(handle);
+    const handleMatch = getPromptDispatchSnapshotCacheEntry(lastPromptDispatchSnapshotsByHandle, handle);
     if (handleMatch) {
         return clonePromptDispatchSnapshot(handleMatch);
     }
@@ -1634,13 +1659,110 @@ function createPromptDispatchSnapshot(request, requestPayload, assembled = null)
         max_completion_tokens: requestPayload?.max_completion_tokens ?? null,
         reasoning_effort: request.body?.reasoning_effort ?? requestPayload?.reasoning_effort ?? requestPayload?.reasoning?.effort ?? null,
         custom_prompt_post_processing: request.body?.custom_prompt_post_processing ?? null,
+        assembly: structuredClone(assembled || null),
         worldInfo: structuredClone(assembled?.worldInfo || null),
         itemization: structuredClone(assembled?.itemization || null),
         requestPayload: structuredClone(requestPayload || {}),
     };
 }
 
-function attachWorldInfoResponseData(payload, timedWorldInfo, worldInfoOverflowed = false) {
+function canViewWorldInfoEntry(user, entry) {
+    if (!entry || entry.storage !== 'secure') {
+        return true;
+    }
+
+    if (Boolean(user?.profile?.admin)) {
+        return true;
+    }
+
+    const requestHandle = String(user?.profile?.handle || '');
+    const ownerHandle = String(entry.ownerHandle || '');
+    return Boolean(requestHandle && ownerHandle && requestHandle === ownerHandle);
+}
+
+function sanitizeWorldInfoEntryForResponse(entry, user) {
+    if (!entry || typeof entry !== 'object') {
+        return null;
+    }
+
+    const canView = canViewWorldInfoEntry(user, entry);
+    const sanitizedEntry = structuredClone(entry);
+
+    sanitizedEntry.storage = entry.storage === 'secure' ? 'secure' : 'user';
+    sanitizedEntry.ownerHandle = canView ? String(entry.ownerHandle || '') : '';
+    sanitizedEntry.hidden = !canView;
+    sanitizedEntry.displayContent = canView
+        ? String(entry.displayContent ?? entry.content ?? '')
+        : 'hidden entry';
+    sanitizedEntry.content = canView ? String(entry.content ?? '') : '';
+
+    if (!canView) {
+        sanitizedEntry.key = null;
+        sanitizedEntry.uid = null;
+        sanitizedEntry.book = null;
+        sanitizedEntry.displayName = null;
+        sanitizedEntry.comment = null;
+        sanitizedEntry.matchedPrimaryKey = null;
+        sanitizedEntry.matchedSecondaryKeys = [];
+    }
+
+    return sanitizedEntry;
+}
+
+function buildWorldInfoSummaryResponseData(worldInfo, user) {
+    if (!worldInfo || typeof worldInfo !== 'object') {
+        return { worldInfoSummary: null, worldInfoReport: null };
+    }
+
+    const activatedEntries = Array.isArray(worldInfo.activatedEntries)
+        ? worldInfo.activatedEntries.map(entry => sanitizeWorldInfoEntryForResponse(entry, user)).filter(Boolean)
+        : [];
+    const admittedEntries = activatedEntries.filter(entry => entry.status === 'admitted');
+    const worldInfoReport = {
+        activatedEntries,
+        beforeEntries: admittedEntries.filter(entry => entry.placement === 'before'),
+        afterEntries: admittedEntries.filter(entry => entry.placement === 'after'),
+        depthEntries: admittedEntries.filter(entry => String(entry.placement || '').startsWith('depth:')),
+        exampleEntries: admittedEntries.filter(entry => String(entry.placement || '').startsWith('example_')),
+        timedState: structuredClone(worldInfo.timedState || {}),
+        overflowed: Boolean(worldInfo.overflowed),
+        rounds: Array.isArray(worldInfo.rounds)
+            ? worldInfo.rounds.map(round => ({
+                roundIndex: Number(round?.roundIndex ?? 0) || 0,
+                scanState: round?.scanState ?? null,
+                entries: activatedEntries.filter(entry => (Number(entry.roundIndex ?? 0) || 0) === (Number(round?.roundIndex ?? 0) || 0)),
+                admittedEntries: Number(round?.admittedEntries ?? 0) || 0,
+                droppedEntries: Number(round?.droppedEntries ?? 0) || 0,
+            }))
+            : [],
+        budgetUsed: structuredClone(worldInfo.budgetUsed || {}),
+    };
+
+    const worldInfoSummary = {
+        activeEntries: admittedEntries.map(entry => ({
+            key: entry.key,
+            book: entry.book,
+            uid: entry.uid,
+            storage: entry.storage,
+            ownerHandle: entry.ownerHandle,
+            displayName: entry.displayName,
+            displayContent: entry.displayContent,
+            hidden: entry.hidden,
+            tokens: Number(entry.tokens ?? 0) || 0,
+            placement: entry.placement ?? null,
+            roundIndex: Number(entry.roundIndex ?? 0) || 0,
+            status: entry.status ?? null,
+        })),
+        overflowed: Boolean(worldInfo.overflowed),
+        totalTokens: admittedEntries.reduce((total, entry) => total + (Number(entry.tokens ?? 0) || 0), 0),
+        activeEntriesCount: admittedEntries.length,
+        budgetUsed: structuredClone(worldInfo.budgetUsed || {}),
+    };
+
+    return { worldInfoSummary, worldInfoReport };
+}
+
+function attachWorldInfoResponseData(payload, request, timedWorldInfo, worldInfoOverflowed = false, worldInfo = null) {
     if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
         return payload;
     }
@@ -1648,12 +1770,19 @@ function attachWorldInfoResponseData(payload, timedWorldInfo, worldInfoOverflowe
     const xSillyTavern = {
         ...(payload.x_sillytavern && typeof payload.x_sillytavern === 'object' ? payload.x_sillytavern : {}),
     };
+    const { worldInfoSummary, worldInfoReport } = buildWorldInfoSummaryResponseData(worldInfo, request?.user);
 
     if (timedWorldInfo && typeof timedWorldInfo === 'object') {
         xSillyTavern.timedWorldInfo = timedWorldInfo;
     }
     if (worldInfoOverflowed) {
         xSillyTavern.worldInfoOverflowed = true;
+    }
+    if (worldInfoSummary) {
+        xSillyTavern.worldInfoSummary = worldInfoSummary;
+    }
+    if (worldInfoReport) {
+        xSillyTavern.worldInfoReport = worldInfoReport;
     }
 
     if (!Object.keys(xSillyTavern).length) {
@@ -1678,17 +1807,24 @@ function getSseEventData(eventBlock) {
         .join('\n');
 }
 
-function writeWorldInfoSseEvent(response, timedWorldInfo, worldInfoOverflowed = false) {
+function writeWorldInfoSseEvent(response, request, timedWorldInfo, worldInfoOverflowed = false, worldInfo = null) {
     if (response.writableEnded) {
         return;
     }
 
     const xSillyTavern = {};
+    const { worldInfoSummary, worldInfoReport } = buildWorldInfoSummaryResponseData(worldInfo, request?.user);
     if (timedWorldInfo && typeof timedWorldInfo === 'object') {
         xSillyTavern.timedWorldInfo = timedWorldInfo;
     }
     if (worldInfoOverflowed) {
         xSillyTavern.worldInfoOverflowed = true;
+    }
+    if (worldInfoSummary) {
+        xSillyTavern.worldInfoSummary = worldInfoSummary;
+    }
+    if (worldInfoReport) {
+        xSillyTavern.worldInfoReport = worldInfoReport;
     }
     if (!Object.keys(xSillyTavern).length) {
         return;
@@ -1697,7 +1833,7 @@ function writeWorldInfoSseEvent(response, timedWorldInfo, worldInfoOverflowed = 
     response.write(`data: ${JSON.stringify({ x_sillytavern: xSillyTavern })}\n\n`);
 }
 
-async function forwardFetchResponseWithWorldInfo(from, to, timedWorldInfo, worldInfoOverflowed = false) {
+async function forwardFetchResponseWithWorldInfo(from, to, request, timedWorldInfo, worldInfoOverflowed = false, worldInfo = null) {
     let statusCode = from.status;
     let statusText = from.statusText;
 
@@ -1716,7 +1852,7 @@ async function forwardFetchResponseWithWorldInfo(from, to, timedWorldInfo, world
     to.setHeader('Connection', 'keep-alive');
 
     if (!from.body || !to.socket) {
-        writeWorldInfoSseEvent(to, timedWorldInfo, worldInfoOverflowed);
+        writeWorldInfoSseEvent(to, request, timedWorldInfo, worldInfoOverflowed, worldInfo);
         to.end();
         return;
     }
@@ -1731,7 +1867,7 @@ async function forwardFetchResponseWithWorldInfo(from, to, timedWorldInfo, world
         }
 
         if (!timedWorldInfoSent && getSseEventData(eventBlock) === '[DONE]') {
-            writeWorldInfoSseEvent(to, timedWorldInfo, worldInfoOverflowed);
+            writeWorldInfoSseEvent(to, request, timedWorldInfo, worldInfoOverflowed, worldInfo);
             timedWorldInfoSent = true;
         }
 
@@ -1763,7 +1899,7 @@ async function forwardFetchResponseWithWorldInfo(from, to, timedWorldInfo, world
         }
 
         if (!timedWorldInfoSent) {
-            writeWorldInfoSseEvent(to, timedWorldInfo, worldInfoOverflowed);
+            writeWorldInfoSseEvent(to, request, timedWorldInfo, worldInfoOverflowed, worldInfo);
         }
 
         console.info('Streaming request finished');
@@ -2594,14 +2730,14 @@ export async function handleChatCompletionsGenerate(request, response) {
                     forwardFetchResponse(fetchResponse, response);
                     return;
                 }
-                await forwardFetchResponseWithWorldInfo(fetchResponse, response, assembledTimedWorldInfo, assembledWorldInfoOverflowed);
+                await forwardFetchResponseWithWorldInfo(fetchResponse, response, request, assembledTimedWorldInfo, assembledWorldInfoOverflowed, assembledPromptSnapshot?.worldInfo || null);
                 return;
             }
 
             if (fetchResponse.ok) {
                 /** @type {any} */
                 let json = await fetchResponse.json();
-                json = attachWorldInfoResponseData(json, assembledTimedWorldInfo, assembledWorldInfoOverflowed);
+                json = attachWorldInfoResponseData(json, request, assembledTimedWorldInfo, assembledWorldInfoOverflowed, assembledPromptSnapshot?.worldInfo || null);
                 response.send(json);
                 console.debug('Chat Completion response:', json);
             } else {
@@ -2663,7 +2799,7 @@ router.post('/assemble', async function (request, response) {
         await prepareServerPromptContext(request.user, request.user.directories, request.body);
         const result = await assembleChatCompletionPrompt(request.body);
         rewriteSystemMessagesForO1Model(request.body.model, request.body.chatCompletionSource, result.chat);
-        return response.send(attachWorldInfoResponseData(result, result.timedWorldInfo, result.worldInfoOverflowed));
+        return response.send(attachWorldInfoResponseData(result, request, result.timedWorldInfo, result.worldInfoOverflowed, result.worldInfo));
     } catch (error) {
         console.error('Chat completion assembly failed', error);
         return response.status(getPromptAssemblyErrorStatus(error)).send(toPromptAssemblyErrorBody(error));
@@ -2686,7 +2822,7 @@ router.post('/assemble/compare', async function (request, response) {
         return response.send(attachWorldInfoResponseData({
             ...result,
             comparison,
-        }, result.timedWorldInfo, result.worldInfoOverflowed));
+        }, request, result.timedWorldInfo, result.worldInfoOverflowed, result.worldInfo));
     } catch (error) {
         console.error('Chat completion assembly comparison failed', error);
         return response.status(getPromptAssemblyErrorStatus(error)).send(toPromptAssemblyErrorBody(error));

@@ -44,6 +44,7 @@ export async function ensureResolvedLorebookName({
     let attempts = 0;
 
     while (attempts < 3) {
+        attempts++;
         let reason = null;
         if (!lorebookName) {
             reason = 'unassigned';
@@ -73,7 +74,6 @@ export async function ensureResolvedLorebookName({
                 chat_metadata[METADATA_KEY] = renderedName;
                 saveMetadataDebounced();
                 lorebookName = renderedName;
-                attempts++;
                 continue;
             }
 
@@ -120,7 +120,6 @@ export async function ensureResolvedLorebookName({
             chat_metadata[METADATA_KEY] = renderedName;
             saveMetadataDebounced();
             lorebookName = renderedName;
-            attempts++;
             continue;
         }
 

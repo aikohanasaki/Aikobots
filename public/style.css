@@ -6474,7 +6474,6 @@ body:not(.movingUI) .drawer-content.maximized {
     grid-row: 1;
 }
 
-#PromptUtilitySettingsBlock summary,
 #PromptUtilitySettingsBlock summary {
     font-size: 0.95em;
     cursor: pointer;

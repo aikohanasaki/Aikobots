@@ -19,7 +19,7 @@ import {
     getLorebookForManagement,
     listLorebooksForManagement,
     promoteLorebook,
-    readLorebookForGeneration,
+    readLorebookForGenerationWithMetadata,
     readWorldInfoFile as readUserWorldInfoFile,
     saveLorebookForManagement,
 } from '../lorebook-repository.js';
@@ -159,21 +159,23 @@ function parseDecorators(content) {
     return [decorators, newContent];
 }
 
-function worldEntriesFromBook(worldInfo, worldName) {
+function worldEntriesFromBook(worldInfo, worldName, lorebookMetadata = null) {
     if (!worldInfo?.entries || typeof worldInfo.entries !== 'object') {
         return [];
     }
 
     const lorebookSettings = extractLorebookSettings(worldInfo);
+    const storage = lorebookMetadata?.storage === 'secure' ? 'secure' : 'user';
+    const ownerHandle = String(lorebookMetadata?.ownerHandle || '');
 
     return Object.keys(worldInfo.entries)
         .map(key => worldInfo.entries[key])
-        .map(({ uid, ...rest }) => ({ uid, world: worldName, lorebookSettings, ...rest }));
+        .map(({ uid, ...rest }) => ({ uid, world: worldName, lorebookSettings, storage, ownerHandle, ...rest }));
 }
 
 async function readWorldEntries(user, worldName) {
-    const worldInfo = await readLorebookForGeneration(user, worldName, true);
-    return worldEntriesFromBook(worldInfo, worldName);
+    const { data: worldInfo, metadata } = await readLorebookForGenerationWithMetadata(user, worldName, true);
+    return worldEntriesFromBook(worldInfo, worldName, metadata);
 }
 
 function normalizeSpeakerIdentifier(value) {

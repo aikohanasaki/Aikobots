@@ -620,7 +620,7 @@ function selectPrefix(selected_prefix, finalPrompt) {
     const isNewModel = clio || kayra || erato;
 
     if (isNewModel) {
-        // NovelAI claims they scan backwards 1000 characters (not tokens!) to look for special prompt brackets. That's really short.
+        // NovelAI claims they scan backwards 1500 characters (not tokens!) to look for special prompt brackets. That's really short.
         const tail = finalPrompt.slice(-1500);
         useInstruct = tail.includes('}');
         return useInstruct ? 'special_instruct' : selected_prefix;

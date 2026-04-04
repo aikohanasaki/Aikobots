@@ -188,7 +188,8 @@ function fillSingleSelect(select, options, value, emptyLabel) {
         select.append(new Option(option.label, option.value, false, option.value === value));
     }
 
-    select.val(value || options[0].value);
+    const valueExists = options.some(option => option.value === value);
+    select.val(valueExists ? value : options[0].value);
 }
 
 function fillMultiSelect(select, options, values) {

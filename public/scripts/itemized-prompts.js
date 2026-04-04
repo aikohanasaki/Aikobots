@@ -121,6 +121,10 @@ export async function itemizedParams(itemizedPrompts, thisPromptSet, incomingMes
     }
 
     const serverItemization = itemizedPrompt.serverAssemblyDebugDump?.assembly?.itemization;
+    const messageWorldInfoReport = chat[incomingMesId]?.extra?.worldInfoReport;
+    const rawWorldInfoEntries = Array.isArray(messageWorldInfoReport?.activatedEntries)
+        ? messageWorldInfoReport.activatedEntries
+        : itemizedPrompt.serverAssemblyDebugDump?.assembly?.worldInfo?.activatedEntries;
     const params = {
         charDescriptionTokens: serverItemization ? toNumber(serverItemization.charDescriptionTokens) : await getTokenCountAsync(itemizedPrompt.charDescription),
         charPersonalityTokens: serverItemization ? toNumber(serverItemization.charPersonalityTokens) : await getTokenCountAsync(itemizedPrompt.charPersonality),
@@ -145,7 +149,20 @@ export async function itemizedParams(itemizedPrompts, thisPromptSet, incomingMes
         presetName: itemizedPrompt.presetName || t`(Unknown)`,
         messagesCount: String(itemizedPrompt.messagesCount ?? ''),
         examplesCount: String(itemizedPrompt.examplesCount ?? ''),
+        worldInfoEntries: Array.isArray(rawWorldInfoEntries)
+            ? rawWorldInfoEntries
+                .filter(entry => entry?.status === 'admitted')
+                .map(entry => ({
+                    book: entry?.book || '',
+                    displayName: entry?.displayName || '',
+                    placement: entry?.placement || '',
+                    tokens: toNumber(entry?.tokens),
+                    hidden: Boolean(entry?.hidden),
+                    displayContent: String(entry?.displayContent ?? entry?.content ?? ''),
+                }))
+            : [],
     };
+    params.hasWorldInfoEntries = params.worldInfoEntries.length > 0;
 
     const getFriendlyName = (value) => $(`#rm_api_block select option[value="${value}"]`).first().text() || value;
 
@@ -380,7 +397,7 @@ export function initItemizedPrompts() {
         console.log(`looking for mesID: ${mesIdForItemization}`);
         if (itemizedPrompts.length !== undefined && itemizedPrompts.length !== 0) {
             const itemizedPrompt = itemizedPrompts.find(x => Number(x.mesId) === Number(mesIdForItemization));
-            if (itemizedPrompt?.serverPromptAssembly && typeof globalThis.SillyTavern?.debugServerAssembly === 'function') {
+            if (itemizedPrompt?.serverPromptAssembly && !itemizedPrompt?.serverAssemblyDebugDump?.assembly && typeof globalThis.SillyTavern?.debugServerAssembly === 'function') {
                 try {
                     await globalThis.SillyTavern.debugServerAssembly();
                 } catch (error) {

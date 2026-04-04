@@ -1,6 +1,6 @@
 import { Fuse } from '../lib.js';
 
-import { saveSettings, substituteParams, getRequestHeaders, chat_metadata, this_chid, characters, saveCharacterDebounced, menu_type, eventSource, event_types, saveMetadata, getCurrentChatId, extension_prompt_roles, create_save, createOrEditCharacter, name1 } from '../script.js';
+import { saveSettings, substituteParams, getRequestHeaders, chat, chat_metadata, this_chid, characters, saveCharacterDebounced, menu_type, eventSource, event_types, saveMetadata, getCurrentChatId, extension_prompt_roles, create_save, createOrEditCharacter, name1 } from '../script.js';
 import { download, debounce, delay, initScrollHeight, resetScrollHeight, parseJsonFile, extractDataFromPng, getFileBuffer, getCharaFilename, getSortableDelay, PAGINATION_TEMPLATE, navigation_option, waitUntilCondition, isTrueBoolean, setValueByPath, flashHighlight, select2ModifyOptions, getSelect2OptionId, dynamicSelect2DataViaAjax, highlightRegex, select2ChoiceClickSubscribe, isFalseBoolean, getSanitizedFilename, checkOverwriteExistingData, parseStringArray, cancelDebounce, findChar, onlyUnique, equalsIgnoreCaseAndAccents, uuidv4, normalizeArray, getUniqueName } from './utils.js';
 import { getContext } from './extensions.js';
 import { isMobile } from './RossAscends-mods.js';
@@ -976,6 +976,93 @@ export function reloadEditor(file, loadIfNotSelected = false) {
     }
 }
 
+function getWorldInfoReportSnapshot(messageId = null) {
+    if (typeof messageId === 'number' && Number.isFinite(messageId) && messageId >= 0) {
+        const message = chat[messageId];
+        if (!message) {
+            return null;
+        }
+
+        return {
+            messageId,
+            report: message.extra?.worldInfoReport || null,
+            summary: message.extra?.worldInfoSummary || null,
+        };
+    }
+
+    for (let index = chat.length - 1; index >= 0; index--) {
+        const report = chat[index]?.extra?.worldInfoReport;
+        const summary = chat[index]?.extra?.worldInfoSummary;
+        if ((report && typeof report === 'object') || (summary && typeof summary === 'object')) {
+            return {
+                messageId: index,
+                report: report || null,
+                summary: summary || null,
+            };
+        }
+    }
+
+    return {
+        messageId: null,
+        report: chat_metadata.worldInfoReport || null,
+        summary: chat_metadata.worldInfoSummary || null,
+    };
+}
+
+async function showWorldInfoReportPopup(messageId = null) {
+    const snapshot = getWorldInfoReportSnapshot(messageId);
+    const report = snapshot?.report;
+    const summary = snapshot?.summary;
+
+    if ((!report || typeof report !== 'object') && (!summary || typeof summary !== 'object')) {
+        toastr.info(t`No World Info report is available for this chat yet.`);
+        return '';
+    }
+
+    const activeEntries = Array.isArray(summary?.activeEntries)
+        ? summary.activeEntries
+        : Array.isArray(report?.activatedEntries)
+            ? report.activatedEntries.filter(entry => entry?.status === 'admitted')
+            : [];
+    const rounds = Array.isArray(report?.rounds) ? report.rounds : [];
+    const template = await renderTemplateAsync('worldInfoReport', {
+        messageId: snapshot?.messageId,
+        overflowed: Boolean(summary?.overflowed ?? report?.overflowed),
+        activeEntriesCount: Number(summary?.activeEntriesCount ?? activeEntries.length) || 0,
+        totalTokens: Number(summary?.totalTokens ?? activeEntries.reduce((total, entry) => total + (Number(entry?.tokens ?? 0) || 0), 0)) || 0,
+        globalBudgetUsed: Number(report?.budgetUsed?.global?.used ?? summary?.budgetUsed?.global?.used ?? 0) || 0,
+        globalBudgetLimit: Number(report?.budgetUsed?.global?.limit ?? summary?.budgetUsed?.global?.limit ?? 0) || 0,
+        activeEntries: activeEntries.map(entry => ({
+            book: entry?.book || '',
+            displayName: entry?.displayName || '',
+            placement: entry?.placement || '',
+            tokens: Number(entry?.tokens ?? 0) || 0,
+            hidden: Boolean(entry?.hidden),
+            displayContent: entry?.displayContent || '',
+            status: entry?.status || '',
+        })),
+        rounds: rounds.map(round => ({
+            roundIndex: Number(round?.roundIndex ?? 0) || 0,
+            scanState: round?.scanState || '',
+            admittedEntries: Number(round?.admittedEntries ?? 0) || 0,
+            droppedEntries: Number(round?.droppedEntries ?? 0) || 0,
+            entries: Array.isArray(round?.entries) ? round.entries.map(entry => ({
+                book: entry?.book || '',
+                displayName: entry?.displayName || '',
+                placement: entry?.placement || '',
+                tokens: Number(entry?.tokens ?? 0) || 0,
+                hidden: Boolean(entry?.hidden),
+                displayContent: entry?.displayContent || '',
+                status: entry?.status || '',
+                dropReason: entry?.dropReason || '',
+            })) : [],
+        })),
+    });
+
+    await callGenericPopup(template, POPUP_TYPE.TEXT, '', { wide: true, wider: true, allowVerticalScrolling: true, leftAlign: true });
+    return '';
+}
+
 //MARK: regWISlashCommands
 function registerWorldInfoSlashCommands() {
     /**
@@ -1008,6 +1095,14 @@ function registerWorldInfoSlashCommands() {
         }
 
         return entries;
+    }
+
+    async function showWorldInfoReportCallback(_args, value) {
+        const parsedMessageId = value === undefined || value === null || value === ''
+            ? null
+            : Number(value);
+        const messageId = Number.isFinite(parsedMessageId) ? parsedMessageId : null;
+        return showWorldInfoReportPopup(messageId);
     }
 
     /**
@@ -1523,6 +1618,28 @@ function registerWorldInfoSlashCommands() {
         return JSON.stringify(entries);
     }
 
+    SlashCommandParser.addCommandObject(SlashCommand.fromProps({
+        name: 'wi-report',
+        callback: showWorldInfoReportCallback,
+        unnamedArgumentList: [
+            SlashCommandArgument.fromProps({
+                description: 'Optional message ID to inspect. Defaults to the latest stored World Info report in this chat.',
+                typeList: [ARGUMENT_TYPE.NUMBER, ARGUMENT_TYPE.STRING],
+                isRequired: false,
+                acceptsMultiple: false,
+            }),
+        ],
+        helpString: `
+            <div>
+                Open the structured World Info report popup for the current chat. If a message ID is provided, uses the report stored on that message.
+            </div>
+            <div>
+                <strong>Example:</strong>
+                <code>/wi-report 42</code>
+            </div>
+        `,
+        aliases: ['lore-report'],
+    }));
     SlashCommandParser.addCommandObject(SlashCommand.fromProps({
         name: 'world',
         callback: onWorldInfoChange,

@@ -149,7 +149,7 @@
 
     </div>
     <hr>
-    <div class="wide100p flex-container flexFlowColumns">
+<div class="wide100p flex-container flexFlowColumns">
         <div class="flex-container wide100p">
             <div class="flex1"><span data-i18n="Total Tokens in Prompt:">Total Tokens in Prompt:</span></div>
             <div class="">{{finalPromptTokens}}</div>
@@ -160,6 +160,24 @@
         </div>
     </div>
 </div>
+{{#if hasWorldInfoEntries}}
+<hr>
+<div class="wide100p flex-container flexFlowColumns flexNoGap">
+    <div class="wide100p"><strong>World Info Entries</strong></div>
+    {{#each worldInfoEntries}}
+    <div class="wide100p" style="padding: 0.4rem 0; border-bottom: 1px solid var(--SmartThemeBorderColor);">
+        <div class="flex-container wide100p">
+            <div class="flex1">
+                {{#if displayName}}{{displayName}}{{else}}{{#if book}}{{book}}{{else}}World Info Entry{{/if}}{{/if}}
+            </div>
+            <div>{{tokens}} tokens</div>
+        </div>
+        <div><small>{{placement}}{{#if hidden}} | hidden{{/if}}</small></div>
+        <pre class="tokenItemizingMaintext">{{displayContent}}</pre>
+    </div>
+    {{/each}}
+</div>
+{{/if}}
 <hr>
 <div id="rawPromptPopup" class="list-group">
     <div id="rawPromptWrapper" class="tokenItemizingMaintext"></div>

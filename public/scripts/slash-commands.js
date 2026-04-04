@@ -439,8 +439,12 @@ export function initDefaultSlashCommands() {
                     if (chatId) {
                         return reject(t`Not in a temporary chat`);
                     }
-                    await newAssistantChat({ temporary: true });
-                    return resolve('');
+                    try {
+                        await newAssistantChat({ temporary: true });
+                        return resolve('');
+                    } catch (error) {
+                        return reject(error instanceof Error ? error.message : t`Failed to open temporary chat`);
+                    }
                 };
 
                 eventSource.on(event_types.CHAT_CHANGED, eventCallback);

@@ -23,6 +23,11 @@ export const PUBLISH_MODES = Object.freeze({
     GLOBAL: 'global',
 });
 
+export const SUBMISSION_CLEANUP_MODES = Object.freeze({
+    ASSET: 'asset',
+    ALL: 'all',
+});
+
 export const DISTRIBUTION_SOURCE_TYPES = Object.freeze({
     CHARACTER: 'character',
     SUBMISSION: 'submission',
@@ -30,6 +35,19 @@ export const DISTRIBUTION_SOURCE_TYPES = Object.freeze({
 
 const DEFAULT_CONTENT_ROOT = path.join(serverDirectory, 'default', 'content');
 const DEFAULT_CONTENT_INDEX = path.join(DEFAULT_CONTENT_ROOT, 'index.json');
+let defaultContentIndexWriteQueue = Promise.resolve();
+
+/**
+ * Serializes mutations to the shared default content index to avoid lost updates.
+ * @template T
+ * @param {() => Promise<T>} operation
+ * @returns {Promise<T>}
+ */
+function runWithDefaultContentIndexLock(operation) {
+    const queuedOperation = defaultContentIndexWriteQueue.catch(() => { }).then(operation);
+    defaultContentIndexWriteQueue = queuedOperation.catch(() => { });
+    return queuedOperation;
+}
 
 /**
  * Gets the submission root directory.
@@ -185,30 +203,32 @@ function getSubmissionOwnerHandle(card) {
  * @returns {Promise<void>}
  */
 async function upsertDefaultContentCharacter(relativeFilename) {
-    await fsPromises.mkdir(path.dirname(DEFAULT_CONTENT_INDEX), { recursive: true });
+    return runWithDefaultContentIndexLock(async () => {
+        await fsPromises.mkdir(path.dirname(DEFAULT_CONTENT_INDEX), { recursive: true });
 
-    /** @type {{filename: string, type: string}[]} */
-    let contentIndex = [];
-    if (fs.existsSync(DEFAULT_CONTENT_INDEX)) {
-        try {
-            const raw = await fsPromises.readFile(DEFAULT_CONTENT_INDEX, 'utf8');
-            const parsed = JSON.parse(raw);
-            if (Array.isArray(parsed)) {
-                contentIndex = parsed;
+        /** @type {{filename: string, type: string}[]} */
+        let contentIndex = [];
+        if (fs.existsSync(DEFAULT_CONTENT_INDEX)) {
+            try {
+                const raw = await fsPromises.readFile(DEFAULT_CONTENT_INDEX, 'utf8');
+                const parsed = JSON.parse(raw);
+                if (Array.isArray(parsed)) {
+                    contentIndex = parsed;
+                }
+            } catch (error) {
+                console.warn('Failed to read default content index. Recreating it.', error);
             }
-        } catch (error) {
-            console.warn('Failed to read default content index. Recreating it.', error);
         }
-    }
 
-    const existingIndex = contentIndex.findIndex(item => item.filename === relativeFilename);
-    if (existingIndex === -1) {
-        contentIndex.push({ filename: relativeFilename, type: 'character' });
-    } else {
-        contentIndex[existingIndex].type = 'character';
-    }
+        const existingIndex = contentIndex.findIndex(item => item.filename === relativeFilename);
+        if (existingIndex === -1) {
+            contentIndex.push({ filename: relativeFilename, type: 'character' });
+        } else {
+            contentIndex[existingIndex].type = 'character';
+        }
 
-    writeFileAtomicSync(DEFAULT_CONTENT_INDEX, JSON.stringify(contentIndex, null, 4));
+        writeFileAtomicSync(DEFAULT_CONTENT_INDEX, JSON.stringify(contentIndex, null, 4));
+    });
 }
 
 /**
@@ -277,6 +297,26 @@ export async function writeSubmissionRecord(record) {
     const { basePath, recordPath } = getSubmissionPaths(record.id);
     await fsPromises.mkdir(basePath, { recursive: true });
     writeFileAtomicSync(recordPath, JSON.stringify(record, null, 4));
+}
+
+/**
+ * Cleans up stored submission data.
+ * @param {{ submissionId: string, deleteMode: 'asset'|'all' }} params
+ * @returns {Promise<void>}
+ */
+export async function cleanupSubmission({ submissionId, deleteMode }) {
+    const { basePath, cardPath } = getSubmissionPaths(submissionId);
+
+    switch (deleteMode) {
+        case SUBMISSION_CLEANUP_MODES.ASSET:
+            await fsPromises.rm(cardPath, { force: true }).catch(() => { });
+            return;
+        case SUBMISSION_CLEANUP_MODES.ALL:
+            await fsPromises.rm(basePath, { recursive: true, force: true }).catch(() => { });
+            return;
+        default:
+            throw new Error('Invalid submission cleanup mode.');
+    }
 }
 
 /**
@@ -351,16 +391,44 @@ export async function persistCharacterSubmissionOwner({ filePath, ownerHandle })
  */
 export async function buildSubmissionSummary(record) {
     const { cardPath } = getSubmissionPaths(record.id);
-    const { card } = await readCharacterCardFile(cardPath);
+    const hasStoredCard = fs.existsSync(cardPath);
 
-    return {
-        ...record,
-        characterName: getCharacterName(card),
-        creator: String(_.get(card, 'data.creator', _.get(card, 'creator', '')) || ''),
-        creatorNotes: String(_.get(card, 'data.creator_notes', _.get(card, 'creatorcomment', '')) || ''),
-        tags: _.get(card, 'data.tags', _.get(card, 'tags', [])) || [],
-        ownerMetadata: String(_.get(card, 'data.extensions.aikobots.owner_handle', '')),
-    };
+    if (!hasStoredCard) {
+        return {
+            ...record,
+            characterName: '',
+            creator: '',
+            creatorNotes: '',
+            tags: [],
+            ownerMetadata: '',
+            hasStoredCard: false,
+        };
+    }
+
+    try {
+        const { card } = await readCharacterCardFile(cardPath);
+
+        return {
+            ...record,
+            characterName: getCharacterName(card),
+            creator: String(_.get(card, 'data.creator', _.get(card, 'creator', '')) || ''),
+            creatorNotes: String(_.get(card, 'data.creator_notes', _.get(card, 'creatorcomment', '')) || ''),
+            tags: _.get(card, 'data.tags', _.get(card, 'tags', [])) || [],
+            ownerMetadata: String(_.get(card, 'data.extensions.aikobots.owner_handle', '')),
+            hasStoredCard: true,
+        };
+    } catch (error) {
+        console.warn(`Failed to read submission card metadata for ${record.id}.`, error);
+        return {
+            ...record,
+            characterName: '',
+            creator: '',
+            creatorNotes: '',
+            tags: [],
+            ownerMetadata: '',
+            hasStoredCard: true,
+        };
+    }
 }
 
 /**

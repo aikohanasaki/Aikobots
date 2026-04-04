@@ -29,12 +29,12 @@
         <div class="flex-container flexFlowColumn named-bookmarks-list">
             {{#each bookmarks}}
                 <div class="named-bookmark-item flex-container alignItemsCenter padding8 marginTopBot5 st-bookmarks-row" data-message-num="{{messageNum}}" data-title="{{title}}">
-                    <div class="named-bookmark-main flex1 cursor-pointer marginTopBot5" data-index="{{@index}}" title="{{loadStatus.tooltip}}">
+                    <button type="button" class="named-bookmark-main flex1 cursor-pointer marginTopBot5 menu_button" data-index="{{@index}}" title="{{loadStatus.tooltip}}">
                         <span class="named-bookmark-indicator">{{loadStatus.indicator}}</span>
                         <strong>#{{messageNum}}</strong>
                         <span>-</span>
                         <span>{{title}}</span>
-                    </div>
+                    </button>
                     <div class="named-bookmark-actions flex-container flexNoGap">
                         <button type="button" class="menu_button fa-solid fa-edit interactable named-bookmark-edit" data-index="{{@index}}" title="Edit bookmark"></button>
                         <button type="button" class="menu_button fa-solid fa-trash interactable red_button named-bookmark-delete" data-index="{{@index}}" title="Delete bookmark"></button>

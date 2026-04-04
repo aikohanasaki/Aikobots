@@ -676,21 +676,51 @@ export function getLorebookForManagement(user, name, allowDummy = false, storage
  * @param {string} name
  * @param {boolean} [allowDummy=false]
  */
-export function readLorebookForGeneration(user, name, allowDummy = false) {
+export function readLorebookForGenerationWithMetadata(user, name, allowDummy = false) {
     const canonicalName = getCanonicalLorebookName(name);
     const dummyObject = allowDummy ? { entries: {} } : null;
 
     if (!canonicalName) {
-        return dummyObject;
+        return {
+            data: dummyObject,
+            metadata: null,
+        };
     }
 
     const userRecord = getUserLorebookRecord(user.profile.handle, canonicalName);
     if (userRecord) {
-        return readLorebookFromRecord(userRecord, allowDummy);
+        return {
+            data: readLorebookFromRecord(userRecord, allowDummy),
+            metadata: {
+                name: userRecord.name,
+                storage: 'user',
+                ownerHandle: userRecord.ownerHandle,
+            },
+        };
     }
 
     const secureRecord = getSecureIndexEntry(canonicalName);
-    return readLorebookFromRecord(secureRecord, allowDummy);
+    return {
+        data: readLorebookFromRecord(secureRecord, allowDummy),
+        metadata: secureRecord ? {
+            name: secureRecord.name,
+            storage: 'secure',
+            ownerHandle: secureRecord.ownerHandle,
+        } : {
+            name: canonicalName,
+            storage: 'user',
+            ownerHandle: user.profile.handle,
+        },
+    };
+}
+
+/**
+ * @param {import('./users.js').User} user
+ * @param {string} name
+ * @param {boolean} [allowDummy=false]
+ */
+export function readLorebookForGeneration(user, name, allowDummy = false) {
+    return readLorebookForGenerationWithMetadata(user, name, allowDummy).data;
 }
 
 /**

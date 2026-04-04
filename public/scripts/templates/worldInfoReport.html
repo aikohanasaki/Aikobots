@@ -1,0 +1,69 @@
+<h3>World Info Report{{#if messageId}} <small>(Message {{messageId}})</small>{{/if}}</h3>
+<div class="flex-container flexFlowColumns">
+    <div class="flex-container wide100p">
+        <div class="flex1">Active Entries</div>
+        <div>{{activeEntriesCount}}</div>
+    </div>
+    <div class="flex-container wide100p">
+        <div class="flex1">Active Tokens</div>
+        <div>{{totalTokens}}</div>
+    </div>
+    <div class="flex-container wide100p">
+        <div class="flex1">Global Budget</div>
+        <div>{{globalBudgetUsed}} / {{globalBudgetLimit}}</div>
+    </div>
+    <div class="flex-container wide100p">
+        <div class="flex1">Overflowed</div>
+        <div>{{#if overflowed}}Yes{{else}}No{{/if}}</div>
+    </div>
+</div>
+
+{{#if activeEntries.length}}
+<hr>
+<h4>Active Entries</h4>
+<div class="flex-container flexFlowColumns flexNoGap">
+    {{#each activeEntries}}
+    <div class="wide100p" style="padding: 0.4rem 0; border-bottom: 1px solid var(--SmartThemeBorderColor);">
+        <div class="flex-container wide100p">
+            <div class="flex1">
+                {{#if displayName}}{{displayName}}{{else}}{{#if book}}{{book}}{{else}}World Info Entry{{/if}}{{/if}}
+            </div>
+            <div>{{tokens}} tokens</div>
+        </div>
+        <div><small>{{placement}}{{#if hidden}} | hidden{{/if}}{{#if status}} | {{status}}{{/if}}</small></div>
+        <pre class="tokenItemizingMaintext">{{displayContent}}</pre>
+    </div>
+    {{/each}}
+</div>
+{{/if}}
+
+{{#if rounds.length}}
+<hr>
+<h4>Rounds</h4>
+<div class="flex-container flexFlowColumns flexNoGap">
+    {{#each rounds}}
+    <div class="wide100p" style="padding: 0.6rem 0; border-bottom: 1px solid var(--SmartThemeBorderColor);">
+        <div class="flex-container wide100p">
+            <div class="flex1">Round {{roundIndex}}</div>
+            <div><small>{{scanState}} | admitted {{admittedEntries}} | dropped {{droppedEntries}}</small></div>
+        </div>
+        {{#if entries.length}}
+        <div class="flex-container flexFlowColumns flexNoGap">
+            {{#each entries}}
+            <div class="wide100p" style="padding: 0.35rem 0;">
+                <div class="flex-container wide100p">
+                    <div class="flex1">
+                        {{#if displayName}}{{displayName}}{{else}}{{#if book}}{{book}}{{else}}World Info Entry{{/if}}{{/if}}
+                    </div>
+                    <div>{{tokens}} tokens</div>
+                </div>
+                <div><small>{{placement}}{{#if hidden}} | hidden{{/if}}{{#if status}} | {{status}}{{/if}}{{#if dropReason}} ({{dropReason}}){{/if}}</small></div>
+                <pre class="tokenItemizingMaintext">{{displayContent}}</pre>
+            </div>
+            {{/each}}
+        </div>
+        {{/if}}
+    </div>
+    {{/each}}
+</div>
+{{/if}}

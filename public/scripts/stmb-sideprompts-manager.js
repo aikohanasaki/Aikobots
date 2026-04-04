@@ -21,6 +21,7 @@ function normalizeTemplateTriggers(template) {
     template.triggers = hadExplicitTriggers
         ? { ...template.triggers }
         : { commands: ['sideprompt'] };
+    const strippedAutoTriggers = [];
 
     if (template.triggers.onInterval) {
         const visibleMessages = Math.max(1, Number(template.triggers.onInterval.visibleMessages ?? 50));
@@ -42,12 +43,16 @@ function normalizeTemplateTriggers(template) {
     }
 
     if (hasTemplateRuntimeMacros(template)) {
+        if (template.triggers.onInterval) strippedAutoTriggers.push('onInterval');
+        if (template.triggers.onAfterMemory) strippedAutoTriggers.push('onAfterMemory');
         delete template.triggers.onInterval;
         delete template.triggers.onAfterMemory;
         if (!template.triggers.commands.some(command => command.toLowerCase() === 'sideprompt')) {
             template.triggers.commands.push('sideprompt');
         }
     }
+
+    return { strippedAutoTriggers };
 }
 
 function validateSidePromptsFileV2(data) {
@@ -159,7 +164,6 @@ function getBuiltinTemplates() {
             },
         },
         { onAfterMemory: { enabled: true }, commands: ['sideprompt'] },
-        'cast',
     );
 
     define(
@@ -222,26 +226,6 @@ function getBuiltinTemplates() {
     return prompts;
 }
 
-function normalizeBuiltinTemplateKeys(document) {
-    const prompts = document?.prompts;
-    if (!prompts || typeof prompts !== 'object') {
-        return false;
-    }
-
-    if (!prompts.cast && prompts['cast-of-characters']) {
-        const legacy = prompts['cast-of-characters'];
-        prompts.cast = {
-            ...legacy,
-            key: 'cast',
-            updatedAt: nowIso(),
-        };
-        delete prompts['cast-of-characters'];
-        return true;
-    }
-
-    return false;
-}
-
 function createBaseDoc() {
     return {
         version: 2,
@@ -294,9 +278,6 @@ export async function loadSidePrompts() {
                 await saveDoc(data);
             } else {
                 data = parsed;
-                if (normalizeBuiltinTemplateKeys(data)) {
-                    await saveDoc(data);
-                }
             }
         }
     } catch {

@@ -8,7 +8,9 @@ import sanitize from 'sanitize-filename';
 import {
     PUBLISH_MODES,
     SUBMISSION_STATUSES,
+    SUBMISSION_CLEANUP_MODES,
     canAccessSubmission,
+    cleanupSubmission,
     createCharacterSubmission,
     buildSubmissionSummary,
     distributeCharacterFile,
@@ -22,6 +24,20 @@ import {
 import { requireAdminMiddleware } from '../users.js';
 
 export const router = express.Router();
+
+const PNG_SIGNATURE = Buffer.from([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A]);
+
+async function isPngFile(filePath) {
+    const fileHandle = await fsPromises.open(filePath, 'r');
+
+    try {
+        const header = Buffer.alloc(PNG_SIGNATURE.length);
+        const { bytesRead } = await fileHandle.read(header, 0, header.length, 0);
+        return bytesRead === PNG_SIGNATURE.length && header.equals(PNG_SIGNATURE);
+    } finally {
+        await fileHandle.close();
+    }
+}
 
 router.post('/submit', async (request, response) => {
     const uploadPath = request.file?.path || (request.file?.destination && request.file?.filename ? path.join(request.file.destination, request.file.filename) : '');
@@ -39,11 +55,7 @@ router.post('/submit', async (request, response) => {
                 return response.status(400).json({ error: 'Uploaded file could not be processed.' });
             }
 
-            const mimeType = String(request.file.mimetype || '').toLowerCase();
-            const originalName = String(request.file.originalname || '').toLowerCase();
-            const isPng = mimeType === 'image/png' || originalName.endsWith('.png');
-
-            if (!isPng) {
+            if (!(await isPngFile(uploadPath))) {
                 return response.status(400).json({ error: 'Only PNG character cards are supported.' });
             }
         } else {
@@ -59,6 +71,10 @@ router.post('/submit', async (request, response) => {
             sourcePath = path.join(request.user.directories.characters, sourceAvatar);
             if (!fs.existsSync(sourcePath)) {
                 return response.status(404).json({ error: 'Source character was not found.' });
+            }
+
+            if (!(await isPngFile(sourcePath))) {
+                return response.status(400).json({ error: 'Only PNG character cards are supported.' });
             }
 
             originalFilename = sourceAvatar;
@@ -197,5 +213,40 @@ router.post('/review', requireAdminMiddleware, async (request, response) => {
     } catch (error) {
         console.error('Character submission review failed:', error);
         return response.status(400).json({ error: error.message || 'Character review failed.' });
+    }
+});
+
+router.post('/cleanup', requireAdminMiddleware, async (request, response) => {
+    try {
+        const submissionId = String(request.body?.id || '').trim();
+        const deleteMode = String(request.body?.deleteMode || '').trim();
+
+        if (!submissionId) {
+            return response.status(400).json({ error: 'Missing submission id.' });
+        }
+
+        if (![SUBMISSION_CLEANUP_MODES.ASSET, SUBMISSION_CLEANUP_MODES.ALL].includes(deleteMode)) {
+            return response.status(400).json({ error: 'Invalid cleanup mode.' });
+        }
+
+        const record = await getSubmissionRecord(submissionId);
+        await cleanupSubmission({ submissionId, deleteMode });
+
+        if (deleteMode === SUBMISSION_CLEANUP_MODES.ALL) {
+            return response.json({
+                id: submissionId,
+                deleted: true,
+                deleteMode,
+            });
+        }
+
+        return response.json({
+            ...(await buildSubmissionSummary(record)),
+            deleted: false,
+            deleteMode,
+        });
+    } catch (error) {
+        console.error('Character submission cleanup failed:', error);
+        return response.status(400).json({ error: error.message || 'Character submission cleanup failed.' });
     }
 });

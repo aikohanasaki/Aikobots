@@ -147,17 +147,22 @@ async function loadDoc(settings = null) {
         });
 
         if (!response.ok) {
-            shouldCreate = true;
+            if (response.status === 404) {
+                shouldCreate = true;
+            } else {
+                throw new Error(`Failed to load consolidation prompts: ${response.status} ${response.statusText}`);
+            }
         } else {
             const parsed = JSON.parse(await response.text());
             if (!validatePromptsFile(parsed)) {
-                shouldCreate = true;
-            } else {
-                data = parsed;
+                throw new Error('Invalid consolidation prompts file structure.');
             }
+            data = parsed;
         }
-    } catch {
-        shouldCreate = true;
+    } catch (error) {
+        if (!shouldCreate) {
+            throw error;
+        }
     }
 
     if (shouldCreate) {
