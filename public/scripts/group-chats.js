@@ -69,6 +69,7 @@ import {
     setCharacterSettingsOverrides,
     system_avatar,
     isChatSaving,
+    closeCurrentChat,
     setExternalAbortController,
     baseChatReplace,
     depth_prompt_depth_default,
@@ -2086,10 +2087,17 @@ export async function deleteGroupChat(groupId, chatId, { jumpToNewChat = true } 
         return;
     }
 
+    if (typeof group.past_metadata !== 'object') {
+        group.past_metadata = {};
+    }
+
+    const isCurrentChat = group.chat_id === chatId;
+    const isActiveCurrentChat = isCurrentChat && String(selected_group) === String(groupId);
+
     group.chats.splice(group.chats.indexOf(chatId), 1);
     delete group.past_metadata[chatId];
 
-    if (group.chat_id === chatId) {
+    if (isCurrentChat) {
         group.chat_id = '';
         group.chat_metadata = {};
         updateChatMetadata(group.chat_metadata, true);
@@ -2102,16 +2110,52 @@ export async function deleteGroupChat(groupId, chatId, { jumpToNewChat = true } 
     });
 
     if (response.ok) {
-        if (jumpToNewChat) {
-            if (group.chats.length) {
-                await openGroupChat(groupId, group.chats[group.chats.length - 1]);
+        if (isActiveCurrentChat && jumpToNewChat) {
+            if (power_user.delete_current_chat_to_welcome) {
+                prepareNextGroupChat(group);
+                await editGroup(groupId, true, false);
+                await closeCurrentChat();
+            } else if (group.chats.length) {
+                const newChatId = group.chats[group.chats.length - 1];
+                group.chat_id = newChatId;
+                group.chat_metadata = group.past_metadata[newChatId] || {};
+                group['date_last_chat'] = Date.now();
+                updateChatMetadata(group.chat_metadata, true);
+                await editGroup(groupId, true, false);
+                await getGroupChat(groupId);
             } else {
                 await createNewGroupChat(groupId);
             }
+        } else {
+            await editGroup(groupId, true, false);
         }
 
         await eventSource.emit(event_types.GROUP_CHAT_DELETED, chatId);
     }
+}
+
+function prepareNextGroupChat(group) {
+    if (!group) {
+        return;
+    }
+
+    if (typeof group.past_metadata !== 'object') {
+        group.past_metadata = {};
+    }
+
+    if (group.chats.length) {
+        const nextChatId = group.chats[group.chats.length - 1];
+        group.chat_id = nextChatId;
+        group.chat_metadata = group.past_metadata[nextChatId] || {};
+        group['date_last_chat'] = Date.now();
+        return;
+    }
+
+    const nextChatId = humanizedDateTime();
+    group.chats.push(nextChatId);
+    group.chat_id = nextChatId;
+    group.chat_metadata = {};
+    group['date_last_chat'] = Date.now();
 }
 
 /**

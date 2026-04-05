@@ -414,6 +414,12 @@ export const ZANITY_ENDPOINT = {
     ALTERNATE: 'alternate',
 };
 
+function getZanityApiUrl(endpoint = null) {
+    return (endpoint || oai_settings.zanity_endpoint) === ZANITY_ENDPOINT.ALTERNATE
+        ? 'https://api.zanity.xyz/rp'
+        : 'https://api.zanity.xyz/v1';
+}
+
 const sensitiveFields = [
     'reverse_proxy',
     'proxy_password',
@@ -2118,7 +2124,7 @@ async function buildOpenAIGenerateData(type, messages, { jsonSchema = null } = {
     }
 
     // Add logprobs request (currently OpenAI only, max 5 on their side)
-    if (useLogprobs && (isOAI || isAzureOpenAI || isCustom || isDeepSeek || isXAI || isAimlapi)) {
+    if (useLogprobs && (isOAI || isAzureOpenAI || isCustom || isZanity || isDeepSeek || isXAI || isAimlapi)) {
         generate_data['logprobs'] = 5;
     }
 
@@ -2247,8 +2253,10 @@ async function buildOpenAIGenerateData(type, messages, { jsonSchema = null } = {
     }
 
     if (isZanity) {
-        generate_data['top_k'] = Number(oai_settings.top_k_openai);
-        generate_data['zanity_endpoint'] = oai_settings.zanity_endpoint || ZANITY_ENDPOINT.STANDARD;
+        generate_data['custom_url'] = getZanityApiUrl();
+        generate_data['custom_include_body'] = '';
+        generate_data['custom_exclude_body'] = '';
+        generate_data['custom_include_headers'] = '';
     }
 
     // https://docs.z.ai/api-reference/llm/chat-completion
@@ -3580,7 +3588,6 @@ async function getStatusOpen() {
         chat_completion_sources.AI21,
         chat_completion_sources.VERTEXAI,
         chat_completion_sources.PERPLEXITY,
-        chat_completion_sources.ZANITY,
         chat_completion_sources.ZAI,
     ];
     if (noValidateSources.includes(oai_settings.chat_completion_source)) {
@@ -3640,7 +3647,8 @@ async function getStatusOpen() {
     }
 
     if (oai_settings.chat_completion_source === chat_completion_sources.ZANITY) {
-        data.zanity_endpoint = oai_settings.zanity_endpoint || ZANITY_ENDPOINT.STANDARD;
+        data.custom_url = getZanityApiUrl();
+        data.custom_include_headers = '';
     }
 
     const canBypass = (oai_settings.chat_completion_source === chat_completion_sources.OPENAI && oai_settings.bypass_status_check) || oai_settings.chat_completion_source === chat_completion_sources.CUSTOM;

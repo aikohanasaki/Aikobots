@@ -1972,9 +1972,10 @@ router.post('/status', async function (request, statusResponse) {
         apiKey = readSecret(request.user.directories, SECRET_KEYS.NAVY);
         headers = {};
     } else if (request.body.chat_completion_source === CHAT_COMPLETION_SOURCES.ZANITY) {
-        apiUrl = getZanityApiUrl(request.body.zanity_endpoint);
+        apiUrl = request.body.custom_url || getZanityApiUrl(request.body.zanity_endpoint);
         apiKey = readSecret(request.user.directories, SECRET_KEYS.ZANITY);
         headers = {};
+        mergeObjectWithYaml(headers, request.body.custom_include_headers);
     } else if (request.body.chat_completion_source === CHAT_COMPLETION_SOURCES.NANOGPT) {
         apiUrl = API_NANOGPT;
         apiKey = readSecret(request.user.directories, SECRET_KEYS.NANOGPT);
@@ -2581,13 +2582,21 @@ export async function handleChatCompletionsGenerate(request, response) {
         };
         throw new Error('This provider is temporarily disabled.');
     } else if (request.body.chat_completion_source === CHAT_COMPLETION_SOURCES.ZANITY) {
-        apiUrl = getZanityApiUrl(request.body.zanity_endpoint);
+        apiUrl = request.body.custom_url || getZanityApiUrl(request.body.zanity_endpoint);
         apiKey = readSecret(request.user.directories, SECRET_KEYS.ZANITY);
         headers = {};
-        bodyParams = {};
-        if (request.body.json_schema) {
-            setJsonObjectFormat(bodyParams, request.body.messages, request.body.json_schema);
+        bodyParams = {
+            logprobs: request.body.logprobs,
+            top_logprobs: undefined,
+        };
+
+        if (bodyParams.logprobs > 0) {
+            bodyParams.top_logprobs = bodyParams.logprobs;
+            bodyParams.logprobs = true;
         }
+
+        mergeObjectWithYaml(bodyParams, request.body.custom_include_body);
+        mergeObjectWithYaml(headers, request.body.custom_include_headers);
     } else if (request.body.chat_completion_source === CHAT_COMPLETION_SOURCES.ZAI) {
         apiUrl = request.body.zai_endpoint === ZAI_ENDPOINT.CODING ? API_ZAI_CODING : API_ZAI_COMMON;
         apiKey = readSecret(request.user.directories, SECRET_KEYS.ZAI);
@@ -2691,7 +2700,7 @@ export async function handleChatCompletionsGenerate(request, response) {
         ...bodyParams,
     };
 
-    if (request.body.chat_completion_source === CHAT_COMPLETION_SOURCES.CUSTOM) {
+    if ([CHAT_COMPLETION_SOURCES.CUSTOM, CHAT_COMPLETION_SOURCES.ZANITY].includes(request.body.chat_completion_source)) {
         excludeKeysByYaml(requestBody, request.body.custom_exclude_body);
     }
 

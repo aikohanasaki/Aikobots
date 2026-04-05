@@ -274,6 +274,7 @@ export const power_user = {
     show_swipe_num_all_messages: false,
     auto_connect: false,
     auto_load_chat: false,
+    delete_current_chat_to_welcome: false,
     forbid_external_media: true,
     external_media_allowed_overrides: [],
     external_media_forbidden_overrides: [],
@@ -1670,6 +1671,7 @@ export async function loadPowerUserSettings(settings, data) {
     $('#reduced_motion').prop('checked', power_user.reduced_motion);
     $('#auto-connect-checkbox').prop('checked', power_user.auto_connect);
     $('#auto-load-chat-checkbox').prop('checked', power_user.auto_load_chat);
+    $('#delete-current-chat-to-welcome').prop('checked', power_user.delete_current_chat_to_welcome);
     $('#forbid_external_media').prop('checked', power_user.forbid_external_media);
     $('#pin_styles').prop('checked', power_user.pin_styles);
     $('#click_to_edit').prop('checked', power_user.click_to_edit);
@@ -3753,6 +3755,11 @@ jQuery(() => {
 
     $('#auto-load-chat-checkbox').on('input', function () {
         power_user.auto_load_chat = !!$(this).prop('checked');
+        saveSettingsDebounced();
+    });
+
+    $('#delete-current-chat-to-welcome').on('input', function () {
+        power_user.delete_current_chat_to_welcome = !!$(this).prop('checked');
         saveSettingsDebounced();
     });
 

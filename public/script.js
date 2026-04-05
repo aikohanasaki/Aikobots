@@ -1167,12 +1167,12 @@ async function deleteCurrentTopChat() {
     }
 
     if (selected_group) {
-        await deleteGroupChatByName(selected_group, currentChatId);
+        await deleteGroupChat(selected_group, currentChatId);
         return;
     }
 
     if (this_chid !== undefined) {
-        await deleteCharacterChatByName(String(this_chid), currentChatId);
+        await delChat(`${currentChatId}.jsonl`);
     }
 }
 
@@ -2061,7 +2061,13 @@ async function delChat(chatfile) {
         const name = chatfile.replace('.jsonl', '');
         if (name === characters[this_chid].chat) {
             chat_metadata = {};
-            await replaceCurrentChat();
+            if (power_user.delete_current_chat_to_welcome) {
+                const replacementChatName = await getReplacementCharacterChatName(String(this_chid));
+                await updateRemoteChatName(String(this_chid), replacementChatName);
+                await closeCurrentChat();
+            } else {
+                await replaceCurrentChat();
+            }
         }
         await eventSource.emit(event_types.CHAT_DELETED, name);
     }
@@ -2081,6 +2087,11 @@ export async function deleteCharacterChatByName(characterId, fileName) {
     const character = characters[characterId];
     if (!character) {
         console.warn(`Character with ID ${characterId} not found.`);
+        return;
+    }
+
+    if (!selected_group && String(this_chid) === String(characterId)) {
+        await delChat(`${fileName}.jsonl`);
         return;
     }
 
@@ -2111,6 +2122,30 @@ export async function deleteCharacterChatByName(characterId, fileName) {
     }
 
     await eventSource.emit(event_types.CHAT_DELETED, fileName);
+}
+
+async function getReplacementCharacterChatName(characterId) {
+    const character = characters[characterId];
+    if (!character) {
+        return `${name2} - ${humanizedDateTime()}`;
+    }
+
+    const chatsResponse = await fetch('/api/characters/chats', {
+        method: 'POST',
+        headers: getRequestHeaders(),
+        body: JSON.stringify({ avatar_url: character.avatar }),
+    });
+
+    if (!chatsResponse.ok) {
+        return `${character.name} - ${humanizedDateTime()}`;
+    }
+
+    const chats = Object.values(await chatsResponse.json());
+    chats.sort((a, b) => sortMoments(timestampToMoment(a.last_mes), timestampToMoment(b.last_mes)));
+
+    return chats.length && typeof chats[0] === 'object'
+        ? chats[0].file_name.replace('.jsonl', '')
+        : `${character.name} - ${humanizedDateTime()}`;
 }
 
 export async function replaceCurrentChat() {
