@@ -1,3 +1,4 @@
+import { DOMPurify } from '../lib.js';
 import { getRequestHeaders, messageFormatting } from '../script.js';
 import { POPUP_RESULT, POPUP_TYPE, Popup, callGenericPopup } from './popup.js';
 import { renderTemplateAsync } from './templates.js';
@@ -179,7 +180,12 @@ async function sendAdminMessage(handle, body) {
 
 function getMessageHtml(message) {
     if (typeof message?.html === 'string' && message.html.length) {
-        return message.html;
+        return DOMPurify.sanitize(message.html, {
+            RETURN_DOM: false,
+            RETURN_DOM_FRAGMENT: false,
+            RETURN_TRUSTED_TYPE: false,
+            MESSAGE_SANITIZE: true,
+        });
     }
 
     try {
@@ -1440,6 +1446,13 @@ async function openUserMessagesPopup() {
     const threadContainer = template.find('.userMessagesThread');
     const composer = template.find('.userMessagesComposer');
     const sendButton = template.find('.userMessagesSendButton');
+    let isSendingMessage = false;
+
+    function setComposerSendingState(isSending) {
+        sendButton.toggleClass('disabled', isSending);
+        sendButton.prop('disabled', isSending);
+        composer.prop('disabled', isSending);
+    }
 
     async function loadThread() {
         try {
@@ -1453,10 +1466,15 @@ async function openUserMessagesPopup() {
     }
 
     async function sendMessage() {
+        if (isSendingMessage) {
+            return;
+        }
+
         const body = String(composer.val() || '');
 
         try {
-            sendButton.addClass('disabled');
+            isSendingMessage = true;
+            setComposerSendingState(true);
             await sendUserMessage(body);
             composer.val('');
             await loadThread();
@@ -1464,7 +1482,8 @@ async function openUserMessagesPopup() {
             console.error('Error sending user message:', error);
             toastr.error(error.message || 'Unknown error', 'Failed to send message');
         } finally {
-            sendButton.removeClass('disabled');
+            isSendingMessage = false;
+            setComposerSendingState(false);
         }
     }
 
@@ -1532,6 +1551,7 @@ async function changeAvatar(handle, avatar) {
 async function openAdminPanel(initialTab = 'usersList') {
     let selectedMessageHandle = '';
     let threadSummaries = [];
+    let isSendingAdminMessage = false;
 
     function showAdminTab(target) {
         template.find('.adminNav > button').each(function () {
@@ -1671,18 +1691,30 @@ async function openAdminPanel(initialTab = 'usersList') {
         }
     }
 
+    function setAdminComposerSendingState(isSending) {
+        const composer = template.find('.adminMessagesComposer');
+        const sendButton = template.find('.adminMessagesSendButton');
+        sendButton.toggleClass('disabled', isSending);
+        sendButton.prop('disabled', isSending);
+        composer.prop('disabled', isSending);
+    }
+
     async function sendAdminMessageFromComposer() {
+        if (isSendingAdminMessage) {
+            return;
+        }
+
         if (!selectedMessageHandle) {
             toastr.warning('Select a user thread first.', 'No thread selected');
             return;
         }
 
         const composer = template.find('.adminMessagesComposer');
-        const sendButton = template.find('.adminMessagesSendButton');
         const body = String(composer.val() || '');
 
         try {
-            sendButton.addClass('disabled');
+            isSendingAdminMessage = true;
+            setAdminComposerSendingState(true);
             await sendAdminMessage(selectedMessageHandle, body);
             composer.val('');
             await loadMessageSummaries();
@@ -1691,7 +1723,8 @@ async function openAdminPanel(initialTab = 'usersList') {
             console.error('Error sending admin message:', error);
             toastr.error(error.message || 'Unknown error', 'Failed to send message');
         } finally {
-            sendButton.removeClass('disabled');
+            isSendingAdminMessage = false;
+            setAdminComposerSendingState(false);
         }
     }
 

@@ -1625,12 +1625,15 @@ class PromptManager {
      * @param {object | null} assembly Server assembly payload
      */
     setAssemblyDebugData(assembly) {
-        const messages = this.hydrateMessageNode(assembly?.messagesState);
+        const hydrated = this.hydrateMessageNode(assembly?.messagesState);
+        const messages = hydrated instanceof MessageCollection
+            ? hydrated
+            : hydrated instanceof Message
+                ? new MessageCollection('assembly', hydrated)
+                : new MessageCollection('assembly');
 
-        if (messages instanceof MessageCollection) {
-            this.setMessages(messages);
-            this.populateTokenCounts(messages);
-        }
+        this.setMessages(messages);
+        this.populateTokenCounts(messages);
 
         this.overriddenPrompts = Array.isArray(assembly?.overriddenPrompts)
             ? assembly.overriddenPrompts

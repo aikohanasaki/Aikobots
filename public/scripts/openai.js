@@ -154,12 +154,31 @@ function sanitizeForServerPayload(value, seen = new WeakSet()) {
     return result;
 }
 
+function redactSensitiveDebugValue(value) {
+    if (Array.isArray(value)) {
+        return value.map(item => redactSensitiveDebugValue(item));
+    }
+
+    if (!value || typeof value !== 'object') {
+        return value;
+    }
+
+    const result = {};
+    for (const [key, nestedValue] of Object.entries(value)) {
+        result[key] = sensitiveFields.includes(key)
+            ? '[REDACTED]'
+            : redactSensitiveDebugValue(nestedValue);
+    }
+
+    return result;
+}
+
 function storeServerAssemblyPromptContext(promptContext) {
     const sanitizedPromptContext = promptContext && typeof promptContext === 'object'
         ? sanitizeForServerPayload(promptContext)
         : null;
     lastServerAssemblyPromptContext = sanitizedPromptContext && typeof sanitizedPromptContext === 'object'
-        ? sanitizedPromptContext
+        ? redactSensitiveDebugValue(sanitizedPromptContext)
         : null;
 }
 
@@ -202,6 +221,9 @@ export async function debugServerAssemblyDump(promptContext = null) {
     const context = sourceContext && typeof sourceContext === 'object'
         ? sanitizeForServerPayload(sourceContext)
         : null;
+    const debugContext = context && typeof context === 'object'
+        ? redactSensitiveDebugValue(context)
+        : null;
 
     if (!context) {
         throw new Error('No promptContext is available for server assembly debug.');
@@ -236,7 +258,7 @@ export async function debugServerAssemblyDump(promptContext = null) {
 
     const dump = {
         createdAt: new Date().toISOString(),
-        promptContext: context,
+        promptContext: debugContext,
         assembly: data,
     };
 

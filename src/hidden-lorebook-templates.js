@@ -9,6 +9,7 @@ import {
 } from './hidden-lorebook-bindings.js';
 
 export const HIDDEN_LOREBOOK_TEMPLATES_FILE = 'hidden-lorebook-templates.json';
+const CHARACTER_AVATAR_EXTENSION_REGEX = /\.(?:png|webp|jpe?g|gif|bmp|avif)$/i;
 
 const cache = new Map();
 
@@ -39,7 +40,7 @@ function normalizeName(value) {
 }
 
 function normalizeCharacterKey(value) {
-    return path.parse(normalizeName(value)).name;
+    return normalizeName(value).replace(CHARACTER_AVATAR_EXTENSION_REGEX, '');
 }
 
 function normalizeStringArray(value) {
@@ -116,31 +117,39 @@ export function normalizeHiddenLorebookTemplates(data = {}) {
     return { templates, characters };
 }
 
-function getCachedRegistry(filePath, stat) {
+function getCachedRegistryEntry(filePath, stat) {
     const entry = cache.get(filePath);
     if (!entry) {
         return null;
     }
 
     if (!stat && entry.mtimeMs === null) {
-        return structuredClone(entry.data);
+        return {
+            ...entry,
+            data: structuredClone(entry.data),
+        };
     }
 
     if (stat && entry.mtimeMs === stat.mtimeMs) {
-        return structuredClone(entry.data);
+        return {
+            ...entry,
+            data: structuredClone(entry.data),
+        };
     }
 
     return null;
 }
 
-function setCachedRegistry(filePath, data, mtimeMs) {
+function setCachedRegistry(filePath, data, mtimeMs, { loadFailed = false, loadErrorMessage = '' } = {}) {
     cache.set(filePath, {
         mtimeMs,
         data: structuredClone(data),
+        loadFailed,
+        loadErrorMessage,
     });
 }
 
-export function readHiddenLorebookTemplates({ rootDir = globalThis.DATA_ROOT || process.cwd() } = {}) {
+function readHiddenLorebookTemplatesEntry({ rootDir = globalThis.DATA_ROOT || process.cwd(), throwOnError = false } = {}) {
     const filePath = getRegistryPath(rootDir);
     let stat = null;
     try {
@@ -150,29 +159,53 @@ export function readHiddenLorebookTemplates({ rootDir = globalThis.DATA_ROOT || 
             throw error;
         }
     }
-    const cached = getCachedRegistry(filePath, stat);
+    const cachedEntry = getCachedRegistryEntry(filePath, stat);
 
-    if (cached) {
-        return cached;
+    if (cachedEntry) {
+        if (cachedEntry.loadFailed && throwOnError) {
+            throw new Error(cachedEntry.loadErrorMessage || 'Failed to read hidden lorebook template registry.');
+        }
+
+        return cachedEntry;
     }
 
     if (!stat) {
         const emptyRegistry = normalizeHiddenLorebookTemplates();
         setCachedRegistry(filePath, emptyRegistry, null);
-        return emptyRegistry;
+        return {
+            data: emptyRegistry,
+            loadFailed: false,
+        };
     }
 
     try {
         const parsed = JSON.parse(fs.readFileSync(filePath, 'utf8'));
         const normalized = normalizeHiddenLorebookTemplates(parsed);
         setCachedRegistry(filePath, normalized, stat.mtimeMs);
-        return normalized;
+        return {
+            data: normalized,
+            loadFailed: false,
+        };
     } catch (error) {
+        if (throwOnError) {
+            throw error;
+        }
+
         console.warn('[Lorebooks] Failed to read hidden lorebook template registry. Falling back to an empty registry.', error);
         const emptyRegistry = normalizeHiddenLorebookTemplates();
-        setCachedRegistry(filePath, emptyRegistry, stat.mtimeMs);
-        return emptyRegistry;
+        setCachedRegistry(filePath, emptyRegistry, stat.mtimeMs, {
+            loadFailed: true,
+            loadErrorMessage: String(error?.message || error),
+        });
+        return {
+            data: emptyRegistry,
+            loadFailed: true,
+        };
     }
+}
+
+export function readHiddenLorebookTemplates({ rootDir = globalThis.DATA_ROOT || process.cwd() } = {}) {
+    return readHiddenLorebookTemplatesEntry({ rootDir }).data;
 }
 
 export function writeHiddenLorebookTemplates(data = {}, { rootDir = globalThis.DATA_ROOT || process.cwd() } = {}) {
@@ -245,7 +278,7 @@ export function compileHiddenLorebookTemplateRegistry(data = {}) {
 }
 
 export function compileAndWriteHiddenLorebookTemplates({ rootDir = globalThis.DATA_ROOT || process.cwd() } = {}) {
-    const source = readHiddenLorebookTemplates({ rootDir });
+    const source = readHiddenLorebookTemplatesEntry({ rootDir, throwOnError: true }).data;
     const result = compileHiddenLorebookTemplateRegistry(source);
     const compiled = writeHiddenLorebookBindings(result.compiled, { rootDir });
 

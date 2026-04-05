@@ -1,3 +1,6 @@
+import dns from 'node:dns/promises';
+import net from 'node:net';
+import ipaddr from 'ipaddr.js';
 import {
     countWebTokenizerTokens,
     getSentencepieceTokenizer,
@@ -39,6 +42,7 @@ const character_names_behavior = {
 };
 
 const DEFAULT_ORDER = 100;
+const MEDIA_FETCH_PROTOCOLS = new Set(['http:', 'https:']);
 const promptStateModuleMap = {
     summary: '1_memory',
     authorsNote: '2_floating_prompt',
@@ -243,10 +247,10 @@ class Message {
         await this.refreshTokens();
     }
 
-    async addImage(image, quality = 'auto') {
+    async addImage(image, quality = 'auto', clientOrigin = '') {
         this.content = this.ensureContentIsArray();
         try {
-            image = isDataURL(image) ? image : await fetchMediaAsDataUrl(image, 'image/png');
+            image = isDataURL(image) ? image : await fetchMediaAsDataUrl(image, 'image/png', clientOrigin);
         } catch (error) {
             console.error('Image adding skipped', error);
             return;
@@ -256,10 +260,10 @@ class Message {
         this.tokens += getImageTokenCost(image, quality);
     }
 
-    async addVideo(video) {
+    async addVideo(video, clientOrigin = '') {
         this.content = this.ensureContentIsArray();
         try {
-            video = isDataURL(video) ? video : await fetchMediaAsDataUrl(video, 'video/mp4');
+            video = isDataURL(video) ? video : await fetchMediaAsDataUrl(video, 'video/mp4', clientOrigin);
         } catch (error) {
             console.error('Video adding skipped', error);
             return;
@@ -269,10 +273,10 @@ class Message {
         this.tokens += 263 * 40; // Estimated tokens per video: ~263 frames × 40 tokens/frame
     }
 
-    async addAudio(audio) {
+    async addAudio(audio, clientOrigin = '') {
         this.content = this.ensureContentIsArray();
         try {
-            audio = isDataURL(audio) ? audio : await fetchMediaAsDataUrl(audio, 'audio/wav');
+            audio = isDataURL(audio) ? audio : await fetchMediaAsDataUrl(audio, 'audio/wav', clientOrigin);
         } catch (error) {
             console.error('Audio adding skipped', error);
             return;
@@ -431,7 +435,13 @@ class ChatCompletion {
             }
 
             const shouldSquash = current => !excludeList.includes(current.identifier) && current.role === 'system' && !current.name;
-            if (shouldSquash(message) && lastMessage && shouldSquash(lastMessage)) {
+            if (
+                shouldSquash(message) &&
+                lastMessage &&
+                shouldSquash(lastMessage) &&
+                typeof lastMessage.content === 'string' &&
+                typeof message.content === 'string'
+            ) {
                 lastMessage.content += '\n' + message.content;
                 lastMessage.tokens = await this.tokenHandler.countAsync({ role: lastMessage.role, content: lastMessage.content });
             } else {
@@ -794,12 +804,90 @@ async function readResponseBodyWithLimit(response, controller, maxBytes) {
     return Buffer.concat(chunks, totalBytes);
 }
 
-async function fetchMediaAsDataUrl(url, fallbackMimeType) {
+function parseMediaUrl(url, clientOrigin = '') {
+    const mediaUrl = String(url || '');
+    if (!mediaUrl || isDataURL(mediaUrl)) {
+        return null;
+    }
+
+    try {
+        const parsedUrl = new URL(mediaUrl);
+        return MEDIA_FETCH_PROTOCOLS.has(parsedUrl.protocol) ? parsedUrl : null;
+    } catch {
+        if (!clientOrigin) {
+            return null;
+        }
+        try {
+            const baseUrl = new URL(clientOrigin);
+            if (!MEDIA_FETCH_PROTOCOLS.has(baseUrl.protocol)) {
+                return null;
+            }
+            const parsedUrl = new URL(mediaUrl, baseUrl);
+            return MEDIA_FETCH_PROTOCOLS.has(parsedUrl.protocol) ? parsedUrl : null;
+        } catch {
+            return null;
+        }
+    }
+}
+
+function normalizeIpAddress(address) {
+    let parsedAddress = ipaddr.parse(address);
+    if (parsedAddress.kind() === 'ipv6' && typeof parsedAddress.isIPv4MappedAddress === 'function' && parsedAddress.isIPv4MappedAddress()) {
+        parsedAddress = parsedAddress.toIPv4Address();
+    }
+    return parsedAddress;
+}
+
+function isPrivateNetworkAddress(address) {
+    return normalizeIpAddress(address).range() !== 'unicast';
+}
+
+async function lookupHostnameAddresses(hostname) {
+    if (net.isIP(hostname)) {
+        return [hostname];
+    }
+
+    const results = await dns.lookup(hostname, { all: true, verbatim: true });
+    return results.map(result => result.address).filter(Boolean);
+}
+
+async function validateRemoteMediaUrl(url, clientOrigin = '') {
+    const parsedUrl = parseMediaUrl(url, clientOrigin);
+    if (!parsedUrl) {
+        throw new Error('Invalid media URL');
+    }
+
+    if (parsedUrl.username || parsedUrl.password) {
+        throw new Error('Media URL credentials are not allowed');
+    }
+
+    const baseUrl = parseMediaUrl(clientOrigin);
+    const isSameOrigin = Boolean(baseUrl && parsedUrl.origin === baseUrl.origin);
+    const hostname = parsedUrl.hostname.toLowerCase();
+
+    if (!isSameOrigin && (hostname === 'localhost' || hostname.endsWith('.localhost'))) {
+        throw new Error(`Refusing to fetch private media host: ${hostname}`);
+    }
+
+    const resolvedAddresses = await lookupHostnameAddresses(parsedUrl.hostname);
+    if (!resolvedAddresses.length) {
+        throw new Error(`Unable to resolve media host: ${parsedUrl.hostname}`);
+    }
+
+    if (!isSameOrigin && resolvedAddresses.some(isPrivateNetworkAddress)) {
+        throw new Error(`Refusing to fetch private media host: ${parsedUrl.hostname}`);
+    }
+
+    return parsedUrl.toString();
+}
+
+async function fetchMediaAsDataUrl(url, fallbackMimeType, clientOrigin = '') {
+    const mediaUrl = await validateRemoteMediaUrl(url, clientOrigin);
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), 30000);
 
     try {
-        const response = await fetch(url, { method: 'GET', signal: controller.signal });
+        const response = await fetch(mediaUrl, { method: 'GET', redirect: 'error', signal: controller.signal });
         if (!response.ok) {
             throw new Error(`Failed to fetch media: ${response.status}`);
         }
@@ -965,18 +1053,7 @@ function resolveMediaUrl(url, clientOrigin = '') {
         return mediaUrl;
     }
 
-    try {
-        return new URL(mediaUrl).toString();
-    } catch {
-        if (!clientOrigin) {
-            return mediaUrl;
-        }
-        try {
-            return new URL(mediaUrl, clientOrigin).toString();
-        } catch {
-            return mediaUrl;
-        }
-    }
+    return parseMediaUrl(mediaUrl, clientOrigin)?.toString() || '';
 }
 
 function parseExampleIntoIndividual(messageExampleString, userName, charName, groupNames = [], appendNamesForGroup = true, selectedGroup = false) {
@@ -1434,15 +1511,18 @@ async function populateChatHistory(messages, prompts, chatCompletion, context) {
             const mediaType = String(media.type || 'image');
             const mediaUrl = resolveMediaUrl(media.url, context.clientOrigin);
             const imageQuality = context.oaiSettings.inline_image_quality || 'auto';
+            if (!mediaUrl) {
+                return;
+            }
 
             if (mediaSupport.image && mediaType === 'image') {
-                await chatMessage.addImage(mediaUrl, imageQuality);
+                await chatMessage.addImage(mediaUrl, imageQuality, context.clientOrigin);
             }
             if (mediaSupport.video && mediaType === 'video') {
-                await chatMessage.addVideo(mediaUrl);
+                await chatMessage.addVideo(mediaUrl, context.clientOrigin);
             }
             if (mediaSupport.audio && mediaType === 'audio') {
-                await chatMessage.addAudio(mediaUrl);
+                await chatMessage.addAudio(mediaUrl, context.clientOrigin);
             }
         }
 
@@ -1656,8 +1736,9 @@ async function populateChatCompletion(prompts, chatCompletion, context) {
 
     if (prompts.has('quietPrompt')) {
         const quietPromptMessage = await Message.fromPromptAsync(prompts.get('quietPrompt'), context.tokenHandler);
-        if (context.mediaSupport?.image && context.quietImage) {
-            await quietPromptMessage.addImage(resolveMediaUrl(context.quietImage, context.clientOrigin), context.oaiSettings.inline_image_quality || 'auto');
+        const quietImageUrl = resolveMediaUrl(context.quietImage, context.clientOrigin);
+        if (context.mediaSupport?.image && quietImageUrl) {
+            await quietPromptMessage.addImage(quietImageUrl, context.oaiSettings.inline_image_quality || 'auto', context.clientOrigin);
         }
         if (quietPromptMessage?.content) {
             controlPrompts.add(quietPromptMessage);

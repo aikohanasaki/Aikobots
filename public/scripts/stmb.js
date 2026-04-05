@@ -1028,7 +1028,22 @@ function buildSummaryPromptManagerRowsHtml(presets, selectedPresetKey = null) {
     `;
 }
 
-function refreshSummaryPromptManagerList(dialog, selectedPresetKey = null) {
+function getPersistedSummaryPromptManagerTarget(targetProfileIndex = null) {
+    const normalizedIndex = Number(targetProfileIndex);
+    if (!Number.isInteger(normalizedIndex) || normalizedIndex < 0) {
+        return null;
+    }
+    const profile = stmbSettings.profiles?.[normalizedIndex];
+    if (!profile) {
+        return null;
+    }
+    return {
+        profile,
+        profileIndex: normalizedIndex,
+    };
+}
+
+function refreshSummaryPromptManagerList(dialog, selectedPresetKey = null, targetProfileIndex = null) {
     if (!dialog) {
         return;
     }
@@ -1045,7 +1060,13 @@ function refreshSummaryPromptManagerList(dialog, selectedPresetKey = null) {
     }
     const applyButton = dialog.querySelector('#stmb-pm-apply');
     if (applyButton) {
-        applyButton.disabled = !selectedPresetKey;
+        const resolvedTarget = getPersistedSummaryPromptManagerTarget(targetProfileIndex);
+        applyButton.disabled = !selectedPresetKey || !resolvedTarget;
+        if (resolvedTarget) {
+            applyButton.removeAttribute('title');
+        } else {
+            applyButton.title = 'Save the profile first to apply a preset';
+        }
     }
 }
 
@@ -1140,13 +1161,15 @@ async function openArcPromptEditPopup({ presetKey = null, duplicate = false } = 
     return await upsertArcPromptPreset(nextKey, prompt, displayName || null);
 }
 
-async function applySummaryPromptPresetToSelectedProfile(presetKey) {
+async function applySummaryPromptPresetToSelectedProfile(presetKey, targetProfileIndex = null) {
     if (!presetKey) {
         throw new Error(translate('Select a preset first', 'STMemoryBooks_SelectPresetFirst'));
     }
-    const settingsProfileSelect = document.querySelector('#stmb-settings-profile-select');
-    const selectedIndex = Number(settingsProfileSelect?.value ?? stmbSettings.defaultProfile ?? 0);
-    const profile = stmbSettings.profiles?.[selectedIndex];
+    const target = getPersistedSummaryPromptManagerTarget(targetProfileIndex);
+    if (!target) {
+        throw new Error('Save the profile before applying a preset');
+    }
+    const { profile } = target;
     if (!profile) {
         throw new Error(translate('Selected profile not found', 'STMemoryBooks_SelectedProfileNotFound'));
     }
@@ -1156,7 +1179,7 @@ async function applySummaryPromptPresetToSelectedProfile(presetKey) {
     return true;
 }
 
-async function showSummaryPromptManagerPopup({ onChange = null } = {}) {
+async function showSummaryPromptManagerPopup({ onChange = null, targetProfileIndex = null } = {}) {
     try {
         await firstRunInitSummaryPromptPresets(stmbSettings);
         let selectedPresetKey = null;
@@ -1193,14 +1216,14 @@ async function showSummaryPromptManagerPopup({ onChange = null } = {}) {
             // noop
         }
 
-        const notifyChange = async () => {
+        const notifyChange = async change => {
             if (typeof onChange === 'function') {
-                await onChange();
+                await onChange(change);
             }
         };
         const reopenManager = async () => {
             popup.completeAffirmative();
-            await showSummaryPromptManagerPopup({ onChange });
+            await showSummaryPromptManagerPopup({ onChange, targetProfileIndex });
         };
 
         popup.dlg?.addEventListener('click', async event => {
@@ -1255,7 +1278,7 @@ async function showSummaryPromptManagerPopup({ onChange = null } = {}) {
             const row = event.target.closest('tr[data-preset-key]');
             if (row) {
                 selectedPresetKey = String(row.dataset.presetKey || '');
-                refreshSummaryPromptManagerList(popup.dlg, selectedPresetKey);
+                refreshSummaryPromptManagerList(popup.dlg, selectedPresetKey, targetProfileIndex);
                 return;
             }
 
@@ -1327,10 +1350,14 @@ async function showSummaryPromptManagerPopup({ onChange = null } = {}) {
 
             if (event.target.closest('#stmb-pm-apply')) {
                 try {
-                    const applied = await applySummaryPromptPresetToSelectedProfile(selectedPresetKey);
+                    const applied = await applySummaryPromptPresetToSelectedProfile(selectedPresetKey, targetProfileIndex);
                     if (applied) {
                         toastr.success(translate('Preset applied to profile', 'STMemoryBooks_PresetAppliedToProfile'), 'Memory Books');
-                        await notifyChange();
+                        await notifyChange({
+                            type: 'apply',
+                            presetKey: selectedPresetKey,
+                            targetProfileIndex,
+                        });
                     }
                 } catch (error) {
                     toastr.error(error?.message || translate('Failed to apply preset', 'STMemoryBooks_FailedToApplyPreset'), 'Memory Books');
@@ -1339,7 +1366,7 @@ async function showSummaryPromptManagerPopup({ onChange = null } = {}) {
         });
 
         popup.dlg?.querySelector('#stmb-prompt-search')?.addEventListener('input', () => {
-            refreshSummaryPromptManagerList(popup.dlg, selectedPresetKey);
+            refreshSummaryPromptManagerList(popup.dlg, selectedPresetKey, targetProfileIndex);
         });
 
         popup.dlg?.querySelector('#stmb-pm-import-file')?.addEventListener('change', async event => {
@@ -1358,7 +1385,7 @@ async function showSummaryPromptManagerPopup({ onChange = null } = {}) {
             }
         });
 
-        refreshSummaryPromptManagerList(popup.dlg, selectedPresetKey);
+        refreshSummaryPromptManagerList(popup.dlg, selectedPresetKey, targetProfileIndex);
         try {
             applyLocale(popup.dlg);
         } catch {
@@ -1425,18 +1452,21 @@ async function showArcPromptManagerPopup({ onChange = null } = {}) {
     };
 
     popup.dlg?.addEventListener('click', async event => {
-        const actionButton = event.target.closest('.stmb-pm-action');
+        const actionButton = event.target.closest('.stmb-action');
         if (actionButton) {
             const row = actionButton.closest('tr[data-preset-key]');
             selectedPresetKey = String(row?.dataset?.presetKey || '');
             try {
-                if (actionButton.classList.contains('stmb-pm-action-edit')) {
-                    await openArcPromptEditPopup({ presetKey: selectedPresetKey });
+                if (actionButton.classList.contains('stmb-action-edit')) {
+                    const savedKey = await openArcPromptEditPopup({ presetKey: selectedPresetKey });
+                    if (!savedKey) {
+                        return;
+                    }
                     toastr.success('Consolidation preset updated successfully', 'STMB');
-                } else if (actionButton.classList.contains('stmb-pm-action-duplicate')) {
+                } else if (actionButton.classList.contains('stmb-action-duplicate')) {
                     await duplicateArcPromptPreset(selectedPresetKey);
                     toastr.success('Consolidation preset duplicated successfully', 'STMB');
-                } else if (actionButton.classList.contains('stmb-pm-action-delete')) {
+                } else if (actionButton.classList.contains('stmb-action-delete')) {
                     const confirm = await Popup.show.confirm('Delete Consolidation Preset', `Are you sure you want to delete "${escapeHtml(getArcPromptDisplayName(selectedPresetKey))}"?`);
                     if (!confirm) {
                         return;
@@ -2596,9 +2626,13 @@ async function openProfileEditor(profileIndex = null) {
         }
         if (target.closest('#stmb-profile-editor-open-prompt-manager')) {
             await showSummaryPromptManagerPopup({
-                onChange: async () => {
-                    refreshProfileEditorPresetOptions(popup.dlg);
+                onChange: async change => {
+                    const preferredPresetKey = change?.type === 'apply' && change?.targetProfileIndex === profileIndex
+                        ? change.presetKey
+                        : null;
+                    refreshProfileEditorPresetOptions(popup.dlg, preferredPresetKey);
                 },
+                targetProfileIndex: isNew ? null : profileIndex,
             });
             refreshProfileEditorPresetOptions(popup.dlg);
             return;
@@ -3147,10 +3181,12 @@ async function showMainEntryPopup() {
             return;
         }
         if (target.closest('#stmb-settings-open-prompt-manager')) {
+            const selectedProfileIndex = Number(popup.dlg?.querySelector('#stmb-settings-profile-select')?.value ?? stmbSettings.defaultProfile ?? 0);
             await showSummaryPromptManagerPopup({
                 onChange: async () => {
                     updateSettingsPopupDynamicState(popup.dlg, currentUiConnection);
                 },
+                targetProfileIndex: selectedProfileIndex,
             });
             updateSettingsPopupDynamicState(popup.dlg, currentUiConnection);
             return;
@@ -3654,7 +3690,10 @@ function getCurrentSceneRange() {
     }
 
     assertRangeWithinCurrentChat(markers);
-    return markers;
+    return {
+        sceneStart: markers.sceneStart,
+        sceneEnd: markers.sceneEnd,
+    };
 }
 
 function getNextMemoryRange() {
@@ -3853,19 +3892,23 @@ function handleMessageDeletion(deletedId) {
     const state = getStmbState();
     let newStart = Number.isInteger(state.sceneStart) ? state.sceneStart : null;
     let newEnd = Number.isInteger(state.sceneEnd) ? state.sceneEnd : null;
+    let newHighestProcessed = Number.isInteger(state.highestMemoryProcessed) ? state.highestMemoryProcessed : null;
     let changed = false;
+    let sceneChanged = false;
     let toastrMessage = '';
 
     if (newStart === id && newEnd === id) {
         newStart = null;
         newEnd = null;
         changed = true;
+        sceneChanged = true;
         toastrMessage = 'Scene cleared due to start marker deletion';
     } else if (newStart !== null && newEnd !== null) {
         if (id < newStart) {
             newStart--;
             newEnd--;
             changed = true;
+            sceneChanged = true;
             toastrMessage = 'Scene markers adjusted due to message deletion.';
         } else if (id === newStart) {
             newStart = null;
@@ -3873,45 +3916,74 @@ function handleMessageDeletion(deletedId) {
                 newEnd--;
             }
             changed = true;
+            sceneChanged = true;
             toastrMessage = 'Scene end point cleared due to message deletion';
         } else if (id > newStart && id < newEnd) {
             newEnd--;
             changed = true;
+            sceneChanged = true;
             toastrMessage = 'Scene markers adjusted due to message deletion.';
         } else if (id === newEnd) {
             newEnd = null;
             changed = true;
+            sceneChanged = true;
             toastrMessage = 'Scene end point cleared due to message deletion';
         }
     } else if (newStart !== null) {
         if (id < newStart) {
             newStart--;
             changed = true;
+            sceneChanged = true;
             toastrMessage = 'Scene markers adjusted due to message deletion.';
         } else if (id === newStart) {
             newStart = null;
             changed = true;
+            sceneChanged = true;
             toastrMessage = 'Scene end point cleared due to message deletion';
         }
     } else if (newEnd !== null) {
         if (id < newEnd) {
             newEnd--;
             changed = true;
+            sceneChanged = true;
             toastrMessage = 'Scene markers adjusted due to message deletion.';
         } else if (id === newEnd) {
             newEnd = null;
             changed = true;
+            sceneChanged = true;
             toastrMessage = 'Scene end point cleared due to message deletion';
+        }
+    }
+
+    if (newHighestProcessed !== null) {
+        const newLastMessageId = chat.length - 1;
+        const rebasedHighestProcessed = id <= newHighestProcessed
+            ? newHighestProcessed - 1
+            : newHighestProcessed;
+        const clampedHighestProcessed = newLastMessageId >= 0
+            ? Math.min(rebasedHighestProcessed, newLastMessageId)
+            : null;
+        if (clampedHighestProcessed !== newHighestProcessed) {
+            newHighestProcessed = clampedHighestProcessed;
+            changed = true;
         }
     }
 
     if (changed) {
         state.sceneStart = newStart;
         state.sceneEnd = newEnd;
+        state.highestMemoryProcessed = newHighestProcessed;
+        if (newHighestProcessed === null) {
+            delete state.highestMemoryProcessed;
+            delete state.highestMemoryProcessedManuallySet;
+        }
         saveMetadataDebounced();
-        if (getModuleSettings().showNotifications) {
+        if (sceneChanged && getModuleSettings().showNotifications) {
             toastr.warning(toastrMessage, 'STMB');
         }
+        refreshOpenSettingsPopupSceneState().catch(error => {
+            console.warn('STMB settings popup scene refresh failed', error);
+        });
     }
 
     validateSceneMarkers();

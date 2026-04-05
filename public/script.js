@@ -8471,9 +8471,9 @@ export async function getChat() {
  * Renders a message into a detached message element for read-only snapshots such as the popout reader.
  * @param {ChatMessage} mes Message object
  * @param {number} messageId Absolute message ID
- * @returns {Promise<JQuery<HTMLElement>>} Detached rendered message element
+ * @returns {JQuery<HTMLElement>} Detached rendered message element
  */
-export async function renderDetachedMessage(mes, messageId) {
+export function renderDetachedMessage(mes, messageId) {
     let messageText = mes?.extra?.display_text ?? mes?.mes;
     const momentDate = timestampToMoment(mes?.send_date);
     const timestamp = momentDate.isValid() ? momentDate.format('LL LT') : '';

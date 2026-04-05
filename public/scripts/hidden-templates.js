@@ -11,6 +11,7 @@ let panelEventsBound = false;
 let hiddenTemplatesPanelRefreshPromise = null;
 let hiddenTemplatesPanelRefreshPending = false;
 let hiddenTemplatesPanelRefreshPendingQuiet = true;
+const CHARACTER_AVATAR_EXTENSION_REGEX = /\.(?:png|webp|jpe?g|gif|bmp|avif)$/i;
 
 function compareStrings(a, b) {
     return String(a).localeCompare(String(b));
@@ -21,7 +22,7 @@ function normalizeName(value) {
 }
 
 function normalizeCharacterKey(value) {
-    return normalizeName(value).replace(/\.[^/.]+$/, '');
+    return normalizeName(value).replace(CHARACTER_AVATAR_EXTENSION_REGEX, '');
 }
 
 function normalizeStringArray(value) {

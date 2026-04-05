@@ -175,9 +175,9 @@ function normalizeTier(tier) {
 
 function normalizeText(text) {
     return String(text ?? '')
-        .replace(/\r\n/g, '\n')
+        .replace(/\r\n?/g, '\n')
         .replace(/^\uFEFF/, '')
-        .replace(/[\u0000-\u001F\u200B-\u200D\u2060]/g, '');
+        .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u200B-\u200D\u2060]/g, '');
 }
 
 function makeSummaryParseError(code, message, rawResponse = '') {
@@ -717,6 +717,7 @@ export function createSummaryCandidatesFromResponse(parsedResponse, sourceEntrie
     });
 
     const resolveId = value => idResolver.get(String(value || '').trim());
+    const allBriefIds = briefs.map(brief => String(brief.id));
     const unassignedIds = new Set();
     for (const item of parsedResponse.unassigned_items || []) {
         const resolved = resolveId(item.id);
@@ -725,13 +726,24 @@ export function createSummaryCandidatesFromResponse(parsedResponse, sourceEntrie
 
     const summaryCandidates = [];
     for (const item of summaries) {
-        let memberIds = Array.isArray(item.member_ids)
+        const hasExplicitMemberIds = Array.isArray(item.member_ids) && item.member_ids.length > 0;
+        let memberIds = hasExplicitMemberIds
             ? item.member_ids.map(resolveId).filter(Boolean)
             : [];
-        if (memberIds.length === 0) {
+        if (memberIds.length === 0 && summaries.length > 1) {
             throw makeSummaryParseError(
                 'AMBIGUOUS_MEMBER_IDS',
                 'A multi-summary response contained missing or unresolvable member_ids.',
+                JSON.stringify(parsedResponse ?? {}),
+            );
+        }
+        if (memberIds.length === 0 && !hasExplicitMemberIds) {
+            memberIds = allBriefIds;
+        }
+        if (memberIds.length === 0) {
+            throw makeSummaryParseError(
+                'AMBIGUOUS_MEMBER_IDS',
+                'A summary response contained unresolvable member_ids.',
                 JSON.stringify(parsedResponse ?? {}),
             );
         }

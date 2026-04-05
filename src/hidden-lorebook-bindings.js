@@ -5,6 +5,7 @@ import { sync as writeFileAtomicSync } from 'write-file-atomic';
 
 export const HIDDEN_LOREBOOK_BINDINGS_FILE = 'hidden-lorebook-bindings.json';
 export const HIDDEN_LOREBOOK_REGISTRY_DIRECTORY = ['_system', 'hidden-lorebooks'];
+const CHARACTER_AVATAR_EXTENSION_REGEX = /\.(?:png|webp|jpe?g|gif|bmp|avif)$/i;
 
 const cache = new Map();
 
@@ -40,8 +41,12 @@ function normalizeLorebookNames(value) {
     return [...unique];
 }
 
+function normalizeName(value) {
+    return String(value || '').trim();
+}
+
 function normalizeCharacterKey(value) {
-    return path.parse(String(value || '').trim()).name;
+    return normalizeName(value).replace(CHARACTER_AVATAR_EXTENSION_REGEX, '');
 }
 
 export function normalizeHiddenLorebookBindings(data = {}) {

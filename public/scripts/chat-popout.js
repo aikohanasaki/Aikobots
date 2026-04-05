@@ -78,16 +78,19 @@ async function renderReaderChunkHtml(messages = [], loadedRangeStart = 0) {
     for (let index = 0; index < messages.length; index++) {
         const absoluteId = loadedRangeStart + index;
         const existingMessage = chat[absoluteId];
+        const insertedTemporaryMessage = !existingMessage;
 
-        if (!existingMessage) {
-            chat[absoluteId] = messages[index];
-        }
+        try {
+            if (insertedTemporaryMessage) {
+                chat[absoluteId] = messages[index];
+            }
 
-        const rendered = await renderDetachedMessage(messages[index], absoluteId);
-        htmlParts.push(rendered.prop('outerHTML'));
-
-        if (!existingMessage) {
-            delete chat[absoluteId];
+            const rendered = renderDetachedMessage(messages[index], absoluteId);
+            htmlParts.push(rendered.prop('outerHTML'));
+        } finally {
+            if (insertedTemporaryMessage) {
+                delete chat[absoluteId];
+            }
         }
     }
 

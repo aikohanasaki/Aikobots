@@ -28,6 +28,7 @@ import { SlashCommandParser } from './slash-commands/SlashCommandParser.js';
 import { download, ensurePlainObject, equalsIgnoreCaseAndAccents, getSanitizedFilename, parseJsonFile, waitUntilCondition } from './utils.js';
 
 const presetManagers = {};
+// Text-generation preset managers were removed with the textgen cleanup; only OpenAI presets and reasoning templates remain here.
 const CHAT_COMPLETIONS_ONLY_PRESET_MANAGERS = new Set(['openai', 'reasoning']);
 
 /**
@@ -286,6 +287,7 @@ class PresetManager {
      * Returns true if the API is from Advanced Formatting group.
      */
     isAdvancedFormatting() {
+        // After textgen removal, reasoning is the only remaining name-keyed template set.
         return this.apiId === 'reasoning';
     }
 

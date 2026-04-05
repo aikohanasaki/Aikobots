@@ -240,6 +240,29 @@ function createLorebookEntry(lorebookData) {
     return entry;
 }
 
+const RESERVED_LOREBOOK_ENTRY_UPDATE_FIELDS = new Set(['uid', 'comment', 'content']);
+
+function findReservedLorebookEntryUpdateField(updates = {}) {
+    for (const key of Object.keys(updates || {})) {
+        if (RESERVED_LOREBOOK_ENTRY_UPDATE_FIELDS.has(key)) {
+            return key;
+        }
+    }
+
+    return null;
+}
+
+function getInvalidLorebookEntryUpdate(fieldGroups = {}) {
+    for (const [groupName, updates] of Object.entries(fieldGroups || {})) {
+        const key = findReservedLorebookEntryUpdateField(updates);
+        if (key) {
+            return { groupName, key };
+        }
+    }
+
+    return null;
+}
+
 function upsertLorebookEntryByTitleData(lorebookData, {
     title,
     content = '',
@@ -264,9 +287,15 @@ function upsertLorebookEntryByTitleData(lorebookData, {
     entry.comment = title;
     entry.content = content;
     for (const [key, value] of Object.entries(metadataUpdates)) {
+        if (RESERVED_LOREBOOK_ENTRY_UPDATE_FIELDS.has(key)) {
+            continue;
+        }
         entry[key] = value;
     }
     for (const [key, value] of Object.entries(entryOverrides)) {
+        if (RESERVED_LOREBOOK_ENTRY_UPDATE_FIELDS.has(key)) {
+            continue;
+        }
         entry[key] = value;
     }
 
@@ -831,12 +860,22 @@ router.post('/upsert-entry-by-title', async (request, response) => {
     const defaults = request.body?.defaults || {};
     const metadataUpdates = request.body?.metadataUpdates || {};
     const entryOverrides = request.body?.entryOverrides || {};
+    const invalidUpdate = getInvalidLorebookEntryUpdate({ metadataUpdates, entryOverrides });
 
     if (!lorebookContext || !title) {
         return response.status(400).send({
             error: {
                 type: 'StmbBadRequest',
                 message: 'lorebookName and title are required.',
+            },
+        });
+    }
+
+    if (invalidUpdate) {
+        return response.status(400).send({
+            error: {
+                type: 'StmbBadRequest',
+                message: `${invalidUpdate.groupName}.${invalidUpdate.key} is reserved. Use the title/content request fields and server-assigned uid instead.`,
             },
         });
     }
@@ -890,6 +929,19 @@ router.post('/upsert-entries-batch', async (request, response) => {
                 error: {
                     type: 'StmbBadRequest',
                     message: 'Every batch item requires a title.',
+                },
+            });
+        }
+
+        const invalidUpdate = getInvalidLorebookEntryUpdate({
+            metadataUpdates: item?.metadataUpdates || {},
+            entryOverrides: item?.entryOverrides || {},
+        });
+        if (invalidUpdate) {
+            return response.status(400).send({
+                error: {
+                    type: 'StmbBadRequest',
+                    message: `Batch item "${String(item?.title || '').trim()}": ${invalidUpdate.groupName}.${invalidUpdate.key} is reserved. Use the title/content item fields and server-assigned uid instead.`,
                 },
             });
         }

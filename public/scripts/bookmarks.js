@@ -419,7 +419,7 @@ async function promptDeleteNamedBookmark(index) {
     }
 
     const confirmation = await Popup.show.confirm(t`Delete Bookmark`, `Delete bookmark "${bookmark.messageNum} - ${bookmark.title}"?`);
-    if (confirmation !== POPUP_RESULT.AFFIRMATIVE) {
+    if (!confirmation) {
         return;
     }
 
@@ -895,6 +895,9 @@ export async function branchChat(mesId) {
     }
 
     const fileName = await createBranch(mesId);
+    if (!fileName) {
+        return null;
+    }
     await saveItemizedPrompts(fileName);
 
     if (selected_group) {
@@ -1319,8 +1322,8 @@ export function initBookmarks() {
             showLoader();
             const rowType = $(this).attr('data-manage-chats-row-type') || $(this).closest('[data-manage-chats-row-type]').attr('data-manage-chats-row-type');
             const orphanKey = $(this).attr('data-orphan-key') || $(this).closest('[data-orphan-key]').attr('data-orphan-key');
-            const ownerType = $(this).attr('data-owner-type');
-            const ownerId = $(this).attr('data-owner-id');
+            const ownerType = $(this).attr('data-owner-type') || $(this).closest('[data-owner-type]').attr('data-owner-type');
+            const ownerId = $(this).attr('data-owner-id') || $(this).closest('[data-owner-id]').attr('data-owner-id');
             if (rowType === 'orphan-character' && orphanKey) {
                 await openManageChatsOrphanCharacterChat(orphanKey, fileName);
             } else if (ownerType && ownerId) {
