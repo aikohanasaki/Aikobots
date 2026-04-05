@@ -902,7 +902,7 @@ export async function scanWorldInfo(payload = {}) {
         if (patch.scanState && !existing.scanState) {
             existing.scanState = patch.scanState;
         }
-        if (Number.isFinite(Number(patch.roundIndex)) && !Number.isFinite(Number(existing.roundIndex))) {
+        if (Number.isFinite(Number(patch.roundIndex)) && (existing.roundIndex === null || existing.roundIndex === undefined || !Number.isFinite(Number(existing.roundIndex)))) {
             existing.roundIndex = Number(patch.roundIndex);
         }
         if (patch.status) {

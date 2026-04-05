@@ -6329,9 +6329,10 @@ export async function Generate(type, { automatic_trigger, force_name2, quiet_pro
         let currentArrayEntry = Number(thisPromptBits.length - 1);
         const isServerAssembledOpenAI = main_api === 'openai' && !generate_data.prompt && !generate_data.input;
         const canPersistPromptInspectorContent = isAdmin();
+        const canPersistPromptInspectorText = canPersistPromptInspectorContent || !isServerAssembledOpenAI;
         let additionalPromptStuff = {
             ...thisPromptBits[currentArrayEntry],
-            rawPrompt: (isServerAssembledOpenAI || !canPersistPromptInspectorContent) ? '' : (generate_data.prompt || generate_data.input),
+            rawPrompt: canPersistPromptInspectorText ? (generate_data.prompt || generate_data.input) : '',
             mesId: getNextMessageId(type),
             allAnchors: canPersistPromptInspectorContent ? await getAllExtensionPrompts() : '',
             chatInjects: canPersistPromptInspectorContent ? (injectedIndices?.map(index => arrMes[arrMes.length - index - 1])?.join('') || '') : '',

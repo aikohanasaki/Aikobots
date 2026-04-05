@@ -1758,7 +1758,7 @@ function buildWorldInfoPlacementRedactionMap(entries = []) {
         }
 
         const text = entry?.hidden
-            ? '(hidden entry)'
+            ? (placement ? `(hidden entry: ${placement})` : '(hidden entry)')
             : String(entry?.displayContent ?? entry?.content ?? '').trim();
 
         if (!text) {
@@ -1916,18 +1916,18 @@ function sanitizePromptAssemblyForResponse(assembly, user) {
 
     sanitizedAssembly.worldInfo = sanitizedWorldInfo;
 
+    sanitizedAssembly.redactedPromptText = Array.isArray(sanitizedPromptData.chat)
+        ? sanitizedPromptData.chat.map(message => String(message?.content ?? '')).join('\n')
+        : '';
+
     if (canViewRawDebugData) {
         sanitizedAssembly.messagesState = sanitizedPromptData.messagesState;
         sanitizedAssembly.chat = Array.isArray(sanitizedPromptData.chat) ? sanitizedPromptData.chat : [];
-        sanitizedAssembly.redactedPromptText = sanitizedAssembly.chat
-            .map(message => String(message?.content ?? ''))
-            .join('\n');
     } else {
         delete sanitizedAssembly.messagesState;
         delete sanitizedAssembly.chat;
         delete sanitizedAssembly.overriddenPrompts;
         delete sanitizedAssembly.comparison;
-        delete sanitizedAssembly.redactedPromptText;
     }
 
     return sanitizedAssembly;

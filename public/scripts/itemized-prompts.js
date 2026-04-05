@@ -123,36 +123,51 @@ function buildWorldInfoPreview(content, maxLength = 240) {
     return `${normalized.slice(0, maxLength).trimEnd()}...`;
 }
 
+function formatHiddenWorldInfoPlaceholder(placement) {
+    const normalizedPlacement = String(placement || '').trim();
+    return normalizedPlacement
+        ? `(hidden entry: ${normalizedPlacement})`
+        : '(hidden entry)';
+}
+
 function aggregatePromptInspectorWorldInfoEntries(entries = []) {
     const visibleEntries = [];
-    const hiddenEntries = [];
+    const hiddenEntriesByPlacement = new Map();
 
     for (const entry of entries) {
         if (entry?.hidden) {
-            hiddenEntries.push(entry);
+            const placement = String(entry?.placement || '').trim();
+            const group = hiddenEntriesByPlacement.get(placement) || [];
+            group.push(entry);
+            hiddenEntriesByPlacement.set(placement, group);
         } else {
             visibleEntries.push(entry);
         }
     }
 
-    if (!hiddenEntries.length) {
+    if (!hiddenEntriesByPlacement.size) {
         return visibleEntries;
     }
 
-    const hiddenCount = hiddenEntries.length;
-    const hiddenTokens = hiddenEntries.reduce((total, entry) => total + toNumber(entry?.tokens), 0);
-    visibleEntries.push({
-        book: '',
-        displayName: t`Hidden entries (${hiddenCount})`,
-        placement: '',
-        metaText: t`hidden`,
-        tokens: hiddenTokens,
-        hidden: true,
-        displayContent: t`${hiddenCount} hidden entries`,
-        previewContent: t`${hiddenCount} hidden entries`,
-        isExpandable: false,
-        isHiddenSummary: true,
-    });
+    for (const [placement, hiddenEntries] of hiddenEntriesByPlacement.entries()) {
+        const hiddenCount = hiddenEntries.length;
+        const hiddenTokens = hiddenEntries.reduce((total, entry) => total + toNumber(entry?.tokens), 0);
+        const displayContent = placement
+            ? t`${hiddenCount} hidden entries at ${placement}`
+            : t`${hiddenCount} hidden entries`;
+        visibleEntries.push({
+            book: '',
+            displayName: t`Hidden entries (${hiddenCount})`,
+            placement,
+            metaText: placement ? `${placement} | ${t`hidden`}` : t`hidden`,
+            tokens: hiddenTokens,
+            hidden: true,
+            displayContent,
+            previewContent: displayContent,
+            isExpandable: false,
+            isHiddenSummary: true,
+        });
+    }
 
     return visibleEntries;
 }
@@ -176,7 +191,7 @@ function buildWorldInfoPlacementRedactionMap(entries = []) {
         }
 
         const text = entry?.hidden
-            ? '(hidden entry)'
+            ? formatHiddenWorldInfoPlaceholder(placement)
             : String(entry?.displayContent ?? entry?.content ?? '').trim();
 
         if (!text) {
@@ -288,7 +303,7 @@ export async function itemizedParams(itemizedPrompts, thisPromptSet, incomingMes
         const hidden = Boolean(entry?.hidden);
         return {
             book: entry?.book || '',
-            displayName: entry?.displayName || '',
+            displayName: hidden ? t`Hidden entry` : (entry?.displayName || ''),
             placement,
             metaText: hidden
                 ? (placement ? `${placement} | hidden` : 'hidden')

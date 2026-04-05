@@ -614,4 +614,53 @@ await runScenario('non-recursing admitted entries still count against later glob
     assert(result.overflowed === true, 'expected global budget overflow to be reported');
 });
 
+await runScenario('debug summary preserves recursion round numbers for delayed entries', async () => {
+    const result = await scanWorldInfo({
+        chat: [],
+        maxContext: 100,
+        settings: {
+            world_info_budget: 100,
+            world_info_budget_cap: 0,
+            world_info_recursive: true,
+        },
+        sortedEntries: [
+            {
+                uid: 1,
+                world: 'Alpha',
+                order: 200,
+                content: 'starter',
+                decorators: ['@@activate'],
+                lorebookSettings: { budgetMode: 'default' },
+            },
+            {
+                uid: 2,
+                world: 'Beta',
+                order: 100,
+                content: 'delayed entry',
+                decorators: ['@@activate'],
+                delayUntilRecursion: true,
+                lorebookSettings: { budgetMode: 'default' },
+            },
+        ],
+    });
+
+    const debugEntries = Object.fromEntries(result.worldInfo.activatedEntries.map(entry => [entry.uid, entry]));
+    assert(debugEntries[1]?.scanState === 'initial', `expected Alpha.1 to activate in initial scan, got ${debugEntries[1]?.scanState}`);
+    assert(debugEntries[1]?.roundIndex === 1, `expected Alpha.1 roundIndex 1, got ${debugEntries[1]?.roundIndex}`);
+    assert(debugEntries[2]?.scanState === 'recursion', `expected Beta.2 to activate in recursion, got ${debugEntries[2]?.scanState}`);
+    assert(debugEntries[2]?.roundIndex === 2, `expected Beta.2 roundIndex 2, got ${debugEntries[2]?.roundIndex}`);
+
+    const rounds = result.worldInfo.rounds.map(round => ({
+        roundIndex: round.roundIndex,
+        admitted: round.entries.filter(entry => entry.status === 'admitted').map(entry => entry.uid),
+    }));
+    assert(
+        JSON.stringify(rounds) === JSON.stringify([
+            { roundIndex: 1, admitted: [1] },
+            { roundIndex: 2, admitted: [2] },
+        ]),
+        `unexpected debug rounds: ${JSON.stringify(rounds)}`,
+    );
+});
+
 console.log('World Info smoke test complete.');

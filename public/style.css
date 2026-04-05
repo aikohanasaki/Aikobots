@@ -6819,3 +6819,40 @@ body:not(.movingUI) .drawer-content.maximized {
         opacity: 0.7;
     }
 }
+
+.wi-report-keyword-container {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    max-width: min(90vw, 1000px);
+}
+
+.wi-report-keyword-title {
+    font-weight: 600;
+    font-size: 16px;
+}
+
+.wi-report-keyword-summary {
+    opacity: 0.8;
+}
+
+.wi-report-keyword-subtitle {
+    margin-top: 6px;
+    font-weight: 600;
+    font-size: 13px;
+    opacity: 0.9;
+}
+
+.wi-report-keyword-list {
+    margin: 6px 0 0 1.25em;
+    padding: 0;
+    list-style: disc;
+}
+
+.wi-report-keyword-text {
+    color: var(--SmartThemeQuoteColor);
+}
+
+.wi-report-keyword-entry--constant {
+    color: var(--SmartThemeEmColor);
+}

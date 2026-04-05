@@ -1129,38 +1129,95 @@ function humanizeWorldInfoReportValue(value) {
     return text.replace(/_/g, ' ');
 }
 
-function formatWorldInfoReportActivation(entry) {
-    if (entry?.hidden) {
-        return 'Activation hidden';
+function normalizeWorldInfoReportKeyword(value) {
+    const text = String(value ?? '').trim().replace(/\s+/g, ' ');
+    if (!text) {
+        return '';
     }
 
-    const activationSource = humanizeWorldInfoReportValue(entry?.activationSource);
-    const activationReason = humanizeWorldInfoReportValue(entry?.activationReason);
-    const matchedPrimaryKey = String(entry?.matchedPrimaryKey ?? '').trim();
-    const matchedSecondaryKeys = Array.isArray(entry?.matchedSecondaryKeys)
-        ? entry.matchedSecondaryKeys.map(key => String(key ?? '').trim()).filter(Boolean)
+    return text;
+}
+
+function getWorldInfoReportEntryLabel(entry) {
+    const book = String(entry?.book ?? '').trim() || 'World Info';
+    const uid = entry?.uid === null || entry?.uid === undefined ? '' : String(entry.uid).trim();
+    const comment = String(entry?.displayName ?? entry?.comment ?? '').trim();
+
+    if (uid) {
+        return `${book}:${uid}${comment ? ` - ${comment}` : ''}`;
+    }
+
+    return `${book}${comment ? ` - ${comment}` : ''}`;
+}
+
+function getWorldInfoReportKeywords(entry) {
+    const primary = normalizeWorldInfoReportKeyword(entry?.matchedPrimaryKey);
+    const secondaries = Array.isArray(entry?.matchedSecondaryKeys)
+        ? entry.matchedSecondaryKeys
+            .map(normalizeWorldInfoReportKeyword)
+            .filter(Boolean)
+            .filter((keyword, index, array) => array.findIndex(item => item.localeCompare(keyword, undefined, { sensitivity: 'accent' }) === 0) === index)
         : [];
 
-    const lines = [];
-    const activationSummary = [activationSource, activationReason].filter(Boolean).join(' | ');
+    return { primary, secondaries };
+}
 
-    if (activationSummary) {
-        lines.push(`Activation: ${activationSummary}`);
+function getWorldInfoReportKeywordText(entry) {
+    const { primary, secondaries } = getWorldInfoReportKeywords(entry);
+
+    if (primary && secondaries.length) {
+        return ` (${primary}, ${secondaries.join(', ')})`;
     }
 
-    if (matchedPrimaryKey) {
-        lines.push(`Primary key: ${matchedPrimaryKey}`);
+    if (primary) {
+        return ` (${primary})`;
     }
 
-    if (matchedSecondaryKeys.length) {
-        lines.push(`Secondary keys: ${matchedSecondaryKeys.join(', ')}`);
+    if (secondaries.length) {
+        return ` (${secondaries.join(', ')})`;
     }
 
-    if (!lines.length) {
-        lines.push('Activation: no activation metadata');
+    return ' (no keyword)';
+}
+
+function isWorldInfoReportConstantLike(entry) {
+    return entry?.activationSource === 'constant' || entry?.activationSource === 'sticky';
+}
+
+function getWorldInfoReportUniqueKeywordCount(entries = []) {
+    const keywords = new Set();
+
+    for (const entry of entries) {
+        const { primary, secondaries } = getWorldInfoReportKeywords(entry);
+        if (primary) {
+            keywords.add(primary.toLocaleLowerCase());
+        }
+
+        for (const secondary of secondaries) {
+            keywords.add(secondary.toLocaleLowerCase());
+        }
     }
 
-    return lines.join('\n');
+    return keywords.size;
+}
+
+function buildWorldInfoReportRounds(report, activeEntries) {
+    const rounds = Array.isArray(report?.rounds)
+        ? report.rounds.map((round, index) => ({
+            loopNumber: Number(round?.roundIndex ?? 0) || index + 1,
+            entries: getVisibleWorldInfoReportEntries(Array.isArray(round?.entries) ? round.entries.filter(entry => entry?.status === 'admitted') : []),
+        })).filter(round => round.entries.length)
+        : [];
+
+    if (rounds.length) {
+        return rounds;
+    }
+
+    if (activeEntries.length) {
+        return [{ loopNumber: 1, entries: activeEntries }];
+    }
+
+    return [];
 }
 
 async function showWorldInfoReportPopup(messageId = null) {
@@ -1178,63 +1235,70 @@ async function showWorldInfoReportPopup(messageId = null) {
         : Array.isArray(report?.activatedEntries)
             ? report.activatedEntries.filter(entry => entry?.status === 'admitted')
             : [];
-    const rounds = Array.isArray(report?.rounds) ? report.rounds : [];
-    const hiddenEntriesCount = Array.isArray(report?.activatedEntries)
-        ? report.activatedEntries.filter(entry => entry?.hidden).length
-        : activeEntries.filter(entry => entry?.hidden).length;
-    const template = await renderTemplateAsync('worldInfoReport', {
-        messageId: snapshot?.messageId,
-        overflowed: Boolean(summary?.overflowed ?? report?.overflowed),
-        hiddenEntriesCount,
-        activeEntriesCount: Number(summary?.activeEntriesCount ?? activeEntries.length) || 0,
-        totalTokens: Number(summary?.totalTokens ?? activeEntries.reduce((total, entry) => total + (Number(entry?.tokens ?? 0) || 0), 0)) || 0,
-        globalBudgetUsed: Number(report?.budgetUsed?.global?.used ?? summary?.budgetUsed?.global?.used ?? 0) || 0,
-        globalBudgetLimit: Number(report?.budgetUsed?.global?.limit ?? summary?.budgetUsed?.global?.limit ?? 0) || 0,
-        activeEntries: getVisibleWorldInfoReportEntries(activeEntries.map(entry => {
-            const placement = entry?.placement || '';
-            const status = entry?.status || '';
-            return {
-                book: entry?.book || '',
-                displayName: entry?.displayName || '',
-                placement,
-                metaText: [
-                    placement,
-                    status,
-                ].filter(Boolean).join(' | '),
-                tokens: Number(entry?.tokens ?? 0) || 0,
-                hidden: Boolean(entry?.hidden),
-                activationText: formatWorldInfoReportActivation(entry),
-                status,
-            };
-        })),
-        rounds: rounds.map(round => ({
-            roundIndex: Number(round?.roundIndex ?? 0) || 0,
-            scanState: round?.scanState || '',
-            admittedEntries: Number(round?.admittedEntries ?? 0) || 0,
-            droppedEntries: Number(round?.droppedEntries ?? 0) || 0,
-            entries: getVisibleWorldInfoReportEntries(Array.isArray(round?.entries) ? round.entries.map(entry => {
-                const placement = entry?.placement || '';
-                const status = entry?.status || '';
-                const dropReason = entry?.dropReason || '';
-                return {
-                    book: entry?.book || '',
-                    displayName: entry?.displayName || '',
-                    placement,
-                    metaText: [
-                        placement,
-                        status,
-                    ].filter(Boolean).join(' | ') + (dropReason ? ` (${dropReason})` : ''),
-                    tokens: Number(entry?.tokens ?? 0) || 0,
-                    hidden: Boolean(entry?.hidden),
-                    activationText: formatWorldInfoReportActivation(entry),
-                    status,
-                    dropReason,
-                };
-            }) : []),
-        })),
-    });
+    const visibleActiveEntries = getVisibleWorldInfoReportEntries(activeEntries);
+    const rounds = buildWorldInfoReportRounds(report, visibleActiveEntries);
+    const uniqueKeywordCount = getWorldInfoReportUniqueKeywordCount(visibleActiveEntries);
 
-    await callGenericPopup(template, POPUP_TYPE.TEXT, '', { wide: true, wider: true, allowVerticalScrolling: true, leftAlign: true });
+    const container = document.createElement('div');
+    container.classList.add('wi-report-keyword-container');
+
+    const title = document.createElement('div');
+    title.classList.add('wi-report-keyword-title');
+    title.textContent = 'World Info Keyword Report';
+    container.append(title);
+
+    const summaryLine = document.createElement('div');
+    summaryLine.classList.add('wi-report-keyword-summary');
+    summaryLine.textContent = visibleActiveEntries.length
+        ? `Entries added to WI: ${visibleActiveEntries.length} • Unique keywords: ${uniqueKeywordCount}`
+        : 'No activation events captured yet.';
+    container.append(summaryLine);
+
+    if (rounds.length) {
+        const loopSummary = document.createElement('div');
+        loopSummary.classList.add('wi-report-keyword-summary');
+        loopSummary.textContent = rounds
+            .map(round => `Loop ${round.loopNumber}: ${round.entries.length} entries`)
+            .join(' • ');
+        container.append(loopSummary);
+    }
+
+    for (const round of rounds) {
+        const subtitle = document.createElement('div');
+        subtitle.classList.add('wi-report-keyword-subtitle');
+        subtitle.textContent = `Loop ${round.loopNumber}`;
+        container.append(subtitle);
+
+        const list = document.createElement('ul');
+        list.classList.add('wi-report-keyword-list');
+
+        for (const entry of round.entries) {
+            const listItem = document.createElement('li');
+            listItem.textContent = getWorldInfoReportEntryLabel(entry);
+
+            if (isWorldInfoReportConstantLike(entry)) {
+                listItem.classList.add('wi-report-keyword-entry--constant');
+            }
+
+            const keywordSpan = document.createElement('span');
+            keywordSpan.classList.add('wi-report-keyword-text');
+            keywordSpan.textContent = getWorldInfoReportKeywordText(entry);
+            listItem.append(keywordSpan);
+            list.append(listItem);
+        }
+
+        container.append(list);
+    }
+
+    const popup = new Popup(container, POPUP_TYPE.TEXT, '', {
+        allowVerticalScrolling: true,
+        okButton: 'Close',
+        wide: true,
+        large: true,
+        leftAlign: true,
+        animation: 'fast',
+    });
+    await popup.show();
     return '';
 }
 
