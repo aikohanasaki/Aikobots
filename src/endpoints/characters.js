@@ -339,11 +339,13 @@ async function tryReadImage(imgPath, crop) {
  * calculateChatSize - Calculates the total chat size for a given character.
  *
  * @param  {string} charDir The directory where the chats are stored.
- * @return { {chatSize: number, dateLastChat: number} }         The total chat size.
+ * @return {{ chatSize: number, dateLastChat: number, latestChat: string }} The total chat size and latest chat id.
  */
 const calculateChatSize = (charDir) => {
     let chatSize = 0;
     let dateLastChat = 0;
+    let latestChat = '';
+    let latestChatMtime = 0;
 
     if (fs.existsSync(charDir)) {
         const chats = fs.readdirSync(charDir);
@@ -352,11 +354,16 @@ const calculateChatSize = (charDir) => {
                 const chatStat = fs.statSync(path.join(charDir, chat));
                 chatSize += chatStat.size;
                 dateLastChat = Math.max(dateLastChat, chatStat.mtimeMs);
+
+                if (path.extname(chat) === '.jsonl' && !chat.endsWith('.head.jsonl') && chatStat.mtimeMs >= latestChatMtime) {
+                    latestChatMtime = chatStat.mtimeMs;
+                    latestChat = path.parse(chat).name;
+                }
             }
         }
     }
 
-    return { chatSize, dateLastChat };
+    return { chatSize, dateLastChat, latestChat };
 };
 
 // Calculate the total string length of the data object
@@ -419,9 +426,14 @@ const processCharacter = async (item, directories, { shallow }) => {
         character['create_date'] = jsonObject['create_date'] || humanizedISO8601DateTime(charStat.ctimeMs);
         const chatsDirectory = path.join(directories.chats, item.replace('.png', ''));
 
-        const { chatSize, dateLastChat } = calculateChatSize(chatsDirectory);
+        const { chatSize, dateLastChat, latestChat } = calculateChatSize(chatsDirectory);
         character['chat_size'] = chatSize;
         character['date_last_chat'] = dateLastChat;
+        const activeChat = typeof character.chat === 'string' ? character.chat.trim() : '';
+        const activeChatPath = activeChat ? path.join(chatsDirectory, sanitize(`${activeChat}.jsonl`)) : '';
+        character['chat'] = activeChat && fs.existsSync(activeChatPath)
+            ? activeChat
+            : (latestChat || activeChat || `${character.name} - ${humanizedISO8601DateTime()}`);
         character['data_size'] = calculateDataSize(jsonObject?.data);
         return shallow ? toShallow(character) : character;
     }

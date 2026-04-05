@@ -1,6 +1,6 @@
 import { Fuse } from '../lib.js';
 
-import { saveSettings, substituteParams, getRequestHeaders, chat, chat_metadata, this_chid, characters, saveCharacterDebounced, menu_type, eventSource, event_types, saveMetadata, getCurrentChatId, extension_prompt_roles, create_save, createOrEditCharacter, name1, itemizedPrompts } from '../script.js';
+import { saveSettings, substituteParams, getRequestHeaders, chat, chat_metadata, this_chid, characters, saveCharacterDebounced, menu_type, eventSource, event_types, saveMetadata, getCurrentChatId, extension_prompt_roles, create_save, createOrEditCharacter, name1, itemizedPrompts, canEditCharacterMetadata } from '../script.js';
 import { download, debounce, delay, initScrollHeight, resetScrollHeight, parseJsonFile, extractDataFromPng, getFileBuffer, getCharaFilename, getSortableDelay, PAGINATION_TEMPLATE, navigation_option, waitUntilCondition, isTrueBoolean, setValueByPath, flashHighlight, select2ModifyOptions, getSelect2OptionId, dynamicSelect2DataViaAjax, highlightRegex, select2ChoiceClickSubscribe, isFalseBoolean, getSanitizedFilename, checkOverwriteExistingData, parseStringArray, cancelDebounce, findChar, onlyUnique, equalsIgnoreCaseAndAccents, uuidv4, normalizeArray, getUniqueName } from './utils.js';
 import { getContext, writeExtensionField } from './extensions.js';
 import { isMobile } from './RossAscends-mods.js';
@@ -1120,6 +1120,49 @@ function getVisibleWorldInfoReportEntries(entries = []) {
     return entries.filter(entry => !entry?.hidden);
 }
 
+function humanizeWorldInfoReportValue(value) {
+    const text = String(value ?? '').trim();
+    if (!text) {
+        return '';
+    }
+
+    return text.replace(/_/g, ' ');
+}
+
+function formatWorldInfoReportActivation(entry) {
+    if (entry?.hidden) {
+        return 'Activation hidden';
+    }
+
+    const activationSource = humanizeWorldInfoReportValue(entry?.activationSource);
+    const activationReason = humanizeWorldInfoReportValue(entry?.activationReason);
+    const matchedPrimaryKey = String(entry?.matchedPrimaryKey ?? '').trim();
+    const matchedSecondaryKeys = Array.isArray(entry?.matchedSecondaryKeys)
+        ? entry.matchedSecondaryKeys.map(key => String(key ?? '').trim()).filter(Boolean)
+        : [];
+
+    const lines = [];
+    const activationSummary = [activationSource, activationReason].filter(Boolean).join(' | ');
+
+    if (activationSummary) {
+        lines.push(`Activation: ${activationSummary}`);
+    }
+
+    if (matchedPrimaryKey) {
+        lines.push(`Primary key: ${matchedPrimaryKey}`);
+    }
+
+    if (matchedSecondaryKeys.length) {
+        lines.push(`Secondary keys: ${matchedSecondaryKeys.join(', ')}`);
+    }
+
+    if (!lines.length) {
+        lines.push('Activation: no activation metadata');
+    }
+
+    return lines.join('\n');
+}
+
 async function showWorldInfoReportPopup(messageId = null) {
     const snapshot = getWorldInfoReportSnapshot(messageId);
     const report = snapshot?.report;
@@ -1160,7 +1203,7 @@ async function showWorldInfoReportPopup(messageId = null) {
                 ].filter(Boolean).join(' | '),
                 tokens: Number(entry?.tokens ?? 0) || 0,
                 hidden: Boolean(entry?.hidden),
-                displayContent: entry?.displayContent || '',
+                activationText: formatWorldInfoReportActivation(entry),
                 status,
             };
         })),
@@ -1183,7 +1226,7 @@ async function showWorldInfoReportPopup(messageId = null) {
                     ].filter(Boolean).join(' | ') + (dropReason ? ` (${dropReason})` : ''),
                     tokens: Number(entry?.tokens ?? 0) || 0,
                     hidden: Boolean(entry?.hidden),
-                    displayContent: entry?.displayContent || '',
+                    activationText: formatWorldInfoReportActivation(entry),
                     status,
                     dropReason,
                 };
@@ -6062,6 +6105,12 @@ export function initWorldInfo() {
 
         if (chid === -1) {
             openSetWorldMenu();
+            return;
+        }
+
+        const ownerHandle = String(characters[chid]?.data?.extensions?.aikobots?.owner_handle || '').trim();
+        if (ownerHandle && !canEditCharacterMetadata(chid)) {
+            toastr.info(t`Only the character's owner and site admins may access character lore for this character.`, t`Character locked`);
             return;
         }
 

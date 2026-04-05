@@ -7,7 +7,6 @@ import { power_user, registerDebugFunction } from './power-user.js';
 import { isMobile } from './RossAscends-mods.js';
 import { renderTemplateAsync } from './templates.js';
 import { getFriendlyTokenizerName, getTokenCountAsync } from './tokenizers.js';
-import { isAdmin } from './user.js';
 import { copyText } from './utils.js';
 
 let PromptArrayItemForRawPromptDisplay;
@@ -509,14 +508,21 @@ export async function promptItemize(itemizedPrompts, requestedMesId) {
 
     initializeWorldInfoEntryToggles(popup);
 
+    const currentPromptText = getPromptText(PromptArrayItemForRawPromptDisplay);
+    const priorPromptText = priorPromptArrayItemForRawPromptDisplay !== undefined
+        ? getPromptText(priorPromptArrayItemForRawPromptDisplay)
+        : '';
+    const hasCurrentPromptText = Boolean(currentPromptText.trim());
+    const hasPriorPromptText = Boolean(priorPromptText.trim());
+
     /** @type {HTMLElement} */
     const diffPrevPrompt = popup.dlg.querySelector('#diffPrevPrompt');
-    if (priorPromptArrayItemForRawPromptDisplay) {
+    if (hasCurrentPromptText && hasPriorPromptText) {
         diffPrevPrompt.style.display = '';
         diffPrevPrompt.addEventListener('click', function () {
             const dmp = new DiffMatchPatch();
-            const text1 = getPromptText(priorPromptArrayItemForRawPromptDisplay);
-            const text2 = getPromptText(PromptArrayItemForRawPromptDisplay);
+            const text1 = priorPromptText;
+            const text2 = currentPromptText;
 
             dmp.Diff_Timeout = 2.0;
 
@@ -535,19 +541,24 @@ export async function promptItemize(itemizedPrompts, requestedMesId) {
     } else {
         diffPrevPrompt.style.display = 'none';
     }
-    popup.dlg.querySelector('#copyPromptToClipboard').addEventListener('pointerup', async function () {
-        const rawPromptValues = getPromptText(PromptArrayItemForRawPromptDisplay);
-        await copyText(rawPromptValues);
-        toastr.info(t`Copied!`);
-    });
+    const copyPromptToClipboard = popup.dlg.querySelector('#copyPromptToClipboard');
+    if (hasCurrentPromptText) {
+        copyPromptToClipboard.addEventListener('pointerup', async function () {
+            await copyText(currentPromptText);
+            toastr.info(t`Copied!`);
+        });
+    } else {
+        copyPromptToClipboard.style.display = 'none';
+    }
 
-    popup.dlg.querySelector('#showRawPrompt').addEventListener('click', async function () {
+    const showRawPrompt = popup.dlg.querySelector('#showRawPrompt');
+    if (hasCurrentPromptText) {
+        showRawPrompt.addEventListener('click', async function () {
         //console.log(itemizedPrompts[PromptArrayItemForRawPromptDisplay].rawPrompt);
         console.log(PromptArrayItemForRawPromptDisplay);
         console.log(itemizedPrompts);
         console.log(itemizedPrompts[PromptArrayItemForRawPromptDisplay].rawPrompt);
-
-        const rawPrompt = getPromptText(PromptArrayItemForRawPromptDisplay);
+        const rawPrompt = currentPromptText;
 
         // Mobile needs special handholding. The side-view on the popup wouldn't work,
         // so we just show an additional popup for this.
@@ -564,7 +575,10 @@ export async function promptItemize(itemizedPrompts, requestedMesId) {
         const rawPromptWrapper = document.getElementById('rawPromptWrapper');
         rawPromptWrapper.innerText = rawPrompt;
         $('#rawPromptPopup').slideToggle();
-    });
+        });
+    } else {
+        showRawPrompt.style.display = 'none';
+    }
 
     await popup.show();
 }

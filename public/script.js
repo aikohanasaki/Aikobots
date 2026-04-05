@@ -268,9 +268,13 @@ function applyServerAssemblyToPromptRecord(targetPrompt, assembly, { promptConte
         return false;
     }
 
-    targetPrompt.rawPrompt = Array.isArray(assembly.chat)
-        ? structuredClone(assembly.chat)
-        : '';
+    if (typeof assembly.redactedPromptText === 'string') {
+        targetPrompt.rawPrompt = assembly.redactedPromptText;
+    } else {
+        targetPrompt.rawPrompt = Array.isArray(assembly.chat)
+            ? structuredClone(assembly.chat)
+            : '';
+    }
     targetPrompt.serverAssemblyDebugDump = {
         createdAt: createdAt || new Date().toISOString(),
         promptContext: promptContext && typeof promptContext === 'object' ? structuredClone(promptContext) : null,
@@ -6324,36 +6328,37 @@ export async function Generate(type, { automatic_trigger, force_name2, quiet_pro
         //set array object for prompt token itemization of this message
         let currentArrayEntry = Number(thisPromptBits.length - 1);
         const isServerAssembledOpenAI = main_api === 'openai' && !generate_data.prompt && !generate_data.input;
+        const canPersistPromptInspectorContent = isAdmin();
         let additionalPromptStuff = {
             ...thisPromptBits[currentArrayEntry],
-            rawPrompt: isServerAssembledOpenAI ? '' : (generate_data.prompt || generate_data.input),
+            rawPrompt: (isServerAssembledOpenAI || !canPersistPromptInspectorContent) ? '' : (generate_data.prompt || generate_data.input),
             mesId: getNextMessageId(type),
-            allAnchors: await getAllExtensionPrompts(),
-            chatInjects: injectedIndices?.map(index => arrMes[arrMes.length - index - 1])?.join('') || '',
-            chatSystemInjects: systemInjectedIndices?.map(index => arrMes[arrMes.length - index - 1])?.join('') || '',
-            summarizeString: (extension_prompts['1_memory']?.value || ''),
-            authorsNoteString: (extension_prompts['2_floating_prompt']?.value || ''),
-            smartContextString: (extension_prompts['chromadb']?.value || ''),
-            chatVectorsString: (extension_prompts['3_vectors']?.value || ''),
-            dataBankVectorsString: (extension_prompts['4_vectors_data_bank']?.value || ''),
-            worldInfoString: isServerAssembledOpenAI ? '' : worldInfoString,
-            storyString: isServerAssembledOpenAI ? '' : storyString,
-            beforeScenarioAnchor: isServerAssembledOpenAI ? '' : beforeScenarioAnchor,
-            afterScenarioAnchor: isServerAssembledOpenAI ? '' : afterScenarioAnchor,
-            examplesString: isServerAssembledOpenAI ? '' : examplesString,
-            mesSendString: isServerAssembledOpenAI ? '' : mesSendString,
-            generatedPromptCache: isServerAssembledOpenAI ? '' : generatedPromptCache,
-            promptBias: promptBias,
-            finalPrompt: isServerAssembledOpenAI ? '' : finalPrompt,
-            charDescription: description,
-            charPersonality: personality,
-            scenarioText: scenario,
+            allAnchors: canPersistPromptInspectorContent ? await getAllExtensionPrompts() : '',
+            chatInjects: canPersistPromptInspectorContent ? (injectedIndices?.map(index => arrMes[arrMes.length - index - 1])?.join('') || '') : '',
+            chatSystemInjects: canPersistPromptInspectorContent ? (systemInjectedIndices?.map(index => arrMes[arrMes.length - index - 1])?.join('') || '') : '',
+            summarizeString: canPersistPromptInspectorContent ? (extension_prompts['1_memory']?.value || '') : '',
+            authorsNoteString: canPersistPromptInspectorContent ? (extension_prompts['2_floating_prompt']?.value || '') : '',
+            smartContextString: canPersistPromptInspectorContent ? (extension_prompts['chromadb']?.value || '') : '',
+            chatVectorsString: canPersistPromptInspectorContent ? (extension_prompts['3_vectors']?.value || '') : '',
+            dataBankVectorsString: canPersistPromptInspectorContent ? (extension_prompts['4_vectors_data_bank']?.value || '') : '',
+            worldInfoString: (isServerAssembledOpenAI || !canPersistPromptInspectorContent) ? '' : worldInfoString,
+            storyString: (isServerAssembledOpenAI || !canPersistPromptInspectorContent) ? '' : storyString,
+            beforeScenarioAnchor: (isServerAssembledOpenAI || !canPersistPromptInspectorContent) ? '' : beforeScenarioAnchor,
+            afterScenarioAnchor: (isServerAssembledOpenAI || !canPersistPromptInspectorContent) ? '' : afterScenarioAnchor,
+            examplesString: (isServerAssembledOpenAI || !canPersistPromptInspectorContent) ? '' : examplesString,
+            mesSendString: (isServerAssembledOpenAI || !canPersistPromptInspectorContent) ? '' : mesSendString,
+            generatedPromptCache: (isServerAssembledOpenAI || !canPersistPromptInspectorContent) ? '' : generatedPromptCache,
+            promptBias: canPersistPromptInspectorContent ? promptBias : '',
+            finalPrompt: (isServerAssembledOpenAI || !canPersistPromptInspectorContent) ? '' : finalPrompt,
+            charDescription: canPersistPromptInspectorContent ? description : '',
+            charPersonality: canPersistPromptInspectorContent ? personality : '',
+            scenarioText: canPersistPromptInspectorContent ? scenario : '',
             this_max_context: this_max_context,
             padding: power_user.token_padding,
             main_api: main_api,
             serverPromptAssembly: isServerAssembledOpenAI,
             instruction: '',
-            userPersona: (power_user.persona_description_position == persona_description_positions.IN_PROMPT ? (persona || '') : ''),
+            userPersona: canPersistPromptInspectorContent && power_user.persona_description_position == persona_description_positions.IN_PROMPT ? (persona || '') : '',
             tokenizer: getFriendlyTokenizerName(main_api).tokenizerName || '',
             presetName: getPresetManager()?.getSelectedPresetName() || '',
             messagesCount: main_api !== 'openai' ? Math.max(0, mesSend.length - systemInjectedIndices.length) : null,
@@ -10916,7 +10921,7 @@ function getCharacterOwnerHandle(chid) {
     return String(characters[chid]?.data?.extensions?.aikobots?.owner_handle || '').trim();
 }
 
-function canEditCharacterMetadata(chid) {
+export function canEditCharacterMetadata(chid) {
     const ownerHandle = getCharacterOwnerHandle(chid);
     return !ownerHandle || isAdmin() || currentUser?.handle === ownerHandle;
 }
@@ -11391,6 +11396,11 @@ async function openCharacterWorldPopup() {
     const canEditLoreLinks = menu_type == 'create'
         || !ownerHandle
         || canEditCharacterMetadata(chid);
+    if (!canEditLoreLinks && ownerHandle) {
+        toastr.info(t`Only the character's owner and site admins may access character lore for this character.`, t`Character locked`);
+        return;
+    }
+
     const allowsUserLinkedLorebooks = canEditLoreLinks && !ownerHandle;
     const secureWorldNames = getSecureWorldNames();
     const selectableExtraBookOptions = allowsUserLinkedLorebooks ? world_names : secureWorldNames;

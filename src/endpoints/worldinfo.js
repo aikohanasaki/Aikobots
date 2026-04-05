@@ -342,6 +342,35 @@ function substituteParams(content, env = {}) {
     });
 }
 
+function isSortedEntryHiddenForUser(user, entry) {
+    if (!entry || entry.storage !== 'secure') {
+        return false;
+    }
+
+    const requestHandle = String(user?.profile?.handle || '');
+    const ownerHandle = String(entry.ownerHandle || '');
+    return !requestHandle || !ownerHandle || requestHandle !== ownerHandle;
+}
+
+function sanitizeSortedEntriesPayloadForResponse(user, payload) {
+    if (!payload || typeof payload !== 'object') {
+        return payload;
+    }
+
+    const filterVisibleEntries = (entries) => Array.isArray(entries)
+        ? entries.filter(entry => !isSortedEntryHiddenForUser(user, entry))
+        : [];
+
+    return {
+        ...payload,
+        globalLore: filterVisibleEntries(payload.globalLore),
+        characterLore: filterVisibleEntries(payload.characterLore),
+        chatLore: filterVisibleEntries(payload.chatLore),
+        personaLore: filterVisibleEntries(payload.personaLore),
+        entries: filterVisibleEntries(payload.entries),
+    };
+}
+
 export async function resolveSortedEntriesPayload(user, body = {}, options = {}) {
     const {
         selectedWorldInfo = [],
@@ -687,7 +716,8 @@ router.post('/sorted-entries', async (request, response) => {
     }
 
     try {
-        return response.send(await resolveSortedEntriesPayload(request.user, request.body));
+        const payload = await resolveSortedEntriesPayload(request.user, request.body);
+        return response.send(sanitizeSortedEntriesPayloadForResponse(request.user, payload));
     } catch (error) {
         return sendLorebookError(response, error);
     }
