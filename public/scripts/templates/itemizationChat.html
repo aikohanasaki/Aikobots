@@ -165,15 +165,32 @@
 <div class="wide100p flex-container flexFlowColumns flexNoGap">
     <div class="wide100p"><strong>World Info Entries</strong></div>
     {{#each worldInfoEntries}}
-    <div class="wide100p" style="padding: 0.4rem 0; border-bottom: 1px solid var(--SmartThemeBorderColor);">
-        <div class="flex-container wide100p">
-            <div class="flex1">
+    <div class="wide100p promptInspectorWorldInfoEntry" data-expanded="false">
+        <div class="flex-container wide100p promptInspectorWorldInfoHeader">
+            <div class="flex1 flex-container promptInspectorWorldInfoTitle">
+                {{#if isExpandable}}
+                <i
+                    class="fa-solid fa-chevron-right promptInspectorWorldInfoToggle right_menu_button interactable"
+                    aria-expanded="false"
+                    aria-label="Show entry"
+                    title="Show entry"
+                    role="button"
+                    tabindex="0"
+                ></i>
+                {{/if}}
+                <div class="flex1">
                 {{#if displayName}}{{displayName}}{{else}}{{#if book}}{{book}}{{else}}World Info Entry{{/if}}{{/if}}
+                </div>
             </div>
             <div>{{tokens}} tokens</div>
         </div>
-        <div><small>{{placement}}{{#if hidden}} | hidden{{/if}}</small></div>
-        <pre class="tokenItemizingMaintext">{{displayContent}}</pre>
+        <div class="promptInspectorWorldInfoMeta"><small>{{placement}}{{#if hidden}} | hidden{{/if}}</small></div>
+        {{#if isExpandable}}
+        <div class="promptInspectorWorldInfoPreview tokenItemizingMaintext">{{previewContent}}</div>
+        <pre class="promptInspectorWorldInfoContent tokenItemizingMaintext">{{displayContent}}</pre>
+        {{else}}
+        <pre class="promptInspectorWorldInfoContent promptInspectorWorldInfoContent--visible tokenItemizingMaintext">{{displayContent}}</pre>
+        {{/if}}
     </div>
     {{/each}}
 </div>

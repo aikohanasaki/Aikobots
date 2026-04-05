@@ -333,6 +333,58 @@ input[type='checkbox']:focus-visible {
     font-size: calc(var(--mainFontSize) * 0.8);
 }
 
+.promptInspectorWorldInfoEntry {
+    padding: 0.4rem 0;
+    border-bottom: 1px solid var(--SmartThemeBorderColor);
+}
+
+.promptInspectorWorldInfoHeader {
+    align-items: center;
+    gap: 0.75rem;
+}
+
+.promptInspectorWorldInfoTitle {
+    align-items: center;
+    gap: 0.35rem;
+    min-width: 0;
+}
+
+.promptInspectorWorldInfoMeta {
+    margin-top: 0.15rem;
+}
+
+.promptInspectorWorldInfoPreview,
+.promptInspectorWorldInfoContent {
+    margin: 0.4rem 0 0;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+    word-break: break-word;
+}
+
+.promptInspectorWorldInfoPreview {
+    color: var(--SmartThemeEmColor);
+}
+
+.promptInspectorWorldInfoToggle {
+    flex: 0 0 auto;
+    margin: 0;
+    line-height: 1;
+    font-size: 0.95rem;
+}
+
+.promptInspectorWorldInfoContent {
+    display: none;
+}
+
+.promptInspectorWorldInfoContent--visible,
+.promptInspectorWorldInfoEntry[data-expanded="true"] .promptInspectorWorldInfoContent {
+    display: block;
+}
+
+.promptInspectorWorldInfoEntry[data-expanded="true"] .promptInspectorWorldInfoPreview {
+    display: none;
+}
+
 .tokenGraph {
     border-radius: 10px;
     border: 1px solid var(--SmartThemeBorderColor);

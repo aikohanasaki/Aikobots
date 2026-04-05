@@ -21,7 +21,6 @@ export let itemizedPrompts = [];
  * @param {string} chatId Chat ID to load
  */
 export async function loadItemizedPrompts(chatId) {
-    if (!isAdmin()) { return; }
     try {
         if (!chatId) {
             itemizedPrompts = [];
@@ -44,7 +43,6 @@ export async function loadItemizedPrompts(chatId) {
  * @param {string} chatId Chat ID to save itemized prompts for
  */
 export async function saveItemizedPrompts(chatId) {
-    if (!isAdmin()) { return; }
     try {
         if (!chatId) {
             return;
@@ -113,6 +111,19 @@ function getPercentage(value, total) {
     return total > 0 ? ((value / total) * 100).toFixed(2) : '0.00';
 }
 
+function buildWorldInfoPreview(content, maxLength = 240) {
+    const normalized = String(content ?? '').replace(/\s+/g, ' ').trim();
+    if (!normalized) {
+        return '';
+    }
+
+    if (normalized.length <= maxLength) {
+        return normalized;
+    }
+
+    return `${normalized.slice(0, maxLength).trimEnd()}...`;
+}
+
 export async function itemizedParams(itemizedPrompts, thisPromptSet, incomingMesId) {
     const itemizedPrompt = itemizedPrompts[thisPromptSet];
     if (!itemizedPrompt) {
@@ -152,14 +163,20 @@ export async function itemizedParams(itemizedPrompts, thisPromptSet, incomingMes
         worldInfoEntries: Array.isArray(rawWorldInfoEntries)
             ? rawWorldInfoEntries
                 .filter(entry => entry?.status === 'admitted')
-                .map(entry => ({
-                    book: entry?.book || '',
-                    displayName: entry?.displayName || '',
-                    placement: entry?.placement || '',
-                    tokens: toNumber(entry?.tokens),
-                    hidden: Boolean(entry?.hidden),
-                    displayContent: String(entry?.displayContent ?? entry?.content ?? ''),
-                }))
+                .map(entry => {
+                    const displayContent = String(entry?.displayContent ?? entry?.content ?? '');
+                    const previewContent = buildWorldInfoPreview(displayContent);
+                    return {
+                        book: entry?.book || '',
+                        displayName: entry?.displayName || '',
+                        placement: entry?.placement || '',
+                        tokens: toNumber(entry?.tokens),
+                        hidden: Boolean(entry?.hidden),
+                        displayContent,
+                        previewContent,
+                        isExpandable: previewContent !== displayContent,
+                    };
+                })
             : [],
     };
     params.hasWorldInfoEntries = params.worldInfoEntries.length > 0;
@@ -270,7 +287,6 @@ export async function itemizedParams(itemizedPrompts, thisPromptSet, incomingMes
 }
 
 export function findItemizedPromptSet(itemizedPrompts, incomingMesId) {
-    if (!isAdmin()) { return; }
     let thisPromptSet = undefined;
     for (let i = 0; i < itemizedPrompts.length; i++) {
         console.log(`looking for ${incomingMesId} vs ${itemizedPrompts[i].mesId}`);
@@ -288,8 +304,43 @@ export function findItemizedPromptSet(itemizedPrompts, incomingMesId) {
     return thisPromptSet;
 }
 
+function initializeWorldInfoEntryToggles(popup) {
+    popup.dlg.querySelectorAll('.promptInspectorWorldInfoEntry').forEach((entry) => {
+        if (!(entry instanceof HTMLElement)) {
+            return;
+        }
+
+        const toggle = entry.querySelector('.promptInspectorWorldInfoToggle');
+        if (!(toggle instanceof HTMLElement)) {
+            return;
+        }
+
+        const setExpanded = (expanded) => {
+            const label = expanded ? t`Hide entry` : t`Show entry`;
+            entry.dataset.expanded = String(expanded);
+            toggle.setAttribute('aria-expanded', String(expanded));
+            toggle.setAttribute('aria-label', label);
+            toggle.title = label;
+            toggle.classList.toggle('fa-chevron-right', !expanded);
+            toggle.classList.toggle('fa-chevron-down', expanded);
+        };
+
+        setExpanded(false);
+        const toggleExpanded = () => {
+            setExpanded(entry.dataset.expanded !== 'true');
+        };
+
+        toggle.addEventListener('click', toggleExpanded);
+        toggle.addEventListener('keydown', (event) => {
+            if (event.key === 'Enter' || event.key === ' ') {
+                event.preventDefault();
+                toggleExpanded();
+            }
+        });
+    });
+}
+
 export async function promptItemize(itemizedPrompts, requestedMesId) {
-    if (!isAdmin()) { return; }
     console.log('PROMPT ITEMIZE ENTERED');
     var incomingMesId = Number(requestedMesId);
     console.debug(`looking for MesId ${incomingMesId}`);
@@ -312,11 +363,17 @@ export async function promptItemize(itemizedPrompts, requestedMesId) {
         ? await renderTemplateAsync('itemizationChat', params)
         : await renderTemplateAsync('itemizationText', params);
 
-    const popup = new Popup(template, POPUP_TYPE.TEXT);
+    const popup = new Popup(template, POPUP_TYPE.TEXT, '', {
+        wide: true,
+        wider: true,
+        allowVerticalScrolling: true,
+        leftAlign: true,
+    });
+
+    initializeWorldInfoEntryToggles(popup);
 
     /** @type {HTMLElement} */
     const diffPrevPrompt = popup.dlg.querySelector('#diffPrevPrompt');
-    if (!isAdmin()) { return; }
     if (priorPromptArrayItemForRawPromptDisplay) {
         diffPrevPrompt.style.display = '';
         diffPrevPrompt.addEventListener('click', function () {
@@ -342,7 +399,6 @@ export async function promptItemize(itemizedPrompts, requestedMesId) {
         diffPrevPrompt.style.display = 'none';
     }
     popup.dlg.querySelector('#copyPromptToClipboard').addEventListener('pointerup', async function () {
-        if (!isAdmin()) { return; }
         let rawPrompt = itemizedPrompts[PromptArrayItemForRawPromptDisplay].rawPrompt;
         let rawPromptValues = rawPrompt;
 
@@ -355,7 +411,6 @@ export async function promptItemize(itemizedPrompts, requestedMesId) {
     });
 
     popup.dlg.querySelector('#showRawPrompt').addEventListener('click', async function () {
-        if (!isAdmin()) { return; }
         //console.log(itemizedPrompts[PromptArrayItemForRawPromptDisplay].rawPrompt);
         console.log(PromptArrayItemForRawPromptDisplay);
         console.log(itemizedPrompts);
@@ -397,7 +452,7 @@ export function initItemizedPrompts() {
         console.log(`looking for mesID: ${mesIdForItemization}`);
         if (itemizedPrompts.length !== undefined && itemizedPrompts.length !== 0) {
             const itemizedPrompt = itemizedPrompts.find(x => Number(x.mesId) === Number(mesIdForItemization));
-            if (itemizedPrompt?.serverPromptAssembly && !itemizedPrompt?.serverAssemblyDebugDump?.assembly && typeof globalThis.SillyTavern?.debugServerAssembly === 'function') {
+            if (isAdmin() && itemizedPrompt?.serverPromptAssembly && !itemizedPrompt?.serverAssemblyDebugDump?.assembly && typeof globalThis.SillyTavern?.debugServerAssembly === 'function') {
                 try {
                     await globalThis.SillyTavern.debugServerAssembly();
                 } catch (error) {

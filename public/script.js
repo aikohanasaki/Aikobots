@@ -285,7 +285,7 @@ function applyServerAssemblyToPromptRecord(targetPrompt, assembly, { promptConte
 }
 
 async function storeLastServerDispatchSnapshotToPrompt(messageId) {
-    if (!isAdmin() || !Array.isArray(itemizedPrompts)) {
+    if (!Array.isArray(itemizedPrompts)) {
         return null;
     }
 
@@ -3810,13 +3810,13 @@ export function addOneMessage(mes, { type = 'normal', insertAfter = null, scroll
         newMessage.addClass('toolCall');
     }
 
-    // Shows the Prompt display button for admins only.
+    // Shows the Prompt display button when we have a prompt record for the message.
     const mesIdToFind = newMessageId;
     const promptButton = newMessage.find('.mes_prompt');
     promptButton.hide();
 
     //if we have itemized messages, and the array isn't null..
-    if (isAdmin() && params.isUser === false && Array.isArray(itemizedPrompts) && itemizedPrompts.length > 0) {
+    if (params.isUser === false && Array.isArray(itemizedPrompts) && itemizedPrompts.length > 0) {
         const itemizedPrompt = itemizedPrompts.find(x => Number(x.mesId) === Number(mesIdToFind));
         if (itemizedPrompt) {
             promptButton.show();
