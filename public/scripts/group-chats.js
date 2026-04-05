@@ -2192,6 +2192,15 @@ export async function importGroupChat(formData, { refresh = true, groupId = sele
         return data?.fileNames || [];
     }
 
+    try {
+        const errorData = await fetchResult.json();
+        if (errorData?.message) {
+            toastr.error(errorData.message, t`Failed to import chat`);
+        }
+    } catch {
+        // Ignore non-JSON error responses and fall through to the empty result.
+    }
+
     return [];
 }
 

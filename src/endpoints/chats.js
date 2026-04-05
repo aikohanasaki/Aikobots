@@ -59,6 +59,23 @@ function getChatStorage(header) {
     return storage?.mode === CHAT_STORAGE_MODE_SPLIT_TAIL ? storage : null;
 }
 
+function getUnsupportedImportedJsonlMessage(header) {
+    if (!header || !_.isObject(header)) {
+        return null;
+    }
+
+    if (header.split_part === 'head') {
+        return 'This JSONL file is only a long-chat head segment. Export the full chat as JSONL first, then import that exported file.';
+    }
+
+    const storage = getChatStorage(header);
+    if (storage) {
+        return 'This JSONL file is a split long-chat tail segment and does not include the full message history. Export the full chat as JSONL first, then import that exported file.';
+    }
+
+    return null;
+}
+
 function clampLongChatValue(value, min, max, fallback) {
     const numeric = Number(value);
     if (!Number.isFinite(numeric)) {
@@ -1223,6 +1240,12 @@ router.post('/import', validateAvatarUrlMiddleware, function (request, response)
             if (!(jsonData.user_name !== undefined || jsonData.name !== undefined)) {
                 console.error('Incorrect chat format .jsonl');
                 return response.send({ error: true });
+            }
+
+            const unsupportedImportMessage = getUnsupportedImportedJsonlMessage(jsonData);
+            if (unsupportedImportMessage) {
+                console.warn('Rejected unsupported JSONL chat import:', unsupportedImportMessage);
+                return response.status(400).send({ error: true, message: unsupportedImportMessage });
             }
 
             // Do a tiny bit of work to import Chub Chat data

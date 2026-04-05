@@ -625,6 +625,10 @@ export function getCurrentChatId() {
     }
 }
 
+function hasActiveChatContext() {
+    return Boolean(selected_group || this_chid !== undefined || chat.length || name2 === neutralCharacterName);
+}
+
 function normalizeTopChatFileName(name) {
     return String(name ?? '').replace(/\.jsonl$/i, '');
 }
@@ -645,21 +649,12 @@ function saveTopChatPanelsState() {
     }));
 }
 
-function getTopChatButtonHandlerElements() {
-    return [
-        topChatButtons.newChat,
-        topChatButtons.renameChat,
-        topChatButtons.deleteChat,
-        topChatButtons.closeChat,
-    ];
-}
-
 function setTopChatAvailabilityState(hasChat) {
     setTopChatActionDisabled(topChatButtons.chatManager, false);
-
-    for (const button of getTopChatButtonHandlerElements()) {
-        setTopChatActionDisabled(button, !hasChat);
-    }
+    setTopChatActionDisabled(topChatButtons.newChat, false);
+    setTopChatActionDisabled(topChatButtons.closeChat, !hasActiveChatContext());
+    setTopChatActionDisabled(topChatButtons.renameChat, !hasChat);
+    setTopChatActionDisabled(topChatButtons.deleteChat, !hasChat);
 }
 
 async function getTopChatChatFiles() {
@@ -709,6 +704,57 @@ async function openTopChatById(chatId) {
     if (this_chid !== undefined) {
         await openCharacterChat(normalizedChatId);
     }
+}
+
+async function handleManageChatsAction({ fromSlashCommand = false } = {}) {
+    const canOpenManageChats = fromSlashCommand || (selected_group && !is_group_generating) || (!selected_group && !is_send_press);
+    if (!canOpenManageChats) {
+        return;
+    }
+
+    await displayPastChats();
+
+    // Avoid the extra overlay when invoked from slash commands.
+    if (fromSlashCommand) {
+        return;
+    }
+
+    console.log('displaying shadow');
+    $('#shadow_select_chat_popup').css('display', 'block');
+    $('#shadow_select_chat_popup').css('opacity', 0.0);
+    $('#shadow_select_chat_popup').transition({
+        opacity: 1.0,
+        duration: animation_duration,
+        easing: animation_easing,
+    });
+}
+
+async function handleStartNewChatAction() {
+    if ((selected_group || this_chid !== undefined) && !is_send_press) {
+        let deleteCurrentChat = false;
+        const result = await Popup.show.confirm(t`Start new chat?`, await renderTemplateAsync('newChatConfirm'), {
+            onClose: () => { deleteCurrentChat = !!$('#del_chat_checkbox').prop('checked'); },
+        });
+        if (!result) {
+            return;
+        }
+
+        await doNewChat({ deleteCurrentChat: deleteCurrentChat });
+        return;
+    }
+
+    if (!selected_group && this_chid === undefined && !is_send_press) {
+        const alreadyInTempChat = this_chid === undefined && name2 === neutralCharacterName;
+        await newAssistantChat({ temporary: alreadyInTempChat });
+    }
+}
+
+async function handleCloseChatAction() {
+    if (!hasActiveChatContext()) {
+        return;
+    }
+
+    await closeCurrentChat();
 }
 
 function getTopChatSidebarElement() {
@@ -1198,16 +1244,12 @@ function initTopChatUi() {
         await toggleTopChatConnectionProfiles();
     });
     bindTopChatButton(topChatButtons.chatManager, async () => {
-        document.getElementById('option_select_chat')?.click();
+        await handleManageChatsAction();
     });
-    bindTopChatButton(topChatButtons.newChat, async () => {
-        document.getElementById('option_start_new_chat')?.click();
-    });
+    bindTopChatButton(topChatButtons.newChat, handleStartNewChatAction);
     bindTopChatButton(topChatButtons.renameChat, renameCurrentTopChat);
     bindTopChatButton(topChatButtons.deleteChat, deleteCurrentTopChat);
-    bindTopChatButton(topChatButtons.closeChat, async () => {
-        document.getElementById('option_close_chat')?.click();
-    });
+    bindTopChatButton(topChatButtons.closeChat, handleCloseChatAction);
 
     topChatBarChatNameSelect.addEventListener('change', async () => {
         await openTopChatById(topChatBarChatNameSelect.value);
@@ -2048,13 +2090,18 @@ async function delChat(chatfile) {
         // choose another chat if current was deleted
         const name = chatfile.replace('.jsonl', '');
         if (name === characters[this_chid].chat) {
+            characters[this_chid].chat = '';
+            $('#selected_chat_pole').val('');
             chat_metadata = {};
             if (power_user.delete_current_chat_to_welcome) {
                 const replacementChatName = await getReplacementCharacterChatName(String(this_chid));
                 await updateRemoteChatName(String(this_chid), replacementChatName);
                 await closeCurrentChat();
             } else {
-                await replaceCurrentChat();
+                const replaced = await replaceCurrentChat();
+                if (!replaced) {
+                    await closeCurrentChat();
+                }
             }
         }
         await eventSource.emit(event_types.CHAT_DELETED, name);
@@ -2137,34 +2184,26 @@ async function getReplacementCharacterChatName(characterId) {
 }
 
 export async function replaceCurrentChat() {
+    if (this_chid === undefined || !characters[this_chid]) {
+        return false;
+    }
+
     await clearChat();
     chat.length = 0;
 
-    const chatsResponse = await fetch('/api/characters/chats', {
-        method: 'POST',
-        headers: getRequestHeaders(),
-        body: JSON.stringify({ avatar_url: characters[this_chid].avatar }),
-    });
+    const replacementChatName = await getReplacementCharacterChatName(String(this_chid));
+    if (!replacementChatName) {
+        return false;
+    }
 
-    if (chatsResponse.ok) {
-        const chats = Object.values(await chatsResponse.json());
-        chats.sort((a, b) => sortMoments(timestampToMoment(a.last_mes), timestampToMoment(b.last_mes)));
-
-        // pick existing chat
-        if (chats.length && typeof chats[0] === 'object') {
-            characters[this_chid].chat = chats[0].file_name.replace('.jsonl', '');
-            $('#selected_chat_pole').val(characters[this_chid].chat);
-            saveCharacterDebounced();
-            await getChat();
-        }
-
-        // start new chat
-        else {
-            characters[this_chid].chat = `${name2} - ${humanizedDateTime()}`;
-            $('#selected_chat_pole').val(characters[this_chid].chat);
-            saveCharacterDebounced();
-            await getChat();
-        }
+    try {
+        await updateRemoteChatName(String(this_chid), replacementChatName);
+        $('#selected_chat_pole').val(replacementChatName);
+        await getChat();
+        return Boolean(normalizeTopChatFileName(getCurrentChatId()));
+    } catch (error) {
+        console.error('Failed to replace current chat', error);
+        return false;
     }
 }
 
@@ -11220,6 +11259,15 @@ async function importCharacterChat(formData, { refresh = true } = {}) {
         return data?.fileNames || [];
     }
 
+    try {
+        const errorData = await fetchResult.json();
+        if (errorData?.message) {
+            toastr.error(errorData.message, t`Failed to import chat`);
+        }
+    } catch {
+        // Ignore non-JSON error responses and fall through to the empty result.
+    }
+
     return [];
 }
 
@@ -13324,40 +13372,11 @@ jQuery(async function () {
         });
 
         if (id == 'option_select_chat') {
-            const canOpenManageChats = fromSlashCommand || (selected_group && !is_group_generating) || (!selected_group && !is_send_press);
-            if (canOpenManageChats) {
-                await displayPastChats();
-                //this is just to avoid the shadow for past chat view when using /delchat
-                //however, the dialog popup still gets one..
-                if (!fromSlashCommand) {
-                    console.log('displaying shadow');
-                    $('#shadow_select_chat_popup').css('display', 'block');
-                    $('#shadow_select_chat_popup').css('opacity', 0.0);
-                    $('#shadow_select_chat_popup').transition({
-                        opacity: 1.0,
-                        duration: animation_duration,
-                        easing: animation_easing,
-                    });
-                }
-            }
+            await handleManageChatsAction({ fromSlashCommand });
         }
 
         else if (id == 'option_start_new_chat') {
-            if ((selected_group || this_chid !== undefined) && !is_send_press) {
-                let deleteCurrentChat = false;
-                const result = await Popup.show.confirm(t`Start new chat?`, await renderTemplateAsync('newChatConfirm'), {
-                    onClose: () => { deleteCurrentChat = !!$('#del_chat_checkbox').prop('checked'); },
-                });
-                if (!result) {
-                    return;
-                }
-
-                await doNewChat({ deleteCurrentChat: deleteCurrentChat });
-            }
-            if (!selected_group && this_chid === undefined && !is_send_press) {
-                const alreadyInTempChat = this_chid === undefined && name2 === neutralCharacterName;
-                await newAssistantChat({ temporary: alreadyInTempChat });
-            }
+            await handleStartNewChatAction();
         }
 
         else if (id == 'option_regenerate') {
@@ -13396,7 +13415,7 @@ jQuery(async function () {
         }
 
         else if (id == 'option_close_chat') {
-            await closeCurrentChat();
+            await handleCloseChatAction();
         }
 
         else if (id === 'option_settings') {

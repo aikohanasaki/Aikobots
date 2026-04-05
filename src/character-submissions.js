@@ -278,17 +278,49 @@ async function validateSelectedTargets(targetHandles, actingUserHandle) {
 }
 
 /**
- * Copies a character to a destination while preserving/overriding the favorite state.
+ * Reads a source card once and prepares the shared payload used for distribution.
+ * The distributed copy should preserve owner and lorebook metadata while stripping
+ * private session fields consistently for every destination.
  * @param {string} sourcePath
+ * @returns {Promise<{ rawBuffer: Buffer, card: object }>}
+ */
+async function prepareCharacterCardForDistribution(sourcePath) {
+    const { rawBuffer, card } = await readCharacterCardFile(sourcePath);
+    stripPrivateShareFields(card);
+    return { rawBuffer, card };
+}
+
+/**
+ * Writes a prepared distributed character card to a destination while preserving/overriding the favorite state.
+ * @param {{ rawBuffer: Buffer, card: object }} preparedCard
  * @param {string} destinationPath
  * @param {boolean} favoriteState
  * @returns {Promise<void>}
  */
-async function copyCharacterCard(sourcePath, destinationPath, favoriteState) {
-    const { rawBuffer, card } = await readCharacterCardFile(sourcePath);
+async function writePreparedCharacterCard(preparedCard, destinationPath, favoriteState) {
+    const card = structuredClone(preparedCard.card);
     setFavoriteState(card, favoriteState);
-    stripPrivateShareFields(card);
-    await writeCharacterCardFile(rawBuffer, card, destinationPath);
+    await writeCharacterCardFile(preparedCard.rawBuffer, card, destinationPath);
+}
+
+/**
+ * Copies a prepared distribution card to a destination while preserving/overriding the favorite state.
+ * @param {{ rawBuffer: Buffer, card: object }} preparedCard
+ * @param {string} destinationPath
+ * @param {boolean} favoriteState
+ * @returns {Promise<void>}
+ */
+async function copyPreparedCharacterCard(preparedCard, destinationPath, favoriteState) {
+    await writePreparedCharacterCard(preparedCard, destinationPath, favoriteState);
+}
+
+/**
+ * Creates the destination card used for global/selected distribution.
+ * @param {string} sourcePath
+ * @returns {Promise<{ rawBuffer: Buffer, card: object }>}
+ */
+async function buildDistributionPayload(sourcePath) {
+    return await prepareCharacterCardForDistribution(sourcePath);
 }
 
 /**
@@ -494,6 +526,7 @@ export async function distributeCharacterFile({ sourcePath, publishedFilename, p
 
     const sourceName = normalizeCharacterFileName(publishedFilename, path.parse(sourcePath).name);
     const outputFilename = `${sourceName}.png`;
+    const distributionPayload = await buildDistributionPayload(sourcePath);
 
     /** @type {string[]} */
     let recipients = [];
@@ -519,13 +552,13 @@ export async function distributeCharacterFile({ sourcePath, publishedFilename, p
             favoriteState = getFavoriteState(card);
         }
 
-        await copyCharacterCard(sourcePath, destinationPath, favoriteState);
+        await copyPreparedCharacterCard(distributionPayload, destinationPath, favoriteState);
         invalidateThumbnail(directories, 'avatar', outputFilename);
     }
 
     if (publishMode === PUBLISH_MODES.GLOBAL) {
         const defaultContentPath = path.join(DEFAULT_CONTENT_ROOT, 'characters', outputFilename);
-        await copyCharacterCard(sourcePath, defaultContentPath, false);
+        await copyPreparedCharacterCard(distributionPayload, defaultContentPath, false);
         await upsertDefaultContentCharacter(path.join('characters', outputFilename).replaceAll('\\', '/'));
     }
 
