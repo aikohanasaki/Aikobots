@@ -17,6 +17,7 @@ import { default as validateAvatarUrlMiddleware, getFileNameValidationFunction }
 import { deepMerge, humanizedISO8601DateTime, tryParse, extractFileFromZipBuffer, MemoryLimitedMap, getConfigValue, mutateJsonString, clientRelativePath, getUniqueName, sanitizeSafeCharacterReplacements } from '../util.js';
 import { TavernCardValidator } from '../validator/TavernCardValidator.js';
 import { parse, read, write } from '../character-card-parser.js';
+import { getCharacterOwnerHandle, validateOwnedCharacterLinkedLorebooks } from '../character-linked-lorebooks.js';
 import { readWorldInfoFile } from './worldinfo.js';
 import { invalidateThumbnail } from './thumbnails.js';
 import { importRisuSprites } from './sprites.js';
@@ -731,15 +732,6 @@ function convertWorldInfoToCharacterBook(name, entries) {
 }
 
 /**
- * Gets the owner handle for a character card.
- * @param {object|null|undefined} characterCard Character card data
- * @returns {string}
- */
-function getCharacterOwnerHandle(characterCard) {
-    return String(_.get(characterCard, 'data.extensions.aikobots.owner_handle', '') || '').trim();
-}
-
-/**
  * Checks whether the current requester can edit protected lorebook metadata for a character.
  * @param {object|null|undefined} characterCard Character card data
  * @param {import('express').Request} request Express request object
@@ -1187,6 +1179,11 @@ router.post('/edit', validateAvatarUrlMiddleware, async function (request, respo
         if (existingCharacter && !canEditLorebooks) {
             preserveProtectedLorebookFields(char, existingCharacter);
         }
+
+        if (canEditLorebooks) {
+            validateOwnedCharacterLinkedLorebooks(request.user, char);
+        }
+
         char.chat = request.body.chat;
         char.create_date = request.body.create_date;
         char = JSON.stringify(char);
@@ -1207,6 +1204,10 @@ router.post('/edit', validateAvatarUrlMiddleware, async function (request, respo
 
         return response.sendStatus(200);
     } catch (err) {
+        if (err?.status === 400) {
+            return response.status(400).json({ error: err.message });
+        }
+
         console.error('An error occurred, character edit invalidated.', err);
         return response.sendStatus(500);
     }
@@ -1343,6 +1344,10 @@ router.post('/merge-attributes', getFileNameValidationFunction('avatar'), async 
 
         character = deepMerge(character, update);
 
+        if (updatesSecureLorebooks && canEditLorebooks) {
+            validateOwnedCharacterLinkedLorebooks(request.user, character);
+        }
+
         const validator = new TavernCardValidator(character);
         const targetImg = (update.avatar).replace('.png', '');
 
@@ -1355,6 +1360,10 @@ router.post('/merge-attributes', getFileNameValidationFunction('avatar'), async 
             response.status(400).send({ message: `Validation failed for ${character.name}`, error: validator.lastValidationError });
         }
     } catch (exception) {
+        if (exception?.status === 400) {
+            return response.status(400).send({ message: 'Invalid linked lorebooks.', error: exception.message });
+        }
+
         response.status(500).send({ message: 'Unexpected error while saving character.', error: exception.toString() });
     }
 });

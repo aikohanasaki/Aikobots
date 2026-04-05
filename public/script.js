@@ -11341,13 +11341,25 @@ async function openCharacterWorldPopup() {
     const canEditLoreLinks = menu_type == 'create'
         || !ownerHandle
         || canEditCharacterMetadata(chid);
+    const allowsUserLinkedLorebooks = canEditLoreLinks && !ownerHandle;
     const secureWorldNames = getSecureWorldNames();
-    const secureWorldNameSet = new Set(secureWorldNames);
+    const selectableExtraBookOptions = allowsUserLinkedLorebooks ? world_names : secureWorldNames;
+    const selectableExtraBookSet = new Set(selectableExtraBookOptions);
     const extrasPlaceholder = canEditLoreLinks
         ? t`Click here to select lorebooks.`
         : 'Read-only linked lorebooks.';
     const template = $('#character_world_template .character_world').clone();
     template.find('.character_name').text(charName);
+    template.find('.character_extra_world_info_help_primary').text(
+        allowsUserLinkedLorebooks
+            ? 'Choose secure lorebooks and your own lorebooks to be used with this character.'
+            : t`Choose secure lorebooks to be used with this character.`,
+    );
+    template.find('.character_extra_world_info_help_secondary').text(
+        allowsUserLinkedLorebooks
+            ? 'If this character is submitted or assigned an owner, only secure lorebooks can remain linked.'
+            : t`These lorebooks will not be exported. Please ensure that these lorebooks are set as secure lorebooks.`,
+    );
 
     // --- Event Handlers ---
     async function handlePrimaryWorldSelect() {
@@ -11361,7 +11373,7 @@ async function openCharacterWorldPopup() {
         const el = evt?.currentTarget ?? this;
         const selectedValues = $(el).val();
         const selected = Array.isArray(selectedValues) ? selectedValues : [];
-        const nextList = selected.map(i => secureWorldNames[Number(i)]).filter(Boolean);
+        const nextList = selected.map(i => selectableExtraBookOptions[Number(i)]).filter(Boolean);
 
         if (menu_type == 'create') {
             await charSetAuxWorlds('', nextList);
@@ -11386,13 +11398,13 @@ async function openCharacterWorldPopup() {
     // Append to extras dropdown.
     const extrasSelect = template.find('.character_extra_world_info_selector');
     const selectedExtraBooks = menu_type == 'create' ? create_save.extra_books : getCharacterExtraBooks(fileName);
-    const secureSelectedExtraBooks = canEditLoreLinks
-        ? selectedExtraBooks.filter(item => secureWorldNameSet.has(item))
+    const filteredSelectedExtraBooks = canEditLoreLinks
+        ? selectedExtraBooks.filter(item => selectableExtraBookSet.has(item))
         : selectedExtraBooks.filter(Boolean).filter(onlyUnique);
 
-    const extraBookOptions = canEditLoreLinks ? secureWorldNames : secureSelectedExtraBooks;
+    const extraBookOptions = canEditLoreLinks ? selectableExtraBookOptions : filteredSelectedExtraBooks;
     extraBookOptions.forEach((item, i) => {
-        const isSelected = secureSelectedExtraBooks.includes(item);
+        const isSelected = filteredSelectedExtraBooks.includes(item);
         extrasSelect.append(new Option(item, String(i), isSelected, isSelected));
     });
     extrasSelect.prop('disabled', !canEditLoreLinks);
@@ -11603,7 +11615,19 @@ export async function createOrEditCharacter(e) {
             });
 
             if (!fetchResult.ok) {
-                throw new Error('Fetch result is not ok');
+                let errorMessage = '';
+                try {
+                    const errorData = await fetchResult.json();
+                    errorMessage = errorData?.error || errorData?.message || '';
+                } catch {
+                    try {
+                        errorMessage = await fetchResult.text();
+                    } catch {
+                        errorMessage = '';
+                    }
+                }
+
+                throw new Error(errorMessage || 'Fetch result is not ok');
             }
 
             const avatarId = await fetchResult.text();
@@ -11726,7 +11750,7 @@ export async function createOrEditCharacter(e) {
             return true;
         } catch (error) {
             console.log(error);
-            toastr.error(t`Something went wrong while saving the character, or the image file provided was in an invalid format. Double check that the image is not a webp.`);
+            toastr.error(error?.message || t`Something went wrong while saving the character, or the image file provided was in an invalid format. Double check that the image is not a webp.`);
             return false;
         }
     }

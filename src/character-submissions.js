@@ -8,6 +8,7 @@ import sanitize from 'sanitize-filename';
 import writeFileAtomic from 'write-file-atomic';
 
 import { parse, write } from './character-card-parser.js';
+import { validateSubmittedCharacterLinkedLorebooks } from './character-linked-lorebooks.js';
 import { invalidateThumbnail } from './endpoints/thumbnails.js';
 import { getAllEnabledUsers, getUserDirectories } from './users.js';
 import { serverDirectory } from './server-directory.js';
@@ -334,10 +335,10 @@ export async function cleanupSubmission({ submissionId, deleteMode }) {
 
 /**
  * Creates a new character submission from an uploaded PNG.
- * @param {{ uploadPath: string, ownerHandle: string, originalFilename: string }} params
+ * @param {{ uploadPath: string, user: import('./users.js').User, ownerHandle: string, originalFilename: string }} params
  * @returns {Promise<SubmissionRecord>}
  */
-export async function createCharacterSubmission({ uploadPath, ownerHandle, originalFilename }) {
+export async function createCharacterSubmission({ uploadPath, user, ownerHandle, originalFilename }) {
     await ensureSubmissionStore();
 
     const submissionId = crypto.randomUUID();
@@ -350,6 +351,7 @@ export async function createCharacterSubmission({ uploadPath, ownerHandle, origi
         throw new Error(`This character is owned by ${existingOwnerHandle} and cannot be submitted by ${ownerHandle}.`);
     }
 
+    validateSubmittedCharacterLinkedLorebooks(user, card);
     setSubmissionMetadata(card, { ownerHandle, submissionId });
     setFavoriteState(card, false);
     stripPrivateShareFields(card);

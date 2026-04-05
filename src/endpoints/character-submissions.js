@@ -82,6 +82,7 @@ router.post('/submit', async (request, response) => {
 
         const record = await createCharacterSubmission({
             uploadPath: sourcePath,
+            user: request.user,
             ownerHandle: request.user.profile.handle,
             originalFilename,
         });

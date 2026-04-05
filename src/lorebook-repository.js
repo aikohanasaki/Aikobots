@@ -785,6 +785,26 @@ export function saveLorebookForManagement(user, name, data, storage = 'user') {
 export function deleteLorebookForManagement(user, name) {
     const canonicalName = assertCanonicalName(name);
     const secureRecord = getSecureIndexEntry(canonicalName);
+    const userRecord = getUserLorebookRecord(user.profile.handle, canonicalName);
+    const isSecureBackingLorebook = Boolean(userRecord && secureRecord && secureRecord.ownerHandle === user.profile.handle);
+
+    if (userRecord && !isSecureBackingLorebook) {
+        try {
+            fs.unlinkSync(userRecord.path);
+        } catch (error) {
+            if (error?.code === 'ENOENT') {
+                throw new LorebookRepositoryError('LorebookNotFound', `Lorebook "${canonicalName}" not found.`, 404);
+            }
+
+            throw new LorebookRepositoryError('LorebookDeleteFailed', `Failed to delete lorebook "${canonicalName}".`, 500);
+        }
+
+        return {
+            name: canonicalName,
+            storage: 'user',
+            ownerHandle: user.profile.handle,
+        };
+    }
 
     if (secureRecord) {
         if (!canManageSecureLorebook(user, secureRecord)) {
@@ -794,7 +814,6 @@ export function deleteLorebookForManagement(user, name) {
         throw new LorebookRepositoryError('LorebookAccessDenied', `Secure lorebook "${canonicalName}" must be demoted before deletion.`, 403);
     }
 
-    const userRecord = getUserLorebookRecord(user.profile.handle, canonicalName);
     if (!userRecord) {
         throw new LorebookRepositoryError('LorebookNotFound', `Lorebook "${canonicalName}" not found.`, 404);
     }

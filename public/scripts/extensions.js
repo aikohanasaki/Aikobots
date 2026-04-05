@@ -1573,7 +1573,22 @@ export async function writeExtensionField(characterId, key, value) {
     });
 
     if (!mergeResponse.ok) {
-        console.error('Failed to save extension field', mergeResponse.statusText);
+        let errorMessage = '';
+        try {
+            const errorData = await mergeResponse.json();
+            errorMessage = errorData?.error || errorData?.message || '';
+        } catch {
+            try {
+                errorMessage = await mergeResponse.text();
+            } catch {
+                errorMessage = '';
+            }
+        }
+
+        console.error('Failed to save extension field', errorMessage || mergeResponse.statusText);
+        if (errorMessage) {
+            toastr.error(errorMessage);
+        }
     }
 }
 
