@@ -1651,6 +1651,9 @@ router.post('/distribute', requireAdminMiddleware, async function (request, resp
             publishMode,
             targetHandles: request.body?.targetHandles,
             actingUserHandle: request.user.profile.handle,
+            sourceOwnerHandle: sourceType === DISTRIBUTION_SOURCE_TYPES.CHARACTER
+                ? request.user.profile.handle
+                : '',
         });
 
         return response.json(distribution);

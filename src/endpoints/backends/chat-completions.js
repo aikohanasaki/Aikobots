@@ -1641,6 +1641,7 @@ function getPromptParityCaseId(request) {
 }
 
 function createPromptDispatchSnapshot(request, requestPayload, assembled = null) {
+    const sanitizedAssembly = sanitizePromptAssemblyForResponse(assembled, request?.user);
     return {
         caseId: getPromptParityCaseId(request),
         branch: detectWorkspaceBranch(),
@@ -1656,25 +1657,25 @@ function createPromptDispatchSnapshot(request, requestPayload, assembled = null)
         max_completion_tokens: requestPayload?.max_completion_tokens ?? null,
         reasoning_effort: request.body?.reasoning_effort ?? requestPayload?.reasoning_effort ?? requestPayload?.reasoning?.effort ?? null,
         custom_prompt_post_processing: request.body?.custom_prompt_post_processing ?? null,
-        assembly: structuredClone(assembled || null),
-        worldInfo: structuredClone(assembled?.worldInfo || null),
+        assembly: structuredClone(sanitizedAssembly || null),
+        worldInfo: structuredClone(sanitizedAssembly?.worldInfo || null),
         itemization: structuredClone(assembled?.itemization || null),
         requestPayload: structuredClone(requestPayload || {}),
     };
 }
 
-function canViewWorldInfoEntry(user, entry) {
+function isWorldInfoEntryHiddenForUser(user, entry) {
     if (!entry || entry.storage !== 'secure') {
-        return true;
-    }
-
-    if (Boolean(user?.profile?.admin)) {
-        return true;
+        return false;
     }
 
     const requestHandle = String(user?.profile?.handle || '');
     const ownerHandle = String(entry.ownerHandle || '');
-    return Boolean(requestHandle && ownerHandle && requestHandle === ownerHandle);
+    return !requestHandle || !ownerHandle || requestHandle !== ownerHandle;
+}
+
+function canViewWorldInfoEntry(user, entry) {
+    return !isWorldInfoEntryHiddenForUser(user, entry);
 }
 
 function sanitizeWorldInfoEntryForResponse(entry, user) {
@@ -1706,16 +1707,30 @@ function sanitizeWorldInfoEntryForResponse(entry, user) {
     return sanitizedEntry;
 }
 
-function buildWorldInfoSummaryResponseData(worldInfo, user) {
+function sanitizeWorldInfoDebugDataForResponse(worldInfo, user) {
     if (!worldInfo || typeof worldInfo !== 'object') {
-        return { worldInfoSummary: null, worldInfoReport: null };
+        return null;
     }
 
     const activatedEntries = Array.isArray(worldInfo.activatedEntries)
         ? worldInfo.activatedEntries.map(entry => sanitizeWorldInfoEntryForResponse(entry, user)).filter(Boolean)
         : [];
     const admittedEntries = activatedEntries.filter(entry => entry.status === 'admitted');
-    const worldInfoReport = {
+    const rounds = Array.isArray(worldInfo.rounds)
+        ? worldInfo.rounds.map(round => {
+            const roundIndex = Number(round?.roundIndex ?? 0) || 0;
+            const roundEntries = activatedEntries.filter(entry => (Number(entry.roundIndex ?? 0) || 0) === roundIndex);
+            return {
+                roundIndex,
+                scanState: round?.scanState ?? null,
+                entries: roundEntries,
+                admittedEntries: roundEntries.filter(entry => entry.status === 'admitted').length,
+                droppedEntries: roundEntries.filter(entry => entry.status !== 'admitted').length,
+            };
+        })
+        : [];
+
+    return {
         activatedEntries,
         beforeEntries: admittedEntries.filter(entry => entry.placement === 'before'),
         afterEntries: admittedEntries.filter(entry => entry.placement === 'after'),
@@ -1723,17 +1738,30 @@ function buildWorldInfoSummaryResponseData(worldInfo, user) {
         exampleEntries: admittedEntries.filter(entry => String(entry.placement || '').startsWith('example_')),
         timedState: structuredClone(worldInfo.timedState || {}),
         overflowed: Boolean(worldInfo.overflowed),
-        rounds: Array.isArray(worldInfo.rounds)
-            ? worldInfo.rounds.map(round => ({
-                roundIndex: Number(round?.roundIndex ?? 0) || 0,
-                scanState: round?.scanState ?? null,
-                entries: activatedEntries.filter(entry => (Number(entry.roundIndex ?? 0) || 0) === (Number(round?.roundIndex ?? 0) || 0)),
-                admittedEntries: Number(round?.admittedEntries ?? 0) || 0,
-                droppedEntries: Number(round?.droppedEntries ?? 0) || 0,
-            }))
-            : [],
+        rounds,
         budgetUsed: structuredClone(worldInfo.budgetUsed || {}),
     };
+}
+
+function sanitizePromptAssemblyForResponse(assembly, user) {
+    if (!assembly || typeof assembly !== 'object') {
+        return assembly;
+    }
+
+    const sanitizedAssembly = structuredClone(assembly);
+    sanitizedAssembly.worldInfo = sanitizeWorldInfoDebugDataForResponse(assembly.worldInfo, user);
+    return sanitizedAssembly;
+}
+
+function buildWorldInfoSummaryResponseData(worldInfo, user) {
+    const sanitizedWorldInfo = sanitizeWorldInfoDebugDataForResponse(worldInfo, user);
+    if (!sanitizedWorldInfo) {
+        return { sanitizedWorldInfo: null, worldInfoSummary: null, worldInfoReport: null };
+    }
+
+    const activatedEntries = sanitizedWorldInfo.activatedEntries;
+    const admittedEntries = activatedEntries.filter(entry => entry.status === 'admitted');
+    const worldInfoReport = structuredClone(sanitizedWorldInfo);
 
     const worldInfoSummary = {
         activeEntries: admittedEntries.map(entry => ({
@@ -1750,13 +1778,13 @@ function buildWorldInfoSummaryResponseData(worldInfo, user) {
             roundIndex: Number(entry.roundIndex ?? 0) || 0,
             status: entry.status ?? null,
         })),
-        overflowed: Boolean(worldInfo.overflowed),
+        overflowed: Boolean(sanitizedWorldInfo.overflowed),
         totalTokens: admittedEntries.reduce((total, entry) => total + (Number(entry.tokens ?? 0) || 0), 0),
         activeEntriesCount: admittedEntries.length,
-        budgetUsed: structuredClone(worldInfo.budgetUsed || {}),
+        budgetUsed: structuredClone(sanitizedWorldInfo.budgetUsed || {}),
     };
 
-    return { worldInfoSummary, worldInfoReport };
+    return { sanitizedWorldInfo, worldInfoSummary, worldInfoReport };
 }
 
 function attachWorldInfoResponseData(payload, request, timedWorldInfo, worldInfoOverflowed = false, worldInfo = null) {
@@ -1767,7 +1795,7 @@ function attachWorldInfoResponseData(payload, request, timedWorldInfo, worldInfo
     const xSillyTavern = {
         ...(payload.x_sillytavern && typeof payload.x_sillytavern === 'object' ? payload.x_sillytavern : {}),
     };
-    const { worldInfoSummary, worldInfoReport } = buildWorldInfoSummaryResponseData(worldInfo, request?.user);
+    const { sanitizedWorldInfo, worldInfoSummary, worldInfoReport } = buildWorldInfoSummaryResponseData(worldInfo, request?.user);
 
     if (timedWorldInfo && typeof timedWorldInfo === 'object') {
         xSillyTavern.timedWorldInfo = timedWorldInfo;
@@ -1780,6 +1808,9 @@ function attachWorldInfoResponseData(payload, request, timedWorldInfo, worldInfo
     }
     if (worldInfoReport) {
         xSillyTavern.worldInfoReport = worldInfoReport;
+    }
+    if (sanitizedWorldInfo) {
+        payload.worldInfo = structuredClone(sanitizedWorldInfo);
     }
 
     if (!Object.keys(xSillyTavern).length) {

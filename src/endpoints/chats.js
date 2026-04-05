@@ -16,6 +16,8 @@ import {
     generateTimestamp,
     removeOldBackups,
     formatBytes,
+    getUniqueName,
+    sanitizeSafeCharacterReplacements,
 } from '../util.js';
 
 const isBackupEnabled = !!getConfigValue('backups.chat.enabled', true, 'boolean');
@@ -74,6 +76,20 @@ function getUnsupportedImportedJsonlMessage(header) {
     }
 
     return null;
+}
+
+function getImportedChatBaseName(originalName, characterName) {
+    const sanitizedOriginalBaseName = sanitize(path.parse(String(originalName || '')).name, {
+        replacement: sanitizeSafeCharacterReplacements,
+    });
+
+    if (sanitizedOriginalBaseName) {
+        return sanitizedOriginalBaseName;
+    }
+
+    return sanitize(`${characterName} - ${humanizedISO8601DateTime()} imported`, {
+        replacement: sanitizeSafeCharacterReplacements,
+    });
 }
 
 function clampLongChatValue(value, min, max, fallback) {
@@ -1190,6 +1206,21 @@ router.post('/import', validateAvatarUrlMiddleware, function (request, response)
     try {
         const pathToUpload = path.join(request.file.destination, request.file.filename);
         const data = fs.readFileSync(pathToUpload, 'utf8');
+        const chatsDirectory = path.join(request.user.directories.chats, avatarUrl);
+        const importedChatBaseName = getImportedChatBaseName(request.file.originalname, characterName);
+
+        if (!fs.existsSync(chatsDirectory)) {
+            fs.mkdirSync(chatsDirectory, { recursive: true });
+        }
+
+        const getImportedChatFileName = (usedNames = []) => {
+            const uniqueBaseName = getUniqueName(importedChatBaseName, (candidate) => {
+                const fileName = `${candidate}.jsonl`;
+                return usedNames.includes(fileName) || fs.existsSync(path.join(chatsDirectory, fileName));
+            });
+
+            return `${uniqueBaseName}.jsonl`;
+        };
 
         if (format === 'json') {
             fs.unlinkSync(pathToUpload);
@@ -1214,8 +1245,8 @@ router.post('/import', validateAvatarUrlMiddleware, function (request, response)
             }
 
             const handleChat = (chat) => {
-                const fileName = `${characterName} - ${humanizedISO8601DateTime()} imported.jsonl`;
-                const filePath = path.join(request.user.directories.chats, avatarUrl, fileName);
+                const fileName = getImportedChatFileName(fileNames);
+                const filePath = path.join(chatsDirectory, fileName);
                 fileNames.push(fileName);
                 writeFileAtomicSync(filePath, chat, 'utf8');
             };
@@ -1259,8 +1290,8 @@ router.post('/import', validateAvatarUrlMiddleware, function (request, response)
                 console.warn('Failed to flatten Chub Chat data: ', error);
             }
 
-            const fileName = `${characterName} - ${humanizedISO8601DateTime()} imported.jsonl`;
-            const filePath = path.join(request.user.directories.chats, avatarUrl, fileName);
+            const fileName = getImportedChatFileName(fileNames);
+            const filePath = path.join(chatsDirectory, fileName);
             fileNames.push(fileName);
             if (flattenedChat !== data) {
                 writeFileAtomicSync(filePath, flattenedChat, 'utf8');

@@ -42,6 +42,8 @@ import {
     charUpdatePrimaryWorld,
     charSetAuxWorlds,
     getCharacterExtraBooks,
+    getEditableCharacterExtraBooks,
+    getLegacyCharacterExtraBooks,
     getForcedActivationEntriesSnapshot,
 } from './scripts/world-info.js';
 
@@ -11445,7 +11447,8 @@ async function openCharacterWorldPopup() {
 
     // Append to extras dropdown.
     const extrasSelect = template.find('.character_extra_world_info_selector');
-    const selectedExtraBooks = menu_type == 'create' ? create_save.extra_books : getCharacterExtraBooks(fileName);
+    const selectedExtraBooks = menu_type == 'create' ? create_save.extra_books : getEditableCharacterExtraBooks(fileName);
+    const legacyExtraBooks = menu_type == 'create' ? [] : getLegacyCharacterExtraBooks(fileName);
     const filteredSelectedExtraBooks = canEditLoreLinks
         ? selectedExtraBooks.filter(item => selectableExtraBookSet.has(item))
         : selectedExtraBooks.filter(Boolean).filter(onlyUnique);
@@ -11456,6 +11459,16 @@ async function openCharacterWorldPopup() {
         extrasSelect.append(new Option(item, String(i), isSelected, isSelected));
     });
     extrasSelect.prop('disabled', !canEditLoreLinks);
+
+    if (legacyExtraBooks.length > 0) {
+        template.find('.range-block-range').first().after($(`
+            <div class="range-block-counter justifyLeft flex-container flexFlowColumn margin-bot-10px opacity50p">
+                <span>Legacy compatibility lorebooks from settings.json are also active for this character at runtime.</span>
+                <span>These links are read-only here and are not changed when you edit metadata-linked lorebooks.</span>
+                <span><strong>${escapeHtml(legacyExtraBooks.join(', '))}</strong></span>
+            </div>
+        `));
+    }
 
     if (!canEditLoreLinks && ownerHandle) {
         template.find('.range-block-title').first().after($(`

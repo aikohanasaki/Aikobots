@@ -124,6 +124,129 @@ function buildWorldInfoPreview(content, maxLength = 240) {
     return `${normalized.slice(0, maxLength).trimEnd()}...`;
 }
 
+function aggregatePromptInspectorWorldInfoEntries(entries = []) {
+    const visibleEntries = [];
+    const hiddenEntries = [];
+
+    for (const entry of entries) {
+        if (entry?.hidden) {
+            hiddenEntries.push(entry);
+        } else {
+            visibleEntries.push(entry);
+        }
+    }
+
+    if (!hiddenEntries.length) {
+        return visibleEntries;
+    }
+
+    const hiddenCount = hiddenEntries.length;
+    const hiddenTokens = hiddenEntries.reduce((total, entry) => total + toNumber(entry?.tokens), 0);
+    visibleEntries.push({
+        book: '',
+        displayName: t`Hidden entries (${hiddenCount})`,
+        placement: '',
+        metaText: t`hidden`,
+        tokens: hiddenTokens,
+        hidden: true,
+        displayContent: t`${hiddenCount} hidden entries`,
+        previewContent: t`${hiddenCount} hidden entries`,
+        isExpandable: false,
+        isHiddenSummary: true,
+    });
+
+    return visibleEntries;
+}
+
+function getPromptWorldInfoEntries(itemizedPrompt, incomingMesId) {
+    const messageWorldInfoReport = chat[incomingMesId]?.extra?.worldInfoReport;
+    const rawWorldInfoEntries = Array.isArray(messageWorldInfoReport?.activatedEntries)
+        ? messageWorldInfoReport.activatedEntries
+        : itemizedPrompt?.serverAssemblyDebugDump?.assembly?.worldInfo?.activatedEntries;
+
+    return Array.isArray(rawWorldInfoEntries)
+        ? rawWorldInfoEntries.filter(entry => entry?.status === 'admitted')
+        : [];
+}
+
+function buildWorldInfoPlacementRedactionMap(entries = []) {
+    return entries.reduce((result, entry) => {
+        const placement = String(entry?.placement || '').trim();
+        if (!placement) {
+            return result;
+        }
+
+        const text = entry?.hidden
+            ? '(hidden entry)'
+            : String(entry?.displayContent ?? entry?.content ?? '').trim();
+
+        if (!text) {
+            return result;
+        }
+
+        result[placement] = result[placement] || [];
+        result[placement].push(text);
+        return result;
+    }, {});
+}
+
+function flattenMessagesStateToRedactedPrompt(node, placementMap, depthPlacementQueue) {
+    if (!node || typeof node !== 'object') {
+        return [];
+    }
+
+    if (node.type === 'collection') {
+        if (node.identifier === 'worldInfoBefore') {
+            return placementMap.before || [];
+        }
+        if (node.identifier === 'worldInfoAfter') {
+            return placementMap.after || [];
+        }
+
+        return Array.isArray(node.collection)
+            ? node.collection.flatMap(child => flattenMessagesStateToRedactedPrompt(child, placementMap, depthPlacementQueue))
+            : [];
+    }
+
+    if (node.type !== 'message') {
+        return [];
+    }
+
+    if (node.injected && node.role === 'system' && depthPlacementQueue.length > 0) {
+        const nextPlacement = depthPlacementQueue.shift();
+        return placementMap[nextPlacement] || ['(hidden entry)'];
+    }
+
+    const content = String(node.content ?? '').trim();
+    return content ? [content] : [];
+}
+
+function getRedactedRawPromptText(itemizedPrompt, incomingMesId) {
+    const entries = getPromptWorldInfoEntries(itemizedPrompt, incomingMesId);
+    const hasHiddenEntries = entries.some(entry => entry?.hidden);
+    const rawPrompt = itemizedPrompt?.rawPrompt;
+
+    if (!hasHiddenEntries) {
+        return Array.isArray(rawPrompt) ? rawPrompt.map(x => x.content).join('\n') : String(rawPrompt ?? '');
+    }
+
+    const messagesState = itemizedPrompt?.serverAssemblyDebugDump?.assembly?.messagesState;
+    if (!messagesState || typeof messagesState !== 'object') {
+        return Array.isArray(rawPrompt) ? rawPrompt.map(x => x.content).join('\n') : String(rawPrompt ?? '');
+    }
+
+    const placementMap = buildWorldInfoPlacementRedactionMap(entries);
+    const depthPlacementQueue = Object.keys(placementMap)
+        .filter(key => key.startsWith('depth:'))
+        .sort((a, b) => {
+            const [aDepth = 0, aRole = 0] = a.split(':').slice(1).map(Number);
+            const [bDepth = 0, bRole = 0] = b.split(':').slice(1).map(Number);
+            return bDepth - aDepth || aRole - bRole;
+        });
+
+    return flattenMessagesStateToRedactedPrompt(messagesState, placementMap, depthPlacementQueue).join('\n');
+}
+
 export async function itemizedParams(itemizedPrompts, thisPromptSet, incomingMesId) {
     const itemizedPrompt = itemizedPrompts[thisPromptSet];
     if (!itemizedPrompt) {
@@ -132,10 +255,7 @@ export async function itemizedParams(itemizedPrompts, thisPromptSet, incomingMes
     }
 
     const serverItemization = itemizedPrompt.serverAssemblyDebugDump?.assembly?.itemization;
-    const messageWorldInfoReport = chat[incomingMesId]?.extra?.worldInfoReport;
-    const rawWorldInfoEntries = Array.isArray(messageWorldInfoReport?.activatedEntries)
-        ? messageWorldInfoReport.activatedEntries
-        : itemizedPrompt.serverAssemblyDebugDump?.assembly?.worldInfo?.activatedEntries;
+    const rawWorldInfoEntries = getPromptWorldInfoEntries(itemizedPrompt, incomingMesId);
     const params = {
         charDescriptionTokens: serverItemization ? toNumber(serverItemization.charDescriptionTokens) : await getTokenCountAsync(itemizedPrompt.charDescription),
         charPersonalityTokens: serverItemization ? toNumber(serverItemization.charPersonalityTokens) : await getTokenCountAsync(itemizedPrompt.charPersonality),
@@ -160,30 +280,34 @@ export async function itemizedParams(itemizedPrompts, thisPromptSet, incomingMes
         presetName: itemizedPrompt.presetName || t`(Unknown)`,
         messagesCount: String(itemizedPrompt.messagesCount ?? ''),
         examplesCount: String(itemizedPrompt.examplesCount ?? ''),
-        worldInfoEntries: Array.isArray(rawWorldInfoEntries)
-            ? rawWorldInfoEntries
-                .filter(entry => entry?.status === 'admitted')
-                .map(entry => {
-                    const displayContent = String(entry?.displayContent ?? entry?.content ?? '');
-                    const previewContent = buildWorldInfoPreview(displayContent);
-                    return {
-                        book: entry?.book || '',
-                        displayName: entry?.displayName || '',
-                        placement: entry?.placement || '',
-                        tokens: toNumber(entry?.tokens),
-                        hidden: Boolean(entry?.hidden),
-                        displayContent,
-                        previewContent,
-                        isExpandable: previewContent !== displayContent,
-                    };
-                })
-            : [],
+        worldInfoEntries: [],
     };
+    const allWorldInfoEntries = rawWorldInfoEntries.map(entry => {
+        const displayContent = String(entry?.displayContent ?? entry?.content ?? '');
+        const previewContent = buildWorldInfoPreview(displayContent);
+        const placement = entry?.placement || '';
+        const hidden = Boolean(entry?.hidden);
+        return {
+            book: entry?.book || '',
+            displayName: entry?.displayName || '',
+            placement,
+            metaText: hidden
+                ? (placement ? `${placement} | hidden` : 'hidden')
+                : placement,
+            tokens: toNumber(entry?.tokens),
+            hidden,
+            displayContent,
+            previewContent,
+            isExpandable: previewContent !== displayContent,
+            isHiddenSummary: false,
+        };
+    });
+    params.worldInfoEntries = aggregatePromptInspectorWorldInfoEntries(allWorldInfoEntries);
     params.hasWorldInfoEntries = params.worldInfoEntries.length > 0;
-    params.hiddenWorldInfoTokens = params.worldInfoEntries
+    params.hiddenWorldInfoTokens = allWorldInfoEntries
         .filter(entry => entry.hidden)
         .reduce((total, entry) => total + toNumber(entry.tokens), 0);
-    params.visibleWorldInfoTokens = params.worldInfoEntries
+    params.visibleWorldInfoTokens = allWorldInfoEntries
         .filter(entry => !entry.hidden)
         .reduce((total, entry) => total + toNumber(entry.tokens), 0);
 
@@ -367,7 +491,10 @@ export async function promptItemize(itemizedPrompts, requestedMesId) {
         console.warn(`could not build itemized prompt params for mesId ${incomingMesId}`);
         return null;
     }
-    const flatten = (rawPrompt) => Array.isArray(rawPrompt) ? rawPrompt.map(x => x.content).join('\n') : rawPrompt;
+    const getPromptText = (promptIndex) => {
+        const prompt = itemizedPrompts[promptIndex];
+        return getRedactedRawPromptText(prompt, Number(prompt?.mesId ?? incomingMesId));
+    };
 
     const template = params.this_main_api == 'openai'
         ? await renderTemplateAsync('itemizationChat', params)
@@ -388,8 +515,8 @@ export async function promptItemize(itemizedPrompts, requestedMesId) {
         diffPrevPrompt.style.display = '';
         diffPrevPrompt.addEventListener('click', function () {
             const dmp = new DiffMatchPatch();
-            const text1 = flatten(itemizedPrompts[priorPromptArrayItemForRawPromptDisplay].rawPrompt);
-            const text2 = flatten(itemizedPrompts[PromptArrayItemForRawPromptDisplay].rawPrompt);
+            const text1 = getPromptText(priorPromptArrayItemForRawPromptDisplay);
+            const text2 = getPromptText(PromptArrayItemForRawPromptDisplay);
 
             dmp.Diff_Timeout = 2.0;
 
@@ -409,13 +536,7 @@ export async function promptItemize(itemizedPrompts, requestedMesId) {
         diffPrevPrompt.style.display = 'none';
     }
     popup.dlg.querySelector('#copyPromptToClipboard').addEventListener('pointerup', async function () {
-        let rawPrompt = itemizedPrompts[PromptArrayItemForRawPromptDisplay].rawPrompt;
-        let rawPromptValues = rawPrompt;
-
-        if (Array.isArray(rawPrompt)) {
-            rawPromptValues = rawPrompt.map(x => x.content).join('\n');
-        }
-
+        const rawPromptValues = getPromptText(PromptArrayItemForRawPromptDisplay);
         await copyText(rawPromptValues);
         toastr.info(t`Copied!`);
     });
@@ -426,7 +547,7 @@ export async function promptItemize(itemizedPrompts, requestedMesId) {
         console.log(itemizedPrompts);
         console.log(itemizedPrompts[PromptArrayItemForRawPromptDisplay].rawPrompt);
 
-        const rawPrompt = flatten(itemizedPrompts[PromptArrayItemForRawPromptDisplay].rawPrompt);
+        const rawPrompt = getPromptText(PromptArrayItemForRawPromptDisplay);
 
         // Mobile needs special handholding. The side-view on the popup wouldn't work,
         // so we just show an additional popup for this.

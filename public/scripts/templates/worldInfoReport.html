@@ -4,6 +4,12 @@
         <div class="flex1">Active Entries</div>
         <div>{{activeEntriesCount}}</div>
     </div>
+    {{#if hiddenEntriesCount}}
+    <div class="flex-container wide100p">
+        <div class="flex1"><small>{{hiddenEntriesCount}} hidden entries</small></div>
+        <div></div>
+    </div>
+    {{/if}}
     <div class="flex-container wide100p">
         <div class="flex1">Active Tokens</div>
         <div>{{totalTokens}}</div>
@@ -30,7 +36,7 @@
             </div>
             <div>{{tokens}} tokens</div>
         </div>
-        <div><small>{{placement}}{{#if hidden}} | hidden{{/if}}{{#if status}} | {{status}}{{/if}}</small></div>
+        <div><small>{{metaText}}</small></div>
         <pre class="tokenItemizingMaintext">{{displayContent}}</pre>
     </div>
     {{/each}}
@@ -57,7 +63,7 @@
                     </div>
                     <div>{{tokens}} tokens</div>
                 </div>
-                <div><small>{{placement}}{{#if hidden}} | hidden{{/if}}{{#if status}} | {{status}}{{/if}}{{#if dropReason}} ({{dropReason}}){{/if}}</small></div>
+                <div><small>{{metaText}}</small></div>
                 <pre class="tokenItemizingMaintext">{{displayContent}}</pre>
             </div>
             {{/each}}

@@ -1,6 +1,6 @@
 import { Fuse } from '../lib.js';
 
-import { saveSettings, substituteParams, getRequestHeaders, chat, chat_metadata, this_chid, characters, saveCharacterDebounced, menu_type, eventSource, event_types, saveMetadata, getCurrentChatId, extension_prompt_roles, create_save, createOrEditCharacter, name1 } from '../script.js';
+import { saveSettings, substituteParams, getRequestHeaders, chat, chat_metadata, this_chid, characters, saveCharacterDebounced, menu_type, eventSource, event_types, saveMetadata, getCurrentChatId, extension_prompt_roles, create_save, createOrEditCharacter, name1, itemizedPrompts } from '../script.js';
 import { download, debounce, delay, initScrollHeight, resetScrollHeight, parseJsonFile, extractDataFromPng, getFileBuffer, getCharaFilename, getSortableDelay, PAGINATION_TEMPLATE, navigation_option, waitUntilCondition, isTrueBoolean, setValueByPath, flashHighlight, select2ModifyOptions, getSelect2OptionId, dynamicSelect2DataViaAjax, highlightRegex, select2ChoiceClickSubscribe, isFalseBoolean, getSanitizedFilename, checkOverwriteExistingData, parseStringArray, cancelDebounce, findChar, onlyUnique, equalsIgnoreCaseAndAccents, uuidv4, normalizeArray, getUniqueName } from './utils.js';
 import { getContext, writeExtensionField } from './extensions.js';
 import { isMobile } from './RossAscends-mods.js';
@@ -286,7 +286,7 @@ function getHiddenSelectedWorldInfo() {
     return selected_world_info.filter(name => hasBoundWorldInfo(name) && !world_names.includes(name));
 }
 
-function getLegacyCharacterExtraBooks(fileName) {
+export function getLegacyCharacterExtraBooks(fileName) {
     const extraCharLore = world_info.charLore?.find((entry) => entry.name === fileName);
     return Array.isArray(extraCharLore?.extraBooks) ? normalizeArray(extraCharLore.extraBooks) : [];
 }
@@ -318,11 +318,29 @@ function getMetadataCharacterExtraBooks(character) {
     };
 }
 
-export function getCharacterExtraBooks(fileName) {
+function mergeCharacterExtraBooks(...sources) {
+    return normalizeArray(sources.flatMap(source => Array.isArray(source) ? source : []));
+}
+
+function getCharacterExtraBookState(fileName) {
     const characterIndex = resolveCharacterIndexFromFileName(fileName);
     const character = characterIndex !== -1 ? characters[characterIndex] : null;
     const metadataBooks = getMetadataCharacterExtraBooks(character);
-    return metadataBooks.hasValue ? metadataBooks.books : getLegacyCharacterExtraBooks(fileName);
+    const legacyBooks = getLegacyCharacterExtraBooks(fileName);
+    return {
+        hasMetadataValue: metadataBooks.hasValue,
+        metadataBooks: metadataBooks.books,
+        legacyBooks,
+        mergedBooks: mergeCharacterExtraBooks(metadataBooks.books, legacyBooks),
+    };
+}
+
+export function getEditableCharacterExtraBooks(fileName) {
+    return getCharacterExtraBookState(fileName).metadataBooks;
+}
+
+export function getCharacterExtraBooks(fileName) {
+    return getCharacterExtraBookState(fileName).mergedBooks;
 }
 
 async function setCharacterExtraBooks(characterIndex, books) {
@@ -333,7 +351,7 @@ async function setCharacterExtraBooks(characterIndex, books) {
 async function updateAllCharacterExtraBooks(transform) {
     for (let index = 0; index < characters.length; index++) {
         const fileName = getCharaFilename(index);
-        const currentBooks = getCharacterExtraBooks(fileName);
+        const currentBooks = getEditableCharacterExtraBooks(fileName);
         const nextBooks = normalizeArray(transform(currentBooks, characters[index], index));
 
         if (JSON.stringify(currentBooks) === JSON.stringify(nextBooks)) {
@@ -1038,14 +1056,19 @@ function getWorldInfoReportSnapshot(messageId = null) {
     if (typeof messageId === 'number' && Number.isFinite(messageId) && messageId >= 0) {
         const message = chat[messageId];
         if (!message) {
-            return null;
+            return getPromptInspectorWorldInfoSnapshot(messageId);
         }
 
-        return {
+        const snapshot = {
             messageId,
             report: message.extra?.worldInfoReport || null,
             summary: message.extra?.worldInfoSummary || null,
         };
+        if ((snapshot.report && typeof snapshot.report === 'object') || (snapshot.summary && typeof snapshot.summary === 'object')) {
+            return snapshot;
+        }
+
+        return getPromptInspectorWorldInfoSnapshot(messageId) || snapshot;
     }
 
     for (let index = chat.length - 1; index >= 0; index--) {
@@ -1060,11 +1083,41 @@ function getWorldInfoReportSnapshot(messageId = null) {
         }
     }
 
+    const promptSnapshot = getPromptInspectorWorldInfoSnapshot();
+    if (promptSnapshot) {
+        return promptSnapshot;
+    }
+
     return {
         messageId: null,
         report: chat_metadata.worldInfoReport || null,
         summary: chat_metadata.worldInfoSummary || null,
     };
+}
+
+function getPromptInspectorWorldInfoSnapshot(messageId = null) {
+    if (!Array.isArray(itemizedPrompts) || itemizedPrompts.length === 0) {
+        return null;
+    }
+
+    const targetPrompt = typeof messageId === 'number' && Number.isFinite(messageId) && messageId >= 0
+        ? itemizedPrompts.find(item => Number(item?.mesId) === Number(messageId))
+        : [...itemizedPrompts].reverse().find(item => item?.serverAssemblyDebugDump?.assembly?.worldInfo);
+
+    const report = targetPrompt?.serverAssemblyDebugDump?.assembly?.worldInfo;
+    if (!report || typeof report !== 'object') {
+        return null;
+    }
+
+    return {
+        messageId: Number.isFinite(Number(targetPrompt?.mesId)) ? Number(targetPrompt.mesId) : messageId,
+        report,
+        summary: null,
+    };
+}
+
+function getVisibleWorldInfoReportEntries(entries = []) {
+    return entries.filter(entry => !entry?.hidden);
 }
 
 async function showWorldInfoReportPopup(messageId = null) {
@@ -1083,37 +1136,58 @@ async function showWorldInfoReportPopup(messageId = null) {
             ? report.activatedEntries.filter(entry => entry?.status === 'admitted')
             : [];
     const rounds = Array.isArray(report?.rounds) ? report.rounds : [];
+    const hiddenEntriesCount = Array.isArray(report?.activatedEntries)
+        ? report.activatedEntries.filter(entry => entry?.hidden).length
+        : activeEntries.filter(entry => entry?.hidden).length;
     const template = await renderTemplateAsync('worldInfoReport', {
         messageId: snapshot?.messageId,
         overflowed: Boolean(summary?.overflowed ?? report?.overflowed),
+        hiddenEntriesCount,
         activeEntriesCount: Number(summary?.activeEntriesCount ?? activeEntries.length) || 0,
         totalTokens: Number(summary?.totalTokens ?? activeEntries.reduce((total, entry) => total + (Number(entry?.tokens ?? 0) || 0), 0)) || 0,
         globalBudgetUsed: Number(report?.budgetUsed?.global?.used ?? summary?.budgetUsed?.global?.used ?? 0) || 0,
         globalBudgetLimit: Number(report?.budgetUsed?.global?.limit ?? summary?.budgetUsed?.global?.limit ?? 0) || 0,
-        activeEntries: activeEntries.map(entry => ({
-            book: entry?.book || '',
-            displayName: entry?.displayName || '',
-            placement: entry?.placement || '',
-            tokens: Number(entry?.tokens ?? 0) || 0,
-            hidden: Boolean(entry?.hidden),
-            displayContent: entry?.displayContent || '',
-            status: entry?.status || '',
+        activeEntries: getVisibleWorldInfoReportEntries(activeEntries.map(entry => {
+            const placement = entry?.placement || '';
+            const status = entry?.status || '';
+            return {
+                book: entry?.book || '',
+                displayName: entry?.displayName || '',
+                placement,
+                metaText: [
+                    placement,
+                    status,
+                ].filter(Boolean).join(' | '),
+                tokens: Number(entry?.tokens ?? 0) || 0,
+                hidden: Boolean(entry?.hidden),
+                displayContent: entry?.displayContent || '',
+                status,
+            };
         })),
         rounds: rounds.map(round => ({
             roundIndex: Number(round?.roundIndex ?? 0) || 0,
             scanState: round?.scanState || '',
             admittedEntries: Number(round?.admittedEntries ?? 0) || 0,
             droppedEntries: Number(round?.droppedEntries ?? 0) || 0,
-            entries: Array.isArray(round?.entries) ? round.entries.map(entry => ({
-                book: entry?.book || '',
-                displayName: entry?.displayName || '',
-                placement: entry?.placement || '',
-                tokens: Number(entry?.tokens ?? 0) || 0,
-                hidden: Boolean(entry?.hidden),
-                displayContent: entry?.displayContent || '',
-                status: entry?.status || '',
-                dropReason: entry?.dropReason || '',
-            })) : [],
+            entries: getVisibleWorldInfoReportEntries(Array.isArray(round?.entries) ? round.entries.map(entry => {
+                const placement = entry?.placement || '';
+                const status = entry?.status || '';
+                const dropReason = entry?.dropReason || '';
+                return {
+                    book: entry?.book || '',
+                    displayName: entry?.displayName || '',
+                    placement,
+                    metaText: [
+                        placement,
+                        status,
+                    ].filter(Boolean).join(' | ') + (dropReason ? ` (${dropReason})` : ''),
+                    tokens: Number(entry?.tokens ?? 0) || 0,
+                    hidden: Boolean(entry?.hidden),
+                    displayContent: entry?.displayContent || '',
+                    status,
+                    dropReason,
+                };
+            }) : []),
         })),
     });
 
@@ -5809,7 +5883,7 @@ export async function charUpdatePrimaryWorld(name) {
 export async function charUpdateAddAuxWorld(characterKey, nameOrNames) {
     const fileName = getCharaFilename(null, { manualAvatarKey: characterKey });
     const toAdd = Array.isArray(nameOrNames) ? nameOrNames : [nameOrNames];
-    await charSetAuxWorlds(fileName, [...getCharacterExtraBooks(fileName), ...toAdd]);
+    await charSetAuxWorlds(fileName, [...getEditableCharacterExtraBooks(fileName), ...toAdd]);
 }
 
 /**

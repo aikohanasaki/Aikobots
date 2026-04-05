@@ -203,6 +203,15 @@ function setSubmissionMetadata(card, { ownerHandle, submissionId }) {
 }
 
 /**
+ * Sets ownership metadata on a card without changing submission metadata.
+ * @param {object} card
+ * @param {string} ownerHandle
+ */
+function setCharacterOwnerHandle(card, ownerHandle) {
+    _.set(card, 'data.extensions.aikobots.owner_handle', String(ownerHandle || '').trim());
+}
+
+/**
  * Gets the ownership metadata stored on a card.
  * @param {object} card
  * @returns {string}
@@ -291,6 +300,29 @@ async function prepareCharacterCardForDistribution(sourcePath) {
 }
 
 /**
+ * Persists owner metadata to a source character card when it is missing.
+ * Used by direct admin distribution so pushed characters carry an owner forward.
+ * @param {{ filePath: string, ownerHandle?: string }} params
+ * @returns {Promise<void>}
+ */
+async function persistCharacterOwnerIfMissing({ filePath, ownerHandle = '' }) {
+    const normalizedOwnerHandle = String(ownerHandle || '').trim();
+    if (!normalizedOwnerHandle) {
+        return;
+    }
+
+    const { rawBuffer, card } = await readCharacterCardFile(filePath);
+    const existingOwnerHandle = getSubmissionOwnerHandle(card);
+
+    if (existingOwnerHandle) {
+        return;
+    }
+
+    setCharacterOwnerHandle(card, normalizedOwnerHandle);
+    await writeCharacterCardFile(rawBuffer, card, filePath);
+}
+
+/**
  * Writes a prepared distributed character card to a destination while preserving/overriding the favorite state.
  * @param {{ rawBuffer: Buffer, card: object }} preparedCard
  * @param {string} destinationPath
@@ -319,7 +351,8 @@ async function copyPreparedCharacterCard(preparedCard, destinationPath, favorite
  * @param {string} sourcePath
  * @returns {Promise<{ rawBuffer: Buffer, card: object }>}
  */
-async function buildDistributionPayload(sourcePath) {
+async function buildDistributionPayload(sourcePath, { sourceOwnerHandle = '' } = {}) {
+    await persistCharacterOwnerIfMissing({ filePath: sourcePath, ownerHandle: sourceOwnerHandle });
     return await prepareCharacterCardForDistribution(sourcePath);
 }
 
@@ -427,7 +460,7 @@ export async function persistCharacterSubmissionOwner({ filePath, ownerHandle })
         return;
     }
 
-    _.set(card, 'data.extensions.aikobots.owner_handle', ownerHandle);
+    setCharacterOwnerHandle(card, ownerHandle);
     await writeCharacterCardFile(rawBuffer, card, filePath);
 }
 
@@ -516,17 +549,17 @@ export function canAccessSubmission(record, user) {
 
 /**
  * Distributes a character PNG to selected users or globally.
- * @param {{ sourcePath: string, publishedFilename?: string, publishMode: 'selected'|'global', targetHandles?: string[], actingUserHandle: string }} params
+ * @param {{ sourcePath: string, publishedFilename?: string, publishMode: 'selected'|'global', targetHandles?: string[], actingUserHandle: string, sourceOwnerHandle?: string }} params
  * @returns {Promise<{ publishedFilename: string, targetHandles: string[] }>}
  */
-export async function distributeCharacterFile({ sourcePath, publishedFilename, publishMode, targetHandles = [], actingUserHandle }) {
+export async function distributeCharacterFile({ sourcePath, publishedFilename, publishMode, targetHandles = [], actingUserHandle, sourceOwnerHandle = '' }) {
     if (!fs.existsSync(sourcePath)) {
         throw new Error('Character source file was not found.');
     }
 
     const sourceName = normalizeCharacterFileName(publishedFilename, path.parse(sourcePath).name);
     const outputFilename = `${sourceName}.png`;
-    const distributionPayload = await buildDistributionPayload(sourcePath);
+    const distributionPayload = await buildDistributionPayload(sourcePath, { sourceOwnerHandle });
 
     /** @type {string[]} */
     let recipients = [];
