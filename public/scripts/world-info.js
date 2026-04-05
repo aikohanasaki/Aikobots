@@ -2,7 +2,7 @@ import { Fuse } from '../lib.js';
 
 import { saveSettings, substituteParams, getRequestHeaders, chat, chat_metadata, this_chid, characters, saveCharacterDebounced, menu_type, eventSource, event_types, saveMetadata, getCurrentChatId, extension_prompt_roles, create_save, createOrEditCharacter, name1 } from '../script.js';
 import { download, debounce, delay, initScrollHeight, resetScrollHeight, parseJsonFile, extractDataFromPng, getFileBuffer, getCharaFilename, getSortableDelay, PAGINATION_TEMPLATE, navigation_option, waitUntilCondition, isTrueBoolean, setValueByPath, flashHighlight, select2ModifyOptions, getSelect2OptionId, dynamicSelect2DataViaAjax, highlightRegex, select2ChoiceClickSubscribe, isFalseBoolean, getSanitizedFilename, checkOverwriteExistingData, parseStringArray, cancelDebounce, findChar, onlyUnique, equalsIgnoreCaseAndAccents, uuidv4, normalizeArray, getUniqueName } from './utils.js';
-import { getContext } from './extensions.js';
+import { getContext, writeExtensionField } from './extensions.js';
 import { isMobile } from './RossAscends-mods.js';
 import { FILTER_TYPES, FilterHelper } from './filters.js';
 import { getTokenCountAsync } from './tokenizers.js';
@@ -284,6 +284,64 @@ function hasBoundWorldInfo(name) {
 
 function getHiddenSelectedWorldInfo() {
     return selected_world_info.filter(name => hasBoundWorldInfo(name) && !world_names.includes(name));
+}
+
+function getLegacyCharacterExtraBooks(fileName) {
+    const extraCharLore = world_info.charLore?.find((entry) => entry.name === fileName);
+    return Array.isArray(extraCharLore?.extraBooks) ? normalizeArray(extraCharLore.extraBooks) : [];
+}
+
+function resolveCharacterIndexFromFileName(fileName) {
+    const normalizedFileName = String(fileName || '').trim();
+    if (!normalizedFileName) {
+        return -1;
+    }
+
+    for (let index = 0; index < characters.length; index++) {
+        if (getCharaFilename(index) === normalizedFileName) {
+            return index;
+        }
+    }
+
+    return -1;
+}
+
+function getMetadataCharacterExtraBooks(character) {
+    if (!character) {
+        return { hasValue: false, books: [] };
+    }
+
+    const value = character?.data?.extensions?.aikobots?.secure_lorebooks;
+    return {
+        hasValue: Array.isArray(value),
+        books: Array.isArray(value) ? normalizeArray(value) : [],
+    };
+}
+
+export function getCharacterExtraBooks(fileName) {
+    const characterIndex = resolveCharacterIndexFromFileName(fileName);
+    const character = characterIndex !== -1 ? characters[characterIndex] : null;
+    const metadataBooks = getMetadataCharacterExtraBooks(character);
+    return metadataBooks.hasValue ? metadataBooks.books : getLegacyCharacterExtraBooks(fileName);
+}
+
+async function setCharacterExtraBooks(characterIndex, books) {
+    const nextBooks = normalizeArray(books);
+    await writeExtensionField(characterIndex, 'aikobots.secure_lorebooks', nextBooks);
+}
+
+async function updateAllCharacterExtraBooks(transform) {
+    for (let index = 0; index < characters.length; index++) {
+        const fileName = getCharaFilename(index);
+        const currentBooks = getCharacterExtraBooks(fileName);
+        const nextBooks = normalizeArray(transform(currentBooks, characters[index], index));
+
+        if (JSON.stringify(currentBooks) === JSON.stringify(nextBooks)) {
+            continue;
+        }
+
+        await setCharacterExtraBooks(index, nextBooks);
+    }
 }
 
 function updateWorldInfoStorageButton(name = '') {
@@ -1150,10 +1208,7 @@ function registerWorldInfoSlashCommands() {
         }
         if (type === 'all' || type === 'additional') {
             const fileName = getCharaFilename(context.characters.indexOf(character));
-            const extraCharLore = world_info.charLore?.find((e) => e.name === fileName);
-            if (extraCharLore && Array.isArray(extraCharLore.extraBooks)) {
-                books.push(...extraCharLore.extraBooks.filter(onlyUnique).filter(Boolean));
-            }
+            books.push(...getCharacterExtraBooks(fileName).filter(onlyUnique).filter(Boolean));
         }
 
         if (isTrueBoolean(String(create)) && books.length === 0) {
@@ -2394,6 +2449,8 @@ async function displayWorldEntries(name, data, navigation = navigation_option.no
 
             saveSettingsDebounced();
         }
+
+        await updateAllCharacterExtraBooks(currentBooks => currentBooks.filter((book) => book !== name));
 
         // Selected world_info automatically refreshes
         await deleteWorldInfo(name);
@@ -4203,6 +4260,14 @@ async function renameWorldInfo(name, data) {
         saveSettingsDebounced();
     }
 
+    await updateAllCharacterExtraBooks(currentBooks => {
+        if (!currentBooks.includes(oldName)) {
+            return currentBooks;
+        }
+
+        return [...currentBooks.filter((book) => book !== oldName), newName];
+    });
+
     if (entryPreviouslySelected !== -1) {
         const wiElement = getWIElement(newName);
         wiElement.prop('selected', true);
@@ -4359,7 +4424,6 @@ export async function createNewWorldInfo(worldName, { interactive = false } = {}
 async function getSortedEntriesOnServer() {
     const character = characters[this_chid];
     const fileName = getCharaFilename(this_chid);
-    const extraCharLore = world_info.charLore?.find((entry) => entry.name === fileName);
     const context = getContext();
     const response = await fetch('/api/worldinfo/sorted-entries', {
         method: 'POST',
@@ -4369,7 +4433,7 @@ async function getSortedEntriesOnServer() {
             chatWorld: chat_metadata[METADATA_KEY] || '',
             personaWorld: power_user.persona_description_lorebook || '',
             characterWorld: character?.data?.extensions?.world || '',
-            characterExtraBooks: extraCharLore?.extraBooks || [],
+            characterExtraBooks: getCharacterExtraBooks(fileName),
             selectedGroup: Boolean(context?.groupId),
             activeSpeaker: {
                 name: character?.name || '',
@@ -5745,7 +5809,7 @@ export async function charUpdatePrimaryWorld(name) {
 export async function charUpdateAddAuxWorld(characterKey, nameOrNames) {
     const fileName = getCharaFilename(null, { manualAvatarKey: characterKey });
     const toAdd = Array.isArray(nameOrNames) ? nameOrNames : [nameOrNames];
-    updateAuxBooks(fileName, curr => [...curr, ...toAdd]);
+    await charSetAuxWorlds(fileName, [...getCharacterExtraBooks(fileName), ...toAdd]);
 }
 
 /**
@@ -5753,34 +5817,31 @@ export async function charUpdateAddAuxWorld(characterKey, nameOrNames) {
  * @param {string} fileName - The filename of the character to update
  * @param {string[]} books - The new list of auxiliary world books to replace the existing list with
  */
-export function charSetAuxWorlds(fileName, books) {
-    updateAuxBooks(fileName, _ => Array.isArray(books) ? books : []);
-}
-
-function updateAuxBooks(fileName, computeNext) {
-    if (!fileName) return;
+export async function charSetAuxWorlds(fileName, books) {
+    const nextBooks = normalizeArray(Array.isArray(books) ? books : []);
 
     if (menu_type === 'create') {
-        const current = create_save.extra_books ?? [];
-        create_save.extra_books = normalizeArray(computeNext(current));
-        return; // no debounced save in create flow
+        create_save.extra_books = nextBooks;
+        create_save.extensions = create_save.extensions || {};
+        create_save.extensions.aikobots = create_save.extensions.aikobots || {};
+
+        if (nextBooks.length > 0) {
+            create_save.extensions.aikobots.secure_lorebooks = [...nextBooks];
+        } else {
+            delete create_save.extensions.aikobots.secure_lorebooks;
+            if (Object.keys(create_save.extensions.aikobots).length === 0) {
+                delete create_save.extensions.aikobots;
+            }
+        }
+        return;
     }
 
-    const charLore = world_info.charLore ?? [];
-    const idx = charLore.findIndex(e => e.name === fileName);
-    const current = idx !== -1 ? (charLore[idx].extraBooks ?? []) : [];
-    const next = normalizeArray(computeNext(current));
-
-    if (next.length === 0) {
-        if (idx !== -1) charLore.splice(idx, 1);
-    } else if (idx === -1) {
-        charLore.push({ name: fileName, extraBooks: next });
-    } else {
-        charLore[idx] = { ...charLore[idx], extraBooks: next };
+    const characterIndex = resolveCharacterIndexFromFileName(fileName);
+    if (characterIndex === -1) {
+        return;
     }
 
-    Object.assign(world_info, { charLore });
-    saveSettingsDebounced();
+    await setCharacterExtraBooks(characterIndex, nextBooks);
 }
 
 export function initWorldInfo() {

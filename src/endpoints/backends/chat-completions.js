@@ -1591,11 +1591,7 @@ function getStoredPromptDispatchSnapshot(request) {
  * @returns {boolean}
  */
 function canAccessPromptParitySnapshot(request) {
-    return Boolean(
-        request.user?.profile?.admin ||
-        request.user?.profile?.handle ||
-        getConfigValue('dev.promptParityAllowAllUsers', false, 'boolean'),
-    );
+    return Boolean(request.user);
 }
 
 function detectWorkspaceBranch() {

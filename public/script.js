@@ -41,6 +41,7 @@ import {
     initWorldInfo,
     charUpdatePrimaryWorld,
     charSetAuxWorlds,
+    getCharacterExtraBooks,
     getForcedActivationEntriesSnapshot,
 } from './scripts/world-info.js';
 
@@ -253,12 +254,6 @@ import { SimpleMutex } from './scripts/util/SimpleMutex.js';
 import { AudioPlayer } from './scripts/audio-player.js';
 import { getStmbSettings, initStmb, loadStmbSettings } from './scripts/stmb.js';
 
-function requireAdminServerAssemblyDebugAccess() {
-    if (!isAdmin()) {
-        throw new Error('Server assembly debugging is only available to admins.');
-    }
-}
-
 function showPromptInspectorButtonForMessage(messageId) {
     const targetMesId = Number(messageId);
     if (Number.isFinite(targetMesId) && targetMesId >= 0) {
@@ -308,8 +303,6 @@ async function storeLastServerDispatchSnapshotToPrompt(messageId) {
 }
 
 async function debugServerAssemblyToPrompt(promptContext = null) {
-    requireAdminServerAssemblyDebugAccess();
-
     const dump = await debugServerAssemblyDump(promptContext);
 
     if (!Array.isArray(itemizedPrompts)) {
@@ -349,14 +342,9 @@ globalThis.SillyTavern = {
     libs,
     getContext,
     debugServerAssembly: debugServerAssemblyToPrompt,
-    getLastServerAssemblyDebugDump: () => {
-        requireAdminServerAssemblyDebugAccess();
-        return getLastServerAssemblyDebugDump();
-    },
-    getLastServerDispatchSnapshot: async () => {
-        requireAdminServerAssemblyDebugAccess();
-        return fetchLastServerDispatchSnapshot();
-    },
+    storeLastServerDispatchSnapshotToPrompt,
+    getLastServerAssemblyDebugDump: () => getLastServerAssemblyDebugDump(),
+    getLastServerDispatchSnapshot: async () => fetchLastServerDispatchSnapshot(),
 };
 
 export {
@@ -6206,7 +6194,6 @@ export async function Generate(type, { automatic_trigger, force_name2, quiet_pro
     switch (main_api) {
         case 'openai': {
             const tagKey = getTagKeyForEntity(this_chid);
-            const extraCharLore = world_info.charLore?.find((entry) => entry.name === getCharaFilename(this_chid));
             const activeCharacter = globalThis.promptManager?.activeCharacter ?? characters[this_chid];
             const promptContext = await buildServerAssemblyPayload({
                 coreChat: getCoreChatPayloadForAssembly(coreChat),
@@ -6238,7 +6225,7 @@ export async function Generate(type, { automatic_trigger, force_name2, quiet_pro
                     chatWorld: chat_metadata[METADATA_KEY] || '',
                     personaWorld: power_user.persona_description_lorebook || '',
                     characterWorld: characters[this_chid]?.data?.extensions?.world || '',
-                    characterExtraBooks: extraCharLore?.extraBooks || [],
+                    characterExtraBooks: getCharacterExtraBooks(getCharaFilename(this_chid)),
                     selectedGroup: Boolean(selected_group),
                     activeSpeaker: {
                         name: activeCharacter?.name || name2 || '',
@@ -11370,19 +11357,19 @@ async function openCharacterWorldPopup() {
         await charUpdatePrimaryWorld(name);
     }
 
-    function handleExtrasWorldSelect(evt) {
+    async function handleExtrasWorldSelect(evt) {
         const el = evt?.currentTarget ?? this;
         const selectedValues = $(el).val();
         const selected = Array.isArray(selectedValues) ? selectedValues : [];
         const nextList = selected.map(i => secureWorldNames[Number(i)]).filter(Boolean);
 
         if (menu_type == 'create') {
-            create_save.extra_books = nextList;
+            await charSetAuxWorlds('', nextList);
             return;
         }
 
         const fileName = getCharaFilename(null, {});
-        charSetAuxWorlds(fileName, nextList);
+        await charSetAuxWorlds(fileName, nextList);
     }
 
     // --- Populate Dropdowns ---
@@ -11398,8 +11385,7 @@ async function openCharacterWorldPopup() {
 
     // Append to extras dropdown.
     const extrasSelect = template.find('.character_extra_world_info_selector');
-    const existingCharLore = world_info.charLore?.find((e) => e.name === fileName);
-    const selectedExtraBooks = (menu_type == 'create' ? create_save.extra_books : existingCharLore?.extraBooks) ?? [];
+    const selectedExtraBooks = menu_type == 'create' ? create_save.extra_books : getCharacterExtraBooks(fileName);
     const secureSelectedExtraBooks = canEditLoreLinks
         ? selectedExtraBooks.filter(item => secureWorldNameSet.has(item))
         : selectedExtraBooks.filter(Boolean).filter(onlyUnique);
@@ -11652,13 +11638,6 @@ export async function createOrEditCharacter(e) {
                 field.callback && field.callback(fieldValue);
             });
 
-            if (Array.isArray(create_save.extra_books) && create_save.extra_books.length > 0) {
-                const fileName = getCharaFilename(null, { manualAvatarKey: avatarId });
-                const charLore = world_info.charLore ?? [];
-                charLore.push({ name: fileName, extraBooks: create_save.extra_books });
-                Object.assign(world_info, { charLore: charLore });
-                saveSettingsDebounced();
-            }
             create_save.extra_books = [];
 
             $('#character_popup-button-h3').text('Create character');

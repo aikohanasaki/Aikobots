@@ -1562,11 +1562,10 @@ export async function writeExtensionField(characterId, key, value) {
     const saveDataRequest = {
         avatar: character.avatar,
         data: {
-            extensions: {
-                [key]: value,
-            },
+            extensions: {},
         },
     };
+    setValueByPath(saveDataRequest, path, value);
     const mergeResponse = await fetch('/api/characters/merge-attributes', {
         method: 'POST',
         headers: getRequestHeaders(),

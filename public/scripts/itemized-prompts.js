@@ -180,6 +180,12 @@ export async function itemizedParams(itemizedPrompts, thisPromptSet, incomingMes
             : [],
     };
     params.hasWorldInfoEntries = params.worldInfoEntries.length > 0;
+    params.hiddenWorldInfoTokens = params.worldInfoEntries
+        .filter(entry => entry.hidden)
+        .reduce((total, entry) => total + toNumber(entry.tokens), 0);
+    params.visibleWorldInfoTokens = params.worldInfoEntries
+        .filter(entry => !entry.hidden)
+        .reduce((total, entry) => total + toNumber(entry.tokens), 0);
 
     const getFriendlyName = (value) => $(`#rm_api_block select option[value="${value}"]`).first().text() || value;
 
@@ -249,6 +255,8 @@ export async function itemizedParams(itemizedPrompts, thisPromptSet, incomingMes
         params.selectedTokenizer = getFriendlyTokenizerName(params.this_main_api).tokenizerName;
         params.oaiSystemTokens = params.oaiImpersonateTokens + params.oaiJailbreakTokens + params.oaiNudgeTokens + params.oaiStartTokens + params.oaiNsfwTokens + params.oaiMainTokens;
         params.oaiSystemTokensPercentage = getPercentage(params.oaiSystemTokens, params.finalPromptTokens);
+        params.hiddenPromptTokens = params.hiddenWorldInfoTokens;
+        params.nonHiddenPromptTokens = Math.max(0, params.finalPromptTokens - params.hiddenPromptTokens);
     } else {
         //for non-OAI APIs
         //console.log('-- Counting non-OAI Tokens');
@@ -282,6 +290,8 @@ export async function itemizedParams(itemizedPrompts, thisPromptSet, incomingMes
         params.worldInfoStringTokensPercentage = params.worldInfoTotalTokensPercentage;
         params.allAnchorsTokensPercentage = getPercentage(params.allAnchorsTokens, params.totalTokensInPrompt);
         params.selectedTokenizer = itemizedPrompt.tokenizer || getFriendlyTokenizerName(params.this_main_api).tokenizerName;
+        params.hiddenPromptTokens = params.hiddenWorldInfoTokens;
+        params.nonHiddenPromptTokens = Math.max(0, params.totalTokensInPrompt - params.hiddenPromptTokens);
     }
     return params;
 }
@@ -452,11 +462,21 @@ export function initItemizedPrompts() {
         console.log(`looking for mesID: ${mesIdForItemization}`);
         if (itemizedPrompts.length !== undefined && itemizedPrompts.length !== 0) {
             const itemizedPrompt = itemizedPrompts.find(x => Number(x.mesId) === Number(mesIdForItemization));
-            if (isAdmin() && itemizedPrompt?.serverPromptAssembly && !itemizedPrompt?.serverAssemblyDebugDump?.assembly && typeof globalThis.SillyTavern?.debugServerAssembly === 'function') {
-                try {
-                    await globalThis.SillyTavern.debugServerAssembly();
-                } catch (error) {
-                    console.error('Failed to refresh server prompt assembly debug dump', error);
+            if (itemizedPrompt?.serverPromptAssembly && !itemizedPrompt?.serverAssemblyDebugDump?.assembly?.itemization) {
+                if (typeof globalThis.SillyTavern?.storeLastServerDispatchSnapshotToPrompt === 'function') {
+                    try {
+                        await globalThis.SillyTavern.storeLastServerDispatchSnapshotToPrompt(Number(mesIdForItemization));
+                    } catch (error) {
+                        console.error('Failed to attach last server dispatch snapshot to prompt record', error);
+                    }
+                }
+
+                if (!itemizedPrompt?.serverAssemblyDebugDump?.assembly?.itemization && typeof globalThis.SillyTavern?.debugServerAssembly === 'function') {
+                    try {
+                        await globalThis.SillyTavern.debugServerAssembly();
+                    } catch (error) {
+                        console.error('Failed to refresh server prompt assembly debug dump', error);
+                    }
                 }
             }
             await promptItemize(itemizedPrompts, mesIdForItemization);

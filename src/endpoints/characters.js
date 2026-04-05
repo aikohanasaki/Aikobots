@@ -499,6 +499,7 @@ function convertToV2(char, directories) {
 function unsetPrivateFields(char) {
     _.set(char, 'fav', false);
     _.set(char, 'data.extensions.fav', false);
+    _.unset(char, 'data.extensions.aikobots.secure_lorebooks');
     _.unset(char, 'chat');
 }
 
@@ -727,6 +728,47 @@ function convertWorldInfoToCharacterBook(name, entries) {
     }
 
     return result;
+}
+
+/**
+ * Gets the owner handle for a character card.
+ * @param {object|null|undefined} characterCard Character card data
+ * @returns {string}
+ */
+function getCharacterOwnerHandle(characterCard) {
+    return String(_.get(characterCard, 'data.extensions.aikobots.owner_handle', '') || '').trim();
+}
+
+/**
+ * Checks whether the current requester can edit protected lorebook metadata for a character.
+ * @param {object|null|undefined} characterCard Character card data
+ * @param {import('express').Request} request Express request object
+ * @returns {boolean}
+ */
+function canEditCharacterLorebooks(characterCard, request) {
+    const ownerHandle = getCharacterOwnerHandle(characterCard);
+    return !ownerHandle || Boolean(request.user?.profile?.admin) || request.user?.profile?.handle === ownerHandle;
+}
+
+/**
+ * Copies protected lorebook fields from one character card to another.
+ * @param {object} targetCharacter Character card to mutate
+ * @param {object} sourceCharacter Character card to copy from
+ */
+function preserveProtectedLorebookFields(targetCharacter, sourceCharacter) {
+    _.set(targetCharacter, 'data.extensions.world', String(_.get(sourceCharacter, 'data.extensions.world', '') || ''));
+
+    if (_.has(sourceCharacter, 'data.character_book')) {
+        _.set(targetCharacter, 'data.character_book', _.cloneDeep(_.get(sourceCharacter, 'data.character_book')));
+    } else {
+        _.unset(targetCharacter, 'data.character_book');
+    }
+
+    if (_.has(sourceCharacter, 'data.extensions.aikobots.secure_lorebooks')) {
+        _.set(targetCharacter, 'data.extensions.aikobots.secure_lorebooks', _.cloneDeep(_.get(sourceCharacter, 'data.extensions.aikobots.secure_lorebooks')));
+    } else {
+        _.unset(targetCharacter, 'data.extensions.aikobots.secure_lorebooks');
+    }
 }
 
 /**
@@ -1110,15 +1152,47 @@ router.post('/edit', validateAvatarUrlMiddleware, async function (request, respo
         return;
     }
 
-    let char = charaFormatData(request.body, request.user.directories);
-    char.chat = request.body.chat;
-    char.create_date = request.body.create_date;
-    char = JSON.stringify(char);
-    let targetFile = (request.body.avatar_url).replace('.png', '');
-
     try {
+        const avatarPath = path.join(request.user.directories.characters, request.body.avatar_url);
+        const rawCharacterData = await readCharacterData(avatarPath);
+        const existingCharacter = rawCharacterData ? getCharaCardV2(JSON.parse(rawCharacterData), request.user.directories, false) : null;
+        const canEditLorebooks = canEditCharacterLorebooks(existingCharacter, request);
+
+        if (existingCharacter && !canEditLorebooks) {
+            const requestedJsonData = tryParse(request.body.json_data);
+            const requestedJsonCard = requestedJsonData ? getCharaCardV2(requestedJsonData, request.user.directories, false) : null;
+            const existingWorld = String(_.get(existingCharacter, 'data.extensions.world', '') || '');
+            const requestedWorld = String(request.body.world || '');
+            const requestedJsonWorld = requestedJsonCard
+                ? String(_.get(requestedJsonCard, 'data.extensions.world', existingWorld) || '')
+                : existingWorld;
+            const requestedEmbeddedBookChanged = requestedJsonCard
+                ? _.has(requestedJsonCard, 'data.character_book') && !_.isEqual(_.get(requestedJsonCard, 'data.character_book'), _.get(existingCharacter, 'data.character_book'))
+                : false;
+            const requestedSecureLorebooksChanged = requestedJsonCard
+                ? _.has(requestedJsonCard, 'data.extensions.aikobots.secure_lorebooks')
+                    && !_.isEqual(
+                        _.get(requestedJsonCard, 'data.extensions.aikobots.secure_lorebooks'),
+                        _.get(existingCharacter, 'data.extensions.aikobots.secure_lorebooks'),
+                    )
+                : false;
+
+            if (requestedWorld !== existingWorld || requestedJsonWorld !== existingWorld || requestedEmbeddedBookChanged || requestedSecureLorebooksChanged) {
+                const ownerHandle = getCharacterOwnerHandle(existingCharacter);
+                return response.status(403).json({ error: `Only ${ownerHandle} and admins can change this character's lorebook assignments.` });
+            }
+        }
+
+        let char = charaFormatData(request.body, request.user.directories);
+        if (existingCharacter && !canEditLorebooks) {
+            preserveProtectedLorebookFields(char, existingCharacter);
+        }
+        char.chat = request.body.chat;
+        char.create_date = request.body.create_date;
+        char = JSON.stringify(char);
+        let targetFile = (request.body.avatar_url).replace('.png', '');
+
         if (!request.file) {
-            const avatarPath = path.join(request.user.directories.characters, request.body.avatar_url);
             await writeCharacterData(avatarPath, char, targetFile, request);
         } else {
             const crop = tryParse(request.query.crop);
@@ -1254,6 +1328,15 @@ router.post('/merge-attributes', getFileNameValidationFunction('avatar'), async 
         }
 
         let character = JSON.parse(pngStringData);
+        const canEditLorebooks = canEditCharacterLorebooks(character, request);
+        const updatesSecureLorebooks =
+            _.has(update, 'data.extensions.aikobots.secure_lorebooks')
+            || Object.prototype.hasOwnProperty.call(update?.data?.extensions ?? {}, 'aikobots.secure_lorebooks');
+
+        if (updatesSecureLorebooks && !canEditLorebooks) {
+            const ownerHandle = getCharacterOwnerHandle(character);
+            return response.status(403).json({ error: `Only ${ownerHandle} and admins can change this character's lorebook assignments.` });
+        }
 
         _.unset(update, 'json_data');
         _.unset(character, 'json_data');
@@ -1583,8 +1666,8 @@ router.post('/duplicate', validateAvatarUrlMiddleware, async function (request, 
 
         const rawCharacterData = await readCharacterData(filename);
         const characterCard = rawCharacterData ? JSON.parse(rawCharacterData) : null;
-        const ownerHandle = String(_.get(characterCard, 'data.extensions.aikobots.owner_handle', '') || '').trim();
-        const canDuplicate = !ownerHandle || Boolean(request.user.profile.admin) || request.user.profile.handle === ownerHandle;
+        const ownerHandle = getCharacterOwnerHandle(characterCard);
+        const canDuplicate = canEditCharacterLorebooks(characterCard, request);
         if (!canDuplicate) {
             return response.status(403).json({ error: `Only ${ownerHandle} and admins can duplicate this character.` });
         }
