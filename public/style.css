@@ -3476,19 +3476,6 @@ input[type=search]:focus::-webkit-search-cancel-button {
     flex: 0 0 auto;
 }
 
-.character_distribute_button {
-    display: none;
-    appearance: none;
-    background: none;
-    border: 0;
-    color: inherit;
-    font: inherit;
-}
-
-body #rm_print_characters_block .character_select .character_distribute_button {
-    display: flex;
-}
-
 .character_name_block_sub_line {
     position: absolute;
     right: 0px;
@@ -3676,10 +3663,8 @@ body #rm_print_characters_block .character_select .character_distribute_button {
     outline: 2px solid var(--golden);
 }
 
-.character_select.is_fav .ch_name,
-.group_select.is_fav .ch_name,
-.group_member.is_fav .ch_name {
-    color: var(--golden);
+.character_select.has_owner_handle .ch_name {
+    color: var(--SmartThemeUnderlineColor);
 }
 
 .avatar.is_active {

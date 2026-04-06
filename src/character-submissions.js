@@ -89,7 +89,6 @@ export async function ensureSubmissionStore() {
 export function getSubmissionPaths(submissionId) {
     const root = path.resolve(getSubmissionsRoot());
     const id = String(submissionId || '').trim();
-
     const parts = id.split('|');
     if (parts.length !== 2 || !parts[0] || !parts[1]) {
         throw new Error('Invalid submission id.');
@@ -104,7 +103,9 @@ export function getSubmissionPaths(submissionId) {
         throw new Error('Invalid submission id.');
     }
 
-    const basePath = path.resolve(root, id);
+    const ownerDirectoryName = normalizeSubmissionOwnerHandle(parts[0]);
+    const submissionFileName = normalizeSubmissionFileName(parts[1]);
+    const basePath = path.resolve(root, ownerDirectoryName);
     const relativePath = path.relative(root, basePath);
     if (!relativePath || relativePath.startsWith('..') || path.isAbsolute(relativePath)) {
         throw new Error('Invalid submission id.');
@@ -112,8 +113,8 @@ export function getSubmissionPaths(submissionId) {
 
     return {
         basePath,
-        cardPath: path.join(basePath, 'card.png'),
-        recordPath: path.join(basePath, 'record.json'),
+        cardPath: path.join(basePath, `${submissionFileName}.png`),
+        recordPath: path.join(basePath, `${submissionFileName}.json`),
     };
 }
 
@@ -135,12 +136,12 @@ export function normalizeCharacterFileName(value, fallback = 'character') {
 }
 
 /**
- * Normalizes one submission id component before joining with the pipe delimiter.
+ * Normalizes the owner handle used for submission storage directories.
  * @param {string | undefined | null} value
  * @returns {string}
  */
-function normalizeSubmissionIdComponent(value) {
-    const sanitizedValue = sanitize(String(value || '').replaceAll('|', '')).trim().toLowerCase();
+function normalizeSubmissionOwnerHandle(value) {
+    const sanitizedValue = sanitize(String(value || '').replaceAll('|', '')).trim();
 
     if (!sanitizedValue) {
         throw new Error('Invalid submission id.');
@@ -150,14 +151,38 @@ function normalizeSubmissionIdComponent(value) {
 }
 
 /**
- * Builds the deterministic submission id for a creator/filename pair.
+ * Normalizes the bot name used for submission card/record filenames.
+ * @param {string | undefined | null} value
+ * @returns {string}
+ */
+function normalizeSubmissionFileName(value) {
+    return normalizeCharacterFileName(value, 'character');
+}
+
+/**
+ * Builds the deterministic submission id from owner + bot name.
  * @param {{ ownerHandle: string, submittedFilename: string }} params
  * @returns {string}
  */
 function buildSubmissionId({ ownerHandle, submittedFilename }) {
-    const normalizedOwnerHandle = normalizeSubmissionIdComponent(ownerHandle);
-    const normalizedSubmittedFilename = normalizeSubmissionIdComponent(submittedFilename);
+    const normalizedOwnerHandle = normalizeSubmissionOwnerHandle(ownerHandle);
+    const normalizedSubmittedFilename = normalizeSubmissionFileName(submittedFilename);
     return `${normalizedOwnerHandle}|${normalizedSubmittedFilename}`;
+}
+
+async function removeSubmissionOwnerDirectoryIfEmpty(directoryPath) {
+    try {
+        const entries = await fsPromises.readdir(directoryPath);
+        if (entries.length === 0) {
+            await fsPromises.rmdir(directoryPath);
+        }
+    } catch (error) {
+        if (error?.code === 'ENOENT') {
+            return;
+        }
+
+        throw error;
+    }
 }
 
 /**
@@ -423,14 +448,16 @@ export async function writeSubmissionRecord(record) {
  * @returns {Promise<void>}
  */
 export async function cleanupSubmission({ submissionId, deleteMode }) {
-    const { basePath, cardPath } = getSubmissionPaths(submissionId);
+    const { basePath, cardPath, recordPath } = getSubmissionPaths(submissionId);
 
     switch (deleteMode) {
         case SUBMISSION_CLEANUP_MODES.ASSET:
             await fsPromises.rm(cardPath, { force: true }).catch(() => { });
             return;
         case SUBMISSION_CLEANUP_MODES.ALL:
-            await fsPromises.rm(basePath, { recursive: true, force: true }).catch(() => { });
+            await fsPromises.rm(cardPath, { force: true }).catch(() => { });
+            await fsPromises.rm(recordPath, { force: true }).catch(() => { });
+            await removeSubmissionOwnerDirectoryIfEmpty(basePath);
             return;
         default:
             throw new Error('Invalid submission cleanup mode.');
@@ -445,10 +472,12 @@ export async function cleanupSubmission({ submissionId, deleteMode }) {
 export async function createCharacterSubmission({ uploadPath, user, ownerHandle, originalFilename }) {
     await ensureSubmissionStore();
 
-    const submittedFilename = `${normalizeCharacterFileName(originalFilename, 'character')}.png`;
+    const { rawBuffer, card } = await readCharacterCardFile(uploadPath);
+    const fallbackName = normalizeCharacterFileName(originalFilename, 'character');
+    const characterName = normalizeCharacterFileName(getCharacterName(card), fallbackName);
+    const submittedFilename = `${characterName}.png`;
     const submissionId = buildSubmissionId({ ownerHandle, submittedFilename });
     const { basePath, cardPath } = getSubmissionPaths(submissionId);
-    const { rawBuffer, card } = await readCharacterCardFile(uploadPath);
     const existingOwnerHandle = getSubmissionOwnerHandle(card);
 
     if (existingOwnerHandle && existingOwnerHandle !== ownerHandle) {
@@ -556,19 +585,34 @@ export async function buildSubmissionSummary(record) {
  */
 export async function listSubmissionRecords() {
     await ensureSubmissionStore();
-    const entries = await fsPromises.readdir(getSubmissionsRoot(), { withFileTypes: true });
+    const ownerEntries = await fsPromises.readdir(getSubmissionsRoot(), { withFileTypes: true });
     const records = [];
 
-    for (const entry of entries) {
-        if (!entry.isDirectory()) {
+    for (const ownerEntry of ownerEntries) {
+        if (!ownerEntry.isDirectory()) {
             continue;
         }
 
-        try {
-            const record = await getSubmissionRecord(entry.name);
-            records.push(record);
-        } catch (error) {
-            console.warn(`Skipping unreadable submission record: ${entry.name}`, error);
+        const ownerPath = path.join(getSubmissionsRoot(), ownerEntry.name);
+        const fileEntries = await fsPromises.readdir(ownerPath, { withFileTypes: true }).catch(() => []);
+
+        for (const fileEntry of fileEntries) {
+            if (!fileEntry.isFile() || path.extname(fileEntry.name).toLowerCase() !== '.json' || fileEntry.name === 'record.json') {
+                continue;
+            }
+
+            const submissionName = path.parse(fileEntry.name).name;
+            const submissionId = buildSubmissionId({
+                ownerHandle: ownerEntry.name,
+                submittedFilename: submissionName,
+            });
+
+            try {
+                const record = await getSubmissionRecord(submissionId);
+                records.push(record);
+            } catch (error) {
+                console.warn(`Skipping unreadable submission record: ${submissionId}`, error);
+            }
         }
     }
 

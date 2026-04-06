@@ -88,10 +88,14 @@ router.post('/submit', async (request, response) => {
         });
 
         if (!request.file) {
-            await persistCharacterSubmissionOwner({
-                filePath: sourcePath,
-                ownerHandle: request.user.profile.handle,
-            });
+            try {
+                await persistCharacterSubmissionOwner({
+                    filePath: sourcePath,
+                    ownerHandle: request.user.profile.handle,
+                });
+            } catch (error) {
+                console.warn('Character submission succeeded, but failed to persist owner metadata back to the source character.', error);
+            }
         }
 
         return response.json({

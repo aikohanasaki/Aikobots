@@ -75,7 +75,6 @@ async function getCurrentUser() {
         currentUser = await response.json();
         $('#admin_button').toggle(accountsEnabled && isAdmin());
         $('#messages_button').toggle(accountsEnabled);
-        $('.character_distribute_button').css('display', isAdmin() ? 'flex' : 'none');
         await refreshMessagesSummary();
     } catch (error) {
         console.error('Error getting current user:', error);
@@ -395,32 +394,6 @@ async function cleanupCharacterSubmission(payload) {
     } catch (error) {
         console.error('Error cleaning up submission:', error);
         toastr.error(error.message || 'Unknown error', 'Submission cleanup failed');
-        return null;
-    }
-}
-
-/**
- * Sends a distribution request for a character.
- * @param {object} payload
- * @returns {Promise<object | null>}
- */
-async function distributeCharacterRequest(payload) {
-    try {
-        const response = await fetch('/api/characters/distribute', {
-            method: 'POST',
-            headers: getRequestHeaders(),
-            body: JSON.stringify(payload),
-        });
-
-        const data = await response.json().catch(() => ({}));
-        if (!response.ok) {
-            throw new Error(data?.error || 'Failed to distribute character');
-        }
-
-        return data;
-    } catch (error) {
-        console.error('Error distributing character:', error);
-        toastr.error(error.message || 'Unknown error', 'Character distribution failed');
         return null;
     }
 }
@@ -864,158 +837,6 @@ async function openSubmissionReviewPopup(submission, callback) {
             : '';
         toastr.success(`Published ${approved.publishedFilename || approved.characterName}${skippedNotice}`, 'Submission approved');
         callback();
-    }
-}
-
-/**
- * Opens the admin distribution popup for an existing character card.
- * @param {{ name: string, avatar: string }} character
- * @returns {Promise<void>}
- */
-export async function openCharacterDistributePopup(character) {
-    if (!isAdmin()) {
-        return;
-    }
-
-    const users = (await getUsers() || []).filter(user => user.enabled);
-    const ownerHandle = String(character?.data?.extensions?.aikobots?.owner_handle || getCurrentUserHandle()).trim();
-    let publishMode = 'selected';
-    let publishedFilename = String(character?.name || '').trim();
-    let applyBlacklist = false;
-    let persistWhitelist = false;
-    let policyRequestId = 0;
-    let policyRefreshTimer = null;
-    const checklist = buildUserChecklist(users);
-    const blacklistChecklist = buildUserChecklist(users);
-
-    const container = $(`
-        <div class="flex-container flexFlowColumn flexGap10">
-            <h3 class="margin0">Distribute Character</h3>
-            <div class="opacity50p distribute-character-name"></div>
-            <label class="flex-container flexFlowColumn flexNoGap">
-                <span>Publish Mode</span>
-                <select class="text_pole distribute-publish-mode">
-                    <option value="selected">Selected Users</option>
-                    <option value="global">Global</option>
-                </select>
-            </label>
-            <label class="flex-container flexFlowColumn flexNoGap">
-                <span>Published Filename</span>
-                <input class="text_pole distribute-published-filename" type="text">
-            </label>
-            <label class="distribute-apply-blacklist-block flex-container alignItemsCenter flexGap10">
-                <input type="checkbox" class="distribute-apply-blacklist">
-                <span>Apply blacklist</span>
-            </label>
-            <div class="distribute-blacklist-targets-block flex-container flexFlowColumn flexGap5">
-                <span>Blacklisted Users</span>
-            </div>
-            <div class="distribute-targets-block flex-container flexFlowColumn flexGap5">
-                <span>Recipients</span>
-            </div>
-            <label class="distribute-persist-whitelist-block flex-container alignItemsCenter flexGap10">
-                <input type="checkbox" class="distribute-persist-whitelist">
-                <span>Save whitelist for future selected pushes</span>
-            </label>
-        </div>
-    `);
-
-    function syncPolicyBlocks() {
-        container.find('.distribute-targets-block').toggle(publishMode === 'selected');
-        container.find('.distribute-persist-whitelist-block').toggle(publishMode === 'selected');
-        container.find('.distribute-apply-blacklist-block').toggle(publishMode === 'global');
-        container.find('.distribute-blacklist-targets-block').toggle(publishMode === 'global' && applyBlacklist);
-    }
-
-    async function loadPolicyForCurrentFilename({ overwriteRecipients = false } = {}) {
-        const requestId = ++policyRequestId;
-        const policy = await getCharacterDistributionPolicy(ownerHandle, publishedFilename);
-        if (requestId !== policyRequestId) {
-            return;
-        }
-
-        applyBlacklist = policy.hasBlacklist;
-        persistWhitelist = policy.hasWhitelist;
-        container.find('.distribute-apply-blacklist').prop('checked', applyBlacklist);
-        container.find('.distribute-persist-whitelist').prop('checked', persistWhitelist);
-        setSelectedHandles(blacklistChecklist, policy.blacklistHandles);
-
-        if (policy.hasWhitelist) {
-            setSelectedHandles(checklist, policy.whitelistHandles);
-        } else if (overwriteRecipients) {
-            setSelectedHandles(checklist, []);
-        } else {
-            setSelectedHandles(checklist, []);
-        }
-
-        syncPolicyBlocks();
-    }
-
-    function queuePolicyRefresh() {
-        clearTimeout(policyRefreshTimer);
-        policyRefreshTimer = setTimeout(() => {
-            policyRefreshTimer = null;
-            void loadPolicyForCurrentFilename();
-        }, 250);
-    }
-
-    container.find('.distribute-character-name').text(`${character.name} (${character.avatar})`);
-    container.find('.distribute-publish-mode').val(publishMode).on('change', function () {
-        publishMode = String($(this).val());
-        syncPolicyBlocks();
-    });
-    container.find('.distribute-published-filename').val(publishedFilename).on('input', function () {
-        publishedFilename = String($(this).val());
-        queuePolicyRefresh();
-    });
-    container.find('.distribute-apply-blacklist').on('change', function () {
-        applyBlacklist = Boolean($(this).prop('checked'));
-        syncPolicyBlocks();
-    });
-    container.find('.distribute-persist-whitelist').on('change', function () {
-        persistWhitelist = Boolean($(this).prop('checked'));
-    });
-    container.find('.distribute-targets-block').append(checklist);
-    container.find('.distribute-blacklist-targets-block').append(blacklistChecklist);
-    syncPolicyBlocks();
-    await loadPolicyForCurrentFilename({ overwriteRecipients: true });
-
-    const result = await callGenericPopup(container, POPUP_TYPE.CONFIRM, '', {
-        okButton: 'Distribute',
-        cancelButton: 'Cancel',
-        wide: true,
-        allowVerticalScrolling: true,
-    });
-    clearTimeout(policyRefreshTimer);
-
-    if (result !== POPUP_RESULT.AFFIRMATIVE) {
-        return;
-    }
-
-    const targetHandles = getSelectedHandles(checklist);
-    const blacklistHandles = applyBlacklist ? getSelectedHandles(blacklistChecklist) : [];
-    if (publishMode === 'selected' && targetHandles.length === 0) {
-        toastr.error('Choose at least one recipient.', 'Distribution cancelled');
-        return;
-    }
-
-    const distribution = await distributeCharacterRequest({
-        sourceType: 'character',
-        sourceAvatar: character.avatar,
-        publishMode,
-        targetHandles,
-        publishedFilename,
-        applyBlacklist,
-        blacklistHandles,
-        persistWhitelist,
-        whitelistHandles: persistWhitelist ? targetHandles : [],
-    });
-
-    if (distribution) {
-        const skippedNotice = Array.isArray(distribution.skippedHandles) && distribution.skippedHandles.length > 0
-            ? ` Skipped: ${distribution.skippedHandles.join(', ')}`
-            : '';
-        toastr.success(`Distributed ${distribution.publishedFilename}${skippedNotice}`, 'Character published');
     }
 }
 

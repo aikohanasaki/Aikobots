@@ -398,6 +398,9 @@ const toShallow = (character) => {
             tags: _.get(character, 'data.tags', []),
             extensions: {
                 fav: _.get(character, 'data.extensions.fav', false),
+                aikobots: {
+                    owner_handle: _.get(character, 'data.extensions.aikobots.owner_handle', ''),
+                },
             },
         },
     };

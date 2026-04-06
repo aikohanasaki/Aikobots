@@ -224,7 +224,7 @@ import { BulkEditOverlay } from './scripts/BulkEditOverlay.js';
 import { appendFileContent, hasPendingFileAttachment, populateFileAttachment, decodeStyleTags, encodeStyleTags, isExternalMediaAllowed, preserveNeutralChat, restoreNeutralChat, formatCreatorNotes, initChatUtilities, addDOMPurifyHooks } from './scripts/chats.js';
 import { getPresetManager, initPresetManager } from './scripts/preset-manager.js';
 import { evaluateMacros, getLastMessageId, initMacros, MacrosParser } from './scripts/macros.js';
-import { currentUser, openCharacterDistributePopup, setUserControls, submitSelectedCharacterForReview } from './scripts/user.js';
+import { currentUser, setUserControls, submitSelectedCharacterForReview } from './scripts/user.js';
 import { POPUP_RESULT, POPUP_TYPE, Popup, callGenericPopup, fixToastrForDialogs } from './scripts/popup.js';
 import { renderTemplate, renderTemplateAsync } from './scripts/templates.js';
 import { initScrapers } from './scripts/scrapers.js';
@@ -1930,9 +1930,9 @@ function getCharacterBlock(item, id) {
     if (power_user.show_card_avatar_urls) {
         template.find('.ch_avatar_url').text(item.avatar);
     }
-    template.find('.character_distribute_button').css('display', isAdmin() ? 'flex' : 'none');
     template.find('.ch_fav_icon').css('display', 'none');
     template.toggleClass('is_fav', item.fav || item.fav == 'true');
+    template.toggleClass('has_owner_handle', Boolean(item.data?.extensions?.aikobots?.owner_handle));
     template.find('.ch_fav').val(item.fav);
 
     const isAssistant = item.avatar === getPermanentAssistantAvatar();
@@ -13233,25 +13233,6 @@ jQuery(async function () {
     $(document).on('click', '.character_select', async function () {
         const id = Number($(this).attr('data-chid'));
         await selectCharacterById(id);
-    });
-
-    $(document).on('click', '.character_distribute_button', async function (event) {
-        if (!isAdmin()) {
-            toastr.error(t`Only admins can distribute characters.`);
-            return;
-        }
-
-        event.preventDefault();
-        event.stopPropagation();
-
-        const card = $(this).closest('.character_select');
-        const id = Number(card.attr('data-chid'));
-        if (Number.isNaN(id) || !characters[id]) {
-            toastr.warning('No character selected.');
-            return;
-        }
-
-        await openCharacterDistributePopup(characters[id]);
     });
 
     $(document).on('click', '.bogus_folder_select', function () {
