@@ -1,7 +1,6 @@
 import path from 'node:path';
 import fs from 'node:fs';
 import { promises as fsPromises } from 'node:fs';
-import crypto from 'node:crypto';
 
 import _ from 'lodash';
 import sanitize from 'sanitize-filename';
@@ -37,7 +36,6 @@ export const DISTRIBUTION_SOURCE_TYPES = Object.freeze({
 
 const DEFAULT_CONTENT_ROOT = path.join(serverDirectory, 'default', 'content');
 const DEFAULT_CONTENT_INDEX = path.join(DEFAULT_CONTENT_ROOT, 'index.json');
-const SUBMISSION_ID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 let defaultContentIndexWriteQueue = Promise.resolve();
 
 /**
@@ -92,7 +90,17 @@ export function getSubmissionPaths(submissionId) {
     const root = path.resolve(getSubmissionsRoot());
     const id = String(submissionId || '').trim();
 
-    if (!SUBMISSION_ID_REGEX.test(id)) {
+    const parts = id.split('|');
+    if (parts.length !== 2 || !parts[0] || !parts[1]) {
+        throw new Error('Invalid submission id.');
+    }
+
+    const normalizedId = buildSubmissionId({
+        ownerHandle: parts[0],
+        submittedFilename: parts[1],
+    });
+
+    if (normalizedId !== id) {
         throw new Error('Invalid submission id.');
     }
 
@@ -124,6 +132,32 @@ export function normalizeCharacterFileName(value, fallback = 'character') {
     }
 
     return sanitizedName;
+}
+
+/**
+ * Normalizes one submission id component before joining with the pipe delimiter.
+ * @param {string | undefined | null} value
+ * @returns {string}
+ */
+function normalizeSubmissionIdComponent(value) {
+    const sanitizedValue = sanitize(String(value || '').replaceAll('|', '')).trim().toLowerCase();
+
+    if (!sanitizedValue) {
+        throw new Error('Invalid submission id.');
+    }
+
+    return sanitizedValue;
+}
+
+/**
+ * Builds the deterministic submission id for a creator/filename pair.
+ * @param {{ ownerHandle: string, submittedFilename: string }} params
+ * @returns {string}
+ */
+function buildSubmissionId({ ownerHandle, submittedFilename }) {
+    const normalizedOwnerHandle = normalizeSubmissionIdComponent(ownerHandle);
+    const normalizedSubmittedFilename = normalizeSubmissionIdComponent(submittedFilename);
+    return `${normalizedOwnerHandle}|${normalizedSubmittedFilename}`;
 }
 
 /**
@@ -411,8 +445,8 @@ export async function cleanupSubmission({ submissionId, deleteMode }) {
 export async function createCharacterSubmission({ uploadPath, user, ownerHandle, originalFilename }) {
     await ensureSubmissionStore();
 
-    const submissionId = crypto.randomUUID();
     const submittedFilename = `${normalizeCharacterFileName(originalFilename, 'character')}.png`;
+    const submissionId = buildSubmissionId({ ownerHandle, submittedFilename });
     const { basePath, cardPath } = getSubmissionPaths(submissionId);
     const { rawBuffer, card } = await readCharacterCardFile(uploadPath);
     const existingOwnerHandle = getSubmissionOwnerHandle(card);

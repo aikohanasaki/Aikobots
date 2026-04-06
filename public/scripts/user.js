@@ -571,6 +571,7 @@ async function openMySubmissionsPopup() {
     const submissions = await getCharacterSubmissions();
     const container = $('<div class="flex-container flexFlowColumn flexGap10"></div>');
     container.append('<h3 class="margin0">My Submissions</h3>');
+    container.append('<div class="opacity50p">Approved entries in this list are already published.</div>');
     const list = $('<div class="flex-container flexFlowColumn flexGap10"></div>');
     container.append(list);
     renderSubmissionCards(list, submissions);
@@ -1824,8 +1825,10 @@ async function openAdminPanel(initialTab = 'usersList') {
         }
     }
 
+    let submissionStatusFilter = 'pending';
+
     async function renderSubmissions() {
-        const submissions = await getCharacterSubmissions();
+        const submissions = await getCharacterSubmissions(submissionStatusFilter);
         renderSubmissionCards(template.find('.submissionsList'), submissions, {
             admin: true,
             onReview: (submission) => openSubmissionReviewPopup(submission, renderSubmissions),
@@ -1966,6 +1969,10 @@ async function openAdminPanel(initialTab = 'usersList') {
             template.find('.manageUsersButton').trigger('click');
             renderUsers();
         });
+    });
+    template.find('.submissionStatusFilter').val(submissionStatusFilter).on('change', function () {
+        submissionStatusFilter = String($(this).val() || '').trim();
+        void renderSubmissions();
     });
     template.find('.manageSubmissionsButton').on('click', () => renderSubmissions());
     template.find('.refreshSubmissionQueueButton').on('click', () => renderSubmissions());

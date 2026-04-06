@@ -89,6 +89,15 @@
     </div>
     <div class="navTab submissionQueue flex-container flexFlowColumn" style="display: none;">
         <div class="flex-container justifyCenter marginBot10">
+            <label class="flex-container alignItemsCenter flexGap10">
+                <span data-i18n="Status">Status</span>
+                <select class="text_pole submissionStatusFilter">
+                    <option value="" data-i18n="All">All</option>
+                    <option value="pending" selected data-i18n="Pending">Pending</option>
+                    <option value="approved" data-i18n="Approved">Approved</option>
+                    <option value="rejected" data-i18n="Rejected">Rejected</option>
+                </select>
+            </label>
             <div class="refreshSubmissionQueueButton menu_button menu_button_icon">
                 <i class="fa-fw fa-solid fa-rotate"></i>
                 <span data-i18n="Refresh Queue">Refresh Queue</span>
