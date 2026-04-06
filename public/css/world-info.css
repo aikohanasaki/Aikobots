@@ -2,15 +2,21 @@
     --stlo-field-min-width: 220px;
     --stlo-field-small-width: 140px;
     --wi-entry-header-gap: 5px;
+    --wi-entry-chrome-gap: 2px;
+    --wi-entry-actions-gap: 2px;
     --wi-entry-control-icon-width: 1.6rem;
-    --wi-entry-action-button-width: 1.9rem;
-    --wi-entry-chrome-width: calc((var(--wi-entry-control-icon-width) * 4) + (var(--wi-entry-header-gap) * 3));
-    --wi-entry-status-width: calc(3.5em + 30px);
-    --wi-entry-position-width: calc(3.8em + 30px);
-    --wi-entry-depth-width: calc(3.8em + 15px);
-    --wi-entry-order-width: calc(3.5em + 10px);
-    --wi-entry-probability-width: calc(3.5em + 15px);
-    --wi-entry-actions-width: calc((var(--wi-entry-action-button-width) * 3) + (var(--wi-entry-header-gap) * 2));
+    --wi-entry-action-button-width: 1.75rem;
+    --wi-entry-bulk-slot-width: var(--wi-entry-control-icon-width);
+    --wi-entry-chrome-compact-width: calc((var(--wi-entry-control-icon-width) * 2) + var(--wi-entry-chrome-gap));
+    --wi-entry-chrome-custom-width: calc(var(--wi-entry-chrome-compact-width) + var(--wi-entry-control-icon-width) + var(--wi-entry-chrome-gap));
+    --wi-entry-chrome-bulk-width: calc(var(--wi-entry-chrome-compact-width) + var(--wi-entry-bulk-slot-width) + var(--wi-entry-chrome-gap));
+    --wi-entry-chrome-full-width: calc(var(--wi-entry-chrome-custom-width) + var(--wi-entry-bulk-slot-width) + var(--wi-entry-chrome-gap));
+    --wi-entry-status-width: 56px;
+    --wi-entry-position-width: 74px;
+    --wi-entry-depth-width: 46px;
+    --wi-entry-order-width: 56px;
+    --wi-entry-probability-width: 64px;
+    --wi-entry-actions-width: calc((var(--wi-entry-action-button-width) * 2) + var(--wi-entry-actions-gap));
 }
 
 .world_info_select_block {
@@ -262,19 +268,18 @@
     display: flex;
     align-items: center;
     justify-content: flex-start;
+    flex-wrap: nowrap;
     gap: var(--wi-entry-header-gap);
     width: 100%;
     box-sizing: border-box;
-    padding: 0 5px;
+    padding: 0 5px 0 calc(5px + var(--wi-entry-chrome-compact-width) + var(--wi-entry-header-gap));
+    overflow: hidden;
 }
 
 #WIEntryHeaderTitlesPC > small {
     flex: 0 0 auto;
     min-width: 0;
-}
-
-.wi-entry-header-spacer {
-    width: var(--wi-entry-chrome-width);
+    white-space: nowrap;
 }
 
 .wi-entry-header-title {
@@ -309,9 +314,9 @@
 .WIEntryChromeControls {
     display: flex;
     align-items: center;
-    gap: var(--wi-entry-header-gap);
-    flex: 0 0 var(--wi-entry-chrome-width);
-    min-width: var(--wi-entry-chrome-width);
+    gap: var(--wi-entry-chrome-gap);
+    flex: 0 0 var(--wi-entry-chrome-compact-width);
+    min-width: var(--wi-entry-chrome-compact-width);
 }
 
 .WIEntryChromeControls > .drag-handle,
@@ -325,10 +330,45 @@
     width: var(--wi-entry-control-icon-width);
 }
 
+.wi-bulk-select-slot {
+    display: none !important;
+}
+
 .wi-bulk-select-checkbox {
     margin: 0;
     visibility: hidden;
     pointer-events: none;
+}
+
+#world_popup_entries_list.wi-custom-order #WIEntryHeaderTitlesPC {
+    padding-left: calc(5px + var(--wi-entry-chrome-custom-width) + var(--wi-entry-header-gap));
+}
+
+#world_popup_entries_list.wi-custom-order .WIEntryChromeControls {
+    flex-basis: var(--wi-entry-chrome-custom-width);
+    min-width: var(--wi-entry-chrome-custom-width);
+}
+
+#world_popup_entries_list.wi-bulk-move-mode #WIEntryHeaderTitlesPC {
+    padding-left: calc(5px + var(--wi-entry-chrome-bulk-width) + var(--wi-entry-header-gap));
+}
+
+#world_popup_entries_list.wi-bulk-move-mode .WIEntryChromeControls {
+    flex-basis: var(--wi-entry-chrome-bulk-width);
+    min-width: var(--wi-entry-chrome-bulk-width);
+}
+
+#world_popup_entries_list.wi-bulk-move-mode.wi-custom-order #WIEntryHeaderTitlesPC {
+    padding-left: calc(5px + var(--wi-entry-chrome-full-width) + var(--wi-entry-header-gap));
+}
+
+#world_popup_entries_list.wi-bulk-move-mode.wi-custom-order .WIEntryChromeControls {
+    flex-basis: var(--wi-entry-chrome-full-width);
+    min-width: var(--wi-entry-chrome-full-width);
+}
+
+#world_popup_entries_list.wi-bulk-move-mode .wi-bulk-select-slot {
+    display: flex !important;
 }
 
 #world_popup_entries_list.wi-bulk-move-mode .wi-bulk-select-checkbox {
@@ -338,6 +378,11 @@
 
 .WIEntryTitleAndStatus {
     flex: 1 1 auto;
+    min-width: 90px;
+    overflow: hidden;
+}
+
+.WIEntryTitleAndStatus.flex1 {
     min-width: 0;
 }
 
@@ -392,7 +437,7 @@
 .WIEntryActionButtons {
     display: flex;
     align-items: center;
-    gap: var(--wi-entry-header-gap);
+    gap: var(--wi-entry-actions-gap);
     flex: 0 0 var(--wi-entry-actions-width);
     min-width: var(--wi-entry-actions-width);
 }
@@ -406,8 +451,7 @@
 
 .wi-column-hidden,
 .wi-drag-handle-hidden {
-    visibility: hidden;
-    pointer-events: none;
+    display: none !important;
 }
 
 .wi-bulk-move-selected .wi-card-entry {

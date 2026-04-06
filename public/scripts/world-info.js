@@ -2812,6 +2812,7 @@ async function displayWorldEntries(name, data, navigation = navigation_option.no
                 }
 
                 const isCustomOrder = $('#world_info_sort_order').find(':selected').data('rule') === 'custom';
+                worldEntriesList.toggleClass('wi-custom-order', isCustomOrder);
                 blocks.forEach(block => {
                     block.find('.drag-handle').toggleClass('wi-drag-handle-hidden', !isCustomOrder);
                 });
