@@ -6367,7 +6367,7 @@ export async function Generate(type, { automatic_trigger, force_name2, quiet_pro
         };
 
         //console.log(additionalPromptStuff);
-        const itemizedIndex = itemizedPrompts.findIndex((item) => item.mesId === additionalPromptStuff.mesId);
+        const itemizedIndex = itemizedPrompts.findIndex((item) => Number(item?.mesId) === Number(additionalPromptStuff.mesId));
 
         if (itemizedIndex !== -1) {
             itemizedPrompts[itemizedIndex] = additionalPromptStuff;
