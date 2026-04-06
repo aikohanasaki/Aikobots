@@ -1,6 +1,6 @@
 import { Fuse } from '../lib.js';
 
-import { saveSettings, substituteParams, getRequestHeaders, chat, chat_metadata, this_chid, characters, saveCharacterDebounced, menu_type, eventSource, event_types, saveMetadata, getCurrentChatId, extension_prompt_roles, create_save, createOrEditCharacter, name1, itemizedPrompts, canEditCharacterMetadata } from '../script.js';
+import { saveSettings, substituteParams, getRequestHeaders, chat, chat_metadata, this_chid, characters, saveCharacterDebounced, menu_type, eventSource, event_types, saveMetadata, getCurrentChatId, extension_prompt_roles, create_save, createOrEditCharacter, name1, canEditCharacterMetadata } from '../script.js';
 import { download, debounce, delay, initScrollHeight, resetScrollHeight, parseJsonFile, extractDataFromPng, getFileBuffer, getCharaFilename, getSortableDelay, PAGINATION_TEMPLATE, navigation_option, waitUntilCondition, isTrueBoolean, setValueByPath, flashHighlight, select2ModifyOptions, getSelect2OptionId, dynamicSelect2DataViaAjax, highlightRegex, select2ChoiceClickSubscribe, isFalseBoolean, getSanitizedFilename, checkOverwriteExistingData, parseStringArray, cancelDebounce, findChar, onlyUnique, equalsIgnoreCaseAndAccents, uuidv4, normalizeArray, getUniqueName } from './utils.js';
 import { getContext, writeExtensionField } from './extensions.js';
 import { isMobile } from './RossAscends-mods.js';
@@ -20,6 +20,7 @@ import { StructuredCloneMap } from './util/StructuredCloneMap.js';
 import { renderTemplateAsync } from './templates.js';
 import { t } from './i18n.js';
 import { accountStorage } from './util/AccountStorage.js';
+import { fetchPromptInspectionSnapshot } from './openai.js';
 import { getOrCreatePersonaDescriptor, setPersonaDescription, user_avatar } from './personas.js';
 
 export const world_info_logic = {
@@ -1052,26 +1053,54 @@ export function reloadEditor(file, loadIfNotSelected = false) {
     }
 }
 
-function getWorldInfoReportSnapshot(messageId = null) {
+async function getWorldInfoReportSnapshot(messageId = null) {
     if (typeof messageId === 'number' && Number.isFinite(messageId) && messageId >= 0) {
         const message = chat[messageId];
         if (!message) {
-            return getPromptInspectorWorldInfoSnapshot(messageId);
+            return {
+                messageId,
+                report: null,
+                summary: null,
+                missingSnapshot: false,
+            };
+        }
+
+        const promptSnapshotKey = message.extra?.promptSnapshotKey;
+        if (typeof promptSnapshotKey === 'string' && promptSnapshotKey) {
+            const snapshot = await fetchPromptInspectionSnapshot(promptSnapshotKey);
+            return {
+                messageId,
+                report: snapshot?.worldInfoReport || snapshot?.worldInfo || null,
+                summary: snapshot?.worldInfoSummary || null,
+                missingSnapshot: false,
+            };
         }
 
         const snapshot = {
             messageId,
             report: message.extra?.worldInfoReport || null,
             summary: message.extra?.worldInfoSummary || null,
+            missingSnapshot: false,
         };
         if ((snapshot.report && typeof snapshot.report === 'object') || (snapshot.summary && typeof snapshot.summary === 'object')) {
             return snapshot;
         }
 
-        return getPromptInspectorWorldInfoSnapshot(messageId) || snapshot;
+        return snapshot;
     }
 
     for (let index = chat.length - 1; index >= 0; index--) {
+        const promptSnapshotKey = chat[index]?.extra?.promptSnapshotKey;
+        if (typeof promptSnapshotKey === 'string' && promptSnapshotKey) {
+            const snapshot = await fetchPromptInspectionSnapshot(promptSnapshotKey);
+            return {
+                messageId: index,
+                report: snapshot?.worldInfoReport || snapshot?.worldInfo || null,
+                summary: snapshot?.worldInfoSummary || null,
+                missingSnapshot: false,
+            };
+        }
+
         const report = chat[index]?.extra?.worldInfoReport;
         const summary = chat[index]?.extra?.worldInfoSummary;
         if ((report && typeof report === 'object') || (summary && typeof summary === 'object')) {
@@ -1079,40 +1108,16 @@ function getWorldInfoReportSnapshot(messageId = null) {
                 messageId: index,
                 report: report || null,
                 summary: summary || null,
+                missingSnapshot: false,
             };
         }
-    }
-
-    const promptSnapshot = getPromptInspectorWorldInfoSnapshot();
-    if (promptSnapshot) {
-        return promptSnapshot;
     }
 
     return {
         messageId: null,
         report: chat_metadata.worldInfoReport || null,
         summary: chat_metadata.worldInfoSummary || null,
-    };
-}
-
-function getPromptInspectorWorldInfoSnapshot(messageId = null) {
-    if (!Array.isArray(itemizedPrompts) || itemizedPrompts.length === 0) {
-        return null;
-    }
-
-    const targetPrompt = typeof messageId === 'number' && Number.isFinite(messageId) && messageId >= 0
-        ? itemizedPrompts.find(item => Number(item?.mesId) === Number(messageId))
-        : [...itemizedPrompts].reverse().find(item => item?.serverAssemblyDebugDump?.assembly?.worldInfo);
-
-    const report = targetPrompt?.serverAssemblyDebugDump?.assembly?.worldInfo;
-    if (!report || typeof report !== 'object') {
-        return null;
-    }
-
-    return {
-        messageId: Number.isFinite(Number(targetPrompt?.mesId)) ? Number(targetPrompt.mesId) : messageId,
-        report,
-        summary: null,
+        missingSnapshot: false,
     };
 }
 
@@ -1221,7 +1226,14 @@ function buildWorldInfoReportRounds(report, activeEntries) {
 }
 
 async function showWorldInfoReportPopup(messageId = null) {
-    const snapshot = getWorldInfoReportSnapshot(messageId);
+    let snapshot;
+    try {
+        snapshot = await getWorldInfoReportSnapshot(messageId);
+    } catch (error) {
+        console.error('Failed to fetch world info report snapshot', error);
+        toastr.info(t`The World Info snapshot is no longer available.`);
+        return '';
+    }
     const report = snapshot?.report;
     const summary = snapshot?.summary;
 

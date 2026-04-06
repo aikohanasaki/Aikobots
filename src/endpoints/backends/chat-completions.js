@@ -1,11 +1,8 @@
 import process from 'node:process';
 import util from 'node:util';
-import fs from 'node:fs';
-import path from 'node:path';
 import express from 'express';
 import fetch from 'node-fetch';
 import urlJoin from 'url-join';
-import { fileURLToPath } from 'node:url';
 
 import {
     AIMLAPI_HEADERS,
@@ -90,13 +87,8 @@ const API_ZANITY_ALTERNATE = 'https://api.zanity.xyz/rp';
 const API_ZAI_COMMON = 'https://api.z.ai/api/paas/v4';
 const API_ZAI_CODING = 'https://api.z.ai/api/coding/paas/v4';
 const API_SILICONFLOW = 'https://api.siliconflow.com/v1';
-const MODULE_DIR = path.dirname(fileURLToPath(import.meta.url));
-const REPO_ROOT = path.resolve(MODULE_DIR, '../../../');
-const MAX_PROMPT_DISPATCH_SNAPSHOTS = 100;
-const lastPromptDispatchSnapshots = new Map();
-const lastPromptDispatchSnapshotsByHandle = new Map();
-let lastPromptDispatchSnapshotGlobal = null;
-let cachedWorkspaceBranch = undefined;
+const MAX_PROMPT_INSPECTION_SNAPSHOTS = 100;
+const promptInspectionSnapshots = new Map();
 
 // blocked due to site policy, unblocking august 2026
 const BLOCKED_CUSTOM_ENDPOINT_HOSTNAME = 'voidai.app';
@@ -1522,78 +1514,6 @@ function rewriteSystemMessagesForO1Model(model, chatCompletionSource, messages) 
     return messages;
 }
 
-function clonePromptDispatchSnapshot(snapshot) {
-    return snapshot && typeof snapshot === 'object'
-        ? structuredClone(snapshot)
-        : null;
-}
-
-function getPromptDispatchSnapshotKey(request) {
-    const handle = String(request?.user?.profile?.handle || 'anonymous');
-    const sessionId = String(request?.sessionID || request?.session?.id || 'no-session');
-    return `${handle}::${sessionId}`;
-}
-
-function setPromptDispatchSnapshotCacheEntry(cache, key, value) {
-    if (cache.has(key)) {
-        cache.delete(key);
-    }
-
-    cache.set(key, value);
-
-    while (cache.size > MAX_PROMPT_DISPATCH_SNAPSHOTS) {
-        const oldestKey = cache.keys().next().value;
-        cache.delete(oldestKey);
-    }
-}
-
-function getPromptDispatchSnapshotCacheEntry(cache, key) {
-    if (!cache.has(key)) {
-        return undefined;
-    }
-
-    const value = cache.get(key);
-    cache.delete(key);
-    cache.set(key, value);
-    return value;
-}
-
-function storePromptDispatchSnapshot(request, snapshot) {
-    const clonedSnapshot = clonePromptDispatchSnapshot(snapshot);
-    const handle = String(request?.user?.profile?.handle || 'anonymous');
-
-    setPromptDispatchSnapshotCacheEntry(lastPromptDispatchSnapshots, getPromptDispatchSnapshotKey(request), clonedSnapshot);
-    setPromptDispatchSnapshotCacheEntry(lastPromptDispatchSnapshotsByHandle, handle, clonePromptDispatchSnapshot(clonedSnapshot));
-    lastPromptDispatchSnapshotGlobal = clonePromptDispatchSnapshot(clonedSnapshot);
-}
-
-function getStoredPromptDispatchSnapshot(request) {
-    const exactMatch = getPromptDispatchSnapshotCacheEntry(lastPromptDispatchSnapshots, getPromptDispatchSnapshotKey(request));
-    if (exactMatch) {
-        return clonePromptDispatchSnapshot(exactMatch);
-    }
-
-    const handle = String(request?.user?.profile?.handle || 'anonymous');
-    const handleMatch = getPromptDispatchSnapshotCacheEntry(lastPromptDispatchSnapshotsByHandle, handle);
-    if (handleMatch) {
-        return clonePromptDispatchSnapshot(handleMatch);
-    }
-
-    if (getConfigValue('dev.promptParityAllowAllUsers', false, 'boolean')) {
-        return clonePromptDispatchSnapshot(lastPromptDispatchSnapshotGlobal);
-    }
-
-    return null;
-}
-
-/**
- * @param {import('express').Request} request
- * @returns {boolean}
- */
-function canAccessPromptParitySnapshot(request) {
-    return Boolean(request.user);
-}
-
 /**
  * @param {any} user
  * @returns {boolean}
@@ -1602,72 +1522,172 @@ function canViewPromptParityRawDebugData(user) {
     return Boolean(user?.profile?.admin);
 }
 
-function detectWorkspaceBranch() {
-    if (cachedWorkspaceBranch !== undefined) {
-        return cachedWorkspaceBranch;
+function clonePromptInspectionSnapshot(snapshot) {
+    return snapshot && typeof snapshot === 'object'
+        ? structuredClone(snapshot)
+        : null;
+}
+
+function sanitizePromptSnapshotKeyPart(value) {
+    return String(value ?? '').replace(/\|/g, '').trim();
+}
+
+function buildPromptSnapshotKey(username, chatScope, mesId, swipeId) {
+    const normalizedUsername = sanitizePromptSnapshotKeyPart(username);
+    const normalizedChatScope = sanitizePromptSnapshotKeyPart(chatScope);
+    const normalizedMesId = Number(mesId);
+    const normalizedSwipeId = Number(swipeId);
+
+    if (!normalizedUsername || !normalizedChatScope || !Number.isFinite(normalizedMesId) || normalizedMesId < 0 || !Number.isFinite(normalizedSwipeId) || normalizedSwipeId < 0) {
+        return null;
     }
 
-    try {
-        const dotGitPath = path.join(REPO_ROOT, '.git');
-        if (!fs.existsSync(dotGitPath)) {
-            cachedWorkspaceBranch = null;
-            return cachedWorkspaceBranch;
-        }
+    return `${normalizedUsername}|${normalizedChatScope}|${normalizedMesId}|${normalizedSwipeId}`;
+}
 
-        let gitDir = dotGitPath;
-        if (fs.statSync(dotGitPath).isFile()) {
-            const dotGitContents = fs.readFileSync(dotGitPath, 'utf8');
-            const gitDirMatch = dotGitContents.match(/^gitdir:\s*(.+)$/m);
-            if (!gitDirMatch) {
-                cachedWorkspaceBranch = null;
-                return cachedWorkspaceBranch;
-            }
-            gitDir = path.resolve(REPO_ROOT, gitDirMatch[1].trim());
-        }
+function parsePromptSnapshotKey(key) {
+    const parts = String(key || '').split('|');
+    if (parts.length !== 4) {
+        return null;
+    }
 
-        const headPath = path.join(gitDir, 'HEAD');
-        if (!fs.existsSync(headPath)) {
-            cachedWorkspaceBranch = null;
-            return cachedWorkspaceBranch;
-        }
+    const [username, chatScope, mesIdText, swipeIdText] = parts;
+    const mesId = Number(mesIdText);
+    const swipeId = Number(swipeIdText);
+    if (!username || !chatScope || !Number.isFinite(mesId) || mesId < 0 || !Number.isFinite(swipeId) || swipeId < 0) {
+        return null;
+    }
 
-        const headContents = fs.readFileSync(headPath, 'utf8').trim();
-        const refMatch = headContents.match(/^ref:\s+refs\/heads\/(.+)$/);
-        cachedWorkspaceBranch = refMatch ? refMatch[1] : null;
-        return cachedWorkspaceBranch;
-    } catch {
-        cachedWorkspaceBranch = null;
-        return cachedWorkspaceBranch;
+    return { username, chatScope, mesId, swipeId };
+}
+
+function getPromptInspectionUserHandle(request) {
+    return sanitizePromptSnapshotKeyPart(request?.user?.profile?.handle || '');
+}
+
+function getPromptInspectionInfo(request) {
+    const promptInspection = request?.body?.prompt_context?.promptInspection;
+    if (!promptInspection || typeof promptInspection !== 'object') {
+        return null;
+    }
+
+    const username = getPromptInspectionUserHandle(request);
+    const chatScope = sanitizePromptSnapshotKeyPart(promptInspection.chatScope || request?.body?.prompt_context?.currentChatId || '');
+    const mesId = Number(promptInspection.mesId);
+    const swipeId = Number(promptInspection.swipeId);
+    const key = buildPromptSnapshotKey(username, chatScope, mesId, swipeId);
+
+    if (!key) {
+        return null;
+    }
+
+    return { key, username, chatScope, mesId, swipeId };
+}
+
+function setPromptInspectionSnapshot(key, snapshot) {
+    if (!key) {
+        return;
+    }
+
+    if (promptInspectionSnapshots.has(key)) {
+        promptInspectionSnapshots.delete(key);
+    }
+
+    promptInspectionSnapshots.set(key, clonePromptInspectionSnapshot(snapshot));
+
+    while (promptInspectionSnapshots.size > MAX_PROMPT_INSPECTION_SNAPSHOTS) {
+        const oldestKey = promptInspectionSnapshots.keys().next().value;
+        promptInspectionSnapshots.delete(oldestKey);
     }
 }
 
-function getPromptParityCaseId(request) {
-    return request.body?.prompt_parity_case_id
-        || request.body?.prompt_context?.caseId
-        || request.body?.prompt_context?.case_id
-        || null;
+function getPromptInspectionSnapshot(key) {
+    if (!key || !promptInspectionSnapshots.has(key)) {
+        return null;
+    }
+
+    const snapshot = promptInspectionSnapshots.get(key);
+    promptInspectionSnapshots.delete(key);
+    promptInspectionSnapshots.set(key, snapshot);
+    return clonePromptInspectionSnapshot(snapshot);
 }
 
-function createPromptDispatchSnapshot(request, requestPayload, assembled = null) {
+function deletePromptInspectionSnapshot(key) {
+    if (!key) {
+        return false;
+    }
+
+    return promptInspectionSnapshots.delete(key);
+}
+
+function rekeyPromptInspectionSnapshot(fromKey, toKey) {
+    if (!fromKey || !toKey || fromKey === toKey || !promptInspectionSnapshots.has(fromKey)) {
+        return false;
+    }
+
+    const snapshot = promptInspectionSnapshots.get(fromKey);
+    promptInspectionSnapshots.delete(fromKey);
+
+    const parsedKey = parsePromptSnapshotKey(toKey);
+    const rekeyedSnapshot = clonePromptInspectionSnapshot(snapshot);
+    if (rekeyedSnapshot && parsedKey) {
+        rekeyedSnapshot.key = toKey;
+        rekeyedSnapshot.username = parsedKey.username;
+        rekeyedSnapshot.chatScope = parsedKey.chatScope;
+        rekeyedSnapshot.mesId = parsedKey.mesId;
+        rekeyedSnapshot.swipeId = parsedKey.swipeId;
+    }
+
+    setPromptInspectionSnapshot(toKey, rekeyedSnapshot);
+    return true;
+}
+
+function isPromptSnapshotAuthorizedForRequest(request, key) {
+    const parsedKey = parsePromptSnapshotKey(key);
+    if (!parsedKey) {
+        return false;
+    }
+
+    return parsedKey.username === getPromptInspectionUserHandle(request);
+}
+
+function shouldRewriteSystemMessagesForO1Model(model, chatCompletionSource) {
+    const normalizedModel = String(model || '');
+    const normalizedSource = String(chatCompletionSource || '');
+
+    return normalizedModel.startsWith('o1') && [
+        CHAT_COMPLETION_SOURCES.OPENAI,
+        CHAT_COMPLETION_SOURCES.AZURE_OPENAI,
+    ].includes(normalizedSource);
+}
+
+function createPromptInspectionSnapshot(request, assembled, promptInspectionInfo) {
+    if (!assembled || !promptInspectionInfo) {
+        return null;
+    }
+
+    const model = request?.body?.prompt_context?.model ?? request?.body?.model ?? null;
+    const source = request?.body?.prompt_context?.chatCompletionSource ?? request?.body?.chat_completion_source ?? null;
+
     return {
-        caseId: getPromptParityCaseId(request),
-        branch: detectWorkspaceBranch(),
-        capturedAt: new Date().toISOString(),
-        type: request.body?.type || request.body?.prompt_context?.type || null,
-        source: request.body?.chat_completion_source || null,
-        model: requestPayload?.model || null,
-        messages: Array.isArray(requestPayload?.messages) ? structuredClone(requestPayload.messages) : [],
-        stop: Array.isArray(requestPayload?.stop) ? structuredClone(requestPayload.stop) : null,
-        tools: Array.isArray(requestPayload?.tools) ? structuredClone(requestPayload.tools) : null,
-        tool_choice: requestPayload?.tool_choice ?? null,
-        max_tokens: requestPayload?.max_tokens ?? null,
-        max_completion_tokens: requestPayload?.max_completion_tokens ?? null,
-        reasoning_effort: request.body?.reasoning_effort ?? requestPayload?.reasoning_effort ?? requestPayload?.reasoning?.effort ?? null,
-        custom_prompt_post_processing: request.body?.custom_prompt_post_processing ?? null,
-        assembly: structuredClone(assembled || null),
+        key: promptInspectionInfo.key,
+        username: promptInspectionInfo.username,
+        chatScope: promptInspectionInfo.chatScope,
+        mesId: promptInspectionInfo.mesId,
+        swipeId: promptInspectionInfo.swipeId,
+        createdAt: new Date().toISOString(),
+        type: request?.body?.prompt_context?.type ?? request?.body?.type ?? null,
+        source,
+        model,
+        assembly: structuredClone(assembled),
         worldInfo: structuredClone(assembled?.worldInfo || null),
         itemization: structuredClone(assembled?.itemization || null),
-        requestPayload: structuredClone(requestPayload || {}),
+        dispatchMetadata: {
+            source,
+            model,
+            custom_prompt_post_processing: request?.body?.custom_prompt_post_processing ?? null,
+            willRewriteSystemMessagesForO1: shouldRewriteSystemMessagesForO1Model(model, source),
+        },
     };
 }
 
@@ -1750,28 +1770,7 @@ function sanitizeWorldInfoDebugDataForResponse(worldInfo, user) {
     };
 }
 
-function buildWorldInfoPlacementRedactionMap(entries = []) {
-    return entries.reduce((result, entry) => {
-        const placement = String(entry?.placement || '').trim();
-        if (!placement || entry?.status !== 'admitted') {
-            return result;
-        }
-
-        const text = entry?.hidden
-            ? '(hidden entry)'
-            : String(entry?.displayContent ?? entry?.content ?? '').trim();
-
-        if (!text) {
-            return result;
-        }
-
-        result[placement] = result[placement] || [];
-        result[placement].push(text);
-        return result;
-    }, {});
-}
-
-function buildOutletRedactionPairsForResponse(sourceWorldInfo, sanitizedWorldInfo) {
+function buildWorldInfoRedactionPairsForResponse(sourceWorldInfo, sanitizedWorldInfo) {
     const sourceEntries = Array.isArray(sourceWorldInfo?.activatedEntries)
         ? sourceWorldInfo.activatedEntries
         : [];
@@ -1780,23 +1779,19 @@ function buildOutletRedactionPairsForResponse(sourceWorldInfo, sanitizedWorldInf
         : [];
 
     /** @type {Map<string, {source: string[], sanitized: string[], hasHidden: boolean}>} */
-    const outletMap = new Map();
+    const redactionMap = new Map();
 
     for (let index = 0; index < Math.max(sourceEntries.length, sanitizedEntries.length); index++) {
         const sourceEntry = sourceEntries[index];
         const sanitizedEntry = sanitizedEntries[index];
         const placement = String(sourceEntry?.placement ?? sanitizedEntry?.placement ?? '').trim();
-        if (!placement.startsWith('outlet:')) {
-            continue;
-        }
-
         const sourceStatus = sourceEntry?.status ?? sanitizedEntry?.status;
         const sanitizedStatus = sanitizedEntry?.status ?? sourceEntry?.status;
         if (sourceStatus !== 'admitted' || sanitizedStatus !== 'admitted') {
             continue;
         }
 
-        const bucket = outletMap.get(placement) || { source: [], sanitized: [], hasHidden: false };
+        const bucket = redactionMap.get(`${placement}:${index}`) || { source: [], sanitized: [], hasHidden: false };
         const sourceText = String(sourceEntry?.content ?? sourceEntry?.displayContent ?? '').trim();
         const sanitizedText = String(sanitizedEntry?.displayContent ?? sanitizedEntry?.content ?? '').trim();
         const isHidden = Boolean(sanitizedEntry?.hidden);
@@ -1811,10 +1806,10 @@ function buildOutletRedactionPairsForResponse(sourceWorldInfo, sanitizedWorldInf
             bucket.hasHidden = true;
         }
 
-        outletMap.set(placement, bucket);
+        redactionMap.set(`${placement}:${index}`, bucket);
     }
 
-    return Array.from(outletMap.values())
+    return Array.from(redactionMap.values())
         .filter(bucket => bucket.hasHidden && bucket.source.length > 0 && bucket.sanitized.length > 0)
         .map(bucket => ({
             originalText: bucket.source.join('\n'),
@@ -1839,7 +1834,7 @@ function replaceExactTextBundles(value, redactionPairs = []) {
     return result;
 }
 
-function applyOutletRedactionsToMessageContent(content, redactionPairs = []) {
+function applyPromptRedactionsToMessageContent(content, redactionPairs = []) {
     if (typeof content === 'string') {
         return replaceExactTextBundles(content, redactionPairs);
     }
@@ -1861,53 +1856,7 @@ function applyOutletRedactionsToMessageContent(content, redactionPairs = []) {
     });
 }
 
-function createSanitizedSerializedMessage(template, content) {
-    const baseMessage = template && template.type === 'message'
-        ? structuredClone(template)
-        : { type: 'message', role: 'system', identifier: null };
-    baseMessage.content = String(content ?? '');
-    return baseMessage;
-}
-
-function sanitizeMessagesStateForResponse(node, placementMap, depthPlacementQueue) {
-    if (!node || typeof node !== 'object') {
-        return null;
-    }
-
-    if (node.type === 'collection') {
-        const sanitizedCollection = structuredClone(node);
-        const sourceCollection = Array.isArray(node.collection) ? node.collection : [];
-
-        if (node.identifier === 'worldInfoBefore' || node.identifier === 'worldInfoAfter') {
-            const placement = node.identifier === 'worldInfoBefore' ? 'before' : 'after';
-            const contents = placementMap[placement] || [];
-            const templateMessage = sourceCollection.find(child => child?.type === 'message') || null;
-            sanitizedCollection.collection = contents.map((content, index) =>
-                createSanitizedSerializedMessage(sourceCollection[index] || templateMessage, content));
-            return sanitizedCollection;
-        }
-
-        sanitizedCollection.collection = sourceCollection
-            .map(child => sanitizeMessagesStateForResponse(child, placementMap, depthPlacementQueue))
-            .filter(Boolean);
-        return sanitizedCollection;
-    }
-
-    if (node.type !== 'message') {
-        return structuredClone(node);
-    }
-
-    const sanitizedMessage = structuredClone(node);
-    if (sanitizedMessage.injected && sanitizedMessage.role === 'system' && depthPlacementQueue.length > 0) {
-        const nextPlacement = depthPlacementQueue.shift();
-        const replacement = placementMap[nextPlacement] || ['(hidden entry)'];
-        sanitizedMessage.content = replacement.join('\n').trim();
-    }
-
-    return sanitizedMessage;
-}
-
-function applyOutletRedactionsToMessagesState(node, redactionPairs = []) {
+function applyPromptRedactionsToMessagesState(node, redactionPairs = []) {
     if (!node || typeof node !== 'object') {
         return null;
     }
@@ -1915,7 +1864,9 @@ function applyOutletRedactionsToMessagesState(node, redactionPairs = []) {
     if (node.type === 'collection') {
         const sanitizedCollection = structuredClone(node);
         sanitizedCollection.collection = Array.isArray(node.collection)
-            ? node.collection.map(child => applyOutletRedactionsToMessagesState(child, redactionPairs)).filter(Boolean)
+            ? node.collection
+                .map(child => applyPromptRedactionsToMessagesState(child, redactionPairs))
+                .filter(Boolean)
             : [];
         return sanitizedCollection;
     }
@@ -1925,8 +1876,24 @@ function applyOutletRedactionsToMessagesState(node, redactionPairs = []) {
     }
 
     const sanitizedMessage = structuredClone(node);
-    sanitizedMessage.content = applyOutletRedactionsToMessageContent(sanitizedMessage.content, redactionPairs);
+    sanitizedMessage.content = applyPromptRedactionsToMessageContent(sanitizedMessage.content, redactionPairs);
     return sanitizedMessage;
+}
+
+function applyPromptRedactionsToChat(chat, redactionPairs = []) {
+    if (!Array.isArray(chat)) {
+        return null;
+    }
+
+    return chat.map(message => {
+        if (!message || typeof message !== 'object') {
+            return message;
+        }
+
+        const sanitizedMessage = structuredClone(message);
+        sanitizedMessage.content = applyPromptRedactionsToMessageContent(sanitizedMessage.content, redactionPairs);
+        return sanitizedMessage;
+    });
 }
 
 function buildChatFromMessagesState(node, result = []) {
@@ -1965,57 +1932,60 @@ function buildChatFromMessagesState(node, result = []) {
     return result;
 }
 
+function buildPromptTextFromChat(chat = []) {
+    return Array.isArray(chat)
+        ? chat.map(message => String(message?.content ?? '')).join('\n')
+        : '';
+}
+
 function buildRedactedChatForResponse(assembly, sanitizedWorldInfo) {
     const sourceMessagesState = assembly?.messagesState;
-    const outletRedactionPairs = buildOutletRedactionPairsForResponse(assembly?.worldInfo, sanitizedWorldInfo);
-    const hasHiddenEntries = Array.isArray(sanitizedWorldInfo?.activatedEntries)
-        && sanitizedWorldInfo.activatedEntries.some(entry => entry?.hidden && entry?.status === 'admitted');
+    const redactionPairs = buildWorldInfoRedactionPairsForResponse(assembly?.worldInfo, sanitizedWorldInfo);
 
-    if (!hasHiddenEntries) {
+    if (!redactionPairs.length) {
+        const clonedMessagesState = sourceMessagesState && typeof sourceMessagesState === 'object'
+            ? structuredClone(sourceMessagesState)
+            : null;
+        const clonedChat = Array.isArray(assembly?.chat)
+            ? structuredClone(assembly.chat)
+            : buildChatFromMessagesState(clonedMessagesState, []);
         return {
-            messagesState: sourceMessagesState && typeof sourceMessagesState === 'object'
-                ? structuredClone(sourceMessagesState)
-                : null,
-            chat: Array.isArray(assembly?.chat) ? structuredClone(assembly.chat) : null,
+            messagesState: clonedMessagesState,
+            chat: clonedChat,
         };
     }
 
-    if (!sourceMessagesState || typeof sourceMessagesState !== 'object') {
-        return { messagesState: null, chat: null };
+    if (sourceMessagesState && typeof sourceMessagesState === 'object') {
+        const messagesState = applyPromptRedactionsToMessagesState(sourceMessagesState, redactionPairs);
+        return {
+            messagesState,
+            chat: buildChatFromMessagesState(messagesState, []),
+        };
     }
 
-    const placementMap = buildWorldInfoPlacementRedactionMap(sanitizedWorldInfo?.activatedEntries || []);
-    const depthPlacementQueue = Object.keys(placementMap)
-        .filter(key => key.startsWith('depth:'))
-        .sort((a, b) => {
-            const [aDepth = 0, aRole = 0] = a.split(':').slice(1).map(Number);
-            const [bDepth = 0, bRole = 0] = b.split(':').slice(1).map(Number);
-            return bDepth - aDepth || aRole - bRole;
-        });
-    const wiRedactedMessagesState = sanitizeMessagesStateForResponse(sourceMessagesState, placementMap, depthPlacementQueue);
-    const messagesState = applyOutletRedactionsToMessagesState(wiRedactedMessagesState, outletRedactionPairs);
-    const chat = messagesState ? buildChatFromMessagesState(messagesState, []) : null;
-    return { messagesState, chat };
+    return {
+        messagesState: null,
+        chat: applyPromptRedactionsToChat(assembly?.chat, redactionPairs),
+    };
 }
 
-function sanitizePromptRequestPayloadForResponse(requestPayload, sanitizedChat, user) {
-    if (!canViewPromptParityRawDebugData(user) || !requestPayload || typeof requestPayload !== 'object') {
-        return null;
+function sanitizePromptAssemblyForSnapshotResponse(assembly, user) {
+    if (!assembly || typeof assembly !== 'object') {
+        return assembly;
     }
 
-    const sanitizedPayload = structuredClone(requestPayload);
+    const sanitizedAssembly = structuredClone(assembly);
+    const sanitizedWorldInfo = sanitizeWorldInfoDebugDataForResponse(assembly.worldInfo, user);
+    const sanitizedPromptData = buildRedactedChatForResponse(assembly, sanitizedWorldInfo);
 
-    if (Array.isArray(sanitizedPayload.messages)) {
-        sanitizedPayload.messages = Array.isArray(sanitizedChat) ? structuredClone(sanitizedChat) : [];
-    }
+    sanitizedAssembly.worldInfo = sanitizedWorldInfo;
+    sanitizedAssembly.messagesState = sanitizedPromptData.messagesState;
+    sanitizedAssembly.chat = Array.isArray(sanitizedPromptData.chat) ? sanitizedPromptData.chat : [];
+    sanitizedAssembly.redactedPromptText = buildPromptTextFromChat(sanitizedAssembly.chat);
+    delete sanitizedAssembly.overriddenPrompts;
+    delete sanitizedAssembly.comparison;
 
-    delete sanitizedPayload.prompt;
-    delete sanitizedPayload.input;
-    delete sanitizedPayload.prompt_context;
-    delete sanitizedPayload.promptContext;
-    delete sanitizedPayload.clientChat;
-
-    return sanitizedPayload;
+    return sanitizedAssembly;
 }
 
 function sanitizePromptAssemblyForResponse(assembly, user) {
@@ -2024,58 +1994,40 @@ function sanitizePromptAssemblyForResponse(assembly, user) {
     }
 
     const canViewRawDebugData = canViewPromptParityRawDebugData(user);
-    const sanitizedAssembly = structuredClone(assembly);
-    const sanitizedWorldInfo = sanitizeWorldInfoDebugDataForResponse(assembly.worldInfo, user);
-    const sanitizedPromptData = buildRedactedChatForResponse(assembly, sanitizedWorldInfo);
+    const sanitizedAssembly = sanitizePromptAssemblyForSnapshotResponse(assembly, user);
 
-    sanitizedAssembly.worldInfo = sanitizedWorldInfo;
-
-    sanitizedAssembly.redactedPromptText = Array.isArray(sanitizedPromptData.chat)
-        ? sanitizedPromptData.chat.map(message => String(message?.content ?? '')).join('\n')
-        : '';
-
-    if (canViewRawDebugData) {
-        sanitizedAssembly.messagesState = sanitizedPromptData.messagesState;
-        sanitizedAssembly.chat = Array.isArray(sanitizedPromptData.chat) ? sanitizedPromptData.chat : [];
-    } else {
+    if (!canViewRawDebugData) {
         delete sanitizedAssembly.messagesState;
         delete sanitizedAssembly.chat;
-        delete sanitizedAssembly.overriddenPrompts;
-        delete sanitizedAssembly.comparison;
     }
 
     return sanitizedAssembly;
 }
 
-function sanitizePromptDispatchSnapshotForResponse(snapshot, user) {
+function sanitizePromptInspectionSnapshotForResponse(snapshot, user) {
     if (!snapshot || typeof snapshot !== 'object') {
         return snapshot;
     }
 
-    const sanitizedAssembly = sanitizePromptAssemblyForResponse(snapshot.assembly, user);
-    const canViewRawDebugData = canViewPromptParityRawDebugData(user);
+    const assembly = sanitizePromptAssemblyForSnapshotResponse(snapshot.assembly, user);
+    const { worldInfoSummary, worldInfoReport } = buildWorldInfoSummaryResponseData(assembly?.worldInfo, user);
 
     return {
-        caseId: snapshot.caseId ?? null,
-        branch: snapshot.branch ?? null,
-        capturedAt: snapshot.capturedAt ?? null,
+        key: snapshot.key ?? null,
+        username: snapshot.username ?? null,
+        chatScope: snapshot.chatScope ?? null,
+        mesId: snapshot.mesId ?? null,
+        swipeId: snapshot.swipeId ?? null,
+        createdAt: snapshot.createdAt ?? null,
         type: snapshot.type ?? null,
         source: snapshot.source ?? null,
         model: snapshot.model ?? null,
-        messages: canViewRawDebugData && Array.isArray(sanitizedAssembly?.chat)
-            ? structuredClone(sanitizedAssembly.chat)
-            : [],
-        stop: canViewRawDebugData && Array.isArray(snapshot.stop) ? structuredClone(snapshot.stop) : null,
-        tools: canViewRawDebugData && Array.isArray(snapshot.tools) ? structuredClone(snapshot.tools) : null,
-        tool_choice: canViewRawDebugData ? snapshot.tool_choice ?? null : null,
-        max_tokens: snapshot.max_tokens ?? null,
-        max_completion_tokens: snapshot.max_completion_tokens ?? null,
-        reasoning_effort: snapshot.reasoning_effort ?? null,
-        custom_prompt_post_processing: snapshot.custom_prompt_post_processing ?? null,
-        assembly: structuredClone(sanitizedAssembly || null),
-        worldInfo: structuredClone(sanitizedAssembly?.worldInfo || sanitizeWorldInfoDebugDataForResponse(snapshot.worldInfo, user) || null),
-        itemization: structuredClone(sanitizedAssembly?.itemization || snapshot.itemization || null),
-        requestPayload: sanitizePromptRequestPayloadForResponse(snapshot.requestPayload, sanitizedAssembly?.chat, user),
+        assembly,
+        worldInfo: structuredClone(assembly?.worldInfo || null),
+        worldInfoSummary,
+        worldInfoReport,
+        itemization: structuredClone(assembly?.itemization || snapshot.itemization || null),
+        dispatchMetadata: structuredClone(snapshot.dispatchMetadata || null),
     };
 }
 
@@ -2113,16 +2065,13 @@ function buildWorldInfoSummaryResponseData(worldInfo, user) {
     return { sanitizedWorldInfo, worldInfoSummary, worldInfoReport };
 }
 
-function attachWorldInfoResponseData(payload, request, timedWorldInfo, worldInfoOverflowed = false, worldInfo = null) {
-    if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
-        return payload;
+function buildXSillyTavernPayload(request, timedWorldInfo, worldInfoOverflowed = false, worldInfo = null, promptSnapshotKey = null) {
+    const xSillyTavern = {};
+    const { worldInfoSummary, worldInfoReport } = buildWorldInfoSummaryResponseData(worldInfo, request?.user);
+
+    if (typeof promptSnapshotKey === 'string' && promptSnapshotKey) {
+        xSillyTavern.promptSnapshotKey = promptSnapshotKey;
     }
-
-    const xSillyTavern = {
-        ...(payload.x_sillytavern && typeof payload.x_sillytavern === 'object' ? payload.x_sillytavern : {}),
-    };
-    const { sanitizedWorldInfo, worldInfoSummary, worldInfoReport } = buildWorldInfoSummaryResponseData(worldInfo, request?.user);
-
     if (timedWorldInfo && typeof timedWorldInfo === 'object') {
         xSillyTavern.timedWorldInfo = timedWorldInfo;
     }
@@ -2135,6 +2084,20 @@ function attachWorldInfoResponseData(payload, request, timedWorldInfo, worldInfo
     if (worldInfoReport) {
         xSillyTavern.worldInfoReport = worldInfoReport;
     }
+
+    return xSillyTavern;
+}
+
+function attachWorldInfoResponseData(payload, request, timedWorldInfo, worldInfoOverflowed = false, worldInfo = null, promptSnapshotKey = null) {
+    if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
+        return payload;
+    }
+
+    const xSillyTavern = {
+        ...(payload.x_sillytavern && typeof payload.x_sillytavern === 'object' ? payload.x_sillytavern : {}),
+        ...buildXSillyTavernPayload(request, timedWorldInfo, worldInfoOverflowed, worldInfo, promptSnapshotKey),
+    };
+    const { sanitizedWorldInfo } = buildWorldInfoSummaryResponseData(worldInfo, request?.user);
     if (sanitizedWorldInfo) {
         payload.worldInfo = structuredClone(sanitizedWorldInfo);
     }
@@ -2149,37 +2112,12 @@ function attachWorldInfoResponseData(payload, request, timedWorldInfo, worldInfo
     return payload;
 }
 
-function getSseEventData(eventBlock) {
-    if (!eventBlock) {
-        return '';
-    }
-
-    return eventBlock
-        .split(/\r?\n/)
-        .filter(line => line.startsWith('data:'))
-        .map(line => line.slice(5).trimStart())
-        .join('\n');
-}
-
-function writeWorldInfoSseEvent(response, request, timedWorldInfo, worldInfoOverflowed = false, worldInfo = null) {
+function writeWorldInfoSseEvent(response, request, timedWorldInfo, worldInfoOverflowed = false, worldInfo = null, promptSnapshotKey = null) {
     if (response.writableEnded) {
         return;
     }
 
-    const xSillyTavern = {};
-    const { worldInfoSummary, worldInfoReport } = buildWorldInfoSummaryResponseData(worldInfo, request?.user);
-    if (timedWorldInfo && typeof timedWorldInfo === 'object') {
-        xSillyTavern.timedWorldInfo = timedWorldInfo;
-    }
-    if (worldInfoOverflowed) {
-        xSillyTavern.worldInfoOverflowed = true;
-    }
-    if (worldInfoSummary) {
-        xSillyTavern.worldInfoSummary = worldInfoSummary;
-    }
-    if (worldInfoReport) {
-        xSillyTavern.worldInfoReport = worldInfoReport;
-    }
+    const xSillyTavern = buildXSillyTavernPayload(request, timedWorldInfo, worldInfoOverflowed, worldInfo, promptSnapshotKey);
     if (!Object.keys(xSillyTavern).length) {
         return;
     }
@@ -2187,7 +2125,7 @@ function writeWorldInfoSseEvent(response, request, timedWorldInfo, worldInfoOver
     response.write(`data: ${JSON.stringify({ x_sillytavern: xSillyTavern })}\n\n`);
 }
 
-async function forwardFetchResponseWithWorldInfo(from, to, request, timedWorldInfo, worldInfoOverflowed = false, worldInfo = null) {
+async function forwardFetchResponseWithWorldInfo(from, to, request, timedWorldInfo, worldInfoOverflowed = false, worldInfo = null, promptSnapshotKey = null) {
     let statusCode = from.status;
     let statusText = from.statusText;
 
@@ -2206,23 +2144,19 @@ async function forwardFetchResponseWithWorldInfo(from, to, request, timedWorldIn
     to.setHeader('Connection', 'keep-alive');
 
     if (!from.body || !to.socket) {
-        writeWorldInfoSseEvent(to, request, timedWorldInfo, worldInfoOverflowed, worldInfo);
+        writeWorldInfoSseEvent(to, request, timedWorldInfo, worldInfoOverflowed, worldInfo, promptSnapshotKey);
         to.end();
         return;
     }
 
+    writeWorldInfoSseEvent(to, request, timedWorldInfo, worldInfoOverflowed, worldInfo, promptSnapshotKey);
+
     const decoder = new TextDecoder();
     let buffer = '';
-    let timedWorldInfoSent = false;
 
     const flushEventBlock = (eventBlock) => {
         if (!eventBlock || to.writableEnded) {
             return;
-        }
-
-        if (!timedWorldInfoSent && getSseEventData(eventBlock) === '[DONE]') {
-            writeWorldInfoSseEvent(to, request, timedWorldInfo, worldInfoOverflowed, worldInfo);
-            timedWorldInfoSent = true;
         }
 
         to.write(`${eventBlock}\n\n`);
@@ -2250,10 +2184,6 @@ async function forwardFetchResponseWithWorldInfo(from, to, request, timedWorldIn
 
         if (buffer) {
             flushEventBlock(buffer);
-        }
-
-        if (!timedWorldInfoSent) {
-            writeWorldInfoSseEvent(to, request, timedWorldInfo, worldInfoOverflowed, worldInfo);
         }
 
         console.info('Streaming request finished');
@@ -2687,16 +2617,38 @@ export async function handleChatCompletionsGenerate(request, response) {
     let assembledTimedWorldInfo = null;
     let assembledWorldInfoOverflowed = false;
     let assembledPromptSnapshot = null;
+    let promptInspectionInfo = null;
     if (!Array.isArray(request.body.messages) && request.body.prompt_context && typeof request.body.prompt_context === 'object') {
         request.body.prompt_context.includeItemization = true;
         await prepareServerPromptContext(request.user, request.user.directories, request.body.prompt_context);
         const assembled = await assembleChatCompletionPrompt(request.body.prompt_context);
+        promptInspectionInfo = getPromptInspectionInfo(request);
+        if (promptInspectionInfo) {
+            assembledPromptSnapshot = assembled;
+            const promptSnapshotCount = Math.max(1, Number(request.body.n) || 1);
+            for (let index = 0; index < promptSnapshotCount; index++) {
+                const snapshotInfo = index === 0
+                    ? promptInspectionInfo
+                    : {
+                        ...promptInspectionInfo,
+                        swipeId: promptInspectionInfo.swipeId + index,
+                        key: buildPromptSnapshotKey(
+                            promptInspectionInfo.username,
+                            promptInspectionInfo.chatScope,
+                            promptInspectionInfo.mesId,
+                            promptInspectionInfo.swipeId + index,
+                        ),
+                    };
+                if (snapshotInfo?.key) {
+                    setPromptInspectionSnapshot(snapshotInfo.key, createPromptInspectionSnapshot(request, assembled, snapshotInfo));
+                }
+            }
+        }
         rewriteSystemMessagesForO1Model(request.body.prompt_context.model, request.body.prompt_context.chatCompletionSource, assembled.chat);
         request.body.messages = assembled.chat;
         response.setHeader('X-ST-Messages-Count', String(Number(assembled.messagesCount) || 0));
         assembledTimedWorldInfo = assembled.timedWorldInfo;
         assembledWorldInfoOverflowed = Boolean(assembled.worldInfoOverflowed);
-        assembledPromptSnapshot = assembled;
         assembledPromptContext = true;
     }
 
@@ -3058,8 +3010,6 @@ export async function handleChatCompletionsGenerate(request, response) {
         excludeKeysByYaml(requestBody, request.body.custom_exclude_body);
     }
 
-    storePromptDispatchSnapshot(request, createPromptDispatchSnapshot(request, requestBody, assembledPromptSnapshot));
-
     /** @type {import('node-fetch').RequestInit} */
     const config = {
         method: 'post',
@@ -3093,14 +3043,14 @@ export async function handleChatCompletionsGenerate(request, response) {
                     forwardFetchResponse(fetchResponse, response);
                     return;
                 }
-                await forwardFetchResponseWithWorldInfo(fetchResponse, response, request, assembledTimedWorldInfo, assembledWorldInfoOverflowed, assembledPromptSnapshot?.worldInfo || null);
+                await forwardFetchResponseWithWorldInfo(fetchResponse, response, request, assembledTimedWorldInfo, assembledWorldInfoOverflowed, assembledPromptSnapshot?.worldInfo || null, promptInspectionInfo?.key || null);
                 return;
             }
 
             if (fetchResponse.ok) {
                 /** @type {any} */
                 let json = await fetchResponse.json();
-                json = attachWorldInfoResponseData(json, request, assembledTimedWorldInfo, assembledWorldInfoOverflowed, assembledPromptSnapshot?.worldInfo || null);
+                json = attachWorldInfoResponseData(json, request, assembledTimedWorldInfo, assembledWorldInfoOverflowed, assembledPromptSnapshot?.worldInfo || null, promptInspectionInfo?.key || null);
                 response.send(json);
                 console.debug('Chat Completion response:', json);
             } else {
@@ -3194,17 +3144,45 @@ router.post('/assemble/compare', async function (request, response) {
     }
 });
 
-router.get('/debug/last-dispatch', async function (request, response) {
-    if (!canAccessPromptParitySnapshot(request)) {
+router.get('/debug/prompt-snapshot', async function (request, response) {
+    const key = String(request.query.key || '');
+    if (!isPromptSnapshotAuthorizedForRequest(request, key)) {
         return response.sendStatus(403);
     }
 
-    const snapshot = getStoredPromptDispatchSnapshot(request);
+    const snapshot = getPromptInspectionSnapshot(key);
     if (!snapshot) {
-        return response.status(404).send({ error: { message: 'No prompt dispatch snapshot is available for this session.' } });
+        return response.status(404).send({ error: { message: 'No prompt inspection snapshot is available for this key.' } });
     }
 
-    return response.send(sanitizePromptDispatchSnapshotForResponse(snapshot, request.user));
+    return response.send(sanitizePromptInspectionSnapshotForResponse(snapshot, request.user));
+});
+
+router.post('/debug/prompt-snapshot/maintenance', async function (request, response) {
+    const deletes = Array.isArray(request.body?.deletes) ? request.body.deletes : [];
+    const rekeys = Array.isArray(request.body?.rekeys) ? request.body.rekeys : [];
+
+    for (const key of deletes) {
+        if (!isPromptSnapshotAuthorizedForRequest(request, key)) {
+            return response.sendStatus(403);
+        }
+    }
+
+    for (const rekey of rekeys) {
+        if (!isPromptSnapshotAuthorizedForRequest(request, rekey?.from) || !isPromptSnapshotAuthorizedForRequest(request, rekey?.to)) {
+            return response.sendStatus(403);
+        }
+    }
+
+    for (const key of deletes) {
+        deletePromptInspectionSnapshot(String(key || ''));
+    }
+
+    for (const rekey of rekeys) {
+        rekeyPromptInspectionSnapshot(String(rekey?.from || ''), String(rekey?.to || ''));
+    }
+
+    return response.send({ ok: true });
 });
 
 const multimodalModels = express.Router();

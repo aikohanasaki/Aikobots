@@ -109,9 +109,10 @@ import {
     consumeOpenAIWorldInfoResponseData,
     buildServerAssemblyPayload,
     consumeOpenAITimedWorldInfo,
+    consumeOpenAIPromptInspectionResponseData,
     debugServerAssemblyDump,
-    fetchLastServerDispatchSnapshot,
     getLastServerAssemblyDebugDump,
+    maintainPromptInspectionSnapshots,
     sendOpenAIRequest,
     loadOpenAISettings,
     oai_settings,
@@ -243,7 +244,7 @@ import { extractReasoningFromData, initReasoning, parseReasoningInSwipes, Prompt
 import { accountStorage } from './scripts/util/AccountStorage.js';
 import { initWelcomeScreen, openPermanentAssistantChat, getPermanentAssistantAvatar } from './scripts/welcome-screen.js';
 import { initDataMaid } from './scripts/data-maid.js';
-import { clearItemizedPrompts, deleteItemizedPrompts, findItemizedPromptSet, initItemizedPrompts, itemizedParams, itemizedPrompts, loadItemizedPrompts, promptItemize, replaceItemizedPromptText, saveItemizedPrompts } from './scripts/itemized-prompts.js';
+import { clearItemizedPrompts, deleteItemizedPrompts, findItemizedPromptSet, getLatestItemizedPrompt, initItemizedPrompts, itemizedParams, itemizedPrompts, loadItemizedPrompts, promptItemize, replaceItemizedPromptText, saveItemizedPrompts, setLatestItemizedPrompt } from './scripts/itemized-prompts.js';
 import { getSystemMessageByType, initSystemMessages, SAFETY_CHAT, sendSystemMessage, system_message_types, system_messages } from './scripts/system-messages.js';
 import { event_types, eventSource } from './scripts/events.js';
 import { isAdmin } from './scripts/user.js';
@@ -256,91 +257,329 @@ import { SimpleMutex } from './scripts/util/SimpleMutex.js';
 import { AudioPlayer } from './scripts/audio-player.js';
 import { getStmbSettings, initStmb, loadStmbSettings } from './scripts/stmb.js';
 
-function showPromptInspectorButtonForMessage(messageId) {
-    const targetMesId = Number(messageId);
-    if (Number.isFinite(targetMesId) && targetMesId >= 0) {
-        chatElement.find(`.mes[mesid="${targetMesId}"] .mes_prompt`).show();
-    }
-}
+let pendingPromptInspectorRecord = null;
 
-function applyServerAssemblyToPromptRecord(targetPrompt, assembly, { promptContext = null, createdAt = null } = {}) {
-    if (!targetPrompt || !assembly || typeof assembly !== 'object') {
-        return false;
-    }
-
-    if (typeof assembly.redactedPromptText === 'string') {
-        targetPrompt.rawPrompt = assembly.redactedPromptText;
-    } else {
-        targetPrompt.rawPrompt = Array.isArray(assembly.chat)
-            ? structuredClone(assembly.chat)
-            : '';
-    }
-    targetPrompt.serverAssemblyDebugDump = {
-        createdAt: createdAt || new Date().toISOString(),
-        promptContext: promptContext && typeof promptContext === 'object' ? structuredClone(promptContext) : null,
-        assembly: structuredClone(assembly),
-    };
-    targetPrompt.messagesCount = assembly.messagesCount ?? targetPrompt.messagesCount ?? null;
-    targetPrompt.examplesCount = assembly.examplesCount ?? targetPrompt.examplesCount ?? null;
-    return true;
-}
-
-async function storeLastServerDispatchSnapshotToPrompt(messageId) {
-    if (!Array.isArray(itemizedPrompts)) {
-        return null;
-    }
-
-    const targetPrompt = itemizedPrompts.find(item => Number(item?.mesId) === Number(messageId) && item?.serverPromptAssembly);
-    if (!targetPrompt) {
-        return null;
-    }
-
-    const snapshot = await fetchLastServerDispatchSnapshot();
-    if (!snapshot?.assembly || typeof snapshot.assembly !== 'object') {
-        return snapshot;
-    }
-
-    applyServerAssemblyToPromptRecord(targetPrompt, snapshot.assembly, {
-        createdAt: snapshot.capturedAt,
+function createPromptInspectorButton() {
+    return $('<div>', {
+        title: 'Prompt',
+        class: 'mes_button mes_prompt fa-solid fa-square-poll-horizontal',
+        'data-i18n': '[title]Prompt',
     });
-    showPromptInspectorButtonForMessage(messageId);
-    await saveItemizedPrompts(getCurrentChatId());
-    return snapshot;
 }
 
-async function debugServerAssemblyToPrompt(promptContext = null) {
-    const dump = await debugServerAssemblyDump(promptContext);
-
-    if (!Array.isArray(itemizedPrompts)) {
-        return dump;
+function getPromptInspectorTargetMessageId() {
+    const retainedPrompt = getLatestItemizedPrompt();
+    const targetMesId = Number(retainedPrompt?.mesId);
+    if (!Number.isFinite(targetMesId) || targetMesId < 0) {
+        return null;
     }
 
-    let targetPrompt = null;
-    for (let index = itemizedPrompts.length - 1; index >= 0; index--) {
-        const item = itemizedPrompts[index];
-        if (item?.serverPromptAssembly) {
-            targetPrompt = item;
-            break;
+    const targetMessage = chat[targetMesId];
+    if (!targetMessage || targetMessage.is_user || targetMessage.is_system) {
+        return null;
+    }
+
+    if (Array.isArray(targetMessage.swipes) && targetMessage.swipes.length > 0) {
+        const activeSwipeId = Number(targetMessage.swipe_id);
+        if (!Number.isFinite(activeSwipeId) || activeSwipeId !== targetMessage.swipes.length - 1) {
+            return null;
         }
     }
 
-    if (!targetPrompt && itemizedPrompts.length > 0) {
-        targetPrompt = itemizedPrompts[itemizedPrompts.length - 1];
+    return targetMesId;
+}
+
+function refreshPromptInspectorButton() {
+    chatElement.find('.mes_prompt').remove();
+
+    const targetMesId = getPromptInspectorTargetMessageId();
+    if (!Number.isFinite(targetMesId)) {
+        return;
     }
 
-    if (!targetPrompt) {
-        return dump;
+    const messageElement = chatElement.find(`.mes[mesid="${targetMesId}"]`).last();
+    if (!messageElement.length) {
+        return;
     }
 
-    applyServerAssemblyToPromptRecord(targetPrompt, dump?.assembly, {
-        promptContext: dump?.promptContext,
-        createdAt: dump?.createdAt,
+    const extraButtons = messageElement.find('.extraMesButtons').first();
+    if (!extraButtons.length) {
+        return;
+    }
+
+    const promptButton = createPromptInspectorButton();
+    const insertionTarget = extraButtons.find('.mes_hide').first();
+    if (insertionTarget.length) {
+        promptButton.insertBefore(insertionTarget);
+    } else {
+        extraButtons.append(promptButton);
+    }
+}
+
+function showPromptInspectorButtonForMessage(_messageId) {
+    refreshPromptInspectorButton();
+}
+
+function stagePromptInspectorRecord(record) {
+    pendingPromptInspectorRecord = record && typeof record === 'object'
+        ? structuredClone(record)
+        : null;
+}
+
+function parsePromptSnapshotKey(promptSnapshotKey) {
+    const parts = String(promptSnapshotKey || '').split('|');
+    if (parts.length !== 4) {
+        return null;
+    }
+
+    const [username, chatScope, mesIdText, swipeIdText] = parts;
+    const mesId = Number(mesIdText);
+    const swipeId = Number(swipeIdText);
+    if (!username || !chatScope || !Number.isFinite(mesId) || mesId < 0 || !Number.isFinite(swipeId) || swipeId < 0) {
+        return null;
+    }
+
+    return { username, chatScope, mesId, swipeId };
+}
+
+function buildPromptSnapshotKey({ username, chatScope, mesId, swipeId }) {
+    if (!username || !chatScope || !Number.isFinite(Number(mesId)) || Number(mesId) < 0 || !Number.isFinite(Number(swipeId)) || Number(swipeId) < 0) {
+        return null;
+    }
+
+    return `${username}|${chatScope}|${Number(mesId)}|${Number(swipeId)}`;
+}
+
+function rekeyPromptSnapshotKey(promptSnapshotKey, { mesId = null, swipeId = null } = {}) {
+    const parsed = parsePromptSnapshotKey(promptSnapshotKey);
+    if (!parsed) {
+        return null;
+    }
+
+    return buildPromptSnapshotKey({
+        ...parsed,
+        mesId: mesId ?? parsed.mesId,
+        swipeId: swipeId ?? parsed.swipeId,
     });
+}
 
-    const targetMesId = Number(targetPrompt.mesId);
-    showPromptInspectorButtonForMessage(targetMesId);
+async function commitLatestPromptInspectorRecord(messageId) {
+    if (!pendingPromptInspectorRecord) {
+        return null;
+    }
+
+    const targetMesId = Number(messageId);
+    if (!Number.isFinite(targetMesId) || targetMesId < 0) {
+        pendingPromptInspectorRecord = null;
+        return null;
+    }
+
+    const retainedRecord = {
+        ...structuredClone(pendingPromptInspectorRecord),
+        mesId: targetMesId,
+        swipeId: Number(chat[targetMesId]?.swipe_id ?? 0) || 0,
+        promptSnapshotKey: typeof chat[targetMesId]?.extra?.promptSnapshotKey === 'string'
+            ? chat[targetMesId].extra.promptSnapshotKey
+            : null,
+    };
+
+    pendingPromptInspectorRecord = null;
+    setLatestItemizedPrompt(retainedRecord);
+    refreshPromptInspectorButton();
     await saveItemizedPrompts(getCurrentChatId());
-    return dump;
+    return retainedRecord;
+}
+
+async function syncLatestPromptInspectorAfterMessageDeletion(deletedMessageId) {
+    const retainedPrompt = getLatestItemizedPrompt();
+    const retainedMesId = Number(retainedPrompt?.mesId);
+    if (!retainedPrompt || !Number.isFinite(retainedMesId)) {
+        refreshPromptInspectorButton();
+        return;
+    }
+
+    if (deletedMessageId === retainedMesId) {
+        setLatestItemizedPrompt(null);
+    } else if (deletedMessageId < retainedMesId) {
+        const nextPromptSnapshotKey = retainedPrompt?.promptSnapshotKey
+            ? rekeyPromptSnapshotKey(retainedPrompt.promptSnapshotKey, { mesId: retainedMesId - 1 })
+            : null;
+        setLatestItemizedPrompt({
+            ...structuredClone(retainedPrompt),
+            mesId: retainedMesId - 1,
+            promptSnapshotKey: nextPromptSnapshotKey,
+        });
+    }
+
+    refreshPromptInspectorButton();
+    await saveItemizedPrompts(getCurrentChatId());
+}
+
+function getPromptSnapshotChatScope() {
+    const currentChatId = getCurrentChatId() || '';
+    if (selected_group) {
+        return `group:${selected_group}:${currentChatId || 'chat'}`;
+    }
+
+    return `chat:${currentChatId || name2 || 'chat'}`;
+}
+
+function getPromptSnapshotTarget(type) {
+    if (type === 'swipe') {
+        const message = chat[chat.length - 1];
+        return {
+            mesId: Math.max(0, chat.length - 1),
+            swipeId: Array.isArray(message?.swipes) ? message.swipes.length : 0,
+        };
+    }
+
+    if (['append', 'continue', 'appendFinal'].includes(type)) {
+        const message = chat[chat.length - 1];
+        return {
+            mesId: Math.max(0, chat.length - 1),
+            swipeId: Number(message?.swipe_id ?? 0) || 0,
+        };
+    }
+
+    return {
+        mesId: chat.length,
+        swipeId: 0,
+    };
+}
+
+function applyPromptInspectionResponseDataToMessage(messageId, promptInspectionResponseData) {
+    const promptSnapshotKey = promptInspectionResponseData?.promptSnapshotKey;
+    if (typeof promptSnapshotKey !== 'string' || !promptSnapshotKey) {
+        return null;
+    }
+
+    const item = chat[messageId];
+    if (!item) {
+        return null;
+    }
+
+    item.extra ??= {};
+    item.extra.promptSnapshotKey = promptSnapshotKey;
+    return promptSnapshotKey;
+}
+
+function getPromptSnapshotKeysFromMessage(message) {
+    const keys = new Set();
+
+    const messageKey = message?.extra?.promptSnapshotKey;
+    if (typeof messageKey === 'string' && messageKey) {
+        keys.add(messageKey);
+    }
+
+    if (Array.isArray(message?.swipe_info)) {
+        for (const swipeInfo of message.swipe_info) {
+            const swipeKey = swipeInfo?.extra?.promptSnapshotKey;
+            if (typeof swipeKey === 'string' && swipeKey) {
+                keys.add(swipeKey);
+            }
+        }
+    }
+
+    return [...keys];
+}
+
+function addPromptSnapshotRekeyOperation(rekeys, fromKey, toKey) {
+    if (!fromKey || !toKey || fromKey === toKey) {
+        return;
+    }
+
+    rekeys.push({ from: fromKey, to: toKey });
+}
+
+function rekeyMessagePromptSnapshotKeys(message, mesId, rekeys) {
+    if (!message || typeof message !== 'object') {
+        return;
+    }
+
+    if (typeof message?.extra?.promptSnapshotKey === 'string' && message.extra.promptSnapshotKey) {
+        const nextMessageKey = rekeyPromptSnapshotKey(message.extra.promptSnapshotKey, {
+            mesId,
+            swipeId: Number(message?.swipe_id ?? 0) || 0,
+        });
+        if (nextMessageKey) {
+            addPromptSnapshotRekeyOperation(rekeys, message.extra.promptSnapshotKey, nextMessageKey);
+            message.extra.promptSnapshotKey = nextMessageKey;
+        }
+    }
+
+    if (!Array.isArray(message?.swipe_info)) {
+        return;
+    }
+
+    for (let index = 0; index < message.swipe_info.length; index++) {
+        const swipeExtra = message.swipe_info[index]?.extra;
+        const swipeKey = swipeExtra?.promptSnapshotKey;
+        if (typeof swipeKey !== 'string' || !swipeKey) {
+            continue;
+        }
+
+        const nextSwipeKey = rekeyPromptSnapshotKey(swipeKey, { mesId, swipeId: index });
+        if (!nextSwipeKey) {
+            continue;
+        }
+
+        addPromptSnapshotRekeyOperation(rekeys, swipeKey, nextSwipeKey);
+        swipeExtra.promptSnapshotKey = nextSwipeKey;
+    }
+}
+
+function syncMessagePromptSnapshotKeyFromActiveSwipe(message) {
+    if (!message || typeof message !== 'object' || !Array.isArray(message.swipe_info)) {
+        return;
+    }
+
+    const activeSwipeId = Number(message.swipe_id ?? 0);
+    const activeSwipeKey = message.swipe_info[activeSwipeId]?.extra?.promptSnapshotKey;
+    if (typeof activeSwipeKey === 'string' && activeSwipeKey) {
+        message.extra ??= {};
+        message.extra.promptSnapshotKey = activeSwipeKey;
+    }
+}
+
+async function maintainPromptSnapshotKeys({ deletes = [], rekeys = [] } = {}) {
+    if ((!Array.isArray(deletes) || !deletes.length) && (!Array.isArray(rekeys) || !rekeys.length)) {
+        return;
+    }
+
+    try {
+        await maintainPromptInspectionSnapshots({ deletes, rekeys });
+    } catch (error) {
+        console.error('Failed to maintain prompt inspection snapshots', error);
+    }
+}
+
+async function syncLatestPromptInspectorAfterSwipeMutation(messageId) {
+    const retainedPrompt = getLatestItemizedPrompt();
+    if (!retainedPrompt || Number(retainedPrompt?.mesId) !== Number(messageId)) {
+        refreshPromptInspectorButton();
+        await saveItemizedPrompts(getCurrentChatId());
+        return;
+    }
+
+    const message = chat[messageId];
+    if (!message) {
+        setLatestItemizedPrompt(null);
+    } else {
+        setLatestItemizedPrompt({
+            ...structuredClone(retainedPrompt),
+            swipeId: Number(message?.swipe_id ?? 0) || 0,
+            promptSnapshotKey: typeof message?.extra?.promptSnapshotKey === 'string'
+                ? message.extra.promptSnapshotKey
+                : null,
+        });
+    }
+
+    refreshPromptInspectorButton();
+    await saveItemizedPrompts(getCurrentChatId());
+}
+
+async function debugServerAssemblyToPrompt(promptContext = null, messageId = null) {
+    return await debugServerAssemblyDump(promptContext);
 }
 
 // API OBJECT FOR EXTERNAL WIRING
@@ -348,9 +587,7 @@ globalThis.SillyTavern = {
     libs,
     getContext,
     debugServerAssembly: debugServerAssemblyToPrompt,
-    storeLastServerDispatchSnapshotToPrompt,
     getLastServerAssemblyDebugDump: () => getLastServerAssemblyDebugDump(),
-    getLastServerDispatchSnapshot: async () => fetchLastServerDispatchSnapshot(),
 };
 
 export {
@@ -2590,6 +2827,7 @@ function finalizeRenderedMessageWindow() {
     chatElement.find('.mes').removeClass('last_mes');
     chatElement.find('.mes').last().addClass('last_mes');
     refreshSwipeButtons();
+    refreshPromptInspectorButton();
     applyStylePins();
     updateHistoryControls();
 }
@@ -2821,16 +3059,20 @@ export async function clearChat() {
 
     setVisibleChatRange(null, null);
     resetChatLoadState();
+    setLatestItemizedPrompt(null);
     await saveItemizedPrompts(getCurrentChatId());
-    itemizedPrompts.length = 0;
+    refreshPromptInspectorButton();
 }
 
 export async function deleteLastMessage() {
     const deletedId = chat.length - 1;
+    const deletedSnapshotKeys = deletedId >= 0 ? getPromptSnapshotKeysFromMessage(chat[deletedId]) : [];
     chat.length = chat.length - 1;
     syncSplitTailStateAfterMutation();
     chatElement.children('.mes').last().remove();
     syncVisibleChatRangeFromDom();
+    await syncLatestPromptInspectorAfterMessageDeletion(deletedId);
+    await maintainPromptSnapshotKeys({ deletes: deletedSnapshotKeys });
     updateHistoryControls();
     restoreTimedWorldInfoFromChat();
     await eventSource.emit(event_types.MESSAGE_DELETED, deletedId, chat.length);
@@ -2884,10 +3126,17 @@ export async function deleteMessage(id, swipeDeletionIndex = undefined, askConfi
         return;
     }
 
+    const deletedSnapshotKeys = getPromptSnapshotKeysFromMessage(chat[id]);
     chat.splice(id, 1);
     syncSplitTailStateAfterMutation();
+    const rekeys = [];
+    for (let messageIndex = id; messageIndex < chat.length; messageIndex++) {
+        rekeyMessagePromptSnapshotKeys(chat[messageIndex], messageIndex, rekeys);
+    }
+    await syncLatestPromptInspectorAfterMessageDeletion(id);
     messageElement.remove();
     restoreTimedWorldInfoFromChat();
+    await maintainPromptSnapshotKeys({ deletes: deletedSnapshotKeys, rekeys });
 
     chat_metadata['tainted'] = true;
 
@@ -3843,19 +4092,6 @@ export function addOneMessage(mes, { type = 'normal', insertAfter = null, scroll
         newMessage.addClass('toolCall');
     }
 
-    // Shows the Prompt display button when we have a prompt record for the message.
-    const mesIdToFind = newMessageId;
-    const promptButton = newMessage.find('.mes_prompt');
-    promptButton.hide();
-
-    //if we have itemized messages, and the array isn't null..
-    if (params.isUser === false && Array.isArray(itemizedPrompts) && itemizedPrompts.length > 0) {
-        const itemizedPrompt = itemizedPrompts.find(x => Number(x.mesId) === Number(mesIdToFind));
-        if (itemizedPrompt) {
-            promptButton.show();
-        }
-    }
-
     newMessage.find('.avatar img').on('error', function () {
         $(this).hide();
         $(this).parent().html('<div class="missing-avatar fa-solid fa-user-slash"></div>');
@@ -3901,6 +4137,8 @@ export function addOneMessage(mes, { type = 'normal', insertAfter = null, scroll
         chatElement.find('.mes').eq(-2).removeClass('last_mes');
         refreshSwipeButtons();
     }
+
+    refreshPromptInspectorButton();
 
     // Don't scroll if not inserting last
     if (!insertAfter && !insertBefore && scroll) {
@@ -4771,9 +5009,9 @@ class StreamingProcessor {
     }
 
     async onStartStreaming(text) {
-        // Streaming replies receive WI metadata only after the SSE payload completes.
-        // Clear any leftover pending snapshot from an earlier request before creating the placeholder message.
+        // Clear any leftover pending inspection metadata from an earlier request before creating the placeholder message.
         consumeOpenAITimedWorldInfo();
+        consumeOpenAIPromptInspectionResponseData();
         consumeOpenAIWorldInfoResponseData();
 
         const continueOnReasoning = !!(this.type === 'continue' && this.promptReasoning.prefixReasoning);
@@ -4908,14 +5146,11 @@ class StreamingProcessor {
         await this.reasoningHandler.finish(messageId);
 
         const timedWorldInfo = consumeOpenAITimedWorldInfo();
+        const promptInspectionResponseData = consumeOpenAIPromptInspectionResponseData();
         const worldInfoResponseData = consumeOpenAIWorldInfoResponseData();
         applyTimedWorldInfoToMessage(messageId, timedWorldInfo);
+        applyPromptInspectionResponseDataToMessage(messageId, promptInspectionResponseData);
         applyWorldInfoResponseDataToMessage(messageId, worldInfoResponseData);
-        try {
-            await storeLastServerDispatchSnapshotToPrompt(messageId);
-        } catch (error) {
-            console.error('Failed to store server dispatch snapshot for prompt inspection', error);
-        }
 
         if (Array.isArray(this.swipes) && this.swipes.length > 0) {
             const message = chat[messageId];
@@ -4929,11 +5164,24 @@ class StreamingProcessor {
                 gen_finished: message.gen_finished,
                 extra: swipeInfoExtra,
             };
-            const swipeInfoArray = Array(this.swipes.length).fill().map(() => structuredClone(swipeInfo));
+            const startingSwipeIndex = Array.isArray(message.swipes) ? message.swipes.length : 0;
+            const basePromptSnapshotKey = typeof message.extra?.promptSnapshotKey === 'string' ? message.extra.promptSnapshotKey : null;
+            const swipeInfoArray = Array(this.swipes.length).fill().map((_, index) => {
+                const swipeInfoClone = structuredClone(swipeInfo);
+                const swipePromptSnapshotKey = basePromptSnapshotKey
+                    ? rekeyPromptSnapshotKey(basePromptSnapshotKey, { mesId: messageId, swipeId: startingSwipeIndex + index })
+                    : null;
+                if (swipePromptSnapshotKey) {
+                    swipeInfoClone.extra.promptSnapshotKey = swipePromptSnapshotKey;
+                }
+                return swipeInfoClone;
+            });
             parseReasoningInSwipes(this.swipes, swipeInfoArray, message.extra?.reasoning_duration);
             chat[messageId].swipes.push(...this.swipes);
             chat[messageId].swipe_info.push(...swipeInfoArray);
         }
+
+        await commitLatestPromptInspectorRecord(messageId);
 
         if (Array.isArray(this.images) && this.images.length > 0) {
             await processImageAttachment(chat[messageId], { imageUrls: this.images });
@@ -6240,6 +6488,7 @@ export async function Generate(type, { automatic_trigger, force_name2, quiet_pro
         case 'openai': {
             const tagKey = getTagKeyForEntity(this_chid);
             const activeCharacter = globalThis.promptManager?.activeCharacter ?? characters[this_chid];
+            const promptSnapshotTarget = getPromptSnapshotTarget(type);
             const promptContext = await buildServerAssemblyPayload({
                 coreChat: getCoreChatPayloadForAssembly(coreChat),
                 name2: name2,
@@ -6298,6 +6547,13 @@ export async function Generate(type, { automatic_trigger, force_name2, quiet_pro
                     tokenizerModel: getTokenizerModel(),
                 },
             });
+            if (!['quiet', 'impersonate'].includes(type)) {
+                promptContext.promptInspection = {
+                    chatScope: getPromptSnapshotChatScope(),
+                    mesId: promptSnapshotTarget.mesId,
+                    swipeId: promptSnapshotTarget.swipeId,
+                };
+            }
             generate_data = { promptContext };
             break;
         }
@@ -6330,10 +6586,13 @@ export async function Generate(type, { automatic_trigger, force_name2, quiet_pro
         const isServerAssembledOpenAI = main_api === 'openai' && !generate_data.prompt && !generate_data.input;
         const canPersistPromptInspectorContent = isAdmin();
         const canPersistPromptInspectorText = canPersistPromptInspectorContent || !isServerAssembledOpenAI;
+        const promptSnapshotTarget = getPromptSnapshotTarget(type);
         let additionalPromptStuff = {
             ...thisPromptBits[currentArrayEntry],
             rawPrompt: canPersistPromptInspectorText ? (generate_data.prompt || generate_data.input) : '',
             mesId: getNextMessageId(type),
+            swipeId: promptSnapshotTarget.swipeId,
+            promptSnapshotKey: null,
             allAnchors: canPersistPromptInspectorContent ? await getAllExtensionPrompts() : '',
             chatInjects: canPersistPromptInspectorContent ? (injectedIndices?.map(index => arrMes[arrMes.length - index - 1])?.join('') || '') : '',
             chatSystemInjects: canPersistPromptInspectorContent ? (systemInjectedIndices?.map(index => arrMes[arrMes.length - index - 1])?.join('') || '') : '',
@@ -6366,17 +6625,8 @@ export async function Generate(type, { automatic_trigger, force_name2, quiet_pro
             examplesCount: main_api !== 'openai' ? (pinExmString ? mesExamplesArray.length : count_exm_add) : null,
         };
 
-        //console.log(additionalPromptStuff);
-        const itemizedIndex = itemizedPrompts.findIndex((item) => Number(item?.mesId) === Number(additionalPromptStuff.mesId));
-
-        if (itemizedIndex !== -1) {
-            itemizedPrompts[itemizedIndex] = additionalPromptStuff;
-        }
-        else {
-            itemizedPrompts.push(additionalPromptStuff);
-        }
-
-        console.debug(`pushed prompt bits to itemizedPrompts array. Length is now: ${itemizedPrompts.length}`);
+        stagePromptInspectorRecord(additionalPromptStuff);
+        console.debug('Staged latest prompt inspector record.');
 
         if (isStreamingEnabled() && type !== 'quiet') {
             continue_mag = promptReasoning.removePrefix(continue_mag);
@@ -6452,6 +6702,7 @@ export async function Generate(type, { automatic_trigger, force_name2, quiet_pro
     async function onSuccess(data) {
         if (!data) {
             consumeOpenAITimedWorldInfo();
+            consumeOpenAIPromptInspectionResponseData();
             consumeOpenAIWorldInfoResponseData();
             return;
         }
@@ -6475,6 +6726,7 @@ export async function Generate(type, { automatic_trigger, force_name2, quiet_pro
         if (jsonSchema) {
             unblockGeneration(type);
             consumeOpenAITimedWorldInfo();
+            consumeOpenAIPromptInspectionResponseData();
             consumeOpenAIWorldInfoResponseData();
             return extractJsonFromData(data);
         }
@@ -6519,11 +6771,13 @@ export async function Generate(type, { automatic_trigger, force_name2, quiet_pro
             $('#send_textarea').val(getMessage)[0].dispatchEvent(new Event('input', { bubbles: true }));
             await eventSource.emit(event_types.IMPERSONATE_READY, getMessage);
             consumeOpenAITimedWorldInfo();
+            consumeOpenAIPromptInspectionResponseData();
             consumeOpenAIWorldInfoResponseData();
         }
         else if (type == 'quiet') {
             unblockGeneration(type);
             consumeOpenAITimedWorldInfo();
+            consumeOpenAIPromptInspectionResponseData();
             consumeOpenAIWorldInfoResponseData();
             return getMessage;
         }
@@ -6596,6 +6850,7 @@ export async function Generate(type, { automatic_trigger, force_name2, quiet_pro
         }
 
         consumeOpenAITimedWorldInfo();
+        consumeOpenAIPromptInspectionResponseData();
         consumeOpenAIWorldInfoResponseData();
         unblockGeneration(type);
         console.log(exception);
@@ -7431,6 +7686,7 @@ export async function saveReply({ type, getMessage, fromStreaming = false, title
     }
 
     const timedWorldInfo = fromStreaming ? null : consumeOpenAITimedWorldInfo();
+    const promptInspectionResponseData = fromStreaming ? null : consumeOpenAIPromptInspectionResponseData();
     const worldInfoResponseData = fromStreaming ? null : consumeOpenAIWorldInfoResponseData();
 
     let oldMessage = '';
@@ -7551,12 +7807,8 @@ export async function saveReply({ type, getMessage, fromStreaming = false, title
         item.extra = {};
     }
     applyTimedWorldInfoToMessage(chat.length - 1, timedWorldInfo);
+    applyPromptInspectionResponseDataToMessage(chat.length - 1, promptInspectionResponseData);
     applyWorldInfoResponseDataToMessage(chat.length - 1, worldInfoResponseData);
-    try {
-        await storeLastServerDispatchSnapshotToPrompt(chat.length - 1);
-    } catch (error) {
-        console.error('Failed to store server dispatch snapshot for prompt inspection', error);
-    }
     if (item['swipe_info'] === undefined) {
         item['swipe_info'] = [];
     }
@@ -7592,10 +7844,25 @@ export async function saveReply({ type, getMessage, fromStreaming = false, title
             gen_finished: item.gen_finished,
             extra: swipeInfoExtra,
         };
-        const swipeInfoArray = Array(swipes.length).fill().map(() => structuredClone(swipeInfo));
+        const startingSwipeIndex = Array.isArray(item.swipes) ? item.swipes.length : 0;
+        const basePromptSnapshotKey = typeof item.extra?.promptSnapshotKey === 'string' ? item.extra.promptSnapshotKey : null;
+        const swipeInfoArray = Array(swipes.length).fill().map((_, index) => {
+            const swipeInfoClone = structuredClone(swipeInfo);
+            const swipePromptSnapshotKey = basePromptSnapshotKey
+                ? rekeyPromptSnapshotKey(basePromptSnapshotKey, { mesId: chat.length - 1, swipeId: startingSwipeIndex + index })
+                : null;
+            if (swipePromptSnapshotKey) {
+                swipeInfoClone.extra.promptSnapshotKey = swipePromptSnapshotKey;
+            }
+            return swipeInfoClone;
+        });
         parseReasoningInSwipes(swipes, swipeInfoArray, item.extra?.reasoning_duration);
         item.swipes.push(...swipes);
         item.swipe_info.push(...swipeInfoArray);
+    }
+
+    if (!fromStreaming) {
+        await commitLatestPromptInspectorRecord(chat.length - 1);
     }
 
     statMesProcess(chat[chat.length - 1], type, characters, this_chid, oldMessage);
@@ -8572,7 +8839,6 @@ export function renderDetachedMessage(mes, messageId) {
         messageElement.addClass('toolCall');
     }
 
-    messageElement.find('.mes_prompt').hide();
     messageElement.find('.mes_text').append(messageText);
     appendMediaToMessage(mes, messageElement, SCROLL_BEHAVIOR.NONE);
     addCopyToCodeBlocks(messageElement);
@@ -11185,6 +11451,7 @@ export async function deleteSwipe(swipeId = null, messageId = chat.length - 1) {
         return;
     }
 
+    const deletedSwipeSnapshotKey = message.swipe_info?.[swipeId]?.extra?.promptSnapshotKey;
     message.swipes.splice(swipeId, 1);
 
     if (Array.isArray(message.swipe_info) && message.swipe_info.length) {
@@ -11194,6 +11461,30 @@ export async function deleteSwipe(swipeId = null, messageId = chat.length - 1) {
     // Select the next swipe, or the one before if it was the last one
     const newSwipeId = Math.min(swipeId, message.swipes.length - 1);
     syncSwipeToMes(messageId, newSwipeId);
+    const rekeys = [];
+    if (Array.isArray(message.swipe_info)) {
+        for (let index = swipeId; index < message.swipe_info.length; index++) {
+            const swipeExtra = message.swipe_info[index]?.extra;
+            const swipeKey = swipeExtra?.promptSnapshotKey;
+            if (typeof swipeKey !== 'string' || !swipeKey) {
+                continue;
+            }
+
+            const nextSwipeKey = rekeyPromptSnapshotKey(swipeKey, { mesId: messageId, swipeId: index });
+            if (!nextSwipeKey) {
+                continue;
+            }
+
+            addPromptSnapshotRekeyOperation(rekeys, swipeKey, nextSwipeKey);
+            swipeExtra.promptSnapshotKey = nextSwipeKey;
+        }
+    }
+    syncMessagePromptSnapshotKeyFromActiveSwipe(message);
+    await syncLatestPromptInspectorAfterSwipeMutation(messageId);
+    await maintainPromptSnapshotKeys({
+        deletes: typeof deletedSwipeSnapshotKey === 'string' && deletedSwipeSnapshotKey ? [deletedSwipeSnapshotKey] : [],
+        rekeys,
+    });
 
     chat_metadata['tainted'] = true;
 

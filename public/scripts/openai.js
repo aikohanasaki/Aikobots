@@ -92,9 +92,9 @@ export {
 let pendingTimedWorldInfo = null;
 let pendingWorldInfoSummary = null;
 let pendingWorldInfoReport = null;
+let pendingPromptSnapshotKey = null;
 let lastServerAssemblyPromptContext = null;
 let lastServerAssemblyDebugDump = null;
-let lastServerDispatchSnapshot = null;
 
 function sanitizeForServerPayload(value, seen = new WeakSet()) {
     if (value === null || value === undefined) {
@@ -194,24 +194,8 @@ function cloneServerAssemblyDebugDump(dump) {
         : null;
 }
 
-function storeServerDispatchSnapshot(snapshot) {
-    lastServerDispatchSnapshot = snapshot && typeof snapshot === 'object'
-        ? snapshot
-        : null;
-}
-
-function cloneServerDispatchSnapshot(snapshot) {
-    return snapshot && typeof snapshot === 'object'
-        ? structuredClone(snapshot)
-        : null;
-}
-
 export function getLastServerAssemblyDebugDump() {
     return cloneServerAssemblyDebugDump(lastServerAssemblyDebugDump);
-}
-
-export function getLastServerDispatchSnapshot() {
-    return cloneServerDispatchSnapshot(lastServerDispatchSnapshot);
 }
 
 export async function debugServerAssemblyDump(promptContext = null) {
@@ -275,8 +259,8 @@ export async function debugServerAssemblyDump(promptContext = null) {
     return cloneServerAssemblyDebugDump(dump);
 }
 
-export async function fetchLastServerDispatchSnapshot() {
-    const response = await fetch('/api/backends/chat-completions/debug/last-dispatch', {
+export async function fetchPromptInspectionSnapshot(promptSnapshotKey) {
+    const response = await fetch(`/api/backends/chat-completions/debug/prompt-snapshot?key=${encodeURIComponent(String(promptSnapshotKey || ''))}`, {
         method: 'GET',
         headers: getRequestHeaders(),
     });
@@ -298,8 +282,38 @@ export async function fetchLastServerDispatchSnapshot() {
         throw new Error(message);
     }
 
-    storeServerDispatchSnapshot(data);
-    return cloneServerDispatchSnapshot(data);
+    return data;
+}
+
+export async function maintainPromptInspectionSnapshots({ deletes = [], rekeys = [] } = {}) {
+    if (!Array.isArray(deletes) || !Array.isArray(rekeys) || (!deletes.length && !rekeys.length)) {
+        return { ok: true };
+    }
+
+    const response = await fetch('/api/backends/chat-completions/debug/prompt-snapshot/maintenance', {
+        method: 'POST',
+        headers: getRequestHeaders(),
+        body: JSON.stringify({ deletes, rekeys }),
+    });
+
+    const responseText = await response.text();
+    let data = null;
+    try {
+        data = responseText ? JSON.parse(responseText) : null;
+    } catch {
+        data = null;
+    }
+
+    if (!response.ok) {
+        const message =
+            data?.error?.message ||
+            data?.message ||
+            responseText?.trim() ||
+            `Got response status ${response.status}`;
+        throw new Error(message);
+    }
+
+    return data;
 }
 
 function maybeNotifyWorldInfoOverflow(data) {
@@ -961,6 +975,10 @@ function applyAssemblyResponseMetadata(response, type) {
 }
 
 function applyTimedWorldInfoResponseData(data) {
+    const promptSnapshotKey = data?.x_sillytavern?.promptSnapshotKey;
+    if (typeof promptSnapshotKey === 'string' && promptSnapshotKey) {
+        pendingPromptSnapshotKey = promptSnapshotKey;
+    }
     const timedWorldInfo = data?.x_sillytavern?.timedWorldInfo;
     if (timedWorldInfo && typeof timedWorldInfo === 'object') {
         pendingTimedWorldInfo = structuredClone(timedWorldInfo);
@@ -981,6 +999,14 @@ export function consumeOpenAITimedWorldInfo() {
         ? structuredClone(pendingTimedWorldInfo)
         : null;
     pendingTimedWorldInfo = null;
+    return value;
+}
+
+export function consumeOpenAIPromptInspectionResponseData() {
+    const value = typeof pendingPromptSnapshotKey === 'string' && pendingPromptSnapshotKey
+        ? { promptSnapshotKey: pendingPromptSnapshotKey }
+        : { promptSnapshotKey: null };
+    pendingPromptSnapshotKey = null;
     return value;
 }
 
@@ -2031,6 +2057,7 @@ async function buildOpenAIGenerateData(type, messages, { jsonSchema = null } = {
     pendingTimedWorldInfo = null;
     pendingWorldInfoSummary = null;
     pendingWorldInfoReport = null;
+    pendingPromptSnapshotKey = null;
     storeServerAssemblyPromptContext(promptContext);
 
     if (!promptContext && !Array.isArray(messages)) {

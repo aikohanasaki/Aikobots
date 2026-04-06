@@ -1,7 +1,7 @@
-import { DiffMatchPatch, DOMPurify, localforage } from '../lib.js';
+import { localforage } from '../lib.js';
 import { chat, event_types, eventSource, getCurrentChatId, reloadCurrentChat } from '../script.js';
 import { t } from './i18n.js';
-import { oai_settings } from './openai.js';
+import { fetchPromptInspectionSnapshot, oai_settings } from './openai.js';
 import { Popup, POPUP_TYPE } from './popup.js';
 import { power_user, registerDebugFunction } from './power-user.js';
 import { isMobile } from './RossAscends-mods.js';
@@ -10,10 +10,32 @@ import { getFriendlyTokenizerName, getTokenCountAsync } from './tokenizers.js';
 import { copyText } from './utils.js';
 
 let PromptArrayItemForRawPromptDisplay;
-let priorPromptArrayItemForRawPromptDisplay;
 
 const promptStorage = localforage.createInstance({ name: 'SillyTavern_Prompts' });
 export let itemizedPrompts = [];
+
+function normalizeItemizedPrompts(prompts) {
+    const normalized = Array.isArray(prompts)
+        ? prompts.filter(prompt => prompt && typeof prompt === 'object')
+        : [];
+
+    if (normalized.length <= 1) {
+        return normalized;
+    }
+
+    return [normalized[normalized.length - 1]];
+}
+
+export function getLatestItemizedPrompt() {
+    return Array.isArray(itemizedPrompts) && itemizedPrompts.length > 0
+        ? itemizedPrompts[0]
+        : null;
+}
+
+export function setLatestItemizedPrompt(prompt) {
+    itemizedPrompts = prompt && typeof prompt === 'object' ? [prompt] : [];
+    return getLatestItemizedPrompt();
+}
 
 /**
  * Gets the itemized prompts for a chat.
@@ -26,11 +48,7 @@ export async function loadItemizedPrompts(chatId) {
             return;
         }
 
-        itemizedPrompts = await promptStorage.getItem(chatId);
-
-        if (!itemizedPrompts) {
-            itemizedPrompts = [];
-        }
+        itemizedPrompts = normalizeItemizedPrompts(await promptStorage.getItem(chatId));
     } catch (error) {
         console.error('Error loading itemized prompts for chat', chatId, error);
         itemizedPrompts = [];
@@ -139,6 +157,18 @@ function buildWorldInfoPreview(content, maxLength = 240) {
     return `${normalized.slice(0, maxLength).trimEnd()}...`;
 }
 
+function isSnapshotBackedPrompt(itemizedPrompt) {
+    return Boolean(itemizedPrompt?.serverPromptAssembly && typeof itemizedPrompt?.promptSnapshotKey === 'string' && itemizedPrompt.promptSnapshotKey);
+}
+
+async function fetchSnapshotBackedPrompt(itemizedPrompt) {
+    if (!isSnapshotBackedPrompt(itemizedPrompt)) {
+        return null;
+    }
+
+    return await fetchPromptInspectionSnapshot(itemizedPrompt.promptSnapshotKey);
+}
+
 function formatHiddenWorldInfoPlaceholder(placement) {
     void placement;
     return '(hidden entry)';
@@ -179,7 +209,18 @@ function aggregatePromptInspectorWorldInfoEntries(entries = []) {
     return visibleEntries;
 }
 
-function getPromptWorldInfoEntries(itemizedPrompt, incomingMesId) {
+function getPromptWorldInfoEntries(itemizedPrompt, incomingMesId, snapshot = null) {
+    const snapshotEntries = Array.isArray(snapshot?.worldInfoReport?.activatedEntries)
+        ? snapshot.worldInfoReport.activatedEntries
+        : Array.isArray(snapshot?.worldInfo?.activatedEntries)
+            ? snapshot.worldInfo.activatedEntries
+            : Array.isArray(snapshot?.assembly?.worldInfo?.activatedEntries)
+                ? snapshot.assembly.worldInfo.activatedEntries
+                : null;
+    if (Array.isArray(snapshotEntries)) {
+        return snapshotEntries.filter(entry => entry?.status === 'admitted');
+    }
+
     const messageWorldInfoReport = chat[incomingMesId]?.extra?.worldInfoReport;
     const rawWorldInfoEntries = Array.isArray(messageWorldInfoReport?.activatedEntries)
         ? messageWorldInfoReport.activatedEntries
@@ -242,7 +283,12 @@ function flattenMessagesStateToRedactedPrompt(node, placementMap, depthPlacement
     return content ? [content] : [];
 }
 
-function getRedactedRawPromptText(itemizedPrompt, incomingMesId) {
+function getRedactedRawPromptText(itemizedPrompt, incomingMesId, snapshot = null) {
+    const snapshotPromptText = snapshot?.assembly?.redactedPromptText;
+    if (typeof snapshotPromptText === 'string' && snapshotPromptText) {
+        return snapshotPromptText;
+    }
+
     const entries = getPromptWorldInfoEntries(itemizedPrompt, incomingMesId);
     const hasHiddenEntries = entries.some(entry => entry?.hidden);
     const rawPrompt = itemizedPrompt?.rawPrompt;
@@ -268,15 +314,16 @@ function getRedactedRawPromptText(itemizedPrompt, incomingMesId) {
     return flattenMessagesStateToRedactedPrompt(messagesState, placementMap, depthPlacementQueue).join('\n');
 }
 
-export async function itemizedParams(itemizedPrompts, thisPromptSet, incomingMesId) {
+export async function itemizedParams(itemizedPrompts, thisPromptSet, incomingMesId, snapshot = null) {
     const itemizedPrompt = itemizedPrompts[thisPromptSet];
     if (!itemizedPrompt) {
         console.warn('itemizedPrompt not found at index', thisPromptSet);
         return null;
     }
 
-    const serverItemization = itemizedPrompt.serverAssemblyDebugDump?.assembly?.itemization;
-    const rawWorldInfoEntries = getPromptWorldInfoEntries(itemizedPrompt, incomingMesId);
+    const snapshotAssembly = snapshot?.assembly && typeof snapshot.assembly === 'object' ? snapshot.assembly : null;
+    const serverItemization = snapshot?.itemization || snapshotAssembly?.itemization || itemizedPrompt.serverAssemblyDebugDump?.assembly?.itemization;
+    const rawWorldInfoEntries = getPromptWorldInfoEntries(itemizedPrompt, incomingMesId, snapshot);
     const params = {
         charDescriptionTokens: serverItemization ? toNumber(serverItemization.charDescriptionTokens) : await getTokenCountAsync(itemizedPrompt.charDescription),
         charPersonalityTokens: serverItemization ? toNumber(serverItemization.charPersonalityTokens) : await getTokenCountAsync(itemizedPrompt.charPersonality),
@@ -299,8 +346,8 @@ export async function itemizedParams(itemizedPrompts, thisPromptSet, incomingMes
         modelUsed: chat[incomingMesId]?.extra?.model,
         apiUsed: chat[incomingMesId]?.extra?.api,
         presetName: itemizedPrompt.presetName || t`(Unknown)`,
-        messagesCount: String(itemizedPrompt.messagesCount ?? ''),
-        examplesCount: String(itemizedPrompt.examplesCount ?? ''),
+        messagesCount: String(snapshotAssembly?.messagesCount ?? itemizedPrompt.messagesCount ?? ''),
+        examplesCount: String(snapshotAssembly?.examplesCount ?? itemizedPrompt.examplesCount ?? ''),
         worldInfoEntries: [],
     };
     const allWorldInfoEntries = rawWorldInfoEntries.map(entry => {
@@ -443,18 +490,10 @@ export async function itemizedParams(itemizedPrompts, thisPromptSet, incomingMes
 
 export function findItemizedPromptSet(itemizedPrompts, incomingMesId) {
     PromptArrayItemForRawPromptDisplay = undefined;
-    priorPromptArrayItemForRawPromptDisplay = undefined;
 
     const thisPromptSet = findLatestItemizedPromptIndexByMesId(itemizedPrompts, incomingMesId);
     if (thisPromptSet === -1) {
         return undefined;
-    }
-
-    for (let i = 0; i < itemizedPrompts.length; i++) {
-        console.log(`looking for ${incomingMesId} vs ${itemizedPrompts[i].mesId}`);
-        if (i < thisPromptSet && itemizedPrompts[i].rawPrompt) {
-            priorPromptArrayItemForRawPromptDisplay = i;
-        }
     }
 
     console.log(`found matching mesID ${thisPromptSet}`);
@@ -512,14 +551,26 @@ export async function promptItemize(itemizedPrompts, requestedMesId) {
         return null;
     }
 
-    const params = await itemizedParams(itemizedPrompts, thisPromptSet, incomingMesId);
+    const itemizedPrompt = itemizedPrompts[thisPromptSet];
+    let snapshot = null;
+    if (isSnapshotBackedPrompt(itemizedPrompt)) {
+        try {
+            snapshot = await fetchSnapshotBackedPrompt(itemizedPrompt);
+        } catch (error) {
+            console.error('Failed to fetch prompt inspection snapshot', error);
+            toastr.info(t`The prompt snapshot is no longer available.`);
+            return null;
+        }
+    }
+
+    const params = await itemizedParams(itemizedPrompts, thisPromptSet, incomingMesId, snapshot);
     if (!params) {
         console.warn(`could not build itemized prompt params for mesId ${incomingMesId}`);
         return null;
     }
     const getPromptText = (promptIndex) => {
         const prompt = itemizedPrompts[promptIndex];
-        return getRedactedRawPromptText(prompt, Number(prompt?.mesId ?? incomingMesId));
+        return getRedactedRawPromptText(prompt, Number(prompt?.mesId ?? incomingMesId), snapshot);
     };
 
     const template = params.this_main_api == 'openai'
@@ -537,38 +588,8 @@ export async function promptItemize(itemizedPrompts, requestedMesId) {
 
     const currentPromptText = getPromptText(PromptArrayItemForRawPromptDisplay);
     const fallbackPromptText = currentPromptText.trim() ? currentPromptText : '(hidden entry)';
-    const priorPromptText = priorPromptArrayItemForRawPromptDisplay !== undefined
-        ? getPromptText(priorPromptArrayItemForRawPromptDisplay)
-        : '';
     const hasCurrentPromptText = Boolean(fallbackPromptText.trim());
-    const hasPriorPromptText = Boolean(priorPromptText.trim());
 
-    /** @type {HTMLElement} */
-    const diffPrevPrompt = popup.dlg.querySelector('#diffPrevPrompt');
-    if (hasCurrentPromptText && hasPriorPromptText) {
-        diffPrevPrompt.style.display = '';
-        diffPrevPrompt.addEventListener('click', function () {
-            const dmp = new DiffMatchPatch();
-            const text1 = priorPromptText;
-            const text2 = currentPromptText;
-
-            dmp.Diff_Timeout = 2.0;
-
-            const d = dmp.diff_main(text1, text2);
-            let ds = dmp.diff_prettyHtml(d);
-            // make it readable
-            ds = ds.replaceAll('background:#e6ffe6;', 'background:#b9f3b9; color:black;');
-            ds = ds.replaceAll('background:#ffe6e6;', 'background:#f5b4b4; color:black;');
-            ds = ds.replaceAll('&para;', '');
-            const container = document.createElement('div');
-            container.innerHTML = DOMPurify.sanitize(ds);
-            const rawPromptWrapper = document.getElementById('rawPromptWrapper');
-            rawPromptWrapper.replaceChildren(container);
-            $('#rawPromptPopup').slideToggle();
-        });
-    } else {
-        diffPrevPrompt.style.display = 'none';
-    }
     const copyPromptToClipboard = popup.dlg.querySelector('#copyPromptToClipboard');
     if (hasCurrentPromptText) {
         copyPromptToClipboard.addEventListener('pointerup', async function () {
@@ -624,24 +645,9 @@ export function initItemizedPrompts() {
         let mesIdForItemization = $(this).closest('.mes').attr('mesId');
         console.log(`looking for mesID: ${mesIdForItemization}`);
         if (itemizedPrompts.length !== undefined && itemizedPrompts.length !== 0) {
-            const itemizedPromptIndex = findLatestItemizedPromptIndexByMesId(itemizedPrompts, mesIdForItemization);
-            const itemizedPrompt = itemizedPromptIndex !== -1 ? itemizedPrompts[itemizedPromptIndex] : null;
-            if (itemizedPrompt?.serverPromptAssembly && !itemizedPrompt?.serverAssemblyDebugDump?.assembly?.itemization) {
-                if (typeof globalThis.SillyTavern?.storeLastServerDispatchSnapshotToPrompt === 'function') {
-                    try {
-                        await globalThis.SillyTavern.storeLastServerDispatchSnapshotToPrompt(Number(mesIdForItemization));
-                    } catch (error) {
-                        console.error('Failed to attach last server dispatch snapshot to prompt record', error);
-                    }
-                }
-
-                if (!itemizedPrompt?.serverAssemblyDebugDump?.assembly?.itemization && typeof globalThis.SillyTavern?.debugServerAssembly === 'function') {
-                    try {
-                        await globalThis.SillyTavern.debugServerAssembly();
-                    } catch (error) {
-                        console.error('Failed to refresh server prompt assembly debug dump', error);
-                    }
-                }
+            const itemizedPrompt = getLatestItemizedPrompt();
+            if (Number(itemizedPrompt?.mesId) !== Number(mesIdForItemization)) {
+                return;
             }
             await promptItemize(itemizedPrompts, mesIdForItemization);
         }
