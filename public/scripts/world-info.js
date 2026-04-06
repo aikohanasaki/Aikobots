@@ -82,6 +82,92 @@ const DEFAULT_LOREBOOK_SETTINGS = Object.freeze({
     randomTrim: false,
 });
 
+const worldInfoBulkMoveState = {
+    lorebookName: '',
+    bulkMoveMode: false,
+    selectedEntryUids: new Set(),
+};
+
+function getWorldInfoBulkMoveState(name = '') {
+    if (worldInfoBulkMoveState.lorebookName !== name) {
+        resetWorldInfoBulkMoveState(name);
+    }
+
+    return worldInfoBulkMoveState;
+}
+
+function resetWorldInfoBulkMoveState(name = '') {
+    worldInfoBulkMoveState.lorebookName = name;
+    worldInfoBulkMoveState.bulkMoveMode = false;
+    worldInfoBulkMoveState.selectedEntryUids.clear();
+}
+
+function setWorldInfoBulkMoveMode(name = '', enabled = false) {
+    const state = getWorldInfoBulkMoveState(name);
+    state.bulkMoveMode = enabled;
+
+    if (!enabled) {
+        state.selectedEntryUids.clear();
+    }
+}
+
+function setWorldInfoBulkMoveEntrySelected(name = '', uid, selected) {
+    const state = getWorldInfoBulkMoveState(name);
+    const normalizedUid = String(uid);
+
+    if (selected) {
+        state.selectedEntryUids.add(normalizedUid);
+    } else {
+        state.selectedEntryUids.delete(normalizedUid);
+    }
+}
+
+function isWorldInfoBulkMoveEntrySelected(name = '', uid) {
+    return getWorldInfoBulkMoveState(name).selectedEntryUids.has(String(uid));
+}
+
+function getSelectedWorldInfoEntriesInDisplayOrder(name = '', data = null) {
+    const state = getWorldInfoBulkMoveState(name);
+    if (!state.selectedEntryUids.size || !data?.entries) {
+        return [];
+    }
+
+    const allEntries = addMissingWorldInfoFields(Object.keys(data.entries).map(uid => data.entries[uid]).filter(entry => entry && typeof entry === 'object' && !Array.isArray(entry)));
+    const filteredAndSortedEntries = sortWorldInfoEntries(worldInfoFilter.applyFilters([...allEntries]));
+    const selectedEntries = filteredAndSortedEntries.filter(entry => state.selectedEntryUids.has(String(entry.uid)));
+    const selectedEntryUidSet = new Set(selectedEntries.map(entry => String(entry.uid)));
+    const remainingEntries = sortWorldInfoEntries(allEntries.filter(entry => state.selectedEntryUids.has(String(entry.uid)) && !selectedEntryUidSet.has(String(entry.uid))));
+
+    return [...selectedEntries, ...remainingEntries];
+}
+
+function syncWorldInfoBulkMoveUi(name = '') {
+    const state = getWorldInfoBulkMoveState(name);
+    const selectionCount = state.selectedEntryUids.size;
+    const worldEntriesList = $('#world_popup_entries_list');
+    const toggleButton = $('#world_bulk_move_mode');
+    const applyButton = $('#world_bulk_move_apply');
+    const selectionSuffix = selectionCount > 0 ? ` (${selectionCount})` : '';
+
+    worldEntriesList.toggleClass('wi-bulk-move-mode', state.bulkMoveMode);
+    worldEntriesList.find('.world_entry').each(function () {
+        const uid = String($(this).data('uid'));
+        const isSelected = state.selectedEntryUids.has(uid);
+        $(this).toggleClass('wi-bulk-move-selected', isSelected);
+        $(this).find('.wi-bulk-select-checkbox').prop('checked', isSelected);
+    });
+
+    toggleButton
+        .toggleClass('world_bulk_move_active', state.bulkMoveMode)
+        .attr('title', state.bulkMoveMode ? `Cancel bulk move/copy selection${selectionSuffix}` : 'Select Entries to Move/Copy');
+
+    applyButton
+        .css('display', state.bulkMoveMode && selectionCount > 0 ? 'flex' : 'none')
+        .attr('title', selectionCount > 0 ? `Move/Copy ${selectionCount} selected entr${selectionCount === 1 ? 'y' : 'ies'}` : 'Move/Copy Selected Entries');
+
+    applyButton.find('.world-bulk-move-count').text(selectionSuffix);
+}
+
 function normalizeWorldInfoItems(data = {}) {
     if (Array.isArray(data.world_info_items) && data.world_info_items.length > 0) {
         return data.world_info_items
@@ -2603,6 +2689,8 @@ async function displayWorldEntries(name, data, navigation = navigation_option.no
 
     if (!data || !('entries' in data)) {
         $('#world_popup_new').off('click').on('click', nullWorldInfo);
+        $('#world_bulk_move_mode').off('click').removeClass('world_bulk_move_active').on('click', nullWorldInfo);
+        $('#world_bulk_move_apply').off('click').hide();
         $('#world_popup_name_button').off('click').on('click', nullWorldInfo);
         $('#world_popup_export').off('click').on('click', nullWorldInfo);
         $('#world_popup_delete').off('click').on('click', nullWorldInfo);
@@ -2724,14 +2812,13 @@ async function displayWorldEntries(name, data, navigation = navigation_option.no
                 }
 
                 const isCustomOrder = $('#world_info_sort_order').find(':selected').data('rule') === 'custom';
-                if (!isCustomOrder) {
-                    blocks.forEach(block => {
-                        block.find('.drag-handle').remove();
-                    });
-                }
+                blocks.forEach(block => {
+                    block.find('.drag-handle').toggleClass('wi-drag-handle-hidden', !isCustomOrder);
+                });
 
                 worldEntriesList.append(keywordHeaders);
                 worldEntriesList.append(blocks);
+                syncWorldInfoBulkMoveUi(name);
             } catch (error) {
                 console.error('Error while rendering WI entries:', error);
             }
@@ -2767,6 +2854,36 @@ async function displayWorldEntries(name, data, navigation = navigation_option.no
     $('#world_popup_new').off('click').on('click', () => {
         const entry = createWorldInfoEntry(name, data);
         if (entry) updateEditor(entry.uid);
+    });
+
+    $('#world_bulk_move_mode').off('click').on('click', () => {
+        const state = getWorldInfoBulkMoveState(name);
+        setWorldInfoBulkMoveMode(name, !state.bulkMoveMode);
+        syncWorldInfoBulkMoveUi(name);
+    });
+
+    $('#world_bulk_move_apply').off('click').on('click', async () => {
+        const selectedEntries = getSelectedWorldInfoEntriesInDisplayOrder(name, data);
+        if (!selectedEntries.length) {
+            syncWorldInfoBulkMoveUi(name);
+            return;
+        }
+
+        const selectionLabel = `${selectedEntries.length} selected entr${selectedEntries.length === 1 ? 'y' : 'ies'}`;
+        const moveTarget = await promptWorldInfoMoveTarget(name, selectionLabel);
+        if (!moveTarget) {
+            syncWorldInfoBulkMoveUi(name);
+            return;
+        }
+
+        const moved = await moveWorldInfoEntries(name, moveTarget.targetLorebookName, selectedEntries.map(entry => entry.uid), { deleteOriginal: moveTarget.deleteOriginal });
+        if (!moved) {
+            syncWorldInfoBulkMoveUi(name);
+            return;
+        }
+
+        resetWorldInfoBulkMoveState(name);
+        syncWorldInfoBulkMoveUi(name);
     });
 
     $('#world_popup_name_button').off('click').on('click', async () => {
@@ -3416,7 +3533,6 @@ function handleProbabilityInputHelper({ probabilityInput, data, entry, name }) {
         !noSave && await saveWorldInfo(name, data);
     });
     probabilityInput.val(entry.probability).trigger('input', { noSave: true });
-    probabilityInput.css('width', 'calc(3em + 15px)');
 }
 
 /**
@@ -3436,7 +3552,7 @@ function handleProbabilityToggleHelper({ probabilityToggle, data, entry, name, p
         data.entries[uid].useProbability = value;
         const probabilityContainer = $(this).closest('.world_entry').find('.probabilityContainer');
         !noSave && await saveWorldInfo(name, data);
-        value ? probabilityContainer.show() : probabilityContainer.hide();
+        probabilityContainer.toggleClass('wi-column-hidden', !value);
         if (value && data.entries[uid].probability === null) {
             data.entries[uid].probability = 100;
         }
@@ -3628,7 +3744,6 @@ export async function getWorldEntry(name, data, entry) {
         !noSave && await saveWorldInfo(name, data);
     });
     orderInput.val(entry.order).trigger('input', { noSave: true });
-    orderInput.css('width', 'calc(3em + 15px)');
 
     // Probability
     handleProbabilityInputHelper({ probabilityInput: headerTemplate.find('input[name="probability"]'), data, entry, name });
@@ -3638,7 +3753,6 @@ export async function getWorldEntry(name, data, entry) {
         inputElem: headerTemplate.find('input[name="depth"]'),
         entry, entryKey: 'depth', data, name, min: 0, max: MAX_SCAN_DEPTH, clamp: false,
     });
-    headerTemplate.find('input[name="depth"]').css('width', 'calc(3em + 15px)');
 
     // Position
     if (entry.position === undefined) entry.position = 0;
@@ -3681,6 +3795,21 @@ export async function getWorldEntry(name, data, entry) {
         entry, data, name, template: headerTemplate,
     });
 
+    // Bulk move selector
+    const bulkSelectCheckbox = headerTemplate.find('.wi-bulk-select-checkbox');
+    bulkSelectCheckbox.data('uid', entry.uid);
+    bulkSelectCheckbox.prop('checked', isWorldInfoBulkMoveEntrySelected(name, entry.uid));
+    headerTemplate.toggleClass('wi-bulk-move-selected', isWorldInfoBulkMoveEntrySelected(name, entry.uid));
+    bulkSelectCheckbox.on('click mousedown', event => event.stopPropagation());
+    bulkSelectCheckbox.on('change', function (event) {
+        event.stopPropagation();
+        const uid = $(this).data('uid');
+        const selected = $(this).prop('checked');
+        setWorldInfoBulkMoveEntrySelected(name, uid, selected);
+        headerTemplate.toggleClass('wi-bulk-move-selected', selected);
+        syncWorldInfoBulkMoveUi(name);
+    });
+
     // Duplicate/delete/move buttons
     headerTemplate.find('.duplicate_entry_button').data('uid', entry.uid).on('click', async function () {
         const uid = $(this).data('uid');
@@ -3707,54 +3836,12 @@ export async function getWorldEntry(name, data, entry) {
         if (!sourceWorldInfo) return;
         const sourceName = sourceWorldInfo.entries[sourceUid]?.comment;
         if (sourceName === undefined) return;
-        const select = document.createElement('select');
-        select.id = 'move_entry_target_select';
-        select.classList.add('text_pole', 'wide100p', 'marginTop10');
-        const defaultOption = document.createElement('option');
-        defaultOption.value = '';
-        defaultOption.textContent = `-- ${t`Select Target Lorebook`} --`;
-        select.appendChild(defaultOption);
-        let selectableWorldCount = 0;
-        world_names.forEach(worldName => {
-            if (worldName !== sourceWorld) {
-                const option = document.createElement('option');
-                option.value = world_names.indexOf(worldName).toString();
-                option.textContent = worldName;
-                select.appendChild(option);
-                selectableWorldCount++;
-            }
-        });
-        if (selectableWorldCount === 0) {
-            toastr.warning(t`There are no other lorebooks to move to.`);
+        const moveTarget = await promptWorldInfoMoveTarget(sourceWorld, `'${sourceName}'`);
+        if (!moveTarget) {
             return;
         }
-        const wrapper = document.createElement('div');
-        wrapper.textContent = t`Move/Copy '${sourceName}' to:`;
-        const container = document.createElement('div');
-        container.appendChild(wrapper);
-        container.appendChild(select);
-        let selectedWorldIndex = -1;
-        select.addEventListener('change', function () {
-            selectedWorldIndex = this.value === '' ? -1 : Number(this.value);
-        });
-        const popup = new Popup(container, POPUP_TYPE.CONFIRM, '', {
-            cancelButton: t`Cancel`,
-            customButtons: [
-                { text: t`Move`, result: POPUP_RESULT.CUSTOM1 },
-                { text: t`Copy`, result: POPUP_RESULT.CUSTOM2 },
-            ],
-        });
-        popup.okButton.style.display = 'none'; // Hide the default OK button
-        const popupConfirm = await popup.show();
-        if (!popupConfirm) return;
-        if (selectedWorldIndex === -1) return;
-        const selectedValue = world_names[selectedWorldIndex];
-        if (!selectedValue) {
-            toastr.warning(t`Please select a target lorebook.`);
-            return;
-        }
-        const deleteOriginal = popupConfirm === POPUP_RESULT.CUSTOM1;
-        await moveWorldInfoEntry(sourceWorld, selectedValue, sourceUid, { deleteOriginal });
+
+        await moveWorldInfoEntry(sourceWorld, moveTarget.targetLorebookName, sourceUid, { deleteOriginal: moveTarget.deleteOriginal });
     });
 
     let drawerInitialized = false;
@@ -5856,16 +5943,82 @@ export async function assignLorebookToChat(event) {
 }
 
 /**
- * Moves a World Info entry from a source lorebook to a target lorebook.
+ * Prompts for the target lorebook and whether the selected entries should be moved or copied.
+ *
+ * @param {string} sourceWorld - The source lorebook.
+ * @param {string} [sourceLabel=''] - The display label used in the popup message.
+ * @returns {Promise<{targetLorebookName: string, deleteOriginal: boolean} | null>} The chosen target and mode, or null if cancelled.
+ */
+export async function promptWorldInfoMoveTarget(sourceWorld, sourceLabel = '') {
+    const selectableWorlds = Array.isArray(world_names) ? world_names.filter(worldName => worldName !== sourceWorld) : [];
+    if (selectableWorlds.length === 0) {
+        toastr.warning(t`There are no other lorebooks to move to.`);
+        return null;
+    }
+
+    const select = document.createElement('select');
+    select.id = 'move_entry_target_select';
+    select.classList.add('text_pole', 'wide100p', 'marginTop10');
+
+    const defaultOption = document.createElement('option');
+    defaultOption.value = '';
+    defaultOption.textContent = `-- ${t`Select Target Lorebook`} --`;
+    select.appendChild(defaultOption);
+
+    for (const worldName of selectableWorlds) {
+        const option = document.createElement('option');
+        option.value = worldName;
+        option.textContent = worldName;
+        select.appendChild(option);
+    }
+
+    const wrapper = document.createElement('div');
+    wrapper.textContent = sourceLabel ? `Move/Copy ${sourceLabel} to:` : 'Move/Copy entry to:';
+
+    const container = document.createElement('div');
+    container.appendChild(wrapper);
+    container.appendChild(select);
+
+    let selectedWorldName = '';
+    select.addEventListener('change', function () {
+        selectedWorldName = String(this.value || '');
+    });
+
+    const popup = new Popup(container, POPUP_TYPE.CONFIRM, '', {
+        cancelButton: t`Cancel`,
+        customButtons: [
+            { text: t`Move`, result: POPUP_RESULT.CUSTOM1 },
+            { text: t`Copy`, result: POPUP_RESULT.CUSTOM2 },
+        ],
+    });
+    popup.okButton.style.display = 'none';
+    const popupConfirm = await popup.show();
+    if (!popupConfirm) {
+        return null;
+    }
+
+    if (!selectedWorldName) {
+        toastr.warning(t`Please select a target lorebook.`);
+        return null;
+    }
+
+    return {
+        targetLorebookName: selectedWorldName,
+        deleteOriginal: popupConfirm === POPUP_RESULT.CUSTOM1,
+    };
+}
+
+/**
+ * Moves one or more World Info entries from a source lorebook to a target lorebook.
  *
  * @param {string} sourceName - The name of the source lorebook file.
  * @param {string} targetName - The name of the target lorebook file.
- * @param {string|number} uid - The UID of the entry to move from the source lorebook.
+ * @param {Array<string|number>|string|number} uids - The UID or UIDs of the entries to move from the source lorebook.
  * @param {Object} options - Additional options for the move operation.
- * @param {boolean} [options.deleteOriginal=true] - Whether to delete the original entry from the source lorebook after moving it.
+ * @param {boolean} [options.deleteOriginal=true] - Whether to delete the original entries from the source lorebook after moving them.
  * @returns {Promise<boolean>} True if the move was successful, false otherwise.
  */
-export async function moveWorldInfoEntry(sourceName, targetName, uid, { deleteOriginal = true } = {}) {
+export async function moveWorldInfoEntries(sourceName, targetName, uids, { deleteOriginal = true } = {}) {
     if (sourceName === targetName) {
         return false;
     }
@@ -5882,60 +6035,60 @@ export async function moveWorldInfoEntry(sourceName, targetName, uid, { deleteOr
         return false;
     }
 
-    const entryUidString = String(uid);
+    const entryUidStrings = Array.from(new Set((Array.isArray(uids) ? uids : [uids]).map(uid => String(uid))));
+    if (!entryUidStrings.length) {
+        toastr.warning(t`No lorebook entries selected.`);
+        return false;
+    }
 
     try {
         const sourceData = await loadWorldInfo(sourceName);
         const targetData = await loadWorldInfo(targetName);
 
-        if (!sourceData || !sourceData.entries) {
+        if (!sourceData?.entries) {
             toastr.error(t`Failed to load data for source lorebook '${sourceName}'.`);
             console.error(`[WI Move] Could not load source data for '${sourceName}'.`);
             return false;
         }
-        if (!targetData || !targetData.entries) {
+        if (!targetData?.entries) {
             toastr.error(t`Failed to load data for target lorebook '${targetName}'.`);
             console.error(`[WI Move] Could not load target data for '${targetName}'.`);
             return false;
         }
 
-        if (!sourceData.entries[entryUidString]) {
-            toastr.error(t`Entry not found in source lorebook '${sourceName}'.`);
-            console.error(`[WI Move] Entry UID ${entryUidString} not found in '${sourceName}'.`);
+        const sourceEntries = entryUidStrings.map(uid => sourceData.entries[uid]);
+        if (sourceEntries.some(entry => !entry)) {
+            toastr.error(t`One or more selected entries were not found in source lorebook '${sourceName}'.`);
+            console.error(`[WI Move] Missing selected entries in '${sourceName}'.`, entryUidStrings);
             return false;
         }
 
-        const entryToMove = structuredClone(sourceData.entries[entryUidString]);
+        let maxDisplayIndex = Object.values(targetData.entries).reduce((max, entry) => Math.max(max, entry.displayIndex ?? -1), -1);
+        for (const sourceEntry of sourceEntries) {
+            const entryToMove = structuredClone(sourceEntry);
+            const newUid = getFreeWorldEntryUid(targetData);
+            if (!Number.isInteger(newUid)) {
+                console.error(`[WI Move] Failed to get a free UID in '${targetName}'.`);
+                return false;
+            }
 
-        const newUid = getFreeWorldEntryUid(targetData);
-        if (newUid === null) {
-            console.error(`[WI Move] Failed to get a free UID in '${targetName}'.`);
-            return false;
+            entryToMove.uid = newUid;
+            entryToMove.displayIndex = ++maxDisplayIndex;
+            targetData.entries[newUid] = entryToMove;
         }
-
-        entryToMove.uid = newUid;
-        // Place the entry at the end of the target lorebook
-        const maxDisplayIndex = Object.values(targetData.entries).reduce((max, entry) => Math.max(max, entry.displayIndex ?? -1), -1);
-        entryToMove.displayIndex = maxDisplayIndex + 1;
-
-        targetData.entries[newUid] = entryToMove;
 
         if (deleteOriginal) {
-            delete sourceData.entries[entryUidString];
-            // Remove from originalData if it exists
-            deleteWIOriginalDataValue(sourceData, entryUidString);
-            // TODO: setWIOriginalDataValue
-            console.debug(`[WI Move] Removed entry UID ${entryUidString} from source '${sourceName}'.`);
+            for (const entryUid of entryUidStrings) {
+                delete sourceData.entries[entryUid];
+                deleteWIOriginalDataValue(sourceData, entryUid);
+            }
         }
 
         await saveWorldInfo(targetName, targetData, true);
-        console.debug(`[WI Move] Saved target lorebook '${targetName}'.`);
-        await saveWorldInfo(sourceName, sourceData, true);
-        console.debug(`[WI Move] Saved source lorebook '${sourceName}'.`);
+        if (deleteOriginal) {
+            await saveWorldInfo(sourceName, sourceData, true);
+        }
 
-        console.log(`[WI Move] ${entryToMove.comment} ${deleteOriginal ? 'moved' : 'copied'} successfully to '${targetName}'.`);
-
-        // Check if the currently viewed book in the editor is the source or target and reload it
         const currentEditorBookIndex = Number($('#world_editor_select').val());
         if (!isNaN(currentEditorBookIndex)) {
             const currentEditorBookName = world_names[currentEditorBookIndex];
@@ -5944,9 +6097,10 @@ export async function moveWorldInfoEntry(sourceName, targetName, uid, { deleteOr
             }
         }
 
+        const entryLabel = entryUidStrings.length === 1 ? t`Entry` : `${entryUidStrings.length} entries`;
         toastr.success(deleteOriginal
-            ? t`Entry moved successfully from '${sourceName}' to '${targetName}'.`
-            : t`Entry copied successfully to '${targetName}'.`);
+            ? `${entryLabel} moved successfully from '${sourceName}' to '${targetName}'.`
+            : `${entryLabel} copied successfully to '${targetName}'.`);
 
         return true;
     } catch (error) {
@@ -5954,6 +6108,10 @@ export async function moveWorldInfoEntry(sourceName, targetName, uid, { deleteOr
         console.error('[WI Move] Unexpected error:', error);
         return false;
     }
+}
+
+export async function moveWorldInfoEntry(sourceName, targetName, uid, { deleteOriginal = true } = {}) {
+    return moveWorldInfoEntries(sourceName, targetName, [uid], { deleteOriginal });
 }
 
 
@@ -6080,12 +6238,16 @@ export function initWorldInfo() {
         worldInfoFilter.setFilterData(FILTER_TYPES.WORLD_INFO_SEARCH, '', true);
         const selectedIndex = String($('#world_editor_select').find(':selected').val());
         $('#world_lorebook_ordering').off('click').on('click', nullWorldInfo);
+        const worldName = selectedIndex === '' ? '' : world_names[selectedIndex];
+
+        if (worldInfoBulkMoveState.lorebookName !== worldName) {
+            resetWorldInfoBulkMoveState(worldName);
+        }
 
         if (selectedIndex === '') {
             updateWorldInfoStorageButton('');
             await hideWorldEditor();
         } else {
-            const worldName = world_names[selectedIndex];
             updateWorldInfoStorageButton(worldName);
             await showWorldEditor(worldName);
         }

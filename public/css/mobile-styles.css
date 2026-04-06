@@ -251,8 +251,15 @@
     }
 
     .WIEntryTitleAndStatus,
+    .WIEntryStatusControl,
     .WIEntryHeaderControls {
         width: 100%;
+    }
+
+    .wi-bulk-select-slot,
+    #world_bulk_move_mode,
+    #world_bulk_move_apply {
+        display: none !important;
     }
 
     #WIEntryHeaderTitlesPC {

@@ -1,6 +1,16 @@
 :root {
     --stlo-field-min-width: 220px;
     --stlo-field-small-width: 140px;
+    --wi-entry-header-gap: 5px;
+    --wi-entry-control-icon-width: 1.6rem;
+    --wi-entry-action-button-width: 1.9rem;
+    --wi-entry-chrome-width: calc((var(--wi-entry-control-icon-width) * 4) + (var(--wi-entry-header-gap) * 3));
+    --wi-entry-status-width: calc(3.5em + 30px);
+    --wi-entry-position-width: calc(3.8em + 30px);
+    --wi-entry-depth-width: calc(3.8em + 15px);
+    --wi-entry-order-width: calc(3.5em + 10px);
+    --wi-entry-probability-width: calc(3.5em + 15px);
+    --wi-entry-actions-width: calc((var(--wi-entry-action-button-width) * 3) + (var(--wi-entry-header-gap) * 2));
 }
 
 .world_info_select_block {
@@ -92,6 +102,9 @@
 .world_entry_thin_controls {
     display: flex;
     flex-direction: row;
+    gap: var(--wi-entry-header-gap);
+    flex: 1 1 auto;
+    min-width: 0;
 }
 
 /* .world_entry_thin_controls>div {
@@ -125,6 +138,9 @@
 }
 
 .world_entry .inline-drawer-header {
+    display: flex;
+    align-items: center;
+    gap: var(--wi-entry-header-gap);
     cursor: initial;
 }
 
@@ -240,6 +256,163 @@
 
 .WIEntryHeaderTitleMobile {
     display: none;
+}
+
+#WIEntryHeaderTitlesPC {
+    display: flex;
+    align-items: center;
+    justify-content: flex-start;
+    gap: var(--wi-entry-header-gap);
+    width: 100%;
+    box-sizing: border-box;
+    padding: 0 5px;
+}
+
+#WIEntryHeaderTitlesPC > small {
+    flex: 0 0 auto;
+    min-width: 0;
+}
+
+.wi-entry-header-spacer {
+    width: var(--wi-entry-chrome-width);
+}
+
+.wi-entry-header-title {
+    flex: 1 1 auto !important;
+    text-align: left;
+}
+
+.wi-entry-header-status {
+    width: var(--wi-entry-status-width);
+}
+
+.wi-entry-header-position {
+    width: var(--wi-entry-position-width);
+}
+
+.wi-entry-header-depth {
+    width: var(--wi-entry-depth-width);
+}
+
+.wi-entry-header-order {
+    width: var(--wi-entry-order-width);
+}
+
+.wi-entry-header-probability {
+    width: var(--wi-entry-probability-width);
+}
+
+.wi-entry-header-actions {
+    width: var(--wi-entry-actions-width);
+}
+
+.WIEntryChromeControls {
+    display: flex;
+    align-items: center;
+    gap: var(--wi-entry-header-gap);
+    flex: 0 0 var(--wi-entry-chrome-width);
+    min-width: var(--wi-entry-chrome-width);
+}
+
+.WIEntryChromeControls > .drag-handle,
+.WIEntryChromeControls > .inline-drawer-toggle,
+.WIEntryChromeControls > .killSwitch,
+.WIEntryChromeControls > .wi-bulk-select-slot {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex: 0 0 var(--wi-entry-control-icon-width);
+    width: var(--wi-entry-control-icon-width);
+}
+
+.wi-bulk-select-checkbox {
+    margin: 0;
+    visibility: hidden;
+    pointer-events: none;
+}
+
+#world_popup_entries_list.wi-bulk-move-mode .wi-bulk-select-checkbox {
+    visibility: visible;
+    pointer-events: auto;
+}
+
+.WIEntryTitleAndStatus {
+    flex: 1 1 auto;
+    min-width: 0;
+}
+
+.WIEntryTitleAndStatus > .flex-container {
+    min-width: 0;
+}
+
+.WIEntryTitleAndStatus textarea[name="comment"] {
+    width: 100%;
+}
+
+.WIEntryStatusControl {
+    display: flex;
+    flex: 0 0 var(--wi-entry-status-width);
+    min-width: var(--wi-entry-status-width);
+}
+
+.WIEntryStatusControl > .text_pole {
+    width: 100%;
+}
+
+.WIEntryHeaderControls {
+    display: flex;
+    align-items: center;
+    gap: var(--wi-entry-header-gap);
+    flex: 0 0 auto;
+}
+
+.WIEntryPositionControl {
+    width: var(--wi-entry-position-width);
+}
+
+.WIEntryDepthControl {
+    width: var(--wi-entry-depth-width);
+}
+
+.WIEntryOrderControl {
+    width: var(--wi-entry-order-width);
+}
+
+.WIEntryProbabilityControl {
+    width: var(--wi-entry-probability-width);
+}
+
+.WIEntryPositionControl > .text_pole,
+.WIEntryDepthControl > .text_pole,
+.WIEntryOrderControl > .text_pole,
+.WIEntryProbabilityControl > .text_pole {
+    width: 100%;
+}
+
+.WIEntryActionButtons {
+    display: flex;
+    align-items: center;
+    gap: var(--wi-entry-header-gap);
+    flex: 0 0 var(--wi-entry-actions-width);
+    min-width: var(--wi-entry-actions-width);
+}
+
+.WIEntryActionButtons > .menu_button {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex: 0 0 var(--wi-entry-action-button-width);
+}
+
+.wi-column-hidden,
+.wi-drag-handle-hidden {
+    visibility: hidden;
+    pointer-events: none;
+}
+
+.wi-bulk-move-selected .wi-card-entry {
+    border-color: var(--SmartThemeQuoteColor);
+    box-shadow: inset 0 0 0 1px var(--SmartThemeQuoteColor);
 }
 
 .world_entry .select2-selection--multiple,
@@ -369,6 +542,15 @@ select.keyselect+span.select2-container .select2-selection--multiple {
 .stlo_section_copy {
     display: block;
     opacity: 0.8;
+}
+
+#world_bulk_move_apply {
+    display: none;
+}
+
+#world_bulk_move_mode.world_bulk_move_active {
+    color: var(--SmartThemeQuoteColor);
+    box-shadow: inset 0 0 0 1px var(--SmartThemeQuoteColor);
 }
 
 .stlo_field_grid {

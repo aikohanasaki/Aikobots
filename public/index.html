@@ -2348,6 +2348,12 @@
                         </div>
                         <div class="flex-container alignitemscenter">
                             <div id="world_popup_new" class="menu_button fa-solid fa-plus" title="New Entry" data-i18n="[title]New Entry"></div>
+                            <div id="world_bulk_move_mode" class="menu_button fa-solid fa-right-left" title="Select Entries to Move/Copy" data-i18n="[title]Select Entries to Move/Copy"></div>
+                            <div id="world_bulk_move_apply" class="menu_button menu_button_icon" title="Move/Copy Selected Entries" data-i18n="[title]Move/Copy Selected Entries">
+                                <i class="fa-solid fa-right-left"></i>
+                                <span data-i18n="Move/Copy Selected">Move/Copy Selected</span>
+                                <span class="world-bulk-move-count"></span>
+                            </div>
                             <div id="OpenAllWIEntries" class="menu_button fa-solid fa-expand" title="Open all Entries" data-i18n="[title]Open all Entries"></div>
                             <div id="CloseAllWIEntries" class="menu_button fa-solid fa-compress" title="Close all Entries" data-i18n="[title]Close all Entries"></div>
                             <div id="world_backfill_memos" class="menu_button fa-solid fa-notes-medical" title="Fill empty Memo/Titles with Keywords" data-i18n="[title]Fill empty Memo/Titles with Keywords"></div>
@@ -4455,76 +4461,83 @@
                 <form class="world_entry_form  wi-card-entry">
                     <div class="inline-drawer wide100p">
                         <div class="inline-drawer-header gap5px padding0">
-                            <span class="drag-handle">&#9776;</span>
-                            <div class="gap5px world_entry_thin_controls wide100p alignitemscenter">
+                            <div class="WIEntryChromeControls flex-container alignitemscenter">
+                                <span class="drag-handle">&#9776;</span>
                                 <div class="inline-drawer-toggle fa-fw fa-solid fa-circle-chevron-down inline-drawer-icon down"></div>
                                 <div class="fa-solid fa-toggle-on killSwitch" name="entryKillSwitch" data-i18n="[title]Toggle entry's active state." title="Toggle entry's active state."></div>
-                                <div class="flex-container alignitemscenter wide100p">
-                                    <div class="WIEntryTitleAndStatus flex-container flex1 alignitemscenter">
-                                        <div class="flex-container flex1">
-                                            <textarea class="text_pole" rows="1" name="comment" data-i18n="[placeholder]Entry Title/Memo" placeholder="Entry Title/Memo"></textarea>
-                                        </div>
-                                        <!-- <span class="world_entry_form_position_value"></span> -->
-                                        <select data-i18n="[title]WI Entry Status:🔵 Constant🟢 Normal🔗 Vectorized" title="WI Entry Status:&#13;🔵 Constant&#13;🟢 Normal&#13;🔗 Vectorized" name="entryStateSelector" class="text_pole widthNatural margin0">
-                                            <option value="constant" title="Constant" data-i18n="[title]WI_Entry_Status_Constant">🔵</option>
-                                            <option value="normal" title="Normal" data-i18n="[title]WI_Entry_Status_Normal">🟢</option>
-                                            <option value="vectorized" title="Vectorized" data-i18n="[title]WI_Entry_Status_Vectorized">🔗</option>
+                                <div class="wi-bulk-select-slot">
+                                    <input type="checkbox" class="wi-bulk-select-checkbox" aria-label="Select lorebook entry for bulk move or copy">
+                                </div>
+                            </div>
+                            <div class="gap5px world_entry_thin_controls wide100p alignitemscenter">
+                                <div class="WIEntryTitleAndStatus flex-container flex1 alignitemscenter">
+                                    <div class="flex-container flex1">
+                                        <textarea class="text_pole" rows="1" name="comment" data-i18n="[placeholder]Entry Title/Memo" placeholder="Entry Title/Memo"></textarea>
+                                    </div>
+                                </div>
+                                <div class="WIEntryStatusControl flex-container">
+                                    <!-- <span class="world_entry_form_position_value"></span> -->
+                                    <select data-i18n="[title]WI Entry Status:🔵 Constant🟢 Normal🔗 Vectorized" title="WI Entry Status:&#13;🔵 Constant&#13;🟢 Normal&#13;🔗 Vectorized" name="entryStateSelector" class="text_pole widthNatural margin0">
+                                        <option value="constant" title="Constant" data-i18n="[title]WI_Entry_Status_Constant">🔵</option>
+                                        <option value="normal" title="Normal" data-i18n="[title]WI_Entry_Status_Normal">🟢</option>
+                                        <option value="vectorized" title="Vectorized" data-i18n="[title]WI_Entry_Status_Vectorized">🔗</option>
+                                    </select>
+                                </div>
+                                <div class="WIEntryHeaderControls flex-container">
+                                    <div name="PositionBlock" class="world_entry_form_control world_entry_form_radios wi-enter-footer-text WIEntryPositionControl">
+                                        <label for="position" class="WIEntryHeaderTitleMobile" data-i18n="Position:">Position:</label>
+                                        <select name="position" class="text_pole widthNatural margin0" data-i18n="[title]T_Position" title="↑Char: Before Character Definitions&#13;↓Char: After Character Definitions&#13;↑EM: Before Example Messages&#13;↓EM: After Example Messages&#13;↑AN: Before Author's Note&#13;↓AN: After Author's Note&#13;@D ⚙️: at Depth (System)&#13;@D 👤: at Depth (User)&#13;@D 🤖: at Depth (Assistant)">
+                                            <option value="0" data-role="" data-i18n="Before Char Defs">
+                                                ↑Char
+                                            </option>
+                                            <option value="1" data-role="" data-i18n="After Char Defs">
+                                                ↓Char
+                                            </option>
+                                            <option value="5" data-role="" data-i18n="Before EM">
+                                                ↑EM
+                                            </option>
+                                            <option value="6" data-role="" data-i18n="After EM">
+                                                ↓EM
+                                            </option>
+                                            <option value="2" data-role="" data-i18n="Before AN">
+                                                ↑AN
+                                            </option>
+                                            <option value="3" data-role="" data-i18n="After AN">
+                                                ↓AN
+                                            </option>
+                                            <option value="4" data-role="0" data-i18n="at Depth System">
+                                                @D ⚙️
+                                            </option>
+                                            <option value="4" data-role="1" data-i18n="at Depth User">
+                                                @D 👤
+                                            </option>
+                                            <option value="4" data-role="2" data-i18n="at Depth AI">
+                                                @D 🤖
+                                            </option>
+                                            <option value="7" data-role="" data-i18n="Outlet">
+                                                ➡️ Outlet
+                                            </option>
                                         </select>
                                     </div>
-                                    <div class="WIEnteryHeaderControls flex-container">
-                                        <div name="PositionBlock" class="world_entry_form_control world_entry_form_radios wi-enter-footer-text">
-                                            <label for="position" class="WIEntryHeaderTitleMobile" data-i18n="Position:">Position:</label>
-                                            <select name="position" class="text_pole widthNatural margin0" data-i18n="[title]T_Position" title="↑Char: Before Character Definitions&#13;↓Char: After Character Definitions&#13;↑EM: Before Example Messages&#13;↓EM: After Example Messages&#13;↑AN: Before Author's Note&#13;↓AN: After Author's Note&#13;@D ⚙️: at Depth (System)&#13;@D 👤: at Depth (User)&#13;@D 🤖: at Depth (Assistant)">
-                                                <option value="0" data-role="" data-i18n="Before Char Defs">
-                                                    ↑Char
-                                                </option>
-                                                <option value="1" data-role="" data-i18n="After Char Defs">
-                                                    ↓Char
-                                                </option>
-                                                <option value="5" data-role="" data-i18n="Before EM">
-                                                    ↑EM
-                                                </option>
-                                                <option value="6" data-role="" data-i18n="After EM">
-                                                    ↓EM
-                                                </option>
-                                                <option value="2" data-role="" data-i18n="Before AN">
-                                                    ↑AN
-                                                </option>
-                                                <option value="3" data-role="" data-i18n="After AN">
-                                                    ↓AN
-                                                </option>
-                                                <option value="4" data-role="0" data-i18n="at Depth System">
-                                                    @D ⚙️
-                                                </option>
-                                                <option value="4" data-role="1" data-i18n="at Depth User">
-                                                    @D 👤
-                                                </option>
-                                                <option value="4" data-role="2" data-i18n="at Depth AI">
-                                                    @D 🤖
-                                                </option>
-                                                <option value="7" data-role="" data-i18n="Outlet">
-                                                    ➡️ Outlet
-                                                </option>
-                                            </select>
-                                        </div>
-                                        <div class="world_entry_form_control wi-enter-footer-text flex-container flexNoGap">
-                                            <label for="depth" class="WIEntryHeaderTitleMobile" data-i18n="Depth:">Depth:</label>
-                                            <input title="Depth" class="text_pole wideMax100px margin0" type="number" name="depth" data-i18n="[title]Depth" placeholder="" min="0" max="9999" />
-                                        </div>
-                                        <div class="world_entry_form_control wi-enter-footer-text  flex-container flexNoGap">
-                                            <label for="order" class="WIEntryHeaderTitleMobile" data-i18n="Order:">Order:</label>
-                                            <input title="Order" data-i18n="[title]Order" class="text_pole wideMax100px margin0" type="number" name="order" placeholder="" min="0" max="9999" />
-                                        </div>
-                                        <div class="world_entry_form_control wi-enter-footer-text flex-container flexNoGap probabilityContainer">
-                                            <label for="order" class="WIEntryHeaderTitleMobile" data-i18n="Trigger %:">Trigger %:</label>
-                                            <input title="Probability" data-i18n="[title]Probability" class="text_pole wideMax100px margin0" type="number" name="probability" placeholder="" min="0" max="100" />
-                                        </div>
+                                    <div class="world_entry_form_control wi-enter-footer-text flex-container flexNoGap WIEntryDepthControl">
+                                        <label for="depth" class="WIEntryHeaderTitleMobile" data-i18n="Depth:">Depth:</label>
+                                        <input title="Depth" class="text_pole wideMax100px margin0" type="number" name="depth" data-i18n="[title]Depth" placeholder="" min="0" max="9999" />
+                                    </div>
+                                    <div class="world_entry_form_control wi-enter-footer-text  flex-container flexNoGap WIEntryOrderControl">
+                                        <label for="order" class="WIEntryHeaderTitleMobile" data-i18n="Order:">Order:</label>
+                                        <input title="Order" data-i18n="[title]Order" class="text_pole wideMax100px margin0" type="number" name="order" placeholder="" min="0" max="9999" />
+                                    </div>
+                                    <div class="world_entry_form_control wi-enter-footer-text flex-container flexNoGap probabilityContainer WIEntryProbabilityControl">
+                                        <label for="order" class="WIEntryHeaderTitleMobile" data-i18n="Trigger %:">Trigger %:</label>
+                                        <input title="Probability" data-i18n="[title]Probability" class="text_pole wideMax100px margin0" type="number" name="probability" placeholder="" min="0" max="100" />
                                     </div>
                                 </div>
                             </div>
-                            <i class="menu_button move_entry_button fa-solid fa-right-left" title="Move/Copy Entry to Another Lorebook" data-i18n="[title]Move/Copy Entry to Another Lorebook"></i>
-                            <i class="menu_button duplicate_entry_button fa-solid fa-paste" title="Duplicate world info entry" data-i18n="[title]Duplicate world info entry" type="submit" value=""></i>
-                            <i class="menu_button delete_entry_button fa-solid fa-trash-can" title="Delete world info entry" data-i18n="[title]Delete world info entry" type="submit" value=""></i>
+                            <div class="WIEntryActionButtons flex-container alignitemscenter">
+                                <i class="menu_button move_entry_button fa-solid fa-right-left" title="Move/Copy Entry to Another Lorebook" data-i18n="[title]Move/Copy Entry to Another Lorebook"></i>
+                                <i class="menu_button duplicate_entry_button fa-solid fa-paste" title="Duplicate world info entry" data-i18n="[title]Duplicate world info entry" type="submit" value=""></i>
+                                <i class="menu_button delete_entry_button fa-solid fa-trash-can" title="Delete world info entry" data-i18n="[title]Delete world info entry" type="submit" value=""></i>
+                            </div>
                         </div>
                         <div class="inline-drawer-content inline-drawer-outlet flex-container paddingBottom5px wide100p ">
                             <!-- Outlet for world_entry_edit -->
