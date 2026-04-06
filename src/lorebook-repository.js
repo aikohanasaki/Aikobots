@@ -588,15 +588,16 @@ export function listLorebooksForManagement(user) {
         for (const file of worldFiles) {
             const name = path.parse(file).name;
             const secureRecord = secureRecords.get(name);
-            const effectiveRecord = secureRecord?.ownerHandle === currentHandle
-                ? secureRecord
-                : {
-                    name,
+            const resolved = secureRecord?.ownerHandle === currentHandle
+                ? resolveLorebookWithMetadata(user, name, {
+                    storage: 'secure',
+                    requireManageableSecure: true,
+                })
+                : resolveLorebookWithMetadata(user, name, {
                     storage: 'user',
-                    ownerHandle: currentHandle,
-                };
+                });
 
-            items.push(buildListItem(effectiveRecord, currentHandle, isAdmin));
+            items.push(buildListItem(resolved.metadata, currentHandle, isAdmin));
             seenNames.add(name);
         }
     }
@@ -610,12 +611,102 @@ export function listLorebooksForManagement(user) {
                 continue;
             }
 
-            items.push(buildListItem(secureRecord, currentHandle, isAdmin));
+            const resolved = resolveLorebookWithMetadata(user, name, {
+                storage: 'secure',
+                requireManageableSecure: true,
+            });
+            items.push(buildListItem(resolved.metadata, currentHandle, isAdmin));
             seenNames.add(name);
         }
     }
 
     return items.sort((a, b) => a.name.localeCompare(b.name));
+}
+
+/**
+ * Resolves a lorebook using a consistent repository-level access policy.
+ * `preferUser` is used by generation to allow local shadowing. `storage='secure'`
+ * can be used by validation paths that need to confirm a secure binding exists
+ * without requiring the current actor to manage the secure lorebook directly.
+ * @param {import('./users.js').User} user
+ * @param {string} name
+ * @param {{
+ *   allowDummy?: boolean,
+ *   storage?: 'user'|'secure'|null,
+ *   preferUser?: boolean,
+ *   requireManageableSecure?: boolean,
+ * }} [options]
+ */
+export function resolveLorebookWithMetadata(user, name, {
+    allowDummy = false,
+    storage = null,
+    preferUser = false,
+    requireManageableSecure = false,
+} = {}) {
+    const canonicalName = assertCanonicalName(name);
+    const dummyData = allowDummy ? { entries: {} } : null;
+    const userRecord = getUserLorebookRecord(user.profile.handle, canonicalName);
+    const secureRecord = getSecureIndexEntry(canonicalName);
+    const preferredStorage = storage === 'secure' ? 'secure' : (storage === 'user' ? 'user' : null);
+
+    const buildSecureResponse = () => ({
+        data: readLorebookFromRecord(secureRecord, allowDummy),
+        metadata: {
+            name: secureRecord.name,
+            storage: 'secure',
+            ownerHandle: secureRecord.ownerHandle,
+        },
+    });
+
+    const buildUserResponse = () => ({
+        data: readLorebookFromRecord(userRecord, allowDummy),
+        metadata: {
+            name: userRecord.name,
+            storage: 'user',
+            ownerHandle: userRecord.ownerHandle,
+        },
+    });
+
+    const buildDummyResponse = () => ({
+        data: dummyData,
+        metadata: {
+            name: canonicalName,
+            storage: 'user',
+            ownerHandle: user.profile.handle,
+        },
+    });
+
+    if (preferredStorage === 'secure') {
+        if (!secureRecord || !canManageSecureLorebook(user, secureRecord)) {
+            if (!secureRecord || requireManageableSecure) {
+                throw new LorebookRepositoryError('LorebookNotFound', `Lorebook "${canonicalName}" not found.`, 404);
+            }
+        }
+
+        return buildSecureResponse();
+    }
+
+    if (preferUser && userRecord) {
+        return buildUserResponse();
+    }
+
+    if (secureRecord) {
+        if (requireManageableSecure && !canManageSecureLorebook(user, secureRecord)) {
+            throw new LorebookRepositoryError('LorebookNotFound', `Lorebook "${canonicalName}" not found.`, 404);
+        }
+
+        return buildSecureResponse();
+    }
+
+    if (userRecord) {
+        return buildUserResponse();
+    }
+
+    if (allowDummy) {
+        return buildDummyResponse();
+    }
+
+    throw new LorebookRepositoryError('LorebookNotFound', `Lorebook "${canonicalName}" not found.`, 404);
 }
 
 /**
@@ -625,50 +716,12 @@ export function listLorebooksForManagement(user) {
  * @param {'user'|'secure'|null} [storage=null] Preferred storage location to read from
  */
 export function getLorebookForManagement(user, name, allowDummy = false, storage = null) {
-    const canonicalName = assertCanonicalName(name);
-    const secureRecord = getSecureIndexEntry(canonicalName);
-    const preferredStorage = storage === 'secure' ? 'secure' : (storage === 'user' ? 'user' : null);
-    const shouldUseSecure = preferredStorage === 'secure' || (!preferredStorage && secureRecord);
-
-    if (shouldUseSecure) {
-        if (!secureRecord || !canManageSecureLorebook(user, secureRecord)) {
-            throw new LorebookRepositoryError('LorebookNotFound', `Lorebook "${canonicalName}" not found.`, 404);
-        }
-
-        return {
-            data: readLorebookFromRecord(secureRecord, allowDummy),
-            metadata: {
-                name: secureRecord.name,
-                storage: 'secure',
-                ownerHandle: secureRecord.ownerHandle,
-            },
-        };
-    }
-
-    const userRecord = getUserLorebookRecord(user.profile.handle, canonicalName);
-    if (!userRecord) {
-        if (allowDummy) {
-            return {
-                data: { entries: {} },
-                metadata: {
-                    name: canonicalName,
-                    storage: 'user',
-                    ownerHandle: user.profile.handle,
-                },
-            };
-        }
-
-        throw new LorebookRepositoryError('LorebookNotFound', `Lorebook "${canonicalName}" not found.`, 404);
-    }
-
-    return {
-        data: readLorebookFromRecord(userRecord, allowDummy),
-        metadata: {
-            name: userRecord.name,
-            storage: 'user',
-            ownerHandle: userRecord.ownerHandle,
-        },
-    };
+    return resolveLorebookWithMetadata(user, name, {
+        allowDummy,
+        storage,
+        preferUser: false,
+        requireManageableSecure: true,
+    });
 }
 
 /**
@@ -687,31 +740,30 @@ export function readLorebookForGenerationWithMetadata(user, name, allowDummy = f
         };
     }
 
-    const userRecord = getUserLorebookRecord(user.profile.handle, canonicalName);
-    if (userRecord) {
-        return {
-            data: readLorebookFromRecord(userRecord, allowDummy),
-            metadata: {
-                name: userRecord.name,
-                storage: 'user',
-                ownerHandle: userRecord.ownerHandle,
-            },
-        };
-    }
+    return resolveLorebookWithMetadata(user, canonicalName, {
+        allowDummy,
+        preferUser: true,
+        requireManageableSecure: false,
+    });
+}
 
-    const secureRecord = getSecureIndexEntry(canonicalName);
-    return {
-        data: readLorebookFromRecord(secureRecord, allowDummy),
-        metadata: secureRecord ? {
-            name: secureRecord.name,
-            storage: 'secure',
-            ownerHandle: secureRecord.ownerHandle,
-        } : {
-            name: canonicalName,
-            storage: 'user',
-            ownerHandle: user.profile.handle,
-        },
-    };
+/**
+ * Determines whether a lorebook has a readable secure record, regardless of who owns it.
+ * This is used by validation paths that need to accept admin-determined secure lorebooks
+ * without requiring the current actor to manage them directly.
+ * @param {string} name
+ * @returns {boolean}
+ */
+export function hasReadableSecureLorebook(name) {
+    try {
+        return Boolean(resolveLorebookWithMetadata(
+            { profile: { handle: '', admin: false } },
+            name,
+            { storage: 'secure', allowDummy: false, requireManageableSecure: false },
+        ));
+    } catch {
+        return false;
+    }
 }
 
 /**
@@ -735,10 +787,15 @@ export function hasLorebookForGeneration(user, name) {
         return false;
     }
 
-    return Boolean(
-        getUserLorebookRecord(user.profile.handle, canonicalName) ||
-        getSecureIndexEntry(canonicalName),
-    );
+    try {
+        return Boolean(resolveLorebookWithMetadata(user, canonicalName, {
+            allowDummy: false,
+            preferUser: true,
+            requireManageableSecure: false,
+        }));
+    } catch {
+        return false;
+    }
 }
 
 /**
