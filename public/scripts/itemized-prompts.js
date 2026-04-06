@@ -310,7 +310,7 @@ export async function itemizedParams(itemizedPrompts, thisPromptSet, incomingMes
         const hidden = Boolean(entry?.hidden);
         return {
             book: entry?.book || '',
-            displayName: hidden ? t`Hidden entry` : (entry?.displayName || ''),
+            displayName: hidden ? t`(hidden entry)` : (entry?.displayName || ''),
             placement,
             metaText: hidden
                 ? (placement ? `${placement} | hidden` : 'hidden')

@@ -1698,7 +1698,7 @@ function sanitizeWorldInfoEntryForResponse(entry, user) {
     sanitizedEntry.hidden = !canView;
     sanitizedEntry.displayContent = canView
         ? String(entry.displayContent ?? entry.content ?? '')
-        : 'hidden entry';
+        : '(hidden entry)';
     sanitizedEntry.content = canView ? String(entry.content ?? '') : '';
 
     if (!canView) {
