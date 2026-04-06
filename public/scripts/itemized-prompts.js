@@ -124,50 +124,41 @@ function buildWorldInfoPreview(content, maxLength = 240) {
 }
 
 function formatHiddenWorldInfoPlaceholder(placement) {
-    const normalizedPlacement = String(placement || '').trim();
-    return normalizedPlacement
-        ? `(hidden entry: ${normalizedPlacement})`
-        : '(hidden entry)';
+    void placement;
+    return '(hidden entry)';
 }
 
 function aggregatePromptInspectorWorldInfoEntries(entries = []) {
     const visibleEntries = [];
-    const hiddenEntriesByPlacement = new Map();
+    const hiddenEntries = [];
 
     for (const entry of entries) {
         if (entry?.hidden) {
-            const placement = String(entry?.placement || '').trim();
-            const group = hiddenEntriesByPlacement.get(placement) || [];
-            group.push(entry);
-            hiddenEntriesByPlacement.set(placement, group);
+            hiddenEntries.push(entry);
         } else {
             visibleEntries.push(entry);
         }
     }
 
-    if (!hiddenEntriesByPlacement.size) {
+    if (!hiddenEntries.length) {
         return visibleEntries;
     }
 
-    for (const [placement, hiddenEntries] of hiddenEntriesByPlacement.entries()) {
-        const hiddenCount = hiddenEntries.length;
-        const hiddenTokens = hiddenEntries.reduce((total, entry) => total + toNumber(entry?.tokens), 0);
-        const displayContent = placement
-            ? t`${hiddenCount} hidden entries at ${placement}`
-            : t`${hiddenCount} hidden entries`;
-        visibleEntries.push({
-            book: '',
-            displayName: t`Hidden entries (${hiddenCount})`,
-            placement,
-            metaText: placement ? `${placement} | ${t`hidden`}` : t`hidden`,
-            tokens: hiddenTokens,
-            hidden: true,
-            displayContent,
-            previewContent: displayContent,
-            isExpandable: false,
-            isHiddenSummary: true,
-        });
-    }
+    const hiddenCount = hiddenEntries.length;
+    const hiddenTokens = hiddenEntries.reduce((total, entry) => total + toNumber(entry?.tokens), 0);
+    const displayContent = t`${hiddenCount} hidden entries`;
+    visibleEntries.push({
+        book: '',
+        displayName: t`Hidden entries (${hiddenCount})`,
+        placement: '',
+        metaText: t`hidden`,
+        tokens: hiddenTokens,
+        hidden: true,
+        displayContent,
+        previewContent: displayContent,
+        isExpandable: false,
+        isHiddenSummary: true,
+    });
 
     return visibleEntries;
 }

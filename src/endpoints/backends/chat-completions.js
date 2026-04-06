@@ -1758,7 +1758,7 @@ function buildWorldInfoPlacementRedactionMap(entries = []) {
         }
 
         const text = entry?.hidden
-            ? (placement ? `(hidden entry: ${placement})` : '(hidden entry)')
+            ? '(hidden entry)'
             : String(entry?.displayContent ?? entry?.content ?? '').trim();
 
         if (!text) {
