@@ -2000,7 +2000,6 @@ function sanitizePromptAssemblyForResponse(assembly, user) {
     const sanitizedAssembly = sanitizePromptAssemblyForSnapshotResponse(assembly, user);
 
     if (!canViewRawDebugData) {
-        delete sanitizedAssembly.messagesState;
         delete sanitizedAssembly.chat;
     }
 
