@@ -185,16 +185,19 @@ class TokenHandler {
 class Message {
     static tokensPerImage = 85;
 
-    constructor(role, content, identifier, tokenHandler) {
+    constructor(role, content, identifier, tokenHandler, contentSegments = undefined) {
         this.identifier = identifier;
         this.role = role || 'system';
         this.content = content;
+        this.contentSegments = Array.isArray(contentSegments) && contentSegments.length
+            ? normalizeContentSegments(contentSegments)
+            : undefined;
         this.tokens = 0;
         this.tokenHandler = tokenHandler;
     }
 
-    static async createAsync(role, content, identifier, tokenHandler) {
-        const message = new Message(role, content, identifier, tokenHandler);
+    static async createAsync(role, content, identifier, tokenHandler, contentSegments = undefined) {
+        const message = new Message(role, content, identifier, tokenHandler, contentSegments);
         if (typeof message.content === 'string' && message.content.length > 0) {
             message.tokens = await tokenHandler.countAsync({ role: message.role, content: message.content });
         }
@@ -202,7 +205,7 @@ class Message {
     }
 
     static async fromPromptAsync(prompt, tokenHandler) {
-        const message = await Message.createAsync(prompt.role, prompt.content, prompt.identifier, tokenHandler);
+        const message = await Message.createAsync(prompt.role, prompt.content, prompt.identifier, tokenHandler, prompt.contentSegments);
         message.extension = Boolean(prompt?.extension);
         message.injected = Boolean(prompt?.injected);
         message.systemPrompt = Boolean(prompt?.system_prompt);
@@ -443,6 +446,11 @@ class ChatCompletion {
                 typeof message.content === 'string'
             ) {
                 lastMessage.content += '\n' + message.content;
+                const squashedSegments = joinContentSegments([
+                    lastMessage.contentSegments,
+                    message.contentSegments,
+                ]);
+                lastMessage.contentSegments = squashedSegments.length ? squashedSegments : undefined;
                 lastMessage.tokens = await this.tokenHandler.countAsync({ role: lastMessage.role, content: lastMessage.content });
             } else {
                 squashedMessages.push(message);
@@ -492,6 +500,7 @@ function serializeMessageNode(node) {
         identifier: node.identifier,
         role: node.role,
         content: node.content,
+        contentSegments: cloneContentSegments(node.contentSegments),
         name: node.name,
         tokens: node.tokens,
         extension: Boolean(node.extension),
@@ -721,7 +730,9 @@ class PromptManagerCore {
         if (typeof original === 'string') {
             additional.original = original;
         }
-        preparedPrompt.content = substituteParams(preparedPrompt.content ?? '', this.env, additional);
+        const resolvedContent = resolvePromptContent(preparedPrompt.content ?? '', preparedPrompt.contentSegments, this.env, additional);
+        preparedPrompt.content = resolvedContent.content;
+        preparedPrompt.contentSegments = resolvedContent.contentSegments.length ? resolvedContent.contentSegments : undefined;
         return preparedPrompt;
     }
 
@@ -1109,8 +1120,11 @@ function parseExampleIntoIndividual(messageExampleString, userName, charName, gr
     return result;
 }
 
-function parseWorldInfoExampleBlocks(content, context) {
-    const exampleString = String(content || '').replace(/\r/gm, '');
+function parseWorldInfoExampleBlocks(exampleEntry, context) {
+    const sourceEntry = exampleEntry && typeof exampleEntry === 'object' && !Array.isArray(exampleEntry)
+        ? exampleEntry
+        : { text: String(exampleEntry ?? '') };
+    const exampleString = String(sourceEntry.text || '').replace(/\r/gm, '');
     if (!exampleString.trim()) {
         return [];
     }
@@ -1126,6 +1140,10 @@ function parseWorldInfoExampleBlocks(content, context) {
     return exampleBlocks
         .map(block => block.replace(/<START>/i, '{Example Dialogue:}'))
         .map(block => parseExampleIntoIndividual(block, context.userName, context.charName, context.groupNames, true, context.selectedGroup))
+        .map(block => block.map(message => ({
+            ...message,
+            contentSegments: normalizeContentSegments([createWorldInfoContentSegment(sourceEntry, message.content)]),
+        })))
         .filter(block => Array.isArray(block) && block.length > 0);
 }
 
@@ -1163,6 +1181,204 @@ function formatWorldInfo(value, wiFormat) {
     }
 
     return stringFormat(wiFormat, value);
+}
+
+function createTextContentSegment(text) {
+    const normalizedText = String(text ?? '');
+    if (!normalizedText) {
+        return null;
+    }
+
+    return {
+        type: 'text',
+        text: normalizedText,
+    };
+}
+
+function createWorldInfoContentSegment(entry = {}, text = entry?.text ?? '') {
+    const normalizedText = String(text ?? '');
+    if (!normalizedText) {
+        return null;
+    }
+
+    return {
+        type: 'worldInfo',
+        text: normalizedText,
+        storage: entry?.storage === 'secure' ? 'secure' : 'user',
+        ownerHandle: String(entry?.ownerHandle || ''),
+        book: entry?.book ?? null,
+        uid: entry?.uid ?? null,
+        placement: entry?.placement ?? null,
+        roundIndex: Number(entry?.roundIndex ?? 0) || 0,
+        status: entry?.status ?? null,
+    };
+}
+
+function cloneContentSegments(segments = []) {
+    return Array.isArray(segments) ? structuredClone(segments) : [];
+}
+
+function normalizeContentSegments(segments = []) {
+    const normalizedSegments = [];
+
+    for (const segment of Array.isArray(segments) ? segments : []) {
+        if (!segment || typeof segment !== 'object') {
+            continue;
+        }
+
+        const text = String(segment.text ?? '');
+        if (!text) {
+            continue;
+        }
+
+        const normalizedSegment = segment.type === 'worldInfo'
+            ? createWorldInfoContentSegment(segment, text)
+            : createTextContentSegment(text);
+        if (!normalizedSegment) {
+            continue;
+        }
+
+        const previousSegment = normalizedSegments[normalizedSegments.length - 1];
+        if (previousSegment && previousSegment.type === 'text' && normalizedSegment.type === 'text') {
+            previousSegment.text += normalizedSegment.text;
+        } else {
+            normalizedSegments.push(normalizedSegment);
+        }
+    }
+
+    return normalizedSegments;
+}
+
+function flattenContentSegments(segments = []) {
+    return normalizeContentSegments(segments).map(segment => String(segment.text ?? '')).join('');
+}
+
+function joinContentSegments(parts = [], separator = '\n') {
+    const joinedSegments = [];
+    const normalizedSeparator = String(separator ?? '');
+    let hasContent = false;
+
+    for (const part of parts) {
+        const segments = Array.isArray(part)
+            ? normalizeContentSegments(part)
+            : normalizeContentSegments([createTextContentSegment(part)]);
+        if (!segments.length) {
+            continue;
+        }
+
+        if (hasContent && normalizedSeparator) {
+            joinedSegments.push(createTextContentSegment(normalizedSeparator));
+        }
+
+        joinedSegments.push(...segments);
+        hasContent = true;
+    }
+
+    return normalizeContentSegments(joinedSegments);
+}
+
+function formatWorldInfoSegments(segments = [], wiFormat = '') {
+    const normalizedSegments = normalizeContentSegments(segments);
+    if (!normalizedSegments.length) {
+        return [];
+    }
+
+    const template = String(wiFormat || '').trim();
+    if (!template) {
+        return normalizedSegments;
+    }
+
+    if (!template.includes('{0}')) {
+        return normalizeContentSegments([createTextContentSegment(template)]);
+    }
+
+    return normalizeContentSegments(template.split('{0}').flatMap((part, index, array) => {
+        const segmentParts = [];
+        if (part) {
+            segmentParts.push(createTextContentSegment(part));
+        }
+        if (index < array.length - 1) {
+            segmentParts.push(...cloneContentSegments(normalizedSegments));
+        }
+        return segmentParts;
+    }));
+}
+
+function getOutletSegmentValues(macroState) {
+    return macroState && typeof macroState === 'object' && macroState.outletSegmentValues && typeof macroState.outletSegmentValues === 'object'
+        ? macroState.outletSegmentValues
+        : {};
+}
+
+function expandTextContentSegment(text, env = {}, additional = {}) {
+    const sourceText = String(text ?? '');
+    if (!sourceText) {
+        return [];
+    }
+
+    const outletSegmentValues = getOutletSegmentValues(env?.__macroState || additional?.__macroState || null);
+    const outletRegex = /{{outlet::(.+?)}}/gi;
+    const expandedSegments = [];
+    let match;
+    let lastIndex = 0;
+    let matchedOutlet = false;
+
+    while ((match = outletRegex.exec(sourceText)) !== null) {
+        matchedOutlet = true;
+        const leadingText = sourceText.slice(lastIndex, match.index);
+        const resolvedLeadingText = substituteParams(leadingText, env, additional);
+        if (resolvedLeadingText) {
+            expandedSegments.push(createTextContentSegment(resolvedLeadingText));
+        }
+
+        const outletKey = String(match[1] || '').trim();
+        const outletSegments = cloneContentSegments(outletSegmentValues[outletKey] || []);
+        if (outletSegments.length) {
+            expandedSegments.push(...outletSegments);
+        } else {
+            const resolvedOutletText = substituteParams(match[0], env, additional);
+            if (resolvedOutletText) {
+                expandedSegments.push(createTextContentSegment(resolvedOutletText));
+            }
+        }
+
+        lastIndex = match.index + match[0].length;
+    }
+
+    if (!matchedOutlet) {
+        const resolvedText = substituteParams(sourceText, env, additional);
+        return normalizeContentSegments([createTextContentSegment(resolvedText)]);
+    }
+
+    const trailingText = sourceText.slice(lastIndex);
+    const resolvedTrailingText = substituteParams(trailingText, env, additional);
+    if (resolvedTrailingText) {
+        expandedSegments.push(createTextContentSegment(resolvedTrailingText));
+    }
+
+    return normalizeContentSegments(expandedSegments);
+}
+
+function resolvePromptContent(content, contentSegments, env = {}, additional = {}) {
+    const sourceSegments = Array.isArray(contentSegments) && contentSegments.length
+        ? cloneContentSegments(contentSegments)
+        : normalizeContentSegments([createTextContentSegment(content)]);
+    const resolvedSegments = [];
+
+    for (const segment of sourceSegments) {
+        if (segment.type === 'worldInfo') {
+            resolvedSegments.push(createWorldInfoContentSegment(segment, segment.text));
+            continue;
+        }
+
+        resolvedSegments.push(...expandTextContentSegment(segment.text, env, additional));
+    }
+
+    const normalizedSegments = normalizeContentSegments(resolvedSegments);
+    return {
+        content: flattenContentSegments(normalizedSegments),
+        contentSegments: normalizedSegments,
+    };
 }
 
 function formatPersonaDescription(value) {
@@ -1229,6 +1445,31 @@ function getExtensionPrompt(extensionPrompts = {}, env = {}, position = extensio
     return values.length ? substituteParams(values, env) : values;
 }
 
+function getExtensionPromptSegments(extensionPrompts = {}, position = extension_prompt_types.IN_PROMPT, depth, separator = '\n', role, wrap = true) {
+    const getValue = (prompt) => String(prompt?.value ?? prompt?.resolvedValue ?? '');
+    const prompts = Object.keys(extensionPrompts)
+        .sort()
+        .map(key => extensionPrompts[key])
+        .filter(prompt => prompt?.position === position && getValue(prompt))
+        .filter(prompt => depth === undefined || prompt.depth === undefined || prompt.depth === depth)
+        .filter(prompt => role === undefined || prompt.role === undefined || prompt.role === role)
+        .filter(prompt => Array.isArray(prompt?.contentSegments) && prompt.contentSegments.length);
+
+    let segments = joinContentSegments(prompts.map(prompt => prompt.contentSegments), separator);
+    if (!segments.length) {
+        return [];
+    }
+
+    if (wrap && !flattenContentSegments(segments).startsWith(separator)) {
+        segments = normalizeContentSegments([createTextContentSegment(separator), ...segments]);
+    }
+    if (wrap && !flattenContentSegments(segments).endsWith(separator)) {
+        segments = normalizeContentSegments([...segments, createTextContentSegment(separator)]);
+    }
+
+    return segments;
+}
+
 async function applyWorldInfoToContext(context) {
     if (!context.worldInfoRequest || typeof context.worldInfoRequest !== 'object') {
         return;
@@ -1245,6 +1486,27 @@ async function applyWorldInfoToContext(context) {
 
     context.worldInfoBefore = scanResult.worldInfoBefore || '';
     context.worldInfoAfter = scanResult.worldInfoAfter || '';
+    const structuredWorldInfo = scanResult.structuredWorldInfo || {};
+    context.worldInfoBeforeSegments = normalizeContentSegments(
+        (Array.isArray(structuredWorldInfo.beforeEntries) ? structuredWorldInfo.beforeEntries : [])
+            .map(entry => createWorldInfoContentSegment(entry, entry.text))
+            .filter(Boolean),
+    );
+    context.worldInfoAfterSegments = normalizeContentSegments(
+        (Array.isArray(structuredWorldInfo.afterEntries) ? structuredWorldInfo.afterEntries : [])
+            .map(entry => createWorldInfoContentSegment(entry, entry.text))
+            .filter(Boolean),
+    );
+    context.worldInfoAuthorsNoteTopSegments = normalizeContentSegments(
+        (Array.isArray(structuredWorldInfo.authorsNoteBeforeEntries) ? structuredWorldInfo.authorsNoteBeforeEntries : [])
+            .map(entry => createWorldInfoContentSegment(entry, entry.text))
+            .filter(Boolean),
+    );
+    context.worldInfoAuthorsNoteBottomSegments = normalizeContentSegments(
+        (Array.isArray(structuredWorldInfo.authorsNoteAfterEntries) ? structuredWorldInfo.authorsNoteAfterEntries : [])
+            .map(entry => createWorldInfoContentSegment(entry, entry.text))
+            .filter(Boolean),
+    );
 
     const extensionPrompts = { ...context.extensionPrompts };
     const authorsNote = extensionPrompts['2_floating_prompt'];
@@ -1253,20 +1515,33 @@ async function applyWorldInfoToContext(context) {
         const originalResolved = String(authorsNote.resolvedValue ?? authorsNote.value ?? '');
         const top = Array.isArray(scanResult.ANBeforeEntries) ? scanResult.ANBeforeEntries.join('\n') : '';
         const bottom = Array.isArray(scanResult.ANAfterEntries) ? scanResult.ANAfterEntries.join('\n') : '';
+        const authorsNoteSegments = joinContentSegments([
+            context.worldInfoAuthorsNoteTopSegments,
+            createTextContentSegment(original),
+            context.worldInfoAuthorsNoteBottomSegments,
+        ]);
         extensionPrompts['2_floating_prompt'] = {
             ...authorsNote,
             value: [top, original, bottom].filter(Boolean).join('\n'),
             resolvedValue: [top, originalResolved, bottom].filter(Boolean).join('\n'),
+            contentSegments: authorsNoteSegments,
         };
     }
 
     for (const item of Array.isArray(scanResult.WIDepthEntries) ? scanResult.WIDepthEntries : []) {
+        const structuredDepthItem = (Array.isArray(structuredWorldInfo.depthEntries) ? structuredWorldInfo.depthEntries : [])
+            .find(depthItem => depthItem.depth === item.depth && depthItem.role === item.role);
         extensionPrompts[`customDepthWI_${item.depth}_${item.role}`] = {
             value: Array.isArray(item.entries) ? item.entries.join('\n') : '',
             position: extension_prompt_types.IN_CHAT,
             depth: item.depth,
             scan: false,
             role: item.role ?? extension_prompt_roles.SYSTEM,
+            contentSegments: normalizeContentSegments(
+                (Array.isArray(structuredDepthItem?.entries) ? structuredDepthItem.entries : [])
+                    .map(entry => createWorldInfoContentSegment(entry, entry.text))
+                    .filter(Boolean),
+            ),
         };
     }
 
@@ -1277,6 +1552,11 @@ async function applyWorldInfoToContext(context) {
             depth: 0,
             scan: false,
             role: extension_prompt_roles.SYSTEM,
+            contentSegments: normalizeContentSegments(
+                (Array.isArray(structuredWorldInfo.outletEntries?.[key]) ? structuredWorldInfo.outletEntries[key] : [])
+                    .map(entry => createWorldInfoContentSegment(entry, entry.text))
+                    .filter(Boolean),
+            ),
         };
     }
 
@@ -1286,8 +1566,14 @@ async function applyWorldInfoToContext(context) {
     if (Array.isArray(scanResult.EMEntries) && scanResult.EMEntries.length) {
         const messageExamples = Array.isArray(context.messageExamples) ? [...context.messageExamples] : [];
 
-        for (const example of scanResult.EMEntries) {
-            const parsedBlocks = parseWorldInfoExampleBlocks(example?.content, context);
+        const structuredExamples = Array.isArray(structuredWorldInfo.exampleEntries) ? structuredWorldInfo.exampleEntries : [];
+        for (let index = 0; index < scanResult.EMEntries.length; index++) {
+            const example = scanResult.EMEntries[index];
+            const structuredExample = structuredExamples[index];
+            const parsedBlocks = parseWorldInfoExampleBlocks({
+                ...(structuredExample?.entry || {}),
+                text: example?.content ?? structuredExample?.entry?.text ?? '',
+            }, context);
             if (!parsedBlocks.length) {
                 continue;
             }
@@ -1395,13 +1681,32 @@ async function populateInjectionPrompts(prompts, messages, extensionPrompts, env
         for (const order of orders) {
             const orderPrompts = orderGroups[order];
             for (const role of ['system', 'user', 'assistant']) {
-                const rolePrompts = orderPrompts.filter(prompt => prompt.role === role).map(prompt => prompt.content).join('\n');
+                const rolePromptEntries = orderPrompts.filter(prompt => prompt.role === role);
+                const rolePrompts = rolePromptEntries.map(prompt => prompt.content).join('\n');
                 const extensionPrompt = Number(order) === 100
                     ? getExtensionPrompt(extensionPrompts, env, extension_prompt_types.IN_CHAT, depth, '\n', role === 'system' ? extension_prompt_roles.SYSTEM : role === 'user' ? extension_prompt_roles.USER : extension_prompt_roles.ASSISTANT, false)
                     : '';
+                const extensionPromptSegments = Number(order) === 100
+                    ? getExtensionPromptSegments(extensionPrompts, extension_prompt_types.IN_CHAT, depth, '\n', role === 'system' ? extension_prompt_roles.SYSTEM : role === 'user' ? extension_prompt_roles.USER : extension_prompt_roles.ASSISTANT, false)
+                    : [];
                 const jointPrompt = [rolePrompts, extensionPrompt].filter(Boolean).map(value => value.trim()).join('\n');
                 if (jointPrompt) {
-                    roleMessages.push({ role, content: jointPrompt, injected: true });
+                    const rolePromptSegments = joinContentSegments(
+                        rolePromptEntries.map(prompt => Array.isArray(prompt.contentSegments) && prompt.contentSegments.length
+                            ? prompt.contentSegments
+                            : createTextContentSegment(prompt.content)),
+                        '\n',
+                    );
+                    const jointContentSegments = joinContentSegments([
+                        rolePromptSegments,
+                        extensionPromptSegments,
+                    ]);
+                    roleMessages.push({
+                        role,
+                        content: jointPrompt,
+                        contentSegments: jointContentSegments.length ? jointContentSegments : undefined,
+                        injected: true,
+                    });
                 }
             }
         }
@@ -1432,7 +1737,7 @@ async function populateDialogueExamples(prompts, chatCompletion, messageExamples
         const chatMessages = [];
         for (let promptIndex = 0; promptIndex < dialogue.length; promptIndex++) {
             const prompt = dialogue[promptIndex];
-            const chatMessage = await Message.createAsync('system', prompt.content || '', `dialogueExamples ${dialogueIndex}-${promptIndex}`, context.tokenHandler);
+            const chatMessage = await Message.createAsync('system', prompt.content || '', `dialogueExamples ${dialogueIndex}-${promptIndex}`, context.tokenHandler, prompt.contentSegments);
             if (prompt.name) {
                 await chatMessage.setName(prompt.name);
             }
@@ -1579,8 +1884,18 @@ async function preparePromptsForChatCompletion(context) {
     const charPersonalityText = context.charPersonality && context.oaiSettings.personality_format ? substituteParams(context.oaiSettings.personality_format, context.env, { personality: context.charPersonality }) : (context.charPersonality || '');
 
     const systemPrompts = [
-        { role: 'system', content: formatWorldInfo(context.worldInfoBefore, context.oaiSettings.wi_format), identifier: 'worldInfoBefore' },
-        { role: 'system', content: formatWorldInfo(context.worldInfoAfter, context.oaiSettings.wi_format), identifier: 'worldInfoAfter' },
+        {
+            role: 'system',
+            content: formatWorldInfo(context.worldInfoBefore, context.oaiSettings.wi_format),
+            contentSegments: formatWorldInfoSegments(context.worldInfoBeforeSegments, context.oaiSettings.wi_format),
+            identifier: 'worldInfoBefore',
+        },
+        {
+            role: 'system',
+            content: formatWorldInfo(context.worldInfoAfter, context.oaiSettings.wi_format),
+            contentSegments: formatWorldInfoSegments(context.worldInfoAfterSegments, context.oaiSettings.wi_format),
+            identifier: 'worldInfoAfter',
+        },
         { role: 'system', content: context.charDescription, identifier: 'charDescription' },
         { role: 'system', content: charPersonalityText, identifier: 'charPersonality' },
         { role: 'system', content: scenarioText, identifier: 'scenario' },
@@ -1593,27 +1908,27 @@ async function preparePromptsForChatCompletion(context) {
     const extensionPrompts = context.extensionPrompts || {};
     const summary = extensionPrompts['1_memory'];
     if (summary?.value ?? summary?.resolvedValue) {
-        systemPrompts.push({ role: getPromptRole(summary.role), content: summary.value ?? summary.resolvedValue, identifier: 'summary', position: getPromptPosition(summary.position) });
+        systemPrompts.push({ role: getPromptRole(summary.role), content: summary.value ?? summary.resolvedValue, contentSegments: summary.contentSegments, identifier: 'summary', position: getPromptPosition(summary.position) });
     }
 
     const authorsNote = extensionPrompts['2_floating_prompt'];
     if (authorsNote?.value ?? authorsNote?.resolvedValue) {
-        systemPrompts.push({ role: getPromptRole(authorsNote.role), content: authorsNote.value ?? authorsNote.resolvedValue, identifier: 'authorsNote', position: getPromptPosition(authorsNote.position) });
+        systemPrompts.push({ role: getPromptRole(authorsNote.role), content: authorsNote.value ?? authorsNote.resolvedValue, contentSegments: authorsNote.contentSegments, identifier: 'authorsNote', position: getPromptPosition(authorsNote.position) });
     }
 
     const vectorsMemory = extensionPrompts['3_vectors'];
     if (vectorsMemory?.value ?? vectorsMemory?.resolvedValue) {
-        systemPrompts.push({ role: 'system', content: vectorsMemory.value ?? vectorsMemory.resolvedValue, identifier: 'vectorsMemory', position: getPromptPosition(vectorsMemory.position) });
+        systemPrompts.push({ role: 'system', content: vectorsMemory.value ?? vectorsMemory.resolvedValue, contentSegments: vectorsMemory.contentSegments, identifier: 'vectorsMemory', position: getPromptPosition(vectorsMemory.position) });
     }
 
     const vectorsDataBank = extensionPrompts['4_vectors_data_bank'];
     if (vectorsDataBank?.value ?? vectorsDataBank?.resolvedValue) {
-        systemPrompts.push({ role: getPromptRole(vectorsDataBank.role), content: vectorsDataBank.value ?? vectorsDataBank.resolvedValue, identifier: 'vectorsDataBank', position: getPromptPosition(vectorsDataBank.position) });
+        systemPrompts.push({ role: getPromptRole(vectorsDataBank.role), content: vectorsDataBank.value ?? vectorsDataBank.resolvedValue, contentSegments: vectorsDataBank.contentSegments, identifier: 'vectorsDataBank', position: getPromptPosition(vectorsDataBank.position) });
     }
 
     const smartContext = extensionPrompts.chromadb;
     if (smartContext?.value ?? smartContext?.resolvedValue) {
-        systemPrompts.push({ role: 'system', content: smartContext.value ?? smartContext.resolvedValue, identifier: 'smartContext', position: getPromptPosition(smartContext.position) });
+        systemPrompts.push({ role: 'system', content: smartContext.value ?? smartContext.resolvedValue, contentSegments: smartContext.contentSegments, identifier: 'smartContext', position: getPromptPosition(smartContext.position) });
     }
 
     if (context.powerUser.persona_description && context.powerUser.persona_description_position === context.personaDescriptionPosition.IN_PROMPT) {
@@ -1634,6 +1949,7 @@ async function preparePromptsForChatCompletion(context) {
             position: getPromptPosition(prompt.position),
             role: getPromptRole(prompt.role),
             content: promptValue,
+            contentSegments: prompt.contentSegments,
             extension: true,
         });
     }

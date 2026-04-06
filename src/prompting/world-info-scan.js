@@ -416,6 +416,19 @@ async function buildWorldInfoDebugSummary(entryDebugMap, payload, tokenCountCach
     };
 }
 
+function buildWorldInfoSegmentEntry(entry = {}, payload = {}, debugItem = null) {
+    return {
+        text: String(entry.content ?? ''),
+        storage: entry.storage === 'secure' ? 'secure' : 'user',
+        ownerHandle: String(entry.ownerHandle || ''),
+        book: entry.world ?? null,
+        uid: entry.uid ?? null,
+        placement: getWorldInfoPlacement(entry, payload),
+        roundIndex: Number(debugItem?.roundIndex ?? 0) || 0,
+        status: debugItem?.status ?? 'admitted',
+    };
+}
+
 class WorldInfoBuffer {
     #settings = null;
     #globalScanData = null;
@@ -1261,6 +1274,15 @@ export async function scanWorldInfo(payload = {}) {
     const EMEntries = [];
     const ANTopEntries = [];
     const ANBottomEntries = [];
+    const structuredWorldInfo = {
+        beforeEntries: [],
+        afterEntries: [],
+        exampleEntries: [],
+        authorsNoteBeforeEntries: [],
+        authorsNoteAfterEntries: [],
+        depthEntries: [],
+        outletEntries: {},
+    };
     const sortFn = (a, b) => (b.order ?? 0) - (a.order ?? 0);
 
     [...allActivatedEntries.values()].sort(sortFn).forEach((entry) => {
@@ -1269,33 +1291,48 @@ export async function scanWorldInfo(payload = {}) {
             return;
         }
 
+        const debugItem = entryDebug.get(getWorldInfoEntryKey(entry)) || null;
+        const segmentEntry = buildWorldInfoSegmentEntry(entry, payload, debugItem);
+
         switch (entry.position) {
             case world_info_position.before:
                 WIBeforeEntries.unshift(content);
+                structuredWorldInfo.beforeEntries.unshift(segmentEntry);
                 break;
             case world_info_position.after:
                 WIAfterEntries.unshift(content);
+                structuredWorldInfo.afterEntries.unshift(segmentEntry);
                 break;
             case world_info_position.EMTop:
                 EMEntries.unshift({ position: wi_anchor_position.before, content });
+                structuredWorldInfo.exampleEntries.unshift({ position: wi_anchor_position.before, entry: segmentEntry });
                 break;
             case world_info_position.EMBottom:
                 EMEntries.unshift({ position: wi_anchor_position.after, content });
+                structuredWorldInfo.exampleEntries.unshift({ position: wi_anchor_position.after, entry: segmentEntry });
                 break;
             case world_info_position.ANTop:
                 ANTopEntries.unshift(content);
+                structuredWorldInfo.authorsNoteBeforeEntries.unshift(segmentEntry);
                 break;
             case world_info_position.ANBottom:
                 ANBottomEntries.unshift(content);
+                structuredWorldInfo.authorsNoteAfterEntries.unshift(segmentEntry);
                 break;
             case world_info_position.atDepth: {
                 const depth = entry.depth ?? DEFAULT_DEPTH;
                 const role = entry.role ?? 0;
                 const existingDepthIndex = WIDepthEntries.findIndex(item => item.depth === depth && item.role === role);
+                const structuredDepthIndex = structuredWorldInfo.depthEntries.findIndex(item => item.depth === depth && item.role === role);
                 if (existingDepthIndex !== -1) {
                     WIDepthEntries[existingDepthIndex].entries.unshift(content);
                 } else {
                     WIDepthEntries.push({ depth, entries: [content], role });
+                }
+                if (structuredDepthIndex !== -1) {
+                    structuredWorldInfo.depthEntries[structuredDepthIndex].entries.unshift(segmentEntry);
+                } else {
+                    structuredWorldInfo.depthEntries.push({ depth, entries: [segmentEntry], role });
                 }
                 break;
             }
@@ -1303,6 +1340,8 @@ export async function scanWorldInfo(payload = {}) {
                 if (entry.outletName) {
                     WIOutletEntries[entry.outletName] = WIOutletEntries[entry.outletName] ?? [];
                     WIOutletEntries[entry.outletName].push(content);
+                    structuredWorldInfo.outletEntries[entry.outletName] = structuredWorldInfo.outletEntries[entry.outletName] ?? [];
+                    structuredWorldInfo.outletEntries[entry.outletName].push(segmentEntry);
                 }
                 break;
             default:
@@ -1318,6 +1357,7 @@ export async function scanWorldInfo(payload = {}) {
         ANBeforeEntries: ANTopEntries,
         ANAfterEntries: ANBottomEntries,
         outletEntries: WIOutletEntries,
+        structuredWorldInfo,
         allActivatedEntries: Array.from(allActivatedEntries.values()),
         timedWorldInfo: timedEffects.getTimedWorldInfo(),
         overflowed: Boolean(tokenBudgetOverflowed),

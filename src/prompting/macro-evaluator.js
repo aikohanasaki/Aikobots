@@ -58,6 +58,21 @@ function buildOutletValues(extensionPrompts = {}) {
     return outletValues;
 }
 
+function buildOutletSegmentValues(extensionPrompts = {}) {
+    const outletSegmentValues = {};
+    for (const [key, prompt] of Object.entries(extensionPrompts || {})) {
+        const match = /^customWIOutlet_(.+)$/.exec(key);
+        if (!match) {
+            continue;
+        }
+
+        outletSegmentValues[match[1]] = Array.isArray(prompt?.contentSegments)
+            ? structuredClone(prompt.contentSegments)
+            : [];
+    }
+    return outletSegmentValues;
+}
+
 const ESCAPED_COMMA_SENTINEL = '__ST_ESCAPED_COMMA_7F3F5E9A__';
 
 function splitEscapedList(listString) {
@@ -76,6 +91,7 @@ export function createMacroState(snapshot = {}, extensionPrompts = {}) {
         chatId: String(snapshot?.chatId || ''),
         now: moment(snapshot?.now || undefined),
         outletValues: buildOutletValues(extensionPrompts),
+        outletSegmentValues: buildOutletSegmentValues(extensionPrompts),
     };
 }
 
@@ -84,6 +100,7 @@ export function refreshMacroOutletValues(macroState, extensionPrompts = {}) {
         return;
     }
     macroState.outletValues = buildOutletValues(extensionPrompts);
+    macroState.outletSegmentValues = buildOutletSegmentValues(extensionPrompts);
 }
 
 export function evaluatePromptMacros(content, env = {}, { additional = {}, macroState = null, postProcessFn = (x) => x } = {}) {

@@ -1691,13 +1691,34 @@ function createPromptInspectionSnapshot(request, assembled, promptInspectionInfo
     };
 }
 
+function getSecureLorebookOwnerHandleFromName(bookName) {
+    const normalizedBookName = String(bookName || '').trim();
+    const match = /^Z-([^-]+)-.+$/.exec(normalizedBookName);
+    return match ? match[1] : '';
+}
+
+function getWorldInfoEntryOwnerHandle(entry) {
+    const directOwnerHandle = String(entry?.ownerHandle || '').trim();
+    if (directOwnerHandle) {
+        return directOwnerHandle;
+    }
+
+    return entry?.storage === 'secure'
+        ? getSecureLorebookOwnerHandleFromName(entry?.book)
+        : '';
+}
+
 function isWorldInfoEntryHiddenForUser(user, entry) {
+    if (Boolean(user?.profile?.admin)) {
+        return false;
+    }
+
     if (!entry || entry.storage !== 'secure') {
         return false;
     }
 
     const requestHandle = String(user?.profile?.handle || '');
-    const ownerHandle = String(entry.ownerHandle || '');
+    const ownerHandle = getWorldInfoEntryOwnerHandle(entry);
     return !requestHandle || !ownerHandle || requestHandle !== ownerHandle;
 }
 
@@ -1714,7 +1735,7 @@ function sanitizeWorldInfoEntryForResponse(entry, user) {
     const sanitizedEntry = structuredClone(entry);
 
     sanitizedEntry.storage = entry.storage === 'secure' ? 'secure' : 'user';
-    sanitizedEntry.ownerHandle = canView ? String(entry.ownerHandle || '') : '';
+    sanitizedEntry.ownerHandle = canView ? getWorldInfoEntryOwnerHandle(entry) : '';
     sanitizedEntry.hidden = !canView;
     sanitizedEntry.displayContent = canView
         ? String(entry.displayContent ?? entry.content ?? '')
@@ -1770,93 +1791,92 @@ function sanitizeWorldInfoDebugDataForResponse(worldInfo, user) {
     };
 }
 
-function buildWorldInfoRedactionPairsForResponse(sourceWorldInfo, sanitizedWorldInfo) {
-    const sourceEntries = Array.isArray(sourceWorldInfo?.activatedEntries)
-        ? sourceWorldInfo.activatedEntries
-        : [];
-    const sanitizedEntries = Array.isArray(sanitizedWorldInfo?.activatedEntries)
-        ? sanitizedWorldInfo.activatedEntries
-        : [];
+function normalizeContentSegmentsForResponse(segments = []) {
+    const normalizedSegments = [];
 
-    /** @type {Map<string, {source: string[], sanitized: string[], hasHidden: boolean}>} */
-    const redactionMap = new Map();
-
-    for (let index = 0; index < Math.max(sourceEntries.length, sanitizedEntries.length); index++) {
-        const sourceEntry = sourceEntries[index];
-        const sanitizedEntry = sanitizedEntries[index];
-        const placement = String(sourceEntry?.placement ?? sanitizedEntry?.placement ?? '').trim();
-        const sourceStatus = sourceEntry?.status ?? sanitizedEntry?.status;
-        const sanitizedStatus = sanitizedEntry?.status ?? sourceEntry?.status;
-        if (sourceStatus !== 'admitted' || sanitizedStatus !== 'admitted') {
+    for (const segment of Array.isArray(segments) ? segments : []) {
+        if (!segment || typeof segment !== 'object') {
             continue;
         }
 
-        const bucket = redactionMap.get(`${placement}:${index}`) || { source: [], sanitized: [], hasHidden: false };
-        const sourceText = String(sourceEntry?.content ?? sourceEntry?.displayContent ?? '').trim();
-        const sanitizedText = String(sanitizedEntry?.displayContent ?? sanitizedEntry?.content ?? '').trim();
-        const isHidden = Boolean(sanitizedEntry?.hidden);
-
-        if (sourceText) {
-            bucket.source.push(sourceText);
-        }
-        if (sanitizedText) {
-            bucket.sanitized.push(sanitizedText);
-        }
-        if (isHidden) {
-            bucket.hasHidden = true;
-        }
-
-        redactionMap.set(`${placement}:${index}`, bucket);
-    }
-
-    return Array.from(redactionMap.values())
-        .filter(bucket => bucket.hasHidden && bucket.source.length > 0 && bucket.sanitized.length > 0)
-        .map(bucket => ({
-            originalText: bucket.source.join('\n'),
-            redactedText: bucket.sanitized.join('\n'),
-        }))
-        .filter(pair => pair.originalText && pair.redactedText && pair.originalText !== pair.redactedText);
-}
-
-function replaceExactTextBundles(value, redactionPairs = []) {
-    if (typeof value !== 'string' || !value || !Array.isArray(redactionPairs) || !redactionPairs.length) {
-        return value;
-    }
-
-    let result = value;
-    for (const pair of redactionPairs) {
-        if (!pair?.originalText || pair.originalText === pair.redactedText) {
+        const text = String(segment.text ?? '');
+        if (!text) {
             continue;
         }
-        result = result.split(pair.originalText).join(pair.redactedText);
+
+        const normalizedSegment = segment.type === 'worldInfo'
+            ? {
+                type: 'worldInfo',
+                text,
+                storage: segment.storage === 'secure' ? 'secure' : 'user',
+                ownerHandle: getWorldInfoEntryOwnerHandle(segment),
+                book: segment.book ?? null,
+                uid: segment.uid ?? null,
+                placement: segment.placement ?? null,
+                roundIndex: Number(segment.roundIndex ?? 0) || 0,
+                status: segment.status ?? null,
+            }
+            : {
+                type: 'text',
+                text,
+            };
+
+        const previousSegment = normalizedSegments[normalizedSegments.length - 1];
+        if (previousSegment && previousSegment.type === 'text' && normalizedSegment.type === 'text') {
+            previousSegment.text += normalizedSegment.text;
+        } else {
+            normalizedSegments.push(normalizedSegment);
+        }
     }
 
-    return result;
+    return normalizedSegments;
 }
 
-function applyPromptRedactionsToMessageContent(content, redactionPairs = []) {
-    if (typeof content === 'string') {
-        return replaceExactTextBundles(content, redactionPairs);
-    }
-
-    if (!Array.isArray(content)) {
-        return content;
-    }
-
-    return content.map(part => {
-        if (!part || typeof part !== 'object') {
-            return part;
-        }
-
-        const clonedPart = structuredClone(part);
-        if (typeof clonedPart.text === 'string') {
-            clonedPart.text = replaceExactTextBundles(clonedPart.text, redactionPairs);
-        }
-        return clonedPart;
-    });
+function flattenContentSegmentsForResponse(segments = []) {
+    return normalizeContentSegmentsForResponse(segments)
+        .map(segment => String(segment.text ?? ''))
+        .join('');
 }
 
-function applyPromptRedactionsToMessagesState(node, redactionPairs = []) {
+function sanitizePromptContentSegmentsForResponse(segments, user) {
+    const sanitizedSegments = [];
+
+    for (const segment of normalizeContentSegmentsForResponse(segments)) {
+        if (segment.type !== 'worldInfo') {
+            sanitizedSegments.push(segment);
+            continue;
+        }
+
+        if (canViewWorldInfoEntry(user, segment)) {
+            sanitizedSegments.push(segment);
+            continue;
+        }
+
+        sanitizedSegments.push({
+            type: 'text',
+            text: '(hidden entry)',
+        });
+    }
+
+    return normalizeContentSegmentsForResponse(sanitizedSegments);
+}
+
+function sanitizePromptMessageContentForResponse(content, contentSegments, user) {
+    if (!Array.isArray(contentSegments) || !contentSegments.length) {
+        return {
+            content: structuredClone(content),
+            contentSegments: undefined,
+        };
+    }
+
+    const sanitizedSegments = sanitizePromptContentSegmentsForResponse(contentSegments, user);
+    return {
+        content: flattenContentSegmentsForResponse(sanitizedSegments),
+        contentSegments: sanitizedSegments,
+    };
+}
+
+function sanitizeMessagesStateForResponse(node, user) {
     if (!node || typeof node !== 'object') {
         return null;
     }
@@ -1865,7 +1885,7 @@ function applyPromptRedactionsToMessagesState(node, redactionPairs = []) {
         const sanitizedCollection = structuredClone(node);
         sanitizedCollection.collection = Array.isArray(node.collection)
             ? node.collection
-                .map(child => applyPromptRedactionsToMessagesState(child, redactionPairs))
+                .map(child => sanitizeMessagesStateForResponse(child, user))
                 .filter(Boolean)
             : [];
         return sanitizedCollection;
@@ -1876,24 +1896,10 @@ function applyPromptRedactionsToMessagesState(node, redactionPairs = []) {
     }
 
     const sanitizedMessage = structuredClone(node);
-    sanitizedMessage.content = applyPromptRedactionsToMessageContent(sanitizedMessage.content, redactionPairs);
+    const sanitizedContent = sanitizePromptMessageContentForResponse(sanitizedMessage.content, sanitizedMessage.contentSegments, user);
+    sanitizedMessage.content = sanitizedContent.content;
+    sanitizedMessage.contentSegments = sanitizedContent.contentSegments;
     return sanitizedMessage;
-}
-
-function applyPromptRedactionsToChat(chat, redactionPairs = []) {
-    if (!Array.isArray(chat)) {
-        return null;
-    }
-
-    return chat.map(message => {
-        if (!message || typeof message !== 'object') {
-            return message;
-        }
-
-        const sanitizedMessage = structuredClone(message);
-        sanitizedMessage.content = applyPromptRedactionsToMessageContent(sanitizedMessage.content, redactionPairs);
-        return sanitizedMessage;
-    });
 }
 
 function buildChatFromMessagesState(node, result = []) {
@@ -1913,7 +1919,9 @@ function buildChatFromMessagesState(node, result = []) {
 
     const message = {
         role: node.role,
-        content: String(node.content ?? ''),
+        content: typeof node.content === 'string' || Array.isArray(node.content)
+            ? structuredClone(node.content)
+            : String(node.content ?? ''),
     };
 
     if (node.name !== undefined) {
@@ -1938,25 +1946,11 @@ function buildPromptTextFromChat(chat = []) {
         : '';
 }
 
-function buildRedactedChatForResponse(assembly, sanitizedWorldInfo) {
+function buildRedactedChatForResponse(assembly, user) {
     const sourceMessagesState = assembly?.messagesState;
-    const redactionPairs = buildWorldInfoRedactionPairsForResponse(assembly?.worldInfo, sanitizedWorldInfo);
-
-    if (!redactionPairs.length) {
-        const clonedMessagesState = sourceMessagesState && typeof sourceMessagesState === 'object'
-            ? structuredClone(sourceMessagesState)
-            : null;
-        const clonedChat = Array.isArray(assembly?.chat)
-            ? structuredClone(assembly.chat)
-            : buildChatFromMessagesState(clonedMessagesState, []);
-        return {
-            messagesState: clonedMessagesState,
-            chat: clonedChat,
-        };
-    }
 
     if (sourceMessagesState && typeof sourceMessagesState === 'object') {
-        const messagesState = applyPromptRedactionsToMessagesState(sourceMessagesState, redactionPairs);
+        const messagesState = sanitizeMessagesStateForResponse(sourceMessagesState, user);
         return {
             messagesState,
             chat: buildChatFromMessagesState(messagesState, []),
@@ -1965,7 +1959,9 @@ function buildRedactedChatForResponse(assembly, sanitizedWorldInfo) {
 
     return {
         messagesState: null,
-        chat: applyPromptRedactionsToChat(assembly?.chat, redactionPairs),
+        chat: Boolean(user?.profile?.admin) && Array.isArray(assembly?.chat)
+            ? structuredClone(assembly.chat)
+            : [],
     };
 }
 
@@ -1976,7 +1972,7 @@ function sanitizePromptAssemblyForSnapshotResponse(assembly, user) {
 
     const sanitizedAssembly = structuredClone(assembly);
     const sanitizedWorldInfo = sanitizeWorldInfoDebugDataForResponse(assembly.worldInfo, user);
-    const sanitizedPromptData = buildRedactedChatForResponse(assembly, sanitizedWorldInfo);
+    const sanitizedPromptData = buildRedactedChatForResponse(assembly, user);
 
     sanitizedAssembly.worldInfo = sanitizedWorldInfo;
     sanitizedAssembly.messagesState = sanitizedPromptData.messagesState;
