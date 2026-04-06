@@ -8,6 +8,7 @@ import sanitize from 'sanitize-filename';
 import writeFileAtomic from 'write-file-atomic';
 
 import { parse, write } from './character-card-parser.js';
+import { getCharacterDistributionPolicy, setCharacterDistributionPolicy } from './character-distribution-registry.js';
 import { validateSubmittedCharacterLinkedLorebooks } from './character-linked-lorebooks.js';
 import { invalidateThumbnail } from './endpoints/thumbnails.js';
 import { getAllEnabledUsers, getUserDirectories } from './users.js';
@@ -271,9 +272,9 @@ async function getEnabledPublishTargets(actingUserHandle) {
  * @param {string} actingUserHandle
  * @returns {Promise<string[]>}
  */
-async function validateSelectedTargets(targetHandles, actingUserHandle) {
+async function validateDistributionHandles(targetHandles, actingUserHandle, { requireAtLeastOne = false } = {}) {
     const requested = [...new Set((Array.isArray(targetHandles) ? targetHandles : []).map(handle => String(handle || '').trim()).filter(Boolean))];
-    if (requested.length === 0) {
+    if (requireAtLeastOne && requested.length === 0) {
         throw new Error('At least one target user is required.');
     }
 
@@ -284,6 +285,10 @@ async function validateSelectedTargets(targetHandles, actingUserHandle) {
     }
 
     return requested;
+}
+
+async function validateSelectedTargets(targetHandles, actingUserHandle) {
+    return validateDistributionHandles(targetHandles, actingUserHandle, { requireAtLeastOne: true });
 }
 
 /**
@@ -549,10 +554,21 @@ export function canAccessSubmission(record, user) {
 
 /**
  * Distributes a character PNG to selected users or globally.
- * @param {{ sourcePath: string, publishedFilename?: string, publishMode: 'selected'|'global', targetHandles?: string[], actingUserHandle: string, sourceOwnerHandle?: string }} params
- * @returns {Promise<{ publishedFilename: string, targetHandles: string[] }>}
+ * @param {{ sourcePath: string, publishedFilename?: string, publishMode: 'selected'|'global', targetHandles?: string[], actingUserHandle: string, sourceOwnerHandle?: string, applyBlacklist?: boolean, blacklistHandles?: string[], persistWhitelist?: boolean, whitelistHandles?: string[] }} params
+ * @returns {Promise<{ publishedFilename: string, targetHandles: string[], skippedHandles: string[], distributionPolicy: object }>}
  */
-export async function distributeCharacterFile({ sourcePath, publishedFilename, publishMode, targetHandles = [], actingUserHandle, sourceOwnerHandle = '' }) {
+export async function distributeCharacterFile({
+    sourcePath,
+    publishedFilename,
+    publishMode,
+    targetHandles = [],
+    actingUserHandle,
+    sourceOwnerHandle = '',
+    applyBlacklist,
+    blacklistHandles = [],
+    persistWhitelist,
+    whitelistHandles = [],
+}) {
     if (!fs.existsSync(sourcePath)) {
         throw new Error('Character source file was not found.');
     }
@@ -560,13 +576,51 @@ export async function distributeCharacterFile({ sourcePath, publishedFilename, p
     const sourceName = normalizeCharacterFileName(publishedFilename, path.parse(sourcePath).name);
     const outputFilename = `${sourceName}.png`;
     const distributionPayload = await buildDistributionPayload(sourcePath, { sourceOwnerHandle });
+    const resolvedOwnerHandle = getSubmissionOwnerHandle(distributionPayload.card) || String(sourceOwnerHandle || actingUserHandle || '').trim();
+    let distributionPolicy = await getCharacterDistributionPolicy({
+        ownerHandle: resolvedOwnerHandle,
+        publishedFilename: sourceName,
+    });
 
     /** @type {string[]} */
     let recipients = [];
+    /** @type {string[]} */
+    let skippedHandles = [];
     if (publishMode === PUBLISH_MODES.GLOBAL) {
+        const nextBlacklistHandles = typeof applyBlacklist === 'boolean'
+            ? await validateDistributionHandles(blacklistHandles, actingUserHandle)
+            : undefined;
+
+        if (typeof applyBlacklist === 'boolean') {
+            distributionPolicy = await setCharacterDistributionPolicy({
+                ownerHandle: resolvedOwnerHandle,
+                publishedFilename: sourceName,
+                blacklistHandles: applyBlacklist ? nextBlacklistHandles : [],
+                updatedBy: actingUserHandle,
+            });
+        }
+
         recipients = await getEnabledPublishTargets(actingUserHandle);
+        if (distributionPolicy.blacklistHandles.length > 0) {
+            const blacklist = new Set(distributionPolicy.blacklistHandles);
+            skippedHandles = recipients.filter(handle => blacklist.has(handle));
+            recipients = recipients.filter(handle => !blacklist.has(handle));
+        }
     } else if (publishMode === PUBLISH_MODES.SELECTED) {
         recipients = await validateSelectedTargets(targetHandles, actingUserHandle);
+
+        if (typeof persistWhitelist === 'boolean') {
+            distributionPolicy = await setCharacterDistributionPolicy({
+                ownerHandle: resolvedOwnerHandle,
+                publishedFilename: sourceName,
+                whitelistHandles: persistWhitelist
+                    ? (Array.isArray(whitelistHandles) && whitelistHandles.length > 0
+                        ? await validateDistributionHandles(whitelistHandles, actingUserHandle)
+                        : recipients)
+                    : [],
+                updatedBy: actingUserHandle,
+            });
+        }
     } else {
         throw new Error('Invalid publish mode.');
     }
@@ -598,5 +652,7 @@ export async function distributeCharacterFile({ sourcePath, publishedFilename, p
     return {
         publishedFilename: outputFilename,
         targetHandles: recipients,
+        skippedHandles,
+        distributionPolicy,
     };
 }

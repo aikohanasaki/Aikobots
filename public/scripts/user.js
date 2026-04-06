@@ -269,6 +269,53 @@ async function getCharacterSubmissions(status = '') {
     }
 }
 
+function createEmptyCharacterDistributionPolicy(ownerHandle = '', publishedFilename = '') {
+    return {
+        key: '',
+        ownerHandle: String(ownerHandle || '').trim(),
+        publishedFilename: String(publishedFilename || '').trim().replace(/\.png$/i, ''),
+        blacklistHandles: [],
+        whitelistHandles: [],
+        hasBlacklist: false,
+        hasWhitelist: false,
+        updatedAt: null,
+        updatedBy: null,
+    };
+}
+
+async function getCharacterDistributionPolicy(ownerHandle, publishedFilename) {
+    const normalizedOwnerHandle = String(ownerHandle || '').trim();
+    const normalizedPublishedFilename = String(publishedFilename || '').trim().replace(/\.png$/i, '');
+
+    if (!normalizedPublishedFilename) {
+        return createEmptyCharacterDistributionPolicy(normalizedOwnerHandle, normalizedPublishedFilename);
+    }
+
+    try {
+        const response = await fetch('/api/characters/distribution-policy', {
+            method: 'POST',
+            headers: getRequestHeaders(),
+            body: JSON.stringify({
+                ownerHandle: normalizedOwnerHandle,
+                publishedFilename: normalizedPublishedFilename,
+            }),
+        });
+
+        const data = await response.json().catch(() => ({}));
+        if (!response.ok) {
+            throw new Error(data?.error || 'Failed to get character distribution policy');
+        }
+
+        return {
+            ...createEmptyCharacterDistributionPolicy(normalizedOwnerHandle, normalizedPublishedFilename),
+            ...data,
+        };
+    } catch (error) {
+        console.error('Error getting character distribution policy:', error);
+        return createEmptyCharacterDistributionPolicy(normalizedOwnerHandle, normalizedPublishedFilename);
+    }
+}
+
 /**
  * Submits an existing character card for admin review.
  * @param {string} sourceAvatar
@@ -409,6 +456,13 @@ function buildUserChecklist(users, selectedHandles = []) {
  */
 function getSelectedHandles(container) {
     return container.find('.distribution-target:checked').map((_, element) => String($(element).val())).get();
+}
+
+function setSelectedHandles(container, selectedHandles = []) {
+    const selected = new Set((Array.isArray(selectedHandles) ? selectedHandles : []).map(handle => String(handle || '').trim()).filter(Boolean));
+    container.find('.distribution-target').each((_, element) => {
+        $(element).prop('checked', selected.has(String($(element).val())));
+    });
 }
 
 /**
@@ -569,10 +623,17 @@ export async function submitSelectedCharacterForReview(character) {
  */
 async function openSubmissionReviewPopup(submission, callback) {
     const users = (await getUsers() || []).filter(user => user.enabled);
+    const ownerHandle = String(submission.ownerHandle || getCurrentUserHandle()).trim();
     let publishMode = submission.publishMode || 'selected';
     let reviewNote = String(submission.reviewNote || '');
     let publishedFilename = String((submission.publishedFilename || submission.characterName || submission.submittedFilename || '').replace(/\.png$/i, ''));
-    const checklist = buildUserChecklist(users, submission.targetHandles || []);
+    let applyBlacklist = false;
+    let persistWhitelist = false;
+    let policyRequestId = 0;
+    let policyRefreshTimer = null;
+    const initialTargetHandles = Array.isArray(submission.targetHandles) ? submission.targetHandles : [];
+    const checklist = buildUserChecklist(users, initialTargetHandles);
+    const blacklistChecklist = buildUserChecklist(users);
     const REVIEW_POPUP_RESULT_REJECT = POPUP_RESULT.CUSTOM1;
     const REVIEW_POPUP_RESULT_DELETE_ASSET = POPUP_RESULT.CUSTOM2;
     const REVIEW_POPUP_RESULT_DELETE_ALL = POPUP_RESULT.CUSTOM3;
@@ -599,9 +660,20 @@ async function openSubmissionReviewPopup(submission, callback) {
                 <span>Published Filename</span>
                 <input class="text_pole review-published-filename" type="text">
             </label>
+            <label class="review-apply-blacklist-block flex-container alignItemsCenter flexGap10">
+                <input type="checkbox" class="review-apply-blacklist">
+                <span>Apply blacklist</span>
+            </label>
+            <div class="review-blacklist-targets-block flex-container flexFlowColumn flexGap5">
+                <span>Blacklisted Users</span>
+            </div>
             <div class="review-targets-block flex-container flexFlowColumn flexGap5">
                 <span>Recipients</span>
             </div>
+            <label class="review-persist-whitelist-block flex-container alignItemsCenter flexGap10">
+                <input type="checkbox" class="review-persist-whitelist">
+                <span>Save whitelist for future selected pushes</span>
+            </label>
             <label class="flex-container flexFlowColumn flexNoGap">
                 <span>Review Note</span>
                 <textarea class="text_pole review-note" rows="3"></textarea>
@@ -616,20 +688,79 @@ async function openSubmissionReviewPopup(submission, callback) {
     container.find('.submission-owner').text(submission.ownerHandle);
     container.find('.submission-status').text(getSubmissionStatusLabel(submission.status));
     container.find('.review-stored-card-status').text(submission.hasStoredCard === false ? 'Stored card asset has already been deleted.' : '');
+    const isPending = submission.status === 'pending';
+    const canApprove = isPending && submission.hasStoredCard !== false;
+
+    function syncPolicyBlocks() {
+        container.find('.review-publish-mode-block, .review-published-filename-block').toggle(canApprove);
+        container.find('.review-targets-block').toggle(canApprove && publishMode === 'selected');
+        container.find('.review-persist-whitelist-block').toggle(canApprove && publishMode === 'selected');
+        container.find('.review-apply-blacklist-block').toggle(canApprove && publishMode === 'global');
+        container.find('.review-blacklist-targets-block').toggle(canApprove && publishMode === 'global' && applyBlacklist);
+    }
+
+    async function loadPolicyForCurrentFilename({ overwriteRecipients = false } = {}) {
+        if (!canApprove) {
+            return;
+        }
+
+        const requestId = ++policyRequestId;
+        const policy = await getCharacterDistributionPolicy(ownerHandle, publishedFilename);
+        if (requestId !== policyRequestId) {
+            return;
+        }
+
+        applyBlacklist = policy.hasBlacklist;
+        persistWhitelist = policy.hasWhitelist;
+        container.find('.review-apply-blacklist').prop('checked', applyBlacklist);
+        container.find('.review-persist-whitelist').prop('checked', persistWhitelist);
+        setSelectedHandles(blacklistChecklist, policy.blacklistHandles);
+
+        if (policy.hasWhitelist) {
+            setSelectedHandles(checklist, policy.whitelistHandles);
+        } else if (overwriteRecipients) {
+            setSelectedHandles(checklist, initialTargetHandles);
+        } else {
+            setSelectedHandles(checklist, []);
+        }
+
+        syncPolicyBlocks();
+    }
+
+    function queuePolicyRefresh() {
+        if (!canApprove) {
+            return;
+        }
+
+        clearTimeout(policyRefreshTimer);
+        policyRefreshTimer = setTimeout(() => {
+            policyRefreshTimer = null;
+            void loadPolicyForCurrentFilename();
+        }, 250);
+    }
+
     container.find('.review-publish-mode').val(publishMode).on('change', function () {
         publishMode = String($(this).val());
-        container.find('.review-targets-block').toggle(publishMode === 'selected');
+        syncPolicyBlocks();
     });
     container.find('.review-published-filename').val(publishedFilename).on('input', function () {
         publishedFilename = String($(this).val());
+        queuePolicyRefresh();
     });
     container.find('.review-note').val(reviewNote).on('input', function () {
         reviewNote = String($(this).val());
     });
-    container.find('.review-targets-block').append(checklist).toggle(publishMode === 'selected');
-    const isPending = submission.status === 'pending';
-    const canApprove = isPending && submission.hasStoredCard !== false;
-    container.find('.review-publish-mode-block, .review-published-filename-block, .review-targets-block').toggle(canApprove);
+    container.find('.review-apply-blacklist').on('change', function () {
+        applyBlacklist = Boolean($(this).prop('checked'));
+        syncPolicyBlocks();
+    });
+    container.find('.review-persist-whitelist').on('change', function () {
+        persistWhitelist = Boolean($(this).prop('checked'));
+    });
+    container.find('.review-targets-block').append(checklist);
+    container.find('.review-blacklist-targets-block').append(blacklistChecklist);
+    syncPolicyBlocks();
+    await loadPolicyForCurrentFilename({ overwriteRecipients: true });
 
     const result = await callGenericPopup(container, POPUP_TYPE.CONFIRM, '', {
         okButton: canApprove ? 'Approve & Publish' : false,
@@ -654,6 +785,7 @@ async function openSubmissionReviewPopup(submission, callback) {
             },
         ],
     });
+    clearTimeout(policyRefreshTimer);
 
     if (result === POPUP_RESULT.CANCELLED || result === POPUP_RESULT.NEGATIVE) {
         return;
@@ -706,6 +838,7 @@ async function openSubmissionReviewPopup(submission, callback) {
     }
 
     const targetHandles = getSelectedHandles(checklist);
+    const blacklistHandles = applyBlacklist ? getSelectedHandles(blacklistChecklist) : [];
     if (publishMode === 'selected' && targetHandles.length === 0) {
         toastr.error('Choose at least one recipient.', 'Review cancelled');
         return;
@@ -718,10 +851,17 @@ async function openSubmissionReviewPopup(submission, callback) {
         targetHandles,
         publishedFilename,
         reviewNote,
+        applyBlacklist,
+        blacklistHandles,
+        persistWhitelist,
+        whitelistHandles: persistWhitelist ? targetHandles : [],
     });
 
     if (approved) {
-        toastr.success(`Published ${approved.publishedFilename || approved.characterName}`, 'Submission approved');
+        const skippedNotice = Array.isArray(approved.skippedHandles) && approved.skippedHandles.length > 0
+            ? ` Skipped: ${approved.skippedHandles.join(', ')}`
+            : '';
+        toastr.success(`Published ${approved.publishedFilename || approved.characterName}${skippedNotice}`, 'Submission approved');
         callback();
     }
 }
@@ -737,9 +877,15 @@ export async function openCharacterDistributePopup(character) {
     }
 
     const users = (await getUsers() || []).filter(user => user.enabled);
+    const ownerHandle = String(character?.data?.extensions?.aikobots?.owner_handle || getCurrentUserHandle()).trim();
     let publishMode = 'selected';
     let publishedFilename = String(character?.name || '').trim();
+    let applyBlacklist = false;
+    let persistWhitelist = false;
+    let policyRequestId = 0;
+    let policyRefreshTimer = null;
     const checklist = buildUserChecklist(users);
+    const blacklistChecklist = buildUserChecklist(users);
 
     const container = $(`
         <div class="flex-container flexFlowColumn flexGap10">
@@ -756,21 +902,82 @@ export async function openCharacterDistributePopup(character) {
                 <span>Published Filename</span>
                 <input class="text_pole distribute-published-filename" type="text">
             </label>
+            <label class="distribute-apply-blacklist-block flex-container alignItemsCenter flexGap10">
+                <input type="checkbox" class="distribute-apply-blacklist">
+                <span>Apply blacklist</span>
+            </label>
+            <div class="distribute-blacklist-targets-block flex-container flexFlowColumn flexGap5">
+                <span>Blacklisted Users</span>
+            </div>
             <div class="distribute-targets-block flex-container flexFlowColumn flexGap5">
                 <span>Recipients</span>
             </div>
+            <label class="distribute-persist-whitelist-block flex-container alignItemsCenter flexGap10">
+                <input type="checkbox" class="distribute-persist-whitelist">
+                <span>Save whitelist for future selected pushes</span>
+            </label>
         </div>
     `);
+
+    function syncPolicyBlocks() {
+        container.find('.distribute-targets-block').toggle(publishMode === 'selected');
+        container.find('.distribute-persist-whitelist-block').toggle(publishMode === 'selected');
+        container.find('.distribute-apply-blacklist-block').toggle(publishMode === 'global');
+        container.find('.distribute-blacklist-targets-block').toggle(publishMode === 'global' && applyBlacklist);
+    }
+
+    async function loadPolicyForCurrentFilename({ overwriteRecipients = false } = {}) {
+        const requestId = ++policyRequestId;
+        const policy = await getCharacterDistributionPolicy(ownerHandle, publishedFilename);
+        if (requestId !== policyRequestId) {
+            return;
+        }
+
+        applyBlacklist = policy.hasBlacklist;
+        persistWhitelist = policy.hasWhitelist;
+        container.find('.distribute-apply-blacklist').prop('checked', applyBlacklist);
+        container.find('.distribute-persist-whitelist').prop('checked', persistWhitelist);
+        setSelectedHandles(blacklistChecklist, policy.blacklistHandles);
+
+        if (policy.hasWhitelist) {
+            setSelectedHandles(checklist, policy.whitelistHandles);
+        } else if (overwriteRecipients) {
+            setSelectedHandles(checklist, []);
+        } else {
+            setSelectedHandles(checklist, []);
+        }
+
+        syncPolicyBlocks();
+    }
+
+    function queuePolicyRefresh() {
+        clearTimeout(policyRefreshTimer);
+        policyRefreshTimer = setTimeout(() => {
+            policyRefreshTimer = null;
+            void loadPolicyForCurrentFilename();
+        }, 250);
+    }
 
     container.find('.distribute-character-name').text(`${character.name} (${character.avatar})`);
     container.find('.distribute-publish-mode').val(publishMode).on('change', function () {
         publishMode = String($(this).val());
-        container.find('.distribute-targets-block').toggle(publishMode === 'selected');
+        syncPolicyBlocks();
     });
     container.find('.distribute-published-filename').val(publishedFilename).on('input', function () {
         publishedFilename = String($(this).val());
+        queuePolicyRefresh();
     });
-    container.find('.distribute-targets-block').append(checklist).toggle(publishMode === 'selected');
+    container.find('.distribute-apply-blacklist').on('change', function () {
+        applyBlacklist = Boolean($(this).prop('checked'));
+        syncPolicyBlocks();
+    });
+    container.find('.distribute-persist-whitelist').on('change', function () {
+        persistWhitelist = Boolean($(this).prop('checked'));
+    });
+    container.find('.distribute-targets-block').append(checklist);
+    container.find('.distribute-blacklist-targets-block').append(blacklistChecklist);
+    syncPolicyBlocks();
+    await loadPolicyForCurrentFilename({ overwriteRecipients: true });
 
     const result = await callGenericPopup(container, POPUP_TYPE.CONFIRM, '', {
         okButton: 'Distribute',
@@ -778,12 +985,14 @@ export async function openCharacterDistributePopup(character) {
         wide: true,
         allowVerticalScrolling: true,
     });
+    clearTimeout(policyRefreshTimer);
 
     if (result !== POPUP_RESULT.AFFIRMATIVE) {
         return;
     }
 
     const targetHandles = getSelectedHandles(checklist);
+    const blacklistHandles = applyBlacklist ? getSelectedHandles(blacklistChecklist) : [];
     if (publishMode === 'selected' && targetHandles.length === 0) {
         toastr.error('Choose at least one recipient.', 'Distribution cancelled');
         return;
@@ -795,10 +1004,17 @@ export async function openCharacterDistributePopup(character) {
         publishMode,
         targetHandles,
         publishedFilename,
+        applyBlacklist,
+        blacklistHandles,
+        persistWhitelist,
+        whitelistHandles: persistWhitelist ? targetHandles : [],
     });
 
     if (distribution) {
-        toastr.success(`Distributed ${distribution.publishedFilename}`, 'Character published');
+        const skippedNotice = Array.isArray(distribution.skippedHandles) && distribution.skippedHandles.length > 0
+            ? ` Skipped: ${distribution.skippedHandles.join(', ')}`
+            : '';
+        toastr.success(`Distributed ${distribution.publishedFilename}${skippedNotice}`, 'Character published');
     }
 }
 

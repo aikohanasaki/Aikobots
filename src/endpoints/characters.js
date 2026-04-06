@@ -17,6 +17,7 @@ import { default as validateAvatarUrlMiddleware, getFileNameValidationFunction }
 import { deepMerge, humanizedISO8601DateTime, tryParse, extractFileFromZipBuffer, MemoryLimitedMap, getConfigValue, mutateJsonString, clientRelativePath, getUniqueName, sanitizeSafeCharacterReplacements } from '../util.js';
 import { TavernCardValidator } from '../validator/TavernCardValidator.js';
 import { parse, read, write } from '../character-card-parser.js';
+import { getCharacterDistributionPolicy } from '../character-distribution-registry.js';
 import { getCharacterOwnerHandle, validateOwnedCharacterLinkedLorebooks } from '../character-linked-lorebooks.js';
 import { readWorldInfoFile } from './worldinfo.js';
 import { invalidateThumbnail } from './thumbnails.js';
@@ -1610,10 +1611,29 @@ router.post('/import', async function (request, response) {
     }
 });
 
+router.post('/distribution-policy', requireAdminMiddleware, async function (request, response) {
+    try {
+        const ownerHandle = String(request.body?.ownerHandle || '').trim();
+        const publishedFilename = String(request.body?.publishedFilename || '').trim();
+
+        if (!publishedFilename) {
+            return response.status(400).json({ error: 'Missing published filename.' });
+        }
+
+        const policy = await getCharacterDistributionPolicy({ ownerHandle, publishedFilename });
+        return response.json(policy);
+    } catch (error) {
+        console.error('Character distribution policy lookup failed', error);
+        return response.status(400).json({ error: error.message || 'Character distribution policy lookup failed.' });
+    }
+});
+
 router.post('/distribute', requireAdminMiddleware, async function (request, response) {
     try {
         const sourceType = String(request.body?.sourceType || '').trim();
         const publishMode = String(request.body?.publishMode || '').trim();
+        const applyBlacklist = typeof request.body?.applyBlacklist === 'boolean' ? request.body.applyBlacklist : undefined;
+        const persistWhitelist = typeof request.body?.persistWhitelist === 'boolean' ? request.body.persistWhitelist : undefined;
 
         if (![PUBLISH_MODES.SELECTED, PUBLISH_MODES.GLOBAL].includes(publishMode)) {
             return response.status(400).json({ error: 'Invalid publish mode.' });
@@ -1663,6 +1683,10 @@ router.post('/distribute', requireAdminMiddleware, async function (request, resp
             publishMode,
             targetHandles: request.body?.targetHandles,
             actingUserHandle: request.user.profile.handle,
+            applyBlacklist,
+            blacklistHandles: request.body?.blacklistHandles,
+            persistWhitelist,
+            whitelistHandles: request.body?.whitelistHandles,
             sourceOwnerHandle: sourceType === DISTRIBUTION_SOURCE_TYPES.CHARACTER
                 ? request.user.profile.handle
                 : '',

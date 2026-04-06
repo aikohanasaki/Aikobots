@@ -9,7 +9,8 @@ import sanitize from 'sanitize-filename';
 import { sync as writeFileAtomicSync } from 'write-file-atomic';
 
 import { getConfigValue, color, setPermissionsSync, isValidUrl } from '../util.js';
-import { write } from '../character-card-parser.js';
+import { parse, write } from '../character-card-parser.js';
+import { getCharacterDistributionPolicy } from '../character-distribution-registry.js';
 import { serverDirectory } from '../server-directory.js';
 import { Jimp, JimpMime } from '../jimp.js';
 import { DEFAULT_AVATAR_PATH } from '../constants.js';
@@ -146,6 +147,30 @@ async function seedContentForUser(contentIndex, directories, forceCategories) {
 
         const basePath = path.parse(contentItem.filename).base;
         const targetPath = path.join(contentTarget, basePath);
+
+        if (contentItem.type === CONTENT_TYPES.CHARACTER) {
+            try {
+                const rawCard = await parse(contentPath, 'png');
+                const card = JSON.parse(rawCard);
+                const ownerHandle = String(card?.data?.extensions?.aikobots?.owner_handle || '').trim();
+                const targetUserHandle = path.basename(directories.root);
+
+                if (ownerHandle && targetUserHandle) {
+                    const policy = await getCharacterDistributionPolicy({
+                        ownerHandle,
+                        publishedFilename: path.parse(contentItem.filename).name,
+                    });
+
+                    if (policy.blacklistHandles.includes(targetUserHandle)) {
+                        console.info(`Skipping blacklisted character ${contentItem.filename} for ${targetUserHandle}`);
+                        continue;
+                    }
+                }
+            } catch (error) {
+                console.warn(`Failed to evaluate distribution policy for ${contentItem.filename}`, error);
+            }
+        }
+
         contentLog.push(contentItem.filename);
 
         if (fs.existsSync(targetPath)) {

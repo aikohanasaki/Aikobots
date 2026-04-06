@@ -188,6 +188,8 @@ router.post('/review', requireAdminMiddleware, async (request, response) => {
         }
 
         const publishMode = String(request.body?.publishMode || '').trim();
+        const applyBlacklist = typeof request.body?.applyBlacklist === 'boolean' ? request.body.applyBlacklist : undefined;
+        const persistWhitelist = typeof request.body?.persistWhitelist === 'boolean' ? request.body.persistWhitelist : undefined;
         if (![PUBLISH_MODES.SELECTED, PUBLISH_MODES.GLOBAL].includes(publishMode)) {
             return response.status(400).json({ error: 'Invalid publish mode.' });
         }
@@ -206,6 +208,10 @@ router.post('/review', requireAdminMiddleware, async (request, response) => {
             publishMode,
             targetHandles,
             actingUserHandle: request.user.profile.handle,
+            applyBlacklist,
+            blacklistHandles: request.body?.blacklistHandles,
+            persistWhitelist,
+            whitelistHandles: request.body?.whitelistHandles,
         });
 
         record.status = SUBMISSION_STATUSES.APPROVED;
@@ -217,7 +223,11 @@ router.post('/review', requireAdminMiddleware, async (request, response) => {
         record.publishedFilename = distribution.publishedFilename;
         await writeSubmissionRecord(record);
 
-        return response.json(await buildSubmissionSummary(record));
+        return response.json({
+            ...(await buildSubmissionSummary(record)),
+            skippedHandles: distribution.skippedHandles,
+            distributionPolicy: distribution.distributionPolicy,
+        });
     } catch (error) {
         console.error('Character submission review failed:', error);
         return response.status(400).json({ error: error.message || 'Character review failed.' });
