@@ -1771,6 +1771,96 @@ function buildWorldInfoPlacementRedactionMap(entries = []) {
     }, {});
 }
 
+function buildOutletRedactionPairsForResponse(sourceWorldInfo, sanitizedWorldInfo) {
+    const sourceEntries = Array.isArray(sourceWorldInfo?.activatedEntries)
+        ? sourceWorldInfo.activatedEntries
+        : [];
+    const sanitizedEntries = Array.isArray(sanitizedWorldInfo?.activatedEntries)
+        ? sanitizedWorldInfo.activatedEntries
+        : [];
+
+    /** @type {Map<string, {source: string[], sanitized: string[], hasHidden: boolean}>} */
+    const outletMap = new Map();
+
+    for (let index = 0; index < Math.max(sourceEntries.length, sanitizedEntries.length); index++) {
+        const sourceEntry = sourceEntries[index];
+        const sanitizedEntry = sanitizedEntries[index];
+        const placement = String(sourceEntry?.placement ?? sanitizedEntry?.placement ?? '').trim();
+        if (!placement.startsWith('outlet:')) {
+            continue;
+        }
+
+        const sourceStatus = sourceEntry?.status ?? sanitizedEntry?.status;
+        const sanitizedStatus = sanitizedEntry?.status ?? sourceEntry?.status;
+        if (sourceStatus !== 'admitted' || sanitizedStatus !== 'admitted') {
+            continue;
+        }
+
+        const bucket = outletMap.get(placement) || { source: [], sanitized: [], hasHidden: false };
+        const sourceText = String(sourceEntry?.content ?? sourceEntry?.displayContent ?? '').trim();
+        const sanitizedText = String(sanitizedEntry?.displayContent ?? sanitizedEntry?.content ?? '').trim();
+        const isHidden = Boolean(sanitizedEntry?.hidden);
+
+        if (sourceText) {
+            bucket.source.push(sourceText);
+        }
+        if (sanitizedText) {
+            bucket.sanitized.push(sanitizedText);
+        }
+        if (isHidden) {
+            bucket.hasHidden = true;
+        }
+
+        outletMap.set(placement, bucket);
+    }
+
+    return Array.from(outletMap.values())
+        .filter(bucket => bucket.hasHidden && bucket.source.length > 0 && bucket.sanitized.length > 0)
+        .map(bucket => ({
+            originalText: bucket.source.join('\n'),
+            redactedText: bucket.sanitized.join('\n'),
+        }))
+        .filter(pair => pair.originalText && pair.redactedText && pair.originalText !== pair.redactedText);
+}
+
+function replaceExactTextBundles(value, redactionPairs = []) {
+    if (typeof value !== 'string' || !value || !Array.isArray(redactionPairs) || !redactionPairs.length) {
+        return value;
+    }
+
+    let result = value;
+    for (const pair of redactionPairs) {
+        if (!pair?.originalText || pair.originalText === pair.redactedText) {
+            continue;
+        }
+        result = result.split(pair.originalText).join(pair.redactedText);
+    }
+
+    return result;
+}
+
+function applyOutletRedactionsToMessageContent(content, redactionPairs = []) {
+    if (typeof content === 'string') {
+        return replaceExactTextBundles(content, redactionPairs);
+    }
+
+    if (!Array.isArray(content)) {
+        return content;
+    }
+
+    return content.map(part => {
+        if (!part || typeof part !== 'object') {
+            return part;
+        }
+
+        const clonedPart = structuredClone(part);
+        if (typeof clonedPart.text === 'string') {
+            clonedPart.text = replaceExactTextBundles(clonedPart.text, redactionPairs);
+        }
+        return clonedPart;
+    });
+}
+
 function createSanitizedSerializedMessage(template, content) {
     const baseMessage = template && template.type === 'message'
         ? structuredClone(template)
@@ -1817,6 +1907,28 @@ function sanitizeMessagesStateForResponse(node, placementMap, depthPlacementQueu
     return sanitizedMessage;
 }
 
+function applyOutletRedactionsToMessagesState(node, redactionPairs = []) {
+    if (!node || typeof node !== 'object') {
+        return null;
+    }
+
+    if (node.type === 'collection') {
+        const sanitizedCollection = structuredClone(node);
+        sanitizedCollection.collection = Array.isArray(node.collection)
+            ? node.collection.map(child => applyOutletRedactionsToMessagesState(child, redactionPairs)).filter(Boolean)
+            : [];
+        return sanitizedCollection;
+    }
+
+    if (node.type !== 'message') {
+        return structuredClone(node);
+    }
+
+    const sanitizedMessage = structuredClone(node);
+    sanitizedMessage.content = applyOutletRedactionsToMessageContent(sanitizedMessage.content, redactionPairs);
+    return sanitizedMessage;
+}
+
 function buildChatFromMessagesState(node, result = []) {
     if (!node || typeof node !== 'object') {
         return result;
@@ -1855,6 +1967,7 @@ function buildChatFromMessagesState(node, result = []) {
 
 function buildRedactedChatForResponse(assembly, sanitizedWorldInfo) {
     const sourceMessagesState = assembly?.messagesState;
+    const outletRedactionPairs = buildOutletRedactionPairsForResponse(assembly?.worldInfo, sanitizedWorldInfo);
     const hasHiddenEntries = Array.isArray(sanitizedWorldInfo?.activatedEntries)
         && sanitizedWorldInfo.activatedEntries.some(entry => entry?.hidden && entry?.status === 'admitted');
 
@@ -1879,7 +1992,8 @@ function buildRedactedChatForResponse(assembly, sanitizedWorldInfo) {
             const [bDepth = 0, bRole = 0] = b.split(':').slice(1).map(Number);
             return bDepth - aDepth || aRole - bRole;
         });
-    const messagesState = sanitizeMessagesStateForResponse(sourceMessagesState, placementMap, depthPlacementQueue);
+    const wiRedactedMessagesState = sanitizeMessagesStateForResponse(sourceMessagesState, placementMap, depthPlacementQueue);
+    const messagesState = applyOutletRedactionsToMessagesState(wiRedactedMessagesState, outletRedactionPairs);
     const chat = messagesState ? buildChatFromMessagesState(messagesState, []) : null;
     return { messagesState, chat };
 }

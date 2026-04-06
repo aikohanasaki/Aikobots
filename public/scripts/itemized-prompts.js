@@ -64,7 +64,8 @@ export async function replaceItemizedPromptText(mesId, promptText) {
         itemizedPrompts = [];
     }
 
-    const itemizedPrompt = itemizedPrompts.find(x => x.mesId === mesId);
+    const itemizedPromptIndex = findLatestItemizedPromptIndexByMesId(itemizedPrompts, mesId);
+    const itemizedPrompt = itemizedPromptIndex !== -1 ? itemizedPrompts[itemizedPromptIndex] : null;
 
     if (!itemizedPrompt) {
         return;
@@ -99,6 +100,21 @@ export async function clearItemizedPrompts() {
     } catch (error) {
         console.error('Error clearing itemized prompts', error);
     }
+}
+
+function findLatestItemizedPromptIndexByMesId(prompts, mesId) {
+    const numericMesId = Number(mesId);
+    if (!Array.isArray(prompts) || !Number.isFinite(numericMesId)) {
+        return -1;
+    }
+
+    for (let index = prompts.length - 1; index >= 0; index--) {
+        if (Number(prompts[index]?.mesId) === numericMesId) {
+            return index;
+        }
+    }
+
+    return -1;
 }
 
 function toNumber(value) {
@@ -426,20 +442,25 @@ export async function itemizedParams(itemizedPrompts, thisPromptSet, incomingMes
 }
 
 export function findItemizedPromptSet(itemizedPrompts, incomingMesId) {
-    let thisPromptSet = undefined;
+    PromptArrayItemForRawPromptDisplay = undefined;
+    priorPromptArrayItemForRawPromptDisplay = undefined;
+
+    const thisPromptSet = findLatestItemizedPromptIndexByMesId(itemizedPrompts, incomingMesId);
+    if (thisPromptSet === -1) {
+        return undefined;
+    }
+
     for (let i = 0; i < itemizedPrompts.length; i++) {
         console.log(`looking for ${incomingMesId} vs ${itemizedPrompts[i].mesId}`);
-        if (itemizedPrompts[i].mesId === incomingMesId) {
-            console.log(`found matching mesID ${i}`);
-            thisPromptSet = i;
-            PromptArrayItemForRawPromptDisplay = i;
-            console.log(`wanting to raw display of ArrayItem: ${PromptArrayItemForRawPromptDisplay} which is mesID ${incomingMesId}`);
-            console.log(itemizedPrompts[thisPromptSet]);
-            break;
-        } else if (itemizedPrompts[i].rawPrompt) {
+        if (i < thisPromptSet && itemizedPrompts[i].rawPrompt) {
             priorPromptArrayItemForRawPromptDisplay = i;
         }
     }
+
+    console.log(`found matching mesID ${thisPromptSet}`);
+    PromptArrayItemForRawPromptDisplay = thisPromptSet;
+    console.log(`wanting to raw display of ArrayItem: ${PromptArrayItemForRawPromptDisplay} which is mesID ${incomingMesId}`);
+    console.log(itemizedPrompts[thisPromptSet]);
     return thisPromptSet;
 }
 
@@ -515,10 +536,11 @@ export async function promptItemize(itemizedPrompts, requestedMesId) {
     initializeWorldInfoEntryToggles(popup);
 
     const currentPromptText = getPromptText(PromptArrayItemForRawPromptDisplay);
+    const fallbackPromptText = currentPromptText.trim() ? currentPromptText : '(hidden entry)';
     const priorPromptText = priorPromptArrayItemForRawPromptDisplay !== undefined
         ? getPromptText(priorPromptArrayItemForRawPromptDisplay)
         : '';
-    const hasCurrentPromptText = Boolean(currentPromptText.trim());
+    const hasCurrentPromptText = Boolean(fallbackPromptText.trim());
     const hasPriorPromptText = Boolean(priorPromptText.trim());
 
     /** @type {HTMLElement} */
@@ -550,7 +572,7 @@ export async function promptItemize(itemizedPrompts, requestedMesId) {
     const copyPromptToClipboard = popup.dlg.querySelector('#copyPromptToClipboard');
     if (hasCurrentPromptText) {
         copyPromptToClipboard.addEventListener('pointerup', async function () {
-            await copyText(currentPromptText);
+            await copyText(fallbackPromptText);
             toastr.info(t`Copied!`);
         });
     } else {
@@ -564,7 +586,7 @@ export async function promptItemize(itemizedPrompts, requestedMesId) {
         console.log(PromptArrayItemForRawPromptDisplay);
         console.log(itemizedPrompts);
         console.log(itemizedPrompts[PromptArrayItemForRawPromptDisplay].rawPrompt);
-        const rawPrompt = currentPromptText;
+        const rawPrompt = fallbackPromptText;
 
         // Mobile needs special handholding. The side-view on the popup wouldn't work,
         // so we just show an additional popup for this.
@@ -602,7 +624,8 @@ export function initItemizedPrompts() {
         let mesIdForItemization = $(this).closest('.mes').attr('mesId');
         console.log(`looking for mesID: ${mesIdForItemization}`);
         if (itemizedPrompts.length !== undefined && itemizedPrompts.length !== 0) {
-            const itemizedPrompt = itemizedPrompts.find(x => Number(x.mesId) === Number(mesIdForItemization));
+            const itemizedPromptIndex = findLatestItemizedPromptIndexByMesId(itemizedPrompts, mesIdForItemization);
+            const itemizedPrompt = itemizedPromptIndex !== -1 ? itemizedPrompts[itemizedPromptIndex] : null;
             if (itemizedPrompt?.serverPromptAssembly && !itemizedPrompt?.serverAssemblyDebugDump?.assembly?.itemization) {
                 if (typeof globalThis.SillyTavern?.storeLastServerDispatchSnapshotToPrompt === 'function') {
                     try {
