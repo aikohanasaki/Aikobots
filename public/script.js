@@ -5009,11 +5009,6 @@ class StreamingProcessor {
     }
 
     async onStartStreaming(text) {
-        // Clear any leftover pending inspection metadata from an earlier request before creating the placeholder message.
-        consumeOpenAITimedWorldInfo();
-        consumeOpenAIPromptInspectionResponseData();
-        consumeOpenAIWorldInfoResponseData();
-
         const continueOnReasoning = !!(this.type === 'continue' && this.promptReasoning.prefixReasoning);
         if (continueOnReasoning) {
             this.reasoningHandler.initContinue(this.promptReasoning);

@@ -184,12 +184,69 @@ function setJsonObjectFormat(bodyParams, messages, jsonSchema) {
     messages.push(message);
 }
 
+function createProviderJsonResult(body, { status = 200, ok = true } = {}) {
+    return {
+        kind: 'json',
+        ok: Boolean(ok),
+        status,
+        body,
+    };
+}
+
+function createProviderStreamResult(fetchResponse) {
+    return {
+        kind: 'stream',
+        ok: Boolean(fetchResponse?.ok),
+        response: fetchResponse,
+    };
+}
+
+async function sendProviderDispatchResult(result, request, response, {
+    timedWorldInfo = null,
+    worldInfoOverflowed = false,
+    worldInfo = null,
+    promptSnapshotKey = null,
+} = {}) {
+    if (!result || typeof result !== 'object') {
+        return response.status(500).send({ error: true });
+    }
+
+    if (result.kind === 'stream') {
+        if (!result.response) {
+            return response.status(500).send({ error: true });
+        }
+
+        if (!result.ok) {
+            return forwardFetchResponse(result.response, response);
+        }
+
+        return await forwardFetchResponseWithWorldInfo(
+            result.response,
+            response,
+            request,
+            timedWorldInfo,
+            worldInfoOverflowed,
+            worldInfo,
+            promptSnapshotKey,
+        );
+    }
+
+    if (result.kind !== 'json') {
+        return response.status(500).send({ error: true });
+    }
+
+    const payload = result.ok
+        ? attachWorldInfoResponseData(result.body, request, timedWorldInfo, worldInfoOverflowed, worldInfo, promptSnapshotKey)
+        : result.body;
+
+    return response.status(result.status || 200).send(payload);
+}
+
 /**
  * Sends a request to Claude API.
  * @param {express.Request} request Express request
- * @param {express.Response} response Express response
  */
-async function sendClaudeRequest(request, response) {
+async function sendClaudeRequest(request) {
     const apiUrl = new URL(request.body.reverse_proxy || API_CLAUDE).toString();
     const apiKey = request.body.reverse_proxy ? request.body.proxy_password : readSecret(request.user.directories, SECRET_KEYS.CLAUDE);
     const divider = '-'.repeat(process.stdout.columns);
@@ -202,7 +259,7 @@ async function sendClaudeRequest(request, response) {
 
     if (!apiKey) {
         console.warn(color.red(`Claude API key is missing.\n${divider}`));
-        return response.status(400).send({ error: true });
+        return createProviderJsonResult({ error: true }, { status: 400, ok: false });
     }
 
     try {
@@ -343,13 +400,12 @@ async function sendClaudeRequest(request, response) {
         });
 
         if (request.body.stream) {
-            // Pipe remote SSE stream to Express response
-            forwardFetchResponse(generateResponse, response);
+            return createProviderStreamResult(generateResponse);
         } else {
             if (!generateResponse.ok) {
                 const generateResponseText = await generateResponse.text();
                 console.warn(color.red(`Claude API returned error: ${generateResponse.status} ${generateResponse.statusText}\n${generateResponseText}\n${divider}`));
-                return response.status(500).send({ error: true });
+                return createProviderJsonResult({ error: true }, { status: 500, ok: false });
             }
 
             /** @type {any} */
@@ -359,22 +415,19 @@ async function sendClaudeRequest(request, response) {
 
             // Wrap it back to OAI format + save the original content
             const reply = { choices: [{ 'message': { 'content': responseText } }], content: generateResponseJson.content };
-            return response.send(reply);
+            return createProviderJsonResult(reply);
         }
     } catch (error) {
         console.error(color.red(`Error communicating with Claude: ${error}\n${divider}`));
-        if (!response.headersSent) {
-            return response.status(500).send({ error: true });
-        }
+        return createProviderJsonResult({ error: true }, { status: 500, ok: false });
     }
 }
 
 /**
  * Sends a request to Google AI API.
  * @param {express.Request} request Express request
- * @param {express.Response} response Express response
  */
-async function sendMakerSuiteRequest(request, response) {
+async function sendMakerSuiteRequest(request) {
     const useVertexAi = request.body.chat_completion_source === CHAT_COMPLETION_SOURCES.VERTEXAI;
     const apiName = useVertexAi ? 'Google Vertex AI' : 'Google AI Studio';
     let apiUrl;
@@ -393,7 +446,7 @@ async function sendMakerSuiteRequest(request, response) {
             console.debug(`Using Vertex AI authentication type: ${authType}`);
         } catch (error) {
             console.warn(`${apiName} authentication failed: ${error.message}`);
-            return response.status(400).send({ error: true, message: error.message });
+            return createProviderJsonResult({ error: true, message: error.message }, { status: 400, ok: false });
         }
     } else {
         apiUrl = new URL(request.body.reverse_proxy || API_MAKERSUITE);
@@ -401,7 +454,7 @@ async function sendMakerSuiteRequest(request, response) {
 
         if (!request.body.reverse_proxy && !apiKey) {
             console.warn(`${apiName} API key is missing.`);
-            return response.status(400).send({ error: true });
+            return createProviderJsonResult({ error: true }, { status: 400, ok: false });
         }
 
         authHeader = `Bearer ${apiKey}`;
@@ -558,7 +611,7 @@ async function sendMakerSuiteRequest(request, response) {
                 const serviceAccountJson = readSecret(request.user.directories, SECRET_KEYS.VERTEXAI_SERVICE_ACCOUNT);
                 if (!serviceAccountJson) {
                     console.warn('Vertex AI Service Account JSON is missing.');
-                    return response.status(400).send({ error: true });
+                    return createProviderJsonResult({ error: true }, { status: 400, ok: false });
                 }
 
                 let projectId;
@@ -567,7 +620,7 @@ async function sendMakerSuiteRequest(request, response) {
                     projectId = getProjectIdFromServiceAccount(serviceAccount);
                 } catch (error) {
                     console.error('Failed to extract project ID from Service Account JSON:', error);
-                    return response.status(400).send({ error: true });
+                    return createProviderJsonResult({ error: true }, { status: 400, ok: false });
                 }
                 const region = request.body.vertexai_region || 'us-central1';
                 // Handle global region differently - no region prefix in hostname
@@ -594,21 +647,13 @@ async function sendMakerSuiteRequest(request, response) {
         });
 
         if (stream) {
-            try {
-                // Pipe remote SSE stream to Express response
-                forwardFetchResponse(generateResponse, response);
-            } catch (error) {
-                console.error('Error forwarding streaming response:', error);
-                if (!response.headersSent) {
-                    return response.status(500).send({ error: true });
-                }
-            }
+            return createProviderStreamResult(generateResponse);
         } else {
             if (!generateResponse.ok) {
                 const errorText = await generateResponse.text();
                 console.warn(`${apiName} API returned error: ${generateResponse.status} ${generateResponse.statusText} ${errorText}`);
                 const errorJson = tryParse(errorText) ?? { error: true };
-                return response.status(500).send(errorJson);
+                return createProviderJsonResult(errorJson, { status: 500, ok: false });
             }
 
             /** @type {any} */
@@ -621,7 +666,7 @@ async function sendMakerSuiteRequest(request, response) {
                 if (generateResponseJson?.promptFeedback?.blockReason) {
                     message += `\nPrompt was blocked due to : ${generateResponseJson.promptFeedback.blockReason}`;
                 }
-                return response.send({ error: { message } });
+                return createProviderJsonResult({ error: { message } }, { ok: false });
             }
 
             const responseContent = candidates[0].content ?? candidates[0].output;
@@ -633,33 +678,30 @@ async function sendMakerSuiteRequest(request, response) {
             if (!responseText && !functionCall && !inlineData) {
                 let message = `${apiName} Candidate text empty`;
                 console.warn(message, generateResponseJson);
-                return response.send({ error: { message } });
+                return createProviderJsonResult({ error: { message } }, { ok: false });
             }
 
             // Wrap it back to OAI format
             const reply = { choices: [{ 'message': { 'content': responseText } }], responseContent };
-            return response.send(reply);
+            return createProviderJsonResult(reply);
         }
     } catch (error) {
         console.error(`Error communicating with ${apiName} API:`, error);
-        if (!response.headersSent) {
-            return response.status(500).send({ error: true });
-        }
+        return createProviderJsonResult({ error: true }, { status: 500, ok: false });
     }
 }
 
 /**
  * Sends a request to AI21 API.
  * @param {express.Request} request Express request
- * @param {express.Response} response Express response
  */
-async function sendAI21Request(request, response) {
-    if (!request.body) return response.sendStatus(400);
+async function sendAI21Request(request) {
+    if (!request.body) return createProviderJsonResult({ error: true }, { status: 400, ok: false });
 
     const apiKey = readSecret(request.user.directories, SECRET_KEYS.AI21);
     if (!apiKey) {
         console.warn('AI21 API key is missing.');
-        return response.status(400).send({ error: true });
+        return createProviderJsonResult({ error: true }, { status: 400, ok: false });
     }
 
     const bodyParams = {};
@@ -707,40 +749,35 @@ async function sendAI21Request(request, response) {
     try {
         const generateResponse = await fetch(API_AI21 + '/chat/completions', options);
         if (request.body.stream) {
-            forwardFetchResponse(generateResponse, response);
+            return createProviderStreamResult(generateResponse);
         } else {
             if (!generateResponse.ok) {
                 const errorText = await generateResponse.text();
                 console.warn(`AI21 API returned error: ${generateResponse.status} ${generateResponse.statusText} ${errorText}`);
                 const errorJson = tryParse(errorText) ?? { error: true };
-                return response.status(500).send(errorJson);
+                return createProviderJsonResult(errorJson, { status: 500, ok: false });
             }
             const generateResponseJson = await generateResponse.json();
             console.debug('AI21 response:', generateResponseJson);
-            return response.send(generateResponseJson);
+            return createProviderJsonResult(generateResponseJson);
         }
     } catch (error) {
         console.error('Error communicating with AI21 API: ', error);
-        if (!response.headersSent) {
-            response.send({ error: true });
-        } else {
-            response.end();
-        }
+        return createProviderJsonResult({ error: true }, { status: 500, ok: false });
     }
 }
 
 /**
  * Sends a request to MistralAI API.
  * @param {express.Request} request Express request
- * @param {express.Response} response Express response
  */
-async function sendMistralAIRequest(request, response) {
+async function sendMistralAIRequest(request) {
     const apiUrl = new URL(request.body.reverse_proxy || API_MISTRAL).toString();
     const apiKey = request.body.reverse_proxy ? request.body.proxy_password : readSecret(request.user.directories, SECRET_KEYS.MISTRALAI);
 
     if (!apiKey) {
         console.warn('MistralAI API key is missing.');
-        return response.status(400).send({ error: true });
+        return createProviderJsonResult({ error: true }, { status: 400, ok: false });
     }
 
     try {
@@ -797,34 +834,29 @@ async function sendMistralAIRequest(request, response) {
 
         const generateResponse = await fetch(apiUrl + '/chat/completions', config);
         if (request.body.stream) {
-            forwardFetchResponse(generateResponse, response);
+            return createProviderStreamResult(generateResponse);
         } else {
             if (!generateResponse.ok) {
                 const errorText = await generateResponse.text();
                 console.warn(`MistralAI API returned error: ${generateResponse.status} ${generateResponse.statusText} ${errorText}`);
                 const errorJson = tryParse(errorText) ?? { error: true };
-                return response.status(500).send(errorJson);
+                return createProviderJsonResult(errorJson, { status: 500, ok: false });
             }
             const generateResponseJson = await generateResponse.json();
             console.debug('MistralAI response:', generateResponseJson);
-            return response.send(generateResponseJson);
+            return createProviderJsonResult(generateResponseJson);
         }
     } catch (error) {
         console.error('Error communicating with MistralAI API: ', error);
-        if (!response.headersSent) {
-            response.send({ error: true });
-        } else {
-            response.end();
-        }
+        return createProviderJsonResult({ error: true }, { status: 500, ok: false });
     }
 }
 
 /**
  * Sends a request to Cohere API.
  * @param {express.Request} request Express request
- * @param {express.Response} response Express response
  */
-async function sendCohereRequest(request, response) {
+async function sendCohereRequest(request) {
     const apiKey = readSecret(request.user.directories, SECRET_KEYS.COHERE);
     const controller = new AbortController();
     request.socket.removeAllListeners('close');
@@ -834,7 +866,7 @@ async function sendCohereRequest(request, response) {
 
     if (!apiKey) {
         console.warn('Cohere API key is missing.');
-        return response.status(400).send({ error: true });
+        return createProviderJsonResult({ error: true }, { status: 400, ok: false });
     }
 
     try {
@@ -896,41 +928,36 @@ async function sendCohereRequest(request, response) {
 
         if (request.body.stream) {
             const stream = await fetch(apiUrl, config);
-            forwardFetchResponse(stream, response);
+            return createProviderStreamResult(stream);
         } else {
             const generateResponse = await fetch(apiUrl, config);
             if (!generateResponse.ok) {
                 const errorText = await generateResponse.text();
                 console.warn(`Cohere API returned error: ${generateResponse.status} ${generateResponse.statusText} ${errorText}`);
                 const errorJson = tryParse(errorText) ?? { error: true };
-                return response.status(500).send(errorJson);
+                return createProviderJsonResult(errorJson, { status: 500, ok: false });
             }
             const generateResponseJson = await generateResponse.json();
             console.debug('Cohere response:', generateResponseJson);
-            return response.send(generateResponseJson);
+            return createProviderJsonResult(generateResponseJson);
         }
     } catch (error) {
         console.error('Error communicating with Cohere API: ', error);
-        if (!response.headersSent) {
-            response.send({ error: true });
-        } else {
-            response.end();
-        }
+        return createProviderJsonResult({ error: true }, { status: 500, ok: false });
     }
 }
 
 /**
  * Sends a request to DeepSeek API.
  * @param {express.Request} request Express request
- * @param {express.Response} response Express response
  */
-async function sendDeepSeekRequest(request, response) {
+async function sendDeepSeekRequest(request) {
     const apiUrl = new URL(request.body.reverse_proxy || API_DEEPSEEK).toString();
     const apiKey = request.body.reverse_proxy ? request.body.proxy_password : readSecret(request.user.directories, SECRET_KEYS.DEEPSEEK);
 
     if (!apiKey && !request.body.reverse_proxy) {
         console.warn('DeepSeek API key is missing.');
-        return response.status(400).send({ error: true });
+        return createProviderJsonResult({ error: true }, { status: 400, ok: false });
     }
 
     const controller = new AbortController();
@@ -1003,40 +1030,35 @@ async function sendDeepSeekRequest(request, response) {
         const generateResponse = await fetch(apiUrl + '/chat/completions', config);
 
         if (request.body.stream) {
-            forwardFetchResponse(generateResponse, response);
+            return createProviderStreamResult(generateResponse);
         } else {
             if (!generateResponse.ok) {
                 const errorText = await generateResponse.text();
                 console.warn(`DeepSeek API returned error: ${generateResponse.status} ${generateResponse.statusText} ${errorText}`);
                 const errorJson = tryParse(errorText) ?? { error: true };
-                return response.status(500).send(errorJson);
+                return createProviderJsonResult(errorJson, { status: 500, ok: false });
             }
             const generateResponseJson = await generateResponse.json();
             console.debug('DeepSeek response:', generateResponseJson);
-            return response.send(generateResponseJson);
+            return createProviderJsonResult(generateResponseJson);
         }
     } catch (error) {
         console.error('Error communicating with DeepSeek API: ', error);
-        if (!response.headersSent) {
-            response.send({ error: true });
-        } else {
-            response.end();
-        }
+        return createProviderJsonResult({ error: true }, { status: 500, ok: false });
     }
 }
 
 /**
  * Sends a request to XAI API.
  * @param {express.Request} request Express request
- * @param {express.Response} response Express response
  */
-async function sendXaiRequest(request, response) {
+async function sendXaiRequest(request) {
     const apiUrl = new URL(request.body.reverse_proxy || API_XAI).toString();
     const apiKey = request.body.reverse_proxy ? request.body.proxy_password : readSecret(request.user.directories, SECRET_KEYS.XAI);
 
     if (!apiKey && !request.body.reverse_proxy) {
         console.warn('xAI API key is missing.');
-        return response.status(400).send({ error: true });
+        return createProviderJsonResult({ error: true }, { status: 400, ok: false });
     }
 
     const controller = new AbortController();
@@ -1120,40 +1142,35 @@ async function sendXaiRequest(request, response) {
         const generateResponse = await fetch(apiUrl + '/chat/completions', config);
 
         if (request.body.stream) {
-            forwardFetchResponse(generateResponse, response);
+            return createProviderStreamResult(generateResponse);
         } else {
             if (!generateResponse.ok) {
                 const errorText = await generateResponse.text();
                 console.warn(`xAI API returned error: ${generateResponse.status} ${generateResponse.statusText} ${errorText}`);
                 const errorJson = tryParse(errorText) ?? { error: true };
-                return response.status(500).send(errorJson);
+                return createProviderJsonResult(errorJson, { status: 500, ok: false });
             }
             const generateResponseJson = await generateResponse.json();
             console.debug('xAI response:', generateResponseJson);
-            return response.send(generateResponseJson);
+            return createProviderJsonResult(generateResponseJson);
         }
     } catch (error) {
         console.error('Error communicating with xAI API: ', error);
-        if (!response.headersSent) {
-            response.send({ error: true });
-        } else {
-            response.end();
-        }
+        return createProviderJsonResult({ error: true }, { status: 500, ok: false });
     }
 }
 
 /**
  * Sends a request to AI/ML API.
  * @param {express.Request} request Express request
- * @param {express.Response} response Express response
  */
-async function sendAimlapiRequest(request, response) {
+async function sendAimlapiRequest(request) {
     const apiUrl = API_AIMLAPI;
     const apiKey = readSecret(request.user.directories, SECRET_KEYS.AIMLAPI);
 
     if (!apiKey) {
         console.warn('AI/ML API key is missing.');
-        return response.status(400).send({ error: true });
+        return createProviderJsonResult({ error: true }, { status: 400, ok: false });
     }
 
     const controller = new AbortController();
@@ -1225,40 +1242,35 @@ async function sendAimlapiRequest(request, response) {
         const generateResponse = await fetch(apiUrl + '/chat/completions', config);
 
         if (request.body.stream) {
-            forwardFetchResponse(generateResponse, response);
+            return createProviderStreamResult(generateResponse);
         } else {
             if (!generateResponse.ok) {
                 const errorText = await generateResponse.text();
                 console.warn(`AI/ML API returned error: ${generateResponse.status} ${generateResponse.statusText} ${errorText}`);
                 const errorJson = tryParse(errorText) ?? { error: true };
-                return response.status(500).send(errorJson);
+                return createProviderJsonResult(errorJson, { status: 500, ok: false });
             }
             const generateResponseJson = await generateResponse.json();
             console.debug('AI/ML API response:', generateResponseJson);
-            return response.send(generateResponseJson);
+            return createProviderJsonResult(generateResponseJson);
         }
     } catch (error) {
         console.error('Error communicating with AI/ML API: ', error);
-        if (!response.headersSent) {
-            response.send({ error: true });
-        } else {
-            response.end();
-        }
+        return createProviderJsonResult({ error: true }, { status: 500, ok: false });
     }
 }
 
 /**
  * Sends a request to Electron Hub.
  * @param {express.Request} request Express request
- * @param {express.Response} response Express response
  */
-async function sendElectronHubRequest(request, response) {
+async function sendElectronHubRequest(request) {
     const apiUrl = API_ELECTRONHUB;
     const apiKey = readSecret(request.user.directories, SECRET_KEYS.ELECTRONHUB);
 
     if (!apiKey) {
         console.warn('Electron Hub key is missing.');
-        return response.status(400).send({ error: true });
+        return createProviderJsonResult({ error: true }, { status: 400, ok: false });
     }
 
     const controller = new AbortController();
@@ -1325,46 +1337,41 @@ async function sendElectronHubRequest(request, response) {
         const generateResponse = await fetch(apiUrl + '/chat/completions', config);
 
         if (request.body.stream) {
-            forwardFetchResponse(generateResponse, response);
+            return createProviderStreamResult(generateResponse);
         } else {
             if (!generateResponse.ok) {
                 const errorText = await generateResponse.text();
                 console.warn('Electron Hub returned error: ', errorText);
                 const errorJson = tryParse(errorText) ?? { error: true };
-                return response.status(500).send(errorJson);
+                return createProviderJsonResult(errorJson, { status: 500, ok: false });
             }
             const generateResponseJson = await generateResponse.json();
             console.debug('Electron Hub response:', generateResponseJson);
-            return response.send(generateResponseJson);
+            return createProviderJsonResult(generateResponseJson);
         }
     }
     catch (error) {
         console.error('Error communicating with Electron Hub: ', error);
-        if (!response.headersSent) {
-            response.send({ error: true });
-        } else {
-            response.end();
-        }
+        return createProviderJsonResult({ error: true }, { status: 500, ok: false });
     }
 }
 
 /**
  * Sends a chat completion request to Azure OpenAI.
  * @param {express.Request} request Express request object (contains request.body with all generate_data)
- * @param {express.Response} response Express response object
  */
-async function sendAzureOpenAIRequest(request, response) {
+async function sendAzureOpenAIRequest(request) {
     // 1. GATHER & VALIDATE SETTINGS
     const { azure_base_url, azure_deployment_name, azure_api_version } = request.body;
     const apiKey = typeof request.body.azure_api_key === 'string'
         ? request.body.azure_api_key
         : readSecret(request.user.directories, SECRET_KEYS.AZURE_OPENAI);
     if (!azure_base_url || !azure_deployment_name || !azure_api_version || !apiKey) {
-        return response.status(400).send({
+        return createProviderJsonResult({
             error: {
                 message: 'Azure OpenAI configuration is incomplete. Please provide Base URL, Deployment Name, API Version, and API Key in the connection settings.',
             },
-        });
+        }, { status: 400, ok: false });
     }
 
     // 2. PREPARE THE REQUEST
@@ -1423,24 +1430,24 @@ async function sendAzureOpenAIRequest(request, response) {
         const fetchResponse = await fetch(endpointUrl, config);
 
         if (request.body.stream) {
-            return forwardFetchResponse(fetchResponse, response);
+            return createProviderStreamResult(fetchResponse);
         }
 
         if (fetchResponse.ok) {
             /** @type {any} */
             const json = await fetchResponse.json();
             console.debug('Azure OpenAI response:', json);
-            return response.send(json);
+            return createProviderJsonResult(json);
         }
 
         const text = await fetchResponse.text();
         const data = tryParse(text) || { error: { message: fetchResponse.statusText || 'Unknown error occurred' } };
-        return response.status(500).send(data);
+        return createProviderJsonResult(data, { status: 500, ok: false });
     } catch (error) {
         const message = error.name === 'AbortError'
             ? 'Request was aborted by the client.'
             : (error.message || 'An unknown network error occurred.');
-        return response.status(500).send({ error: { message, ...error } });
+        return createProviderJsonResult({ error: { message, ...error } }, { status: 500, ok: false });
     }
 }
 
@@ -2662,18 +2669,48 @@ export async function handleChatCompletionsGenerate(request, response) {
 
     rewriteSystemMessagesForO1Model(request.body.model, request.body.chat_completion_source, request.body.messages);
 
+    let providerResult = null;
     switch (request.body.chat_completion_source) {
-        case CHAT_COMPLETION_SOURCES.CLAUDE: return sendClaudeRequest(request, response);
-        case CHAT_COMPLETION_SOURCES.AI21: return sendAI21Request(request, response);
-        case CHAT_COMPLETION_SOURCES.MAKERSUITE: return sendMakerSuiteRequest(request, response);
-        case CHAT_COMPLETION_SOURCES.VERTEXAI: return sendMakerSuiteRequest(request, response);
-        case CHAT_COMPLETION_SOURCES.MISTRALAI: return sendMistralAIRequest(request, response);
-        case CHAT_COMPLETION_SOURCES.COHERE: return sendCohereRequest(request, response);
-        case CHAT_COMPLETION_SOURCES.DEEPSEEK: return sendDeepSeekRequest(request, response);
-        case CHAT_COMPLETION_SOURCES.AIMLAPI: return sendAimlapiRequest(request, response);
-        case CHAT_COMPLETION_SOURCES.XAI: return sendXaiRequest(request, response);
-        case CHAT_COMPLETION_SOURCES.ELECTRONHUB: return sendElectronHubRequest(request, response);
-        case CHAT_COMPLETION_SOURCES.AZURE_OPENAI: return sendAzureOpenAIRequest(request, response);
+        case CHAT_COMPLETION_SOURCES.CLAUDE:
+            providerResult = await sendClaudeRequest(request);
+            break;
+        case CHAT_COMPLETION_SOURCES.AI21:
+            providerResult = await sendAI21Request(request);
+            break;
+        case CHAT_COMPLETION_SOURCES.MAKERSUITE:
+        case CHAT_COMPLETION_SOURCES.VERTEXAI:
+            providerResult = await sendMakerSuiteRequest(request);
+            break;
+        case CHAT_COMPLETION_SOURCES.MISTRALAI:
+            providerResult = await sendMistralAIRequest(request);
+            break;
+        case CHAT_COMPLETION_SOURCES.COHERE:
+            providerResult = await sendCohereRequest(request);
+            break;
+        case CHAT_COMPLETION_SOURCES.DEEPSEEK:
+            providerResult = await sendDeepSeekRequest(request);
+            break;
+        case CHAT_COMPLETION_SOURCES.AIMLAPI:
+            providerResult = await sendAimlapiRequest(request);
+            break;
+        case CHAT_COMPLETION_SOURCES.XAI:
+            providerResult = await sendXaiRequest(request);
+            break;
+        case CHAT_COMPLETION_SOURCES.ELECTRONHUB:
+            providerResult = await sendElectronHubRequest(request);
+            break;
+        case CHAT_COMPLETION_SOURCES.AZURE_OPENAI:
+            providerResult = await sendAzureOpenAIRequest(request);
+            break;
+    }
+
+    if (providerResult) {
+        return await sendProviderDispatchResult(providerResult, request, response, {
+            timedWorldInfo: assembledTimedWorldInfo,
+            worldInfoOverflowed: assembledWorldInfoOverflowed,
+            worldInfo: assembledPromptSnapshot?.worldInfo || null,
+            promptSnapshotKey: promptInspectionInfo?.key || null,
+        });
     }
 
     const requestedTextCompletion = Boolean(request.body.model && TEXT_COMPLETION_MODELS.includes(request.body.model)) || typeof request.body.messages === 'string';
@@ -3020,37 +3057,36 @@ export async function handleChatCompletionsGenerate(request, response) {
 
     console.debug('Chat Completion request:', requestBody);
 
-    makeRequest(config, response, request);
+    providerResult = await makeRequest(config, request);
+    return await sendProviderDispatchResult(providerResult, request, response, {
+        timedWorldInfo: assembledTimedWorldInfo,
+        worldInfoOverflowed: assembledWorldInfoOverflowed,
+        worldInfo: assembledPromptSnapshot?.worldInfo || null,
+        promptSnapshotKey: promptInspectionInfo?.key || null,
+    });
 
     /**
      * Makes a fetch request to the OpenAI API endpoint.
      * @param {import('node-fetch').RequestInit} config Fetch config
-     * @param {express.Response} response Express response
      * @param {express.Request} request Express request
      */
-    async function makeRequest(config, response, request) {
+    async function makeRequest(config, request) {
         try {
             controller.signal.throwIfAborted();
             const fetchResponse = await fetch(endpointUrl, config);
 
             if (request.body.stream) {
                 console.info('Streaming request in progress');
-                if (!fetchResponse.ok) {
-                    forwardFetchResponse(fetchResponse, response);
-                    return;
-                }
-                await forwardFetchResponseWithWorldInfo(fetchResponse, response, request, assembledTimedWorldInfo, assembledWorldInfoOverflowed, assembledPromptSnapshot?.worldInfo || null, promptInspectionInfo?.key || null);
-                return;
+                return createProviderStreamResult(fetchResponse);
             }
 
             if (fetchResponse.ok) {
                 /** @type {any} */
-                let json = await fetchResponse.json();
-                json = attachWorldInfoResponseData(json, request, assembledTimedWorldInfo, assembledWorldInfoOverflowed, assembledPromptSnapshot?.worldInfo || null, promptInspectionInfo?.key || null);
-                response.send(json);
+                const json = await fetchResponse.json();
                 console.debug('Chat Completion response:', json);
+                return createProviderJsonResult(json);
             } else {
-                await handleErrorResponse(fetchResponse);
+                return await handleErrorResponse(fetchResponse);
             }
         } catch (error) {
             console.error('Generation failed', error);
@@ -3058,11 +3094,7 @@ export async function handleChatCompletionsGenerate(request, response) {
                 ? `Connection refused: ${error.message}`
                 : error.message || 'Unknown error occurred';
 
-            if (!response.headersSent) {
-                response.status(502).send({ error: { message, ...error } });
-            } else {
-                response.end();
-            }
+            return createProviderJsonResult({ error: { message, ...error } }, { status: 502, ok: false });
         }
     }
 
@@ -3077,13 +3109,7 @@ export async function handleChatCompletionsGenerate(request, response) {
         const quota_error = errorResponse.status === 429 && errorData?.error?.type === 'insufficient_quota';
         console.error('Chat completion request error: ', message, responseText);
 
-        if (!response.headersSent) {
-            response.send({ error: { message }, quota_error: quota_error });
-        } else if (!response.writableEnded) {
-            response.write(responseText);
-        } else {
-            response.end();
-        }
+        return createProviderJsonResult({ error: { message }, quota_error: quota_error }, { ok: false });
     }
     })().catch((error) => {
         console.error('Chat completion generation failed', error);
