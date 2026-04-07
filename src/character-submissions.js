@@ -8,7 +8,7 @@ import writeFileAtomic from 'write-file-atomic';
 
 import { parse, write } from './character-card-parser.js';
 import { getCharacterDistributionPolicy, setCharacterDistributionPolicy } from './character-distribution-registry.js';
-import { validateSubmittedCharacterLinkedLorebooks } from './character-linked-lorebooks.js';
+import { getCharacterOwnerHandles, getCharacterSharingMode, validateSubmittedCharacterLinkedLorebooks } from './character-linked-lorebooks.js';
 import { invalidateThumbnail } from './endpoints/thumbnails.js';
 import { getAllEnabledUsers, getUserDirectories } from './users.js';
 import { serverDirectory } from './server-directory.js';
@@ -63,6 +63,7 @@ function getSubmissionsRoot() {
  * @property {string} id
  * @property {'pending'|'approved'|'rejected'} status
  * @property {string} ownerHandle
+ * @property {string[]} [ownerHandles]
  * @property {number} submittedAt
  * @property {string} submittedFilename
  * @property {number | null} reviewedAt
@@ -281,6 +282,15 @@ function getSubmissionOwnerHandle(card) {
 }
 
 /**
+ * Gets the ownership metadata stored on a card.
+ * @param {object} card
+ * @returns {string[]}
+ */
+function getSubmissionOwnerHandles(card) {
+    return getCharacterOwnerHandles(card);
+}
+
+/**
  * Writes/updates the managed content index for globally-published characters.
  * @param {string} relativeFilename
  * @returns {Promise<void>}
@@ -479,8 +489,9 @@ export async function createCharacterSubmission({ uploadPath, user, ownerHandle,
     const submissionId = buildSubmissionId({ ownerHandle, submittedFilename });
     const { basePath, cardPath } = getSubmissionPaths(submissionId);
     const existingOwnerHandle = getSubmissionOwnerHandle(card);
+    const existingOwnerHandles = getSubmissionOwnerHandles(card);
 
-    if (existingOwnerHandle && existingOwnerHandle !== ownerHandle) {
+    if (existingOwnerHandles.length > 0 && !existingOwnerHandles.includes(ownerHandle)) {
         throw new Error(`This character is owned by ${existingOwnerHandle} and cannot be submitted by ${ownerHandle}.`);
     }
 
@@ -496,7 +507,8 @@ export async function createCharacterSubmission({ uploadPath, user, ownerHandle,
     const record = {
         id: submissionId,
         status: SUBMISSION_STATUSES.PENDING,
-        ownerHandle,
+        ownerHandle: existingOwnerHandle || ownerHandle,
+        ownerHandles: existingOwnerHandles.length > 0 ? existingOwnerHandles : [ownerHandle],
         submittedAt: Date.now(),
         submittedFilename,
         reviewedAt: null,
@@ -519,12 +531,13 @@ export async function createCharacterSubmission({ uploadPath, user, ownerHandle,
 export async function persistCharacterSubmissionOwner({ filePath, ownerHandle }) {
     const { rawBuffer, card } = await readCharacterCardFile(filePath);
     const existingOwnerHandle = getSubmissionOwnerHandle(card);
+    const existingOwnerHandles = getSubmissionOwnerHandles(card);
 
-    if (existingOwnerHandle && existingOwnerHandle !== ownerHandle) {
+    if (existingOwnerHandles.length > 0 && !existingOwnerHandles.includes(ownerHandle)) {
         throw new Error(`This character is owned by ${existingOwnerHandle} and cannot be submitted by ${ownerHandle}.`);
     }
 
-    if (existingOwnerHandle === ownerHandle) {
+    if (existingOwnerHandles.includes(ownerHandle) || existingOwnerHandle === ownerHandle) {
         return;
     }
 
@@ -563,6 +576,7 @@ export async function buildSubmissionSummary(record) {
             creatorNotes: String(_.get(card, 'data.creator_notes', _.get(card, 'creatorcomment', '')) || ''),
             tags: _.get(card, 'data.tags', _.get(card, 'tags', [])) || [],
             ownerMetadata: String(_.get(card, 'data.extensions.aikobots.owner_handle', '')),
+            ownerHandles: getSubmissionOwnerHandles(card),
             hasStoredCard: true,
         };
     } catch (error) {
@@ -574,6 +588,7 @@ export async function buildSubmissionSummary(record) {
             creatorNotes: '',
             tags: [],
             ownerMetadata: '',
+            ownerHandles: Array.isArray(record.ownerHandles) ? record.ownerHandles : [record.ownerHandle].filter(Boolean),
             hasStoredCard: true,
         };
     }
@@ -627,7 +642,10 @@ export async function listSubmissionRecords() {
  * @returns {boolean}
  */
 export function canAccessSubmission(record, user) {
-    return Boolean(user.admin) || record.ownerHandle === user.handle;
+    const ownerHandles = [...new Set((Array.isArray(record.ownerHandles) ? record.ownerHandles : [record.ownerHandle])
+        .map(handle => String(handle || '').trim())
+        .filter(Boolean))];
+    return Boolean(user.admin) || ownerHandles.includes(user.handle);
 }
 
 /**
@@ -655,8 +673,10 @@ export async function distributeCharacterFile({
     const outputFilename = `${sourceName}.png`;
     const distributionPayload = await buildDistributionPayload(sourcePath, { sourceOwnerHandle });
     const resolvedOwnerHandle = getSubmissionOwnerHandle(distributionPayload.card) || String(sourceOwnerHandle || actingUserHandle || '').trim();
+    const resolvedCharacterKey = getCharacterSharingMode(distributionPayload.card) === 'shared' ? sourceName : '';
     let distributionPolicy = await getCharacterDistributionPolicy({
         ownerHandle: resolvedOwnerHandle,
+        characterKey: resolvedCharacterKey,
         publishedFilename: sourceName,
     });
 
@@ -672,6 +692,7 @@ export async function distributeCharacterFile({
         if (typeof applyBlacklist === 'boolean') {
             distributionPolicy = await setCharacterDistributionPolicy({
                 ownerHandle: resolvedOwnerHandle,
+                characterKey: resolvedCharacterKey,
                 publishedFilename: sourceName,
                 blacklistHandles: applyBlacklist ? nextBlacklistHandles : [],
                 updatedBy: actingUserHandle,
@@ -690,6 +711,7 @@ export async function distributeCharacterFile({
         if (typeof persistWhitelist === 'boolean') {
             distributionPolicy = await setCharacterDistributionPolicy({
                 ownerHandle: resolvedOwnerHandle,
+                characterKey: resolvedCharacterKey,
                 publishedFilename: sourceName,
                 whitelistHandles: persistWhitelist
                     ? (Array.isArray(whitelistHandles) && whitelistHandles.length > 0

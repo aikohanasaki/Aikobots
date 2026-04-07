@@ -153,11 +153,15 @@ async function seedContentForUser(contentIndex, directories, forceCategories) {
                 const rawCard = await parse(contentPath, 'png');
                 const card = JSON.parse(rawCard);
                 const ownerHandle = String(card?.data?.extensions?.aikobots?.owner_handle || '').trim();
+                const characterKey = card?.data?.extensions?.aikobots?.sharing_mode === 'shared'
+                    ? path.parse(contentItem.filename).name
+                    : '';
                 const targetUserHandle = path.basename(directories.root);
 
                 if (ownerHandle && targetUserHandle) {
                     const policy = await getCharacterDistributionPolicy({
                         ownerHandle,
+                        characterKey,
                         publishedFilename: path.parse(contentItem.filename).name,
                     });
 

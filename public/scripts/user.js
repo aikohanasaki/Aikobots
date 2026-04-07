@@ -268,10 +268,11 @@ async function getCharacterSubmissions(status = '') {
     }
 }
 
-function createEmptyCharacterDistributionPolicy(ownerHandle = '', publishedFilename = '') {
+function createEmptyCharacterDistributionPolicy(ownerHandle = '', publishedFilename = '', characterKey = '') {
     return {
         key: '',
         ownerHandle: String(ownerHandle || '').trim(),
+        characterKey: String(characterKey || '').trim(),
         publishedFilename: String(publishedFilename || '').trim().replace(/\.png$/i, ''),
         blacklistHandles: [],
         whitelistHandles: [],
@@ -282,12 +283,13 @@ function createEmptyCharacterDistributionPolicy(ownerHandle = '', publishedFilen
     };
 }
 
-async function getCharacterDistributionPolicy(ownerHandle, publishedFilename) {
+async function getCharacterDistributionPolicy(ownerHandle, publishedFilename, characterKey = '') {
     const normalizedOwnerHandle = String(ownerHandle || '').trim();
+    const normalizedCharacterKey = String(characterKey || '').trim().replace(/\.png$/i, '');
     const normalizedPublishedFilename = String(publishedFilename || '').trim().replace(/\.png$/i, '');
 
     if (!normalizedPublishedFilename) {
-        return createEmptyCharacterDistributionPolicy(normalizedOwnerHandle, normalizedPublishedFilename);
+        return createEmptyCharacterDistributionPolicy(normalizedOwnerHandle, normalizedPublishedFilename, normalizedCharacterKey);
     }
 
     try {
@@ -296,6 +298,7 @@ async function getCharacterDistributionPolicy(ownerHandle, publishedFilename) {
             headers: getRequestHeaders(),
             body: JSON.stringify({
                 ownerHandle: normalizedOwnerHandle,
+                characterKey: normalizedCharacterKey,
                 publishedFilename: normalizedPublishedFilename,
             }),
         });
@@ -306,12 +309,12 @@ async function getCharacterDistributionPolicy(ownerHandle, publishedFilename) {
         }
 
         return {
-            ...createEmptyCharacterDistributionPolicy(normalizedOwnerHandle, normalizedPublishedFilename),
+            ...createEmptyCharacterDistributionPolicy(normalizedOwnerHandle, normalizedPublishedFilename, normalizedCharacterKey),
             ...data,
         };
     } catch (error) {
         console.error('Error getting character distribution policy:', error);
-        return createEmptyCharacterDistributionPolicy(normalizedOwnerHandle, normalizedPublishedFilename);
+        return createEmptyCharacterDistributionPolicy(normalizedOwnerHandle, normalizedPublishedFilename, normalizedCharacterKey);
     }
 }
 
@@ -490,7 +493,10 @@ function buildSubmissionCard(submission, { admin = false, onReview = null } = {}
         .toggle(submission.hasStoredCard !== false);
     card.find('.submission_name').text(submission.characterName || submission.submittedFilename || submission.id);
     card.find('.submission_status').text(getSubmissionStatusLabel(submission.status));
-    card.find('.submission_owner').text(submission.ownerHandle);
+    const ownerLabel = Array.isArray(submission.ownerHandles) && submission.ownerHandles.length > 0
+        ? submission.ownerHandles.join(', ')
+        : submission.ownerHandle;
+    card.find('.submission_owner').text(ownerLabel);
     card.find('.submission_submitted').text(new Date(submission.submittedAt).toLocaleString());
     card.find('.submission_reviewed_row').toggle(Boolean(submission.reviewedAt));
     card.find('.submission_reviewed').text(submission.reviewedAt ? `${new Date(submission.reviewedAt).toLocaleString()} by ${submission.reviewedBy || 'Unknown'}` : '');
@@ -598,6 +604,9 @@ export async function submitSelectedCharacterForReview(character) {
 async function openSubmissionReviewPopup(submission, callback) {
     const users = (await getUsers() || []).filter(user => user.enabled);
     const ownerHandle = String(submission.ownerHandle || getCurrentUserHandle()).trim();
+    const characterKey = Array.isArray(submission.ownerHandles) && submission.ownerHandles.length > 1
+        ? String(submission.submittedFilename || submission.publishedFilename || '').replace(/\.png$/i, '')
+        : '';
     let publishMode = submission.publishMode || 'selected';
     let reviewNote = String(submission.reviewNote || '');
     let publishedFilename = String((submission.publishedFilename || submission.characterName || submission.submittedFilename || '').replace(/\.png$/i, ''));
@@ -659,7 +668,9 @@ async function openSubmissionReviewPopup(submission, callback) {
         .attr('src', submission.hasStoredCard === false ? '' : submission.previewUrl)
         .toggle(submission.hasStoredCard !== false);
     container.find('.submission-title').text(submission.characterName || submission.submittedFilename);
-    container.find('.submission-owner').text(submission.ownerHandle);
+    container.find('.submission-owner').text(Array.isArray(submission.ownerHandles) && submission.ownerHandles.length > 0
+        ? submission.ownerHandles.join(', ')
+        : submission.ownerHandle);
     container.find('.submission-status').text(getSubmissionStatusLabel(submission.status));
     container.find('.review-stored-card-status').text(submission.hasStoredCard === false ? 'Stored card asset has already been deleted.' : '');
     const isPending = submission.status === 'pending';
@@ -679,7 +690,7 @@ async function openSubmissionReviewPopup(submission, callback) {
         }
 
         const requestId = ++policyRequestId;
-        const policy = await getCharacterDistributionPolicy(ownerHandle, publishedFilename);
+        const policy = await getCharacterDistributionPolicy(ownerHandle, publishedFilename, characterKey);
         if (requestId !== policyRequestId) {
             return;
         }

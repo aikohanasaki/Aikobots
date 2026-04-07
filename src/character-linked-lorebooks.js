@@ -28,6 +28,42 @@ export function getCharacterOwnerHandle(characterCard) {
 }
 
 /**
+ * Gets the normalized owner handles for a character card.
+ * Falls back to the legacy single-owner field when no owner list exists.
+ * @param {object|null|undefined} characterCard
+ * @returns {string[]}
+ */
+export function getCharacterOwnerHandles(characterCard) {
+    const ownerHandles = _.get(characterCard, 'data.extensions.aikobots.owner_handles');
+    if (Array.isArray(ownerHandles)) {
+        return [...new Set(ownerHandles.map(handle => String(handle || '').trim()).filter(Boolean))];
+    }
+
+    const ownerHandle = getCharacterOwnerHandle(characterCard);
+    return ownerHandle ? [ownerHandle] : [];
+}
+
+/**
+ * Gets the sharing mode for a character card.
+ * @param {object|null|undefined} characterCard
+ * @returns {'single'|'shared'}
+ */
+export function getCharacterSharingMode(characterCard) {
+    return _.get(characterCard, 'data.extensions.aikobots.sharing_mode') === 'shared' ? 'shared' : 'single';
+}
+
+/**
+ * Checks whether the provided user handle is one of the character owners.
+ * @param {object|null|undefined} characterCard
+ * @param {string} handle
+ * @returns {boolean}
+ */
+export function isCharacterOwner(characterCard, handle) {
+    const normalizedHandle = String(handle || '').trim();
+    return normalizedHandle ? getCharacterOwnerHandles(characterCard).includes(normalizedHandle) : false;
+}
+
+/**
  * Gets the normalized linked lorebook names stored on a character.
  * @param {object|null|undefined} characterCard
  * @returns {string[]}

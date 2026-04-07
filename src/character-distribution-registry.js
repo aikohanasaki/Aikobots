@@ -38,6 +38,10 @@ function normalizeOwnerHandle(value) {
     return String(value || '').trim();
 }
 
+function normalizeCharacterKey(value) {
+    return normalizePublishedFilename(value);
+}
+
 function normalizeHandles(handles) {
     return [...new Set((Array.isArray(handles) ? handles : []).map(handle => String(handle || '').trim()).filter(Boolean))];
 }
@@ -86,11 +90,12 @@ async function writeRegistryIndex(index) {
     await writeFileAtomic(getRegistryPath(), JSON.stringify(index, null, 4));
 }
 
-function buildPolicyResponse({ ownerHandle, publishedFilename, entry }) {
+function buildPolicyResponse({ ownerHandle, characterKey, publishedFilename, entry }) {
     const normalizedEntry = normalizeRegistryEntry(entry);
     return {
-        key: `${ownerHandle}::${publishedFilename}`,
+        key: characterKey ? `${characterKey}::${publishedFilename}` : `${ownerHandle}::${publishedFilename}`,
         ownerHandle,
+        characterKey,
         publishedFilename,
         blacklistHandles: normalizedEntry.blacklist,
         whitelistHandles: normalizedEntry.whitelist,
@@ -101,27 +106,38 @@ function buildPolicyResponse({ ownerHandle, publishedFilename, entry }) {
     };
 }
 
-export async function getCharacterDistributionPolicy({ ownerHandle, publishedFilename }) {
+export async function getCharacterDistributionPolicy({ ownerHandle, characterKey, publishedFilename }) {
     const normalizedOwnerHandle = normalizeOwnerHandle(ownerHandle);
+    const normalizedCharacterKey = characterKey ? normalizeCharacterKey(characterKey) : '';
     const normalizedPublishedFilename = normalizePublishedFilename(publishedFilename);
     const index = await readRegistryIndex();
-    const key = `${normalizedOwnerHandle}::${normalizedPublishedFilename}`;
+    const key = normalizedCharacterKey
+        ? `${normalizedCharacterKey}::${normalizedPublishedFilename}`
+        : `${normalizedOwnerHandle}::${normalizedPublishedFilename}`;
+    const legacyKey = normalizedCharacterKey
+        ? `${normalizedOwnerHandle}::${normalizedPublishedFilename}`
+        : '';
 
     return buildPolicyResponse({
         ownerHandle: normalizedOwnerHandle,
+        characterKey: normalizedCharacterKey,
         publishedFilename: normalizedPublishedFilename,
-        entry: index.characters[key],
+        entry: index.characters[key] || (legacyKey ? index.characters[legacyKey] : null),
     });
 }
 
-export async function setCharacterDistributionPolicy({ ownerHandle, publishedFilename, blacklistHandles, whitelistHandles, updatedBy }) {
+export async function setCharacterDistributionPolicy({ ownerHandle, characterKey, publishedFilename, blacklistHandles, whitelistHandles, updatedBy }) {
     const normalizedOwnerHandle = normalizeOwnerHandle(ownerHandle);
+    const normalizedCharacterKey = characterKey ? normalizeCharacterKey(characterKey) : '';
     const normalizedPublishedFilename = normalizePublishedFilename(publishedFilename);
-    const key = `${normalizedOwnerHandle}::${normalizedPublishedFilename}`;
+    const key = normalizedCharacterKey
+        ? `${normalizedCharacterKey}::${normalizedPublishedFilename}`
+        : `${normalizedOwnerHandle}::${normalizedPublishedFilename}`;
+    const legacyKey = normalizedCharacterKey ? `${normalizedOwnerHandle}::${normalizedPublishedFilename}` : '';
 
     return runWithRegistryLock(async () => {
         const index = await readRegistryIndex();
-        const nextEntry = normalizeRegistryEntry(index.characters[key]);
+        const nextEntry = normalizeRegistryEntry(index.characters[key] || (legacyKey ? index.characters[legacyKey] : null));
 
         if (blacklistHandles !== undefined) {
             nextEntry.blacklist = normalizeHandles(blacklistHandles);
@@ -133,16 +149,23 @@ export async function setCharacterDistributionPolicy({ ownerHandle, publishedFil
 
         if (nextEntry.blacklist.length === 0 && nextEntry.whitelist.length === 0) {
             delete index.characters[key];
+            if (legacyKey) {
+                delete index.characters[legacyKey];
+            }
         } else {
             nextEntry.updatedAt = Date.now();
             nextEntry.updatedBy = String(updatedBy || '').trim() || null;
             index.characters[key] = nextEntry;
+            if (legacyKey) {
+                delete index.characters[legacyKey];
+            }
         }
 
         await writeRegistryIndex(index);
 
         return buildPolicyResponse({
             ownerHandle: normalizedOwnerHandle,
+            characterKey: normalizedCharacterKey,
             publishedFilename: normalizedPublishedFilename,
             entry: index.characters[key],
         });

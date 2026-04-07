@@ -7193,8 +7193,8 @@ export async function duplicateCharacter() {
     }
 
     if (!canDuplicateCharacter(this_chid)) {
-        const ownerHandle = getCharacterOwnerHandle(this_chid);
-        toastr.info(`Only ${ownerHandle} and admins can duplicate this character.`, 'Character locked');
+        const ownerLabel = getCharacterOwnerLabel(this_chid);
+        toastr.info(`Only ${ownerLabel} and admins can duplicate this character.`, 'Character locked');
         return '';
     }
 
@@ -10954,7 +10954,7 @@ export function select_selected_character(chid, { switchMenu = true } = {}) {
         .attr('aria-disabled', !canDuplicateCharacter(chid) ? 'true' : 'false');
     $('#create_button_label').css('display', 'none');
     $('#char_connections_button').show();
-    $('#submit_character_review_button').css('display', !selected_group ? 'flex' : 'none');
+    $('#submit_character_review_button').css('display', canSubmitCharacterForReview(chid) ? 'flex' : 'none');
 
     // Hide the chat scenario button if we're peeking the group member defs
     $('#set_chat_character_settings').toggle(!selected_group);
@@ -11016,6 +11016,7 @@ export function select_selected_character(chid, { switchMenu = true } = {}) {
 
     // Update some stuff about the char management dropdown
     $('#character_source').attr('disabled', !getCharacterSource(chid) ? '' : null);
+    updateCharacterSharedControls(chid);
 
     eventSource.emit(event_types.CHARACTER_EDITOR_OPENED, chid);
 
@@ -11048,6 +11049,10 @@ function select_rm_create({ switchMenu = true } = {}) {
     $('#dupe_button').hide();
     $('#char_connections_button').hide();
     $('#submit_character_review_button').hide();
+    $('#character_shared_status').hide().empty();
+    $('#character_promote_shared').prop('hidden', true).prop('disabled', true);
+    $('#character_manage_owners').prop('hidden', true).prop('disabled', true);
+    $('#character_checkout_toggle').prop('hidden', true).prop('disabled', true).text('Check Out / In');
 
     //create text poles
     $('#rm_button_back').css('display', '');
@@ -11180,16 +11185,259 @@ function getCharacterOwnerHandle(chid) {
         return '';
     }
 
-    return String(characters[chid]?.data?.extensions?.aikobots?.owner_handle || '').trim();
+    return String(characters[chid]?.ownerHandle || characters[chid]?.data?.extensions?.aikobots?.owner_handle || '').trim();
+}
+
+function getCharacterOwnerHandles(chid) {
+    if (chid === undefined || chid === null || !characters[chid]) {
+        return [];
+    }
+
+    const ownerHandles = Array.isArray(characters[chid]?.ownerHandles)
+        ? characters[chid].ownerHandles
+        : characters[chid]?.data?.extensions?.aikobots?.owner_handles;
+    if (Array.isArray(ownerHandles)) {
+        return [...new Set(ownerHandles.map(handle => String(handle || '').trim()).filter(Boolean))];
+    }
+
+    const ownerHandle = getCharacterOwnerHandle(chid);
+    return ownerHandle ? [ownerHandle] : [];
+}
+
+function getCharacterOwnerLabel(chid) {
+    const ownerHandles = getCharacterOwnerHandles(chid);
+    return ownerHandles.length > 0 ? ownerHandles.join(', ') : getCharacterOwnerHandle(chid);
+}
+
+function getCharacterSharingMode(chid) {
+    if (chid === undefined || chid === null || !characters[chid]) {
+        return 'single';
+    }
+
+    return characters[chid]?.sharingMode === 'shared'
+        || characters[chid]?.data?.extensions?.aikobots?.sharing_mode === 'shared'
+        ? 'shared'
+        : 'single';
+}
+
+function isSharedCharacter(chid) {
+    return getCharacterSharingMode(chid) === 'shared';
 }
 
 export function canEditCharacterMetadata(chid) {
-    const ownerHandle = getCharacterOwnerHandle(chid);
-    return !ownerHandle || isAdmin() || currentUser?.handle === ownerHandle;
+    const ownerHandles = getCharacterOwnerHandles(chid);
+    return ownerHandles.length === 0 || isAdmin() || ownerHandles.includes(currentUser?.handle);
 }
 
 function canDuplicateCharacter(chid) {
     return canEditCharacterMetadata(chid);
+}
+
+function parseCharacterOwnerHandles(value) {
+    return [...new Set(String(value || '')
+        .split(',')
+        .map(handle => handle.trim())
+        .filter(Boolean))];
+}
+
+function ensureActingUserIncludedInCharacterOwnerHandles(ownerHandles = []) {
+    return [...new Set([
+        ...(Array.isArray(ownerHandles) ? ownerHandles : []),
+        String(currentUser?.handle || '').trim(),
+    ].filter(Boolean))];
+}
+
+async function refreshSelectedCharacterManagementState() {
+    if (this_chid === undefined || !characters[this_chid]) {
+        return;
+    }
+
+    const avatar = characters[this_chid].avatar;
+    await getOneCharacter(avatar);
+    select_selected_character(this_chid, { switchMenu: false });
+    printCharactersDebounced();
+}
+
+async function promoteSelectedCharacterToShared() {
+    if (this_chid === undefined || !characters[this_chid]) {
+        return;
+    }
+
+    if (canEditCharacterMetadata(this_chid)) {
+        const saved = await createOrEditCharacter();
+        if (!saved) {
+            return;
+        }
+    }
+
+    const ownerDefaults = ensureActingUserIncludedInCharacterOwnerHandles([]).join(', ');
+    const ownerInput = await Popup.show.input(
+        'Share Character',
+        'Enter comma-separated owner handles. Your handle will be included automatically. Shared characters must keep at least two owners.',
+        ownerDefaults,
+    );
+    if (!ownerInput) {
+        return;
+    }
+
+    const response = await fetch('/api/characters/promote-shared', {
+        method: 'POST',
+        headers: getRequestHeaders(),
+        body: JSON.stringify({
+            avatar_url: characters[this_chid].avatar,
+            ownerHandles: ensureActingUserIncludedInCharacterOwnerHandles(parseCharacterOwnerHandles(ownerInput)),
+        }),
+    });
+
+    const data = await response.json().catch(() => null);
+    if (!response.ok) {
+        toastr.error(data?.error?.message || 'Could not share this character.', 'Character Sharing');
+        return;
+    }
+
+    await refreshSelectedCharacterManagementState();
+    toastr.success('Character is now shared.', 'Character Sharing');
+}
+
+async function manageSelectedSharedCharacterOwners() {
+    if (this_chid === undefined || !characters[this_chid]) {
+        return;
+    }
+
+    if (!characters[this_chid]?.canManageOwners) {
+        toastr.info(getCharacterSharedReadOnlyMessage(this_chid) || 'Shared owner management is unavailable.', 'Character Sharing');
+        return;
+    }
+
+    const ownerInput = await Popup.show.input(
+        'Manage Shared Character Owners',
+        'Enter comma-separated owner handles. Your handle will stay selected automatically. Shared characters must keep at least two owners.',
+        getCharacterOwnerHandles(this_chid).join(', '),
+    );
+    if (!ownerInput) {
+        return;
+    }
+
+    const response = await fetch('/api/characters/shared/owners', {
+        method: 'POST',
+        headers: getRequestHeaders(),
+        body: JSON.stringify({
+            avatar_url: characters[this_chid].avatar,
+            ownerHandles: ensureActingUserIncludedInCharacterOwnerHandles(parseCharacterOwnerHandles(ownerInput)),
+        }),
+    });
+
+    const data = await response.json().catch(() => null);
+    if (!response.ok) {
+        toastr.error(data?.error?.message || 'Could not update shared character owners.', 'Character Sharing');
+        return;
+    }
+
+    await refreshSelectedCharacterManagementState();
+    toastr.success('Shared character owners updated.', 'Character Sharing');
+}
+
+async function toggleSelectedSharedCharacterCheckout() {
+    if (this_chid === undefined || !characters[this_chid] || !isSharedCharacter(this_chid)) {
+        return;
+    }
+
+    const checkoutState = String(characters[this_chid]?.checkoutState || 'available');
+    const canForceCheckout = Boolean(characters[this_chid]?.canForceCheckout);
+    if (checkoutState === 'other' && !canForceCheckout) {
+        toastr.info(getCharacterSharedReadOnlyMessage(this_chid), 'Character Sharing');
+        return;
+    }
+
+    let force = false;
+    if (checkoutState === 'other' && canForceCheckout) {
+        const confirmed = await Popup.show.confirm(
+            'Force Check Out Shared Character',
+            `Force take checkout from "${characters[this_chid]?.checkedOutBy || 'another owner'}"?`,
+        );
+        if (!confirmed) {
+            return;
+        }
+        force = true;
+    }
+
+    const endpoint = checkoutState === 'self' ? '/api/characters/checkin' : '/api/characters/checkout';
+    const response = await fetch(endpoint, {
+        method: 'POST',
+        headers: getRequestHeaders(),
+        body: JSON.stringify({
+            avatar_url: characters[this_chid].avatar,
+            force,
+        }),
+    });
+
+    const data = await response.json().catch(() => null);
+    if (!response.ok) {
+        toastr.error(data?.error?.message || 'Could not update shared character checkout.', 'Character Sharing');
+        return;
+    }
+
+    await refreshSelectedCharacterManagementState();
+}
+
+function canSubmitCharacterForReview(chid) {
+    if (selected_group || chid === undefined || chid === null || !characters[chid]) {
+        return false;
+    }
+
+    const avatar = String(characters[chid]?.avatar || '').trim();
+    return !!avatar && avatar !== 'none' && canEditCharacterMetadata(chid);
+}
+
+function getCharacterSharedReadOnlyMessage(chid) {
+    if (!isSharedCharacter(chid)) {
+        return '';
+    }
+
+    const checkoutState = String(characters[chid]?.checkoutState || 'available');
+    const checkedOutBy = String(characters[chid]?.checkedOutBy || '').trim();
+    if (checkoutState === 'other') {
+        return checkedOutBy
+            ? `Checked out by ${checkedOutBy}.`
+            : 'Checked out by another owner.';
+    }
+
+    if (checkoutState === 'self') {
+        return `Checked out by you${characters[chid]?.checkedOutAt ? ` since ${characters[chid].checkedOutAt}` : ''}.`;
+    }
+
+    return 'Shared character is available for checkout.';
+}
+
+function updateCharacterSharedControls(chid) {
+    const promoteOption = $('#character_promote_shared');
+    const manageOwnersOption = $('#character_manage_owners');
+    const checkoutOption = $('#character_checkout_toggle');
+    const status = $('#character_shared_status');
+    const hasCharacter = chid !== undefined && chid !== null && !!characters[chid] && !selected_group;
+    const shared = hasCharacter && isSharedCharacter(chid);
+    const canManage = hasCharacter && canEditCharacterMetadata(chid);
+    const canManageOwners = Boolean(characters[chid]?.canManageOwners);
+    const checkoutState = String(characters[chid]?.checkoutState || 'available');
+    const canForceCheckout = Boolean(characters[chid]?.canForceCheckout);
+
+    promoteOption.prop('hidden', !hasCharacter || shared).prop('disabled', !hasCharacter || shared || !canManage);
+    manageOwnersOption.prop('hidden', !shared).prop('disabled', !shared || !canManageOwners);
+    checkoutOption.prop('hidden', !shared).prop('disabled', !shared || (checkoutState === 'other' ? !canForceCheckout : checkoutState === 'self' ? !characters[chid]?.canCheckIn : !characters[chid]?.canCheckOut));
+
+    if (shared) {
+        checkoutOption.text(
+            checkoutState === 'self'
+                ? 'Check In Shared Character'
+                : checkoutState === 'other'
+                    ? (canForceCheckout ? 'Force Check Out Shared Character' : 'Shared Character Locked')
+                    : 'Check Out Shared Character',
+        );
+        status.text(getCharacterSharedReadOnlyMessage(chid)).show();
+    } else {
+        checkoutOption.text('Check Out / In');
+        status.hide().empty();
+    }
 }
 
 export async function setCharacterSettingsOverrides() {
@@ -11684,7 +11932,7 @@ async function openCharacterWorldPopup() {
         || !ownerHandle
         || canEditCharacterMetadata(chid);
     if (!canEditLoreLinks && ownerHandle) {
-        toastr.info(t`Only the character's owner and site admins may access character lore for this character.`, t`Character locked`);
+        toastr.info(`Only ${getCharacterOwnerLabel(chid)} and admins may access character lore for this character.`, t`Character locked`);
         return;
     }
 
@@ -11770,7 +12018,7 @@ async function openCharacterWorldPopup() {
     if (!canEditLoreLinks && ownerHandle) {
         template.find('.range-block-title').first().after($(`
             <div class="range-block-counter justifyLeft flex-container flexFlowColumn margin-bot-10px opacity50p">
-                <span>Editing lorebooks is locked for this character. Only the character's owner and site admins can change linked or embedded lorebooks.</span>
+                <span>Editing lorebooks is locked for this character. Only ${escapeHtml(getCharacterOwnerLabel(chid))} and admins can change linked or embedded lorebooks.</span>
             </div>
         `));
     }
@@ -14094,6 +14342,11 @@ jQuery(async function () {
             return;
         }
 
+        if (!canSubmitCharacterForReview(this_chid)) {
+            toastr.info(`Only ${getCharacterOwnerLabel(this_chid)} and admins can submit this character.`, 'Submission unavailable');
+            return;
+        }
+
         if (canEditCharacterMetadata(this_chid)) {
             const saved = await createOrEditCharacter();
             if (!saved) {
@@ -14445,6 +14698,15 @@ jQuery(async function () {
                 break;
             case 'set_chat_character_settings':
                 await setCharacterSettingsOverrides();
+                break;
+            case 'character_promote_shared':
+                await promoteSelectedCharacterToShared();
+                break;
+            case 'character_manage_owners':
+                await manageSelectedSharedCharacterOwners();
+                break;
+            case 'character_checkout_toggle':
+                await toggleSelectedSharedCharacterCheckout();
                 break;
             case 'renameCharButton':
                 await renameCharacter();

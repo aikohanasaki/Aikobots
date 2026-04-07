@@ -18,7 +18,16 @@ import { deepMerge, humanizedISO8601DateTime, tryParse, extractFileFromZipBuffer
 import { TavernCardValidator } from '../validator/TavernCardValidator.js';
 import { parse, read, write } from '../character-card-parser.js';
 import { getCharacterDistributionPolicy } from '../character-distribution-registry.js';
-import { getCharacterOwnerHandle, validateOwnedCharacterLinkedLorebooks } from '../character-linked-lorebooks.js';
+import { getCharacterOwnerHandle, getCharacterOwnerHandles, validateOwnedCharacterLinkedLorebooks } from '../character-linked-lorebooks.js';
+import {
+    CharacterSharingRepositoryError,
+    checkinSharedCharacter,
+    checkoutSharedCharacter,
+    getCharacterMetadata,
+    getSharedCharacterRecord,
+    promoteCharacterToShared,
+    updateSharedCharacterOwners,
+} from '../character-sharing-repository.js';
 import { readWorldInfoFile } from './worldinfo.js';
 import { invalidateThumbnail } from './thumbnails.js';
 import { importRisuSprites } from './sprites.js';
@@ -36,6 +45,15 @@ const isAndroid = process.platform === 'android';
 // Use shallow character data for the character list
 const useShallowCharacters = !!getConfigValue('performance.lazyLoadCharacters', false, 'boolean');
 const useDiskCache = !!getConfigValue('performance.useDiskCache', true, 'boolean');
+
+function getCharacterOwnerLabel(characterCard) {
+    const ownerHandles = getCharacterOwnerHandles(characterCard);
+    if (ownerHandles.length > 0) {
+        return ownerHandles.join(', ');
+    }
+
+    return getCharacterOwnerHandle(characterCard);
+}
 
 class DiskCache {
     /**
@@ -390,6 +408,16 @@ const toShallow = (character) => {
         chat_size: character.chat_size,
         data_size: character.data_size,
         tags: character.tags,
+        ownerHandle: character.ownerHandle || '',
+        ownerHandles: Array.isArray(character.ownerHandles) ? character.ownerHandles : [],
+        sharingMode: character.sharingMode || 'single',
+        checkedOutBy: character.checkedOutBy || null,
+        checkedOutAt: character.checkedOutAt || null,
+        checkoutState: character.checkoutState || 'available',
+        canCheckOut: Boolean(character.canCheckOut),
+        canCheckIn: Boolean(character.canCheckIn),
+        canForceCheckout: Boolean(character.canForceCheckout),
+        canManageOwners: Boolean(character.canManageOwners),
         data: {
             name: _.get(character, 'data.name', ''),
             character_version: _.get(character, 'data.character_version', ''),
@@ -400,11 +428,30 @@ const toShallow = (character) => {
                 fav: _.get(character, 'data.extensions.fav', false),
                 aikobots: {
                     owner_handle: _.get(character, 'data.extensions.aikobots.owner_handle', ''),
+                    owner_handles: _.get(character, 'data.extensions.aikobots.owner_handles', []),
+                    sharing_mode: _.get(character, 'data.extensions.aikobots.sharing_mode', 'single'),
                 },
             },
         },
     };
 };
+
+function applyCharacterManagementMetadata(character, metadata) {
+    character.ownerHandle = metadata.ownerHandle;
+    character.ownerHandles = metadata.ownerHandles;
+    character.sharingMode = metadata.sharingMode;
+    character.checkedOutBy = metadata.checkedOutBy;
+    character.checkedOutAt = metadata.checkedOutAt;
+    character.checkoutState = metadata.checkoutState;
+    character.canCheckOut = metadata.canCheckOut;
+    character.canCheckIn = metadata.canCheckIn;
+    character.canForceCheckout = metadata.canForceCheckout;
+    character.canManageOwners = metadata.canManageOwners;
+
+    _.set(character, 'data.extensions.aikobots.owner_handle', metadata.ownerHandle);
+    _.set(character, 'data.extensions.aikobots.owner_handles', metadata.ownerHandles);
+    _.set(character, 'data.extensions.aikobots.sharing_mode', metadata.sharingMode);
+}
 
 /**
  * processCharacter - Process a given character, read its data and calculate its statistics.
@@ -415,7 +462,7 @@ const toShallow = (character) => {
  * @param  {boolean} options.shallow If true, only return the core character's metadata
  * @return {Promise<object>}     A Promise that resolves when the character processing is done.
  */
-const processCharacter = async (item, directories, { shallow }) => {
+const processCharacter = async (item, directories, { shallow, user = null }) => {
     try {
         const imgFile = path.join(directories.characters, item);
         const imgData = await readCharacterData(imgFile);
@@ -439,6 +486,11 @@ const processCharacter = async (item, directories, { shallow }) => {
             ? activeChat
             : (latestChat || activeChat || `${character.name} - ${humanizedISO8601DateTime()}`);
         character['data_size'] = calculateDataSize(jsonObject?.data);
+        applyCharacterManagementMetadata(character, await getCharacterMetadata({
+            characterCard: character,
+            filenameStem: path.parse(item).name,
+            user,
+        }));
         return shallow ? toShallow(character) : character;
     }
     catch (err) {
@@ -754,8 +806,19 @@ function convertWorldInfoToCharacterBook(name, entries) {
  * @returns {boolean}
  */
 function canEditCharacterLorebooks(characterCard, request) {
-    const ownerHandle = getCharacterOwnerHandle(characterCard);
-    return !ownerHandle || Boolean(request.user?.profile?.admin) || request.user?.profile?.handle === ownerHandle;
+    const ownerHandles = getCharacterOwnerHandles(characterCard);
+    return ownerHandles.length === 0 || Boolean(request.user?.profile?.admin) || ownerHandles.includes(request.user?.profile?.handle);
+}
+
+/**
+ * Checks whether the current requester is one of the character owners.
+ * @param {object|null|undefined} characterCard Character card data
+ * @param {import('express').Request} request Express request object
+ * @returns {boolean}
+ */
+function canManageCharacterOwnership(characterCard, request) {
+    const ownerHandles = getCharacterOwnerHandles(characterCard);
+    return ownerHandles.length === 0 || Boolean(request.user?.profile?.admin) || ownerHandles.includes(request.user?.profile?.handle);
 }
 
 /**
@@ -777,6 +840,50 @@ function preserveProtectedLorebookFields(targetCharacter, sourceCharacter) {
     } else {
         _.unset(targetCharacter, 'data.extensions.aikobots.secure_lorebooks');
     }
+}
+
+function sendSharedCharacterError(response, error) {
+    if (error instanceof CharacterSharingRepositoryError) {
+        return response.status(error.status || 400).json({
+            error: {
+                type: error.type,
+                message: error.message,
+                details: error.details ?? null,
+            },
+        });
+    }
+
+    console.error('[Characters] Shared character operation failed', error);
+    return response.status(500).json({
+        error: {
+            type: 'CharacterInternalError',
+            message: String(error?.message || error),
+            details: null,
+        },
+    });
+}
+
+async function validateSharedCharacterOwnerHandles(ownerHandles = [], actingHandle = '') {
+    const normalizedActingHandle = String(actingHandle || '').trim();
+    const normalizedOwnerHandles = [...new Set([
+        ...(Array.isArray(ownerHandles) ? ownerHandles : []),
+        normalizedActingHandle,
+    ]
+        .map(handle => String(handle || '').trim())
+        .filter(Boolean))];
+
+    if (normalizedOwnerHandles.length < 2) {
+        throw new CharacterSharingRepositoryError('CharacterOwnersInvalid', 'Shared characters must have at least two owners.', 400);
+    }
+
+    const enabledUsers = await getAllEnabledUsers();
+    const enabledHandles = new Set(enabledUsers.map(user => String(user.handle || '').trim()).filter(Boolean));
+    const invalidOwnerHandles = normalizedOwnerHandles.filter(handle => !enabledHandles.has(handle));
+    if (invalidOwnerHandles.length > 0) {
+        throw new CharacterSharingRepositoryError('CharacterOwnersInvalid', `Invalid owner handles: ${invalidOwnerHandles.join(', ')}.`, 400);
+    }
+
+    return normalizedOwnerHandles;
 }
 
 /**
@@ -1122,6 +1229,15 @@ router.post('/rename', validateAvatarUrlMiddleware, async function (request, res
         if (rawOldData === undefined) throw new Error('Failed to read character file');
 
         const oldData = getCharaCardV2(JSON.parse(rawOldData), request.user.directories);
+        if (!canManageCharacterOwnership(oldData, request)) {
+            const ownerLabel = getCharacterOwnerLabel(oldData);
+            return response.status(403).json({ error: `Only ${ownerLabel} and admins can rename this character.` });
+        }
+
+        if (await getSharedCharacterRecord(oldInternalName)) {
+            return response.status(409).json({ error: 'Shared characters cannot be renamed. Renaming creates a new identity; create a new character instead.' });
+        }
+
         _.set(oldData, 'data.name', newName);
         _.set(oldData, 'name', newName);
         const newData = JSON.stringify(oldData);
@@ -1186,8 +1302,8 @@ router.post('/edit', validateAvatarUrlMiddleware, async function (request, respo
                 : false;
 
             if (requestedWorld !== existingWorld || requestedJsonWorld !== existingWorld || requestedEmbeddedBookChanged || requestedSecureLorebooksChanged) {
-                const ownerHandle = getCharacterOwnerHandle(existingCharacter);
-                return response.status(403).json({ error: `Only ${ownerHandle} and admins can change this character's lorebook assignments.` });
+                const ownerLabel = getCharacterOwnerLabel(existingCharacter);
+                return response.status(403).json({ error: `Only ${ownerLabel} and admins can change this character's lorebook assignments.` });
             }
         }
 
@@ -1351,8 +1467,8 @@ router.post('/merge-attributes', getFileNameValidationFunction('avatar'), async 
             || Object.prototype.hasOwnProperty.call(update?.data?.extensions ?? {}, 'aikobots.secure_lorebooks');
 
         if (updatesSecureLorebooks && !canEditLorebooks) {
-            const ownerHandle = getCharacterOwnerHandle(character);
-            return response.status(403).json({ error: `Only ${ownerHandle} and admins can change this character's lorebook assignments.` });
+            const ownerLabel = getCharacterOwnerLabel(character);
+            return response.status(403).json({ error: `Only ${ownerLabel} and admins can change this character's lorebook assignments.` });
         }
 
         _.unset(update, 'json_data');
@@ -1477,7 +1593,10 @@ router.post('/all', async function (request, response) {
     try {
         const files = fs.readdirSync(request.user.directories.characters);
         const pngFiles = files.filter(file => file.endsWith('.png'));
-        const processingPromises = pngFiles.map(file => processCharacter(file, request.user.directories, { shallow: useShallowCharacters }));
+        const processingPromises = pngFiles.map(file => processCharacter(file, request.user.directories, {
+            shallow: useShallowCharacters,
+            user: request.user,
+        }));
         const data = (await Promise.all(processingPromises)).filter(c => c.name);
         return response.send(data);
     } catch (err) {
@@ -1497,7 +1616,7 @@ router.post('/get', validateAvatarUrlMiddleware, async function (request, respon
             return response.sendStatus(404);
         }
 
-        const data = await processCharacter(item, request.user.directories, { shallow: false });
+        const data = await processCharacter(item, request.user.directories, { shallow: false, user: request.user });
 
         return response.send(data);
     } catch (err) {
@@ -1617,17 +1736,72 @@ router.post('/import', async function (request, response) {
 router.post('/distribution-policy', requireAdminMiddleware, async function (request, response) {
     try {
         const ownerHandle = String(request.body?.ownerHandle || '').trim();
+        const characterKey = String(request.body?.characterKey || '').trim();
         const publishedFilename = String(request.body?.publishedFilename || '').trim();
 
         if (!publishedFilename) {
             return response.status(400).json({ error: 'Missing published filename.' });
         }
 
-        const policy = await getCharacterDistributionPolicy({ ownerHandle, publishedFilename });
+        const policy = await getCharacterDistributionPolicy({ ownerHandle, characterKey, publishedFilename });
         return response.json(policy);
     } catch (error) {
         console.error('Character distribution policy lookup failed', error);
         return response.status(400).json({ error: error.message || 'Character distribution policy lookup failed.' });
+    }
+});
+
+router.post('/promote-shared', validateAvatarUrlMiddleware, async function (request, response) {
+    if (!request.body?.avatar_url) {
+        return response.sendStatus(400);
+    }
+
+    try {
+        const ownerHandles = await validateSharedCharacterOwnerHandles(request.body.ownerHandles, request.user?.profile?.handle);
+        const result = await promoteCharacterToShared(request.user, request.body.avatar_url, ownerHandles);
+        return response.send({ ok: true, ...result });
+    } catch (error) {
+        return sendSharedCharacterError(response, error);
+    }
+});
+
+router.post('/shared/owners', validateAvatarUrlMiddleware, async function (request, response) {
+    if (!request.body?.avatar_url) {
+        return response.sendStatus(400);
+    }
+
+    try {
+        const ownerHandles = await validateSharedCharacterOwnerHandles(request.body.ownerHandles, request.user?.profile?.handle);
+        const result = await updateSharedCharacterOwners(request.user, request.body.avatar_url, ownerHandles);
+        return response.send({ ok: true, ...result });
+    } catch (error) {
+        return sendSharedCharacterError(response, error);
+    }
+});
+
+router.post('/checkout', validateAvatarUrlMiddleware, async function (request, response) {
+    if (!request.body?.avatar_url) {
+        return response.sendStatus(400);
+    }
+
+    try {
+        const result = await checkoutSharedCharacter(request.user, request.body.avatar_url, Boolean(request.body.force));
+        return response.send({ ok: true, ...result });
+    } catch (error) {
+        return sendSharedCharacterError(response, error);
+    }
+});
+
+router.post('/checkin', validateAvatarUrlMiddleware, async function (request, response) {
+    if (!request.body?.avatar_url) {
+        return response.sendStatus(400);
+    }
+
+    try {
+        const result = await checkinSharedCharacter(request.user, request.body.avatar_url, Boolean(request.body.force));
+        return response.send({ ok: true, ...result });
+    } catch (error) {
+        return sendSharedCharacterError(response, error);
     }
 });
 
@@ -1717,10 +1891,10 @@ router.post('/duplicate', validateAvatarUrlMiddleware, async function (request, 
 
         const rawCharacterData = await readCharacterData(filename);
         const characterCard = rawCharacterData ? JSON.parse(rawCharacterData) : null;
-        const ownerHandle = getCharacterOwnerHandle(characterCard);
         const canDuplicate = canEditCharacterLorebooks(characterCard, request);
         if (!canDuplicate) {
-            return response.status(403).json({ error: `Only ${ownerHandle} and admins can duplicate this character.` });
+            const ownerLabel = getCharacterOwnerLabel(characterCard);
+            return response.status(403).json({ error: `Only ${ownerLabel} and admins can duplicate this character.` });
         }
 
         let suffix = 1;

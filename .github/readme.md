@@ -1,29 +1,29 @@
 ## What is Aikobots?
 
-Aikobots is a multi-user focused fork of SillyTavern that is focused on chat completion APIs and has removed text generation API features and support. Aikobots v2 officially diverged from ST base code beginning in April 2026 as a fork of SillyTavern 1.14.0. 
+Aikobots is a multi-user fork of SillyTavern built around chat completion APIs. It does not include support for legacy text generation APIs. Aikobots originated as a parallel fork of SillyTavern beginning around version 1.11.0. While earlier development still tracked portions of the upstream project, Aikobots v2 fully diverged after SillyTavern 1.14.0 and no longer develops in parallel with SillyTavern.
 
 ## Our Vision
 
-1. We aim to empower users with as much utility and control over their LLM prompts as possible. The steep learning curve is part of the fun!
-2. We do not provide any online or hosted services, nor programmatically track any user data.
-3. SillyTavern is a passion project brought to you by a dedicated community of LLM enthusiasts, and will always be free and open sourced.
-
-## Do I need a powerful PC to run Aikobots?
-
-The hardware requirements are minimal: it will run on anything that can run NodeJS 18 or higher. If you intend to do LLM inference on your local machine, we recommend a 3000-series NVIDIA graphics card with at least 6GB of VRAM, but actual requirements may vary depending on the model and backend you choose to use.
+1. Support roleplay communities by making it easier for bot creators to share their work and collaborate in a multi-user environment.
+2. Provide stronger protection against scraping and client-side exposure through a server-side architecture.
+3. Preserve compatibility with SillyTavern workflows while integrating the Aikoverse suite directly into core functionality.
+4. Develop Aikobots as an open-source passion project supported by patronage.
 
 ## License and credits
 
-**This program is distributed in the hope that it will be useful,
-but WITHOUT ANY WARRANTY; without even the implied warranty of
-MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-GNU Affero General Public License for more details.**
+**This program is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU Affero General Public License for more details.**
 
-* [SillyTavern](https://github.com/TavernAI/TavernAI) 1.2.8 by Humi: MIT License
-* Portions of CncAnon's TavernAITurbo mod used with permission
+SillyTavern's Credits
+* [TavernAI](https://github.com/TavernAI/TavernAI) 1.2.8 by Humi: MIT License
 * Visual Novel Mode inspired by the work of PepperTaco (<https://github.com/peppertaco/Tavern/>)
 * Noto Sans font by Google (OFL license)
 * Icon theme by Font Awesome <https://fontawesome.com> (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License)
 * Default content by @OtisAlejandro (Seraphina character and lorebook) and @kallmeflocc (10K Discord Users Celebratory Background)
 * Docker guide by [@mrguymiah](https://github.com/mrguymiah) and [@Bronya-Rand](https://github.com/Bronya-Rand)
 * kokoro-js library by [@hexgrad](https://github.com/hexgrad) (Apache-2.0 License)
+
+Additional Aikobots Credits
+* [SillyTavern](https://github.com/SillyTavern/SillyTavern) 1.14.0: AGPL-3.0 License including inherited upstream credits
+* WorldInfo-Info and WorldInfo-Presets from the incomparable [@LenAnderson](https://github.com/LenAnderson/)
+* [@Cohee1207](https://github.com/Cohee1207) for Top Info Bar aka Chat Top Bar (AGPL-3.0 License)
+* Later UI integration for existing character push functionality drew some inspiration from [@selinawynters-ops](https://github.com/selinawynters-ops/).

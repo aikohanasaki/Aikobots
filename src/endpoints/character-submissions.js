@@ -102,6 +102,7 @@ router.post('/submit', async (request, response) => {
             id: record.id,
             status: record.status,
             ownerHandle: record.ownerHandle,
+            ownerHandles: Array.isArray(record.ownerHandles) ? record.ownerHandles : [record.ownerHandle].filter(Boolean),
             submittedFilename: record.submittedFilename,
         });
     } catch (error) {
