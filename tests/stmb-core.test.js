@@ -8,6 +8,7 @@ import {
     compileScene,
     createDefaultStmbSettings,
     createManagedLorebookEntryData,
+    buildSidePromptCheckpointMetadata,
     findFirstLorebookEntryByTitle,
     findOverlappingManagedMemoryEntry,
     formatMemoryTitle,
@@ -17,10 +18,12 @@ import {
     identifyManagedMemoryEntries,
     importLegacyStmbSettings,
     normalizeStmbSettings,
+    parseSceneMemoryCommandRange,
     parseSceneRange,
     parseSequenceFromTitle,
     parseStructuredMemoryResponse,
     previewTitle,
+    readSidePromptCheckpoint,
     validateTitleFormat,
 } from '../public/scripts/stmb-core.js';
 
@@ -205,6 +208,15 @@ describe('stmb core scene handling', () => {
         expect(() => parseSceneRange('12')).toThrow('Scene range must be in x-y format');
     });
 
+    it('matches STMB scenememory range taxonomy exactly', () => {
+        expect(() => parseSceneMemoryCommandRange('', [{}, {}])).toThrow('Missing range argument. Use: /scenememory X-Y (e.g., /scenememory 10-15)');
+        expect(() => parseSceneMemoryCommandRange('12', [{}, {}])).toThrow('Invalid format. Use: /scenememory X-Y (e.g., /scenememory 10-15)');
+        expect(() => parseSceneMemoryCommandRange('3-1', [{}, {}, {}, {}])).toThrow('Start message cannot be greater than end message');
+        expect(() => parseSceneMemoryCommandRange('0-5', [{}, {}])).toThrow('Message IDs out of range. Valid range: 0-1');
+        expect(() => parseSceneMemoryCommandRange('0-1', [{}, null])).toThrow('One or more specified messages do not exist');
+        expect(parseSceneMemoryCommandRange('1-3', [{}, {}, {}, {}])).toEqual({ sceneStart: 1, sceneEnd: 3 });
+    });
+
     it('rebases scene markers and highest processed after deleting a message before the scene', () => {
         expect(applyDeletedMessageToSceneState({
             sceneStart: 5,
@@ -377,6 +389,42 @@ describe('stmb core parsing and persistence', () => {
     it('reads managed memory scene ranges from STMB metadata', () => {
         expect(getRangeFromManagedMemoryEntry({ STMB_start: 3, STMB_end: 8 })).toEqual({ start: 3, end: 8 });
         expect(getRangeFromManagedMemoryEntry({ STMB_start: '3', STMB_end: 8 })).toBeNull();
+    });
+
+    it('normalizes sideprompt checkpoint reads and writes like STMB', () => {
+        expect(readSidePromptCheckpoint('tracker', {
+            STMB_sp_tracker_lastMsgId: '12',
+            STMB_sp_tracker_lastRunAt: '2026-04-06T12:00:00.000Z',
+        })).toEqual({
+            lastMsgId: 12,
+            lastRunAt: Date.parse('2026-04-06T12:00:00.000Z'),
+        });
+
+        expect(readSidePromptCheckpoint('tracker', {
+            STMB_score_lastMsgId: '7',
+            STMB_tracker_lastRunAt: 'invalid',
+        }, { includeLegacyScore: true })).toEqual({
+            lastMsgId: 7,
+            lastRunAt: null,
+        });
+
+        expect(buildSidePromptCheckpointMetadata('tracker', {
+            lastMsgId: 9,
+            lastRunAt: '2026-04-06T13:00:00.000Z',
+        })).toEqual({
+            STMB_sp_tracker_lastMsgId: 9,
+            STMB_sp_tracker_lastRunAt: '2026-04-06T13:00:00.000Z',
+            STMB_tracker_lastMsgId: 9,
+            STMB_tracker_lastRunAt: '2026-04-06T13:00:00.000Z',
+        });
+
+        expect(buildSidePromptCheckpointMetadata('tracker', {
+            lastRunAt: '2026-04-06T13:00:00.000Z',
+            includeLastMsgId: false,
+            includeTrackerFallback: false,
+        })).toEqual({
+            STMB_sp_tracker_lastRunAt: '2026-04-06T13:00:00.000Z',
+        });
     });
 
     it('finds overlapping managed memories using STMB scene metadata', () => {

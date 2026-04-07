@@ -20,9 +20,11 @@ import { createStmbTask, isStmbAbortError, throwIfStmbAborted } from './stmb-tas
 import {
     applyStmbMaxTokensToGenerateData,
     applyStmbProfileToGenerateData,
+    buildSidePromptCheckpointMetadata,
     compileScene,
     findFirstLorebookEntryByTitle,
     getActiveStmbProfile,
+    readSidePromptCheckpoint,
     STMB_METADATA_KEY,
 } from './stmb-core.js';
 import {
@@ -61,15 +63,6 @@ function getStmbChatState() {
     }
 
     return metadata[STMB_METADATA_KEY];
-}
-
-function readSidePromptCheckpoint(templateKey, existingEntry) {
-    const lastMsgId = existingEntry?.[`STMB_sp_${templateKey}_lastMsgId`] ?? existingEntry?.STMB_tracker_lastMsgId;
-    const lastRunAt = existingEntry?.[`STMB_sp_${templateKey}_lastRunAt`] ?? existingEntry?.STMB_tracker_lastRunAt;
-    return {
-        lastMsgId: Number(lastMsgId ?? -1),
-        lastRunAt: lastRunAt ? Date.parse(lastRunAt) : null,
-    };
 }
 
 function buildSceneRequest(sceneStart, sceneEnd) {
@@ -681,6 +674,7 @@ export async function evaluateTrackers(settings, options = {}) {
             }
 
             const endId = compiledScene?.metadata?.sceneEnd ?? currentLast;
+            const checkpointTimestamp = new Date().toISOString();
             const result = await runTemplateForCompiledScene({
                 template,
                 lorebookName,
@@ -689,12 +683,10 @@ export async function evaluateTrackers(settings, options = {}) {
                 settings,
                 fallbackKinds: ['tracker'],
                 trigger: 'onInterval',
-                metadataUpdates: {
-                    [`STMB_sp_${template.key}_lastMsgId`]: endId,
-                    [`STMB_sp_${template.key}_lastRunAt`]: new Date().toISOString(),
-                    STMB_tracker_lastMsgId: endId,
-                    STMB_tracker_lastRunAt: new Date().toISOString(),
-                },
+                metadataUpdates: buildSidePromptCheckpointMetadata(template.key, {
+                    lastMsgId: endId,
+                    lastRunAt: checkpointTimestamp,
+                }),
                 signal,
             });
             if (result?.status === 'cancel') continue;
@@ -832,14 +824,17 @@ export async function runAfterMemory(compiledScene, settings, profile = null, op
                 try {
                     const lorebookSettings = getEffectiveLorebookSettingsForTemplate(waveResult.template);
                     const { defaults, entryOverrides } = makeUpsertParamsFromLorebook(lorebookSettings);
+                    const checkpointTimestamp = new Date().toISOString();
                     itemsToSave.push({
                         title: waveResult.prepared.unifiedTitle,
                         content: resultText,
                         defaults,
                         entryOverrides,
-                        metadataUpdates: {
-                            [`STMB_sp_${waveResult.template.key}_lastRunAt`]: new Date().toISOString(),
-                        },
+                        metadataUpdates: buildSidePromptCheckpointMetadata(waveResult.template.key, {
+                            lastRunAt: checkpointTimestamp,
+                            includeLastMsgId: false,
+                            includeTrackerFallback: false,
+                        }),
                     });
                     succeededNames.push(waveResult.template.name);
                 } catch (error) {
@@ -983,12 +978,8 @@ export async function runSidePrompt(rawInput, settings, options = {}) {
                 lorebookData,
                 getSidePromptLookupTitles(template, parsed.runtimeMacros, ['scoreboard', 'plotpoints', 'tracker']),
             );
-            const lastMessageId = Number(
-                existing?.[`STMB_sp_${template.key}_lastMsgId`] ??
-                existing?.STMB_score_lastMsgId ??
-                existing?.STMB_tracker_lastMsgId ??
-                -1,
-            );
+            const checkpoint = readSidePromptCheckpoint(template.key, existing, { includeLegacyScore: true });
+            const lastMessageId = checkpoint.lastMsgId;
             const sceneStart = Math.max(0, lastMessageId + 1);
             const boundedStart = Math.max(sceneStart, currentLast - 199);
             try {
@@ -1000,6 +991,7 @@ export async function runSidePrompt(rawInput, settings, options = {}) {
         }
 
         const endId = compiledScene?.metadata?.sceneEnd ?? currentLast;
+        const checkpointTimestamp = new Date().toISOString();
         const result = await runTemplateForCompiledScene({
             template,
             lorebookName,
@@ -1009,12 +1001,10 @@ export async function runSidePrompt(rawInput, settings, options = {}) {
             runtimeMacros: parsed.runtimeMacros,
             fallbackKinds: ['scoreboard', 'plotpoints', 'tracker'],
             trigger: 'manual',
-            metadataUpdates: {
-                [`STMB_sp_${template.key}_lastMsgId`]: endId,
-                [`STMB_sp_${template.key}_lastRunAt`]: new Date().toISOString(),
-                STMB_tracker_lastMsgId: endId,
-                STMB_tracker_lastRunAt: new Date().toISOString(),
-            },
+            metadataUpdates: buildSidePromptCheckpointMetadata(template.key, {
+                lastMsgId: endId,
+                lastRunAt: checkpointTimestamp,
+            }),
             signal,
         });
 

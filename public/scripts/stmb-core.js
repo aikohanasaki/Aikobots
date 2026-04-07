@@ -934,6 +934,91 @@ export function parseSceneRange(value) {
     };
 }
 
+export function parseSceneMemoryCommandRange(rangeText, chatEntries = []) {
+    const rangeValue = String(rangeText || '').trim();
+    if (!rangeValue) {
+        throw new Error('Missing range argument. Use: /scenememory X-Y (e.g., /scenememory 10-15)');
+    }
+
+    const match = rangeValue.match(/^(\d+)\s*[-–—]\s*(\d+)$/);
+    if (!match) {
+        throw new Error('Invalid format. Use: /scenememory X-Y (e.g., /scenememory 10-15)');
+    }
+
+    const startId = Number(match[1]);
+    const endId = Number(match[2]);
+    if (!Number.isFinite(startId) || !Number.isFinite(endId)) {
+        throw new Error('Invalid message IDs parsed. Use: /scenememory X-Y (e.g., /scenememory 10-15)');
+    }
+
+    if (startId > endId) {
+        throw new Error('Start message cannot be greater than end message');
+    }
+
+    const activeChat = Array.isArray(chatEntries) ? chatEntries : [];
+    if (startId < 0 || endId >= activeChat.length) {
+        throw new Error(`Message IDs out of range. Valid range: 0-${activeChat.length - 1}`);
+    }
+
+    if (!activeChat[startId] || !activeChat[endId]) {
+        throw new Error('One or more specified messages do not exist');
+    }
+
+    return {
+        sceneStart: startId,
+        sceneEnd: endId,
+    };
+}
+
+export function readSidePromptCheckpoint(templateKey, existingEntry, { includeLegacyScore = false } = {}) {
+    const scopedLastMsgId = existingEntry?.[`STMB_sp_${templateKey}_lastMsgId`];
+    const trackerLastMsgId = existingEntry?.STMB_tracker_lastMsgId;
+    const legacyScoreLastMsgId = includeLegacyScore ? existingEntry?.STMB_score_lastMsgId : undefined;
+    const lastMsgIdValue = scopedLastMsgId ?? legacyScoreLastMsgId ?? trackerLastMsgId;
+    const parsedLastMsgId = Number(lastMsgIdValue);
+
+    const scopedLastRunAt = existingEntry?.[`STMB_sp_${templateKey}_lastRunAt`];
+    const trackerLastRunAt = existingEntry?.STMB_tracker_lastRunAt;
+    const parsedLastRunAt = scopedLastRunAt ? Date.parse(scopedLastRunAt) : (trackerLastRunAt ? Date.parse(trackerLastRunAt) : NaN);
+
+    return {
+        lastMsgId: Number.isFinite(parsedLastMsgId) ? Math.trunc(parsedLastMsgId) : -1,
+        lastRunAt: Number.isFinite(parsedLastRunAt) ? parsedLastRunAt : null,
+    };
+}
+
+export function buildSidePromptCheckpointMetadata(templateKey, {
+    lastMsgId = null,
+    lastRunAt = '',
+    includeLastMsgId = true,
+    includeTrackerFallback = true,
+} = {}) {
+    const key = String(templateKey || '').trim();
+    const normalizedLastRunAt = String(lastRunAt || '').trim();
+    const normalizedLastMsgId = Number.isFinite(Number(lastMsgId)) ? Math.trunc(Number(lastMsgId)) : null;
+    const metadata = {};
+
+    if (!key) {
+        return metadata;
+    }
+
+    if (includeLastMsgId && normalizedLastMsgId !== null) {
+        metadata[`STMB_sp_${key}_lastMsgId`] = normalizedLastMsgId;
+        if (includeTrackerFallback) {
+            metadata.STMB_tracker_lastMsgId = normalizedLastMsgId;
+        }
+    }
+
+    if (normalizedLastRunAt) {
+        metadata[`STMB_sp_${key}_lastRunAt`] = normalizedLastRunAt;
+        if (includeTrackerFallback) {
+            metadata.STMB_tracker_lastRunAt = normalizedLastRunAt;
+        }
+    }
+
+    return metadata;
+}
+
 function normalizeText(text) {
     return String(text ?? '')
         .replace(/\r\n/g, '\n')

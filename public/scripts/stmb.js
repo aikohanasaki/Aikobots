@@ -28,6 +28,7 @@ import {
     applyDeletedMessageToSceneState,
     applyStmbProfileToGenerateData,
     applyStmbMaxTokensToGenerateData,
+    parseSceneMemoryCommandRange,
     compiledSceneToText,
     createDefaultStmbProfile,
     findOverlappingManagedMemoryEntry,
@@ -5012,42 +5013,14 @@ async function createMemoryCommand() {
 }
 
 async function sceneMemoryCommand(_, rangeText) {
-    const rangeValue = String(rangeText || '').trim();
-    if (!rangeValue) {
-        toastr.error('Missing range argument. Use: /scenememory X-Y (e.g., /scenememory 10-15)', 'STMB');
+    let range;
+    try {
+        range = parseSceneMemoryCommandRange(rangeText, chat);
+    } catch (error) {
+        toastr.error(String(error?.message || 'Failed to parse /scenememory range'), 'STMB');
         return '';
     }
 
-    const match = rangeValue.match(/^(\d+)\s*[-–—]\s*(\d+)$/);
-    if (!match) {
-        toastr.error('Invalid format. Use: /scenememory X-Y (e.g., /scenememory 10-15)', 'STMB');
-        return '';
-    }
-
-    const startId = Number(match[1]);
-    const endId = Number(match[2]);
-    if (!Number.isFinite(startId) || !Number.isFinite(endId)) {
-        toastr.error('Invalid message IDs parsed. Use: /scenememory X-Y (e.g., /scenememory 10-15)', 'STMB');
-        return '';
-    }
-
-    if (startId > endId) {
-        toastr.error('Start message cannot be greater than end message', 'STMB');
-        return '';
-    }
-
-    const lastIndex = chat.length - 1;
-    if (startId < 0 || endId > lastIndex) {
-        toastr.error(`Message IDs out of range. Valid range: 0-${lastIndex}`, 'STMB');
-        return '';
-    }
-
-    if (!chat[startId] || !chat[endId]) {
-        toastr.error('One or more specified messages do not exist', 'STMB');
-        return '';
-    }
-
-    const range = { sceneStart: startId, sceneEnd: endId };
     setSceneRange(range.sceneStart, range.sceneEnd);
     const group = selected_group ? groups.find(item => item.id === selected_group) : null;
     const groupSuffix = group?.name ? ` in group "${group.name}"` : '';
