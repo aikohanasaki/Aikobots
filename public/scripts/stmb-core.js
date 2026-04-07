@@ -1223,10 +1223,7 @@ export function identifyManagedMemoryEntries(entries) {
     return Object.values(entries || {})
         .filter(entry =>
             entry &&
-            entry[STMB_MANAGED_FLAG] === true &&
-            entry.stmbSummary !== true &&
-            entry.stmbArc !== true &&
-            String(entry.type || '').toLowerCase() !== 'arc',
+            entry[STMB_MANAGED_FLAG] === true,
         )
         .sort((left, right) => {
             const leftSequence = parseSequenceFromTitle(left.comment || left.title || '') ?? Number(left.uid) ?? 0;

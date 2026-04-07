@@ -212,20 +212,22 @@ describe('stmb core parsing and persistence', () => {
         expect(() => parseStructuredMemoryResponse('not json')).toThrow('did not contain a JSON block');
     });
 
-    it('formats numbered titles and identifies managed entries in sequence order', () => {
+    it('formats numbered titles and identifies all stmemorybooks entries in sequence order', () => {
         const title = formatMemoryTitle('[000] - {{title}}', { title: 'Arrival' }, 7);
         expect(title).toBe('[007] - Arrival');
 
         const entries = {
             1: { uid: 1, comment: '[010] - Later', [STMB_MANAGED_FLAG]: true },
             2: { uid: 2, comment: '[002] - Earlier', [STMB_MANAGED_FLAG]: true },
-            3: { uid: 3, comment: 'Ignored', [STMB_MANAGED_FLAG]: false },
+            3: { uid: 3, comment: '[099] - Arc', [STMB_MANAGED_FLAG]: true, stmbSummary: true, type: 'arc' },
+            4: { uid: 4, comment: 'Ignored', [STMB_MANAGED_FLAG]: false },
         };
 
         const managed = identifyManagedMemoryEntries(entries);
-        expect(managed).toHaveLength(2);
+        expect(managed).toHaveLength(3);
         expect(managed[0].uid).toBe(2);
         expect(managed[1].uid).toBe(1);
+        expect(managed[2].uid).toBe(3);
     });
 
     it('uses STMB title-based numbering instead of entry count', () => {
