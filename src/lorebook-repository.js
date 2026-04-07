@@ -762,13 +762,13 @@ function assertSecurePromotionNameAllowed(user, canonicalName) {
 
     const requiredPrefix = `Z-${user?.profile?.handle || ''}-`;
     if (!canonicalName.startsWith(requiredPrefix) || canonicalName.length <= requiredPrefix.length) {
-        throw new LorebookRepositoryError('LorebookNameInvalid', `Secure lorebooks must start with "${requiredPrefix}". Use your username. Capitalization must match exactly.`, 400);
+        throw new LorebookRepositoryError('LorebookNameInvalid', `Name must start with "${requiredPrefix}" and include at least one character after it.`, 400);
     }
 }
 
 function assertSharedSecurePromotionNameAllowed(canonicalName) {
     if (!canonicalName.startsWith('Y-') || canonicalName.length <= 2) {
-        throw new LorebookRepositoryError('LorebookNameInvalid', 'Shared secure lorebooks must start with "Y-".', 400);
+        throw new LorebookRepositoryError('LorebookNameInvalid', 'Name must start with "Y-" and include at least one character after it.', 400);
     }
 }
 

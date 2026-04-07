@@ -653,13 +653,13 @@ async function moveWorldInfoStorage(name) {
     return true;
 }
 
-function getDefaultSharedLorebookName(name = '') {
+async function getDefaultSharedLorebookName(name = '') {
     const normalizedName = String(name || '').trim();
     const strippedSecurePrefix = normalizedName.startsWith('9Z')
         ? normalizedName.slice(2)
         : normalizedName.replace(/^Z-[^-]+-/, '');
     const baseName = strippedSecurePrefix.startsWith('Y-') ? strippedSecurePrefix.slice(2) : strippedSecurePrefix;
-    return getSanitizedFilename(`Y-${baseName || 'shared-lorebook'}`) || 'Y-shared-lorebook';
+    return await getSanitizedFilename(`Y-${baseName || 'My Shared Lorebook'}`) || 'Y-My Shared Lorebook';
 }
 
 async function refreshWorldInfoAfterMetadataChange(name) {
@@ -757,7 +757,7 @@ async function manageSharedLorebook(name) {
     const sharedName = await Popup.show.input(
         'Promote to shared secure lorebook',
         'Enter the shared secure lorebook name. It must start with "Y-".',
-        getDefaultSharedLorebookName(name),
+        await getDefaultSharedLorebookName(name),
     );
     if (!sharedName) {
         return false;
