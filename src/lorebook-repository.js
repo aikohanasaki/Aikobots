@@ -640,7 +640,6 @@ function buildLorebookMetadata(record, user = null) {
     const checkoutState = getCheckoutState(user, record);
     const isAdmin = Boolean(user?.profile?.admin);
     const canManageSecure = record?.storage === 'secure' ? canManageSecureLorebook(user, record) : false;
-    const checkedOut = sharingMode === 'shared' ? Boolean(String(record?.checkedOutBy || '').trim()) : false;
 
     return {
         name: record?.name || '',
@@ -648,7 +647,6 @@ function buildLorebookMetadata(record, user = null) {
         ownerHandle: getPrimaryOwnerHandle(ownerHandles) || String(record?.ownerHandle || '').trim(),
         ownerHandles,
         sharingMode,
-        checkedOut,
         checkedOutBy: sharingMode === 'shared' ? (String(record?.checkedOutBy || '').trim() || null) : null,
         checkedOutAt: sharingMode === 'shared' ? (record?.checkedOutAt || null) : null,
         checkoutState,
@@ -1072,7 +1070,6 @@ function buildDeletedSecureLorebookResponse(recordOrName, user, deletedUserHandl
             ownerHandle: '',
             ownerHandles: [],
             sharingMode: 'single',
-            checkedOut: false,
             checkedOutBy: null,
             checkedOutAt: null,
             checkoutState: 'available',
@@ -1661,7 +1658,6 @@ export function resolveLorebookWithMetadata(user, name, {
             ownerHandle: userRecord.ownerHandle,
             ownerHandles: userRecord.ownerHandles,
             sharingMode: 'single',
-            checkedOut: false,
             checkedOutBy: null,
             checkedOutAt: null,
             checkoutState: 'available',
@@ -1680,7 +1676,6 @@ export function resolveLorebookWithMetadata(user, name, {
             ownerHandle: user.profile.handle,
             ownerHandles: [user.profile.handle].filter(Boolean),
             sharingMode: 'single',
-            checkedOut: false,
             checkedOutBy: null,
             checkedOutAt: null,
             checkoutState: 'available',
@@ -1929,7 +1924,6 @@ export function saveLorebookForManagement(user, name, data, storage = 'user') {
         ownerHandle: user.profile.handle,
         ownerHandles: [user.profile.handle].filter(Boolean),
         sharingMode: 'single',
-        checkedOut: false,
         checkedOutBy: null,
         checkedOutAt: null,
         checkoutState: 'available',
@@ -2064,7 +2058,6 @@ export function promoteLorebook(user, name) {
         ownerHandle: user.profile.handle,
         ownerHandles: [user.profile.handle].filter(Boolean),
         sharingMode: 'single',
-        checkedOut: false,
         checkedOutBy: null,
         checkedOutAt: null,
         checkoutState: 'available',
@@ -2099,7 +2092,6 @@ export function demoteLorebook(user, name) {
         ownerHandle: secureRecord.ownerHandle,
         ownerHandles: [secureRecord.ownerHandle].filter(Boolean),
         sharingMode: 'single',
-        checkedOut: false,
         checkedOutBy: null,
         checkedOutAt: null,
         checkoutState: 'available',
@@ -2142,7 +2134,6 @@ export function promoteLorebookToShared(user, sourceName, sharedName, ownerHandl
             name: sharedCanonicalName,
             ownerHandle: existingSharedTarget.ownerHandle,
             ownerHandles: existingOwnerHandles,
-            checkedOut: Boolean(String(existingSharedTarget.checkedOutBy || '').trim()),
             checkedOutBy: String(existingSharedTarget.checkedOutBy || '').trim() || null,
             canOverwrite: canManageSecureLorebook(user, existingSharedTarget),
         };
@@ -2220,7 +2211,6 @@ export function promoteLorebookToShared(user, sourceName, sharedName, ownerHandl
         sharingMode: 'shared',
         ownerHandle: getPrimaryOwnerHandle(normalizedOwners),
         ownerHandles: normalizedOwners,
-        checkedOut: false,
         checkedOutBy: null,
         checkedOutAt: null,
     }, user);
@@ -2375,7 +2365,6 @@ export function unshareLorebook(user, name, targetOwnerHandle) {
         ownerHandle: normalizedTargetOwnerHandle,
         ownerHandles: [normalizedTargetOwnerHandle].filter(Boolean),
         sharingMode: 'single',
-        checkedOut: false,
         checkedOutBy: null,
         checkedOutAt: null,
         checkoutState: 'available',

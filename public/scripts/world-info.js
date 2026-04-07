@@ -183,7 +183,6 @@ function normalizeWorldInfoItems(data = {}) {
                     ? item.ownerHandles.map(handle => String(handle || '').trim()).filter(Boolean)
                     : [String(item.ownerHandle || '').trim()].filter(Boolean),
                 sharingMode: item.sharingMode === 'shared' ? 'shared' : 'single',
-                checkedOut: hasOwn('checkedOut') ? Boolean(item.checkedOut) : undefined,
                 checkedOutBy: String(item.checkedOutBy || '').trim() || null,
                 checkedOutAt: item.checkedOutAt || null,
                 checkoutState: ['self', 'other'].includes(String(item.checkoutState || '')) ? String(item.checkoutState) : 'available',
@@ -206,7 +205,6 @@ function normalizeWorldInfoItems(data = {}) {
             ownerHandle: '',
             ownerHandles: [],
             sharingMode: 'single',
-            checkedOut: false,
             checkedOutBy: null,
             checkedOutAt: null,
             checkoutState: 'available',
