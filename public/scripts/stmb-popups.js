@@ -9,6 +9,7 @@ import { escapeHtml } from './utils.js';
 const STMB_POPUP_RESULTS = Object.freeze({
     ADVANCED: POPUP_RESULT.CUSTOM1,
     SAVE_PROFILE: POPUP_RESULT.CUSTOM2,
+    SETTINGS: POPUP_RESULT.CUSTOM3,
     RETRY: POPUP_RESULT.CUSTOM4,
 });
 const activePreviewPopups = new Set();
@@ -607,6 +608,11 @@ export async function showConfirmationPopup(data) {
         allowVerticalScrolling: true,
         customButtons: [
             {
+                text: 'Settings...',
+                result: STMB_POPUP_RESULTS.SETTINGS,
+                classes: ['menu_button', 'whitespacenowrap'],
+            },
+            {
                 text: 'Advanced Options...',
                 result: STMB_POPUP_RESULTS.ADVANCED,
                 classes: ['menu_button', 'whitespacenowrap'],
@@ -621,6 +627,9 @@ export async function showConfirmationPopup(data) {
     updateSelectedProfile();
 
     const result = await popup.show();
+    if (result === STMB_POPUP_RESULTS.SETTINGS) {
+        return { action: 'settings' };
+    }
     if (result === STMB_POPUP_RESULTS.ADVANCED) {
         return {
             action: 'advanced',
@@ -640,6 +649,12 @@ export async function showConfirmationPopup(data) {
 export async function showAdvancedOptionsPopup(data) {
     const profiles = Array.isArray(data?.profiles) ? data.profiles : [];
     const selectedIndex = Number.isInteger(data?.selectedProfileIndex) ? data.selectedProfileIndex : 0;
+    const baseEstimatedTokens = Number.isFinite(Number(data?.estimatedTokens))
+        ? Math.max(0, Math.trunc(Number(data.estimatedTokens)))
+        : 0;
+    const tokenThreshold = Number.isFinite(Number(data?.tokenThreshold))
+        ? Math.max(1000, Math.trunc(Number(data.tokenThreshold)))
+        : 30000;
     const html = `
         <div class="stmb-advanced-popup">
             <h3>Advanced Options</h3>
@@ -647,7 +662,9 @@ export async function showAdvancedOptionsPopup(data) {
                 <div>Scene: ${escapeHtml(String(data?.sceneStart ?? '?'))}-${escapeHtml(String(data?.sceneEnd ?? '?'))}</div>
                 <div>Messages: ${escapeHtml(String(data?.messageCount ?? '?'))}</div>
                 <div>Available memories: ${escapeHtml(String(data?.availableMemories ?? 0))}</div>
-                <div>Estimated tokens: ${escapeHtml(String(data?.estimatedTokens ?? '?'))}</div>
+                <div>Base tokens: ${escapeHtml(String(baseEstimatedTokens))}</div>
+                <div>Total estimated tokens: <span id="stmb-advanced-total-tokens">${escapeHtml(String(baseEstimatedTokens))}</span></div>
+                <div id="stmb-advanced-token-warning" class="${baseEstimatedTokens > tokenThreshold ? '' : 'displayNone'}"><strong>Warning:</strong> Large scene exceeds the warning threshold of ${escapeHtml(String(tokenThreshold))} tokens.</div>
             </div>
             <div class="world_entry_form_control">
                 <label for="stmb-advanced-profile-select">Profile</label>
@@ -722,6 +739,11 @@ export async function showAdvancedOptionsPopup(data) {
         },
         customButtons: [
             {
+                text: 'Settings...',
+                result: STMB_POPUP_RESULTS.SETTINGS,
+                classes: ['menu_button', 'whitespacenowrap'],
+            },
+            {
                 text: 'Save as New Profile',
                 result: STMB_POPUP_RESULTS.SAVE_PROFILE,
                 classes: ['menu_button', 'whitespacenowrap'],
@@ -731,6 +753,8 @@ export async function showAdvancedOptionsPopup(data) {
 
     const dialog = popup.dlg;
     const profileSelect = dialog.querySelector('#stmb-advanced-profile-select');
+    const totalTokensEl = dialog.querySelector('#stmb-advanced-total-tokens');
+    const tokenWarningEl = dialog.querySelector('#stmb-advanced-token-warning');
     const originalSettings = {
         profileIndex: Number(profileSelect?.value ?? selectedIndex),
         promptText: String(profiles[selectedIndex]?.effectivePrompt || ''),
@@ -776,11 +800,73 @@ export async function showAdvancedOptionsPopup(data) {
     profileSelect?.addEventListener('change', () => {
         updateSelectedProfile(true);
         updateCreateButtonState();
+        updateTokenEstimate().catch(error => {
+            console.warn('STMB advanced token estimate update failed', error);
+        });
     });
     dialog.querySelector('#stmb-advanced-prompt')?.addEventListener('input', updateCreateButtonState);
-    dialog.querySelector('#stmb-advanced-memory-count')?.addEventListener('input', updateCreateButtonState);
+    dialog.querySelector('#stmb-advanced-prompt')?.addEventListener('change', () => {
+        updateTokenEstimate().catch(error => {
+            console.warn('STMB advanced token estimate update failed', error);
+        });
+    });
+    dialog.querySelector('#stmb-advanced-memory-count')?.addEventListener('input', () => {
+        updateCreateButtonState();
+        updateTokenEstimate().catch(error => {
+            console.warn('STMB advanced token estimate update failed', error);
+        });
+    });
     dialog.querySelector('#stmb-advanced-override-settings')?.addEventListener('change', updateCreateButtonState);
     updateCreateButtonState();
+
+    let tokenEstimateRequestId = 0;
+    const updateTokenEstimate = async () => {
+        const estimateTokenTotal = typeof data?.estimateTokenTotal === 'function'
+            ? data.estimateTokenTotal
+            : null;
+        const requestId = ++tokenEstimateRequestId;
+        const memoryCount = Number(dialog.querySelector('#stmb-advanced-memory-count')?.value ?? data?.defaultMemoryCount ?? 0);
+
+        const applyEstimate = estimatedTokens => {
+            const normalizedTokens = Number.isFinite(Number(estimatedTokens))
+                ? Math.max(0, Math.trunc(Number(estimatedTokens)))
+                : baseEstimatedTokens;
+            if (totalTokensEl) {
+                totalTokensEl.textContent = String(normalizedTokens);
+            }
+            if (tokenWarningEl) {
+                tokenWarningEl.classList.toggle('displayNone', normalizedTokens <= tokenThreshold);
+            }
+        };
+
+        if (!estimateTokenTotal) {
+            applyEstimate(baseEstimatedTokens);
+            return;
+        }
+
+        if (totalTokensEl) {
+            totalTokensEl.textContent = 'Calculating...';
+        }
+
+        try {
+            const estimatedTokens = await estimateTokenTotal({
+                profileIndex: Number(profileSelect?.value ?? selectedIndex),
+                promptText: String(dialog.querySelector('#stmb-advanced-prompt')?.value || ''),
+                memoryCount: Number.isFinite(memoryCount) ? memoryCount : Number(data?.defaultMemoryCount ?? 0),
+                overrideSettings: Boolean(dialog.querySelector('#stmb-advanced-override-settings')?.checked),
+            });
+            if (requestId !== tokenEstimateRequestId) {
+                return;
+            }
+            applyEstimate(estimatedTokens);
+        } catch (error) {
+            if (requestId !== tokenEstimateRequestId) {
+                return;
+            }
+            console.warn('STMB advanced token estimate failed', error);
+            applyEstimate(baseEstimatedTokens);
+        }
+    };
 
     const buildResult = action => ({
         action,
@@ -791,7 +877,12 @@ export async function showAdvancedOptionsPopup(data) {
         newProfileName: String(dialog.querySelector('#stmb-advanced-profile-name')?.value || '').trim(),
     });
 
+    await updateTokenEstimate();
+
     const result = await popup.show();
+    if (result === STMB_POPUP_RESULTS.SETTINGS) {
+        return { action: 'settings' };
+    }
     if (result === STMB_POPUP_RESULTS.SAVE_PROFILE) {
         return buildResult('save_profile');
     }

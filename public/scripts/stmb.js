@@ -11,7 +11,7 @@ import {
 } from '../script.js';
 import { DOMPurify } from '../lib.js';
 import { getContext, saveMetadataDebounced } from './extensions.js';
-import { commitStmbSummaries, generateStmbSummary, generateStmbText, prepareStmbMemoryMessages, saveStmbMemoryEntry } from './stmb-api.js';
+import { commitStmbSummaries, generateStmbMemory, generateStmbSummary, generateStmbText, prepareStmbMemoryMessages, saveStmbMemoryEntry } from './stmb-api.js';
 import { closeActiveMemoryPreviewPopups, showAdvancedOptionsPopup, showAutoConsolidationPromptPopup, showAutoSummaryDecisionPopup, showConfirmationPopup, showFailedAIResponsePopup, showFailedSummaryResponsePopup, showLorebookPickerPopup, showMemoryPreviewPopup, showSummaryConsolidationOptionsPopup } from './stmb-popups.js';
 import { Popup, POPUP_RESULT, POPUP_TYPE } from './popup.js';
 import { applyLocale, translate } from './i18n.js';
@@ -3334,6 +3334,35 @@ function saveAdvancedProfile(baseProfile, popupResult, currentUiConnection) {
     return nextProfile;
 }
 
+async function estimateAdvancedMemoryTokens(compiledScene, lorebookName, options = {}) {
+    const profileIndex = Number.isInteger(options?.profileIndex) ? options.profileIndex : null;
+    const promptText = String(options?.promptText || '').trim();
+    const memoryCount = Number.isFinite(Number(options?.memoryCount))
+        ? Math.max(0, Math.min(7, Math.trunc(Number(options.memoryCount))))
+        : 0;
+    const effectiveProfile = structuredClone(getActiveStmbProfile(stmbSettings, profileIndex));
+
+    if (promptText) {
+        effectiveProfile.promptText = promptText;
+    }
+
+    const requestSettings = {
+        ...stmbSettings,
+        moduleSettings: {
+            ...(stmbSettings.moduleSettings || {}),
+            defaultMemoryCount: memoryCount,
+        },
+    };
+    const prepared = await prepareStmbMemoryMessages({
+        lorebookName,
+        storage: getLorebookStorageForRequest(lorebookName),
+        compiledScene,
+        profile: effectiveProfile,
+        stmbSettings: requestSettings,
+    });
+    return await getTokenCountAsync(String(prepared?.promptText || ''));
+}
+
 async function showAndGetMemorySettings(compiledScene, range, lorebookName, selectedProfileIndex = null) {
     await firstRunInitSummaryPromptPresets(stmbSettings);
     const tokenThreshold = getModuleSettings().tokenWarningThreshold ?? 30000;
@@ -3373,6 +3402,11 @@ async function showAndGetMemorySettings(compiledScene, range, lorebookName, sele
         return null;
     }
 
+    if (confirmation.action === 'settings') {
+        await showMainEntryPopup();
+        return null;
+    }
+
     if (confirmation.action === 'confirm') {
         return {
             profileSettings: structuredClone(getActiveStmbProfile(stmbSettings, confirmation.profileIndex)),
@@ -3393,9 +3427,16 @@ async function showAndGetMemorySettings(compiledScene, range, lorebookName, sele
         defaultMemoryCount: Math.max(0, Math.min(7, Number(getModuleSettings().defaultMemoryCount ?? 0))),
         overrideSettings: false,
         suggestedProfileName: `${getProfileDisplayName(selectedProfile)} - Modified`,
+        tokenThreshold,
+        estimateTokenTotal: async popupOptions => await estimateAdvancedMemoryTokens(compiledScene, lorebookName, popupOptions),
     });
 
     if (advanced.action === 'cancel') {
+        return null;
+    }
+
+    if (advanced.action === 'settings') {
+        await showMainEntryPopup();
         return null;
     }
 
@@ -4004,18 +4045,26 @@ async function requestStructuredMemory(compiledScene, profile, lorebookName, sum
     const { generateData } = await buildOpenAIGenerateData('quiet', [{ role: 'user', content: promptText }], {
         jsonSchema: getMemorySchema(),
     });
+    const finalGenerateData = applyStmbMaxTokensToGenerateData(
+        applyStmbProfileToGenerateData(generateData, profile, getStmbProviderDefaults()),
+        getModuleSettings().maxTokens,
+    );
+
+    if (!getModuleSettings().useRegex) {
+        const result = await generateStmbMemory({
+            generateData: finalGenerateData,
+        }, { signal });
+        return result.memory;
+    }
+
     const result = await generateStmbText({
-        generateData: applyStmbMaxTokensToGenerateData(
-            applyStmbProfileToGenerateData(generateData, profile, getStmbProviderDefaults()),
-            getModuleSettings().maxTokens,
-        ),
+        generateData: finalGenerateData,
     }, { signal });
 
     try {
-        const parseTarget = getModuleSettings().useRegex
-            ? applySelectedRegex(String(result.text || ''), getModuleSettings().selectedRegexIncoming)
-            : (result.providerResponse ?? result.text);
-        return parseStructuredMemoryResponse(parseTarget);
+        return parseStructuredMemoryResponse(
+            applySelectedRegex(String(result.text || ''), getModuleSettings().selectedRegexIncoming),
+        );
     } catch (error) {
         error.rawResponse = typeof result?.text === 'string' && result.text
             ? result.text
