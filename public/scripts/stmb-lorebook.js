@@ -4,7 +4,7 @@ import {
     name1,
     name2,
 } from '../script.js';
-import { saveMetadataDebounced } from './extensions.js';
+import { getContext, saveMetadataDebounced } from './extensions.js';
 import {
     assignLorebookToChat,
     createNewWorldInfo,
@@ -13,6 +13,7 @@ import {
     world_names,
 } from './world-info.js';
 import { showLorebookPickerPopup, showLorebookRecoveryPopup } from './stmb-popups.js';
+import { calculateLorebookStats as calculateLorebookStatsCore } from './stmb-core.js';
 
 export class StmbLorebookHandledError extends Error {
     constructor(message = '') {
@@ -24,6 +25,27 @@ export class StmbLorebookHandledError extends Error {
 
 export function isStmbLorebookHandledError(error) {
     return Boolean(error?.handled) || error instanceof StmbLorebookHandledError;
+}
+
+export async function getLorebookStats() {
+    try {
+        const context = await getContext();
+        const lorebookName = String(context?.chatMetadata?.[METADATA_KEY] || '').trim();
+
+        if (!lorebookName) {
+            return { valid: false, error: 'No lorebook bound to chat' };
+        }
+
+        const lorebookData = await loadWorldInfo(lorebookName);
+        if (!lorebookData) {
+            return { valid: false, error: 'Failed to load lorebook' };
+        }
+
+        return calculateLorebookStatsCore(lorebookName, lorebookData);
+    } catch (error) {
+        console.error('STMB lorebook stats failed', error);
+        return { valid: false, error: String(error?.message || error) };
+    }
 }
 
 export async function ensureResolvedLorebookName({

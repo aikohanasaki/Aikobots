@@ -1232,6 +1232,30 @@ export function identifyManagedMemoryEntries(entries) {
         });
 }
 
+function countEntryKeywords(entry) {
+    return Array.isArray(entry?.key) ? entry.key.length : 0;
+}
+
+export function calculateLorebookStats(lorebookName, lorebookData) {
+    const entries = Object.values(lorebookData?.entries || {});
+    const managedEntries = identifyManagedMemoryEntries(lorebookData?.entries || {});
+    const managedEntrySet = new Set(managedEntries);
+    const otherEntries = entries.filter(entry => !managedEntrySet.has(entry));
+
+    return {
+        valid: true,
+        lorebookName,
+        totalEntries: entries.length,
+        memoryEntries: managedEntries.length,
+        otherEntries: otherEntries.length,
+        averageContentLength: entries.length > 0
+            ? Math.round(entries.reduce((sum, entry) => sum + (entry?.content?.length || 0), 0) / entries.length)
+            : 0,
+        totalKeywords: entries.reduce((sum, entry) => sum + countEntryKeywords(entry), 0),
+        memoryKeywords: managedEntries.reduce((sum, entry) => sum + countEntryKeywords(entry), 0),
+    };
+}
+
 export function getRangeFromManagedMemoryEntry(entry) {
     if (typeof entry?.STMB_start === 'number' && typeof entry?.STMB_end === 'number') {
         return { start: entry.STMB_start, end: entry.STMB_end };
