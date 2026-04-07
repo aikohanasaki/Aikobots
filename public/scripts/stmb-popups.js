@@ -804,107 +804,128 @@ export async function showAdvancedOptionsPopup(data) {
 
 export async function showMemoryPreviewPopup(memoryResult, sceneData, profileSettings, options = {}) {
     if (!memoryResult || typeof memoryResult !== 'object') {
+        console.error('STMB invalid memoryResult passed to showMemoryPreviewPopup');
         return { action: 'cancel' };
     }
 
-    const title = String(
-        memoryResult.extractedTitle
-        ?? memoryResult.title
-        ?? 'Memory',
-    ).trim() || 'Memory';
-    const content = String(
-        memoryResult.content
-        ?? memoryResult.summary
-        ?? '',
-    ).trim();
-    const keywordsText = keywordsToString(
-        memoryResult.suggestedKeys
-        ?? memoryResult.keywords
-        ?? [],
-    );
+    if (!sceneData || typeof sceneData !== 'object') {
+        console.error('STMB invalid sceneData passed to showMemoryPreviewPopup');
+        return { action: 'cancel' };
+    }
 
-    const html = `
-        <div class="stmb-preview-popup">
-            <h3>Review Memory</h3>
-            <div class="world_entry_form_control opacity70p">
-                <div>Profile: ${escapeHtml(String(profileSettings?.name || 'Current SillyTavern Settings'))}</div>
-                <div>Scene: ${escapeHtml(String(sceneData?.sceneStart ?? '?'))}-${escapeHtml(String(sceneData?.sceneEnd ?? '?'))}</div>
-                <div>Messages: ${escapeHtml(String(sceneData?.messageCount ?? '?'))}</div>
-            </div>
-            <div class="world_entry_form_control">
-                <label for="stmb-preview-title">Title</label>
-                <input id="stmb-preview-title" class="text_pole" style="width:100%" value="${escapeHtml(title)}" ${options.lockTitle ? 'readonly' : ''}>
-            </div>
-            <div class="world_entry_form_control">
-                <label for="stmb-preview-content">Content</label>
-                <textarea id="stmb-preview-content" class="text_pole" style="width:100%; min-height:220px; white-space:pre-wrap;">${escapeHtml(content)}</textarea>
-            </div>
-            <div class="world_entry_form_control">
-                <label for="stmb-preview-keywords">Keywords</label>
-                <textarea id="stmb-preview-keywords" class="text_pole" style="width:100%; min-height:90px; white-space:pre-wrap;">${escapeHtml(keywordsText)}</textarea>
-            </div>
-        </div>
-    `;
+    if (!profileSettings || typeof profileSettings !== 'object') {
+        console.error('STMB invalid profileSettings passed to showMemoryPreviewPopup');
+        return { action: 'cancel' };
+    }
 
-    safePlayMessageSound();
-    const popup = new Popup(DOMPurify.sanitize(html), POPUP_TYPE.TEXT, '', {
-        okButton: 'Edit & Save',
-        cancelButton: 'Cancel',
-        wide: true,
-        allowVerticalScrolling: true,
-        onClosing: popupInstance => {
-            if (popupInstance.result !== POPUP_RESULT.AFFIRMATIVE) {
-                return true;
-            }
+    if (!Number.isInteger(sceneData.sceneStart) || !Number.isInteger(sceneData.sceneEnd) || !Number.isInteger(sceneData.messageCount)) {
+        console.error('STMB sceneData missing required numeric properties for showMemoryPreviewPopup', sceneData);
+        return { action: 'cancel' };
+    }
 
-            const titleValue = String(popupInstance.dlg.querySelector('#stmb-preview-title')?.value || '').trim();
-            const contentValue = String(popupInstance.dlg.querySelector('#stmb-preview-content')?.value || '').trim();
-            if (!contentValue) {
-                toastr.error('Memory content cannot be empty', 'STMB');
-                return false;
-            }
-            if (!options.lockTitle && !titleValue) {
-                toastr.error('Memory title cannot be empty', 'STMB');
-                return false;
-            }
-            return true;
-        },
-        customButtons: [
-            {
-                text: 'Retry Generation',
-                result: STMB_POPUP_RESULTS.RETRY,
-                classes: ['menu_button', 'whitespacenowrap'],
-            },
-        ],
-    });
-
-    activePreviewPopups.add(popup);
     try {
-        const result = await popup.show();
-        if (result === STMB_POPUP_RESULTS.RETRY) {
-            return { action: 'retry' };
-        }
-        if (result !== POPUP_RESULT.AFFIRMATIVE) {
-            return { action: 'cancel' };
-        }
+        const title = String(
+            memoryResult.extractedTitle
+            ?? memoryResult.title
+            ?? 'Memory',
+        ).trim() || 'Memory';
+        const content = String(
+            memoryResult.content
+            ?? memoryResult.summary
+            ?? '',
+        ).trim();
+        const keywordsText = keywordsToString(
+            memoryResult.suggestedKeys
+            ?? memoryResult.keywords
+            ?? [],
+        );
 
-        const titleValue = String(popup.dlg.querySelector('#stmb-preview-title')?.value || '').trim();
-        const contentValue = String(popup.dlg.querySelector('#stmb-preview-content')?.value || '').trim();
-        const keywordsValue = String(popup.dlg.querySelector('#stmb-preview-keywords')?.value || '').trim();
+        const html = `
+            <div class="stmb-preview-popup">
+                <h3>Review Memory</h3>
+                <div class="world_entry_form_control opacity70p">
+                    <div>Profile: ${escapeHtml(String(profileSettings.name || 'Current SillyTavern Settings'))}</div>
+                    <div>Scene: ${escapeHtml(String(sceneData.sceneStart))}-${escapeHtml(String(sceneData.sceneEnd))}</div>
+                    <div>Messages: ${escapeHtml(String(sceneData.messageCount))}</div>
+                </div>
+                <div class="world_entry_form_control">
+                    <label for="stmb-preview-title">Title</label>
+                    <input id="stmb-preview-title" class="text_pole" style="width:100%" value="${escapeHtml(title)}" ${options.lockTitle ? 'readonly' : ''}>
+                </div>
+                <div class="world_entry_form_control">
+                    <label for="stmb-preview-content">Content</label>
+                    <textarea id="stmb-preview-content" class="text_pole" style="width:100%; min-height:220px; white-space:pre-wrap;">${escapeHtml(content)}</textarea>
+                </div>
+                <div class="world_entry_form_control">
+                    <label for="stmb-preview-keywords">Keywords</label>
+                    <textarea id="stmb-preview-keywords" class="text_pole" style="width:100%; min-height:90px; white-space:pre-wrap;">${escapeHtml(keywordsText)}</textarea>
+                </div>
+            </div>
+        `;
 
-        return {
-            action: 'edit',
-            memoryData: {
-                ...memoryResult,
-                extractedTitle: options.lockTitle ? title : titleValue,
-                title: options.lockTitle ? title : titleValue,
-                content: contentValue,
-                suggestedKeys: parseKeywords(keywordsValue),
-                keywords: parseKeywords(keywordsValue),
+        safePlayMessageSound();
+        const popup = new Popup(DOMPurify.sanitize(html), POPUP_TYPE.TEXT, '', {
+            okButton: 'Edit & Save',
+            cancelButton: 'Cancel',
+            wide: true,
+            allowVerticalScrolling: true,
+            onClosing: popupInstance => {
+                if (popupInstance.result !== POPUP_RESULT.AFFIRMATIVE) {
+                    return true;
+                }
+
+                const titleValue = String(popupInstance.dlg.querySelector('#stmb-preview-title')?.value || '').trim();
+                const contentValue = String(popupInstance.dlg.querySelector('#stmb-preview-content')?.value || '').trim();
+                if (!contentValue) {
+                    toastr.error('Memory content cannot be empty', 'STMB');
+                    return false;
+                }
+                if (!options.lockTitle && !titleValue) {
+                    toastr.error('Memory title cannot be empty', 'STMB');
+                    return false;
+                }
+                return true;
             },
-        };
-    } finally {
-        activePreviewPopups.delete(popup);
+            customButtons: [
+                {
+                    text: 'Retry Generation',
+                    result: STMB_POPUP_RESULTS.RETRY,
+                    classes: ['menu_button', 'whitespacenowrap'],
+                },
+            ],
+        });
+
+        activePreviewPopups.add(popup);
+        try {
+            const result = await popup.show();
+            if (result === STMB_POPUP_RESULTS.RETRY) {
+                return { action: 'retry' };
+            }
+            if (result !== POPUP_RESULT.AFFIRMATIVE) {
+                return { action: 'cancel' };
+            }
+
+            const titleValue = String(popup.dlg.querySelector('#stmb-preview-title')?.value || '').trim();
+            const contentValue = String(popup.dlg.querySelector('#stmb-preview-content')?.value || '').trim();
+            const keywordsValue = String(popup.dlg.querySelector('#stmb-preview-keywords')?.value || '').trim();
+
+            return {
+                action: 'edit',
+                memoryData: {
+                    ...memoryResult,
+                    extractedTitle: options.lockTitle ? title : titleValue,
+                    title: options.lockTitle ? title : titleValue,
+                    content: contentValue,
+                    suggestedKeys: parseKeywords(keywordsValue),
+                    keywords: parseKeywords(keywordsValue),
+                },
+            };
+        } finally {
+            activePreviewPopups.delete(popup);
+        }
+    } catch (error) {
+        console.error('STMB failed to show memory preview popup', error);
+        return { action: 'cancel' };
     }
 }
 
@@ -919,88 +940,108 @@ export function closeActiveMemoryPreviewPopups() {
 }
 
 export function showFailedAIResponsePopup(error, { onApply } = {}) {
-    const rawResponse = typeof error?.rawResponse === 'string' ? error.rawResponse : '';
-    const providerBody = typeof error?.providerBody === 'string' ? error.providerBody : '';
-    const code = String(error?.code || '').trim();
-    const message = String(error?.message || 'Unknown error').trim();
-    const canApply = rawResponse && typeof onApply === 'function';
+    try {
+        const rawResponse = typeof error?.rawResponse === 'string' ? error.rawResponse : '';
+        const providerBody = typeof error?.providerBody === 'string' ? error.providerBody : '';
+        const code = String(error?.code || '').trim();
+        const message = String(error?.message || 'Unknown error').trim();
+        const canApply = Boolean(rawResponse) && typeof onApply === 'function';
 
-    const html = `
-        <div class="stmb-failed-response-popup">
-            <h3>Review Failed AI Response</h3>
-            <div class="world_entry_form_control">
-                <div><strong>Error:</strong> ${escapeHtml(message)}</div>
-                ${code ? `<div><strong>Code:</strong> ${escapeHtml(code)}</div>` : ''}
+        const html = `
+            <div class="stmb-failed-response-popup">
+                <h3>Review Failed AI Response</h3>
+                <div class="world_entry_form_control">
+                    <div><strong>Error:</strong> ${escapeHtml(message)}</div>
+                    ${code ? `<div><strong>Code:</strong> ${escapeHtml(code)}</div>` : ''}
+                </div>
+                ${rawResponse ? `
+                    <div class="world_entry_form_control">
+                        <h4>Raw AI Response</h4>
+                        <textarea id="stmb-corrected-raw" class="text_pole" style="width:100%; min-height:220px; max-height:360px; white-space:pre; overflow:auto;">${escapeHtml(rawResponse)}</textarea>
+                        <div class="buttons_block gap10px">
+                            <button id="stmb-copy-raw" class="menu_button">Copy Raw</button>
+                            <button id="stmb-apply-corrected-raw" class="menu_button" ${canApply ? '' : 'disabled'}>Create Memory from corrected JSON</button>
+                        </div>
+                        ${canApply ? '' : '<div class="opacity70p">Unable to apply corrected JSON because the original generation context is missing.</div>'}
+                    </div>
+                ` : '<div class="world_entry_form_control opacity70p">No raw response was captured.</div>'}
+                ${providerBody ? `
+                    <div class="world_entry_form_control">
+                        <h4>Provider Error Body</h4>
+                        <pre class="text_pole" style="white-space:pre-wrap; max-height:200px; overflow:auto;"><code>${escapeHtml(providerBody)}</code></pre>
+                        <div class="buttons_block gap10px">
+                            <button id="stmb-copy-provider" class="menu_button">Copy Provider Body</button>
+                        </div>
+                    </div>
+                ` : ''}
             </div>
-            ${rawResponse ? `
-                <div class="world_entry_form_control">
-                    <h4>Raw AI Response</h4>
-                    <textarea id="stmb-corrected-raw" class="text_pole" style="width:100%; min-height:220px; max-height:360px; white-space:pre; overflow:auto;">${escapeHtml(rawResponse)}</textarea>
-                    <div class="buttons_block gap10px">
-                        <button id="stmb-copy-raw" class="menu_button">Copy Raw</button>
-                        <button id="stmb-apply-corrected-raw" class="menu_button" ${canApply ? '' : 'disabled'}>Create Memory from corrected JSON</button>
-                    </div>
-                    ${canApply ? '' : '<div class="opacity70p">Unable to apply corrected JSON because the original generation context is missing.</div>'}
-                </div>
-            ` : '<div class="world_entry_form_control opacity70p">No raw response was captured.</div>'}
-            ${providerBody ? `
-                <div class="world_entry_form_control">
-                    <h4>Provider Error Body</h4>
-                    <pre class="text_pole" style="white-space:pre-wrap; max-height:200px; overflow:auto;"><code>${escapeHtml(providerBody)}</code></pre>
-                    <div class="buttons_block gap10px">
-                        <button id="stmb-copy-provider" class="menu_button">Copy Provider Body</button>
-                    </div>
-                </div>
-            ` : ''}
-        </div>
-    `;
+        `;
 
-    safePlayMessageSound();
-    const popup = new Popup(DOMPurify.sanitize(html), POPUP_TYPE.TEXT, '', {
-        wide: true,
-        large: true,
-        allowVerticalScrolling: true,
-        okButton: false,
-        cancelButton: 'Close',
-    });
+        safePlayMessageSound();
+        const popup = new Popup(DOMPurify.sanitize(html), POPUP_TYPE.TEXT, '', {
+            wide: true,
+            large: true,
+            allowVerticalScrolling: true,
+            okButton: false,
+            cancelButton: 'Close',
+        });
 
-    const dlg = popup.dlg;
-    dlg.querySelector('#stmb-copy-raw')?.addEventListener('click', async () => {
-        try {
-            await navigator.clipboard.writeText(rawResponse);
-            toastr.success('Copied raw response', 'STMB');
-        } catch {
-            toastr.error('Copy failed', 'STMB');
-        }
-    });
-    dlg.querySelector('#stmb-copy-provider')?.addEventListener('click', async () => {
-        try {
-            await navigator.clipboard.writeText(providerBody);
-            toastr.success('Copied provider body', 'STMB');
-        } catch {
-            toastr.error('Copy failed', 'STMB');
-        }
-    });
-    dlg.querySelector('#stmb-apply-corrected-raw')?.addEventListener('click', async () => {
-        const correctedRaw = String(dlg.querySelector('#stmb-corrected-raw')?.value ?? rawResponse);
-        if (!canApply) {
-            return;
-        }
+        const dlg = popup.dlg;
+        const applyButton = dlg.querySelector('#stmb-apply-corrected-raw');
+        const closeButton = dlg.querySelector('.popup_button_cancel');
+        let isApplying = false;
 
-        try {
-            const applied = await onApply(correctedRaw);
-            if (!applied) {
+        dlg.querySelector('#stmb-copy-raw')?.addEventListener('click', async () => {
+            try {
+                await navigator.clipboard.writeText(rawResponse);
+                toastr.success('Copied raw response', 'STMB');
+            } catch {
+                toastr.error('Copy failed', 'STMB');
+            }
+        });
+        dlg.querySelector('#stmb-copy-provider')?.addEventListener('click', async () => {
+            try {
+                await navigator.clipboard.writeText(providerBody);
+                toastr.success('Copied provider body', 'STMB');
+            } catch {
+                toastr.error('Copy failed', 'STMB');
+            }
+        });
+        applyButton?.addEventListener('click', async () => {
+            if (!canApply || isApplying) {
                 return;
             }
-            toastr.success('Memory created from corrected JSON', 'STMB');
-            await popup.completeCancelled();
-        } catch (applyError) {
-            console.error('STMB manual memory repair failed', applyError);
-            toastr.error(String(applyError?.message || 'Failed to create memory from corrected JSON'), 'STMB');
-        }
-    });
 
-    void popup.show();
+            const correctedRaw = String(dlg.querySelector('#stmb-corrected-raw')?.value ?? rawResponse);
+            isApplying = true;
+            applyButton.disabled = true;
+            if (closeButton) {
+                closeButton.disabled = true;
+            }
+
+            try {
+                const applied = await onApply(correctedRaw);
+                if (applied && popup.dlg?.open) {
+                    await popup.completeCancelled();
+                }
+            } catch (applyError) {
+                console.error('STMB manual memory repair failed', applyError);
+                toastr.error(String(applyError?.message || 'Failed to create memory from corrected JSON'), 'STMB');
+            } finally {
+                if (popup.dlg?.open) {
+                    isApplying = false;
+                    applyButton.disabled = !canApply;
+                    if (closeButton) {
+                        closeButton.disabled = false;
+                    }
+                }
+            }
+        });
+
+        void popup.show();
+    } catch (popupError) {
+        console.error('STMB failed to show failed AI response popup', popupError);
+    }
 }
 
 function splitKeywords(keywordText) {
