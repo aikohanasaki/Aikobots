@@ -4,10 +4,14 @@ import path from 'node:path';
 import sanitize from 'sanitize-filename';
 import { sync as writeFileAtomicSync } from 'write-file-atomic';
 
+import { write as writeCharacterCard, read as readCharacterCard } from './character-card-parser.js';
+import { SETTINGS_FILE } from './constants.js';
 import { getUserDirectories } from './users.js';
 
 const SECURE_LOREBOOK_DIRECTORY = ['_secure', 'worlds'];
+const SHARED_SECURE_LOREBOOK_DIRECTORY = ['_secure', 'shared-worlds'];
 const SECURE_INDEX_FILENAME = 'index.json';
+const SHARED_SECURE_INDEX_FILENAME = 'index.json';
 const SECURE_INDEX_LOCK_SUFFIX = '.lock';
 const SECURE_INDEX_LOCK_RETRY_MS = 50;
 const SECURE_INDEX_LOCK_TIMEOUT_MS = 10_000;
@@ -18,12 +22,14 @@ export class LorebookRepositoryError extends Error {
      * @param {string} type
      * @param {string} message
      * @param {number} [status=400]
+     * @param {Record<string, any>|null} [details=null]
      */
-    constructor(type, message, status = 400) {
+    constructor(type, message, status = 400, details = null) {
         super(message);
         this.name = type;
         this.type = type;
         this.status = status;
+        this.details = details;
     }
 }
 
@@ -32,10 +38,19 @@ export class LorebookRepositoryError extends Error {
  * @property {string} name
  * @property {'user'|'secure'} storage
  * @property {string} ownerHandle
+ * @property {string[]} [ownerHandles]
+ * @property {'single'|'shared'} [sharingMode]
+ * @property {string|null} [checkedOutBy]
+ * @property {string|null} [checkedOutAt]
+ * @property {'available'|'self'|'other'} [checkoutState]
  * @property {boolean} canEdit
  * @property {boolean} canDelete
  * @property {boolean} canPromote
  * @property {boolean} canDemote
+ * @property {boolean} [canCheckOut]
+ * @property {boolean} [canCheckIn]
+ * @property {boolean} [canForceCheckout]
+ * @property {boolean} [canManageOwners]
  */
 
 function hasTrailingJsonExtension(name) {
@@ -102,6 +117,49 @@ function normalizeSecureIndexBooks(books) {
     return normalizedBooks;
 }
 
+function normalizeOwnerHandles(ownerHandles) {
+    return [...new Set((Array.isArray(ownerHandles) ? ownerHandles : [])
+        .map(handle => String(handle || '').trim())
+        .filter(Boolean))];
+}
+
+function getPrimaryOwnerHandle(ownerHandles) {
+    return normalizeOwnerHandles(ownerHandles)[0] || '';
+}
+
+function normalizeSharedSecureIndexBooks(books) {
+    const sourceBooks = books && typeof books === 'object' && !Array.isArray(books) ? books : {};
+    const normalizedBooks = {};
+
+    for (const [name, metadata] of Object.entries(sourceBooks)) {
+        if (hasTrailingJsonExtension(name)) {
+            continue;
+        }
+
+        const canonicalName = getCanonicalLorebookName(name);
+        if (!canonicalName) {
+            continue;
+        }
+
+        const owners = normalizeOwnerHandles(metadata?.owners);
+        if (!owners.length) {
+            continue;
+        }
+
+        normalizedBooks[canonicalName] = {
+            owners,
+            createdAt: metadata?.createdAt || null,
+            updatedAt: metadata?.updatedAt || null,
+            createdBy: metadata?.createdBy || null,
+            updatedBy: metadata?.updatedBy || null,
+            checkedOutBy: String(metadata?.checkedOutBy || '').trim() || null,
+            checkedOutAt: metadata?.checkedOutAt || null,
+        };
+    }
+
+    return normalizedBooks;
+}
+
 function ensureDirectory(dir) {
     fs.mkdirSync(dir, { recursive: true });
     return dir;
@@ -115,16 +173,36 @@ function getSecureLorebookDirectory() {
     return ensureDirectory(path.join(globalThis.DATA_ROOT, ...SECURE_LOREBOOK_DIRECTORY));
 }
 
+function getSharedSecureLorebookDirectory() {
+    if (!globalThis.DATA_ROOT) {
+        throw new Error('DATA_ROOT must be defined before using lorebook repository');
+    }
+
+    return ensureDirectory(path.join(globalThis.DATA_ROOT, ...SHARED_SECURE_LOREBOOK_DIRECTORY));
+}
+
 function getSecureLorebookPath(name) {
     return getLorebookPathFromCanonical(getSecureLorebookDirectory(), getCanonicalLorebookName(name));
+}
+
+function getSharedSecureLorebookPath(name) {
+    return getLorebookPathFromCanonical(getSharedSecureLorebookDirectory(), getCanonicalLorebookName(name));
 }
 
 function getSecureIndexPath() {
     return path.join(getSecureLorebookDirectory(), SECURE_INDEX_FILENAME);
 }
 
+function getSharedSecureIndexPath() {
+    return path.join(getSharedSecureLorebookDirectory(), SHARED_SECURE_INDEX_FILENAME);
+}
+
 function getSecureIndexLockPath() {
     return `${getSecureIndexPath()}${SECURE_INDEX_LOCK_SUFFIX}`;
+}
+
+function getSharedSecureIndexLockPath() {
+    return `${getSharedSecureIndexPath()}${SECURE_INDEX_LOCK_SUFFIX}`;
 }
 
 function getSecureIndexMetadata(name) {
@@ -148,6 +226,25 @@ function getSecureIndexMetadata(name) {
 
 function readJsonFileSync(filePath) {
     return JSON.parse(fs.readFileSync(filePath, 'utf8'));
+}
+
+function getSharedSecureIndexMetadata(name) {
+    const canonicalName = getCanonicalLorebookName(name);
+    if (!canonicalName) {
+        return null;
+    }
+
+    const index = readSharedSecureIndex();
+    const metadata = index.books[canonicalName];
+    if (!metadata) {
+        return null;
+    }
+
+    return {
+        name: canonicalName,
+        metadata,
+        path: getSharedSecureLorebookPath(canonicalName),
+    };
 }
 
 function tryReadJsonFileSync(filePath, fallbackValue, label) {
@@ -182,8 +279,35 @@ function readSecureIndex() {
     return { version: 1, books: {} };
 }
 
+function readSharedSecureIndex() {
+    const indexPath = getSharedSecureIndexPath();
+
+    if (!fs.existsSync(indexPath)) {
+        return { version: 1, books: {} };
+    }
+
+    try {
+        const parsed = readJsonFileSync(indexPath);
+        if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+            const isValidBooks = parsed.books && typeof parsed.books === 'object' && !Array.isArray(parsed.books);
+            return {
+                version: Number(parsed.version) || 1,
+                books: normalizeSharedSecureIndexBooks(isValidBooks ? parsed.books : {}),
+            };
+        }
+    } catch (error) {
+        console.error('[Lorebooks] Failed to read shared secure lorebook index', error);
+    }
+
+    return { version: 1, books: {} };
+}
+
 function writeSecureIndex(index) {
     writeFileAtomicSync(getSecureIndexPath(), JSON.stringify(index, null, 4), 'utf8');
+}
+
+function writeSharedSecureIndex(index) {
+    writeFileAtomicSync(getSharedSecureIndexPath(), JSON.stringify(index, null, 4), 'utf8');
 }
 
 function repairLegacyLorebookFile(directory, canonicalName, label) {
@@ -259,8 +383,7 @@ function removeSecureIndexLock(lockPath) {
     }
 }
 
-function acquireSecureIndexWriteLock() {
-    const lockPath = getSecureIndexLockPath();
+function acquireIndexWriteLock(lockPath) {
     ensureDirectory(path.dirname(lockPath));
     const deadline = Date.now() + SECURE_INDEX_LOCK_TIMEOUT_MS;
 
@@ -287,17 +410,42 @@ function acquireSecureIndexWriteLock() {
     }
 }
 
-function mutateSecureIndex(mutate) {
-    // Only writers acquire the lock so readers can continue to inspect the index.
-    const release = acquireSecureIndexWriteLock();
+function acquireSecureIndexWriteLock() {
+    return acquireIndexWriteLock(getSecureIndexLockPath());
+}
+
+function acquireSharedSecureIndexWriteLock() {
+    return acquireIndexWriteLock(getSharedSecureIndexLockPath());
+}
+
+function mutateIndex({ readIndex, writeIndex, acquireLock, mutate }) {
+    const release = acquireLock();
     try {
-        const index = readSecureIndex();
+        const index = readIndex();
         const result = mutate(index);
-        writeSecureIndex(index);
+        writeIndex(index);
         return result;
     } finally {
         release();
     }
+}
+
+function mutateSecureIndex(mutate) {
+    return mutateIndex({
+        readIndex: readSecureIndex,
+        writeIndex: writeSecureIndex,
+        acquireLock: acquireSecureIndexWriteLock,
+        mutate,
+    });
+}
+
+function mutateSharedSecureIndex(mutate) {
+    return mutateIndex({
+        readIndex: readSharedSecureIndex,
+        writeIndex: writeSharedSecureIndex,
+        acquireLock: acquireSharedSecureIndexWriteLock,
+        mutate,
+    });
 }
 
 function createSecureLorebookSymlink(linkPath, targetPath, canonicalName) {
@@ -358,11 +506,65 @@ function getSecureIndexEntry(name) {
     return {
         name: canonicalName,
         storage: 'secure',
+        sharingMode: 'single',
         ownerHandle: String(metadata.ownerHandle || ''),
+        ownerHandles: [String(metadata.ownerHandle || '')].filter(Boolean),
         createdAt: metadata.createdAt || null,
         updatedAt: metadata.updatedAt || null,
         createdBy: metadata.createdBy || null,
         updatedBy: metadata.updatedBy || null,
+        checkedOutBy: null,
+        checkedOutAt: null,
+        path: filePath,
+    };
+}
+
+function getSharedSecureIndexEntry(name) {
+    const sharedEntry = getSharedSecureIndexMetadata(name);
+    if (!sharedEntry) {
+        return null;
+    }
+
+    const { name: canonicalName, metadata, path: filePath } = sharedEntry;
+    let stats;
+    repairLegacyLorebookFile(getSharedSecureLorebookDirectory(), canonicalName, 'shared secure lorebook');
+
+    try {
+        stats = fs.statSync(filePath);
+    } catch (error) {
+        if (error?.code !== 'ENOENT') {
+            console.warn(`[Lorebooks] Failed to inspect shared secure lorebook "${canonicalName}"`, error);
+        } else {
+            console.warn(`[Lorebooks] Shared secure lorebook "${canonicalName}" is missing its backing file.`);
+        }
+        return null;
+    }
+
+    if (!stats.isFile()) {
+        console.warn(`[Lorebooks] Shared secure lorebook "${canonicalName}" is not stored as a file.`);
+        return null;
+    }
+
+    try {
+        fs.accessSync(filePath, fs.constants.R_OK);
+    } catch (error) {
+        console.warn(`[Lorebooks] Shared secure lorebook "${canonicalName}" is unreadable.`, error);
+        return null;
+    }
+
+    const ownerHandles = normalizeOwnerHandles(metadata.owners);
+    return {
+        name: canonicalName,
+        storage: 'secure',
+        sharingMode: 'shared',
+        ownerHandle: getPrimaryOwnerHandle(ownerHandles),
+        ownerHandles,
+        createdAt: metadata.createdAt || null,
+        updatedAt: metadata.updatedAt || null,
+        createdBy: metadata.createdBy || null,
+        updatedBy: metadata.updatedBy || null,
+        checkedOutBy: String(metadata.checkedOutBy || '').trim() || null,
+        checkedOutAt: metadata.checkedOutAt || null,
         path: filePath,
     };
 }
@@ -392,28 +594,105 @@ function getUserLorebookRecord(handle, name) {
     return {
         name: canonicalName,
         storage: 'user',
+        sharingMode: 'single',
         ownerHandle: handle,
+        ownerHandles: [handle].filter(Boolean),
+        checkedOutBy: null,
+        checkedOutAt: null,
         path: filePath,
     };
 }
 
-function buildListItem(record, currentHandle, isAdmin) {
+function getCheckoutState(user, record) {
+    if (record?.sharingMode !== 'shared') {
+        return 'available';
+    }
+
+    const currentHandle = String(user?.profile?.handle || '').trim();
+    const checkedOutBy = String(record?.checkedOutBy || '').trim();
+    if (!checkedOutBy) {
+        return 'available';
+    }
+
+    return checkedOutBy === currentHandle ? 'self' : 'other';
+}
+
+function isSharedLorebookCheckedOutByUser(user, record) {
+    return getCheckoutState(user, record) === 'self';
+}
+
+function buildLorebookMetadata(record, user = null) {
+    const ownerHandles = normalizeOwnerHandles(record?.ownerHandles || [record?.ownerHandle]);
+    const sharingMode = record?.sharingMode === 'shared' ? 'shared' : 'single';
+    const checkoutState = getCheckoutState(user, record);
+    const isAdmin = Boolean(user?.profile?.admin);
+    const canManageSecure = record?.storage === 'secure' ? canManageSecureLorebook(user, record) : false;
+    const checkedOut = sharingMode === 'shared' ? Boolean(String(record?.checkedOutBy || '').trim()) : false;
+
+    return {
+        name: record?.name || '',
+        storage: record?.storage === 'secure' ? 'secure' : 'user',
+        ownerHandle: getPrimaryOwnerHandle(ownerHandles) || String(record?.ownerHandle || '').trim(),
+        ownerHandles,
+        sharingMode,
+        checkedOut,
+        checkedOutBy: sharingMode === 'shared' ? (String(record?.checkedOutBy || '').trim() || null) : null,
+        checkedOutAt: sharingMode === 'shared' ? (record?.checkedOutAt || null) : null,
+        checkoutState,
+        canCheckOut: sharingMode === 'shared' && canManageSecure && checkoutState !== 'self',
+        canCheckIn: sharingMode === 'shared' && checkoutState === 'self',
+        canForceCheckout: sharingMode === 'shared' && isAdmin && checkoutState === 'other',
+        canManageOwners: sharingMode === 'shared' && canManageSecure && checkoutState === 'self',
+    };
+}
+
+function buildListItem(record, user) {
+    const currentHandle = String(user?.profile?.handle || '').trim();
     const isSecure = record.storage === 'secure';
     const canManage = currentHandle === record.ownerHandle;
-    const canManageSecure = isAdmin || canManage;
+    const canManageSecure = canManageSecureLorebook(user, record);
+    const isShared = record.sharingMode === 'shared';
+    const canMutateShared = isSharedLorebookCheckedOutByUser(user, record);
+    const metadata = buildLorebookMetadata(record, user);
     return {
         name: record.name,
         storage: record.storage,
-        ownerHandle: record.ownerHandle,
-        canEdit: isSecure ? canManageSecure : canManage,
-        canDelete: !isSecure && canManage,
+        ownerHandle: metadata.ownerHandle,
+        ownerHandles: metadata.ownerHandles,
+        sharingMode: metadata.sharingMode,
+        checkedOutBy: metadata.checkedOutBy,
+        checkedOutAt: metadata.checkedOutAt,
+        checkoutState: metadata.checkoutState,
+        canEdit: isSecure ? (isShared ? canMutateShared : canManageSecure) : canManage,
+        canDelete: isSecure ? (isShared ? canMutateShared : canManageSecure) : canManage,
         canPromote: !isSecure && canManage,
-        canDemote: isSecure && canManageSecure,
+        canDemote: isSecure && !isShared && canManageSecure,
+        canCheckOut: metadata.canCheckOut,
+        canCheckIn: metadata.canCheckIn,
+        canForceCheckout: metadata.canForceCheckout,
+        canManageOwners: metadata.canManageOwners && (isShared ? canMutateShared : false),
     };
 }
 
 function canManageSecureLorebook(user, record) {
-    return Boolean(user?.profile?.admin) || record.ownerHandle === user?.profile?.handle;
+    if (!record || record.storage !== 'secure') {
+        return false;
+    }
+
+    if (Boolean(user?.profile?.admin)) {
+        return true;
+    }
+
+    const handle = String(user?.profile?.handle || '').trim();
+    if (!handle) {
+        return false;
+    }
+
+    if (record.sharingMode === 'shared') {
+        return normalizeOwnerHandles(record.ownerHandles).includes(handle);
+    }
+
+    return record.ownerHandle === handle;
 }
 
 function assertCanonicalName(name) {
@@ -456,7 +735,8 @@ function readLorebookFromRecord(record, allowDummy) {
 
 function assertSecureNameAvailableForPromotion(name) {
     const secureEntry = getSecureIndexMetadata(name);
-    if (secureEntry) {
+    const sharedEntry = getSharedSecureIndexMetadata(name);
+    if (secureEntry || sharedEntry) {
         throw new LorebookRepositoryError('LorebookAlreadySecure', `Lorebook "${name}" is already secure.`, 409);
     }
 }
@@ -475,6 +755,20 @@ function assertSecurePromotionNameAllowed(user, canonicalName) {
     }
 }
 
+function assertSharedSecurePromotionNameAllowed(canonicalName) {
+    if (!canonicalName.startsWith('Y-') || canonicalName.length <= 2) {
+        throw new LorebookRepositoryError('LorebookNameInvalid', 'Shared secure lorebooks must start with "Y-".', 400);
+    }
+}
+
+function assertSharedSecureNameAvailable(name) {
+    const secureEntry = getSecureIndexMetadata(name);
+    const sharedEntry = getSharedSecureIndexMetadata(name);
+    if (secureEntry || sharedEntry) {
+        throw new LorebookRepositoryError('LorebookAlreadySecure', `Lorebook "${name}" already exists in secure storage.`, 409);
+    }
+}
+
 function writeSecureLorebookMetadata(name, ownerHandle, actorHandle, existingMetadata = null) {
     const timestamp = new Date().toISOString();
     const canonicalName = assertCanonicalName(name);
@@ -485,6 +779,30 @@ function writeSecureLorebookMetadata(name, ownerHandle, actorHandle, existingMet
             updatedAt: timestamp,
             createdBy: existingMetadata?.createdBy || actorHandle,
             updatedBy: actorHandle,
+        };
+    });
+}
+
+function writeSharedSecureLorebookMetadata(name, ownerHandles, actorHandle, existingMetadata = null) {
+    const timestamp = new Date().toISOString();
+    const canonicalName = assertCanonicalName(name);
+    const normalizedOwners = normalizeOwnerHandles(ownerHandles);
+
+    if (normalizedOwners.length < 2) {
+        throw new LorebookRepositoryError('LorebookOwnersInvalid', 'Shared secure lorebooks must have at least two owners.', 400);
+    }
+
+    mutateSharedSecureIndex(index => {
+        const nextCheckedOutBy = String(existingMetadata?.checkedOutBy || '').trim() || null;
+        const preserveCheckout = nextCheckedOutBy && normalizedOwners.includes(nextCheckedOutBy);
+        index.books[canonicalName] = {
+            owners: normalizedOwners,
+            createdAt: existingMetadata?.createdAt || timestamp,
+            updatedAt: timestamp,
+            createdBy: existingMetadata?.createdBy || actorHandle,
+            updatedBy: actorHandle,
+            checkedOutBy: preserveCheckout ? nextCheckedOutBy : null,
+            checkedOutAt: preserveCheckout ? (existingMetadata?.checkedOutAt || timestamp) : null,
         };
     });
 }
@@ -513,7 +831,9 @@ function removeSecureLorebook(name) {
     try {
         fs.unlinkSync(filePath);
     } catch (error) {
-        if (error?.code === 'ENOENT') {
+        const metadataMissing = !getSecureIndexMetadata(canonicalName);
+        const fileMissing = !fs.existsSync(filePath);
+        if (metadataMissing && fileMissing) {
             return;
         }
 
@@ -532,11 +852,545 @@ function removeSecureLorebook(name) {
     }
 }
 
+function removeSharedSecureLorebook(name) {
+    const canonicalName = assertCanonicalName(name);
+    const filePath = getSharedSecureLorebookPath(canonicalName);
+    const removedMetadata = mutateSharedSecureIndex(index => {
+        const metadata = index.books[canonicalName] || null;
+        delete index.books[canonicalName];
+        return metadata;
+    });
+
+    try {
+        fs.unlinkSync(filePath);
+    } catch (error) {
+        const metadataMissing = !getSharedSecureIndexMetadata(canonicalName);
+        const fileMissing = !fs.existsSync(filePath);
+        if (metadataMissing && fileMissing) {
+            return;
+        }
+
+        try {
+            if (removedMetadata) {
+                mutateSharedSecureIndex(index => {
+                    index.books[canonicalName] = removedMetadata;
+                });
+            }
+        } catch (restoreError) {
+            console.error(`[Lorebooks] Failed to restore shared secure lorebook index entry for "${canonicalName}" after deletion failed.`, restoreError);
+            throw new LorebookRepositoryError('LorebookStateRepairFailed', `Failed to delete shared secure lorebook "${canonicalName}" cleanly. Manual repair may be required.`, 500);
+        }
+
+        throw error;
+    }
+}
+
+function removeUserLorebookCopy(handle, name) {
+    const canonicalName = assertCanonicalName(name);
+    const filePath = getUserLorebookPath(handle, canonicalName);
+    if (!filePath || !fs.existsSync(filePath)) {
+        return false;
+    }
+
+    try {
+        fs.unlinkSync(filePath);
+        return true;
+    } catch (error) {
+        if (error?.code === 'ENOENT') {
+            return false;
+        }
+
+        if (!fs.existsSync(filePath)) {
+            return true;
+        }
+
+        throw new LorebookRepositoryError('LorebookDeleteFailed', `Failed to delete lorebook "${canonicalName}" for user "${handle}".`, 500);
+    }
+}
+
+function sanitizeLorebookDataForStorage(data) {
+    const source = data && typeof data === 'object' && !Array.isArray(data) ? data : {};
+    return { ...source };
+}
+
+function inspectLorebookCopyState(name, userHandles = []) {
+    const canonicalName = assertCanonicalName(name);
+    const normalizedUserHandles = [...new Set((Array.isArray(userHandles) ? userHandles : []).map(handle => String(handle || '').trim()).filter(Boolean))];
+    const secureMetadata = getSecureIndexMetadata(canonicalName);
+    const sharedMetadata = getSharedSecureIndexMetadata(canonicalName);
+    const securePath = getSecureLorebookPath(canonicalName);
+    const sharedPath = getSharedSecureLorebookPath(canonicalName);
+
+    return {
+        securePresent: Boolean(secureMetadata || fs.existsSync(securePath)),
+        sharedPresent: Boolean(sharedMetadata || fs.existsSync(sharedPath)),
+        userHandlesWithCopies: normalizedUserHandles.filter(handle => {
+            const userPath = getUserLorebookPath(handle, canonicalName);
+            return Boolean(userPath && fs.existsSync(userPath));
+        }),
+    };
+}
+
+function hasAnyLorebookCopies(state) {
+    return Boolean(state?.securePresent || state?.sharedPresent || (Array.isArray(state?.userHandlesWithCopies) && state.userHandlesWithCopies.length > 0));
+}
+
+function doesLorebookReferenceMatch(reference, canonicalName) {
+    return getCanonicalLorebookName(reference) === canonicalName;
+}
+
+function inspectLorebookReferenceState(name, userHandles = []) {
+    const canonicalName = assertCanonicalName(name);
+    const normalizedUserHandles = [...new Set((Array.isArray(userHandles) ? userHandles : []).map(handle => String(handle || '').trim()).filter(Boolean))];
+    const settingsReferences = [];
+    const characterReferences = [];
+    const settingsReadErrors = [];
+    const characterReadErrors = [];
+
+    for (const handle of normalizedUserHandles) {
+        const directories = getUserDirectories(handle);
+        const settingsPath = path.join(directories.root, SETTINGS_FILE);
+        if (fs.existsSync(settingsPath)) {
+            try {
+                const settings = readJsonFileSync(settingsPath);
+                const globalSelectMatches = (Array.isArray(settings?.world_info?.globalSelect) ? settings.world_info.globalSelect : [])
+                    .filter(value => doesLorebookReferenceMatch(value, canonicalName));
+                if (globalSelectMatches.length > 0) {
+                    settingsReferences.push({ handle, path: settingsPath, field: 'world_info.globalSelect', matches: globalSelectMatches });
+                }
+
+                for (const entry of Array.isArray(settings?.world_info?.charLore) ? settings.world_info.charLore : []) {
+                    const matches = (Array.isArray(entry?.extraBooks) ? entry.extraBooks : [])
+                        .filter(value => doesLorebookReferenceMatch(value, canonicalName));
+                    if (matches.length > 0) {
+                        settingsReferences.push({
+                            handle,
+                            path: settingsPath,
+                            field: 'world_info.charLore[].extraBooks',
+                            matches,
+                            character: String(entry?.name || '').trim(),
+                        });
+                    }
+                }
+
+                const personaLorebook = String(settings?.power_user?.persona_description_lorebook || '').trim();
+                if (doesLorebookReferenceMatch(personaLorebook, canonicalName)) {
+                    settingsReferences.push({
+                        handle,
+                        path: settingsPath,
+                        field: 'power_user.persona_description_lorebook',
+                        matches: [personaLorebook],
+                    });
+                }
+            } catch (error) {
+                settingsReadErrors.push({
+                    handle,
+                    path: settingsPath,
+                    message: String(error?.message || error),
+                });
+            }
+        }
+
+        if (!fs.existsSync(directories.characters)) {
+            continue;
+        }
+
+        for (const entry of fs.readdirSync(directories.characters, { withFileTypes: true })) {
+            if (!entry.isFile() || path.extname(entry.name).toLowerCase() !== '.png') {
+                continue;
+            }
+
+            const filePath = path.join(directories.characters, entry.name);
+            try {
+                const rawBuffer = fs.readFileSync(filePath);
+                const character = JSON.parse(readCharacterCard(rawBuffer));
+                const primaryLorebook = String(character?.data?.extensions?.world || '').trim();
+                if (doesLorebookReferenceMatch(primaryLorebook, canonicalName)) {
+                    characterReferences.push({
+                        handle,
+                        path: filePath,
+                        field: 'data.extensions.world',
+                        matches: [primaryLorebook],
+                    });
+                }
+
+                const linkedLorebooks = (Array.isArray(character?.data?.extensions?.aikobots?.secure_lorebooks)
+                    ? character.data.extensions.aikobots.secure_lorebooks
+                    : [])
+                    .filter(value => doesLorebookReferenceMatch(value, canonicalName));
+                if (linkedLorebooks.length > 0) {
+                    characterReferences.push({
+                        handle,
+                        path: filePath,
+                        field: 'data.extensions.aikobots.secure_lorebooks',
+                        matches: linkedLorebooks,
+                    });
+                }
+            } catch (error) {
+                characterReadErrors.push({
+                    handle,
+                    path: filePath,
+                    message: String(error?.message || error),
+                });
+            }
+        }
+    }
+
+    return {
+        settingsReferences,
+        characterReferences,
+        settingsReadErrors,
+        characterReadErrors,
+    };
+}
+
+function hasAnyLorebookReferences(state) {
+    return Boolean(
+        (Array.isArray(state?.settingsReferences) && state.settingsReferences.length > 0)
+        || (Array.isArray(state?.characterReferences) && state.characterReferences.length > 0),
+    );
+}
+
+function buildDeletedSecureLorebookResponse(recordOrName, user, deletedUserHandles = []) {
+    const metadata = typeof recordOrName === 'string'
+        ? {
+            name: assertCanonicalName(recordOrName),
+            storage: 'secure',
+            ownerHandle: '',
+            ownerHandles: [],
+            sharingMode: 'single',
+            checkedOut: false,
+            checkedOutBy: null,
+            checkedOutAt: null,
+            checkoutState: 'available',
+            canCheckOut: false,
+            canCheckIn: false,
+            canForceCheckout: false,
+            canManageOwners: false,
+        }
+        : buildLorebookMetadata(recordOrName, user);
+
+    return {
+        ...metadata,
+        deletedAllCopies: true,
+        deletedUserHandles,
+    };
+}
+
+function removeAllLorebookArtifacts(name, userHandles = [], options = {}) {
+    const canonicalName = assertCanonicalName(name);
+    const removeSecureBacking = options?.removeSecureBacking !== false;
+    const copyState = inspectLorebookCopyState(canonicalName, userHandles);
+
+    for (const handle of copyState.userHandlesWithCopies) {
+        removeUserLorebookCopy(handle, canonicalName);
+    }
+
+    cleanupLorebookReferences(canonicalName, userHandles);
+
+    const postCleanupCopyState = inspectLorebookCopyState(canonicalName, userHandles);
+    const postCleanupReferenceState = inspectLorebookReferenceState(canonicalName, userHandles);
+    if ((Array.isArray(postCleanupCopyState.userHandlesWithCopies) && postCleanupCopyState.userHandlesWithCopies.length > 0)
+        || hasAnyLorebookReferences(postCleanupReferenceState)) {
+        throw new LorebookRepositoryError(
+            'LorebookDeleteFailed',
+            `Failed to remove all user copies or references for lorebook "${canonicalName}".`,
+            500,
+            {
+                afterState: postCleanupCopyState,
+                afterReferenceState: postCleanupReferenceState,
+            },
+        );
+    }
+
+    if (removeSecureBacking) {
+        if (postCleanupCopyState.sharedPresent) {
+            removeSharedSecureLorebook(canonicalName);
+        }
+
+        if (postCleanupCopyState.securePresent) {
+            removeSecureLorebook(canonicalName);
+        }
+    }
+
+    return copyState.userHandlesWithCopies;
+}
+
+function deleteResidualSecureLorebookArtifacts(user, name, userHandles = []) {
+    const canonicalName = assertCanonicalName(name);
+    const beforeState = inspectLorebookCopyState(canonicalName, userHandles);
+    const beforeReferenceState = inspectLorebookReferenceState(canonicalName, userHandles);
+
+    if (!Boolean(user?.profile?.admin)) {
+        throw new LorebookRepositoryError(
+            'LorebookAccessDenied',
+            `Secure lorebook "${canonicalName}" is already partially deleted. Admin cleanup is required to remove remaining copies or references.`,
+            403,
+            {
+                beforeState,
+                beforeReferenceState,
+            },
+        );
+    }
+
+    try {
+        const deletedUserHandles = removeAllLorebookArtifacts(canonicalName, userHandles, { removeSecureBacking: true });
+        const finalState = inspectLorebookCopyState(canonicalName, userHandles);
+        const finalReferenceState = inspectLorebookReferenceState(canonicalName, userHandles);
+        if (hasAnyLorebookCopies(finalState) || hasAnyLorebookReferences(finalReferenceState)) {
+            throw new LorebookRepositoryError(
+                'LorebookStateRepairFailed',
+                `Failed to clean up remaining secure lorebook artifacts for "${canonicalName}". Manual repair may be required.`,
+                500,
+                {
+                    beforeState,
+                    afterState: finalState,
+                    beforeReferenceState,
+                    afterReferenceState: finalReferenceState,
+                },
+            );
+        }
+
+        return buildDeletedSecureLorebookResponse(canonicalName, user, deletedUserHandles);
+    } catch (error) {
+        const afterFailureState = inspectLorebookCopyState(canonicalName, userHandles);
+        const afterFailureReferenceState = inspectLorebookReferenceState(canonicalName, userHandles);
+        if (!hasAnyLorebookCopies(afterFailureState) && !hasAnyLorebookReferences(afterFailureReferenceState)) {
+            return buildDeletedSecureLorebookResponse(canonicalName, user, beforeState.userHandlesWithCopies);
+        }
+
+        if (error instanceof LorebookRepositoryError) {
+            throw error;
+        }
+
+        throw new LorebookRepositoryError(
+            'LorebookStateRepairFailed',
+            `Failed to clean up remaining secure lorebook artifacts for "${canonicalName}". Manual repair may be required.`,
+            500,
+            {
+                beforeState,
+                afterState: afterFailureState,
+                beforeReferenceState,
+                afterReferenceState: afterFailureReferenceState,
+            },
+        );
+    }
+}
+
+function cleanupLorebookSettingsReferences(name, userHandles = []) {
+    const canonicalName = assertCanonicalName(name);
+    const normalizedUserHandles = [...new Set((Array.isArray(userHandles) ? userHandles : []).map(handle => String(handle || '').trim()).filter(Boolean))];
+    const cleanedSettingsHandles = [];
+    const errors = [];
+
+    for (const handle of normalizedUserHandles) {
+        const directories = getUserDirectories(handle);
+        const settingsPath = path.join(directories.root, SETTINGS_FILE);
+        if (!fs.existsSync(settingsPath)) {
+            continue;
+        }
+
+        try {
+            const settings = readJsonFileSync(settingsPath);
+            let modified = false;
+
+            if (Array.isArray(settings?.world_info?.globalSelect)) {
+                const filtered = settings.world_info.globalSelect.filter(value => !doesLorebookReferenceMatch(value, canonicalName));
+                if (filtered.length !== settings.world_info.globalSelect.length) {
+                    settings.world_info.globalSelect = filtered;
+                    modified = true;
+                }
+            }
+
+            if (Array.isArray(settings?.world_info?.charLore)) {
+                const nextCharLore = [];
+                for (const entry of settings.world_info.charLore) {
+                    const currentExtraBooks = Array.isArray(entry?.extraBooks) ? entry.extraBooks : [];
+                    const filteredExtraBooks = currentExtraBooks.filter(value => !doesLorebookReferenceMatch(value, canonicalName));
+                    if (filteredExtraBooks.length !== currentExtraBooks.length) {
+                        entry.extraBooks = filteredExtraBooks;
+                        modified = true;
+                    }
+
+                    if (filteredExtraBooks.length > 0) {
+                        nextCharLore.push(entry);
+                    } else if (currentExtraBooks.length === 0) {
+                        nextCharLore.push(entry);
+                    } else {
+                        modified = true;
+                    }
+                }
+
+                if (nextCharLore.length !== settings.world_info.charLore.length) {
+                    settings.world_info.charLore = nextCharLore;
+                }
+            }
+
+            if (doesLorebookReferenceMatch(settings?.power_user?.persona_description_lorebook, canonicalName)) {
+                settings.power_user = settings.power_user && typeof settings.power_user === 'object' ? settings.power_user : {};
+                settings.power_user.persona_description_lorebook = '';
+                modified = true;
+            }
+
+            if (modified) {
+                writeFileAtomicSync(settingsPath, JSON.stringify(settings, null, 4), 'utf8');
+                cleanedSettingsHandles.push(handle);
+            }
+        } catch (error) {
+            errors.push({
+                handle,
+                path: settingsPath,
+                message: String(error?.message || error),
+            });
+        }
+    }
+
+    return { cleanedSettingsHandles, settingsCleanupErrors: errors };
+}
+
+function cleanupLorebookCharacterReferences(name, userHandles = []) {
+    const canonicalName = assertCanonicalName(name);
+    const normalizedUserHandles = [...new Set((Array.isArray(userHandles) ? userHandles : []).map(handle => String(handle || '').trim()).filter(Boolean))];
+    const cleanedCharacterFiles = [];
+    const errors = [];
+
+    for (const handle of normalizedUserHandles) {
+        const directories = getUserDirectories(handle);
+        if (!fs.existsSync(directories.characters)) {
+            continue;
+        }
+
+        for (const entry of fs.readdirSync(directories.characters, { withFileTypes: true })) {
+            if (!entry.isFile() || path.extname(entry.name).toLowerCase() !== '.png') {
+                continue;
+            }
+
+            const filePath = path.join(directories.characters, entry.name);
+            try {
+                const rawBuffer = fs.readFileSync(filePath);
+                const character = JSON.parse(readCharacterCard(rawBuffer));
+                let modified = false;
+
+                if (doesLorebookReferenceMatch(character?.data?.extensions?.world, canonicalName)) {
+                    if (character?.data?.extensions && typeof character.data.extensions === 'object') {
+                        character.data.extensions.world = '';
+                        modified = true;
+                    }
+                }
+
+                const currentLinkedLorebooks = Array.isArray(character?.data?.extensions?.aikobots?.secure_lorebooks)
+                    ? character.data.extensions.aikobots.secure_lorebooks
+                    : null;
+                if (currentLinkedLorebooks) {
+                    const filteredLinkedLorebooks = currentLinkedLorebooks.filter(value => !doesLorebookReferenceMatch(value, canonicalName));
+                    if (filteredLinkedLorebooks.length !== currentLinkedLorebooks.length) {
+                        if (filteredLinkedLorebooks.length > 0) {
+                            character.data.extensions.aikobots.secure_lorebooks = filteredLinkedLorebooks;
+                        } else {
+                            delete character.data.extensions.aikobots.secure_lorebooks;
+                            if (Object.keys(character.data.extensions.aikobots).length === 0) {
+                                delete character.data.extensions.aikobots;
+                            }
+                        }
+                        modified = true;
+                    }
+                }
+
+                if (modified) {
+                    writeFileAtomicSync(filePath, writeCharacterCard(rawBuffer, JSON.stringify(character)));
+                    cleanedCharacterFiles.push({ handle, path: filePath });
+                }
+            } catch (error) {
+                errors.push({
+                    handle,
+                    path: filePath,
+                    message: String(error?.message || error),
+                });
+            }
+        }
+    }
+
+    return { cleanedCharacterFiles, characterCleanupErrors: errors };
+}
+
+function cleanupLorebookReferences(name, userHandles = []) {
+    return {
+        ...cleanupLorebookSettingsReferences(name, userHandles),
+        ...cleanupLorebookCharacterReferences(name, userHandles),
+    };
+}
+
+function areOwnerHandleSetsEqual(left = [], right = []) {
+    const normalize = (values) => [...new Set((Array.isArray(values) ? values : []).map(value => String(value || '').trim()).filter(Boolean))].sort();
+    const normalizedLeft = normalize(left);
+    const normalizedRight = normalize(right);
+    return normalizedLeft.length === normalizedRight.length
+        && normalizedLeft.every((value, index) => value === normalizedRight[index]);
+}
+
+function didPromoteSingleSecureLorebookSucceed(name, ownerHandle) {
+    const canonicalName = assertCanonicalName(name);
+    const secureRecord = getSecureIndexEntry(canonicalName);
+    return Boolean(secureRecord && secureRecord.ownerHandle === ownerHandle && fs.existsSync(getSecureLorebookPath(canonicalName)));
+}
+
+function didPromoteLorebookToSharedSucceed({ sourceCanonicalName, sharedCanonicalName, normalizedOwners, secureSourceRecord, localSourceRecord }) {
+    const targetRecord = getSharedSecureIndexEntry(sharedCanonicalName);
+    if (!targetRecord || !fs.existsSync(getSharedSecureLorebookPath(sharedCanonicalName)) || !areOwnerHandleSetsEqual(targetRecord.ownerHandles, normalizedOwners)) {
+        return false;
+    }
+
+    if (secureSourceRecord) {
+        const sourceSecureRemoved = !getSecureIndexMetadata(sourceCanonicalName) && !fs.existsSync(getSecureLorebookPath(sourceCanonicalName));
+        const sourceBackingPath = getUserLorebookPath(secureSourceRecord.ownerHandle, sourceCanonicalName);
+        const sourceBackingRemoved = !sourceBackingPath || !fs.existsSync(sourceBackingPath);
+        return sourceSecureRemoved && sourceBackingRemoved;
+    }
+
+    if (localSourceRecord?.path && fs.existsSync(localSourceRecord.path)) {
+        return false;
+    }
+
+    return true;
+}
+
+function didUnshareLorebookSucceed(sharedName, targetName, targetOwnerHandle) {
+    const canonicalSharedName = assertCanonicalName(sharedName);
+    const canonicalTargetName = assertCanonicalName(targetName);
+    const targetSecureRecord = getSecureIndexEntry(canonicalTargetName);
+    const targetUserRecord = getUserLorebookRecord(targetOwnerHandle, canonicalTargetName);
+    const sharedRemoved = !getSharedSecureIndexMetadata(canonicalSharedName) && !fs.existsSync(getSharedSecureLorebookPath(canonicalSharedName));
+    return Boolean(targetSecureRecord && targetSecureRecord.ownerHandle === targetOwnerHandle && targetUserRecord && sharedRemoved);
+}
+
 function writeUserLorebook(handle, name, data) {
     const canonicalName = assertCanonicalName(name);
     const filePath = getUserLorebookPath(handle, canonicalName);
     ensureDirectory(path.dirname(filePath));
     writeFileAtomicSync(filePath, JSON.stringify(data, null, 4), 'utf8');
+}
+
+function writeSharedSecureLorebook(name, data) {
+    const canonicalName = assertCanonicalName(name);
+    const filePath = getSharedSecureLorebookPath(canonicalName);
+    ensureDirectory(path.dirname(filePath));
+    writeFileAtomicSync(filePath, JSON.stringify(data, null, 4), 'utf8');
+}
+
+function assertSharedLorebookCheckedOutForEdit(user, record) {
+    if (record?.sharingMode !== 'shared') {
+        return;
+    }
+
+    const currentHandle = String(user?.profile?.handle || '').trim();
+    const checkedOutBy = String(record?.checkedOutBy || '').trim();
+    if (!checkedOutBy) {
+        throw new LorebookRepositoryError('LorebookCheckoutRequired', `Lorebook "${record.name}" must be checked out before editing.`, 423);
+    }
+
+    if (checkedOutBy !== currentHandle) {
+        throw new LorebookRepositoryError('LorebookCheckedOut', `Lorebook "${record.name}" is checked out by ${checkedOutBy}.`, 423);
+    }
 }
 
 export function readWorldInfoFile(directories, worldInfoName, allowDummy) {
@@ -561,13 +1415,14 @@ export function readWorldInfoFile(directories, worldInfoName, allowDummy) {
  * @returns {LorebookListItem[]}
  */
 export function listLorebooksForManagement(user) {
-    const currentHandle = user.profile.handle;
     const isAdmin = Boolean(user.profile.admin);
     const items = [];
     const seenNames = new Set();
     const worldsDir = user.directories.worlds;
     const secureIndex = readSecureIndex();
+    const sharedSecureIndex = readSharedSecureIndex();
     const secureRecords = new Map();
+    const sharedSecureRecords = new Map();
 
     for (const name of Object.keys(secureIndex.books)) {
         const secureRecord = getSecureIndexEntry(name);
@@ -579,6 +1434,15 @@ export function listLorebooksForManagement(user) {
         secureRecords.set(name, secureRecord);
     }
 
+    for (const name of Object.keys(sharedSecureIndex.books)) {
+        const sharedSecureRecord = getSharedSecureIndexEntry(name);
+        if (!sharedSecureRecord || !canManageSecureLorebook(user, sharedSecureRecord)) {
+            continue;
+        }
+
+        sharedSecureRecords.set(name, sharedSecureRecord);
+    }
+
     if (fs.existsSync(worldsDir)) {
         repairLegacyLorebookDirectory(worldsDir, 'lorebook');
         const worldFiles = fs.readdirSync(worldsDir)
@@ -588,7 +1452,13 @@ export function listLorebooksForManagement(user) {
         for (const file of worldFiles) {
             const name = path.parse(file).name;
             const secureRecord = secureRecords.get(name);
-            const resolved = secureRecord?.ownerHandle === currentHandle
+            const sharedSecureRecord = sharedSecureRecords.get(name);
+            const resolved = sharedSecureRecord
+                ? resolveLorebookWithMetadata(user, name, {
+                    storage: 'secure',
+                    requireManageableSecure: true,
+                })
+                : secureRecord?.ownerHandle === user.profile.handle
                 ? resolveLorebookWithMetadata(user, name, {
                     storage: 'secure',
                     requireManageableSecure: true,
@@ -597,7 +1467,7 @@ export function listLorebooksForManagement(user) {
                     storage: 'user',
                 });
 
-            items.push(buildListItem(resolved.metadata, currentHandle, isAdmin));
+            items.push(buildListItem(resolved.metadata, user));
             seenNames.add(name);
         }
     }
@@ -605,7 +1475,7 @@ export function listLorebooksForManagement(user) {
     if (isAdmin) {
         for (const [name, secureRecord] of secureRecords.entries()) {
             if (seenNames.has(name)) {
-                if (secureRecord.ownerHandle !== currentHandle) {
+                if (secureRecord.ownerHandle !== user.profile.handle) {
                     console.error(`[Lorebooks] Lorebook name conflict "${name}" exists in both local storage and secure storage owned by "${secureRecord.ownerHandle}".`);
                 }
                 continue;
@@ -615,7 +1485,20 @@ export function listLorebooksForManagement(user) {
                 storage: 'secure',
                 requireManageableSecure: true,
             });
-            items.push(buildListItem(resolved.metadata, currentHandle, isAdmin));
+            items.push(buildListItem(resolved.metadata, user));
+            seenNames.add(name);
+        }
+
+        for (const [name] of sharedSecureRecords.entries()) {
+            if (seenNames.has(name)) {
+                continue;
+            }
+
+            const resolved = resolveLorebookWithMetadata(user, name, {
+                storage: 'secure',
+                requireManageableSecure: true,
+            });
+            items.push(buildListItem(resolved.metadata, user));
             seenNames.add(name);
         }
     }
@@ -647,15 +1530,12 @@ export function resolveLorebookWithMetadata(user, name, {
     const dummyData = allowDummy ? { entries: {} } : null;
     const userRecord = getUserLorebookRecord(user.profile.handle, canonicalName);
     const secureRecord = getSecureIndexEntry(canonicalName);
+    const sharedSecureRecord = getSharedSecureIndexEntry(canonicalName);
     const preferredStorage = storage === 'secure' ? 'secure' : (storage === 'user' ? 'user' : null);
 
-    const buildSecureResponse = () => ({
-        data: readLorebookFromRecord(secureRecord, allowDummy),
-        metadata: {
-            name: secureRecord.name,
-            storage: 'secure',
-            ownerHandle: secureRecord.ownerHandle,
-        },
+    const buildSecureResponse = (record) => ({
+        data: readLorebookFromRecord(record, allowDummy),
+        metadata: buildLorebookMetadata(record, user),
     });
 
     const buildUserResponse = () => ({
@@ -664,6 +1544,16 @@ export function resolveLorebookWithMetadata(user, name, {
             name: userRecord.name,
             storage: 'user',
             ownerHandle: userRecord.ownerHandle,
+            ownerHandles: userRecord.ownerHandles,
+            sharingMode: 'single',
+            checkedOut: false,
+            checkedOutBy: null,
+            checkedOutAt: null,
+            checkoutState: 'available',
+            canCheckOut: false,
+            canCheckIn: false,
+            canForceCheckout: false,
+            canManageOwners: false,
         },
     });
 
@@ -673,21 +1563,40 @@ export function resolveLorebookWithMetadata(user, name, {
             name: canonicalName,
             storage: 'user',
             ownerHandle: user.profile.handle,
+            ownerHandles: [user.profile.handle].filter(Boolean),
+            sharingMode: 'single',
+            checkedOut: false,
+            checkedOutBy: null,
+            checkedOutAt: null,
+            checkoutState: 'available',
+            canCheckOut: false,
+            canCheckIn: false,
+            canForceCheckout: false,
+            canManageOwners: false,
         },
     });
 
     if (preferredStorage === 'secure') {
-        if (!secureRecord || !canManageSecureLorebook(user, secureRecord)) {
-            if (!secureRecord || requireManageableSecure) {
+        const preferredSecureRecord = sharedSecureRecord || secureRecord;
+        if (!preferredSecureRecord || (requireManageableSecure && !canManageSecureLorebook(user, preferredSecureRecord))) {
+            if (!preferredSecureRecord || requireManageableSecure) {
                 throw new LorebookRepositoryError('LorebookNotFound', `Lorebook "${canonicalName}" not found.`, 404);
             }
         }
 
-        return buildSecureResponse();
+        return buildSecureResponse(preferredSecureRecord);
     }
 
     if (preferUser && userRecord) {
         return buildUserResponse();
+    }
+
+    if (sharedSecureRecord) {
+        if (requireManageableSecure && !canManageSecureLorebook(user, sharedSecureRecord)) {
+            throw new LorebookRepositoryError('LorebookNotFound', `Lorebook "${canonicalName}" not found.`, 404);
+        }
+
+        return buildSecureResponse(sharedSecureRecord);
     }
 
     if (secureRecord) {
@@ -695,7 +1604,7 @@ export function resolveLorebookWithMetadata(user, name, {
             throw new LorebookRepositoryError('LorebookNotFound', `Lorebook "${canonicalName}" not found.`, 404);
         }
 
-        return buildSecureResponse();
+        return buildSecureResponse(secureRecord);
     }
 
     if (userRecord) {
@@ -707,6 +1616,63 @@ export function resolveLorebookWithMetadata(user, name, {
     }
 
     throw new LorebookRepositoryError('LorebookNotFound', `Lorebook "${canonicalName}" not found.`, 404);
+}
+
+function deleteAllSecureLorebookCopies(user, record, userHandles = []) {
+    const canonicalName = assertCanonicalName(record?.name);
+    const isShared = record?.sharingMode === 'shared';
+    const beforeState = inspectLorebookCopyState(canonicalName, userHandles);
+    const beforeReferenceState = inspectLorebookReferenceState(canonicalName, userHandles);
+
+    if (!canManageSecureLorebook(user, record)) {
+        throw new LorebookRepositoryError('LorebookAccessDenied', `Lorebook "${canonicalName}" is not deletable.`, 403);
+    }
+
+    try {
+        if (isShared) {
+            assertSharedLorebookCheckedOutForEdit(user, record);
+        }
+
+        removeAllLorebookArtifacts(canonicalName, userHandles, { removeSecureBacking: true });
+    } catch (error) {
+        const afterFailureState = inspectLorebookCopyState(canonicalName, userHandles);
+        const afterFailureReferenceState = inspectLorebookReferenceState(canonicalName, userHandles);
+        if (!hasAnyLorebookCopies(afterFailureState) && !hasAnyLorebookReferences(afterFailureReferenceState)) {
+            return buildDeletedSecureLorebookResponse(record, user, beforeState.userHandlesWithCopies);
+        }
+
+        throw new LorebookRepositoryError(
+            'LorebookStateRepairFailed',
+            `Failed to delete all copies of secure lorebook "${canonicalName}" cleanly. Manual repair may be required.`,
+            500,
+            {
+                beforeState,
+                afterState: afterFailureState,
+                beforeReferenceState,
+                afterReferenceState: afterFailureReferenceState,
+            },
+        );
+    }
+
+    const finalState = inspectLorebookCopyState(canonicalName, userHandles);
+    const finalReferenceState = inspectLorebookReferenceState(canonicalName, userHandles);
+    if (hasAnyLorebookCopies(finalState) || hasAnyLorebookReferences(finalReferenceState)) {
+        throw new LorebookRepositoryError(
+            'LorebookStateRepairFailed',
+            `Failed to delete all copies of secure lorebook "${canonicalName}" cleanly. Manual repair may be required.`,
+            500,
+            {
+                beforeState,
+                afterState: finalState,
+                beforeReferenceState,
+                afterReferenceState: finalReferenceState,
+            },
+        );
+    }
+
+    return {
+        ...buildDeletedSecureLorebookResponse(record, user, beforeState.userHandlesWithCopies),
+    };
 }
 
 /**
@@ -808,30 +1774,51 @@ export function saveLorebookForManagement(user, name, data, storage = 'user') {
     assertLorebookSaveNameAllowed(name);
     const canonicalName = assertCanonicalName(name);
     assertLorebookData(data, canonicalName);
+    const sanitizedData = sanitizeLorebookDataForStorage(data);
     const secureRecord = getSecureIndexEntry(canonicalName);
+    const sharedSecureRecord = getSharedSecureIndexEntry(canonicalName);
     const preferredStorage = storage === 'secure' ? 'secure' : 'user';
 
     if (preferredStorage === 'secure') {
+        if (sharedSecureRecord) {
+            if (!canManageSecureLorebook(user, sharedSecureRecord)) {
+                throw new LorebookRepositoryError('LorebookNotFound', `Lorebook "${canonicalName}" not found.`, 404);
+            }
+
+            assertSharedLorebookCheckedOutForEdit(user, sharedSecureRecord);
+            writeSharedSecureLorebook(canonicalName, sanitizedData);
+            writeSharedSecureLorebookMetadata(canonicalName, sharedSecureRecord.ownerHandles, user.profile.handle, sharedSecureRecord);
+            const updatedRecord = getSharedSecureIndexEntry(canonicalName);
+            return buildLorebookMetadata(updatedRecord || sharedSecureRecord, user);
+        }
+
         if (!secureRecord || !canManageSecureLorebook(user, secureRecord)) {
             throw new LorebookRepositoryError('LorebookNotFound', `Lorebook "${canonicalName}" not found.`, 404);
         }
 
-        writeUserLorebook(secureRecord.ownerHandle, canonicalName, data);
+        writeUserLorebook(secureRecord.ownerHandle, canonicalName, sanitizedData);
         writeSecureLorebookMetadata(canonicalName, secureRecord.ownerHandle, user.profile.handle, secureRecord);
-        return {
-            name: canonicalName,
-            storage: 'secure',
-            ownerHandle: secureRecord.ownerHandle,
-        };
+        return buildLorebookMetadata(getSecureIndexEntry(canonicalName) || secureRecord, user);
     }
 
-    writeUserLorebook(user.profile.handle, canonicalName, data);
+    writeUserLorebook(user.profile.handle, canonicalName, sanitizedData);
     return {
         name: canonicalName,
         storage: 'user',
         ownerHandle: user.profile.handle,
+        ownerHandles: [user.profile.handle].filter(Boolean),
+        sharingMode: 'single',
+        checkedOut: false,
+        checkedOutBy: null,
+        checkedOutAt: null,
+        checkoutState: 'available',
+        canCheckOut: false,
+        canCheckIn: false,
+        canForceCheckout: false,
+        canManageOwners: false,
         // True when an admin saves a user-storage lorebook that shadows another user's secure lorebook.
-        shadowingSecure: Boolean(secureRecord && secureRecord.ownerHandle !== user.profile.handle && canManageSecureLorebook(user, secureRecord)),
+        shadowingSecure: Boolean((secureRecord && secureRecord.ownerHandle !== user.profile.handle && canManageSecureLorebook(user, secureRecord))
+            || (sharedSecureRecord && canManageSecureLorebook(user, sharedSecureRecord))),
     };
 }
 
@@ -839,11 +1826,37 @@ export function saveLorebookForManagement(user, name, data, storage = 'user') {
  * @param {import('./users.js').User} user
  * @param {string} name
  */
-export function deleteLorebookForManagement(user, name) {
+export function deleteLorebookForManagement(user, name, options = {}) {
     const canonicalName = assertCanonicalName(name);
     const secureRecord = getSecureIndexEntry(canonicalName);
+    const sharedSecureRecord = getSharedSecureIndexEntry(canonicalName);
     const userRecord = getUserLorebookRecord(user.profile.handle, canonicalName);
+    const preferredStorage = options?.storage === 'secure' ? 'secure' : (options?.storage === 'user' ? 'user' : null);
+    const allUserHandles = Array.isArray(options?.allUserHandles) ? options.allUserHandles : [];
     const isSecureBackingLorebook = Boolean(userRecord && secureRecord && secureRecord.ownerHandle === user.profile.handle);
+
+    if (preferredStorage === 'secure') {
+        const secureTarget = sharedSecureRecord || secureRecord;
+        if (!secureTarget) {
+            const residualCopyState = inspectLorebookCopyState(canonicalName, allUserHandles);
+            const residualReferenceState = inspectLorebookReferenceState(canonicalName, allUserHandles);
+            if (hasAnyLorebookCopies(residualCopyState) || hasAnyLorebookReferences(residualReferenceState)) {
+                return deleteResidualSecureLorebookArtifacts(user, canonicalName, allUserHandles);
+            }
+
+            throw new LorebookRepositoryError('LorebookNotFound', `Lorebook "${canonicalName}" not found.`, 404);
+        }
+
+        return deleteAllSecureLorebookCopies(user, secureTarget, allUserHandles);
+    }
+
+    if (sharedSecureRecord) {
+        return deleteAllSecureLorebookCopies(user, sharedSecureRecord, allUserHandles);
+    }
+
+    if (secureRecord) {
+        return deleteAllSecureLorebookCopies(user, secureRecord, allUserHandles);
+    }
 
     if (userRecord && !isSecureBackingLorebook) {
         try {
@@ -861,14 +1874,6 @@ export function deleteLorebookForManagement(user, name) {
             storage: 'user',
             ownerHandle: user.profile.handle,
         };
-    }
-
-    if (secureRecord) {
-        if (!canManageSecureLorebook(user, secureRecord)) {
-            throw new LorebookRepositoryError('LorebookAccessDenied', `Lorebook "${canonicalName}" is not deletable.`, 403);
-        }
-
-        throw new LorebookRepositoryError('LorebookAccessDenied', `Secure lorebook "${canonicalName}" must be demoted before deletion.`, 403);
     }
 
     if (!userRecord) {
@@ -906,17 +1911,27 @@ export function promoteLorebook(user, name) {
     assertSecurePromotionNameAllowed(user, canonicalName);
     assertSecureNameAvailableForPromotion(canonicalName);
 
-    createSecureLorebookLink(canonicalName, user.profile.handle);
     try {
+        createSecureLorebookLink(canonicalName, user.profile.handle);
         writeSecureLorebookMetadata(canonicalName, user.profile.handle, user.profile.handle);
     } catch (error) {
+        if (didPromoteSingleSecureLorebookSucceed(canonicalName, user.profile.handle)) {
+            return buildLorebookMetadata(getSecureIndexEntry(canonicalName) || {
+                name: canonicalName,
+                storage: 'secure',
+                sharingMode: 'single',
+                ownerHandle: user.profile.handle,
+                ownerHandles: [user.profile.handle].filter(Boolean),
+            }, user);
+        }
+
         try {
-            fs.unlinkSync(getSecureLorebookPath(canonicalName));
-        } catch (cleanupError) {
-            if (cleanupError?.code !== 'ENOENT') {
-                console.error(`[Lorebooks] Failed to remove secure lorebook link for "${canonicalName}" after promotion metadata write failed.`, cleanupError);
-                throw new LorebookRepositoryError('LorebookStateRepairFailed', `Failed to promote secure lorebook "${canonicalName}" cleanly. Manual repair may be required.`, 500);
+            if (getSecureIndexMetadata(canonicalName) || fs.existsSync(getSecureLorebookPath(canonicalName))) {
+                removeSecureLorebook(canonicalName);
             }
+        } catch (cleanupError) {
+            console.error(`[Lorebooks] Failed to remove secure lorebook link for "${canonicalName}" after promotion metadata write failed.`, cleanupError);
+            throw new LorebookRepositoryError('LorebookStateRepairFailed', `Failed to promote secure lorebook "${canonicalName}" cleanly. Manual repair may be required.`, 500);
         }
 
         throw error;
@@ -926,6 +1941,16 @@ export function promoteLorebook(user, name) {
         name: canonicalName,
         storage: 'secure',
         ownerHandle: user.profile.handle,
+        ownerHandles: [user.profile.handle].filter(Boolean),
+        sharingMode: 'single',
+        checkedOut: false,
+        checkedOutBy: null,
+        checkedOutAt: null,
+        checkoutState: 'available',
+        canCheckOut: false,
+        canCheckIn: false,
+        canForceCheckout: false,
+        canManageOwners: false,
     };
 }
 
@@ -951,5 +1976,291 @@ export function demoteLorebook(user, name) {
         name: canonicalName,
         storage: 'user',
         ownerHandle: secureRecord.ownerHandle,
+        ownerHandles: [secureRecord.ownerHandle].filter(Boolean),
+        sharingMode: 'single',
+        checkedOut: false,
+        checkedOutBy: null,
+        checkedOutAt: null,
+        checkoutState: 'available',
+        canCheckOut: false,
+        canCheckIn: false,
+        canForceCheckout: false,
+        canManageOwners: false,
+    };
+}
+
+export function promoteLorebookToShared(user, sourceName, sharedName, ownerHandles, options = {}) {
+    const sourceCanonicalName = assertCanonicalName(sourceName);
+    const sharedCanonicalName = assertCanonicalName(sharedName);
+    const localSourceRecord = getUserLorebookRecord(user.profile.handle, sourceCanonicalName);
+    const secureSourceRecord = getSecureIndexEntry(sourceCanonicalName);
+    const normalizedOwners = normalizeOwnerHandles(ownerHandles);
+    const overwriteExistingShared = Boolean(options?.overwriteExistingShared);
+
+    assertLorebookSaveNameAllowed(sharedName);
+    assertSharedSecurePromotionNameAllowed(sharedCanonicalName);
+
+    if (normalizedOwners.length < 2) {
+        throw new LorebookRepositoryError('LorebookOwnersInvalid', 'Shared secure lorebooks must have at least two owners.', 400);
+    }
+
+    if (!localSourceRecord && !secureSourceRecord) {
+        throw new LorebookRepositoryError('LorebookNotFound', `Lorebook "${sourceCanonicalName}" not found.`, 404);
+    }
+
+    if (secureSourceRecord && !canManageSecureLorebook(user, secureSourceRecord)) {
+        throw new LorebookRepositoryError('LorebookAccessDenied', `Lorebook "${sourceCanonicalName}" is not movable.`, 403);
+    }
+
+    const existingSharedTarget = getSharedSecureIndexEntry(sharedCanonicalName);
+    const existingSecureTarget = getSecureIndexEntry(sharedCanonicalName);
+    const existingUserTarget = getUserLorebookRecord(user.profile.handle, sharedCanonicalName);
+    if (existingSharedTarget) {
+        const existingOwnerHandles = normalizeOwnerHandles(existingSharedTarget.ownerHandles);
+        const overwriteDetails = {
+            name: sharedCanonicalName,
+            ownerHandle: existingSharedTarget.ownerHandle,
+            ownerHandles: existingOwnerHandles,
+            checkedOut: Boolean(String(existingSharedTarget.checkedOutBy || '').trim()),
+            checkedOutBy: String(existingSharedTarget.checkedOutBy || '').trim() || null,
+            canOverwrite: canManageSecureLorebook(user, existingSharedTarget),
+        };
+        if (!overwriteExistingShared) {
+            throw new LorebookRepositoryError(
+                'LorebookSharedOverwriteConfirmationRequired',
+                `Shared lorebook "${sharedCanonicalName}" already exists and is owned by ${existingOwnerHandles.join(', ')}.`,
+                409,
+                overwriteDetails,
+            );
+        }
+
+        if (!overwriteDetails.canOverwrite) {
+            throw new LorebookRepositoryError(
+                'LorebookAccessDenied',
+                `Shared lorebook "${sharedCanonicalName}" is already owned by ${existingOwnerHandles.join(', ')}.`,
+                403,
+                overwriteDetails,
+            );
+        }
+
+        assertSharedLorebookCheckedOutForEdit(user, existingSharedTarget);
+    }
+
+    if (existingSecureTarget || (existingUserTarget && sharedCanonicalName !== sourceCanonicalName)) {
+        throw new LorebookRepositoryError('LorebookAlreadyExists', `Lorebook "${sharedCanonicalName}" already exists.`, 409);
+    }
+
+    const sourceRecord = secureSourceRecord || localSourceRecord;
+    const data = readLorebookFromRecord(sourceRecord, false);
+    assertLorebookData(data, sourceCanonicalName);
+
+    try {
+        writeSharedSecureLorebook(sharedCanonicalName, data);
+        writeSharedSecureLorebookMetadata(sharedCanonicalName, normalizedOwners, user.profile.handle, existingSharedTarget);
+        if (secureSourceRecord) {
+            removeSecureLorebook(sourceCanonicalName);
+            const sourceBackingPath = getUserLorebookPath(secureSourceRecord.ownerHandle, sourceCanonicalName);
+            if (sourceBackingPath && fs.existsSync(sourceBackingPath)) {
+                fs.unlinkSync(sourceBackingPath);
+            }
+        } else if (localSourceRecord?.path && fs.existsSync(localSourceRecord.path)) {
+            fs.unlinkSync(localSourceRecord.path);
+        }
+    } catch (error) {
+        if (didPromoteLorebookToSharedSucceed({ sourceCanonicalName, sharedCanonicalName, normalizedOwners, secureSourceRecord, localSourceRecord })) {
+            const completedRecord = getSharedSecureIndexEntry(sharedCanonicalName);
+            return buildLorebookMetadata(completedRecord || {
+                name: sharedCanonicalName,
+                storage: 'secure',
+                sharingMode: 'shared',
+                ownerHandle: getPrimaryOwnerHandle(normalizedOwners),
+                ownerHandles: normalizedOwners,
+                checkedOutBy: null,
+                checkedOutAt: null,
+            }, user);
+        }
+
+        try {
+            if (getSharedSecureIndexMetadata(sharedCanonicalName) || fs.existsSync(getSharedSecureLorebookPath(sharedCanonicalName))) {
+                removeSharedSecureLorebook(sharedCanonicalName);
+            }
+        } catch (cleanupError) {
+            console.error(`[Lorebooks] Failed to clean up shared secure lorebook "${sharedCanonicalName}" after promotion failed.`, cleanupError);
+            throw new LorebookRepositoryError('LorebookStateRepairFailed', `Failed to promote shared secure lorebook "${sharedCanonicalName}" cleanly. Manual repair may be required.`, 500);
+        }
+
+        throw error;
+    }
+
+    const nextRecord = getSharedSecureIndexEntry(sharedCanonicalName);
+    return buildLorebookMetadata(nextRecord || {
+        name: sharedCanonicalName,
+        storage: 'secure',
+        sharingMode: 'shared',
+        ownerHandle: getPrimaryOwnerHandle(normalizedOwners),
+        ownerHandles: normalizedOwners,
+        checkedOut: false,
+        checkedOutBy: null,
+        checkedOutAt: null,
+    }, user);
+}
+
+export function updateSharedLorebookOwners(user, name, ownerHandles) {
+    const canonicalName = assertCanonicalName(name);
+    const sharedSecureRecord = getSharedSecureIndexEntry(canonicalName);
+    const normalizedOwners = normalizeOwnerHandles(ownerHandles);
+
+    if (!sharedSecureRecord) {
+        throw new LorebookRepositoryError('LorebookNotFound', `Lorebook "${canonicalName}" not found.`, 404);
+    }
+
+    if (!canManageSecureLorebook(user, sharedSecureRecord)) {
+        throw new LorebookRepositoryError('LorebookAccessDenied', `Lorebook "${canonicalName}" is not editable.`, 403);
+    }
+
+    assertSharedLorebookCheckedOutForEdit(user, sharedSecureRecord);
+    writeSharedSecureLorebookMetadata(canonicalName, normalizedOwners, user.profile.handle, sharedSecureRecord);
+    return buildLorebookMetadata(getSharedSecureIndexEntry(canonicalName) || sharedSecureRecord, user);
+}
+
+export function checkoutSharedLorebook(user, name, force = false) {
+    const canonicalName = assertCanonicalName(name);
+    const sharedSecureRecord = getSharedSecureIndexEntry(canonicalName);
+    if (!sharedSecureRecord) {
+        throw new LorebookRepositoryError('LorebookNotFound', `Lorebook "${canonicalName}" not found.`, 404);
+    }
+
+    if (!canManageSecureLorebook(user, sharedSecureRecord)) {
+        throw new LorebookRepositoryError('LorebookAccessDenied', `Lorebook "${canonicalName}" is not accessible.`, 403);
+    }
+
+    const currentHandle = String(user?.profile?.handle || '').trim();
+    const checkedOutBy = String(sharedSecureRecord.checkedOutBy || '').trim();
+    if (checkedOutBy && checkedOutBy !== currentHandle && !force) {
+        throw new LorebookRepositoryError('LorebookCheckedOut', `Lorebook "${canonicalName}" is checked out by ${checkedOutBy}.`, 423);
+    }
+
+    if (checkedOutBy && checkedOutBy !== currentHandle && force && !Boolean(user?.profile?.admin)) {
+        throw new LorebookRepositoryError('LorebookAccessDenied', `Lorebook "${canonicalName}" is checked out by ${checkedOutBy}.`, 403);
+    }
+
+    const timestamp = new Date().toISOString();
+    mutateSharedSecureIndex(index => {
+        const record = index.books[canonicalName];
+        if (!record) {
+            throw new LorebookRepositoryError('LorebookNotFound', `Lorebook "${canonicalName}" not found.`, 404);
+        }
+        record.checkedOutBy = currentHandle;
+        record.checkedOutAt = timestamp;
+        record.updatedAt = timestamp;
+        record.updatedBy = currentHandle;
+    });
+
+    return buildLorebookMetadata(getSharedSecureIndexEntry(canonicalName) || sharedSecureRecord, user);
+}
+
+export function checkinSharedLorebook(user, name, force = false) {
+    const canonicalName = assertCanonicalName(name);
+    const sharedSecureRecord = getSharedSecureIndexEntry(canonicalName);
+    if (!sharedSecureRecord) {
+        throw new LorebookRepositoryError('LorebookNotFound', `Lorebook "${canonicalName}" not found.`, 404);
+    }
+
+    if (!canManageSecureLorebook(user, sharedSecureRecord)) {
+        throw new LorebookRepositoryError('LorebookAccessDenied', `Lorebook "${canonicalName}" is not accessible.`, 403);
+    }
+
+    const currentHandle = String(user?.profile?.handle || '').trim();
+    const checkedOutBy = String(sharedSecureRecord.checkedOutBy || '').trim();
+    if (checkedOutBy && checkedOutBy !== currentHandle && !force) {
+        throw new LorebookRepositoryError('LorebookCheckedOut', `Lorebook "${canonicalName}" is checked out by ${checkedOutBy}.`, 423);
+    }
+
+    if (checkedOutBy && checkedOutBy !== currentHandle && force && !Boolean(user?.profile?.admin)) {
+        throw new LorebookRepositoryError('LorebookAccessDenied', `Lorebook "${canonicalName}" is checked out by ${checkedOutBy}.`, 403);
+    }
+
+    const timestamp = new Date().toISOString();
+    mutateSharedSecureIndex(index => {
+        const record = index.books[canonicalName];
+        if (!record) {
+            throw new LorebookRepositoryError('LorebookNotFound', `Lorebook "${canonicalName}" not found.`, 404);
+        }
+        record.checkedOutBy = null;
+        record.checkedOutAt = null;
+        record.updatedAt = timestamp;
+        record.updatedBy = currentHandle;
+    });
+
+    return buildLorebookMetadata(getSharedSecureIndexEntry(canonicalName) || sharedSecureRecord, user);
+}
+
+export function unshareLorebook(user, name, targetOwnerHandle) {
+    const canonicalName = assertCanonicalName(name);
+    const sharedSecureRecord = getSharedSecureIndexEntry(canonicalName);
+    const normalizedTargetOwnerHandle = String(targetOwnerHandle || '').trim();
+    const sharedSlug = canonicalName.startsWith('Y-') ? canonicalName.slice(2) : canonicalName;
+    const targetName = `Z-${normalizedTargetOwnerHandle}-${sharedSlug}`;
+
+    if (!Boolean(user?.profile?.admin)) {
+        throw new LorebookRepositoryError('LorebookAccessDenied', `Lorebook "${canonicalName}" is not movable.`, 403);
+    }
+
+    if (!sharedSecureRecord) {
+        throw new LorebookRepositoryError('LorebookNotFound', `Lorebook "${canonicalName}" not found.`, 404);
+    }
+
+    const existingTargetUser = getUserLorebookRecord(normalizedTargetOwnerHandle, targetName);
+    const existingTargetSecure = getSecureIndexEntry(targetName);
+    const existingTargetShared = getSharedSecureIndexEntry(targetName);
+    if (existingTargetUser || existingTargetSecure || existingTargetShared) {
+        throw new LorebookRepositoryError('LorebookAlreadyExists', `Lorebook "${targetName}" already exists.`, 409);
+    }
+
+    const data = readLorebookFromRecord(sharedSecureRecord, false);
+    assertLorebookData(data, canonicalName);
+
+    try {
+        writeUserLorebook(normalizedTargetOwnerHandle, targetName, data);
+        createSecureLorebookLink(targetName, normalizedTargetOwnerHandle);
+        writeSecureLorebookMetadata(targetName, normalizedTargetOwnerHandle, user.profile.handle);
+        removeSharedSecureLorebook(canonicalName);
+    } catch (error) {
+        if (didUnshareLorebookSucceed(canonicalName, targetName, normalizedTargetOwnerHandle)) {
+            return buildLorebookMetadata(getSecureIndexEntry(targetName) || {
+                name: targetName,
+                storage: 'secure',
+                sharingMode: 'single',
+                ownerHandle: normalizedTargetOwnerHandle,
+                ownerHandles: [normalizedTargetOwnerHandle].filter(Boolean),
+            }, user);
+        }
+
+        try {
+            if (getSecureIndexMetadata(targetName) || fs.existsSync(getSecureLorebookPath(targetName))) {
+                removeSecureLorebook(targetName);
+            }
+            removeUserLorebookCopy(normalizedTargetOwnerHandle, targetName);
+        } catch (cleanupError) {
+            console.error(`[Lorebooks] Failed to clean up secure lorebook "${targetName}" after unshare failed.`, cleanupError);
+            throw new LorebookRepositoryError('LorebookStateRepairFailed', `Failed to unshare lorebook "${canonicalName}" cleanly. Manual repair may be required.`, 500);
+        }
+        throw error;
+    }
+
+    return {
+        name: targetName,
+        storage: 'secure',
+        ownerHandle: normalizedTargetOwnerHandle,
+        ownerHandles: [normalizedTargetOwnerHandle].filter(Boolean),
+        sharingMode: 'single',
+        checkedOut: false,
+        checkedOutBy: null,
+        checkedOutAt: null,
+        checkoutState: 'available',
+        canCheckOut: false,
+        canCheckIn: false,
+        canForceCheckout: false,
+        canManageOwners: false,
     };
 }

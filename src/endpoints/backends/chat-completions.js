@@ -1715,6 +1715,19 @@ function getWorldInfoEntryOwnerHandle(entry) {
         : '';
 }
 
+function getWorldInfoEntryOwnerHandles(entry) {
+    const ownerHandles = Array.isArray(entry?.ownerHandles)
+        ? entry.ownerHandles.map(handle => String(handle || '').trim()).filter(Boolean)
+        : [];
+
+    if (ownerHandles.length > 0) {
+        return ownerHandles;
+    }
+
+    const ownerHandle = getWorldInfoEntryOwnerHandle(entry);
+    return ownerHandle ? [ownerHandle] : [];
+}
+
 function isWorldInfoEntryHiddenForUser(user, entry) {
     if (Boolean(user?.profile?.admin)) {
         return false;
@@ -1725,8 +1738,8 @@ function isWorldInfoEntryHiddenForUser(user, entry) {
     }
 
     const requestHandle = String(user?.profile?.handle || '');
-    const ownerHandle = getWorldInfoEntryOwnerHandle(entry);
-    return !requestHandle || !ownerHandle || requestHandle !== ownerHandle;
+    const ownerHandles = getWorldInfoEntryOwnerHandles(entry);
+    return !requestHandle || ownerHandles.length === 0 || !ownerHandles.includes(requestHandle);
 }
 
 function canViewWorldInfoEntry(user, entry) {
@@ -1743,6 +1756,7 @@ function sanitizeWorldInfoEntryForResponse(entry, user) {
 
     sanitizedEntry.storage = entry.storage === 'secure' ? 'secure' : 'user';
     sanitizedEntry.ownerHandle = canView ? getWorldInfoEntryOwnerHandle(entry) : '';
+    sanitizedEntry.ownerHandles = canView ? getWorldInfoEntryOwnerHandles(entry) : [];
     sanitizedEntry.hidden = !canView;
     sanitizedEntry.displayContent = canView
         ? String(entry.displayContent ?? entry.content ?? '')

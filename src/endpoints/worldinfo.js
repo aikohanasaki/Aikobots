@@ -12,6 +12,8 @@ import {
     writeHiddenLorebookTemplates,
 } from '../hidden-lorebook-templates.js';
 import {
+    checkinSharedLorebook,
+    checkoutSharedLorebook,
     hasLorebookForGeneration,
     LorebookRepositoryError,
     deleteLorebookForManagement,
@@ -19,11 +21,14 @@ import {
     getLorebookForManagement,
     listLorebooksForManagement,
     promoteLorebook,
+    promoteLorebookToShared,
     readLorebookForGenerationWithMetadata,
     readWorldInfoFile as readUserWorldInfoFile,
     saveLorebookForManagement,
+    unshareLorebook,
+    updateSharedLorebookOwners,
 } from '../lorebook-repository.js';
-import { requireAdminMiddleware } from '../users.js';
+import { getAllEnabledUsers, getAllUserHandles, requireAdminMiddleware } from '../users.js';
 
 export const readWorldInfoFile = readUserWorldInfoFile;
 
@@ -167,10 +172,12 @@ function worldEntriesFromBook(worldInfo, worldName, lorebookMetadata = null) {
     const lorebookSettings = extractLorebookSettings(worldInfo);
     const storage = lorebookMetadata?.storage === 'secure' ? 'secure' : 'user';
     const ownerHandle = String(lorebookMetadata?.ownerHandle || '');
+    const ownerHandles = Array.isArray(lorebookMetadata?.ownerHandles) ? lorebookMetadata.ownerHandles.map(handle => String(handle || '').trim()).filter(Boolean) : [];
+    const sharingMode = lorebookMetadata?.sharingMode === 'shared' ? 'shared' : 'single';
 
     return Object.keys(worldInfo.entries)
         .map(key => worldInfo.entries[key])
-        .map(({ uid, ...rest }) => ({ uid, world: worldName, lorebookSettings, storage, ownerHandle, ...rest }));
+        .map(({ uid, ...rest }) => ({ uid, world: worldName, lorebookSettings, storage, ownerHandle, ownerHandles, sharingMode, ...rest }));
 }
 
 async function readWorldEntries(user, worldName) {
@@ -343,11 +350,20 @@ function substituteParams(content, env = {}) {
 }
 
 function isSortedEntryHiddenForUser(user, entry) {
+    if (Boolean(user?.profile?.admin)) {
+        return false;
+    }
+
     if (!entry || entry.storage !== 'secure') {
         return false;
     }
 
     const requestHandle = String(user?.profile?.handle || '');
+    const ownerHandles = Array.isArray(entry.ownerHandles) ? entry.ownerHandles.map(handle => String(handle || '').trim()).filter(Boolean) : [];
+    if (ownerHandles.length > 0) {
+        return !requestHandle || !ownerHandles.includes(requestHandle);
+    }
+
     const ownerHandle = String(entry.ownerHandle || '');
     return !requestHandle || !ownerHandle || requestHandle !== ownerHandle;
 }
@@ -528,6 +544,7 @@ function sendLorebookError(response, error) {
             error: {
                 type: error.type,
                 message: error.message,
+                details: error.details || null,
             },
         });
     }
@@ -537,8 +554,46 @@ function sendLorebookError(response, error) {
         error: {
             type: 'LorebookInternalError',
             message: String(error?.message || error),
+            details: null,
         },
     });
+}
+
+async function validateSharedOwnerHandles(ownerHandles = [], actingHandle = '') {
+    const normalizedActingHandle = String(actingHandle || '').trim();
+    const normalizedOwnerHandles = [...new Set([
+        ...(Array.isArray(ownerHandles) ? ownerHandles : []),
+        normalizedActingHandle,
+    ]
+        .map(handle => String(handle || '').trim())
+        .filter(Boolean))];
+
+    if (normalizedOwnerHandles.length < 2) {
+        throw new LorebookRepositoryError('LorebookOwnersInvalid', 'Shared secure lorebooks must have at least two owners.', 400);
+    }
+
+    const enabledUsers = await getAllEnabledUsers();
+    const enabledHandles = new Set(enabledUsers.map(user => String(user.handle || '').trim()).filter(Boolean));
+    const invalidOwnerHandles = normalizedOwnerHandles.filter(handle => !enabledHandles.has(handle));
+    if (invalidOwnerHandles.length > 0) {
+        throw new LorebookRepositoryError('LorebookOwnersInvalid', `Invalid owner handles: ${invalidOwnerHandles.join(', ')}.`, 400);
+    }
+
+    return normalizedOwnerHandles;
+}
+
+async function validateEnabledHandle(handle) {
+    const normalizedHandle = String(handle || '').trim();
+    if (!normalizedHandle) {
+        throw new LorebookRepositoryError('LorebookOwnersInvalid', 'A valid owner handle is required.', 400);
+    }
+
+    const enabledUsers = await getAllEnabledUsers();
+    if (!enabledUsers.some(user => String(user.handle || '').trim() === normalizedHandle)) {
+        throw new LorebookRepositoryError('LorebookOwnersInvalid', `Invalid owner handle: ${normalizedHandle}.`, 400);
+    }
+
+    return normalizedHandle;
 }
 
 router.post('/list', async (request, response) => {
@@ -557,7 +612,7 @@ router.post('/get', async (request, response) => {
 
     try {
         const { data, metadata } = await getLorebookForManagement(request.user, request.body.name, true, request.body.storage || null);
-        return response.send({ ...data, name: metadata.name, storage: metadata.storage, ownerHandle: metadata.ownerHandle });
+        return response.send({ data, metadata });
     } catch (error) {
         return sendLorebookError(response, error);
     }
@@ -569,7 +624,11 @@ router.post('/delete', async (request, response) => {
     }
 
     try {
-        const result = await deleteLorebookForManagement(request.user, request.body.name);
+        const allUserHandles = (await getAllUserHandles()).map(handle => String(handle || '').trim()).filter(Boolean);
+        const result = await deleteLorebookForManagement(request.user, request.body.name, {
+            storage: request.body.storage || null,
+            allUserHandles,
+        });
         return response.send({ ok: true, ...result });
     } catch (error) {
         return sendLorebookError(response, error);
@@ -614,6 +673,7 @@ router.post('/import', async (request, response) => {
             ownerHandle: metadata.ownerHandle,
             shadowingSecure: Boolean(metadata.shadowingSecure),
             removedTrailingJsonSuffix,
+            metadata,
         });
     } catch (error) {
         return sendLorebookError(response, error);
@@ -639,7 +699,14 @@ router.post('/edit', async (request, response) => {
 
     try {
         const metadata = await saveLorebookForManagement(request.user, request.body.name, request.body.data, request.body.storage || 'user');
-        return response.send({ ok: true, name: metadata.name, storage: metadata.storage, ownerHandle: metadata.ownerHandle, shadowingSecure: Boolean(metadata.shadowingSecure) });
+        return response.send({
+            ok: true,
+            name: metadata.name,
+            storage: metadata.storage,
+            ownerHandle: metadata.ownerHandle,
+            shadowingSecure: Boolean(metadata.shadowingSecure),
+            metadata,
+        });
     } catch (error) {
         return sendLorebookError(response, error);
     }
@@ -658,6 +725,22 @@ router.post('/promote', async (request, response) => {
     }
 });
 
+router.post('/promote-shared', async (request, response) => {
+    if (!request.body?.name || !request.body?.sharedName) {
+        return response.sendStatus(400);
+    }
+
+    try {
+        const ownerHandles = await validateSharedOwnerHandles(request.body.ownerHandles, request.user?.profile?.handle);
+        const result = await promoteLorebookToShared(request.user, request.body.name, request.body.sharedName, ownerHandles, {
+            overwriteExistingShared: Boolean(request.body.forceOverwriteShared),
+        });
+        return response.send({ ok: true, ...result });
+    } catch (error) {
+        return sendLorebookError(response, error);
+    }
+});
+
 router.post('/demote', async (request, response) => {
     if (!request.body?.name) {
         return response.sendStatus(400);
@@ -665,6 +748,60 @@ router.post('/demote', async (request, response) => {
 
     try {
         const result = await demoteLorebook(request.user, request.body.name);
+        return response.send({ ok: true, ...result });
+    } catch (error) {
+        return sendLorebookError(response, error);
+    }
+});
+
+router.post('/shared/owners', async (request, response) => {
+    if (!request.body?.name) {
+        return response.sendStatus(400);
+    }
+
+    try {
+        const ownerHandles = await validateSharedOwnerHandles(request.body.ownerHandles, request.user?.profile?.handle);
+        const result = await updateSharedLorebookOwners(request.user, request.body.name, ownerHandles);
+        return response.send({ ok: true, ...result });
+    } catch (error) {
+        return sendLorebookError(response, error);
+    }
+});
+
+router.post('/checkout', async (request, response) => {
+    if (!request.body?.name) {
+        return response.sendStatus(400);
+    }
+
+    try {
+        const result = await checkoutSharedLorebook(request.user, request.body.name, Boolean(request.body.force));
+        return response.send({ ok: true, ...result });
+    } catch (error) {
+        return sendLorebookError(response, error);
+    }
+});
+
+router.post('/checkin', async (request, response) => {
+    if (!request.body?.name) {
+        return response.sendStatus(400);
+    }
+
+    try {
+        const result = await checkinSharedLorebook(request.user, request.body.name, Boolean(request.body.force));
+        return response.send({ ok: true, ...result });
+    } catch (error) {
+        return sendLorebookError(response, error);
+    }
+});
+
+router.post('/unshare', requireAdminMiddleware, async (request, response) => {
+    if (!request.body?.name || !request.body?.targetOwnerHandle) {
+        return response.sendStatus(400);
+    }
+
+    try {
+        const targetOwnerHandle = await validateEnabledHandle(request.body.targetOwnerHandle);
+        const result = await unshareLorebook(request.user, request.body.name, targetOwnerHandle);
         return response.send({ ok: true, ...result });
     } catch (error) {
         return sendLorebookError(response, error);

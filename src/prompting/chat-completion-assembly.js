@@ -1206,6 +1206,7 @@ function createWorldInfoContentSegment(entry = {}, text = entry?.text ?? '') {
         text: normalizedText,
         storage: entry?.storage === 'secure' ? 'secure' : 'user',
         ownerHandle: String(entry?.ownerHandle || ''),
+        ownerHandles: Array.isArray(entry?.ownerHandles) ? entry.ownerHandles.map(handle => String(handle || '').trim()).filter(Boolean) : [],
         book: entry?.book ?? null,
         uid: entry?.uid ?? null,
         placement: entry?.placement ?? null,

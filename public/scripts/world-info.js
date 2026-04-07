@@ -22,6 +22,7 @@ import { t } from './i18n.js';
 import { accountStorage } from './util/AccountStorage.js';
 import { fetchPromptInspectionSnapshot } from './openai.js';
 import { getOrCreatePersonaDescriptor, setPersonaDescription, user_avatar } from './personas.js';
+import { getCurrentUserHandle } from './user.js';
 
 export const world_info_logic = {
     AND_ANY: 0,
@@ -172,15 +173,30 @@ function normalizeWorldInfoItems(data = {}) {
     if (Array.isArray(data.world_info_items) && data.world_info_items.length > 0) {
         return data.world_info_items
             .filter(item => item && typeof item.name === 'string' && item.name)
-            .map(item => ({
+            .map(item => {
+                const hasOwn = (key) => Object.prototype.hasOwnProperty.call(item, key);
+                return {
                 name: item.name,
                 storage: item.storage === 'secure' ? 'secure' : 'user',
                 ownerHandle: String(item.ownerHandle || ''),
-                canEdit: Boolean(item.canEdit),
-                canDelete: Boolean(item.canDelete),
-                canPromote: Boolean(item.canPromote),
-                canDemote: Boolean(item.canDemote),
-            }));
+                ownerHandles: Array.isArray(item.ownerHandles)
+                    ? item.ownerHandles.map(handle => String(handle || '').trim()).filter(Boolean)
+                    : [String(item.ownerHandle || '').trim()].filter(Boolean),
+                sharingMode: item.sharingMode === 'shared' ? 'shared' : 'single',
+                checkedOut: hasOwn('checkedOut') ? Boolean(item.checkedOut) : undefined,
+                checkedOutBy: String(item.checkedOutBy || '').trim() || null,
+                checkedOutAt: item.checkedOutAt || null,
+                checkoutState: ['self', 'other'].includes(String(item.checkoutState || '')) ? String(item.checkoutState) : 'available',
+                canEdit: hasOwn('canEdit') ? Boolean(item.canEdit) : undefined,
+                canDelete: hasOwn('canDelete') ? Boolean(item.canDelete) : undefined,
+                canPromote: hasOwn('canPromote') ? Boolean(item.canPromote) : undefined,
+                canDemote: hasOwn('canDemote') ? Boolean(item.canDemote) : undefined,
+                canCheckOut: hasOwn('canCheckOut') ? Boolean(item.canCheckOut) : undefined,
+                canCheckIn: hasOwn('canCheckIn') ? Boolean(item.canCheckIn) : undefined,
+                canForceCheckout: hasOwn('canForceCheckout') ? Boolean(item.canForceCheckout) : undefined,
+                canManageOwners: hasOwn('canManageOwners') ? Boolean(item.canManageOwners) : undefined,
+            };
+            });
     }
 
     return Array.isArray(data.world_names)
@@ -188,10 +204,20 @@ function normalizeWorldInfoItems(data = {}) {
             name,
             storage: 'user',
             ownerHandle: '',
+            ownerHandles: [],
+            sharingMode: 'single',
+            checkedOut: false,
+            checkedOutBy: null,
+            checkedOutAt: null,
+            checkoutState: 'available',
             canEdit: true,
             canDelete: true,
             canPromote: true,
             canDemote: false,
+            canCheckOut: false,
+            canCheckIn: false,
+            canForceCheckout: false,
+            canManageOwners: false,
         }))
         : [];
 }
@@ -209,6 +235,66 @@ function setWorldInfoItems(items = []) {
 
 function getWorldInfoItem(name) {
     return worldInfoItemMap.get(name) || null;
+}
+
+function upsertWorldInfoItem(item) {
+    if (!item?.name) {
+        return;
+    }
+
+    const normalizedItem = normalizeWorldInfoItems({ world_info_items: [item] })[0];
+    if (!normalizedItem) {
+        return;
+    }
+
+    const existingItem = getWorldInfoItem(normalizedItem.name);
+    const mergedItem = {
+        ...(existingItem || {}),
+        ...Object.fromEntries(Object.entries(normalizedItem).filter(([, value]) => value !== undefined)),
+    };
+    worldInfoItemMap.set(normalizedItem.name, mergedItem);
+    world_info_items = world_info_items.some(item => item.name === normalizedItem.name)
+        ? world_info_items.map(item => item.name === normalizedItem.name ? mergedItem : item)
+        : [...world_info_items, mergedItem];
+    world_names = world_info_items.map(item => item.name);
+}
+
+function getResolvedWorldInfoItem(name = '', data = null) {
+    const item = getWorldInfoItem(name);
+    if (item) {
+        return item;
+    }
+
+    if (!data || typeof data !== 'object') {
+        return null;
+    }
+
+    const fallbackName = String(name || data.name || '').trim();
+    if (!fallbackName) {
+        return null;
+    }
+
+    return normalizeWorldInfoItems({ world_info_items: [{ name: fallbackName }] })[0] || null;
+}
+
+function isSharedSecureLorebook(item) {
+    return item?.storage === 'secure' && item?.sharingMode === 'shared';
+}
+
+function isSharedLorebookReadOnly(item) {
+    return isSharedSecureLorebook(item) && item.checkoutState !== 'self';
+}
+
+function getWorldInfoReadOnlyMessage(item) {
+    if (!isSharedSecureLorebook(item)) {
+        return '';
+    }
+
+    if (item.checkoutState === 'other' && item.checkedOutBy) {
+        return `Checked out by ${item.checkedOutBy}. Check out is required before editing.`;
+    }
+
+    return 'Check out is required before editing this shared lorebook.';
 }
 
 export function getSecureWorldNames() {
@@ -464,6 +550,16 @@ function updateWorldInfoStorageButton(name = '') {
         return;
     }
 
+    if (item.sharingMode === 'shared') {
+        const label = 'Shared secure lorebooks use dedicated shared storage';
+        button.addClass('disabled');
+        button.attr('title', label);
+        button.attr('aria-label', label);
+        icon.removeClass('fa-lock-open fa-shield-halved');
+        icon.addClass('fa-lock');
+        return;
+    }
+
     const canToggle = item.canPromote || item.canDemote;
     button.toggleClass('disabled', !canToggle);
 
@@ -496,6 +592,9 @@ function refreshWorldInfoSelectors(editorSelected = '') {
     });
 
     updateWorldInfoStorageButton(editorSelected);
+    updateWorldInfoSharedManageButton(editorSelected);
+    updateWorldInfoCheckoutButton(editorSelected);
+    updateWorldInfoCheckoutStatus(editorSelected);
 }
 
 async function requestWorldInfoList() {
@@ -554,6 +653,227 @@ async function moveWorldInfoStorage(name) {
     }
 
     return true;
+}
+
+function getDefaultSharedLorebookName(name = '') {
+    const normalizedName = String(name || '').trim();
+    const strippedSecurePrefix = normalizedName.startsWith('9Z')
+        ? normalizedName.slice(2)
+        : normalizedName.replace(/^Z-[^-]+-/, '');
+    const baseName = strippedSecurePrefix.startsWith('Y-') ? strippedSecurePrefix.slice(2) : strippedSecurePrefix;
+    return getSanitizedFilename(`Y-${baseName || 'shared-lorebook'}`) || 'Y-shared-lorebook';
+}
+
+async function refreshWorldInfoAfterMetadataChange(name) {
+    if (name && worldInfoCache.has(name)) {
+        worldInfoCache.delete(name);
+    }
+
+    await updateWorldInfoList();
+
+    const updatedData = await loadWorldInfo(name);
+    if (updatedData) {
+        await displayWorldEntries(name, updatedData, navigation_option.previous, false);
+    } else {
+        await hideWorldEditor();
+    }
+}
+
+async function toggleWorldInfoCheckout(name) {
+    const lorebook = getWorldInfoItem(name);
+    if (!isSharedSecureLorebook(lorebook)) {
+        return false;
+    }
+
+    const isCheckingIn = lorebook.checkoutState === 'self';
+    const canForceCheckout = lorebook.checkoutState === 'other' && lorebook.canForceCheckout;
+    if (!isCheckingIn && !lorebook.canCheckOut && !canForceCheckout) {
+        return false;
+    }
+
+    const force = canForceCheckout && !isCheckingIn;
+    if (force) {
+        const confirmed = await Popup.show.confirm(
+            `Force take checkout from "${lorebook.checkedOutBy || 'another owner'}"?`,
+            'This will transfer the shared lorebook checkout to you.',
+        );
+        if (!confirmed) {
+            return false;
+        }
+    }
+
+    const response = await fetch(isCheckingIn ? '/api/worldinfo/checkin' : '/api/worldinfo/checkout', {
+        method: 'POST',
+        headers: getRequestHeaders(),
+        body: JSON.stringify({ name, force }),
+    });
+
+    if (!response.ok) {
+        const error = await response.json().catch(() => null);
+        toastr.error(error?.error?.message || 'Could not update shared lorebook checkout.', t`World Info`);
+        return false;
+    }
+
+    await refreshWorldInfoAfterMetadataChange(name);
+    return true;
+}
+
+async function manageSharedLorebook(name) {
+    const lorebook = getWorldInfoItem(name);
+    if (!lorebook) {
+        return false;
+    }
+
+    if (isSharedSecureLorebook(lorebook)) {
+        if (!lorebook.canManageOwners) {
+            toastr.info(getWorldInfoReadOnlyMessage(lorebook), t`World Info`);
+            return false;
+        }
+
+        const ownerInput = await Popup.show.input(
+            'Manage shared lorebook owners',
+            'Enter comma-separated owner handles. Your handle will stay selected automatically. Shared lorebooks must keep at least two owners.',
+            lorebook.ownerHandles.join(', '),
+        );
+        if (!ownerInput) {
+            return false;
+        }
+
+        const ownerHandles = ensureActingUserIncludedInOwnerHandles(parseStringArray(ownerInput));
+        const response = await fetch('/api/worldinfo/shared/owners', {
+            method: 'POST',
+            headers: getRequestHeaders(),
+            body: JSON.stringify({ name, ownerHandles }),
+        });
+
+        if (!response.ok) {
+            const error = await response.json().catch(() => null);
+            toastr.error(error?.error?.message || 'Could not update shared lorebook owners.', t`World Info`);
+            return false;
+        }
+
+        await refreshWorldInfoAfterMetadataChange(name);
+        return true;
+    }
+
+    const sharedName = await Popup.show.input(
+        'Promote to shared secure lorebook',
+        'Enter the shared secure lorebook name. It must start with "Y-".',
+        getDefaultSharedLorebookName(name),
+    );
+    if (!sharedName) {
+        return false;
+    }
+
+    const ownerDefaults = [getCurrentUserHandle()].filter(Boolean).join(', ');
+    const ownerInput = await Popup.show.input(
+        'Shared owners',
+        'Enter comma-separated owner handles. Your handle will be included automatically.',
+        ownerDefaults,
+    );
+    if (!ownerInput) {
+        return false;
+    }
+
+    const ownerHandles = ensureActingUserIncludedInOwnerHandles(parseStringArray(ownerInput));
+    const submitPromotion = async (forceOverwriteShared = false) => fetch('/api/worldinfo/promote-shared', {
+        method: 'POST',
+        headers: getRequestHeaders(),
+        body: JSON.stringify({ name, sharedName, ownerHandles, forceOverwriteShared }),
+    });
+    let response = await submitPromotion(false);
+
+    if (!response.ok) {
+        const error = await response.json().catch(() => null);
+        if (error?.error?.type === 'LorebookSharedOverwriteConfirmationRequired') {
+            const existingOwners = Array.isArray(error?.error?.details?.ownerHandles)
+                ? error.error.details.ownerHandles.filter(Boolean)
+                : [];
+            const ownerLabel = existingOwners.length > 0 ? existingOwners.join(', ') : 'another owner';
+            const checkedOutBy = String(error?.error?.details?.checkedOutBy || '').trim();
+            const canOverwrite = Boolean(error?.error?.details?.canOverwrite);
+            if (!canOverwrite) {
+                toastr.error(`Shared lorebook "${sharedName}" already exists and is owned by ${ownerLabel}.`, t`World Info`);
+                return false;
+            }
+
+            const confirmed = await Popup.show.confirm(
+                `Shared lorebook "${sharedName}" already exists`,
+                `It is already shared by ${ownerLabel}.${checkedOutBy ? ` It is currently checked out by ${checkedOutBy}.` : ''} Continuing will overwrite its contents and owner list.`,
+            );
+            if (!confirmed) {
+                return false;
+            }
+
+            const confirmedAgain = await Popup.show.confirm(
+                `Overwrite "${sharedName}"?`,
+                'This is the final confirmation. The existing shared lorebook will be replaced with the lorebook you are sharing now.',
+            );
+            if (!confirmedAgain) {
+                return false;
+            }
+
+            response = await submitPromotion(true);
+            if (!response.ok) {
+                const retryError = await response.json().catch(() => null);
+                toastr.error(retryError?.error?.message || 'Could not overwrite shared lorebook.', t`World Info`);
+                return false;
+            }
+        } else {
+            toastr.error(error?.error?.message || 'Could not promote lorebook to shared secure storage.', t`World Info`);
+            return false;
+        }
+    }
+
+    if (worldInfoCache.has(name)) {
+        worldInfoCache.delete(name);
+    }
+    if (sharedName !== name && worldInfoCache.has(sharedName)) {
+        worldInfoCache.delete(sharedName);
+    }
+
+    await updateWorldInfoList();
+    const sharedIndex = world_names.indexOf(sharedName);
+    if (sharedIndex !== -1) {
+        $('#world_editor_select').val(String(sharedIndex)).trigger('change');
+    }
+    return true;
+}
+
+async function confirmSecureLorebookDeletion(name, lorebook) {
+    const ownerLabel = Array.isArray(lorebook?.ownerHandles) && lorebook.ownerHandles.length > 0
+        ? lorebook.ownerHandles.join(', ')
+        : (lorebook?.ownerHandle || 'the owner');
+    const sharedLabel = lorebook?.sharingMode === 'shared' ? 'shared secure' : 'secure';
+    const warningConfirmed = await Popup.show.confirm(
+        `Delete ${sharedLabel} lorebook "${name}"?`,
+        `ALL copies of "${name}" will be deleted for every user. It is currently owned by ${ownerLabel}. Export a copy first if that is not what you want.`,
+        { okButton: 'Delete All Copies', cancelButton: 'Cancel' },
+    );
+    if (!warningConfirmed) {
+        return false;
+    }
+
+    const typedName = await Popup.show.input(
+        `Type "${name}" to confirm`,
+        'This permanently deletes every copy of this secure lorebook. This cannot be undone.',
+        '',
+        { okButton: 'Delete All Copies', cancelButton: 'Cancel' },
+    );
+    return typedName === name;
+}
+
+function ensureActingUserIncludedInOwnerHandles(ownerHandles = []) {
+    const currentUserHandle = String(getCurrentUserHandle() || '').trim();
+    return [...new Set([
+        currentUserHandle,
+        ...(Array.isArray(ownerHandles) ? ownerHandles : []),
+    ].map(handle => String(handle || '').trim()).filter(Boolean))];
+}
+
+function stripTransientWorldInfoMetadata(data) {
+    const source = data && typeof data === 'object' && !Array.isArray(data) ? data : {};
+    return { ...source };
 }
 
 // Typedef area
@@ -2438,9 +2758,22 @@ export async function loadWorldInfo(name) {
     });
 
     if (response.ok) {
-        const data = await response.json();
-        worldInfoCache.set(name, data);
-        return data;
+        const payload = await response.json();
+        const metadata = payload?.metadata && typeof payload.metadata === 'object' ? payload.metadata : null;
+        const data = payload?.data && typeof payload.data === 'object'
+            ? payload.data
+            : (payload && typeof payload === 'object' && 'entries' in payload ? payload : null);
+
+        if (metadata) {
+            upsertWorldInfoItem(metadata);
+        } else if (payload && typeof payload === 'object' && payload.name) {
+            upsertWorldInfoItem(payload);
+        }
+
+        if (data) {
+            worldInfoCache.set(name, data);
+            return data;
+        }
     }
 
     return null;
@@ -2686,6 +3019,8 @@ async function displayWorldEntries(name, data, navigation = navigation_option.no
     const worldEntriesList = $('#world_popup_entries_list');
     clearEntryList(worldEntriesList);
     worldEntriesList.show();
+    const lorebook = getResolvedWorldInfoItem(name, data);
+    const isReadOnlySharedLorebook = isSharedLorebookReadOnly(lorebook);
 
     if (!data || !('entries' in data)) {
         $('#world_popup_new').off('click').on('click', nullWorldInfo);
@@ -2696,7 +3031,12 @@ async function displayWorldEntries(name, data, navigation = navigation_option.no
         $('#world_popup_delete').off('click').on('click', nullWorldInfo);
         $('#world_duplicate').off('click').on('click', nullWorldInfo);
         $('#world_secure_toggle').off('click').on('click', nullWorldInfo);
+        $('#world_shared_manage').off('click').on('click', nullWorldInfo);
+        $('#world_checkout_toggle').off('click').on('click', nullWorldInfo).hide();
         updateWorldInfoStorageButton('');
+        updateWorldInfoSharedManageButton('');
+        updateWorldInfoCheckoutButton('');
+        updateWorldInfoCheckoutStatus('');
         worldEntriesList.hide();
         $('#world_info_pagination').html('');
         return;
@@ -2705,14 +3045,18 @@ async function displayWorldEntries(name, data, navigation = navigation_option.no
     // Regardless of whether success is displayed or not. Make sure the delete button is available.
     // Do not put this code behind.
     $('#world_popup_delete').off('click').on('click', async () => {
-        const lorebook = getWorldInfoItem(name);
-        if (lorebook?.storage === 'secure') {
-            toastr.info(t`Secure lorebooks must be demoted before deletion.`, t`World Info`);
+        const currentLorebook = getResolvedWorldInfoItem(name, data);
+        if (currentLorebook?.storage === 'secure' && !currentLorebook?.canDelete) {
+            toastr.info(getWorldInfoReadOnlyMessage(currentLorebook), t`World Info`);
             return;
         }
-
-        const confirmation = await Popup.show.confirm(`Delete the World/Lorebook: "${name}"?`, 'This action is irreversible!');
+        const confirmation = currentLorebook?.storage === 'secure'
+            ? await confirmSecureLorebookDeletion(name, currentLorebook)
+            : await Popup.show.confirm(`Delete the World/Lorebook: "${name}"?`, 'This action is irreversible!');
         if (!confirmation) {
+            if (currentLorebook?.storage === 'secure') {
+                toastr.info(`Deletion cancelled. Type "${name}" exactly to delete all copies.`, t`World Info`);
+            }
             return;
         }
 
@@ -2820,6 +3164,7 @@ async function displayWorldEntries(name, data, navigation = navigation_option.no
                 worldEntriesList.append(keywordHeaders);
                 worldEntriesList.append(blocks);
                 syncWorldInfoBulkMoveUi(name);
+                applyWorldInfoReadOnlyState(name, data);
             } catch (error) {
                 console.error('Error while rendering WI entries:', error);
             }
@@ -2853,17 +3198,29 @@ async function displayWorldEntries(name, data, navigation = navigation_option.no
     }
 
     $('#world_popup_new').off('click').on('click', () => {
+        if (isReadOnlySharedLorebook) {
+            toastr.info(getWorldInfoReadOnlyMessage(lorebook), t`World Info`);
+            return;
+        }
         const entry = createWorldInfoEntry(name, data);
         if (entry) updateEditor(entry.uid);
     });
 
     $('#world_bulk_move_mode').off('click').on('click', () => {
+        if (isReadOnlySharedLorebook) {
+            toastr.info(getWorldInfoReadOnlyMessage(lorebook), t`World Info`);
+            return;
+        }
         const state = getWorldInfoBulkMoveState(name);
         setWorldInfoBulkMoveMode(name, !state.bulkMoveMode);
         syncWorldInfoBulkMoveUi(name);
     });
 
     $('#world_bulk_move_apply').off('click').on('click', async () => {
+        if (isReadOnlySharedLorebook) {
+            toastr.info(getWorldInfoReadOnlyMessage(lorebook), t`World Info`);
+            return;
+        }
         const selectedEntries = getSelectedWorldInfoEntriesInDisplayOrder(name, data);
         if (!selectedEntries.length) {
             syncWorldInfoBulkMoveUi(name);
@@ -2888,8 +3245,12 @@ async function displayWorldEntries(name, data, navigation = navigation_option.no
     });
 
     $('#world_popup_name_button').off('click').on('click', async () => {
-        const lorebook = getWorldInfoItem(name);
-        if (lorebook?.storage === 'secure') {
+        const currentLorebook = getResolvedWorldInfoItem(name, data);
+        if (isReadOnlySharedLorebook) {
+            toastr.info(getWorldInfoReadOnlyMessage(currentLorebook), t`World Info`);
+            return;
+        }
+        if (currentLorebook?.storage === 'secure') {
             toastr.info(t`Secure lorebooks cannot be renamed here.`, t`World Info`);
             return;
         }
@@ -2897,20 +3258,47 @@ async function displayWorldEntries(name, data, navigation = navigation_option.no
     });
 
     $('#world_lorebook_ordering').off('click').on('click', async () => {
+        if (isReadOnlySharedLorebook) {
+            toastr.info(getWorldInfoReadOnlyMessage(lorebook), t`World Info`);
+            return;
+        }
         await openLorebookOrderingDialog(name, data);
     });
 
     $('#world_secure_toggle').off('click').on('click', async () => {
-        const lorebook = getWorldInfoItem(name);
-        if (!lorebook || (!lorebook.canPromote && !lorebook.canDemote)) {
+        const currentLorebook = getResolvedWorldInfoItem(name, data);
+        if (!currentLorebook || currentLorebook.sharingMode === 'shared' || (!currentLorebook.canPromote && !currentLorebook.canDemote)) {
             return;
         }
 
         await moveWorldInfoStorage(name);
     });
     updateWorldInfoStorageButton(name);
+    $('#world_shared_manage').off('click').on('click', async () => {
+        await manageSharedLorebook(name);
+    });
+    updateWorldInfoSharedManageButton(name);
+    $('#world_checkout_toggle').off('click').on('click', async () => {
+        const currentLorebook = getResolvedWorldInfoItem(name, data);
+        if (!isSharedSecureLorebook(currentLorebook)) {
+            return;
+        }
+
+        if (currentLorebook.checkoutState === 'other' && !currentLorebook.canForceCheckout) {
+            toastr.info(getWorldInfoReadOnlyMessage(currentLorebook), t`World Info`);
+            return;
+        }
+
+        await toggleWorldInfoCheckout(name);
+    });
+    updateWorldInfoCheckoutButton(name);
+    updateWorldInfoCheckoutStatus(name, data);
 
     $('#world_backfill_memos').off('click').on('click', async () => {
+        if (isReadOnlySharedLorebook) {
+            toastr.info(getWorldInfoReadOnlyMessage(lorebook), t`World Info`);
+            return;
+        }
         let counter = 0;
         for (const entry of Object.values(data.entries)) {
             if (!entry.comment && Array.isArray(entry.key) && entry.key.length > 0) {
@@ -2928,6 +3316,10 @@ async function displayWorldEntries(name, data, navigation = navigation_option.no
     });
 
     $('#world_apply_current_sorting').off('click').on('click', async () => {
+        if (isReadOnlySharedLorebook) {
+            toastr.info(getWorldInfoReadOnlyMessage(lorebook), t`World Info`);
+            return;
+        }
         const entryCount = Object.keys(data.entries).length;
         const moreThan100 = entryCount > 100;
 
@@ -2973,13 +3365,17 @@ async function displayWorldEntries(name, data, navigation = navigation_option.no
 
     $('#world_popup_export').off('click').on('click', () => {
         if (name && data) {
-            const jsonValue = JSON.stringify(data);
+            const jsonValue = JSON.stringify(stripTransientWorldInfoMetadata(data));
             const fileName = `${name}.json`;
             download(jsonValue, fileName, 'application/json');
         }
     });
 
     $('#world_duplicate').off('click').on('click', async () => {
+        if (isReadOnlySharedLorebook) {
+            toastr.info(getWorldInfoReadOnlyMessage(lorebook), t`World Info`);
+            return;
+        }
         const tempName = getFreeWorldName();
         const finalName = await Popup.show.input('Create a new World Info?', 'Enter a name for the new file:', tempName);
 
@@ -3029,6 +3425,9 @@ async function displayWorldEntries(name, data, navigation = navigation_option.no
             await saveWorldInfo(name, data);
         },
     });
+
+    worldEntriesList.sortable('option', 'disabled', isReadOnlySharedLorebook);
+    applyWorldInfoReadOnlyState(name, data);
 
     //$("#world_popup_entries_list").disableSelection();
 }
@@ -3533,6 +3932,7 @@ function handleProbabilityInputHelper({ probabilityInput, data, entry, name }) {
         setWIOriginalDataValue(data, uid, 'extensions.probability', data.entries[uid].probability);
         !noSave && await saveWorldInfo(name, data);
     });
+
     probabilityInput.val(entry.probability).trigger('input', { noSave: true });
 }
 
@@ -4343,7 +4743,7 @@ export function duplicateWorldInfoEntry(data, uid) {
     delete originalData.uid;
 
     // Create new entry and copy over data
-    const entry = createWorldInfoEntry(data.name, data);
+    const entry = createWorldInfoEntry('', data);
     Object.assign(entry, originalData);
 
     return entry;
@@ -4450,11 +4850,12 @@ export function createWorldInfoEntry(_name, data) {
 async function _save(name, data) {
     // Prevent double saving if both immediate and debounced save are called
     cancelDebounce(saveWorldDebounced);
+    const sanitizedData = stripTransientWorldInfoMetadata(data);
 
     const response = await fetch('/api/worldinfo/edit', {
         method: 'POST',
         headers: getRequestHeaders(),
-        body: JSON.stringify({ name: name, data: data, storage: getLorebookStorageForRequest(name) }),
+        body: JSON.stringify({ name: name, data: sanitizedData, storage: getLorebookStorageForRequest(name) }),
     });
 
     if (!response.ok) {
@@ -4465,6 +4866,9 @@ async function _save(name, data) {
     }
 
     const responseData = await response.json().catch(() => null);
+    if (responseData?.metadata) {
+        upsertWorldInfoItem(responseData.metadata);
+    }
     maybeWarnSecureShadowing(responseData, name);
     await eventSource.emit(event_types.WORLDINFO_UPDATED, name, data);
 }
@@ -4569,12 +4973,6 @@ async function renameWorldInfo(name, data) {
  */
 export async function deleteWorldInfo(worldInfoName) {
     if (!world_names.includes(worldInfoName)) {
-        return false;
-    }
-
-    const lorebook = getWorldInfoItem(worldInfoName);
-    if (lorebook?.storage === 'secure') {
-        toastr.info(t`Secure lorebooks must be demoted before deletion.`, t`World Info`);
         return false;
     }
 
@@ -5867,6 +6265,9 @@ export async function importWorldInfo(file) {
         }
 
         const data = await result.json();
+        if (data?.metadata) {
+            upsertWorldInfoItem(data.metadata);
+        }
         maybeWarnSecureShadowing(data, data?.name || sanitizedWorldName);
 
         if (data.name) {
@@ -6109,6 +6510,118 @@ export async function moveWorldInfoEntries(sourceName, targetName, uids, { delet
         console.error('[WI Move] Unexpected error:', error);
         return false;
     }
+}
+
+function updateWorldInfoSharedManageButton(name = '') {
+    const button = $('#world_shared_manage');
+    const item = getWorldInfoItem(name);
+
+    if (!item) {
+        button.addClass('disabled');
+        button.attr('title', 'Share or manage shared lorebook owners');
+        button.attr('aria-label', 'Share or manage shared lorebook owners');
+        return;
+    }
+
+    if (item.sharingMode === 'shared') {
+        const canManageOwners = Boolean(item.canManageOwners);
+        button.toggleClass('disabled', !canManageOwners);
+        button.attr('title', canManageOwners ? 'Manage shared lorebook owners' : getWorldInfoReadOnlyMessage(item));
+        button.attr('aria-label', canManageOwners ? 'Manage shared lorebook owners' : 'Shared lorebook owner management is unavailable');
+        return;
+    }
+
+    button.toggleClass('disabled', item.storage !== 'user' && item.storage !== 'secure');
+    button.attr('title', 'Convert this lorebook to a shared secure lorebook');
+    button.attr('aria-label', 'Convert this lorebook to a shared secure lorebook');
+}
+
+function updateWorldInfoCheckoutButton(name = '') {
+    const button = $('#world_checkout_toggle');
+    const labelElement = $('#world_checkout_toggle_label');
+    const item = getWorldInfoItem(name);
+
+    if (!item || item.sharingMode !== 'shared') {
+        button.hide().addClass('disabled');
+        labelElement.text('Check Out');
+        button.attr('title', 'Check out lorebook for editing');
+        button.attr('aria-label', 'Check out lorebook for editing');
+        return;
+    }
+
+    button.show();
+    if (item.checkoutState === 'self') {
+        labelElement.text('Check In');
+        button.toggleClass('disabled', !item.canCheckIn);
+        button.attr('title', 'Check in shared lorebook');
+        button.attr('aria-label', 'Check in shared lorebook');
+        return;
+    }
+
+    if (item.checkoutState === 'other') {
+        const lockedLabel = item.canForceCheckout ? 'Force Check Out' : 'Locked';
+        labelElement.text(lockedLabel);
+        button.toggleClass('disabled', !item.canForceCheckout);
+        button.attr('title', item.checkedOutBy
+            ? `Checked out by ${item.checkedOutBy}`
+            : 'This shared lorebook is checked out by another owner');
+        button.attr('aria-label', `Shared lorebook checked out by ${item.checkedOutBy || 'another owner'}`);
+        return;
+    }
+
+    labelElement.text('Check Out');
+    button.toggleClass('disabled', !item.canCheckOut);
+    button.attr('title', 'Check out shared lorebook');
+    button.attr('aria-label', 'Check out shared lorebook');
+}
+
+function updateWorldInfoCheckoutStatus(name = '', data = null) {
+    const item = getResolvedWorldInfoItem(name, data);
+    const status = $('#world_checkout_status');
+
+    if (!isSharedSecureLorebook(item)) {
+        status.hide().empty();
+        return;
+    }
+
+    const text = item.checkoutState === 'self'
+        ? `Checked out by you${item.checkedOutAt ? ` since ${item.checkedOutAt}` : ''}.`
+        : item.checkoutState === 'other'
+            ? `Checked out by ${item.checkedOutBy || 'another owner'}.`
+            : 'Shared lorebook is currently available for checkout.';
+
+    const readOnlyMessage = isSharedLorebookReadOnly(item) ? ` ${getWorldInfoReadOnlyMessage(item)}` : '';
+    status.text(`${text}${readOnlyMessage}`).show();
+}
+
+function applyWorldInfoReadOnlyState(name = '', data = null) {
+    const item = getResolvedWorldInfoItem(name, data);
+    const isReadOnly = isSharedLorebookReadOnly(item);
+    const message = getWorldInfoReadOnlyMessage(item);
+    const mutationSelector = [
+        '#world_popup_new',
+        '#world_bulk_move_mode',
+        '#world_bulk_move_apply',
+        '#world_popup_name_button',
+        '#world_popup_delete',
+        '#world_duplicate',
+        '#world_lorebook_ordering',
+        '#world_backfill_memos',
+        '#world_apply_current_sorting',
+    ].join(', ');
+
+    $(mutationSelector)
+        .toggleClass('disabled', isReadOnly)
+        .attr('title', (_, currentTitle) => isReadOnly ? message : currentTitle);
+
+    const entriesList = $('#world_popup_entries_list');
+    entriesList.find('input, textarea, select, button').prop('disabled', isReadOnly);
+    entriesList.find('.duplicate_entry_button, .delete_entry_button, .move_entry_button, .killSwitch, .drag-handle, .wi-bulk-select-slot, .editor_maximize')
+        .toggleClass('disabled', isReadOnly)
+        .css('pointer-events', isReadOnly ? 'none' : '');
+    entriesList.find('.select2-hidden-accessible').each(function () {
+        $(this).prop('disabled', isReadOnly).trigger('change.select2');
+    });
 }
 
 export async function moveWorldInfoEntry(sourceName, targetName, uid, { deleteOriginal = true } = {}) {
