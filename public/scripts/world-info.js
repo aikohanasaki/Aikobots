@@ -6588,7 +6588,11 @@ function updateWorldInfoCheckoutStatus(name = '', data = null) {
             ? `Checked out by ${item.checkedOutBy || 'another owner'}.`
             : 'Shared lorebook is currently available for checkout.';
 
-    const readOnlyMessage = isSharedLorebookReadOnly(item) ? ` ${getWorldInfoReadOnlyMessage(item)}` : '';
+    const readOnlyMessage = item.checkoutState === 'other'
+        ? ' Check out is required before editing.'
+        : isSharedLorebookReadOnly(item)
+            ? ` ${getWorldInfoReadOnlyMessage(item)}`
+            : '';
     status.text(`${text}${readOnlyMessage}`).show();
 }
 

@@ -1584,25 +1584,25 @@ export function listLorebooksForManagement(user) {
         }
     }
 
+    for (const [name] of sharedSecureRecords.entries()) {
+        if (seenNames.has(name)) {
+            continue;
+        }
+
+        const resolved = resolveLorebookWithMetadata(user, name, {
+            storage: 'secure',
+            requireManageableSecure: true,
+        });
+        items.push(buildListItem(resolved.metadata, user));
+        seenNames.add(name);
+    }
+
     if (isAdmin) {
         for (const [name, secureRecord] of secureRecords.entries()) {
             if (seenNames.has(name)) {
                 if (secureRecord.ownerHandle !== user.profile.handle) {
                     console.error(`[Lorebooks] Lorebook name conflict "${name}" exists in both local storage and secure storage owned by "${secureRecord.ownerHandle}".`);
                 }
-                continue;
-            }
-
-            const resolved = resolveLorebookWithMetadata(user, name, {
-                storage: 'secure',
-                requireManageableSecure: true,
-            });
-            items.push(buildListItem(resolved.metadata, user));
-            seenNames.add(name);
-        }
-
-        for (const [name] of sharedSecureRecords.entries()) {
-            if (seenNames.has(name)) {
                 continue;
             }
 
