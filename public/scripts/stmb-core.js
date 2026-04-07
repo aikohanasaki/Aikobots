@@ -1306,6 +1306,129 @@ export function findOverlappingManagedMemoryEntry(entries, range) {
     return null;
 }
 
+export function applyDeletedMessageToSceneState(state = {}, deletedId, chatLength) {
+    const id = Number(deletedId);
+    if (!Number.isFinite(id)) {
+        return {
+            sceneStart: Number.isInteger(state?.sceneStart) ? state.sceneStart : null,
+            sceneEnd: Number.isInteger(state?.sceneEnd) ? state.sceneEnd : null,
+            highestProcessed: Number.isInteger(state?.highestMemoryProcessed) ? state.highestMemoryProcessed : null,
+            changed: false,
+            sceneChanged: false,
+            toastrMessage: '',
+        };
+    }
+
+    let newStart = Number.isInteger(state?.sceneStart) ? state.sceneStart : null;
+    let newEnd = Number.isInteger(state?.sceneEnd) ? state.sceneEnd : null;
+    let newHighestProcessed = Number.isInteger(state?.highestMemoryProcessed) ? state.highestMemoryProcessed : null;
+    let changed = false;
+    let sceneChanged = false;
+    let toastrMessage = '';
+
+    if (newStart === id && newEnd === id) {
+        newStart = null;
+        newEnd = null;
+        changed = true;
+        sceneChanged = true;
+        toastrMessage = 'Scene cleared due to start marker deletion';
+    } else if (newStart !== null && newEnd !== null) {
+        if (id < newStart) {
+            newStart--;
+            newEnd--;
+            changed = true;
+            sceneChanged = true;
+            toastrMessage = 'Scene markers adjusted due to message deletion.';
+        } else if (id === newStart) {
+            newStart = null;
+            if (newEnd > id) {
+                newEnd--;
+            }
+            changed = true;
+            sceneChanged = true;
+            toastrMessage = 'Scene end point cleared due to message deletion';
+        } else if (id > newStart && id < newEnd) {
+            newEnd--;
+            changed = true;
+            sceneChanged = true;
+            toastrMessage = 'Scene markers adjusted due to message deletion.';
+        } else if (id === newEnd) {
+            newEnd = null;
+            changed = true;
+            sceneChanged = true;
+            toastrMessage = 'Scene end point cleared due to message deletion';
+        }
+    } else if (newStart !== null) {
+        if (id < newStart) {
+            newStart--;
+            changed = true;
+            sceneChanged = true;
+            toastrMessage = 'Scene markers adjusted due to message deletion.';
+        } else if (id === newStart) {
+            newStart = null;
+            changed = true;
+            sceneChanged = true;
+            toastrMessage = 'Scene end point cleared due to message deletion';
+        }
+    } else if (newEnd !== null) {
+        if (id < newEnd) {
+            newEnd--;
+            changed = true;
+            sceneChanged = true;
+            toastrMessage = 'Scene markers adjusted due to message deletion.';
+        } else if (id === newEnd) {
+            newEnd = null;
+            changed = true;
+            sceneChanged = true;
+            toastrMessage = 'Scene end point cleared due to message deletion';
+        }
+    }
+
+    if (newHighestProcessed !== null) {
+        const rebasedHighestProcessed = id <= newHighestProcessed
+            ? newHighestProcessed - 1
+            : newHighestProcessed;
+        const clampedHighestProcessed = chatLength > 0
+            ? Math.min(rebasedHighestProcessed, chatLength - 1)
+            : null;
+        if (clampedHighestProcessed !== newHighestProcessed) {
+            newHighestProcessed = clampedHighestProcessed;
+            changed = true;
+        }
+    }
+
+    if (chatLength <= 0) {
+        if (newStart !== null || newEnd !== null) {
+            changed = true;
+        }
+        newStart = null;
+        newEnd = null;
+    } else {
+        if (newStart !== null && (newStart < 0 || newStart >= chatLength)) {
+            newStart = null;
+            changed = true;
+        }
+        if (newEnd !== null && (newEnd < 0 || newEnd >= chatLength)) {
+            newEnd = chatLength - 1;
+            changed = true;
+        }
+        if (newStart !== null && newEnd !== null && newStart > newEnd) {
+            newStart = null;
+            newEnd = null;
+            changed = true;
+        }
+    }
+
+    return {
+        sceneStart: newStart,
+        sceneEnd: newEnd,
+        highestProcessed: newHighestProcessed,
+        changed,
+        sceneChanged,
+        toastrMessage,
+    };
+}
+
 function computeLorebookEntryOrder(lorebookSettings, orderNumber, options = {}) {
     const modeRaw = String(lorebookSettings?.orderMode || 'auto').toLowerCase();
     const mode = modeRaw === 'manual' || modeRaw === 'reverse' ? modeRaw : 'auto';

@@ -25,6 +25,7 @@ import { getRegexScripts, runRegexScript } from './extensions/regex/engine.js';
 import { getLorebookStorageForRequest, loadWorldInfo, METADATA_KEY, reloadEditor, world_names, worldInfoCache } from './world-info.js';
 import { buildOpenAIGenerateData, oai_settings } from './openai.js';
 import {
+    applyDeletedMessageToSceneState,
     applyStmbProfileToGenerateData,
     applyStmbMaxTokensToGenerateData,
     compiledSceneToText,
@@ -3890,96 +3891,19 @@ function handleMessageDeletion(deletedId) {
     }
 
     const state = getStmbState();
-    let newStart = Number.isInteger(state.sceneStart) ? state.sceneStart : null;
-    let newEnd = Number.isInteger(state.sceneEnd) ? state.sceneEnd : null;
-    let newHighestProcessed = Number.isInteger(state.highestMemoryProcessed) ? state.highestMemoryProcessed : null;
-    let changed = false;
-    let sceneChanged = false;
-    let toastrMessage = '';
+    const result = applyDeletedMessageToSceneState(state, id, chat.length);
 
-    if (newStart === id && newEnd === id) {
-        newStart = null;
-        newEnd = null;
-        changed = true;
-        sceneChanged = true;
-        toastrMessage = 'Scene cleared due to start marker deletion';
-    } else if (newStart !== null && newEnd !== null) {
-        if (id < newStart) {
-            newStart--;
-            newEnd--;
-            changed = true;
-            sceneChanged = true;
-            toastrMessage = 'Scene markers adjusted due to message deletion.';
-        } else if (id === newStart) {
-            newStart = null;
-            if (newEnd > id) {
-                newEnd--;
-            }
-            changed = true;
-            sceneChanged = true;
-            toastrMessage = 'Scene end point cleared due to message deletion';
-        } else if (id > newStart && id < newEnd) {
-            newEnd--;
-            changed = true;
-            sceneChanged = true;
-            toastrMessage = 'Scene markers adjusted due to message deletion.';
-        } else if (id === newEnd) {
-            newEnd = null;
-            changed = true;
-            sceneChanged = true;
-            toastrMessage = 'Scene end point cleared due to message deletion';
-        }
-    } else if (newStart !== null) {
-        if (id < newStart) {
-            newStart--;
-            changed = true;
-            sceneChanged = true;
-            toastrMessage = 'Scene markers adjusted due to message deletion.';
-        } else if (id === newStart) {
-            newStart = null;
-            changed = true;
-            sceneChanged = true;
-            toastrMessage = 'Scene end point cleared due to message deletion';
-        }
-    } else if (newEnd !== null) {
-        if (id < newEnd) {
-            newEnd--;
-            changed = true;
-            sceneChanged = true;
-            toastrMessage = 'Scene markers adjusted due to message deletion.';
-        } else if (id === newEnd) {
-            newEnd = null;
-            changed = true;
-            sceneChanged = true;
-            toastrMessage = 'Scene end point cleared due to message deletion';
-        }
-    }
-
-    if (newHighestProcessed !== null) {
-        const newLastMessageId = chat.length - 1;
-        const rebasedHighestProcessed = id <= newHighestProcessed
-            ? newHighestProcessed - 1
-            : newHighestProcessed;
-        const clampedHighestProcessed = newLastMessageId >= 0
-            ? Math.min(rebasedHighestProcessed, newLastMessageId)
-            : null;
-        if (clampedHighestProcessed !== newHighestProcessed) {
-            newHighestProcessed = clampedHighestProcessed;
-            changed = true;
-        }
-    }
-
-    if (changed) {
-        state.sceneStart = newStart;
-        state.sceneEnd = newEnd;
-        state.highestMemoryProcessed = newHighestProcessed;
-        if (newHighestProcessed === null) {
+    if (result.changed) {
+        state.sceneStart = result.sceneStart;
+        state.sceneEnd = result.sceneEnd;
+        state.highestMemoryProcessed = result.highestProcessed;
+        if (result.highestProcessed === null) {
             delete state.highestMemoryProcessed;
             delete state.highestMemoryProcessedManuallySet;
         }
         saveMetadataDebounced();
-        if (sceneChanged && getModuleSettings().showNotifications) {
-            toastr.warning(toastrMessage, 'STMB');
+        if (result.sceneChanged && getModuleSettings().showNotifications) {
+            toastr.warning(result.toastrMessage, 'STMB');
         }
         refreshOpenSettingsPopupSceneState().catch(error => {
             console.warn('STMB settings popup scene refresh failed', error);

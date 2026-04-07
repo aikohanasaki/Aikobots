@@ -1,6 +1,7 @@
 import { describe, expect, it } from '@jest/globals';
 
 import {
+    applyDeletedMessageToSceneState,
     STMB_DEFAULT_PROFILE_NAME,
     STMB_MANAGED_FLAG,
     applyStmbMaxTokensToGenerateData,
@@ -202,6 +203,51 @@ describe('stmb core scene handling', () => {
 
     it('rejects malformed scene ranges', () => {
         expect(() => parseSceneRange('12')).toThrow('Scene range must be in x-y format');
+    });
+
+    it('rebases scene markers and highest processed after deleting a message before the scene', () => {
+        expect(applyDeletedMessageToSceneState({
+            sceneStart: 5,
+            sceneEnd: 9,
+            highestMemoryProcessed: 12,
+        }, 3, 20)).toEqual({
+            sceneStart: 4,
+            sceneEnd: 8,
+            highestProcessed: 11,
+            changed: true,
+            sceneChanged: true,
+            toastrMessage: 'Scene markers adjusted due to message deletion.',
+        });
+    });
+
+    it('clears a single-message scene and rebases highest processed like STMB', () => {
+        expect(applyDeletedMessageToSceneState({
+            sceneStart: 7,
+            sceneEnd: 7,
+            highestMemoryProcessed: 7,
+        }, 7, 10)).toEqual({
+            sceneStart: null,
+            sceneEnd: null,
+            highestProcessed: 6,
+            changed: true,
+            sceneChanged: true,
+            toastrMessage: 'Scene cleared due to start marker deletion',
+        });
+    });
+
+    it('clears highest processed when deletion empties the chat', () => {
+        expect(applyDeletedMessageToSceneState({
+            sceneStart: 0,
+            sceneEnd: 0,
+            highestMemoryProcessed: 0,
+        }, 0, 0)).toEqual({
+            sceneStart: null,
+            sceneEnd: null,
+            highestProcessed: null,
+            changed: true,
+            sceneChanged: true,
+            toastrMessage: 'Scene cleared due to start marker deletion',
+        });
     });
 });
 
