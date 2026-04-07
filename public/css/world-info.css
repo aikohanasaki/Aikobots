@@ -50,6 +50,10 @@
     flex: 1;
 }
 
+.WIEntryContentAndMemo .commentContainer:empty {
+    display: none !important;
+}
+
 #world_popup_bottom_holder {
     display: flex;
     flex-flow: row;
@@ -108,6 +112,9 @@
 .world_entry_thin_controls {
     display: flex;
     flex-direction: row;
+}
+
+.WIEntryHeaderMainControls {
     gap: var(--wi-entry-header-gap);
     flex: 1 1 auto;
     min-width: 0;
