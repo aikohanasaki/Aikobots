@@ -10,6 +10,7 @@ import { getUserDirectories } from './users.js';
 
 const SECURE_LOREBOOK_DIRECTORY = ['_secure', 'worlds'];
 const SHARED_SECURE_LOREBOOK_DIRECTORY = ['_secure', 'shared-worlds'];
+const SECURE_DELETE_MARKER_DIRECTORY = ['_secure', 'delete-markers'];
 const SECURE_INDEX_FILENAME = 'index.json';
 const SHARED_SECURE_INDEX_FILENAME = 'index.json';
 const SECURE_INDEX_LOCK_SUFFIX = '.lock';
@@ -181,12 +182,24 @@ function getSharedSecureLorebookDirectory() {
     return ensureDirectory(path.join(globalThis.DATA_ROOT, ...SHARED_SECURE_LOREBOOK_DIRECTORY));
 }
 
+function getSecureDeleteMarkerDirectory() {
+    if (!globalThis.DATA_ROOT) {
+        throw new Error('DATA_ROOT must be defined before using lorebook repository');
+    }
+
+    return ensureDirectory(path.join(globalThis.DATA_ROOT, ...SECURE_DELETE_MARKER_DIRECTORY));
+}
+
 function getSecureLorebookPath(name) {
     return getLorebookPathFromCanonical(getSecureLorebookDirectory(), getCanonicalLorebookName(name));
 }
 
 function getSharedSecureLorebookPath(name) {
     return getLorebookPathFromCanonical(getSharedSecureLorebookDirectory(), getCanonicalLorebookName(name));
+}
+
+function getSecureDeleteMarkerPath(name) {
+    return getLorebookPathFromCanonical(getSecureDeleteMarkerDirectory(), getCanonicalLorebookName(name));
 }
 
 function getSecureIndexPath() {
@@ -1077,16 +1090,92 @@ function buildDeletedSecureLorebookResponse(recordOrName, user, deletedUserHandl
     };
 }
 
+function buildSecureDeleteMarkerMetadata(recordOrName) {
+    const canonicalName = assertCanonicalName(typeof recordOrName === 'string' ? recordOrName : recordOrName?.name);
+    const ownerHandles = normalizeOwnerHandles(
+        typeof recordOrName === 'string'
+            ? []
+            : (recordOrName?.ownerHandles || [recordOrName?.ownerHandle]),
+    );
+
+    return {
+        name: canonicalName,
+        storage: 'secure',
+        ownerHandle: typeof recordOrName === 'string' ? '' : String(recordOrName?.ownerHandle || '').trim(),
+        ownerHandles,
+        sharingMode: typeof recordOrName === 'string'
+            ? 'single'
+            : (recordOrName?.sharingMode === 'shared' ? 'shared' : 'single'),
+        checkedOutBy: typeof recordOrName === 'string' ? null : (String(recordOrName?.checkedOutBy || '').trim() || null),
+        checkedOutAt: typeof recordOrName === 'string' ? null : (recordOrName?.checkedOutAt || null),
+    };
+}
+
+function readSecureDeleteMarker(name) {
+    const canonicalName = assertCanonicalName(name);
+    const filePath = getSecureDeleteMarkerPath(canonicalName);
+    if (!fs.existsSync(filePath)) {
+        return null;
+    }
+
+    const marker = tryReadJsonFileSync(filePath, null, 'secure delete marker');
+    if (!marker || typeof marker !== 'object') {
+        return null;
+    }
+
+    return buildSecureDeleteMarkerMetadata(marker);
+}
+
+function writeSecureDeleteMarker(recordOrName) {
+    const marker = buildSecureDeleteMarkerMetadata(recordOrName);
+    writeFileAtomicSync(getSecureDeleteMarkerPath(marker.name), JSON.stringify(marker, null, 4), 'utf8');
+    return marker;
+}
+
+function removeSecureDeleteMarker(name) {
+    const canonicalName = assertCanonicalName(name);
+    const filePath = getSecureDeleteMarkerPath(canonicalName);
+    if (!fs.existsSync(filePath)) {
+        return;
+    }
+
+    try {
+        fs.unlinkSync(filePath);
+    } catch (error) {
+        if (error?.code === 'ENOENT') {
+            return;
+        }
+
+        if (fs.existsSync(filePath)) {
+            throw new LorebookRepositoryError(
+                'LorebookStateRepairFailed',
+                `Failed to remove secure delete marker for lorebook "${canonicalName}". Manual repair may be required.`,
+                500,
+            );
+        }
+    }
+}
+
 function removeAllLorebookArtifacts(name, userHandles = [], options = {}) {
     const canonicalName = assertCanonicalName(name);
     const removeSecureBacking = options?.removeSecureBacking !== false;
+    const referenceState = options?.referenceState && typeof options.referenceState === 'object' ? options.referenceState : null;
     const copyState = inspectLorebookCopyState(canonicalName, userHandles);
 
     for (const handle of copyState.userHandlesWithCopies) {
         removeUserLorebookCopy(handle, canonicalName);
     }
 
-    cleanupLorebookReferences(canonicalName, userHandles);
+    const cleanupResult = cleanupLorebookReferences(canonicalName, userHandles, referenceState);
+    if ((Array.isArray(cleanupResult?.settingsCleanupErrors) && cleanupResult.settingsCleanupErrors.length > 0)
+        || (Array.isArray(cleanupResult?.characterCleanupErrors) && cleanupResult.characterCleanupErrors.length > 0)) {
+        throw new LorebookRepositoryError(
+            'LorebookDeleteFailed',
+            `Failed to remove known references for lorebook "${canonicalName}".`,
+            500,
+            cleanupResult,
+        );
+    }
 
     const postCleanupCopyState = inspectLorebookCopyState(canonicalName, userHandles);
     const postCleanupReferenceState = inspectLorebookReferenceState(canonicalName, userHandles);
@@ -1113,28 +1202,38 @@ function removeAllLorebookArtifacts(name, userHandles = [], options = {}) {
         }
     }
 
-    return copyState.userHandlesWithCopies;
+    return {
+        deletedUserHandles: copyState.userHandlesWithCopies,
+        cleanupResult,
+    };
 }
 
 function deleteResidualSecureLorebookArtifacts(user, name, userHandles = []) {
     const canonicalName = assertCanonicalName(name);
     const beforeState = inspectLorebookCopyState(canonicalName, userHandles);
     const beforeReferenceState = inspectLorebookReferenceState(canonicalName, userHandles);
+    const deleteMarker = readSecureDeleteMarker(canonicalName);
 
-    if (!Boolean(user?.profile?.admin)) {
+    if (deleteMarker ? !canManageSecureLorebook(user, deleteMarker) : !Boolean(user?.profile?.admin)) {
         throw new LorebookRepositoryError(
             'LorebookAccessDenied',
-            `Secure lorebook "${canonicalName}" is already partially deleted. Admin cleanup is required to remove remaining copies or references.`,
+            deleteMarker
+                ? `Secure lorebook "${canonicalName}" is already partially deleted. Only its owners and admins can finish cleanup.`
+                : `Secure lorebook "${canonicalName}" is already partially deleted. Admin cleanup is required to remove remaining copies or references.`,
             403,
             {
                 beforeState,
                 beforeReferenceState,
+                deleteMarker,
             },
         );
     }
 
     try {
-        const deletedUserHandles = removeAllLorebookArtifacts(canonicalName, userHandles, { removeSecureBacking: true });
+        const { deletedUserHandles } = removeAllLorebookArtifacts(canonicalName, userHandles, {
+            removeSecureBacking: true,
+            referenceState: beforeReferenceState,
+        });
         const finalState = inspectLorebookCopyState(canonicalName, userHandles);
         const finalReferenceState = inspectLorebookReferenceState(canonicalName, userHandles);
         if (hasAnyLorebookCopies(finalState) || hasAnyLorebookReferences(finalReferenceState)) {
@@ -1151,11 +1250,13 @@ function deleteResidualSecureLorebookArtifacts(user, name, userHandles = []) {
             );
         }
 
+        removeSecureDeleteMarker(canonicalName);
         return buildDeletedSecureLorebookResponse(canonicalName, user, deletedUserHandles);
     } catch (error) {
         const afterFailureState = inspectLorebookCopyState(canonicalName, userHandles);
         const afterFailureReferenceState = inspectLorebookReferenceState(canonicalName, userHandles);
         if (!hasAnyLorebookCopies(afterFailureState) && !hasAnyLorebookReferences(afterFailureReferenceState)) {
+            removeSecureDeleteMarker(canonicalName);
             return buildDeletedSecureLorebookResponse(canonicalName, user, beforeState.userHandlesWithCopies);
         }
 
@@ -1177,16 +1278,23 @@ function deleteResidualSecureLorebookArtifacts(user, name, userHandles = []) {
     }
 }
 
-function cleanupLorebookSettingsReferences(name, userHandles = []) {
+function cleanupLorebookSettingsReferences(name, userHandles = [], referenceState = null) {
     const canonicalName = assertCanonicalName(name);
     const normalizedUserHandles = [...new Set((Array.isArray(userHandles) ? userHandles : []).map(handle => String(handle || '').trim()).filter(Boolean))];
     const cleanedSettingsHandles = [];
     const errors = [];
+    const referencedSettingsPaths = referenceState && typeof referenceState === 'object'
+        ? new Set((Array.isArray(referenceState.settingsReferences) ? referenceState.settingsReferences : []).map(reference => String(reference?.path || '')).filter(Boolean))
+        : null;
 
     for (const handle of normalizedUserHandles) {
         const directories = getUserDirectories(handle);
         const settingsPath = path.join(directories.root, SETTINGS_FILE);
         if (!fs.existsSync(settingsPath)) {
+            continue;
+        }
+
+        if (referencedSettingsPaths && !referencedSettingsPaths.has(settingsPath)) {
             continue;
         }
 
@@ -1248,11 +1356,14 @@ function cleanupLorebookSettingsReferences(name, userHandles = []) {
     return { cleanedSettingsHandles, settingsCleanupErrors: errors };
 }
 
-function cleanupLorebookCharacterReferences(name, userHandles = []) {
+function cleanupLorebookCharacterReferences(name, userHandles = [], referenceState = null) {
     const canonicalName = assertCanonicalName(name);
     const normalizedUserHandles = [...new Set((Array.isArray(userHandles) ? userHandles : []).map(handle => String(handle || '').trim()).filter(Boolean))];
     const cleanedCharacterFiles = [];
     const errors = [];
+    const referencedCharacterPaths = referenceState && typeof referenceState === 'object'
+        ? new Set((Array.isArray(referenceState.characterReferences) ? referenceState.characterReferences : []).map(reference => String(reference?.path || '')).filter(Boolean))
+        : null;
 
     for (const handle of normalizedUserHandles) {
         const directories = getUserDirectories(handle);
@@ -1266,6 +1377,10 @@ function cleanupLorebookCharacterReferences(name, userHandles = []) {
             }
 
             const filePath = path.join(directories.characters, entry.name);
+            if (referencedCharacterPaths && !referencedCharacterPaths.has(filePath)) {
+                continue;
+            }
+
             try {
                 const rawBuffer = fs.readFileSync(filePath);
                 const character = JSON.parse(readCharacterCard(rawBuffer));
@@ -1313,10 +1428,10 @@ function cleanupLorebookCharacterReferences(name, userHandles = []) {
     return { cleanedCharacterFiles, characterCleanupErrors: errors };
 }
 
-function cleanupLorebookReferences(name, userHandles = []) {
+function cleanupLorebookReferences(name, userHandles = [], referenceState = null) {
     return {
-        ...cleanupLorebookSettingsReferences(name, userHandles),
-        ...cleanupLorebookCharacterReferences(name, userHandles),
+        ...cleanupLorebookSettingsReferences(name, userHandles, referenceState),
+        ...cleanupLorebookCharacterReferences(name, userHandles, referenceState),
     };
 }
 
@@ -1633,11 +1748,16 @@ function deleteAllSecureLorebookCopies(user, record, userHandles = []) {
             assertSharedLorebookCheckedOutForEdit(user, record);
         }
 
-        removeAllLorebookArtifacts(canonicalName, userHandles, { removeSecureBacking: true });
+        writeSecureDeleteMarker(record);
+        removeAllLorebookArtifacts(canonicalName, userHandles, {
+            removeSecureBacking: true,
+            referenceState: beforeReferenceState,
+        });
     } catch (error) {
         const afterFailureState = inspectLorebookCopyState(canonicalName, userHandles);
         const afterFailureReferenceState = inspectLorebookReferenceState(canonicalName, userHandles);
         if (!hasAnyLorebookCopies(afterFailureState) && !hasAnyLorebookReferences(afterFailureReferenceState)) {
+            removeSecureDeleteMarker(canonicalName);
             return buildDeletedSecureLorebookResponse(record, user, beforeState.userHandlesWithCopies);
         }
 
@@ -1670,6 +1790,7 @@ function deleteAllSecureLorebookCopies(user, record, userHandles = []) {
         );
     }
 
+    removeSecureDeleteMarker(canonicalName);
     return {
         ...buildDeletedSecureLorebookResponse(record, user, beforeState.userHandlesWithCopies),
     };
