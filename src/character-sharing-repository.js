@@ -6,7 +6,7 @@ import sanitize from 'sanitize-filename';
 import writeFileAtomic from 'write-file-atomic';
 
 import { parse, write } from './character-card-parser.js';
-import { getCharacterOwnerHandle, getCharacterOwnerHandles, getCharacterSharingMode } from './character-linked-lorebooks.js';
+import { getCharacterOwnerHandle, getCharacterOwnerHandles, getCharacterSharedKey, getCharacterSharingMode } from './character-linked-lorebooks.js';
 import { getUserDirectories } from './users.js';
 
 const SHARED_CHARACTER_DIRECTORY = ['_secure', 'shared-characters'];
@@ -63,8 +63,27 @@ function normalizeCharacterName(value) {
     return sanitizedName;
 }
 
+function normalizeOptionalCharacterName(value) {
+    const normalizedValue = String(value || '').trim();
+    return normalizedValue ? normalizeCharacterName(normalizedValue) : '';
+}
+
 function getSharedCharacterPath(name) {
     return path.join(getSharedCharacterDirectory(), `${normalizeCharacterName(name)}.png`);
+}
+
+export function getSharedCharacterKeyForFilePath(filePath) {
+    try {
+        const resolvedPath = fs.realpathSync(filePath);
+        const sharedDirectory = path.resolve(getSharedCharacterDirectory());
+        if (path.dirname(resolvedPath) !== sharedDirectory) {
+            return '';
+        }
+
+        return normalizeCharacterName(path.parse(resolvedPath).name);
+    } catch {
+        return '';
+    }
 }
 
 function normalizeOwnerHandles(ownerHandles) {
@@ -122,6 +141,10 @@ async function readSharedCharacterIndex() {
     }
 }
 
+export async function readSharedCharacterIndexSnapshot() {
+    return await readSharedCharacterIndex();
+}
+
 async function writeSharedCharacterIndex(index) {
     await writeFileAtomic(getSharedCharacterIndexPath(), JSON.stringify(index, null, 4));
 }
@@ -165,6 +188,9 @@ export function canManageSharedCharacter(user, record) {
 function buildCharacterMetadata(record, user = null) {
     const ownerHandles = normalizeOwnerHandles(record?.ownerHandles || [record?.ownerHandle]);
     const sharingMode = record?.sharingMode === 'shared' ? 'shared' : 'single';
+    const sharedCharacterKey = sharingMode === 'shared'
+        ? normalizeCharacterName(record?.sharedCharacterKey || record?.name || '')
+        : normalizeOptionalCharacterName(record?.sharedCharacterKey);
     const checkoutState = getCheckoutState(user, record);
     const canManage = canManageSharedCharacter(user, {
         ...record,
@@ -178,6 +204,7 @@ function buildCharacterMetadata(record, user = null) {
         ownerHandle: getPrimaryOwnerHandle(ownerHandles) || String(record?.ownerHandle || '').trim(),
         ownerHandles,
         sharingMode,
+        sharedCharacterKey,
         checkedOutBy: sharingMode === 'shared' ? (String(record?.checkedOutBy || '').trim() || null) : null,
         checkedOutAt: sharingMode === 'shared' ? (record?.checkedOutAt || null) : null,
         checkoutState,
@@ -253,10 +280,13 @@ async function writeCharacterCardFile(rawBuffer, card, outputPath) {
     await writeFileAtomic(outputPath, outputBuffer);
 }
 
-export function setCharacterSharingMetadata(characterCard, { ownerHandles, sharingMode = 'single' }) {
+export function setCharacterSharingMetadata(characterCard, { ownerHandles, sharingMode = 'single', sharedCharacterKey = '' }) {
     const normalizedOwnerHandles = normalizeOwnerHandles(ownerHandles);
     const normalizedSharingMode = sharingMode === 'shared' ? 'shared' : 'single';
     const primaryOwnerHandle = getPrimaryOwnerHandle(normalizedOwnerHandles);
+    const normalizedSharedCharacterKey = normalizedSharingMode === 'shared'
+        ? normalizeCharacterName(sharedCharacterKey || 'character')
+        : normalizeOptionalCharacterName(sharedCharacterKey);
 
     if (normalizedSharingMode === 'shared' && normalizedOwnerHandles.length < 2) {
         throw new CharacterSharingRepositoryError('CharacterOwnersInvalid', 'Shared characters must have at least two owners.', 400);
@@ -270,13 +300,65 @@ export function setCharacterSharingMetadata(characterCard, { ownerHandles, shari
         ? normalizedOwnerHandles
         : normalizedOwnerHandles.slice(0, 1);
     characterCard.data.extensions.aikobots.sharing_mode = normalizedSharingMode;
+    if (normalizedSharedCharacterKey) {
+        characterCard.data.extensions.aikobots.shared_character_key = normalizedSharedCharacterKey;
+    } else {
+        delete characterCard.data.extensions.aikobots.shared_character_key;
+    }
 }
 
 async function updateCanonicalCharacterMetadata(name, ownerHandles) {
     const canonicalPath = getSharedCharacterPath(name);
     const { rawBuffer, card } = await readCharacterCardFile(canonicalPath);
-    setCharacterSharingMetadata(card, { ownerHandles, sharingMode: 'shared' });
+    setCharacterSharingMetadata(card, { ownerHandles, sharingMode: 'shared', sharedCharacterKey: name });
     await writeCharacterCardFile(rawBuffer, card, canonicalPath);
+}
+
+async function backfillCanonicalSharedCharacterMetadata(record) {
+    if (!record?.name) {
+        return;
+    }
+
+    try {
+        const canonicalPath = getSharedCharacterPath(record.name);
+        const { rawBuffer, card } = await readCharacterCardFile(canonicalPath);
+        const nextSharedKey = normalizeCharacterName(record.sharedCharacterKey || record.name);
+        const currentOwnerHandles = normalizeOwnerHandles(getCharacterOwnerHandles(card));
+        const currentSharingMode = getCharacterSharingMode(card);
+        const currentSharedKey = getCharacterSharedKey(card);
+        const needsBackfill =
+            currentSharingMode !== 'shared'
+            || currentSharedKey !== nextSharedKey
+            || currentOwnerHandles.length !== record.ownerHandles.length
+            || currentOwnerHandles.some(handle => !record.ownerHandles.includes(handle));
+
+        if (!needsBackfill) {
+            return;
+        }
+
+        setCharacterSharingMetadata(card, {
+            ownerHandles: record.ownerHandles,
+            sharingMode: 'shared',
+            sharedCharacterKey: nextSharedKey,
+        });
+        await writeCharacterCardFile(rawBuffer, card, canonicalPath);
+    } catch (error) {
+        console.warn(`[Characters] Failed to backfill shared metadata for "${record.name}".`, error);
+    }
+}
+
+function canPromoteCharacter(user, characterCard) {
+    if (Boolean(user?.profile?.admin)) {
+        return true;
+    }
+
+    const ownerHandles = getCharacterOwnerHandles(characterCard);
+    if (ownerHandles.length === 0) {
+        return true;
+    }
+
+    const currentHandle = String(user?.profile?.handle || '').trim();
+    return currentHandle ? ownerHandles.includes(currentHandle) : false;
 }
 
 function getSharedCharacterIndexRecord(index, name) {
@@ -291,6 +373,7 @@ function getSharedCharacterIndexRecord(index, name) {
         ownerHandle: getPrimaryOwnerHandle(record.ownerHandles),
         ownerHandles: normalizeOwnerHandles(record.ownerHandles),
         sharingMode: 'shared',
+        sharedCharacterKey: canonicalName,
         checkedOutBy: String(record.checkedOutBy || '').trim() || null,
         checkedOutAt: record.checkedOutAt || null,
         createdAt: record.createdAt || null,
@@ -300,25 +383,27 @@ function getSharedCharacterIndexRecord(index, name) {
     };
 }
 
-export async function getSharedCharacterRecord(name) {
-    const index = await readSharedCharacterIndex();
+export async function getSharedCharacterRecord(name, { sharedIndex = null } = {}) {
+    const index = sharedIndex || await readSharedCharacterIndex();
     return getSharedCharacterIndexRecord(index, name);
 }
 
-export async function getCharacterMetadata({ characterCard = null, filenameStem = '', user = null } = {}) {
+export async function getCharacterMetadata({ characterCard = null, filenameStem = '', user = null, sharedIndex = null } = {}) {
     const fallbackName = normalizeCharacterName(filenameStem || 'character');
-    const sharedRecord = await getSharedCharacterRecord(fallbackName);
+    const sharedRecord = await getSharedCharacterRecord(fallbackName, { sharedIndex });
     if (sharedRecord) {
+        await backfillCanonicalSharedCharacterMetadata(sharedRecord);
         return buildCharacterMetadata(sharedRecord, user);
     }
 
     const ownerHandles = getCharacterOwnerHandles(characterCard);
-    const ownerHandle = getCharacterOwnerHandle(characterCard);
+    const ownerHandle = getPrimaryOwnerHandle(ownerHandles) || getCharacterOwnerHandle(characterCard);
     return buildCharacterMetadata({
         name: fallbackName,
         ownerHandle,
         ownerHandles,
-        sharingMode: getCharacterSharingMode(characterCard),
+        sharingMode: 'single',
+        sharedCharacterKey: getCharacterSharedKey(characterCard),
         checkedOutBy: null,
         checkedOutAt: null,
     }, user);
@@ -355,8 +440,12 @@ export async function promoteCharacterToShared(user, avatarName, ownerHandles) {
 
     const destinationPath = getSharedCharacterPath(canonicalName);
     const { rawBuffer, card } = await readCharacterCardFile(sourcePath);
+    if (!canPromoteCharacter(user, card)) {
+        const ownerLabel = normalizeOwnerHandles(getCharacterOwnerHandles(card)).join(', ') || getCharacterOwnerHandle(card) || 'the current owner';
+        throw new CharacterSharingRepositoryError('CharacterAccessDenied', `Only ${ownerLabel} and admins can share this character.`, 403);
+    }
     const originalCard = structuredClone(card);
-    setCharacterSharingMetadata(card, { ownerHandles: normalizedOwners, sharingMode: 'shared' });
+    setCharacterSharingMetadata(card, { ownerHandles: normalizedOwners, sharingMode: 'shared', sharedCharacterKey: canonicalName });
     await writeCharacterCardFile(rawBuffer, card, destinationPath);
 
     await mutateSharedCharacterIndex(async index => {

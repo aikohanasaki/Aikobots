@@ -26,6 +26,7 @@ import {
     getCharacterMetadata,
     getSharedCharacterRecord,
     promoteCharacterToShared,
+    readSharedCharacterIndexSnapshot,
     updateSharedCharacterOwners,
 } from '../character-sharing-repository.js';
 import { readWorldInfoFile } from './worldinfo.js';
@@ -411,6 +412,7 @@ const toShallow = (character) => {
         ownerHandle: character.ownerHandle || '',
         ownerHandles: Array.isArray(character.ownerHandles) ? character.ownerHandles : [],
         sharingMode: character.sharingMode || 'single',
+        sharedCharacterKey: character.sharedCharacterKey || '',
         checkedOutBy: character.checkedOutBy || null,
         checkedOutAt: character.checkedOutAt || null,
         checkoutState: character.checkoutState || 'available',
@@ -430,6 +432,7 @@ const toShallow = (character) => {
                     owner_handle: _.get(character, 'data.extensions.aikobots.owner_handle', ''),
                     owner_handles: _.get(character, 'data.extensions.aikobots.owner_handles', []),
                     sharing_mode: _.get(character, 'data.extensions.aikobots.sharing_mode', 'single'),
+                    shared_character_key: _.get(character, 'data.extensions.aikobots.shared_character_key', ''),
                 },
             },
         },
@@ -440,6 +443,7 @@ function applyCharacterManagementMetadata(character, metadata) {
     character.ownerHandle = metadata.ownerHandle;
     character.ownerHandles = metadata.ownerHandles;
     character.sharingMode = metadata.sharingMode;
+    character.sharedCharacterKey = metadata.sharedCharacterKey;
     character.checkedOutBy = metadata.checkedOutBy;
     character.checkedOutAt = metadata.checkedOutAt;
     character.checkoutState = metadata.checkoutState;
@@ -451,6 +455,7 @@ function applyCharacterManagementMetadata(character, metadata) {
     _.set(character, 'data.extensions.aikobots.owner_handle', metadata.ownerHandle);
     _.set(character, 'data.extensions.aikobots.owner_handles', metadata.ownerHandles);
     _.set(character, 'data.extensions.aikobots.sharing_mode', metadata.sharingMode);
+    _.set(character, 'data.extensions.aikobots.shared_character_key', metadata.sharedCharacterKey);
 }
 
 /**
@@ -462,7 +467,7 @@ function applyCharacterManagementMetadata(character, metadata) {
  * @param  {boolean} options.shallow If true, only return the core character's metadata
  * @return {Promise<object>}     A Promise that resolves when the character processing is done.
  */
-const processCharacter = async (item, directories, { shallow, user = null }) => {
+const processCharacter = async (item, directories, { shallow, user = null, sharedIndex = null }) => {
     try {
         const imgFile = path.join(directories.characters, item);
         const imgData = await readCharacterData(imgFile);
@@ -490,6 +495,7 @@ const processCharacter = async (item, directories, { shallow, user = null }) => 
             characterCard: character,
             filenameStem: path.parse(item).name,
             user,
+            sharedIndex,
         }));
         return shallow ? toShallow(character) : character;
     }
@@ -1593,9 +1599,11 @@ router.post('/all', async function (request, response) {
     try {
         const files = fs.readdirSync(request.user.directories.characters);
         const pngFiles = files.filter(file => file.endsWith('.png'));
+        const sharedIndex = await readSharedCharacterIndexSnapshot();
         const processingPromises = pngFiles.map(file => processCharacter(file, request.user.directories, {
             shallow: useShallowCharacters,
             user: request.user,
+            sharedIndex,
         }));
         const data = (await Promise.all(processingPromises)).filter(c => c.name);
         return response.send(data);

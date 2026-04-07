@@ -53,6 +53,17 @@ export function getCharacterSharingMode(characterCard) {
 }
 
 /**
+ * Gets the canonical shared-character key stored on a character card.
+ * @param {object|null|undefined} characterCard
+ * @returns {string}
+ */
+export function getCharacterSharedKey(characterCard) {
+    return String(_.get(characterCard, 'data.extensions.aikobots.shared_character_key', '') || '')
+        .trim()
+        .replace(/\.png$/i, '');
+}
+
+/**
  * Checks whether the provided user handle is one of the character owners.
  * @param {object|null|undefined} characterCard
  * @param {string} handle
@@ -99,7 +110,7 @@ export function getInvalidSecureLinkedLorebooks(user, characterCard) {
  * @returns {void}
  */
 export function validateOwnedCharacterLinkedLorebooks(user, characterCard) {
-    if (!getCharacterOwnerHandle(characterCard)) {
+    if (getCharacterOwnerHandles(characterCard).length === 0) {
         return;
     }
 

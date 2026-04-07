@@ -8,7 +8,8 @@ import writeFileAtomic from 'write-file-atomic';
 
 import { parse, write } from './character-card-parser.js';
 import { getCharacterDistributionPolicy, setCharacterDistributionPolicy } from './character-distribution-registry.js';
-import { getCharacterOwnerHandles, getCharacterSharingMode, validateSubmittedCharacterLinkedLorebooks } from './character-linked-lorebooks.js';
+import { getCharacterOwnerHandles, getCharacterSharedKey, validateSubmittedCharacterLinkedLorebooks } from './character-linked-lorebooks.js';
+import { getSharedCharacterKeyForFilePath } from './character-sharing-repository.js';
 import { invalidateThumbnail } from './endpoints/thumbnails.js';
 import { getAllEnabledUsers, getUserDirectories } from './users.js';
 import { serverDirectory } from './server-directory.js';
@@ -64,6 +65,7 @@ function getSubmissionsRoot() {
  * @property {'pending'|'approved'|'rejected'} status
  * @property {string} ownerHandle
  * @property {string[]} [ownerHandles]
+ * @property {string} [sharedCharacterKey]
  * @property {number} submittedAt
  * @property {string} submittedFilename
  * @property {number | null} reviewedAt
@@ -254,6 +256,21 @@ function stripPrivateShareFields(card) {
 }
 
 /**
+ * Downgrades shared-management behavior for distributed copies while preserving owner metadata.
+ * @param {object} card
+ * @param {string} [fallbackSharedCharacterKey='']
+ */
+function normalizeDistributedCharacterCard(card, fallbackSharedCharacterKey = '') {
+    const sharedCharacterKey = getCharacterSharedKey(card) || String(fallbackSharedCharacterKey || '').trim();
+    if (!sharedCharacterKey) {
+        return;
+    }
+
+    _.set(card, 'data.extensions.aikobots.shared_character_key', sharedCharacterKey);
+    _.set(card, 'data.extensions.aikobots.sharing_mode', 'single');
+}
+
+/**
  * Sets ownership metadata on a card.
  * @param {object} card
  * @param {{ ownerHandle: string, submissionId: string }} params
@@ -370,6 +387,7 @@ async function validateSelectedTargets(targetHandles, actingUserHandle) {
 async function prepareCharacterCardForDistribution(sourcePath) {
     const { rawBuffer, card } = await readCharacterCardFile(sourcePath);
     stripPrivateShareFields(card);
+    normalizeDistributedCharacterCard(card, getSharedCharacterKeyForFilePath(sourcePath));
     return { rawBuffer, card };
 }
 
@@ -490,6 +508,7 @@ export async function createCharacterSubmission({ uploadPath, user, ownerHandle,
     const { basePath, cardPath } = getSubmissionPaths(submissionId);
     const existingOwnerHandle = getSubmissionOwnerHandle(card);
     const existingOwnerHandles = getSubmissionOwnerHandles(card);
+    const existingSharedCharacterKey = getCharacterSharedKey(card) || getSharedCharacterKeyForFilePath(uploadPath);
 
     if (existingOwnerHandles.length > 0 && !existingOwnerHandles.includes(ownerHandle)) {
         throw new Error(`This character is owned by ${existingOwnerHandle} and cannot be submitted by ${ownerHandle}.`);
@@ -497,6 +516,9 @@ export async function createCharacterSubmission({ uploadPath, user, ownerHandle,
 
     validateSubmittedCharacterLinkedLorebooks(user, card);
     setSubmissionMetadata(card, { ownerHandle, submissionId });
+    if (existingSharedCharacterKey) {
+        _.set(card, 'data.extensions.aikobots.shared_character_key', existingSharedCharacterKey);
+    }
     setFavoriteState(card, false);
     stripPrivateShareFields(card);
 
@@ -509,6 +531,7 @@ export async function createCharacterSubmission({ uploadPath, user, ownerHandle,
         status: SUBMISSION_STATUSES.PENDING,
         ownerHandle: existingOwnerHandle || ownerHandle,
         ownerHandles: existingOwnerHandles.length > 0 ? existingOwnerHandles : [ownerHandle],
+        sharedCharacterKey: existingSharedCharacterKey || '',
         submittedAt: Date.now(),
         submittedFilename,
         reviewedAt: null,
@@ -562,6 +585,7 @@ export async function buildSubmissionSummary(record) {
             creatorNotes: '',
             tags: [],
             ownerMetadata: '',
+            sharedCharacterKey: String(record.sharedCharacterKey || '').trim(),
             hasStoredCard: false,
         };
     }
@@ -577,6 +601,7 @@ export async function buildSubmissionSummary(record) {
             tags: _.get(card, 'data.tags', _.get(card, 'tags', [])) || [],
             ownerMetadata: String(_.get(card, 'data.extensions.aikobots.owner_handle', '')),
             ownerHandles: getSubmissionOwnerHandles(card),
+            sharedCharacterKey: getCharacterSharedKey(card) || String(record.sharedCharacterKey || '').trim(),
             hasStoredCard: true,
         };
     } catch (error) {
@@ -589,6 +614,7 @@ export async function buildSubmissionSummary(record) {
             tags: [],
             ownerMetadata: '',
             ownerHandles: Array.isArray(record.ownerHandles) ? record.ownerHandles : [record.ownerHandle].filter(Boolean),
+            sharedCharacterKey: String(record.sharedCharacterKey || '').trim(),
             hasStoredCard: true,
         };
     }
@@ -673,7 +699,7 @@ export async function distributeCharacterFile({
     const outputFilename = `${sourceName}.png`;
     const distributionPayload = await buildDistributionPayload(sourcePath, { sourceOwnerHandle });
     const resolvedOwnerHandle = getSubmissionOwnerHandle(distributionPayload.card) || String(sourceOwnerHandle || actingUserHandle || '').trim();
-    const resolvedCharacterKey = getCharacterSharingMode(distributionPayload.card) === 'shared' ? sourceName : '';
+    const resolvedCharacterKey = getCharacterSharedKey(distributionPayload.card) || getSharedCharacterKeyForFilePath(sourcePath);
     let distributionPolicy = await getCharacterDistributionPolicy({
         ownerHandle: resolvedOwnerHandle,
         characterKey: resolvedCharacterKey,

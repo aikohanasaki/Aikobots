@@ -103,6 +103,7 @@ router.post('/submit', async (request, response) => {
             status: record.status,
             ownerHandle: record.ownerHandle,
             ownerHandles: Array.isArray(record.ownerHandles) ? record.ownerHandles : [record.ownerHandle].filter(Boolean),
+            sharedCharacterKey: String(record.sharedCharacterKey || '').trim(),
             submittedFilename: record.submittedFilename,
         });
     } catch (error) {

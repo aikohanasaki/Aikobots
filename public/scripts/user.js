@@ -604,9 +604,7 @@ export async function submitSelectedCharacterForReview(character) {
 async function openSubmissionReviewPopup(submission, callback) {
     const users = (await getUsers() || []).filter(user => user.enabled);
     const ownerHandle = String(submission.ownerHandle || getCurrentUserHandle()).trim();
-    const characterKey = Array.isArray(submission.ownerHandles) && submission.ownerHandles.length > 1
-        ? String(submission.submittedFilename || submission.publishedFilename || '').replace(/\.png$/i, '')
-        : '';
+    const characterKey = String(submission.sharedCharacterKey || '').trim().replace(/\.png$/i, '');
     let publishMode = submission.publishMode || 'selected';
     let reviewNote = String(submission.reviewNote || '');
     let publishedFilename = String((submission.publishedFilename || submission.characterName || submission.submittedFilename || '').replace(/\.png$/i, ''));

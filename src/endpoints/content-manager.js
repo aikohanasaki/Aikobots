@@ -11,6 +11,7 @@ import { sync as writeFileAtomicSync } from 'write-file-atomic';
 import { getConfigValue, color, setPermissionsSync, isValidUrl } from '../util.js';
 import { parse, write } from '../character-card-parser.js';
 import { getCharacterDistributionPolicy } from '../character-distribution-registry.js';
+import { getCharacterSharedKey } from '../character-linked-lorebooks.js';
 import { serverDirectory } from '../server-directory.js';
 import { Jimp, JimpMime } from '../jimp.js';
 import { DEFAULT_AVATAR_PATH } from '../constants.js';
@@ -153,9 +154,7 @@ async function seedContentForUser(contentIndex, directories, forceCategories) {
                 const rawCard = await parse(contentPath, 'png');
                 const card = JSON.parse(rawCard);
                 const ownerHandle = String(card?.data?.extensions?.aikobots?.owner_handle || '').trim();
-                const characterKey = card?.data?.extensions?.aikobots?.sharing_mode === 'shared'
-                    ? path.parse(contentItem.filename).name
-                    : '';
+                const characterKey = getCharacterSharedKey(card);
                 const targetUserHandle = path.basename(directories.root);
 
                 if (ownerHandle && targetUserHandle) {
