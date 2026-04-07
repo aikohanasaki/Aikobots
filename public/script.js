@@ -1921,12 +1921,19 @@ function getCharacterBlock(item, id) {
     if (item.avatar != 'none') {
         this_avatar = getThumbnailUrl('avatar', item.avatar);
     }
+    const ownerHandles = Array.isArray(item.ownerHandles) && item.ownerHandles.length
+        ? item.ownerHandles.filter(Boolean)
+        : Array.isArray(item.data?.extensions?.aikobots?.owner_handles) && item.data.extensions.aikobots.owner_handles.length
+            ? item.data.extensions.aikobots.owner_handles.filter(Boolean)
+            : [item.ownerHandle || item.data?.extensions?.aikobots?.owner_handle].filter(Boolean);
+    const isOwnedCharacter = Boolean(currentUser?.handle) && ownerHandles.includes(currentUser.handle);
     // Populate the template
     const template = $('#character_template .character_select').clone();
     template.attr({ 'data-chid': id, 'id': `CharID${id}` });
     template.find('img').attr('src', this_avatar).attr('alt', item.name);
     template.find('.avatar').attr('title', `[Character] ${item.name}\nFile: ${item.avatar}`);
     template.find('.ch_name').text(item.name).attr('title', `[Character] ${item.name}`);
+    template.find('.ch_name').css('color', isOwnedCharacter ? 'var(--SmartThemeEmColor)' : '');
     if (power_user.show_card_avatar_urls) {
         template.find('.ch_avatar_url').text(item.avatar);
     }
