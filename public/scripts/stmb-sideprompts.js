@@ -21,6 +21,7 @@ import {
     applyStmbMaxTokensToGenerateData,
     applyStmbProfileToGenerateData,
     compileScene,
+    findFirstLorebookEntryByTitle,
     getActiveStmbProfile,
     STMB_METADATA_KEY,
 } from './stmb-core.js';
@@ -270,15 +271,6 @@ function getSidePromptLookupTitles(template, runtimeMacros = {}, fallbackKinds =
     return titles;
 }
 
-function findFirstLoreEntryByTitle(lorebookData, titles = []) {
-    const entries = Object.values(lorebookData?.entries || {});
-    for (const title of titles) {
-        const found = entries.find(entry => String(entry?.comment || '') === title);
-        if (found) return found;
-    }
-    return null;
-}
-
 async function upsertLorebookEntryByTitle(lorebookName, lorebookData, title, content, options = {}) {
     const {
         defaults = {
@@ -414,7 +406,7 @@ async function runSidePromptAttempt({
 
 async function prepareSidePromptRun({ template, lorebookName, lorebookData, compiledScene, settings, profile = null, runtimeMacros = {}, fallbackKinds = [], signal = null }) {
     const unifiedTitle = getUnifiedSidePromptTitle(template, runtimeMacros);
-    const existing = findFirstLoreEntryByTitle(lorebookData, getSidePromptLookupTitles(template, runtimeMacros, fallbackKinds));
+    const existing = findFirstLorebookEntryByTitle(lorebookData, getSidePromptLookupTitles(template, runtimeMacros, fallbackKinds));
     const lookupTitles = getSidePromptLookupTitles(template, runtimeMacros, fallbackKinds);
     const macroSnapshot = getServerMacroSnapshot();
     const promptState = await getServerPromptState();
@@ -667,7 +659,7 @@ export async function evaluateTrackers(settings, options = {}) {
         for (const template of templates) {
             throwIfStmbAborted(signal);
             const lookupTitles = getSidePromptLookupTitles(template, {}, ['tracker']);
-            const existing = findFirstLoreEntryByTitle(lorebookData, lookupTitles);
+            const existing = findFirstLorebookEntryByTitle(lorebookData, lookupTitles);
             const checkpoint = readSidePromptCheckpoint(template.key, existing);
             const lastMessageId = checkpoint.lastMsgId;
             const lastRunAt = checkpoint.lastRunAt;
@@ -987,7 +979,7 @@ export async function runSidePrompt(rawInput, settings, options = {}) {
                 hasShownSidePromptRangeTip = true;
             }
 
-            const existing = findFirstLoreEntryByTitle(
+            const existing = findFirstLorebookEntryByTitle(
                 lorebookData,
                 getSidePromptLookupTitles(template, parsed.runtimeMacros, ['scoreboard', 'plotpoints', 'tracker']),
             );

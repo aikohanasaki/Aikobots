@@ -7,8 +7,10 @@ import {
     compileScene,
     createDefaultStmbSettings,
     createManagedLorebookEntryData,
+    findFirstLorebookEntryByTitle,
     findOverlappingManagedMemoryEntry,
     formatMemoryTitle,
+    getEntryByTitle,
     getNextManagedMemorySequenceNumber,
     getRangeFromManagedMemoryEntry,
     identifyManagedMemoryEntries,
@@ -17,6 +19,8 @@ import {
     parseSceneRange,
     parseSequenceFromTitle,
     parseStructuredMemoryResponse,
+    previewTitle,
+    validateTitleFormat,
 } from '../public/scripts/stmb-core.js';
 
 describe('stmb core settings', () => {
@@ -271,6 +275,31 @@ describe('stmb core parsing and persistence', () => {
         expect(formatMemoryTitle('([000]) {{title}}', { title: 'Arrival' }, 8)).toBe('(008) Arrival');
         expect(formatMemoryTitle('{[000]} {{title}}', { title: 'Arrival' }, 8)).toBe('{008} Arrival');
         expect(formatMemoryTitle('#[000] {{title}}', { title: 'Arrival' }, 8)).toBe('#008 Arrival');
+    });
+
+    it('validates title formats and previews the next numbered title', () => {
+        const validation = validateTitleFormat('[[000]] {{title}} {{unknown}} \u0007');
+        expect(validation.valid).toBe(true);
+        expect(validation.errors).toEqual([]);
+        expect(validation.warnings).toEqual(expect.arrayContaining([
+            'Title contains characters that will be removed during sanitization',
+            'Unknown placeholders: {{unknown}}',
+        ]));
+
+        expect(previewTitle('[000] - {{title}}')).toBe('[003] - Sample Memory Title');
+    });
+
+    it('finds lorebook entries by exact title and fallback title order', () => {
+        const lorebookData = {
+            entries: {
+                1: { uid: 1, comment: 'One' },
+                2: { uid: 2, comment: 'Two' },
+            },
+        };
+
+        expect(getEntryByTitle(lorebookData, 'Two')?.uid).toBe(2);
+        expect(findFirstLorebookEntryByTitle(lorebookData, ['Missing', 'Two'])?.uid).toBe(2);
+        expect(findFirstLorebookEntryByTitle(lorebookData, ['Missing'])).toBeNull();
     });
 
     it('treats any stmemorybooks entry as a numbering conflict like STMB', () => {

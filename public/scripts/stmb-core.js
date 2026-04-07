@@ -1381,6 +1381,33 @@ function sanitizeTitle(title) {
     return String(title ?? '').replace(/[\u0000-\u001F\u007F-\u009F]/g, '').trim() || 'Auto Memory';
 }
 
+export function getEntryByTitle(lorebookData, title) {
+    const target = String(title || '');
+    if (!target) {
+        return null;
+    }
+
+    const entries = Object.values(lorebookData?.entries || {});
+    for (const entry of entries) {
+        if (String(entry?.comment || '') === target) {
+            return entry;
+        }
+    }
+
+    return null;
+}
+
+export function findFirstLorebookEntryByTitle(lorebookData, titles = []) {
+    for (const title of Array.isArray(titles) ? titles : []) {
+        const found = getEntryByTitle(lorebookData, title);
+        if (found) {
+            return found;
+        }
+    }
+
+    return null;
+}
+
 function escapeRegex(string) {
     return String(string || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
@@ -1493,6 +1520,83 @@ export function formatMemoryTitle(titleFormat, context, sequenceNumber) {
     let result = applyNumberingPattern(format, sequenceNumber);
     result = result.replace(/\{\{(\w+)\}\}/g, (_, key) => replacements[key] ?? '');
     return sanitizeTitle(result);
+}
+
+export function validateTitleFormat(format) {
+    const errors = [];
+    const warnings = [];
+    const value = String(format ?? '');
+
+    if (!value.trim()) {
+        errors.push('Title format must be a non-empty string');
+        return { valid: false, errors, warnings };
+    }
+
+    const withoutPlaceholders = value.replace(/\{\{[^}]+\}\}/g, '');
+    if (/[\u0000-\u001F\u007F-\u009F]/.test(withoutPlaceholders)) {
+        warnings.push('Title contains characters that will be removed during sanitization');
+    }
+
+    const validPlaceholders = new Set(['{{title}}', '{{scene}}', '{{char}}', '{{user}}', '{{messages}}', '{{profile}}', '{{date}}', '{{time}}']);
+    const invalidPlaceholders = [...value.matchAll(/\{\{[^}]*\}\}/g)]
+        .map(match => match[0])
+        .filter(token => !validPlaceholders.has(token));
+    if (invalidPlaceholders.length > 0) {
+        warnings.push(`Unknown placeholders: ${invalidPlaceholders.join(', ')}`);
+    }
+
+    const potentialNumberingPatterns = [...withoutPlaceholders.matchAll(/\[\[[^\]]+\]\]|\(\[[^\]]+\]\)|\{\[[^\]]+\]\}|#\[[^\]]+\]|\[[^\]]+\]|\([^)]*\)|\{[^}]*\}|#[^\s#{}()[\]]+/g)]
+        .map(match => match[0])
+        .filter(token => /0/.test(token));
+    const allowedNumberingPatterns = [
+        /^\[\[0+\]\]$/,
+        /^\(\[0+\]\)$/,
+        /^\{\[0+\]\}$/,
+        /^#\[0+\]$/,
+        /^\[0+\]$/,
+        /^\(0+\)$/,
+        /^\{0+\}$/,
+        /^#0+$/,
+    ];
+    const invalidNumberingPatterns = potentialNumberingPatterns.filter(token => !allowedNumberingPatterns.some(pattern => pattern.test(token)));
+    if (invalidNumberingPatterns.length > 0) {
+        warnings.push(`Invalid numbering patterns: ${invalidNumberingPatterns.join(', ')}. Use [000], (000), {000}, #000, #[000], ([000]), {[000]}, or [[000]].`);
+    }
+
+    if (value.length > 100) {
+        warnings.push('Title format is very long and may be truncated');
+    }
+
+    return {
+        valid: errors.length === 0,
+        errors,
+        warnings,
+    };
+}
+
+export function previewTitle(titleFormat, sampleData = {}) {
+    const mockEntries = {
+        existing1: { uid: 5, comment: '[001] - Previous Memory', [STMB_MANAGED_FLAG]: true },
+        existing2: { uid: 7, comment: '[002] - Another Memory', [STMB_MANAGED_FLAG]: true },
+    };
+    const nextSequenceNumber = getNextManagedMemorySequenceNumber(mockEntries, titleFormat);
+    const defaultContext = {
+        title: 'Sample Memory Title',
+        sceneStart: 15,
+        sceneEnd: 23,
+        characterName: 'Alice',
+        userName: 'Bob',
+        messageCount: 9,
+        profileName: 'Summary',
+        date: '2026-01-02',
+        time: '03:04:05',
+    };
+
+    try {
+        return formatMemoryTitle(titleFormat, { ...defaultContext, ...(sampleData || {}) }, nextSequenceNumber);
+    } catch (error) {
+        return `Error: ${String(error?.message || error)}`;
+    }
 }
 
 export function getNextManagedMemorySequenceNumber(entries, titleFormat = null) {
