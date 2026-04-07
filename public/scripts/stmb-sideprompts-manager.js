@@ -2,6 +2,8 @@ import { getRequestHeaders } from '../script.js';
 import { hasTemplateRuntimeMacros } from './stmb-sideprompt-macros.js';
 
 const SIDE_PROMPTS_FILE = 'stmb-side-prompts.json';
+const BUILTIN_CAST_KEY = 'cast';
+const LEGACY_BUILTIN_CAST_KEY = 'cast-of-characters';
 let cachedDoc = null;
 
 function nowIso() {
@@ -202,6 +204,7 @@ function getBuiltinTemplates() {
             },
         },
         { onAfterMemory: { enabled: true }, commands: ['sideprompt'] },
+        BUILTIN_CAST_KEY,
     );
 
     define(
@@ -224,6 +227,24 @@ function getBuiltinTemplates() {
     );
 
     return prompts;
+}
+
+function migrateBuiltinTemplateKeys(document) {
+    const prompts = document?.prompts;
+    if (!prompts || typeof prompts !== 'object') {
+        return false;
+    }
+
+    if (!prompts[BUILTIN_CAST_KEY] && prompts[LEGACY_BUILTIN_CAST_KEY]) {
+        prompts[BUILTIN_CAST_KEY] = {
+            ...prompts[LEGACY_BUILTIN_CAST_KEY],
+            key: BUILTIN_CAST_KEY,
+        };
+        delete prompts[LEGACY_BUILTIN_CAST_KEY];
+        return true;
+    }
+
+    return false;
 }
 
 function createBaseDoc() {
@@ -272,12 +293,16 @@ export async function loadSidePrompts() {
             const parsed = JSON.parse(text);
             if (looksLikeV1SidePrompts(parsed)) {
                 data = migrateV1toV2(parsed);
+                migrateBuiltinTemplateKeys(data);
                 await saveDoc(data);
             } else if (!validateSidePromptsFileV2(parsed)) {
                 data = createBaseDoc();
                 await saveDoc(data);
             } else {
                 data = parsed;
+                if (migrateBuiltinTemplateKeys(data)) {
+                    await saveDoc(data);
+                }
             }
         }
     } catch {
@@ -454,6 +479,7 @@ export async function importSidePromptsJson(text) {
     } else {
         throw new Error('Invalid side prompts file structure');
     }
+    migrateBuiltinTemplateKeys(incoming);
 
     const existing = await loadSidePrompts();
     const merged = {

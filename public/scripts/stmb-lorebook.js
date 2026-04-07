@@ -3,8 +3,9 @@ import {
     getCurrentChatId,
     name1,
     name2,
+    saveMetadata,
 } from '../script.js';
-import { getContext, saveMetadataDebounced } from './extensions.js';
+import { getContext } from './extensions.js';
 import {
     assignLorebookToChat,
     createNewWorldInfo,
@@ -14,6 +15,7 @@ import {
 } from './world-info.js';
 import { showLorebookPickerPopup, showLorebookRecoveryPopup } from './stmb-popups.js';
 import { calculateLorebookStats as calculateLorebookStatsCore } from './stmb-core.js';
+import { getSanitizedFilename } from './utils.js';
 
 export class StmbLorebookHandledError extends Error {
     constructor(message = '') {
@@ -25,6 +27,47 @@ export class StmbLorebookHandledError extends Error {
 
 export function isStmbLorebookHandledError(error) {
     return Boolean(error?.handled) || error instanceof StmbLorebookHandledError;
+}
+
+function renderLorebookNameTemplate(template) {
+    return String(template || 'LTM - {{char}} - {{chat}}')
+        .replace(/\{\{char\}\}/g, String(name2 || 'Character'))
+        .replace(/\{\{user\}\}/g, String(name1 || 'User'))
+        .replace(/\{\{chat\}\}/g, String(getCurrentChatId() || 'Chat'));
+}
+
+async function generateAutoLorebookName(template) {
+    const renderedName = renderLorebookNameTemplate(template)
+        .replace(/[\/\\:*?"<>|]/g, '_')
+        .replace(/_{2,}/g, '_')
+        .substring(0, 60);
+    const sanitizedName = String(await getSanitizedFilename(renderedName)).trim();
+    const baseName = sanitizedName || 'LTM';
+
+    if (!Array.isArray(world_names) || !world_names.includes(baseName)) {
+        return baseName;
+    }
+
+    for (let index = 2; index <= 999; index++) {
+        const candidate = `${baseName} ${index}`;
+        if (!world_names.includes(candidate)) {
+            return candidate;
+        }
+    }
+
+    return `${baseName} ${Date.now()}`;
+}
+
+async function autoCreateAndBindLorebook(lorebookNameTemplate) {
+    const generatedName = await generateAutoLorebookName(lorebookNameTemplate);
+    const created = await createNewWorldInfo(generatedName);
+    if (!created) {
+        throw new Error(`Failed to create lorebook "${generatedName}"`);
+    }
+
+    chat_metadata[METADATA_KEY] = generatedName;
+    await saveMetadata();
+    return generatedName;
 }
 
 export async function getLorebookStats() {
@@ -85,17 +128,7 @@ export async function ensureResolvedLorebookName({
             });
 
             if (recovery.action === 'create' && allowCreate) {
-                const renderedName = String(lorebookNameTemplate || 'LTM - {{char}} - {{chat}}')
-                    .replace(/\{\{char\}\}/g, String(name2 || 'Character'))
-                    .replace(/\{\{user\}\}/g, String(name1 || 'User'))
-                    .replace(/\{\{chat\}\}/g, String(getCurrentChatId() || 'Chat'));
-                const created = await createNewWorldInfo(renderedName);
-                if (!created) {
-                    throw new Error(`Failed to create lorebook "${renderedName}"`);
-                }
-                chat_metadata[METADATA_KEY] = renderedName;
-                saveMetadataDebounced();
-                lorebookName = renderedName;
+                lorebookName = await autoCreateAndBindLorebook(lorebookNameTemplate);
                 continue;
             }
 
@@ -131,17 +164,7 @@ export async function ensureResolvedLorebookName({
         });
 
         if (recovery.action === 'create' && allowCreate) {
-            const renderedName = String(lorebookNameTemplate || 'LTM - {{char}} - {{chat}}')
-                .replace(/\{\{char\}\}/g, String(name2 || 'Character'))
-                .replace(/\{\{user\}\}/g, String(name1 || 'User'))
-                .replace(/\{\{chat\}\}/g, String(getCurrentChatId() || 'Chat'));
-            const created = await createNewWorldInfo(renderedName);
-            if (!created) {
-                throw new Error(`Failed to create lorebook "${renderedName}"`);
-            }
-            chat_metadata[METADATA_KEY] = renderedName;
-            saveMetadataDebounced();
-            lorebookName = renderedName;
+            lorebookName = await autoCreateAndBindLorebook(lorebookNameTemplate);
             continue;
         }
 

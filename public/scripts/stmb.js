@@ -3824,11 +3824,36 @@ async function resolveAutoSummaryLorebook() {
         lorebookName = selectedLorebook;
     }
 
-    return {
-        valid: Boolean(lorebookName),
-        lorebookName: lorebookName || null,
-        error: lorebookName ? '' : 'No manual lorebook selected',
-    };
+    try {
+        const resolvedLorebookName = await ensureResolvedLorebookName({
+            manualMode: true,
+            getManualLorebook: () => getStmbState().manualLorebook,
+            setManualLorebook: async selectedLorebook => {
+                getStmbState().manualLorebook = String(selectedLorebook || '').trim();
+                saveMetadataDebounced();
+            },
+            createContext: 'auto-summary',
+        });
+        return {
+            valid: Boolean(resolvedLorebookName),
+            lorebookName: resolvedLorebookName || null,
+            error: resolvedLorebookName ? '' : 'No manual lorebook selected',
+        };
+    } catch (error) {
+        if (isStmbLorebookHandledError(error)) {
+            return {
+                valid: false,
+                lorebookName: null,
+                error: String(error?.message || 'No manual lorebook selected'),
+            };
+        }
+
+        return {
+            valid: false,
+            lorebookName: null,
+            error: String(error?.message || 'No manual lorebook selected'),
+        };
+    }
 }
 
 async function checkAutoSummaryTrigger() {
@@ -4060,15 +4085,14 @@ async function requestStructuredMemory(compiledScene, profile, lorebookName, sum
     const result = await generateStmbText({
         generateData: finalGenerateData,
     }, { signal });
+    const rawText = String(result.text || '');
+    assertNoProviderTruncation(result.providerResponse, rawText);
+    const cleanedText = applySelectedRegex(rawText, getModuleSettings().selectedRegexIncoming);
 
     try {
-        return parseStructuredMemoryResponse(
-            applySelectedRegex(String(result.text || ''), getModuleSettings().selectedRegexIncoming),
-        );
+        return parseStructuredMemoryResponse(cleanedText);
     } catch (error) {
-        error.rawResponse = typeof result?.text === 'string' && result.text
-            ? result.text
-            : JSON.stringify(result?.providerResponse ?? {});
+        error.rawResponse = cleanedText || rawText || JSON.stringify(result?.providerResponse ?? {});
         error.providerBody = JSON.stringify(result?.providerResponse ?? {});
         throw error;
     }
@@ -4085,6 +4109,29 @@ function serializeSummaryProviderResponse(providerResponse, fallback = '') {
         return JSON.stringify(providerResponse ?? {}, null, 2);
     } catch {
         return String(providerResponse ?? '').trim();
+    }
+}
+
+function assertNoProviderTruncation(providerResponse, fallbackText = '') {
+    const finishReason = providerResponse?.choices?.[0]?.finish_reason || providerResponse?.finish_reason || providerResponse?.stop_reason;
+    const normalizedFinishReason = typeof finishReason === 'string' ? finishReason.toLowerCase() : '';
+
+    if (normalizedFinishReason.includes('length') || normalizedFinishReason.includes('max')) {
+        const error = new Error('Model response appears truncated (provider finish_reason). Please increase Max Response Length.');
+        error.name = 'StmbStructuredParseError';
+        error.code = 'PROVIDER_TRUNCATION';
+        error.rawResponse = String(fallbackText || '').trim();
+        error.providerBody = serializeSummaryProviderResponse(providerResponse);
+        throw error;
+    }
+
+    if (providerResponse?.truncated === true) {
+        const error = new Error('Model response appears truncated (provider flag). Please increase Max Response Length.');
+        error.name = 'StmbStructuredParseError';
+        error.code = 'PROVIDER_TRUNCATION_FLAG';
+        error.rawResponse = String(fallbackText || '').trim();
+        error.providerBody = serializeSummaryProviderResponse(providerResponse);
+        throw error;
     }
 }
 

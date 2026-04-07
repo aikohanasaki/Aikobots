@@ -18,6 +18,7 @@ import {
     buildSummaryAnalysisPrompt,
     createManagedSummaryEntryData,
     getNextSummaryNumber,
+    migrateLorebookSummarySchema,
     parseSummaryJsonResponse,
     getSummaryTierLabel,
 } from '../../public/scripts/stmb-summary.js';
@@ -797,6 +798,7 @@ router.post('/commit-summaries', async (request, response) => {
             lorebookContext.storage,
         );
         ensureEntriesObject(lorebookData);
+        const schemaMigrated = migrateLorebookSummarySchema(lorebookData);
 
         let nextSummaryNumber = getNextSummaryNumber(lorebookData, targetTier);
         const createdEntries = [];
@@ -830,7 +832,7 @@ router.post('/commit-summaries', async (request, response) => {
             nextSummaryNumber++;
         }
 
-        if (createdEntries.length > 0 || migrated) {
+        if (createdEntries.length > 0 || migrated || schemaMigrated) {
             const savedMetadata = await saveLorebookForManagement(request.user, metadata.name, lorebookData, metadata.storage);
             return response.send({
                 ok: true,
