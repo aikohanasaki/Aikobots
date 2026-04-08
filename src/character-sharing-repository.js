@@ -158,6 +158,29 @@ async function mutateSharedCharacterIndex(mutate) {
     });
 }
 
+async function withSharedCharacterTransaction(transaction, { onRollback = null, rollbackMessage = 'Failed to restore shared character state.' } = {}) {
+    return runWithSharedCharacterLock(async () => {
+        const index = await readSharedCharacterIndex();
+
+        try {
+            const result = await transaction(index);
+            await writeSharedCharacterIndex(index);
+            return result;
+        } catch (error) {
+            if (typeof onRollback === 'function') {
+                try {
+                    await onRollback(error);
+                } catch (rollbackError) {
+                    console.error('[Characters] Shared character rollback failed.', rollbackError);
+                    throw new CharacterSharingRepositoryError('CharacterStateRepairFailed', rollbackMessage, 500);
+                }
+            }
+
+            throw error;
+        }
+    });
+}
+
 function getCheckoutState(user, record) {
     if (record?.sharingMode !== 'shared') {
         return 'available';
@@ -392,7 +415,6 @@ export async function getCharacterMetadata({ characterCard = null, filenameStem 
     const fallbackName = normalizeCharacterName(filenameStem || 'character');
     const sharedRecord = await getSharedCharacterRecord(fallbackName, { sharedIndex });
     if (sharedRecord) {
-        await backfillCanonicalSharedCharacterMetadata(sharedRecord);
         return buildCharacterMetadata(sharedRecord, user);
     }
 
@@ -421,48 +443,43 @@ export async function promoteCharacterToShared(user, avatarName, ownerHandles) {
         throw new CharacterSharingRepositoryError('CharacterNotFound', `Character "${canonicalName}" not found.`, 404);
     }
 
-    const existingSharedRecord = await getSharedCharacterRecord(canonicalName);
-    if (existingSharedRecord) {
-        throw new CharacterSharingRepositoryError(
-            'CharacterAlreadyShared',
-            `Character "${canonicalName}" is already shared by ${existingSharedRecord.ownerHandles.join(', ')}.`,
-            409,
-            { ownerHandles: existingSharedRecord.ownerHandles, checkedOutBy: existingSharedRecord.checkedOutBy },
-        );
-    }
-
-    for (const handle of normalizedOwners) {
-        const targetPath = getUserCharacterPath(handle, canonicalName);
-        if (handle !== user.profile.handle && fs.existsSync(targetPath)) {
-            throw new CharacterSharingRepositoryError('CharacterAlreadyExists', `Character "${canonicalName}" already exists for ${handle}.`, 409);
-        }
-    }
-
     const destinationPath = getSharedCharacterPath(canonicalName);
-    const { rawBuffer, card } = await readCharacterCardFile(sourcePath);
-    if (!canPromoteCharacter(user, card)) {
-        const ownerLabel = normalizeOwnerHandles(getCharacterOwnerHandles(card)).join(', ') || getCharacterOwnerHandle(card) || 'the current owner';
-        throw new CharacterSharingRepositoryError('CharacterAccessDenied', `Only ${ownerLabel} and admins can share this character.`, 403);
-    }
-    const originalCard = structuredClone(card);
-    setCharacterSharingMetadata(card, { ownerHandles: normalizedOwners, sharingMode: 'shared', sharedCharacterKey: canonicalName });
-    await writeCharacterCardFile(rawBuffer, card, destinationPath);
-
-    await mutateSharedCharacterIndex(async index => {
-        const timestamp = new Date().toISOString();
-        index.characters[canonicalName] = {
-            ownerHandles: normalizedOwners,
-            checkedOutBy: null,
-            checkedOutAt: null,
-            createdAt: timestamp,
-            updatedAt: timestamp,
-            createdBy: user.profile.handle,
-            updatedBy: user.profile.handle,
-        };
-    });
-
     const createdLinks = [];
-    try {
+    let originalRawBuffer = null;
+    let originalCard = null;
+    let wroteCanonicalCharacter = false;
+
+    return withSharedCharacterTransaction(async index => {
+        const existingSharedRecord = getSharedCharacterIndexRecord(index, canonicalName);
+        if (existingSharedRecord) {
+            throw new CharacterSharingRepositoryError(
+                'CharacterAlreadyShared',
+                `Character "${canonicalName}" is already shared by ${existingSharedRecord.ownerHandles.join(', ')}.`,
+                409,
+                { ownerHandles: existingSharedRecord.ownerHandles, checkedOutBy: existingSharedRecord.checkedOutBy },
+            );
+        }
+
+        for (const handle of normalizedOwners) {
+            const targetPath = getUserCharacterPath(handle, canonicalName);
+            if (handle !== user.profile.handle && fs.existsSync(targetPath)) {
+                throw new CharacterSharingRepositoryError('CharacterAlreadyExists', `Character "${canonicalName}" already exists for ${handle}.`, 409);
+            }
+        }
+
+        const { rawBuffer, card } = await readCharacterCardFile(sourcePath);
+        originalRawBuffer = rawBuffer;
+        originalCard = structuredClone(card);
+
+        if (!canPromoteCharacter(user, card)) {
+            const ownerLabel = normalizeOwnerHandles(getCharacterOwnerHandles(card)).join(', ') || getCharacterOwnerHandle(card) || 'the current owner';
+            throw new CharacterSharingRepositoryError('CharacterAccessDenied', `Only ${ownerLabel} and admins can share this character.`, 403);
+        }
+
+        setCharacterSharingMetadata(card, { ownerHandles: normalizedOwners, sharingMode: 'shared', sharedCharacterKey: canonicalName });
+        await writeCharacterCardFile(rawBuffer, card, destinationPath);
+        wroteCanonicalCharacter = true;
+
         const linkHandles = [
             ...normalizedOwners.filter(handle => handle !== user.profile.handle),
             ...normalizedOwners.filter(handle => handle === user.profile.handle),
@@ -477,89 +494,98 @@ export async function promoteCharacterToShared(user, avatarName, ownerHandles) {
             createSharedCharacterSymlink(targetPath, destinationPath, canonicalName);
             createdLinks.push(targetPath);
         }
-    } catch (error) {
-        try {
+
+        const timestamp = new Date().toISOString();
+        index.characters[canonicalName] = {
+            ownerHandles: normalizedOwners,
+            checkedOutBy: null,
+            checkedOutAt: null,
+            createdAt: timestamp,
+            updatedAt: timestamp,
+            createdBy: user.profile.handle,
+            updatedBy: user.profile.handle,
+        };
+
+        return buildCharacterMetadata(getSharedCharacterIndexRecord(index, canonicalName), user);
+    }, {
+        onRollback: async () => {
+            if (!wroteCanonicalCharacter && createdLinks.length === 0) {
+                return;
+            }
+
             for (const linkPath of createdLinks) {
                 if (fs.existsSync(linkPath)) {
                     fs.unlinkSync(linkPath);
                 }
             }
-            if (normalizedOwners.includes(user.profile.handle) && !fs.existsSync(sourcePath)) {
-                await writeCharacterCardFile(rawBuffer, originalCard, sourcePath);
+
+            if (normalizedOwners.includes(user.profile.handle) && !fs.existsSync(sourcePath) && originalRawBuffer && originalCard) {
+                await writeCharacterCardFile(originalRawBuffer, originalCard, sourcePath);
             }
-            await mutateSharedCharacterIndex(async index => {
-                delete index.characters[canonicalName];
-            });
-            if (fs.existsSync(destinationPath)) {
+
+            if (wroteCanonicalCharacter && fs.existsSync(destinationPath)) {
                 fs.unlinkSync(destinationPath);
             }
-        } catch (cleanupError) {
-            console.error(`[Characters] Failed to clean up shared character "${canonicalName}" after promotion failed.`, cleanupError);
-            throw new CharacterSharingRepositoryError('CharacterStateRepairFailed', `Failed to promote shared character "${canonicalName}" cleanly. Manual repair may be required.`, 500);
-        }
-
-        throw error;
-    }
-
-    const nextRecord = await getSharedCharacterRecord(canonicalName);
-    return buildCharacterMetadata(nextRecord || {
-        name: canonicalName,
-        ownerHandles: normalizedOwners,
-        sharingMode: 'shared',
-        checkedOutBy: null,
-        checkedOutAt: null,
-    }, user);
+        },
+        rollbackMessage: `Failed to promote shared character "${canonicalName}" cleanly. Manual repair may be required.`,
+    });
 }
 
 export async function updateSharedCharacterOwners(user, name, ownerHandles) {
     const canonicalName = normalizeCharacterName(name);
-    const sharedRecord = await getSharedCharacterRecord(canonicalName);
     const normalizedOwners = normalizeOwnerHandles(ownerHandles);
-
-    if (!sharedRecord) {
-        throw new CharacterSharingRepositoryError('CharacterNotFound', `Character "${canonicalName}" not found.`, 404);
-    }
-
-    if (!canManageSharedCharacter(user, sharedRecord)) {
-        throw new CharacterSharingRepositoryError('CharacterAccessDenied', `Character "${canonicalName}" is not editable.`, 403);
-    }
-
-    assertSharedCharacterCheckedOutForEdit(user, sharedRecord);
-
-    for (const handle of normalizedOwners) {
-        const targetPath = getUserCharacterPath(handle, canonicalName);
-        if (!sharedRecord.ownerHandles.includes(handle) && fs.existsSync(targetPath)) {
-            throw new CharacterSharingRepositoryError('CharacterAlreadyExists', `Character "${canonicalName}" already exists for ${handle}.`, 409);
-        }
-    }
-
     const destinationPath = getSharedCharacterPath(canonicalName);
     const createdLinks = [];
-    for (const handle of normalizedOwners.filter(handle => !sharedRecord.ownerHandles.includes(handle))) {
-        const linkPath = getUserCharacterPath(handle, canonicalName);
-        createSharedCharacterSymlink(linkPath, destinationPath, canonicalName);
-        createdLinks.push(linkPath);
-    }
+    const removedLinks = [];
+    let originalCanonicalRawBuffer = null;
+    let originalCanonicalCard = null;
+    let updatedCanonicalCharacter = false;
 
-    try {
-        await updateCanonicalCharacterMetadata(canonicalName, normalizedOwners);
-    } catch (error) {
-        for (const linkPath of createdLinks) {
-            if (fs.existsSync(linkPath)) {
-                fs.unlinkSync(linkPath);
+    return withSharedCharacterTransaction(async index => {
+        const sharedRecord = getSharedCharacterIndexRecord(index, canonicalName);
+        if (!sharedRecord) {
+            throw new CharacterSharingRepositoryError('CharacterNotFound', `Character "${canonicalName}" not found.`, 404);
+        }
+
+        if (normalizedOwners.length < 2) {
+            throw new CharacterSharingRepositoryError('CharacterOwnersInvalid', 'Shared characters must have at least two owners.', 400);
+        }
+
+        if (!canManageSharedCharacter(user, sharedRecord)) {
+            throw new CharacterSharingRepositoryError('CharacterAccessDenied', `Character "${canonicalName}" is not editable.`, 403);
+        }
+
+        assertSharedCharacterCheckedOutForEdit(user, sharedRecord);
+
+        for (const handle of normalizedOwners) {
+            const targetPath = getUserCharacterPath(handle, canonicalName);
+            if (!sharedRecord.ownerHandles.includes(handle) && fs.existsSync(targetPath)) {
+                throw new CharacterSharingRepositoryError('CharacterAlreadyExists', `Character "${canonicalName}" already exists for ${handle}.`, 409);
             }
         }
-        throw error;
-    }
 
-    for (const handle of sharedRecord.ownerHandles.filter(handle => !normalizedOwners.includes(handle))) {
-        const targetPath = getUserCharacterPath(handle, canonicalName);
-        if (fs.existsSync(targetPath)) {
-            fs.unlinkSync(targetPath);
+        const { rawBuffer, card } = await readCharacterCardFile(destinationPath);
+        originalCanonicalRawBuffer = rawBuffer;
+        originalCanonicalCard = structuredClone(card);
+
+        for (const handle of normalizedOwners.filter(handle => !sharedRecord.ownerHandles.includes(handle))) {
+            const linkPath = getUserCharacterPath(handle, canonicalName);
+            createSharedCharacterSymlink(linkPath, destinationPath, canonicalName);
+            createdLinks.push(linkPath);
         }
-    }
 
-    await mutateSharedCharacterIndex(async index => {
+        setCharacterSharingMetadata(card, { ownerHandles: normalizedOwners, sharingMode: 'shared', sharedCharacterKey: canonicalName });
+        await writeCharacterCardFile(rawBuffer, card, destinationPath);
+        updatedCanonicalCharacter = true;
+
+        for (const handle of sharedRecord.ownerHandles.filter(handle => !normalizedOwners.includes(handle))) {
+            const targetPath = getUserCharacterPath(handle, canonicalName);
+            if (fs.existsSync(targetPath)) {
+                fs.unlinkSync(targetPath);
+                removedLinks.push(targetPath);
+            }
+        }
+
         const record = index.characters[canonicalName];
         if (!record) {
             throw new CharacterSharingRepositoryError('CharacterNotFound', `Character "${canonicalName}" not found.`, 404);
@@ -572,81 +598,96 @@ export async function updateSharedCharacterOwners(user, name, ownerHandles) {
             record.checkedOutBy = null;
             record.checkedOutAt = null;
         }
-    });
 
-    return buildCharacterMetadata((await getSharedCharacterRecord(canonicalName)) || sharedRecord, user);
+        return buildCharacterMetadata(getSharedCharacterIndexRecord(index, canonicalName), user);
+    }, {
+        onRollback: async () => {
+            if (!updatedCanonicalCharacter && createdLinks.length === 0 && removedLinks.length === 0) {
+                return;
+            }
+
+            for (const linkPath of createdLinks) {
+                if (fs.existsSync(linkPath)) {
+                    fs.unlinkSync(linkPath);
+                }
+            }
+
+            if (updatedCanonicalCharacter && originalCanonicalRawBuffer && originalCanonicalCard) {
+                await writeCharacterCardFile(originalCanonicalRawBuffer, originalCanonicalCard, destinationPath);
+            }
+
+            for (const linkPath of removedLinks) {
+                if (!fs.existsSync(linkPath)) {
+                    createSharedCharacterSymlink(linkPath, destinationPath, canonicalName);
+                }
+            }
+        },
+        rollbackMessage: `Failed to update shared character "${canonicalName}" cleanly. Manual repair may be required.`,
+    });
 }
 
 export async function checkoutSharedCharacter(user, name, force = false) {
     const canonicalName = normalizeCharacterName(name);
-    const sharedRecord = await getSharedCharacterRecord(canonicalName);
-    if (!sharedRecord) {
-        throw new CharacterSharingRepositoryError('CharacterNotFound', `Character "${canonicalName}" not found.`, 404);
-    }
-
-    if (!canManageSharedCharacter(user, sharedRecord)) {
-        throw new CharacterSharingRepositoryError('CharacterAccessDenied', `Character "${canonicalName}" is not accessible.`, 403);
-    }
-
-    const currentHandle = String(user?.profile?.handle || '').trim();
-    const checkedOutBy = String(sharedRecord.checkedOutBy || '').trim();
-    if (checkedOutBy && checkedOutBy !== currentHandle && !force) {
-        throw new CharacterSharingRepositoryError('CharacterCheckedOut', `Character "${canonicalName}" is checked out by ${checkedOutBy}.`, 423);
-    }
-
-    if (checkedOutBy && checkedOutBy !== currentHandle && force && !Boolean(user?.profile?.admin)) {
-        throw new CharacterSharingRepositoryError('CharacterAccessDenied', `Character "${canonicalName}" is checked out by ${checkedOutBy}.`, 403);
-    }
-
-    await mutateSharedCharacterIndex(async index => {
-        const record = index.characters[canonicalName];
-        if (!record) {
+    return withSharedCharacterTransaction(async index => {
+        const sharedRecord = getSharedCharacterIndexRecord(index, canonicalName);
+        if (!sharedRecord) {
             throw new CharacterSharingRepositoryError('CharacterNotFound', `Character "${canonicalName}" not found.`, 404);
         }
 
+        if (!canManageSharedCharacter(user, sharedRecord)) {
+            throw new CharacterSharingRepositoryError('CharacterAccessDenied', `Character "${canonicalName}" is not accessible.`, 403);
+        }
+
+        const currentHandle = String(user?.profile?.handle || '').trim();
+        const checkedOutBy = String(sharedRecord.checkedOutBy || '').trim();
+        if (checkedOutBy && checkedOutBy !== currentHandle && !force) {
+            throw new CharacterSharingRepositoryError('CharacterCheckedOut', `Character "${canonicalName}" is checked out by ${checkedOutBy}.`, 423);
+        }
+
+        if (checkedOutBy && checkedOutBy !== currentHandle && force && !Boolean(user?.profile?.admin)) {
+            throw new CharacterSharingRepositoryError('CharacterAccessDenied', `Character "${canonicalName}" is checked out by ${checkedOutBy}.`, 403);
+        }
+
+        const record = index.characters[canonicalName];
         const timestamp = new Date().toISOString();
         record.checkedOutBy = currentHandle;
         record.checkedOutAt = timestamp;
         record.updatedAt = timestamp;
         record.updatedBy = currentHandle;
-    });
 
-    return buildCharacterMetadata((await getSharedCharacterRecord(canonicalName)) || sharedRecord, user);
+        return buildCharacterMetadata(getSharedCharacterIndexRecord(index, canonicalName), user);
+    });
 }
 
 export async function checkinSharedCharacter(user, name, force = false) {
     const canonicalName = normalizeCharacterName(name);
-    const sharedRecord = await getSharedCharacterRecord(canonicalName);
-    if (!sharedRecord) {
-        throw new CharacterSharingRepositoryError('CharacterNotFound', `Character "${canonicalName}" not found.`, 404);
-    }
-
-    if (!canManageSharedCharacter(user, sharedRecord)) {
-        throw new CharacterSharingRepositoryError('CharacterAccessDenied', `Character "${canonicalName}" is not accessible.`, 403);
-    }
-
-    const currentHandle = String(user?.profile?.handle || '').trim();
-    const checkedOutBy = String(sharedRecord.checkedOutBy || '').trim();
-    if (checkedOutBy && checkedOutBy !== currentHandle && !force) {
-        throw new CharacterSharingRepositoryError('CharacterCheckedOut', `Character "${canonicalName}" is checked out by ${checkedOutBy}.`, 423);
-    }
-
-    if (checkedOutBy && checkedOutBy !== currentHandle && force && !Boolean(user?.profile?.admin)) {
-        throw new CharacterSharingRepositoryError('CharacterAccessDenied', `Character "${canonicalName}" is checked out by ${checkedOutBy}.`, 403);
-    }
-
-    await mutateSharedCharacterIndex(async index => {
-        const record = index.characters[canonicalName];
-        if (!record) {
+    return withSharedCharacterTransaction(async index => {
+        const sharedRecord = getSharedCharacterIndexRecord(index, canonicalName);
+        if (!sharedRecord) {
             throw new CharacterSharingRepositoryError('CharacterNotFound', `Character "${canonicalName}" not found.`, 404);
         }
 
+        if (!canManageSharedCharacter(user, sharedRecord)) {
+            throw new CharacterSharingRepositoryError('CharacterAccessDenied', `Character "${canonicalName}" is not accessible.`, 403);
+        }
+
+        const currentHandle = String(user?.profile?.handle || '').trim();
+        const checkedOutBy = String(sharedRecord.checkedOutBy || '').trim();
+        if (checkedOutBy && checkedOutBy !== currentHandle && !force) {
+            throw new CharacterSharingRepositoryError('CharacterCheckedOut', `Character "${canonicalName}" is checked out by ${checkedOutBy}.`, 423);
+        }
+
+        if (checkedOutBy && checkedOutBy !== currentHandle && force && !Boolean(user?.profile?.admin)) {
+            throw new CharacterSharingRepositoryError('CharacterAccessDenied', `Character "${canonicalName}" is checked out by ${checkedOutBy}.`, 403);
+        }
+
+        const record = index.characters[canonicalName];
         const timestamp = new Date().toISOString();
         record.checkedOutBy = null;
         record.checkedOutAt = null;
         record.updatedAt = timestamp;
         record.updatedBy = currentHandle;
-    });
 
-    return buildCharacterMetadata((await getSharedCharacterRecord(canonicalName)) || sharedRecord, user);
+        return buildCharacterMetadata(getSharedCharacterIndexRecord(index, canonicalName), user);
+    });
 }
