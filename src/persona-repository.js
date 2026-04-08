@@ -135,8 +135,7 @@ export function readPersonasDocument(directories) {
         const rawDocument = JSON.parse(fs.readFileSync(pathToPersonas, 'utf8'));
         return normalizePersonasDocument(rawDocument);
     } catch (error) {
-        console.error(`Failed to read personas file: ${pathToPersonas}`, error);
-        return createEmptyPersonasDocument();
+        throw new Error(`Failed to read personas file "${pathToPersonas}": ${error.message}`);
     }
 }
 

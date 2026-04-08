@@ -323,8 +323,15 @@ router.post('/get', async (request, response) => {
         return response.sendStatus(500);
     }
 
-    const personasDocument = readOrMigratePersonasDocument(request.user.directories, settings);
-    const settingsString = buildMergedSettingsString(settings, personasDocument);
+    let personasDocument;
+    let settingsString;
+    try {
+        personasDocument = readOrMigratePersonasDocument(request.user.directories, settings);
+        settingsString = buildMergedSettingsString(settings, personasDocument);
+    } catch (error) {
+        console.error('Failed to load personas for settings payload:', error);
+        return response.sendStatus(500);
+    }
 
     // OpenAI Settings
     const { fileContents: openai_settings, fileNames: openai_setting_names }
