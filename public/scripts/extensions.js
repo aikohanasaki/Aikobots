@@ -483,6 +483,40 @@ function autoConnectInputHandler() {
     saveSettingsDebounced();
 }
 
+function syncAdminExtensionsControls() {
+    const controlSelector = '#extensions_notify_updates_label, #extensions_details, #third_party_extension_button';
+
+    if (!isAdmin()) {
+        $(controlSelector).remove();
+        return;
+    }
+
+    if ($('#extensions_details').length) {
+        return;
+    }
+
+    const extensionsHeading = $('#rm_extensions_block h3[data-i18n="Extensions"]').first();
+
+    if (!extensionsHeading.length) {
+        return;
+    }
+
+    extensionsHeading.after(`
+        <label id="extensions_notify_updates_label" style="display: none;" for="extensions_notify_updates" class="checkbox_label flexNoGap">
+            <input id="extensions_notify_updates" type="checkbox">
+            <span data-i18n="Notify on extension updates">Notify on extension updates</span>
+        </label>
+        <div id="extensions_details" style="display: none;" class="menu_button_icon menu_button">
+            <i class="fa-solid fa-cubes"></i>
+            <span data-i18n="Manage extensions">Manage extensions</span>
+        </div>
+        <div id="third_party_extension_button" style="display: none;" title="Import Extension From Git Repo" data-i18n="[title]Import Extension From Git Repo" class="menu_button menu_button_icon">
+            <i class="fa-solid fa-cloud-arrow-down"></i>
+            <span data-i18n="Install extension">Install extension</span>
+        </div>
+    `);
+}
+
 async function addExtensionsButtonAndMenu() {
     const buttonHTML = await renderTemplateAsync('wandButton');
     const extensionsMenuHTML = await renderTemplateAsync('wandMenu');
@@ -1294,6 +1328,7 @@ export async function loadExtensionSettings(settings, versionChanged, enableAuto
         Object.assign(extension_settings, settings.extension_settings);
     }
 
+    syncAdminExtensionsControls();
     $('#extensions_url').val(extension_settings.apiUrl);
     $('#extensions_api_key').val(extension_settings.apiKey);
     $('#extensions_autoconnect').prop('checked', extension_settings.autoConnect);
@@ -1644,8 +1679,8 @@ export async function initExtensions() {
 
     $('#extensions_connect').on('click', connectClickHandler);
     $('#extensions_autoconnect').on('input', autoConnectInputHandler);
-    $('#extensions_details').on('click', showExtensionsDetails);
-    $('#extensions_notify_updates').on('input', notifyUpdatesInputHandler);
+    $(document).on('click', '#extensions_details', showExtensionsDetails);
+    $(document).on('input', '#extensions_notify_updates', notifyUpdatesInputHandler);
     $(document).on('click', '.extensions_info .extension_block .toggle_disable', onDisableExtensionClick);
     $(document).on('click', '.extensions_info .extension_block .toggle_enable', onEnableExtensionClick);
     $(document).on('click', '.extensions_info .extension_block .btn_update', onUpdateClick);
@@ -1658,5 +1693,5 @@ export async function initExtensions() {
      *
      * @listens #third_party_extension_button#click - The click event of the '#third_party_extension_button' element.
      */
-    $('#third_party_extension_button').on('click', () => openThirdPartyExtensionMenu());
+    $(document).on('click', '#third_party_extension_button', () => openThirdPartyExtensionMenu());
 }
