@@ -6,6 +6,14 @@ import _ from 'lodash';
 import { sync as writeFileAtomicSync } from 'write-file-atomic';
 
 import { SETTINGS_FILE } from '../constants.js';
+import {
+    buildPersonasDocumentFromLegacySettings,
+    getPersonasPath,
+    mergePersonasIntoSettings,
+    readOrMigratePersonasDocument,
+    stripPersonaRegistryFromSettings,
+    writePersonasDocument,
+} from '../persona-repository.js';
 import { getConfigValue, generateTimestamp, removeOldBackups } from '../util.js';
 import { getAllUserHandles, getUserDirectories } from '../users.js';
 import { getFileNameValidationFunction } from '../middleware/validateFileName.js';
@@ -103,6 +111,29 @@ export function getSettingsBackupFilePrefix(handle) {
     return `settings_${handle}_`;
 }
 
+function getPersonasBackupFilePrefix(handle) {
+    return `personas_${handle}_`;
+}
+
+function getSnapshotTimestamp(fileName, prefix) {
+    if (!fileName.startsWith(prefix) || !fileName.endsWith('.json')) {
+        return '';
+    }
+
+    return fileName.slice(prefix.length, -'.json'.length);
+}
+
+function getPairedPersonasBackupPath(handle, settingsSnapshotPathOrName) {
+    const settingsSnapshotName = path.basename(settingsSnapshotPathOrName);
+    const timestamp = getSnapshotTimestamp(settingsSnapshotName, getSettingsBackupFilePrefix(handle));
+    if (!timestamp) {
+        return null;
+    }
+
+    const userDirectories = getUserDirectories(handle);
+    return path.join(userDirectories.backups, `${getPersonasBackupFilePrefix(handle)}${timestamp}.json`);
+}
+
 function readPresetsFromDirectory(directoryPath, options = {}) {
     const {
         sortFunction,
@@ -154,10 +185,10 @@ function backupUserSettings(handle, preventDuplicates) {
         return;
     }
 
-    const backupFile = path.join(userDirectories.backups, `${getSettingsBackupFilePrefix(handle)}${generateTimestamp()}.json`);
     const sourceFile = path.join(userDirectories.root, SETTINGS_FILE);
+    const personasSourceFile = getPersonasPath(userDirectories);
 
-    if (preventDuplicates && isDuplicateBackup(handle, sourceFile)) {
+    if (preventDuplicates && isDuplicateBackup(handle, sourceFile, personasSourceFile)) {
         return;
     }
 
@@ -165,22 +196,36 @@ function backupUserSettings(handle, preventDuplicates) {
         return;
     }
 
+    const timestamp = generateTimestamp();
+    const backupFile = path.join(userDirectories.backups, `${getSettingsBackupFilePrefix(handle)}${timestamp}.json`);
+    const personasBackupFile = path.join(userDirectories.backups, `${getPersonasBackupFilePrefix(handle)}${timestamp}.json`);
+
     fs.copyFileSync(sourceFile, backupFile);
+    if (fs.existsSync(personasSourceFile)) {
+        fs.copyFileSync(personasSourceFile, personasBackupFile);
+    } else {
+        fs.rmSync(personasBackupFile, { force: true });
+    }
+
     removeOldBackups(userDirectories.backups, `settings_${handle}`);
+    removeOldBackups(userDirectories.backups, `personas_${handle}`);
 }
 
 /**
  * Checks if the backup would be a duplicate.
  * @param {string} handle User handle
- * @param {string} sourceFile Source file path
+ * @param {string} sourceFile Source settings file path
+ * @param {string} personasSourceFile Source personas file path
  * @returns {boolean} True if the backup is a duplicate
  */
-function isDuplicateBackup(handle, sourceFile) {
+function isDuplicateBackup(handle, sourceFile, personasSourceFile) {
     const latestBackup = getLatestBackup(handle);
     if (!latestBackup) {
         return false;
     }
-    return areFilesEqual(latestBackup, sourceFile);
+
+    return areFilesEquivalent(latestBackup, sourceFile)
+        && areFilesEquivalent(getPairedPersonasBackupPath(handle, latestBackup), personasSourceFile);
 }
 
 /**
@@ -196,6 +241,40 @@ function areFilesEqual(file1, file2) {
     const content1 = fs.readFileSync(file1);
     const content2 = fs.readFileSync(file2);
     return content1.toString() === content2.toString();
+}
+
+/**
+ * Returns true if both file states match, including when both files are absent.
+ * @param {string|null} file1 File path
+ * @param {string|null} file2 File path
+ * @returns {boolean} True if both files are absent or their contents match
+ */
+function areFilesEquivalent(file1, file2) {
+    const file1Exists = Boolean(file1) && fs.existsSync(file1);
+    const file2Exists = Boolean(file2) && fs.existsSync(file2);
+
+    if (!file1Exists && !file2Exists) {
+        return true;
+    }
+
+    if (!file1Exists || !file2Exists) {
+        return false;
+    }
+
+    return areFilesEqual(file1, file2);
+}
+
+function buildMergedSettingsString(settings, personasDocument) {
+    const mergedSettings = mergePersonasIntoSettings(stripPersonaRegistryFromSettings(settings), personasDocument);
+    return JSON.stringify(mergedSettings, null, 4);
+}
+
+function parseSnapshotSettings(content, label) {
+    try {
+        return JSON.parse(content);
+    } catch (error) {
+        throw new Error(`Failed to parse ${label}: ${error.message}`);
+    }
 }
 
 /**
@@ -220,7 +299,12 @@ export const router = express.Router();
 router.post('/save', function (request, response) {
     try {
         const pathToSettings = path.join(request.user.directories.root, SETTINGS_FILE);
-        writeFileAtomicSync(pathToSettings, JSON.stringify(request.body, null, 4), 'utf8');
+        const settings = structuredClone(request.body ?? {});
+        const personasDocument = buildPersonasDocumentFromLegacySettings(settings);
+        const strippedSettings = stripPersonaRegistryFromSettings(settings);
+
+        writePersonasDocument(request.user.directories, personasDocument);
+        writeFileAtomicSync(pathToSettings, JSON.stringify(strippedSettings, null, 4), 'utf8');
         triggerAutoSave(request.user.profile.handle);
         response.send({ result: 'ok' });
     } catch (err) {
@@ -234,10 +318,13 @@ router.post('/get', async (request, response) => {
     let settings;
     try {
         const pathToSettings = path.join(request.user.directories.root, SETTINGS_FILE);
-        settings = fs.readFileSync(pathToSettings, 'utf8');
+        settings = JSON.parse(fs.readFileSync(pathToSettings, 'utf8'));
     } catch (e) {
         return response.sendStatus(500);
     }
+
+    const personasDocument = readOrMigratePersonasDocument(request.user.directories, settings);
+    const settingsString = buildMergedSettingsString(settings, personasDocument);
 
     // OpenAI Settings
     const { fileContents: openai_settings, fileNames: openai_setting_names }
@@ -261,7 +348,7 @@ router.post('/get', async (request, response) => {
     const reasoning = safeRead(() => readAndParseFromDirectory(request.user.directories.reasoning), [], 'reasoning presets');
 
     response.send({
-        settings,
+        settings: settingsString,
         world_names,
         world_info_items: worldInfoItems,
         openai_settings,
@@ -317,14 +404,19 @@ router.post('/load-snapshot', getFileNameValidationFunction('name'), async (requ
 
         const snapshotName = request.body.name;
         const snapshotPath = path.join(request.user.directories.backups, snapshotName);
+        const personasSnapshotPath = getPairedPersonasBackupPath(request.user.profile.handle, snapshotName);
 
         if (!fs.existsSync(snapshotPath)) {
             return response.sendStatus(404);
         }
 
-        const content = fs.readFileSync(snapshotPath, 'utf8');
+        const settingsContent = fs.readFileSync(snapshotPath, 'utf8');
+        const settings = parseSnapshotSettings(settingsContent, `settings snapshot "${snapshotName}"`);
+        const personasDocument = fs.existsSync(personasSnapshotPath)
+            ? JSON.parse(fs.readFileSync(personasSnapshotPath, 'utf8'))
+            : buildPersonasDocumentFromLegacySettings(settings);
 
-        response.send(content);
+        response.send(buildMergedSettingsString(settings, personasDocument));
     } catch (error) {
         console.error(error);
         response.sendStatus(500);
@@ -351,14 +443,26 @@ router.post('/restore-snapshot', getFileNameValidationFunction('name'), async (r
 
         const snapshotName = request.body.name;
         const snapshotPath = path.join(request.user.directories.backups, snapshotName);
+        const personasSnapshotPath = getPairedPersonasBackupPath(request.user.profile.handle, snapshotName);
 
         if (!fs.existsSync(snapshotPath)) {
             return response.sendStatus(404);
         }
 
+        const settingsContent = fs.readFileSync(snapshotPath, 'utf8');
+        const settings = parseSnapshotSettings(settingsContent, `settings snapshot "${snapshotName}"`);
+        const personasDocument = fs.existsSync(personasSnapshotPath)
+            ? JSON.parse(fs.readFileSync(personasSnapshotPath, 'utf8'))
+            : buildPersonasDocumentFromLegacySettings(settings);
         const pathToSettings = path.join(request.user.directories.root, SETTINGS_FILE);
-        fs.rmSync(pathToSettings, { force: true });
-        fs.copyFileSync(snapshotPath, pathToSettings);
+        const pathToPersonas = getPersonasPath(request.user.directories);
+        const strippedSettings = stripPersonaRegistryFromSettings(settings);
+
+        writePersonasDocument(request.user.directories, personasDocument);
+        writeFileAtomicSync(pathToSettings, JSON.stringify(strippedSettings, null, 4), 'utf8');
+        if (!Object.keys(personasDocument?.personas || {}).length && !personasDocument?.defaultPersona) {
+            fs.rmSync(pathToPersonas, { force: true });
+        }
 
         response.sendStatus(204);
     } catch (error) {

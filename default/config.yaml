@@ -19,7 +19,7 @@ dnsPreferIPv6: false
 # -- BROWSER LAUNCH CONFIGURATION --
 browserLaunch:
   # Open the browser automatically on server startup.
-  enabled: true
+  enabled: false
   # Browser to use for opening the URL.
   # NOT SUPPORTED ON ANDROID DEVICES.
   # - Use "default" to use the system default browser
@@ -79,9 +79,9 @@ requestProxy:
     - localhost
     - 127.0.0.1
 # Enable multi-user mode
-enableUserAccounts: false
+enableUserAccounts: true
 # Enable discreet login mode: hides user list on the login screen
-enableDiscreetLogin: false
+enableDiscreetLogin: true
 # If `basicAuthMode` and this are enabled then
 # the username and passwords for basic auth are the same as those
 # for the individual accounts
@@ -172,15 +172,15 @@ thumbnails:
   # Changing this only affects new thumbnails. To recreate the old ones, clear out /thumbnails folder in your user data.
   format: "jpg"
   # JPG thumbnail quality (0-100)
-  quality: 95
+  quality: 90
   # Maximum thumbnail dimensions per type [width, height]
-  dimensions: { 'bg': [160, 90], 'avatar': [96, 144], 'persona': [96, 144] }
+  dimensions: { 'bg': [160, 90], 'avatar': [360, 540], 'persona': [360, 540] }
 
 # PERFORMANCE-RELATED CONFIGURATION
 performance:
   # Enables lazy loading of character cards. Improves performances with large card libraries.
   # May have compatibility issues with some extensions.
-  lazyLoadCharacters: false
+  lazyLoadCharacters: true
   # The maximum amount of memory that parsed character cards can use. Set to 0 to disable memory caching.
   memoryCacheCapacity: '100mb'
   # Enables disk caching for character cards. Improves performances with large card libraries.
@@ -190,7 +190,7 @@ performance:
 # IMPORTANT: Requires localhost or a domain with HTTPS, otherwise will not work!
 cacheBuster:
   # Clear browser cache on first load or after uploading image files
-  enabled: false
+  enabled: true
   # Only clear cache for the specified user agent regex pattern
   # Example: 'firefox|safari' (case-insensitive)
   userAgentPattern: ''
@@ -295,4 +295,4 @@ gemini:
 # -- SERVER PLUGIN CONFIGURATION --
 enableServerPlugins: false
 # Attempt to automatically update server plugins on startup
-enableServerPluginsAutoUpdate: true
+enableServerPluginsAutoUpdate: false

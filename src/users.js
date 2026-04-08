@@ -17,6 +17,7 @@ import sanitize from 'sanitize-filename';
 import { USER_DIRECTORY_TEMPLATE, DEFAULT_USER, PUBLIC_DIRECTORIES, SETTINGS_FILE, UPLOADS_DIRECTORY } from './constants.js';
 import { getConfigValue, color, delay, generateTimestamp, invalidateFirefoxCache } from './util.js';
 import { readSecret, writeSecret } from './endpoints/secrets.js';
+import { readOrMigratePersonasDocument } from './persona-repository.js';
 import { serverDirectory } from './server-directory.js';
 
 export const KEY_PREFIX = 'user:';
@@ -580,7 +581,8 @@ export async function getUserAvatar(handle) {
         const directory = getUserDirectories(handle);
         const pathToSettings = path.join(directory.root, SETTINGS_FILE);
         const settings = fs.existsSync(pathToSettings) ? JSON.parse(fs.readFileSync(pathToSettings, 'utf8')) : {};
-        const avatarFile = settings?.power_user?.default_persona || settings?.user_avatar;
+        const personasDocument = readOrMigratePersonasDocument(directory, settings);
+        const avatarFile = personasDocument.defaultPersona || settings?.user_avatar;
         if (!avatarFile) {
             return PUBLIC_USER_AVATAR;
         }

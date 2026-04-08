@@ -7,6 +7,7 @@ import express from 'express';
 
 import { getUserAvatar, toKey, getPasswordHash, getPasswordSalt, createBackupArchive, ensurePublicDirectoriesExist, toAvatarKey } from '../users.js';
 import { SETTINGS_FILE } from '../constants.js';
+import { getPersonasPath } from '../persona-repository.js';
 import { checkForNewContent, CONTENT_TYPES } from './content-manager.js';
 import { color, Cache } from '../util.js';
 
@@ -167,7 +168,9 @@ router.post('/reset-settings', async (request, response) => {
         }
 
         const pathToFile = path.join(request.user.directories.root, SETTINGS_FILE);
+        const pathToPersonas = getPersonasPath(request.user.directories);
         await fsPromises.rm(pathToFile, { force: true });
+        await fsPromises.rm(pathToPersonas, { force: true });
         await checkForNewContent([request.user.directories], [CONTENT_TYPES.SETTINGS]);
 
         return response.sendStatus(204);
