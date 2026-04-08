@@ -502,15 +502,15 @@ function syncAdminExtensionsControls() {
     }
 
     extensionsHeading.after(`
-        <label id="extensions_notify_updates_label" style="display: none;" for="extensions_notify_updates" class="checkbox_label flexNoGap">
+        <label id="extensions_notify_updates_label" for="extensions_notify_updates" class="checkbox_label flexNoGap">
             <input id="extensions_notify_updates" type="checkbox">
             <span data-i18n="Notify on extension updates">Notify on extension updates</span>
         </label>
-        <div id="extensions_details" style="display: none;" class="menu_button_icon menu_button">
+        <div id="extensions_details" class="menu_button_icon menu_button">
             <i class="fa-solid fa-cubes"></i>
             <span data-i18n="Manage extensions">Manage extensions</span>
         </div>
-        <div id="third_party_extension_button" style="display: none;" title="Import Extension From Git Repo" data-i18n="[title]Import Extension From Git Repo" class="menu_button menu_button_icon">
+        <div id="third_party_extension_button" title="Import Extension From Git Repo" data-i18n="[title]Import Extension From Git Repo" class="menu_button menu_button_icon">
             <i class="fa-solid fa-cloud-arrow-down"></i>
             <span data-i18n="Install extension">Install extension</span>
         </div>
