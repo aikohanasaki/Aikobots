@@ -1,9 +1,5 @@
 /.vscode/
 !.vscode/extensions.json
-/data
-!/data/_system/hidden-lorebooks/
-!/data/_system/hidden-lorebooks/hidden-lorebook-bindings.json
-!/data/_system/hidden-lorebooks/hidden-lorebook-templates.json
 /default/scaffold
 /default/content/
 /docker/config
