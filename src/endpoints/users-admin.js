@@ -35,6 +35,7 @@ router.post('/get', requireAdminMiddleware, async (_request, response) => {
                         admin: user.admin,
                         enabled: user.enabled,
                         created: user.created,
+                        lastActivityAt: user.lastActivityAt,
                         password: !!user.password,
                     }),
                 );

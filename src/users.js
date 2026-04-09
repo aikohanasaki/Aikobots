@@ -49,6 +49,7 @@ const STORAGE_KEYS = {
  * @property {string} handle - The user's short handle. Used for directories and other references
  * @property {string} name - The user's name. Displayed in the UI
  * @property {number} created - The timestamp when the user was created
+ * @property {number} [lastActivityAt] - The timestamp when the user last opened a chat in the app
  * @property {string} password - Scrypt hash of the user's password
  * @property {string} salt - Salt used for hashing the password
  * @property {boolean} enabled - Whether the user is enabled
@@ -64,6 +65,7 @@ const STORAGE_KEYS = {
  * @property {boolean} password - Whether the user is password protected
  * @property {boolean} [enabled] - Whether the user is enabled
  * @property {number} [created] - The timestamp when the user was created
+ * @property {number} [lastActivityAt] - The timestamp when the user last opened a chat in the app
  */
 
 /**
@@ -539,6 +541,29 @@ export async function getAllUserHandles() {
     const keys = await storage.keys(x => x.key.startsWith(KEY_PREFIX));
     const handles = keys.map(x => x.replace(KEY_PREFIX, ''));
     return handles;
+}
+
+/**
+ * Updates the last activity timestamp for a user.
+ * @param {string} handle User handle
+ * @param {number} [timestamp] Activity timestamp
+ * @returns {Promise<boolean>} Whether the user was updated
+ */
+export async function touchUserActivity(handle, timestamp = Date.now()) {
+    if (!handle) {
+        return false;
+    }
+
+    /** @type {User} */
+    const user = await storage.getItem(toKey(handle));
+
+    if (!user) {
+        return false;
+    }
+
+    user.lastActivityAt = timestamp;
+    await storage.setItem(toKey(handle), user);
+    return true;
 }
 
 /**
