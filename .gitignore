@@ -1,7 +1,5 @@
 /.vscode/
 !.vscode/extensions.json
-/default/scaffold
-/default/content/
 /docker/config
 /docker/user
 /docker/extensions

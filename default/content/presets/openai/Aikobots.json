@@ -1,0 +1,250 @@
+{
+    "temperature": 1,
+    "frequency_penalty": 0.3,
+    "presence_penalty": 0.1,
+    "top_p": 0.98,
+    "top_k": 0,
+    "top_a": 0,
+    "min_p": 0.05,
+    "repetition_penalty": 1.05,
+    "openai_max_context": 296600,
+    "openai_max_tokens": 5000,
+    "wrap_in_quotes": false,
+    "names_behavior": 0,
+    "send_if_empty": "",
+    "impersonation_prompt": "[Write your next reply from the point of view of {{user}}, using the chat history so far as a guideline for the writing style of {{user}}. Don't write as {{char}} or system. Don't describe actions of {{char}}.]",
+    "new_chat_prompt": "",
+    "new_group_chat_prompt": "[Start a new group chat. Group members: {{group}}]",
+    "new_example_chat_prompt": "[Example Chat]",
+    "continue_nudge_prompt": "[Continue your last message as {{char}} without repeating its original content. You can omit the statbox this time.]",
+    "bias_preset_selected": "Default (none)",
+    "max_context_unlocked": false,
+    "wi_format": "{0}",
+    "scenario_format": "{{scenario}}",
+    "personality_format": "{{personality}}",
+    "group_nudge_prompt": "[It's {{char}}'s turn. Write the next reply only as {{char}}.]",
+    "stream_openai": true,
+    "prompts": [
+        {
+            "name": "System Prompt",
+            "system_prompt": true,
+            "role": "system",
+            "content": "{{outlet::OverrideAll}}\n\n{{outlet::OOCPrimacy}}\n\n{{outlet::RoleplayPrinciples}}\n\n{{outlet::NarrativeBoundaries}}\n\n{{outlet::AntiRepetition}}\n\n{{outlet::StoryTelling}}\n\n{{outlet::Initiative}}",
+            "identifier": "main",
+            "injection_position": 0,
+            "injection_depth": 4,
+            "forbid_overrides": false,
+            "injection_order": 100,
+            "injection_trigger": []
+        },
+        {
+            "name": "User Prompt",
+            "system_prompt": true,
+            "role": "system",
+            "content": "{{outlet::ENDING}}\n\n{{outlet::GeminiEND}}",
+            "identifier": "nsfw",
+            "injection_position": 0,
+            "injection_depth": 4,
+            "forbid_overrides": false,
+            "injection_order": 100,
+            "injection_trigger": []
+        },
+        {
+            "identifier": "dialogueExamples",
+            "name": "Chat Examples",
+            "system_prompt": true,
+            "marker": true
+        },
+        {
+            "name": "System Note",
+            "system_prompt": true,
+            "role": "system",
+            "content": "{{outlet::WritingStyle}}\n\n{{outlet::ProseStyle}}\n\n{{outlet::ProseModifiers}}\n\n{{outlet::Jailbreak}}\n",
+            "identifier": "jailbreak",
+            "injection_position": 0,
+            "injection_depth": 4,
+            "forbid_overrides": false,
+            "injection_order": 100,
+            "injection_trigger": []
+        },
+        {
+            "identifier": "chatHistory",
+            "name": "Chat History",
+            "system_prompt": true,
+            "marker": true
+        },
+        {
+            "identifier": "worldInfoAfter",
+            "name": "World Info (after)",
+            "system_prompt": true,
+            "marker": true
+        },
+        {
+            "identifier": "worldInfoBefore",
+            "name": "World Info (before)",
+            "system_prompt": true,
+            "marker": true
+        },
+        {
+            "identifier": "enhanceDefinitions",
+            "role": "system",
+            "name": "Images in Context",
+            "content": "Images that are found in context and that are not {{user}}'s last message have already been described and are only there for informational purposes. They must not be described a second time unless Human or {{user}} specifically prompts you to do so. ",
+            "system_prompt": true,
+            "marker": false,
+            "injection_position": 0,
+            "injection_depth": 4,
+            "forbid_overrides": false,
+            "injection_order": 100
+        },
+        {
+            "identifier": "charDescription",
+            "name": "Char Description",
+            "system_prompt": true,
+            "marker": true
+        },
+        {
+            "identifier": "charPersonality",
+            "name": "Char Personality",
+            "system_prompt": true,
+            "marker": true
+        },
+        {
+            "identifier": "scenario",
+            "name": "Scenario",
+            "system_prompt": true,
+            "marker": true
+        },
+        {
+            "identifier": "personaDescription",
+            "name": "Persona Description",
+            "system_prompt": true,
+            "marker": true
+        }
+    ],
+    "prompt_order": [
+        {
+            "character_id": 100000,
+            "order": [
+                {
+                    "identifier": "main",
+                    "enabled": true
+                },
+                {
+                    "identifier": "worldInfoBefore",
+                    "enabled": true
+                },
+                {
+                    "identifier": "charDescription",
+                    "enabled": true
+                },
+                {
+                    "identifier": "charPersonality",
+                    "enabled": true
+                },
+                {
+                    "identifier": "scenario",
+                    "enabled": true
+                },
+                {
+                    "identifier": "enhanceDefinitions",
+                    "enabled": false
+                },
+                {
+                    "identifier": "nsfw",
+                    "enabled": true
+                },
+                {
+                    "identifier": "worldInfoAfter",
+                    "enabled": true
+                },
+                {
+                    "identifier": "dialogueExamples",
+                    "enabled": true
+                },
+                {
+                    "identifier": "chatHistory",
+                    "enabled": true
+                },
+                {
+                    "identifier": "jailbreak",
+                    "enabled": true
+                }
+            ]
+        },
+        {
+            "character_id": 100001,
+            "order": [
+                {
+                    "identifier": "main",
+                    "enabled": true
+                },
+                {
+                    "identifier": "jailbreak",
+                    "enabled": true
+                },
+                {
+                    "identifier": "worldInfoBefore",
+                    "enabled": true
+                },
+                {
+                    "identifier": "personaDescription",
+                    "enabled": true
+                },
+                {
+                    "identifier": "charDescription",
+                    "enabled": true
+                },
+                {
+                    "identifier": "charPersonality",
+                    "enabled": true
+                },
+                {
+                    "identifier": "scenario",
+                    "enabled": true
+                },
+                {
+                    "identifier": "worldInfoAfter",
+                    "enabled": true
+                },
+                {
+                    "identifier": "dialogueExamples",
+                    "enabled": true
+                },
+                {
+                    "identifier": "chatHistory",
+                    "enabled": true
+                },
+                {
+                    "identifier": "enhanceDefinitions",
+                    "enabled": false
+                },
+                {
+                    "identifier": "nsfw",
+                    "enabled": true
+                }
+            ]
+        }
+    ],
+    "assistant_prefill": "",
+    "assistant_impersonation": "",
+    "claude_use_sysprompt": false,
+    "use_makersuite_sysprompt": true,
+    "squash_system_messages": false,
+    "image_inlining": false,
+    "inline_image_quality": "auto",
+    "video_inlining": false,
+    "audio_inlining": false,
+    "continue_prefill": false,
+    "continue_postfix": " ",
+    "function_calling": true,
+    "show_thoughts": false,
+    "reasoning_effort": "auto",
+    "enable_web_search": false,
+    "request_images": false,
+    "seed": -1,
+    "n": 1,
+    "extensions": {
+        "regex_scripts": []
+    }
+}
