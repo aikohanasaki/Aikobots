@@ -11,6 +11,7 @@
 /public/error/
 /node_modules/
 /plugins/
+/stmb-reference/
 *.code-workspace
 *.jsonl
 <<<<<<< HEAD
