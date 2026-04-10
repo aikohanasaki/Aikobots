@@ -97,6 +97,15 @@ async function getUsers() {
 }
 
 /**
+ * Formats an optional admin-visible timestamp.
+ * @param {number} value Timestamp in milliseconds
+ * @returns {string} Formatted timestamp
+ */
+function formatAdminTimestamp(value) {
+    return Number.isFinite(value) ? new Date(value).toLocaleString() : 'Never';
+}
+
+/**
  * Enable a user account.
  * @param {string} handle User handle
  * @param {function} callback Success callback
@@ -790,6 +799,7 @@ async function openAdminPanel() {
             userBlock.find('.hasPassword').toggle(user.password);
             userBlock.find('.noPassword').toggle(!user.password);
             userBlock.find('.userCreated').text(new Date(user.created).toLocaleString());
+            userBlock.find('.userLastActivity').text(formatAdminTimestamp(user.lastActivityAt));
             userBlock.find('.userEnableButton').toggle(!user.enabled).on('click', () => enableUser(user.handle, renderUsers));
             userBlock.find('.userDisableButton').toggle(user.enabled).on('click', () => disableUser(user.handle, renderUsers));
             userBlock.find('.userPromoteButton').toggle(!user.admin).on('click', () => promoteUser(user.handle, renderUsers));

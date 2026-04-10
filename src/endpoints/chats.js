@@ -9,6 +9,7 @@ import { sync as writeFileAtomicSync } from 'write-file-atomic';
 import _ from 'lodash';
 
 import validateAvatarUrlMiddleware from '../middleware/validateFileName.js';
+import { touchUserActivity } from '../users.js';
 import {
     getConfigValue,
     humanizedISO8601DateTime,
@@ -462,7 +463,7 @@ router.post('/save', validateAvatarUrlMiddleware, async function (request, respo
     }
 });
 
-router.post('/get', validateAvatarUrlMiddleware, function (request, response) {
+router.post('/get', validateAvatarUrlMiddleware, async function (request, response) {
     try {
         const dirName = String(request.body.avatar_url).replace('.png', '');
         const directoryPath = path.join(request.user.directories.chats, dirName);
@@ -491,6 +492,11 @@ router.post('/get', validateAvatarUrlMiddleware, function (request, response) {
 
         // Iterate through the array of strings and parse each line as JSON
         const jsonData = lines.map((l) => { try { return JSON.parse(l); } catch (_) { return; } }).filter(x => x);
+        try {
+            await touchUserActivity(request.user.profile.handle);
+        } catch (error) {
+            console.error('Failed to update user last activity for direct chat read:', error);
+        }
         return response.send(jsonData);
     } catch (error) {
         console.error(error);
@@ -738,7 +744,7 @@ router.post('/import', validateAvatarUrlMiddleware, function (request, response)
     }
 });
 
-router.post('/group/get', (request, response) => {
+router.post('/group/get', async (request, response) => {
     if (!request.body || !request.body.id) {
         return response.sendStatus(400);
     }
@@ -752,6 +758,11 @@ router.post('/group/get', (request, response) => {
 
         // Iterate through the array of strings and parse each line as JSON
         const jsonData = lines.map(line => tryParse(line)).filter(x => x);
+        try {
+            await touchUserActivity(request.user.profile.handle);
+        } catch (error) {
+            console.error('Failed to update user last activity for group chat read:', error);
+        }
         return response.send(jsonData);
     } else {
         return response.send([]);
