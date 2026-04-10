@@ -557,7 +557,7 @@ function bindHiddenTemplatesPanelEvents(panel) {
             ...panel.source.templates[panel.currentTemplate],
             add: getSelectedValues(panel.templateAdd),
         };
-        renderPanel(panel);
+        renderCompiledPreview(panel);
     });
 
     panel.templateRemove.on('change', () => {
@@ -569,7 +569,7 @@ function bindHiddenTemplatesPanelEvents(panel) {
             ...panel.source.templates[panel.currentTemplate],
             remove: getSelectedValues(panel.templateRemove),
         };
-        renderPanel(panel);
+        renderCompiledPreview(panel);
     });
 
     panel.characterTemplates.on('change', () => {
@@ -580,7 +580,7 @@ function bindHiddenTemplatesPanelEvents(panel) {
         const entry = ensureCharacterEntry(panel, panel.currentCharacter);
         entry.templates = getSelectedValues(panel.characterTemplates);
         upsertCharacterEntry(panel, panel.currentCharacter, entry);
-        renderPanel(panel);
+        renderCompiledPreview(panel);
     });
 
     panel.characterAdd.on('change', () => {
@@ -591,7 +591,7 @@ function bindHiddenTemplatesPanelEvents(panel) {
         const entry = ensureCharacterEntry(panel, panel.currentCharacter);
         entry.add = getSelectedValues(panel.characterAdd);
         upsertCharacterEntry(panel, panel.currentCharacter, entry);
-        renderPanel(panel);
+        renderCompiledPreview(panel);
     });
 
     panel.characterRemove.on('change', () => {
@@ -602,7 +602,7 @@ function bindHiddenTemplatesPanelEvents(panel) {
         const entry = ensureCharacterEntry(panel, panel.currentCharacter);
         entry.remove = getSelectedValues(panel.characterRemove);
         upsertCharacterEntry(panel, panel.currentCharacter, entry);
-        renderPanel(panel);
+        renderCompiledPreview(panel);
     });
 
     panel.templateCreate.on('click', async () => {
