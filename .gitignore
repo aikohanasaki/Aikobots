@@ -59,3 +59,4 @@ public/error/
 yarn.lock
 *.code-workspace
 test-results/
+STMB_*.md
