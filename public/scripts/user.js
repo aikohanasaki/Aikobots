@@ -614,7 +614,7 @@ async function openSubmissionReviewPopup(submission, callback) {
     const users = (await getUsers() || []).filter(user => user.enabled);
     const ownerHandle = String(submission.ownerHandle || getCurrentUserHandle()).trim();
     const characterKey = String(submission.sharedCharacterKey || '').trim().replace(/\.png$/i, '');
-    let publishMode = submission.publishMode || 'selected';
+    let publishMode = submission.publishMode || 'global';
     let reviewNote = String(submission.reviewNote || '');
     let publishedFilename = String((submission.publishedFilename || submission.characterName || submission.submittedFilename || '').replace(/\.png$/i, ''));
     let applyBlacklist = false;
