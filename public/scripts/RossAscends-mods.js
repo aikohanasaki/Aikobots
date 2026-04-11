@@ -306,22 +306,216 @@ async function RA_autoloadchat() {
     }
 }
 
+const refreshFavoritesCarouselLayout = debounce(() => {
+    const shell = ensureFavoritesCarouselShell();
+    if (!shell) {
+        return;
+    }
+
+    makeInfiniteScroll(shell.carousel);
+    setupFavoritesCarousel();
+}, debounce_timeout.short);
+
+function ensureFavoritesCarouselShell() {
+    const hotSwapWrapper = document.getElementById('HotSwapWrapper');
+    if (!hotSwapWrapper) {
+        return null;
+    }
+
+    let wrapper = document.getElementById('favorites_carousel_wrapper');
+    if (!wrapper) {
+        const existingHotswap = hotSwapWrapper.querySelector('.hotswap');
+        const noFavsMessage = existingHotswap?.getAttribute('no_favs') || 'Favorite characters to add them to HotSwaps';
+
+        hotSwapWrapper.replaceChildren();
+
+        wrapper = document.createElement('div');
+        wrapper.id = 'favorites_carousel_wrapper';
+        wrapper.className = 'alignitemscenter flex-container margin0auto wide100p';
+
+        const leftArrow = document.createElement('div');
+        leftArrow.id = 'favorites_carousel_left';
+        leftArrow.className = 'carousel-arrow';
+        leftArrow.title = 'Scroll left';
+        leftArrow.innerHTML = '<i class="fa-solid fa-chevron-left"></i>';
+
+        const carousel = document.createElement('div');
+        carousel.id = 'favorites_carousel';
+        carousel.className = 'hotswap favorites_carousel avatars_inline scroll-reset-container expander';
+        carousel.setAttribute('data-i18n', '[no_favs]Favorite characters to add them to HotSwaps');
+        carousel.setAttribute('no_favs', noFavsMessage);
+
+        const rightArrow = document.createElement('div');
+        rightArrow.id = 'favorites_carousel_right';
+        rightArrow.className = 'carousel-arrow';
+        rightArrow.title = 'Scroll right';
+        rightArrow.innerHTML = '<i class="fa-solid fa-chevron-right"></i>';
+
+        wrapper.append(leftArrow, carousel, rightArrow);
+        hotSwapWrapper.append(wrapper);
+    }
+
+    return {
+        wrapper: $('#favorites_carousel_wrapper'),
+        carousel: $('#favorites_carousel'),
+        left: $('#favorites_carousel_left'),
+        right: $('#favorites_carousel_right'),
+    };
+}
+
+function resetFavoritesCarousel(shell) {
+    shell.carousel.children('.inf_clone').remove();
+    shell.carousel.removeData('favoritesCarouselInfinite');
+    shell.carousel.off('scroll.infinite scroll.favCarousel wheel.favCarousel');
+    shell.carousel.find('img').off('load.favCarousel load.favCarouselLayout');
+    shell.carousel.removeClass('desktop mobile');
+    shell.carousel.scrollLeft(0);
+    shell.wrapper.removeClass('with-arrows');
+    shell.left.off('.favCarousel').hide().removeClass('disabled');
+    shell.right.off('.favCarousel').hide().removeClass('disabled');
+}
+
+function makeInfiniteScroll($carousel) {
+    if ($carousel.length === 0) {
+        return false;
+    }
+
+    $carousel.children('.inf_clone').remove();
+    $carousel.removeData('favoritesCarouselInfinite');
+    $carousel.off('scroll.infinite');
+
+    const $items = $carousel.children().not('.inf_clone');
+    if ($items.length === 0) {
+        $carousel.scrollLeft(0);
+        return false;
+    }
+
+    let setWidth = 0;
+    $items.each(function () {
+        setWidth += $(this).outerWidth(true);
+    });
+
+    if (setWidth <= $carousel[0].clientWidth + 1) {
+        $carousel.scrollLeft(0);
+        return false;
+    }
+
+    const prependClones = $items.clone().addClass('inf_clone');
+    const appendClones = $items.clone().addClass('inf_clone');
+    $carousel.prepend(prependClones);
+    $carousel.append(appendClones);
+    $carousel.data('favoritesCarouselInfinite', true);
+    $carousel.scrollLeft(setWidth);
+
+    let ticking = false;
+    function onScroll() {
+        if (ticking) {
+            return;
+        }
+
+        ticking = true;
+        window.requestAnimationFrame(() => {
+            const left = $carousel[0].scrollLeft;
+            if (left < setWidth * 0.5) {
+                $carousel[0].scrollLeft = left + setWidth;
+            } else if (left > setWidth * 1.5) {
+                $carousel[0].scrollLeft = left - setWidth;
+            }
+            ticking = false;
+        });
+    }
+
+    $carousel.on('scroll.infinite', onScroll);
+    return true;
+}
+
+function setupFavoritesCarousel() {
+    const shell = ensureFavoritesCarouselShell();
+    if (!shell) {
+        return;
+    }
+
+    const mobileEnv = isMobile();
+    shell.carousel.toggleClass('mobile', mobileEnv).toggleClass('desktop', !mobileEnv);
+
+    const firstItem = shell.carousel.children('.avatar').not('.inf_clone').first();
+    const scrollStep = firstItem.length ? firstItem.outerWidth(true) : 100;
+
+    function updateArrowVisibility() {
+        const infinite = Boolean(shell.carousel.data('favoritesCarouselInfinite'));
+        const overflow = infinite || shell.carousel[0].scrollWidth > shell.carousel[0].clientWidth + 1;
+        const showArrows = overflow && !mobileEnv;
+
+        shell.left.css('display', showArrows ? 'block' : 'none');
+        shell.right.css('display', showArrows ? 'block' : 'none');
+        shell.wrapper.toggleClass('with-arrows', showArrows);
+
+        if (!showArrows) {
+            shell.left.removeClass('disabled');
+            shell.right.removeClass('disabled');
+            return;
+        }
+
+        if (infinite) {
+            shell.left.removeClass('disabled');
+            shell.right.removeClass('disabled');
+            return;
+        }
+
+        const maxScroll = shell.carousel[0].scrollWidth - shell.carousel[0].clientWidth;
+        shell.left.toggleClass('disabled', shell.carousel.scrollLeft() <= 0);
+        shell.right.toggleClass('disabled', shell.carousel.scrollLeft() >= maxScroll - 1);
+    }
+
+    shell.left.off('.favCarousel').on('click.favCarousel', () => {
+        shell.carousel.stop(true, false).animate({ scrollLeft: shell.carousel.scrollLeft() - scrollStep }, 200);
+    });
+    shell.right.off('.favCarousel').on('click.favCarousel', () => {
+        shell.carousel.stop(true, false).animate({ scrollLeft: shell.carousel.scrollLeft() + scrollStep }, 200);
+    });
+
+    $(window).off('resize.favCarousel').on('resize.favCarousel', refreshFavoritesCarouselLayout);
+    shell.carousel.off('scroll.favCarousel').on('scroll.favCarousel', updateArrowVisibility);
+    shell.carousel.off('wheel.favCarousel');
+
+    if (!mobileEnv) {
+        shell.carousel.on('wheel.favCarousel', function (e) {
+            e.preventDefault();
+            const originalEvent = e.originalEvent;
+            const delta = originalEvent.deltaX !== 0 ? originalEvent.deltaX : originalEvent.deltaY;
+            this.scrollLeft += delta;
+        });
+    }
+
+    shell.carousel.find('img').off('load.favCarousel').on('load.favCarousel', updateArrowVisibility);
+    updateArrowVisibility();
+}
+
 export async function favsToHotswap() {
+    const shell = ensureFavoritesCarouselShell();
+    if (!shell) {
+        return;
+    }
+
     const entities = getEntitiesList({ doFilter: false });
-    const container = $('#right-nav-panel .hotswap');
+    const container = shell.carousel;
 
     // Hard limit is required because even if all hotswaps don't fit the screen, their images would still be loaded
-    // 25 is roughly calculated as the maximum number of favs that can fit an ultrawide monitor with the default theme
-    const FAVS_LIMIT = 25;
+    const FAVS_LIMIT = 100;
     const favs = entities.filter(x => x.item.fav || x.item.fav == 'true').slice(0, FAVS_LIMIT);
 
-    //helpful instruction message if no characters are favorited
-    if (favs.length == 0) {
+    resetFavoritesCarousel(shell);
+
+    if (favs.length === 0) {
         container.html(`<small><span><i class="fa-solid fa-star"></i>&nbsp;${DOMPurify.sanitize(container.attr('no_favs'))}</span></small>`);
         return;
     }
 
     buildAvatarList(container, favs, { interactable: true, highlightFavs: false });
+    makeInfiniteScroll(container);
+    setupFavoritesCarousel();
+    container.find('img').off('load.favCarouselLayout').on('load.favCarouselLayout', refreshFavoritesCarouselLayout);
+    window.requestAnimationFrame(() => refreshFavoritesCarouselLayout());
 }
 
 //changes input bar and send button display depending on connection status
