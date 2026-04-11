@@ -1477,7 +1477,6 @@ function initTopChatUi() {
     if (!topChatBarElement || !topChatBarChatNameSelect) {
         return;
     }
-
     ensureTopChatSidebar();
 
     bindTopChatButton(topChatButtons.toggleSidebar, async () => {

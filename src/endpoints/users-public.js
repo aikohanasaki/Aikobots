@@ -30,7 +30,8 @@ router.post('/list', async (_request, response) => {
         }
 
         /** @type {import('../users.js').User[]} */
-        const users = await storage.values(x => x.key.startsWith(KEY_PREFIX));
+        const users = (await storage.values(x => typeof x?.key === 'string' && x.key.startsWith(KEY_PREFIX)))
+            .filter(user => user && typeof user.handle === 'string');
 
         /** @type {Promise<import('../users.js').UserViewModel>[]} */
         const viewModelPromises = users

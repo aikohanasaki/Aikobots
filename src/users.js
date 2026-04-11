@@ -35,6 +35,8 @@ const ANON_CSRF_SECRET = crypto.randomBytes(64).toString('base64');
 const DIRECTORIES_CACHE = new Map();
 const PUBLIC_USER_AVATAR = '/img/default-user.png';
 const COOKIE_SECRET_PATH = 'cookie-secret.txt';
+const STORAGE_DIRECTORY = '_storage';
+const STORAGE_CORRUPT_DIRECTORY = '_storage-corrupt';
 
 const STORAGE_KEYS = {
     csrfSecret: 'csrfSecret',
@@ -43,6 +45,78 @@ const STORAGE_KEYS = {
      */
     cookieSecret: 'cookieSecret',
 };
+
+/**
+ * Checks whether a parsed node-persist datum has the expected shape.
+ * @param {unknown} datum Parsed storage datum
+ * @returns {datum is { key: string, value?: unknown, ttl?: number | false }}
+ */
+function isValidStorageDatum(datum) {
+    return !!datum && typeof datum === 'object' && typeof datum.key === 'string';
+}
+
+/**
+ * Checks whether a value resembles a stored user record.
+ * @param {unknown} value Parsed user value
+ * @returns {value is User}
+ */
+function isStoredUser(value) {
+    return !!value && typeof value === 'object' && typeof value.handle === 'string';
+}
+
+/**
+ * Moves malformed node-persist entries out of the active storage directory.
+ * @param {string} storageDir The node-persist storage directory
+ * @returns {Promise<void>}
+ */
+async function quarantineInvalidStorageFiles(storageDir) {
+    if (!fs.existsSync(storageDir)) {
+        return;
+    }
+
+    const entries = await fs.promises.readdir(storageDir, { withFileTypes: true });
+    /** @type {{ name: string, reason: string }[]} */
+    const quarantinedEntries = [];
+    let quarantineDir;
+
+    for (const entry of entries) {
+        if (entry.name.startsWith('.')) {
+            continue;
+        }
+
+        const entryPath = path.join(storageDir, entry.name);
+
+        try {
+            if (!entry.isFile()) {
+                throw new Error('unexpected non-file entry');
+            }
+
+            const text = await fs.promises.readFile(entryPath, 'utf8');
+            const parsed = JSON.parse(text);
+
+            if (!isValidStorageDatum(parsed)) {
+                throw new Error('invalid storage datum');
+            }
+        } catch (error) {
+            quarantineDir ??= path.join(
+                path.dirname(storageDir),
+                STORAGE_CORRUPT_DIRECTORY,
+                new Date().toISOString().replaceAll(':', '-'),
+            );
+            await fs.promises.mkdir(quarantineDir, { recursive: true });
+            await fs.promises.rename(entryPath, path.join(quarantineDir, entry.name));
+            quarantinedEntries.push({
+                name: entry.name,
+                reason: error instanceof Error ? error.message : String(error),
+            });
+        }
+    }
+
+    if (quarantinedEntries.length > 0) {
+        console.warn(color.yellow(`Quarantined ${quarantinedEntries.length} invalid storage entr${quarantinedEntries.length === 1 ? 'y' : 'ies'} from ${storageDir}`));
+        quarantinedEntries.forEach(entry => console.warn(`- ${entry.name}: ${entry.reason}`));
+    }
+}
 
 /**
  * @typedef {Object} User
@@ -423,9 +497,12 @@ export function toAvatarKey(handle) {
  */
 export async function initUserStorage(dataRoot) {
     console.log('Using data root:', color.green(dataRoot));
+    const storageDir = path.join(dataRoot, STORAGE_DIRECTORY);
+    await quarantineInvalidStorageFiles(storageDir);
     await storage.init({
-        dir: path.join(dataRoot, '_storage'),
+        dir: storageDir,
         ttl: false, // Never expire
+        forgiveParseErrors: true,
         expiredInterval: 0,
     });
 
@@ -538,7 +615,7 @@ export function getCsrfSecret(request) {
  * @returns {Promise<string[]>} - The list of user handles
  */
 export async function getAllUserHandles() {
-    const keys = await storage.keys(x => x.key.startsWith(KEY_PREFIX));
+    const keys = await storage.keys(x => typeof x?.key === 'string' && x.key.startsWith(KEY_PREFIX));
     const handles = keys.map(x => x.replace(KEY_PREFIX, ''));
     return handles;
 }
@@ -1025,7 +1102,7 @@ async function getAllUsers() {
      * @type {User[]}
      */
     const users = await storage.values();
-    return users;
+    return users.filter(isStoredUser);
 }
 
 /**
