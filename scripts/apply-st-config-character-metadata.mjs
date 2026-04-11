@@ -45,9 +45,10 @@ import {
     readHiddenLorebookTemplates,
     writeHiddenLorebookTemplates,
 } from '../src/hidden-lorebook-templates.js';
+import { serverDirectory } from '../src/server-directory.js';
 import { buildHiddenLorebookTemplateSource } from './generate-hidden-lorebook-template-source.mjs';
 
-function getConfiguredDefaultScaffoldRoot(configPath = path.join(process.cwd(), 'config.yaml')) {
+function getConfiguredDefaultScaffoldRoot(configPath = path.join(serverDirectory, 'config.yaml')) {
     try {
         if (!fs.existsSync(configPath)) {
             return './default/scaffold';
