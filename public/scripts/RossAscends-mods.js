@@ -446,8 +446,8 @@ function setupFavoritesCarousel() {
         const overflow = infinite || shell.carousel[0].scrollWidth > shell.carousel[0].clientWidth + 1;
         const showArrows = overflow && !mobileEnv;
 
-        shell.left.css('display', showArrows ? 'block' : 'none');
-        shell.right.css('display', showArrows ? 'block' : 'none');
+        shell.left.css('display', showArrows ? 'flex' : 'none');
+        shell.right.css('display', showArrows ? 'flex' : 'none');
         shell.wrapper.toggleClass('with-arrows', showArrows);
 
         if (!showArrows) {
