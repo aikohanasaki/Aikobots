@@ -35,7 +35,7 @@ import path from 'node:path';
 import process from 'node:process';
 import { fileURLToPath } from 'node:url';
 
-import writeFileAtomic from 'write-file-atomic';
+import writeFileAtomic, { sync as writeFileAtomicSync } from 'write-file-atomic';
 
 import { parse, write } from '../src/character-card-parser.js';
 import {
@@ -44,6 +44,7 @@ import {
     readHiddenLorebookTemplates,
     writeHiddenLorebookTemplates,
 } from '../src/hidden-lorebook-templates.js';
+import { serverDirectory } from '../src/server-directory.js';
 import { buildHiddenLorebookTemplateSource } from './generate-hidden-lorebook-template-source.mjs';
 
 function parseArgs(argv) {
@@ -51,6 +52,7 @@ function parseArgs(argv) {
         input: undefined,
         charactersDir: undefined,
         dataRoot: undefined,
+        scaffoldRoot: path.join(serverDirectory, 'default', 'scaffold'),
         defaultOwner: 'default-user',
         dryRun: false,
         help: false,
@@ -67,6 +69,9 @@ function parseArgs(argv) {
                 break;
             case '--data-root':
                 options.dataRoot = argv[++index] ?? undefined;
+                break;
+            case '--scaffold-root':
+                options.scaffoldRoot = argv[++index] ?? undefined;
                 break;
             case '--default-owner':
                 options.defaultOwner = argv[++index] ?? options.defaultOwner;
@@ -90,6 +95,7 @@ function printUsage() {
     console.log('Usage:');
     console.log('  node .\\scripts\\apply-st-config-character-metadata.mjs --input C:\\path\\to\\st_config.py --characters-dir C:\\path\\to\\characters');
     console.log('  node .\\scripts\\apply-st-config-character-metadata.mjs --input C:\\path\\to\\st_config.py --characters-dir C:\\path\\to\\characters --data-root C:\\path\\to\\data');
+    console.log('  node .\\scripts\\apply-st-config-character-metadata.mjs --input C:\\path\\to\\st_config.py --characters-dir C:\\path\\to\\characters --scaffold-root .\\default\\scaffold');
     console.log('  node .\\scripts\\apply-st-config-character-metadata.mjs --input C:\\path\\to\\st_config.py --characters-dir C:\\path\\to\\characters --data-root C:\\path\\to\\data --dry-run');
 }
 
@@ -113,6 +119,36 @@ function assertFileExists(filePath, label) {
 
 function compareStrings(a, b) {
     return String(a).localeCompare(String(b));
+}
+
+function readContentIndex(indexPath) {
+    if (!fs.existsSync(indexPath)) {
+        return [];
+    }
+
+    try {
+        const parsed = JSON.parse(fs.readFileSync(indexPath, 'utf8'));
+        return Array.isArray(parsed) ? parsed : [];
+    } catch {
+        return [];
+    }
+}
+
+function upsertScaffoldCharacterIndex(scaffoldRoot, fileName) {
+    const indexPath = path.join(scaffoldRoot, 'index.json');
+    const relativeFilename = path.join('characters', fileName).replaceAll('\\', '/');
+    const index = readContentIndex(indexPath);
+    const existingIndex = index.findIndex(item => item?.filename === relativeFilename);
+    const nextEntry = { filename: relativeFilename, type: 'character' };
+
+    if (existingIndex === -1) {
+        index.push(nextEntry);
+    } else {
+        index[existingIndex] = nextEntry;
+    }
+
+    fs.mkdirSync(path.dirname(indexPath), { recursive: true });
+    writeFileAtomicSync(indexPath, JSON.stringify(index, null, 4), 'utf8');
 }
 
 function collectPngFiles(rootDir) {
@@ -333,17 +369,20 @@ export async function runStConfigCharacterMetadataMigration({
     inputPath,
     charactersDir,
     dataRoot,
+    scaffoldRoot = path.join(serverDirectory, 'default', 'scaffold'),
     defaultOwner = 'default-user',
     dryRun = false,
 } = {}) {
     const resolvedInputPath = assertFileExists(inputPath, 'Input file');
     const resolvedCharactersDir = assertDirectoryExists(charactersDir, 'Characters directory');
     const resolvedDataRoot = dataRoot ? assertDirectoryExists(dataRoot, 'Data root') : '';
+    const resolvedScaffoldRoot = scaffoldRoot ? path.resolve(String(scaffoldRoot)) : '';
     const stConfigText = await fs.promises.readFile(resolvedInputPath, 'utf8');
     const templateSource = buildHiddenLorebookTemplateSource(stConfigText);
     const discoveredFiles = collectPngFiles(resolvedCharactersDir);
     const plan = buildCharacterMetadataMigrationPlan(templateSource, discoveredFiles, { defaultOwner });
     const updated = [];
+    const scaffoldUpdated = [];
 
     if (plan.duplicateMatches.length > 0) {
         throw new Error(`Found duplicate PNG filenames for ${plan.duplicateMatches.length} character(s). Resolve duplicates before running this migration.`);
@@ -354,6 +393,13 @@ export async function runStConfigCharacterMetadataMigration({
             const { rawBuffer, card } = await readCharacterCardFile(assignment.filePath);
             applySingleOwnerPushedMetadata(card, assignment);
             await writeCharacterCardFile(rawBuffer, card, assignment.filePath);
+
+            if (resolvedScaffoldRoot) {
+                const scaffoldCharactersDir = path.join(resolvedScaffoldRoot, 'characters');
+                const scaffoldPath = path.join(scaffoldCharactersDir, assignment.fileName);
+                await writeCharacterCardFile(rawBuffer, card, scaffoldPath);
+                upsertScaffoldCharacterIndex(resolvedScaffoldRoot, assignment.fileName);
+            }
         }
 
         updated.push({
@@ -363,6 +409,13 @@ export async function runStConfigCharacterMetadataMigration({
             secureLorebooks: assignment.secureLorebooks,
             hiddenTemplates: assignment.hiddenTemplates,
         });
+
+        if (resolvedScaffoldRoot) {
+            scaffoldUpdated.push({
+                characterName: assignment.characterName,
+                filePath: path.join(resolvedScaffoldRoot, 'characters', assignment.fileName),
+            });
+        }
     }
 
     let hiddenTemplatePatch = null;
@@ -385,6 +438,7 @@ export async function runStConfigCharacterMetadataMigration({
             inputPath: resolvedInputPath,
             charactersDir: resolvedCharactersDir,
             dataRoot: resolvedDataRoot || null,
+            scaffoldRoot: resolvedScaffoldRoot || null,
             defaultOwner,
             dryRun: Boolean(dryRun),
         },
@@ -393,8 +447,10 @@ export async function runStConfigCharacterMetadataMigration({
             matchedCharacters: plan.matched.length,
             missingCharacters: plan.missing.length,
             updatedCharacters: updated.length,
+            scaffoldCharacters: scaffoldUpdated.length,
         },
         updated,
+        scaffoldUpdated,
         missing: plan.missing,
         hiddenTemplatePatch,
         hiddenTemplateSource,
@@ -419,6 +475,7 @@ async function main() {
         inputPath: options.input,
         charactersDir: options.charactersDir,
         dataRoot: options.dataRoot,
+        scaffoldRoot: options.scaffoldRoot,
         defaultOwner: options.defaultOwner,
         dryRun: options.dryRun,
     });
@@ -426,6 +483,7 @@ async function main() {
     console.log(`Scanned PNG files: ${result.counts.scannedPngFiles}`);
     console.log(`Matched characters: ${result.counts.matchedCharacters}`);
     console.log(`Updated characters: ${result.counts.updatedCharacters}`);
+    console.log(`Scaffold characters: ${result.counts.scaffoldCharacters}`);
     console.log(`Missing characters: ${result.counts.missingCharacters}`);
 
     if (result.options.dataRoot) {

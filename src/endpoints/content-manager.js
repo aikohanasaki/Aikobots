@@ -58,6 +58,20 @@ export const CONTENT_TYPES = {
     REASONING: 'reasoning',
 };
 
+function isScaffoldCharacterContentItem(contentItem) {
+    return contentItem?.type === CONTENT_TYPES.CHARACTER && contentItem?.folder === scaffoldDirectory;
+}
+
+function filesAreIdentical(leftPath, rightPath) {
+    try {
+        const left = fs.readFileSync(leftPath);
+        const right = fs.readFileSync(rightPath);
+        return left.equals(right);
+    } catch {
+        return false;
+    }
+}
+
 /**
  * Gets the default presets from the content directory.
  * @param {import('../users.js').UserDirectoryList} directories User directories
@@ -122,8 +136,10 @@ async function seedContentForUser(contentIndex, directories, forceCategories) {
     const contentLog = getContentLog(contentLogPath);
 
     for (const contentItem of contentIndex) {
+        const refreshScaffoldCharacter = isScaffoldCharacterContentItem(contentItem);
+
         // If the content item is already in the log, skip it
-        if (contentLog.includes(contentItem.filename) && !forceCategories?.includes(contentItem.type)) {
+        if (contentLog.includes(contentItem.filename) && !forceCategories?.includes(contentItem.type) && !refreshScaffoldCharacter) {
             continue;
         }
 
@@ -174,10 +190,24 @@ async function seedContentForUser(contentIndex, directories, forceCategories) {
             }
         }
 
-        contentLog.push(contentItem.filename);
+        if (!contentLog.includes(contentItem.filename)) {
+            contentLog.push(contentItem.filename);
+        }
 
         if (fs.existsSync(targetPath)) {
-            console.warn(`Content file ${contentItem.filename} already exists in ${contentTarget}`);
+            if (!refreshScaffoldCharacter) {
+                console.warn(`Content file ${contentItem.filename} already exists in ${contentTarget}`);
+                continue;
+            }
+
+            if (filesAreIdentical(contentPath, targetPath)) {
+                continue;
+            }
+
+            fs.cpSync(contentPath, targetPath, { recursive: true, force: true });
+            setPermissionsSync(targetPath);
+            console.info(`Scaffold character ${contentItem.filename} refreshed in ${contentTarget}`);
+            anyContentAdded = true;
             continue;
         }
 
