@@ -1185,6 +1185,42 @@ export function tryParseStreamingError(response, decoded, { quiet = false } = {}
     return data;
 }
 
+function getResponseErrorMessage(response, errorText, parsed = null) {
+    const statusText = response.statusText ? ` ${response.statusText}` : '';
+    const httpMessage = `HTTP ${response.status}${statusText}`;
+
+    if (parsed?.error?.message) {
+        return parsed.error.message;
+    }
+
+    if (parsed?.message) {
+        return parsed.message;
+    }
+
+    if (parsed?.detail?.error?.message) {
+        return parsed.detail.error.message;
+    }
+
+    const trimmed = typeof errorText === 'string' ? errorText.trim() : '';
+    if (!trimmed) {
+        return httpMessage;
+    }
+
+    const contentType = response.headers?.get('content-type') || '';
+    const looksLikeHtml =
+        /text\/html/i.test(contentType) ||
+        /^<!doctype html\b/i.test(trimmed) ||
+        /^<html\b/i.test(trimmed) ||
+        /<body\b/i.test(trimmed);
+
+    if (looksLikeHtml) {
+        return `Upstream request failed (${httpMessage})`;
+    }
+
+    const [firstLine] = trimmed.split(/\r?\n/, 1);
+    return firstLine || httpMessage;
+}
+
 /**
  * Checks if the response contains a quota error and displays a popup if it does.
  * @param data
@@ -2435,11 +2471,7 @@ async function sendOpenAIRequest(type, messages, signal, { jsonSchema = null } =
         if (!response.ok) {
             const errorText = await response.text();
             const parsed = tryParseStreamingError(response, errorText);
-            const fallbackMessage =
-                parsed?.error?.message ||
-                parsed?.message ||
-                errorText?.trim() ||
-                `Got response status ${response.status}`;
+            const fallbackMessage = getResponseErrorMessage(response, errorText, parsed);
             throw new Error(fallbackMessage);
         }
     } finally {
