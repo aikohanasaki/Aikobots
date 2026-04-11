@@ -1,4 +1,6 @@
 dataRoot: ./data
+defaultContentRoot: ./default/content
+defaultScaffoldRoot: ./default/scaffold
 listen: false
 listenAddress:
   ipv4: 0.0.0.0
