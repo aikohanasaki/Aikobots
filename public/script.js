@@ -8922,6 +8922,33 @@ function getFirstMessage() {
     return message;
 }
 
+/**
+ * Refreshes the first character message for an untouched solo chat.
+ * Used when chat rendering inputs change without modifying the character card itself.
+ * @returns {Promise<boolean>} Whether the first message was regenerated.
+ */
+export async function refreshPristineFirstMessage() {
+    const shouldRegenerateMessage =
+        !selected_group &&
+        !chat_metadata['tainted'] &&
+        (chat.length === 0 || (chat.length === 1 && !chat[0].is_user && !chat[0].is_system));
+
+    if (!shouldRegenerateMessage) {
+        return false;
+    }
+
+    const message = getFirstMessage();
+    chat.splice(0, chat.length, message);
+    const messageId = chat.length - 1;
+    await eventSource.emit(event_types.MESSAGE_RECEIVED, messageId, 'first_message');
+    await clearChat();
+    await printMessages();
+    await eventSource.emit(event_types.CHARACTER_MESSAGE_RENDERED, messageId, 'first_message');
+    await saveChatConditional();
+
+    return true;
+}
+
 export async function openCharacterChat(file_name) {
     await waitUntilCondition(() => !isChatSaving, debounce_timeout.extended, 10);
     await clearChat();
@@ -12342,22 +12369,8 @@ export async function createOrEditCharacter(e) {
             await eventSource.emit(event_types.CHARACTER_EDITED, { detail: { id: this_chid, character: characters[this_chid] } });
 
             // Recreate the chat if it hasn't been used at least once (i.e. with continue).
-            const message = getFirstMessage();
-            const shouldRegenerateMessage =
-                !isNewChat &&
-                message.mes &&
-                !selected_group &&
-                !chat_metadata['tainted'] &&
-                (chat.length === 0 || (chat.length === 1 && !chat[0].is_user && !chat[0].is_system));
-
-            if (shouldRegenerateMessage) {
-                chat.splice(0, chat.length, message);
-                const messageId = (chat.length - 1);
-                await eventSource.emit(event_types.MESSAGE_RECEIVED, messageId, 'first_message');
-                await clearChat();
-                await printMessages();
-                await eventSource.emit(event_types.CHARACTER_MESSAGE_RENDERED, messageId, 'first_message');
-                await saveChatConditional();
+            if (!isNewChat) {
+                await refreshPristineFirstMessage();
             }
 
             return true;

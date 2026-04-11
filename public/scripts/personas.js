@@ -4,11 +4,11 @@ import {
     characters,
     chat,
     chat_metadata,
-    createOrEditCharacter,
     default_user_avatar,
     eventSource,
     event_types,
     getCurrentChatId,
+    refreshPristineFirstMessage,
     getRequestHeaders,
     getThumbnailUrl,
     groupToEntity,
@@ -1758,7 +1758,7 @@ export async function retriggerFirstMessageOnEmptyChat() {
         await reloadCurrentChat();
     }
     if (!selected_group && Number(this_chid) >= 0 && chat.length === 1) {
-        await createOrEditCharacter();
+        await refreshPristineFirstMessage();
     }
 }
 
