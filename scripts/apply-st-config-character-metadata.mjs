@@ -36,6 +36,7 @@ import process from 'node:process';
 import { fileURLToPath } from 'node:url';
 
 import writeFileAtomic, { sync as writeFileAtomicSync } from 'write-file-atomic';
+import yaml from 'yaml';
 
 import { parse, write } from '../src/character-card-parser.js';
 import {
@@ -44,15 +45,29 @@ import {
     readHiddenLorebookTemplates,
     writeHiddenLorebookTemplates,
 } from '../src/hidden-lorebook-templates.js';
-import { serverDirectory } from '../src/server-directory.js';
 import { buildHiddenLorebookTemplateSource } from './generate-hidden-lorebook-template-source.mjs';
+
+function getConfiguredDefaultScaffoldRoot(configPath = path.join(process.cwd(), 'config.yaml')) {
+    try {
+        if (!fs.existsSync(configPath)) {
+            return './default/scaffold';
+        }
+
+        const config = yaml.parse(fs.readFileSync(configPath, 'utf8'));
+        return String(config?.defaultScaffoldRoot || './default/scaffold');
+    } catch {
+        return './default/scaffold';
+    }
+}
+
+const configuredDefaultScaffoldRoot = getConfiguredDefaultScaffoldRoot();
 
 function parseArgs(argv) {
     const options = {
         input: undefined,
         charactersDir: undefined,
         dataRoot: undefined,
-        scaffoldRoot: path.join(serverDirectory, 'default', 'scaffold'),
+        scaffoldRoot: configuredDefaultScaffoldRoot,
         defaultOwner: 'default-user',
         dryRun: false,
         help: false,
@@ -95,7 +110,7 @@ function printUsage() {
     console.log('Usage:');
     console.log('  node .\\scripts\\apply-st-config-character-metadata.mjs --input C:\\path\\to\\st_config.py --characters-dir C:\\path\\to\\characters');
     console.log('  node .\\scripts\\apply-st-config-character-metadata.mjs --input C:\\path\\to\\st_config.py --characters-dir C:\\path\\to\\characters --data-root C:\\path\\to\\data');
-    console.log('  node .\\scripts\\apply-st-config-character-metadata.mjs --input C:\\path\\to\\st_config.py --characters-dir C:\\path\\to\\characters --scaffold-root .\\default\\scaffold');
+    console.log('  node .\\scripts\\apply-st-config-character-metadata.mjs --input C:\\path\\to\\st_config.py --characters-dir C:\\path\\to\\characters --scaffold-root C:\\path\\to\\scaffold');
     console.log('  node .\\scripts\\apply-st-config-character-metadata.mjs --input C:\\path\\to\\st_config.py --characters-dir C:\\path\\to\\characters --data-root C:\\path\\to\\data --dry-run');
 }
 
@@ -369,7 +384,7 @@ export async function runStConfigCharacterMetadataMigration({
     inputPath,
     charactersDir,
     dataRoot,
-    scaffoldRoot = path.join(serverDirectory, 'default', 'scaffold'),
+    scaffoldRoot = configuredDefaultScaffoldRoot,
     defaultOwner = 'default-user',
     dryRun = false,
 } = {}) {

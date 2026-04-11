@@ -12,7 +12,6 @@ import { getCharacterOwnerHandles, getCharacterSharedKey, validateSubmittedChara
 import { getSharedCharacterKeyForFilePath } from './character-sharing-repository.js';
 import { invalidateThumbnail } from './endpoints/thumbnails.js';
 import { getAllEnabledUsers, getUserDirectories } from './users.js';
-import { serverDirectory } from './server-directory.js';
 
 export const SUBMISSION_STATUSES = Object.freeze({
     PENDING: 'pending',
@@ -35,7 +34,7 @@ export const DISTRIBUTION_SOURCE_TYPES = Object.freeze({
     SUBMISSION: 'submission',
 });
 
-const DEFAULT_CONTENT_ROOT = path.join(serverDirectory, 'default', 'content');
+const DEFAULT_CONTENT_ROOT = globalThis.DEFAULT_CONTENT_ROOT;
 const DEFAULT_CONTENT_INDEX = path.join(DEFAULT_CONTENT_ROOT, 'index.json');
 let defaultContentIndexWriteQueue = Promise.resolve();
 

@@ -1,6 +1,10 @@
 # -- DATA CONFIGURATION --
 # Root directory for user data storage
 dataRoot: ./data
+# Root directory for bundled default content seeding
+defaultContentRoot: ./default/content
+# Root directory for scaffold content
+defaultScaffoldRoot: ./default/scaffold
 # -- SERVER CONFIGURATION --
 # Listen for incoming connections
 listen: false

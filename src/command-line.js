@@ -11,6 +11,8 @@ import { initConfig } from './config-init.js';
  * @typedef {object} CommandLineArguments Parsed command line arguments
  * @property {string} configPath Path to the config file
  * @property {string} dataRoot Data root directory
+ * @property {string} defaultContentRoot Default content root directory
+ * @property {string} defaultScaffoldRoot Default scaffold root directory
  * @property {number} port Port number
  * @property {boolean} listen If SillyTavern is listening on all network interfaces
  * @property {string} listenAddressIPv6 IPv6 address to listen to
@@ -55,6 +57,8 @@ export class CommandLineParser {
         return Object.freeze({
             configPath: configPath,
             dataRoot: dataPath,
+            defaultContentRoot: './default/content',
+            defaultScaffoldRoot: './default/scaffold',
             port: 8000,
             listen: false,
             listenAddressIPv6: '[::]',
@@ -210,6 +214,16 @@ export class CommandLineParser {
                 default: null,
                 describe: 'Root directory for data storage (only for standalone mode)',
             })
+            .option('defaultContentRoot', {
+                type: 'string',
+                default: null,
+                describe: 'Root directory for default content seeding',
+            })
+            .option('defaultScaffoldRoot', {
+                type: 'string',
+                default: null,
+                describe: 'Root directory for scaffold content',
+            })
             .option('basicAuthMode', {
                 type: 'boolean',
                 default: null,
@@ -278,10 +292,15 @@ export class CommandLineParser {
             fs.mkdirSync(dataRoot, { recursive: true });
         }
 
+        const defaultContentRoot = cliArguments.defaultContentRoot ?? getConfigValue('defaultContentRoot', defaultConfig.defaultContentRoot);
+        const defaultScaffoldRoot = cliArguments.defaultScaffoldRoot ?? getConfigValue('defaultScaffoldRoot', defaultConfig.defaultScaffoldRoot);
+
         /** @type {CommandLineArguments} */
         const result = {
             configPath: configPath,
             dataRoot: dataRoot,
+            defaultContentRoot: defaultContentRoot,
+            defaultScaffoldRoot: defaultScaffoldRoot,
             port: cliArguments.port ?? getConfigValue('port', defaultConfig.port, 'number'),
             listen: cliArguments.listen ?? getConfigValue('listen', defaultConfig.listen, 'boolean'),
             listenAddressIPv6: cliArguments.listenAddressIPv6 ?? getConfigValue('listenAddress.ipv6', defaultConfig.listenAddressIPv6),

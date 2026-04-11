@@ -12,12 +12,11 @@ import { getConfigValue, color, setPermissionsSync, isValidUrl } from '../util.j
 import { parse, write } from '../character-card-parser.js';
 import { getCharacterDistributionPolicy } from '../character-distribution-registry.js';
 import { getCharacterSharedKey } from '../character-linked-lorebooks.js';
-import { serverDirectory } from '../server-directory.js';
 import { Jimp, JimpMime } from '../jimp.js';
 import { DEFAULT_AVATAR_PATH } from '../constants.js';
 
-const contentDirectory = path.join(serverDirectory, 'default/content');
-const scaffoldDirectory = path.join(serverDirectory, 'default/scaffold');
+const contentDirectory = globalThis.DEFAULT_CONTENT_ROOT;
+const scaffoldDirectory = globalThis.DEFAULT_SCAFFOLD_ROOT;
 const contentIndexPath = path.join(contentDirectory, 'index.json');
 const scaffoldIndexPath = path.join(scaffoldDirectory, 'index.json');
 let contentCheckQueue = Promise.resolve();

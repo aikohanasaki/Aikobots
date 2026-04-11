@@ -63,6 +63,16 @@ declare global {
     var DATA_ROOT: string;
 
     /**
+     * The root directory for default content seeding.
+     */
+    var DEFAULT_CONTENT_ROOT: string;
+
+    /**
+     * The root directory for scaffold content.
+     */
+    var DEFAULT_SCAFFOLD_ROOT: string;
+
+    /**
      * Parsed command line arguments.
      */
     var COMMAND_LINE_ARGS: CommandLineArguments;
