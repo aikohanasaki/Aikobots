@@ -17,7 +17,6 @@ import {
     ZAI_ENDPOINT,
 } from '../../constants.js';
 import {
-    forwardFetchResponse,
     getConfigValue,
     tryParse,
     uuidv4,
@@ -201,6 +200,165 @@ function createProviderStreamResult(fetchResponse) {
     };
 }
 
+const MAX_ERROR_MESSAGE_LENGTH = 300;
+const MAX_FLAGGED_INPUT_LENGTH = 200;
+
+/**
+ * @param {number} status
+ * @returns {number}
+ */
+function getClientResponseStatus(status) {
+    return status === 401 ? 400 : status;
+}
+
+/**
+ * @param {string} value
+ * @param {number} maxLength
+ * @returns {string}
+ */
+function truncateErrorText(value, maxLength) {
+    const normalized = String(value || '').replace(/\s+/g, ' ').trim();
+
+    if (!normalized) {
+        return '';
+    }
+
+    if (normalized.length <= maxLength) {
+        return normalized;
+    }
+
+    return `${normalized.slice(0, Math.max(0, maxLength - 3)).trimEnd()}...`;
+}
+
+/**
+ * @param {unknown} value
+ * @param {string} fallback
+ * @returns {string}
+ */
+function sanitizeProviderErrorMessage(value, fallback = 'Unknown error occurred') {
+    if (typeof value !== 'string') {
+        return fallback;
+    }
+
+    const normalized = value.replace(/\s+/g, ' ').trim();
+
+    if (!normalized) {
+        return fallback;
+    }
+
+    const bodyMarkerMatch = normalized.match(/^(.*?)(?:\bbody\b\s*[:=]\s*)([\s\S]*)$/i);
+    if (bodyMarkerMatch) {
+        const prefix = truncateErrorText(bodyMarkerMatch[1], MAX_ERROR_MESSAGE_LENGTH);
+        return prefix ? `${prefix} (body omitted)` : fallback;
+    }
+
+    return truncateErrorText(normalized, MAX_ERROR_MESSAGE_LENGTH);
+}
+
+/**
+ * @param {any} source
+ * @param {string} fallback
+ * @returns {string}
+ */
+function extractProviderErrorMessage(source, fallback = 'Unknown error occurred') {
+    const candidates = [
+        source?.error?.message,
+        source?.detail?.error?.message,
+        source?.message,
+        typeof source?.detail === 'string' ? source.detail : null,
+        typeof source?.error === 'string' ? source.error : null,
+        typeof source === 'string' ? source : null,
+    ];
+
+    const candidate = candidates.find(value => typeof value === 'string' && value.trim());
+    return sanitizeProviderErrorMessage(candidate, fallback);
+}
+
+/**
+ * @param {any} metadata
+ * @returns {Record<string, any> | undefined}
+ */
+function sanitizeProviderErrorMetadata(metadata) {
+    if (!metadata || typeof metadata !== 'object') {
+        return undefined;
+    }
+
+    const sanitized = {};
+
+    if (Array.isArray(metadata.reasons)) {
+        sanitized.reasons = metadata.reasons.filter(reason => typeof reason === 'string');
+    }
+
+    if (typeof metadata.flagged_input === 'string') {
+        sanitized.flagged_input = truncateErrorText(metadata.flagged_input, MAX_FLAGGED_INPUT_LENGTH);
+    }
+
+    return Object.keys(sanitized).length ? sanitized : undefined;
+}
+
+/**
+ * @param {any} payload
+ * @param {string} fallbackMessage
+ * @returns {{ error: Record<string, any>, quota_error?: boolean }}
+ */
+function sanitizeProviderErrorPayload(payload, fallbackMessage = 'Unknown error occurred') {
+    const parsedPayload = typeof payload === 'string' ? tryParse(payload) : payload;
+    const source = parsedPayload && typeof parsedPayload === 'object' ? parsedPayload : payload;
+    const errorSource = source?.error && typeof source.error === 'object' ? source.error : null;
+    const message = extractProviderErrorMessage(source, fallbackMessage);
+    const error = { message };
+
+    if (typeof errorSource?.type === 'string') {
+        error.type = errorSource.type;
+    }
+
+    if (typeof errorSource?.code === 'string' || typeof errorSource?.code === 'number') {
+        error.code = errorSource.code;
+    }
+
+    if (typeof errorSource?.param === 'string') {
+        error.param = errorSource.param;
+    }
+
+    const metadata = sanitizeProviderErrorMetadata(errorSource?.metadata);
+    if (metadata) {
+        error.metadata = metadata;
+    }
+
+    const quotaError = Boolean(source?.quota_error) || errorSource?.type === 'insufficient_quota';
+
+    return quotaError ? { error, quota_error: true } : { error };
+}
+
+/**
+ * @param {import('node-fetch').Response} fetchResponse
+ * @returns {Promise<{ status: number, body: { error: Record<string, any>, quota_error?: boolean } }>}
+ */
+async function buildSanitizedErrorResponse(fetchResponse) {
+    let responseText = '';
+
+    try {
+        responseText = await fetchResponse.text();
+    } catch {
+        responseText = '';
+    }
+
+    const fallbackMessage = fetchResponse.statusText || 'Unknown error occurred';
+    const summarizedBody = responseText ? sanitizeProviderErrorMessage(responseText, fallbackMessage) : '';
+
+    console.error(
+        'Chat completion request error:',
+        fetchResponse.status,
+        fallbackMessage,
+        summarizedBody || '(empty response body)',
+    );
+
+    return {
+        status: getClientResponseStatus(fetchResponse.status || 500),
+        body: sanitizeProviderErrorPayload(responseText || null, fallbackMessage),
+    };
+}
+
 async function sendProviderDispatchResult(result, request, response, {
     timedWorldInfo = null,
     worldInfoOverflowed = false,
@@ -217,7 +375,8 @@ async function sendProviderDispatchResult(result, request, response, {
         }
 
         if (!result.ok) {
-            return forwardFetchResponse(result.response, response);
+            const sanitizedError = await buildSanitizedErrorResponse(result.response);
+            return response.status(sanitizedError.status).send(sanitizedError.body);
         }
 
         return await forwardFetchResponseWithWorldInfo(
@@ -237,7 +396,7 @@ async function sendProviderDispatchResult(result, request, response, {
 
     const payload = result.ok
         ? attachWorldInfoResponseData(result.body, request, timedWorldInfo, worldInfoOverflowed, worldInfo, promptSnapshotKey)
-        : result.body;
+        : sanitizeProviderErrorPayload(result.body);
 
     return response.status(result.status || 200).send(payload);
 }
@@ -1447,7 +1606,7 @@ async function sendAzureOpenAIRequest(request) {
         const message = error.name === 'AbortError'
             ? 'Request was aborted by the client.'
             : (error.message || 'An unknown network error occurred.');
-        return createProviderJsonResult({ error: { message, ...error } }, { status: 500, ok: false });
+        return createProviderJsonResult({ error: { message } }, { status: 500, ok: false });
     }
 }
 
@@ -3107,7 +3266,7 @@ export async function handleChatCompletionsGenerate(request, response) {
                 ? `Connection refused: ${error.message}`
                 : error.message || 'Unknown error occurred';
 
-            return createProviderJsonResult({ error: { message, ...error } }, { status: 502, ok: false });
+            return createProviderJsonResult({ error: { message } }, { status: 502, ok: false });
         }
     }
 
@@ -3115,14 +3274,8 @@ export async function handleChatCompletionsGenerate(request, response) {
      * @param {import("node-fetch").Response} errorResponse
      */
     async function handleErrorResponse(errorResponse) {
-        const responseText = await errorResponse.text();
-        const errorData = tryParse(responseText);
-
-        const message = errorResponse.statusText || 'Unknown error occurred';
-        const quota_error = errorResponse.status === 429 && errorData?.error?.type === 'insufficient_quota';
-        console.error('Chat completion request error: ', message, responseText);
-
-        return createProviderJsonResult({ error: { message }, quota_error: quota_error }, { ok: false });
+        const sanitizedError = await buildSanitizedErrorResponse(errorResponse);
+        return createProviderJsonResult(sanitizedError.body, { ok: false });
     }
     })().catch((error) => {
         console.error('Chat completion generation failed', error);
