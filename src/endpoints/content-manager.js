@@ -20,6 +20,7 @@ const contentDirectory = path.join(serverDirectory, 'default/content');
 const scaffoldDirectory = path.join(serverDirectory, 'default/scaffold');
 const contentIndexPath = path.join(contentDirectory, 'index.json');
 const scaffoldIndexPath = path.join(scaffoldDirectory, 'index.json');
+let contentCheckQueue = Promise.resolve();
 
 const WHITELIST_GENERIC_URL_DOWNLOAD_SOURCES = getConfigValue('whitelistImportDomains', []);
 const USER_AGENT = 'SillyTavern';
@@ -37,6 +38,14 @@ function getAttachmentContentDisposition(fileName) {
  * @property {string} type
  * @property {string} [name]
  * @property {string|null} [folder]
+ */
+
+/**
+ * @typedef {ContentItem & {
+ *   baseName?: string,
+ *   contentPath?: string | null,
+ *   characterBlacklistHandles?: string[] | null,
+ * }} PreparedContentItem
  */
 
 /**
@@ -70,6 +79,62 @@ function filesAreIdentical(leftPath, rightPath) {
     } catch {
         return false;
     }
+}
+
+function runWithContentCheckLock(operation) {
+    const queuedOperation = contentCheckQueue.catch(() => { }).then(operation);
+    contentCheckQueue = queuedOperation.catch(() => { });
+    return queuedOperation;
+}
+
+/**
+ * Prepares content metadata once before seeding it to many users.
+ * This avoids reparsing the same character cards for every user on startup.
+ * @param {ContentItem[]} contentIndex
+ * @param {string[]} [forceCategories]
+ * @returns {Promise<PreparedContentItem[]>}
+ */
+async function prepareContentItems(contentIndex, forceCategories = []) {
+    return Promise.all(contentIndex.map(async (contentItem) => {
+        const preparedItem = {
+            ...contentItem,
+            baseName: path.parse(contentItem.filename).base,
+            contentPath: contentItem.folder ? path.join(contentItem.folder, contentItem.filename) : null,
+            characterBlacklistHandles: null,
+        };
+
+        const shouldPrepareCharacterPolicy = contentItem.type === CONTENT_TYPES.CHARACTER
+            && (forceCategories.length === 0
+                || forceCategories.includes(CONTENT_TYPES.CHARACTER)
+                || isScaffoldCharacterContentItem(contentItem));
+
+        if (!shouldPrepareCharacterPolicy || !preparedItem.contentPath || !fs.existsSync(preparedItem.contentPath)) {
+            return preparedItem;
+        }
+
+        try {
+            const rawCard = await parse(preparedItem.contentPath, 'png');
+            const card = JSON.parse(rawCard);
+            const ownerHandle = String(card?.data?.extensions?.aikobots?.owner_handle || '').trim();
+            const characterKey = getCharacterSharedKey(card);
+
+            if (!ownerHandle) {
+                return preparedItem;
+            }
+
+            const policy = await getCharacterDistributionPolicy({
+                ownerHandle,
+                characterKey,
+                publishedFilename: path.parse(contentItem.filename).name,
+            });
+
+            preparedItem.characterBlacklistHandles = policy.blacklistHandles;
+        } catch (error) {
+            console.warn(`Failed to prepare distribution policy for ${contentItem.filename}`, error);
+        }
+
+        return preparedItem;
+    }));
 }
 
 /**
@@ -120,7 +185,7 @@ export function getDefaultPresetFile(filename) {
 
 /**
  * Seeds content for a user.
- * @param {ContentItem[]} contentIndex Content index
+ * @param {PreparedContentItem[]} contentIndex Content index
  * @param {import('../users.js').UserDirectoryList} directories User directories
  * @param {string[]} forceCategories List of categories to force check (even if content check is skipped)
  * @returns {Promise<boolean>} Whether any content was added
@@ -148,7 +213,7 @@ async function seedContentForUser(contentIndex, directories, forceCategories) {
             continue;
         }
 
-        const contentPath = path.join(contentItem.folder, contentItem.filename);
+        const contentPath = contentItem.contentPath || path.join(contentItem.folder, contentItem.filename);
 
         if (!fs.existsSync(contentPath)) {
             console.warn(`Content file ${contentItem.filename} is missing`);
@@ -162,31 +227,14 @@ async function seedContentForUser(contentIndex, directories, forceCategories) {
             continue;
         }
 
-        const basePath = path.parse(contentItem.filename).base;
-        const targetPath = path.join(contentTarget, basePath);
+        const targetPath = path.join(contentTarget, contentItem.baseName || path.parse(contentItem.filename).base);
 
         if (contentItem.type === CONTENT_TYPES.CHARACTER) {
-            try {
-                const rawCard = await parse(contentPath, 'png');
-                const card = JSON.parse(rawCard);
-                const ownerHandle = String(card?.data?.extensions?.aikobots?.owner_handle || '').trim();
-                const characterKey = getCharacterSharedKey(card);
-                const targetUserHandle = path.basename(directories.root);
+            const targetUserHandle = path.basename(directories.root);
 
-                if (ownerHandle && targetUserHandle) {
-                    const policy = await getCharacterDistributionPolicy({
-                        ownerHandle,
-                        characterKey,
-                        publishedFilename: path.parse(contentItem.filename).name,
-                    });
-
-                    if (policy.blacklistHandles.includes(targetUserHandle)) {
-                        console.info(`Skipping blacklisted character ${contentItem.filename} for ${targetUserHandle}`);
-                        continue;
-                    }
-                }
-            } catch (error) {
-                console.warn(`Failed to evaluate distribution policy for ${contentItem.filename}`, error);
+            if (targetUserHandle && contentItem.characterBlacklistHandles?.includes(targetUserHandle)) {
+                console.info(`Skipping blacklisted character ${contentItem.filename} for ${targetUserHandle}`);
+                continue;
             }
         }
 
@@ -228,31 +276,33 @@ async function seedContentForUser(contentIndex, directories, forceCategories) {
  * @returns {Promise<void>}
  */
 export async function checkForNewContent(directoriesList, forceCategories = []) {
-    try {
-        const contentCheckSkip = getConfigValue('skipContentCheck', false, 'boolean');
-        if (contentCheckSkip && forceCategories?.length === 0) {
-            return;
-        }
-
-        const contentIndex = getContentIndex();
-        let anyContentAdded = false;
-
-        for (const directories of directoriesList) {
-            const seedResult = await seedContentForUser(contentIndex, directories, forceCategories);
-
-            if (seedResult) {
-                anyContentAdded = true;
+    return runWithContentCheckLock(async () => {
+        try {
+            const contentCheckSkip = getConfigValue('skipContentCheck', false, 'boolean');
+            if (contentCheckSkip && forceCategories?.length === 0) {
+                return;
             }
-        }
 
-        if (anyContentAdded && !contentCheckSkip && forceCategories?.length === 0) {
-            console.info();
-            console.info(`${color.blue('If you don\'t want to receive content updates in the future, set')} ${color.yellow('skipContentCheck')} ${color.blue('to true in the config.yaml file.')}`);
-            console.info();
+            const contentIndex = await prepareContentItems(getContentIndex(), forceCategories);
+            let anyContentAdded = false;
+
+            for (const directories of directoriesList) {
+                const seedResult = await seedContentForUser(contentIndex, directories, forceCategories);
+
+                if (seedResult) {
+                    anyContentAdded = true;
+                }
+            }
+
+            if (anyContentAdded && !contentCheckSkip && forceCategories?.length === 0) {
+                console.info();
+                console.info(`${color.blue('If you don\'t want to receive content updates in the future, set')} ${color.yellow('skipContentCheck')} ${color.blue('to true in the config.yaml file.')}`);
+                console.info();
+            }
+        } catch (err) {
+            console.error('Content check failed', err);
         }
-    } catch (err) {
-        console.error('Content check failed', err);
-    }
+    });
 }
 
 /**
