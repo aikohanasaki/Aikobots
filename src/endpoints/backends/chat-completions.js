@@ -88,6 +88,7 @@ const API_ZAI_CODING = 'https://api.z.ai/api/coding/paas/v4';
 const API_SILICONFLOW = 'https://api.siliconflow.com/v1';
 const MAX_PROMPT_INSPECTION_SNAPSHOTS = 100;
 const promptInspectionSnapshots = new Map();
+const STREAM_HEARTBEAT_INTERVAL_MS = 15000;
 
 // blocked due to site policy, unblocking august 2026
 const BLOCKED_CUSTOM_ENDPOINT_HOSTNAME = 'voidai.app';
@@ -2300,6 +2301,33 @@ function writeWorldInfoSseEvent(response, request, timedWorldInfo, worldInfoOver
     response.write(`data: ${JSON.stringify({ x_sillytavern: xSillyTavern })}\n\n`);
 }
 
+/**
+ * @param {import('express').Response} response
+ * @returns {NodeJS.Timeout | null}
+ */
+function startStreamHeartbeat(response) {
+    if (response.writableEnded) {
+        return null;
+    }
+
+    return setInterval(() => {
+        if (response.writableEnded) {
+            return;
+        }
+
+        response.write(': heartbeat\n\n');
+    }, STREAM_HEARTBEAT_INTERVAL_MS);
+}
+
+/**
+ * @param {NodeJS.Timeout | null} heartbeat
+ */
+function stopStreamHeartbeat(heartbeat) {
+    if (heartbeat) {
+        clearInterval(heartbeat);
+    }
+}
+
 async function forwardFetchResponseWithWorldInfo(from, to, request, timedWorldInfo, worldInfoOverflowed = false, worldInfo = null, promptSnapshotKey = null) {
     let statusCode = from.status;
     let statusText = from.statusText;
@@ -2317,6 +2345,8 @@ async function forwardFetchResponseWithWorldInfo(from, to, request, timedWorldIn
     to.setHeader('Content-Type', from.headers.get('content-type') || 'text/event-stream; charset=utf-8');
     to.setHeader('Cache-Control', from.headers.get('cache-control') || 'no-cache');
     to.setHeader('Connection', 'keep-alive');
+    to.setHeader('X-Accel-Buffering', 'no');
+    to.flushHeaders?.();
 
     if (!from.body || !to.socket) {
         writeWorldInfoSseEvent(to, request, timedWorldInfo, worldInfoOverflowed, worldInfo, promptSnapshotKey);
@@ -2325,6 +2355,7 @@ async function forwardFetchResponseWithWorldInfo(from, to, request, timedWorldIn
     }
 
     writeWorldInfoSseEvent(to, request, timedWorldInfo, worldInfoOverflowed, worldInfo, promptSnapshotKey);
+    const heartbeat = startStreamHeartbeat(to);
 
     const decoder = new TextDecoder();
     let buffer = '';
@@ -2338,6 +2369,7 @@ async function forwardFetchResponseWithWorldInfo(from, to, request, timedWorldIn
     };
 
     to.socket.on('close', function () {
+        stopStreamHeartbeat(heartbeat);
         from.body.destroy();
         if (!to.writableEnded) {
             to.end();
@@ -2362,11 +2394,13 @@ async function forwardFetchResponseWithWorldInfo(from, to, request, timedWorldIn
         }
 
         console.info('Streaming request finished');
+        stopStreamHeartbeat(heartbeat);
         if (!to.writableEnded) {
             to.end();
         }
     } catch (error) {
         console.error('Streaming request failed', error);
+        stopStreamHeartbeat(heartbeat);
         if (!to.writableEnded) {
             to.end();
         }
