@@ -80,6 +80,56 @@ function filesAreIdentical(leftPath, rightPath) {
     }
 }
 
+function getCharacterFavoriteState(card) {
+    return Boolean(card?.data?.extensions?.fav ?? card?.fav ?? false);
+}
+
+function setCharacterFavoriteState(card, favorite) {
+    if (!card || typeof card !== 'object') {
+        return;
+    }
+
+    card.fav = favorite;
+    card.data = card.data || {};
+    card.data.extensions = card.data.extensions || {};
+    card.data.extensions.fav = favorite;
+}
+
+async function characterFilesAreEquivalentIgnoringFavorite(leftPath, rightPath) {
+    try {
+        const [leftBuffer, rightBuffer, leftRawCard, rightRawCard] = await Promise.all([
+            fs.promises.readFile(leftPath),
+            fs.promises.readFile(rightPath),
+            parse(leftPath, 'png'),
+            parse(rightPath, 'png'),
+        ]);
+
+        const leftCard = JSON.parse(leftRawCard);
+        const rightCard = JSON.parse(rightRawCard);
+        setCharacterFavoriteState(leftCard, false);
+        setCharacterFavoriteState(rightCard, false);
+
+        const normalizedLeft = write(leftBuffer, JSON.stringify(leftCard));
+        const normalizedRight = write(rightBuffer, JSON.stringify(rightCard));
+        return normalizedLeft.equals(normalizedRight);
+    } catch {
+        return filesAreIdentical(leftPath, rightPath);
+    }
+}
+
+async function refreshScaffoldCharacterPreservingFavorite(sourcePath, targetPath) {
+    const [sourceBuffer, sourceRawCard, targetRawCard] = await Promise.all([
+        fs.promises.readFile(sourcePath),
+        parse(sourcePath, 'png'),
+        parse(targetPath, 'png'),
+    ]);
+
+    const sourceCard = JSON.parse(sourceRawCard);
+    const targetCard = JSON.parse(targetRawCard);
+    setCharacterFavoriteState(sourceCard, getCharacterFavoriteState(targetCard));
+    writeFileAtomicSync(targetPath, write(sourceBuffer, JSON.stringify(sourceCard)));
+}
+
 function runWithContentCheckLock(operation) {
     const queuedOperation = contentCheckQueue.catch(() => { }).then(operation);
     contentCheckQueue = queuedOperation.catch(() => { });
@@ -247,11 +297,11 @@ async function seedContentForUser(contentIndex, directories, forceCategories) {
                 continue;
             }
 
-            if (filesAreIdentical(contentPath, targetPath)) {
+            if (await characterFilesAreEquivalentIgnoringFavorite(contentPath, targetPath)) {
                 continue;
             }
 
-            fs.cpSync(contentPath, targetPath, { recursive: true, force: true });
+            await refreshScaffoldCharacterPreservingFavorite(contentPath, targetPath);
             setPermissionsSync(targetPath);
             console.info(`Scaffold character ${contentItem.filename} refreshed in ${contentTarget}`);
             anyContentAdded = true;
