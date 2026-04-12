@@ -51,10 +51,11 @@ async function saveChatIfNeeded(saveFirst = true) {
 
 export async function fetchStmbChatRangeInfo(options = {}) {
     const { signal = null, saveFirst = true, rangeStart = null, rangeEnd = null } = options;
+    const sceneContext = buildStmbSceneContext();
     await saveChatIfNeeded(saveFirst);
 
     return getStmbChatRangeInfo({
-        ...buildStmbSceneContext(),
+        ...sceneContext,
         rangeStart,
         rangeEnd,
     }, { signal });
@@ -67,10 +68,11 @@ export async function captureStmbSceneRange(range, options = {}) {
         skipSystemMessages = true,
         allowPartial = false,
     } = options;
+    const sceneContext = buildStmbSceneContext();
     await saveChatIfNeeded(saveFirst);
 
     return captureStmbScene({
-        ...buildStmbSceneContext(),
+        ...sceneContext,
         sceneStart: Number(range?.sceneStart),
         sceneEnd: Number(range?.sceneEnd),
         skipSystemMessages,

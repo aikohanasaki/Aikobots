@@ -5,6 +5,7 @@ import {
     eventSource,
     event_types,
     getCurrentChatId,
+    isChatSaving,
     name1,
     name2,
     saveSettingsDebounced,
@@ -113,7 +114,7 @@ import {
     removeTemplate,
     upsertTemplate,
 } from './stmb-sideprompts-manager.js';
-import { escapeHtml } from './utils.js';
+import { escapeHtml, waitUntilCondition } from './utils.js';
 import { ensureResolvedLorebookName, isStmbLorebookHandledError } from './stmb-lorebook.js';
 import { createStmbTask, getActiveStmbTaskCount, hasActiveStmbTasks, isStmbAbortError, stopAllStmbTasks, throwIfStmbAborted } from './stmb-tasks.js';
 import { getTokenCountAsync } from './tokenizers.js';
@@ -129,6 +130,8 @@ let lastFailedSummaryContext = null;
 let stmbUiBound = false;
 let sidePromptNameCache = [];
 let activeSettingsPopupDialog = null;
+let passiveStmbCheckTimer = null;
+let passiveStmbCheckNeedsAutoSummary = false;
 
 function isManualSidePromptEnabled(template) {
     const commands = template?.triggers?.commands;
@@ -3869,7 +3872,7 @@ async function checkAutoSummaryTrigger() {
     }
 
     const state = getStmbState();
-    const rangeInfo = await fetchStmbChatRangeInfo();
+    const rangeInfo = await fetchStmbChatRangeInfo({ saveFirst: false });
     const currentLastMessage = Number(rangeInfo?.lastAvailableMessageId);
     if (!Number.isInteger(currentLastMessage) || currentLastMessage < 0) {
         return;
@@ -5092,6 +5095,42 @@ function showSlashCommandError(message, error) {
     toastr.error(String(message || 'STMB command failed'), 'STMB');
 }
 
+function schedulePassiveStmbChecks({ includeAutoSummary = false } = {}) {
+    passiveStmbCheckNeedsAutoSummary = passiveStmbCheckNeedsAutoSummary || Boolean(includeAutoSummary);
+    if (passiveStmbCheckTimer !== null) {
+        return;
+    }
+
+    passiveStmbCheckTimer = window.setTimeout(async () => {
+        const shouldCheckAutoSummary = passiveStmbCheckNeedsAutoSummary;
+        passiveStmbCheckTimer = null;
+        passiveStmbCheckNeedsAutoSummary = false;
+
+        try {
+            await waitUntilCondition(() => isChatSaving, 250, 25, { rejectOnTimeout: false });
+            if (isChatSaving) {
+                await waitUntilCondition(() => !isChatSaving, 5_000, 50, { rejectOnTimeout: false });
+            }
+        } catch {
+            // Ignore save timing races and fall back to a read-only check.
+        }
+
+        if (hasActiveStmbTasks()) {
+            return;
+        }
+
+        evaluateTrackers(stmbSettings).catch(error => {
+            console.warn('STMB evaluateTrackers failed after passive check', error);
+        });
+
+        if (shouldCheckAutoSummary && !selected_group) {
+            checkAutoSummaryTrigger().catch(error => {
+                console.warn('STMB auto-summary trigger failed after passive check', error);
+            });
+        }
+    }, 0);
+}
+
 function launchMemoryCreationInBackground(options, errorMessage) {
     void initiateMemoryCreation(options).catch(error => {
         showSlashCommandError(error?.message || errorMessage || 'Failed to create memory.', error);
@@ -5117,6 +5156,30 @@ async function sceneMemoryCommand(_, rangeText) {
         range = parseSceneRange(rangeText);
     } catch (error) {
         toastr.error(String(error?.message || 'Failed to parse /scenememory range'), 'STMB');
+        return '';
+    }
+
+    try {
+        const rangeInfo = await fetchStmbChatRangeInfo({
+            rangeStart: range.sceneStart,
+            rangeEnd: range.sceneEnd,
+        });
+        const lastAvailableMessageId = Number(rangeInfo?.lastAvailableMessageId);
+        if (!Number.isInteger(lastAvailableMessageId) || lastAvailableMessageId < 0) {
+            toastr.error('There are no messages in this chat yet.', 'STMB');
+            return '';
+        }
+        if (range.sceneStart > lastAvailableMessageId || range.sceneEnd > lastAvailableMessageId) {
+            toastr.error(`Message IDs out of range. Valid range: 0-${lastAvailableMessageId}`, 'STMB');
+            return '';
+        }
+        if (Array.isArray(rangeInfo?.missingRanges) && rangeInfo.missingRanges.length > 0) {
+            const missing = rangeInfo.missingRanges[0];
+            toastr.error(`Cannot use messages ${range.sceneStart}-${range.sceneEnd} because messages ${missing.start}-${missing.end} are unavailable in chat storage.`, 'STMB');
+            return '';
+        }
+    } catch (error) {
+        toastr.error(String(error?.message || 'Invalid message range for /scenememory'), 'STMB');
         return '';
     }
 
@@ -5459,14 +5522,7 @@ export function initStmb() {
         if (hasActiveStmbTasks()) {
             return;
         }
-        evaluateTrackers(stmbSettings).catch(error => {
-            console.warn('STMB evaluateTrackers failed after message receive', error);
-        });
-        if (!selected_group) {
-            checkAutoSummaryTrigger().catch(error => {
-                console.warn('STMB auto-summary trigger failed after message receive', error);
-            });
-        }
+        schedulePassiveStmbChecks({ includeAutoSummary: !selected_group });
     });
 
     eventSource.on(event_types.USER_MESSAGE_RENDERED, (messageId) => {
@@ -5477,9 +5533,7 @@ export function initStmb() {
         if (hasActiveStmbTasks()) {
             return;
         }
-        evaluateTrackers(stmbSettings).catch(error => {
-            console.warn('STMB evaluateTrackers failed after user message', error);
-        });
+        schedulePassiveStmbChecks({ includeAutoSummary: false });
     });
 
     eventSource.on(event_types.CHARACTER_MESSAGE_RENDERED, (messageId) => {

@@ -541,7 +541,7 @@ export async function evaluateTrackers(settings, options = {}) {
 
         const lorebookName = await ensureLorebookName(settings);
         const lorebookData = await loadWorldInfo(lorebookName) || { entries: {} };
-        const chatRangeInfo = await fetchStmbChatRangeInfo();
+        const chatRangeInfo = await fetchStmbChatRangeInfo({ saveFirst: false });
         const currentLast = Number(chatRangeInfo?.lastAvailableMessageId);
         if (currentLast < 0) return;
 
