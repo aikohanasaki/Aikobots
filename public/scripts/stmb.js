@@ -6176,6 +6176,10 @@ export function initStmb() {
     pollCurrentChatPlannerState().catch(error => {
         console.warn('STMB planner initial poll failed', error);
     });
+    setTimeout(() => {
+        validateSceneMarkers();
+        renderAllSceneButtons();
+    }, 0);
 
     eventSource.on(event_types.CHAT_CHANGED, () => {
         setTimeout(() => {

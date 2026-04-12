@@ -2928,10 +2928,20 @@ router.post('/status', async function (request, statusResponse) {
             }
         }
         else {
+            if (request.body.chat_completion_source === CHAT_COMPLETION_SOURCES.ZAI) {
+                console.warn('Z.AI models endpoint status check failed:', response.status, response.statusText);
+                return statusResponse.send({ error: true, bypass: true, data: [] });
+            }
+
             console.error('Chat Completion status check failed. Either Access Token is incorrect or API endpoint is down.');
             statusResponse.send({ error: true, data: { data: [] } });
         }
     } catch (e) {
+        if (request.body.chat_completion_source === CHAT_COMPLETION_SOURCES.ZAI) {
+            console.warn('Z.AI models status check connection error:', e?.message || e);
+            return statusResponse.send({ error: true, bypass: true, data: [] });
+        }
+
         console.error(e);
 
         if (!statusResponse.headersSent) {
@@ -3512,21 +3522,23 @@ export async function handleChatCompletionsGenerate(request, response) {
         try {
             controller.signal.throwIfAborted();
             const fetchResponse = await fetch(endpointUrl, config);
-
-            if (request.body.stream) {
-                console.info('Streaming request in progress');
-                return createProviderStreamResult(fetchResponse);
-            }
-
-            if (fetchResponse.ok) {
-                /** @type {any} */
-                const json = await fetchResponse.json();
-                console.debug('Chat Completion response:', json);
-                return createProviderJsonResult(json);
-            } else {
-                return await handleErrorResponse(fetchResponse);
-            }
+            return await handleFetchResponse(fetchResponse);
         } catch (error) {
+            if (!controller.signal.aborted
+                && request.body.chat_completion_source === CHAT_COMPLETION_SOURCES.ZAI
+                && request.body.zai_endpoint === ZAI_ENDPOINT.CODING) {
+                const fallbackUrl = new URL(`${trimTrailingSlash(API_ZAI_COMMON)}/chat/completions`).toString();
+                console.warn('Z.AI coding endpoint request failed, retrying with common endpoint:', error?.message || error);
+
+                try {
+                    const fallbackResponse = await fetch(fallbackUrl, config);
+                    return await handleFetchResponse(fallbackResponse);
+                } catch (fallbackError) {
+                    console.warn('Z.AI common endpoint fallback failed:', fallbackError?.message || fallbackError);
+                    error = fallbackError;
+                }
+            }
+
             logChatCompletionFailure(request, 'Generation failed', { stage: 'provider_request' }, error);
             const message = error.code === 'ECONNREFUSED'
                 ? `Connection refused: ${error.message}`
@@ -3540,6 +3552,25 @@ export async function handleChatCompletionsGenerate(request, response) {
             });
             return createProviderJsonResult(payload, { status: 502, ok: false });
         }
+    }
+
+    /**
+     * @param {import("node-fetch").Response} fetchResponse
+     */
+    async function handleFetchResponse(fetchResponse) {
+        if (request.body.stream) {
+            console.info('Streaming request in progress');
+            return createProviderStreamResult(fetchResponse);
+        }
+
+        if (fetchResponse.ok) {
+            /** @type {any} */
+            const json = await fetchResponse.json();
+            console.debug('Chat Completion response:', json);
+            return createProviderJsonResult(json);
+        }
+
+        return await handleErrorResponse(fetchResponse);
     }
 
     /**
