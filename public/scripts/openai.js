@@ -664,7 +664,6 @@ const default_settings = {
     request_images: false,
     seed: -1,
     n: 1,
-    bind_preset_to_connection: true,
     extensions: {},
 };
 
@@ -3576,7 +3575,6 @@ function loadOpenAISettings(data, settings) {
     }
 
     $(`#settings_preset_openai option[value="${openai_setting_names[oai_settings.preset_settings_openai]}"]`).prop('selected', true);
-    $('#bind_preset_to_connection').prop('checked', oai_settings.bind_preset_to_connection);
     $('#openai_external_category').toggle(oai_settings.show_external_models);
     $('.reverse_proxy_warning').toggle(oai_settings.reverse_proxy !== '');
 
@@ -4309,12 +4307,8 @@ function onSettingsPresetChange() {
         savePreset: saveOpenAIPreset,
         presetNameBefore: presetNameBefore,
     }).finally(async () => {
-        if (oai_settings.bind_preset_to_connection) {
-            $('.model_custom_select').empty();
-        }
-
         for (const [key, [selector, setting, isCheckbox, isConnection]] of Object.entries(settingsToUpdate)) {
-            if (isConnection && !oai_settings.bind_preset_to_connection) {
+            if (isConnection) {
                 continue;
             }
 
@@ -4332,12 +4326,6 @@ function onSettingsPresetChange() {
                 }
                 oai_settings[setting] = preset[key];
             }
-        }
-
-        // These cannot be changed via preset if unbound to connection
-        if (oai_settings.bind_preset_to_connection) {
-            $('#chat_completion_source').trigger('change');
-            $('#openrouter_providers_chat').trigger('change');
         }
 
         $('#openai_logit_bias_preset').trigger('change');
@@ -6444,11 +6432,6 @@ export function initOpenAI() {
 
         oai_settings.openrouter_providers = selectedProviders;
 
-        saveSettingsDebounced();
-    });
-
-    $('#bind_preset_to_connection').on('input', function () {
-        oai_settings.bind_preset_to_connection = !!$(this).prop('checked');
         saveSettingsDebounced();
     });
 
