@@ -1002,12 +1002,12 @@ function buildSettingsPopupHtml(sceneData, currentUiConnection, regexOptions) {
 
             <h3 class="stmb-section-title">Memory Profiles</h3>
             <div class="world_entry_form_control">
-                <label for="stmb-settings-title-format-select" title="Use [0], [00], [000] for auto-numbering. Available: {{title}}, {{scene}}, {{char}}, {{user}}, {{messages}}, {{profile}}, {{date}}, {{time}}.">Memory Title Format</label>
+                <label for="stmb-settings-title-format-select" title="Use [0], [00], [000] for plain auto-numbering; use [[0]], [[00]], [[000]] to keep square brackets. Available: {{title}}, {{scene}}, {{char}}, {{user}}, {{messages}}, {{profile}}, {{date}}, {{time}}.">Memory Title Format</label>
                 <select id="stmb-settings-title-format-select" class="text_pole">
                     ${titleFormats.map(format => `<option value="${escapeHtml(format)}" ${!usesCustomTitleFormat && format === currentTitleFormat ? 'selected' : ''}>${escapeHtml(format)}</option>`).join('')}
                     <option value="custom" ${usesCustomTitleFormat ? 'selected' : ''}>Custom Title Format...</option>
                 </select>
-                <input type="text" id="stmb-settings-custom-title-format" class="text_pole marginTop5 ${usesCustomTitleFormat ? '' : 'displayNone'}" value="${escapeHtml(currentTitleFormat)}" placeholder="Enter custom format" title="Use [0], [00], [000] for auto-numbering. Available: {{title}}, {{scene}}, {{char}}, {{user}}, {{messages}}, {{profile}}, {{date}}, {{time}}.">
+                <input type="text" id="stmb-settings-custom-title-format" class="text_pole marginTop5 ${usesCustomTitleFormat ? '' : 'displayNone'}" value="${escapeHtml(currentTitleFormat)}" placeholder="Enter custom format" title="Use [0], [00], [000] for plain auto-numbering; use [[0]], [[00]], [[000]] to keep square brackets. Available: {{title}}, {{scene}}, {{char}}, {{user}}, {{messages}}, {{profile}}, {{date}}, {{time}}.">
             </div>
 
             <div class="world_entry_form_control">

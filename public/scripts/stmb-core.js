@@ -1679,14 +1679,14 @@ function extractSequenceUsingTitleFormat(title, titleFormat) {
         .replace(/\\\{\\\{[^}]+\\\}\\\}/g, '.*?');
 
     regexSource = regexSource
-        .replace(/\\\[\\\[(0+)\\\]\\\]/g, '(\\d+)')
-        .replace(/\\\(\\\[(0+)\\\]\\\)/g, '(\\d+)')
-        .replace(/\\\{\\\[(0+)\\\]\\\}/g, '(\\d+)')
-        .replace(/#\\\[(0+)\\\]/g, '(\\d+)')
+        .replace(/\\\[\\\[(0+)\\\]\\\]/g, '\\[(\\d+)\\]')
+        .replace(/\\\(\\\[(0+)\\\]\\\)/g, '\\((\\d+)\\)')
+        .replace(/\\\{\\\[(0+)\\\]\\\}/g, '\\{(\\d+)\\}')
+        .replace(/#\\\[(0+)\\\]/g, '#(\\d+)')
         .replace(/\\\[(0+)\\\]/g, '(\\d+)')
-        .replace(/\\\((0+)\\\)/g, '(\\d+)')
-        .replace(/\\\{(0+)\\\}/g, '(\\d+)')
-        .replace(/#(0+)/g, '(\\d+)');
+        .replace(/\\\((0+)\\\)/g, '\\((\\d+)\\)')
+        .replace(/\\\{(0+)\\\}/g, '\\{(\\d+)\\}')
+        .replace(/#(0+)/g, '#(\\d+)');
 
     try {
         const match = normalizedTitle.match(new RegExp(`^${regexSource}$`));
@@ -1722,7 +1722,7 @@ function applyNumberingPattern(format, sequenceNumber) {
         { regex: /\(\[(0+)\]\)/g, render: digits => `(${String(sequenceNumber).padStart(digits.length, '0')})` },
         { regex: /\{\[(0+)\]\}/g, render: digits => `{${String(sequenceNumber).padStart(digits.length, '0')}}` },
         { regex: /#\[(0+)\]/g, render: digits => `#${String(sequenceNumber).padStart(digits.length, '0')}` },
-        { regex: /\[(0+)\]/g, render: digits => `[${String(sequenceNumber).padStart(digits.length, '0')}]` },
+        { regex: /\[(0+)\]/g, render: digits => String(sequenceNumber).padStart(digits.length, '0') },
         { regex: /\((0+)\)/g, render: digits => `(${String(sequenceNumber).padStart(digits.length, '0')})` },
         { regex: /\{(0+)\}/g, render: digits => `{${String(sequenceNumber).padStart(digits.length, '0')}}` },
         { regex: /#(0+)/g, render: digits => `#${String(sequenceNumber).padStart(digits.length, '0')}` },
@@ -1793,7 +1793,7 @@ export function validateTitleFormat(format) {
     ];
     const invalidNumberingPatterns = potentialNumberingPatterns.filter(token => !allowedNumberingPatterns.some(pattern => pattern.test(token)));
     if (invalidNumberingPatterns.length > 0) {
-        warnings.push(`Invalid numbering patterns: ${invalidNumberingPatterns.join(', ')}. Use [000], (000), {000}, #000, #[000], ([000]), {[000]}, or [[000]].`);
+        warnings.push(`Invalid numbering patterns: ${invalidNumberingPatterns.join(', ')}. Use [000] for plain digits, [[000]] for [000], plus (000), {000}, #000, #[000], ([000]), or {[000]}.`);
     }
 
     if (value.length > 100) {
@@ -1809,8 +1809,8 @@ export function validateTitleFormat(format) {
 
 export function previewTitle(titleFormat, sampleData = {}) {
     const mockEntries = {
-        existing1: { uid: 5, comment: '[001] - Previous Memory', [STMB_MANAGED_FLAG]: true },
-        existing2: { uid: 7, comment: '[002] - Another Memory', [STMB_MANAGED_FLAG]: true },
+        existing1: { uid: 5, comment: '001 - Previous Memory', [STMB_MANAGED_FLAG]: true },
+        existing2: { uid: 7, comment: '002 - Another Memory', [STMB_MANAGED_FLAG]: true },
     };
     const nextSequenceNumber = getNextManagedMemorySequenceNumber(mockEntries, titleFormat);
     const defaultContext = {
