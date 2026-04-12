@@ -45,7 +45,7 @@ import {
     parseSequenceFromTitle,
     parseStructuredMemoryResponse,
 } from './stmb-core.js';
-import { captureStmbSceneRange, fetchStmbChatRangeInfo, getStmbChatKey, isPassiveStmbFlushSuppressedForChat } from './stmb-scene.js';
+import { buildStmbSceneContext, captureStmbSceneRange, fetchStmbChatRangeInfo, getStmbChatKey, isPassiveStmbFlushSuppressedForChat } from './stmb-scene.js';
 import {
     STMB_SUMMARY_RESPONSE_SCHEMA,
     buildBriefsFromEntries,
@@ -3863,14 +3863,14 @@ async function resolveAutoSummaryLorebook() {
     }
 }
 
-async function checkAutoSummaryTrigger() {
+async function checkAutoSummaryTrigger(options = {}) {
     const settings = getModuleSettings();
     if (!settings.autoSummaryEnabled) {
         return;
     }
 
     const state = getStmbState();
-    const rangeInfo = await fetchStmbChatRangeInfo({ saveFirst: false });
+    const rangeInfo = await fetchStmbChatRangeInfo({ saveFirst: false, sceneContext: options.sceneContext || null });
     const currentLastMessage = Number(rangeInfo?.lastAvailableMessageId);
     if (!Number.isInteger(currentLastMessage) || currentLastMessage < 0) {
         return;
@@ -5101,11 +5101,6 @@ function buildCurrentChatSavePayload() {
     };
 }
 
-function isMatchingCurrentChatSave(payload = {}) {
-    return Boolean(getStmbChatKey(payload))
-        && getStmbChatKey(payload) === getStmbChatKey(buildCurrentChatSavePayload());
-}
-
 function queuePassiveStmbChecks(chatLike = buildCurrentChatSavePayload(), options = {}) {
     const { includeAutoSummary = false, includeTrackers = true } = options;
     const chatKey = getStmbChatKey(chatLike);
@@ -5116,11 +5111,13 @@ function queuePassiveStmbChecks(chatLike = buildCurrentChatSavePayload(), option
     const pending = pendingPassiveChecksByChat.get(chatKey) || {
         tracker: false,
         autoSummary: false,
+        sceneContext: options.sceneContext || null,
         savedChat: { ...chatLike },
     };
 
     pending.tracker = pending.tracker || Boolean(includeTrackers);
     pending.autoSummary = pending.autoSummary || Boolean(includeAutoSummary);
+    pending.sceneContext = options.sceneContext || pending.sceneContext;
     pending.savedChat = { ...pending.savedChat, ...chatLike };
     pendingPassiveChecksByChat.set(chatKey, pending);
 }
@@ -5146,9 +5143,6 @@ function flushPassiveStmbChecks(savedChat = {}) {
     if (isPassiveStmbFlushSuppressedForChat(savedChat)) {
         return;
     }
-    if (!isMatchingCurrentChatSave(savedChat)) {
-        return;
-    }
 
     if (hasActiveStmbTasks()) {
         return;
@@ -5160,13 +5154,13 @@ function flushPassiveStmbChecks(savedChat = {}) {
     const shouldCheckAutoSummary = pending.autoSummary;
 
     if (shouldCheckTrackers) {
-        evaluateTrackers(stmbSettings).catch(error => {
+        evaluateTrackers(stmbSettings, { sceneContext: pending.sceneContext }).catch(error => {
             console.warn('STMB evaluateTrackers failed after chat save', error);
         });
     }
 
     if (shouldCheckAutoSummary) {
-        checkAutoSummaryTrigger().catch(error => {
+        checkAutoSummaryTrigger({ sceneContext: pending.sceneContext }).catch(error => {
             console.warn('STMB auto-summary trigger failed after chat save', error);
         });
     }
@@ -5553,9 +5547,6 @@ export function initStmb() {
             validateSceneMarkers();
             renderAllSceneButtons();
         }, 0);
-        if (!hasActiveStmbTasks()) {
-            flushPassiveStmbChecks(buildCurrentChatSavePayload());
-        }
     });
 
     eventSource.on(event_types.MESSAGE_RECEIVED, (messageId) => {
@@ -5566,7 +5557,8 @@ export function initStmb() {
         if (hasActiveStmbTasks()) {
             return;
         }
-        queuePassiveStmbChecks(buildCurrentChatSavePayload(), { includeAutoSummary: !selected_group });
+        const sceneContext = buildStmbSceneContext();
+        queuePassiveStmbChecks(sceneContext, { includeAutoSummary: !selected_group, sceneContext });
     });
 
     eventSource.on(event_types.USER_MESSAGE_RENDERED, (messageId) => {
@@ -5577,7 +5569,8 @@ export function initStmb() {
         if (hasActiveStmbTasks()) {
             return;
         }
-        queuePassiveStmbChecks(buildCurrentChatSavePayload(), { includeAutoSummary: false });
+        const sceneContext = buildStmbSceneContext();
+        queuePassiveStmbChecks(sceneContext, { includeAutoSummary: false, sceneContext });
     });
 
     eventSource.on(event_types.CHARACTER_MESSAGE_RENDERED, (messageId) => {
@@ -5603,7 +5596,8 @@ export function initStmb() {
         if (hasActiveStmbTasks()) {
             return;
         }
-        queuePassiveStmbChecks(buildCurrentChatSavePayload(), { includeAutoSummary: true, includeTrackers: false });
+        const sceneContext = buildStmbSceneContext();
+        queuePassiveStmbChecks(sceneContext, { includeAutoSummary: true, includeTrackers: false, sceneContext });
         flushPassiveStmbChecks(buildCurrentChatSavePayload());
     });
 

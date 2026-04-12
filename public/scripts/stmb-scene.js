@@ -10,7 +10,7 @@ import { captureStmbScene, getStmbChatRangeInfo } from './stmb-api.js';
 
 const suppressedPassiveFlushCounts = new Map();
 
-function buildStmbSceneContext() {
+export function buildStmbSceneContext() {
     const context = getContext();
     const group = selected_group ? groups.find(item => item.id === selected_group) : null;
     const chatId = selected_group
@@ -103,8 +103,8 @@ async function saveChatIfNeeded(saveFirst = true, sceneContext = null) {
 }
 
 export async function fetchStmbChatRangeInfo(options = {}) {
-    const { signal = null, saveFirst = true, rangeStart = null, rangeEnd = null } = options;
-    const sceneContext = buildStmbSceneContext();
+    const { signal = null, saveFirst = true, rangeStart = null, rangeEnd = null, sceneContext: sceneContextOverride = null } = options;
+    const sceneContext = sceneContextOverride || buildStmbSceneContext();
     await saveChatIfNeeded(saveFirst, sceneContext);
 
     return getStmbChatRangeInfo({
@@ -120,8 +120,9 @@ export async function captureStmbSceneRange(range, options = {}) {
         saveFirst = true,
         skipSystemMessages = true,
         allowPartial = false,
+        sceneContext: sceneContextOverride = null,
     } = options;
-    const sceneContext = buildStmbSceneContext();
+    const sceneContext = sceneContextOverride || buildStmbSceneContext();
     await saveChatIfNeeded(saveFirst, sceneContext);
 
     return captureStmbScene({

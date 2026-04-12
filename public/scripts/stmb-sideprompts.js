@@ -358,6 +358,7 @@ async function compileRange(sceneStart, sceneEnd, settings = null, options = {})
         {
             saveFirst: options.saveFirst !== false,
             skipSystemMessages: !settings?.moduleSettings?.unhideBeforeMemory,
+            sceneContext: options.sceneContext || null,
         },
     );
     return result?.compiledScene;
@@ -535,13 +536,14 @@ export async function evaluateTrackers(settings, options = {}) {
     trackerEvaluationPromise = (async () => {
     const parentTask = options.signal ? null : createStmbTask('SidePrompts:onInterval');
     const signal = options.signal || parentTask?.signal || null;
+    const sceneContext = options.sceneContext || null;
     try {
         const templates = await listByTrigger('onInterval');
         if (!templates || templates.length === 0) return;
 
         const lorebookName = await ensureLorebookName(settings);
         const lorebookData = await loadWorldInfo(lorebookName) || { entries: {} };
-        const chatRangeInfo = await fetchStmbChatRangeInfo({ saveFirst: false });
+        const chatRangeInfo = await fetchStmbChatRangeInfo({ saveFirst: false, sceneContext });
         const currentLast = Number(chatRangeInfo?.lastAvailableMessageId);
         if (currentLast < 0) return;
 
@@ -561,6 +563,7 @@ export async function evaluateTrackers(settings, options = {}) {
                 rangeStart: Math.max(0, lastMessageId + 1),
                 rangeEnd: currentLast,
                 saveFirst: false,
+                sceneContext,
             });
             if (Array.isArray(rangeInfo?.missingRanges) && rangeInfo.missingRanges.length > 0) {
                 continue;
@@ -572,7 +575,7 @@ export async function evaluateTrackers(settings, options = {}) {
             const boundedStart = Math.max(start, currentLast - 199);
             let compiledScene;
             try {
-                compiledScene = await compileRange(boundedStart, currentLast, settings, { saveFirst: false });
+                compiledScene = await compileRange(boundedStart, currentLast, settings, { saveFirst: false, sceneContext });
             } catch {
                 continue;
             }
