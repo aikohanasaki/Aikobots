@@ -213,6 +213,82 @@ function getClientResponseStatus(status) {
 }
 
 /**
+ * @param {number} status
+ * @returns {boolean}
+ */
+function isRetryableStatus(status) {
+    return status === 408 || status === 425 || status === 429 || status >= 500;
+}
+
+/**
+ * @param {import('express').Request | undefined} request
+ * @returns {string | undefined}
+ */
+function getRequestProvider(request) {
+    const provider = request?.body?.chat_completion_source ?? request?.body?.prompt_context?.chatCompletionSource ?? null;
+    return typeof provider === 'string' && provider.trim() ? provider : undefined;
+}
+
+/**
+ * @param {import('express').Request | undefined} request
+ * @returns {string | undefined}
+ */
+function getRequestModel(request) {
+    const model = request?.body?.model ?? request?.body?.prompt_context?.model ?? null;
+    return typeof model === 'string' && model.trim() ? model : undefined;
+}
+
+/**
+ * @param {import('express').Request | undefined} request
+ * @param {string} message
+ * @param {{ stage?: string, provider?: string, upstreamStatus?: number | null }} [context]
+ * @param {unknown} [detail]
+ */
+function logChatCompletionFailure(request, message, context = {}, detail) {
+    const logContext = {
+        requestId: request?.requestId || undefined,
+        provider: context.provider || getRequestProvider(request),
+        model: getRequestModel(request),
+        stage: context.stage,
+        upstreamStatus: context.upstreamStatus ?? undefined,
+        stream: typeof request?.body?.stream === 'boolean' ? request.body.stream : undefined,
+    };
+
+    if (detail !== undefined) {
+        console.error(message, logContext, detail);
+        return;
+    }
+
+    console.error(message, logContext);
+}
+
+/**
+ * @param {string} message
+ * @param {number} statusCode
+ * @param {{ stage?: string, provider?: string, retryable?: boolean }} [options]
+ * @returns {Error & { statusCode: number, stage?: string, provider?: string, retryable?: boolean }}
+ */
+function createChatCompletionStageError(message, statusCode, options = {}) {
+    const error = new Error(message);
+    error.name = options.stage === 'provider_request' ? 'ProviderRequestError' : 'ChatCompletionStageError';
+    error.statusCode = statusCode;
+
+    if (options.stage) {
+        error.stage = options.stage;
+    }
+
+    if (options.provider) {
+        error.provider = options.provider;
+    }
+
+    if (typeof options.retryable === 'boolean') {
+        error.retryable = options.retryable;
+    }
+
+    return error;
+}
+
+/**
  * @param {string} value
  * @param {number} maxLength
  * @returns {string}
@@ -332,10 +408,143 @@ function sanitizeProviderErrorPayload(payload, fallbackMessage = 'Unknown error 
 }
 
 /**
+ * @param {any} payload
+ * @param {{
+ *   request?: import('express').Request | null,
+ *   fallbackMessage?: string,
+ *   type?: string | null,
+ *   stage?: string | null,
+ *   provider?: string | null,
+ *   upstreamStatus?: number | null,
+ *   retryable?: boolean | null,
+ * }} [options]
+ * @returns {{ error: Record<string, any>, quota_error?: boolean }}
+ */
+function annotateErrorPayload(payload, {
+    request = null,
+    fallbackMessage = 'Unknown error occurred',
+    type = null,
+    stage = null,
+    provider = null,
+    upstreamStatus = null,
+    retryable = null,
+} = {}) {
+    const existingError = payload?.error && typeof payload.error === 'object' ? payload.error : null;
+    const result = sanitizeProviderErrorPayload(payload, fallbackMessage);
+
+    if (!result.error || typeof result.error !== 'object') {
+        result.error = { message: fallbackMessage };
+    }
+
+    if (type && typeof result.error.type !== 'string') {
+        result.error.type = type;
+    }
+
+    if (typeof existingError?.type === 'string' && typeof result.error.type !== 'string') {
+        result.error.type = existingError.type;
+    }
+
+    if (typeof existingError?.stage === 'string' && typeof result.error.stage !== 'string') {
+        result.error.stage = existingError.stage;
+    }
+
+    if (typeof existingError?.provider === 'string' && typeof result.error.provider !== 'string') {
+        result.error.provider = existingError.provider;
+    }
+
+    if (Number.isInteger(existingError?.upstream_status) && !Number.isInteger(result.error.upstream_status)) {
+        result.error.upstream_status = existingError.upstream_status;
+    }
+
+    if (typeof existingError?.retryable === 'boolean' && typeof result.error.retryable !== 'boolean') {
+        result.error.retryable = existingError.retryable;
+    }
+
+    if (typeof existingError?.request_id === 'string' && typeof result.error.request_id !== 'string') {
+        result.error.request_id = existingError.request_id;
+    }
+
+    if (stage && typeof result.error.stage !== 'string') {
+        result.error.stage = stage;
+    }
+
+    const resolvedProvider = provider || getRequestProvider(request ?? undefined);
+    if (resolvedProvider && typeof result.error.provider !== 'string') {
+        result.error.provider = resolvedProvider;
+    }
+
+    if (Number.isInteger(upstreamStatus) && upstreamStatus > 0 && !Number.isInteger(result.error.upstream_status)) {
+        result.error.upstream_status = upstreamStatus;
+    }
+
+    if (typeof retryable === 'boolean' && typeof result.error.retryable !== 'boolean') {
+        result.error.retryable = retryable;
+    }
+
+    if (request?.requestId) {
+        result.error.request_id = request.requestId;
+    }
+
+    return result;
+}
+
+/**
+ * @param {unknown} error
+ * @returns {number}
+ */
+function getLocalProviderErrorStatus(error) {
+    const code = String(error?.code || '');
+    const networkCodes = new Set(['ECONNREFUSED', 'ENOTFOUND', 'EAI_AGAIN', 'ETIMEDOUT', 'ECONNRESET', 'EPIPE', 'UND_ERR_CONNECT_TIMEOUT', 'UND_ERR_HEADERS_TIMEOUT', 'UND_ERR_SOCKET', 'ERR_SOCKET_CONNECTION_TIMEOUT']);
+
+    if (error?.name === 'AbortError') {
+        return 504;
+    }
+
+    if (networkCodes.has(code)) {
+        return 502;
+    }
+
+    return 500;
+}
+
+/**
+ * @param {unknown} error
+ * @param {import('express').Request} request
+ * @param {{ provider?: string | null, fallbackMessage?: string }} [options]
+ * @returns {{ kind: string, ok: boolean, status: number, body: { error: Record<string, any>, quota_error?: boolean } }}
+ */
+function createLocalProviderErrorResult(error, request, { provider = null, fallbackMessage = 'Unknown error occurred' } = {}) {
+    const status = getLocalProviderErrorStatus(error);
+    const type = typeof error?.name === 'string' && error.name ? error.name : 'ProviderRequestError';
+    const message = sanitizeProviderErrorMessage(error?.message, fallbackMessage);
+    const body = annotateErrorPayload({ error: { message } }, {
+        request,
+        type,
+        stage: 'provider_request',
+        provider,
+        retryable: isRetryableStatus(status),
+    });
+
+    return createProviderJsonResult(body, { status, ok: false });
+}
+
+/**
  * @param {import('node-fetch').Response} fetchResponse
+ * @param {import('express').Request} request
+ * @param {{ stage?: string | null, provider?: string | null }} [options]
+ * @returns {Promise<{ kind: string, ok: boolean, status: number, body: { error: Record<string, any>, quota_error?: boolean } }>}
+ */
+async function createSanitizedProviderErrorResult(fetchResponse, request, { stage = 'provider_response', provider = null } = {}) {
+    const sanitizedError = await buildSanitizedErrorResponse(fetchResponse, { request, stage, provider });
+    return createProviderJsonResult(sanitizedError.body, { status: sanitizedError.status, ok: false });
+}
+
+/**
+ * @param {import('node-fetch').Response} fetchResponse
+ * @param {{ request?: import('express').Request | null, stage?: string | null, provider?: string | null }} [options]
  * @returns {Promise<{ status: number, body: { error: Record<string, any>, quota_error?: boolean } }>}
  */
-async function buildSanitizedErrorResponse(fetchResponse) {
+async function buildSanitizedErrorResponse(fetchResponse, { request = null, stage = 'provider_response', provider = null } = {}) {
     let responseText = '';
 
     try {
@@ -347,16 +556,22 @@ async function buildSanitizedErrorResponse(fetchResponse) {
     const fallbackMessage = fetchResponse.statusText || 'Unknown error occurred';
     const summarizedBody = responseText ? sanitizeProviderErrorMessage(responseText, fallbackMessage) : '';
 
-    console.error(
-        'Chat completion request error:',
-        fetchResponse.status,
-        fallbackMessage,
-        summarizedBody || '(empty response body)',
-    );
+    logChatCompletionFailure(request ?? undefined, 'Chat completion request error', {
+        stage,
+        provider,
+        upstreamStatus: fetchResponse.status,
+    }, `${fallbackMessage}: ${summarizedBody || '(empty response body)'}`);
 
     return {
         status: getClientResponseStatus(fetchResponse.status || 500),
-        body: sanitizeProviderErrorPayload(responseText || null, fallbackMessage),
+        body: annotateErrorPayload(responseText || null, {
+            request,
+            fallbackMessage,
+            stage,
+            provider,
+            upstreamStatus: fetchResponse.status || null,
+            retryable: isRetryableStatus(fetchResponse.status || 500),
+        }),
     };
 }
 
@@ -376,7 +591,7 @@ async function sendProviderDispatchResult(result, request, response, {
         }
 
         if (!result.ok) {
-            const sanitizedError = await buildSanitizedErrorResponse(result.response);
+            const sanitizedError = await buildSanitizedErrorResponse(result.response, { request });
             return response.status(sanitizedError.status).send(sanitizedError.body);
         }
 
@@ -397,7 +612,11 @@ async function sendProviderDispatchResult(result, request, response, {
 
     const payload = result.ok
         ? attachWorldInfoResponseData(result.body, request, timedWorldInfo, worldInfoOverflowed, worldInfo, promptSnapshotKey)
-        : sanitizeProviderErrorPayload(result.body);
+        : annotateErrorPayload(result.body, {
+            request,
+            stage: 'provider_response',
+            retryable: isRetryableStatus(result.status || 500),
+        });
 
     return response.status(result.status || 200).send(payload);
 }
@@ -563,9 +782,7 @@ async function sendClaudeRequest(request) {
             return createProviderStreamResult(generateResponse);
         } else {
             if (!generateResponse.ok) {
-                const generateResponseText = await generateResponse.text();
-                console.warn(color.red(`Claude API returned error: ${generateResponse.status} ${generateResponse.statusText}\n${generateResponseText}\n${divider}`));
-                return createProviderJsonResult({ error: true }, { status: 500, ok: false });
+                return await createSanitizedProviderErrorResult(generateResponse, request);
             }
 
             /** @type {any} */
@@ -579,7 +796,7 @@ async function sendClaudeRequest(request) {
         }
     } catch (error) {
         console.error(color.red(`Error communicating with Claude: ${error}\n${divider}`));
-        return createProviderJsonResult({ error: true }, { status: 500, ok: false });
+        return createLocalProviderErrorResult(error, request, { fallbackMessage: 'Error communicating with Claude API.' });
     }
 }
 
@@ -810,10 +1027,7 @@ async function sendMakerSuiteRequest(request) {
             return createProviderStreamResult(generateResponse);
         } else {
             if (!generateResponse.ok) {
-                const errorText = await generateResponse.text();
-                console.warn(`${apiName} API returned error: ${generateResponse.status} ${generateResponse.statusText} ${errorText}`);
-                const errorJson = tryParse(errorText) ?? { error: true };
-                return createProviderJsonResult(errorJson, { status: 500, ok: false });
+                return await createSanitizedProviderErrorResult(generateResponse, request);
             }
 
             /** @type {any} */
@@ -847,7 +1061,7 @@ async function sendMakerSuiteRequest(request) {
         }
     } catch (error) {
         console.error(`Error communicating with ${apiName} API:`, error);
-        return createProviderJsonResult({ error: true }, { status: 500, ok: false });
+        return createLocalProviderErrorResult(error, request, { fallbackMessage: `Error communicating with ${apiName} API.` });
     }
 }
 
@@ -912,10 +1126,7 @@ async function sendAI21Request(request) {
             return createProviderStreamResult(generateResponse);
         } else {
             if (!generateResponse.ok) {
-                const errorText = await generateResponse.text();
-                console.warn(`AI21 API returned error: ${generateResponse.status} ${generateResponse.statusText} ${errorText}`);
-                const errorJson = tryParse(errorText) ?? { error: true };
-                return createProviderJsonResult(errorJson, { status: 500, ok: false });
+                return await createSanitizedProviderErrorResult(generateResponse, request);
             }
             const generateResponseJson = await generateResponse.json();
             console.debug('AI21 response:', generateResponseJson);
@@ -923,7 +1134,7 @@ async function sendAI21Request(request) {
         }
     } catch (error) {
         console.error('Error communicating with AI21 API: ', error);
-        return createProviderJsonResult({ error: true }, { status: 500, ok: false });
+        return createLocalProviderErrorResult(error, request, { fallbackMessage: 'Error communicating with AI21 API.' });
     }
 }
 
@@ -997,10 +1208,7 @@ async function sendMistralAIRequest(request) {
             return createProviderStreamResult(generateResponse);
         } else {
             if (!generateResponse.ok) {
-                const errorText = await generateResponse.text();
-                console.warn(`MistralAI API returned error: ${generateResponse.status} ${generateResponse.statusText} ${errorText}`);
-                const errorJson = tryParse(errorText) ?? { error: true };
-                return createProviderJsonResult(errorJson, { status: 500, ok: false });
+                return await createSanitizedProviderErrorResult(generateResponse, request);
             }
             const generateResponseJson = await generateResponse.json();
             console.debug('MistralAI response:', generateResponseJson);
@@ -1008,7 +1216,7 @@ async function sendMistralAIRequest(request) {
         }
     } catch (error) {
         console.error('Error communicating with MistralAI API: ', error);
-        return createProviderJsonResult({ error: true }, { status: 500, ok: false });
+        return createLocalProviderErrorResult(error, request, { fallbackMessage: 'Error communicating with MistralAI API.' });
     }
 }
 
@@ -1092,10 +1300,7 @@ async function sendCohereRequest(request) {
         } else {
             const generateResponse = await fetch(apiUrl, config);
             if (!generateResponse.ok) {
-                const errorText = await generateResponse.text();
-                console.warn(`Cohere API returned error: ${generateResponse.status} ${generateResponse.statusText} ${errorText}`);
-                const errorJson = tryParse(errorText) ?? { error: true };
-                return createProviderJsonResult(errorJson, { status: 500, ok: false });
+                return await createSanitizedProviderErrorResult(generateResponse, request);
             }
             const generateResponseJson = await generateResponse.json();
             console.debug('Cohere response:', generateResponseJson);
@@ -1103,7 +1308,7 @@ async function sendCohereRequest(request) {
         }
     } catch (error) {
         console.error('Error communicating with Cohere API: ', error);
-        return createProviderJsonResult({ error: true }, { status: 500, ok: false });
+        return createLocalProviderErrorResult(error, request, { fallbackMessage: 'Error communicating with Cohere API.' });
     }
 }
 
@@ -1193,10 +1398,7 @@ async function sendDeepSeekRequest(request) {
             return createProviderStreamResult(generateResponse);
         } else {
             if (!generateResponse.ok) {
-                const errorText = await generateResponse.text();
-                console.warn(`DeepSeek API returned error: ${generateResponse.status} ${generateResponse.statusText} ${errorText}`);
-                const errorJson = tryParse(errorText) ?? { error: true };
-                return createProviderJsonResult(errorJson, { status: 500, ok: false });
+                return await createSanitizedProviderErrorResult(generateResponse, request);
             }
             const generateResponseJson = await generateResponse.json();
             console.debug('DeepSeek response:', generateResponseJson);
@@ -1204,7 +1406,7 @@ async function sendDeepSeekRequest(request) {
         }
     } catch (error) {
         console.error('Error communicating with DeepSeek API: ', error);
-        return createProviderJsonResult({ error: true }, { status: 500, ok: false });
+        return createLocalProviderErrorResult(error, request, { fallbackMessage: 'Error communicating with DeepSeek API.' });
     }
 }
 
@@ -1305,10 +1507,7 @@ async function sendXaiRequest(request) {
             return createProviderStreamResult(generateResponse);
         } else {
             if (!generateResponse.ok) {
-                const errorText = await generateResponse.text();
-                console.warn(`xAI API returned error: ${generateResponse.status} ${generateResponse.statusText} ${errorText}`);
-                const errorJson = tryParse(errorText) ?? { error: true };
-                return createProviderJsonResult(errorJson, { status: 500, ok: false });
+                return await createSanitizedProviderErrorResult(generateResponse, request);
             }
             const generateResponseJson = await generateResponse.json();
             console.debug('xAI response:', generateResponseJson);
@@ -1316,7 +1515,7 @@ async function sendXaiRequest(request) {
         }
     } catch (error) {
         console.error('Error communicating with xAI API: ', error);
-        return createProviderJsonResult({ error: true }, { status: 500, ok: false });
+        return createLocalProviderErrorResult(error, request, { fallbackMessage: 'Error communicating with xAI API.' });
     }
 }
 
@@ -1405,10 +1604,7 @@ async function sendAimlapiRequest(request) {
             return createProviderStreamResult(generateResponse);
         } else {
             if (!generateResponse.ok) {
-                const errorText = await generateResponse.text();
-                console.warn(`AI/ML API returned error: ${generateResponse.status} ${generateResponse.statusText} ${errorText}`);
-                const errorJson = tryParse(errorText) ?? { error: true };
-                return createProviderJsonResult(errorJson, { status: 500, ok: false });
+                return await createSanitizedProviderErrorResult(generateResponse, request);
             }
             const generateResponseJson = await generateResponse.json();
             console.debug('AI/ML API response:', generateResponseJson);
@@ -1416,7 +1612,7 @@ async function sendAimlapiRequest(request) {
         }
     } catch (error) {
         console.error('Error communicating with AI/ML API: ', error);
-        return createProviderJsonResult({ error: true }, { status: 500, ok: false });
+        return createLocalProviderErrorResult(error, request, { fallbackMessage: 'Error communicating with AI/ML API.' });
     }
 }
 
@@ -1500,10 +1696,7 @@ async function sendElectronHubRequest(request) {
             return createProviderStreamResult(generateResponse);
         } else {
             if (!generateResponse.ok) {
-                const errorText = await generateResponse.text();
-                console.warn('Electron Hub returned error: ', errorText);
-                const errorJson = tryParse(errorText) ?? { error: true };
-                return createProviderJsonResult(errorJson, { status: 500, ok: false });
+                return await createSanitizedProviderErrorResult(generateResponse, request);
             }
             const generateResponseJson = await generateResponse.json();
             console.debug('Electron Hub response:', generateResponseJson);
@@ -1512,7 +1705,7 @@ async function sendElectronHubRequest(request) {
     }
     catch (error) {
         console.error('Error communicating with Electron Hub: ', error);
-        return createProviderJsonResult({ error: true }, { status: 500, ok: false });
+        return createLocalProviderErrorResult(error, request, { fallbackMessage: 'Error communicating with Electron Hub.' });
     }
 }
 
@@ -1600,14 +1793,13 @@ async function sendAzureOpenAIRequest(request) {
             return createProviderJsonResult(json);
         }
 
-        const text = await fetchResponse.text();
-        const data = tryParse(text) || { error: { message: fetchResponse.statusText || 'Unknown error occurred' } };
-        return createProviderJsonResult(data, { status: 500, ok: false });
+        return await createSanitizedProviderErrorResult(fetchResponse, request);
     } catch (error) {
-        const message = error.name === 'AbortError'
-            ? 'Request was aborted by the client.'
-            : (error.message || 'An unknown network error occurred.');
-        return createProviderJsonResult({ error: { message } }, { status: 500, ok: false });
+        return createLocalProviderErrorResult(error, request, {
+            fallbackMessage: error?.name === 'AbortError'
+                ? 'Request was aborted by the client.'
+                : 'An unknown network error occurred.',
+        });
     }
 }
 
@@ -1624,7 +1816,10 @@ async function prepareServerPromptContext(user, directories, promptContext) {
 
     const runtimeResult = await runServerGenerationExtensions(directories, promptContext);
     if (runtimeResult.aborted) {
-        throw new Error('Generation aborted by server extension runtime.');
+        throw createChatCompletionStageError('Generation aborted by server extension runtime.', 503, {
+            stage: 'server_extension',
+            retryable: false,
+        });
     }
 
     const worldInfoRequest = promptContext.worldInfoRequest;
@@ -1650,6 +1845,11 @@ async function prepareServerPromptContext(user, directories, promptContext) {
 }
 
 function getPromptAssemblyErrorStatus(error) {
+    const explicitStatus = Number(error?.statusCode);
+    if (Number.isInteger(explicitStatus) && explicitStatus > 0) {
+        return explicitStatus;
+    }
+
     const errorName = String(error?.name || '');
     if (['TokenBudgetExceededError', 'IdentifierNotFoundError'].includes(errorName)) {
         return 422;
@@ -2408,16 +2608,37 @@ async function forwardFetchResponseWithWorldInfo(from, to, request, timedWorldIn
 }
 
 function toPromptAssemblyErrorBody(error) {
-    return {
+    const payload = {
         error: {
             message: String(error?.message || error),
             type: String(error?.name || 'Error'),
+            stage: String(error?.stage || 'prompt_assembly'),
         },
     };
+
+    if (error?.provider) {
+        payload.error.provider = String(error.provider);
+    }
+
+    if (Number.isInteger(error?.upstreamStatus) && error.upstreamStatus > 0) {
+        payload.error.upstream_status = error.upstreamStatus;
+    }
+
+    if (typeof error?.retryable === 'boolean') {
+        payload.error.retryable = error.retryable;
+    }
+
+    if (typeof error?.requestId === 'string' && error.requestId) {
+        payload.error.request_id = error.requestId;
+    }
+
+    return payload;
 }
 
 router.post('/status', async function (request, statusResponse) {
     if (!request.body) return statusResponse.sendStatus(400);
+    request.requestId = request.requestId || uuidv4();
+    statusResponse.setHeader('X-Request-Id', request.requestId);
 
     if (request.body.reverse_proxy && isVoidaiAppUrl(request.body.reverse_proxy)) {
         console.warn('Blocked reverse proxy endpoint (voidai.app).');
@@ -2498,7 +2719,12 @@ router.post('/status', async function (request, statusResponse) {
         apiUrl = API_COMETAPI;
         apiKey = readSecret(request.user.directories, SECRET_KEYS.COMETAPI);
         headers = {};
-        throw new Error('This provider is temporarily disabled.');
+        return statusResponse.status(503).send(annotateErrorPayload({ error: { message: 'This provider is temporarily disabled.' } }, {
+            request,
+            type: 'ProviderRequestError',
+            stage: 'provider_request',
+            retryable: false,
+        }));
     } else if (request.body.chat_completion_source === CHAT_COMPLETION_SOURCES.MOONSHOT) {
         apiUrl = API_MOONSHOT;
         apiKey = readSecret(request.user.directories, SECRET_KEYS.MOONSHOT);
@@ -2805,6 +3031,8 @@ export async function handleChatCompletionsGenerate(request, response) {
     if (!request.body) return response.status(400).send({ error: true });
 
     return (async () => {
+    request.requestId = request.requestId || uuidv4();
+    response.setHeader('X-Request-Id', request.requestId);
 
     if (request.body.reverse_proxy && isVoidaiAppUrl(request.body.reverse_proxy)) {
         console.warn('Blocked reverse proxy endpoint (voidai.app).');
@@ -3125,7 +3353,11 @@ export async function handleChatCompletionsGenerate(request, response) {
         bodyParams = {
             reasoning_effort: request.body.reasoning_effort,
         };
-        throw new Error('This provider is temporarily disabled.');
+        throw createChatCompletionStageError('This provider is temporarily disabled.', 503, {
+            stage: 'provider_request',
+            provider: request.body.chat_completion_source,
+            retryable: false,
+        });
     } else if (request.body.chat_completion_source === CHAT_COMPLETION_SOURCES.ZANITY) {
         apiUrl = request.body.custom_url || getZanityApiUrl(request.body.zanity_endpoint);
         apiKey = readSecret(request.user.directories, SECRET_KEYS.ZANITY);
@@ -3295,12 +3527,18 @@ export async function handleChatCompletionsGenerate(request, response) {
                 return await handleErrorResponse(fetchResponse);
             }
         } catch (error) {
-            console.error('Generation failed', error);
+            logChatCompletionFailure(request, 'Generation failed', { stage: 'provider_request' }, error);
             const message = error.code === 'ECONNREFUSED'
                 ? `Connection refused: ${error.message}`
                 : error.message || 'Unknown error occurred';
 
-            return createProviderJsonResult({ error: { message } }, { status: 502, ok: false });
+            const payload = annotateErrorPayload({ error: { message } }, {
+                request,
+                type: typeof error?.name === 'string' && error.name ? error.name : 'ProviderRequestError',
+                stage: 'provider_request',
+                retryable: true,
+            });
+            return createProviderJsonResult(payload, { status: 502, ok: false });
         }
     }
 
@@ -3308,11 +3546,17 @@ export async function handleChatCompletionsGenerate(request, response) {
      * @param {import("node-fetch").Response} errorResponse
      */
     async function handleErrorResponse(errorResponse) {
-        const sanitizedError = await buildSanitizedErrorResponse(errorResponse);
-        return createProviderJsonResult(sanitizedError.body, { ok: false });
+        return await createSanitizedProviderErrorResult(errorResponse, request);
     }
     })().catch((error) => {
-        console.error('Chat completion generation failed', error);
+        if (request.requestId && !error?.requestId) {
+            error.requestId = request.requestId;
+        }
+        logChatCompletionFailure(request, 'Chat completion generation failed', {
+            stage: error?.stage || 'chat_completion',
+            provider: error?.provider || getRequestProvider(request),
+            upstreamStatus: error?.upstreamStatus || null,
+        }, error);
         if (!response.headersSent) {
             response.status(getPromptAssemblyErrorStatus(error)).send(toPromptAssemblyErrorBody(error));
         } else if (!response.writableEnded) {
@@ -3331,13 +3575,21 @@ router.post('/assemble', async function (request, response) {
             return response.sendStatus(400);
         }
 
+        request.requestId = request.requestId || uuidv4();
+        response.setHeader('X-Request-Id', request.requestId);
         await prepareServerPromptContext(request.user, request.user.directories, request.body);
         const result = await assembleChatCompletionPrompt(request.body);
         rewriteSystemMessagesForO1Model(request.body.model, request.body.chatCompletionSource, result.chat);
         const sanitizedResult = sanitizePromptAssemblyForResponse(result, request.user);
         return response.send(attachWorldInfoResponseData(sanitizedResult, request, result.timedWorldInfo, result.worldInfoOverflowed, result.worldInfo));
     } catch (error) {
-        console.error('Chat completion assembly failed', error);
+        if (request.requestId && !error?.requestId) {
+            error.requestId = request.requestId;
+        }
+        logChatCompletionFailure(request, 'Chat completion assembly failed', {
+            stage: error?.stage || 'prompt_assembly',
+            upstreamStatus: error?.upstreamStatus || null,
+        }, error);
         return response.status(getPromptAssemblyErrorStatus(error)).send(toPromptAssemblyErrorBody(error));
     }
 });
@@ -3348,6 +3600,8 @@ router.post('/assemble/compare', async function (request, response) {
             return response.sendStatus(400);
         }
 
+        request.requestId = request.requestId || uuidv4();
+        response.setHeader('X-Request-Id', request.requestId);
         await prepareServerPromptContext(request.user, request.user.directories, request.body);
         const result = await assembleChatCompletionPrompt(request.body);
         rewriteSystemMessagesForO1Model(request.body.model, request.body.chatCompletionSource, result.chat);
@@ -3361,7 +3615,13 @@ router.post('/assemble/compare', async function (request, response) {
 
         return response.send(attachWorldInfoResponseData(sanitizedResult, request, result.timedWorldInfo, result.worldInfoOverflowed, result.worldInfo));
     } catch (error) {
-        console.error('Chat completion assembly comparison failed', error);
+        if (request.requestId && !error?.requestId) {
+            error.requestId = request.requestId;
+        }
+        logChatCompletionFailure(request, 'Chat completion assembly comparison failed', {
+            stage: error?.stage || 'prompt_assembly',
+            upstreamStatus: error?.upstreamStatus || null,
+        }, error);
         return response.status(getPromptAssemblyErrorStatus(error)).send(toPromptAssemblyErrorBody(error));
     }
 });

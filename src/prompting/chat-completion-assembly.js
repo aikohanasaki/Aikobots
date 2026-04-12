@@ -338,6 +338,53 @@ class TokenBudgetExceededError extends Error {
     }
 }
 
+class PromptAssemblyError extends Error {
+    constructor(name, message, statusCode, { upstreamStatus, retryable } = {}) {
+        super(message);
+        this.name = name;
+        this.statusCode = statusCode;
+        this.stage = 'prompt_assembly';
+
+        if (Number.isInteger(upstreamStatus) && upstreamStatus > 0) {
+            this.upstreamStatus = upstreamStatus;
+        }
+
+        if (typeof retryable === 'boolean') {
+            this.retryable = retryable;
+        }
+    }
+}
+
+class InvalidMediaUrlError extends PromptAssemblyError {
+    constructor(message) {
+        super('InvalidMediaUrlError', message, 400, { retryable: false });
+    }
+}
+
+class PrivateMediaHostError extends PromptAssemblyError {
+    constructor(hostname) {
+        super('PrivateMediaHostError', `Refusing to fetch private media host: ${hostname}`, 403, { retryable: false });
+    }
+}
+
+class MediaTooLargeError extends PromptAssemblyError {
+    constructor(byteLength) {
+        super('MediaTooLargeError', `Media too large: ${byteLength} bytes`, 413, { retryable: false });
+    }
+}
+
+class RemoteMediaFetchError extends PromptAssemblyError {
+    constructor(message, { statusCode = 502, upstreamStatus, retryable = true } = {}) {
+        super('RemoteMediaFetchError', message, statusCode, { upstreamStatus, retryable });
+    }
+}
+
+class TokenizerLoadError extends PromptAssemblyError {
+    constructor(tokenizerModel) {
+        super('TokenizerLoadError', `Failed to load tokenizer: ${tokenizerModel}`, 500, { retryable: false });
+    }
+}
+
 class ChatCompletion {
     constructor(tokenHandler) {
         this.tokenHandler = tokenHandler;
@@ -778,13 +825,13 @@ const MAX_FETCHED_MEDIA_BYTES = 10 * 1024 * 1024;
 async function readResponseBodyWithLimit(response, controller, maxBytes) {
     const contentLength = Number(response.headers.get('content-length'));
     if (Number.isFinite(contentLength) && contentLength > maxBytes) {
-        throw new Error(`Media too large: ${contentLength} bytes`);
+        throw new MediaTooLargeError(contentLength);
     }
 
     if (!response.body?.getReader) {
         const arrayBuffer = await response.arrayBuffer();
         if (arrayBuffer.byteLength > maxBytes) {
-            throw new Error(`Media too large: ${arrayBuffer.byteLength} bytes`);
+            throw new MediaTooLargeError(arrayBuffer.byteLength);
         }
         return Buffer.from(arrayBuffer);
     }
@@ -803,7 +850,7 @@ async function readResponseBodyWithLimit(response, controller, maxBytes) {
             totalBytes += value.byteLength;
             if (totalBytes > maxBytes) {
                 controller.abort();
-                throw new Error(`Media too large: ${totalBytes} bytes`);
+                throw new MediaTooLargeError(totalBytes);
             }
 
             chunks.push(Buffer.from(value));
@@ -865,11 +912,11 @@ async function lookupHostnameAddresses(hostname) {
 async function validateRemoteMediaUrl(url, clientOrigin = '') {
     const parsedUrl = parseMediaUrl(url, clientOrigin);
     if (!parsedUrl) {
-        throw new Error('Invalid media URL');
+        throw new InvalidMediaUrlError('Invalid media URL');
     }
 
     if (parsedUrl.username || parsedUrl.password) {
-        throw new Error('Media URL credentials are not allowed');
+        throw new InvalidMediaUrlError('Media URL credentials are not allowed');
     }
 
     const baseUrl = parseMediaUrl(clientOrigin);
@@ -877,16 +924,16 @@ async function validateRemoteMediaUrl(url, clientOrigin = '') {
     const hostname = parsedUrl.hostname.toLowerCase();
 
     if (!isSameOrigin && (hostname === 'localhost' || hostname.endsWith('.localhost'))) {
-        throw new Error(`Refusing to fetch private media host: ${hostname}`);
+        throw new PrivateMediaHostError(hostname);
     }
 
     const resolvedAddresses = await lookupHostnameAddresses(parsedUrl.hostname);
     if (!resolvedAddresses.length) {
-        throw new Error(`Unable to resolve media host: ${parsedUrl.hostname}`);
+        throw new RemoteMediaFetchError(`Unable to resolve media host: ${parsedUrl.hostname}`, { statusCode: 502 });
     }
 
     if (!isSameOrigin && resolvedAddresses.some(isPrivateNetworkAddress)) {
-        throw new Error(`Refusing to fetch private media host: ${parsedUrl.hostname}`);
+        throw new PrivateMediaHostError(parsedUrl.hostname);
     }
 
     return parsedUrl.toString();
@@ -900,12 +947,26 @@ async function fetchMediaAsDataUrl(url, fallbackMimeType, clientOrigin = '') {
     try {
         const response = await fetch(mediaUrl, { method: 'GET', redirect: 'error', signal: controller.signal });
         if (!response.ok) {
-            throw new Error(`Failed to fetch media: ${response.status}`);
+            throw new RemoteMediaFetchError(`Failed to fetch media: ${response.status}`, {
+                statusCode: response.status >= 500 ? 502 : 422,
+                upstreamStatus: response.status,
+                retryable: response.status === 408 || response.status === 429 || response.status >= 500,
+            });
         }
 
         const contentType = normalizeMimeType(response.headers.get('content-type'), fallbackMimeType);
         const body = (await readResponseBodyWithLimit(response, controller, MAX_FETCHED_MEDIA_BYTES)).toString('base64');
         return `data:${contentType};base64,${body}`;
+    } catch (error) {
+        if (error instanceof PromptAssemblyError) {
+            throw error;
+        }
+
+        if (error?.name === 'AbortError') {
+            throw new RemoteMediaFetchError('Timed out while fetching remote media.', { statusCode: 504, retryable: true });
+        }
+
+        throw new RemoteMediaFetchError(error?.message || 'Failed to fetch remote media.', { statusCode: 502, retryable: true });
     } finally {
         clearTimeout(timeoutId);
     }
@@ -1607,7 +1668,7 @@ async function countTokensOpenAIAsync(messages, model, full = false) {
     if (tokenizerModel === 'claude') {
         const instance = await getWebTokenizer('claude')?.get();
         if (!instance) {
-            throw new Error('Failed to load Claude tokenizer');
+            throw new TokenizerLoadError('Claude');
         }
         return countWebTokenizerTokens(instance, messageArray);
     }
@@ -1615,7 +1676,7 @@ async function countTokensOpenAIAsync(messages, model, full = false) {
     if (tokenizerModel === 'llama3' || tokenizerModel === 'llama-3') {
         const instance = await getWebTokenizer('llama3')?.get();
         if (!instance) {
-            throw new Error('Failed to load Llama3 tokenizer');
+            throw new TokenizerLoadError('Llama3');
         }
         return countWebTokenizerTokens(instance, messageArray);
     }
@@ -1623,7 +1684,7 @@ async function countTokensOpenAIAsync(messages, model, full = false) {
     if (tokenizerModel === 'qwen2' || tokenizerModel === 'command-r' || tokenizerModel === 'command-a' || tokenizerModel === 'nemo' || tokenizerModel === 'deepseek') {
         const instance = await getWebTokenizer(tokenizerModel)?.get();
         if (!instance) {
-            throw new Error(`Failed to load tokenizer: ${tokenizerModel}`);
+            throw new TokenizerLoadError(tokenizerModel);
         }
         return countWebTokenizerTokens(instance, messageArray);
     }
