@@ -9,6 +9,7 @@ export const event_types = {
     MESSAGE_EDITED: 'message_edited',
     MESSAGE_DELETED: 'message_deleted',
     MESSAGE_UPDATED: 'message_updated',
+    CHAT_SAVED: 'chat_saved',
     MESSAGE_FILE_EMBEDDED: 'message_file_embedded',
     MESSAGE_REASONING_EDITED: 'message_reasoning_edited',
     MESSAGE_REASONING_DELETED: 'message_reasoning_deleted',

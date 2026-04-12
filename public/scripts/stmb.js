@@ -5,7 +5,6 @@ import {
     eventSource,
     event_types,
     getCurrentChatId,
-    isChatSaving,
     name1,
     name2,
     saveSettingsDebounced,
@@ -46,7 +45,7 @@ import {
     parseSequenceFromTitle,
     parseStructuredMemoryResponse,
 } from './stmb-core.js';
-import { captureStmbSceneRange, fetchStmbChatRangeInfo } from './stmb-scene.js';
+import { captureStmbSceneRange, fetchStmbChatRangeInfo, getStmbChatKey, isPassiveStmbFlushSuppressedForChat } from './stmb-scene.js';
 import {
     STMB_SUMMARY_RESPONSE_SCHEMA,
     buildBriefsFromEntries,
@@ -114,7 +113,7 @@ import {
     removeTemplate,
     upsertTemplate,
 } from './stmb-sideprompts-manager.js';
-import { escapeHtml, waitUntilCondition } from './utils.js';
+import { escapeHtml } from './utils.js';
 import { ensureResolvedLorebookName, isStmbLorebookHandledError } from './stmb-lorebook.js';
 import { createStmbTask, getActiveStmbTaskCount, hasActiveStmbTasks, isStmbAbortError, stopAllStmbTasks, throwIfStmbAborted } from './stmb-tasks.js';
 import { getTokenCountAsync } from './tokenizers.js';
@@ -130,8 +129,7 @@ let lastFailedSummaryContext = null;
 let stmbUiBound = false;
 let sidePromptNameCache = [];
 let activeSettingsPopupDialog = null;
-let passiveStmbCheckTimer = null;
-let passiveStmbCheckNeedsAutoSummary = false;
+const pendingPassiveChecksByChat = new Map();
 
 function isManualSidePromptEnabled(template) {
     const commands = template?.triggers?.commands;
@@ -5095,40 +5093,83 @@ function showSlashCommandError(message, error) {
     toastr.error(String(message || 'STMB command failed'), 'STMB');
 }
 
-function schedulePassiveStmbChecks({ includeAutoSummary = false } = {}) {
-    passiveStmbCheckNeedsAutoSummary = passiveStmbCheckNeedsAutoSummary || Boolean(includeAutoSummary);
-    if (passiveStmbCheckTimer !== null) {
+function buildCurrentChatSavePayload() {
+    return {
+        chatId: String(getCurrentChatId() || ''),
+        isGroup: Boolean(selected_group),
+        groupId: selected_group ? String(selected_group) : null,
+    };
+}
+
+function isMatchingCurrentChatSave(payload = {}) {
+    return Boolean(getStmbChatKey(payload))
+        && getStmbChatKey(payload) === getStmbChatKey(buildCurrentChatSavePayload());
+}
+
+function queuePassiveStmbChecks(chatLike = buildCurrentChatSavePayload(), options = {}) {
+    const { includeAutoSummary = false, includeTrackers = true } = options;
+    const chatKey = getStmbChatKey(chatLike);
+    if (!chatKey) {
         return;
     }
 
-    passiveStmbCheckTimer = window.setTimeout(async () => {
-        const shouldCheckAutoSummary = passiveStmbCheckNeedsAutoSummary;
-        passiveStmbCheckTimer = null;
-        passiveStmbCheckNeedsAutoSummary = false;
+    const pending = pendingPassiveChecksByChat.get(chatKey) || {
+        tracker: false,
+        autoSummary: false,
+        savedChat: { ...chatLike },
+    };
 
-        try {
-            await waitUntilCondition(() => isChatSaving, 250, 25, { rejectOnTimeout: false });
-            if (isChatSaving) {
-                await waitUntilCondition(() => !isChatSaving, 5_000, 50, { rejectOnTimeout: false });
-            }
-        } catch {
-            // Ignore save timing races and fall back to a read-only check.
-        }
+    pending.tracker = pending.tracker || Boolean(includeTrackers);
+    pending.autoSummary = pending.autoSummary || Boolean(includeAutoSummary);
+    pending.savedChat = { ...pending.savedChat, ...chatLike };
+    pendingPassiveChecksByChat.set(chatKey, pending);
+}
 
-        if (hasActiveStmbTasks()) {
-            return;
-        }
+function clearPendingPassiveStmbChecks(chatLike = null) {
+    if (!chatLike) {
+        pendingPassiveChecksByChat.clear();
+        return;
+    }
 
+    const chatKey = getStmbChatKey(chatLike);
+    if (chatKey) {
+        pendingPassiveChecksByChat.delete(chatKey);
+    }
+}
+
+function flushPassiveStmbChecks(savedChat = {}) {
+    const chatKey = getStmbChatKey(savedChat);
+    const pending = chatKey ? pendingPassiveChecksByChat.get(chatKey) : null;
+    if (!pending) {
+        return;
+    }
+    if (isPassiveStmbFlushSuppressedForChat(savedChat)) {
+        return;
+    }
+    if (!isMatchingCurrentChatSave(savedChat)) {
+        return;
+    }
+
+    if (hasActiveStmbTasks()) {
+        return;
+    }
+
+    pendingPassiveChecksByChat.delete(chatKey);
+
+    const shouldCheckTrackers = pending.tracker;
+    const shouldCheckAutoSummary = pending.autoSummary;
+
+    if (shouldCheckTrackers) {
         evaluateTrackers(stmbSettings).catch(error => {
-            console.warn('STMB evaluateTrackers failed after passive check', error);
+            console.warn('STMB evaluateTrackers failed after chat save', error);
         });
+    }
 
-        if (shouldCheckAutoSummary && !selected_group) {
-            checkAutoSummaryTrigger().catch(error => {
-                console.warn('STMB auto-summary trigger failed after passive check', error);
-            });
-        }
-    }, 0);
+    if (shouldCheckAutoSummary) {
+        checkAutoSummaryTrigger().catch(error => {
+            console.warn('STMB auto-summary trigger failed after chat save', error);
+        });
+    }
 }
 
 function launchMemoryCreationInBackground(options, errorMessage) {
@@ -5512,6 +5553,9 @@ export function initStmb() {
             validateSceneMarkers();
             renderAllSceneButtons();
         }, 0);
+        if (!hasActiveStmbTasks()) {
+            flushPassiveStmbChecks(buildCurrentChatSavePayload());
+        }
     });
 
     eventSource.on(event_types.MESSAGE_RECEIVED, (messageId) => {
@@ -5522,7 +5566,7 @@ export function initStmb() {
         if (hasActiveStmbTasks()) {
             return;
         }
-        schedulePassiveStmbChecks({ includeAutoSummary: !selected_group });
+        queuePassiveStmbChecks(buildCurrentChatSavePayload(), { includeAutoSummary: !selected_group });
     });
 
     eventSource.on(event_types.USER_MESSAGE_RENDERED, (messageId) => {
@@ -5533,7 +5577,7 @@ export function initStmb() {
         if (hasActiveStmbTasks()) {
             return;
         }
-        schedulePassiveStmbChecks({ includeAutoSummary: false });
+        queuePassiveStmbChecks(buildCurrentChatSavePayload(), { includeAutoSummary: false });
     });
 
     eventSource.on(event_types.CHARACTER_MESSAGE_RENDERED, (messageId) => {
@@ -5551,13 +5595,16 @@ export function initStmb() {
         handleMessageDeletion(deletedId);
     });
 
+    eventSource.on(event_types.CHAT_SAVED, (savedChat) => {
+        flushPassiveStmbChecks(savedChat);
+    });
+
     eventSource.on(event_types.GROUP_WRAPPER_FINISHED, () => {
         if (hasActiveStmbTasks()) {
             return;
         }
-        checkAutoSummaryTrigger().catch(error => {
-            console.warn('STMB auto-summary trigger failed after group wrapper', error);
-        });
+        queuePassiveStmbChecks(buildCurrentChatSavePayload(), { includeAutoSummary: true, includeTrackers: false });
+        flushPassiveStmbChecks(buildCurrentChatSavePayload());
     });
 
     stmbInitialized = true;

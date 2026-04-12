@@ -11881,6 +11881,11 @@ export async function saveMetadata() {
 }
 
 export async function saveChatConditional() {
+    let savedChatId = '';
+    let savedIsGroup = false;
+    let savedGroupId = null;
+    let saveSucceeded = false;
+
     try {
         await waitUntilCondition(() => !isChatSaving, DEFAULT_SAVE_EDIT_TIMEOUT, 100);
     } catch {
@@ -11892,9 +11897,12 @@ export async function saveChatConditional() {
         cancelDebouncedChatSave();
 
         isChatSaving = true;
+        savedChatId = String(getCurrentChatId() || '');
+        savedIsGroup = Boolean(selected_group);
+        savedGroupId = savedIsGroup ? selected_group : null;
 
-        if (selected_group) {
-            await saveGroupChat(selected_group, true);
+        if (savedIsGroup) {
+            await saveGroupChat(savedGroupId, true);
         }
         else {
             await saveChat();
@@ -11902,11 +11910,20 @@ export async function saveChatConditional() {
 
         // Save token and prompts cache to IndexedDB storage
         saveTokenCache();
-        saveItemizedPrompts(getCurrentChatId());
+        saveItemizedPrompts(savedChatId);
+        saveSucceeded = true;
     } catch (error) {
         console.error('Error saving chat', error);
     } finally {
         isChatSaving = false;
+    }
+
+    if (saveSucceeded) {
+        await eventSource.emit(event_types.CHAT_SAVED, {
+            chatId: String(savedChatId || ''),
+            isGroup: savedIsGroup,
+            groupId: savedGroupId ? String(savedGroupId) : null,
+        });
     }
 }
 
