@@ -1,8 +1,13 @@
+import fs from 'node:fs';
+import path from 'node:path';
 import express from 'express';
 import { EventEmitter } from 'node:events';
+import { randomUUID } from 'node:crypto';
+import { sync as writeFileAtomicSync } from 'write-file-atomic';
 import { createMacroState, evaluatePromptMacros } from '../prompting/macro-evaluator.js';
 import { handleChatCompletionsGenerate } from './backends/chat-completions.js';
 import { resolveLogicalChatReference } from './chats.js';
+import { getAllUserHandles, getUserDirectories } from '../users.js';
 
 import {
     applyLorebookSettings,
@@ -39,6 +44,252 @@ const promptStateModuleMap = {
     vectorsDataBank: '4_vectors_data_bank',
     smartContext: 'chromadb',
 };
+
+const STMB_METADATA_KEY = 'STMemoryBooks';
+const STMB_WAVE_PLANNER_FILE = 'stmb-wave-planner.json';
+const STMB_WAVE_PLANNER_VERSION = 1;
+const STMB_PLANNER_MAX_HISTORY = 200;
+const stmbPlannerQueues = new Map();
+const activePlannerRuns = new Map();
+let plannerWorkerStarted = false;
+let plannerWorkerTickActive = false;
+
+function getPlannerFilePath(directories) {
+    return path.join(directories.root, STMB_WAVE_PLANNER_FILE);
+}
+
+function createEmptyPlannerDoc() {
+    return {
+        version: STMB_WAVE_PLANNER_VERSION,
+        waves: [],
+        jobs: [],
+    };
+}
+
+function readPlannerDoc(directories) {
+    const filePath = getPlannerFilePath(directories);
+    if (!fs.existsSync(filePath)) {
+        return createEmptyPlannerDoc();
+    }
+
+    try {
+        const parsed = JSON.parse(fs.readFileSync(filePath, 'utf8'));
+        return {
+            version: STMB_WAVE_PLANNER_VERSION,
+            waves: Array.isArray(parsed?.waves) ? parsed.waves : [],
+            jobs: Array.isArray(parsed?.jobs) ? parsed.jobs : [],
+        };
+    } catch (error) {
+        console.warn('[STMB Planner] Failed to read planner document, resetting.', error);
+        return createEmptyPlannerDoc();
+    }
+}
+
+function writePlannerDoc(directories, document) {
+    const filePath = getPlannerFilePath(directories);
+    writeFileAtomicSync(filePath, JSON.stringify(document, null, 2), 'utf8');
+}
+
+async function withPlannerDocument(user, mutate) {
+    const handle = String(user?.profile?.handle || '');
+    const previous = stmbPlannerQueues.get(handle) || Promise.resolve();
+    const operation = previous
+        .catch(() => {})
+        .then(async () => {
+            const document = readPlannerDoc(user.directories);
+            const result = await mutate(document);
+            trimPlannerHistory(document);
+            writePlannerDoc(user.directories, document);
+            return result;
+        });
+
+    stmbPlannerQueues.set(handle, operation.finally(() => {
+        if (stmbPlannerQueues.get(handle) === operation) {
+            stmbPlannerQueues.delete(handle);
+        }
+    }));
+
+    return operation;
+}
+
+function trimPlannerHistory(document) {
+    const terminalStatuses = new Set(['completed', 'failed', 'canceled']);
+    const terminalJobs = document.jobs.filter(job => terminalStatuses.has(String(job?.status || '')));
+    if (terminalJobs.length <= STMB_PLANNER_MAX_HISTORY) {
+        return;
+    }
+
+    terminalJobs.sort((left, right) => Number(right?.updatedAt || 0) - Number(left?.updatedAt || 0));
+    const keepIds = new Set(terminalJobs.slice(0, STMB_PLANNER_MAX_HISTORY).map(job => String(job.id)));
+    document.jobs = document.jobs.filter(job => !terminalStatuses.has(String(job?.status || '')) || keepIds.has(String(job.id)));
+    const remainingJobIds = new Set(document.jobs.map(job => String(job.id)));
+    document.waves = document.waves
+        .map(wave => ({
+            ...wave,
+            jobIds: Array.isArray(wave?.jobIds) ? wave.jobIds.filter(jobId => remainingJobIds.has(String(jobId))) : [],
+        }))
+        .filter(wave => wave.jobIds.length > 0);
+}
+
+function makePlannerUser(handle) {
+    const normalizedHandle = String(handle || '').trim();
+    return {
+        profile: {
+            handle: normalizedHandle,
+            name: normalizedHandle || 'User',
+            admin: false,
+            enabled: true,
+        },
+        directories: getUserDirectories(normalizedHandle),
+    };
+}
+
+function buildPlannerChatKey(sceneContext = {}) {
+    if (sceneContext?.chatRef?.type === 'group') {
+        return `group:${String(sceneContext?.groupId || '')}:${String(sceneContext?.chatId || sceneContext?.chatRef?.chatId || '')}`;
+    }
+
+    return `character:${String(sceneContext?.chatId || sceneContext?.chatRef?.fileName || '')}`;
+}
+
+function buildPlannerChatStateSnapshot(sceneContext = {}, state = {}) {
+    return {
+        sceneContext: structuredClone(sceneContext),
+        state: structuredClone(state || {}),
+        chatKey: buildPlannerChatKey(sceneContext),
+    };
+}
+
+function readJsonlLines(filePath) {
+    if (!filePath || !fs.existsSync(filePath)) {
+        return [];
+    }
+
+    const raw = fs.readFileSync(filePath, 'utf8');
+    if (!raw) {
+        return [];
+    }
+
+    return raw
+        .split('\n')
+        .filter(line => line.trim())
+        .map(line => JSON.parse(line));
+}
+
+function serializeJsonlLines(items) {
+    return items.map(item => JSON.stringify(item)).join('\n');
+}
+
+function normalizeStoredStmbState(value) {
+    if (!value || typeof value !== 'object') {
+        return {};
+    }
+    return structuredClone(value);
+}
+
+function readChatMetadataState(user, sceneContext = {}) {
+    if (sceneContext?.chatRef?.type === 'group') {
+        const groupId = String(sceneContext?.groupId || '').trim();
+        const chatId = String(sceneContext?.chatId || sceneContext?.chatRef?.chatId || '').trim();
+        if (!groupId) {
+            return {};
+        }
+
+        const groupPath = path.join(user.directories.groups, `${groupId}.json`);
+        if (!fs.existsSync(groupPath)) {
+            return {};
+        }
+
+        const group = JSON.parse(fs.readFileSync(groupPath, 'utf8'));
+        const pastMetadata = group?.past_metadata?.[chatId];
+        const activeMetadata = String(group?.chat_id || '') === chatId ? group?.chat_metadata : null;
+        return normalizeStoredStmbState((pastMetadata || activeMetadata || {})[STMB_METADATA_KEY]);
+    }
+
+    const logicalChat = resolveLogicalChatReference(user.directories, sceneContext.chatRef);
+    const headerState = logicalChat?.header?.chat_metadata?.[STMB_METADATA_KEY];
+    return normalizeStoredStmbState(headerState);
+}
+
+function updateChatMetadataState(user, sceneContext = {}, updater) {
+    if (typeof updater !== 'function') {
+        return {};
+    }
+
+    if (sceneContext?.chatRef?.type === 'group') {
+        const groupId = String(sceneContext?.groupId || '').trim();
+        const chatId = String(sceneContext?.chatId || sceneContext?.chatRef?.chatId || '').trim();
+        const groupPath = path.join(user.directories.groups, `${groupId}.json`);
+        if (!groupId || !fs.existsSync(groupPath)) {
+            return {};
+        }
+
+        const group = JSON.parse(fs.readFileSync(groupPath, 'utf8'));
+        if (!group.chat_metadata || typeof group.chat_metadata !== 'object') {
+            group.chat_metadata = {};
+        }
+        if (!group.past_metadata || typeof group.past_metadata !== 'object') {
+            group.past_metadata = {};
+        }
+
+        const sourceMetadata = normalizeStoredStmbState(
+            (group.past_metadata?.[chatId] || (String(group?.chat_id || '') === chatId ? group.chat_metadata : {}))[STMB_METADATA_KEY],
+        );
+        const nextState = normalizeStoredStmbState(updater(sourceMetadata) ?? sourceMetadata);
+        const nextMetadata = {
+            ...(group.past_metadata?.[chatId] || (String(group?.chat_id || '') === chatId ? group.chat_metadata : {})),
+            [STMB_METADATA_KEY]: nextState,
+        };
+
+        group.past_metadata[chatId] = nextMetadata;
+        if (String(group?.chat_id || '') === chatId) {
+            group.chat_metadata = nextMetadata;
+        }
+
+        writeFileAtomicSync(groupPath, JSON.stringify(group, null, 4), 'utf8');
+        return nextState;
+    }
+
+    const logicalChat = resolveLogicalChatReference(user.directories, sceneContext.chatRef);
+    const filePath = logicalChat?.filePath;
+    const records = readJsonlLines(filePath);
+    if (records.length === 0) {
+        return {};
+    }
+
+    const header = records[0];
+    if (!header.chat_metadata || typeof header.chat_metadata !== 'object') {
+        header.chat_metadata = {};
+    }
+    const nextState = normalizeStoredStmbState(updater(normalizeStoredStmbState(header.chat_metadata[STMB_METADATA_KEY])) ?? header.chat_metadata[STMB_METADATA_KEY]);
+    header.chat_metadata[STMB_METADATA_KEY] = nextState;
+    records[0] = header;
+    writeFileAtomicSync(filePath, serializeJsonlLines(records), 'utf8');
+    return nextState;
+}
+
+function createInternalPlannerRequest(user, headers = {}) {
+    const request = new EventEmitter();
+    request.user = user;
+    request.headers = headers;
+    request.socket = new EventEmitter();
+    return request;
+}
+
+async function forwardChatCompletionGenerateForUser(user, generateData, jobId = null) {
+    const request = createInternalPlannerRequest(user);
+    if (jobId) {
+        activePlannerRuns.set(String(jobId), request);
+    }
+
+    try {
+        return await forwardChatCompletionGenerate(request, generateData);
+    } finally {
+        if (jobId) {
+            activePlannerRuns.delete(String(jobId));
+        }
+    }
+}
 
 function sendStmbError(response, error) {
     if (error instanceof LorebookRepositoryError) {
@@ -281,6 +532,7 @@ function normalizeSceneEndpointRequest(body = {}) {
         skipSystemMessages: body.skipSystemMessages !== false,
         allowPartial: Boolean(body.allowPartial),
         chatId: String(body.chatId || ''),
+        groupId: String(body.groupId || ''),
         characterName: String(body.characterName || ''),
         userName: String(body.userName || ''),
     };
@@ -514,6 +766,395 @@ function upsertLorebookEntryByTitleData(lorebookData, {
     }
 
     return { created, entry };
+}
+
+async function saveManagedMemoryForUser(user, {
+    lorebookName,
+    storage = null,
+    memoryObject,
+    sceneContext,
+    profile = {},
+}) {
+    const { data: lorebookData, metadata } = await getLorebookForManagement(
+        user,
+        lorebookName,
+        true,
+        storage,
+    );
+    ensureEntriesObject(lorebookData);
+    const orderClampNotifications = [];
+
+    const sequenceNumber = getNextManagedMemorySequenceNumber(
+        lorebookData.entries,
+        profile?.titleFormat || sceneContext?.titleFormat || null,
+    );
+    const entryPayload = createManagedLorebookEntryData(memoryObject, sceneContext, profile, sequenceNumber);
+    const entry = createLorebookEntry(lorebookData);
+    Object.assign(entry, entryPayload);
+    applyLorebookSettings(entry, profile, {
+        orderNumber: parseSequenceFromTitle(entry.comment || entry.title || '') || 1,
+        orderNumberLabel: 'memory',
+        onOrderClamped: notification => orderClampNotifications.push(notification),
+    });
+
+    const savedMetadata = await saveLorebookForManagement(user, metadata.name, lorebookData, metadata.storage);
+    return {
+        lorebookName: savedMetadata.name,
+        storage: savedMetadata.storage,
+        entry,
+        sequenceNumber,
+        orderClampNotifications,
+    };
+}
+
+async function upsertLorebookEntryByTitleForUser(user, {
+    lorebookName,
+    storage = null,
+    title,
+    content = '',
+    defaults = {},
+    metadataUpdates = {},
+    entryOverrides = {},
+}) {
+    const { data: lorebookData, metadata } = await getLorebookForManagement(
+        user,
+        lorebookName,
+        true,
+        storage,
+    );
+    ensureEntriesObject(lorebookData);
+
+    const { created, entry } = upsertLorebookEntryByTitleData(lorebookData, {
+        title,
+        content,
+        defaults,
+        metadataUpdates,
+        entryOverrides,
+    });
+
+    const savedMetadata = await saveLorebookForManagement(user, metadata.name, lorebookData, metadata.storage);
+    return {
+        lorebookName: savedMetadata.name,
+        storage: savedMetadata.storage,
+        created,
+        entry,
+    };
+}
+
+function buildPlannerWaveStatus(document, wave) {
+    const jobs = (Array.isArray(wave?.jobIds) ? wave.jobIds : [])
+        .map(jobId => document.jobs.find(job => String(job.id) === String(jobId)))
+        .filter(Boolean);
+    if (jobs.some(job => job.status === 'running')) return 'running';
+    if (jobs.some(job => job.status === 'pending')) return 'pending';
+    if (jobs.every(job => job.status === 'completed')) return 'completed';
+    if (jobs.some(job => job.status === 'failed')) return 'failed';
+    if (jobs.every(job => job.status === 'canceled')) return 'canceled';
+    return 'pending';
+}
+
+function refreshPlannerWaveStatuses(document) {
+    document.waves = document.waves.map(wave => ({
+        ...wave,
+        status: buildPlannerWaveStatus(document, wave),
+        updatedAt: Date.now(),
+    }));
+}
+
+function ensurePlannerWorker() {
+    if (plannerWorkerStarted) {
+        return;
+    }
+
+    plannerWorkerStarted = true;
+    setInterval(() => {
+        processPlannerJobs().catch(error => {
+            console.error('[STMB Planner] Worker tick failed', error);
+        });
+    }, 1500).unref?.();
+
+    setTimeout(() => {
+        processPlannerJobs().catch(error => {
+            console.error('[STMB Planner] Initial worker tick failed', error);
+        });
+    }, 100);
+}
+
+async function enqueuePlannerWave(user, payload = {}) {
+    const sceneContext = payload?.sceneContext && typeof payload.sceneContext === 'object'
+        ? structuredClone(payload.sceneContext)
+        : null;
+    const jobs = Array.isArray(payload?.jobs) ? payload.jobs : [];
+    const source = String(payload?.source || 'manual');
+    if (!sceneContext || jobs.length === 0) {
+        throw createStmbRequestError(400, 'StmbBadRequest', 'sceneContext and at least one job are required.');
+    }
+
+    const waveId = randomUUID();
+    const now = Date.now();
+    const chatKey = buildPlannerChatKey(sceneContext);
+
+    const enqueueResult = await withPlannerDocument(user, async document => {
+        const wave = {
+            id: waveId,
+            chatKey,
+            source,
+            createdAt: now,
+            updatedAt: now,
+            status: 'pending',
+            sceneContext: structuredClone(sceneContext),
+            jobIds: [],
+        };
+
+        for (const jobSpec of jobs) {
+            const dedupeKey = String(jobSpec?.dedupeKey || '').trim();
+            if (!dedupeKey) {
+                continue;
+            }
+
+            const existing = document.jobs.find(job =>
+                String(job?.dedupeKey || '') === dedupeKey
+                && ['pending', 'running'].includes(String(job?.status || '')),
+            );
+            if (existing) {
+                wave.jobIds.push(existing.id);
+                continue;
+            }
+
+            const jobId = randomUUID();
+            const job = {
+                id: jobId,
+                waveId,
+                chatKey,
+                kind: String(jobSpec?.kind || ''),
+                dedupeKey,
+                source,
+                status: 'pending',
+                createdAt: now,
+                updatedAt: now,
+                sceneContext: structuredClone(sceneContext),
+                payload: structuredClone(jobSpec?.payload || {}),
+                result: null,
+                error: null,
+            };
+            document.jobs.push(job);
+            wave.jobIds.push(jobId);
+        }
+
+        document.waves.push(wave);
+        refreshPlannerWaveStatuses(document);
+        return {
+            wave,
+            jobs: wave.jobIds
+                .map(jobId => document.jobs.find(job => String(job.id) === String(jobId)))
+                .filter(Boolean),
+        };
+    });
+
+    ensurePlannerWorker();
+    return enqueueResult;
+}
+
+async function listPlannerState(user, chatKey = null) {
+    return withPlannerDocument(user, async document => {
+        refreshPlannerWaveStatuses(document);
+        const normalizedChatKey = chatKey ? String(chatKey) : null;
+        return {
+            waves: document.waves.filter(wave => !normalizedChatKey || String(wave.chatKey) === normalizedChatKey),
+            jobs: document.jobs.filter(job => !normalizedChatKey || String(job.chatKey) === normalizedChatKey),
+        };
+    });
+}
+
+async function cancelPlannerJobs(user, {
+    chatKey = null,
+    waveId = null,
+    all = false,
+} = {}) {
+    return withPlannerDocument(user, async document => {
+        const normalizedChatKey = chatKey ? String(chatKey) : null;
+        const normalizedWaveId = waveId ? String(waveId) : null;
+        let canceled = 0;
+
+        for (const job of document.jobs) {
+            if (!['pending', 'running'].includes(String(job?.status || ''))) {
+                continue;
+            }
+            if (!all && normalizedChatKey && String(job.chatKey) !== normalizedChatKey) {
+                continue;
+            }
+            if (!all && normalizedWaveId && String(job.waveId) !== normalizedWaveId) {
+                continue;
+            }
+            if (!all && !normalizedChatKey && !normalizedWaveId) {
+                continue;
+            }
+            job.status = 'canceled';
+            job.updatedAt = Date.now();
+            job.error = { message: 'Canceled by user.' };
+            const activeRun = activePlannerRuns.get(String(job.id));
+            activeRun?.emit?.('aborted');
+            activeRun?.socket?.emit?.('close');
+            canceled++;
+        }
+
+        refreshPlannerWaveStatuses(document);
+        return { canceled };
+    });
+}
+
+async function executePlannerMemoryJob(user, job) {
+    const forwarded = await forwardChatCompletionGenerateForUser(user, job.payload.generateData, job.id);
+    if (!forwarded.ok) {
+        throw createStmbRequestError(forwarded.status || 500, 'StmbGenerationFailed', 'Failed to generate STMB memory.', {
+            providerBody: forwarded.data,
+        });
+    }
+
+    const memory = parseStructuredMemoryResponse(forwarded.data);
+    const saveResult = await saveManagedMemoryForUser(user, {
+        lorebookName: job.payload.lorebookName,
+        storage: job.payload.storage,
+        memoryObject: memory,
+        sceneContext: job.payload.sceneSaveContext,
+        profile: job.payload.profile || {},
+    });
+
+    updateChatMetadataState(user, job.sceneContext, currentState => {
+        const nextState = { ...currentState };
+        nextState.highestMemoryProcessed = Number(job.payload.range?.sceneEnd);
+        delete nextState.highestMemoryProcessedManuallySet;
+        if (job.payload.keepSceneMarkers !== true && job.payload.autoClearSceneAfterMemory !== false) {
+            nextState.sceneStart = null;
+            nextState.sceneEnd = null;
+        }
+        return nextState;
+    });
+
+    return {
+        type: 'memory',
+        lorebookName: saveResult.lorebookName,
+        entryUid: saveResult.entry?.uid ?? null,
+        highestProcessed: Number(job.payload.range?.sceneEnd),
+    };
+}
+
+async function executePlannerSidePromptJob(user, job) {
+    const forwarded = await forwardChatCompletionGenerateForUser(user, job.payload.generateData, job.id);
+    if (!forwarded.ok) {
+        throw createStmbRequestError(forwarded.status || 500, 'StmbGenerationFailed', 'Failed to generate STMB side prompt.', {
+            providerBody: forwarded.data,
+        });
+    }
+
+    const text = extractTextFromProviderResponse(forwarded.data).trim();
+    if (!text) {
+        return {
+            type: 'sidePrompt',
+            blank: true,
+            title: String(job.payload.title || ''),
+        };
+    }
+
+    const saveResult = await upsertLorebookEntryByTitleForUser(user, {
+        lorebookName: job.payload.lorebookName,
+        storage: job.payload.storage,
+        title: job.payload.title,
+        content: text,
+        defaults: job.payload.defaults || {},
+        metadataUpdates: job.payload.metadataUpdates || {},
+        entryOverrides: job.payload.entryOverrides || {},
+    });
+
+    return {
+        type: 'sidePrompt',
+        title: String(job.payload.title || ''),
+        entryUid: saveResult.entry?.uid ?? null,
+    };
+}
+
+async function executePlannerJob(user, job) {
+    if (job.kind === 'memory') {
+        return executePlannerMemoryJob(user, job);
+    }
+    if (job.kind === 'sidePrompt') {
+        return executePlannerSidePromptJob(user, job);
+    }
+    throw new Error(`Unsupported planner job kind "${job.kind}"`);
+}
+
+async function claimNextPlannerJob(user) {
+    return withPlannerDocument(user, async document => {
+        const runningChats = new Set(
+            document.jobs
+                .filter(job => String(job?.status || '') === 'running')
+                .map(job => String(job.chatKey || '')),
+        );
+        const nextJob = document.jobs.find(job => String(job?.status || '') === 'pending' && !runningChats.has(String(job.chatKey || '')));
+        if (!nextJob) {
+            return null;
+        }
+
+        nextJob.status = 'running';
+        nextJob.updatedAt = Date.now();
+        refreshPlannerWaveStatuses(document);
+        return structuredClone(nextJob);
+    });
+}
+
+async function settlePlannerJob(user, jobId, updater) {
+    return withPlannerDocument(user, async document => {
+        const job = document.jobs.find(candidate => String(candidate.id) === String(jobId));
+        if (!job) {
+            return null;
+        }
+        if (String(job.status || '') === 'canceled') {
+            refreshPlannerWaveStatuses(document);
+            return structuredClone(job);
+        }
+        updater(job);
+        job.updatedAt = Date.now();
+        refreshPlannerWaveStatuses(document);
+        return structuredClone(job);
+    });
+}
+
+async function processPlannerJobs() {
+    if (plannerWorkerTickActive) {
+        return;
+    }
+
+    plannerWorkerTickActive = true;
+    try {
+        const handles = await getAllUserHandles();
+        for (const handle of handles) {
+            const user = makePlannerUser(handle);
+            const nextJob = await claimNextPlannerJob(user);
+            if (!nextJob) {
+                continue;
+            }
+
+            try {
+                const result = await executePlannerJob(user, nextJob);
+                await settlePlannerJob(user, nextJob.id, job => {
+                    job.status = 'completed';
+                    job.result = result;
+                    job.error = null;
+                });
+            } catch (error) {
+                console.error('[STMB Planner] Job failed', nextJob.id, error);
+                await settlePlannerJob(user, nextJob.id, job => {
+                    job.status = 'failed';
+                    job.error = {
+                        message: String(error?.message || error),
+                        type: String(error?.type || error?.name || 'StmbPlannerJobError'),
+                    };
+                });
+            }
+        }
+    } finally {
+        plannerWorkerTickActive = false;
+    }
 }
 
 function getLorebookContext(request) {
@@ -752,6 +1393,90 @@ router.post('/capture-scene', async (request, response) => {
             ok: true,
             compiledScene: result.compiledScene,
             capture: result.capture,
+        });
+    } catch (error) {
+        return sendStmbError(response, error);
+    }
+});
+
+router.post('/planner/chat-state', async (request, response) => {
+    try {
+        const normalizedRequest = normalizeSceneEndpointRequest(request.body?.sceneContext || request.body);
+        return response.send({
+            ok: true,
+            chatKey: buildPlannerChatKey(normalizedRequest),
+            state: readChatMetadataState(request.user, normalizedRequest),
+        });
+    } catch (error) {
+        return sendStmbError(response, error);
+    }
+});
+
+router.post('/planner/update-chat-state', async (request, response) => {
+    try {
+        const normalizedRequest = normalizeSceneEndpointRequest(request.body?.sceneContext || request.body);
+        const patch = request.body?.patch && typeof request.body.patch === 'object' ? request.body.patch : {};
+        const nextState = updateChatMetadataState(request.user, normalizedRequest, currentState => ({
+            ...currentState,
+            ...patch,
+        }));
+        return response.send({
+            ok: true,
+            chatKey: buildPlannerChatKey(normalizedRequest),
+            state: nextState,
+        });
+    } catch (error) {
+        return sendStmbError(response, error);
+    }
+});
+
+router.post('/planner/enqueue-wave', async (request, response) => {
+    try {
+        const sceneContext = request.body?.sceneContext && typeof request.body.sceneContext === 'object'
+            ? request.body.sceneContext
+            : null;
+        const result = await enqueuePlannerWave(request.user, {
+            sceneContext,
+            jobs: Array.isArray(request.body?.jobs) ? request.body.jobs : [],
+            source: request.body?.source || 'manual',
+        });
+        return response.send({
+            ok: true,
+            wave: result.wave,
+            jobs: result.jobs,
+        });
+    } catch (error) {
+        return sendStmbError(response, error);
+    }
+});
+
+router.post('/planner/list-jobs', async (request, response) => {
+    try {
+        const normalizedRequest = normalizeSceneEndpointRequest(request.body?.sceneContext || request.body);
+        const result = await listPlannerState(
+            request.user,
+            request.body?.sceneContext ? buildPlannerChatKey(normalizedRequest) : null,
+        );
+        return response.send({
+            ok: true,
+            ...result,
+        });
+    } catch (error) {
+        return sendStmbError(response, error);
+    }
+});
+
+router.post('/planner/cancel', async (request, response) => {
+    try {
+        const normalizedRequest = normalizeSceneEndpointRequest(request.body?.sceneContext || request.body);
+        const result = await cancelPlannerJobs(request.user, {
+            all: request.body?.all === true,
+            waveId: request.body?.waveId || null,
+            chatKey: request.body?.sceneContext ? buildPlannerChatKey(normalizedRequest) : null,
+        });
+        return response.send({
+            ok: true,
+            ...result,
         });
     } catch (error) {
         return sendStmbError(response, error);
@@ -1245,3 +1970,5 @@ router.post('/upsert-entries-batch', async (request, response) => {
         return sendStmbError(response, error);
     }
 });
+
+ensurePlannerWorker();

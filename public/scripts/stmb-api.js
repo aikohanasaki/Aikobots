@@ -80,6 +80,31 @@ export async function upsertStmbEntriesBatch(payload, options = {}) {
     return signal ? postStmbWithSignal('upsert-entries-batch', payload, signal) : postStmb('upsert-entries-batch', payload);
 }
 
+export async function getStmbPlannerChatState(payload, options = {}) {
+    const { signal = null } = options;
+    return signal ? postStmbWithSignal('planner/chat-state', payload, signal) : postStmb('planner/chat-state', payload);
+}
+
+export async function updateStmbPlannerChatState(payload, options = {}) {
+    const { signal = null } = options;
+    return signal ? postStmbWithSignal('planner/update-chat-state', payload, signal) : postStmb('planner/update-chat-state', payload);
+}
+
+export async function enqueueStmbPlannerWave(payload, options = {}) {
+    const { signal = null } = options;
+    return signal ? postStmbWithSignal('planner/enqueue-wave', payload, signal) : postStmb('planner/enqueue-wave', payload);
+}
+
+export async function listStmbPlannerJobs(payload = {}, options = {}) {
+    const { signal = null } = options;
+    return signal ? postStmbWithSignal('planner/list-jobs', payload, signal) : postStmb('planner/list-jobs', payload);
+}
+
+export async function cancelStmbPlannerJobs(payload = {}, options = {}) {
+    const { signal = null } = options;
+    return signal ? postStmbWithSignal('planner/cancel', payload, signal) : postStmb('planner/cancel', payload);
+}
+
 async function postStmbWithSignal(path, payload, signal) {
     const response = await fetch(`/api/stmb/${path}`, {
         method: 'POST',

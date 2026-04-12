@@ -7,7 +7,7 @@ import {
     name2,
 } from '../script.js';
 import { getContext } from './extensions.js';
-import { generateStmbText, prepareStmbSidePrompt, upsertStmbEntriesBatch, upsertStmbEntryByTitle } from './stmb-api.js';
+import { enqueueStmbPlannerWave, generateStmbText, prepareStmbSidePrompt, upsertStmbEntriesBatch, upsertStmbEntryByTitle } from './stmb-api.js';
 import { saveMetadataDebounced } from './extensions.js';
 import { getLorebookStorageForRequest, loadWorldInfo, METADATA_KEY, reloadEditor, worldInfoCache } from './world-info.js';
 import { buildOpenAIGenerateData, oai_settings } from './openai.js';
@@ -23,7 +23,7 @@ import {
     readSidePromptCheckpoint,
     STMB_METADATA_KEY,
 } from './stmb-core.js';
-import { captureStmbSceneRange, fetchStmbChatRangeInfo } from './stmb-scene.js';
+import { buildStmbSceneContext, captureStmbSceneRange, fetchStmbChatRangeInfo, getStmbChatKey } from './stmb-scene.js';
 import {
     applySidePromptMacros,
     collectTemplateRuntimeMacros,
@@ -364,6 +364,50 @@ async function compileRange(sceneStart, sceneEnd, settings = null, options = {})
     return result?.compiledScene;
 }
 
+async function buildQueuedSidePromptJob({
+    template,
+    lorebookName,
+    compiledScene,
+    settings,
+    runtimeMacros = {},
+    fallbackKinds = [],
+    metadataUpdates = {},
+    trigger = 'manual',
+    sceneContext = null,
+}) {
+    const prepared = await prepareSidePromptRun({
+        template,
+        lorebookName,
+        lorebookData: { entries: {} },
+        compiledScene,
+        settings,
+        runtimeMacros,
+        fallbackKinds,
+        signal: null,
+    });
+    const lorebookSettings = getEffectiveLorebookSettingsForTemplate(template);
+    const { defaults, entryOverrides } = makeUpsertParamsFromLorebook(lorebookSettings, runtimeMacros);
+    const { generateData } = await buildOpenAIGenerateData('quiet', [{ role: 'user', content: String(prepared.finalPrompt || '') }], {});
+
+    return {
+        kind: 'sidePrompt',
+        dedupeKey: `sideprompt:${getStmbChatKey(sceneContext || buildStmbSceneContext())}:${String(template?.key || template?.name || 'unknown')}:${compiledScene?.metadata?.sceneStart ?? 0}:${compiledScene?.metadata?.sceneEnd ?? 0}:${prepared.unifiedTitle}`,
+        payload: {
+            lorebookName,
+            storage: getLorebookStorageForRequest(lorebookName),
+            title: prepared.unifiedTitle,
+            metadataUpdates,
+            defaults,
+            entryOverrides,
+            trigger,
+            generateData: applyStmbMaxTokensToGenerateData(
+                applyStmbProfileToGenerateData(generateData, prepared.profile, getStmbProviderDefaults()),
+                settings?.moduleSettings?.maxTokens,
+            ),
+        },
+    };
+}
+
 function ensureSidePromptTextNotBlank(text, template, trigger) {
     if (String(text || '').trim()) return true;
     toastr.error(`SidePrompt "${template?.name || 'Unknown'}" returned blank content. No changes were saved.`, 'STMB');
@@ -546,6 +590,7 @@ export async function evaluateTrackers(settings, options = {}) {
         const chatRangeInfo = await fetchStmbChatRangeInfo({ saveFirst: false, sceneContext });
         const currentLast = Number(chatRangeInfo?.lastAvailableMessageId);
         if (currentLast < 0) return;
+        const jobs = [];
 
         for (const template of templates) {
             throwIfStmbAborted(signal);
@@ -582,10 +627,9 @@ export async function evaluateTrackers(settings, options = {}) {
 
             const endId = compiledScene?.metadata?.sceneEnd ?? currentLast;
             const checkpointTimestamp = new Date().toISOString();
-            const result = await runTemplateForCompiledScene({
+            jobs.push(await buildQueuedSidePromptJob({
                 template,
                 lorebookName,
-                lorebookData,
                 compiledScene,
                 settings,
                 fallbackKinds: ['tracker'],
@@ -594,9 +638,16 @@ export async function evaluateTrackers(settings, options = {}) {
                     lastMsgId: endId,
                     lastRunAt: checkpointTimestamp,
                 }),
-                signal,
+                sceneContext,
+            }));
+        }
+
+        if (jobs.length > 0) {
+            await enqueueStmbPlannerWave({
+                sceneContext: sceneContext || buildStmbSceneContext(),
+                source: 'tracker',
+                jobs,
             });
-            if (result?.status === 'cancel') continue;
         }
     } catch (error) {
         if (!isStmbAbortError(error) && !isStmbLorebookHandledError(error)) {
@@ -810,10 +861,9 @@ export async function runAfterMemory(compiledScene, settings, profile = null, op
 export { firstRunInitSidePrompts };
 
 export async function runSidePrompt(rawInput, settings, options = {}) {
-    const parentTask = options.signal ? null : createStmbTask('SidePrompts:manual');
-    const signal = options.signal || parentTask?.signal || null;
     let activeTemplateName = '';
     try {
+        const sceneContext = options.sceneContext || buildStmbSceneContext();
         const lorebookName = await ensureLorebookName(settings);
         const lorebookData = await loadWorldInfo(lorebookName) || { entries: {} };
         const parsed = parseSidePromptCommandInput(rawInput);
@@ -867,7 +917,7 @@ export async function runSidePrompt(rawInput, settings, options = {}) {
             }
 
             try {
-                compiledScene = await compileRange(sceneStart, sceneEnd, settings, { saveFirst: false });
+                compiledScene = await compileRange(sceneStart, sceneEnd, settings, { saveFirst: false, sceneContext });
             } catch (error) {
                 toastr.error(String(error?.message || 'Failed to compile the specified range'), 'STMB');
                 return '';
@@ -887,7 +937,7 @@ export async function runSidePrompt(rawInput, settings, options = {}) {
             const sceneStart = Math.max(0, lastMessageId + 1);
             const boundedStart = Math.max(sceneStart, currentLast - 199);
             try {
-                compiledScene = await compileRange(boundedStart, currentLast, settings, { saveFirst: false });
+                compiledScene = await compileRange(boundedStart, currentLast, settings, { saveFirst: false, sceneContext });
             } catch {
                 toastr.error('Failed to compile messages for /sideprompt', 'STMB');
                 return '';
@@ -896,10 +946,13 @@ export async function runSidePrompt(rawInput, settings, options = {}) {
 
         const endId = compiledScene?.metadata?.sceneEnd ?? currentLast;
         const checkpointTimestamp = new Date().toISOString();
-        const result = await runTemplateForCompiledScene({
+        if (settings?.moduleSettings?.showMemoryPreviews) {
+            toastr.info('Durable STMB side prompt jobs save automatically; preview approval is skipped for queued jobs.', 'STMB');
+        }
+
+        const job = await buildQueuedSidePromptJob({
             template,
             lorebookName,
-            lorebookData,
             compiledScene,
             settings,
             runtimeMacros: parsed.runtimeMacros,
@@ -909,19 +962,14 @@ export async function runSidePrompt(rawInput, settings, options = {}) {
                 lastMsgId: endId,
                 lastRunAt: checkpointTimestamp,
             }),
-            signal,
+            sceneContext,
         });
-
-        if (result?.status === 'cancel') {
-            toastr.info(`SidePrompt "${template.name}" canceled.`, 'STMB');
-            return '';
-        }
-
-        if (result?.status === 'blank') {
-            return '';
-        }
-
-        toastr.success(`SidePrompt "${template.name}" updated.`, 'STMB');
+        await enqueueStmbPlannerWave({
+            sceneContext,
+            source: 'manual-sideprompt',
+            jobs: [job],
+        });
+        toastr.success(`Queued SidePrompt "${template.name}".`, 'STMB');
         return '';
     } catch (error) {
         if (isStmbAbortError(error) || isStmbLorebookHandledError(error)) {
@@ -936,8 +984,6 @@ export async function runSidePrompt(rawInput, settings, options = {}) {
             }
         }
         return '';
-    } finally {
-        parentTask?.cleanup();
     }
 }
 

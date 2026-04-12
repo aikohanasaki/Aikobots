@@ -11,7 +11,19 @@ import {
 } from '../script.js';
 import { DOMPurify } from '../lib.js';
 import { getContext, saveMetadataDebounced } from './extensions.js';
-import { commitStmbSummaries, generateStmbMemory, generateStmbSummary, generateStmbText, prepareStmbMemoryMessages, saveStmbMemoryEntry } from './stmb-api.js';
+import {
+    cancelStmbPlannerJobs,
+    commitStmbSummaries,
+    enqueueStmbPlannerWave,
+    generateStmbMemory,
+    generateStmbSummary,
+    generateStmbText,
+    getStmbPlannerChatState,
+    listStmbPlannerJobs,
+    prepareStmbMemoryMessages,
+    saveStmbMemoryEntry,
+    updateStmbPlannerChatState,
+} from './stmb-api.js';
 import { closeActiveMemoryPreviewPopups, showAdvancedOptionsPopup, showAutoConsolidationPromptPopup, showAutoSummaryDecisionPopup, showConfirmationPopup, showFailedAIResponsePopup, showFailedSummaryResponsePopup, showLorebookPickerPopup, showMemoryPreviewPopup, showSummaryConsolidationOptionsPopup } from './stmb-popups.js';
 import { Popup, POPUP_RESULT, POPUP_TYPE } from './popup.js';
 import { applyLocale, translate } from './i18n.js';
@@ -130,6 +142,79 @@ let stmbUiBound = false;
 let sidePromptNameCache = [];
 let activeSettingsPopupDialog = null;
 const pendingPassiveChecksByChat = new Map();
+let plannerStatusPollHandle = null;
+
+const DURABLE_SYNC_STATE_KEYS = [
+    'sceneStart',
+    'sceneEnd',
+    'highestMemoryProcessed',
+    'highestMemoryProcessedManuallySet',
+    'autoSummaryNextPromptAt',
+    'manualLorebook',
+    'autoConsolidationLastPromptKey',
+];
+
+function applyServerPlannerStateToLocal(state = {}) {
+    const localState = getStmbState();
+    for (const key of DURABLE_SYNC_STATE_KEYS) {
+        if (Object.hasOwn(state, key)) {
+            localState[key] = structuredClone(state[key]);
+        } else {
+            delete localState[key];
+        }
+    }
+}
+
+async function syncCurrentChatPlannerState(sceneContext = buildStmbSceneContext()) {
+    try {
+        const result = await getStmbPlannerChatState({ sceneContext });
+        applyServerPlannerStateToLocal(result?.state || {});
+        renderAllSceneButtons();
+        await refreshOpenSettingsPopupSceneState();
+    } catch (error) {
+        console.warn('STMB planner state sync failed', error);
+    }
+}
+
+async function pollCurrentChatPlannerState() {
+    try {
+        const sceneContext = buildStmbSceneContext();
+        const plannerState = await listStmbPlannerJobs({ sceneContext });
+        const jobs = Array.isArray(plannerState?.jobs) ? plannerState.jobs : [];
+        const hasActiveJobs = jobs.some(job => ['pending', 'running'].includes(String(job?.status || '')));
+        const hasRecentTerminal = jobs.some(job => ['completed', 'failed'].includes(String(job?.status || '')) && Number(job?.updatedAt || 0) > (Date.now() - 15_000));
+        if (hasActiveJobs || hasRecentTerminal) {
+            await syncCurrentChatPlannerState(sceneContext);
+        }
+    } catch (error) {
+        console.warn('STMB planner poll failed', error);
+    }
+}
+
+function ensurePlannerStatusPolling() {
+    if (plannerStatusPollHandle) {
+        return;
+    }
+
+    plannerStatusPollHandle = setInterval(() => {
+        pollCurrentChatPlannerState().catch(error => {
+            console.warn('STMB planner poll tick failed', error);
+        });
+    }, 5000);
+}
+
+async function enqueueDurableWave(sceneContext, jobs, source, successMessage = 'STMB job queued.') {
+    const result = await enqueueStmbPlannerWave({
+        sceneContext,
+        source,
+        jobs,
+    });
+    ensurePlannerStatusPolling();
+    if (getModuleSettings().showNotifications) {
+        toastr.info(successMessage, 'STMB');
+    }
+    return result;
+}
 
 function isManualSidePromptEnabled(template) {
     const commands = template?.triggers?.commands;
@@ -3739,10 +3824,15 @@ function getCurrentSceneRange() {
 }
 
 async function getNextMemoryRange() {
-    const highestProcessed = getHighestProcessedMessageId();
+    const sceneContext = buildStmbSceneContext();
+    const stateResult = await getStmbPlannerChatState({ sceneContext });
+    const highestProcessed = Number.isInteger(stateResult?.state?.highestMemoryProcessed)
+        ? stateResult.state.highestMemoryProcessed
+        : null;
     const sceneStart = highestProcessed === null ? 0 : highestProcessed + 1;
     const rangeInfo = await fetchStmbChatRangeInfo({
         rangeStart: sceneStart,
+        sceneContext,
     });
     const sceneEnd = Number(rangeInfo?.lastAvailableMessageId);
 
@@ -3784,6 +3874,7 @@ function validateMemoryCreationContext() {
 }
 
 async function resolveAutoSummaryLorebook() {
+    const sceneContext = buildStmbSceneContext();
     if (!getModuleSettings().manualModeEnabled) {
         try {
             const lorebookName = await ensureLorebookName();
@@ -3806,7 +3897,10 @@ async function resolveAutoSummaryLorebook() {
                 ? Number(decision.postponeMessages)
                 : 10;
             state.autoSummaryNextPromptAt = chat.length + postponeMessages;
-            saveMetadataDebounced();
+            await updateStmbPlannerChatState({
+                sceneContext,
+                patch: { autoSummaryNextPromptAt: state.autoSummaryNextPromptAt },
+            });
             return {
                 valid: false,
                 lorebookName: null,
@@ -3827,7 +3921,10 @@ async function resolveAutoSummaryLorebook() {
         }
 
         state.manualLorebook = selectedLorebook;
-        saveMetadataDebounced();
+        await updateStmbPlannerChatState({
+            sceneContext,
+            patch: { manualLorebook: selectedLorebook },
+        });
         lorebookName = selectedLorebook;
     }
 
@@ -3837,7 +3934,10 @@ async function resolveAutoSummaryLorebook() {
             getManualLorebook: () => getStmbState().manualLorebook,
             setManualLorebook: async selectedLorebook => {
                 getStmbState().manualLorebook = String(selectedLorebook || '').trim();
-                saveMetadataDebounced();
+                await updateStmbPlannerChatState({
+                    sceneContext,
+                    patch: { manualLorebook: getStmbState().manualLorebook },
+                });
             },
             createContext: 'auto-summary',
         });
@@ -3869,8 +3969,10 @@ async function checkAutoSummaryTrigger(options = {}) {
         return;
     }
 
-    const state = getStmbState();
-    const rangeInfo = await fetchStmbChatRangeInfo({ saveFirst: false, sceneContext: options.sceneContext || null });
+    const sceneContext = options.sceneContext || buildStmbSceneContext();
+    const stateResponse = await getStmbPlannerChatState({ sceneContext });
+    const state = stateResponse?.state || {};
+    const rangeInfo = await fetchStmbChatRangeInfo({ saveFirst: false, sceneContext });
     const currentLastMessage = Number(rangeInfo?.lastAvailableMessageId);
     if (!Number.isInteger(currentLastMessage) || currentLastMessage < 0) {
         return;
@@ -3908,8 +4010,13 @@ async function checkAutoSummaryTrigger(options = {}) {
     }
 
     if (Number.isInteger(state.autoSummaryNextPromptAt)) {
-        delete state.autoSummaryNextPromptAt;
-        saveMetadataDebounced();
+        getStmbState().autoSummaryNextPromptAt = null;
+        await updateStmbPlannerChatState({
+            sceneContext,
+            patch: {
+                autoSummaryNextPromptAt: null,
+            },
+        });
     }
 
     const sceneStart = highestProcessed + 1;
@@ -3919,7 +4026,7 @@ async function checkAutoSummaryTrigger(options = {}) {
     }
 
     setSceneRange(sceneStart, sceneEnd);
-    await initiateMemoryCreation({ range: { sceneStart, sceneEnd }, keepSceneMarkers: false });
+    await initiateMemoryCreation({ range: { sceneStart, sceneEnd }, keepSceneMarkers: false, sceneContext, source: 'autoSummary' });
 }
 
 function validateSceneMarkers() {
@@ -4346,6 +4453,51 @@ function buildMemorySceneData(compiledScene, range) {
         characterName: compiledScene?.metadata?.characterName || '',
         userName: compiledScene?.metadata?.userName || '',
         titleFormat: stmbSettings.titleFormat || STMB_DEFAULT_TITLE_FORMAT,
+    };
+}
+
+async function buildQueuedMemoryJob(compiledScene, range, lorebookName, profile, summaryCount, options = {}) {
+    const requestSettings = {
+        ...stmbSettings,
+        moduleSettings: {
+            ...(stmbSettings.moduleSettings || {}),
+            defaultMemoryCount: Math.max(0, Math.min(7, Number(summaryCount ?? 0))),
+        },
+    };
+    const prepared = await prepareStmbMemoryMessages({
+        lorebookName,
+        storage: getLorebookStorageForRequest(lorebookName),
+        compiledScene,
+        profile,
+        stmbSettings: requestSettings,
+    });
+
+    let promptText = String(prepared.promptText || '');
+    if (getModuleSettings().useRegex) {
+        console.warn('STMB durable memory queue does not preserve selected regex transforms; using structured generation snapshot.');
+    }
+
+    const { generateData } = await buildOpenAIGenerateData('quiet', [{ role: 'user', content: promptText }], {
+        jsonSchema: getMemorySchema(),
+    });
+
+    return {
+        kind: 'memory',
+        dedupeKey: `memory:${getStmbChatKey(options.sceneContext || buildStmbSceneContext())}:${range.sceneStart}:${range.sceneEnd}:${String(lorebookName || '')}`,
+        payload: {
+            range: structuredClone(range),
+            lorebookName,
+            storage: getLorebookStorageForRequest(lorebookName),
+            profile: structuredClone(profile || {}),
+            compiledScene: structuredClone(compiledScene),
+            sceneSaveContext: buildMemorySceneData(compiledScene, range),
+            keepSceneMarkers: options.keepSceneMarkers === true,
+            autoClearSceneAfterMemory: getModuleSettings().autoClearSceneAfterMemory !== false,
+            generateData: applyStmbMaxTokensToGenerateData(
+                applyStmbProfileToGenerateData(generateData, profile, getStmbProviderDefaults()),
+                getModuleSettings().maxTokens,
+            ),
+        },
     };
 }
 
@@ -4797,8 +4949,10 @@ async function executeMemoryCreationFromRange(range, options = {}) {
     assertRangeWithinCurrentChat(range);
 
     const lorebookName = await ensureLorebookName();
+    const sceneContext = options.sceneContext || buildStmbSceneContext();
     const sceneCapture = await captureStmbSceneRange(range, {
         skipSystemMessages: !getModuleSettings().unhideBeforeMemory,
+        sceneContext,
     });
     const compiledScene = sceneCapture?.compiledScene;
 
@@ -4827,62 +4981,25 @@ async function executeMemoryCreationFromRange(range, options = {}) {
         return null;
     }
     const profile = effectiveSettings.profileSettings;
-    const { signal, cleanup } = installAbortHook();
-    try {
-        for (;;) {
-            try {
-                const parsedMemory = await requestStructuredMemory(compiledScene, profile, lorebookName, effectiveSettings.summaryCount, signal);
-                const maybeEdited = await maybePreviewMemory(parsedMemory, compiledScene, range, profile);
-                if (maybeEdited === null) {
-                    return null;
-                }
-                if (maybeEdited === 'retry') {
-                    continue;
-                }
-
-                const saved = await saveMemoryObjectToLorebook(maybeEdited, {
-                    lorebookName,
-                    range,
-                    compiledScene,
-                    profile,
-                    keepSceneMarkers: options.keepSceneMarkers,
-                    signal,
-                });
-
-                try {
-                    await runAfterMemory(compiledScene, stmbSettings, profile, { signal });
-                } catch (error) {
-                    if (!isStmbAbortError(error)) {
-                        console.warn('STMB side prompts after memory failed', error);
-                    }
-                }
-
-                await maybePromptAutoConsolidation(1);
-
-                return saved;
-            } catch (error) {
-                if (isStmbAbortError(error)) {
-                    throw error;
-                }
-                if (error?.rawResponse) {
-                    showFailedAIResponsePopup(error, {
-                        onApply: correctedRaw => applyManualFixedMemoryJson(correctedRaw, {
-                            lorebookName,
-                            range,
-                            compiledScene,
-                            profile,
-                            summaryCount: effectiveSettings.summaryCount,
-                            keepSceneMarkers: options.keepSceneMarkers,
-                            signal,
-                        }),
-                    });
-                }
-                throw error;
-            }
-        }
-    } finally {
-        cleanup();
+    if (getModuleSettings().showMemoryPreviews) {
+        toastr.info('Durable STMB jobs auto-save after generation; preview approval is skipped for queued jobs.', 'STMB');
     }
+
+    const job = await buildQueuedMemoryJob(compiledScene, range, lorebookName, profile, effectiveSettings.summaryCount, {
+        keepSceneMarkers: options.keepSceneMarkers,
+        sceneContext,
+    });
+    await enqueueDurableWave(
+        sceneContext,
+        [job],
+        options.source || 'memory',
+        `Queued memory job for messages ${range.sceneStart}-${range.sceneEnd}.`,
+    );
+    return {
+        queued: true,
+        range,
+        lorebookName,
+    };
 }
 
 async function initiateMemoryCreation(options = {}) {
@@ -4890,6 +5007,8 @@ async function initiateMemoryCreation(options = {}) {
     const keepSceneMarkers = Boolean(options?.keepSceneMarkers);
     const profileIndex = options?.profileIndex ?? null;
     const notifyIfBusy = Boolean(options?.notifyIfBusy);
+    const sceneContext = options?.sceneContext || buildStmbSceneContext();
+    const source = options?.source || 'memory';
 
     assertRangeWithinCurrentChat(range);
 
@@ -4907,6 +5026,8 @@ async function initiateMemoryCreation(options = {}) {
     return executeMemoryCreationFromRange(range, {
         keepSceneMarkers,
         profileIndex,
+        sceneContext,
+        source,
     });
 }
 
@@ -5321,7 +5442,10 @@ async function sidePromptOffCommand(_, rawInput) {
 }
 
 async function getHighestProcessedCommand() {
-    const highestProcessed = getHighestProcessedMessageId();
+    const result = await getStmbPlannerChatState({ sceneContext: buildStmbSceneContext() });
+    const highestProcessed = Number.isInteger(result?.state?.highestMemoryProcessed)
+        ? result.state.highestMemoryProcessed
+        : null;
     return String(highestProcessed);
 }
 
@@ -5336,7 +5460,13 @@ async function setHighestProcessedCommand(_, value) {
     if (input === 'none') {
         delete getStmbState().highestMemoryProcessed;
         delete getStmbState().highestMemoryProcessedManuallySet;
-        saveMetadataDebounced();
+        await updateStmbPlannerChatState({
+            sceneContext: buildStmbSceneContext(),
+            patch: {
+                highestMemoryProcessed: null,
+                highestMemoryProcessedManuallySet: null,
+            },
+        });
         await refreshOpenSettingsPopupSceneState();
         toastr.success('Last processed message cleared (no memories processed).', 'STMB');
         return '';
@@ -5377,7 +5507,13 @@ async function setHighestProcessedCommand(_, value) {
     }
     state.highestMemoryProcessed = clamped;
     state.highestMemoryProcessedManuallySet = true;
-    saveMetadataDebounced();
+    await updateStmbPlannerChatState({
+        sceneContext: buildStmbSceneContext(),
+        patch: {
+            highestMemoryProcessed: clamped,
+            highestMemoryProcessedManuallySet: true,
+        },
+    });
     await refreshOpenSettingsPopupSceneState();
     toastr.success(`Last processed message manually set to #${clamped}.`, 'STMB');
 
@@ -5387,6 +5523,13 @@ async function setHighestProcessedCommand(_, value) {
 async function stopStmbCommand() {
     const before = getActiveStmbTaskCount();
     const { stoppedCount } = stopAllStmbTasks();
+    let canceledPlannerJobs = 0;
+    try {
+        const cancelResult = await cancelStmbPlannerJobs({ all: true });
+        canceledPlannerJobs = Number(cancelResult?.canceled || 0);
+    } catch (error) {
+        console.warn('STMB planner cancel failed', error);
+    }
     if (stoppedCount > 0 || before > 0) {
         try {
             toastr.clear();
@@ -5399,8 +5542,8 @@ async function stopStmbCommand() {
         activeRootTask = null;
     }
 
-    const message = stoppedCount > 0 || before > 0
-        ? 'STMB generation manually stopped by user.'
+    const message = stoppedCount > 0 || before > 0 || canceledPlannerJobs > 0
+        ? `STMB generation manually stopped by user.${canceledPlannerJobs > 0 ? ` Canceled ${canceledPlannerJobs} queued job${canceledPlannerJobs === 1 ? '' : 's'}.` : ''}`
         : 'STMB stop issued, but no generation is in progress.';
     toastr.info(message, 'STMB');
     console.log(`STMemoryBooks: ${message}`);
@@ -5541,12 +5684,16 @@ export function initStmb() {
     refreshSidePromptCache().catch(error => {
         console.warn('STMB side prompt cache refresh failed during init', error);
     });
+    ensurePlannerStatusPolling();
 
     eventSource.on(event_types.CHAT_CHANGED, () => {
         setTimeout(() => {
             validateSceneMarkers();
             renderAllSceneButtons();
         }, 0);
+        syncCurrentChatPlannerState().catch(error => {
+            console.warn('STMB planner chat sync failed after chat change', error);
+        });
     });
 
     eventSource.on(event_types.MESSAGE_RECEIVED, (messageId) => {
