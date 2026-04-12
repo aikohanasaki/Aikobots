@@ -6574,10 +6574,6 @@ export async function Generate(type, { automatic_trigger, force_name2, quiet_pro
      * @throws {Error|object} Error with message text, or Error with response JSON (OAI/Horde), or the actual response JSON
      */
     async function finishGenerating() {
-        if (power_user.console_log_prompts) {
-            console.log(generate_data.prompt);
-        }
-
         console.debug('rungenerate calling API');
 
         showStopButton();

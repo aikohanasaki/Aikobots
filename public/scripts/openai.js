@@ -248,14 +248,6 @@ export async function debugServerAssemblyDump(promptContext = null) {
 
     storeServerAssemblyDebugDump(dump);
 
-    console.groupCollapsed('Chat completion assembly debug');
-    console.log('promptContext', dump.promptContext);
-    console.log('assembled.chat', dump.assembly?.chat);
-    console.log('assembled.messagesState', dump.assembly?.messagesState);
-    console.log('assembled.comparison', dump.assembly?.comparison);
-    console.log('assembled.overriddenPrompts', dump.assembly?.overriddenPrompts);
-    console.groupEnd();
-
     return cloneServerAssemblyDebugDump(dump);
 }
 
