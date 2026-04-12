@@ -364,7 +364,7 @@ async function compileRange(sceneStart, sceneEnd, settings = null, options = {})
     return result?.compiledScene;
 }
 
-async function buildQueuedSidePromptJob({
+export async function buildQueuedSidePromptJob({
     template,
     lorebookName,
     compiledScene,
@@ -372,6 +372,7 @@ async function buildQueuedSidePromptJob({
     runtimeMacros = {},
     fallbackKinds = [],
     metadataUpdates = {},
+    commitCheckpoint = null,
     trigger = 'manual',
     sceneContext = null,
 }) {
@@ -397,6 +398,7 @@ async function buildQueuedSidePromptJob({
             storage: getLorebookStorageForRequest(lorebookName),
             title: prepared.unifiedTitle,
             metadataUpdates,
+            commitCheckpoint: commitCheckpoint ? structuredClone(commitCheckpoint) : null,
             defaults,
             entryOverrides,
             trigger,
@@ -406,6 +408,130 @@ async function buildQueuedSidePromptJob({
             ),
         },
     };
+}
+
+export async function buildQueuedAfterMemorySidePromptJobs({
+    lorebookName,
+    compiledScene,
+    settings,
+    profile = null,
+    sceneContext = null,
+    dependsOn = [],
+}) {
+    const templates = await listByTrigger('onAfterMemory');
+    if (!templates || templates.length === 0) {
+        return [];
+    }
+
+    const checkpointTimestamp = new Date().toISOString();
+    const jobs = [];
+    for (const template of templates) {
+        const workflowJobs = await buildQueuedSidePromptWorkflowJobs({
+            template,
+            lorebookName,
+            compiledScene,
+            settings,
+            profile,
+            fallbackKinds: ['plotpoints', 'scoreboard'],
+            trigger: 'onAfterMemory',
+            metadataUpdates: buildSidePromptCheckpointMetadata(template.key, {
+                lastRunAt: checkpointTimestamp,
+                includeLastMsgId: false,
+                includeTrackerFallback: false,
+            }),
+            commitCheckpoint: {
+                templateKey: template.key,
+                includeLastMsgId: false,
+                includeTrackerFallback: false,
+            },
+            sceneContext,
+            dependsOn,
+            previewRequired: settings?.moduleSettings?.showMemoryPreviews === true,
+        });
+        jobs.push(...workflowJobs);
+    }
+
+    return jobs;
+}
+
+export async function buildQueuedSidePromptWorkflowJobs({
+    template,
+    lorebookName,
+    compiledScene,
+    settings,
+    profile = null,
+    runtimeMacros = {},
+    fallbackKinds = [],
+    metadataUpdates = {},
+    commitCheckpoint = null,
+    trigger = 'manual',
+    sceneContext = null,
+    dependsOn = [],
+    previewRequired = false,
+}) {
+    const generateJob = await buildQueuedSidePromptJob({
+        template,
+        lorebookName,
+        compiledScene,
+        settings,
+        profile,
+        runtimeMacros,
+        fallbackKinds,
+        metadataUpdates,
+        commitCheckpoint,
+        trigger,
+        sceneContext,
+    });
+    const sceneData = buildSidePromptPreviewSceneData(compiledScene);
+    const baseKey = String(generateJob?.dedupeKey || `sideprompt:${template?.key || template?.name || 'unknown'}`);
+
+    return [
+        {
+            kind: 'sidePromptGenerate',
+            key: `sidePromptGenerate:${template?.key || template?.name || 'unknown'}:${generateJob.payload.title}`,
+            phase: 'generate',
+            dedupeKey: `${baseKey}:generate`,
+            payload: {
+                ...generateJob.payload,
+                profile: structuredClone(profile || {}),
+                sceneData: structuredClone(sceneData),
+                lockTitle: true,
+            },
+            dependsOn: Array.isArray(dependsOn) ? dependsOn.slice() : [],
+        },
+        {
+            kind: 'sidePromptApproval',
+            key: `sidePromptApproval:${template?.key || template?.name || 'unknown'}:${generateJob.payload.title}`,
+            phase: 'approval',
+            dedupeKey: `${baseKey}:approval`,
+            payload: {
+                title: generateJob.payload.title,
+                trigger,
+                profile: structuredClone(profile || {}),
+                sceneData: structuredClone(sceneData),
+                previewRequired: previewRequired === true,
+                lockTitle: true,
+            },
+            dependsOn: [`sidePromptGenerate:${template?.key || template?.name || 'unknown'}:${generateJob.payload.title}`],
+        },
+        {
+            kind: 'sidePromptCommit',
+            key: `sidePromptCommit:${template?.key || template?.name || 'unknown'}:${generateJob.payload.title}`,
+            phase: 'post_commit',
+            dedupeKey: `${baseKey}:commit`,
+            payload: {
+                lorebookName: generateJob.payload.lorebookName,
+                storage: generateJob.payload.storage,
+                title: generateJob.payload.title,
+                metadataUpdates: structuredClone(metadataUpdates || {}),
+                commitCheckpoint: structuredClone(generateJob.payload.commitCheckpoint || null),
+                defaults: structuredClone(generateJob.payload.defaults || {}),
+                entryOverrides: structuredClone(generateJob.payload.entryOverrides || {}),
+                trigger,
+            },
+            dependsOn: [`sidePromptApproval:${template?.key || template?.name || 'unknown'}:${generateJob.payload.title}`],
+        },
+    ];
 }
 
 function ensureSidePromptTextNotBlank(text, template, trigger) {
@@ -638,6 +764,12 @@ export async function evaluateTrackers(settings, options = {}) {
                     lastMsgId: endId,
                     lastRunAt: checkpointTimestamp,
                 }),
+                commitCheckpoint: {
+                    templateKey: template.key,
+                    lastMsgId: endId,
+                    includeLastMsgId: true,
+                    includeTrackerFallback: true,
+                },
                 sceneContext,
             }));
         }
@@ -946,28 +1078,52 @@ export async function runSidePrompt(rawInput, settings, options = {}) {
 
         const endId = compiledScene?.metadata?.sceneEnd ?? currentLast;
         const checkpointTimestamp = new Date().toISOString();
-        if (settings?.moduleSettings?.showMemoryPreviews) {
-            toastr.info('Durable STMB side prompt jobs save automatically; preview approval is skipped for queued jobs.', 'STMB');
-        }
-
-        const job = await buildQueuedSidePromptJob({
-            template,
-            lorebookName,
-            compiledScene,
-            settings,
-            runtimeMacros: parsed.runtimeMacros,
-            fallbackKinds: ['scoreboard', 'plotpoints', 'tracker'],
-            trigger: 'manual',
-            metadataUpdates: buildSidePromptCheckpointMetadata(template.key, {
-                lastMsgId: endId,
-                lastRunAt: checkpointTimestamp,
-            }),
-            sceneContext,
-        });
+        const jobs = settings?.moduleSettings?.showMemoryPreviews
+            ? await buildQueuedSidePromptWorkflowJobs({
+                template,
+                lorebookName,
+                compiledScene,
+                settings,
+                runtimeMacros: parsed.runtimeMacros,
+                fallbackKinds: ['scoreboard', 'plotpoints', 'tracker'],
+                trigger: 'manual',
+                metadataUpdates: buildSidePromptCheckpointMetadata(template.key, {
+                    lastMsgId: endId,
+                    lastRunAt: checkpointTimestamp,
+                }),
+                commitCheckpoint: {
+                    templateKey: template.key,
+                    lastMsgId: endId,
+                    includeLastMsgId: true,
+                    includeTrackerFallback: true,
+                },
+                sceneContext,
+                previewRequired: true,
+            })
+            : [await buildQueuedSidePromptJob({
+                template,
+                lorebookName,
+                compiledScene,
+                settings,
+                runtimeMacros: parsed.runtimeMacros,
+                fallbackKinds: ['scoreboard', 'plotpoints', 'tracker'],
+                trigger: 'manual',
+                metadataUpdates: buildSidePromptCheckpointMetadata(template.key, {
+                    lastMsgId: endId,
+                    lastRunAt: checkpointTimestamp,
+                }),
+                commitCheckpoint: {
+                    templateKey: template.key,
+                    lastMsgId: endId,
+                    includeLastMsgId: true,
+                    includeTrackerFallback: true,
+                },
+                sceneContext,
+            })];
         await enqueueStmbPlannerWave({
             sceneContext,
             source: 'manual-sideprompt',
-            jobs: [job],
+            jobs,
         });
         toastr.success(`Queued SidePrompt "${template.name}".`, 'STMB');
         return '';

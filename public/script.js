@@ -11906,6 +11906,7 @@ export async function saveChatConditional() {
         }
         else {
             await saveChat();
+            savedChatId = String(getCurrentChatId() || savedChatId || '');
         }
 
         // Save token and prompts cache to IndexedDB storage

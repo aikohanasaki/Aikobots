@@ -977,13 +977,15 @@ export async function showMemoryPreviewPopup(memoryResult, sceneData, profileSet
                 }
                 return true;
             },
-            customButtons: [
-                {
-                    text: 'Retry Generation',
-                    result: STMB_POPUP_RESULTS.RETRY,
-                    classes: ['menu_button', 'whitespacenowrap'],
-                },
-            ],
+            customButtons: options.allowRetry === false
+                ? []
+                : [
+                    {
+                        text: 'Retry Generation',
+                        result: STMB_POPUP_RESULTS.RETRY,
+                        classes: ['menu_button', 'whitespacenowrap'],
+                    },
+                ],
         });
 
         activePreviewPopups.add(popup);

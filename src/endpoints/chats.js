@@ -168,11 +168,11 @@ function hasValidChatPayload(chat) {
     return Array.isArray(chat) && _.isPlainObject(chat[0]);
 }
 
-function serializeJsonl(data) {
+export function serializeJsonl(data) {
     return data.map(x => JSON.stringify(x)).join('\n');
 }
 
-function readJsonlObjects(filePath) {
+export function readJsonlObjects(filePath) {
     if (!fs.existsSync(filePath)) {
         return [];
     }
@@ -264,7 +264,7 @@ function getSegmentLayout(segments) {
     };
 }
 
-function getLogicalChatData(filePath) {
+export function getLogicalChatData(filePath) {
     const segments = getChatSegments(filePath);
 
     if (!segments.header) {
@@ -279,7 +279,7 @@ function getLogicalChatMessages(filePath) {
     return messages;
 }
 
-function writeLogicalChat(filePath, header, messages, { displayCount = LONG_CHAT_DISPLAY_DEFAULT, bufferMax = LONG_CHAT_BUFFER_DEFAULT, tailStartId = null } = {}) {
+export function writeLogicalChat(filePath, header, messages, { displayCount = LONG_CHAT_DISPLAY_DEFAULT, bufferMax = LONG_CHAT_BUFFER_DEFAULT, tailStartId = null } = {}) {
     const { displayCount: normalizedDisplayCount, bufferMax: normalizedBufferMax } = normalizeLongChatConfig({ displayCount, bufferMax });
     const baseHeader = stripChatStorage(header);
     const fullJsonl = serializeJsonl([baseHeader, ...messages]);
@@ -358,7 +358,7 @@ function ensureSplitTailStorage(filePath, { displayCount = LONG_CHAT_DISPLAY_DEF
     return true;
 }
 
-function buildChunkedChatPayload(filePath, {
+export function buildChunkedChatPayload(filePath, {
     rangeStart = null,
     count = null,
     hydrateFull = false,

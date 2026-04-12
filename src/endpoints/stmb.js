@@ -6,11 +6,12 @@ import { randomUUID } from 'node:crypto';
 import { sync as writeFileAtomicSync } from 'write-file-atomic';
 import { createMacroState, evaluatePromptMacros } from '../prompting/macro-evaluator.js';
 import { handleChatCompletionsGenerate } from './backends/chat-completions.js';
-import { resolveLogicalChatReference } from './chats.js';
+import { buildChunkedChatPayload, resolveLogicalChatReference, writeLogicalChat } from './chats.js';
 import { getAllUserHandles, getUserDirectories } from '../users.js';
 
 import {
     applyLorebookSettings,
+    buildSidePromptCheckpointMetadata,
     createManagedLorebookEntryData,
     getNextManagedMemorySequenceNumber,
     getPresetPrompt,
@@ -24,8 +25,11 @@ import {
     buildBriefsFromEntries,
     buildSummaryAnalysisPrompt,
     createManagedSummaryEntryData,
+    getDefaultSummaryMinChildren,
     getNextSummaryNumber,
+    identifyEligibleSummarySourceEntries,
     migrateLorebookSummarySchema,
+    normalizeSummaryMinChildren,
     parseSummaryJsonResponse,
     getSummaryTierLabel,
 } from '../../public/scripts/stmb-summary.js';
@@ -34,6 +38,7 @@ import {
     LorebookRepositoryError,
     saveLorebookForManagement,
 } from '../lorebook-repository.js';
+import { runRegexScript, substitute_find_regex } from '../prompting/regex-runtime.js';
 
 export const router = express.Router();
 
@@ -49,6 +54,8 @@ const STMB_METADATA_KEY = 'STMemoryBooks';
 const STMB_WAVE_PLANNER_FILE = 'stmb-wave-planner.json';
 const STMB_WAVE_PLANNER_VERSION = 1;
 const STMB_PLANNER_MAX_HISTORY = 200;
+const PLANNER_TERMINAL_STATUSES = new Set(['completed', 'failed', 'canceled', 'rejected', 'skipped']);
+const PLANNER_BLOCKING_DEPENDENCY_STATUSES = new Set(['failed', 'canceled', 'rejected', 'skipped']);
 const stmbPlannerQueues = new Map();
 const activePlannerRuns = new Map();
 let plannerWorkerStarted = false;
@@ -66,6 +73,118 @@ function createEmptyPlannerDoc() {
     };
 }
 
+function getPlannerJobStatus(job) {
+    return String(job?.status || 'pending');
+}
+
+function isPlannerTerminalStatus(status) {
+    return PLANNER_TERMINAL_STATUSES.has(String(status || ''));
+}
+
+function normalizePlannerDependencyList(value) {
+    return Array.from(new Set(
+        (Array.isArray(value) ? value : [])
+            .map(item => String(item || '').trim())
+            .filter(Boolean),
+    ));
+}
+
+function getPlannerJobDefaultPhase(kind) {
+    switch (String(kind || '')) {
+        case 'memoryGenerate':
+            return 'generate';
+        case 'memoryApproval':
+            return 'approval';
+        case 'memoryCommit':
+            return 'commit';
+        case 'sidePromptGenerate':
+            return 'generate';
+        case 'sidePromptApproval':
+            return 'approval';
+        case 'sidePromptCommit':
+        case 'chatAutoHide':
+        case 'sidePrompt':
+        case 'consolidationCheck':
+            return 'post_commit';
+        case 'memory':
+            return 'commit';
+        default:
+            return 'pending';
+    }
+}
+
+function normalizePlannerJob(job = {}) {
+    return {
+        ...job,
+        status: getPlannerJobStatus(job),
+        phase: String(job?.phase || getPlannerJobDefaultPhase(job?.kind)),
+        dependsOn: normalizePlannerDependencyList(job?.dependsOn),
+        clientHandledAt: Number.isFinite(Number(job?.clientHandledAt)) ? Number(job.clientHandledAt) : null,
+    };
+}
+
+function getPlannerJobMap(document) {
+    return new Map(
+        (Array.isArray(document?.jobs) ? document.jobs : [])
+            .map(job => normalizePlannerJob(job))
+            .map(job => [String(job.id), job]),
+    );
+}
+
+function evaluatePlannerDependencyState(document, job) {
+    const jobMap = getPlannerJobMap(document);
+    const dependencies = normalizePlannerDependencyList(job?.dependsOn);
+    if (dependencies.length === 0) {
+        return { runnable: true, blocked: false, skip: false };
+    }
+
+    let hasPending = false;
+    for (const dependencyId of dependencies) {
+        const dependency = jobMap.get(String(dependencyId));
+        if (!dependency) {
+            return { runnable: false, blocked: false, skip: true, reason: `Missing dependency ${dependencyId}` };
+        }
+
+        const status = getPlannerJobStatus(dependency);
+        if (PLANNER_BLOCKING_DEPENDENCY_STATUSES.has(status)) {
+            return { runnable: false, blocked: false, skip: true, reason: `Dependency ${dependencyId} settled as ${status}` };
+        }
+        if (status !== 'completed') {
+            hasPending = true;
+        }
+    }
+
+    return {
+        runnable: !hasPending,
+        blocked: hasPending,
+        skip: false,
+    };
+}
+
+function refreshPlannerDependencyStatuses(document) {
+    let changed = false;
+    for (const job of Array.isArray(document?.jobs) ? document.jobs : []) {
+        if (getPlannerJobStatus(job) !== 'pending') {
+            continue;
+        }
+
+        const dependencyState = evaluatePlannerDependencyState(document, job);
+        if (!dependencyState.skip) {
+            continue;
+        }
+
+        job.status = 'skipped';
+        job.phase = String(job?.phase || getPlannerJobDefaultPhase(job?.kind));
+        job.updatedAt = Date.now();
+        job.error = {
+            message: String(dependencyState.reason || 'A dependency did not complete.'),
+            type: 'StmbPlannerDependencySkipped',
+        };
+        changed = true;
+    }
+    return changed;
+}
+
 function readPlannerDoc(directories) {
     const filePath = getPlannerFilePath(directories);
     if (!fs.existsSync(filePath)) {
@@ -77,7 +196,7 @@ function readPlannerDoc(directories) {
         return {
             version: STMB_WAVE_PLANNER_VERSION,
             waves: Array.isArray(parsed?.waves) ? parsed.waves : [],
-            jobs: Array.isArray(parsed?.jobs) ? parsed.jobs : [],
+            jobs: Array.isArray(parsed?.jobs) ? parsed.jobs.map(normalizePlannerJob) : [],
         };
     } catch (error) {
         console.warn('[STMB Planner] Failed to read planner document, resetting.', error);
@@ -98,6 +217,7 @@ async function withPlannerDocument(user, mutate) {
         .then(async () => {
             const document = readPlannerDoc(user.directories);
             const result = await mutate(document);
+            refreshPlannerDependencyStatuses(document);
             trimPlannerHistory(document);
             writePlannerDoc(user.directories, document);
             return result;
@@ -113,15 +233,14 @@ async function withPlannerDocument(user, mutate) {
 }
 
 function trimPlannerHistory(document) {
-    const terminalStatuses = new Set(['completed', 'failed', 'canceled']);
-    const terminalJobs = document.jobs.filter(job => terminalStatuses.has(String(job?.status || '')));
+    const terminalJobs = document.jobs.filter(job => isPlannerTerminalStatus(job?.status));
     if (terminalJobs.length <= STMB_PLANNER_MAX_HISTORY) {
         return;
     }
 
     terminalJobs.sort((left, right) => Number(right?.updatedAt || 0) - Number(left?.updatedAt || 0));
     const keepIds = new Set(terminalJobs.slice(0, STMB_PLANNER_MAX_HISTORY).map(job => String(job.id)));
-    document.jobs = document.jobs.filter(job => !terminalStatuses.has(String(job?.status || '')) || keepIds.has(String(job.id)));
+    document.jobs = document.jobs.filter(job => !isPlannerTerminalStatus(job?.status) || keepIds.has(String(job.id)));
     const remainingJobIds = new Set(document.jobs.map(job => String(job.id)));
     document.waves = document.waves
         .map(wave => ({
@@ -487,6 +606,31 @@ function extractTextFromProviderResponse(payload) {
     return '';
 }
 
+function assertPlannerResponseNotTruncated(providerResponse, fallbackText = '') {
+    const finishReason = providerResponse?.choices?.[0]?.finish_reason || providerResponse?.finish_reason || providerResponse?.stop_reason;
+    const normalizedFinishReason = typeof finishReason === 'string' ? finishReason.toLowerCase() : '';
+
+    if (normalizedFinishReason.includes('length') || normalizedFinishReason.includes('max') || providerResponse?.truncated === true) {
+        throw createStmbRequestError(502, 'StmbGenerationFailed', 'Model response appears truncated. Increase Max Response Tokens.', {
+            providerBody: fallbackText || providerResponse,
+        });
+    }
+}
+
+function applyPlannerRegexScripts(text, regexScripts = []) {
+    let output = String(text || '');
+
+    for (const script of Array.isArray(regexScripts) ? regexScripts : []) {
+        output = runRegexScript({
+            ...script,
+            disabled: false,
+            substituteRegex: substitute_find_regex.NONE,
+        }, output, {});
+    }
+
+    return output;
+}
+
 function intersectRanges(ranges = [], start, end) {
     if (!Number.isInteger(start) || !Number.isInteger(end) || start > end) {
         return [];
@@ -845,15 +989,18 @@ function buildPlannerWaveStatus(document, wave) {
     const jobs = (Array.isArray(wave?.jobIds) ? wave.jobIds : [])
         .map(jobId => document.jobs.find(job => String(job.id) === String(jobId)))
         .filter(Boolean);
-    if (jobs.some(job => job.status === 'running')) return 'running';
-    if (jobs.some(job => job.status === 'pending')) return 'pending';
-    if (jobs.every(job => job.status === 'completed')) return 'completed';
-    if (jobs.some(job => job.status === 'failed')) return 'failed';
-    if (jobs.every(job => job.status === 'canceled')) return 'canceled';
+    if (jobs.some(job => getPlannerJobStatus(job) === 'running')) return 'running';
+    if (jobs.some(job => getPlannerJobStatus(job) === 'awaiting_approval')) return 'awaiting_approval';
+    if (jobs.some(job => getPlannerJobStatus(job) === 'pending')) return 'pending';
+    if (jobs.some(job => getPlannerJobStatus(job) === 'failed')) return 'failed';
+    if (jobs.some(job => getPlannerJobStatus(job) === 'rejected')) return 'rejected';
+    if (jobs.every(job => ['completed', 'skipped'].includes(getPlannerJobStatus(job)))) return 'completed';
+    if (jobs.every(job => ['canceled', 'skipped'].includes(getPlannerJobStatus(job)))) return 'canceled';
     return 'pending';
 }
 
 function refreshPlannerWaveStatuses(document) {
+    refreshPlannerDependencyStatuses(document);
     document.waves = document.waves.map(wave => ({
         ...wave,
         status: buildPlannerWaveStatus(document, wave),
@@ -905,19 +1052,25 @@ async function enqueuePlannerWave(user, payload = {}) {
             sceneContext: structuredClone(sceneContext),
             jobIds: [],
         };
+        const localJobIds = new Map();
+        const specsToCreate = [];
 
         for (const jobSpec of jobs) {
             const dedupeKey = String(jobSpec?.dedupeKey || '').trim();
-            if (!dedupeKey) {
+            const localKey = String(jobSpec?.key || jobSpec?.localKey || '').trim();
+            if (!dedupeKey || (localKey && localJobIds.has(localKey))) {
                 continue;
             }
 
             const existing = document.jobs.find(job =>
                 String(job?.dedupeKey || '') === dedupeKey
-                && ['pending', 'running'].includes(String(job?.status || '')),
+                && ['pending', 'running', 'awaiting_approval'].includes(String(job?.status || '')),
             );
             if (existing) {
                 wave.jobIds.push(existing.id);
+                if (localKey) {
+                    localJobIds.set(localKey, existing.id);
+                }
                 continue;
             }
 
@@ -930,15 +1083,36 @@ async function enqueuePlannerWave(user, payload = {}) {
                 dedupeKey,
                 source,
                 status: 'pending',
+                phase: String(jobSpec?.phase || getPlannerJobDefaultPhase(jobSpec?.kind)),
                 createdAt: now,
                 updatedAt: now,
                 sceneContext: structuredClone(sceneContext),
                 payload: structuredClone(jobSpec?.payload || {}),
+                dependsOn: [],
                 result: null,
                 error: null,
+                approvalRequest: null,
+                clientHandledAt: null,
             };
-            document.jobs.push(job);
             wave.jobIds.push(jobId);
+            if (localKey) {
+                localJobIds.set(localKey, jobId);
+            }
+            specsToCreate.push({ job, jobSpec });
+        }
+
+        for (const { job, jobSpec } of specsToCreate) {
+            const requestedDependencies = normalizePlannerDependencyList(jobSpec?.dependsOn);
+            job.dependsOn = requestedDependencies.map(item => {
+                const resolved = localJobIds.get(String(item || '').trim()) || String(item || '').trim();
+                const exists = document.jobs.some(candidate => String(candidate.id) === resolved)
+                    || specsToCreate.some(candidate => String(candidate.job.id) === resolved);
+                if (!exists) {
+                    throw createStmbRequestError(400, 'StmbBadRequest', `Unknown planner dependency "${item}".`);
+                }
+                return resolved;
+            });
+            document.jobs.push(normalizePlannerJob(job));
         }
 
         document.waves.push(wave);
@@ -977,7 +1151,7 @@ async function cancelPlannerJobs(user, {
         let canceled = 0;
 
         for (const job of document.jobs) {
-            if (!['pending', 'running'].includes(String(job?.status || ''))) {
+            if (!['pending', 'running', 'awaiting_approval'].includes(String(job?.status || ''))) {
                 continue;
             }
             if (!all && normalizedChatKey && String(job.chatKey) !== normalizedChatKey) {
@@ -1003,42 +1177,6 @@ async function cancelPlannerJobs(user, {
     });
 }
 
-async function executePlannerMemoryJob(user, job) {
-    const forwarded = await forwardChatCompletionGenerateForUser(user, job.payload.generateData, job.id);
-    if (!forwarded.ok) {
-        throw createStmbRequestError(forwarded.status || 500, 'StmbGenerationFailed', 'Failed to generate STMB memory.', {
-            providerBody: forwarded.data,
-        });
-    }
-
-    const memory = parseStructuredMemoryResponse(forwarded.data);
-    const saveResult = await saveManagedMemoryForUser(user, {
-        lorebookName: job.payload.lorebookName,
-        storage: job.payload.storage,
-        memoryObject: memory,
-        sceneContext: job.payload.sceneSaveContext,
-        profile: job.payload.profile || {},
-    });
-
-    updateChatMetadataState(user, job.sceneContext, currentState => {
-        const nextState = { ...currentState };
-        nextState.highestMemoryProcessed = Number(job.payload.range?.sceneEnd);
-        delete nextState.highestMemoryProcessedManuallySet;
-        if (job.payload.keepSceneMarkers !== true && job.payload.autoClearSceneAfterMemory !== false) {
-            nextState.sceneStart = null;
-            nextState.sceneEnd = null;
-        }
-        return nextState;
-    });
-
-    return {
-        type: 'memory',
-        lorebookName: saveResult.lorebookName,
-        entryUid: saveResult.entry?.uid ?? null,
-        highestProcessed: Number(job.payload.range?.sceneEnd),
-    };
-}
-
 async function executePlannerSidePromptJob(user, job) {
     const forwarded = await forwardChatCompletionGenerateForUser(user, job.payload.generateData, job.id);
     if (!forwarded.ok) {
@@ -1062,40 +1200,562 @@ async function executePlannerSidePromptJob(user, job) {
         title: job.payload.title,
         content: text,
         defaults: job.payload.defaults || {},
-        metadataUpdates: job.payload.metadataUpdates || {},
+        metadataUpdates: buildPlannerSidePromptMetadataUpdates(job.payload.metadataUpdates, job.payload.commitCheckpoint),
         entryOverrides: job.payload.entryOverrides || {},
     });
 
     return {
         type: 'sidePrompt',
         title: String(job.payload.title || ''),
+        lorebookName: String(job.payload.lorebookName || ''),
         entryUid: saveResult.entry?.uid ?? null,
+    };
+}
+
+function buildPlannerSidePromptMetadataUpdates(metadataUpdates = {}, commitCheckpoint = null) {
+    const baseMetadata = metadataUpdates && typeof metadataUpdates === 'object'
+        ? structuredClone(metadataUpdates)
+        : {};
+    const checkpoint = commitCheckpoint && typeof commitCheckpoint === 'object'
+        ? commitCheckpoint
+        : null;
+    if (!checkpoint?.templateKey) {
+        return baseMetadata;
+    }
+
+    return {
+        ...baseMetadata,
+        ...buildSidePromptCheckpointMetadata(checkpoint.templateKey, {
+            lastMsgId: checkpoint.lastMsgId ?? null,
+            lastRunAt: new Date().toISOString(),
+            includeLastMsgId: checkpoint.includeLastMsgId !== false,
+            includeTrackerFallback: checkpoint.includeTrackerFallback !== false,
+        }),
+    };
+}
+
+async function executePlannerSidePromptGenerateJob(user, job) {
+    const forwarded = await forwardChatCompletionGenerateForUser(user, job.payload.generateData, job.id);
+    if (!forwarded.ok) {
+        throw createStmbRequestError(forwarded.status || 500, 'StmbGenerationFailed', 'Failed to generate STMB side prompt.', {
+            providerBody: forwarded.data,
+        });
+    }
+
+    const text = extractTextFromProviderResponse(forwarded.data).trim();
+    return {
+        type: 'sidePromptGenerate',
+        blank: !text,
+        title: String(job.payload.title || ''),
+        text,
+        lorebookName: String(job.payload.lorebookName || ''),
+    };
+}
+
+async function executePlannerSidePromptApprovalJob(user, job) {
+    const dependencies = await getPlannerDependencyJobs(user, job);
+    const generatedJob = getFirstPlannerDependencyByKind(dependencies, 'sidePromptGenerate');
+    const generatedResult = generatedJob?.result || {};
+
+    if (generatedResult.blank) {
+        return {
+            status: 'completed',
+            phase: 'approval',
+            result: {
+                type: 'sidePromptApproval',
+                decision: 'blank',
+                blank: true,
+                title: String(generatedResult.title || job.payload?.title || ''),
+                text: '',
+            },
+        };
+    }
+
+    if (!String(generatedResult.text || '').trim()) {
+        throw createStmbRequestError(409, 'StmbPlannerDependencyMissing', 'Side prompt approval is missing generated text.');
+    }
+
+    if (job.payload?.previewRequired !== true) {
+        return {
+            status: 'completed',
+            phase: 'approval',
+            result: {
+                type: 'sidePromptApproval',
+                decision: 'approved',
+                title: String(generatedResult.title || job.payload?.title || ''),
+                text: String(generatedResult.text || ''),
+            },
+        };
+    }
+
+    return {
+        status: 'awaiting_approval',
+        phase: 'awaiting_approval',
+        approvalRequest: buildSidePromptApprovalRequest(generatedResult, job),
+    };
+}
+
+async function executePlannerSidePromptCommitJob(user, job) {
+    const dependencies = await getPlannerDependencyJobs(user, job);
+    const approvalJob = getFirstPlannerDependencyByKind(dependencies, 'sidePromptApproval');
+    const approvalResult = approvalJob?.result || {};
+
+    if (approvalResult.blank === true) {
+        return {
+            type: 'sidePrompt',
+            blank: true,
+            title: String(approvalResult.title || job.payload?.title || ''),
+            lorebookName: String(job.payload?.lorebookName || ''),
+        };
+    }
+
+    const text = String(approvalResult.text || '').trim();
+    if (!text) {
+        throw createStmbRequestError(409, 'StmbPlannerDependencyMissing', 'Side prompt commit is missing approved text.');
+    }
+
+    const saveResult = await upsertLorebookEntryByTitleForUser(user, {
+        lorebookName: job.payload.lorebookName,
+        storage: job.payload.storage,
+        title: String(approvalResult.title || job.payload.title || ''),
+        content: text,
+        defaults: job.payload.defaults || {},
+        metadataUpdates: buildPlannerSidePromptMetadataUpdates(job.payload.metadataUpdates, job.payload.commitCheckpoint),
+        entryOverrides: job.payload.entryOverrides || {},
+    });
+
+    return {
+        type: 'sidePrompt',
+        title: String(approvalResult.title || job.payload.title || ''),
+        lorebookName: String(job.payload.lorebookName || ''),
+        entryUid: saveResult.entry?.uid ?? null,
+    };
+}
+
+async function getPlannerDependencyJobs(user, job) {
+    const dependencyIds = normalizePlannerDependencyList(job?.dependsOn);
+    if (dependencyIds.length === 0) {
+        return [];
+    }
+
+    return withPlannerDocument(user, async document => dependencyIds
+        .map(jobId => document.jobs.find(candidate => String(candidate.id) === String(jobId)))
+        .filter(Boolean)
+        .map(candidate => structuredClone(candidate)));
+}
+
+function getFirstPlannerDependencyByKind(dependencies, kind) {
+    return (Array.isArray(dependencies) ? dependencies : []).find(dependency => String(dependency?.kind || '') === String(kind || '')) || null;
+}
+
+function buildMemoryApprovalRequest(memory, job) {
+    return {
+        kind: 'memory_preview',
+        memory: normalizeApprovedMemoryObject(memory),
+        sceneData: structuredClone(job?.payload?.sceneData || {}),
+        profile: structuredClone(job?.payload?.profile || {}),
+        allowRetry: true,
+        lockTitle: false,
+    };
+}
+
+function buildSidePromptApprovalRequest(result, job) {
+    return {
+        kind: 'sideprompt_preview',
+        title: String(result?.title || job?.payload?.title || ''),
+        content: String(result?.text || ''),
+        sceneData: structuredClone(job?.payload?.sceneData || {}),
+        profile: structuredClone(job?.payload?.profile || {}),
+        allowRetry: true,
+        lockTitle: job?.payload?.lockTitle === true,
+    };
+}
+
+function normalizeApprovedMemoryObject(value) {
+    return parseStructuredMemoryResponse(value);
+}
+
+function extractPlannerGeneratedMemory(forwarded, regexConfig = {}) {
+    if (regexConfig.enabled) {
+        const rawText = extractTextFromProviderResponse(forwarded.data).trim();
+        assertPlannerResponseNotTruncated(forwarded.data, rawText);
+        const cleanedText = applyPlannerRegexScripts(rawText, regexConfig.incomingScripts);
+        return parseStructuredMemoryResponse(cleanedText);
+    }
+
+    return parseStructuredMemoryResponse(forwarded.data);
+}
+
+async function executePlannerMemoryGenerateJob(user, job) {
+    const forwarded = await forwardChatCompletionGenerateForUser(user, job.payload.generateData, job.id);
+    if (!forwarded.ok) {
+        throw createStmbRequestError(forwarded.status || 500, 'StmbGenerationFailed', 'Failed to generate STMB memory.', {
+            providerBody: forwarded.data,
+        });
+    }
+
+    const regexConfig = job.payload?.regexConfig && typeof job.payload.regexConfig === 'object'
+        ? job.payload.regexConfig
+        : {};
+    const memory = extractPlannerGeneratedMemory(forwarded, regexConfig);
+    return {
+        type: 'memoryGenerate',
+        memory,
+        lorebookName: String(job.payload.lorebookName || ''),
+        range: structuredClone(job.payload.range || {}),
+    };
+}
+
+async function executePlannerMemoryApprovalJob(user, job) {
+    const dependencies = await getPlannerDependencyJobs(user, job);
+    const generatedJob = getFirstPlannerDependencyByKind(dependencies, 'memoryGenerate');
+    const generatedMemory = generatedJob?.result?.memory;
+    if (!generatedMemory) {
+        throw createStmbRequestError(409, 'StmbPlannerDependencyMissing', 'Memory approval is missing generated memory output.');
+    }
+
+    if (job.payload?.previewRequired !== true) {
+        return {
+            status: 'completed',
+            phase: 'approval',
+            result: {
+                type: 'memoryApproval',
+                decision: 'approved',
+                memory: normalizeApprovedMemoryObject(generatedMemory),
+            },
+        };
+    }
+
+    return {
+        status: 'awaiting_approval',
+        phase: 'awaiting_approval',
+        approvalRequest: buildMemoryApprovalRequest(generatedMemory, job),
+    };
+}
+
+async function executePlannerMemoryCommitJob(user, job) {
+    const dependencies = await getPlannerDependencyJobs(user, job);
+    const approvalJob = getFirstPlannerDependencyByKind(dependencies, 'memoryApproval');
+    const approvedMemory = approvalJob?.result?.memory;
+    if (!approvedMemory) {
+        throw createStmbRequestError(409, 'StmbPlannerDependencyMissing', 'Memory commit is missing approved memory data.');
+    }
+
+    const saveResult = await saveManagedMemoryForUser(user, {
+        lorebookName: job.payload.lorebookName,
+        storage: job.payload.storage,
+        memoryObject: normalizeApprovedMemoryObject(approvedMemory),
+        sceneContext: job.payload.sceneSaveContext,
+        profile: job.payload.profile || {},
+    });
+
+    updateChatMetadataState(user, job.sceneContext, currentState => {
+        const nextState = { ...currentState };
+        nextState.highestMemoryProcessed = Number(job.payload.range?.sceneEnd);
+        delete nextState.highestMemoryProcessedManuallySet;
+        if (job.payload.keepSceneMarkers !== true && job.payload.autoClearSceneAfterMemory !== false) {
+            nextState.sceneStart = null;
+            nextState.sceneEnd = null;
+        }
+        return nextState;
+    });
+
+    return {
+        type: 'memory',
+        lorebookName: saveResult.lorebookName,
+        entryUid: saveResult.entry?.uid ?? null,
+        highestProcessed: Number(job.payload.range?.sceneEnd),
+        orderClampNotifications: Array.isArray(saveResult?.orderClampNotifications) ? saveResult.orderClampNotifications : [],
+        clientActions: [
+            {
+                type: 'refresh_lorebook',
+                lorebookName: saveResult.lorebookName,
+            },
+        ],
+    };
+}
+
+function buildPlannerAutoHideRanges(range = {}, mode = 'none', unhiddenCount = 0) {
+    const normalizedMode = String(mode || 'none').toLowerCase();
+    const normalizedStart = Math.max(0, Math.trunc(Number(range?.sceneStart) || 0));
+    const normalizedEnd = Math.max(normalizedStart, Math.trunc(Number(range?.sceneEnd) || normalizedStart));
+    const keepVisible = Math.max(0, Math.trunc(Number(unhiddenCount) || 0));
+
+    if (normalizedMode === 'all') {
+        const hideEnd = keepVisible === 0 ? normalizedEnd : normalizedEnd - keepVisible;
+        return hideEnd >= 0 ? [{ start: 0, end: hideEnd, hide: true }] : [];
+    }
+
+    if (normalizedMode === 'last') {
+        const sceneSize = normalizedEnd - normalizedStart + 1;
+        if (keepVisible >= sceneSize) {
+            return [];
+        }
+        const hideEnd = keepVisible === 0 ? normalizedEnd : normalizedEnd - keepVisible;
+        return hideEnd >= normalizedStart ? [{ start: normalizedStart, end: hideEnd, hide: true }] : [];
+    }
+
+    return [];
+}
+
+function writePlannerGroupChat(filePath, messages) {
+    writeFileAtomicSync(filePath, messages.map(item => JSON.stringify(item)).join('\n'), 'utf8');
+}
+
+function mutateLogicalChatVisibility(user, sceneContext, ranges = []) {
+    const logicalChat = resolveLogicalChatReference(user.directories, sceneContext.chatRef);
+    const filePath = String(logicalChat?.filePath || '');
+    if (!filePath || !fs.existsSync(filePath)) {
+        return {
+            applied: false,
+            changedMessageIds: [],
+            chatType: String(logicalChat?.chatType || ''),
+        };
+    }
+
+    const nextMessages = Array.isArray(logicalChat?.messages) ? logicalChat.messages.slice() : [];
+    const changedMessageIds = [];
+
+    for (const range of Array.isArray(ranges) ? ranges : []) {
+        const start = Math.max(0, Math.trunc(Number(range?.start) || 0));
+        const end = Math.max(start, Math.trunc(Number(range?.end) || start));
+        const hide = range?.hide !== false;
+
+        for (let index = start; index <= end; index++) {
+            const message = nextMessages[index];
+            if (!message || message.is_system === hide) {
+                continue;
+            }
+            nextMessages[index] = {
+                ...message,
+                is_system: hide,
+            };
+            changedMessageIds.push(index);
+        }
+    }
+
+    if (changedMessageIds.length === 0) {
+        return {
+            applied: false,
+            changedMessageIds: [],
+            chatType: String(logicalChat?.chatType || ''),
+        };
+    }
+
+    if (logicalChat?.chatType === 'group') {
+        writePlannerGroupChat(filePath, nextMessages);
+        return {
+            applied: true,
+            changedMessageIds,
+            chatType: 'group',
+        };
+    }
+
+    const tailStartId = Number.isInteger(logicalChat?.tailStartId) ? logicalChat.tailStartId : 0;
+    const tailCount = Math.max(0, nextMessages.length - tailStartId);
+    writeLogicalChat(filePath, logicalChat?.header || {}, nextMessages, {
+        tailStartId,
+        displayCount: Math.max(20, Math.min(200, tailCount || 100)),
+        bufferMax: Math.max(70, Math.min(500, tailCount || 200)),
+    });
+
+    return {
+        applied: true,
+        changedMessageIds,
+        chatType: 'character',
+        payload: buildChunkedChatPayload(filePath, {
+            hydrateFull: true,
+            count: nextMessages.length,
+            displayCount: Math.max(20, Math.min(200, tailCount || 100)),
+            bufferMax: Math.max(70, Math.min(500, tailCount || 200)),
+            includeParentPromptCache: true,
+        }),
+    };
+}
+
+async function executePlannerChatAutoHideJob(user, job) {
+    const ranges = buildPlannerAutoHideRanges(
+        job.payload?.range || {},
+        job.payload?.mode || 'none',
+        job.payload?.unhiddenCount || 0,
+    );
+    if (ranges.length === 0) {
+        return {
+            type: 'chatAutoHide',
+            applied: false,
+            clientActions: [],
+        };
+    }
+
+    const mutationResult = mutateLogicalChatVisibility(user, job.sceneContext, ranges);
+    return {
+        type: 'chatAutoHide',
+        applied: mutationResult.applied,
+        changedMessageIds: mutationResult.changedMessageIds,
+        clientActions: mutationResult.applied
+            ? [{
+                type: 'reload_chat',
+                payload: mutationResult.payload || null,
+            }]
+            : [],
+    };
+}
+
+async function executePlannerConsolidationCheckJob(user, job) {
+    const targetTier = Math.min(6, Math.max(1, Math.trunc(Number(job.payload?.targetTier) || 1)));
+    const requiredMin = normalizeSummaryMinChildren(
+        job.payload?.requiredMin,
+        getDefaultSummaryMinChildren(targetTier),
+    );
+    const lorebookData = await getLorebookForManagement(
+        user,
+        String(job.payload?.lorebookName || ''),
+        true,
+        job.payload?.storage || null,
+    );
+    ensureEntriesObject(lorebookData.data);
+
+    const eligibleEntries = identifyEligibleSummarySourceEntries(lorebookData.data.entries, targetTier);
+    const eligibleCount = eligibleEntries.length;
+    const promptKey = `${targetTier}:${eligibleCount}`;
+    let ready = eligibleCount >= requiredMin;
+    if (ready) {
+        const state = readChatMetadataState(user, job.sceneContext);
+        if (String(state?.autoConsolidationLastPromptKey || '') === promptKey) {
+            ready = false;
+        } else {
+            updateChatMetadataState(user, job.sceneContext, currentState => ({
+                ...currentState,
+                autoConsolidationLastPromptKey: promptKey,
+            }));
+        }
+    }
+
+    return {
+        type: 'consolidationCheck',
+        lorebookName: String(job.payload?.lorebookName || ''),
+        targetTier,
+        requiredMin,
+        eligibleCount,
+        ready,
     };
 }
 
 async function executePlannerJob(user, job) {
     if (job.kind === 'memory') {
-        return executePlannerMemoryJob(user, job);
+        const generated = await executePlannerMemoryGenerateJob(user, job);
+        const saveResult = await saveManagedMemoryForUser(user, {
+            lorebookName: job.payload.lorebookName,
+            storage: job.payload.storage,
+            memoryObject: generated.memory,
+            sceneContext: job.payload.sceneSaveContext,
+            profile: job.payload.profile || {},
+        });
+
+        updateChatMetadataState(user, job.sceneContext, currentState => {
+            const nextState = { ...currentState };
+            nextState.highestMemoryProcessed = Number(job.payload.range?.sceneEnd);
+            delete nextState.highestMemoryProcessedManuallySet;
+            if (job.payload.keepSceneMarkers !== true && job.payload.autoClearSceneAfterMemory !== false) {
+                nextState.sceneStart = null;
+                nextState.sceneEnd = null;
+            }
+            return nextState;
+        });
+
+        return {
+            status: 'completed',
+            phase: 'commit',
+            result: {
+                type: 'memory',
+                lorebookName: saveResult.lorebookName,
+                entryUid: saveResult.entry?.uid ?? null,
+                highestProcessed: Number(job.payload.range?.sceneEnd),
+                orderClampNotifications: Array.isArray(saveResult?.orderClampNotifications) ? saveResult.orderClampNotifications : [],
+            },
+        };
+    }
+    if (job.kind === 'memoryGenerate') {
+        return {
+            status: 'completed',
+            phase: 'generate',
+            result: await executePlannerMemoryGenerateJob(user, job),
+        };
+    }
+    if (job.kind === 'memoryApproval') {
+        return executePlannerMemoryApprovalJob(user, job);
+    }
+    if (job.kind === 'memoryCommit') {
+        return {
+            status: 'completed',
+            phase: 'commit',
+            result: await executePlannerMemoryCommitJob(user, job),
+        };
+    }
+    if (job.kind === 'chatAutoHide') {
+        return {
+            status: 'completed',
+            phase: 'post_commit',
+            result: await executePlannerChatAutoHideJob(user, job),
+        };
     }
     if (job.kind === 'sidePrompt') {
-        return executePlannerSidePromptJob(user, job);
+        return {
+            status: 'completed',
+            phase: 'post_commit',
+            result: await executePlannerSidePromptJob(user, job),
+        };
+    }
+    if (job.kind === 'sidePromptGenerate') {
+        return {
+            status: 'completed',
+            phase: 'generate',
+            result: await executePlannerSidePromptGenerateJob(user, job),
+        };
+    }
+    if (job.kind === 'sidePromptApproval') {
+        return executePlannerSidePromptApprovalJob(user, job);
+    }
+    if (job.kind === 'sidePromptCommit') {
+        return {
+            status: 'completed',
+            phase: 'post_commit',
+            result: await executePlannerSidePromptCommitJob(user, job),
+        };
+    }
+    if (job.kind === 'consolidationCheck') {
+        return {
+            status: 'completed',
+            phase: 'post_commit',
+            result: await executePlannerConsolidationCheckJob(user, job),
+        };
     }
     throw new Error(`Unsupported planner job kind "${job.kind}"`);
 }
 
 async function claimNextPlannerJob(user) {
     return withPlannerDocument(user, async document => {
+        refreshPlannerDependencyStatuses(document);
         const runningChats = new Set(
             document.jobs
                 .filter(job => String(job?.status || '') === 'running')
                 .map(job => String(job.chatKey || '')),
         );
-        const nextJob = document.jobs.find(job => String(job?.status || '') === 'pending' && !runningChats.has(String(job.chatKey || '')));
+        const nextJob = document.jobs.find(job => {
+            if (String(job?.status || '') !== 'pending') {
+                return false;
+            }
+            if (runningChats.has(String(job.chatKey || ''))) {
+                return false;
+            }
+            return evaluatePlannerDependencyState(document, job).runnable;
+        });
         if (!nextJob) {
             return null;
         }
 
         nextJob.status = 'running';
+        nextJob.phase = String(nextJob?.phase || getPlannerJobDefaultPhase(nextJob?.kind));
         nextJob.updatedAt = Date.now();
         refreshPlannerWaveStatuses(document);
         return structuredClone(nextJob);
@@ -1119,6 +1779,169 @@ async function settlePlannerJob(user, jobId, updater) {
     });
 }
 
+function buildApprovedPlannerResultForJob(job, approvalRequest, editedData = null) {
+    const kind = String(job?.kind || '');
+    if (kind === 'memoryApproval') {
+        const sourceMemory = editedData ?? approvalRequest?.memory;
+        return {
+            type: 'memoryApproval',
+            decision: 'approved',
+            memory: normalizeApprovedMemoryObject(sourceMemory),
+        };
+    }
+
+    if (kind === 'sidePromptApproval') {
+        const source = editedData && typeof editedData === 'object' ? editedData : {};
+        return {
+            type: 'sidePromptApproval',
+            decision: 'approved',
+            title: String(source.title || approvalRequest?.title || ''),
+            text: String(source.content ?? source.text ?? approvalRequest?.content ?? ''),
+        };
+    }
+
+    throw createStmbRequestError(409, 'StmbPlannerApprovalInvalid', `Unsupported approval job kind "${kind}".`);
+}
+
+async function rerunPlannerApprovalGeneration(user, document, approvalJob) {
+    const dependencyIds = normalizePlannerDependencyList(approvalJob?.dependsOn);
+    const generateJob = dependencyIds
+        .map(jobId => document.jobs.find(candidate => String(candidate.id) === String(jobId)))
+        .find(candidate => ['memoryGenerate', 'sidePromptGenerate'].includes(String(candidate?.kind || '')));
+    if (!generateJob) {
+        throw createStmbRequestError(409, 'StmbPlannerDependencyMissing', 'Approval retry is missing its generate job.');
+    }
+
+    let generateResult;
+    if (String(generateJob.kind) === 'memoryGenerate') {
+        generateResult = await executePlannerMemoryGenerateJob(user, structuredClone(generateJob));
+        generateJob.result = generateResult;
+        generateJob.status = 'completed';
+        generateJob.phase = 'generate';
+        generateJob.error = null;
+        generateJob.approvalRequest = null;
+        generateJob.updatedAt = Date.now();
+        approvalJob.status = 'awaiting_approval';
+        approvalJob.phase = 'awaiting_approval';
+        approvalJob.result = null;
+        approvalJob.error = null;
+        approvalJob.approvalRequest = buildMemoryApprovalRequest(generateResult.memory, approvalJob);
+        approvalJob.updatedAt = Date.now();
+        return;
+    }
+
+    if (String(generateJob.kind) === 'sidePromptGenerate') {
+        generateResult = await executePlannerSidePromptGenerateJob(user, structuredClone(generateJob));
+        generateJob.result = generateResult;
+        generateJob.status = 'completed';
+        generateJob.phase = 'generate';
+        generateJob.error = null;
+        generateJob.approvalRequest = null;
+        generateJob.updatedAt = Date.now();
+        approvalJob.status = 'awaiting_approval';
+        approvalJob.result = null;
+        approvalJob.error = null;
+        if (generateResult.blank) {
+            approvalJob.phase = 'approval';
+            approvalJob.status = 'completed';
+            approvalJob.approvalRequest = null;
+            approvalJob.result = {
+                type: 'sidePromptApproval',
+                decision: 'blank',
+                blank: true,
+                title: String(generateResult.title || approvalJob.payload?.title || ''),
+                text: '',
+            };
+        } else {
+            approvalJob.phase = 'awaiting_approval';
+            approvalJob.approvalRequest = buildSidePromptApprovalRequest(generateResult, approvalJob);
+        }
+        approvalJob.updatedAt = Date.now();
+        return;
+    }
+
+    throw createStmbRequestError(409, 'StmbPlannerDependencyMissing', 'Unsupported generate job for approval retry.');
+}
+
+async function respondPlannerApproval(user, {
+    jobId,
+    decision,
+    memory = null,
+    editedData = null,
+} = {}) {
+    const normalizedJobId = String(jobId || '').trim();
+    const normalizedDecision = String(decision || '').trim().toLowerCase();
+    if (!normalizedJobId || !['approve', 'reject', 'retry'].includes(normalizedDecision)) {
+        throw createStmbRequestError(400, 'StmbBadRequest', 'jobId and a valid decision are required.');
+    }
+
+    return withPlannerDocument(user, async document => {
+        const job = document.jobs.find(candidate => String(candidate.id) === normalizedJobId);
+        if (!job) {
+            throw createStmbRequestError(404, 'StmbPlannerJobNotFound', 'Planner approval job was not found.');
+        }
+        if (!['memoryApproval', 'sidePromptApproval'].includes(String(job?.kind || '')) || String(job?.status || '') !== 'awaiting_approval') {
+            throw createStmbRequestError(409, 'StmbPlannerApprovalInvalid', 'Planner job is not awaiting approval.');
+        }
+
+        const approvalRequest = structuredClone(job.approvalRequest || null);
+        if (normalizedDecision === 'reject') {
+            job.approvalRequest = null;
+            job.phase = 'approval';
+            job.updatedAt = Date.now();
+            job.status = 'rejected';
+            job.result = {
+                type: String(job.kind),
+                decision: 'rejected',
+            };
+            job.error = {
+                message: 'Rejected by user.',
+                type: 'StmbPlannerApprovalRejected',
+            };
+        } else if (normalizedDecision === 'retry') {
+            await rerunPlannerApprovalGeneration(user, document, job);
+        } else {
+            job.approvalRequest = null;
+            job.phase = 'approval';
+            job.updatedAt = Date.now();
+            job.status = 'completed';
+            job.result = buildApprovedPlannerResultForJob(job, approvalRequest, editedData ?? memory ?? null);
+            job.error = null;
+        }
+
+        refreshPlannerWaveStatuses(document);
+        return structuredClone(job);
+    });
+}
+
+async function acknowledgePlannerJobs(user, jobs = []) {
+    const acknowledgements = Array.isArray(jobs) ? jobs : [];
+    return withPlannerDocument(user, async document => {
+        let acknowledged = 0;
+        for (const ack of acknowledgements) {
+            const jobId = String(ack?.jobId || '').trim();
+            const updatedAt = Number(ack?.updatedAt || 0);
+            if (!jobId || !updatedAt) {
+                continue;
+            }
+
+            const job = document.jobs.find(candidate => String(candidate.id) === jobId);
+            if (!job) {
+                continue;
+            }
+            if (Number(job.updatedAt || 0) !== updatedAt) {
+                continue;
+            }
+
+            job.clientHandledAt = Date.now();
+            acknowledged++;
+        }
+
+        refreshPlannerWaveStatuses(document);
+        return { acknowledged };
+    });
+}
+
 async function processPlannerJobs() {
     if (plannerWorkerTickActive) {
         return;
@@ -1135,16 +1958,20 @@ async function processPlannerJobs() {
             }
 
             try {
-                const result = await executePlannerJob(user, nextJob);
+                const execution = await executePlannerJob(user, nextJob);
                 await settlePlannerJob(user, nextJob.id, job => {
-                    job.status = 'completed';
-                    job.result = result;
-                    job.error = null;
+                    job.status = String(execution?.status || 'completed');
+                    job.phase = String(execution?.phase || job.phase || getPlannerJobDefaultPhase(job?.kind));
+                    job.result = execution?.result ?? null;
+                    job.approvalRequest = execution?.approvalRequest ?? null;
+                    job.error = execution?.error ?? null;
                 });
             } catch (error) {
                 console.error('[STMB Planner] Job failed', nextJob.id, error);
                 await settlePlannerJob(user, nextJob.id, job => {
                     job.status = 'failed';
+                    job.phase = String(job?.phase || getPlannerJobDefaultPhase(job?.kind));
+                    job.approvalRequest = null;
                     job.error = {
                         message: String(error?.message || error),
                         type: String(error?.type || error?.name || 'StmbPlannerJobError'),
@@ -1457,6 +2284,35 @@ router.post('/planner/list-jobs', async (request, response) => {
             request.user,
             request.body?.sceneContext ? buildPlannerChatKey(normalizedRequest) : null,
         );
+        return response.send({
+            ok: true,
+            ...result,
+        });
+    } catch (error) {
+        return sendStmbError(response, error);
+    }
+});
+
+router.post('/planner/respond-approval', async (request, response) => {
+    try {
+        const result = await respondPlannerApproval(request.user, {
+            jobId: request.body?.jobId,
+            decision: request.body?.decision,
+            memory: request.body?.memory ?? null,
+            editedData: request.body?.editedData ?? null,
+        });
+        return response.send({
+            ok: true,
+            job: result,
+        });
+    } catch (error) {
+        return sendStmbError(response, error);
+    }
+});
+
+router.post('/planner/ack-jobs', async (request, response) => {
+    try {
+        const result = await acknowledgePlannerJobs(request.user, request.body?.jobs);
         return response.send({
             ok: true,
             ...result,

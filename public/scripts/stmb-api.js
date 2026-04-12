@@ -100,6 +100,16 @@ export async function listStmbPlannerJobs(payload = {}, options = {}) {
     return signal ? postStmbWithSignal('planner/list-jobs', payload, signal) : postStmb('planner/list-jobs', payload);
 }
 
+export async function respondStmbPlannerApproval(payload = {}, options = {}) {
+    const { signal = null } = options;
+    return signal ? postStmbWithSignal('planner/respond-approval', payload, signal) : postStmb('planner/respond-approval', payload);
+}
+
+export async function acknowledgeStmbPlannerJobs(payload = {}, options = {}) {
+    const { signal = null } = options;
+    return signal ? postStmbWithSignal('planner/ack-jobs', payload, signal) : postStmb('planner/ack-jobs', payload);
+}
+
 export async function cancelStmbPlannerJobs(payload = {}, options = {}) {
     const { signal = null } = options;
     return signal ? postStmbWithSignal('planner/cancel', payload, signal) : postStmb('planner/cancel', payload);
