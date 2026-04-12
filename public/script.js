@@ -168,6 +168,7 @@ import {
     canUseNegativeLookbehind,
     trimSpaces,
     clamp,
+    urlContentToDataUri,
 } from './scripts/utils.js';
 import { debounce_timeout, GENERATION_TYPE_TRIGGERS, IGNORE_SYMBOL, inject_ids, MEDIA_DISPLAY, MEDIA_SOURCE, MEDIA_TYPE, SCROLL_BEHAVIOR, SWIPE_DIRECTION } from './scripts/constants.js';
 
@@ -10130,6 +10131,110 @@ function getManageChatsHtmlOwnerLabel(rowContext) {
     return t`Chat Export`;
 }
 
+function getManageChatsHtmlVisibleMessages(messages) {
+    return Array.isArray(messages)
+        ? messages.filter(message => message && (message.mes || message.extra?.display_text))
+        : [];
+}
+
+function getManageChatsHtmlMessageAvatarUrl(rowContext, message, fallbackAvatar) {
+    return toManageChatsAbsoluteAssetUrl(
+        message.force_avatar
+        || (message.original_avatar ? getThumbnailUrl('avatar', message.original_avatar) : '')
+        || (message.is_system ? system_avatar : '')
+        || (message.is_user ? default_user_avatar : '')
+        || fallbackAvatar,
+    ) || fallbackAvatar;
+}
+
+function escapeManageChatsCssUrl(url) {
+    return String(url || '')
+        .replace(/\\/g, '\\\\')
+        .replace(/"/g, '\\"')
+        .replace(/\r?\n/g, '');
+}
+
+async function compressManageChatsHtmlAvatar(dataUrl, maxSize = 100, mimeType = 'image/webp', quality = 0.72) {
+    return await new Promise((resolve, reject) => {
+        const img = new Image();
+        img.src = dataUrl;
+        img.onload = () => {
+            const canvas = document.createElement('canvas');
+            const ctx = canvas.getContext('2d');
+
+            if (!ctx) {
+                reject(new Error('Canvas context is not available.'));
+                return;
+            }
+
+            const sourceSize = Math.min(img.width, img.height);
+            const sourceX = (img.width - sourceSize) / 2;
+            const sourceY = (img.height - sourceSize) / 2;
+
+            canvas.width = maxSize;
+            canvas.height = maxSize;
+            ctx.clearRect(0, 0, maxSize, maxSize);
+            ctx.imageSmoothingEnabled = true;
+            ctx.imageSmoothingQuality = 'high';
+            ctx.drawImage(img, sourceX, sourceY, sourceSize, sourceSize, 0, 0, maxSize, maxSize);
+
+            let compressed = canvas.toDataURL(mimeType, quality);
+            if (!compressed.startsWith(`data:${mimeType}`)) {
+                compressed = canvas.toDataURL('image/jpeg', quality);
+            }
+
+            resolve(compressed);
+        };
+        img.onerror = () => reject(new Error('Failed to load avatar image.'));
+    });
+}
+
+async function buildManageChatsHtmlAvatarAssets(rowContext, visibleMessages, fallbackAvatar) {
+    const sourceMap = new Map();
+    const cssRules = [];
+    let classIndex = 1;
+
+    async function registerSource(source) {
+        const normalizedSource = String(source || '').trim() || fallbackAvatar;
+        if (sourceMap.has(normalizedSource)) {
+            return sourceMap.get(normalizedSource);
+        }
+
+        const asset = {
+            className: `avatar-asset-${classIndex++}`,
+            hasImage: false,
+        };
+
+        sourceMap.set(normalizedSource, asset);
+
+        try {
+            const dataUrl = normalizedSource.startsWith('data:')
+                ? normalizedSource
+                : await urlContentToDataUri(normalizedSource, { cache: 'force-cache' });
+            const compressed = await compressManageChatsHtmlAvatar(dataUrl);
+            cssRules.push(`.avatar.${asset.className} { background-image: url("${escapeManageChatsCssUrl(compressed)}"); }`);
+            asset.hasImage = true;
+        } catch (error) {
+            console.warn('Failed to embed avatar for HTML export:', normalizedSource, error);
+        }
+
+        return asset;
+    }
+
+    const fallbackAsset = await registerSource(fallbackAvatar);
+
+    for (const message of visibleMessages) {
+        const source = getManageChatsHtmlMessageAvatarUrl(rowContext, message, fallbackAvatar);
+        await registerSource(source);
+    }
+
+    return {
+        sourceMap,
+        fallbackAsset,
+        cssText: cssRules.join('\n        '),
+    };
+}
+
 async function fetchManageChatsHtmlExportMessages(rowContext, filename) {
     if (rowContext?.rowType === 'orphan-character' && rowContext.orphanKey) {
         const response = await fetch('/api/chats/get', {
@@ -10187,14 +10292,13 @@ async function fetchManageChatsHtmlExportMessages(rowContext, filename) {
     return await response.json();
 }
 
-function buildManageChatsHtmlExport(rowContext, filename, messages) {
+async function buildManageChatsHtmlExport(rowContext, filename, messages) {
     const ownerLabel = escapeManageChatsHtml(getManageChatsHtmlOwnerLabel(rowContext));
     const chatTitle = escapeManageChatsHtml(filename);
     const generatedDate = escapeManageChatsHtml(new Date().toLocaleString());
     const fallbackAvatar = getManageChatsHtmlFallbackAvatar(rowContext);
-    const visibleMessages = Array.isArray(messages)
-        ? messages.filter(message => message && (message.mes || message.extra?.display_text))
-        : [];
+    const visibleMessages = getManageChatsHtmlVisibleMessages(messages);
+    const { sourceMap, fallbackAsset, cssText: avatarCssText } = await buildManageChatsHtmlAvatarAssets(rowContext, visibleMessages, fallbackAvatar);
 
     let messageNumber = 1;
     const bodyHtml = visibleMessages.map((message) => {
@@ -10202,14 +10306,9 @@ function buildManageChatsHtmlExport(rowContext, filename, messages) {
         const safeText = formatManageChatsHtmlText(rawText);
         const displayName = escapeManageChatsHtml(message.name || (message.is_user ? name1 : getManageChatsHtmlOwnerLabel(rowContext)));
         const timestamp = escapeManageChatsHtml(message.send_date || '');
-        const avatarUrl = toManageChatsAbsoluteAssetUrl(
-            message.force_avatar
-            || (message.original_avatar ? getThumbnailUrl('avatar', message.original_avatar) : '')
-            || (message.is_system ? system_avatar : '')
-            || (message.is_user ? default_user_avatar : '')
-            || fallbackAvatar,
-        ) || fallbackAvatar;
-        const safeAvatarUrl = escapeManageChatsHtml(avatarUrl);
+        const avatarUrl = getManageChatsHtmlMessageAvatarUrl(rowContext, message, fallbackAvatar);
+        const avatarAsset = sourceMap.get(avatarUrl);
+        const avatarClassName = escapeManageChatsHtml((avatarAsset?.hasImage ? avatarAsset : fallbackAsset)?.className || fallbackAsset.className);
         const isThought = rawText.includes('▶ Thought');
         const isOoc = rawText.includes('[OOC:') || rawText.includes('[Okia:');
         let messageClass = 'message';
@@ -10228,7 +10327,7 @@ function buildManageChatsHtmlExport(rowContext, filename, messages) {
             <div class="${messageClass}">
                 <span class="message-number">#${messageNumber++}</span>
                 <div class="avatar-container">
-                    <img class="avatar" src="${safeAvatarUrl}" alt="${displayName}" />
+                    <div class="avatar ${avatarClassName}" role="img" aria-label="${displayName}"></div>
                 </div>
                 <div class="message-content">
                     <div class="message-header">
@@ -10317,9 +10416,13 @@ function buildManageChatsHtmlExport(rowContext, filename, messages) {
             width: 60px;
             height: 60px;
             border-radius: 5px;
-            object-fit: cover;
             border: 2px solid #3d3d3d;
+            background-position: center;
+            background-repeat: no-repeat;
+            background-size: cover;
         }
+
+        ${avatarCssText}
 
         .message-content {
             flex-grow: 1;
@@ -10421,7 +10524,7 @@ function buildManageChatsHtmlExport(rowContext, filename, messages) {
 async function exportManageChatsChatAsHtml(rowContext, filename) {
     await saveChatConditional();
     const messages = await fetchManageChatsHtmlExportMessages(rowContext, filename);
-    const html = buildManageChatsHtmlExport(rowContext, filename, messages);
+    const html = await buildManageChatsHtmlExport(rowContext, filename, messages);
     download(html, `${filename}.html`, 'text/html');
     await delay(250);
     toastr.success(t`Chat saved to HTML`);
