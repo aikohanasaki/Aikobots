@@ -11944,6 +11944,9 @@ export async function saveChatConditional() {
     let savedChatId = '';
     let savedIsGroup = false;
     let savedGroupId = null;
+    let savedChatRef = null;
+    let savedAvatarUrl = '';
+    let savedFileName = '';
     let saveSucceeded = false;
 
     try {
@@ -11960,6 +11963,21 @@ export async function saveChatConditional() {
         savedChatId = String(getCurrentChatId() || '');
         savedIsGroup = Boolean(selected_group);
         savedGroupId = savedIsGroup ? selected_group : null;
+        if (savedIsGroup) {
+            savedChatRef = {
+                type: 'group',
+                chatId: savedChatId,
+            };
+        } else {
+            const currentChatDetails = getCurrentChatDetails();
+            savedAvatarUrl = String(currentChatDetails?.avatarUrl || '');
+            savedFileName = savedChatId;
+            savedChatRef = {
+                type: 'character',
+                avatarUrl: savedAvatarUrl,
+                fileName: savedFileName,
+            };
+        }
 
         if (savedIsGroup) {
             await saveGroupChat(savedGroupId, true);
@@ -11967,6 +11985,10 @@ export async function saveChatConditional() {
         else {
             await saveChat();
             savedChatId = String(getCurrentChatId() || savedChatId || '');
+            savedFileName = savedChatId;
+            if (savedChatRef?.type === 'character') {
+                savedChatRef.fileName = savedFileName;
+            }
         }
 
         // Save token and prompts cache to IndexedDB storage
@@ -11984,6 +12006,9 @@ export async function saveChatConditional() {
             chatId: String(savedChatId || ''),
             isGroup: savedIsGroup,
             groupId: savedGroupId ? String(savedGroupId) : null,
+            chatRef: savedChatRef,
+            avatarUrl: savedAvatarUrl,
+            fileName: savedFileName,
         });
     }
 }

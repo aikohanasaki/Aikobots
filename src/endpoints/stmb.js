@@ -271,7 +271,23 @@ function buildPlannerChatKey(sceneContext = {}) {
         return `group:${String(sceneContext?.groupId || '')}:${String(sceneContext?.chatId || sceneContext?.chatRef?.chatId || '')}`;
     }
 
-    return `character:${String(sceneContext?.chatId || sceneContext?.chatRef?.fileName || '')}`;
+    const fileName = String(sceneContext?.chatId || sceneContext?.chatRef?.fileName || '').trim();
+    const avatarUrl = String(sceneContext?.chatRef?.avatarUrl || sceneContext?.avatarUrl || '').trim();
+    return avatarUrl
+        ? `character:${JSON.stringify({ avatarUrl, fileName })}`
+        : `character:${fileName}`;
+}
+
+function buildPlannerChatKeyAliases(sceneContext = {}) {
+    const primaryKey = buildPlannerChatKey(sceneContext);
+    const aliases = new Set([primaryKey]);
+
+    if (sceneContext?.chatRef?.type !== 'group') {
+        const legacyFileName = String(sceneContext?.chatId || sceneContext?.chatRef?.fileName || '').trim();
+        aliases.add(`character:${legacyFileName}`);
+    }
+
+    return Array.from(aliases);
 }
 
 function buildPlannerChatStateSnapshot(sceneContext = {}, state = {}) {
@@ -1053,10 +1069,12 @@ function buildPlannerStateView(document, chatKey = null) {
         status: buildPlannerWaveStatus(snapshot, wave),
     }));
 
-    const normalizedChatKey = chatKey ? String(chatKey) : null;
+    const normalizedChatKeys = Array.isArray(chatKey)
+        ? new Set(chatKey.map(key => String(key || '')).filter(Boolean))
+        : (chatKey ? new Set([String(chatKey)]) : null);
     return {
-        waves: snapshot.waves.filter(wave => !normalizedChatKey || String(wave.chatKey) === normalizedChatKey),
-        jobs: snapshot.jobs.filter(job => !normalizedChatKey || String(job.chatKey) === normalizedChatKey),
+        waves: snapshot.waves.filter(wave => !normalizedChatKeys || normalizedChatKeys.has(String(wave.chatKey))),
+        jobs: snapshot.jobs.filter(job => !normalizedChatKeys || normalizedChatKeys.has(String(job.chatKey))),
     };
 }
 
@@ -1191,7 +1209,9 @@ async function cancelPlannerJobs(user, {
     all = false,
 } = {}) {
     return withPlannerDocument(user, async document => {
-        const normalizedChatKey = chatKey ? String(chatKey) : null;
+        const normalizedChatKeys = Array.isArray(chatKey)
+            ? new Set(chatKey.map(key => String(key || '')).filter(Boolean))
+            : (chatKey ? new Set([String(chatKey)]) : null);
         const normalizedWaveId = waveId ? String(waveId) : null;
         let canceled = 0;
 
@@ -1199,13 +1219,13 @@ async function cancelPlannerJobs(user, {
             if (!['pending', 'running', 'awaiting_approval'].includes(String(job?.status || ''))) {
                 continue;
             }
-            if (!all && normalizedChatKey && String(job.chatKey) !== normalizedChatKey) {
+            if (!all && normalizedChatKeys && !normalizedChatKeys.has(String(job.chatKey))) {
                 continue;
             }
             if (!all && normalizedWaveId && String(job.waveId) !== normalizedWaveId) {
                 continue;
             }
-            if (!all && !normalizedChatKey && !normalizedWaveId) {
+            if (!all && !normalizedChatKeys && !normalizedWaveId) {
                 continue;
             }
             job.status = 'canceled';
@@ -2327,7 +2347,7 @@ router.post('/planner/list-jobs', async (request, response) => {
         const normalizedRequest = normalizeSceneEndpointRequest(request.body?.sceneContext || request.body);
         const result = await listPlannerState(
             request.user,
-            request.body?.sceneContext ? buildPlannerChatKey(normalizedRequest) : null,
+            request.body?.sceneContext ? buildPlannerChatKeyAliases(normalizedRequest) : null,
         );
         return response.send({
             ok: true,
@@ -2373,7 +2393,7 @@ router.post('/planner/cancel', async (request, response) => {
         const result = await cancelPlannerJobs(request.user, {
             all: request.body?.all === true,
             waveId: request.body?.waveId || null,
-            chatKey: request.body?.sceneContext ? buildPlannerChatKey(normalizedRequest) : null,
+            chatKey: request.body?.sceneContext ? buildPlannerChatKeyAliases(normalizedRequest) : null,
         });
         return response.send({
             ok: true,

@@ -5717,10 +5717,14 @@ function showSlashCommandError(message, error) {
 }
 
 function buildCurrentChatSavePayload() {
+    const sceneContext = buildStmbSceneContext();
     return {
-        chatId: String(getCurrentChatId() || ''),
+        chatId: String(sceneContext?.chatId || getCurrentChatId() || ''),
         isGroup: Boolean(selected_group),
         groupId: selected_group ? String(selected_group) : null,
+        chatRef: sceneContext?.chatRef ? { ...sceneContext.chatRef } : null,
+        avatarUrl: String(sceneContext?.chatRef?.avatarUrl || ''),
+        fileName: String(sceneContext?.chatRef?.fileName || sceneContext?.chatId || ''),
     };
 }
 

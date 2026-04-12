@@ -10,6 +10,12 @@ import { captureStmbScene, getStmbChatRangeInfo } from './stmb-api.js';
 
 const suppressedPassiveFlushCounts = new Map();
 
+function buildCharacterChatKeyParts(chatLike = {}) {
+    const fileName = String(chatLike?.chatRef?.fileName || chatLike?.fileName || chatLike?.chatId || '').trim();
+    const avatarUrl = String(chatLike?.chatRef?.avatarUrl || chatLike?.avatarUrl || '').trim();
+    return { fileName, avatarUrl };
+}
+
 export function buildStmbSceneContext() {
     const context = getContext();
     const group = selected_group ? groups.find(item => item.id === selected_group) : null;
@@ -52,14 +58,20 @@ export function getStmbChatKey(chatLike = {}) {
     }
 
     if (chatLike?.chatRef?.type === 'character') {
-        return `character:${String(chatLike?.chatId || chatLike?.chatRef?.fileName || '')}`;
+        const { fileName, avatarUrl } = buildCharacterChatKeyParts(chatLike);
+        return avatarUrl
+            ? `character:${JSON.stringify({ avatarUrl, fileName })}`
+            : `character:${fileName}`;
     }
 
     if (chatLike?.isGroup) {
         return `group:${String(chatLike?.groupId || '')}:${String(chatLike?.chatId || '')}`;
     }
 
-    return `character:${String(chatLike?.chatId || chatLike?.fileName || '')}`;
+    const { fileName, avatarUrl } = buildCharacterChatKeyParts(chatLike);
+    return avatarUrl
+        ? `character:${JSON.stringify({ avatarUrl, fileName })}`
+        : `character:${fileName}`;
 }
 
 function incrementSuppressedPassiveFlush(chatLike) {
