@@ -833,10 +833,11 @@ export function getPresetPrompt(settings, presetName) {
     return customPrompts[presetName] || STMB_DEFAULT_PROMPTS[presetName] || STMB_DEFAULT_PROMPTS.summary;
 }
 
-export function compileScene(messages, sceneRequest) {
+export function compileScene(messages, sceneRequest, options = {}) {
     const sourceMessages = Array.isArray(messages) ? messages : [];
     const sceneStart = Number(sceneRequest?.sceneStart);
     const sceneEnd = Number(sceneRequest?.sceneEnd);
+    const skipSystemMessages = options?.skipSystemMessages !== false;
 
     if (!Number.isInteger(sceneStart) || !Number.isInteger(sceneEnd)) {
         throw new Error('Scene markers are required');
@@ -858,7 +859,7 @@ export function compileScene(messages, sceneRequest) {
             skippedMessageCount++;
             continue;
         }
-        if (message.is_system) {
+        if (skipSystemMessages && message.is_system) {
             hiddenMessageCount++;
             continue;
         }

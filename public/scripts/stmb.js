@@ -28,7 +28,7 @@ import {
     applyDeletedMessageToSceneState,
     applyStmbProfileToGenerateData,
     applyStmbMaxTokensToGenerateData,
-    parseSceneMemoryCommandRange,
+    parseSceneRange,
     compiledSceneToText,
     createDefaultStmbProfile,
     findOverlappingManagedMemoryEntry,
@@ -45,6 +45,7 @@ import {
     parseSequenceFromTitle,
     parseStructuredMemoryResponse,
 } from './stmb-core.js';
+import { captureStmbSceneRange, fetchStmbChatRangeInfo } from './stmb-scene.js';
 import {
     STMB_SUMMARY_RESPONSE_SCHEMA,
     buildBriefsFromEntries,
@@ -436,7 +437,7 @@ function buildSettingsPopupHtml(sceneData, currentUiConnection, regexOptions) {
                 <input type="number" id="stmb-settings-unhidden-entries-count" class="text_pole" min="0" max="50" step="1" value="${escapeHtml(String(moduleSettings.unhiddenEntriesCount ?? 2))}" title="Number of recent messages to leave visible when auto-hiding (0 = hide all up to scene end).">
             </div>
             <div class="world_entry_form_control">
-                <label class="checkbox_label" title="Unhide hidden messages for memory generation (runs /unhide X-Y)."><input type="checkbox" id="stmb-settings-unhide-before-memory" ${moduleSettings.unhideBeforeMemory ? 'checked' : ''}> <span title="Unhide hidden messages for memory generation (runs /unhide X-Y).">Unhide hidden messages for memory generation</span></label>
+                <label class="checkbox_label" title="Include hidden messages when STMB captures a message range."><input type="checkbox" id="stmb-settings-unhide-before-memory" ${moduleSettings.unhideBeforeMemory ? 'checked' : ''}> <span title="Include hidden messages when STMB captures a message range.">Include hidden messages for memory generation</span></label>
             </div>
 
             <div class="world_entry_form_control">
@@ -3718,11 +3719,8 @@ function assertRangeWithinCurrentChat(range) {
     if (sceneStart > sceneEnd) {
         throw new Error('Start message cannot be greater than end message');
     }
-    if (sceneStart < 0 || sceneEnd >= chat.length) {
+    if (sceneStart < 0) {
         throw new Error(`Message IDs out of range. Valid range: 0-${Math.max(chat.length - 1, 0)}`);
-    }
-    if (!chat[sceneStart] || !chat[sceneEnd]) {
-        throw new Error('One or more specified messages do not exist');
     }
 }
 
@@ -3739,13 +3737,21 @@ function getCurrentSceneRange() {
     };
 }
 
-function getNextMemoryRange() {
+async function getNextMemoryRange() {
     const highestProcessed = getHighestProcessedMessageId();
     const sceneStart = highestProcessed === null ? 0 : highestProcessed + 1;
-    const sceneEnd = chat.length - 1;
+    const rangeInfo = await fetchStmbChatRangeInfo({
+        rangeStart: sceneStart,
+    });
+    const sceneEnd = Number(rangeInfo?.lastAvailableMessageId);
 
-    if (sceneStart > sceneEnd) {
+    if (!Number.isInteger(sceneEnd) || sceneStart > sceneEnd) {
         throw new Error('No new messages available for /nextmemory');
+    }
+
+    if (Array.isArray(rangeInfo?.missingRanges) && rangeInfo.missingRanges.length > 0) {
+        const missing = rangeInfo.missingRanges[0];
+        throw new Error(`Cannot capture messages ${sceneStart}-${sceneEnd} because messages ${missing.start}-${missing.end} are unavailable in chat storage.`);
     }
 
     return { sceneStart, sceneEnd };
@@ -3863,12 +3869,13 @@ async function checkAutoSummaryTrigger() {
     }
 
     const state = getStmbState();
-    const currentMessageCount = chat.length;
-    if (currentMessageCount === 0) {
+    const rangeInfo = await fetchStmbChatRangeInfo();
+    const currentLastMessage = Number(rangeInfo?.lastAvailableMessageId);
+    if (!Number.isInteger(currentLastMessage) || currentLastMessage < 0) {
         return;
     }
 
-    const currentLastMessage = currentMessageCount - 1;
+    const currentMessageCount = currentLastMessage + 1;
     const requiredInterval = Number.isFinite(Number(settings.autoSummaryInterval))
         ? Math.max(1, Math.trunc(Number(settings.autoSummaryInterval)))
         : 50;
@@ -4789,6 +4796,11 @@ async function executeMemoryCreationFromRange(range, options = {}) {
     assertRangeWithinCurrentChat(range);
 
     const lorebookName = await ensureLorebookName();
+    const sceneCapture = await captureStmbSceneRange(range, {
+        skipSystemMessages: !getModuleSettings().unhideBeforeMemory,
+    });
+    const compiledScene = sceneCapture?.compiledScene;
+
     if (!getModuleSettings().allowSceneOverlap) {
         const lorebookData = await loadWorldInfo(lorebookName) || { entries: {} };
         if (!lorebookData.entries || typeof lorebookData.entries !== 'object') {
@@ -4809,7 +4821,6 @@ async function executeMemoryCreationFromRange(range, options = {}) {
         }
     }
 
-    const compiledScene = compileScene(chat, buildSceneRequest(range));
     const effectiveSettings = await showAndGetMemorySettings(compiledScene, range, lorebookName, options.profileIndex ?? null);
     if (!effectiveSettings) {
         return null;
@@ -4890,14 +4901,6 @@ async function initiateMemoryCreation(options = {}) {
             toastr.info('Memory creation is already in progress', 'STMB');
         }
         return null;
-    }
-
-    if (getModuleSettings().unhideBeforeMemory) {
-        try {
-            await executeSlashCommands(`/unhide ${range.sceneStart}-${range.sceneEnd}`);
-        } catch (error) {
-            console.warn('STMB /unhide preflight failed or is unavailable:', error);
-        }
     }
 
     return executeMemoryCreationFromRange(range, {
@@ -5111,7 +5114,7 @@ async function createMemoryCommand() {
 async function sceneMemoryCommand(_, rangeText) {
     let range;
     try {
-        range = parseSceneMemoryCommandRange(rangeText, chat);
+        range = parseSceneRange(rangeText);
     } catch (error) {
         toastr.error(String(error?.message || 'Failed to parse /scenememory range'), 'STMB');
         return '';
@@ -5143,7 +5146,7 @@ async function nextMemoryCommand() {
             return '';
         }
 
-        const range = getNextMemoryRange();
+        const range = await getNextMemoryRange();
         setSceneRange(range.sceneStart, range.sceneEnd);
         launchMemoryCreationInBackground({ range, keepSceneMarkers: true, notifyIfBusy: true }, 'Failed to create next memory.');
     } catch (error) {
@@ -5246,14 +5249,23 @@ async function setHighestProcessedCommand(_, value) {
         toastr.error('Invalid argument. Use: /stmb-set-highest <N|none>', 'STMB');
         return '';
     }
+    if (parsed < 0) {
+        toastr.error('Message IDs must be zero or greater.', 'STMB');
+        return '';
+    }
 
-    const lastIndex = chat.length - 1;
-    if (lastIndex < 0) {
+    const rangeInfo = await fetchStmbChatRangeInfo({
+        rangeStart: parsed,
+        rangeEnd: parsed,
+    });
+    const lastIndex = Number(rangeInfo?.lastAvailableMessageId);
+    if (!Number.isInteger(lastIndex) || lastIndex < 0) {
         toastr.error('There are no messages in this chat yet.', 'STMB');
         return '';
     }
-    if (parsed < 0) {
-        toastr.error(`Message IDs out of range. Valid range: 0-${lastIndex}`, 'STMB');
+    if (Array.isArray(rangeInfo?.missingRanges) && rangeInfo.missingRanges.length > 0) {
+        const missing = rangeInfo.missingRanges[0];
+        toastr.error(`Message #${parsed} is unavailable because messages ${missing.start}-${missing.end} are missing from chat storage.`, 'STMB');
         return '';
     }
 

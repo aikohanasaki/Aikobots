@@ -221,6 +221,49 @@ function getChatSegments(filePath) {
     };
 }
 
+function getSegmentLayout(segments) {
+    const hasStorage = Boolean(segments?.storage);
+    const actualHeadCount = Array.isArray(segments?.headMessages) ? segments.headMessages.length : 0;
+    const actualTailCount = Array.isArray(segments?.tailMessages) ? segments.tailMessages.length : 0;
+    const actualTotalMessages = Array.isArray(segments?.messages) ? segments.messages.length : 0;
+    const declaredHeadCount = Number.isInteger(segments?.storage?.head_count)
+        ? Math.max(0, segments.storage.head_count)
+        : actualHeadCount;
+    const declaredTailCount = Number.isInteger(segments?.storage?.tail_count)
+        ? Math.max(0, segments.storage.tail_count)
+        : actualTailCount;
+    const declaredTotalMessages = hasStorage
+        ? declaredHeadCount + declaredTailCount
+        : actualTotalMessages;
+    const headMessagesMissing = hasStorage && actualHeadCount < declaredHeadCount;
+    const headCount = headMessagesMissing ? declaredHeadCount : actualHeadCount;
+    const tailCount = actualTailCount;
+    const totalMessages = headMessagesMissing
+        ? (declaredHeadCount + actualTailCount)
+        : actualTotalMessages;
+    const tailStartId = hasStorage
+        ? Math.min(headCount, totalMessages)
+        : Math.max(0, totalMessages - (tailCount || totalMessages));
+    const tailEndId = totalMessages > 0 ? totalMessages - 1 : -1;
+    const availableTailEndId = actualTailCount > 0 ? tailStartId + actualTailCount - 1 : tailStartId - 1;
+
+    return {
+        actualHeadCount,
+        actualTailCount,
+        actualTotalMessages,
+        declaredHeadCount,
+        declaredTailCount,
+        declaredTotalMessages,
+        headCount,
+        tailCount,
+        totalMessages,
+        tailStartId,
+        tailEndId,
+        availableTailEndId,
+        headMessagesMissing,
+    };
+}
+
 function getLogicalChatData(filePath) {
     const segments = getChatSegments(filePath);
 
@@ -326,10 +369,11 @@ function buildChunkedChatPayload(filePath, {
     const config = normalizeLongChatConfig({ displayCount, bufferMax });
     const segments = getChatSegments(filePath);
     const header = stripChatStorage(segments.header);
-    const totalMessages = segments.messages.length;
-    const tailCount = segments.tailMessages.length || totalMessages;
-    const tailStartId = totalMessages > tailCount ? (totalMessages - tailCount) : 0;
-    const tailEndId = totalMessages > 0 ? totalMessages - 1 : -1;
+    const layout = getSegmentLayout(segments);
+    const totalMessages = layout.totalMessages;
+    const tailCount = Number.isInteger(layout.tailCount) ? layout.tailCount : totalMessages;
+    const tailStartId = layout.tailStartId;
+    const tailEndId = layout.tailEndId;
 
     if (!header) {
         return {
@@ -348,20 +392,56 @@ function buildChunkedChatPayload(filePath, {
 
     let startId = 0;
     let endId = totalMessages - 1;
+    let loadedRangeStart = totalMessages > 0 ? 0 : 0;
+    let loadedRangeEnd = totalMessages > 0 ? endId : -1;
+    let messages = totalMessages > 0
+        ? segments.messages.slice(startId, endId + 1)
+        : [];
+    const shouldServeTailUsingDeclaredIds = Boolean(segments.storage) && layout.headMessagesMissing;
 
-    if (!hydrateFull && segments.storage) {
+    if (shouldServeTailUsingDeclaredIds) {
+        const normalizedCount = hydrateFull
+            ? Math.max(1, layout.actualTailCount)
+            : Math.max(1, Number(count) || tailCount || config.displayCount);
+        startId = Number.isInteger(rangeStart)
+            ? rangeStart
+            : tailStartId;
+        startId = Math.max(tailStartId, Math.min(startId, Math.max(tailStartId, layout.availableTailEndId)));
+        endId = Math.min(layout.availableTailEndId, startId + normalizedCount - 1);
+        loadedRangeStart = startId;
+        loadedRangeEnd = endId;
+        messages = endId >= startId
+            ? segments.tailMessages.slice(startId - tailStartId, endId - tailStartId + 1)
+            : [];
+
+        console.warn(`Long chat head segment is incomplete for ${filePath}; serving tail using declared absolute IDs.`, {
+            declaredHeadCount: layout.declaredHeadCount,
+            actualHeadCount: layout.actualHeadCount,
+            declaredTailCount: layout.declaredTailCount,
+            actualTailCount: layout.actualTailCount,
+            totalMessages,
+        });
+    } else if (!hydrateFull && segments.storage) {
         const normalizedCount = Math.max(1, Number(count) || tailCount || config.displayCount);
         startId = Number.isInteger(rangeStart)
             ? rangeStart
             : tailStartId;
         startId = Math.max(0, Math.min(startId, Math.max(0, totalMessages - 1)));
         endId = Math.min(totalMessages - 1, startId + normalizedCount - 1);
+        loadedRangeStart = startId;
+        loadedRangeEnd = endId;
+        messages = totalMessages > 0
+            ? segments.messages.slice(startId, endId + 1)
+            : [];
+    } else {
+        loadedRangeStart = totalMessages > 0 ? startId : 0;
+        loadedRangeEnd = totalMessages > 0 ? endId : -1;
+        messages = totalMessages > 0
+            ? segments.messages.slice(startId, endId + 1)
+            : [];
     }
 
-    const messages = totalMessages > 0
-        ? segments.messages.slice(startId, endId + 1)
-        : [];
-    const parentPromptMessages = segments.storage && !hydrateFull && (includeParentPromptCache || rangeStart === null)
+    const parentPromptMessages = segments.storage && !hydrateFull && !shouldServeTailUsingDeclaredIds && (includeParentPromptCache || rangeStart === null)
         ? segments.messages.slice(0, tailStartId).filter(isResidentParentPromptMessage)
         : undefined;
 
@@ -371,14 +451,14 @@ function buildChunkedChatPayload(filePath, {
         messages,
         parentPromptMessages,
         totalMessages,
-        loadedRangeStart: totalMessages > 0 ? startId : 0,
-        loadedRangeEnd: totalMessages > 0 ? endId : -1,
+        loadedRangeStart,
+        loadedRangeEnd,
         tailStartId,
         tailEndId,
-        headCount: segments.headMessages.length,
+        headCount: layout.headCount,
         tailCount,
         displayCount: config.displayCount,
-        isHydrated: hydrateFull || !segments.storage,
+        isHydrated: (hydrateFull || !segments.storage) && !shouldServeTailUsingDeclaredIds,
     };
 }
 
@@ -388,6 +468,105 @@ function getCharacterChatFilePath(chatsDirectory, avatarUrl, fileName) {
         ? String(fileName)
         : `${String(fileName)}.jsonl`;
     return path.join(chatsDirectory, directoryName, sanitize(normalizedFileName));
+}
+
+function buildSplitLogicalMessages(segments, layout) {
+    if (!segments?.storage || !layout?.headMessagesMissing) {
+        return Array.isArray(segments?.messages) ? segments.messages.slice() : [];
+    }
+
+    const sparseMessages = new Array(Math.max(0, layout.totalMessages));
+    for (let index = 0; index < layout.actualHeadCount; index++) {
+        sparseMessages[index] = segments.headMessages[index];
+    }
+    for (let index = 0; index < layout.actualTailCount; index++) {
+        sparseMessages[layout.tailStartId + index] = segments.tailMessages[index];
+    }
+    return sparseMessages;
+}
+
+function getMissingRangesForSegments(layout) {
+    if (!layout?.headMessagesMissing) {
+        return [];
+    }
+
+    const missingStart = layout.actualHeadCount;
+    const missingEnd = layout.declaredHeadCount - 1;
+    return missingStart <= missingEnd
+        ? [{ start: missingStart, end: missingEnd }]
+        : [];
+}
+
+function findLastAvailableMessageId(messages) {
+    const sourceMessages = Array.isArray(messages) ? messages : [];
+    for (let index = sourceMessages.length - 1; index >= 0; index--) {
+        if (sourceMessages[index]) {
+            return index;
+        }
+    }
+    return -1;
+}
+
+function resolveDirectLogicalChat(filePath) {
+    const segments = getChatSegments(filePath);
+    const layout = getSegmentLayout(segments);
+    const messages = buildSplitLogicalMessages(segments, layout);
+
+    return {
+        chatType: 'character',
+        filePath,
+        header: stripChatStorage(segments.header),
+        messages,
+        totalMessages: layout.totalMessages,
+        lastAvailableMessageId: findLastAvailableMessageId(messages),
+        missingRanges: getMissingRangesForSegments(layout),
+        storageMode: segments.storage ? CHAT_STORAGE_MODE_SPLIT_TAIL : 'full',
+        storageHealthy: !layout.headMessagesMissing,
+        tailStartId: layout.tailStartId,
+        tailEndId: layout.tailEndId,
+    };
+}
+
+function resolveGroupLogicalChat(filePath) {
+    const messages = readJsonlObjects(filePath);
+
+    return {
+        chatType: 'group',
+        filePath,
+        header: null,
+        messages,
+        totalMessages: messages.length,
+        lastAvailableMessageId: findLastAvailableMessageId(messages),
+        missingRanges: [],
+        storageMode: 'full',
+        storageHealthy: true,
+        tailStartId: 0,
+        tailEndId: messages.length > 0 ? messages.length - 1 : -1,
+    };
+}
+
+export function resolveLogicalChatReference(directories, chatRef) {
+    const reference = chatRef && typeof chatRef === 'object' ? chatRef : {};
+
+    if (reference.type === 'group') {
+        const chatId = String(reference.chatId || '').trim();
+        if (!chatId) {
+            return resolveGroupLogicalChat('');
+        }
+
+        const normalizedFileName = chatId.endsWith('.jsonl') ? chatId : `${chatId}.jsonl`;
+        const filePath = path.join(directories.groupChats, sanitize(normalizedFileName));
+        return resolveGroupLogicalChat(filePath);
+    }
+
+    const avatarUrl = String(reference.avatarUrl || '').trim();
+    const fileName = String(reference.fileName || '').trim();
+    if (!avatarUrl || !fileName) {
+        return resolveDirectLogicalChat('');
+    }
+
+    const filePath = getCharacterChatFilePath(directories.chats, avatarUrl, fileName);
+    return resolveDirectLogicalChat(filePath);
 }
 
 function isPromptExcludedMessage(message) {
@@ -409,16 +588,21 @@ export function resolveSplitCoreChatPayload(chatsDirectory, coreChatPayload) {
     }
 
     const segments = getChatSegments(filePath);
-    const totalMessages = segments.messages.length;
+    const layout = getSegmentLayout(segments);
+    const totalMessages = layout.totalMessages;
     const normalizedTailStartId = Number.isInteger(coreChatPayload.tailStartId)
         ? Math.max(0, Math.min(coreChatPayload.tailStartId, totalMessages))
-        : Math.max(0, totalMessages - segments.tailMessages.length);
+        : layout.tailStartId;
     const parentMessages = coreChatPayload.useParentUnhiddenMessages
-        ? segments.messages.slice(0, normalizedTailStartId).filter(isResidentParentPromptMessage)
+        ? (!layout.headMessagesMissing
+            ? segments.messages.slice(0, normalizedTailStartId).filter(isResidentParentPromptMessage)
+            : [])
         : [];
     const tailMessages = coreChatPayload.useTailContents === false
         ? []
-        : segments.messages.slice(normalizedTailStartId);
+        : (layout.headMessagesMissing
+            ? segments.tailMessages.slice(Math.max(0, Math.max(normalizedTailStartId, layout.tailStartId) - layout.tailStartId))
+            : segments.messages.slice(normalizedTailStartId));
 
     return [...parentMessages, ...tailMessages];
 }
@@ -859,7 +1043,7 @@ export async function getChatInfo(pathToFile, additionalData = {}, isGroup = fal
         const lastMessage = segments.messages.at(-1);
 
         if (lastMessage || segments.header) {
-            chatData.chat_items = segments.messages.length;
+            chatData.chat_items = getSegmentLayout(segments).totalMessages;
             chatData.mes = lastMessage?.mes || '[The message is empty]';
             chatData.last_mes = normalizeChatTimestamp(lastMessage?.send_date, Math.round(stats.mtimeMs));
             res(chatData);

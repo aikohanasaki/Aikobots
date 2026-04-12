@@ -2,6 +2,7 @@ import express from 'express';
 import { EventEmitter } from 'node:events';
 import { createMacroState, evaluatePromptMacros } from '../prompting/macro-evaluator.js';
 import { handleChatCompletionsGenerate } from './backends/chat-completions.js';
+import { resolveLogicalChatReference } from './chats.js';
 
 import {
     applyLorebookSettings,
@@ -11,6 +12,7 @@ import {
     identifyManagedMemoryEntries,
     parseSequenceFromTitle,
     compiledSceneToText,
+    compileScene,
     parseStructuredMemoryResponse,
 } from '../../public/scripts/stmb-core.js';
 import {
@@ -48,6 +50,20 @@ function sendStmbError(response, error) {
         });
     }
 
+    if (Number.isInteger(error?.status)) {
+        const payload = {
+            type: String(error?.type || 'StmbRequestError'),
+            message: String(error?.message || 'STMB request failed'),
+        };
+        for (const key of ['code', 'missingRanges', 'requestedStart', 'requestedEnd', 'lastAvailableMessageId', 'totalLogicalMessages', 'storageMode', 'storageHealthy']) {
+            if (error?.[key] !== undefined) {
+                payload[key] = error[key];
+            }
+        }
+
+        return response.status(error.status).send({ error: payload });
+    }
+
     console.error('[STMB] Unexpected error', error);
     return response.status(500).send({
         error: {
@@ -59,6 +75,14 @@ function sendStmbError(response, error) {
 
 function normalizeStorage(value) {
     return value === 'secure' ? 'secure' : (value === 'user' ? 'user' : null);
+}
+
+function createStmbRequestError(status, type, message, extra = {}) {
+    const error = new Error(String(message || 'STMB request failed'));
+    error.status = Number(status) || 500;
+    error.type = String(type || 'StmbRequestError');
+    Object.assign(error, extra);
+    return error;
 }
 
 class InternalResponseSink {
@@ -210,6 +234,195 @@ function extractTextFromProviderResponse(payload) {
     }
 
     return '';
+}
+
+function intersectRanges(ranges = [], start, end) {
+    if (!Number.isInteger(start) || !Number.isInteger(end) || start > end) {
+        return [];
+    }
+
+    return (Array.isArray(ranges) ? ranges : [])
+        .map(range => ({
+            start: Math.max(start, Number(range?.start)),
+            end: Math.min(end, Number(range?.end)),
+        }))
+        .filter(range => Number.isInteger(range.start) && Number.isInteger(range.end) && range.start <= range.end);
+}
+
+function countRangeMessages(messages = [], start, end) {
+    let visibleMessageCount = 0;
+    let capturableMessageCount = 0;
+
+    for (let index = start; index <= end && index < messages.length; index++) {
+        const message = messages[index];
+        if (!message) {
+            continue;
+        }
+        if (!message.is_system) {
+            visibleMessageCount++;
+        }
+
+        const content = String(message.mes || '').replace(/\r\n/g, '\n').trim();
+        if (content && !message.is_system) {
+            capturableMessageCount++;
+        }
+    }
+
+    return { visibleMessageCount, capturableMessageCount };
+}
+
+function normalizeSceneEndpointRequest(body = {}) {
+    const sceneStart = body.sceneStart === undefined ? null : Number(body.sceneStart);
+    const sceneEnd = body.sceneEnd === undefined ? null : Number(body.sceneEnd);
+    return {
+        chatRef: body.chatRef,
+        sceneStart,
+        sceneEnd,
+        skipSystemMessages: body.skipSystemMessages !== false,
+        allowPartial: Boolean(body.allowPartial),
+        chatId: String(body.chatId || ''),
+        characterName: String(body.characterName || ''),
+        userName: String(body.userName || ''),
+    };
+}
+
+function normalizeRangeInfoRequest(body = {}) {
+    const rangeStart = body.rangeStart === undefined || body.rangeStart === null || body.rangeStart === ''
+        ? null
+        : Number(body.rangeStart);
+    const rangeEnd = body.rangeEnd === undefined || body.rangeEnd === null || body.rangeEnd === ''
+        ? null
+        : Number(body.rangeEnd);
+    return {
+        chatRef: body.chatRef,
+        rangeStart,
+        rangeEnd,
+    };
+}
+
+function getResolvedRangeInfo(chatState, requestedStart = null, requestedEnd = null) {
+    const totalLogicalMessages = Number(chatState?.totalMessages) || 0;
+    const lastAvailableMessageId = Number.isInteger(chatState?.lastAvailableMessageId)
+        ? chatState.lastAvailableMessageId
+        : -1;
+    const normalizedStart = Number.isInteger(requestedStart)
+        ? requestedStart
+        : (totalLogicalMessages > 0 ? 0 : null);
+    const normalizedEnd = Number.isInteger(requestedEnd)
+        ? requestedEnd
+        : (lastAvailableMessageId >= 0 ? lastAvailableMessageId : null);
+    const missingRanges = normalizedStart === null || normalizedEnd === null
+        ? []
+        : intersectRanges(chatState?.missingRanges, normalizedStart, normalizedEnd);
+    const counts = normalizedStart === null || normalizedEnd === null || normalizedStart > normalizedEnd
+        ? { visibleMessageCount: 0, capturableMessageCount: 0 }
+        : countRangeMessages(chatState?.messages, normalizedStart, normalizedEnd);
+
+    return {
+        totalLogicalMessages,
+        lastAvailableMessageId,
+        storageMode: String(chatState?.storageMode || 'full'),
+        storageHealthy: chatState?.storageHealthy !== false,
+        rangeStart: normalizedStart,
+        rangeEnd: normalizedEnd,
+        missingRanges,
+        visibleMessageCount: counts.visibleMessageCount,
+        capturableMessageCount: counts.capturableMessageCount,
+    };
+}
+
+function resolveStmbChatState(request, chatRef) {
+    return resolveLogicalChatReference(request.user.directories, chatRef);
+}
+
+function resolveCapturedScene(request, normalizedRequest) {
+    const chatState = resolveStmbChatState(request, normalizedRequest.chatRef);
+    const totalLogicalMessages = Number(chatState?.totalMessages) || 0;
+
+    if (totalLogicalMessages === 0) {
+        throw createStmbRequestError(400, 'StmbNoMessages', 'There are no messages in this chat yet.', {
+            totalLogicalMessages,
+            lastAvailableMessageId: -1,
+            storageMode: chatState?.storageMode,
+            storageHealthy: chatState?.storageHealthy,
+        });
+    }
+
+    if (!Number.isInteger(normalizedRequest.sceneStart) || !Number.isInteger(normalizedRequest.sceneEnd)) {
+        throw createStmbRequestError(400, 'StmbBadRequest', 'sceneStart and sceneEnd are required.');
+    }
+
+    if (normalizedRequest.sceneStart < 0 || normalizedRequest.sceneEnd < 0 || normalizedRequest.sceneStart > normalizedRequest.sceneEnd) {
+        throw createStmbRequestError(400, 'StmbInvalidRange', 'Start message cannot be greater than end message.');
+    }
+
+    if (normalizedRequest.sceneEnd >= totalLogicalMessages) {
+        throw createStmbRequestError(
+            400,
+            'StmbRangeOutOfBounds',
+            `Message IDs out of range. Valid range: 0-${Math.max(totalLogicalMessages - 1, 0)}`,
+            {
+                requestedStart: normalizedRequest.sceneStart,
+                requestedEnd: normalizedRequest.sceneEnd,
+                totalLogicalMessages,
+                lastAvailableMessageId: chatState?.lastAvailableMessageId ?? -1,
+                storageMode: chatState?.storageMode,
+                storageHealthy: chatState?.storageHealthy,
+            },
+        );
+    }
+
+    const missingRanges = intersectRanges(chatState?.missingRanges, normalizedRequest.sceneStart, normalizedRequest.sceneEnd);
+    if (!normalizedRequest.allowPartial && missingRanges.length > 0) {
+        const firstMissing = missingRanges[0];
+        throw createStmbRequestError(
+            409,
+            'StmbRangeUnavailable',
+            `Cannot capture messages ${normalizedRequest.sceneStart}-${normalizedRequest.sceneEnd} because messages ${firstMissing.start}-${firstMissing.end} are unavailable in chat storage.`,
+            {
+                code: 'MISSING_CHAT_SEGMENT',
+                missingRanges,
+                requestedStart: normalizedRequest.sceneStart,
+                requestedEnd: normalizedRequest.sceneEnd,
+                totalLogicalMessages,
+                lastAvailableMessageId: chatState?.lastAvailableMessageId ?? -1,
+                storageMode: chatState?.storageMode,
+                storageHealthy: chatState?.storageHealthy,
+            },
+        );
+    }
+
+    const compiledScene = compileScene(
+        chatState.messages,
+        {
+            sceneStart: normalizedRequest.sceneStart,
+            sceneEnd: normalizedRequest.sceneEnd,
+            chatId: normalizedRequest.chatId,
+            characterName: normalizedRequest.characterName,
+            userName: normalizedRequest.userName,
+        },
+        {
+            skipSystemMessages: normalizedRequest.skipSystemMessages,
+        },
+    );
+
+    return {
+        compiledScene,
+        capture: {
+            requestedStart: normalizedRequest.sceneStart,
+            requestedEnd: normalizedRequest.sceneEnd,
+            capturedStart: compiledScene?.metadata?.sceneStart ?? normalizedRequest.sceneStart,
+            capturedEnd: compiledScene?.metadata?.sceneEnd ?? normalizedRequest.sceneEnd,
+            totalLogicalMessages,
+            lastAvailableMessageId: chatState?.lastAvailableMessageId ?? -1,
+            hiddenMessagesSkipped: compiledScene?.metadata?.hiddenMessagesSkipped ?? 0,
+            messagesSkipped: compiledScene?.metadata?.messagesSkipped ?? 0,
+            missingRanges,
+            isPartial: missingRanges.length > 0,
+            storageMode: String(chatState?.storageMode || 'full'),
+            storageHealthy: chatState?.storageHealthy !== false,
+        },
+    };
 }
 
 function ensureEntriesObject(lorebookData) {
@@ -493,6 +706,57 @@ function buildSidePromptText(templatePrompt, priorContent, compiledScene, respon
     }
     return parts.join('');
 }
+
+router.post('/chat-range-info', async (request, response) => {
+    try {
+        const normalizedRequest = normalizeRangeInfoRequest(request.body);
+        const chatState = resolveStmbChatState(request, normalizedRequest.chatRef);
+        const totalLogicalMessages = Number(chatState?.totalMessages) || 0;
+        const lastAvailableMessageId = Number.isInteger(chatState?.lastAvailableMessageId)
+            ? chatState.lastAvailableMessageId
+            : -1;
+
+        if (normalizedRequest.rangeStart !== null && (!Number.isInteger(normalizedRequest.rangeStart) || normalizedRequest.rangeStart < 0)) {
+            throw createStmbRequestError(400, 'StmbBadRequest', 'rangeStart must be a non-negative integer.');
+        }
+        if (normalizedRequest.rangeEnd !== null && (!Number.isInteger(normalizedRequest.rangeEnd) || normalizedRequest.rangeEnd < 0)) {
+            throw createStmbRequestError(400, 'StmbBadRequest', 'rangeEnd must be a non-negative integer.');
+        }
+        if (normalizedRequest.rangeStart !== null && normalizedRequest.rangeEnd !== null && normalizedRequest.rangeStart > normalizedRequest.rangeEnd) {
+            throw createStmbRequestError(400, 'StmbInvalidRange', 'Start message cannot be greater than end message.');
+        }
+
+        const resolvedRangeInfo = getResolvedRangeInfo(chatState, normalizedRequest.rangeStart, normalizedRequest.rangeEnd);
+        return response.send({
+            ok: true,
+            totalLogicalMessages,
+            lastAvailableMessageId,
+            storageMode: resolvedRangeInfo.storageMode,
+            storageHealthy: resolvedRangeInfo.storageHealthy,
+            rangeStart: resolvedRangeInfo.rangeStart,
+            rangeEnd: resolvedRangeInfo.rangeEnd,
+            missingRanges: resolvedRangeInfo.missingRanges,
+            visibleMessageCount: resolvedRangeInfo.visibleMessageCount,
+            capturableMessageCount: resolvedRangeInfo.capturableMessageCount,
+        });
+    } catch (error) {
+        return sendStmbError(response, error);
+    }
+});
+
+router.post('/capture-scene', async (request, response) => {
+    try {
+        const normalizedRequest = normalizeSceneEndpointRequest(request.body);
+        const result = resolveCapturedScene(request, normalizedRequest);
+        return response.send({
+            ok: true,
+            compiledScene: result.compiledScene,
+            capture: result.capture,
+        });
+    } catch (error) {
+        return sendStmbError(response, error);
+    }
+});
 
 router.post('/prepare-memory-messages', async (request, response) => {
     const lorebookContext = getLorebookContext(request);

@@ -1,5 +1,4 @@
 import {
-    chat,
     chat_metadata,
     getCurrentChatId,
     getServerMacroSnapshot,
@@ -8,8 +7,6 @@ import {
     name2,
 } from '../script.js';
 import { getContext } from './extensions.js';
-import { groups, selected_group } from './group-chats.js';
-import { executeSlashCommands } from './slash-commands.js';
 import { generateStmbText, prepareStmbSidePrompt, upsertStmbEntriesBatch, upsertStmbEntryByTitle } from './stmb-api.js';
 import { saveMetadataDebounced } from './extensions.js';
 import { getLorebookStorageForRequest, loadWorldInfo, METADATA_KEY, reloadEditor, worldInfoCache } from './world-info.js';
@@ -21,12 +18,12 @@ import {
     applyStmbMaxTokensToGenerateData,
     applyStmbProfileToGenerateData,
     buildSidePromptCheckpointMetadata,
-    compileScene,
     findFirstLorebookEntryByTitle,
     getActiveStmbProfile,
     readSidePromptCheckpoint,
     STMB_METADATA_KEY,
 } from './stmb-core.js';
+import { captureStmbSceneRange, fetchStmbChatRangeInfo } from './stmb-scene.js';
 import {
     applySidePromptMacros,
     collectTemplateRuntimeMacros,
@@ -63,80 +60,6 @@ function getStmbChatState() {
     }
 
     return metadata[STMB_METADATA_KEY];
-}
-
-function buildSceneRequest(sceneStart, sceneEnd) {
-    const context = getContext();
-    const group = selected_group ? groups.find(item => item.id === selected_group) : null;
-    const chatId = selected_group
-        ? String(group?.chat_id || context?.chatId || getCurrentChatId() || '')
-        : String(context?.chatId || getCurrentChatId() || '');
-    const characterName = selected_group
-        ? String(group?.name || name2 || '')
-        : String(name2 || context?.characters?.[context.characterId]?.name || '');
-
-    return {
-        sceneStart,
-        sceneEnd,
-        chatId,
-        characterName,
-        userName: String(name1 || ''),
-    };
-}
-
-function countVisibleMessagesSince(exclusiveStart, inclusiveEnd) {
-    let count = 0;
-    const start = Number.isFinite(exclusiveStart) ? exclusiveStart : -1;
-    const end = Math.max(-1, inclusiveEnd);
-    for (let index = start + 1; index <= end && index < chat.length; index++) {
-        const message = chat[index];
-        if (message && !message.is_system) count++;
-    }
-    return count;
-}
-
-function collectHiddenRanges(start, end) {
-    const ranges = [];
-    let rangeStart = null;
-
-    for (let index = start; index <= end && index < chat.length; index++) {
-        const isHidden = Boolean(chat[index]?.is_system);
-        if (isHidden) {
-            if (rangeStart === null) {
-                rangeStart = index;
-            }
-            continue;
-        }
-        if (rangeStart !== null) {
-            ranges.push({ start: rangeStart, end: index - 1 });
-            rangeStart = null;
-        }
-    }
-
-    if (rangeStart !== null) {
-        ranges.push({ start: rangeStart, end });
-    }
-
-    return ranges;
-}
-
-function isEntireRangeHidden(start, end) {
-    for (let index = start; index <= end && index < chat.length; index++) {
-        if (!chat[index]?.is_system) {
-            return false;
-        }
-    }
-    return true;
-}
-
-async function restoreHiddenRanges(hiddenRanges) {
-    for (const range of hiddenRanges) {
-        try {
-            await executeSlashCommands(`/hide ${range.start}-${range.end}`);
-        } catch (error) {
-            console.warn(`STMB /hide restore failed for hidden range ${range.start}-${range.end}`, error);
-        }
-    }
 }
 
 function resolveLorebookName(settings) {
@@ -429,43 +352,15 @@ async function prepareSidePromptRun({ template, lorebookName, lorebookData, comp
     };
 }
 
-async function compileRange(sceneStart, sceneEnd, settings = null) {
-    const shouldTemporarilyUnhide = Boolean(settings?.moduleSettings?.unhideBeforeMemory);
-    const hiddenRanges = shouldTemporarilyUnhide ? collectHiddenRanges(sceneStart, sceneEnd) : [];
-
-    if (shouldTemporarilyUnhide && hiddenRanges.length > 0) {
-        try {
-            await executeSlashCommands(`/unhide ${sceneStart}-${sceneEnd}`);
-        } catch (error) {
-            console.warn('STMB /unhide failed or unavailable for side prompt compile', error);
-        }
-    }
-
-    try {
-        return compileScene(chat, buildSceneRequest(sceneStart, sceneEnd));
-    } catch (error) {
-        const isHiddenOnlyFailure = String(error?.message || '').includes(`No visible messages in range ${sceneStart}-${sceneEnd}`);
-        if (shouldTemporarilyUnhide && hiddenRanges.length > 0 && isHiddenOnlyFailure) {
-            const unhiddenSnapshot = chat.slice();
-            for (const range of hiddenRanges) {
-                for (let index = range.start; index <= range.end && index < unhiddenSnapshot.length; index++) {
-                    const message = unhiddenSnapshot[index];
-                    if (message) {
-                        unhiddenSnapshot[index] = {
-                            ...message,
-                            is_system: false,
-                        };
-                    }
-                }
-            }
-            return compileScene(unhiddenSnapshot, buildSceneRequest(sceneStart, sceneEnd));
-        }
-        throw error;
-    } finally {
-        if (hiddenRanges.length > 0) {
-            await restoreHiddenRanges(hiddenRanges);
-        }
-    }
+async function compileRange(sceneStart, sceneEnd, settings = null, options = {}) {
+    const result = await captureStmbSceneRange(
+        { sceneStart, sceneEnd },
+        {
+            saveFirst: options.saveFirst !== false,
+            skipSystemMessages: !settings?.moduleSettings?.unhideBeforeMemory,
+        },
+    );
+    return result?.compiledScene;
 }
 
 function ensureSidePromptTextNotBlank(text, template, trigger) {
@@ -646,7 +541,8 @@ export async function evaluateTrackers(settings, options = {}) {
 
         const lorebookName = await ensureLorebookName(settings);
         const lorebookData = await loadWorldInfo(lorebookName) || { entries: {} };
-        const currentLast = chat.length - 1;
+        const chatRangeInfo = await fetchStmbChatRangeInfo();
+        const currentLast = Number(chatRangeInfo?.lastAvailableMessageId);
         if (currentLast < 0) return;
 
         for (const template of templates) {
@@ -661,14 +557,22 @@ export async function evaluateTrackers(settings, options = {}) {
             }
 
             const threshold = Math.max(1, Number(template?.triggers?.onInterval?.visibleMessages ?? 50));
-            const visibleSince = countVisibleMessagesSince(lastMessageId, currentLast);
+            const rangeInfo = await fetchStmbChatRangeInfo({
+                rangeStart: Math.max(0, lastMessageId + 1),
+                rangeEnd: currentLast,
+                saveFirst: false,
+            });
+            if (Array.isArray(rangeInfo?.missingRanges) && rangeInfo.missingRanges.length > 0) {
+                continue;
+            }
+            const visibleSince = Number(rangeInfo?.visibleMessageCount) || 0;
             if (visibleSince < threshold) continue;
 
             const start = Math.max(0, lastMessageId + 1);
             const boundedStart = Math.max(start, currentLast - 199);
             let compiledScene;
             try {
-                compiledScene = await compileRange(boundedStart, currentLast, settings);
+                compiledScene = await compileRange(boundedStart, currentLast, settings, { saveFirst: false });
             } catch {
                 continue;
             }
@@ -937,7 +841,8 @@ export async function runSidePrompt(rawInput, settings, options = {}) {
             return '';
         }
 
-        const currentLast = chat.length - 1;
+        const chatRangeInfo = await fetchStmbChatRangeInfo();
+        const currentLast = Number(chatRangeInfo?.lastAvailableMessageId);
         if (currentLast < 0) {
             toastr.error('No messages available.', 'STMB');
             return '';
@@ -953,19 +858,15 @@ export async function runSidePrompt(rawInput, settings, options = {}) {
 
             const sceneStart = Number(match[1]);
             const sceneEnd = Number(match[2]);
-            if (!(sceneStart >= 0 && sceneEnd >= sceneStart && sceneEnd < chat.length)) {
+            if (!(sceneStart >= 0 && sceneEnd >= sceneStart)) {
                 toastr.error('Invalid message range for /sideprompt', 'STMB');
                 return '';
             }
 
             try {
-                compiledScene = await compileRange(sceneStart, sceneEnd, settings);
+                compiledScene = await compileRange(sceneStart, sceneEnd, settings, { saveFirst: false });
             } catch (error) {
-                if (!settings?.moduleSettings?.unhideBeforeMemory && isEntireRangeHidden(sceneStart, sceneEnd)) {
-                    toastr.error('Failed to compile the specified range. The selected messages are hidden and "Unhide hidden messages for memory generation" is off.', 'STMB');
-                } else {
-                    toastr.error('Failed to compile the specified range', 'STMB');
-                }
+                toastr.error(String(error?.message || 'Failed to compile the specified range'), 'STMB');
                 return '';
             }
         } else {
@@ -983,7 +884,7 @@ export async function runSidePrompt(rawInput, settings, options = {}) {
             const sceneStart = Math.max(0, lastMessageId + 1);
             const boundedStart = Math.max(sceneStart, currentLast - 199);
             try {
-                compiledScene = await compileRange(boundedStart, currentLast, settings);
+                compiledScene = await compileRange(boundedStart, currentLast, settings, { saveFirst: false });
             } catch {
                 toastr.error('Failed to compile messages for /sideprompt', 'STMB');
                 return '';

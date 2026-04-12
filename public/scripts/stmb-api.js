@@ -25,6 +25,16 @@ export async function saveStmbMemoryEntry(payload, options = {}) {
     return signal ? postStmbWithSignal('save-memory', payload, signal) : postStmb('save-memory', payload);
 }
 
+export async function getStmbChatRangeInfo(payload, options = {}) {
+    const { signal = null } = options;
+    return signal ? postStmbWithSignal('chat-range-info', payload, signal) : postStmb('chat-range-info', payload);
+}
+
+export async function captureStmbScene(payload, options = {}) {
+    const { signal = null } = options;
+    return signal ? postStmbWithSignal('capture-scene', payload, signal) : postStmb('capture-scene', payload);
+}
+
 export async function prepareStmbMemoryMessages(payload, options = {}) {
     const { signal = null } = options;
     return signal ? postStmbWithSignal('prepare-memory-messages', payload, signal) : postStmb('prepare-memory-messages', payload);
