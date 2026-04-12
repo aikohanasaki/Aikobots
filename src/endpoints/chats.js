@@ -793,8 +793,27 @@ function resolveDirectLogicalChat(filePath) {
 }
 
 function resolveGroupLogicalChat(filePath) {
-    const messages = readJsonlObjects(filePath);
+    const segments = getChatSegments(filePath);
+    if (isGroupChatHeader(segments.header)) {
+        const layout = getSegmentLayout(segments);
+        const messages = buildSplitLogicalMessages(segments, layout);
 
+        return {
+            chatType: 'group',
+            filePath,
+            header: stripChatStorage(segments.header),
+            messages,
+            totalMessages: layout.totalMessages,
+            lastAvailableMessageId: findLastAvailableMessageId(messages),
+            missingRanges: getMissingRangesForSegments(layout),
+            storageMode: segments.storage ? CHAT_STORAGE_MODE_SPLIT_TAIL : 'full',
+            storageHealthy: !layout.headMessagesMissing,
+            tailStartId: layout.tailStartId,
+            tailEndId: layout.tailEndId,
+        };
+    }
+
+    const messages = readJsonlObjects(filePath);
     return {
         chatType: 'group',
         filePath,
