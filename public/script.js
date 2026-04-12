@@ -790,7 +790,80 @@ export const DEFAULT_SAVE_EDIT_TIMEOUT = debounce_timeout.relaxed;
 export const DEFAULT_PRINT_TIMEOUT = debounce_timeout.quick;
 
 export const saveSettingsDebounced = debounce((loopCounter = 0) => saveSettings(loopCounter), DEFAULT_SAVE_EDIT_TIMEOUT);
-export const saveCharacterDebounced = debounce(() => $('#create_button').trigger('click'), DEFAULT_SAVE_EDIT_TIMEOUT);
+let isCharacterEditorDirty = false;
+
+export function saveCharacterDebounced() {
+    markCharacterEditorDirty();
+}
+
+function isCharacterEditorInEditMode() {
+    return $('#form_create').attr('actiontype') === 'editcharacter' && this_chid !== undefined && !!characters[this_chid];
+}
+
+function updateCharacterSaveButtonState() {
+    const saveButtonLabel = $('#create_button_label');
+    if (!saveButtonLabel.length) {
+        return;
+    }
+
+    const isEditMode = $('#form_create').attr('actiontype') === 'editcharacter';
+    saveButtonLabel
+        .toggleClass('fa-user-check', !isEditMode)
+        .toggleClass('fa-floppy-disk', isEditMode)
+        .attr('title', isEditMode ? t`Save Character` : t`Create Character`);
+
+    $('#create_button').attr('aria-label', isEditMode ? t`Save Character` : t`Create Character`);
+}
+
+function markCharacterEditorDirty() {
+    if (!isCharacterEditorInEditMode()) {
+        return;
+    }
+
+    isCharacterEditorDirty = true;
+    updateCharacterSaveButtonState();
+}
+
+function clearCharacterEditorDirtyState() {
+    isCharacterEditorDirty = false;
+    updateCharacterSaveButtonState();
+}
+
+function hasUnsavedCharacterEdits() {
+    return isCharacterEditorInEditMode() && isCharacterEditorDirty;
+}
+
+async function discardUnsavedCharacterEdits() {
+    if (!isCharacterEditorInEditMode()) {
+        clearCharacterEditorDirtyState();
+        return;
+    }
+
+    const avatar = characters[this_chid]?.avatar;
+    if (avatar) {
+        await getOneCharacter(avatar);
+    }
+
+    clearCharacterEditorDirtyState();
+}
+
+async function confirmCharacterEditorNavigation() {
+    if (!hasUnsavedCharacterEdits()) {
+        return true;
+    }
+
+    const confirmed = await Popup.show.confirm(
+        t`Discard unsaved character changes?`,
+        t`You have unsaved changes for this character. Leave without saving?`,
+    );
+
+    if (!confirmed) {
+        return false;
+    }
+
+    await discardUnsavedCharacterEdits();
+    return true;
+}
 
 /**
  * Prints the character list in a debounced fashion without blocking, with a delay of 100 milliseconds.
@@ -1870,6 +1943,9 @@ export async function selectCharacterById(id, { switchMenu = true } = {}) {
     if (selected_group || String(this_chid) !== String(id)) {
         //if clicked on a different character from what was currently selected
         if (!is_send_press) {
+            if (!await confirmCharacterEditorNavigation()) {
+                return;
+            }
             await clearChat();
             cancelTtsPlay();
             resetSelectedGroup();
@@ -8619,32 +8695,8 @@ async function read_avatar_load(input) {
             return;
         }
 
-        await createOrEditCharacter();
-        await delay(DEFAULT_SAVE_EDIT_TIMEOUT);
-
-        const formData = new FormData(/** @type {HTMLFormElement} */($('#form_create').get(0)));
-        await fetch(getThumbnailUrl('avatar', formData.get('avatar_url').toString()), {
-            method: 'GET',
-            cache: 'reload',
-        });
-
-        const messages = $('.mes').toArray();
-        for (const el of messages) {
-            const $el = $(el);
-            const nameMatch = $el.attr('ch_name') == formData.get('ch_name');
-            if ($el.attr('is_system') == 'true' && !nameMatch) continue;
-            if ($el.attr('is_user') == 'true') continue;
-
-            if (nameMatch) {
-                const previewSrc = $('#avatar_load_preview').attr('src');
-                const avatar = $el.find('.avatar img');
-                avatar.attr('src', default_avatar);
-                await delay(1);
-                avatar.attr('src', previewSrc);
-            }
-        }
-
-        console.log('Avatar refreshed');
+        markCharacterEditorDirty();
+        console.log('Avatar preview updated; save required to persist');
     }
 }
 
@@ -11088,7 +11140,7 @@ export function select_selected_character(chid, { switchMenu = true } = {}) {
     $('#dupe_button')
         .toggleClass('disabled', !canDuplicateCharacter(chid))
         .attr('aria-disabled', !canDuplicateCharacter(chid) ? 'true' : 'false');
-    $('#create_button_label').css('display', 'none');
+    $('#create_button_label').css('display', '');
     $('#char_connections_button').show();
     $('#submit_character_review_button').css('display', canSubmitCharacterForReview(chid) ? 'flex' : 'none');
 
@@ -11144,6 +11196,8 @@ export function select_selected_character(chid, { switchMenu = true } = {}) {
 
     $('#form_create').attr('actiontype', 'editcharacter');
     $('.form_create_bottom_buttons_block .chat_lorebook_button').show();
+    clearCharacterEditorDirtyState();
+    updateCharacterSaveButtonState();
 
     const externalMediaState = isExternalMediaAllowed();
     $('#character_open_media_overrides').toggle(!selected_group);
@@ -11227,6 +11281,8 @@ function select_rm_create({ switchMenu = true } = {}) {
     $('#form_create').attr('actiontype', 'createcharacter');
     $('.form_create_bottom_buttons_block .chat_lorebook_button').hide();
     $('#character_open_media_overrides').hide();
+    clearCharacterEditorDirtyState();
+    updateCharacterSaveButtonState();
 }
 
 function select_rm_characters() {
@@ -12223,7 +12279,7 @@ function openAlternateGreetings() {
         allowVerticalScrolling: true,
         onClose: async () => {
             if (menu_type !== 'create') {
-                await createOrEditCharacter();
+                markCharacterEditorDirty();
             }
         },
     });
@@ -12444,6 +12500,7 @@ export async function createOrEditCharacter(e) {
             select_rm_info('char_create', avatarId, oldSelectedChar);
 
             crop_data = undefined;
+            clearCharacterEditorDirtyState();
 
             return true;
         } catch (error) {
@@ -12486,6 +12543,7 @@ export async function createOrEditCharacter(e) {
             );
             $('#create_button').attr('value', 'Save');
             crop_data = undefined;
+            clearCharacterEditorDirtyState();
             await eventSource.emit(event_types.CHARACTER_EDITED, { detail: { id: this_chid, character: characters[this_chid] } });
 
             // Recreate the chat if it hasn't been used at least once (i.e. with continue).
@@ -13598,19 +13656,31 @@ jQuery(async function () {
 
     //menu buttons setup
 
-    $('#rm_button_settings').on('click', function () {
+    $('#rm_button_settings').on('click', async function () {
+        if (!await confirmCharacterEditorNavigation()) {
+            return;
+        }
         selected_button = 'settings';
         selectRightMenuWithAnimation('rm_api_block');
     });
-    $('#rm_button_characters').on('click', function () {
+    $('#rm_button_characters').on('click', async function () {
+        if (!await confirmCharacterEditorNavigation()) {
+            return;
+        }
         selected_button = 'characters';
         select_rm_characters();
     });
-    $('#rm_button_back').on('click', function () {
+    $('#rm_button_back').on('click', async function () {
+        if (!await confirmCharacterEditorNavigation()) {
+            return;
+        }
         selected_button = 'characters';
         select_rm_characters();
     });
-    $('#rm_button_create').on('click', function () {
+    $('#rm_button_create').on('click', async function () {
+        if (!await confirmCharacterEditorNavigation()) {
+            return;
+        }
         selected_button = 'create';
         select_rm_create();
     });
@@ -13934,6 +14004,8 @@ jQuery(async function () {
     $('#character_name_pole').on('input', function () {
         if (menu_type == 'create') {
             create_save.name = String($('#character_name_pole').val());
+        } else {
+            markCharacterEditorDirty();
         }
     });
 
@@ -13960,7 +14032,7 @@ jQuery(async function () {
             if (menu_type == 'create') {
                 elementsToUpdate[id]();
             } else {
-                saveCharacterDebounced();
+                markCharacterEditorDirty();
             }
         });
     });
@@ -13974,7 +14046,7 @@ jQuery(async function () {
     $('#favorite_button').on('click', function () {
         updateFavButtonState(!fav_ch_checked);
         if (menu_type != 'create') {
-            saveCharacterDebounced();
+            markCharacterEditorDirty();
         }
     });
 
@@ -15103,7 +15175,7 @@ jQuery(async function () {
     await firstLoadInit();
 
     window.addEventListener('beforeunload', (e) => {
-        if (isChatSaving || this_edit_mes_id >= 0) {
+        if (isChatSaving || this_edit_mes_id >= 0 || hasUnsavedCharacterEdits()) {
             e.preventDefault();
             e.returnValue = true;
         }

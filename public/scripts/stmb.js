@@ -443,6 +443,16 @@ function getPlannerJobLabel(job) {
     }
 }
 
+function isInternalPlannerDependencySkip(job) {
+    if (String(job?.error?.type || '') === 'StmbPlannerDependencySkipped') {
+        return true;
+    }
+
+    const message = String(job?.error?.message || '').trim();
+    return /^Dependency [0-9a-f-]+ settled as (failed|canceled|rejected|skipped)$/i.test(message)
+        || /^Missing dependency [0-9a-f-]+$/i.test(message);
+}
+
 function notifyPlannerTerminalStatus(job) {
     const status = String(job?.status || '');
     if (status === 'completed') {
@@ -463,6 +473,9 @@ function notifyPlannerTerminalStatus(job) {
     }
 
     if (status === 'skipped') {
+        if (isInternalPlannerDependencySkip(job)) {
+            return;
+        }
         toastr.warning(message || `${label} skipped.`, 'STMB');
         return;
     }
