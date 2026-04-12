@@ -195,7 +195,10 @@ async function pollCurrentChatPlannerState() {
         const hasActiveJobs = jobs.some(job => ['pending', 'running', 'awaiting_approval'].includes(String(job?.status || '')));
         const hasRecentTerminal = jobs.some(job => ['completed', 'failed', 'canceled', 'rejected', 'skipped'].includes(String(job?.status || '')) && Number(job?.updatedAt || 0) > (Date.now() - 15_000));
         if (hasActiveJobs || hasRecentTerminal) {
+            ensurePlannerStatusPolling();
             await syncCurrentChatPlannerState(sceneContext);
+        } else {
+            stopPlannerStatusPolling();
         }
     } catch (error) {
         console.warn('STMB planner poll failed', error);
@@ -212,6 +215,15 @@ function ensurePlannerStatusPolling() {
             console.warn('STMB planner poll tick failed', error);
         });
     }, 5000);
+}
+
+function stopPlannerStatusPolling() {
+    if (!plannerStatusPollHandle) {
+        return;
+    }
+
+    clearInterval(plannerStatusPollHandle);
+    plannerStatusPollHandle = null;
 }
 
 function pruneHandledPlannerTerminalJobs(now = Date.now()) {
@@ -430,10 +442,9 @@ async function refreshPlannerEffectsFromJobs(jobs = []) {
         }
 
         handledPlannerTerminalJobUpdates.set(jobId, updatedAt || now);
-        if (status !== 'completed') {
-            continue;
+        if (status === 'completed') {
+            await handlePlannerCompletedJob(job);
         }
-        await handlePlannerCompletedJob(job);
         await acknowledgePlannerJobHandled(job);
     }
 }
@@ -445,6 +456,9 @@ async function enqueueDurableWave(sceneContext, jobs, source, successMessage = '
         jobs,
     });
     ensurePlannerStatusPolling();
+    pollCurrentChatPlannerState().catch(error => {
+        console.warn('STMB planner poll failed after enqueue', error);
+    });
     if (getModuleSettings().showNotifications) {
         toastr.info(successMessage, 'STMB');
     }
@@ -6104,7 +6118,9 @@ export function initStmb() {
     refreshSidePromptCache().catch(error => {
         console.warn('STMB side prompt cache refresh failed during init', error);
     });
-    ensurePlannerStatusPolling();
+    pollCurrentChatPlannerState().catch(error => {
+        console.warn('STMB planner initial poll failed', error);
+    });
 
     eventSource.on(event_types.CHAT_CHANGED, () => {
         setTimeout(() => {
@@ -6113,6 +6129,9 @@ export function initStmb() {
         }, 0);
         syncCurrentChatPlannerState().catch(error => {
             console.warn('STMB planner chat sync failed after chat change', error);
+        });
+        pollCurrentChatPlannerState().catch(error => {
+            console.warn('STMB planner poll failed after chat change', error);
         });
     });
 

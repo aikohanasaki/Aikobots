@@ -209,17 +209,20 @@ function writePlannerDoc(directories, document) {
     writeFileAtomicSync(filePath, JSON.stringify(document, null, 2), 'utf8');
 }
 
-async function withPlannerDocument(user, mutate) {
+async function withPlannerDocument(user, mutate, options = {}) {
     const handle = String(user?.profile?.handle || '');
+    const persist = options?.persist !== false;
     const previous = stmbPlannerQueues.get(handle) || Promise.resolve();
     const operation = previous
         .catch(() => {})
         .then(async () => {
             const document = readPlannerDoc(user.directories);
             const result = await mutate(document);
-            refreshPlannerDependencyStatuses(document);
-            trimPlannerHistory(document);
-            writePlannerDoc(user.directories, document);
+            if (persist) {
+                refreshPlannerDependencyStatuses(document);
+                trimPlannerHistory(document);
+                writePlannerDoc(user.directories, document);
+            }
             return result;
         });
 
@@ -1008,6 +1011,21 @@ function refreshPlannerWaveStatuses(document) {
     }));
 }
 
+function buildPlannerStateView(document, chatKey = null) {
+    const snapshot = structuredClone(document);
+    refreshPlannerDependencyStatuses(snapshot);
+    snapshot.waves = snapshot.waves.map(wave => ({
+        ...wave,
+        status: buildPlannerWaveStatus(snapshot, wave),
+    }));
+
+    const normalizedChatKey = chatKey ? String(chatKey) : null;
+    return {
+        waves: snapshot.waves.filter(wave => !normalizedChatKey || String(wave.chatKey) === normalizedChatKey),
+        jobs: snapshot.jobs.filter(job => !normalizedChatKey || String(job.chatKey) === normalizedChatKey),
+    };
+}
+
 function ensurePlannerWorker() {
     if (plannerWorkerStarted) {
         return;
@@ -1130,14 +1148,7 @@ async function enqueuePlannerWave(user, payload = {}) {
 }
 
 async function listPlannerState(user, chatKey = null) {
-    return withPlannerDocument(user, async document => {
-        refreshPlannerWaveStatuses(document);
-        const normalizedChatKey = chatKey ? String(chatKey) : null;
-        return {
-            waves: document.waves.filter(wave => !normalizedChatKey || String(wave.chatKey) === normalizedChatKey),
-            jobs: document.jobs.filter(job => !normalizedChatKey || String(job.chatKey) === normalizedChatKey),
-        };
-    });
+    return withPlannerDocument(user, async document => buildPlannerStateView(document, chatKey), { persist: false });
 }
 
 async function cancelPlannerJobs(user, {
