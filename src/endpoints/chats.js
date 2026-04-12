@@ -28,6 +28,9 @@ const checkIntegrity = !!getConfigValue('backups.chat.checkIntegrity', true, 'bo
 const CHAT_STORAGE_KEY = 'chat_storage';
 const CHAT_STORAGE_MODE_SPLIT_TAIL = 'split-tail';
 const CHAT_HEAD_FILE_SUFFIX = '.head.jsonl';
+const GROUP_CHAT_HEADER_VERSION = 1;
+const CHAT_METADATA_STRIP_KEYS = ['worldInfoSummary', 'worldInfoReport'];
+const CHAT_EXTRA_STRIP_KEYS = ['worldInfoSummary', 'worldInfoReport'];
 const LONG_CHAT_DISPLAY_MIN = 20;
 const LONG_CHAT_DISPLAY_MAX = 200;
 const LONG_CHAT_BUFFER_GAP = 50;
@@ -62,6 +65,88 @@ function getChatStorage(header) {
     return storage?.mode === CHAT_STORAGE_MODE_SPLIT_TAIL ? storage : null;
 }
 
+function isGroupChatHeader(record) {
+    return Boolean(record?.is_group_chat_header === true);
+}
+
+function buildGroupChatHeader(chatMetadata = {}, existingHeader = null) {
+    return {
+        ...(isGroupChatHeader(existingHeader) ? stripChatStorage(existingHeader) : {}),
+        is_group_chat_header: true,
+        group_chat_header_version: GROUP_CHAT_HEADER_VERSION,
+        create_date: String(existingHeader?.create_date || humanizedISO8601DateTime()),
+        chat_metadata: _.isPlainObject(chatMetadata) ? _.cloneDeep(chatMetadata) : {},
+    };
+}
+
+function stripPersistedChatExtra(extra) {
+    if (!_.isPlainObject(extra)) {
+        return extra;
+    }
+
+    const sanitizedExtra = _.cloneDeep(extra);
+    for (const key of CHAT_EXTRA_STRIP_KEYS) {
+        delete sanitizedExtra[key];
+    }
+
+    return sanitizedExtra;
+}
+
+function stripPersistedChatMetadata(chatMetadata) {
+    if (!_.isPlainObject(chatMetadata)) {
+        return chatMetadata;
+    }
+
+    const sanitizedMetadata = _.cloneDeep(chatMetadata);
+    for (const key of CHAT_METADATA_STRIP_KEYS) {
+        delete sanitizedMetadata[key];
+    }
+
+    return sanitizedMetadata;
+}
+
+function sanitizeChatMessageForPersistence(message) {
+    if (!_.isPlainObject(message)) {
+        return message;
+    }
+
+    const sanitizedMessage = _.cloneDeep(message);
+
+    if (_.isPlainObject(sanitizedMessage.extra)) {
+        sanitizedMessage.extra = stripPersistedChatExtra(sanitizedMessage.extra);
+    }
+
+    if (Array.isArray(sanitizedMessage.swipe_info)) {
+        sanitizedMessage.swipe_info = sanitizedMessage.swipe_info.map((swipeInfo) => {
+            if (!_.isPlainObject(swipeInfo)) {
+                return swipeInfo;
+            }
+
+            const sanitizedSwipeInfo = _.cloneDeep(swipeInfo);
+            if (_.isPlainObject(sanitizedSwipeInfo.extra)) {
+                sanitizedSwipeInfo.extra = stripPersistedChatExtra(sanitizedSwipeInfo.extra);
+            }
+
+            return sanitizedSwipeInfo;
+        });
+    }
+
+    return sanitizedMessage;
+}
+
+function sanitizeChatHeaderForPersistence(header) {
+    if (!_.isPlainObject(header)) {
+        return header;
+    }
+
+    const sanitizedHeader = stripChatStorage(_.cloneDeep(header));
+    if (_.isPlainObject(sanitizedHeader.chat_metadata)) {
+        sanitizedHeader.chat_metadata = stripPersistedChatMetadata(sanitizedHeader.chat_metadata);
+    }
+
+    return sanitizedHeader;
+}
+
 function getUnsupportedImportedJsonlMessage(header) {
     if (!header || !_.isObject(header)) {
         return null;
@@ -91,6 +176,111 @@ function getImportedChatBaseName(originalName, characterName) {
     return sanitize(`${characterName} - ${humanizedISO8601DateTime()} imported`, {
         replacement: sanitizeSafeCharacterReplacements,
     });
+}
+
+function parsePromptSnapshotKey(promptSnapshotKey) {
+    if (typeof promptSnapshotKey !== 'string') {
+        return null;
+    }
+
+    const parts = promptSnapshotKey.split('|');
+    if (parts.length !== 4) {
+        return null;
+    }
+
+    const [username, chatScope, mesIdText, swipeIdText] = parts;
+    const mesId = Number(mesIdText);
+    const swipeId = Number(swipeIdText);
+
+    if (!username || !chatScope || !Number.isFinite(mesId) || mesId < 0 || !Number.isFinite(swipeId) || swipeId < 0) {
+        return null;
+    }
+
+    return { username, chatScope, mesId, swipeId };
+}
+
+function buildPromptSnapshotKey({ username, chatScope, mesId, swipeId }) {
+    if (!username || !chatScope || !Number.isFinite(Number(mesId)) || Number(mesId) < 0 || !Number.isFinite(Number(swipeId)) || Number(swipeId) < 0) {
+        return null;
+    }
+
+    return `${username}|${chatScope}|${Number(mesId)}|${Number(swipeId)}`;
+}
+
+function rekeyImportedPromptSnapshotKey(promptSnapshotKey, { chatScope, mesId, swipeId = null } = {}) {
+    const parsed = parsePromptSnapshotKey(promptSnapshotKey);
+    if (!parsed) {
+        return promptSnapshotKey;
+    }
+
+    return buildPromptSnapshotKey({
+        username: parsed.username,
+        chatScope: chatScope ?? parsed.chatScope,
+        mesId: mesId ?? parsed.mesId,
+        swipeId: swipeId ?? parsed.swipeId,
+    }) ?? promptSnapshotKey;
+}
+
+function normalizeImportedHeader(header) {
+    const normalizedHeader = sanitizeChatHeaderForPersistence(header);
+
+    if (_.isPlainObject(normalizedHeader?.chat_metadata)) {
+        delete normalizedHeader.chat_metadata.integrity;
+        delete normalizedHeader.chat_metadata.chat_id_hash;
+    }
+
+    return normalizedHeader;
+}
+
+function normalizeImportedMessage(message, { chatScope, mesId }) {
+    const normalizedMessage = sanitizeChatMessageForPersistence(message);
+
+    if (_.isPlainObject(normalizedMessage?.extra) && typeof normalizedMessage.extra.promptSnapshotKey === 'string') {
+        normalizedMessage.extra.promptSnapshotKey = rekeyImportedPromptSnapshotKey(normalizedMessage.extra.promptSnapshotKey, {
+            chatScope,
+            mesId,
+        });
+    }
+
+    if (Array.isArray(normalizedMessage?.swipe_info)) {
+        normalizedMessage.swipe_info = normalizedMessage.swipe_info.map((swipeInfo, swipeId) => {
+            if (!_.isPlainObject(swipeInfo)) {
+                return swipeInfo;
+            }
+
+            const normalizedSwipeInfo = _.cloneDeep(swipeInfo);
+            if (_.isPlainObject(normalizedSwipeInfo.extra) && typeof normalizedSwipeInfo.extra.promptSnapshotKey === 'string') {
+                normalizedSwipeInfo.extra.promptSnapshotKey = rekeyImportedPromptSnapshotKey(normalizedSwipeInfo.extra.promptSnapshotKey, {
+                    chatScope,
+                    mesId,
+                    swipeId,
+                });
+            }
+
+            return normalizedSwipeInfo;
+        });
+    }
+
+    return normalizedMessage;
+}
+
+function normalizeImportedSerializedChat(serializedChat, fileName) {
+    const records = String(serializedChat || '')
+        .split('\n')
+        .map(line => tryParse(line))
+        .filter(record => _.isPlainObject(record));
+
+    if (!records.length) {
+        return null;
+    }
+
+    const [header, ...messages] = records;
+    const chatScope = `chat:${path.parse(String(fileName || '')).name}`;
+
+    return {
+        header: normalizeImportedHeader(header),
+        messages: messages.map((message, mesId) => normalizeImportedMessage(message, { chatScope, mesId })),
+    };
 }
 
 function clampLongChatValue(value, min, max, fallback) {
@@ -279,12 +469,87 @@ function getLogicalChatMessages(filePath) {
     return messages;
 }
 
+function resolveLegacyGroupChatMetadata(user, chatId) {
+    if (!chatId || !fs.existsSync(user.directories.groups)) {
+        return {};
+    }
+
+    const groupFiles = fs.readdirSync(user.directories.groups).filter(file => path.extname(file) === '.json');
+    for (const groupFile of groupFiles) {
+        try {
+            const groupPath = path.join(user.directories.groups, groupFile);
+            const group = JSON.parse(fs.readFileSync(groupPath, 'utf8'));
+            if (String(group?.chat_id || '') === String(chatId) && _.isPlainObject(group?.chat_metadata)) {
+                return _.cloneDeep(group.chat_metadata);
+            }
+
+            const pastMetadata = group?.past_metadata?.[chatId];
+            if (_.isPlainObject(pastMetadata)) {
+                return _.cloneDeep(pastMetadata);
+            }
+        } catch (error) {
+            console.warn('Failed to resolve legacy group chat metadata for', chatId, error);
+        }
+    }
+
+    return {};
+}
+
+function getGroupChatPayload(filePath) {
+    if (!fs.existsSync(filePath)) {
+        return { header: null, messages: [], hasHeader: false };
+    }
+
+    const records = readJsonlObjects(filePath);
+    if (!records.length) {
+        return { header: null, messages: [], hasHeader: false };
+    }
+
+    if (isGroupChatHeader(records[0])) {
+        const logicalChat = getLogicalChatData(filePath);
+        return {
+            header: logicalChat[0] || null,
+            messages: logicalChat.slice(1),
+            hasHeader: true,
+        };
+    }
+
+    return {
+        header: null,
+        messages: records,
+        hasHeader: false,
+    };
+}
+
+function writeGroupChat(filePath, messages, chatMetadata = {}, existingHeader = null) {
+    return writeLogicalChat(filePath, buildGroupChatHeader(chatMetadata, existingHeader), messages);
+}
+
+function ensureGroupChatHeader(user, chatId, filePath) {
+    const payload = getGroupChatPayload(filePath);
+    if (payload.hasHeader || payload.messages.length === 0) {
+        return payload;
+    }
+
+    const chatMetadata = resolveLegacyGroupChatMetadata(user, chatId);
+    const writeResult = writeGroupChat(filePath, payload.messages, chatMetadata);
+    return {
+        header: buildGroupChatHeader(chatMetadata),
+        messages: payload.messages,
+        hasHeader: true,
+        writeResult,
+    };
+}
+
 export function writeLogicalChat(filePath, header, messages, { displayCount = LONG_CHAT_DISPLAY_DEFAULT, bufferMax = LONG_CHAT_BUFFER_DEFAULT, tailStartId = null } = {}) {
     const { displayCount: normalizedDisplayCount, bufferMax: normalizedBufferMax } = normalizeLongChatConfig({ displayCount, bufferMax });
-    const baseHeader = stripChatStorage(header);
-    const fullJsonl = serializeJsonl([baseHeader, ...messages]);
+    const baseHeader = sanitizeChatHeaderForPersistence(header);
+    const sanitizedMessages = Array.isArray(messages)
+        ? messages.map(message => sanitizeChatMessageForPersistence(message))
+        : [];
+    const fullJsonl = serializeJsonl([baseHeader, ...sanitizedMessages]);
     const headPath = getSplitHeadPath(filePath);
-    const totalMessages = messages.length;
+    const totalMessages = sanitizedMessages.length;
     let nextTailStartId = Number.isInteger(tailStartId) ? tailStartId : null;
 
     if (nextTailStartId !== null) {
@@ -298,8 +563,8 @@ export function writeLogicalChat(filePath, header, messages, { displayCount = LO
     }
 
     if (nextTailStartId !== null && nextTailStartId > 0 && nextTailStartId < totalMessages) {
-        const headMessages = messages.slice(0, nextTailStartId);
-        const tailMessages = messages.slice(nextTailStartId);
+        const headMessages = sanitizedMessages.slice(0, nextTailStartId);
+        const tailMessages = sanitizedMessages.slice(nextTailStartId);
         const storage = {
             mode: CHAT_STORAGE_MODE_SPLIT_TAIL,
             head_file: path.basename(headPath),
@@ -1442,8 +1707,14 @@ router.post('/import', validateAvatarUrlMiddleware, function (request, response)
             const handleChat = (chat) => {
                 const fileName = getImportedChatFileName(fileNames);
                 const filePath = path.join(chatsDirectory, fileName);
+                const normalizedImportedChat = normalizeImportedSerializedChat(chat, fileName);
+
+                if (!normalizedImportedChat?.header) {
+                    throw new Error('Imported chat could not be normalized.');
+                }
+
                 fileNames.push(fileName);
-                writeFileAtomicSync(filePath, chat, 'utf8');
+                writeLogicalChat(filePath, normalizedImportedChat.header, normalizedImportedChat.messages);
             };
 
             const chat = importFunc(userName, characterName, jsonData);
@@ -1487,12 +1758,14 @@ router.post('/import', validateAvatarUrlMiddleware, function (request, response)
 
             const fileName = getImportedChatFileName(fileNames);
             const filePath = path.join(chatsDirectory, fileName);
-            fileNames.push(fileName);
-            if (flattenedChat !== data) {
-                writeFileAtomicSync(filePath, flattenedChat, 'utf8');
-            } else {
-                fs.copyFileSync(pathToUpload, filePath);
+            const normalizedImportedChat = normalizeImportedSerializedChat(flattenedChat, fileName);
+
+            if (!normalizedImportedChat?.header) {
+                throw new Error('Imported chat could not be normalized.');
             }
+
+            fileNames.push(fileName);
+            writeLogicalChat(filePath, normalizedImportedChat.header, normalizedImportedChat.messages);
             fs.unlinkSync(pathToUpload);
             response.send({ res: true, fileNames });
         }
@@ -1511,11 +1784,8 @@ router.post('/group/get', async (request, response) => {
     const pathToFile = path.join(request.user.directories.groupChats, `${id}.jsonl`);
 
     if (fs.existsSync(pathToFile)) {
-        const data = fs.readFileSync(pathToFile, 'utf8');
-        const lines = data.split('\n');
-
-        // Iterate through the array of strings and parse each line as JSON
-        const jsonData = lines.map(line => tryParse(line)).filter(x => x);
+        const payload = ensureGroupChatHeader(request.user, id, pathToFile);
+        const jsonData = payload.messages;
         try {
             await touchUserActivity(request.user.profile.handle);
         } catch (error) {
@@ -1560,6 +1830,10 @@ router.post('/group/delete', (request, response) => {
 
     if (fs.existsSync(pathToFile)) {
         fs.unlinkSync(pathToFile);
+        const headPath = getSplitHeadPath(pathToFile);
+        if (fs.existsSync(headPath)) {
+            fs.unlinkSync(headPath);
+        }
         return response.send({ ok: true });
     }
 
@@ -1583,9 +1857,14 @@ router.post('/group/save', (request, response) => {
     }
 
     let chat_data = request.body.chat;
-    let jsonlData = chat_data.map(JSON.stringify).join('\n');
-    writeFileAtomicSync(pathToFile, jsonlData, 'utf8');
-    getBackupFunction(request.user.profile.handle)(request.user.directories.backups, String(id), jsonlData);
+    const existingPayload = getGroupChatPayload(pathToFile);
+    const chatMetadata = _.isPlainObject(request.body.chat_metadata)
+        ? _.cloneDeep(request.body.chat_metadata)
+        : (existingPayload.hasHeader
+            ? _.cloneDeep(existingPayload.header?.chat_metadata || {})
+            : resolveLegacyGroupChatMetadata(request.user, id));
+    const writeResult = writeGroupChat(pathToFile, chat_data, chatMetadata, existingPayload.header);
+    getBackupFunction(request.user.profile.handle)(request.user.directories.backups, String(id), writeResult.fullJsonl);
     return response.send({ ok: true });
 });
 

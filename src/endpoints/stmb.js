@@ -302,6 +302,20 @@ function serializeJsonlLines(items) {
     return items.map(item => JSON.stringify(item)).join('\n');
 }
 
+function isGroupChatHeaderRecord(record) {
+    return Boolean(record?.is_group_chat_header === true);
+}
+
+function buildGroupChatHeaderRecord(chatMetadata = {}, existingHeader = null) {
+    return {
+        ...(isGroupChatHeaderRecord(existingHeader) ? existingHeader : {}),
+        is_group_chat_header: true,
+        group_chat_header_version: Number(existingHeader?.group_chat_header_version || 1),
+        create_date: String(existingHeader?.create_date || new Date().toISOString()),
+        chat_metadata: chatMetadata && typeof chatMetadata === 'object' ? structuredClone(chatMetadata) : {},
+    };
+}
+
 function normalizeStoredStmbState(value) {
     if (!value || typeof value !== 'object') {
         return {};
@@ -325,7 +339,18 @@ function readChatMetadataState(user, sceneContext = {}) {
         const group = JSON.parse(fs.readFileSync(groupPath, 'utf8'));
         const pastMetadata = group?.past_metadata?.[chatId];
         const activeMetadata = String(group?.chat_id || '') === chatId ? group?.chat_metadata : null;
-        return normalizeStoredStmbState((pastMetadata || activeMetadata || {})[STMB_METADATA_KEY]);
+        const legacyMetadata = pastMetadata || activeMetadata || {};
+        const groupChatPath = path.join(user.directories.groupChats, `${chatId}.jsonl`);
+        const records = readJsonlLines(groupChatPath);
+        if (records.length > 0 && isGroupChatHeaderRecord(records[0])) {
+            return normalizeStoredStmbState(records[0]?.chat_metadata?.[STMB_METADATA_KEY]);
+        }
+
+        if (records.length > 0 && legacyMetadata && typeof legacyMetadata === 'object' && Object.keys(legacyMetadata).length > 0) {
+            writeLogicalChat(groupChatPath, buildGroupChatHeaderRecord(legacyMetadata), records);
+        }
+
+        return normalizeStoredStmbState(legacyMetadata[STMB_METADATA_KEY]);
     }
 
     const logicalChat = resolveLogicalChatReference(user.directories, sceneContext.chatRef);
@@ -369,6 +394,15 @@ function updateChatMetadataState(user, sceneContext = {}, updater) {
         }
 
         writeFileAtomicSync(groupPath, JSON.stringify(group, null, 4), 'utf8');
+
+        const groupChatPath = path.join(user.directories.groupChats, `${chatId}.jsonl`);
+        const records = readJsonlLines(groupChatPath);
+        if (records.length > 0) {
+            const existingHeader = isGroupChatHeaderRecord(records[0]) ? records[0] : null;
+            const messages = existingHeader ? records.slice(1) : records;
+            writeLogicalChat(groupChatPath, buildGroupChatHeaderRecord(nextMetadata, existingHeader), messages);
+        }
+
         return nextState;
     }
 

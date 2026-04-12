@@ -165,6 +165,11 @@ const DURABLE_SYNC_STATE_KEYS = [
 
 function applyServerPlannerStateToLocal(state = {}) {
     const localState = getStmbState();
+    const hasServerState = DURABLE_SYNC_STATE_KEYS.some(key => Object.hasOwn(state, key));
+    if (!hasServerState) {
+        return;
+    }
+
     for (const key of DURABLE_SYNC_STATE_KEYS) {
         if (Object.hasOwn(state, key)) {
             localState[key] = structuredClone(state[key]);
@@ -417,6 +422,54 @@ async function handlePlannerCompletedJob(job) {
     }
 }
 
+function getPlannerJobLabel(job) {
+    switch (String(job?.kind || '')) {
+        case 'memory':
+        case 'memoryGenerate':
+        case 'memoryApproval':
+        case 'memoryCommit':
+            return 'Memory workflow';
+        case 'sidePromptGenerate':
+        case 'sidePromptApproval':
+        case 'sidePromptCommit':
+        case 'sidePrompt':
+            return 'SidePrompt workflow';
+        case 'consolidationCheck':
+            return 'Consolidation check';
+        case 'chatAutoHide':
+            return 'Chat auto-hide';
+        default:
+            return 'STMB job';
+    }
+}
+
+function notifyPlannerTerminalStatus(job) {
+    const status = String(job?.status || '');
+    if (status === 'completed') {
+        return;
+    }
+
+    const label = getPlannerJobLabel(job);
+    const message = String(job?.error?.message || '').trim();
+
+    if (status === 'canceled') {
+        toastr.info(message || `${label} canceled.`, 'STMB');
+        return;
+    }
+
+    if (status === 'rejected') {
+        toastr.info(message || `${label} rejected.`, 'STMB');
+        return;
+    }
+
+    if (status === 'skipped') {
+        toastr.warning(message || `${label} skipped.`, 'STMB');
+        return;
+    }
+
+    toastr.error(message || `${label} failed.`, 'STMB');
+}
+
 async function refreshPlannerEffectsFromJobs(jobs = []) {
     const now = Date.now();
     pruneHandledPlannerTerminalJobs(now);
@@ -444,6 +497,8 @@ async function refreshPlannerEffectsFromJobs(jobs = []) {
         handledPlannerTerminalJobUpdates.set(jobId, updatedAt || now);
         if (status === 'completed') {
             await handlePlannerCompletedJob(job);
+        } else {
+            notifyPlannerTerminalStatus(job);
         }
         await acknowledgePlannerJobHandled(job);
     }

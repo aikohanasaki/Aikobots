@@ -623,7 +623,11 @@ async function saveGroupChat(groupId, shouldSaveGroup) {
     const response = await fetch('/api/chats/group/save', {
         method: 'POST',
         headers: getRequestHeaders(),
-        body: JSON.stringify({ id: chat_id, chat: [...chat] }),
+        body: JSON.stringify({
+            id: chat_id,
+            chat: [...chat],
+            chat_metadata: JSON.parse(JSON.stringify(chat_metadata)),
+        }),
     });
 
     if (!response.ok) {
@@ -633,7 +637,9 @@ async function saveGroupChat(groupId, shouldSaveGroup) {
     }
 
     if (shouldSaveGroup) {
-        await editGroup(groupId, false, false);
+        // Persist group metadata immediately so follow-up server reads see the
+        // current chat-bound state instead of a debounced, stale snapshot.
+        await editGroup(groupId, true, false);
     }
 }
 
@@ -2223,7 +2229,11 @@ export async function saveGroupBookmarkChat(groupId, name, metadata, mesId) {
     const response = await fetch('/api/chats/group/save', {
         method: 'POST',
         headers: getRequestHeaders(),
-        body: JSON.stringify({ id: name, chat: [...trimmed_chat] }),
+        body: JSON.stringify({
+            id: name,
+            chat: [...trimmed_chat],
+            chat_metadata: JSON.parse(JSON.stringify(group.past_metadata[name] || {})),
+        }),
     });
 
     if (!response.ok) {
