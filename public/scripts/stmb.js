@@ -5984,29 +5984,36 @@ async function setHighestProcessedCommand(_, value) {
         return '';
     }
 
+    const lastChatIndex = chat.length - 1;
+    if (!Number.isInteger(lastChatIndex) || lastChatIndex < 0) {
+        toastr.error('There are no messages in this chat yet.', 'STMB');
+        return '';
+    }
+
+    const clamped = Math.min(parsed, lastChatIndex);
+    if (clamped !== parsed) {
+        toastr.info(
+            `Highest message is ${lastChatIndex}, so last message processed has been set to ${lastChatIndex}.`,
+            'STMB',
+        );
+    }
+
     const rangeInfo = await fetchStmbChatRangeInfo({
-        rangeStart: parsed,
-        rangeEnd: parsed,
+        rangeStart: clamped,
+        rangeEnd: clamped,
     });
-    const lastIndex = Number(rangeInfo?.lastAvailableMessageId);
-    if (!Number.isInteger(lastIndex) || lastIndex < 0) {
+    const lastAvailableMessageId = Number(rangeInfo?.lastAvailableMessageId);
+    if (!Number.isInteger(lastAvailableMessageId) || lastAvailableMessageId < 0) {
         toastr.error('There are no messages in this chat yet.', 'STMB');
         return '';
     }
     if (Array.isArray(rangeInfo?.missingRanges) && rangeInfo.missingRanges.length > 0) {
         const missing = rangeInfo.missingRanges[0];
-        toastr.error(`Message #${parsed} is unavailable because messages ${missing.start}-${missing.end} are missing from chat storage.`, 'STMB');
+        toastr.error(`Message #${clamped} is unavailable because messages ${missing.start}-${missing.end} are missing from chat storage.`, 'STMB');
         return '';
     }
 
     const state = getStmbState();
-    const clamped = Math.min(parsed, lastIndex);
-    if (clamped !== parsed) {
-        toastr.info(
-            `Highest message is ${lastIndex}, so last message processed has been set to ${lastIndex}.`,
-            'STMB',
-        );
-    }
     state.highestMemoryProcessed = clamped;
     state.highestMemoryProcessedManuallySet = true;
     await updateStmbPlannerChatState({
