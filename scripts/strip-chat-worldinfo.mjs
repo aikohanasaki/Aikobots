@@ -6,10 +6,10 @@ import { sync as writeFileAtomicSync } from 'write-file-atomic';
 
 import { CommandLineParser } from '../src/command-line.js';
 import { serverDirectory } from '../src/server-directory.js';
-import { initUserStorage, getAllUserHandles, getUserDirectories } from '../src/users.js';
 
 const STRIP_CHAT_METADATA_KEYS = ['worldInfoSummary', 'worldInfoReport'];
 const STRIP_EXTRA_KEYS = ['worldInfoSummary', 'worldInfoReport'];
+const CHAT_DIRECTORY_NAMES = new Set(['chats', 'group chats']);
 
 function stripExtra(extra) {
     if (!extra || typeof extra !== 'object' || Array.isArray(extra)) {
@@ -129,11 +129,38 @@ function processJsonlFile(filePath) {
     };
 }
 
-function collectJsonlFiles(rootPath) {
-    if (!fs.existsSync(rootPath)) {
+function collectChatJsonlFiles(dataRoot) {
+    if (!fs.existsSync(dataRoot)) {
         return [];
     }
 
+    const queue = [dataRoot];
+    const files = [];
+
+    while (queue.length) {
+        const current = queue.pop();
+        if (!current) {
+            continue;
+        }
+
+        for (const entry of fs.readdirSync(current, { withFileTypes: true })) {
+            const fullPath = path.join(current, entry.name);
+
+            if (entry.isDirectory()) {
+                if (CHAT_DIRECTORY_NAMES.has(entry.name)) {
+                    files.push(...collectJsonlFilesInChatDirectory(fullPath));
+                    continue;
+                }
+
+                queue.push(fullPath);
+            }
+        }
+    }
+
+    return files;
+}
+
+function collectJsonlFilesInChatDirectory(rootPath) {
     const queue = [rootPath];
     const files = [];
 
@@ -157,6 +184,18 @@ function collectJsonlFiles(rootPath) {
     }
 
     return files;
+}
+
+function getFileOwnerLabel(dataRoot, filePath) {
+    const relativePath = path.relative(dataRoot, filePath);
+    const segments = relativePath.split(path.sep).filter(Boolean);
+    const directoryIndex = segments.findIndex(segment => CHAT_DIRECTORY_NAMES.has(segment));
+
+    if (directoryIndex > 0) {
+        return segments[directoryIndex - 1];
+    }
+
+    return '(unknown)';
 }
 
 function formatBytes(bytes) {
@@ -184,37 +223,32 @@ async function main() {
     globalThis.DEFAULT_SCAFFOLD_ROOT = cliArgs.defaultScaffoldRoot;
     globalThis.COMMAND_LINE_ARGS = cliArgs;
 
-    await initUserStorage(globalThis.DATA_ROOT);
-
-    const handles = await getAllUserHandles();
+    const chatFiles = collectChatJsonlFiles(globalThis.DATA_ROOT);
     let totalFilesScanned = 0;
     let totalFilesChanged = 0;
     let totalBytesSaved = 0;
+    /** @type {Map<string, { scanned: number, changed: number, bytesSaved: number }>} */
+    const ownerStats = new Map();
 
-    for (const handle of handles) {
-        const directories = getUserDirectories(handle);
-        const chatFiles = [
-            ...collectJsonlFiles(directories.chats),
-            ...collectJsonlFiles(directories.groupChats),
-        ];
+    for (const filePath of chatFiles) {
+        totalFilesScanned++;
+        const ownerLabel = getFileOwnerLabel(globalThis.DATA_ROOT, filePath);
+        const stats = ownerStats.get(ownerLabel) || { scanned: 0, changed: 0, bytesSaved: 0 };
+        stats.scanned++;
 
-        let userChanged = 0;
-        let userSaved = 0;
-
-        for (const filePath of chatFiles) {
-            totalFilesScanned++;
-            const result = processJsonlFile(filePath);
-            if (!result.changed) {
-                continue;
-            }
-
+        const result = processJsonlFile(filePath);
+        if (result.changed) {
             totalFilesChanged++;
-            userChanged++;
-            userSaved += result.bytesSaved;
+            stats.changed++;
+            stats.bytesSaved += result.bytesSaved;
             totalBytesSaved += result.bytesSaved;
         }
 
-        console.log(`${handle}: scanned ${chatFiles.length} chat files, changed ${userChanged}, saved ${formatBytes(userSaved)}`);
+        ownerStats.set(ownerLabel, stats);
+    }
+
+    for (const [ownerLabel, stats] of [...ownerStats.entries()].sort((a, b) => a[0].localeCompare(b[0]))) {
+        console.log(`${ownerLabel}: scanned ${stats.scanned} chat files, changed ${stats.changed}, saved ${formatBytes(stats.bytesSaved)}`);
     }
 
     console.log(`Done. Scanned ${totalFilesScanned} chat files, changed ${totalFilesChanged}, saved ${formatBytes(totalBytesSaved)}.`);
