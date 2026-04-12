@@ -17,8 +17,8 @@ import { default as validateAvatarUrlMiddleware, getFileNameValidationFunction }
 import { deepMerge, humanizedISO8601DateTime, tryParse, extractFileFromZipBuffer, MemoryLimitedMap, getConfigValue, mutateJsonString, clientRelativePath, getUniqueName, sanitizeSafeCharacterReplacements } from '../util.js';
 import { TavernCardValidator } from '../validator/TavernCardValidator.js';
 import { parse, read, write } from '../character-card-parser.js';
-import { getCharacterDistributionPolicy } from '../character-distribution-registry.js';
-import { getCharacterOwnerHandle, getCharacterOwnerHandles, validateOwnedCharacterLinkedLorebooks } from '../character-linked-lorebooks.js';
+import { getCharacterDistributionPolicy, setCharacterDistributionPolicy } from '../character-distribution-registry.js';
+import { getCharacterOwnerHandle, getCharacterOwnerHandles, getCharacterSharedKey, validateOwnedCharacterLinkedLorebooks } from '../character-linked-lorebooks.js';
 import {
     CharacterSharingRepositoryError,
     checkinSharedCharacter,
@@ -1545,6 +1545,41 @@ router.post('/delete', validateAvatarUrlMiddleware, async function (request, res
         return avatarExists;
     }
 
+    async function enrollDeletingUserInRepushBlacklist(avatarPath) {
+        const deletingUserHandle = String(request.user?.profile?.handle || '').trim();
+        if (!deletingUserHandle) {
+            throw new Error('Missing user handle for character deletion.');
+        }
+
+        const rawCharacterData = await readCharacterData(avatarPath);
+        if (!rawCharacterData) {
+            throw new Error('Could not read character metadata for repush opt-out.');
+        }
+
+        const characterCard = getCharaCardV2(JSON.parse(rawCharacterData), request.user.directories, false);
+        const ownerHandles = getCharacterOwnerHandles(characterCard);
+        if (ownerHandles.length === 0 || ownerHandles.includes(deletingUserHandle)) {
+            return;
+        }
+
+        const ownerHandle = getCharacterOwnerHandle(characterCard);
+        const characterKey = getCharacterSharedKey(characterCard);
+        const publishedFilename = path.parse(avatarPath).name;
+        const policy = await getCharacterDistributionPolicy({ ownerHandle, characterKey, publishedFilename });
+
+        if (policy.blacklistHandles.includes(deletingUserHandle)) {
+            return;
+        }
+
+        await setCharacterDistributionPolicy({
+            ownerHandle,
+            characterKey,
+            publishedFilename,
+            blacklistHandles: [...policy.blacklistHandles, deletingUserHandle],
+            updatedBy: deletingUserHandle,
+        });
+    }
+
     if (deleteForAllUsers) {
         try {
             const users = await getAllEnabledUsers();
@@ -1572,6 +1607,10 @@ router.post('/delete', validateAvatarUrlMiddleware, async function (request, res
     }
 
     try {
+        if (request.body.skip_future_pushes == true && !deleteForAllUsers) {
+            await enrollDeletingUserInRepushBlacklist(avatarPath);
+        }
+
         await deleteCharacterFromDirectories(request.user.directories);
     } catch (err) {
         console.error(err);

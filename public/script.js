@@ -13241,9 +13241,10 @@ function doCharListDisplaySwitch() {
  * @param {Object} [options] - Optional parameters for the deletion
  * @param {boolean} [options.deleteChats=true] - Whether to delete associated chats or not
  * @param {boolean} [options.deleteForAllUsers=false] - Whether admins should delete the character for all users
+ * @param {boolean} [options.skipFuturePushes=false] - Whether to opt out of future repushes for a pushed character
  * @return {Promise<void>} - A promise that resolves when the character is successfully deleted
  */
-export async function deleteCharacter(characterKey, { deleteChats = true, deleteForAllUsers = false } = {}) {
+export async function deleteCharacter(characterKey, { deleteChats = true, deleteForAllUsers = false, skipFuturePushes = false } = {}) {
     if (!Array.isArray(characterKey)) {
         characterKey = [characterKey];
     }
@@ -13274,7 +13275,12 @@ export async function deleteCharacter(characterKey, { deleteChats = true, delete
         const chid = characters.indexOf(character);
         const pastChats = await getPastCharacterChats(chid);
 
-        const msg = { avatar_url: character.avatar, delete_chats: deleteChats, delete_for_all_users: deleteForAllUsers };
+        const msg = {
+            avatar_url: character.avatar,
+            delete_chats: deleteChats,
+            delete_for_all_users: deleteForAllUsers,
+            skip_future_pushes: skipFuturePushes,
+        };
 
         const response = await fetch('/api/characters/delete', {
             method: 'POST',
@@ -13894,18 +13900,29 @@ jQuery(async function () {
 
         let deleteChats = false;
         let deleteForAllUsers = false;
+        let skipFuturePushes = false;
+        const ownerHandles = getCharacterOwnerHandles(this_chid);
+        const offerRepushOptOut = Boolean(currentUser?.handle) && ownerHandles.length > 0 && !ownerHandles.includes(currentUser.handle);
 
-        const confirm = await Popup.show.confirm(t`Delete the character?`, await renderTemplateAsync('deleteConfirm', { isAdmin: isAdmin() }), {
+        const confirm = await Popup.show.confirm(t`Delete the character?`, await renderTemplateAsync('deleteConfirm', {
+            isAdmin: isAdmin(),
+            offerRepushOptOut,
+        }), {
             onClose: () => {
                 deleteChats = !!$('#del_char_checkbox').prop('checked');
                 deleteForAllUsers = !!$('#del_char_checkbox_all_users').prop('checked');
+                skipFuturePushes = !deleteForAllUsers && !!$('#del_char_checkbox_skip_future_pushes').prop('checked');
             },
         });
         if (!confirm) {
             return;
         }
 
-        await deleteCharacter(characters[this_chid].avatar, { deleteChats: deleteChats, deleteForAllUsers: deleteForAllUsers });
+        await deleteCharacter(characters[this_chid].avatar, {
+            deleteChats: deleteChats,
+            deleteForAllUsers: deleteForAllUsers,
+            skipFuturePushes: skipFuturePushes,
+        });
     });
 
     //////// OPTIMIZED ALL CHAR CREATION/EDITING TEXTAREA LISTENERS ///////////////
