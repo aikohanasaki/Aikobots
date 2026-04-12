@@ -256,6 +256,37 @@
         width: 100%;
     }
 
+    .world_entry .inline-drawer-header {
+        flex-wrap: wrap;
+        align-items: flex-start;
+    }
+
+    .world_entry .inline-drawer-header > .WIEntryChromeControls {
+        order: 0;
+    }
+
+    .world_entry .inline-drawer-header > .WIEntryActionButtons {
+        order: 1;
+        margin-left: auto;
+    }
+
+    .world_entry .inline-drawer-header > .WIEntryHeaderMainControls {
+        order: 2;
+        flex-basis: 100%;
+        flex-direction: column;
+        align-items: stretch;
+    }
+
+    .WIEntryTitleAndStatus > .flex-container,
+    .WIEntryStatusControl > .text_pole {
+        width: 100%;
+    }
+
+    .WIEntryHeaderControls {
+        flex-wrap: wrap;
+        align-items: flex-start;
+    }
+
     .wi-bulk-select-slot,
     #world_bulk_move_mode,
     #world_bulk_move_apply {
