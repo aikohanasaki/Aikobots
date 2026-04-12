@@ -2904,7 +2904,8 @@ export async function jumpToMessageWindow(messageId, count = null, navigationTok
 
 export async function showMoreMessages(messagesToLoad = null, navigationToken = null) {
     return serializeHistoryWindowNavigation(async () => {
-        let messageId = getFirstDisplayedMessageId();
+        const firstDisplayedMessageId = getFirstDisplayedMessageId();
+        let messageId = firstDisplayedMessageId;
         let count = getConfiguredChatWindowSize(messagesToLoad);
 
         if (!Number.isFinite(messageId)) {
@@ -2914,7 +2915,9 @@ export async function showMoreMessages(messagesToLoad = null, navigationToken = 
         console.debug('Inserting messages before', messageId, 'count', count, 'chat length', chat.length);
         const prevHeight = chatElement.prop('scrollHeight');
         const isButtonInView = isElementInViewport($(`#${TOP_HISTORY_CONTROL_ID}`)[0]);
-        const anchorId = messageId >= chat.length ? null : messageId;
+        let anchorId = Number.isFinite(firstDisplayedMessageId) && firstDisplayedMessageId < chat.length
+            ? firstDisplayedMessageId
+            : null;
         const loadStartId = Math.max(0, messageId - count);
 
         await ensureChatRangeLoaded(loadStartId, count);
@@ -2927,6 +2930,7 @@ export async function showMoreMessages(messagesToLoad = null, navigationToken = 
                 break;
             }
             addOneMessage(chat[newMessageId], { insertBefore: anchorId, scroll: false, forceId: newMessageId, showSwipes: false });
+            anchorId = newMessageId;
             count--;
             messageId--;
         }
