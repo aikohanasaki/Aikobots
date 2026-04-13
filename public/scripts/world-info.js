@@ -3065,6 +3065,7 @@ async function displayWorldEntries(name, data, navigation = navigation_option.no
         $('#world_secure_toggle').off('click').on('click', nullWorldInfo);
         $('#world_shared_manage').off('click').on('click', nullWorldInfo);
         $('#world_checkout_toggle').off('click').on('click', nullWorldInfo).hide();
+        updateWorldInfoMutationButtonState('');
         updateWorldInfoStorageButton('');
         updateWorldInfoSharedManageButton('');
         updateWorldInfoCheckoutButton('');
