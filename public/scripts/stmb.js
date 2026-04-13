@@ -10,7 +10,6 @@ import {
     name1,
     name2,
     renderMessageWindow,
-    reloadCurrentChat,
     scrollChatToBottom,
     saveSettingsDebounced,
     substituteParams,
@@ -20,19 +19,11 @@ import {
 import { DOMPurify } from '../lib.js';
 import { getContext, saveMetadataDebounced } from './extensions.js';
 import {
-    acknowledgeStmbPlannerJobs,
-    cancelStmbPlannerJobs,
     commitStmbSummaries,
-    enqueueStmbPlannerWave,
     generateStmbMemory,
     generateStmbSummary,
     generateStmbText,
-    getStmbPlannerChatState,
-    listStmbPlannerJobs,
-    prepareStmbMemoryMessages,
-    respondStmbPlannerApproval,
     saveStmbMemoryEntry,
-    updateStmbPlannerChatState,
 } from './stmb-api.js';
 import { closeActiveMemoryPreviewPopups, showAdvancedOptionsPopup, showAutoConsolidationPromptPopup, showAutoSummaryDecisionPopup, showConfirmationPopup, showFailedAIResponsePopup, showFailedSummaryResponsePopup, showLorebookPickerPopup, showMemoryPreviewPopup, showSummaryConsolidationOptionsPopup } from './stmb-popups.js';
 import { Popup, POPUP_RESULT, POPUP_TYPE } from './popup.js';
@@ -46,6 +37,7 @@ import { groups, selected_group } from './group-chats.js';
 import { getRegexScripts, runRegexScript, substitute_find_regex } from './extensions/regex/engine.js';
 import { getLorebookStorageForRequest, loadWorldInfo, METADATA_KEY, reloadEditor, world_names, worldInfoCache } from './world-info.js';
 import { buildOpenAIGenerateData, oai_settings } from './openai.js';
+import { buildMemoryPromptText } from './stmb-prompt-assembly.js';
 import {
     applyDeletedMessageToSceneState,
     applyStmbProfileToGenerateData,
@@ -89,8 +81,7 @@ import {
 import {
     evaluateTrackers,
     firstRunInitSidePrompts,
-    buildQueuedAfterMemorySidePromptJobs,
-    runAfterMemory,
+    enqueueAfterMemorySidePromptJobs,
     runSidePrompt,
     toggleSidePromptEnabled,
 } from './stmb-sideprompts.js';
@@ -141,6 +132,13 @@ import { escapeHtml } from './utils.js';
 import { ensureResolvedLorebookName, isStmbLorebookHandledError } from './stmb-lorebook.js';
 import { createStmbTask, getActiveStmbTaskCount, hasActiveStmbTasks, isStmbAbortError, stopAllStmbTasks, throwIfStmbAborted } from './stmb-tasks.js';
 import { getTokenCountAsync } from './tokenizers.js';
+import {
+    cancelAllStmbJobs,
+    enqueueStmbJob,
+    hasActiveStmbJobs,
+    initStmbJobsUi,
+    registerStmbJobExecutor,
+} from './stmb-jobs.js';
 
 const $ = window.jQuery;
 let stmbSettings = normalizeStmbSettings();
@@ -1205,6 +1203,7 @@ async function enqueueDurableWave(sceneContext, jobs, source, successMessage = '
     }
     return result;
 }
+let stmbJobExecutorsRegistered = false;
 
 function isManualSidePromptEnabled(template) {
     const commands = template?.triggers?.commands;
@@ -3263,7 +3262,10 @@ async function openSidePromptEditorPopup({ templateKey = null } = {}) {
 
 async function showSidePromptManagerPopup({ onChange = null } = {}) {
     let selectedTemplateKey = null;
-    const maxConcurrent = Math.max(1, Math.min(5, Number(stmbSettings?.moduleSettings?.sidePromptsMaxConcurrent ?? 2)));
+    const parsedMaxConcurrent = Number(stmbSettings?.moduleSettings?.sidePromptsMaxConcurrent ?? 2);
+    const maxConcurrent = Number.isFinite(parsedMaxConcurrent)
+        ? Math.max(1, Math.min(5, Math.trunc(parsedMaxConcurrent)))
+        : 2;
     const popup = new Popup(DOMPurify.sanitize(`
         <div class="stmb-sideprompt-manager-popup">
             <h3>Trackers & Side Prompts</h3>
@@ -4525,14 +4527,9 @@ async function estimateAdvancedMemoryTokens(compiledScene, lorebookName, options
             defaultMemoryCount: memoryCount,
         },
     };
-    const prepared = await prepareStmbMemoryMessages({
-        lorebookName,
-        storage: getLorebookStorageForRequest(lorebookName),
-        compiledScene,
-        profile: effectiveProfile,
-        stmbSettings: requestSettings,
-    });
-    return await getTokenCountAsync(String(prepared?.promptText || ''));
+    const worldInfo = await loadWorldInfo(lorebookName) || { entries: {} };
+    const finalPromptText = buildMemoryPromptText(compiledScene, effectiveProfile, worldInfo, requestSettings);
+    return await getTokenCountAsync(String(finalPromptText || ''));
 }
 
 async function showAndGetMemorySettings(compiledScene, range, lorebookName, selectedProfileIndex = null) {
@@ -4910,9 +4907,9 @@ function getCurrentSceneRange() {
 
 async function getNextMemoryRange() {
     const sceneContext = buildStmbSceneContext();
-    const stateResult = await getStmbPlannerChatState({ sceneContext });
-    const highestProcessed = Number.isInteger(stateResult?.state?.highestMemoryProcessed)
-        ? stateResult.state.highestMemoryProcessed
+    const state = getStmbState();
+    const highestProcessed = Number.isInteger(state?.highestMemoryProcessed)
+        ? state.highestMemoryProcessed
         : null;
     const sceneStart = highestProcessed === null ? 0 : highestProcessed + 1;
     const rangeInfo = await fetchStmbChatRangeInfo({
@@ -4959,7 +4956,6 @@ function validateMemoryCreationContext() {
 }
 
 async function resolveAutoSummaryLorebook() {
-    const sceneContext = buildStmbSceneContext();
     if (!getModuleSettings().manualModeEnabled) {
         try {
             const lorebookName = await ensureLorebookName();
@@ -4982,10 +4978,7 @@ async function resolveAutoSummaryLorebook() {
                 ? Number(decision.postponeMessages)
                 : 10;
             state.autoSummaryNextPromptAt = chat.length + postponeMessages;
-            await updateStmbPlannerChatState({
-                sceneContext,
-                patch: { autoSummaryNextPromptAt: state.autoSummaryNextPromptAt },
-            });
+            saveMetadataDebounced();
             return {
                 valid: false,
                 lorebookName: null,
@@ -5006,10 +4999,7 @@ async function resolveAutoSummaryLorebook() {
         }
 
         state.manualLorebook = selectedLorebook;
-        await updateStmbPlannerChatState({
-            sceneContext,
-            patch: { manualLorebook: selectedLorebook },
-        });
+        saveMetadataDebounced();
         lorebookName = selectedLorebook;
     }
 
@@ -5019,10 +5009,7 @@ async function resolveAutoSummaryLorebook() {
             getManualLorebook: () => getStmbState().manualLorebook,
             setManualLorebook: async selectedLorebook => {
                 getStmbState().manualLorebook = String(selectedLorebook || '').trim();
-                await updateStmbPlannerChatState({
-                    sceneContext,
-                    patch: { manualLorebook: getStmbState().manualLorebook },
-                });
+                saveMetadataDebounced();
             },
             createContext: 'auto-summary',
         });
@@ -5055,8 +5042,7 @@ async function checkAutoSummaryTrigger(options = {}) {
     }
 
     const sceneContext = options.sceneContext || buildStmbSceneContext();
-    const stateResponse = await getStmbPlannerChatState({ sceneContext });
-    const state = stateResponse?.state || {};
+    const state = getStmbState();
     const rangeInfo = await fetchStmbChatRangeInfo({ saveFirst: false, sceneContext });
     const currentLastMessage = Number(rangeInfo?.lastAvailableMessageId);
     if (!Number.isInteger(currentLastMessage) || currentLastMessage < 0) {
@@ -5075,7 +5061,7 @@ async function checkAutoSummaryTrigger(options = {}) {
     const hasHighestProcessed = typeof rawHighestProcessed === 'number' && Number.isFinite(rawHighestProcessed);
     const highestProcessed = hasHighestProcessed ? rawHighestProcessed : -1;
 
-    if (hasActiveStmbTasks()) {
+    if (hasActiveStmbTasks() || hasActiveStmbJobs(getStmbChatKey(sceneContext))) {
         return;
     }
 
@@ -5096,12 +5082,7 @@ async function checkAutoSummaryTrigger(options = {}) {
 
     if (Number.isInteger(state.autoSummaryNextPromptAt)) {
         getStmbState().autoSummaryNextPromptAt = null;
-        await updateStmbPlannerChatState({
-            sceneContext,
-            patch: {
-                autoSummaryNextPromptAt: null,
-            },
-        });
+        saveMetadataDebounced();
     }
 
     const sceneStart = highestProcessed + 1;
@@ -5254,15 +5235,8 @@ async function requestStructuredMemory(compiledScene, profile, lorebookName, sum
             defaultMemoryCount: Math.max(0, Math.min(7, Number(summaryCount ?? 0))),
         },
     };
-    const prepared = await prepareStmbMemoryMessages({
-        lorebookName,
-        storage: getLorebookStorageForRequest(lorebookName),
-        compiledScene,
-        profile,
-        stmbSettings: requestSettings,
-    }, { signal });
-
-    let promptText = String(prepared.promptText || '');
+    const worldInfo = await loadWorldInfo(lorebookName) || { entries: {} };
+    let promptText = buildMemoryPromptText(compiledScene, profile, worldInfo, requestSettings);
     if (getModuleSettings().useRegex) {
         promptText = applySelectedRegex(promptText, getModuleSettings().selectedRegexOutgoing);
     }
@@ -5552,144 +5526,6 @@ function shouldQueueAutoConsolidationCheck(settings, targetTier = 1) {
     return configuredTargetTiers.includes(Math.min(6, Math.max(1, Math.trunc(Number(targetTier) || 1))));
 }
 
-function buildQueuedConsolidationCheckJob(lorebookName, settings, options = {}) {
-    const targetTier = Math.min(6, Math.max(1, Math.trunc(Number(options.targetTier) || 1)));
-    return {
-        kind: 'consolidationCheck',
-        key: `consolidationCheck:${targetTier}`,
-        dependsOn: ['memoryCommit'],
-        dedupeKey: `consolidation:${getStmbChatKey(options.sceneContext || buildStmbSceneContext())}:${String(lorebookName || '')}:${targetTier}:${Number(options.range?.sceneEnd ?? -1)}`,
-        payload: {
-            lorebookName,
-            storage: getLorebookStorageForRequest(lorebookName),
-            targetTier,
-            requiredMin: normalizeSummaryMinChildren(
-                settings?.moduleSettings?.summaryTierMinimums?.[targetTier],
-                getDefaultSummaryMinChildren(targetTier),
-            ),
-        },
-    };
-}
-
-async function buildQueuedMemoryWaveJobs(compiledScene, range, lorebookName, profile, summaryCount, options = {}) {
-    const requestSettings = {
-        ...stmbSettings,
-        moduleSettings: {
-            ...(stmbSettings.moduleSettings || {}),
-            defaultMemoryCount: Math.max(0, Math.min(7, Number(summaryCount ?? 0))),
-        },
-    };
-    const prepared = await prepareStmbMemoryMessages({
-        lorebookName,
-        storage: getLorebookStorageForRequest(lorebookName),
-        compiledScene,
-        profile,
-        stmbSettings: requestSettings,
-    });
-
-    let promptText = String(prepared.promptText || '');
-    const regexConfig = buildPlannerRegexConfig();
-    if (regexConfig.enabled) {
-        promptText = applyRegexScriptSnapshots(promptText, regexConfig.outgoingScripts);
-    }
-
-    const { generateData } = await buildOpenAIGenerateData(
-        'quiet',
-        [{ role: 'user', content: promptText }],
-        regexConfig.enabled ? {} : { jsonSchema: getMemorySchema() },
-    );
-    const sceneData = buildMemorySceneData(compiledScene, range, requestSettings);
-    const chatKey = getStmbChatKey(options.sceneContext || buildStmbSceneContext());
-    const baseDedupeKey = `memory:${chatKey}:${range.sceneStart}:${range.sceneEnd}:${String(lorebookName || '')}`;
-    const sharedPayload = {
-        range: structuredClone(range),
-        lorebookName,
-        storage: getLorebookStorageForRequest(lorebookName),
-        profile: structuredClone(profile || {}),
-        compiledScene: structuredClone(compiledScene),
-        sceneSaveContext: structuredClone(sceneData),
-        sceneData: structuredClone(sceneData),
-        keepSceneMarkers: options.keepSceneMarkers === true,
-        autoClearSceneAfterMemory: requestSettings?.moduleSettings?.autoClearSceneAfterMemory !== false,
-        regexConfig: structuredClone(regexConfig),
-    };
-
-    const jobs = [
-        {
-            kind: 'memoryGenerate',
-            key: 'memoryGenerate',
-            phase: 'generate',
-            dedupeKey: `${baseDedupeKey}:generate`,
-            payload: {
-                ...sharedPayload,
-                generateData: applyStmbMaxTokensToGenerateData(
-                    applyStmbProfileToGenerateData(generateData, profile, getStmbProviderDefaults()),
-                    requestSettings?.moduleSettings?.maxTokens,
-                ),
-            },
-        },
-        {
-            kind: 'memoryApproval',
-            key: 'memoryApproval',
-            phase: 'approval',
-            dependsOn: ['memoryGenerate'],
-            dedupeKey: `${baseDedupeKey}:approval`,
-            payload: {
-                range: structuredClone(range),
-                profile: structuredClone(profile || {}),
-                sceneData: structuredClone(sceneData),
-                previewRequired: requestSettings?.moduleSettings?.showMemoryPreviews === true,
-            },
-        },
-        {
-            kind: 'memoryCommit',
-            key: 'memoryCommit',
-            phase: 'commit',
-            dependsOn: ['memoryApproval'],
-            dedupeKey: `${baseDedupeKey}:commit`,
-            payload: sharedPayload,
-        },
-    ];
-
-    const autoHideMode = String(requestSettings?.moduleSettings?.autoHideMode || 'none').toLowerCase();
-    if (autoHideMode !== 'none') {
-        jobs.push({
-            kind: 'chatAutoHide',
-            key: 'chatAutoHide',
-            phase: 'post_commit',
-            dependsOn: ['memoryCommit'],
-            dedupeKey: `${baseDedupeKey}:autohide`,
-            payload: {
-                range: structuredClone(range),
-                mode: autoHideMode,
-                unhiddenCount: Number.isFinite(Number(requestSettings?.moduleSettings?.unhiddenEntriesCount))
-                    ? Math.max(0, Math.trunc(Number(requestSettings.moduleSettings.unhiddenEntriesCount)))
-                    : 2,
-            },
-        });
-    }
-
-    const afterMemoryJobs = await buildQueuedAfterMemorySidePromptJobs({
-        lorebookName,
-        compiledScene,
-        settings: requestSettings,
-        profile,
-        sceneContext: options.sceneContext,
-        dependsOn: ['memoryCommit'],
-    });
-    jobs.push(...afterMemoryJobs);
-
-    if (shouldQueueAutoConsolidationCheck(requestSettings, 1)) {
-        jobs.push(buildQueuedConsolidationCheckJob(lorebookName, requestSettings, {
-            targetTier: 1,
-            range,
-            sceneContext: options.sceneContext,
-        }));
-    }
-
-    return jobs;
-}
-
 async function applyPostSaveLorebookEffects(lorebookName, range) {
     if (getModuleSettings().refreshEditor !== false) {
         try {
@@ -5812,7 +5648,7 @@ async function maybePreviewMemory(memoryObject, compiledScene, range, profile) {
     return memoryObject;
 }
 
-async function saveMemoryObjectToLorebook(memoryObject, { lorebookName, range, compiledScene, profile, keepSceneMarkers = false, signal = null }) {
+async function saveMemoryObjectToLorebook(memoryObject, { lorebookName, range, compiledScene, profile, keepSceneMarkers = false, signal = null, showSuccessToast = true }) {
     throwIfStmbAborted(signal);
     const result = await saveStmbMemoryEntry({
         lorebookName,
@@ -5831,7 +5667,7 @@ async function saveMemoryObjectToLorebook(memoryObject, { lorebookName, range, c
         clearSceneMarkers();
     }
 
-    if (getModuleSettings().showNotifications) {
+    if (showSuccessToast && getModuleSettings().showNotifications) {
         toastr.success(`Memory saved to "${lorebookName}"`, 'STMB');
     }
 
@@ -6079,7 +5915,11 @@ async function applyManualFixedMemoryJson(correctedRaw, context) {
             });
 
             try {
-                await runAfterMemory(context.compiledScene, stmbSettings, context.profile, { signal: task.signal });
+                await enqueueAfterMemorySidePromptJobs(context.compiledScene, stmbSettings, context.profile, {
+                    lorebookName: context.lorebookName,
+                    range: context.range,
+                    signal: task.signal,
+                });
             } catch (error) {
                 if (!isStmbAbortError(error)) {
                     console.warn('STMB side prompts after manual repair failed', error);
@@ -6102,6 +5942,7 @@ async function commitSummaryCandidates(summaryCandidates, {
     migrated = false,
     disableOriginals = false,
     summaryEntrySettings = null,
+    showSuccessToast = true,
     signal = null,
 }) {
     throwIfStmbAborted(signal);
@@ -6121,7 +5962,7 @@ async function commitSummaryCandidates(summaryCandidates, {
     await applyPostSummarySaveLorebookEffects(lorebookName);
     showOrderClampNotifications(result?.orderClampNotifications);
 
-    if (getModuleSettings().showNotifications) {
+    if (showSuccessToast && getModuleSettings().showNotifications) {
         toastr.success(
             `${getSummaryTierLabel(normalizedTargetTier)} summary saved to "${lorebookName}"`,
             'STMB',
@@ -6132,6 +5973,116 @@ async function commitSummaryCandidates(summaryCandidates, {
     lastFailedSummaryContext = null;
 
     return createdEntries;
+}
+
+function buildMemoryRequestSettings(summaryCount = 0) {
+    return {
+        ...stmbSettings,
+        moduleSettings: {
+            ...(stmbSettings.moduleSettings || {}),
+            defaultMemoryCount: Math.max(0, Math.min(7, Number(summaryCount ?? 0))),
+        },
+    };
+}
+
+async function executeMemoryJob(job, context) {
+    const payload = job?.payload || {};
+    const range = job?.range || payload.range || null;
+    const lorebookName = String(job?.lorebookName || payload.lorebookName || '').trim();
+    const requestSettings = buildMemoryRequestSettings(payload.summaryCount);
+    const profile = payload.profile ? structuredClone(payload.profile) : getActiveStmbProfile(stmbSettings, job?.profileIndex ?? null);
+
+    if (!Number.isInteger(Number(range?.sceneStart)) || !Number.isInteger(Number(range?.sceneEnd))) {
+        throw new Error('Memory job is missing a valid scene range.');
+    }
+    if (!lorebookName) {
+        throw new Error('Memory job is missing a lorebook.');
+    }
+
+    context.setState('capturing_scene', {
+        detail: `Messages ${range.sceneStart}-${range.sceneEnd}`,
+    });
+    const sceneCapture = payload.compiledScene
+        ? { compiledScene: structuredClone(payload.compiledScene) }
+        : await captureStmbSceneRange(range, {
+            skipSystemMessages: !requestSettings.moduleSettings?.unhideBeforeMemory,
+            sceneContext: job?.sceneContext || buildStmbSceneContext(),
+        });
+    const compiledScene = sceneCapture?.compiledScene;
+
+    if (!requestSettings.moduleSettings?.allowSceneOverlap) {
+        const lorebookData = await loadWorldInfo(lorebookName) || { entries: {} };
+        if (!lorebookData.entries || typeof lorebookData.entries !== 'object') {
+            lorebookData.entries = {};
+        }
+
+        const overlappingMemory = findOverlappingManagedMemoryEntry(lorebookData.entries, range);
+        if (overlappingMemory) {
+            const existingRange = overlappingMemory.range;
+            throw new Error(`Scene overlaps with existing memory: "${overlappingMemory.title}" (messages ${existingRange.start}-${existingRange.end})`);
+        }
+    }
+
+    for (;;) {
+        context.setState('assembling_prompt', { detail: profile?.name || 'Memory' });
+        context.setState('generating', { detail: profile?.name || 'Memory' });
+        let memoryCandidate = await requestStructuredMemory(
+            compiledScene,
+            profile,
+            lorebookName,
+            payload.summaryCount,
+            context.signal,
+        );
+
+        if (requestSettings.moduleSettings?.showMemoryPreviews) {
+            context.setState('awaiting_approval', { detail: `Messages ${range.sceneStart}-${range.sceneEnd}` });
+            const maybeEdited = await maybePreviewMemory(memoryCandidate, compiledScene, range, profile);
+            if (maybeEdited === null) {
+                context.patch({ state: 'canceled', detail: 'Canceled in approval' });
+                return;
+            }
+            if (maybeEdited === 'retry') {
+                continue;
+            }
+            memoryCandidate = maybeEdited;
+        }
+
+        context.setState('saving', { detail: lorebookName });
+        const saved = await saveMemoryObjectToLorebook(memoryCandidate, {
+            lorebookName,
+            range,
+            compiledScene,
+            profile,
+            keepSceneMarkers: Boolean(payload.keepSceneMarkers),
+            signal: context.signal,
+            showSuccessToast: false,
+        });
+        context.setResult({
+            lorebookName,
+            memory: saved?.memory || memoryCandidate,
+            entry: saved?.entry || null,
+        });
+
+        throwIfStmbAborted(context.signal);
+        context.setState('post_save', { detail: 'Running post-save actions' });
+        await enqueueAfterMemorySidePromptJobs(compiledScene, requestSettings, profile, {
+            lorebookName,
+            range,
+            sceneContext: job?.sceneContext || buildStmbSceneContext(),
+            signal: context.signal,
+        });
+        await maybePromptAutoConsolidation(1);
+        return;
+    }
+}
+
+function ensureStmbJobExecutorsRegistered() {
+    if (stmbJobExecutorsRegistered) {
+        return;
+    }
+    registerStmbJobExecutor('memory', executeMemoryJob);
+    registerStmbJobExecutor('consolidation', executeConsolidationJob);
+    stmbJobExecutorsRegistered = true;
 }
 
 async function executeMemoryCreationFromRange(range, options = {}) {
@@ -6169,17 +6120,25 @@ async function executeMemoryCreationFromRange(range, options = {}) {
     if (!effectiveSettings) {
         return null;
     }
-    const profile = effectiveSettings.profileSettings;
-    const jobs = await buildQueuedMemoryWaveJobs(compiledScene, range, lorebookName, profile, effectiveSettings.summaryCount, {
-        keepSceneMarkers: options.keepSceneMarkers,
+    ensureStmbJobExecutorsRegistered();
+    enqueueStmbJob({
+        type: 'memory',
+        range,
+        lorebookName,
+        profileIndex: options.profileIndex ?? null,
         sceneContext,
+        characterName: compiledScene?.metadata?.characterName || '',
+        chatTitle: compiledScene?.metadata?.chatId || '',
+        payload: {
+            compiledScene,
+            range,
+            lorebookName,
+            profile: effectiveSettings.profileSettings,
+            summaryCount: effectiveSettings.summaryCount,
+            keepSceneMarkers: Boolean(options.keepSceneMarkers),
+            source: options.source || 'memory',
+        },
     });
-    await enqueueDurableWave(
-        sceneContext,
-        jobs,
-        options.source || 'memory',
-        `Queued memory workflow for messages ${range.sceneStart}-${range.sceneEnd}.`,
-    );
     return {
         queued: true,
         range,
@@ -6201,7 +6160,7 @@ async function initiateMemoryCreation(options = {}) {
         return null;
     }
 
-    if (hasActiveStmbTasks()) {
+    if (hasActiveStmbTasks() || hasActiveStmbJobs(getStmbChatKey(sceneContext))) {
         if (notifyIfBusy) {
             toastr.info('Memory creation is already in progress', 'STMB');
         }
@@ -6217,11 +6176,11 @@ async function initiateMemoryCreation(options = {}) {
 }
 
 export async function createSummaryForTier(targetTier, options = {}) {
+    const normalizedTargetTier = Math.min(6, Math.max(1, Math.trunc(Number(targetTier) || 1)));
     if (hasActiveStmbTasks()) {
         throw new Error('STMB generation is already in progress');
     }
 
-    const normalizedTargetTier = Math.min(6, Math.max(1, Math.trunc(Number(targetTier) || 1)));
     const lorebookName = await ensureLorebookName();
     const lorebookData = await loadWorldInfo(lorebookName) || { entries: {} };
     if (!lorebookData.entries || typeof lorebookData.entries !== 'object') {
@@ -6258,14 +6217,131 @@ export async function createSummaryForTier(targetTier, options = {}) {
         options.summaryEntrySettings || getModuleSettings().summaryEntrySettings || {},
         getModuleSettings().summaryEntrySettings || {},
     );
-    const { signal, cleanup } = installAbortHook();
-    try {
-        const analysisResult = await runSequentialSummaryAnalysis(sourceEntries, {
+    ensureStmbJobExecutorsRegistered();
+    enqueueStmbJob({
+        type: 'consolidation',
+        lorebookName,
+        sceneContext: buildStmbSceneContext(),
+        characterName: name2 || '',
+        chatTitle: getCurrentChatId() || '',
+        title: getSummaryTierLabel(normalizedTargetTier),
+        detail: `${getSummaryTierLabel(getSourceTierForTarget(normalizedTargetTier))} -> ${getSummaryTierLabel(normalizedTargetTier)}`,
+        payload: {
+            lorebookName,
+            normalizedTargetTier,
+            selectedEntryIds,
+            requiredMin: requiredMinimum,
+            profileIndex: options.profileIndex ?? null,
             presetKey,
             maxItemsPerPass: Math.max(1, Math.trunc(Number(options.maxItemsPerPass) || 15)),
             maxPasses: Math.max(1, Math.trunc(Number(options.maxPasses) || 10)),
-            requiredMin: requiredMinimum,
             tokenTarget: Math.max(1000, Math.trunc(Number(options.tokenTarget) || (getModuleSettings().tokenWarningThreshold ?? 30000))),
+            disableOriginals: Boolean(options.disableOriginals),
+            summaryEntrySettings: chosenSummaryEntrySettings,
+            titleFormat: typeof options.titleFormat === 'string' && options.titleFormat.trim()
+                ? options.titleFormat
+                : getDefaultSummaryTitleFormat(normalizedTargetTier),
+        },
+    });
+    return {
+        queued: true,
+        lorebookName,
+        targetTier: normalizedTargetTier,
+    };
+}
+
+function buildSummaryRepairHandler(contextBase = {}) {
+    return async correctedRaw => {
+        const repairTask = createStmbTask('STMB:summary-manual-repair');
+        try {
+            const context = {
+                ...contextBase,
+                ...(lastFailedSummaryContext || {}),
+            };
+            const freshLorebookData = await loadWorldInfo(context.lorebookName) || { entries: {} };
+            if (!freshLorebookData.entries || typeof freshLorebookData.entries !== 'object') {
+                freshLorebookData.entries = {};
+            }
+            const freshMigrated = migrateLorebookSummarySchema(freshLorebookData);
+            const freshSourceEntries = resolveSelectedSummarySourceEntries(
+                freshLorebookData.entries,
+                context.normalizedTargetTier,
+                context.selectedEntryIds ?? null,
+            );
+            const correctedParsed = parseSummaryJsonResponse(correctedRaw);
+            const { summaryCandidates } = createSummaryCandidatesFromResponse(correctedParsed, freshSourceEntries);
+            if (summaryCandidates.length === 0) {
+                throw new Error(`Model did not return a usable ${getSummaryTierLabel(context.normalizedTargetTier).toLowerCase()} summary`);
+            }
+            await commitSummaryCandidates(summaryCandidates, {
+                normalizedTargetTier: context.normalizedTargetTier,
+                lorebookName: context.lorebookName,
+                titleFormat: context.titleFormat,
+                migrated: freshMigrated,
+                disableOriginals: Boolean(context.disableOriginals),
+                summaryEntrySettings: normalizeLorebookEntrySettings(
+                    context.summaryEntrySettings || getModuleSettings().summaryEntrySettings || {},
+                    getModuleSettings().summaryEntrySettings || {},
+                ),
+                signal: repairTask.signal,
+            });
+            clearAutoConsolidationPromptState(context.normalizedTargetTier);
+            if (context.normalizedTargetTier < 6) {
+                await maybePromptAutoConsolidation(context.normalizedTargetTier + 1);
+            }
+            return true;
+        } finally {
+            repairTask.cleanup();
+        }
+    };
+}
+
+async function runSummaryConsolidationNow(payload = {}, signal = null) {
+    const normalizedTargetTier = Math.min(6, Math.max(1, Math.trunc(Number(payload.normalizedTargetTier || payload.targetTier) || 1)));
+    const lorebookName = String(payload.lorebookName || '').trim() || await ensureLorebookName();
+    const lorebookData = await loadWorldInfo(lorebookName) || { entries: {} };
+    if (!lorebookData.entries || typeof lorebookData.entries !== 'object') {
+        lorebookData.entries = {};
+    }
+
+    const migrated = migrateLorebookSummarySchema(lorebookData);
+    const selectedEntryIds = Array.isArray(payload.selectedEntryIds)
+        ? payload.selectedEntryIds.map(value => String(value))
+        : null;
+    const sourceEntries = resolveSelectedSummarySourceEntries(
+        lorebookData.entries,
+        normalizedTargetTier,
+        selectedEntryIds,
+    );
+    const configuredMinimum = getModuleSettings().summaryTierMinimums?.[normalizedTargetTier];
+    const requiredMinimum = normalizeSummaryMinChildren(
+        payload.requiredMin,
+        configuredMinimum ?? getDefaultSummaryMinChildren(normalizedTargetTier),
+    );
+    if (sourceEntries.length < requiredMinimum) {
+        throw new Error(
+            `Not enough ${getSummaryTierLabel(normalizedTargetTier - 1).toLowerCase()} entries to create a ${getSummaryTierLabel(normalizedTargetTier).toLowerCase()} summary (${sourceEntries.length}/${requiredMinimum})`,
+        );
+    }
+
+    const existingSummaries = identifyManagedSummaryEntries(lorebookData.entries, normalizedTargetTier);
+    const previousSummary = existingSummaries.at(-1) || null;
+    const profile = getActiveStmbProfile(stmbSettings, payload.profileIndex ?? null);
+    const chosenSummaryEntrySettings = normalizeLorebookEntrySettings(
+        payload.summaryEntrySettings || getModuleSettings().summaryEntrySettings || {},
+        getModuleSettings().summaryEntrySettings || {},
+    );
+    const titleFormat = typeof payload.titleFormat === 'string' && payload.titleFormat.trim()
+        ? payload.titleFormat
+        : getDefaultSummaryTitleFormat(normalizedTargetTier);
+
+    try {
+        const analysisResult = await runSequentialSummaryAnalysis(sourceEntries, {
+            presetKey: typeof payload.presetKey === 'string' && payload.presetKey.trim() ? payload.presetKey.trim() : 'arc_default',
+            maxItemsPerPass: Math.max(1, Math.trunc(Number(payload.maxItemsPerPass) || 15)),
+            maxPasses: Math.max(1, Math.trunc(Number(payload.maxPasses) || 10)),
+            requiredMin: requiredMinimum,
+            tokenTarget: Math.max(1000, Math.trunc(Number(payload.tokenTarget) || (getModuleSettings().tokenWarningThreshold ?? 30000))),
             targetTier: normalizedTargetTier,
             previousSummary: previousSummary?.content || null,
             previousOrder: previousSummary ? (parseSequenceFromTitle(previousSummary.comment || '') ?? null) : null,
@@ -6280,16 +6356,14 @@ export async function createSummaryForTier(targetTier, options = {}) {
             throw emptyError;
         }
 
-        const titleFormat = typeof options.titleFormat === 'string' && options.titleFormat.trim()
-            ? options.titleFormat
-            : getDefaultSummaryTitleFormat(normalizedTargetTier);
         const createdEntries = await commitSummaryCandidates(summaryCandidates, {
             normalizedTargetTier,
             lorebookName,
             titleFormat,
             migrated,
-            disableOriginals: Boolean(options.disableOriginals),
+            disableOriginals: Boolean(payload.disableOriginals),
             summaryEntrySettings: chosenSummaryEntrySettings,
+            showSuccessToast: false,
             signal,
         });
 
@@ -6307,78 +6381,36 @@ export async function createSummaryForTier(targetTier, options = {}) {
         };
     } catch (error) {
         if (!isStmbAbortError(error) && error?.rawResponse) {
-            const titleFormat = typeof options.titleFormat === 'string' && options.titleFormat.trim()
-                ? options.titleFormat
-                : getDefaultSummaryTitleFormat(normalizedTargetTier);
             lastFailedSummaryError = error;
             lastFailedSummaryContext = {
                 lorebookName,
                 normalizedTargetTier,
                 titleFormat,
-                disableOriginals: Boolean(options.disableOriginals),
+                disableOriginals: Boolean(payload.disableOriginals),
                 selectedEntryIds,
                 summaryEntrySettings: chosenSummaryEntrySettings,
-                maxItemsPerPass: Math.max(1, Math.trunc(Number(options.maxItemsPerPass) || 15)),
-                maxPasses: Math.max(1, Math.trunc(Number(options.maxPasses) || 10)),
-                tokenTarget: Math.max(1000, Math.trunc(Number(options.tokenTarget) || (getModuleSettings().tokenWarningThreshold ?? 30000))),
+                maxItemsPerPass: Math.max(1, Math.trunc(Number(payload.maxItemsPerPass) || 15)),
+                maxPasses: Math.max(1, Math.trunc(Number(payload.maxPasses) || 10)),
+                tokenTarget: Math.max(1000, Math.trunc(Number(payload.tokenTarget) || (getModuleSettings().tokenWarningThreshold ?? 30000))),
             };
             showFailedSummaryResponsePopup(error, {
-                onApply: async correctedRaw => {
-                    const repairTask = createStmbTask('STMB:summary-manual-repair');
-                    try {
-                        const context = lastFailedSummaryContext || {
-                            lorebookName,
-                            normalizedTargetTier,
-                            titleFormat,
-                            disableOriginals: Boolean(options.disableOriginals),
-                            selectedEntryIds,
-                            summaryEntrySettings: chosenSummaryEntrySettings,
-                            maxItemsPerPass: Math.max(1, Math.trunc(Number(options.maxItemsPerPass) || 15)),
-                            maxPasses: Math.max(1, Math.trunc(Number(options.maxPasses) || 10)),
-                            tokenTarget: Math.max(1000, Math.trunc(Number(options.tokenTarget) || (getModuleSettings().tokenWarningThreshold ?? 30000))),
-                        };
-                        const freshLorebookData = await loadWorldInfo(context.lorebookName) || { entries: {} };
-                        if (!freshLorebookData.entries || typeof freshLorebookData.entries !== 'object') {
-                            freshLorebookData.entries = {};
-                        }
-                        const freshMigrated = migrateLorebookSummarySchema(freshLorebookData);
-                        const freshSourceEntries = resolveSelectedSummarySourceEntries(
-                            freshLorebookData.entries,
-                            context.normalizedTargetTier,
-                            context.selectedEntryIds ?? null,
-                        );
-                        const correctedParsed = parseSummaryJsonResponse(correctedRaw);
-                        const { summaryCandidates } = createSummaryCandidatesFromResponse(correctedParsed, freshSourceEntries);
-                        if (summaryCandidates.length === 0) {
-                            throw new Error(`Model did not return a usable ${getSummaryTierLabel(context.normalizedTargetTier).toLowerCase()} summary`);
-                        }
-                        await commitSummaryCandidates(summaryCandidates, {
-                            normalizedTargetTier: context.normalizedTargetTier,
-                            lorebookName: context.lorebookName,
-                            titleFormat: context.titleFormat,
-                            migrated: freshMigrated,
-                            disableOriginals: Boolean(context.disableOriginals),
-                            summaryEntrySettings: normalizeLorebookEntrySettings(
-                                context.summaryEntrySettings || getModuleSettings().summaryEntrySettings || {},
-                                getModuleSettings().summaryEntrySettings || {},
-                            ),
-                            signal: repairTask.signal,
-                        });
-                        clearAutoConsolidationPromptState(context.normalizedTargetTier);
-                        if (context.normalizedTargetTier < 6) {
-                            await maybePromptAutoConsolidation(context.normalizedTargetTier + 1);
-                        }
-                        return true;
-                    } finally {
-                        repairTask.cleanup();
-                    }
-                },
+                onApply: buildSummaryRepairHandler(lastFailedSummaryContext),
             });
         }
         throw error;
-    } finally {
-        cleanup();
     }
+}
+
+async function executeConsolidationJob(job, context) {
+    const payload = job?.payload || {};
+    const normalizedTargetTier = Math.min(6, Math.max(1, Math.trunc(Number(payload.normalizedTargetTier || payload.targetTier) || 1)));
+    context.setState('assembling_prompt', {
+        detail: `${getSummaryTierLabel(getSourceTierForTarget(normalizedTargetTier))} -> ${getSummaryTierLabel(normalizedTargetTier)}`,
+    });
+    context.setState('generating', { detail: getSummaryTierLabel(normalizedTargetTier) });
+    const result = await runSummaryConsolidationNow(payload, context.signal);
+    context.setState('saving', { detail: payload.lorebookName || job?.lorebookName || '' });
+    context.setResult(result);
 }
 
 function showSlashCommandError(message, error) {
@@ -6454,7 +6486,7 @@ function flushPassiveStmbChecks(savedChat = {}) {
         return;
     }
 
-    if (hasActiveStmbTasks()) {
+    if (hasActiveStmbTasks() || hasActiveStmbJobs(chatKey)) {
         return;
     }
 
@@ -6539,7 +6571,7 @@ async function sceneMemoryCommand(_, rangeText) {
 
 async function nextMemoryCommand() {
     try {
-        if (hasActiveStmbTasks()) {
+        if (hasActiveStmbTasks() || hasActiveStmbJobs(getStmbChatKey(buildStmbSceneContext()))) {
             toastr.info('Memory creation is already in progress', 'STMB');
             return '';
         }
@@ -6631,9 +6663,9 @@ async function sidePromptOffCommand(_, rawInput) {
 }
 
 async function getHighestProcessedCommand() {
-    const result = await getStmbPlannerChatState({ sceneContext: buildStmbSceneContext() });
-    const highestProcessed = Number.isInteger(result?.state?.highestMemoryProcessed)
-        ? result.state.highestMemoryProcessed
+    const state = getStmbState();
+    const highestProcessed = Number.isInteger(state?.highestMemoryProcessed)
+        ? state.highestMemoryProcessed
         : null;
     return String(highestProcessed);
 }
@@ -6649,13 +6681,7 @@ async function setHighestProcessedCommand(_, value) {
     if (input === 'none') {
         delete getStmbState().highestMemoryProcessed;
         delete getStmbState().highestMemoryProcessedManuallySet;
-        await updateStmbPlannerChatState({
-            sceneContext: buildStmbSceneContext(),
-            patch: {
-                highestMemoryProcessed: null,
-                highestMemoryProcessedManuallySet: null,
-            },
-        });
+        saveMetadataDebounced();
         await refreshOpenSettingsPopupSceneState();
         toastr.success('Last processed message cleared (no memories processed).', 'STMB');
         return '';
@@ -6703,13 +6729,7 @@ async function setHighestProcessedCommand(_, value) {
     const state = getStmbState();
     state.highestMemoryProcessed = clamped;
     state.highestMemoryProcessedManuallySet = true;
-    await updateStmbPlannerChatState({
-        sceneContext: buildStmbSceneContext(),
-        patch: {
-            highestMemoryProcessed: clamped,
-            highestMemoryProcessedManuallySet: true,
-        },
-    });
+    saveMetadataDebounced();
     await refreshOpenSettingsPopupSceneState();
     toastr.success(`Last processed message manually set to #${clamped}.`, 'STMB');
 
@@ -6719,13 +6739,7 @@ async function setHighestProcessedCommand(_, value) {
 async function stopStmbCommand() {
     const before = getActiveStmbTaskCount();
     const { stoppedCount } = stopAllStmbTasks();
-    let canceledPlannerJobs = 0;
-    try {
-        const cancelResult = await cancelStmbPlannerJobs({ all: true });
-        canceledPlannerJobs = Number(cancelResult?.canceled || 0);
-    } catch (error) {
-        console.warn('STMB planner cancel failed', error);
-    }
+    const canceledJobs = cancelAllStmbJobs();
     if (stoppedCount > 0 || before > 0) {
         try {
             toastr.clear();
@@ -6738,8 +6752,8 @@ async function stopStmbCommand() {
         activeRootTask = null;
     }
 
-    const message = stoppedCount > 0 || before > 0 || canceledPlannerJobs > 0
-        ? `STMB generation manually stopped by user.${canceledPlannerJobs > 0 ? ` Canceled ${canceledPlannerJobs} queued job${canceledPlannerJobs === 1 ? '' : 's'}.` : ''}`
+    const message = stoppedCount > 0 || before > 0 || canceledJobs > 0
+        ? `STMB generation manually stopped by user.${canceledJobs > 0 ? ` Canceled ${canceledJobs} job${canceledJobs === 1 ? '' : 's'}.` : ''}`
         : 'STMB stop issued, but no generation is in progress.';
     toastr.info(message, 'STMB');
     console.log(`STMemoryBooks: ${message}`);
@@ -6884,9 +6898,8 @@ export function initStmb() {
     refreshSidePromptCache().catch(error => {
         console.warn('STMB side prompt cache refresh failed during init', error);
     });
-    pollCurrentChatPlannerState().catch(error => {
-        console.warn('STMB planner initial poll failed', error);
-    });
+    ensureStmbJobExecutorsRegistered();
+    initStmbJobsUi();
     setTimeout(() => {
         validateSceneMarkers();
         renderAllSceneButtons();
@@ -6897,12 +6910,7 @@ export function initStmb() {
             validateSceneMarkers();
             renderAllSceneButtons();
         }, 0);
-        syncCurrentChatPlannerState().catch(error => {
-            console.warn('STMB planner chat sync failed after chat change', error);
-        });
-        pollCurrentChatPlannerState().catch(error => {
-            console.warn('STMB planner poll failed after chat change', error);
-        });
+        initStmbJobsUi();
     });
 
     eventSource.on(event_types.MESSAGE_RECEIVED, (messageId) => {
@@ -6910,7 +6918,7 @@ export function initStmb() {
         if (messageElement) {
             renderSceneButtonsForMessage(messageElement);
         }
-        if (hasActiveStmbTasks()) {
+        if (hasActiveStmbTasks() || hasActiveStmbJobs(getStmbChatKey(buildStmbSceneContext()))) {
             return;
         }
         const sceneContext = buildStmbSceneContext();
@@ -6922,7 +6930,7 @@ export function initStmb() {
         if (messageElement) {
             renderSceneButtonsForMessage(messageElement);
         }
-        if (hasActiveStmbTasks()) {
+        if (hasActiveStmbTasks() || hasActiveStmbJobs(getStmbChatKey(buildStmbSceneContext()))) {
             return;
         }
         const sceneContext = buildStmbSceneContext();
@@ -6949,7 +6957,7 @@ export function initStmb() {
     });
 
     eventSource.on(event_types.GROUP_WRAPPER_FINISHED, () => {
-        if (hasActiveStmbTasks()) {
+        if (hasActiveStmbTasks() || hasActiveStmbJobs(getStmbChatKey(buildStmbSceneContext()))) {
             return;
         }
         const sceneContext = buildStmbSceneContext();
