@@ -1130,11 +1130,18 @@ async function populateTopChatSidebar() {
         return;
     }
 
+    if (sidebar.dataset.sidebarMode && sidebar.dataset.sidebarMode !== 'chat') {
+        loader.classList.add('displayNone');
+        return;
+    }
+
     if (!sidebar.classList.contains('visible')) {
         container.innerHTML = '';
         loader.classList.add('displayNone');
         return;
     }
+
+    sidebar.dataset.sidebarMode = 'chat';
 
     const processToken = uuidv4();
     topChatSidebarPopulateToken = processToken;
@@ -1231,16 +1238,23 @@ async function populateTopChatSidebar() {
     loader.classList.add('displayNone');
 }
 
-async function toggleTopChatSidebar(forceVisible = undefined, { animate = true, save = true } = {}) {
+export async function toggleTopChatSidebar(forceVisible = undefined, { animate = true, save = true } = {}) {
     const sidebar = ensureTopChatSidebar();
     if (!sidebar) {
         return;
     }
 
-    const shouldShow = typeof forceVisible === 'boolean' ? forceVisible : !sidebar.classList.contains('visible');
+    const shouldSwitchFromAlternateMode = typeof forceVisible !== 'boolean'
+        && sidebar.classList.contains('visible')
+        && sidebar.dataset.sidebarMode
+        && sidebar.dataset.sidebarMode !== 'chat';
+    const shouldShow = typeof forceVisible === 'boolean'
+        ? forceVisible
+        : (shouldSwitchFromAlternateMode ? true : !sidebar.classList.contains('visible'));
     topChatButtons.toggleSidebar?.classList.toggle('active', shouldShow);
 
     if (shouldShow) {
+        sidebar.dataset.sidebarMode = 'chat';
         sidebar.classList.add('visible');
         if (animate) {
             $(sidebar).stop(true, true).fadeIn(animation_duration);
@@ -1250,6 +1264,7 @@ async function toggleTopChatSidebar(forceVisible = undefined, { animate = true, 
         await populateTopChatSidebar();
     } else {
         sidebar.classList.remove('visible');
+        delete sidebar.dataset.sidebarMode;
         if (animate) {
             $(sidebar).stop(true, true).fadeOut(animation_duration);
         } else {

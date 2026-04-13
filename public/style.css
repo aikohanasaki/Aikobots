@@ -900,13 +900,6 @@ body.movingUI #top_chat_bar {
     pointer-events: none;
 }
 
-.stmb-planner-status-topbar {
-    position: relative;
-    display: flex;
-    flex: 0 0 auto;
-    align-items: center;
-}
-
 .stmb-planner-status-button {
     appearance: none;
     -webkit-appearance: none;
@@ -928,12 +921,17 @@ body.movingUI #top_chat_bar {
     line-height: 1;
 }
 
+.stmb-planner-status-icon {
+    display: inline-block;
+    line-height: 1;
+}
+
 .stmb-planner-status-button.stmb-planner-status-attention {
     color: var(--SmartThemeEmColor);
 }
 
 .stmb-planner-status-button.stmb-planner-status-failed {
-    color: var(--SmartThemeRedColor);
+    color: var(--SmartThemeRedColor, #ff6b6b);
 }
 
 .stmb-planner-status-button:hover,
@@ -970,86 +968,6 @@ body.movingUI #top_chat_bar {
 
 .stmb-planner-status-badge.stmb-planner-status-badge-failed {
     background: var(--SmartThemeRedColor, #ff6b6b);
-}
-
-.stmb-planner-status-panel {
-    position: absolute;
-    top: calc(100% + 8px);
-    right: 0;
-    z-index: 3105;
-    width: min(420px, 92vw);
-    max-height: min(65vh, 680px);
-    overflow: auto;
-    padding: 12px;
-    border: 1px solid var(--SmartThemeBorderColor, rgba(255, 255, 255, 0.12));
-    border-radius: 12px;
-    background:
-        linear-gradient(rgb(0 0 0 / 0.42), rgb(0 0 0 / 0.42)),
-        var(--SmartThemeBlurTintColor, rgba(24, 24, 28, 0.96));
-    box-shadow: 0 16px 32px rgba(0, 0, 0, 0.28);
-    backdrop-filter: blur(calc(var(--SmartThemeBlurStrength) * 1.5));
-    -webkit-backdrop-filter: blur(calc(var(--SmartThemeBlurStrength) * 1.5));
-}
-
-.stmb-planner-status-panel-header,
-.stmb-planner-status-actions,
-.stmb-planner-status-row-header {
-    display: flex;
-}
-
-.stmb-planner-status-panel-header {
-    flex-direction: column;
-}
-
-.stmb-planner-status-summary,
-.stmb-planner-status-row-meta,
-.stmb-planner-status-row-error,
-.stmb-planner-status-empty {
-    font-size: 12px;
-}
-
-.stmb-planner-status-summary,
-.stmb-planner-status-row-meta {
-    opacity: 0.82;
-}
-
-.stmb-planner-status-actions {
-    gap: 8px;
-    margin: 12px 0;
-    flex-wrap: wrap;
-    align-items: center;
-}
-
-.stmb-planner-status-rows {
-    display: flex;
-    flex-direction: column;
-    gap: 8px;
-}
-
-.stmb-planner-status-row {
-    padding: 10px;
-    border-radius: 10px;
-    border: 1px solid transparent;
-    background: rgba(255, 255, 255, 0.03);
-}
-
-.stmb-planner-status-row-header {
-    align-items: center;
-    gap: 8px;
-    margin-bottom: 4px;
-}
-
-.stmb-planner-status-dot {
-    width: 10px;
-    height: 10px;
-    border-radius: 999px;
-    display: inline-block;
-    background: currentColor;
-}
-
-.stmb-planner-status-row-error {
-    margin-top: 4px;
-    color: var(--SmartThemeRedColor, #ff6b6b);
 }
 
 .stmb-planner-status-tone-running {
@@ -1358,6 +1276,53 @@ body .panelControlBar {
     opacity: 0.7;
     font-size: calc(var(--mainFontSize) * 0.9);
     padding: 8px 10px;
+}
+
+.stmb-top-chat-summary {
+    padding-bottom: 4px;
+}
+
+.stmb-top-chat-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    padding: 0 4px 8px;
+}
+
+.stmb-top-chat-actions .menu_button {
+    margin: 0;
+}
+
+.stmb-top-chat-item {
+    gap: 4px;
+}
+
+.stmb-top-chat-item .top_chat_sidebar_message {
+    white-space: normal;
+}
+
+.stmb-top-chat-status,
+.stmb-top-chat-meta {
+    font-size: calc(var(--mainFontSize) * 0.8);
+    opacity: 0.82;
+    white-space: nowrap;
+}
+
+.stmb-top-chat-item.stmb-planner-status-tone-running {
+    background: color-mix(in srgb, var(--SmartThemeQuoteColor) 10%, transparent);
+}
+
+.stmb-top-chat-item.stmb-planner-status-tone-awaiting {
+    background: color-mix(in srgb, var(--SmartThemeEmColor) 16%, transparent);
+}
+
+.stmb-top-chat-item.stmb-planner-status-tone-completed {
+    background: color-mix(in srgb, var(--SmartThemeGreenColor) 10%, transparent);
+}
+
+.stmb-top-chat-item.stmb-planner-status-tone-failed,
+.stmb-top-chat-item.stmb-planner-status-tone-canceled {
+    background: color-mix(in srgb, var(--SmartThemeRedColor) 10%, transparent);
 }
 
 /* #send_form.no-connection {

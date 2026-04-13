@@ -15,6 +15,7 @@ import {
     saveSettingsDebounced,
     substituteParams,
     substituteParamsExtended,
+    toggleTopChatSidebar,
 } from '../script.js';
 import { DOMPurify } from '../lib.js';
 import { getContext, saveMetadataDebounced } from './extensions.js';
@@ -166,11 +167,6 @@ let latestPlannerJobs = [];
 let plannerStatusUiInitialized = false;
 let plannerStatusButton = null;
 let plannerStatusBadge = null;
-let plannerStatusPanel = null;
-let plannerStatusSummary = null;
-let plannerStatusRows = null;
-let plannerStatusActions = null;
-let plannerStatusPanelOpen = false;
 const dismissedPlannerNotificationIds = new Set();
 
 const DURABLE_SYNC_STATE_KEYS = [
@@ -445,133 +441,175 @@ function getPlannerJobsForUi(jobs = latestPlannerJobs) {
     return [...activeJobs, ...recentTerminalJobs].slice(0, PLANNER_UI_MAX_ROWS);
 }
 
-function renderPlannerStatusRows(jobs = latestPlannerJobs) {
-    if (!plannerStatusRows) {
-        return;
-    }
-
-    const rows = getPlannerJobsForUi(jobs);
-    if (rows.length === 0) {
-        plannerStatusRows.innerHTML = '<div class="stmb-planner-status-empty">No Memory Books jobs yet.</div>';
-        return;
-    }
-
-    plannerStatusRows.innerHTML = rows.map(job => {
-        const metaParts = [
-            getPlannerStatusLabel(job),
-            getPlannerJobChatLabel(job),
-        ];
-        const lorebookName = getPlannerJobLorebookName(job);
-        if (lorebookName) {
-            metaParts.push(`Lorebook: ${lorebookName}`);
-        }
-        const elapsed = formatPlannerElapsed(job);
-        if (elapsed) {
-            metaParts.push(elapsed);
-        }
-
-        const detail = String(job?.error?.message || '').trim();
-
-        return `
-            <div class="stmb-planner-status-row ${getPlannerStatusTone(job)}">
-                <div class="stmb-planner-status-row-header">
-                    <span class="stmb-planner-status-dot"></span>
-                    <strong>${escapeHtml(getPlannerJobLabel(job))}</strong>
-                </div>
-                <div class="stmb-planner-status-row-meta">${escapeHtml(metaParts.join(' | '))}</div>
-                ${detail ? `<div class="stmb-planner-status-row-error">${escapeHtml(detail)}</div>` : ''}
-            </div>
-        `;
-    }).join('');
+function getSharedSidebarElements() {
+    const sidebar = document.getElementById('top_chat_sidebar');
+    const container = document.getElementById('top_chat_sidebar_container');
+    const loader = document.getElementById('top_chat_sidebar_loader');
+    const title = sidebar?.querySelector('.dragTitle') || null;
+    const chatButton = document.getElementById('top_chat_bar_toggle_sidebar');
+    const plannerButton = document.getElementById('top_chat_bar_toggle_stmb_sidebar');
+    const plannerIcon = plannerButton?.querySelector('.stmb-planner-status-icon') || null;
+    return { sidebar, container, loader, title, chatButton, plannerButton, plannerIcon };
 }
 
-function renderPlannerStatusUi() {
-    if (!plannerStatusUiInitialized || !plannerStatusButton || !plannerStatusSummary || !plannerStatusRows || !plannerStatusActions) {
+function isPlannerSidebarVisible() {
+    const { sidebar } = getSharedSidebarElements();
+    return Boolean(sidebar?.classList.contains('visible') && sidebar?.dataset?.sidebarMode === 'stmb');
+}
+
+function ensurePlannerStatusBadge(button) {
+    let badge = button?.querySelector('.stmb-planner-status-badge');
+    if (badge instanceof HTMLElement) {
+        return badge;
+    }
+
+    badge = document.createElement('span');
+    badge.className = 'stmb-planner-status-badge';
+    badge.hidden = true;
+    button?.appendChild(badge);
+    return badge;
+}
+
+function syncPlannerToggleButton() {
+    const { chatButton, plannerButton, plannerIcon } = getSharedSidebarElements();
+    if (!(plannerButton instanceof HTMLElement)) {
         return;
     }
 
     const visibleJobs = getPlannerJobsForNotifications(latestPlannerJobs);
     const summary = summarizePlannerJobs(visibleJobs);
     const badgeCount = summary.active > 0 ? summary.active : summary.recentFailures;
-    const tooltip = summary.awaitingApproval > 0
-        ? `${summary.awaitingApproval} Memory Books job${summary.awaitingApproval === 1 ? '' : 's'} awaiting approval`
-        : summary.active > 0
-            ? `${summary.active} Memory Books job${summary.active === 1 ? '' : 's'} active`
-            : summary.recentFailures > 0
-                ? `${summary.recentFailures} recent Memory Books failure${summary.recentFailures === 1 ? '' : 's'}`
-                : 'Memory Books queue';
+    const plannerVisible = isPlannerSidebarVisible();
+    const chatVisible = Boolean(chatButton instanceof HTMLElement
+        && getSharedSidebarElements().sidebar?.classList.contains('visible')
+        && getSharedSidebarElements().sidebar?.dataset?.sidebarMode === 'chat');
 
-    plannerStatusButton.title = tooltip;
-    plannerStatusButton.classList.toggle('active', summary.active > 0);
-    plannerStatusButton.classList.toggle('stmb-planner-status-attention', summary.awaitingApproval > 0);
-    plannerStatusButton.classList.toggle('stmb-planner-status-failed', summary.active === 0 && summary.recentFailures > 0);
+    plannerButton.className = 'top_chat_bar_button stmb-planner-status-button';
+    plannerButton.title = plannerVisible ? 'Close Memory Books sidebar' : 'Open Memory Books sidebar';
+    plannerButton.classList.toggle('active', plannerVisible);
+    plannerButton.classList.toggle('stmb-planner-status-attention', summary.awaitingApproval > 0);
+    plannerButton.classList.toggle('stmb-planner-status-failed', summary.active === 0 && summary.recentFailures > 0);
+    if (plannerIcon instanceof HTMLElement) {
+        plannerIcon.className = 'fa-fw fa-solid fa-book stmb-planner-status-icon';
+    }
 
+    if (chatButton instanceof HTMLElement) {
+        chatButton.classList.toggle('active', chatVisible);
+    }
+
+    plannerStatusButton = plannerButton;
+    plannerStatusBadge = ensurePlannerStatusBadge(plannerButton);
     plannerStatusBadge.hidden = badgeCount <= 0;
     plannerStatusBadge.textContent = badgeCount > 0 ? String(badgeCount) : '';
     plannerStatusBadge.classList.toggle('stmb-planner-status-badge-failed', summary.active === 0 && summary.recentFailures > 0);
     plannerStatusBadge.classList.toggle('stmb-planner-status-badge-attention', summary.awaitingApproval > 0);
+}
 
-    plannerStatusSummary.textContent = summary.active > 0
+function addPlannerNotificationDismissals() {
+    for (const job of latestPlannerJobs) {
+        if (isPlannerJobTerminal(job)) {
+            const jobId = String(job?.id || '');
+            if (jobId) {
+                dismissedPlannerNotificationIds.add(jobId);
+            }
+        }
+    }
+}
+
+function buildPlannerSidebarActionButton(label, action, disabled = false) {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'menu_button';
+    button.dataset.action = action;
+    button.textContent = label;
+    if (disabled) {
+        button.disabled = true;
+        button.classList.add('disabled');
+    }
+    return button;
+}
+
+function createPlannerSidebarJobItem(job) {
+    const item = document.createElement('div');
+    item.className = `top_chat_sidebar_item stmb-top-chat-item ${getPlannerStatusTone(job)}`.trim();
+
+    const nameRow = document.createElement('div');
+    nameRow.className = 'top_chat_sidebar_name_row';
+
+    const name = document.createElement('div');
+    name.className = 'top_chat_sidebar_name';
+    name.textContent = getPlannerJobLabel(job);
+    name.title = getPlannerJobLabel(job);
+
+    const status = document.createElement('small');
+    status.className = 'stmb-top-chat-status';
+    status.textContent = getPlannerStatusLabel(job);
+
+    nameRow.append(name, status);
+
+    const messageRow = document.createElement('div');
+    messageRow.className = 'top_chat_sidebar_message_row';
+
+    const message = document.createElement('div');
+    message.className = 'top_chat_sidebar_message';
+    const lorebookName = getPlannerJobLorebookName(job);
+    const baseDetail = String(job?.error?.message || '').trim()
+        || [getPlannerJobChatLabel(job), lorebookName ? `Lorebook: ${lorebookName}` : ''].filter(Boolean).join(' | ');
+    message.textContent = baseDetail || 'No additional detail.';
+    message.title = baseDetail || 'No additional detail.';
+
+    const stats = document.createElement('div');
+    stats.className = 'top_chat_sidebar_stats';
+
+    const meta = document.createElement('small');
+    meta.className = 'stmb-top-chat-meta';
+    meta.textContent = [getPlannerJobChatLabel(job), formatPlannerElapsed(job)].filter(Boolean).join(' | ');
+
+    stats.append(meta);
+    messageRow.append(message, stats);
+
+    item.append(nameRow, messageRow);
+    return item;
+}
+
+function renderPlannerSidebarContent() {
+    const { sidebar, container, loader, title } = getSharedSidebarElements();
+    if (!(sidebar instanceof HTMLElement) || !(container instanceof HTMLElement) || !(loader instanceof HTMLElement) || !(title instanceof HTMLElement)) {
+        return;
+    }
+
+    if (!isPlannerSidebarVisible()) {
+        return;
+    }
+
+    const visibleJobs = getPlannerJobsForNotifications(latestPlannerJobs);
+    const summary = summarizePlannerJobs(visibleJobs);
+    const previousScrollTop = container.scrollTop;
+    const rows = getPlannerJobsForUi(visibleJobs);
+
+    sidebar.dataset.sidebarMode = 'stmb';
+    title.textContent = 'Memory Books';
+    container.innerHTML = '';
+    loader.classList.add('displayNone');
+
+    const summaryBlock = document.createElement('div');
+    summaryBlock.className = 'top_chat_sidebar_empty stmb-top-chat-summary';
+    summaryBlock.textContent = summary.active > 0
         ? `${summary.running} running | ${summary.queued} queued${summary.awaitingApproval > 0 ? ` | ${summary.awaitingApproval} awaiting approval` : ''}`
         : (summary.recentTerminal > 0
             ? `${summary.recentTerminal} recent job${summary.recentTerminal === 1 ? '' : 's'}`
-            : 'No active jobs.');
+            : 'No Memory Books jobs yet.');
+    container.append(summaryBlock);
 
-    plannerStatusActions.innerHTML = `
-        <button type="button" class="menu_button" data-action="open-memory-books">Open Memory Books</button>
-        <button type="button" class="menu_button${summary.active > 0 ? '' : ' disabled'}" data-action="stop-all"${summary.active > 0 ? '' : ' disabled'}>Stop All</button>
-        <button type="button" class="menu_button${summary.recentTerminal > 0 ? '' : ' disabled'}" data-action="clear-notifications"${summary.recentTerminal > 0 ? '' : ' disabled'}>Clear Notifications</button>
-        <button type="button" class="menu_button" data-action="refresh-jobs">Refresh</button>
-    `;
-
-    plannerStatusPanel.hidden = !plannerStatusPanelOpen;
-    renderPlannerStatusRows(visibleJobs);
-}
-
-function handlePlannerStatusButtonClick() {
-    plannerStatusPanelOpen = !plannerStatusPanelOpen;
-    renderPlannerStatusUi();
-}
-
-function ensurePlannerStatusUi() {
-    if (plannerStatusUiInitialized) {
-        renderPlannerStatusUi();
-        return;
-    }
-
-    const topChatBar = document.getElementById('top_chat_bar') || document.getElementById('top-bar');
-    if (!topChatBar) {
-        setTimeout(() => ensurePlannerStatusUi(), 250);
-        return;
-    }
-
-    const wrapper = document.createElement('div');
-    wrapper.className = 'stmb-planner-status-topbar';
-    wrapper.innerHTML = `
-        <button id="stmb-planner-status-button" type="button" class="top_chat_bar_button stmb-planner-status-button" title="Memory Books queue">
-            <span class="fa-solid fa-book"></span>
-            <span id="stmb-planner-status-badge" class="stmb-planner-status-badge" hidden></span>
-        </button>
-        <div id="stmb-planner-status-panel" class="stmb-planner-status-panel" hidden>
-            <div class="stmb-planner-status-panel-header">
-                <strong>Memory Books Queue</strong>
-                <div id="stmb-planner-status-summary" class="stmb-planner-status-summary">No active jobs.</div>
-            </div>
-            <div id="stmb-planner-status-actions" class="stmb-planner-status-actions"></div>
-            <div id="stmb-planner-status-rows" class="stmb-planner-status-rows"></div>
-        </div>
-    `;
-    topChatBar.appendChild(wrapper);
-
-    plannerStatusButton = wrapper.querySelector('#stmb-planner-status-button');
-    plannerStatusBadge = wrapper.querySelector('#stmb-planner-status-badge');
-    plannerStatusPanel = wrapper.querySelector('#stmb-planner-status-panel');
-    plannerStatusSummary = wrapper.querySelector('#stmb-planner-status-summary');
-    plannerStatusRows = wrapper.querySelector('#stmb-planner-status-rows');
-    plannerStatusActions = wrapper.querySelector('#stmb-planner-status-actions');
-
-    plannerStatusButton.addEventListener('click', handlePlannerStatusButtonClick);
-    plannerStatusActions.addEventListener('click', event => {
+    const actions = document.createElement('div');
+    actions.className = 'stmb-top-chat-actions';
+    actions.append(
+        buildPlannerSidebarActionButton('Open Memory Books', 'open-memory-books'),
+        buildPlannerSidebarActionButton('Stop All', 'stop-all', summary.active === 0),
+        buildPlannerSidebarActionButton('Clear Notifications', 'clear-notifications', summary.recentTerminal === 0),
+        buildPlannerSidebarActionButton('Refresh', 'refresh-jobs'),
+    );
+    actions.addEventListener('click', event => {
         const actionButton = event.target.closest('[data-action]');
         if (!(actionButton instanceof HTMLElement) || actionButton.hasAttribute('disabled')) {
             return;
@@ -580,48 +618,130 @@ function ensurePlannerStatusUi() {
         const action = String(actionButton.dataset.action || '');
         if (action === 'open-memory-books') {
             showMainEntryPopup().catch(error => {
-                console.warn('STMB main entry popup failed from planner status UI', error);
+                console.warn('STMB main entry popup failed from shared sidebar', error);
             });
-            plannerStatusPanelOpen = false;
-            renderPlannerStatusUi();
             return;
         }
 
         if (action === 'stop-all') {
             stopStmbCommand().catch(error => {
-                console.warn('STMB stop-all from planner status UI failed', error);
+                console.warn('STMB stop-all from shared sidebar failed', error);
             });
             return;
         }
 
         if (action === 'clear-notifications') {
-            for (const job of latestPlannerJobs) {
-                if (isPlannerJobTerminal(job)) {
-                    const jobId = String(job?.id || '');
-                    if (jobId) {
-                        dismissedPlannerNotificationIds.add(jobId);
-                    }
-                }
-            }
+            addPlannerNotificationDismissals();
             renderPlannerStatusUi();
             return;
         }
 
         if (action === 'refresh-jobs') {
             pollCurrentChatPlannerState().catch(error => {
-                console.warn('STMB planner refresh failed from planner status UI', error);
+                console.warn('STMB planner refresh failed from shared sidebar', error);
             });
         }
     });
+    container.append(actions);
 
-    document.addEventListener('click', event => {
-        if (!plannerStatusPanelOpen || wrapper.contains(event.target)) {
-            return;
+    if (rows.length === 0) {
+        const empty = document.createElement('div');
+        empty.className = 'top_chat_sidebar_empty';
+        empty.textContent = 'No queued, running, or recent Memory Books jobs.';
+        container.append(empty);
+    } else {
+        for (const job of rows) {
+            container.append(createPlannerSidebarJobItem(job));
         }
+    }
 
-        plannerStatusPanelOpen = false;
-        renderPlannerStatusUi();
+    container.scrollTop = previousScrollTop;
+}
+
+async function openPlannerSidebar() {
+    await toggleTopChatSidebar(true);
+    const { sidebar } = getSharedSidebarElements();
+    if (!(sidebar instanceof HTMLElement)) {
+        return;
+    }
+
+    sidebar.dataset.sidebarMode = 'stmb';
+    renderPlannerStatusUi();
+}
+
+async function openChatSidebar() {
+    const { sidebar } = getSharedSidebarElements();
+    if (sidebar instanceof HTMLElement) {
+        sidebar.dataset.sidebarMode = 'chat';
+    }
+    await toggleTopChatSidebar(true);
+    renderPlannerStatusUi();
+}
+
+function handlePlannerSidebarButtonInteraction(event) {
+    const shouldInterceptKeydown = event.type === 'keydown'
+        && !(event.key === 'Enter' || event.key === ' ');
+    if (shouldInterceptKeydown) {
+        return;
+    }
+
+    if (event.type === 'keydown') {
+        event.preventDefault();
+    }
+
+    if (isPlannerSidebarVisible()) {
+        event.preventDefault();
+        openTopChatSidebarClosed().catch(error => {
+            console.warn('Top sidebar close from Memory Books failed', error);
+        });
+        return;
+    }
+
+    event.preventDefault();
+    openPlannerSidebar().catch(error => {
+        console.warn('Top sidebar switch to Memory Books failed', error);
     });
+}
+
+async function openTopChatSidebarClosed() {
+    const { sidebar } = getSharedSidebarElements();
+    if (sidebar instanceof HTMLElement) {
+        delete sidebar.dataset.sidebarMode;
+    }
+    await toggleTopChatSidebar(false);
+    renderPlannerStatusUi();
+}
+
+function renderPlannerStatusUi() {
+    if (!plannerStatusUiInitialized) {
+        return;
+    }
+
+    syncPlannerToggleButton();
+    renderPlannerSidebarContent();
+}
+
+function ensurePlannerStatusUi() {
+    if (plannerStatusUiInitialized) {
+        renderPlannerStatusUi();
+        return;
+    }
+
+    const { chatButton, plannerButton, sidebar } = getSharedSidebarElements();
+    if (!(chatButton instanceof HTMLElement) || !(plannerButton instanceof HTMLElement)) {
+        setTimeout(() => ensurePlannerStatusUi(), 250);
+        return;
+    }
+
+    plannerButton.addEventListener('click', handlePlannerSidebarButtonInteraction);
+    plannerButton.addEventListener('keydown', handlePlannerSidebarButtonInteraction);
+
+    if (sidebar instanceof HTMLElement) {
+        const observer = new MutationObserver(() => {
+            renderPlannerStatusUi();
+        });
+        observer.observe(sidebar, { attributes: true, attributeFilter: ['class', 'data-sidebar-mode'] });
+    }
 
     eventSource.on(event_types.CHAT_CHANGED, () => {
         renderPlannerStatusUi();
