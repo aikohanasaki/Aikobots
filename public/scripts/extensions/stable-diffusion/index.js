@@ -2997,11 +2997,13 @@ async function sendGenerationRequest(generationType, prompt, additionalNegativeP
     }
 
     const filename = `${characterName}_${humanizedDateTime()}`;
-    const base64Image = await saveBase64AsFile(result.data, characterName, filename, result.format);
+    const generatedMedia = isVideo(result.format)
+        ? await saveBase64AsFile(result.data, characterName, filename, result.format)
+        : `data:image/${result.format === 'jpg' ? 'jpeg' : result.format};base64,${result.data}`;
     callback
-        ? await callback(prompt, base64Image, generationType, additionalNegativePrefix, initiator, prefixedPrompt, result.format)
-        : await sendMessage(prompt, base64Image, generationType, additionalNegativePrefix, initiator, prefixedPrompt, result.format);
-    return base64Image;
+        ? await callback(prompt, generatedMedia, generationType, additionalNegativePrefix, initiator, prefixedPrompt, result.format)
+        : await sendMessage(prompt, generatedMedia, generationType, additionalNegativePrefix, initiator, prefixedPrompt, result.format);
+    return generatedMedia;
 }
 
 /**
@@ -4172,15 +4174,26 @@ async function sendMessage(prompt, image, generationType, additionalNegativePref
     const template = extension_settings.sd.prompts[generationMode.MESSAGE] || '{{prompt}}';
     const messageText = substituteParamsExtended(template, { char: name, prompt: prompt, prefixedPrompt: prefixedPrompt });
     const mediaType = isVideo(format) ? MEDIA_TYPE.VIDEO : MEDIA_TYPE.IMAGE;
+    const { createImageAttachmentFromUrl } = await import('../../chats.js');
     /** @type {MediaAttachment} */
-    const mediaAttachment = {
-        url: image,
-        type: mediaType,
-        title: prompt,
-        generation_type: generationType,
-        negative: additionalNegativePrefix,
-        source: MEDIA_SOURCE.GENERATED,
-    };
+    const mediaAttachment = mediaType === MEDIA_TYPE.IMAGE
+        ? await createImageAttachmentFromUrl(image, {
+            title: prompt,
+            source: MEDIA_SOURCE.GENERATED,
+            unavailableOnFailure: true,
+        })
+        : {
+            url: image,
+            type: mediaType,
+            title: prompt,
+            source: MEDIA_SOURCE.GENERATED,
+        };
+    if (!mediaAttachment) {
+        return;
+    }
+    mediaAttachment.type = mediaType;
+    mediaAttachment.generation_type = generationType;
+    mediaAttachment.negative = additionalNegativePrefix;
     /** @type {ChatMessage} */
     const message = {
         name: name,
@@ -4485,6 +4498,23 @@ async function generateMediaSwipe(mediaAttachment, message, onStart, onComplete,
 
     if (!result.url) {
         return null;
+    }
+
+    if (result.type === MEDIA_TYPE.IMAGE) {
+        const { createImageAttachmentFromUrl } = await import('../../chats.js');
+        const ingestedAttachment = await createImageAttachmentFromUrl(result.url, {
+            title: result.title || '',
+            source: MEDIA_SOURCE.GENERATED,
+            unavailableOnFailure: true,
+        });
+        if (!ingestedAttachment) {
+            return null;
+        }
+        ingestedAttachment.type = MEDIA_TYPE.IMAGE;
+        ingestedAttachment.generation_type = result.generation_type;
+        ingestedAttachment.title = result.title;
+        ingestedAttachment.negative = result.negative;
+        return ingestedAttachment;
     }
 
     return result;

@@ -63,10 +63,14 @@ declare global {
     type MediaAttachment = MediaAttachmentProps & ImageGenerationAttachmentProps & ImageCaptionAttachmentProps;
 
     interface MediaAttachmentProps {
-        url: string;
+        url?: string;
+        mediaId?: string;
         title?: string;
         type: string;
         source?: string;
+        status?: 'ready' | 'unavailable';
+        error?: string;
+        originalUrl?: string;
     }
 
     interface ImageGenerationAttachmentProps {

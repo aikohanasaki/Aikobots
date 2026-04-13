@@ -1,4 +1,4 @@
-import { ensureImageFormatSupported, getBase64Async, getFileExtension, isTrueBoolean, saveBase64AsFile } from '../../utils.js';
+import { ensureImageFormatSupported, getBase64Async, isTrueBoolean } from '../../utils.js';
 import { getContext, getApiUrl, doExtrasFetch, extension_settings, modules, renderExtensionTemplateAsync } from '../../extensions.js';
 import { appendMediaToMessage, chat_metadata, eventSource, event_types, getRequestHeaders, saveChatConditional, saveSettingsDebounced, substituteParamsExtended } from '../../../script.js';
 import { getMessageTimeStamp } from '../../RossAscends-mods.js';
@@ -174,23 +174,26 @@ async function captionExistingMessage(message, mediaIndex) {
 /**
  * Sends a captioned message to the chat.
  * @param {string} caption Caption text
- * @param {string} image Image URL
+ * @param {string} image Image source
  * @param {string} mimeType Image MIME type
  * @returns {Promise<void>}
  */
 async function sendCaptionedMessage(caption, image, mimeType) {
     const messageText = await wrapCaptionTemplate(caption);
+    const { createImageAttachmentFromUrl } = await import('../../chats.js');
+    const mediaAttachment = await createImageAttachmentFromUrl(image, {
+        title: messageText,
+        source: MEDIA_SOURCE.CAPTIONED,
+        unavailableOnFailure: true,
+    });
+    if (!mediaAttachment) {
+        return;
+    }
+
+    mediaAttachment.type = MEDIA_TYPE.getFromMime(mimeType) || MEDIA_TYPE.IMAGE;
+    mediaAttachment.captioned = true;
 
     const context = getContext();
-
-    /** @type {MediaAttachment} */
-    const mediaAttachment = {
-        url: image,
-        type: MEDIA_TYPE.getFromMime(mimeType) || MEDIA_TYPE.IMAGE,
-        title: messageText,
-        captioned: true,
-        source: MEDIA_SOURCE.CAPTIONED,
-    };
     /** @type {ChatMessage} */
     const message = {
         name: context.name1,
@@ -365,14 +368,11 @@ async function getCaptionForFile(file, prompt, quiet) {
         }
 
         setSpinnerIcon();
-        const context = getContext();
         const fileData = await getBase64Async(await ensureImageFormatSupported(file));
-        const extension = getFileExtension(file);
         const base64Data = fileData.split(',')[1];
         const { caption } = await doCaptionRequest(base64Data, fileData, prompt);
         if (!quiet) {
-            const imagePath = await saveBase64AsFile(base64Data, context.name2, '', extension);
-            await sendCaptionedMessage(caption, imagePath, file.type);
+            await sendCaptionedMessage(caption, fileData, file.type);
         }
         return caption;
     }
