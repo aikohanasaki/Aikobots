@@ -63,6 +63,23 @@ function getStmbChatState() {
     return metadata[STMB_METADATA_KEY];
 }
 
+function getHighestProcessedMessageBaseline() {
+    const highestProcessed = Number(getStmbChatState()?.highestMemoryProcessed);
+    return Number.isFinite(highestProcessed) ? Math.trunc(highestProcessed) : -1;
+}
+
+function resolveSidePromptCheckpoint(templateKey, existingEntry, options = {}) {
+    const checkpoint = readSidePromptCheckpoint(templateKey, existingEntry, options);
+    if (checkpoint.lastMsgId >= 0) {
+        return checkpoint;
+    }
+
+    return {
+        ...checkpoint,
+        lastMsgId: getHighestProcessedMessageBaseline(),
+    };
+}
+
 function resolveLorebookName(settings) {
     const moduleSettings = settings?.moduleSettings || {};
     if (moduleSettings.manualModeEnabled) {
@@ -70,6 +87,14 @@ function resolveLorebookName(settings) {
         return manualLorebook;
     }
     return String(chat_metadata[METADATA_KEY] || '').trim();
+}
+
+function resolveSidePromptMaxConcurrent(settings) {
+    const parsed = Number(settings?.moduleSettings?.sidePromptsMaxConcurrent ?? 2);
+    if (!Number.isFinite(parsed)) {
+        return 2;
+    }
+    return Math.max(1, Math.min(5, Math.trunc(parsed)));
 }
 
 function renderLorebookNameFromTemplate(settings) {
@@ -414,31 +439,50 @@ export async function buildQueuedAfterMemorySidePromptJobs({
         return [];
     }
 
+    const maxConcurrent = resolveSidePromptMaxConcurrent(settings);
     const checkpointTimestamp = new Date().toISOString();
     const jobs = [];
-    for (const template of templates) {
-        const workflowJobs = await buildQueuedSidePromptWorkflowJobs({
-            template,
+
+    for (let index = 0; index < templates.length; index += maxConcurrent) {
+        const waveTemplates = templates.slice(index, index + maxConcurrent);
+        jobs.push({
+            type: 'sidePromptBatch',
+            range: range ? structuredClone(range) : (compiledScene?.metadata
+                ? {
+                    sceneStart: compiledScene.metadata.sceneStart,
+                    sceneEnd: compiledScene.metadata.sceneEnd,
+                }
+                : null),
             lorebookName,
-            compiledScene,
-            range,
-            settings,
-            profile,
-            fallbackKinds: ['plotpoints', 'scoreboard'],
-            trigger: 'onAfterMemory',
-            metadataUpdates: buildSidePromptCheckpointMetadata(template.key, {
-                lastRunAt: checkpointTimestamp,
-                includeLastMsgId: false,
-                includeTrackerFallback: false,
-            }),
-            commitCheckpoint: {
-                templateKey: template.key,
-                includeLastMsgId: false,
-                includeTrackerFallback: false,
+            sceneContext: sceneContext ? structuredClone(sceneContext) : structuredClone(buildStmbSceneContext()),
+            title: waveTemplates.length === 1
+                ? String(waveTemplates[0]?.name || 'Side Prompt')
+                : `Side Prompt Wave (${waveTemplates.length})`,
+            payload: {
+                lorebookName,
+                compiledScene: compiledScene ? structuredClone(compiledScene) : null,
+                range: range ? structuredClone(range) : null,
+                settings: settings ? structuredClone(settings) : null,
+                profile: profile ? structuredClone(profile) : null,
+                trigger: 'onAfterMemory',
+                templates: waveTemplates.map(template => ({
+                    templateKey: String(template?.key || ''),
+                    templateName: String(template?.name || ''),
+                    runtimeMacros: {},
+                    fallbackKinds: ['plotpoints', 'scoreboard'],
+                    metadataUpdates: buildSidePromptCheckpointMetadata(template.key, {
+                        lastRunAt: checkpointTimestamp,
+                        includeLastMsgId: false,
+                        includeTrackerFallback: false,
+                    }),
+                    commitCheckpoint: {
+                        templateKey: template.key,
+                        includeLastMsgId: false,
+                        includeTrackerFallback: false,
+                    },
+                })),
             },
-            sceneContext,
         });
-        jobs.push(...workflowJobs);
     }
 
     return jobs;
@@ -663,7 +707,7 @@ export async function evaluateTrackers(settings, options = {}) {
             throwIfStmbAborted(signal);
             const lookupTitles = getSidePromptLookupTitles(template, {}, ['tracker']);
             const existing = findFirstLorebookEntryByTitle(lorebookData, lookupTitles);
-            const checkpoint = readSidePromptCheckpoint(template.key, existing);
+            const checkpoint = resolveSidePromptCheckpoint(template.key, existing);
             const lastMessageId = checkpoint.lastMsgId;
             const lastRunAt = checkpoint.lastRunAt;
             if (lastRunAt && Date.now() - lastRunAt < 10000) {
@@ -838,7 +882,7 @@ export async function runSidePrompt(rawInput, settings, options = {}) {
                 lorebookData,
                 getSidePromptLookupTitles(template, parsed.runtimeMacros, ['scoreboard', 'plotpoints', 'tracker']),
             );
-            const checkpoint = readSidePromptCheckpoint(template.key, existing, { includeLegacyScore: true });
+            const checkpoint = resolveSidePromptCheckpoint(template.key, existing, { includeLegacyScore: true });
             const lastMessageId = checkpoint.lastMsgId;
             const sceneStart = Math.max(0, lastMessageId + 1);
             const boundedStart = Math.max(sceneStart, currentLast - 199);
@@ -1008,6 +1052,215 @@ async function executeSidePromptJob(job, context) {
     });
 }
 
+async function executeSidePromptBatchJob(job, context) {
+    const payload = job?.payload || {};
+    const settings = payload.settings || null;
+    const signal = context.signal;
+    const templateInputs = Array.isArray(payload.templates) ? payload.templates : [];
+
+    if (templateInputs.length === 0) {
+        throw new Error('SidePrompt batch job is missing templates.');
+    }
+
+    context.setState('capturing_scene', { detail: getRangeLabelForJob(job) });
+    let compiledScene = payload.compiledScene ? structuredClone(payload.compiledScene) : null;
+    if (!compiledScene) {
+        const range = payload.range || job?.range || null;
+        if (!Number.isInteger(Number(range?.sceneStart)) || !Number.isInteger(Number(range?.sceneEnd))) {
+            throw new Error('SidePrompt batch job is missing a valid message range.');
+        }
+        compiledScene = await compileRange(
+            Number(range.sceneStart),
+            Number(range.sceneEnd),
+            settings,
+            { saveFirst: false, sceneContext: job?.sceneContext || null },
+        );
+    }
+
+    const lorebookName = String(payload.lorebookName || job?.lorebookName || '').trim();
+    if (!lorebookName) {
+        throw new Error('SidePrompt batch job is missing a lorebook.');
+    }
+
+    const lorebookData = await loadWorldInfo(lorebookName) || { entries: {} };
+    if (!lorebookData.entries || typeof lorebookData.entries !== 'object') {
+        lorebookData.entries = {};
+    }
+
+    context.setState('assembling_prompt', {
+        detail: templateInputs.length === 1 ? '1 side prompt' : `${templateInputs.length} side prompts`,
+    });
+
+    let completionOrder = 0;
+    context.setState('generating', {
+        detail: templateInputs.length === 1 ? '1 side prompt' : `${templateInputs.length} side prompts`,
+    });
+    const generationResults = await Promise.all(templateInputs.map(async input => {
+        const template = input?.templateKey
+            ? await getTemplate(input.templateKey)
+            : await findTemplateByName(input?.templateName || '');
+        if (!template) {
+            return {
+                ok: false,
+                error: new Error(`SidePrompt template "${input?.templateName || input?.templateKey || 'unknown'}" not found.`),
+                templateName: String(input?.templateName || input?.templateKey || 'Unknown'),
+                completedOrder: completionOrder++,
+            };
+        }
+
+        try {
+            const prepared = await prepareSidePromptRun({
+                template,
+                lorebookName,
+                lorebookData,
+                compiledScene,
+                settings,
+                profile: payload.profile || null,
+                runtimeMacros: input?.runtimeMacros || {},
+                fallbackKinds: input?.fallbackKinds || [],
+                signal,
+            });
+            const resultText = await runSidePromptAttempt({
+                template,
+                taskLabel: `SidePrompt:${payload.trigger || 'batch'}:${getSidePromptTaskKey(template)}`,
+                finalPrompt: prepared.finalPrompt,
+                settings,
+                profile: prepared.profile,
+                signal,
+            });
+            return {
+                ok: true,
+                template,
+                input,
+                prepared,
+                resultText,
+                completedOrder: completionOrder++,
+            };
+        } catch (error) {
+            if (isStmbAbortError(error)) {
+                throw error;
+            }
+            return {
+                ok: false,
+                error,
+                template,
+                input,
+                templateName: String(template?.name || input?.templateName || input?.templateKey || 'Unknown'),
+                completedOrder: completionOrder++,
+            };
+        }
+    }));
+
+    generationResults.sort((left, right) => left.completedOrder - right.completedOrder);
+
+    const batchItems = [];
+    const failures = [];
+    const canceled = [];
+
+    for (const generationResult of generationResults) {
+        if (!generationResult.ok) {
+            failures.push({
+                templateName: generationResult.templateName,
+                message: String(generationResult.error?.message || 'Unknown side prompt failure'),
+            });
+            continue;
+        }
+
+        const { template, input, prepared } = generationResult;
+        let resultText = generationResult.resultText;
+        if (!ensureSidePromptTextNotBlank(resultText, template, payload.trigger || 'batch')) {
+            failures.push({
+                templateName: String(template?.name || 'Unknown'),
+                message: 'SidePrompt returned blank content.',
+            });
+            continue;
+        }
+
+        if (settings?.moduleSettings?.showMemoryPreviews) {
+            context.setState('awaiting_approval', { detail: template?.name || 'Side Prompt' });
+            const previewResult = await resolveSidePromptPreview({
+                template,
+                unifiedTitle: prepared.unifiedTitle,
+                initialText: resultText,
+                finalPrompt: prepared.finalPrompt,
+                settings,
+                profile: prepared.profile,
+                compiledScene,
+                signal,
+                queuePreview: true,
+                retryTaskLabel: `SidePrompt:${payload.trigger || 'batch'}:retry:${getSidePromptTaskKey(template)}`,
+            });
+            if (previewResult?.blank) {
+                failures.push({
+                    templateName: String(template?.name || 'Unknown'),
+                    message: 'SidePrompt returned blank content.',
+                });
+                continue;
+            }
+            if (!previewResult?.approved) {
+                canceled.push(String(template?.name || 'Unknown'));
+                continue;
+            }
+            resultText = String(previewResult.text ?? resultText);
+        }
+
+        const lorebookSettings = getEffectiveLorebookSettingsForTemplate(template);
+        const { defaults, entryOverrides } = makeUpsertParamsFromLorebook(lorebookSettings, input?.runtimeMacros || {});
+        batchItems.push({
+            title: prepared.unifiedTitle,
+            content: resultText,
+            defaults,
+            metadataUpdates: input?.metadataUpdates || {},
+            entryOverrides,
+            templateName: String(template?.name || 'Unknown'),
+        });
+    }
+
+    const successes = [];
+    if (batchItems.length > 0) {
+        context.setState('saving', {
+            detail: batchItems.length === 1 ? '1 side prompt' : `${batchItems.length} side prompts`,
+        });
+        const saveResults = await upsertLorebookEntriesBatch(
+            lorebookName,
+            lorebookData,
+            batchItems.map(item => ({
+                title: item.title,
+                content: item.content,
+                defaults: item.defaults,
+                metadataUpdates: item.metadataUpdates,
+                entryOverrides: item.entryOverrides,
+            })),
+            {
+                refreshEditor: settings?.moduleSettings?.refreshEditor !== false,
+                signal,
+            },
+        );
+
+        for (let index = 0; index < batchItems.length; index++) {
+            const item = batchItems[index];
+            const saveResult = saveResults[index] || {};
+            successes.push({
+                templateName: item.templateName,
+                title: item.title,
+                created: Boolean(saveResult?.created),
+                uid: saveResult?.entry?.uid ?? null,
+            });
+        }
+    }
+
+    if (successes.length === 0 && failures.length > 0 && canceled.length === 0) {
+        throw new Error(failures[0].message || 'All side prompts in this wave failed.');
+    }
+
+    context.setResult({
+        lorebookName,
+        successes,
+        failures,
+        canceled,
+    });
+}
+
 function getRangeLabelForJob(job) {
     const sceneStart = Number(job?.range?.sceneStart);
     const sceneEnd = Number(job?.range?.sceneEnd);
@@ -1022,6 +1275,7 @@ function ensureSidePromptJobExecutorRegistered() {
         return;
     }
     registerStmbJobExecutor('sidePrompt', executeSidePromptJob);
+    registerStmbJobExecutor('sidePromptBatch', executeSidePromptBatchJob);
     sidePromptJobExecutorRegistered = true;
 }
 

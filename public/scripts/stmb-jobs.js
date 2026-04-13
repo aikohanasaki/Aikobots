@@ -146,6 +146,7 @@ function getJobStateLabel(job = {}) {
 function getJobTypeLabel(type = '') {
     switch (String(type || '')) {
         case 'sidePrompt': return 'Side Prompt';
+        case 'sidePromptBatch': return 'Side Prompt';
         case 'consolidation': return 'Consolidation';
         case 'memory':
         default:

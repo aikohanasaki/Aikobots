@@ -2206,7 +2206,10 @@ async function openSidePromptEditorPopup({ templateKey = null } = {}) {
 
 async function showSidePromptManagerPopup({ onChange = null } = {}) {
     let selectedTemplateKey = null;
-    const maxConcurrent = Math.max(1, Math.min(5, Number(stmbSettings?.moduleSettings?.sidePromptsMaxConcurrent ?? 2)));
+    const parsedMaxConcurrent = Number(stmbSettings?.moduleSettings?.sidePromptsMaxConcurrent ?? 2);
+    const maxConcurrent = Number.isFinite(parsedMaxConcurrent)
+        ? Math.max(1, Math.min(5, Math.trunc(parsedMaxConcurrent)))
+        : 2;
     const popup = new Popup(DOMPurify.sanitize(`
         <div class="stmb-sideprompt-manager-popup">
             <h3>Trackers & Side Prompts</h3>
