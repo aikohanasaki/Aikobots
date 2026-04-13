@@ -5117,7 +5117,7 @@ async function initiateMemoryCreation(options = {}) {
 
 export async function createSummaryForTier(targetTier, options = {}) {
     const normalizedTargetTier = Math.min(6, Math.max(1, Math.trunc(Number(targetTier) || 1)));
-    if (hasActiveStmbTasks() || hasActiveStmbJobs()) {
+    if (hasActiveStmbTasks()) {
         throw new Error('STMB generation is already in progress');
     }
 

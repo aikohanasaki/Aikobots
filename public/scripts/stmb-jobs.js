@@ -4,6 +4,7 @@ import {
 } from '../script.js';
 import { closeActiveMemoryPreviewPopups } from './stmb-popups.js';
 import { buildStmbSceneContext, getStmbChatKey } from './stmb-scene.js';
+import { escapeHtml } from './utils.js';
 
 const jobStores = new Map();
 const jobExecutors = new Map();
@@ -216,6 +217,11 @@ function summarizeStore(store) {
     }, { running: 0, queued: 0, awaitingApproval: 0 });
 }
 
+function getRecentFailureCount(store) {
+    const recentJobs = Array.isArray(store?.recentHistory) ? store.recentHistory : [];
+    return recentJobs.filter(job => job?.state === 'failed').length;
+}
+
 function shouldKeepRenderTimer() {
     for (const store of jobStores.values()) {
         if (store.runningJob || (Array.isArray(store.queue) && store.queue.length > 0)) {
@@ -370,25 +376,28 @@ function renderJobRows(store) {
     const queuedJobs = Array.isArray(store?.queue) ? store.queue : [];
     const recentJobs = Array.isArray(store?.recentHistory) ? store.recentHistory : [];
     const orderedJobs = [...runningJob, ...queuedJobs, ...recentJobs];
+    const esc = value => escapeHtml(String(value ?? ''));
+    const recentFailureCount = getRecentFailureCount(store);
 
     jobsRows.innerHTML = orderedJobs.map(job => {
         const rangeLabel = getRangeLabel(job.range);
+        const elapsedLabel = formatElapsed(job);
         const retryButton = job.state === 'failed'
-            ? `<button type="button" class="menu_button stmb-jobs-row-action" data-action="retry" data-job-id="${job.id}">Retry failed</button>`
+            ? `<button type="button" class="menu_button stmb-jobs-row-action" data-action="retry" data-job-id="${esc(job.id)}">Retry failed</button>`
             : '';
         return `
             <div class="stmb-jobs-row ${getStatusToneClass(job)}">
                 <div class="stmb-jobs-row-main">
                     <div class="stmb-jobs-row-header">
                         <span class="stmb-jobs-row-icon"></span>
-                        <strong>${getJobTypeLabel(job.type)}</strong>
-                        <span class="stmb-jobs-row-status">${getJobStateLabel(job)}</span>
+                        <strong>${esc(getJobTypeLabel(job.type))}</strong>
+                        <span class="stmb-jobs-row-status">${esc(getJobStateLabel(job))}</span>
                     </div>
-                    ${rangeLabel ? `<div class="stmb-jobs-row-meta">${rangeLabel}</div>` : ''}
-                    <div class="stmb-jobs-row-meta">${job.characterName || ''}${job.chatTitle ? ` • ${job.chatTitle}` : ''}</div>
-                    <div class="stmb-jobs-row-meta">${job.lorebookName ? `Lorebook: ${job.lorebookName}` : ''}${formatElapsed(job) ? ` • ${formatElapsed(job)}` : ''}</div>
-                    ${job.detail ? `<div class="stmb-jobs-row-detail">${job.detail}</div>` : ''}
-                    ${job.error?.message ? `<div class="stmb-jobs-row-error">${job.error.message}</div>` : ''}
+                    ${rangeLabel ? `<div class="stmb-jobs-row-meta">${esc(rangeLabel)}</div>` : ''}
+                    <div class="stmb-jobs-row-meta">${esc(job.characterName)}${job.chatTitle ? ` • ${esc(job.chatTitle)}` : ''}</div>
+                    <div class="stmb-jobs-row-meta">${job.lorebookName ? `Lorebook: ${esc(job.lorebookName)}` : ''}${elapsedLabel ? ` • ${esc(elapsedLabel)}` : ''}</div>
+                    ${job.detail ? `<div class="stmb-jobs-row-detail">${esc(job.detail)}</div>` : ''}
+                    ${job.error?.message ? `<div class="stmb-jobs-row-error">${esc(job.error.message)}</div>` : ''}
                 </div>
                 ${retryButton}
             </div>
@@ -400,6 +409,7 @@ function renderJobRows(store) {
     jobsActions.innerHTML = `
         <button type="button" class="menu_button" data-action="cancel-active" ${hasActiveRunningJob ? '' : 'disabled'}>Cancel active job</button>
         <button type="button" class="menu_button" data-action="clear-completed" ${completedCount > 0 ? '' : 'disabled'}>Clear completed</button>
+        ${recentFailureCount > 0 ? '<button type="button" class="stmb-jobs-action-link" data-action="dismiss-failures">Dismiss all notifications</button>' : ''}
     `;
 }
 
@@ -411,25 +421,26 @@ function renderStmbJobsUi() {
     const currentStore = getCurrentStore();
     const summary = summarizeStore(currentStore);
     const activeCount = summary.running + summary.queued + summary.awaitingApproval;
-    const tooltip = buildTooltip(summary);
     const hasActiveJobs = activeCount > 0;
+    const recentFailureCount = getRecentFailureCount(currentStore);
+    const canOpenPanel = hasActiveJobs || recentFailureCount > 0;
+    const tooltip = hasActiveJobs
+        ? buildTooltip(summary)
+        : (recentFailureCount > 0 ? (recentFailureCount === 1 ? '1 recent failure' : `${recentFailureCount} recent failures`) : 'No Memory Books jobs');
 
-    topBarButton.disabled = !hasActiveJobs;
-    topBarButton.classList.toggle('disabled', !hasActiveJobs);
+    topBarButton.disabled = !canOpenPanel;
+    topBarButton.classList.toggle('disabled', !canOpenPanel);
     topBarButton.classList.toggle('active', hasActiveJobs);
     topBarButton.title = tooltip;
     topBarLabel.textContent = 'Memory Books Jobs';
-    topBarBadge.textContent = activeCount > 0 ? String(activeCount) : '';
-    topBarBadge.style.display = activeCount > 0 ? 'inline-flex' : 'none';
+    topBarBadge.textContent = hasActiveJobs ? String(activeCount) : (recentFailureCount > 0 ? String(recentFailureCount) : '');
+    topBarBadge.style.display = canOpenPanel ? 'inline-flex' : 'none';
+    topBarBadge.classList.toggle('stmb-jobs-badge-failed', !hasActiveJobs && recentFailureCount > 0);
     jobsSummary.textContent = hasActiveJobs
-        ? `${summary.running} running, ${summary.queued} queued${summary.awaitingApproval > 0 ? `, ${summary.awaitingApproval} awaiting approval` : ''}`
-        : 'No active jobs';
+        ? `${summary.running} running, ${summary.queued} queued${summary.awaitingApproval > 0 ? `, ${summary.awaitingApproval} awaiting approval` : ''}${recentFailureCount > 0 ? `, ${recentFailureCount} recent ${recentFailureCount === 1 ? 'failure' : 'failures'}` : ''}`
+        : (recentFailureCount > 0 ? `${recentFailureCount} recent ${recentFailureCount === 1 ? 'failure' : 'failures'}` : 'No active jobs');
 
-    if (!hasActiveJobs) {
-        jobsPanel.hidden = true;
-    } else if (currentStore?.uiState?.panelOpen) {
-        jobsPanel.hidden = false;
-    }
+    jobsPanel.hidden = !canOpenPanel || !currentStore?.uiState?.panelOpen;
 
     renderJobRows(currentStore);
     syncRenderTimer();
@@ -439,7 +450,8 @@ function handleTopBarButtonClick() {
     const currentStore = getCurrentStore();
     const summary = summarizeStore(currentStore);
     const activeCount = summary.running + summary.queued + summary.awaitingApproval;
-    if (!(activeCount > 0)) {
+    const canOpenPanel = activeCount > 0 || getRecentFailureCount(currentStore) > 0;
+    if (!canOpenPanel) {
         return;
     }
 
@@ -465,6 +477,10 @@ function handlePanelClick(event) {
     }
     if (action === 'clear-completed') {
         clearCompletedStmbJobs(currentChatKey);
+        return;
+    }
+    if (action === 'dismiss-failures') {
+        dismissFailedStmbJobNotifications(currentChatKey);
         return;
     }
     if (action === 'retry') {
@@ -633,6 +649,19 @@ export function clearCompletedStmbJobs(chatKey = null) {
     const store = ensureChatStore(targetChatKey);
     const before = store.recentHistory.length;
     store.recentHistory = store.recentHistory.filter(job => job.state !== 'completed');
+    touchStore(store);
+    return before - store.recentHistory.length;
+}
+
+export function dismissFailedStmbJobNotifications(chatKey = null) {
+    const targetChatKey = String(chatKey || getCurrentChatKey() || '').trim();
+    if (!targetChatKey) {
+        return 0;
+    }
+
+    const store = ensureChatStore(targetChatKey);
+    const before = store.recentHistory.length;
+    store.recentHistory = store.recentHistory.filter(job => job.state !== 'failed');
     touchStore(store);
     return before - store.recentHistory.length;
 }

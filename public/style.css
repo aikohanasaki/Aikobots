@@ -6938,6 +6938,10 @@ body:not(.movingUI) .drawer-content.maximized {
     font-weight: 700;
 }
 
+.stmb-jobs-badge.stmb-jobs-badge-failed {
+    background: var(--SmartThemeRedColor, #ff6b6b);
+}
+
 .stmb-jobs-panel {
     position: absolute;
     top: calc(100% + 8px);
@@ -6976,6 +6980,7 @@ body:not(.movingUI) .drawer-content.maximized {
     gap: 8px;
     margin: 12px 0;
     flex-wrap: wrap;
+    align-items: center;
 }
 
 .stmb-jobs-rows {
@@ -7026,6 +7031,23 @@ body:not(.movingUI) .drawer-content.maximized {
 
 .stmb-jobs-row-action {
     align-self: center;
+}
+
+.stmb-jobs-action-link {
+    margin-left: auto;
+    padding: 0;
+    border: 0;
+    background: transparent;
+    color: var(--SmartThemeEmColor, #f0c36d);
+    font: inherit;
+    font-size: 12px;
+    cursor: pointer;
+    opacity: 0.9;
+}
+
+.stmb-jobs-action-link:hover {
+    opacity: 1;
+    text-decoration: underline;
 }
 
 .stmb-jobs-tone-running {
