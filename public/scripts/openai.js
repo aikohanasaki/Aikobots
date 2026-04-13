@@ -1040,6 +1040,11 @@ export async function buildServerAssemblyPayload({
     messages,
     messageExamples,
 } = {}) {
+    if (Array.isArray(coreChat) && coreChat.length > 0) {
+        const { backfillImageMediaIdsForMessages } = await import('./chats.js');
+        await backfillImageMediaIdsForMessages(coreChat, { persist: true });
+    }
+
     const resolvedPromptState = promptState && typeof promptState === 'object'
         ? structuredClone(promptState)
         : await getServerPromptState();

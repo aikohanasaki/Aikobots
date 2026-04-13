@@ -16,6 +16,7 @@ import {
     saveSettingsDebounced,
     this_chid,
     saveChatConditional,
+    saveChatDebounced,
     chat_metadata,
     neutralCharacterName,
     updateChatMetadata,
@@ -77,11 +78,352 @@ import { MEDIA_DISPLAY, MEDIA_SOURCE, MEDIA_TYPE, SCROLL_BEHAVIOR, SWIPE_DIRECTI
  */
 
 const fileSizeLimit = 1024 * 1024 * 350; // 350 MB
+const pendingImageAttachments = [];
+const pendingLegacyImageBackfills = new Set();
 const ATTACHMENT_SOURCE = {
     GLOBAL: 'global',
     CHARACTER: 'character',
     CHAT: 'chat',
 };
+
+function isImageAttachment(attachment) {
+    return attachment?.type === MEDIA_TYPE.IMAGE;
+}
+
+function isRemoteUrl(url) {
+    return /^https?:\/\//i.test(String(url || ''));
+}
+
+function isInternalImageUrl(url) {
+    return /(^|\/)user\/images\//i.test(String(url || ''));
+}
+
+function normalizeInternalImageUrl(url) {
+    const normalizedUrl = String(url || '').trim();
+    if (!isInternalImageUrl(normalizedUrl)) {
+        return '';
+    }
+
+    try {
+        const parsedUrl = new URL(normalizedUrl, window.location.origin);
+        if (parsedUrl.origin === window.location.origin) {
+            return parsedUrl.pathname;
+        }
+    } catch {
+        // Fall through to raw relative path handling.
+    }
+
+    return isRemoteUrl(normalizedUrl) ? '' : normalizedUrl;
+}
+
+function getMediaContentUrl(mediaId) {
+    return mediaId ? `/api/media/${encodeURIComponent(mediaId)}/content` : '';
+}
+
+function getAttachmentLegacyUrl(attachment) {
+    if (!attachment || typeof attachment !== 'object') {
+        return '';
+    }
+
+    if (typeof attachment.__legacyUrl === 'string') {
+        return attachment.__legacyUrl;
+    }
+
+    const descriptor = Object.getOwnPropertyDescriptor(attachment, 'url');
+    if (descriptor && Object.prototype.hasOwnProperty.call(descriptor, 'value')) {
+        return String(descriptor.value || '');
+    }
+
+    return '';
+}
+
+export function getMediaAttachmentUrl(attachment) {
+    if (!attachment || attachment.status === 'unavailable') {
+        return '';
+    }
+
+    if (isImageAttachment(attachment) && attachment.mediaId) {
+        return getMediaContentUrl(attachment.mediaId);
+    }
+
+    return getAttachmentLegacyUrl(attachment);
+}
+
+export function hydrateMediaAttachment(attachment) {
+    if (!attachment || typeof attachment !== 'object' || !isImageAttachment(attachment)) {
+        return attachment;
+    }
+
+    const descriptor = Object.getOwnPropertyDescriptor(attachment, 'url');
+    if (!descriptor || descriptor.enumerable) {
+        const currentUrl = getAttachmentLegacyUrl(attachment) || String(attachment.url || '');
+        Object.defineProperty(attachment, '__legacyUrl', {
+            value: currentUrl,
+            enumerable: false,
+            configurable: true,
+            writable: true,
+        });
+        delete attachment.url;
+        Object.defineProperty(attachment, 'url', {
+            enumerable: false,
+            configurable: true,
+            get() {
+                return getMediaAttachmentUrl(this);
+            },
+            set(value) {
+                Object.defineProperty(this, '__legacyUrl', {
+                    value: String(value || ''),
+                    enumerable: false,
+                    configurable: true,
+                    writable: true,
+                });
+            },
+        });
+    }
+
+    return attachment;
+}
+
+export function markImageAttachmentUnavailable(attachment, message = 'Image attachment is unavailable.') {
+    if (!attachment || typeof attachment !== 'object') {
+        return attachment;
+    }
+
+    const currentUrl = getAttachmentLegacyUrl(attachment) || String(attachment.url || '');
+    attachment.status = 'unavailable';
+    attachment.error = String(message || 'Image attachment is unavailable.');
+    if (!attachment.originalUrl && currentUrl) {
+        attachment.originalUrl = currentUrl;
+    }
+    if (!attachment.mediaId && Object.prototype.hasOwnProperty.call(attachment, 'url')) {
+        delete attachment.url;
+    }
+    return hydrateMediaAttachment(attachment);
+}
+
+async function registerExistingImageAttachment(url) {
+    const response = await fetch('/api/media/register-existing-image', {
+        method: 'POST',
+        headers: getRequestHeaders(),
+        body: JSON.stringify({ url }),
+    });
+
+    if (!response.ok) {
+        const error = await response.json().catch(() => ({ error: 'Failed to register internal image' }));
+        throw new Error(error.error || 'Failed to register internal image');
+    }
+
+    return await response.json();
+}
+
+async function ingestImageAttachment(base64Data, mimeType, { filename = '', title = '', source = MEDIA_SOURCE.UPLOAD, sourceUrl = '' } = {}) {
+    const response = await fetch('/api/media/ingest-image', {
+        method: 'POST',
+        headers: getRequestHeaders(),
+        body: JSON.stringify({
+            data: base64Data,
+            mimeType,
+            filename,
+            sourceUrl,
+        }),
+    });
+
+    if (!response.ok) {
+        const error = await response.json().catch(() => ({ error: 'Failed to ingest image' }));
+        throw new Error(error.error || 'Failed to ingest image');
+    }
+
+    const payload = await response.json();
+    return hydrateMediaAttachment({
+        mediaId: String(payload.mediaId || ''),
+        type: MEDIA_TYPE.IMAGE,
+        title,
+        source,
+        status: 'ready',
+        ...(sourceUrl ? { originalUrl: sourceUrl } : {}),
+    });
+}
+
+async function blobToBase64(blob) {
+    const file = new File([blob], 'attachment', { type: blob.type || 'application/octet-stream' });
+    return String(await getBase64Async(file)).split(',')[1];
+}
+
+export async function createImageAttachmentFromUrl(url, { title = '', source = MEDIA_SOURCE.UPLOAD, filename = '', unavailableOnFailure = false } = {}) {
+    const normalizedUrl = String(url || '').trim();
+    if (!normalizedUrl) {
+        return null;
+    }
+
+    try {
+        if (normalizedUrl.startsWith('data:')) {
+            const separatorIndex = normalizedUrl.indexOf(',');
+            const header = separatorIndex >= 0 ? normalizedUrl.slice(0, separatorIndex) : normalizedUrl;
+            const mimeType = /^data:([^;,]+)/i.exec(header)?.[1] || 'image/png';
+            const base64Data = separatorIndex >= 0 ? normalizedUrl.slice(separatorIndex + 1) : '';
+            if (!base64Data) {
+                throw new Error('Invalid data URL: missing base64 data');
+            }
+            return await ingestImageAttachment(base64Data, mimeType, { filename, title, source });
+        }
+
+        const internalImageUrl = normalizeInternalImageUrl(normalizedUrl);
+        if (internalImageUrl) {
+            const payload = await registerExistingImageAttachment(internalImageUrl);
+            return hydrateMediaAttachment({
+                mediaId: String(payload.mediaId || ''),
+                type: MEDIA_TYPE.IMAGE,
+                title,
+                source,
+                status: 'ready',
+            });
+        }
+
+        if (isRemoteUrl(normalizedUrl)) {
+            const imageResponse = await fetch(normalizedUrl);
+            if (!imageResponse.ok) {
+                throw new Error(`Remote image request failed: ${imageResponse.status}`);
+            }
+
+            const blob = await imageResponse.blob();
+            if (!String(blob.type || '').startsWith('image/')) {
+                throw new Error('Remote URL did not return an image');
+            }
+
+            const base64Data = await blobToBase64(blob);
+            return await ingestImageAttachment(base64Data, blob.type, {
+                filename,
+                title,
+                source,
+                sourceUrl: normalizedUrl,
+            });
+        }
+    } catch (error) {
+        if (!unavailableOnFailure) {
+            throw error;
+        }
+
+        return markImageAttachmentUnavailable({
+            type: MEDIA_TYPE.IMAGE,
+            title: title || filename || normalizedUrl,
+            source,
+            originalUrl: normalizedUrl,
+        }, error?.message || 'Failed to ingest remote image');
+    }
+
+    return null;
+}
+
+async function backfillSingleImageAttachment(attachment) {
+    if (!isImageAttachment(attachment) || attachment.mediaId) {
+        return false;
+    }
+
+    const attachmentUrl = String(attachment.url || '');
+    if (!attachmentUrl) {
+        return false;
+    }
+
+    const internalImageUrl = normalizeInternalImageUrl(attachmentUrl);
+    if (!internalImageUrl && isRemoteUrl(attachmentUrl)) {
+        markImageAttachmentUnavailable(attachment, 'External image URL is unavailable until re-ingested.');
+        return true;
+    }
+
+    if (!internalImageUrl || pendingLegacyImageBackfills.has(internalImageUrl)) {
+        return false;
+    }
+
+    pendingLegacyImageBackfills.add(internalImageUrl);
+    try {
+        const payload = await registerExistingImageAttachment(internalImageUrl);
+        attachment.mediaId = String(payload.mediaId || '');
+        attachment.status = 'ready';
+        if (Object.prototype.hasOwnProperty.call(attachment, 'url')) {
+            delete attachment.url;
+        }
+        hydrateMediaAttachment(attachment);
+        return true;
+    } catch (error) {
+        markImageAttachmentUnavailable(attachment, error?.message || 'Failed to register internal image');
+        return true;
+    } finally {
+        pendingLegacyImageBackfills.delete(internalImageUrl);
+    }
+}
+
+export async function backfillImageMediaIdsForMessages(messages, { persist = false } = {}) {
+    let changed = false;
+
+    for (const message of Array.isArray(messages) ? messages : []) {
+        if (!Array.isArray(message?.extra?.media)) {
+            continue;
+        }
+
+        for (const attachment of message.extra.media) {
+            hydrateMediaAttachment(attachment);
+            changed = (await backfillSingleImageAttachment(attachment)) || changed;
+        }
+    }
+
+    if (changed && persist) {
+        saveChatDebounced();
+    }
+
+    return changed;
+}
+
+function updateFileFormUi() {
+    const fileInput = document.getElementById('file_form_input');
+    if (!(fileInput instanceof HTMLInputElement)) {
+        return;
+    }
+
+    const fileCount = fileInput.files.length;
+    const imageCount = pendingImageAttachments.length;
+    const totalCount = fileCount + imageCount;
+
+    if (totalCount === 0) {
+        $('#file_form').addClass('displayNone');
+        return;
+    }
+
+    const readyCount = pendingImageAttachments.filter(x => x.status !== 'unavailable').length;
+    const unavailableCount = pendingImageAttachments.filter(x => x.status === 'unavailable').length;
+    const names = [
+        ...Array.from(fileInput.files).map(file => file.name),
+        ...pendingImageAttachments.map(attachment => attachment.title || attachment.originalUrl || 'Remote image'),
+    ];
+    const totalSize = Array.from(fileInput.files).reduce((acc, file) => acc + file.size, 0);
+    const summary = [];
+    if (fileCount > 0) {
+        summary.push(`${fileCount} file${fileCount === 1 ? '' : 's'}`);
+    }
+    if (imageCount > 0) {
+        summary.push(`${readyCount} remote image${readyCount === 1 ? '' : 's'} ready`);
+    }
+    if (unavailableCount > 0) {
+        summary.push(`${unavailableCount} unavailable`);
+    }
+
+    $('#file_form .file_name').text(names[0] || `${totalCount} attachments`).attr('title', names.join('\n'));
+    $('#file_form .file_size').text(summary.join(', ') || humanFileSize(totalSize)).attr('title', summary.join('\n'));
+    $('#file_form').removeClass('displayNone');
+}
+
+function resetPendingImageAttachments() {
+    pendingImageAttachments.length = 0;
+}
+
+function registerFileFormResetOnChatChange() {
+    if (!getCurrentChatId()) {
+        return;
+    }
+
+    eventSource.once(event_types.CHAT_CHANGED, () => {
+        $('#file_form').trigger('reset');
+    });
+}
 
 async function ensurePromptRelevantMessageEditable(messageId) {
     if (!isHistoricalChatMessage(messageId)) {
@@ -225,6 +567,7 @@ export async function populateFileAttachment(message, inputId = 'file_form_input
         if (!message.extra || typeof message.extra !== 'object') message.extra = {};
         const fileInput = document.getElementById(inputId);
         if (!(fileInput instanceof HTMLInputElement)) return;
+        let addedMedia = false;
 
         for (const file of fileInput.files) {
             const slug = getStringHash(file.name);
@@ -235,20 +578,28 @@ export async function populateFileAttachment(message, inputId = 'file_form_input
 
             const mediaType = MEDIA_TYPE.getFromMime(file.type);
             if (mediaType) {
-                const imageUrl = await saveBase64AsFile(base64Data, name2, fileNamePrefix, extension);
                 if (!Array.isArray(message.extra.media)) {
                     message.extra.media = [];
                 }
                 /** @type {MediaAttachment} */
-                const mediaAttachment = {
-                    url: imageUrl,
-                    type: mediaType,
-                    title: file.name,
-                    source: MEDIA_SOURCE.UPLOAD,
-                };
+                let mediaAttachment;
+                if (mediaType === MEDIA_TYPE.IMAGE) {
+                    mediaAttachment = await ingestImageAttachment(base64Data, file.type, {
+                        filename: file.name,
+                        title: file.name,
+                        source: MEDIA_SOURCE.UPLOAD,
+                    });
+                } else {
+                    const mediaUrl = await saveBase64AsFile(base64Data, name2, fileNamePrefix, extension);
+                    mediaAttachment = {
+                        url: mediaUrl,
+                        type: mediaType,
+                        title: file.name,
+                        source: MEDIA_SOURCE.UPLOAD,
+                    };
+                }
                 message.extra.media.push(mediaAttachment);
-                message.extra.media_index = message.extra.media.length - 1;
-                message.extra.inline_image = true;
+                addedMedia = true;
             } else {
                 const uniqueFileName = `${fileNamePrefix}.txt`;
 
@@ -280,6 +631,20 @@ export async function populateFileAttachment(message, inputId = 'file_form_input
                     created: Date.now(),
                 });
             }
+        }
+
+        if (inputId === 'file_form_input' && pendingImageAttachments.length > 0) {
+            if (!Array.isArray(message.extra.media)) {
+                message.extra.media = [];
+            }
+
+            message.extra.media.push(...pendingImageAttachments.map(attachment => hydrateMediaAttachment({ ...attachment })));
+            addedMedia = true;
+        }
+
+        if (addedMedia && Array.isArray(message.extra.media) && message.extra.media.length > 0) {
+            message.extra.media_index = message.extra.media.length - 1;
+            message.extra.inline_image = true;
         }
     } catch (error) {
         console.error('Could not upload file', error);
@@ -372,8 +737,7 @@ async function validateFile(file) {
 export function hasPendingFileAttachment() {
     const fileInput = document.getElementById('file_form_input');
     if (!(fileInput instanceof HTMLInputElement)) return false;
-    const file = fileInput.files[0];
-    return !!file;
+    return fileInput.files.length > 0 || pendingImageAttachments.length > 0;
 }
 
 /**
@@ -382,7 +746,10 @@ export function hasPendingFileAttachment() {
  * @returns {Promise<void>}
  */
 async function onFileAttach(fileList) {
-    if (!fileList || fileList.length === 0) return;
+    if (!fileList || fileList.length === 0) {
+        updateFileFormUi();
+        return;
+    }
 
     for (const file of fileList) {
         const isValid = await validateFile(file);
@@ -395,20 +762,9 @@ async function onFileAttach(fileList) {
         }
     }
 
-    const name = fileList.length === 1 ? fileList[0].name : t`${fileList.length} files selected`;
-    const size = [...fileList].reduce((acc, file) => acc + file.size, 0);
-    const title = [...fileList].map(x => x.name).join('\n');
-    $('#file_form .file_name').text(name).attr('title', title);
-    $('#file_form .file_size').text(humanFileSize(size)).attr('title', size);
-    $('#file_form').removeClass('displayNone');
+    updateFileFormUi();
 
-    // Reset form on chat change (if not on a welcome screen)
-    const currentChatId = getCurrentChatId();
-    if (currentChatId) {
-        eventSource.once(event_types.CHAT_CHANGED, () => {
-            $('#file_form').trigger('reset');
-        });
-    }
+    registerFileFormResetOnChatChange();
 }
 
 /**
@@ -1020,7 +1376,6 @@ async function deleteMessageMedia(messageId, mediaIndex, messageBlock) {
 
     messageBlock = chatElement.find(`.mes[mesid="${messageId}"]`);
 
-    const deleteUrls = [];
     const deleteFromServerId = 'delete_media_files_checkbox';
     let deleteFromServer = true;
 
@@ -1069,7 +1424,8 @@ async function deleteMessageMedia(messageId, mediaIndex, messageBlock) {
         return;
     }
 
-    deleteUrls.push(message.extra.media[mediaIndex].url);
+    const deleteMedia = [];
+    deleteMedia.push(message.extra.media[mediaIndex]);
     message.extra.media.splice(mediaIndex, 1);
 
     if (message.extra.media_index === mediaIndex) {
@@ -1079,7 +1435,7 @@ async function deleteMessageMedia(messageId, mediaIndex, messageBlock) {
 
     if (value === POPUP_RESULT.CUSTOM1) {
         for (const media of message.extra.media) {
-            deleteUrls.push(media.url);
+            deleteMedia.push(media);
         }
         delete message.extra.media;
         delete message.extra.inline_image;
@@ -1088,9 +1444,9 @@ async function deleteMessageMedia(messageId, mediaIndex, messageBlock) {
     }
 
     if (deleteFromServer) {
-        for (const url of deleteUrls) {
-            if (!url) continue;
-            await deleteMediaFromServer(url, true);
+        for (const attachment of deleteMedia) {
+            if (!attachment) continue;
+            await deleteMediaFromServer(attachment, true);
         }
     }
 
@@ -1129,16 +1485,22 @@ async function switchMessageMediaDisplay(messageId, messageBlock, targetDisplay)
 
 /**
  * Deletes media file from the server.
- * @param {string} url Path to the media file on the server
+ * @param {MediaAttachment | string} attachmentOrUrl Media attachment or path to the media file on the server
  * @param {boolean} [silent=false] If true, do not show error messages
  * @returns {Promise<boolean>} True if media file was deleted, false otherwise.
  */
-export async function deleteMediaFromServer(url, silent = false) {
+export async function deleteMediaFromServer(attachmentOrUrl, silent = false) {
     try {
-        const result = await fetch('/api/images/delete', {
+        const attachment = attachmentOrUrl && typeof attachmentOrUrl === 'object' ? attachmentOrUrl : null;
+        const isManagedImage = isImageAttachment(attachment) && !!attachment.mediaId;
+        const url = typeof attachmentOrUrl === 'string' ? attachmentOrUrl : String(attachment?.url || '');
+        if (!isManagedImage && !url) {
+            return true;
+        }
+        const result = await fetch(isManagedImage ? '/api/media/delete' : '/api/images/delete', {
             method: 'POST',
             headers: getRequestHeaders(),
-            body: JSON.stringify({ path: url }),
+            body: JSON.stringify(isManagedImage ? { mediaId: attachment.mediaId } : { path: url }),
         });
 
         if (!result.ok) {
@@ -1149,10 +1511,12 @@ export async function deleteMediaFromServer(url, silent = false) {
             return false;
         }
 
-        await eventSource.emit(event_types.MEDIA_ATTACHMENT_DELETED, url);
+        await eventSource.emit(event_types.MEDIA_ATTACHMENT_DELETED, attachment?.mediaId || url);
         return true;
     } catch (error) {
-        toastr.error(String(error), t`Could not delete image`);
+        if (!silent) {
+            toastr.error(String(error), t`Could not delete image`);
+        }
         console.error('Could not delete image', error);
         return false;
     }
@@ -2354,6 +2718,9 @@ export function initChatUtilities() {
         return { messageBlock, messageId, mediaBlock, mediaIndex };
     }
     chatElement.on('click', '.mes_img', async function () {
+        if ($(this).hasClass('mes_img_unavailable')) {
+            return;
+        }
         const { messageId, mediaIndex } = getMediaContainerInfo.call(this);
         expandMessageMedia(messageId, mediaIndex);
     });
@@ -2388,11 +2755,37 @@ export function initChatUtilities() {
         await onFileAttach(fileInput.files);
     });
     $('#file_form').on('reset', function () {
-        $('#file_form').addClass('displayNone');
+        resetPendingImageAttachments();
+        updateFileFormUi();
     });
 
     document.getElementById('send_textarea').addEventListener('paste', async function (event) {
         if (event.clipboardData.files.length === 0) {
+            const pastedText = String(event.clipboardData.getData('text/plain') || '').trim();
+            if (!/^https?:\/\/\S+$/i.test(pastedText)) {
+                return;
+            }
+
+            event.preventDefault();
+            event.stopPropagation();
+
+            const attachment = await createImageAttachmentFromUrl(pastedText, {
+                title: pastedText,
+                source: MEDIA_SOURCE.UPLOAD,
+                unavailableOnFailure: true,
+            });
+
+            if (!attachment) {
+                return;
+            }
+
+            pendingImageAttachments.push(attachment);
+            updateFileFormUi();
+            registerFileFormResetOnChatChange();
+
+            if (attachment.status === 'unavailable') {
+                toastr.warning(attachment.error || t`Failed to ingest remote image. It will be skipped during generation.`, t`Image unavailable`);
+            }
             return;
         }
 

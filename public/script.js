@@ -156,7 +156,6 @@ import {
     isElementInViewport,
     copyText,
     escapeHtml,
-    saveBase64AsFile,
     uuidv4,
     equalsIgnoreCaseAndAccents,
     localizePagination,
@@ -222,7 +221,7 @@ import {
 import { getBackgrounds, initBackgrounds, loadBackgroundSettings, background_settings } from './scripts/backgrounds.js';
 import { hideLoader, showLoader } from './scripts/loader.js';
 import { BulkEditOverlay } from './scripts/BulkEditOverlay.js';
-import { appendFileContent, hasPendingFileAttachment, populateFileAttachment, decodeStyleTags, encodeStyleTags, isExternalMediaAllowed, preserveNeutralChat, restoreNeutralChat, formatCreatorNotes, initChatUtilities, addDOMPurifyHooks } from './scripts/chats.js';
+import { appendFileContent, backfillImageMediaIdsForMessages, createImageAttachmentFromUrl, getMediaAttachmentUrl, hasPendingFileAttachment, hydrateMediaAttachment, markImageAttachmentUnavailable, populateFileAttachment, decodeStyleTags, encodeStyleTags, isExternalMediaAllowed, preserveNeutralChat, restoreNeutralChat, formatCreatorNotes, initChatUtilities, addDOMPurifyHooks } from './scripts/chats.js';
 import { getPresetManager, initPresetManager } from './scripts/preset-manager.js';
 import { evaluateMacros, getLastMessageId, initMacros, MacrosParser } from './scripts/macros.js';
 import { currentUser, setUserControls, submitSelectedCharacterForReview } from './scripts/user.js';
@@ -3745,6 +3744,13 @@ export function ensureMessageMediaIsArray(mes) {
     addArrayAutoWrapper(mes.extra, 'file', 'files');
     addArrayAutoWrapper(mes.extra, 'image', 'media', (t) => t.type === MEDIA_TYPE.IMAGE, (t) => t.url);
     addArrayAutoWrapper(mes.extra, 'video', 'media', (t) => t.type === MEDIA_TYPE.VIDEO, (t) => t.url);
+
+    if (Array.isArray(mes.extra.media)) {
+        mes.extra.media.forEach(hydrateMediaAttachment);
+        if (mes.extra.media.some(attachment => attachment?.type === MEDIA_TYPE.IMAGE && !attachment?.mediaId && attachment?.url)) {
+            void backfillImageMediaIdsForMessages([mes], { persist: true });
+        }
+    }
 }
 
 /**
@@ -3825,9 +3831,22 @@ export function appendMediaToMessage(mes, messageElement, scrollBehavior = SCROL
     function appendImageAttachment(attachment, index) {
         const template = $('#message_image_template .mes_img_container').clone();
         template.attr('data-index', index);
+        const attachmentUrl = getMediaAttachmentUrl(attachment);
+
+        if (attachment.status === 'unavailable' || !attachmentUrl) {
+            template.addClass('mes_img_container_unavailable');
+            template.find('.mes_media_enlarge, .mes_img_caption').remove();
+            template.find('.mes_img').remove();
+            const unavailable = $('<div />', { class: 'mes_img mes_img_unavailable' });
+            $('<div />', { class: 'mes_img_unavailable_title', text: attachment.title || t`Image unavailable` }).appendTo(unavailable);
+            $('<div />', { class: 'mes_img_unavailable_error', text: attachment.error || t`This image could not be ingested and was skipped.` }).appendTo(unavailable);
+            template.append(unavailable);
+            mediaBlocks.push(template);
+            return template;
+        }
 
         const image = template.find('.mes_img');
-        image.attr('src', attachment.url);
+        image.attr('src', attachmentUrl);
         image.attr('title', attachment.title || mes.extra.title || '');
         mediaPromises.push(new Promise((resolve) => {
             function onLoad() {
@@ -7404,11 +7423,12 @@ function extractImagesFromData(data, { mainApi = null, chatCompletionSource = nu
                     }
                 } break;
                 case chat_completion_sources.OPENROUTER: {
-                    const imageUrl = data?.choices[0]?.message?.images?.filter(x => x.type === 'image_url')?.map(x => x?.image_url?.url);
+                    const imageUrl = data?.choices[0]?.message?.images
+                        ?.filter(x => x.type === 'image_url')
+                        ?.map(x => typeof x?.image_url?.url === 'string' ? x.image_url.url.trim() : x?.image_url?.url);
                     if (Array.isArray(imageUrl) && imageUrl.length > 0) {
-                        return imageUrl.filter(isDataURL);
+                        return imageUrl.filter(url => isDataURL(url) || (/^https?:\/\//i.test(url) && isValidUrl(url)));
                     }
-                    // TODO: Handle remote URLs
                 }
             }
         } break;
@@ -7709,14 +7729,28 @@ async function processImageAttachment(message, { imageUrls }) {
         if (!imageUrl) {
             continue;
         }
-
-        let url = imageUrl;
-        if (isDataURL(url)) {
-            const fileName = `inline_image_${Date.now().toString()}_${index}`;
-            const [mime, base64] = /^data:(.*?);base64,(.*)$/.exec(imageUrl).slice(1);
-            url = await saveBase64AsFile(base64, message.name, fileName, mime.split('/')[1]);
+        const title = `inline_image_${Date.now().toString()}_${index}`;
+        try {
+            const attachment = await createImageAttachmentFromUrl(imageUrl, {
+                title,
+                source: MEDIA_SOURCE.API,
+                unavailableOnFailure: true,
+            });
+            if (attachment) {
+                saveImageToMessage({ attachment, inline: true }, message);
+            }
+        } catch (error) {
+            console.error('Failed to process generated image attachment', error);
+            saveImageToMessage({
+                attachment: markImageAttachmentUnavailable({
+                    type: MEDIA_TYPE.IMAGE,
+                    title,
+                    source: MEDIA_SOURCE.API,
+                    originalUrl: String(imageUrl || ''),
+                }, error?.message || 'This image could not be ingested and was skipped.'),
+                inline: true,
+            }, message);
         }
-        saveImageToMessage({ image: url, inline: true }, message);
     }
 }
 
@@ -8183,17 +8217,18 @@ export function syncSwipeToMes(messageId = null, swipeId = null) {
  * Saves the image to the message object.
  * @param {ParsedImage} img Image object
  * @param {ChatMessage} mes Chat message object
- * @typedef {{ image?: string, title?: string, inline?: boolean }} ParsedImage
+ * @typedef {{ attachment?: MediaAttachment, inline?: boolean }} ParsedImage
  */
 function saveImageToMessage(img, mes) {
-    if (mes && img.image) {
+    if (mes && img.attachment) {
         if (!mes.extra || typeof mes.extra !== 'object') {
             mes.extra = {};
         }
         if (!Array.isArray(mes.extra.media)) {
             mes.extra.media = [];
         }
-        mes.extra.media.push({ url: img.image, type: MEDIA_TYPE.IMAGE, title: img.title, source: MEDIA_SOURCE.API });
+        mes.extra.media.push(hydrateMediaAttachment(img.attachment));
+        mes.extra.media_index = mes.extra.media.length - 1;
         mes.extra.inline_image = img.inline;
     }
 }

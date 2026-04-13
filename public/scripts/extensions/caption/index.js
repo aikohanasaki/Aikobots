@@ -1,4 +1,4 @@
-import { ensureImageFormatSupported, getBase64Async, getFileExtension, isTrueBoolean, saveBase64AsFile } from '../../utils.js';
+import { ensureImageFormatSupported, getBase64Async, getFileExtension, getStringHash, isTrueBoolean, saveBase64AsFile } from '../../utils.js';
 import { getContext, getApiUrl, doExtrasFetch, extension_settings, modules, renderExtensionTemplateAsync } from '../../extensions.js';
 import { appendMediaToMessage, chat_metadata, eventSource, event_types, getRequestHeaders, saveChatConditional, saveSettingsDebounced, substituteParamsExtended } from '../../../script.js';
 import { getMessageTimeStamp } from '../../RossAscends-mods.js';
@@ -174,23 +174,51 @@ async function captionExistingMessage(message, mediaIndex) {
 /**
  * Sends a captioned message to the chat.
  * @param {string} caption Caption text
- * @param {string} image Image URL
- * @param {string} mimeType Image MIME type
+ * @param {File} file Captioned media file
+ * @param {string} fileData Captioned media data URL
  * @returns {Promise<void>}
  */
-async function sendCaptionedMessage(caption, image, mimeType) {
+async function sendCaptionedMessage(caption, file, fileData) {
     const messageText = await wrapCaptionTemplate(caption);
+    const mimeType = String(file?.type || '');
+    const mediaType = MEDIA_TYPE.getFromMime(mimeType);
+    let mediaAttachment;
+
+    if (mediaType === MEDIA_TYPE.IMAGE) {
+        const { createImageAttachmentFromUrl } = await import('../../chats.js');
+        mediaAttachment = await createImageAttachmentFromUrl(fileData, {
+            title: messageText,
+            source: MEDIA_SOURCE.CAPTIONED,
+            unavailableOnFailure: true,
+        });
+    } else if (mediaType === MEDIA_TYPE.VIDEO) {
+        const context = getContext();
+        const base64Data = String(fileData || '').split(',')[1];
+        if (!base64Data) {
+            throw new Error('Invalid video data: missing base64 payload');
+        }
+        const extension = getFileExtension(file) || mimeType.split('/')[1]?.split(';')[0] || 'bin';
+        const fileSlug = `${Date.now()}_${getStringHash(file?.name || mimeType || 'captioned-media')}`;
+        const mediaUrl = await saveBase64AsFile(base64Data, context.name2, fileSlug, extension);
+
+        mediaAttachment = {
+            url: mediaUrl,
+            type: MEDIA_TYPE.VIDEO,
+            title: messageText,
+            source: MEDIA_SOURCE.CAPTIONED,
+        };
+    } else {
+        throw new Error(`Unsupported captioned media type: ${mimeType || 'unknown'}`);
+    }
+
+    if (!mediaAttachment) {
+        return;
+    }
+
+    mediaAttachment.type = mediaType;
+    mediaAttachment.captioned = true;
 
     const context = getContext();
-
-    /** @type {MediaAttachment} */
-    const mediaAttachment = {
-        url: image,
-        type: MEDIA_TYPE.getFromMime(mimeType) || MEDIA_TYPE.IMAGE,
-        title: messageText,
-        captioned: true,
-        source: MEDIA_SOURCE.CAPTIONED,
-    };
     /** @type {ChatMessage} */
     const message = {
         name: context.name1,
@@ -352,7 +380,7 @@ async function onSelectImage(e, prompt, quiet) {
 }
 
 /**
- * Gets a caption for an image file.
+ * Gets a caption for an image or video file.
  * @param {File} file Input file
  * @param {string} prompt Caption prompt
  * @param {boolean} quiet Suppresses sending a message
@@ -365,14 +393,12 @@ async function getCaptionForFile(file, prompt, quiet) {
         }
 
         setSpinnerIcon();
-        const context = getContext();
-        const fileData = await getBase64Async(await ensureImageFormatSupported(file));
-        const extension = getFileExtension(file);
+        const preparedFile = await ensureImageFormatSupported(file);
+        const fileData = await getBase64Async(preparedFile);
         const base64Data = fileData.split(',')[1];
         const { caption } = await doCaptionRequest(base64Data, fileData, prompt);
         if (!quiet) {
-            const imagePath = await saveBase64AsFile(base64Data, context.name2, '', extension);
-            await sendCaptionedMessage(caption, imagePath, file.type);
+            await sendCaptionedMessage(caption, preparedFile, fileData);
         }
         return caption;
     }

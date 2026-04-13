@@ -1,6 +1,8 @@
 import dns from 'node:dns/promises';
+import fs from 'node:fs';
 import net from 'node:net';
 import ipaddr from 'ipaddr.js';
+import { getStoredMediaRecord, resolveStoredMediaPath } from '../media-storage.js';
 import {
     countWebTokenizerTokens,
     getSentencepieceTokenizer,
@@ -250,12 +252,10 @@ class Message {
         await this.refreshTokens();
     }
 
-    async addImage(image, quality = 'auto', clientOrigin = '') {
+    async addImage(image, quality = 'auto', _clientOrigin = '') {
         this.content = this.ensureContentIsArray();
-        try {
-            image = isDataURL(image) ? image : await fetchMediaAsDataUrl(image, 'image/png', clientOrigin);
-        } catch (error) {
-            console.error('Image adding skipped', error);
+        if (!isDataURL(image)) {
+            console.error('Image adding skipped: only data URLs are supported during prompt assembly.');
             return;
         }
 
@@ -1119,6 +1119,32 @@ function getImageTokenCost(dataUrl, quality) {
     return squares * 170 + 85;
 }
 
+async function resolveStoredImageMediaAsDataUrl(media, directories) {
+    if (!media || media.status === 'unavailable' || !media.mediaId || !directories) {
+        return '';
+    }
+
+    try {
+        const record = await getStoredMediaRecord(directories, media.mediaId);
+        if (!record?.mimeType) {
+            return '';
+        }
+
+        const mediaPath = resolveStoredMediaPath(directories, record);
+        const mediaStats = await fs.promises.stat(mediaPath);
+        if (mediaStats.size > MAX_FETCHED_MEDIA_BYTES) {
+            console.warn(`Stored image media ${media.mediaId} exceeds the ${MAX_FETCHED_MEDIA_BYTES} byte inline limit.`);
+            return '';
+        }
+
+        const mediaBuffer = await fs.promises.readFile(mediaPath);
+        return `data:${record.mimeType};base64,${mediaBuffer.toString('base64')}`;
+    } catch (error) {
+        console.warn(`Failed to resolve stored image media ${media?.mediaId || ''}`, error);
+        return '';
+    }
+}
+
 function resolveMediaUrl(url, clientOrigin = '') {
     const mediaUrl = String(url || '');
     if (!mediaUrl || isDataURL(mediaUrl)) {
@@ -1871,20 +1897,32 @@ async function populateChatHistory(messages, prompts, chatCompletion, context) {
         }
 
         async function inlineMediaAttachment(media) {
-            if (!media?.url) {
+            if (!media) {
                 return;
             }
 
             const mediaType = String(media.type || 'image');
-            const mediaUrl = resolveMediaUrl(media.url, context.clientOrigin);
             const imageQuality = context.oaiSettings.inline_image_quality || 'auto';
+
+            if (mediaSupport.image && mediaType === 'image') {
+                const imageDataUrl = await resolveStoredImageMediaAsDataUrl(media, context.userDirectories);
+                if (!imageDataUrl) {
+                    console.warn('Dropping image attachment during prompt assembly because stored media could not be resolved.', {
+                        mediaId: String(media.mediaId || ''),
+                        status: String(media.status || ''),
+                        hasDataUrl: isDataURL(media.url),
+                    });
+                    return;
+                }
+
+                await chatMessage.addImage(imageDataUrl, imageQuality, context.clientOrigin);
+            }
+
+            const mediaUrl = resolveMediaUrl(media.url, context.clientOrigin);
             if (!mediaUrl) {
                 return;
             }
 
-            if (mediaSupport.image && mediaType === 'image') {
-                await chatMessage.addImage(mediaUrl, imageQuality, context.clientOrigin);
-            }
             if (mediaSupport.video && mediaType === 'video') {
                 await chatMessage.addVideo(mediaUrl, context.clientOrigin);
             }
@@ -2114,8 +2152,8 @@ async function populateChatCompletion(prompts, chatCompletion, context) {
 
     if (prompts.has('quietPrompt')) {
         const quietPromptMessage = await Message.fromPromptAsync(prompts.get('quietPrompt'), context.tokenHandler);
-        const quietImageUrl = resolveMediaUrl(context.quietImage, context.clientOrigin);
-        if (context.mediaSupport?.image && quietImageUrl) {
+        const quietImageUrl = String(context.quietImage || '');
+        if (context.mediaSupport?.image && isDataURL(quietImageUrl)) {
             await quietPromptMessage.addImage(quietImageUrl, context.oaiSettings.inline_image_quality || 'auto', context.clientOrigin);
         }
         if (quietPromptMessage?.content) {

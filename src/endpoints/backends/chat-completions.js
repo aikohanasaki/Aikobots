@@ -1810,6 +1810,8 @@ async function prepareServerPromptContext(user, directories, promptContext) {
         return { aborted: false, executedExtensions: [] };
     }
 
+    promptContext.userDirectories = directories;
+
     if (!Array.isArray(promptContext.coreChat) && promptContext.coreChat && typeof promptContext.coreChat === 'object') {
         promptContext.coreChat = resolveSplitCoreChatPayload(directories.chats, promptContext.coreChat);
     }
