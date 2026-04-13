@@ -1498,6 +1498,7 @@ function getPreferredOpenAIModel(models, currentModel) {
 
     const preferredModels = [
         default_settings.openai_model,
+        'gpt-5.4-chat-latest',
         'gpt-5.3-chat-latest',
         'gpt-5.2',
         'gpt-5.2-chat-latest',
@@ -2336,6 +2337,7 @@ async function buildOpenAIGenerateData(type, messages, { jsonSchema = null } = {
     }
 
     if (isCustom) {
+        delete generate_data.verbosity;
         generate_data['custom_url'] = oai_settings.custom_url;
         generate_data['custom_include_body'] = oai_settings.custom_include_body;
         generate_data['custom_exclude_body'] = oai_settings.custom_exclude_body;
@@ -5397,7 +5399,10 @@ function toggleChatCompletionForms() {
         $('#model_claude_select').trigger('change');
     }
     else if (oai_settings.chat_completion_source == chat_completion_sources.OPENAI) {
-        $('#model_openai_select').trigger('change');
+        const openAiSelect = $('#model_openai_select');
+        if (openAiSelect.find('option').length > 0) {
+            openAiSelect.trigger('change');
+        }
     }
     else if (oai_settings.chat_completion_source == chat_completion_sources.MAKERSUITE) {
         $('#model_google_select').trigger('change');

@@ -3431,7 +3431,7 @@ export async function handleChatCompletionsGenerate(request, response) {
         }
     }
 
-    if (request.body.verbosity && [CHAT_COMPLETION_SOURCES.CUSTOM, CHAT_COMPLETION_SOURCES.OPENAI].includes(request.body.chat_completion_source)) {
+    if (request.body.verbosity && request.body.chat_completion_source === CHAT_COMPLETION_SOURCES.OPENAI) {
         if (OPENAI_VERBOSITY_MODELS.test(request.body.model)) {
             bodyParams['verbosity'] = request.body.verbosity;
         }
