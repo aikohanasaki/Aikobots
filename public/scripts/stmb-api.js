@@ -35,21 +35,6 @@ export async function captureStmbScene(payload, options = {}) {
     return signal ? postStmbWithSignal('capture-scene', payload, signal) : postStmb('capture-scene', payload);
 }
 
-export async function prepareStmbMemoryMessages(payload, options = {}) {
-    const { signal = null } = options;
-    return signal ? postStmbWithSignal('prepare-memory-messages', payload, signal) : postStmb('prepare-memory-messages', payload);
-}
-
-export async function prepareStmbSummaryPrompt(payload, options = {}) {
-    const { signal = null } = options;
-    return signal ? postStmbWithSignal('prepare-summary-prompt', payload, signal) : postStmb('prepare-summary-prompt', payload);
-}
-
-export async function prepareStmbSidePrompt(payload, options = {}) {
-    const { signal = null } = options;
-    return signal ? postStmbWithSignal('prepare-sideprompt', payload, signal) : postStmb('prepare-sideprompt', payload);
-}
-
 export async function generateStmbMemory(payload, options = {}) {
     const { signal = null } = options;
     return postStmbWithSignal('generate-memory', payload, signal);
@@ -78,41 +63,6 @@ export async function upsertStmbEntryByTitle(payload, options = {}) {
 export async function upsertStmbEntriesBatch(payload, options = {}) {
     const { signal = null } = options;
     return signal ? postStmbWithSignal('upsert-entries-batch', payload, signal) : postStmb('upsert-entries-batch', payload);
-}
-
-export async function getStmbPlannerChatState(payload, options = {}) {
-    const { signal = null } = options;
-    return signal ? postStmbWithSignal('planner/chat-state', payload, signal) : postStmb('planner/chat-state', payload);
-}
-
-export async function updateStmbPlannerChatState(payload, options = {}) {
-    const { signal = null } = options;
-    return signal ? postStmbWithSignal('planner/update-chat-state', payload, signal) : postStmb('planner/update-chat-state', payload);
-}
-
-export async function enqueueStmbPlannerWave(payload, options = {}) {
-    const { signal = null } = options;
-    return signal ? postStmbWithSignal('planner/enqueue-wave', payload, signal) : postStmb('planner/enqueue-wave', payload);
-}
-
-export async function listStmbPlannerJobs(payload = {}, options = {}) {
-    const { signal = null } = options;
-    return signal ? postStmbWithSignal('planner/list-jobs', payload, signal) : postStmb('planner/list-jobs', payload);
-}
-
-export async function respondStmbPlannerApproval(payload = {}, options = {}) {
-    const { signal = null } = options;
-    return signal ? postStmbWithSignal('planner/respond-approval', payload, signal) : postStmb('planner/respond-approval', payload);
-}
-
-export async function acknowledgeStmbPlannerJobs(payload = {}, options = {}) {
-    const { signal = null } = options;
-    return signal ? postStmbWithSignal('planner/ack-jobs', payload, signal) : postStmb('planner/ack-jobs', payload);
-}
-
-export async function cancelStmbPlannerJobs(payload = {}, options = {}) {
-    const { signal = null } = options;
-    return signal ? postStmbWithSignal('planner/cancel', payload, signal) : postStmb('planner/cancel', payload);
 }
 
 async function postStmbWithSignal(path, payload, signal) {
