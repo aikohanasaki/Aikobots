@@ -2997,7 +2997,8 @@ async function sendGenerationRequest(generationType, prompt, additionalNegativeP
     }
 
     const filename = `${characterName}_${humanizedDateTime()}`;
-    const generatedMedia = isVideo(result.format)
+    const shouldPersistAsPath = isVideo(result.format) || generationType === generationMode.BACKGROUND;
+    const generatedMedia = shouldPersistAsPath
         ? await saveBase64AsFile(result.data, characterName, filename, result.format)
         : `data:image/${result.format === 'jpg' ? 'jpeg' : result.format};base64,${result.data}`;
     callback

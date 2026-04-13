@@ -1130,7 +1130,14 @@ async function resolveStoredImageMediaAsDataUrl(media, directories) {
             return '';
         }
 
-        const mediaBuffer = await fs.promises.readFile(resolveStoredMediaPath(directories, record));
+        const mediaPath = resolveStoredMediaPath(directories, record);
+        const mediaStats = await fs.promises.stat(mediaPath);
+        if (mediaStats.size > MAX_FETCHED_MEDIA_BYTES) {
+            console.warn(`Stored image media ${media.mediaId} exceeds the ${MAX_FETCHED_MEDIA_BYTES} byte inline limit.`);
+            return '';
+        }
+
+        const mediaBuffer = await fs.promises.readFile(mediaPath);
         return `data:${record.mimeType};base64,${mediaBuffer.toString('base64')}`;
     } catch (error) {
         console.warn(`Failed to resolve stored image media ${media?.mediaId || ''}`, error);
