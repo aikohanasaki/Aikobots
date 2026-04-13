@@ -2731,6 +2731,41 @@ export function applyChunkedChatPayload(response, { replace = false, currentView
     return header;
 }
 
+async function replaceChunkedChatPayloadPreservingWindow(response, { scrollToTail = false } = {}) {
+    const previousChatLength = chat.length;
+    const previousStartId = getFirstDisplayedMessageId();
+    const previousCount = Math.max(
+        1,
+        chatElement.find('.mes').length || getConfiguredChatWindowSize(),
+    );
+    const wasShowingLatest = Number.isFinite(previousStartId)
+        ? previousStartId + previousCount >= previousChatLength
+        : chatLoadState.currentView !== 'history';
+    const nextView = wasShowingLatest
+        ? 'tail'
+        : (Number.isInteger(response?.tailStartId) && Number(previousStartId) < response.tailStartId ? 'history' : 'tail');
+
+    applyChunkedChatPayload(response, { replace: true, currentView: nextView });
+
+    if (!chat.length) {
+        await renderMessageWindow(0, previousCount);
+        return;
+    }
+
+    const renderStart = wasShowingLatest
+        ? Math.max(0, chat.length - previousCount)
+        : clamp(
+            Number.isFinite(previousStartId) ? previousStartId : 0,
+            0,
+            Math.max(0, chat.length - 1),
+        );
+
+    await renderMessageWindow(renderStart, previousCount);
+    if (nextView === 'tail' && scrollToTail) {
+        scrollChatToBottom({ waitForFrame: true });
+    }
+}
+
 async function fetchChunkedChat({ rangeStart = null, count = null, hydrateFull = false, includeParentPromptCache = false } = {}) {
     await unshallowCharacter(this_chid);
 
@@ -8642,9 +8677,7 @@ export async function saveChat({ chatName, withMetadata, mesId, force = false } 
                 syncSplitTailStateAfterMutation();
 
                 if (responseData?.payload) {
-                    applyChunkedChatPayload(responseData.payload, { replace: true, currentView: 'tail' });
-                    await printMessages();
-                    scrollChatToBottom();
+                    await replaceChunkedChatPayloadPreservingWindow(responseData.payload, { scrollToTail: true });
                 } else {
                     const previousTailStartId = chatLoadState.tailStartId;
                     chatLoadState.storageMode = responseData?.storage_mode === CHAT_STORAGE_MODE_SPLIT_TAIL

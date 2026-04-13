@@ -171,6 +171,7 @@ let plannerStatusSummary = null;
 let plannerStatusRows = null;
 let plannerStatusActions = null;
 let plannerStatusPanelOpen = false;
+const dismissedPlannerNotificationIds = new Set();
 
 const DURABLE_SYNC_STATE_KEYS = [
     'sceneStart',
@@ -319,6 +320,34 @@ function summarizePlannerJobs(jobs = []) {
     return summary;
 }
 
+function pruneDismissedPlannerNotifications(jobs = latestPlannerJobs) {
+    if (dismissedPlannerNotificationIds.size === 0) {
+        return;
+    }
+
+    const visibleTerminalIds = new Set(
+        (Array.isArray(jobs) ? jobs : [])
+            .filter(job => isPlannerJobTerminal(job))
+            .map(job => String(job?.id || ''))
+            .filter(Boolean),
+    );
+
+    for (const jobId of dismissedPlannerNotificationIds) {
+        if (!visibleTerminalIds.has(jobId)) {
+            dismissedPlannerNotificationIds.delete(jobId);
+        }
+    }
+}
+
+function getPlannerJobsForNotifications(jobs = latestPlannerJobs) {
+    return (Array.isArray(jobs) ? jobs : []).filter(job => {
+        if (!isPlannerJobTerminal(job)) {
+            return true;
+        }
+        return !dismissedPlannerNotificationIds.has(String(job?.id || ''));
+    });
+}
+
 function formatPlannerElapsed(job = {}) {
     const end = isPlannerJobActive(job)
         ? Date.now()
@@ -375,11 +404,12 @@ function getPlannerJobLorebookName(job = {}) {
 }
 
 function getPlannerJobsForUi(jobs = latestPlannerJobs) {
+    const visibleJobs = getPlannerJobsForNotifications(jobs);
     const cutoff = Date.now() - PLANNER_RECENT_JOB_WINDOW_MS;
     const activeJobs = [];
     const recentTerminalJobs = [];
 
-    for (const job of Array.isArray(jobs) ? jobs : []) {
+    for (const job of visibleJobs) {
         if (isPlannerJobActive(job)) {
             activeJobs.push(job);
             continue;
@@ -460,7 +490,8 @@ function renderPlannerStatusUi() {
         return;
     }
 
-    const summary = summarizePlannerJobs(latestPlannerJobs);
+    const visibleJobs = getPlannerJobsForNotifications(latestPlannerJobs);
+    const summary = summarizePlannerJobs(visibleJobs);
     const badgeCount = summary.active > 0 ? summary.active : summary.recentFailures;
     const tooltip = summary.awaitingApproval > 0
         ? `${summary.awaitingApproval} Memory Books job${summary.awaitingApproval === 1 ? '' : 's'} awaiting approval`
@@ -489,11 +520,12 @@ function renderPlannerStatusUi() {
     plannerStatusActions.innerHTML = `
         <button type="button" class="menu_button" data-action="open-memory-books">Open Memory Books</button>
         <button type="button" class="menu_button${summary.active > 0 ? '' : ' disabled'}" data-action="stop-all"${summary.active > 0 ? '' : ' disabled'}>Stop All</button>
+        <button type="button" class="menu_button${summary.recentTerminal > 0 ? '' : ' disabled'}" data-action="clear-notifications"${summary.recentTerminal > 0 ? '' : ' disabled'}>Clear Notifications</button>
         <button type="button" class="menu_button" data-action="refresh-jobs">Refresh</button>
     `;
 
     plannerStatusPanel.hidden = !plannerStatusPanelOpen;
-    renderPlannerStatusRows(latestPlannerJobs);
+    renderPlannerStatusRows(visibleJobs);
 }
 
 function handlePlannerStatusButtonClick() {
@@ -559,6 +591,19 @@ function ensurePlannerStatusUi() {
             stopStmbCommand().catch(error => {
                 console.warn('STMB stop-all from planner status UI failed', error);
             });
+            return;
+        }
+
+        if (action === 'clear-notifications') {
+            for (const job of latestPlannerJobs) {
+                if (isPlannerJobTerminal(job)) {
+                    const jobId = String(job?.id || '');
+                    if (jobId) {
+                        dismissedPlannerNotificationIds.add(jobId);
+                    }
+                }
+            }
+            renderPlannerStatusUi();
             return;
         }
 
@@ -645,10 +690,12 @@ async function pollCurrentChatPlannerState() {
         const plannerState = await listStmbPlannerJobs();
         const jobs = Array.isArray(plannerState?.jobs) ? plannerState.jobs : [];
         latestPlannerJobs = jobs;
+        pruneDismissedPlannerNotifications(jobs);
         renderPlannerStatusUi();
         await handlePlannerApprovalRequests(jobs);
         await refreshPlannerEffectsFromJobs(jobs);
         latestPlannerJobs = jobs;
+        pruneDismissedPlannerNotifications(jobs);
         renderPlannerStatusUi();
         const hasActiveJobs = jobs.some(job => ['pending', 'running', 'awaiting_approval'].includes(String(job?.status || '')));
         const hasRecentTerminal = jobs.some(job => ['completed', 'failed', 'canceled', 'rejected', 'skipped'].includes(String(job?.status || '')) && Number(job?.updatedAt || 0) > (Date.now() - 15_000));
