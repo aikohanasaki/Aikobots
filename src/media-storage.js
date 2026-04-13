@@ -108,7 +108,12 @@ export function normalizeStoredMediaRecord(directories, record) {
  * @returns {string}
  */
 export function resolveStoredMediaPath(directories, record) {
-    return path.join(directories.root, record.relativePath);
+    const absolutePath = path.join(directories.root, String(record?.relativePath || ''));
+    if (!isPathUnderParent(directories.userImages, absolutePath)) {
+        throw new Error('Stored media path is outside the internal image store');
+    }
+
+    return absolutePath;
 }
 
 /**

@@ -2997,13 +2997,13 @@ async function sendGenerationRequest(generationType, prompt, additionalNegativeP
     }
 
     const filename = `${characterName}_${humanizedDateTime()}`;
-    const shouldPersistAsPath = isVideo(result.format) || generationType === generationMode.BACKGROUND;
-    const generatedMedia = shouldPersistAsPath
-        ? await saveBase64AsFile(result.data, characterName, filename, result.format)
+    const generatedMedia = await saveBase64AsFile(result.data, characterName, filename, result.format);
+    const attachmentMedia = isVideo(result.format) || generationType === generationMode.BACKGROUND
+        ? generatedMedia
         : `data:image/${result.format === 'jpg' ? 'jpeg' : result.format};base64,${result.data}`;
     callback
         ? await callback(prompt, generatedMedia, generationType, additionalNegativePrefix, initiator, prefixedPrompt, result.format)
-        : await sendMessage(prompt, generatedMedia, generationType, additionalNegativePrefix, initiator, prefixedPrompt, result.format);
+        : await sendMessage(prompt, attachmentMedia, generationType, additionalNegativePrefix, initiator, prefixedPrompt, result.format);
     return generatedMedia;
 }
 

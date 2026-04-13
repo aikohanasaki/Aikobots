@@ -1,5 +1,6 @@
 import { Buffer } from 'node:buffer';
 import fs from 'node:fs';
+import { pipeline } from 'node:stream/promises';
 
 import express from 'express';
 
@@ -80,9 +81,14 @@ router.get('/:mediaId/content', async (request, response) => {
         }
 
         response.setHeader('Content-Type', record.mimeType || 'application/octet-stream');
-        return fs.createReadStream(absolutePath).pipe(response);
+        await pipeline(fs.createReadStream(absolutePath), response);
+        return;
     } catch (error) {
         console.error('Failed to stream media content', error);
+        if (response.headersSent) {
+            response.destroy(error);
+            return;
+        }
         return response.sendStatus(500);
     }
 });

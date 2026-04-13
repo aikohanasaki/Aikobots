@@ -1907,6 +1907,11 @@ async function populateChatHistory(messages, prompts, chatCompletion, context) {
             if (mediaSupport.image && mediaType === 'image') {
                 const imageDataUrl = await resolveStoredImageMediaAsDataUrl(media, context.userDirectories);
                 if (!imageDataUrl) {
+                    console.warn('Dropping image attachment during prompt assembly because stored media could not be resolved.', {
+                        mediaId: String(media.mediaId || ''),
+                        status: String(media.status || ''),
+                        hasDataUrl: isDataURL(media.url),
+                    });
                     return;
                 }
 

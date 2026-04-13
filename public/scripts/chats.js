@@ -184,7 +184,7 @@ export function hydrateMediaAttachment(attachment) {
     return attachment;
 }
 
-function markImageAttachmentUnavailable(attachment, message = 'Image attachment is unavailable.') {
+export function markImageAttachmentUnavailable(attachment, message = 'Image attachment is unavailable.') {
     if (!attachment || typeof attachment !== 'object') {
         return attachment;
     }
@@ -257,9 +257,13 @@ export async function createImageAttachmentFromUrl(url, { title = '', source = M
 
     try {
         if (normalizedUrl.startsWith('data:')) {
-            const [header] = normalizedUrl.split(',', 1);
+            const separatorIndex = normalizedUrl.indexOf(',');
+            const header = separatorIndex >= 0 ? normalizedUrl.slice(0, separatorIndex) : normalizedUrl;
             const mimeType = /^data:([^;,]+)/i.exec(header)?.[1] || 'image/png';
-            const base64Data = normalizedUrl.split(',')[1] || '';
+            const base64Data = separatorIndex >= 0 ? normalizedUrl.slice(separatorIndex + 1) : '';
+            if (!base64Data) {
+                throw new Error('Invalid data URL: missing base64 data');
+            }
             return await ingestImageAttachment(base64Data, mimeType, { filename, title, source });
         }
 

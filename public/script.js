@@ -221,7 +221,7 @@ import {
 import { getBackgrounds, initBackgrounds, loadBackgroundSettings, background_settings } from './scripts/backgrounds.js';
 import { hideLoader, showLoader } from './scripts/loader.js';
 import { BulkEditOverlay } from './scripts/BulkEditOverlay.js';
-import { appendFileContent, backfillImageMediaIdsForMessages, createImageAttachmentFromUrl, getMediaAttachmentUrl, hasPendingFileAttachment, hydrateMediaAttachment, populateFileAttachment, decodeStyleTags, encodeStyleTags, isExternalMediaAllowed, preserveNeutralChat, restoreNeutralChat, formatCreatorNotes, initChatUtilities, addDOMPurifyHooks } from './scripts/chats.js';
+import { appendFileContent, backfillImageMediaIdsForMessages, createImageAttachmentFromUrl, getMediaAttachmentUrl, hasPendingFileAttachment, hydrateMediaAttachment, markImageAttachmentUnavailable, populateFileAttachment, decodeStyleTags, encodeStyleTags, isExternalMediaAllowed, preserveNeutralChat, restoreNeutralChat, formatCreatorNotes, initChatUtilities, addDOMPurifyHooks } from './scripts/chats.js';
 import { getPresetManager, initPresetManager } from './scripts/preset-manager.js';
 import { evaluateMacros, getLastMessageId, initMacros, MacrosParser } from './scripts/macros.js';
 import { currentUser, setUserControls, submitSelectedCharacterForReview } from './scripts/user.js';
@@ -7423,9 +7423,11 @@ function extractImagesFromData(data, { mainApi = null, chatCompletionSource = nu
                     }
                 } break;
                 case chat_completion_sources.OPENROUTER: {
-                    const imageUrl = data?.choices[0]?.message?.images?.filter(x => x.type === 'image_url')?.map(x => x?.image_url?.url);
+                    const imageUrl = data?.choices[0]?.message?.images
+                        ?.filter(x => x.type === 'image_url')
+                        ?.map(x => typeof x?.image_url?.url === 'string' ? x.image_url.url.trim() : x?.image_url?.url);
                     if (Array.isArray(imageUrl) && imageUrl.length > 0) {
-                        return imageUrl.filter(Boolean);
+                        return imageUrl.filter(url => isDataURL(url) || (/^https?:\/\//i.test(url) && isValidUrl(url)));
                     }
                 }
             }
@@ -7727,9 +7729,10 @@ async function processImageAttachment(message, { imageUrls }) {
         if (!imageUrl) {
             continue;
         }
+        const title = `inline_image_${Date.now().toString()}_${index}`;
         try {
             const attachment = await createImageAttachmentFromUrl(imageUrl, {
-                title: `inline_image_${Date.now().toString()}_${index}`,
+                title,
                 source: MEDIA_SOURCE.API,
                 unavailableOnFailure: true,
             });
@@ -7738,6 +7741,15 @@ async function processImageAttachment(message, { imageUrls }) {
             }
         } catch (error) {
             console.error('Failed to process generated image attachment', error);
+            saveImageToMessage({
+                attachment: markImageAttachmentUnavailable({
+                    type: MEDIA_TYPE.IMAGE,
+                    title,
+                    source: MEDIA_SOURCE.API,
+                    originalUrl: String(imageUrl || ''),
+                }, error?.message || 'This image could not be ingested and was skipped.'),
+                inline: true,
+            }, message);
         }
     }
 }
