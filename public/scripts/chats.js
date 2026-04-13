@@ -784,6 +784,10 @@ async function deleteMessageFile(messageBlock, messageId, fileIndex) {
     }
 
     messageBlock = chatElement.find(`.mes[mesid="${messageId}"]`);
+    if (!messageBlock.length) {
+        console.warn('Message block not found after editability check', messageId);
+        return;
+    }
 
     const confirm = await callGenericPopup('Are you sure you want to delete this file?', POPUP_TYPE.CONFIRM);
 
@@ -1375,6 +1379,10 @@ async function deleteMessageMedia(messageId, mediaIndex, messageBlock) {
     }
 
     messageBlock = chatElement.find(`.mes[mesid="${messageId}"]`);
+    if (!messageBlock.length) {
+        console.warn('Message block not found after editability check', messageId);
+        return;
+    }
 
     const deleteFromServerId = 'delete_media_files_checkbox';
     let deleteFromServer = true;

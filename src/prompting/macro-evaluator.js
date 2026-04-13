@@ -74,12 +74,22 @@ function buildOutletSegmentValues(extensionPrompts = {}) {
 }
 
 const ESCAPED_COMMA_SENTINEL = '__ST_ESCAPED_COMMA_7F3F5E9A__';
+let hasWarnedBannedMacroDeprecation = false;
 
 function splitEscapedList(listString) {
     return String(listString || '')
         .replace(/\\,/g, ESCAPED_COMMA_SENTINEL)
         .split(',')
         .map(item => item.trim().replaceAll(ESCAPED_COMMA_SENTINEL, ','));
+}
+
+function warnBannedMacroDeprecated() {
+    if (hasWarnedBannedMacroDeprecation) {
+        return;
+    }
+
+    hasWarnedBannedMacroDeprecation = true;
+    console.warn('{{banned "...}}" is deprecated and no longer adds banned word sequences. The macro is stripped from prompts.');
 }
 
 export function createMacroState(snapshot = {}, extensionPrompts = {}) {
@@ -241,7 +251,10 @@ export function evaluatePromptMacros(content, env = {}, { additional = {}, macro
             }
             return moment.duration(leftMoment.diff(rightMoment)).humanize(true);
         } },
-        { regex: /{{banned "(.*)"}}/gi, replace: () => '' },
+        { regex: /{{banned "(.*)"}}/gi, replace: () => {
+            warnBannedMacroDeprecated();
+            return '';
+        } },
         { regex: /{{random\s?::?([^}]+)}}/gi, replace: (_, listString) => {
             const list = String(listString || '').includes('::')
                 ? String(listString).split('::')

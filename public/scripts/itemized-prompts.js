@@ -289,7 +289,7 @@ function getRedactedRawPromptText(itemizedPrompt, incomingMesId, snapshot = null
         return snapshotPromptText;
     }
 
-    const entries = getPromptWorldInfoEntries(itemizedPrompt, incomingMesId);
+    const entries = getPromptWorldInfoEntries(itemizedPrompt, incomingMesId, snapshot);
     const hasHiddenEntries = entries.some(entry => entry?.hidden);
     const rawPrompt = itemizedPrompt?.rawPrompt;
 
@@ -297,7 +297,7 @@ function getRedactedRawPromptText(itemizedPrompt, incomingMesId, snapshot = null
         return Array.isArray(rawPrompt) ? rawPrompt.map(x => x.content).join('\n') : String(rawPrompt ?? '');
     }
 
-    const messagesState = itemizedPrompt?.serverAssemblyDebugDump?.assembly?.messagesState;
+    const messagesState = snapshot?.assembly?.messagesState ?? itemizedPrompt?.serverAssemblyDebugDump?.assembly?.messagesState;
     if (!messagesState || typeof messagesState !== 'object') {
         return Array.isArray(rawPrompt) ? rawPrompt.map(x => x.content).join('\n') : String(rawPrompt ?? '');
     }

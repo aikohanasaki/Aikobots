@@ -321,13 +321,27 @@ function getCurrentSwipeId() {
     return swipeId !== null ? swipeId + 1 : null;
 }
 
+let hasWarnedBannedMacroDeprecation = false;
+
+function warnBannedMacroDeprecated() {
+    if (hasWarnedBannedMacroDeprecation) {
+        return;
+    }
+
+    hasWarnedBannedMacroDeprecation = true;
+    console.warn('{{banned "...}}" is deprecated and no longer adds banned word sequences. The macro is stripped from prompts.');
+}
+
 /**
- * Replaces banned words in macros with an empty string.
+ * Strips the deprecated {{banned "...}} macro while warning once.
  * @returns {Macro}
  */
 function getBannedWordsMacro() {
     const banPattern = /{{banned ".*"}}/gi;
-    const banReplace = () => '';
+    const banReplace = () => {
+        warnBannedMacroDeprecated();
+        return '';
+    };
 
     return { regex: banPattern, replace: banReplace };
 }

@@ -50,7 +50,7 @@
     <li><tt>&lcub;&lcub;random:(args)&rcub;&rcub;</tt> – <span data-i18n="help_macros_37">returns a random item from the list. (ex: </span><tt>&lcub;&lcub;random:1,2,3,4&rcub;&rcub;</tt><span data-i18n="space_  will return 1 of the 4 numbers at random. Works with text lists too."> will return 1 of the 4 numbers at random. Works with text lists too.</span></li>
     <li><tt>&lcub;&lcub;random::(arg1)::(arg2)&rcub;&rcub;</tt> – <span data-i18n="help_macros_38">alternative syntax for random that allows to use commas in the list items.</span></li>
     <li><tt>&lcub;&lcub;pick::(args)&rcub;&rcub;</tt> – <span data-i18n="help_macros_39">picks a random item from the list. Works the same as &lcub;&lcub;random&rcub;&rcub;, with the same possible syntax options, but the pick will stay consistent for this chat once picked and won't be re-rolled on consecutive messages and prompt processing.</span></li>
-    <li><tt>&lcub;&lcub;banned "text here"&rcub;&rcub;</tt> – <span data-i18n="help_macros_40">dynamically add text in the quotes to banned words sequences, if Text Generation WebUI backend used. Do nothing for others backends. Can be used anywhere (Character description, WI, AN, etc.) Quotes around the text are important.</span></li>
+    <li><tt>&lcub;&lcub;banned "text here"&rcub;&rcub;</tt> – <span data-i18n="help_macros_40">deprecated macro. It is stripped from prompts and no longer adds banned word sequences.</span></li>
     <li><tt>&lcub;&lcub;isMobile&rcub;&rcub;</tt> – <span data-i18n="help_macros_isMobile">"true" if currently running in a mobile environment, "false" otherwise</span></li>
 </ul>
 <div data-i18n="Instruct Mode Macros:">

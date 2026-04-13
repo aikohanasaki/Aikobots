@@ -265,7 +265,7 @@ export async function upsertArcPromptPresetFile(key, prompt, displayName = null)
         throw new Error('Prompt cannot be empty');
     }
 
-    const doc = await loadDoc();
+    const doc = structuredClone(await loadDoc());
     const normalizedKey = typeof key === 'string' && key.trim() ? key.trim() : null;
     const actualKey = normalizedKey || generateUniqueKey(displayName || generateDisplayNameFromContent(trimmedPrompt), doc.overrides);
     const timestamp = new Date().toISOString();
@@ -295,7 +295,7 @@ export async function duplicateArcPromptPresetFile(key) {
 
 export async function removeArcPromptPresetFile(key) {
     const normalizedKey = String(key || '').trim();
-    const doc = await loadDoc();
+    const doc = structuredClone(await loadDoc());
     if (!Object.prototype.hasOwnProperty.call(doc.overrides, normalizedKey)) {
         throw new Error(`Consolidation prompt "${normalizedKey}" not found`);
     }
@@ -312,11 +312,11 @@ export async function importArcPromptPresetsJsonFile(text) {
     if (!validatePromptsFile(parsed)) {
         throw new Error('Invalid consolidation prompts file structure.');
     }
-    await saveDoc(parsed);
+    await saveDoc(structuredClone(parsed));
 }
 
 export async function recreateBuiltInArcPromptOverridesFile() {
-    const doc = await loadDoc();
+    const doc = structuredClone(await loadDoc());
     let removed = 0;
     for (const key of Object.keys(STMB_DEFAULT_SUMMARY_PROMPTS || {})) {
         if (Object.prototype.hasOwnProperty.call(doc.overrides, key)) {

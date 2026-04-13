@@ -326,6 +326,15 @@ async function updateNamedBookmark(originalMessageNum, originalTitle, nextMessag
         return { success: false, error: 'Title is required.' };
     }
 
+    const duplicateIndex = bookmarks.findIndex((bookmark, index) =>
+        index !== bookmarkIndex
+        && bookmark.messageNum === nextMessageNum
+        && bookmark.title === normalizedTitle,
+    );
+    if (duplicateIndex !== -1) {
+        return { success: false, error: 'An identical bookmark already exists.' };
+    }
+
     bookmarks[bookmarkIndex] = {
         messageNum: nextMessageNum,
         title: normalizedTitle,

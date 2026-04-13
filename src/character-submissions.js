@@ -36,6 +36,10 @@ export const DISTRIBUTION_SOURCE_TYPES = Object.freeze({
 
 const DEFAULT_CONTENT_ROOT = globalThis.DEFAULT_CONTENT_ROOT;
 const DEFAULT_CONTENT_INDEX = path.join(DEFAULT_CONTENT_ROOT, 'index.json');
+const DEFAULT_CONTENT_INDEX_LOCK_SUFFIX = '.lock';
+const DEFAULT_CONTENT_INDEX_LOCK_RETRY_MS = 50;
+const DEFAULT_CONTENT_INDEX_LOCK_TIMEOUT_MS = 10_000;
+const DEFAULT_CONTENT_INDEX_LOCK_STALE_MS = 60_000;
 let defaultContentIndexWriteQueue = Promise.resolve();
 
 /**
@@ -45,9 +49,87 @@ let defaultContentIndexWriteQueue = Promise.resolve();
  * @returns {Promise<T>}
  */
 function runWithDefaultContentIndexLock(operation) {
-    const queuedOperation = defaultContentIndexWriteQueue.catch(() => { }).then(operation);
+    const queuedOperation = defaultContentIndexWriteQueue.catch(() => { }).then(async () => {
+        const release = acquireDefaultContentIndexWriteLock();
+
+        try {
+            return await operation();
+        } finally {
+            release();
+        }
+    });
     defaultContentIndexWriteQueue = queuedOperation.catch(() => { });
     return queuedOperation;
+}
+
+function getDefaultContentIndexLockPath() {
+    return `${DEFAULT_CONTENT_INDEX}${DEFAULT_CONTENT_INDEX_LOCK_SUFFIX}`;
+}
+
+function sleepSync(ms) {
+    if (ms <= 0) {
+        return;
+    }
+
+    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+}
+
+function isDefaultContentIndexLockStale(lockPath) {
+    try {
+        const stats = fs.statSync(lockPath);
+        return Date.now() - stats.mtimeMs > DEFAULT_CONTENT_INDEX_LOCK_STALE_MS;
+    } catch (error) {
+        if (error?.code === 'ENOENT') {
+            return false;
+        }
+
+        throw error;
+    }
+}
+
+function removeDefaultContentIndexLock(lockPath) {
+    try {
+        fs.rmdirSync(lockPath);
+    } catch (error) {
+        if (error?.code === 'ENOENT') {
+            return;
+        }
+
+        if (error?.code === 'ENOTEMPTY') {
+            fs.rmSync(lockPath, { recursive: true, force: false });
+            return;
+        }
+
+        throw error;
+    }
+}
+
+function acquireDefaultContentIndexWriteLock() {
+    const lockPath = getDefaultContentIndexLockPath();
+    fs.mkdirSync(path.dirname(lockPath), { recursive: true });
+    const deadline = Date.now() + DEFAULT_CONTENT_INDEX_LOCK_TIMEOUT_MS;
+
+    while (true) {
+        try {
+            fs.mkdirSync(lockPath);
+            return () => removeDefaultContentIndexLock(lockPath);
+        } catch (error) {
+            if (error?.code !== 'EEXIST') {
+                throw error;
+            }
+
+            if (isDefaultContentIndexLockStale(lockPath)) {
+                removeDefaultContentIndexLock(lockPath);
+                continue;
+            }
+
+            if (Date.now() >= deadline) {
+                throw new Error('Timed out waiting to update the default content index.');
+            }
+
+            sleepSync(DEFAULT_CONTENT_INDEX_LOCK_RETRY_MS);
+        }
+    }
 }
 
 /**

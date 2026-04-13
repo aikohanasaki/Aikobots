@@ -50,6 +50,7 @@ import {
     createDefaultStmbProfile,
     findOverlappingManagedMemoryEntry,
     normalizeLorebookEntrySettings,
+    STMB_DEFAULT_MAX_TOKENS,
     STMB_DEFAULT_PROMPTS,
     STMB_DEFAULT_MEMORY_SCHEMA,
     STMB_DEFAULT_TITLE_FORMAT,
@@ -149,6 +150,7 @@ let sidePromptNameCache = [];
 let activeSettingsPopupDialog = null;
 const pendingPassiveChecksByChat = new Map();
 let plannerStatusPollHandle = null;
+let plannerStatusPollInFlight = false;
 const handledPlannerTerminalJobUpdates = new Map();
 const handledPlannerApprovalPrompts = new Map();
 let plannerChatReloadPromise = null;
@@ -215,10 +217,19 @@ function ensurePlannerStatusPolling() {
         return;
     }
 
-    plannerStatusPollHandle = setInterval(() => {
-        pollCurrentChatPlannerState().catch(error => {
+    plannerStatusPollHandle = setInterval(async () => {
+        if (plannerStatusPollInFlight) {
+            return;
+        }
+
+        plannerStatusPollInFlight = true;
+        try {
+            await pollCurrentChatPlannerState();
+        } catch (error) {
             console.warn('STMB planner poll tick failed', error);
-        });
+        } finally {
+            plannerStatusPollInFlight = false;
+        }
     }, 5000);
 }
 
@@ -900,7 +911,7 @@ function buildSettingsPopupHtml(sceneData, currentUiConnection, regexOptions) {
 
             <div class="world_entry_form_control">
                 <label for="stmb-settings-max-tokens" title="Maximum number of tokens to use for memory summaries.">Max Response Tokens</label>
-                <input type="number" id="stmb-settings-max-tokens" class="text_pole" min="0" step="1" value="${escapeHtml(String(moduleSettings.maxTokens ?? 4000))}" title="Maximum number of tokens to use for memory summaries.">
+                <input type="number" id="stmb-settings-max-tokens" class="text_pole" min="0" step="1" value="${escapeHtml(String(moduleSettings.maxTokens ?? STMB_DEFAULT_MAX_TOKENS))}" title="Maximum number of tokens to use for memory summaries.">
             </div>
             <div class="world_entry_form_control">
                 <label for="stmb-settings-token-warning-threshold" title="Show confirmation dialog when estimated input tokens exceed this threshold. Default: 30,000.">Token Warning Threshold</label>
@@ -3191,8 +3202,18 @@ async function deleteSelectedProfile(profileIndex) {
 }
 
 function exportProfilesToFile() {
+    const profiles = Array.isArray(stmbSettings.profiles)
+        ? stmbSettings.profiles.map(profile => {
+            const sanitizedProfile = structuredClone(profile || {});
+            if (sanitizedProfile.connection && typeof sanitizedProfile.connection === 'object' && Object.hasOwn(sanitizedProfile.connection, 'apiKey')) {
+                delete sanitizedProfile.connection.apiKey;
+            }
+            return sanitizedProfile;
+        })
+        : [];
+
     const payload = {
-        profiles: stmbSettings.profiles,
+        profiles,
         exportDate: new Date().toISOString(),
         version: 1,
         moduleVersion: stmbSettings.migrationVersion || 1,

@@ -11,6 +11,10 @@ import { getUserDirectories } from './users.js';
 
 const SHARED_CHARACTER_DIRECTORY = ['_secure', 'shared-characters'];
 const SHARED_CHARACTER_INDEX_FILENAME = 'index.json';
+const SHARED_CHARACTER_INDEX_LOCK_SUFFIX = '.lock';
+const SHARED_CHARACTER_INDEX_LOCK_RETRY_MS = 50;
+const SHARED_CHARACTER_INDEX_LOCK_TIMEOUT_MS = 10_000;
+const SHARED_CHARACTER_INDEX_LOCK_STALE_MS = 60_000;
 let sharedCharacterWriteQueue = Promise.resolve();
 
 export class CharacterSharingRepositoryError extends Error {
@@ -30,7 +34,15 @@ export class CharacterSharingRepositoryError extends Error {
 }
 
 function runWithSharedCharacterLock(operation) {
-    const queuedOperation = sharedCharacterWriteQueue.catch(() => { }).then(operation);
+    const queuedOperation = sharedCharacterWriteQueue.catch(() => { }).then(async () => {
+        const release = acquireSharedCharacterWriteLock();
+
+        try {
+            return await operation();
+        } finally {
+            release();
+        }
+    });
     sharedCharacterWriteQueue = queuedOperation.catch(() => { });
     return queuedOperation;
 }
@@ -50,6 +62,76 @@ function getSharedCharacterDirectory() {
 
 function getSharedCharacterIndexPath() {
     return path.join(getSharedCharacterDirectory(), SHARED_CHARACTER_INDEX_FILENAME);
+}
+
+function getSharedCharacterIndexLockPath() {
+    return `${getSharedCharacterIndexPath()}${SHARED_CHARACTER_INDEX_LOCK_SUFFIX}`;
+}
+
+function sleepSync(ms) {
+    if (ms <= 0) {
+        return;
+    }
+
+    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+}
+
+function isSharedCharacterIndexLockStale(lockPath) {
+    try {
+        const stats = fs.statSync(lockPath);
+        return Date.now() - stats.mtimeMs > SHARED_CHARACTER_INDEX_LOCK_STALE_MS;
+    } catch (error) {
+        if (error?.code === 'ENOENT') {
+            return false;
+        }
+
+        throw error;
+    }
+}
+
+function removeSharedCharacterIndexLock(lockPath) {
+    try {
+        fs.rmdirSync(lockPath);
+    } catch (error) {
+        if (error?.code === 'ENOENT') {
+            return;
+        }
+
+        if (error?.code === 'ENOTEMPTY') {
+            fs.rmSync(lockPath, { recursive: true, force: false });
+            return;
+        }
+
+        throw error;
+    }
+}
+
+function acquireSharedCharacterWriteLock() {
+    const lockPath = getSharedCharacterIndexLockPath();
+    ensureDirectory(path.dirname(lockPath));
+    const deadline = Date.now() + SHARED_CHARACTER_INDEX_LOCK_TIMEOUT_MS;
+
+    while (true) {
+        try {
+            fs.mkdirSync(lockPath);
+            return () => removeSharedCharacterIndexLock(lockPath);
+        } catch (error) {
+            if (error?.code !== 'EEXIST') {
+                throw error;
+            }
+
+            if (isSharedCharacterIndexLockStale(lockPath)) {
+                removeSharedCharacterIndexLock(lockPath);
+                continue;
+            }
+
+            if (Date.now() >= deadline) {
+                throw new CharacterSharingRepositoryError('CharacterIndexBusy', 'Timed out waiting to update the shared character index.', 503);
+            }
+
+            sleepSync(SHARED_CHARACTER_INDEX_LOCK_RETRY_MS);
+        }
+    }
 }
 
 function normalizeCharacterName(value) {
