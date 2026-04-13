@@ -54,10 +54,12 @@ const STMB_METADATA_KEY = 'STMemoryBooks';
 const STMB_WAVE_PLANNER_FILE = 'stmb-wave-planner.json';
 const STMB_WAVE_PLANNER_VERSION = 1;
 const STMB_PLANNER_MAX_HISTORY = 200;
+const STMB_PLANNER_MAX_CONCURRENT_JOBS = 4;
 const PLANNER_TERMINAL_STATUSES = new Set(['completed', 'failed', 'canceled', 'rejected', 'skipped']);
 const PLANNER_BLOCKING_DEPENDENCY_STATUSES = new Set(['failed', 'canceled', 'rejected', 'skipped']);
 const stmbPlannerQueues = new Map();
 const activePlannerRuns = new Map();
+const activePlannerJobExecutions = new Map();
 let plannerWorkerStarted = false;
 let plannerWorkerTickActive = false;
 
@@ -455,7 +457,10 @@ async function forwardChatCompletionGenerateForUser(user, generateData, jobId = 
     }
 
     try {
-        return await forwardChatCompletionGenerate(request, generateData);
+        return await forwardChatCompletionGenerate(request, {
+            ...(generateData && typeof generateData === 'object' ? generateData : {}),
+            stream: false,
+        });
     } finally {
         if (jobId) {
             activePlannerRuns.delete(String(jobId));
@@ -1563,8 +1568,9 @@ function buildPlannerAutoHideRanges(range = {}, mode = 'none', unhiddenCount = 0
     return [];
 }
 
-function writePlannerGroupChat(filePath, messages) {
-    writeFileAtomicSync(filePath, messages.map(item => JSON.stringify(item)).join('\n'), 'utf8');
+function writePlannerGroupChat(filePath, header, messages) {
+    const records = header ? [header, ...messages] : messages;
+    writeFileAtomicSync(filePath, records.map(item => JSON.stringify(item)).join('\n'), 'utf8');
 }
 
 function mutateLogicalChatVisibility(user, sceneContext, ranges = []) {
@@ -1608,7 +1614,7 @@ function mutateLogicalChatVisibility(user, sceneContext, ranges = []) {
     }
 
     if (logicalChat?.chatType === 'group') {
-        writePlannerGroupChat(filePath, nextMessages);
+        writePlannerGroupChat(filePath, logicalChat?.header || null, nextMessages);
         return {
             applied: true,
             changedMessageIds,
@@ -1844,6 +1850,35 @@ async function settlePlannerJob(user, jobId, updater) {
     });
 }
 
+async function runPlannerJobExecution(user, job) {
+    try {
+        const execution = await executePlannerJob(user, job);
+        await settlePlannerJob(user, job.id, settledJob => {
+            settledJob.status = String(execution?.status || 'completed');
+            settledJob.phase = String(execution?.phase || settledJob.phase || getPlannerJobDefaultPhase(settledJob?.kind));
+            settledJob.result = execution?.result ?? null;
+            settledJob.approvalRequest = execution?.approvalRequest ?? null;
+            settledJob.error = execution?.error ?? null;
+        });
+    } catch (error) {
+        console.error('[STMB Planner] Job failed', job.id, error);
+        await settlePlannerJob(user, job.id, settledJob => {
+            settledJob.status = 'failed';
+            settledJob.phase = String(settledJob?.phase || getPlannerJobDefaultPhase(settledJob?.kind));
+            settledJob.approvalRequest = null;
+            settledJob.error = {
+                message: String(error?.message || error),
+                type: String(error?.type || error?.name || 'StmbPlannerJobError'),
+            };
+        });
+    } finally {
+        activePlannerJobExecutions.delete(String(job.id));
+        processPlannerJobs().catch(error => {
+            console.error('[STMB Planner] Worker reschedule failed', error);
+        });
+    }
+}
+
 function buildApprovedPlannerResultForJob(job, approvalRequest, editedData = null) {
     const kind = String(job?.kind || '');
     if (kind === 'memoryApproval') {
@@ -2014,35 +2049,40 @@ async function processPlannerJobs() {
 
     plannerWorkerTickActive = true;
     try {
+        let remainingCapacity = STMB_PLANNER_MAX_CONCURRENT_JOBS - activePlannerJobExecutions.size;
+        if (remainingCapacity <= 0) {
+            return;
+        }
+
         const handles = await getAllUserHandles();
-        for (const handle of handles) {
-            const user = makePlannerUser(handle);
-            const nextJob = await claimNextPlannerJob(user);
-            if (!nextJob) {
-                continue;
+        const users = handles.map(handle => makePlannerUser(handle));
+        const claimedJobs = [];
+
+        while (remainingCapacity > 0) {
+            let claimedInPass = false;
+            for (const user of users) {
+                if (remainingCapacity <= 0) {
+                    break;
+                }
+
+                const nextJob = await claimNextPlannerJob(user);
+                if (!nextJob) {
+                    continue;
+                }
+
+                claimedJobs.push({ user, job: nextJob });
+                remainingCapacity--;
+                claimedInPass = true;
             }
 
-            try {
-                const execution = await executePlannerJob(user, nextJob);
-                await settlePlannerJob(user, nextJob.id, job => {
-                    job.status = String(execution?.status || 'completed');
-                    job.phase = String(execution?.phase || job.phase || getPlannerJobDefaultPhase(job?.kind));
-                    job.result = execution?.result ?? null;
-                    job.approvalRequest = execution?.approvalRequest ?? null;
-                    job.error = execution?.error ?? null;
-                });
-            } catch (error) {
-                console.error('[STMB Planner] Job failed', nextJob.id, error);
-                await settlePlannerJob(user, nextJob.id, job => {
-                    job.status = 'failed';
-                    job.phase = String(job?.phase || getPlannerJobDefaultPhase(job?.kind));
-                    job.approvalRequest = null;
-                    job.error = {
-                        message: String(error?.message || error),
-                        type: String(error?.type || error?.name || 'StmbPlannerJobError'),
-                    };
-                });
+            if (!claimedInPass) {
+                break;
             }
+        }
+
+        for (const { user, job } of claimedJobs) {
+            const executionPromise = runPlannerJobExecution(user, job);
+            activePlannerJobExecutions.set(String(job.id), executionPromise);
         }
     } finally {
         plannerWorkerTickActive = false;

@@ -773,3 +773,60 @@ export async function checkinSharedCharacter(user, name, force = false) {
         return buildCharacterMetadata(getSharedCharacterIndexRecord(index, canonicalName), user);
     });
 }
+
+export async function deleteSharedCharacter(user, name) {
+    const canonicalName = normalizeCharacterName(name);
+    const destinationPath = getSharedCharacterPath(canonicalName);
+    const removedLinks = [];
+    let originalCanonicalRawBuffer = null;
+    let originalCanonicalCard = null;
+
+    return withSharedCharacterTransaction(async index => {
+        const sharedRecord = getSharedCharacterIndexRecord(index, canonicalName);
+        if (!sharedRecord) {
+            throw new CharacterSharingRepositoryError('CharacterNotFound', `Character "${canonicalName}" not found.`, 404);
+        }
+
+        if (!Boolean(user?.profile?.admin)) {
+            throw new CharacterSharingRepositoryError('CharacterAccessDenied', `Character "${canonicalName}" is not deletable.`, 403);
+        }
+
+        if (fs.existsSync(destinationPath)) {
+            const { rawBuffer, card } = await readCharacterCardFile(destinationPath);
+            originalCanonicalRawBuffer = rawBuffer;
+            originalCanonicalCard = structuredClone(card);
+        }
+
+        for (const handle of sharedRecord.ownerHandles) {
+            const linkPath = getUserCharacterPath(handle, canonicalName);
+            if (fs.existsSync(linkPath)) {
+                fs.unlinkSync(linkPath);
+                removedLinks.push(linkPath);
+            }
+        }
+
+        if (fs.existsSync(destinationPath)) {
+            fs.unlinkSync(destinationPath);
+        }
+
+        delete index.characters[canonicalName];
+        return true;
+    }, {
+        onRollback: async () => {
+            if (originalCanonicalRawBuffer && originalCanonicalCard && !fs.existsSync(destinationPath)) {
+                await writeCharacterCardFile(originalCanonicalRawBuffer, originalCanonicalCard, destinationPath);
+            }
+
+            if (!fs.existsSync(destinationPath)) {
+                return;
+            }
+
+            for (const linkPath of removedLinks) {
+                if (!fs.existsSync(linkPath)) {
+                    createSharedCharacterSymlink(linkPath, destinationPath, canonicalName);
+                }
+            }
+        },
+        rollbackMessage: `Failed to delete shared character "${canonicalName}" cleanly. Manual repair may be required.`,
+    });
+}

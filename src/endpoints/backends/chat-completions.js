@@ -2572,7 +2572,8 @@ async function forwardFetchResponseWithWorldInfo(from, to, request, timedWorldIn
 
     to.socket.on('close', function () {
         stopStreamHeartbeat(heartbeat);
-        from.body.destroy();
+        from.body.once?.('error', () => {});
+        from.body.destroy?.();
         if (!to.writableEnded) {
             to.end();
         }

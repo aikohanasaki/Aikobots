@@ -10755,7 +10755,7 @@ export async function openManageChatsOrphanCharacterChat(orphanKey, fileName) {
             displayName,
             !!message.is_system,
             !!message.is_user,
-            index,
+            -1,
             {},
             false,
         )));
@@ -12028,7 +12028,7 @@ export async function saveChatConditional() {
 
         // Save token and prompts cache to IndexedDB storage
         saveTokenCache();
-        saveItemizedPrompts(savedChatId);
+        await saveItemizedPrompts(savedChatId);
         saveSucceeded = true;
     } catch (error) {
         console.error('Error saving chat', error);

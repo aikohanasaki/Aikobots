@@ -591,11 +591,11 @@ export function writeLogicalChat(filePath, header, messages, { displayCount = LO
             compacted: tailStartId !== null && nextTailStartId !== tailStartId,
         };
     } else {
+        writeFileAtomicSync(filePath, fullJsonl, 'utf8');
+
         if (fs.existsSync(headPath)) {
             fs.unlinkSync(headPath);
         }
-
-        writeFileAtomicSync(filePath, fullJsonl, 'utf8');
 
         return {
             fullJsonl,

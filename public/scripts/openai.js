@@ -182,6 +182,18 @@ function storeServerAssemblyPromptContext(promptContext) {
         : null;
 }
 
+function stripSensitiveServerPayloadFields(value) {
+    if (!value || typeof value !== 'object') {
+        return value;
+    }
+
+    const copy = { ...value };
+    for (const field of sensitiveFields) {
+        delete copy[field];
+    }
+    return copy;
+}
+
 function storeServerAssemblyDebugDump(dump) {
     lastServerAssemblyDebugDump = dump && typeof dump === 'object'
         ? dump
@@ -1099,7 +1111,7 @@ export async function buildServerAssemblyPayload({
         activeCharacter: promptManager?.activeCharacter ? { id: promptManager.activeCharacter.id } : null,
         serviceSettings: sanitizeForServerPayload(promptManager?.serviceSettings || {}),
         extensionSettings: sanitizeForServerPayload(extension_settings || {}),
-        oaiSettings: sanitizeForServerPayload(oai_settings),
+        oaiSettings: stripSensitiveServerPayloadFields(sanitizeForServerPayload(oai_settings)),
         powerUser: {
             pin_examples: Boolean(power_user.pin_examples),
             persona_description: power_user.persona_description || '',
@@ -2622,6 +2634,8 @@ function parseChatCompletionLogprobs(data) {
         case chat_completion_sources.DEEPSEEK:
         case chat_completion_sources.XAI:
         case chat_completion_sources.CUSTOM:
+        case chat_completion_sources.AIMLAPI:
+        case chat_completion_sources.ZANITY:
             if (!data.choices?.length) {
                 return null;
             }

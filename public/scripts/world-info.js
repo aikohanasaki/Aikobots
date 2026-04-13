@@ -127,6 +127,41 @@ function isWorldInfoBulkMoveEntrySelected(name = '', uid) {
     return getWorldInfoBulkMoveState(name).selectedEntryUids.has(String(uid));
 }
 
+const WORLD_INFO_MUTATION_BUTTON_DEFAULT_TITLES = Object.freeze({
+    '#world_popup_new': 'New Entry',
+    '#world_popup_name_button': 'Rename World Info',
+    '#world_popup_delete': 'Delete World Info',
+    '#world_duplicate': 'Duplicate World Info',
+    '#world_lorebook_ordering': 'Lorebook Ordering & Budget',
+    '#world_backfill_memos': 'Fill empty Memo/Titles with Keywords',
+    '#world_apply_current_sorting': 'Apply current sorting as Order',
+});
+
+function getWorldInfoMutationButtonTitles(name = '') {
+    const state = getWorldInfoBulkMoveState(name);
+    const selectionCount = state.selectedEntryUids.size;
+    const selectionSuffix = selectionCount > 0 ? ` (${selectionCount})` : '';
+
+    return {
+        ...WORLD_INFO_MUTATION_BUTTON_DEFAULT_TITLES,
+        '#world_bulk_move_mode': state.bulkMoveMode ? `Cancel bulk move/copy selection${selectionSuffix}` : 'Select Entries to Move/Copy',
+        '#world_bulk_move_apply': selectionCount > 0 ? `Move/Copy ${selectionCount} selected entr${selectionCount === 1 ? 'y' : 'ies'}` : 'Move/Copy Selected Entries',
+    };
+}
+
+function updateWorldInfoMutationButtonState(name = '', data = null) {
+    const item = getResolvedWorldInfoItem(name, data);
+    const isReadOnly = isSharedLorebookReadOnly(item);
+    const title = getWorldInfoReadOnlyMessage(item);
+    const titles = getWorldInfoMutationButtonTitles(name);
+
+    for (const [selector, buttonTitle] of Object.entries(titles)) {
+        $(selector)
+            .toggleClass('disabled', isReadOnly)
+            .attr('title', isReadOnly ? title : buttonTitle);
+    }
+}
+
 function getSelectedWorldInfoEntriesInDisplayOrder(name = '', data = null) {
     const state = getWorldInfoBulkMoveState(name);
     if (!state.selectedEntryUids.size || !data?.entries) {
@@ -159,14 +194,13 @@ function syncWorldInfoBulkMoveUi(name = '') {
     });
 
     toggleButton
-        .toggleClass('world_bulk_move_active', state.bulkMoveMode)
-        .attr('title', state.bulkMoveMode ? `Cancel bulk move/copy selection${selectionSuffix}` : 'Select Entries to Move/Copy');
+        .toggleClass('world_bulk_move_active', state.bulkMoveMode);
 
     applyButton
-        .css('display', state.bulkMoveMode && selectionCount > 0 ? 'flex' : 'none')
-        .attr('title', selectionCount > 0 ? `Move/Copy ${selectionCount} selected entr${selectionCount === 1 ? 'y' : 'ies'}` : 'Move/Copy Selected Entries');
+        .css('display', state.bulkMoveMode && selectionCount > 0 ? 'flex' : 'none');
 
     applyButton.find('.world-bulk-move-count').text(selectionSuffix);
+    updateWorldInfoMutationButtonState(name);
 }
 
 function normalizeWorldInfoItems(data = {}) {
@@ -3348,7 +3382,7 @@ async function displayWorldEntries(name, data, navigation = navigation_option.no
             if (entry.order === newOrder) continue;
 
             entry.order = newOrder;
-            setWIOriginalDataValue(data, entry.order, 'order', entry.order);
+            setWIOriginalDataValue(data, entry.uid, 'insertion_order', entry.order);
             updated++;
         }
 
@@ -5085,10 +5119,10 @@ export async function createNewWorldInfo(worldName, { interactive = false } = {}
         return false;
     }
 
-    await saveWorldInfo(worldName, worldInfoTemplate, true);
+    await saveWorldInfo(sanitizedWorldName, worldInfoTemplate, true);
     await updateWorldInfoList();
 
-    const selectedIndex = world_names.indexOf(worldName);
+    const selectedIndex = world_names.indexOf(sanitizedWorldName);
     if (selectedIndex !== -1) {
         $('#world_editor_select').val(selectedIndex).trigger('change');
     } else {
@@ -6599,22 +6633,7 @@ function updateWorldInfoCheckoutStatus(name = '', data = null) {
 function applyWorldInfoReadOnlyState(name = '', data = null) {
     const item = getResolvedWorldInfoItem(name, data);
     const isReadOnly = isSharedLorebookReadOnly(item);
-    const message = getWorldInfoReadOnlyMessage(item);
-    const mutationSelector = [
-        '#world_popup_new',
-        '#world_bulk_move_mode',
-        '#world_bulk_move_apply',
-        '#world_popup_name_button',
-        '#world_popup_delete',
-        '#world_duplicate',
-        '#world_lorebook_ordering',
-        '#world_backfill_memos',
-        '#world_apply_current_sorting',
-    ].join(', ');
-
-    $(mutationSelector)
-        .toggleClass('disabled', isReadOnly)
-        .attr('title', (_, currentTitle) => isReadOnly ? message : currentTitle);
+    updateWorldInfoMutationButtonState(name, data);
 
     const entriesList = $('#world_popup_entries_list');
     entriesList.find('input, textarea, select, button').prop('disabled', isReadOnly);

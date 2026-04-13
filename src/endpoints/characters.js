@@ -23,6 +23,7 @@ import {
     CharacterSharingRepositoryError,
     checkinSharedCharacter,
     checkoutSharedCharacter,
+    deleteSharedCharacter,
     getCharacterMetadata,
     getSharedCharacterRecord,
     promoteCharacterToShared,
@@ -869,6 +870,32 @@ function sendSharedCharacterError(response, error) {
     });
 }
 
+async function assertSharedCharacterCheckoutForMutation(request, avatarName) {
+    const characterName = path.parse(String(avatarName || '')).name;
+    if (!characterName) {
+        return;
+    }
+
+    const sharedRecord = await getSharedCharacterRecord(characterName);
+    if (!sharedRecord || sharedRecord.sharingMode !== 'shared') {
+        return;
+    }
+
+    if (Boolean(request.user?.profile?.admin)) {
+        return;
+    }
+
+    const currentHandle = String(request.user?.profile?.handle || '').trim();
+    const checkedOutBy = String(sharedRecord.checkedOutBy || '').trim();
+    if (!checkedOutBy) {
+        throw new CharacterSharingRepositoryError('CharacterCheckedOut', `Character "${sharedRecord.name}" must be checked out before editing.`, 423);
+    }
+
+    if (checkedOutBy !== currentHandle) {
+        throw new CharacterSharingRepositoryError('CharacterCheckedOut', `Character "${sharedRecord.name}" is checked out by ${checkedOutBy}.`, 423);
+    }
+}
+
 async function validateSharedCharacterOwnerHandles(ownerHandles = [], actingHandle = '') {
     const normalizedActingHandle = String(actingHandle || '').trim();
     const normalizedOwnerHandles = [...new Set([
@@ -1195,6 +1222,8 @@ router.post('/create', getFileNameValidationFunction('file_name'), async functio
         const avatarName = `${internalName}.png`;
         const chatsPath = path.join(request.user.directories.chats, internalName);
 
+        await assertSharedCharacterCheckoutForMutation(request, avatarName);
+
         if (!fs.existsSync(chatsPath)) fs.mkdirSync(chatsPath);
 
         if (!request.file) {
@@ -1208,6 +1237,10 @@ router.post('/create', getFileNameValidationFunction('file_name'), async functio
             return response.send(avatarName);
         }
     } catch (err) {
+        if (err instanceof CharacterSharingRepositoryError) {
+            return sendSharedCharacterError(response, err);
+        }
+
         console.error(err);
         response.sendStatus(500);
     }
@@ -1283,6 +1316,7 @@ router.post('/edit', validateAvatarUrlMiddleware, async function (request, respo
     }
 
     try {
+        await assertSharedCharacterCheckoutForMutation(request, request.body.avatar_url);
         const avatarPath = path.join(request.user.directories.characters, request.body.avatar_url);
         const rawCharacterData = await readCharacterData(avatarPath);
         const existingCharacter = rawCharacterData ? getCharaCardV2(JSON.parse(rawCharacterData), request.user.directories, false) : null;
@@ -1346,6 +1380,10 @@ router.post('/edit', validateAvatarUrlMiddleware, async function (request, respo
             return response.status(400).json({ error: err.message });
         }
 
+        if (err instanceof CharacterSharingRepositoryError) {
+            return sendSharedCharacterError(response, err);
+        }
+
         console.error('An error occurred, character edit invalidated.', err);
         return response.sendStatus(500);
     }
@@ -1369,6 +1407,9 @@ router.post('/edit-avatar', validateAvatarUrlMiddleware, async function (request
         if (!fs.existsSync(characterPath)) {
             return response.status(400).send('Error: character file does not exist');
         }
+
+        await assertSharedCharacterCheckoutForMutation(request, request.body.avatar_url);
+
         const data = await readCharacterData(characterPath);
         if (!data) {
             return response.status(400).send('Error: failed to read character data');
@@ -1387,6 +1428,10 @@ router.post('/edit-avatar', validateAvatarUrlMiddleware, async function (request
 
         return response.sendStatus(200);
     } catch (err) {
+        if (err instanceof CharacterSharingRepositoryError) {
+            return sendSharedCharacterError(response, err);
+        }
+
         console.error('An error occurred while editing avatar', err);
         return response.sendStatus(500);
     }
@@ -1420,6 +1465,7 @@ router.post('/edit-attribute', validateAvatarUrlMiddleware, async function (requ
     }
 
     try {
+        await assertSharedCharacterCheckoutForMutation(request, request.body.avatar_url);
         const avatarPath = path.join(request.user.directories.characters, request.body.avatar_url);
         const charJSON = await readCharacterData(avatarPath);
         if (typeof charJSON !== 'string') throw new Error('Failed to read character file');
@@ -1438,6 +1484,10 @@ router.post('/edit-attribute', validateAvatarUrlMiddleware, async function (requ
         await writeCharacterData(avatarPath, newCharJSON, targetFile, request);
         return response.sendStatus(200);
     } catch (err) {
+        if (err instanceof CharacterSharingRepositoryError) {
+            return sendSharedCharacterError(response, err);
+        }
+
         console.error('An error occurred, character edit invalidated.', err);
         return response.sendStatus(500);
     }
@@ -1457,6 +1507,7 @@ router.post('/edit-attribute', validateAvatarUrlMiddleware, async function (requ
 router.post('/merge-attributes', getFileNameValidationFunction('avatar'), async function (request, response) {
     try {
         const update = request.body;
+        await assertSharedCharacterCheckoutForMutation(request, update.avatar);
         const avatarPath = path.join(request.user.directories.characters, update.avatar);
 
         const pngStringData = await readCharacterData(avatarPath);
@@ -1467,12 +1518,14 @@ router.post('/merge-attributes', getFileNameValidationFunction('avatar'), async 
         }
 
         let character = JSON.parse(pngStringData);
+        const existingCharacter = _.cloneDeep(character);
         const canEditLorebooks = canEditCharacterLorebooks(character, request);
-        const updatesSecureLorebooks =
-            _.has(update, 'data.extensions.aikobots.secure_lorebooks')
-            || Object.prototype.hasOwnProperty.call(update?.data?.extensions ?? {}, 'aikobots.secure_lorebooks');
+        const updatesWorld = _.has(update, 'data.extensions.world');
+        const updatesEmbeddedBook = _.has(update, 'data.character_book');
+        const updatesSecureLorebooks = _.has(update, 'data.extensions.aikobots.secure_lorebooks');
+        const updatesProtectedLorebookFields = updatesWorld || updatesEmbeddedBook || updatesSecureLorebooks;
 
-        if (updatesSecureLorebooks && !canEditLorebooks) {
+        if (updatesProtectedLorebookFields && !canEditLorebooks) {
             const ownerLabel = getCharacterOwnerLabel(character);
             return response.status(403).json({ error: `Only ${ownerLabel} and admins can change this character's lorebook assignments.` });
         }
@@ -1481,6 +1534,10 @@ router.post('/merge-attributes', getFileNameValidationFunction('avatar'), async 
         _.unset(character, 'json_data');
 
         character = deepMerge(character, update);
+
+        if (!canEditLorebooks) {
+            preserveProtectedLorebookFields(character, existingCharacter);
+        }
 
         if (updatesSecureLorebooks && canEditLorebooks) {
             validateOwnedCharacterLinkedLorebooks(request.user, character);
@@ -1500,6 +1557,10 @@ router.post('/merge-attributes', getFileNameValidationFunction('avatar'), async 
     } catch (exception) {
         if (exception?.status === 400) {
             return response.status(400).send({ message: 'Invalid linked lorebooks.', error: exception.message });
+        }
+
+        if (exception instanceof CharacterSharingRepositoryError) {
+            return sendSharedCharacterError(response, exception);
         }
 
         response.status(500).send({ message: 'Unexpected error while saving character.', error: exception.toString() });
@@ -1582,6 +1643,12 @@ router.post('/delete', validateAvatarUrlMiddleware, async function (request, res
 
     if (deleteForAllUsers) {
         try {
+            const sharedRecord = await getSharedCharacterRecord(avatarUrl);
+            const removedSharedBacking = Boolean(sharedRecord);
+            if (sharedRecord) {
+                await deleteSharedCharacter(request.user, avatarUrl);
+            }
+
             const users = await getAllEnabledUsers();
             let deletedCount = 0;
 
@@ -1590,10 +1657,14 @@ router.post('/delete', validateAvatarUrlMiddleware, async function (request, res
                 deletedCount += Number(await deleteCharacterFromDirectories(directories));
             }
 
-            if (!deletedCount) {
+            if (!deletedCount && !removedSharedBacking) {
                 return response.sendStatus(400);
             }
         } catch (err) {
+            if (err instanceof CharacterSharingRepositoryError) {
+                return sendSharedCharacterError(response, err);
+            }
+
             console.error(err);
             return response.sendStatus(500);
         }
@@ -1607,6 +1678,14 @@ router.post('/delete', validateAvatarUrlMiddleware, async function (request, res
     }
 
     try {
+        const sharedRecord = await getSharedCharacterRecord(avatarUrl);
+        const currentHandle = String(request.user?.profile?.handle || '').trim();
+        if (sharedRecord?.ownerHandles?.includes(currentHandle)) {
+            return response.status(409).json({
+                error: 'Shared owners cannot delete only their local copy. Update shared owners instead, or use delete for all users.',
+            });
+        }
+
         if (request.body.skip_future_pushes == true && !deleteForAllUsers) {
             await enrollDeletingUserInRepushBlacklist(avatarPath);
         }
@@ -1762,6 +1841,10 @@ router.post('/import', async function (request, response) {
             throw new Error(`Unsupported format: ${format}`);
         }
 
+        if (preservedFileName) {
+            await assertSharedCharacterCheckoutForMutation(request, preservedFileName);
+        }
+
         const fileName = await importFunction(uploadPath, { request, response }, preservedFileName);
 
         if (!fileName) {
@@ -1775,6 +1858,10 @@ router.post('/import', async function (request, response) {
 
         response.send({ file_name: fileName });
     } catch (err) {
+        if (err instanceof CharacterSharingRepositoryError) {
+            return sendSharedCharacterError(response, err);
+        }
+
         console.error(err);
         response.send({ error: true });
     }
