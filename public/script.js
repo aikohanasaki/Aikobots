@@ -2687,7 +2687,7 @@ function getCoreChatPayloadForAssembly(coreChat) {
     return coreChat;
 }
 
-function applyChunkedChatPayload(response, { replace = false, currentView = null } = {}) {
+export function applyChunkedChatPayload(response, { replace = false, currentView = null } = {}) {
     const header = response?.header ?? null;
     const messages = Array.isArray(response?.messages) ? response.messages : [];
     const totalMessages = Number(response?.totalMessages) || 0;
