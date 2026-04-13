@@ -571,7 +571,7 @@ export function normalizeStmbSettings(rawSettings, legacySettings = null) {
         ? defaults.moduleSettings.unhiddenEntriesCount
         : moduleSettings.unhiddenEntriesCount;
     moduleSettings.autoSummaryInterval = moduleSettings.autoSummaryInterval === undefined || Number(moduleSettings.autoSummaryInterval) < 10
-        ? 100
+        ? defaults.moduleSettings.autoSummaryInterval
         : Math.trunc(Number(moduleSettings.autoSummaryInterval));
     moduleSettings.autoSummaryBuffer = Number.isFinite(Number(moduleSettings.autoSummaryBuffer)) ? Math.max(0, Math.trunc(Number(moduleSettings.autoSummaryBuffer))) : defaults.moduleSettings.autoSummaryBuffer;
     moduleSettings.convertExistingRecursion = Boolean(moduleSettings.convertExistingRecursion);
@@ -647,6 +647,14 @@ function normalizeCompletionSource(source) {
     const normalized = String(source || '').trim().toLowerCase();
     if (normalized === 'google') return 'makersuite';
     return normalized || 'openai';
+}
+
+function isOpenAIReasoningModel(modelId) {
+    return /^(o1|o3|o4)/i.test(String(modelId || '').trim());
+}
+
+function usesOpenAIMaxCompletionTokens(modelId) {
+    return isOpenAIReasoningModel(modelId) || /^(gpt-5|gpt-4o)/i.test(String(modelId || '').trim());
 }
 
 export function resolveStmbProfileConnection(profile) {
@@ -741,8 +749,8 @@ export function applyStmbProfileToGenerateData(generateData, profile, providerDe
 
     const model = String(next.model || '');
     const isOpenAICompat = provider === 'openai' || provider === 'azure_openai';
-    const isReasoningModel = isOpenAICompat && /^(o1|o3|o4)/.test(model);
-    const isGpt5Model = isOpenAICompat && /^gpt-5/.test(model);
+    const isReasoningModel = isOpenAICompat && isOpenAIReasoningModel(model);
+    const isGpt5Model = isOpenAICompat && /^gpt-5/i.test(model);
 
     if (!isOpenAICompat) {
         if (next.max_tokens === undefined && next.max_completion_tokens !== undefined) {
@@ -808,7 +816,7 @@ export function applyStmbMaxTokensToGenerateData(generateData, stmbMaxTokens) {
     const provider = String(next.chat_completion_source || '').toLowerCase();
     const modelId = String(next.model || '').toLowerCase();
     const usesMaxCompletionTokens = (provider === 'openai' || provider === 'azure_openai')
-        && /(gpt-5|gpt-4o|o1(-preview|-mini)?)/i.test(modelId);
+        && usesOpenAIMaxCompletionTokens(modelId);
 
     if (usesMaxCompletionTokens) {
         next.max_completion_tokens = parsedMaxTokens;
@@ -1432,7 +1440,7 @@ export function applyDeletedMessageToSceneState(state = {}, deletedId, chatLengt
             }
             changed = true;
             sceneChanged = true;
-            toastrMessage = 'Scene end point cleared due to message deletion';
+            toastrMessage = 'Scene start point cleared due to message deletion';
         } else if (id > newStart && id < newEnd) {
             newEnd--;
             changed = true;
@@ -1454,7 +1462,7 @@ export function applyDeletedMessageToSceneState(state = {}, deletedId, chatLengt
             newStart = null;
             changed = true;
             sceneChanged = true;
-            toastrMessage = 'Scene end point cleared due to message deletion';
+            toastrMessage = 'Scene start point cleared due to message deletion';
         }
     } else if (newEnd !== null) {
         if (id < newEnd) {
