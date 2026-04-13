@@ -529,6 +529,31 @@ function buildPlannerSidebarActionButton(label, action, disabled = false) {
     return button;
 }
 
+function getFocusedPlannerSidebarAction(container) {
+    if (!(container instanceof HTMLElement) || !(document.activeElement instanceof HTMLElement) || !container.contains(document.activeElement)) {
+        return '';
+    }
+
+    const focusedAction = document.activeElement.closest('.stmb-top-chat-actions [data-action]');
+    return focusedAction instanceof HTMLElement
+        ? String(focusedAction.dataset.action || '')
+        : '';
+}
+
+function findPlannerSidebarActionButton(container, action) {
+    if (!(container instanceof HTMLElement) || !action) {
+        return null;
+    }
+
+    for (const candidate of container.querySelectorAll('.stmb-top-chat-actions [data-action]')) {
+        if (candidate instanceof HTMLButtonElement && String(candidate.dataset.action || '') === action) {
+            return candidate;
+        }
+    }
+
+    return null;
+}
+
 function createPlannerSidebarJobItem(job) {
     const item = document.createElement('div');
     item.className = `top_chat_sidebar_item stmb-top-chat-item ${getPlannerStatusTone(job)}`.trim();
@@ -585,6 +610,7 @@ function renderPlannerSidebarContent() {
     const visibleJobs = getPlannerJobsForNotifications(latestPlannerJobs);
     const summary = summarizePlannerJobs(visibleJobs);
     const previousScrollTop = container.scrollTop;
+    const focusedAction = getFocusedPlannerSidebarAction(container);
     const rows = getPlannerJobsForUi(visibleJobs);
 
     sidebar.dataset.sidebarMode = 'stmb';
@@ -656,6 +682,10 @@ function renderPlannerSidebarContent() {
     }
 
     container.scrollTop = previousScrollTop;
+    const nextFocusedAction = findPlannerSidebarActionButton(container, focusedAction);
+    if (nextFocusedAction && !nextFocusedAction.disabled) {
+        nextFocusedAction.focus();
+    }
 }
 
 async function openPlannerSidebar() {
@@ -728,7 +758,9 @@ function ensurePlannerStatusUi() {
     }
 
     const { chatButton, plannerButton, sidebar } = getSharedSidebarElements();
-    if (!(chatButton instanceof HTMLElement) || !(plannerButton instanceof HTMLElement)) {
+    if (!(chatButton instanceof HTMLElement)
+        || !(plannerButton instanceof HTMLElement)
+        || !(sidebar instanceof HTMLElement)) {
         setTimeout(() => ensurePlannerStatusUi(), 250);
         return;
     }
@@ -736,12 +768,10 @@ function ensurePlannerStatusUi() {
     plannerButton.addEventListener('click', handlePlannerSidebarButtonInteraction);
     plannerButton.addEventListener('keydown', handlePlannerSidebarButtonInteraction);
 
-    if (sidebar instanceof HTMLElement) {
-        const observer = new MutationObserver(() => {
-            renderPlannerStatusUi();
-        });
-        observer.observe(sidebar, { attributes: true, attributeFilter: ['class', 'data-sidebar-mode'] });
-    }
+    const observer = new MutationObserver(() => {
+        renderPlannerStatusUi();
+    });
+    observer.observe(sidebar, { attributes: true, attributeFilter: ['class', 'data-sidebar-mode'] });
 
     eventSource.on(event_types.CHAT_CHANGED, () => {
         renderPlannerStatusUi();
@@ -1015,6 +1045,7 @@ async function acknowledgePlannerJobHandled(job) {
 async function handlePlannerCompletedJob(job) {
     const result = job?.result && typeof job.result === 'object' ? job.result : {};
     const lorebookName = String(result?.lorebookName || job?.payload?.lorebookName || '').trim();
+    const isCurrentChatJob = isPlannerJobForCurrentChat(job);
     if (lorebookName) {
         await refreshCachedPlannerLorebook(lorebookName);
     }
@@ -1028,7 +1059,7 @@ async function handlePlannerCompletedJob(job) {
     }
 
     if (result?.type === 'chatAutoHide' && result.applied) {
-        if (!isPlannerJobForCurrentChat(job)) {
+        if (!isCurrentChatJob) {
             return;
         }
 
@@ -1045,6 +1076,10 @@ async function handlePlannerCompletedJob(job) {
     }
 
     if (result?.type === 'consolidationCheck' && result.ready) {
+        if (!isCurrentChatJob) {
+            return;
+        }
+
         const sourceLabel = getSummaryTierLabel(getSourceTierForTarget(result.targetTier)).toLowerCase();
         const sourcePlural = pluralizeSummaryLabel(sourceLabel);
         const targetLabel = getSummaryTierLabel(result.targetTier).toLowerCase();

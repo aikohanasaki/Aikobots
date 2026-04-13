@@ -1158,6 +1158,11 @@ async function populateTopChatSidebar() {
         last_mes: timestampToMoment(chat.last_mes || Date.now()),
     })).sort((a, b) => sortMoments(a.last_mes, b.last_mes));
 
+    if (!sidebar.classList.contains('visible') || sidebar.dataset.sidebarMode !== 'chat') {
+        loader.classList.add('displayNone');
+        return;
+    }
+
     if (topChatSidebarPopulateToken !== processToken) {
         return;
     }
@@ -1549,10 +1554,6 @@ function restoreTopChatPanelsState() {
 
     try {
         const state = JSON.parse(rawState);
-        if (state?.sidebarVisible) {
-            void toggleTopChatSidebar(true, { animate: false, save: false });
-        }
-
         if (state?.connectionProfilesVisible) {
             void toggleTopChatConnectionProfiles(true, { save: false });
         }
