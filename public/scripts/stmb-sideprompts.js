@@ -924,7 +924,6 @@ export async function runSidePrompt(rawInput, settings, options = {}) {
         for (const job of jobs) {
             enqueueStmbJob(job);
         }
-        toastr.success(`Queued SidePrompt "${template.name}".`, 'STMB');
         return '';
     } catch (error) {
         if (isStmbAbortError(error) || isStmbLorebookHandledError(error)) {

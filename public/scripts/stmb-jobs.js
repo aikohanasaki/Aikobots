@@ -283,7 +283,6 @@ async function runNextJob(chatKey) {
         if (nextJob.abortController?.signal?.aborted || String(error?.code || '') === 'STMB_ABORTED') {
             nextJob.state = 'canceled';
             nextJob.error = null;
-            globalThis.toastr?.info?.(`${getJobTypeLabel(nextJob.type)} job canceled.`, 'STMB');
         } else {
             nextJob.state = 'failed';
             nextJob.error = {

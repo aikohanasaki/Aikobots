@@ -4886,6 +4886,7 @@ async function commitSummaryCandidates(summaryCandidates, {
     migrated = false,
     disableOriginals = false,
     summaryEntrySettings = null,
+    showSuccessToast = true,
     signal = null,
 }) {
     throwIfStmbAborted(signal);
@@ -4905,7 +4906,7 @@ async function commitSummaryCandidates(summaryCandidates, {
     await applyPostSummarySaveLorebookEffects(lorebookName);
     showOrderClampNotifications(result?.orderClampNotifications);
 
-    if (getModuleSettings().showNotifications) {
+    if (showSuccessToast && getModuleSettings().showNotifications) {
         toastr.success(
             `${getSummaryTierLabel(normalizedTargetTier)} summary saved to "${lorebookName}"`,
             'STMB',
@@ -5306,6 +5307,7 @@ async function runSummaryConsolidationNow(payload = {}, signal = null) {
             migrated,
             disableOriginals: Boolean(payload.disableOriginals),
             summaryEntrySettings: chosenSummaryEntrySettings,
+            showSuccessToast: false,
             signal,
         });
 
