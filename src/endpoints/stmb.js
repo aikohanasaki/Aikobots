@@ -1199,8 +1199,6 @@ async function enqueuePlannerWave(user, payload = {}) {
                 .filter(Boolean),
         };
     });
-
-    ensurePlannerWorker();
     return enqueueResult;
 }
 
@@ -2331,119 +2329,6 @@ router.post('/capture-scene', async (request, response) => {
     }
 });
 
-router.post('/planner/chat-state', async (request, response) => {
-    try {
-        const normalizedRequest = normalizeSceneEndpointRequest(request.body?.sceneContext || request.body);
-        return response.send({
-            ok: true,
-            chatKey: buildPlannerChatKey(normalizedRequest),
-            state: readChatMetadataState(request.user, normalizedRequest),
-        });
-    } catch (error) {
-        return sendStmbError(response, error);
-    }
-});
-
-router.post('/planner/update-chat-state', async (request, response) => {
-    try {
-        const normalizedRequest = normalizeSceneEndpointRequest(request.body?.sceneContext || request.body);
-        const patch = request.body?.patch && typeof request.body.patch === 'object' ? request.body.patch : {};
-        const nextState = updateChatMetadataState(request.user, normalizedRequest, currentState => ({
-            ...currentState,
-            ...patch,
-        }));
-        return response.send({
-            ok: true,
-            chatKey: buildPlannerChatKey(normalizedRequest),
-            state: nextState,
-        });
-    } catch (error) {
-        return sendStmbError(response, error);
-    }
-});
-
-router.post('/planner/enqueue-wave', async (request, response) => {
-    try {
-        const sceneContext = request.body?.sceneContext && typeof request.body.sceneContext === 'object'
-            ? request.body.sceneContext
-            : null;
-        const result = await enqueuePlannerWave(request.user, {
-            sceneContext,
-            jobs: Array.isArray(request.body?.jobs) ? request.body.jobs : [],
-            source: request.body?.source || 'manual',
-        });
-        return response.send({
-            ok: true,
-            wave: result.wave,
-            jobs: result.jobs,
-        });
-    } catch (error) {
-        return sendStmbError(response, error);
-    }
-});
-
-router.post('/planner/list-jobs', async (request, response) => {
-    try {
-        const normalizedRequest = normalizeSceneEndpointRequest(request.body?.sceneContext || request.body);
-        const result = await listPlannerState(
-            request.user,
-            request.body?.sceneContext ? buildPlannerChatKeyAliases(normalizedRequest) : null,
-        );
-        return response.send({
-            ok: true,
-            ...result,
-        });
-    } catch (error) {
-        return sendStmbError(response, error);
-    }
-});
-
-router.post('/planner/respond-approval', async (request, response) => {
-    try {
-        const result = await respondPlannerApproval(request.user, {
-            jobId: request.body?.jobId,
-            decision: request.body?.decision,
-            memory: request.body?.memory ?? null,
-            editedData: request.body?.editedData ?? null,
-        });
-        return response.send({
-            ok: true,
-            job: result,
-        });
-    } catch (error) {
-        return sendStmbError(response, error);
-    }
-});
-
-router.post('/planner/ack-jobs', async (request, response) => {
-    try {
-        const result = await acknowledgePlannerJobs(request.user, request.body?.jobs);
-        return response.send({
-            ok: true,
-            ...result,
-        });
-    } catch (error) {
-        return sendStmbError(response, error);
-    }
-});
-
-router.post('/planner/cancel', async (request, response) => {
-    try {
-        const normalizedRequest = normalizeSceneEndpointRequest(request.body?.sceneContext || request.body);
-        const result = await cancelPlannerJobs(request.user, {
-            all: request.body?.all === true,
-            waveId: request.body?.waveId || null,
-            chatKey: request.body?.sceneContext ? buildPlannerChatKeyAliases(normalizedRequest) : null,
-        });
-        return response.send({
-            ok: true,
-            ...result,
-        });
-    } catch (error) {
-        return sendStmbError(response, error);
-    }
-});
-
 router.post('/prepare-memory-messages', async (request, response) => {
     const lorebookContext = getLorebookContext(request);
     const compiledScene = request.body?.compiledScene;
@@ -2931,5 +2816,3 @@ router.post('/upsert-entries-batch', async (request, response) => {
         return sendStmbError(response, error);
     }
 });
-
-ensurePlannerWorker();
