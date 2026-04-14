@@ -12661,7 +12661,7 @@ export async function createOrEditCharacter(e) {
             }
 
             await getOneCharacter(formData.get('avatar_url'));
-            favsToHotswap(); // Update fav state
+            await printCharacters(false);
 
             $('#add_avatar_button').replaceWith(
                 $('#add_avatar_button').val('').clone(true),

@@ -88,11 +88,12 @@ class CharacterContextMenu {
         });
 
         if (!mergeResponse.ok) {
-            mergeResponse.json().then(json => toastr.error(`Character not saved. Error: ${json.message}. Field: ${json.error}`));
+            const error = await mergeResponse.json().catch(() => null);
+            const message = error?.message || 'Character not saved.';
+            const field = error?.error ? ` Field: ${error.error}` : '';
+            toastr.error(`${message}${field}`);
+            throw new Error(message);
         }
-
-        const element = document.getElementById(`CharID${characterId}`);
-        element.classList.toggle('is_fav');
     };
 
     /**
