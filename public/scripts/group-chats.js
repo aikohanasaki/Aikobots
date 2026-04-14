@@ -19,8 +19,9 @@ import {
     waitUntilCondition,
 } from './utils.js';
 import { RA_CountCharTokens, humanizedDateTime, dragElement, favsToHotswap, getMessageTimeStamp } from './RossAscends-mods.js';
-import { power_user, loadMovingUIState, sortEntitiesList } from './power-user.js';
+import { LONG_CHAT_DISPLAY_MIN, power_user, loadMovingUIState, sortEntitiesList } from './power-user.js';
 import { debounce_timeout } from './constants.js';
+import { deferLoader, ensureDeferredLoaderShown, waitForLoaderPaint } from './loader.js';
 
 import {
     chat,
@@ -282,6 +283,8 @@ export async function getGroupChat(groupId, reload = false) {
     const freshChat = !metadata.tainted && (!Array.isArray(data) || !data.length);
 
     updateChatMetadata(metadata, true);
+    await ensureDeferredLoaderShown({ force: (Array.isArray(data) ? data.length : 0) >= LONG_CHAT_DISPLAY_MIN || freshChat });
+    await waitForLoaderPaint();
 
     await loadItemizedPrompts(getCurrentChatId());
 
@@ -2040,15 +2043,21 @@ export async function openGroupChat(groupId, chatId) {
         return;
     }
 
-    await persistActiveGroupChat(groupId);
-    await clearChat();
-    chat.length = 0;
-    group.chat_id = chatId;
-    group['date_last_chat'] = Date.now();
-    updateChatMetadata({}, true);
+    const deferredLoader = deferLoader();
 
-    await editGroup(groupId, true, false);
-    await getGroupChat(groupId);
+    try {
+        await persistActiveGroupChat(groupId);
+        await clearChat();
+        chat.length = 0;
+        group.chat_id = chatId;
+        group['date_last_chat'] = Date.now();
+        updateChatMetadata({}, true);
+
+        await editGroup(groupId, true, false);
+        await getGroupChat(groupId);
+    } finally {
+        await deferredLoader.clear();
+    }
 }
 
 export async function renameGroupChat(groupId, oldChatId, newChatId) {

@@ -79,8 +79,56 @@ function normalizePersonaRecord(avatarId, record, fallbackName = '') {
     };
 }
 
+function normalizeLegacyPersonasSource(source) {
+    const personasMap = isPlainObject(source.personas) ? source.personas : {};
+    const personaDescriptions = isPlainObject(source.persona_descriptions) ? source.persona_descriptions : {};
+    const avatarIds = new Set([
+        ...Object.keys(personasMap),
+        ...Object.keys(personaDescriptions),
+    ]);
+    const personas = {};
+
+    for (const avatarId of avatarIds) {
+        const normalizedAvatarId = String(avatarId || '').trim();
+        if (!normalizedAvatarId) {
+            continue;
+        }
+
+        const personaValue = personasMap[normalizedAvatarId];
+        const descriptor = isPlainObject(personaDescriptions[normalizedAvatarId]) ? personaDescriptions[normalizedAvatarId] : {};
+        const fallbackName = toOptionalString(personaValue, '');
+        const record = isPlainObject(personaValue)
+            ? {
+                ...descriptor,
+                ...personaValue,
+                avatar: normalizedAvatarId,
+            }
+            : {
+                ...descriptor,
+                name: fallbackName,
+                avatar: normalizedAvatarId,
+            };
+
+        personas[normalizedAvatarId] = normalizePersonaRecord(normalizedAvatarId, record, fallbackName);
+    }
+
+    const defaultPersona = String(source.defaultPersona ?? source.default_persona ?? '').trim();
+
+    return {
+        version: PERSONAS_VERSION,
+        defaultPersona: personas[defaultPersona] ? defaultPersona : null,
+        personas,
+    };
+}
+
 function normalizePersonasDocument(document) {
     const source = isPlainObject(document) ? document : {};
+    const hasLegacyRegistry = isPlainObject(source.persona_descriptions) || 'default_persona' in source;
+
+    if (hasLegacyRegistry) {
+        return normalizeLegacyPersonasSource(source);
+    }
+
     const sourcePersonas = isPlainObject(source.personas) ? source.personas : {};
     const personas = {};
 
@@ -90,10 +138,17 @@ function normalizePersonasDocument(document) {
             continue;
         }
 
-        personas[normalizedAvatarId] = normalizePersonaRecord(normalizedAvatarId, record);
+        const fallbackName = toOptionalString(record, '');
+        const normalizedRecord = isPlainObject(record)
+            ? record
+            : {
+                name: fallbackName,
+                avatar: normalizedAvatarId,
+            };
+        personas[normalizedAvatarId] = normalizePersonaRecord(normalizedAvatarId, normalizedRecord, fallbackName);
     }
 
-    const defaultPersona = String(source.defaultPersona || '').trim();
+    const defaultPersona = String(source.defaultPersona ?? source.default_persona ?? '').trim();
 
     return {
         version: PERSONAS_VERSION,
@@ -161,13 +216,21 @@ export function buildPersonasDocumentFromLegacySettings(settings) {
             continue;
         }
 
+        const personaValue = personasMap[normalizedAvatarId];
         const descriptor = isPlainObject(personaDescriptions[normalizedAvatarId]) ? personaDescriptions[normalizedAvatarId] : {};
-        const name = toOptionalString(personasMap[normalizedAvatarId], '');
-        document.personas[normalizedAvatarId] = normalizePersonaRecord(normalizedAvatarId, {
-            ...descriptor,
-            name,
-            avatar: normalizedAvatarId,
-        }, name);
+        const name = toOptionalString(personaValue, '');
+        const record = isPlainObject(personaValue)
+            ? {
+                ...descriptor,
+                ...personaValue,
+                avatar: normalizedAvatarId,
+            }
+            : {
+                ...descriptor,
+                name,
+                avatar: normalizedAvatarId,
+            };
+        document.personas[normalizedAvatarId] = normalizePersonaRecord(normalizedAvatarId, record, name);
     }
 
     const defaultPersona = String(settings?.power_user?.default_persona || '').trim();

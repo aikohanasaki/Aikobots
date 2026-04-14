@@ -1,76 +1,178 @@
-import { POPUP_RESULT, POPUP_TYPE, Popup } from './popup.js';
+let activeLoaderHandle = null;
+let loaderHandleCounter = 0;
+let pendingLoader = null;
 
-/** @type {Popup} */
-let loaderPopup;
+const PRELOADER_SELECTOR = '#preloader';
 
-let preloaderYoinked = false;
-
-export function showLoader() {
-    // Two loaders don't make sense. Don't await, we can overlay the old loader while it closes
-    if (loaderPopup) loaderPopup.complete(POPUP_RESULT.CANCELLED);
-
-    loaderPopup = new Popup(`
-        <div id="loader">
-            <div id="load-spinner" class="fa-solid fa-gear fa-spin fa-3x"></div>
-        </div>`, POPUP_TYPE.DISPLAY, null, { transparent: true, animation: 'none', wide: true, large: true });
-
-    // No close button, loaders are not closable
-    loaderPopup.closeButton.style.display = 'none';
-
-    loaderPopup.show();
+function getPreloaderElement() {
+    return document.querySelector(PRELOADER_SELECTOR);
 }
 
-export async function hideLoader() {
-    if (!loaderPopup) {
+function getNow() {
+    return typeof performance !== 'undefined' && typeof performance.now === 'function'
+        ? performance.now()
+        : Date.now();
+}
+
+function resetLoaderState(handle = activeLoaderHandle) {
+    if (handle && activeLoaderHandle !== handle) {
+        return;
+    }
+
+    activeLoaderHandle = null;
+}
+
+function resetPendingLoaderState(pending = pendingLoader) {
+    if (pending && pendingLoader !== pending) {
+        return;
+    }
+
+    pendingLoader = null;
+}
+
+export function isLoaderVisible() {
+    const preloader = getPreloaderElement();
+    return Boolean(preloader && !preloader.classList.contains('loader-hidden'));
+}
+
+export async function waitForLoaderPaint() {
+    if (!isLoaderVisible()) {
+        return;
+    }
+
+    await new Promise((resolve) => {
+        if (typeof requestAnimationFrame !== 'function') {
+            setTimeout(resolve, 0);
+            return;
+        }
+
+        requestAnimationFrame(() => requestAnimationFrame(resolve));
+    });
+}
+
+async function ensurePendingLoaderShown(pending, { force = false } = {}) {
+    if (!pending || pending.cleared) {
+        await waitForLoaderPaint();
+        return false;
+    }
+
+    const elapsed = getNow() - pending.startedAt;
+    if (!force && elapsed < pending.delayMs) {
+        return false;
+    }
+
+    clearTimeout(pending.timer);
+
+    if (!pending.handle) {
+        pending.handle = showLoader();
+    }
+
+    await waitForLoaderPaint();
+    return true;
+}
+
+export async function ensureDeferredLoaderShown({ force = false } = {}) {
+    return ensurePendingLoaderShown(pendingLoader, { force });
+}
+
+export function showLoader() {
+    const handle = `loader-${++loaderHandleCounter}`;
+    activeLoaderHandle = handle;
+
+    const preloader = getPreloaderElement();
+    if (!preloader) {
+        console.warn('Preloader element not found, skipping showLoader');
+        return handle;
+    }
+
+    preloader.classList.remove('loader-hidden');
+    preloader.setAttribute('aria-hidden', 'false');
+
+    return handle;
+}
+
+export function deferLoader({ delayMs = 250 } = {}) {
+    const pending = {
+        handle: null,
+        cleared: false,
+        delayMs,
+        startedAt: getNow(),
+        timer: null,
+    };
+
+    pendingLoader = pending;
+    pending.timer = setTimeout(() => {
+        if (pending.cleared || pendingLoader !== pending) {
+            return;
+        }
+
+        pending.handle = showLoader();
+    }, delayMs);
+
+    return {
+        async ensureShown({ force = false } = {}) {
+            if (pending.cleared) {
+                return false;
+            }
+
+            return ensurePendingLoaderShown(pending, { force });
+        },
+        async clear() {
+            if (pending.cleared) {
+                return;
+            }
+
+            pending.cleared = true;
+            clearTimeout(pending.timer);
+            resetPendingLoaderState(pending);
+
+            if (pending.handle) {
+                await hideLoader(pending.handle);
+            }
+        },
+    };
+}
+
+export async function hideLoader(handle = null) {
+    if (!activeLoaderHandle) {
         console.warn('There is no loader showing to hide');
         return Promise.resolve();
     }
 
+    if (handle && handle !== activeLoaderHandle) {
+        return Promise.resolve();
+    }
+
     return new Promise((resolve) => {
-        const spinner = $('#load-spinner');
-        if (!spinner.length) {
-            console.warn('Spinner element not found, skipping animation');
+        const currentHandle = activeLoaderHandle;
+        const preloader = getPreloaderElement();
+
+        if (!preloader) {
+            console.warn('Preloader element not found, skipping hideLoader');
+            resetLoaderState(currentHandle);
+            resolve();
+            return;
+        }
+
+        const transitionDuration = getComputedStyle(preloader).transitionDuration || '0s';
+        const hasTransitions = parseFloat(transitionDuration) > 0;
+
+        const cleanup = () => {
+            preloader.setAttribute('aria-hidden', 'true');
+            resetLoaderState(currentHandle);
+            resolve();
+        };
+
+        preloader.classList.add('loader-hidden');
+
+        if (!hasTransitions) {
             cleanup();
             return;
         }
 
-        // Check if transitions are enabled
-        const transitionDuration = spinner[0] ? getComputedStyle(spinner[0]).transitionDuration : '0s';
-        const hasTransitions = parseFloat(transitionDuration) > 0;
-
-        if (hasTransitions) {
-            Promise.race([
-                new Promise((r) => setTimeout(r, 500)), // Fallback timeout
-                new Promise((r) => spinner.one('transitionend webkitTransitionEnd oTransitionEnd MSTransitionEnd', r)),
-            ]).finally(cleanup);
-        } else {
-            cleanup();
-        }
-
-        function cleanup() {
-            $('#loader').remove();
-            // Yoink preloader entirely; it only exists to cover up unstyled content while loading JS
-            // If it's present, we remove it once and then it's gone.
-            yoinkPreloader();
-
-            loaderPopup.complete(POPUP_RESULT.AFFIRMATIVE)
-                .catch((err) => console.error('Error completing loaderPopup:', err))
-                .finally(() => {
-                    loaderPopup = null;
-                    resolve();
-                });
-        }
-
-        // Apply the styles
-        spinner.css({
-            'filter': 'blur(15px)',
-            'opacity': '0',
-        });
+        Promise.race([
+            new Promise((r) => setTimeout(r, 500)),
+            new Promise((r) => $(preloader).one('transitionend webkitTransitionEnd oTransitionEnd MSTransitionEnd', r)),
+        ]).finally(cleanup);
     });
-}
-
-function yoinkPreloader() {
-    if (preloaderYoinked) return;
-    document.getElementById('preloader').remove();
-    preloaderYoinked = true;
 }

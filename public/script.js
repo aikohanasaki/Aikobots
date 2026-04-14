@@ -219,7 +219,7 @@ import {
     isPersonaPanelOpen,
 } from './scripts/personas.js';
 import { getBackgrounds, initBackgrounds, loadBackgroundSettings, background_settings } from './scripts/backgrounds.js';
-import { hideLoader, showLoader } from './scripts/loader.js';
+import { deferLoader, ensureDeferredLoaderShown, hideLoader, isLoaderVisible, showLoader, waitForLoaderPaint } from './scripts/loader.js';
 import { BulkEditOverlay } from './scripts/BulkEditOverlay.js';
 import { appendFileContent, backfillImageMediaIdsForMessages, createImageAttachmentFromUrl, getMediaAttachmentUrl, hasPendingFileAttachment, hydrateMediaAttachment, markImageAttachmentUnavailable, populateFileAttachment, decodeStyleTags, encodeStyleTags, isExternalMediaAllowed, preserveNeutralChat, restoreNeutralChat, formatCreatorNotes, initChatUtilities, addDOMPurifyHooks } from './scripts/chats.js';
 import { getPresetManager, initPresetManager } from './scripts/preset-manager.js';
@@ -1961,15 +1961,21 @@ export async function selectCharacterById(id, { switchMenu = true } = {}) {
             if (!await confirmCharacterEditorNavigation()) {
                 return;
             }
-            await clearChat();
-            cancelTtsPlay();
-            resetSelectedGroup();
-            this_edit_mes_id = undefined;
-            selected_button = 'character_edit';
-            setCharacterId(id);
-            chat.length = 0;
-            chat_metadata = {};
-            await getChat();
+
+            const deferredLoader = deferLoader();
+            try {
+                await clearChat();
+                cancelTtsPlay();
+                resetSelectedGroup();
+                this_edit_mes_id = undefined;
+                selected_button = 'character_edit';
+                setCharacterId(id);
+                chat.length = 0;
+                chat_metadata = {};
+                await getChat();
+            } finally {
+                await deferredLoader.clear();
+            }
         }
     } else {
         //if clicked on character that was already selected
@@ -3291,25 +3297,33 @@ export async function deleteMessage(id, swipeDeletionIndex = undefined, askConfi
 }
 
 export async function reloadCurrentChat() {
-    preserveNeutralChat();
-    await clearChat();
-    chat.length = 0;
+    const deferredLoader = isLoaderVisible() ? null : deferLoader();
 
-    if (selected_group) {
-        await getGroupChat(selected_group, true);
-    }
-    else if (this_chid !== undefined) {
-        await getChat();
-    }
-    else {
-        resetChatState();
-        restoreNeutralChat();
-        await getCharacters();
-        await printMessages();
-        await eventSource.emit(event_types.CHAT_CHANGED, getCurrentChatId());
-    }
+    try {
+        preserveNeutralChat();
+        await clearChat();
+        chat.length = 0;
 
-    refreshSwipeButtons();
+        if (selected_group) {
+            await getGroupChat(selected_group, true);
+        }
+        else if (this_chid !== undefined) {
+            await getChat();
+        }
+        else {
+            resetChatState();
+            restoreNeutralChat();
+            await getCharacters();
+            await ensureDeferredLoaderShown({ force: true });
+            await waitForLoaderPaint();
+            await printMessages();
+            await eventSource.emit(event_types.CHAT_CHANGED, getCurrentChatId());
+        }
+
+        refreshSwipeButtons();
+    } finally {
+        await deferredLoader?.clear();
+    }
 }
 
 /**
@@ -8889,6 +8903,8 @@ export async function getChat() {
         if (!chat_metadata['integrity']) {
             chat_metadata['integrity'] = uuidv4();
         }
+        await ensureDeferredLoaderShown({ force: getTotalChatMessages() >= LONG_CHAT_DISPLAY_MIN });
+        await waitForLoaderPaint();
         await getChatResult();
         eventSource.emit('chatLoaded', { detail: { id: this_chid, character: characters[this_chid] } });
 
@@ -9087,13 +9103,19 @@ export async function refreshPristineFirstMessage() {
 
 export async function openCharacterChat(file_name) {
     await waitUntilCondition(() => !isChatSaving, debounce_timeout.extended, 10);
-    await clearChat();
-    characters[this_chid]['chat'] = file_name;
-    chat.length = 0;
-    chat_metadata = {};
-    await getChat();
-    $('#selected_chat_pole').val(file_name);
-    await createOrEditCharacter(new CustomEvent('newChat'));
+    const deferredLoader = deferLoader();
+
+    try {
+        await clearChat();
+        characters[this_chid]['chat'] = file_name;
+        chat.length = 0;
+        chat_metadata = {};
+        await getChat();
+        $('#selected_chat_pole').val(file_name);
+        await createOrEditCharacter(new CustomEvent('newChat'));
+    } finally {
+        await deferredLoader.clear();
+    }
 }
 
 ////////// OPTIMZED MAIN API CHANGE FUNCTION ////////////

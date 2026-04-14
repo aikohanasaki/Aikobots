@@ -114,10 +114,55 @@ function getPopupAssetUrls() {
     const toAbsoluteUrl = (path) => new URL(path, window.location.href).href;
     return [
         toAbsoluteUrl('style.css'),
+        toAbsoluteUrl('css/chat-popout.css'),
         toAbsoluteUrl('css/bright.min.css'),
         toAbsoluteUrl('css/fontawesome.min.css'),
         toAbsoluteUrl('css/solid.min.css'),
+        toAbsoluteUrl('css/loader.css'),
     ];
+}
+
+function getChatPopoutThemeVariablesCss() {
+    const themeVariables = new Map();
+
+    for (const element of [document.documentElement, document.body]) {
+        if (!(element instanceof HTMLElement)) {
+            continue;
+        }
+
+        const styles = getComputedStyle(element);
+        for (const property of Array.from(styles)) {
+            if (!property.startsWith('--')) {
+                continue;
+            }
+
+            const value = styles.getPropertyValue(property).trim();
+            if (value) {
+                themeVariables.set(property, value);
+            }
+        }
+    }
+
+    const serializedVariables = [...themeVariables.entries()]
+        .map(([property, value]) => `            ${property}: ${value};`)
+        .join('\n');
+
+    return `:root {\n${serializedVariables}\n        }`;
+}
+
+function getChatPopoutColorScheme() {
+    const background = getComputedStyle(document.documentElement)
+        .getPropertyValue('--SmartThemeBlurTintColor')
+        .trim();
+    const match = background.match(/rgba?\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)/i);
+
+    if (!match) {
+        return 'dark';
+    }
+
+    const [red, green, blue] = match.slice(1).map(Number);
+    const luminance = ((red * 299) + (green * 587) + (blue * 114)) / 1000;
+    return luminance >= 140 ? 'light' : 'dark';
 }
 
 function buildChatPopoutHtml({ focusMessageId = null, context = null } = {}) {
@@ -126,6 +171,13 @@ function buildChatPopoutHtml({ focusMessageId = null, context = null } = {}) {
         .join('');
     const normalizedFocusMessageId = Number.isInteger(Number(focusMessageId)) ? Number(focusMessageId) : null;
     const serializedContext = JSON.stringify(context ?? null).replace(/</g, '\\u003c');
+    const themeVariablesCss = getChatPopoutThemeVariablesCss();
+    const colorScheme = getChatPopoutColorScheme();
+    const bodyClasses = ['chat-popout'];
+
+    if (document.body?.classList.contains('no-blur')) {
+        bodyClasses.push('no-blur');
+    }
 
     return `<!DOCTYPE html>
 <html>
@@ -136,123 +188,23 @@ function buildChatPopoutHtml({ focusMessageId = null, context = null } = {}) {
     ${stylesheets}
     <style>
         :root {
-            color-scheme: dark;
+            color-scheme: ${colorScheme};
         }
 
-        html, body {
-            margin: 0;
-            min-height: 100%;
-            background: rgb(24, 24, 26);
-            color: rgb(235, 235, 235);
-            font-family: "Noto Sans", sans-serif;
-        }
-
-        body.chat-popout {
-            overflow: hidden;
-        }
-
-        .chat-popout-shell {
-            min-height: 100vh;
-            display: flex;
-            flex-direction: column;
-        }
-
-        .chat-popout-log {
-            flex: 1 1 auto;
-            overflow: auto;
-            padding: 16px;
-        }
-
-        .chat-popout-log > #chat {
-            max-width: 960px;
-            width: 100%;
-            margin: 0 auto;
-        }
-
-        .chat-popout-loading {
-            max-width: 960px;
-            margin: 0 auto 16px;
-            opacity: 0.8;
-            font-size: 0.95rem;
-        }
-
-        .chat-popout-end {
-            flex: 0 0 auto;
-            padding: 14px 18px;
-            border-top: 1px solid rgba(255, 255, 255, 0.12);
-            background: rgba(0, 0, 0, 0.35);
-            text-align: center;
-            font-size: 0.95rem;
-        }
-
-        .chat-popout-end strong {
-            display: block;
-            margin-bottom: 4px;
-            font-size: 1rem;
-        }
-
-        .chat-popout-log .swipe_left,
-        .chat-popout-log .swipe_right,
-        .chat-popout-log .del_checkbox,
-        .chat-popout-log .mes_prompt,
-        .chat-popout-log .extraMesButtonsHint,
-        .chat-popout-log .mes_edit_buttons,
-        .chat-popout-log .code-copy,
-        .chat-popout-log .mes_reasoning_actions,
-        .chat-popout-log #show_more_messages,
-        .chat-popout-log #show_newer_messages {
-            display: none !important;
-        }
-
-        .chat-popout-log .mes_buttons {
-            display: inline-flex !important;
-            gap: 8px;
-        }
-
-        .chat-popout-log .mes_buttons > :not(.mes_edit):not(.mes_copy):not(.extraMesButtons) {
-            display: none !important;
-        }
-
-        .chat-popout-log .extraMesButtons {
-            display: contents !important;
-        }
-
-        .chat-popout-log .extraMesButtons > :not(.mes_edit):not(.mes_copy) {
-            display: none !important;
-        }
-
-        .chat-popout-log .mes_copy,
-        .chat-popout-log .mes_edit {
-            display: inline-flex !important;
-        }
-
-        .chat-popout-log .mes_text[data-chat-popout-editing="true"] {
-            outline: 1px solid rgba(255, 255, 255, 0.25);
-            border-radius: 6px;
-            background: rgba(255, 255, 255, 0.04);
-            padding: 8px;
-        }
-
-        .chat-popout-log #chat {
-            overflow: visible !important;
-            height: auto !important;
-        }
-
-        .chat-popout-target {
-            outline: 1px solid rgba(255, 255, 255, 0.35);
-            border-radius: 8px;
-            background: rgba(255, 255, 255, 0.06);
-        }
-
-        .chat-popout-end[data-hidden="true"] {
-            display: none;
-        }
+        ${themeVariablesCss}
     </style>
 </head>
-<body class="chat-popout">
+<body class="${bodyClasses.join(' ')}">
     <div class="chat-popout-shell">
         <main class="chat-popout-log">
-            <div id="chat-popout-loading" class="chat-popout-loading">Loading chat…</div>
+            <div id="chat-popout-loading" class="chat-popout-loading" data-hidden="false" data-mode="initial" aria-live="polite">
+                <div class="loader-shell">
+                    <div class="loader-icon-wrap">
+                        <i class="loader-spinner fa-solid fa-circle-notch"></i>
+                    </div>
+                    <div class="loader-copy" id="chat-popout-loading-text">Loading chat…</div>
+                </div>
+            </div>
             <div id="chat"></div>
         </main>
         <footer class="chat-popout-end" id="chat-popout-end" data-hidden="true">
@@ -270,11 +222,15 @@ function buildChatPopoutHtml({ focusMessageId = null, context = null } = {}) {
             const threshold = ${READER_THRESHOLD};
             const chat = document.getElementById('chat');
             const loading = document.getElementById('chat-popout-loading');
+            const loadingText = document.getElementById('chat-popout-loading-text');
             const footer = document.getElementById('chat-popout-end');
             const state = {
                 totalMessages: 0,
                 loadedStart: null,
                 loadedEnd: null,
+                initialLoading: true,
+                loadError: '',
+                statusMessage: 'Loading chat…',
                 loadingBefore: false,
                 loadingAfter: false,
             };
@@ -282,17 +238,48 @@ function buildChatPopoutHtml({ focusMessageId = null, context = null } = {}) {
                 return;
             }
 
-            if (!window.opener || window.opener.closed || !window.opener.ChatPopout?.loadChunk) {
-                if (loading) {
-                    loading.textContent = 'The main app window is not available.';
+            const setLoadingState = ({ text = '', mode = 'initial', visible = true } = {}) => {
+                if (loadingText) {
+                    loadingText.textContent = text;
                 }
+
+                if (loading) {
+                    loading.dataset.mode = mode;
+                    loading.dataset.hidden = visible ? 'false' : 'true';
+                }
+            };
+
+            const syncLoadingState = ({ text = '' } = {}) => {
+                if (text) {
+                    state.statusMessage = text;
+                }
+
+                if (state.loadError) {
+                    setLoadingState({ text: state.loadError, mode: 'initial', visible: true });
+                    return;
+                }
+
+                if (state.initialLoading) {
+                    setLoadingState({ text: state.statusMessage || 'Loading chat…', mode: 'initial', visible: true });
+                    return;
+                }
+
+                if (state.loadingBefore || state.loadingAfter) {
+                    setLoadingState({ text: state.statusMessage || 'Loading messages…', mode: 'incremental', visible: true });
+                    return;
+                }
+
+                setLoadingState({ visible: false });
+            };
+
+            if (!window.opener || window.opener.closed || !window.opener.ChatPopout?.loadChunk) {
+                state.loadError = 'The main app window is not available.';
+                syncLoadingState();
                 return;
             }
 
             const setLoadingText = (text) => {
-                if (loading) {
-                    loading.textContent = text;
-                }
+                syncLoadingState({ text });
             };
 
             const maybeToggleFooter = () => {
@@ -424,6 +411,7 @@ function buildChatPopoutHtml({ focusMessageId = null, context = null } = {}) {
                 }
 
                 state.loadingAfter = true;
+                state.loadError = '';
                 setLoadingText('Loading more messages…');
 
                 try {
@@ -432,9 +420,13 @@ function buildChatPopoutHtml({ focusMessageId = null, context = null } = {}) {
                         count: batchSize,
                     });
                     insertChunk(chunk, 'after');
+                } catch (error) {
+                    console.error('[Chat Popout] Failed to load later messages.', error);
+                    state.loadError = error?.message || 'Failed to load more messages.';
                 } finally {
                     state.loadingAfter = false;
-                    setLoadingText('');
+                    state.statusMessage = '';
+                    syncLoadingState();
                 }
             };
 
@@ -444,6 +436,7 @@ function buildChatPopoutHtml({ focusMessageId = null, context = null } = {}) {
                 }
 
                 state.loadingBefore = true;
+                state.loadError = '';
                 setLoadingText('Loading earlier messages…');
 
                 try {
@@ -453,9 +446,13 @@ function buildChatPopoutHtml({ focusMessageId = null, context = null } = {}) {
                         count: state.loadedStart - nextStart,
                     });
                     insertChunk(chunk, 'before');
+                } catch (error) {
+                    console.error('[Chat Popout] Failed to load earlier messages.', error);
+                    state.loadError = error?.message || 'Failed to load earlier messages.';
                 } finally {
                     state.loadingBefore = false;
-                    setLoadingText('');
+                    state.statusMessage = '';
+                    syncLoadingState();
                 }
             };
 
@@ -525,6 +522,7 @@ function buildChatPopoutHtml({ focusMessageId = null, context = null } = {}) {
 
             const loadInitial = async () => {
                 try {
+                    state.loadError = '';
                     const initialStart = Number.isInteger(focusMessageId)
                         ? Math.max(0, focusMessageId - Math.floor(initialBatchSize / 2))
                         : null;
@@ -533,12 +531,15 @@ function buildChatPopoutHtml({ focusMessageId = null, context = null } = {}) {
                         count: Number.isInteger(focusMessageId) ? initialBatchSize : batchSize,
                     });
                     insertChunk(chunk, 'after');
-                    setLoadingText('');
                     scrollFocusIntoView();
                     maybeLoadMore();
                 } catch (error) {
                     console.error('[Chat Popout] Failed to initialize reader.', error);
-                    setLoadingText(error?.message || 'Failed to load chat.');
+                    state.loadError = error?.message || 'Failed to load chat.';
+                } finally {
+                    state.initialLoading = false;
+                    state.statusMessage = '';
+                    syncLoadingState();
                 }
             };
 
