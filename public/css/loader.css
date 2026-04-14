@@ -20,13 +20,13 @@
 }
 
 #preloader .loader-shell,
-#loader {
+#popup-loader {
     display: flex;
     align-items: center;
     justify-content: center;
 }
 
-#loader {
+#popup-loader {
     transition: all var(--animation-duration-2x) ease-out;
 }
 

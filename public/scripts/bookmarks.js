@@ -33,7 +33,6 @@ import {
     saveGroupBookmarkChat,
     selected_group,
 } from './group-chats.js';
-import { hideLoader, showLoader } from './loader.js';
 import { getLastMessageId } from './macros.js';
 import { Popup, POPUP_RESULT, POPUP_TYPE } from './popup.js';
 import { SlashCommand } from './slash-commands/SlashCommand.js';
@@ -1327,23 +1326,18 @@ export function initBookmarks() {
             return;
         }
 
-        try {
-            showLoader();
-            const rowType = $(this).attr('data-manage-chats-row-type') || $(this).closest('[data-manage-chats-row-type]').attr('data-manage-chats-row-type');
-            const orphanKey = $(this).attr('data-orphan-key') || $(this).closest('[data-orphan-key]').attr('data-orphan-key');
-            const ownerType = $(this).attr('data-owner-type') || $(this).closest('[data-owner-type]').attr('data-owner-type');
-            const ownerId = $(this).attr('data-owner-id') || $(this).closest('[data-owner-id]').attr('data-owner-id');
-            if (rowType === 'orphan-character' && orphanKey) {
-                await openManageChatsOrphanCharacterChat(orphanKey, fileName);
-            } else if (ownerType && ownerId) {
-                await openManageChatsOwnerChat({ type: ownerType, id: ownerId }, fileName);
-            } else if (selected_group) {
-                await openGroupChat(selected_group, fileName);
-            } else {
-                await openCharacterChat(fileName);
-            }
-        } finally {
-            await hideLoader();
+        const rowType = $(this).attr('data-manage-chats-row-type') || $(this).closest('[data-manage-chats-row-type]').attr('data-manage-chats-row-type');
+        const orphanKey = $(this).attr('data-orphan-key') || $(this).closest('[data-orphan-key]').attr('data-orphan-key');
+        const ownerType = $(this).attr('data-owner-type') || $(this).closest('[data-owner-type]').attr('data-owner-type');
+        const ownerId = $(this).attr('data-owner-id') || $(this).closest('[data-owner-id]').attr('data-owner-id');
+        if (rowType === 'orphan-character' && orphanKey) {
+            await openManageChatsOrphanCharacterChat(orphanKey, fileName);
+        } else if (ownerType && ownerId) {
+            await openManageChatsOwnerChat({ type: ownerType, id: ownerId }, fileName);
+        } else if (selected_group) {
+            await openGroupChat(selected_group, fileName);
+        } else {
+            await openCharacterChat(fileName);
         }
 
         $('#shadow_select_chat_popup').css('display', 'none');
