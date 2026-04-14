@@ -164,6 +164,20 @@ function getUnsupportedImportedJsonlMessage(header) {
     return null;
 }
 
+function getChatFileStats(filePath) {
+    const tailStats = fs.statSync(filePath);
+    const headPath = getSplitHeadPath(filePath);
+    const headStats = fs.existsSync(headPath) ? fs.statSync(headPath) : null;
+
+    return {
+        tailStats,
+        headPath,
+        headStats,
+        totalSize: tailStats.size + (headStats?.size || 0),
+        latestMtimeMs: Math.max(tailStats.mtimeMs, headStats?.mtimeMs || 0),
+    };
+}
+
 function getImportedChatBaseName(originalName, characterName) {
     const sanitizedOriginalBaseName = sanitize(path.parse(String(originalName || '')).name, {
         replacement: sanitizeSafeCharacterReplacements,
@@ -538,6 +552,25 @@ function ensureGroupChatHeader(user, chatId, filePath) {
         messages: payload.messages,
         hasHeader: true,
         writeResult,
+    };
+}
+
+function getPreservedSplitTailWriteConfig(segments) {
+    const layout = getSegmentLayout(segments);
+    const preservedTailCount = Math.max(0, layout.tailCount || 0);
+    const tailStartId = segments?.storage
+        ? layout.tailStartId
+        : layout.totalMessages;
+    const config = normalizeLongChatConfig({
+        displayCount: preservedTailCount > 0
+            ? Math.min(LONG_CHAT_DISPLAY_MAX, Math.max(LONG_CHAT_DISPLAY_MIN, preservedTailCount))
+            : LONG_CHAT_DISPLAY_DEFAULT,
+        bufferMax: Math.max(LONG_CHAT_BUFFER_DEFAULT, preservedTailCount),
+    });
+
+    return {
+        ...config,
+        tailStartId,
     };
 }
 
@@ -1536,18 +1569,36 @@ router.post('/rename', validateAvatarUrlMiddleware, async function (request, res
             return response.status(400).send({ error: true });
         }
 
-        fs.copyFileSync(pathToOriginalFile, pathToRenamedFile);
-        fs.unlinkSync(pathToOriginalFile);
-
         const originalHeadPath = getSplitHeadPath(pathToOriginalFile);
-        const renamedHeadPath = getSplitHeadPath(pathToRenamedFile);
+        const segments = getChatSegments(pathToOriginalFile);
+        const segmentLayout = getSegmentLayout(segments);
+
+        if (segments.storage && segmentLayout.headMessagesMissing) {
+            console.error('Cannot rename split-tail chat with incomplete head segment.', {
+                pathToOriginalFile,
+                declaredHeadCount: segmentLayout.declaredHeadCount,
+                actualHeadCount: segmentLayout.actualHeadCount,
+            });
+            return response.status(409).send({ error: 'incomplete_split_chat' });
+        }
+
+        if (segments.header) {
+            const writeConfig = getPreservedSplitTailWriteConfig(segments);
+            const targetHeader = request.body.is_group
+                ? buildGroupChatHeader(segments.header?.chat_metadata || {}, segments.header)
+                : stripChatStorage(segments.header);
+
+            writeLogicalChat(pathToRenamedFile, targetHeader, segments.messages, writeConfig);
+        } else if (request.body.is_group) {
+            const groupRecords = readJsonlObjects(pathToOriginalFile);
+            writeFileAtomicSync(pathToRenamedFile, serializeJsonl(groupRecords), 'utf8');
+        } else {
+            fs.copyFileSync(pathToOriginalFile, pathToRenamedFile);
+        }
+
+        fs.unlinkSync(pathToOriginalFile);
         if (fs.existsSync(originalHeadPath)) {
-            fs.copyFileSync(originalHeadPath, renamedHeadPath);
             fs.unlinkSync(originalHeadPath);
-            const logicalChat = getLogicalChatData(pathToRenamedFile);
-            if (logicalChat.length > 0) {
-                writeLogicalChat(pathToRenamedFile, logicalChat[0], logicalChat.slice(1));
-            }
         }
 
         console.info('Successfully renamed chat file.');
@@ -1659,6 +1710,14 @@ router.post('/group/import', function (request, response) {
 
         const chatname = humanizedISO8601DateTime();
         const pathToUpload = path.join(filedata.destination, filedata.filename);
+        const header = tryParse(String(fs.readFileSync(pathToUpload, 'utf8') || '').split('\n').find(line => line.trim()) || '');
+        const unsupportedImportMessage = getUnsupportedImportedJsonlMessage(header);
+        if (unsupportedImportMessage) {
+            fs.unlinkSync(pathToUpload);
+            console.warn('Rejected unsupported group JSONL chat import:', unsupportedImportMessage);
+            return response.status(400).send({ error: true, message: unsupportedImportMessage });
+        }
+
         const pathToNewFile = path.join(request.user.directories.groupChats, `${chatname}.jsonl`);
         fs.copyFileSync(pathToUpload, pathToNewFile);
         fs.unlinkSync(pathToUpload);
@@ -1801,10 +1860,12 @@ router.post('/group/get', async (request, response) => {
 
     const id = request.body.id;
     const pathToFile = path.join(request.user.directories.groupChats, `${id}.jsonl`);
+    const withMetadata = request.body.with_metadata === true;
 
     if (fs.existsSync(pathToFile)) {
         const payload = ensureGroupChatHeader(request.user, id, pathToFile);
         const jsonData = payload.messages;
+        const chatMetadata = _.cloneDeep(payload.header?.chat_metadata || {});
         try {
             await touchUserActivity(request.user.profile.handle);
         } catch (error) {
@@ -1827,15 +1888,25 @@ router.post('/group/get', async (request, response) => {
                 totalMessages,
                 loadedRangeStart,
                 loadedRangeEnd,
+                ...(withMetadata ? { chat_metadata: chatMetadata } : {}),
                 messages: loadedRangeEnd >= loadedRangeStart
                     ? jsonData.slice(loadedRangeStart, loadedRangeEnd + 1)
                     : [],
             });
         }
 
+        if (withMetadata) {
+            return response.send({
+                messages: jsonData,
+                chat_metadata: chatMetadata,
+            });
+        }
+
         return response.send(jsonData);
     } else {
-        return response.send([]);
+        return response.send(withMetadata
+            ? { messages: [], chat_metadata: {} }
+            : []);
     }
 });
 
@@ -1922,10 +1993,10 @@ router.post('/search', validateAvatarUrlMiddleware, function (request, response)
                 .map(chatId => {
                     const filePath = path.join(groupChatsDir, `${chatId}.jsonl`);
                     if (!fs.existsSync(filePath)) return null;
-                    const stats = fs.statSync(filePath);
+                    const fileStats = getChatFileStats(filePath);
                     return {
                         file_name: chatId,
-                        file_size: formatBytes(stats.size),
+                        file_size: formatBytes(fileStats.totalSize),
                         path: filePath,
                     };
                 })
@@ -2067,10 +2138,10 @@ router.post('/orphaned', async function (request, response) {
                                 return null;
                             }
 
-                            const stats = fs.statSync(filePath);
+                            const fileStats = getChatFileStats(filePath);
                             return getChatSearchResult({
                                 file_name: `${chatId}.jsonl`,
-                                file_size: formatBytes(stats.size),
+                                file_size: formatBytes(fileStats.totalSize),
                                 path: filePath,
                             }, fragments);
                         })
@@ -2138,8 +2209,8 @@ router.post('/recent', async function (request, response) {
 
                     for (const file of jsonlFiles) {
                         const filePath = path.join(pathToChats, file);
-                        const stats = await fs.promises.stat(filePath);
-                        allChatFiles.push({ pngFile, filePath, mtime: stats.mtimeMs });
+                        const fileStats = getChatFileStats(filePath);
+                        allChatFiles.push({ pngFile, filePath, mtime: fileStats.latestMtimeMs });
                     }
                 }
             }
@@ -2161,8 +2232,8 @@ router.post('/recent', async function (request, response) {
                             if (!fs.existsSync(filePath)) {
                                 continue;
                             }
-                            const stats = await fs.promises.stat(filePath);
-                            allChatFiles.push({ groupId: groupData.id, filePath, mtime: stats.mtimeMs });
+                            const fileStats = getChatFileStats(filePath);
+                            allChatFiles.push({ groupId: groupData.id, filePath, mtime: fileStats.latestMtimeMs });
                         }
                     }
                 } catch (error) {
@@ -2178,8 +2249,8 @@ router.post('/recent', async function (request, response) {
 
             for (const file of chatFiles) {
                 const filePath = path.join(request.user.directories.chats, file);
-                const stats = await fs.promises.stat(filePath);
-                allChatFiles.push({ filePath, mtime: stats.mtimeMs });
+                const fileStats = getChatFileStats(filePath);
+                allChatFiles.push({ filePath, mtime: fileStats.latestMtimeMs });
             }
         };
 

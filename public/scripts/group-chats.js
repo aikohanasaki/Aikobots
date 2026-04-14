@@ -138,6 +138,29 @@ const saveGroupDebounced = debounce(async (group, reload) => await _save(group, 
 /** @type {Map<string, number>} */
 let groupChatQueueOrder = new Map();
 
+function cloneGroupChatMetadata(metadata = {}) {
+    if (!metadata || typeof metadata !== 'object') {
+        return {};
+    }
+
+    try {
+        return JSON.parse(JSON.stringify(metadata));
+    } catch {
+        return {};
+    }
+}
+
+function sanitizeGroupForPersistence(group) {
+    if (!group || typeof group !== 'object') {
+        return group;
+    }
+
+    const sanitizedGroup = JSON.parse(JSON.stringify(group));
+    delete sanitizedGroup.chat_metadata;
+    delete sanitizedGroup.past_metadata;
+    return sanitizedGroup;
+}
+
 function setAutoModeWorker() {
     clearInterval(autoModeWorker);
     const autoModeDelay = groups.find(x => x.id === selected_group)?.auto_mode_delay ?? DEFAULT_AUTO_MODE_DELAY;
@@ -148,7 +171,7 @@ async function _save(group, reload = true) {
     await fetch('/api/groups/edit', {
         method: 'POST',
         headers: getRequestHeaders(),
-        body: JSON.stringify(group),
+        body: JSON.stringify(sanitizeGroupForPersistence(group)),
     });
     if (reload) {
         await getCharacters();
@@ -180,19 +203,34 @@ async function regenerateGroup() {
     generateGroupWrapper(false, 'normal', { signal: abortController.signal });
 }
 
-async function loadGroupChat(chatId) {
+async function loadGroupChat(chatId, { withMetadata = false } = {}) {
     const response = await fetch('/api/chats/group/get', {
         method: 'POST',
         headers: getRequestHeaders(),
-        body: JSON.stringify({ id: chatId }),
+        body: JSON.stringify({
+            id: chatId,
+            ...(withMetadata ? { with_metadata: true } : {}),
+        }),
     });
 
     if (response.ok) {
         const data = await response.json();
-        return data;
+
+        if (withMetadata) {
+            return {
+                messages: Array.isArray(data?.messages) ? data.messages : [],
+                chat_metadata: cloneGroupChatMetadata(data?.chat_metadata),
+            };
+        }
+
+        return Array.isArray(data)
+            ? data
+            : (Array.isArray(data?.messages) ? data.messages : []);
     }
 
-    return [];
+    return withMetadata
+        ? { messages: [], chat_metadata: {} }
+        : [];
 }
 
 async function validateGroup(group) {
@@ -238,9 +276,12 @@ export async function getGroupChat(groupId, reload = false) {
     await unshallowGroupMembers(groupId);
 
     const chat_id = group.chat_id;
-    const data = await loadGroupChat(chat_id);
-    const metadata = group.chat_metadata ?? {};
+    const payload = await loadGroupChat(chat_id, { withMetadata: true });
+    const data = payload.messages;
+    const metadata = payload.chat_metadata;
     const freshChat = !metadata.tainted && (!Array.isArray(data) || !data.length);
+
+    updateChatMetadata(metadata, true);
 
     await loadItemizedPrompts(getCurrentChatId());
 
@@ -273,8 +314,6 @@ export async function getGroupChat(groupId, reload = false) {
         chatElement.find('.mes').remove();
         await printMessages();
     }
-
-    updateChatMetadata(metadata, true);
 
     if (reload) {
         select_group_chats(groupId, true);
@@ -637,10 +676,17 @@ async function saveGroupChat(groupId, shouldSaveGroup) {
     }
 
     if (shouldSaveGroup) {
-        // Persist group metadata immediately so follow-up server reads see the
-        // current chat-bound state instead of a debounced, stale snapshot.
         await editGroup(groupId, true, false);
     }
+}
+
+async function persistActiveGroupChat(groupId) {
+    const group = groups.find(x => x.id === groupId);
+    if (!group?.chat_id || String(selected_group) !== String(groupId)) {
+        return;
+    }
+
+    await saveGroupChat(groupId, false);
 }
 
 export async function renameGroupMember(oldAvatar, newAvatar, newName) {
@@ -734,15 +780,14 @@ async function getGroups() {
                     .filter(x => x)
                     .filter(onlyUnique);
             }
-            if (group.past_metadata == undefined) {
-                group.past_metadata = {};
-            }
             if (typeof group.chat_id === 'number') {
                 group.chat_id = String(group.chat_id);
             }
             if (Array.isArray(group.chats) && group.chats.some(x => typeof x === 'number')) {
                 group.chats = group.chats.map(x => String(x));
             }
+            delete group.chat_metadata;
+            delete group.past_metadata;
         }
     }
 }
@@ -1258,11 +1303,6 @@ export async function editGroup(id, immediately, reload = true) {
 
     if (!group) {
         return;
-    }
-
-    if (id === selected_group) {
-        // structuredClone may cause issues if metadata has non-cloneable references
-        group['chat_metadata'] = JSON.parse(JSON.stringify(chat_metadata));
     }
 
     if (immediately) {
@@ -1919,7 +1959,6 @@ async function createGroup() {
             activation_strategy: activationStrategy,
             generation_mode: generationMode,
             disabled_members: [],
-            chat_metadata: {},
             fav: fav_grp_checked,
             chat_id: chatName,
             chats: chats,
@@ -1943,22 +1982,14 @@ export async function createNewGroupChat(groupId) {
         return;
     }
 
-    const oldChatName = group.chat_id;
     const newChatName = humanizedDateTime();
 
-    if (typeof group.past_metadata !== 'object') {
-        group.past_metadata = {};
-    }
-
+    await persistActiveGroupChat(groupId);
     await clearChat();
     chat.length = 0;
-    if (oldChatName) {
-        group.past_metadata[oldChatName] = Object.assign({}, chat_metadata);
-    }
     group.chats.push(newChatName);
     group.chat_id = newChatName;
-    group.chat_metadata = {};
-    updateChatMetadata(group.chat_metadata, true);
+    updateChatMetadata({}, true);
 
     await editGroup(group.id, true, false);
     await getGroupChat(group.id);
@@ -1971,27 +2002,34 @@ export async function getGroupPastChats(groupId) {
         return [];
     }
 
-    const chats = [];
-
     try {
-        for (const chatId of group.chats) {
-            const messages = await loadGroupChat(chatId);
-            let this_chat_file_size = (JSON.stringify(messages).length / 1024).toFixed(2) + 'kb';
-            let chat_items = messages.length;
-            const lastMessage = messages.length ? messages[messages.length - 1].mes : '[The chat is empty]';
-            const lastMessageDate = messages.length ? (messages[messages.length - 1].send_date || Date.now()) : Date.now();
-            chats.push({
-                'file_name': chatId,
-                'mes': lastMessage,
-                'last_mes': lastMessageDate,
-                'file_size': this_chat_file_size,
-                'chat_items': chat_items,
-            });
+        const response = await fetch('/api/chats/search', {
+            method: 'POST',
+            headers: getRequestHeaders(),
+            body: JSON.stringify({
+                query: '',
+                group_id: groupId,
+            }),
+        });
+
+        if (!response.ok) {
+            throw new Error('Failed to fetch group chat summaries.');
         }
+
+        const chats = await response.json();
+        return Array.isArray(chats)
+            ? chats.map(chat => ({
+                file_name: chat.file_name,
+                mes: chat.preview_message ?? '',
+                last_mes: chat.last_mes ?? Date.now(),
+                file_size: chat.file_size ?? '0kb',
+                chat_items: chat.message_count ?? 0,
+            }))
+            : [];
     } catch (err) {
         console.error(err);
+        return [];
     }
-    return chats;
 }
 
 export async function openGroupChat(groupId, chatId) {
@@ -2002,14 +2040,12 @@ export async function openGroupChat(groupId, chatId) {
         return;
     }
 
+    await persistActiveGroupChat(groupId);
     await clearChat();
     chat.length = 0;
-    const previousChat = group.chat_id;
-    group.past_metadata[previousChat] = Object.assign({}, chat_metadata);
     group.chat_id = chatId;
-    group.chat_metadata = group.past_metadata[chatId] || {};
     group['date_last_chat'] = Date.now();
-    updateChatMetadata(group.chat_metadata, true);
+    updateChatMetadata({}, true);
 
     await editGroup(groupId, true, false);
     await getGroupChat(groupId);
@@ -2028,8 +2064,6 @@ export async function renameGroupChat(groupId, oldChatId, newChatId) {
 
     group.chats.splice(group.chats.indexOf(oldChatId), 1);
     group.chats.push(newChatId);
-    group.past_metadata[newChatId] = (group.past_metadata[oldChatId] || {});
-    delete group.past_metadata[oldChatId];
 
     await editGroup(groupId, true, true);
 }
@@ -2046,12 +2080,7 @@ export async function deleteGroupChatByName(groupId, chatName) {
         return;
     }
 
-    if (typeof group.past_metadata !== 'object') {
-        group.past_metadata = {};
-    }
-
     group.chats.splice(group.chats.indexOf(chatName), 1);
-    delete group.past_metadata[chatName];
 
     const response = await fetch('/api/chats/group/delete', {
         method: 'POST',
@@ -2067,12 +2096,11 @@ export async function deleteGroupChatByName(groupId, chatName) {
 
     // If the deleted chat was the current chat, switch to the last chat in the group
     if (group.chat_id === chatName) {
-        group.chat_id = '';
-        group.chat_metadata = {};
-
         const newChatName = group.chats.length ? group.chats[group.chats.length - 1] : humanizedDateTime();
+        if (!group.chats.length) {
+            group.chats.push(newChatName);
+        }
         group.chat_id = newChatName;
-        group.chat_metadata = group.past_metadata[newChatName] || {};
     }
 
     await editGroup(groupId, true, true);
@@ -2093,20 +2121,14 @@ export async function deleteGroupChat(groupId, chatId, { jumpToNewChat = true } 
         return;
     }
 
-    if (typeof group.past_metadata !== 'object') {
-        group.past_metadata = {};
-    }
-
     const isCurrentChat = group.chat_id === chatId;
     const isActiveCurrentChat = isCurrentChat && String(selected_group) === String(groupId);
 
     group.chats.splice(group.chats.indexOf(chatId), 1);
-    delete group.past_metadata[chatId];
 
     if (isCurrentChat) {
         group.chat_id = '';
-        group.chat_metadata = {};
-        updateChatMetadata(group.chat_metadata, true);
+        updateChatMetadata({}, true);
     }
 
     const response = await fetch('/api/chats/group/delete', {
@@ -2124,9 +2146,8 @@ export async function deleteGroupChat(groupId, chatId, { jumpToNewChat = true } 
             } else if (group.chats.length) {
                 const newChatId = group.chats[group.chats.length - 1];
                 group.chat_id = newChatId;
-                group.chat_metadata = group.past_metadata[newChatId] || {};
                 group['date_last_chat'] = Date.now();
-                updateChatMetadata(group.chat_metadata, true);
+                updateChatMetadata({}, true);
                 await editGroup(groupId, true, false);
                 await getGroupChat(groupId);
             } else {
@@ -2145,14 +2166,9 @@ function prepareNextGroupChat(group) {
         return;
     }
 
-    if (typeof group.past_metadata !== 'object') {
-        group.past_metadata = {};
-    }
-
     if (group.chats.length) {
         const nextChatId = group.chats[group.chats.length - 1];
         group.chat_id = nextChatId;
-        group.chat_metadata = group.past_metadata[nextChatId] || {};
         group['date_last_chat'] = Date.now();
         return;
     }
@@ -2160,7 +2176,6 @@ function prepareNextGroupChat(group) {
     const nextChatId = humanizedDateTime();
     group.chats.push(nextChatId);
     group.chat_id = nextChatId;
-    group.chat_metadata = {};
     group['date_last_chat'] = Date.now();
 }
 
@@ -2217,7 +2232,10 @@ export async function saveGroupBookmarkChat(groupId, name, metadata, mesId) {
         return;
     }
 
-    group.past_metadata[name] = { ...chat_metadata, ...(metadata || {}) };
+    const bookmarkMetadata = cloneGroupChatMetadata({
+        ...cloneGroupChatMetadata(chat_metadata),
+        ...(metadata || {}),
+    });
     group.chats.push(name);
 
     const trimmed_chat = (mesId !== undefined && mesId >= 0 && mesId < chat.length)
@@ -2232,7 +2250,7 @@ export async function saveGroupBookmarkChat(groupId, name, metadata, mesId) {
         body: JSON.stringify({
             id: name,
             chat: [...trimmed_chat],
-            chat_metadata: JSON.parse(JSON.stringify(group.past_metadata[name] || {})),
+            chat_metadata: bookmarkMetadata,
         }),
     });
 

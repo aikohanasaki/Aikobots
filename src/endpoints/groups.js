@@ -9,6 +9,21 @@ import { humanizedISO8601DateTime } from '../util.js';
 import { getFileNameValidationFunction } from '../middleware/validateFileName.js';
 
 export const router = express.Router();
+const getSplitHeadPath = (filePath) => {
+    const parsedPath = path.parse(filePath);
+    return path.join(parsedPath.dir, `${parsedPath.name}.head.jsonl`);
+};
+
+const sanitizeGroupPayload = (group) => {
+    if (!group || typeof group !== 'object') {
+        return group;
+    }
+
+    const sanitizedGroup = JSON.parse(JSON.stringify(group));
+    delete sanitizedGroup.chat_metadata;
+    delete sanitizedGroup.past_metadata;
+    return sanitizedGroup;
+};
 
 router.post('/all', (request, response) => {
     const groups = [];
@@ -24,7 +39,7 @@ router.post('/all', (request, response) => {
         try {
             const filePath = path.join(request.user.directories.groups, file);
             const fileContents = fs.readFileSync(filePath, 'utf8');
-            const group = JSON.parse(fileContents);
+            const group = sanitizeGroupPayload(JSON.parse(fileContents));
             const groupStat = fs.statSync(filePath);
             group['date_added'] = groupStat.birthtimeMs;
             group['create_date'] = humanizedISO8601DateTime(groupStat.birthtimeMs);
@@ -35,9 +50,12 @@ router.post('/all', (request, response) => {
             if (Array.isArray(group.chats) && Array.isArray(chats)) {
                 for (const chat of chats) {
                     if (group.chats.includes(path.parse(chat).name)) {
-                        const chatStat = fs.statSync(path.join(request.user.directories.groupChats, chat));
-                        chat_size += chatStat.size;
-                        date_last_chat = Math.max(date_last_chat, chatStat.mtimeMs);
+                        const chatPath = path.join(request.user.directories.groupChats, chat);
+                        const chatStat = fs.statSync(chatPath);
+                        const headPath = getSplitHeadPath(chatPath);
+                        const headStat = fs.existsSync(headPath) ? fs.statSync(headPath) : null;
+                        chat_size += chatStat.size + (headStat?.size || 0);
+                        date_last_chat = Math.max(date_last_chat, chatStat.mtimeMs, headStat?.mtimeMs || 0);
                     }
                 }
             }
@@ -60,7 +78,7 @@ router.post('/create', (request, response) => {
     }
 
     const id = String(Date.now());
-    const groupMetadata = {
+    const groupMetadata = sanitizeGroupPayload({
         id: id,
         name: request.body.name ?? 'New Group',
         members: request.body.members ?? [],
@@ -69,14 +87,13 @@ router.post('/create', (request, response) => {
         activation_strategy: request.body.activation_strategy ?? 0,
         generation_mode: request.body.generation_mode ?? 0,
         disabled_members: request.body.disabled_members ?? [],
-        chat_metadata: request.body.chat_metadata ?? {},
         fav: request.body.fav,
         chat_id: request.body.chat_id ?? id,
         chats: request.body.chats ?? [id],
         auto_mode_delay: request.body.auto_mode_delay ?? 5,
         generation_mode_join_prefix: request.body.generation_mode_join_prefix ?? '',
         generation_mode_join_suffix: request.body.generation_mode_join_suffix ?? '',
-    };
+    });
     const pathToFile = path.join(request.user.directories.groups, sanitize(`${id}.json`));
     const fileData = JSON.stringify(groupMetadata, null, 4);
 
@@ -94,7 +111,7 @@ router.post('/edit', getFileNameValidationFunction('id'), (request, response) =>
     }
     const id = request.body.id;
     const pathToFile = path.join(request.user.directories.groups, sanitize(`${id}.json`));
-    const fileData = JSON.stringify(request.body, null, 4);
+    const fileData = JSON.stringify(sanitizeGroupPayload(request.body), null, 4);
 
     writeFileAtomicSync(pathToFile, fileData);
     return response.send({ ok: true });
@@ -116,9 +133,14 @@ router.post('/delete', getFileNameValidationFunction('id'), async (request, resp
             for (const chat of group.chats) {
                 console.info('Deleting group chat', chat);
                 const pathToFile = path.join(request.user.directories.groupChats, sanitize(`${chat}.jsonl`));
+                const headPath = getSplitHeadPath(pathToFile);
 
                 if (fs.existsSync(pathToFile)) {
                     fs.unlinkSync(pathToFile);
+                }
+
+                if (fs.existsSync(headPath)) {
+                    fs.unlinkSync(headPath);
                 }
             }
         }

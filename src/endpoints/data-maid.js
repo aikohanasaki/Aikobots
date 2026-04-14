@@ -4,11 +4,16 @@ import path from 'node:path';
 import express from 'express';
 import mime from 'mime-types';
 import { getSettingsBackupFilePrefix } from './settings.js';
-import { CHAT_BACKUPS_PREFIX } from './chats.js';
+import { CHAT_BACKUPS_PREFIX, getLogicalChatData, serializeJsonl } from './chats.js';
 import { isPathUnderParent, tryParse } from '../util.js';
 import { SETTINGS_FILE } from '../constants.js';
 
 const sha256 = str => crypto.createHash('sha256').update(str).digest('hex');
+const isHeadChatFile = (fileName) => String(fileName).endsWith('.head.jsonl');
+const getSplitHeadPath = (filePath) => {
+    const parsedPath = path.parse(filePath);
+    return path.join(parsedPath.dir, `${parsedPath.name}.head.jsonl`);
+};
 
 /**
  * @typedef {object} DataMaidRawReport
@@ -134,12 +139,15 @@ export class DataMaidService {
      */
     async #sanitizeRecord(name, withParent) {
         const stat = fs.existsSync(name) ? await fs.promises.stat(name) : null;
+        const includeHeadStat = stat && path.extname(name) === '.jsonl' && !isHeadChatFile(name);
+        const headPath = includeHeadStat ? getSplitHeadPath(name) : null;
+        const headStat = headPath && fs.existsSync(headPath) ? await fs.promises.stat(headPath) : null;
         return {
             name: path.basename(name),
             hash: sha256(name),
             parent: withParent ? path.basename(path.dirname(name)) : void 0,
-            size: stat?.size,
-            mtime: stat?.mtimeMs,
+            size: (stat?.size || 0) + (headStat?.size || 0),
+            mtime: Math.max(stat?.mtimeMs || 0, headStat?.mtimeMs || 0),
         };
     }
 
@@ -337,7 +345,7 @@ export class DataMaidService {
                 if (folder.isDirectory() && !knownChatFolders.has(folder.name)) {
                     const chatFiles = await fs.promises.readdir(path.join(this.directories.chats, folder.name), { withFileTypes: true });
                     for (const file of chatFiles) {
-                        if (file.isFile() && path.parse(file.name).ext === '.jsonl') {
+                        if (file.isFile() && path.parse(file.name).ext === '.jsonl' && !isHeadChatFile(file.name)) {
                             result.push(path.join(this.directories.chats, folder.name, file.name));
                         }
                     }
@@ -382,7 +390,7 @@ export class DataMaidService {
             }
             const groupChats = await fs.promises.readdir(this.directories.groupChats, { withFileTypes: true });
             for (const file of groupChats) {
-                if (file.isFile() && path.parse(file.name).ext === '.jsonl') {
+                if (file.isFile() && path.parse(file.name).ext === '.jsonl' && !isHeadChatFile(file.name)) {
                     if (!knownGroupChats.has(path.parse(file.name).name)) {
                         result.push(path.join(this.directories.groupChats, file.name));
                     }
@@ -535,7 +543,7 @@ export class DataMaidService {
 
             const groupChats = await fs.promises.readdir(this.directories.groupChats, { withFileTypes: true });
             for (const file of groupChats) {
-                if (file.isFile() && path.parse(file.name).ext === '.jsonl') {
+                if (file.isFile() && path.parse(file.name).ext === '.jsonl' && !isHeadChatFile(file.name)) {
                     const chatMessages = await this.#parseChatFile(path.join(this.directories.groupChats, file.name));
                     allChats.push(...chatMessages.filter(filterFn));
                 }
@@ -546,7 +554,7 @@ export class DataMaidService {
                 if (directory.isDirectory()) {
                     const chatFiles = await fs.promises.readdir(path.join(this.directories.chats, directory.name), { withFileTypes: true });
                     for (const file of chatFiles) {
-                        if (file.isFile() && path.parse(file.name).ext === '.jsonl') {
+                        if (file.isFile() && path.parse(file.name).ext === '.jsonl' && !isHeadChatFile(file.name)) {
                             const chatMessages = await this.#parseChatFile(path.join(this.directories.chats, directory.name, file.name));
                             allChats.push(...chatMessages.filter(filterFn));
                         }
@@ -571,21 +579,13 @@ export class DataMaidService {
         try {
             const allMetadata = [];
 
-            const groups = await fs.promises.readdir(this.directories.groups, { withFileTypes: true });
-            for (const file of groups) {
-                if (file.isFile() && path.parse(file.name).ext === '.json') {
-                    try {
-                        const pathToFile = path.join(this.directories.groups, file.name);
-                        const fileContent = await fs.promises.readFile(pathToFile, 'utf-8');
-                        const groupData = tryParse(fileContent);
-                        if (groupData?.chat_metadata && filterFn(groupData.chat_metadata)) {
-                            allMetadata.push(groupData.chat_metadata);
-                        }
-                        if (groupData?.past_metadata) {
-                            allMetadata.push(...Object.values(groupData.past_metadata).filter(filterFn));
-                        }
-                    } catch (error) {
-                        console.error(`[Data Maid] Error parsing group chat file ${file.name}:`, error);
+            const groupChats = await fs.promises.readdir(this.directories.groupChats, { withFileTypes: true });
+            for (const file of groupChats) {
+                if (file.isFile() && path.parse(file.name).ext === '.jsonl' && !isHeadChatFile(file.name)) {
+                    const chatMessages = await this.#parseChatFile(path.join(this.directories.groupChats, file.name));
+                    const chatMetadata = chatMessages?.[0]?.chat_metadata;
+                    if (chatMetadata && filterFn(chatMetadata)) {
+                        allMetadata.push(chatMetadata);
                     }
                 }
             }
@@ -595,7 +595,7 @@ export class DataMaidService {
                 if (directory.isDirectory()) {
                     const chatFiles = await fs.promises.readdir(path.join(this.directories.chats, directory.name), { withFileTypes: true });
                     for (const file of chatFiles) {
-                        if (file.isFile() && path.parse(file.name).ext === '.jsonl') {
+                        if (file.isFile() && path.parse(file.name).ext === '.jsonl' && !isHeadChatFile(file.name)) {
                             const chatMessages = await this.#parseChatFile(path.join(this.directories.chats, directory.name, file.name));
                             const chatMetadata = chatMessages?.[0]?.chat_metadata;
                             if (chatMetadata && filterFn(chatMetadata)) {
@@ -621,6 +621,11 @@ export class DataMaidService {
      */
     async #parseChatFile(filePath) {
         try {
+            const logicalChat = getLogicalChatData(filePath);
+            if (logicalChat.length > 0) {
+                return logicalChat;
+            }
+
             const content = await fs.promises.readFile(filePath, 'utf-8');
             const chatData = content.split('\n').map(tryParse).filter(Boolean);
             return chatData;
@@ -744,7 +749,10 @@ router.get('/view', async (req, res) => {
             return res.sendStatus(404);
         }
 
-        const fileBuffer = await fs.promises.readFile(pathToFile);
+        const logicalChat = getLogicalChatData(pathToFile);
+        const fileBuffer = logicalChat.length > 0
+            ? Buffer.from(serializeJsonl(logicalChat), 'utf8')
+            : await fs.promises.readFile(pathToFile);
         const mimeType = mime.lookup(pathToFile) || 'text/plain';
         res.setHeader('Content-Type', mimeType);
         return res.send(fileBuffer);
@@ -793,6 +801,12 @@ router.post('/delete', async (req, res) => {
             }
 
             await fs.promises.unlink(pathToFile);
+            if (path.extname(pathToFile) === '.jsonl' && !isHeadChatFile(pathToFile)) {
+                const headPath = getSplitHeadPath(pathToFile);
+                if (fs.existsSync(headPath)) {
+                    await fs.promises.unlink(headPath);
+                }
+            }
         }
 
         return res.sendStatus(204);
