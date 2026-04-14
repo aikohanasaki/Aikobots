@@ -423,23 +423,28 @@ function renderStmbJobsUi() {
     const hasActiveJobs = activeCount > 0;
     const recentFailureCount = getRecentFailureCount(currentStore);
     const canOpenPanel = hasActiveJobs || recentFailureCount > 0;
+    if (!canOpenPanel && currentStore?.uiState) {
+        currentStore.uiState.panelOpen = false;
+    }
+    const isPanelOpen = Boolean(canOpenPanel && currentStore?.uiState?.panelOpen);
     const tooltip = hasActiveJobs
         ? buildTooltip(summary)
         : (recentFailureCount > 0 ? (recentFailureCount === 1 ? '1 recent failure' : `${recentFailureCount} recent failures`) : 'No Memory Books jobs');
 
     topBarButton.disabled = !canOpenPanel;
     topBarButton.classList.toggle('disabled', !canOpenPanel);
-    topBarButton.classList.toggle('active', hasActiveJobs);
+    topBarButton.classList.toggle('active', isPanelOpen);
     topBarButton.title = tooltip;
     topBarButton.setAttribute('aria-label', `Memory Books Jobs. ${tooltip}`);
+    topBarButton.setAttribute('aria-expanded', String(isPanelOpen));
     topBarBadge.textContent = hasActiveJobs ? String(activeCount) : (recentFailureCount > 0 ? String(recentFailureCount) : '');
     topBarBadge.style.display = canOpenPanel ? 'inline-flex' : 'none';
     topBarBadge.classList.toggle('stmb-jobs-badge-failed', !hasActiveJobs && recentFailureCount > 0);
     jobsSummary.textContent = hasActiveJobs
         ? `${summary.running} running, ${summary.queued} queued${summary.awaitingApproval > 0 ? `, ${summary.awaitingApproval} awaiting approval` : ''}${recentFailureCount > 0 ? `, ${recentFailureCount} recent ${recentFailureCount === 1 ? 'failure' : 'failures'}` : ''}`
         : (recentFailureCount > 0 ? `${recentFailureCount} recent ${recentFailureCount === 1 ? 'failure' : 'failures'}` : 'No active jobs');
-
-    jobsPanel.hidden = !canOpenPanel || !currentStore?.uiState?.panelOpen;
+    jobsPanel.classList.toggle('visible', isPanelOpen);
+    jobsPanel.setAttribute('aria-hidden', String(!isPanelOpen));
 
     renderJobRows(currentStore);
     syncRenderTimer();
@@ -494,6 +499,7 @@ export function initStmbJobsUi() {
     }
 
     const wrapper = document.getElementById('stmb-jobs-topbar');
+    const drawer = document.getElementById('top_chat_stmb_jobs');
     if (!wrapper) {
         setTimeout(() => initStmbJobsUi(), 250);
         return;
@@ -501,30 +507,19 @@ export function initStmbJobsUi() {
 
     topBarButton = wrapper.querySelector('#stmb-jobs-topbar-button');
     topBarBadge = wrapper.querySelector('#stmb-jobs-topbar-badge');
-    jobsPanel = wrapper.querySelector('#stmb-jobs-panel');
-    jobsSummary = wrapper.querySelector('#stmb-jobs-summary');
-    jobsRows = wrapper.querySelector('#stmb-jobs-rows');
-    jobsActions = wrapper.querySelector('#stmb-jobs-actions');
+    jobsPanel = drawer;
+    jobsSummary = drawer?.querySelector('#stmb-jobs-summary');
+    jobsRows = drawer?.querySelector('#stmb-jobs-rows');
+    jobsActions = drawer?.querySelector('#stmb-jobs-actions');
     if (!topBarButton || !topBarBadge || !jobsPanel || !jobsSummary || !jobsRows || !jobsActions) {
         setTimeout(() => initStmbJobsUi(), 250);
         return;
     }
 
+    topBarButton.setAttribute('aria-controls', 'top_chat_stmb_jobs');
+    topBarButton.setAttribute('aria-expanded', 'false');
     topBarButton.addEventListener('click', handleTopBarButtonClick);
     jobsPanel.addEventListener('click', handlePanelClick);
-    document.addEventListener('click', event => {
-        if (!jobsPanel || jobsPanel.hidden) {
-            return;
-        }
-        if (wrapper.contains(event.target)) {
-            return;
-        }
-        const currentStore = getCurrentStore();
-        if (currentStore?.uiState) {
-            currentStore.uiState.panelOpen = false;
-        }
-        renderStmbJobsUi();
-    });
 
     eventSource.on(event_types.CHAT_CHANGED, () => renderStmbJobsUi());
     jobsUiInitialized = true;
