@@ -1,6 +1,4 @@
 import express from 'express';
-import { EventEmitter } from 'node:events';
-import { handleChatCompletionsGenerate } from './backends/chat-completions.js';
 import { resolveLogicalChatReference } from './chats.js';
 
 import {
@@ -9,13 +7,11 @@ import {
     getNextManagedMemorySequenceNumber,
     parseSequenceFromTitle,
     compileScene,
-    parseStructuredMemoryResponse,
 } from '../../public/scripts/stmb-core.js';
 import {
     createManagedSummaryEntryData,
     getNextSummaryNumber,
     migrateLorebookSummarySchema,
-    parseSummaryJsonResponse,
     getSummaryTierLabel,
 } from '../../public/scripts/stmb-summary.js';
 import {
@@ -69,157 +65,6 @@ function createStmbRequestError(status, type, message, extra = {}) {
     error.type = String(type || 'StmbRequestError');
     Object.assign(error, extra);
     return error;
-}
-
-class InternalResponseSink {
-    constructor() {
-        this.statusCode = 200;
-        this.headers = new Map();
-        this.body = undefined;
-        this.headersSent = false;
-        this.writableEnded = false;
-    }
-
-    setHeader(name, value) {
-        this.headers.set(String(name).toLowerCase(), value);
-        return this;
-    }
-
-    getHeader(name) {
-        return this.headers.get(String(name).toLowerCase());
-    }
-
-    status(code) {
-        this.statusCode = Number(code) || 200;
-        return this;
-    }
-
-    send(payload) {
-        this.body = payload;
-        this.headersSent = true;
-        this.writableEnded = true;
-        return this;
-    }
-
-    json(payload) {
-        return this.send(payload);
-    }
-
-    sendStatus(code) {
-        this.statusCode = Number(code) || 500;
-        this.headersSent = true;
-        this.writableEnded = true;
-        this.body = undefined;
-        return this;
-    }
-
-    write(payload) {
-        this.headersSent = true;
-        if (payload !== undefined) {
-            this.body = this.body === undefined ? payload : `${String(this.body)}${String(payload)}`;
-        }
-        return true;
-    }
-
-    end(payload) {
-        if (payload !== undefined && this.body === undefined) {
-            this.body = payload;
-        }
-        this.headersSent = true;
-        this.writableEnded = true;
-        return this;
-    }
-}
-
-class InternalSocketSink extends EventEmitter {
-    removeAllListeners(eventName) {
-        return super.removeAllListeners(eventName);
-    }
-}
-
-async function forwardChatCompletionGenerate(request, generateData) {
-    const internalRequest = Object.create(request);
-    internalRequest.body = structuredClone(generateData);
-    internalRequest.user = request.user;
-    internalRequest.headers = request.headers;
-    const socket = new InternalSocketSink();
-    const emitClose = () => socket.emit('close');
-    const outerSocket = request.socket;
-    request.once('aborted', emitClose);
-    outerSocket?.once?.('close', emitClose);
-    internalRequest.socket = socket;
-
-    const sink = new InternalResponseSink();
-    try {
-        await handleChatCompletionsGenerate(internalRequest, sink);
-        const hasPayloadError = Boolean(sink.body && typeof sink.body === 'object' && !Array.isArray(sink.body) && sink.body.error);
-        const effectiveStatus = hasPayloadError
-            ? (sink.body?.quota_error ? 429 : (sink.statusCode >= 400 ? sink.statusCode : 502))
-            : sink.statusCode;
-
-        return {
-            ok: !hasPayloadError && effectiveStatus >= 200 && effectiveStatus < 300,
-            status: effectiveStatus,
-            data: sink.body,
-        };
-    } finally {
-        request.off('aborted', emitClose);
-        outerSocket?.off?.('close', emitClose);
-    }
-}
-
-function sendForwardedFailure(response, forwarded) {
-    return response.status(forwarded.status || 500).send(
-        forwarded.data || {
-            error: {
-                type: 'StmbGenerationFailed',
-                message: 'Failed to generate STMB response.',
-            },
-        },
-    );
-}
-
-function extractTextFromProviderResponse(payload) {
-    if (typeof payload === 'string') {
-        return payload;
-    }
-    if (!payload || typeof payload !== 'object') {
-        return String(payload ?? '');
-    }
-
-    const choiceContent = payload?.choices?.[0]?.message?.content ?? payload?.choices?.[0]?.text;
-    if (typeof choiceContent === 'string') {
-        return choiceContent;
-    }
-    if (Array.isArray(choiceContent)) {
-        return choiceContent
-            .map(part => {
-                if (typeof part === 'string') return part;
-                if (typeof part?.text === 'string') return part.text;
-                return '';
-            })
-            .join('');
-    }
-
-    const claudeContent = payload?.content;
-    if (Array.isArray(claudeContent)) {
-        return claudeContent
-            .map(part => {
-                if (typeof part === 'string') return part;
-                if (typeof part?.text === 'string') return part.text;
-                return '';
-            })
-            .join('');
-    }
-
-    const geminiParts = payload?.candidates?.[0]?.content?.parts;
-    if (Array.isArray(geminiParts)) {
-        return geminiParts
-            .map(part => typeof part?.text === 'string' ? part.text : '')
-            .join('');
-    }
-
-    return '';
 }
 
 function intersectRanges(ranges = [], start, end) {
@@ -612,117 +457,6 @@ router.post('/save-memory', async (request, response) => {
             entry,
             sequenceNumber,
             orderClampNotifications,
-        });
-    } catch (error) {
-        return sendStmbError(response, error);
-    }
-});
-
-router.post('/generate-memory', async (request, response) => {
-    const generateData = request.body?.generateData;
-    if (!generateData || typeof generateData !== 'object') {
-        return response.status(400).send({
-            error: {
-                type: 'StmbBadRequest',
-                message: 'generateData is required.',
-            },
-        });
-    }
-
-    try {
-        const forwarded = await forwardChatCompletionGenerate(request, { ...generateData, stream: false });
-        if (!forwarded.ok) {
-            return sendForwardedFailure(response, forwarded);
-        }
-
-        try {
-            const memory = parseStructuredMemoryResponse(forwarded.data);
-            return response.send({
-                ok: true,
-                memory,
-                providerResponse: forwarded.data,
-            });
-        } catch (error) {
-            return response.status(422).send({
-                error: {
-                    type: error?.name || 'StmbMemoryParseError',
-                    code: error?.code || 'PARSE_FAILED',
-                    message: String(error?.message || 'Failed to parse structured memory response.'),
-                    rawResponse: typeof error?.rawResponse === 'string' && error.rawResponse
-                        ? error.rawResponse
-                        : JSON.stringify(forwarded.data ?? {}),
-                    providerBody: JSON.stringify(forwarded.data ?? {}),
-                },
-            });
-        }
-    } catch (error) {
-        return sendStmbError(response, error);
-    }
-});
-
-router.post('/generate-summary', async (request, response) => {
-    const generateData = request.body?.generateData;
-    if (!generateData || typeof generateData !== 'object') {
-        return response.status(400).send({
-            error: {
-                type: 'StmbBadRequest',
-                message: 'generateData is required.',
-            },
-        });
-    }
-
-    try {
-        const forwarded = await forwardChatCompletionGenerate(request, { ...generateData, stream: false });
-        if (!forwarded.ok) {
-            return sendForwardedFailure(response, forwarded);
-        }
-
-        try {
-            const parsed = parseSummaryJsonResponse(forwarded.data);
-            return response.send({
-                ok: true,
-                parsed,
-                providerResponse: forwarded.data,
-            });
-        } catch (error) {
-            return response.status(422).send({
-                error: {
-                    type: error?.name || 'StmbSummaryParseError',
-                    code: error?.code || 'PARSE_FAILED',
-                    message: String(error?.message || 'Failed to parse structured summary response.'),
-                    rawResponse: typeof error?.rawResponse === 'string' && error.rawResponse
-                        ? error.rawResponse
-                        : JSON.stringify(forwarded.data ?? {}),
-                    providerBody: JSON.stringify(forwarded.data ?? {}),
-                },
-            });
-        }
-    } catch (error) {
-        return sendStmbError(response, error);
-    }
-});
-
-router.post('/generate-text', async (request, response) => {
-    const generateData = request.body?.generateData;
-    if (!generateData || typeof generateData !== 'object') {
-        return response.status(400).send({
-            error: {
-                type: 'StmbBadRequest',
-                message: 'generateData is required.',
-            },
-        });
-    }
-
-    try {
-        const forwarded = await forwardChatCompletionGenerate(request, { ...generateData, stream: false });
-        if (!forwarded.ok) {
-            return sendForwardedFailure(response, forwarded);
-        }
-
-        return response.send({
-            ok: true,
-            text: extractTextFromProviderResponse(forwarded.data),
-            providerResponse: forwarded.data,
         });
     } catch (error) {
         return sendStmbError(response, error);
