@@ -12661,7 +12661,11 @@ export async function createOrEditCharacter(e) {
             }
 
             await getOneCharacter(formData.get('avatar_url'));
-            await printCharacters(false);
+            if (isNewChat) {
+                favsToHotswap();
+            } else {
+                await printCharacters(false);
+            }
 
             $('#add_avatar_button').replaceWith(
                 $('#add_avatar_button').val('').clone(true),
