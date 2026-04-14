@@ -11207,11 +11207,16 @@ export function select_rm_info(type, charId, previousCharId = null) {
  * @param {string} chid Character array index
  * @param {object} [param1] Options for the switch
  * @param {boolean} [param1.switchMenu=true] Whether to switch the menu
+ * @param {boolean} [param1.forceRefresh=false] Whether to repopulate the form even with unsaved edits
  */
-export function select_selected_character(chid, { switchMenu = true } = {}) {
+export function select_selected_character(chid, { switchMenu = true, forceRefresh = false } = {}) {
     //character select
     //console.log('select_selected_character() -- starting with input of -- ' + chid + ' (name:' + characters[chid].name + ')');
-    select_rm_create({ switchMenu });
+    const shouldPreserveUnsavedEdits = !forceRefresh
+        && String(chid) === String(this_chid)
+        && hasUnsavedCharacterEdits();
+
+    select_rm_create({ switchMenu, hydrateForm: false });
     switchMenu && setMenuType('character_edit');
     $('#delete_button').css('display', 'flex');
     $('#export_button').css('display', 'flex');
@@ -11236,51 +11241,57 @@ export function select_selected_character(chid, { switchMenu = true } = {}) {
         $('#rm_button_selected_ch').children('h2').text(characters[chid].name);
     }
 
-    $('#add_avatar_button').val('');
+    if (!shouldPreserveUnsavedEdits) {
+        $('#add_avatar_button').val('');
+    }
 
-    $('#character_popup-button-h3').text(characters[chid].name);
-    $('#character_name_pole').val(characters[chid].name);
-    $('#description_textarea').val(characters[chid].description);
-    $('#character_world').val(characters[chid].data?.extensions?.world || '');
-    $('#creator_notes_textarea').val(characters[chid].data?.creator_notes || characters[chid].creatorcomment);
-    $('#creator_notes_spoiler').html(formatCreatorNotes(characters[chid].data?.creator_notes || characters[chid].creatorcomment, characters[chid].avatar));
-    $('#character_version_textarea').val(characters[chid].data?.character_version || '');
-    $('#system_prompt_textarea').val(characters[chid].data?.system_prompt || '');
-    $('#post_history_instructions_textarea').val(characters[chid].data?.post_history_instructions || '');
-    $('#tags_textarea').val(Array.isArray(characters[chid].data?.tags) ? characters[chid].data.tags.join(', ') : '');
-    $('#creator_textarea').val(characters[chid].data?.creator);
-    $('#character_version_textarea').val(characters[chid].data?.character_version || '');
-    $('#personality_textarea').val(characters[chid].personality);
-    $('#firstmessage_textarea').val(characters[chid].first_mes);
-    $('#scenario_pole').val(characters[chid].scenario);
-    $('#depth_prompt_prompt').val(characters[chid].data?.extensions?.depth_prompt?.prompt ?? '');
-    $('#depth_prompt_depth').val(characters[chid].data?.extensions?.depth_prompt?.depth ?? depth_prompt_depth_default);
-    $('#depth_prompt_role').val(characters[chid].data?.extensions?.depth_prompt?.role ?? depth_prompt_role_default);
-    $('#talkativeness_slider').val(characters[chid].talkativeness || talkativeness_default);
-    $('#mes_example_textarea').val(characters[chid].mes_example);
-    $('#selected_chat_pole').val(characters[chid].chat);
-    $('#create_date_pole').val(characters[chid].create_date);
-    $('#avatar_url_pole').val(characters[chid].avatar);
-    $('#chat_import_avatar_url').val(characters[chid].avatar);
-    $('#chat_import_character_name').val(characters[chid].name);
-    $('#character_json_data').val(characters[chid].json_data);
+    if (!shouldPreserveUnsavedEdits) {
+        $('#character_popup-button-h3').text(characters[chid].name);
+        $('#character_name_pole').val(characters[chid].name);
+        $('#description_textarea').val(characters[chid].description);
+        $('#character_world').val(characters[chid].data?.extensions?.world || '');
+        $('#creator_notes_textarea').val(characters[chid].data?.creator_notes || characters[chid].creatorcomment);
+        $('#creator_notes_spoiler').html(formatCreatorNotes(characters[chid].data?.creator_notes || characters[chid].creatorcomment, characters[chid].avatar));
+        $('#character_version_textarea').val(characters[chid].data?.character_version || '');
+        $('#system_prompt_textarea').val(characters[chid].data?.system_prompt || '');
+        $('#post_history_instructions_textarea').val(characters[chid].data?.post_history_instructions || '');
+        $('#tags_textarea').val(Array.isArray(characters[chid].data?.tags) ? characters[chid].data.tags.join(', ') : '');
+        $('#creator_textarea').val(characters[chid].data?.creator);
+        $('#character_version_textarea').val(characters[chid].data?.character_version || '');
+        $('#personality_textarea').val(characters[chid].personality);
+        $('#firstmessage_textarea').val(characters[chid].first_mes);
+        $('#scenario_pole').val(characters[chid].scenario);
+        $('#depth_prompt_prompt').val(characters[chid].data?.extensions?.depth_prompt?.prompt ?? '');
+        $('#depth_prompt_depth').val(characters[chid].data?.extensions?.depth_prompt?.depth ?? depth_prompt_depth_default);
+        $('#depth_prompt_role').val(characters[chid].data?.extensions?.depth_prompt?.role ?? depth_prompt_role_default);
+        $('#talkativeness_slider').val(characters[chid].talkativeness || talkativeness_default);
+        $('#mes_example_textarea').val(characters[chid].mes_example);
+        $('#selected_chat_pole').val(characters[chid].chat);
+        $('#create_date_pole').val(characters[chid].create_date);
+        $('#avatar_url_pole').val(characters[chid].avatar);
+        $('#chat_import_avatar_url').val(characters[chid].avatar);
+        $('#chat_import_character_name').val(characters[chid].name);
+        $('#character_json_data').val(characters[chid].json_data);
 
-    updateFavButtonState(characters[chid].fav || characters[chid].fav == 'true');
+        updateFavButtonState(characters[chid].fav || characters[chid].fav == 'true');
 
-    const avatarUrl = characters[chid].avatar != 'none' ? getThumbnailUrl('avatar', characters[chid].avatar) : default_avatar;
-    $('#avatar_load_preview').attr('src', avatarUrl);
-    $('.open_alternate_greetings').data('chid', chid);
-    $('#set_character_world').data('chid', chid);
-    setWorldInfoButtonClass(chid);
-    checkEmbeddedWorld(chid);
+        const avatarUrl = characters[chid].avatar != 'none' ? getThumbnailUrl('avatar', characters[chid].avatar) : default_avatar;
+        $('#avatar_load_preview').attr('src', avatarUrl);
+        $('.open_alternate_greetings').data('chid', chid);
+        $('#set_character_world').data('chid', chid);
+        setWorldInfoButtonClass(chid);
+        checkEmbeddedWorld(chid);
 
-    $('#name_div').removeClass('displayBlock');
-    $('#name_div').addClass('displayNone');
-    $('#renameCharButton').css('display', '');
+        $('#name_div').removeClass('displayBlock');
+        $('#name_div').addClass('displayNone');
+        $('#renameCharButton').css('display', '');
+    }
 
     $('#form_create').attr('actiontype', 'editcharacter');
     $('.form_create_bottom_buttons_block .chat_lorebook_button').show();
-    clearCharacterEditorDirtyState();
+    if (!shouldPreserveUnsavedEdits) {
+        clearCharacterEditorDirtyState();
+    }
     updateCharacterSaveButtonState();
 
     const externalMediaState = isExternalMediaAllowed();
@@ -11301,12 +11312,13 @@ export function select_selected_character(chid, { switchMenu = true } = {}) {
  * Selects the right menu for creating a new character.
  * @param {object} [options] Options for the switch
  * @param {boolean} [options.switchMenu=true] Whether to switch the menu
+ * @param {boolean} [options.hydrateForm=true] Whether to populate the form with create-mode values
  */
-function select_rm_create({ switchMenu = true } = {}) {
+function select_rm_create({ switchMenu = true, hydrateForm = true } = {}) {
     switchMenu && setMenuType('create');
 
     //console.log('select_rm_Create() -- selected button: '+selected_button);
-    if (selected_button == 'create' && create_save.avatar) {
+    if (hydrateForm && selected_button == 'create' && create_save.avatar) {
         const addAvatarInput = /** @type {HTMLInputElement} */ ($('#add_avatar_button').get(0));
         addAvatarInput.files = create_save.avatar;
         read_avatar_load(addAvatarInput);
@@ -11331,41 +11343,43 @@ function select_rm_create({ switchMenu = true } = {}) {
     //create text poles
     $('#rm_button_back').css('display', '');
     $('#character_import_button').css('display', '');
-    $('#character_popup-button-h3').text('Create character');
-    $('#character_name_pole').val(create_save.name);
-    $('#description_textarea').val(create_save.description);
-    $('#character_world').val(create_save.world);
-    $('#creator_notes_textarea').val(create_save.creator_notes);
-    $('#creator_notes_spoiler').html(formatCreatorNotes(create_save.creator_notes, ''));
-    $('#post_history_instructions_textarea').val(create_save.post_history_instructions);
-    $('#system_prompt_textarea').val(create_save.system_prompt);
-    $('#tags_textarea').val(create_save.tags);
-    $('#creator_textarea').val(create_save.creator);
-    $('#character_version_textarea').val(create_save.character_version);
-    $('#personality_textarea').val(create_save.personality);
-    $('#firstmessage_textarea').val(create_save.first_message);
-    $('#talkativeness_slider').val(create_save.talkativeness);
-    $('#scenario_pole').val(create_save.scenario);
-    $('#depth_prompt_prompt').val(create_save.depth_prompt_prompt);
-    $('#depth_prompt_depth').val(create_save.depth_prompt_depth);
-    $('#depth_prompt_role').val(create_save.depth_prompt_role);
-    $('#mes_example_textarea').val(create_save.mes_example);
-    $('#character_json_data').val('');
-    $('#avatar_div').css('display', 'flex');
-    $('#avatar_load_preview').attr('src', default_avatar);
-    $('#renameCharButton').css('display', 'none');
-    $('#name_div').removeClass('displayNone');
-    $('#name_div').addClass('displayBlock');
-    $('.open_alternate_greetings').data('chid', -1);
-    $('#set_character_world').data('chid', -1);
-    setWorldInfoButtonClass(undefined, !!create_save.world);
-    updateFavButtonState(false);
-    checkEmbeddedWorld();
+    if (hydrateForm) {
+        $('#character_popup-button-h3').text('Create character');
+        $('#character_name_pole').val(create_save.name);
+        $('#description_textarea').val(create_save.description);
+        $('#character_world').val(create_save.world);
+        $('#creator_notes_textarea').val(create_save.creator_notes);
+        $('#creator_notes_spoiler').html(formatCreatorNotes(create_save.creator_notes, ''));
+        $('#post_history_instructions_textarea').val(create_save.post_history_instructions);
+        $('#system_prompt_textarea').val(create_save.system_prompt);
+        $('#tags_textarea').val(create_save.tags);
+        $('#creator_textarea').val(create_save.creator);
+        $('#character_version_textarea').val(create_save.character_version);
+        $('#personality_textarea').val(create_save.personality);
+        $('#firstmessage_textarea').val(create_save.first_message);
+        $('#talkativeness_slider').val(create_save.talkativeness);
+        $('#scenario_pole').val(create_save.scenario);
+        $('#depth_prompt_prompt').val(create_save.depth_prompt_prompt);
+        $('#depth_prompt_depth').val(create_save.depth_prompt_depth);
+        $('#depth_prompt_role').val(create_save.depth_prompt_role);
+        $('#mes_example_textarea').val(create_save.mes_example);
+        $('#character_json_data').val('');
+        $('#avatar_div').css('display', 'flex');
+        $('#avatar_load_preview').attr('src', default_avatar);
+        $('#renameCharButton').css('display', 'none');
+        $('#name_div').removeClass('displayNone');
+        $('#name_div').addClass('displayBlock');
+        $('.open_alternate_greetings').data('chid', -1);
+        $('#set_character_world').data('chid', -1);
+        setWorldInfoButtonClass(undefined, !!create_save.world);
+        updateFavButtonState(false);
+        checkEmbeddedWorld();
+    }
 
     $('#form_create').attr('actiontype', 'createcharacter');
     $('.form_create_bottom_buttons_block .chat_lorebook_button').hide();
     $('#character_open_media_overrides').hide();
-    clearCharacterEditorDirtyState();
+    hydrateForm && clearCharacterEditorDirtyState();
     updateCharacterSaveButtonState();
 }
 
@@ -12499,6 +12513,18 @@ export async function createOrEditCharacter(e) {
     const formData = new FormData(/** @type {HTMLFormElement} */($('#form_create').get(0)));
     formData.set('fav', String(fav_ch_checked));
     const isNewChat = e instanceof CustomEvent && e.type === 'newChat';
+    const getFetchErrorMessage = async (response) => {
+        try {
+            const errorData = await response.json();
+            return errorData?.error || errorData?.message || errorData?.error?.message || '';
+        } catch {
+            try {
+                return await response.text();
+            } catch {
+                return '';
+            }
+        }
+    };
 
     const rawFile = formData.get('avatar');
     if (rawFile instanceof File) {
@@ -12540,18 +12566,7 @@ export async function createOrEditCharacter(e) {
             });
 
             if (!fetchResult.ok) {
-                let errorMessage = '';
-                try {
-                    const errorData = await fetchResult.json();
-                    errorMessage = errorData?.error || errorData?.message || '';
-                } catch {
-                    try {
-                        errorMessage = await fetchResult.text();
-                    } catch {
-                        errorMessage = '';
-                    }
-                }
-
+                const errorMessage = await getFetchErrorMessage(fetchResult);
                 throw new Error(errorMessage || 'Fetch result is not ok');
             }
 
@@ -12641,7 +12656,8 @@ export async function createOrEditCharacter(e) {
             });
 
             if (!fetchResult.ok) {
-                throw new Error('Fetch result is not ok');
+                const errorMessage = await getFetchErrorMessage(fetchResult);
+                throw new Error(errorMessage || 'Fetch result is not ok');
             }
 
             await getOneCharacter(formData.get('avatar_url'));
@@ -14073,7 +14089,11 @@ jQuery(async function () {
         read_avatar_load(inputElement);
     });
 
-    $('#form_create').on('submit', (e) => createOrEditCharacter(e.originalEvent));
+    $('#form_create').on('submit', async function (e) {
+        e.preventDefault();
+        e.stopPropagation();
+        await createOrEditCharacter(e.originalEvent ?? e);
+    });
 
     $('#delete_button').on('click', async function () {
         if (this_chid === undefined || !characters[this_chid]) {
