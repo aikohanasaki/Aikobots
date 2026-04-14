@@ -14,18 +14,143 @@
     /*for some reason the full screen blur does not work on iOS*/
     backdrop-filter: blur(30px);
     opacity: 1;
-}
-
-#load-spinner {
-    --spinner-size: 2em;
-    transition: all var(--animation-duration-2x) ease-out;
-    opacity: 1;
-    top: calc(50% - var(--spinner-size) / 2);
-    left: calc(50% - var(--spinner-size) / 2);
-    position: absolute;
-    width: var(--spinner-size);
-    height: var(--spinner-size);
     display: flex;
     align-items: center;
     justify-content: center;
+}
+
+#preloader .loader-shell,
+#loader {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+#loader {
+    transition: all var(--animation-duration-2x) ease-out;
+}
+
+.loader-shell {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 0.9rem;
+    width: min(28rem, calc(100vw - 3rem));
+    width: min(28rem, calc(100dvw - 3rem));
+    text-align: center;
+}
+
+.loader-icon-wrap {
+    position: relative;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 4.75rem;
+    min-height: 4.75rem;
+    animation: loader-bob 2.4s ease-in-out infinite;
+}
+
+.loader-icon-wrap::before,
+.loader-icon-wrap::after {
+    content: "";
+    position: absolute;
+    width: 0.5rem;
+    height: 0.5rem;
+    border-radius: 50%;
+    background: color-mix(in srgb, var(--SmartThemeBodyColor) 82%, transparent);
+    box-shadow: 0 0 12px color-mix(in srgb, var(--SmartThemeBodyColor) 35%, transparent);
+    animation: loader-orbit-glow 1.8s ease-in-out infinite alternate;
+}
+
+.loader-icon-wrap::before {
+    top: 0.3rem;
+    left: 0.45rem;
+}
+
+.loader-icon-wrap::after {
+    right: 0.35rem;
+    bottom: 0.45rem;
+    animation-delay: 0.6s;
+}
+
+.loader-spinner {
+    --spinner-size: 2.8rem;
+    position: relative;
+    z-index: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: var(--spinner-size);
+    height: var(--spinner-size);
+    filter: drop-shadow(0 0 14px color-mix(in srgb, var(--SmartThemeBodyColor) 22%, transparent));
+    animation: fa-spin 2s infinite linear, loader-pulse 2.2s ease-in-out infinite;
+}
+
+.loader-copy {
+    max-width: 24rem;
+    line-height: 1.45;
+    font-size: calc(var(--mainFontSize) * 0.98);
+    opacity: 0.88;
+    text-wrap: balance;
+    animation: loader-copy-float 2.8s ease-in-out infinite;
+}
+
+@keyframes loader-bob {
+    0%,
+    100% {
+        transform: translateY(0);
+    }
+
+    50% {
+        transform: translateY(-3px);
+    }
+}
+
+@keyframes loader-pulse {
+    0%,
+    100% {
+        filter: drop-shadow(0 0 10px color-mix(in srgb, var(--SmartThemeBodyColor) 18%, transparent));
+    }
+
+    50% {
+        filter: drop-shadow(0 0 18px color-mix(in srgb, var(--SmartThemeBodyColor) 32%, transparent));
+    }
+}
+
+@keyframes loader-copy-float {
+    0%,
+    100% {
+        opacity: 0.8;
+        transform: translateY(0);
+    }
+
+    50% {
+        opacity: 1;
+        transform: translateY(-2px);
+    }
+}
+
+@keyframes loader-orbit-glow {
+    0% {
+        opacity: 0.45;
+        transform: scale(0.9);
+    }
+
+    100% {
+        opacity: 0.95;
+        transform: scale(1.1);
+    }
+}
+
+@media (max-width: 600px) {
+    .loader-shell {
+        width: min(22rem, calc(100vw - 2rem));
+        width: min(22rem, calc(100dvw - 2rem));
+        gap: 0.8rem;
+    }
+
+    .loader-copy {
+        font-size: calc(var(--mainFontSize) * 0.92);
+    }
 }

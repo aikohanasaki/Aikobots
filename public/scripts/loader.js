@@ -11,7 +11,12 @@ export function showLoader() {
 
     loaderPopup = new Popup(`
         <div id="loader">
-            <div id="load-spinner" class="fa-solid fa-gear fa-spin fa-3x"></div>
+            <div class="loader-shell" aria-live="polite">
+                <div class="loader-icon-wrap">
+                    <div id="load-spinner" class="loader-spinner fa-solid fa-gear fa-spin fa-3x"></div>
+                </div>
+                <div class="loader-copy">We're working on your request, sit tight!</div>
+            </div>
         </div>`, POPUP_TYPE.DISPLAY, null, { transparent: true, animation: 'none', wide: true, large: true });
 
     // No close button, loaders are not closable
@@ -27,21 +32,21 @@ export async function hideLoader() {
     }
 
     return new Promise((resolve) => {
-        const spinner = $('#load-spinner');
-        if (!spinner.length) {
-            console.warn('Spinner element not found, skipping animation');
+        const loader = $('#loader');
+        if (!loader.length) {
+            console.warn('Loader element not found, skipping animation');
             cleanup();
             return;
         }
 
         // Check if transitions are enabled
-        const transitionDuration = spinner[0] ? getComputedStyle(spinner[0]).transitionDuration : '0s';
+        const transitionDuration = loader[0] ? getComputedStyle(loader[0]).transitionDuration : '0s';
         const hasTransitions = parseFloat(transitionDuration) > 0;
 
         if (hasTransitions) {
             Promise.race([
                 new Promise((r) => setTimeout(r, 500)), // Fallback timeout
-                new Promise((r) => spinner.one('transitionend webkitTransitionEnd oTransitionEnd MSTransitionEnd', r)),
+                new Promise((r) => loader.one('transitionend webkitTransitionEnd oTransitionEnd MSTransitionEnd', r)),
             ]).finally(cleanup);
         } else {
             cleanup();
@@ -62,7 +67,7 @@ export async function hideLoader() {
         }
 
         // Apply the styles
-        spinner.css({
+        loader.css({
             'filter': 'blur(15px)',
             'opacity': '0',
         });
