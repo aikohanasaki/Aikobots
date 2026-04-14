@@ -6,7 +6,7 @@
     z-index: 999999;
     background-color: var(--SmartThemeBlurTintColor);
     color: var(--SmartThemeBodyColor);
-    /*for some reason the full screen blur does not work on iOS*/
+    /* for some reason the full screen blur does not work on iOS */
     backdrop-filter: blur(30px);
     opacity: 1;
     display: flex;
@@ -15,8 +15,7 @@
     overflow: hidden;
     visibility: visible;
     pointer-events: auto;
-    transition: opacity var(--animation-duration-2x) ease-out, visibility 0s linear;
-}
+    transition: opacity var(--animation-duration-2x) ease-out, visibility 0s linear var(--animation-duration-2x);}
 
 #preloader .loader-shell {
     display: flex;
