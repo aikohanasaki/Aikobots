@@ -17,17 +17,21 @@
     display: flex;
     align-items: center;
     justify-content: center;
+    visibility: visible;
+    pointer-events: auto;
+    transition: opacity var(--animation-duration-2x) ease-out, visibility 0s linear;
 }
 
-#preloader .loader-shell,
-#popup-loader {
+#preloader .loader-shell {
     display: flex;
     align-items: center;
     justify-content: center;
 }
 
-#popup-loader {
-    transition: all var(--animation-duration-2x) ease-out;
+#preloader.loader-hidden {
+    opacity: 0;
+    visibility: hidden;
+    pointer-events: none;
 }
 
 .loader-shell {
