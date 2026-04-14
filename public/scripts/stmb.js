@@ -27,7 +27,7 @@ import { SlashCommandParser } from './slash-commands/SlashCommandParser.js';
 import { SlashCommand } from './slash-commands/SlashCommand.js';
 import { ARGUMENT_TYPE, SlashCommandArgument } from './slash-commands/SlashCommandArgument.js';
 import { SlashCommandEnumValue } from './slash-commands/SlashCommandEnumValue.js';
-import { executeSlashCommands } from './slash-commands.js';
+import { hideChatMessageRange } from './chats.js';
 import { groups, selected_group } from './group-chats.js';
 import { getRegexScripts, runRegexScript, substitute_find_regex } from './extensions/regex/engine.js';
 import { getLorebookStorageForRequest, loadWorldInfo, METADATA_KEY, reloadEditor, world_names, worldInfoCache } from './world-info.js';
@@ -148,6 +148,13 @@ let sidePromptNameCache = [];
 let activeSettingsPopupDialog = null;
 const pendingPassiveChecksByChat = new Map();
 let stmbJobExecutorsRegistered = false;
+const STMB_VOLATILE_STATE_KEYS = new Set([
+    'sceneStart',
+    'sceneEnd',
+    'autoSummaryNextPromptAt',
+    'autoConsolidationLastPromptKey',
+]);
+const stmbVolatileStateByChat = new Map();
 
 function isManualSidePromptEnabled(template) {
     const commands = template?.triggers?.commands;
@@ -3599,7 +3606,7 @@ function getModuleSettings() {
     return stmbSettings.moduleSettings || {};
 }
 
-function getStmbState() {
+function getPersistedStmbState() {
     const context = getContext();
     const metadata = context?.chatMetadata || chat_metadata;
     if (!metadata[STMB_METADATA_KEY] || typeof metadata[STMB_METADATA_KEY] !== 'object') {
@@ -3607,6 +3614,75 @@ function getStmbState() {
     }
 
     return metadata[STMB_METADATA_KEY];
+}
+
+function getStmbVolatileState(chatKey = null) {
+    const resolvedChatKey = String(chatKey || getStmbChatKey(buildStmbSceneContext()) || '__stmb__').trim() || '__stmb__';
+    if (!stmbVolatileStateByChat.has(resolvedChatKey)) {
+        stmbVolatileStateByChat.set(resolvedChatKey, {});
+    }
+    return stmbVolatileStateByChat.get(resolvedChatKey);
+}
+
+function migrateVolatileStmbState(persistedState, volatileState) {
+    for (const key of STMB_VOLATILE_STATE_KEYS) {
+        if (!Object.hasOwn(volatileState, key) && Object.hasOwn(persistedState, key)) {
+            volatileState[key] = structuredClone(persistedState[key]);
+        }
+        delete persistedState[key];
+    }
+}
+
+function getStmbState() {
+    const persistedState = getPersistedStmbState();
+    const volatileState = getStmbVolatileState();
+    migrateVolatileStmbState(persistedState, volatileState);
+
+    return new Proxy(persistedState, {
+        get(target, property, receiver) {
+            if (typeof property === 'string' && STMB_VOLATILE_STATE_KEYS.has(property)) {
+                return volatileState[property];
+            }
+            return Reflect.get(target, property, receiver);
+        },
+        set(target, property, value, receiver) {
+            if (typeof property === 'string' && STMB_VOLATILE_STATE_KEYS.has(property)) {
+                volatileState[property] = value;
+                return true;
+            }
+            return Reflect.set(target, property, value, receiver);
+        },
+        deleteProperty(target, property) {
+            if (typeof property === 'string' && STMB_VOLATILE_STATE_KEYS.has(property)) {
+                delete volatileState[property];
+                return true;
+            }
+            return Reflect.deleteProperty(target, property);
+        },
+        has(target, property) {
+            if (typeof property === 'string' && STMB_VOLATILE_STATE_KEYS.has(property)) {
+                return Object.hasOwn(volatileState, property);
+            }
+            return Reflect.has(target, property);
+        },
+        ownKeys(target) {
+            return Array.from(new Set([
+                ...Reflect.ownKeys(target),
+                ...Reflect.ownKeys(volatileState),
+            ]));
+        },
+        getOwnPropertyDescriptor(target, property) {
+            if (typeof property === 'string' && STMB_VOLATILE_STATE_KEYS.has(property) && Object.hasOwn(volatileState, property)) {
+                return {
+                    configurable: true,
+                    enumerable: true,
+                    writable: true,
+                    value: volatileState[property],
+                };
+            }
+            return Reflect.getOwnPropertyDescriptor(target, property);
+        },
+    });
 }
 
 export function loadStmbSettings(settings) {
@@ -3650,7 +3726,6 @@ function setSceneMarker(kind, messageId) {
 
     state.sceneStart = nextStart;
     state.sceneEnd = nextEnd;
-    saveMetadataDebounced();
     renderAllSceneButtons();
     refreshOpenSettingsPopupSceneState().catch(error => {
         console.warn('STMB settings popup scene refresh failed', error);
@@ -3661,7 +3736,6 @@ function setSceneRange(sceneStart, sceneEnd) {
     const state = getStmbState();
     state.sceneStart = Number(sceneStart);
     state.sceneEnd = Number(sceneEnd);
-    saveMetadataDebounced();
     renderAllSceneButtons();
     refreshOpenSettingsPopupSceneState().catch(error => {
         console.warn('STMB settings popup scene refresh failed', error);
@@ -3672,7 +3746,6 @@ function clearSceneMarkers() {
     const state = getStmbState();
     delete state.sceneStart;
     delete state.sceneEnd;
-    saveMetadataDebounced();
     renderAllSceneButtons();
     refreshOpenSettingsPopupSceneState().catch(error => {
         console.warn('STMB settings popup scene refresh failed', error);
@@ -3922,7 +3995,6 @@ async function resolveAutoSummaryLorebook() {
                 ? Number(decision.postponeMessages)
                 : 10;
             state.autoSummaryNextPromptAt = chat.length + postponeMessages;
-            saveMetadataDebounced();
             return {
                 valid: false,
                 lorebookName: null,
@@ -4026,7 +4098,6 @@ async function checkAutoSummaryTrigger(options = {}) {
 
     if (Number.isInteger(state.autoSummaryNextPromptAt)) {
         getStmbState().autoSummaryNextPromptAt = null;
-        saveMetadataDebounced();
     }
 
     const sceneStart = highestProcessed + 1;
@@ -4067,7 +4138,6 @@ function validateSceneMarkers() {
     }
 
     if (changed) {
-        saveMetadataDebounced();
         refreshOpenSettingsPopupSceneState().catch(error => {
             console.warn('STMB settings popup scene refresh failed', error);
         });
@@ -4083,6 +4153,9 @@ function handleMessageDeletion(deletedId) {
     }
 
     const state = getStmbState();
+    const previousHighestProcessed = Number.isInteger(state.highestMemoryProcessed) ? state.highestMemoryProcessed : null;
+    const hadHighestProcessed = Object.hasOwn(state, 'highestMemoryProcessed');
+    const hadHighestProcessedManuallySet = Object.hasOwn(state, 'highestMemoryProcessedManuallySet');
     const result = applyDeletedMessageToSceneState(state, id, chat.length);
 
     if (result.changed) {
@@ -4093,7 +4166,11 @@ function handleMessageDeletion(deletedId) {
             delete state.highestMemoryProcessed;
             delete state.highestMemoryProcessedManuallySet;
         }
-        saveMetadataDebounced();
+        const shouldPersistHighestProcessed = previousHighestProcessed !== result.highestProcessed
+            || (result.highestProcessed === null && (hadHighestProcessed || hadHighestProcessedManuallySet));
+        if (shouldPersistHighestProcessed) {
+            saveMetadataDebounced();
+        }
         if (result.sceneChanged && getModuleSettings().showNotifications) {
             toastr.warning(result.toastrMessage, 'STMB');
         }
@@ -4492,7 +4569,7 @@ async function applyPostSaveLorebookEffects(lorebookName, range) {
         if (autoHideMode === 'all') {
             const hideEnd = unhiddenCount === 0 ? range.sceneEnd : range.sceneEnd - unhiddenCount;
             if (hideEnd >= 0) {
-                await executeSlashCommands(`/hide 0-${hideEnd}`);
+                await hideChatMessageRange(0, hideEnd, false, null, false);
             }
             return;
         }
@@ -4505,7 +4582,7 @@ async function applyPostSaveLorebookEffects(lorebookName, range) {
 
             const hideEnd = unhiddenCount === 0 ? range.sceneEnd : range.sceneEnd - unhiddenCount;
             if (hideEnd >= range.sceneStart) {
-                await executeSlashCommands(`/hide ${range.sceneStart}-${hideEnd}`);
+                await hideChatMessageRange(range.sceneStart, hideEnd, false, null, false);
             }
         }
     } catch (error) {
@@ -4638,7 +4715,6 @@ function clearAutoConsolidationPromptState(targetTier) {
     const prefix = `${Math.min(6, Math.max(1, Math.trunc(Number(targetTier) || 1)))}:`;
     if (typeof state.autoConsolidationLastPromptKey === 'string' && state.autoConsolidationLastPromptKey.startsWith(prefix)) {
         delete state.autoConsolidationLastPromptKey;
-        saveMetadataDebounced();
     }
 }
 
@@ -4809,7 +4885,6 @@ async function maybePromptAutoConsolidation(targetTier) {
             return;
         }
         state.autoConsolidationLastPromptKey = promptKey;
-        saveMetadataDebounced();
 
         const sourceLabel = getSummaryTierLabel(getSourceTierForTarget(normalizedTargetTier)).toLowerCase();
         const sourcePlural = sourceLabel.endsWith('y') ? `${sourceLabel.slice(0, -1)}ies` : `${sourceLabel}s`;

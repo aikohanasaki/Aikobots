@@ -495,9 +495,10 @@ function getConverter(type) {
  * @param {number} end Ending message ID (inclusive)
  * @param {boolean} unhide If true, unhide the messages instead.
  * @param {string} nameFitler Optional name filter
+ * @param {boolean} persist If true, save the chat after changing visibility.
  * @returns {Promise<void>}
  */
-export async function hideChatMessageRange(start, end, unhide, nameFitler = null) {
+export async function hideChatMessageRange(start, end, unhide, nameFitler = null, persist = true) {
     if (isNaN(start)) return;
     if (!end) end = start;
     const hide = !unhide;
@@ -527,9 +528,11 @@ export async function hideChatMessageRange(start, end, unhide, nameFitler = null
     // Reload swipes. Useful when a last message is hidden.
     refreshSwipeButtons();
 
-    await saveChatConditional();
+    if (persist) {
+        await saveChatConditional();
+    }
 
-    if (hydratedHistoricalMessages) {
+    if (persist && hydratedHistoricalMessages) {
         await reloadCurrentChat();
     }
 }

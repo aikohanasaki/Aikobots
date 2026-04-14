@@ -1,4 +1,5 @@
 import {
+    chat,
     getCurrentChatId,
     name1,
     name2,
@@ -6,6 +7,7 @@ import {
 } from '../script.js';
 import { getContext } from './extensions.js';
 import { groups, selected_group } from './group-chats.js';
+import { compileScene } from './stmb-core.js';
 import { captureStmbScene, getStmbChatRangeInfo } from './stmb-api.js';
 
 const suppressedPassiveFlushCounts = new Map();
@@ -103,6 +105,131 @@ export function isPassiveStmbFlushSuppressedForChat(chatLike = {}) {
     return Boolean(chatKey && suppressedPassiveFlushCounts.get(chatKey));
 }
 
+function isCurrentSceneContext(sceneContext = null) {
+    const targetChatKey = getStmbChatKey(sceneContext || buildStmbSceneContext());
+    const currentChatKey = getStmbChatKey(buildStmbSceneContext());
+    return Boolean(targetChatKey) && targetChatKey === currentChatKey;
+}
+
+function countRangeMessages(messages = [], start, end) {
+    let visibleMessageCount = 0;
+    let capturableMessageCount = 0;
+
+    for (let index = start; index <= end && index < messages.length; index++) {
+        const message = messages[index];
+        if (!message) {
+            continue;
+        }
+        if (!message.is_system) {
+            visibleMessageCount++;
+        }
+
+        const content = String(message.mes || '').replace(/\r\n/g, '\n').trim();
+        if (content && !message.is_system) {
+            capturableMessageCount++;
+        }
+    }
+
+    return { visibleMessageCount, capturableMessageCount };
+}
+
+function findMissingRanges(messages = [], start = null, end = null) {
+    if (!Number.isInteger(start) || !Number.isInteger(end) || start > end) {
+        return [];
+    }
+
+    const missingRanges = [];
+    let missingStart = null;
+
+    for (let index = start; index <= end; index++) {
+        if (!messages[index]) {
+            if (missingStart === null) {
+                missingStart = index;
+            }
+            continue;
+        }
+
+        if (missingStart !== null) {
+            missingRanges.push({ start: missingStart, end: index - 1 });
+            missingStart = null;
+        }
+    }
+
+    if (missingStart !== null) {
+        missingRanges.push({ start: missingStart, end });
+    }
+
+    return missingRanges;
+}
+
+function buildLocalRangeInfo(rangeStart = null, rangeEnd = null) {
+    const totalLogicalMessages = Array.isArray(chat) ? chat.length : 0;
+    const lastAvailableMessageId = totalLogicalMessages > 0 ? totalLogicalMessages - 1 : -1;
+    const normalizedStart = Number.isInteger(rangeStart)
+        ? rangeStart
+        : (totalLogicalMessages > 0 ? 0 : null);
+    const normalizedEnd = Number.isInteger(rangeEnd)
+        ? rangeEnd
+        : (lastAvailableMessageId >= 0 ? lastAvailableMessageId : null);
+    const missingRanges = findMissingRanges(chat, normalizedStart, normalizedEnd);
+    const counts = normalizedStart === null || normalizedEnd === null || normalizedStart > normalizedEnd
+        ? { visibleMessageCount: 0, capturableMessageCount: 0 }
+        : countRangeMessages(chat, normalizedStart, normalizedEnd);
+
+    return {
+        ok: true,
+        totalLogicalMessages,
+        lastAvailableMessageId,
+        storageMode: 'full',
+        storageHealthy: true,
+        rangeStart: normalizedStart,
+        rangeEnd: normalizedEnd,
+        missingRanges,
+        visibleMessageCount: counts.visibleMessageCount,
+        capturableMessageCount: counts.capturableMessageCount,
+    };
+}
+
+function buildLocalCompiledScene(range, { skipSystemMessages = true, allowPartial = false, sceneContext = null } = {}) {
+    const resolvedSceneContext = sceneContext || buildStmbSceneContext();
+    const requestedStart = Number(range?.sceneStart);
+    const requestedEnd = Number(range?.sceneEnd);
+    const missingRanges = findMissingRanges(chat, requestedStart, requestedEnd);
+    if (allowPartial !== true && missingRanges.length > 0) {
+        const firstMissing = missingRanges[0];
+        throw new Error(`Cannot capture messages ${requestedStart}-${requestedEnd} because messages ${firstMissing.start}-${firstMissing.end} are unavailable in chat storage.`);
+    }
+
+    const compiledScene = compileScene(chat, {
+        sceneStart: requestedStart,
+        sceneEnd: requestedEnd,
+        chatId: String(resolvedSceneContext?.chatId || ''),
+        characterName: String(resolvedSceneContext?.characterName || ''),
+        userName: String(resolvedSceneContext?.userName || ''),
+    }, {
+        skipSystemMessages,
+    });
+
+    return {
+        ok: true,
+        compiledScene,
+        capture: {
+            requestedStart,
+            requestedEnd,
+            capturedStart: compiledScene?.metadata?.sceneStart ?? requestedStart,
+            capturedEnd: compiledScene?.metadata?.sceneEnd ?? requestedEnd,
+            totalLogicalMessages: Array.isArray(chat) ? chat.length : 0,
+            lastAvailableMessageId: Array.isArray(chat) && chat.length > 0 ? chat.length - 1 : -1,
+            hiddenMessagesSkipped: compiledScene?.metadata?.hiddenMessagesSkipped ?? 0,
+            messagesSkipped: compiledScene?.metadata?.messagesSkipped ?? 0,
+            missingRanges,
+            isPartial: missingRanges.length > 0,
+            storageMode: 'full',
+            storageHealthy: true,
+        },
+    };
+}
+
 async function saveChatIfNeeded(saveFirst = true, sceneContext = null) {
     if (saveFirst !== false) {
         const chatKey = incrementSuppressedPassiveFlush(sceneContext || buildStmbSceneContext());
@@ -115,8 +242,11 @@ async function saveChatIfNeeded(saveFirst = true, sceneContext = null) {
 }
 
 export async function fetchStmbChatRangeInfo(options = {}) {
-    const { signal = null, saveFirst = true, rangeStart = null, rangeEnd = null, sceneContext: sceneContextOverride = null } = options;
+    const { signal = null, saveFirst = false, rangeStart = null, rangeEnd = null, sceneContext: sceneContextOverride = null } = options;
     const sceneContext = sceneContextOverride || buildStmbSceneContext();
+    if (isCurrentSceneContext(sceneContext)) {
+        return buildLocalRangeInfo(rangeStart, rangeEnd);
+    }
     await saveChatIfNeeded(saveFirst, sceneContext);
 
     return getStmbChatRangeInfo({
@@ -129,12 +259,19 @@ export async function fetchStmbChatRangeInfo(options = {}) {
 export async function captureStmbSceneRange(range, options = {}) {
     const {
         signal = null,
-        saveFirst = true,
+        saveFirst = false,
         skipSystemMessages = true,
         allowPartial = false,
         sceneContext: sceneContextOverride = null,
     } = options;
     const sceneContext = sceneContextOverride || buildStmbSceneContext();
+    if (isCurrentSceneContext(sceneContext) && allowPartial !== true) {
+        return buildLocalCompiledScene(range, {
+            skipSystemMessages,
+            allowPartial,
+            sceneContext,
+        });
+    }
     await saveChatIfNeeded(saveFirst, sceneContext);
 
     return captureStmbScene({
