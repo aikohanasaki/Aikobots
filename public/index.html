@@ -5333,6 +5333,21 @@
         <div id="top_chat_bar">
             <div id="top_chat_bar_toggle_sidebar" class="top_chat_bar_button fa-fw fa-solid fa-box-archive" title="Toggle chat sidebar" tabindex="0"></div>
             <div id="top_chat_bar_toggle_connection_profiles" class="top_chat_bar_button fa-fw fa-solid fa-plug" title="Show connection profiles" tabindex="0"></div>
+            <div id="stmb-jobs-topbar" class="stmb-jobs-topbar">
+                <button id="stmb-jobs-topbar-button" type="button" class="menu_button menu_button_icon top_chat_bar_button stmb-jobs-topbar-button disabled" disabled title="No Memory Books jobs" aria-label="Memory Books Jobs. No Memory Books jobs">
+                    <i class="fa-solid fa-book-open stmb-jobs-topbar-icon" aria-hidden="true"></i>
+                    <span class="sr-only">Memory Books Jobs</span>
+                    <span id="stmb-jobs-topbar-badge" class="stmb-jobs-badge" style="display:none;"></span>
+                </button>
+                <div id="stmb-jobs-panel" class="stmb-jobs-panel" hidden>
+                    <div class="stmb-jobs-panel-header">
+                        <strong>Memory Books Jobs</strong>
+                        <div id="stmb-jobs-summary" class="stmb-jobs-summary">No active jobs</div>
+                    </div>
+                    <div id="stmb-jobs-actions" class="stmb-jobs-actions"></div>
+                    <div id="stmb-jobs-rows" class="stmb-jobs-rows"></div>
+                </div>
+            </div>
             <select id="top_chat_bar_chat_name" title="Current chat" disabled>
                 <option selected>No chat selected</option>
             </select>

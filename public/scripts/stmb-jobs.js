@@ -493,30 +493,11 @@ export function initStmbJobsUi() {
         return;
     }
 
-    const topBar = document.getElementById('top-bar');
-    if (!topBar) {
+    const wrapper = document.getElementById('stmb-jobs-topbar');
+    if (!wrapper) {
         setTimeout(() => initStmbJobsUi(), 250);
         return;
     }
-
-    const wrapper = document.createElement('div');
-    wrapper.className = 'stmb-jobs-topbar';
-    wrapper.innerHTML = `
-        <button id="stmb-jobs-topbar-button" type="button" class="menu_button menu_button_icon stmb-jobs-topbar-button disabled" disabled title="No Memory Books jobs" aria-label="Memory Books Jobs. No Memory Books jobs">
-            <i class="fa-solid fa-book-open stmb-jobs-topbar-icon" aria-hidden="true"></i>
-            <span class="sr-only">Memory Books Jobs</span>
-            <span id="stmb-jobs-topbar-badge" class="stmb-jobs-badge" style="display:none;"></span>
-        </button>
-        <div id="stmb-jobs-panel" class="stmb-jobs-panel" hidden>
-            <div class="stmb-jobs-panel-header">
-                <strong>Memory Books Jobs</strong>
-                <div id="stmb-jobs-summary" class="stmb-jobs-summary">No active jobs</div>
-            </div>
-            <div id="stmb-jobs-actions" class="stmb-jobs-actions"></div>
-            <div id="stmb-jobs-rows" class="stmb-jobs-rows"></div>
-        </div>
-    `;
-    topBar.appendChild(wrapper);
 
     topBarButton = wrapper.querySelector('#stmb-jobs-topbar-button');
     topBarBadge = wrapper.querySelector('#stmb-jobs-topbar-badge');
@@ -524,6 +505,10 @@ export function initStmbJobsUi() {
     jobsSummary = wrapper.querySelector('#stmb-jobs-summary');
     jobsRows = wrapper.querySelector('#stmb-jobs-rows');
     jobsActions = wrapper.querySelector('#stmb-jobs-actions');
+    if (!topBarButton || !topBarBadge || !jobsPanel || !jobsSummary || !jobsRows || !jobsActions) {
+        setTimeout(() => initStmbJobsUi(), 250);
+        return;
+    }
 
     topBarButton.addEventListener('click', handleTopBarButtonClick);
     jobsPanel.addEventListener('click', handlePanelClick);
