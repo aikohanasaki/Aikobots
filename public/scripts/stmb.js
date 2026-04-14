@@ -3616,8 +3616,16 @@ function getPersistedStmbState() {
     return metadata[STMB_METADATA_KEY];
 }
 
-function getStmbVolatileState(chatKey = null) {
-    const resolvedChatKey = String(chatKey || getStmbChatKey(buildStmbSceneContext()) || '__stmb__').trim() || '__stmb__';
+function resolveStmbStateChatKey(chatScope = null) {
+    if (typeof chatScope === 'string') {
+        return String(chatScope).trim() || '__stmb__';
+    }
+
+    return String(getStmbChatKey(chatScope || buildStmbSceneContext()) || '__stmb__').trim() || '__stmb__';
+}
+
+function getStmbVolatileState(chatScope = null) {
+    const resolvedChatKey = resolveStmbStateChatKey(chatScope);
     if (!stmbVolatileStateByChat.has(resolvedChatKey)) {
         stmbVolatileStateByChat.set(resolvedChatKey, {});
     }
@@ -3625,18 +3633,25 @@ function getStmbVolatileState(chatKey = null) {
 }
 
 function migrateVolatileStmbState(persistedState, volatileState) {
+    let changed = false;
     for (const key of STMB_VOLATILE_STATE_KEYS) {
         if (!Object.hasOwn(volatileState, key) && Object.hasOwn(persistedState, key)) {
             volatileState[key] = structuredClone(persistedState[key]);
         }
-        delete persistedState[key];
+        if (Object.hasOwn(persistedState, key)) {
+            delete persistedState[key];
+            changed = true;
+        }
     }
+    return changed;
 }
 
-function getStmbState() {
+function getStmbState(chatScope = null) {
     const persistedState = getPersistedStmbState();
-    const volatileState = getStmbVolatileState();
-    migrateVolatileStmbState(persistedState, volatileState);
+    const volatileState = getStmbVolatileState(chatScope);
+    if (migrateVolatileStmbState(persistedState, volatileState)) {
+        saveMetadataDebounced();
+    }
 
     return new Proxy(persistedState, {
         get(target, property, receiver) {
@@ -3732,8 +3747,8 @@ function setSceneMarker(kind, messageId) {
     });
 }
 
-function setSceneRange(sceneStart, sceneEnd) {
-    const state = getStmbState();
+function setSceneRange(sceneStart, sceneEnd, chatScope = null) {
+    const state = getStmbState(chatScope);
     state.sceneStart = Number(sceneStart);
     state.sceneEnd = Number(sceneEnd);
     renderAllSceneButtons();
@@ -3972,7 +3987,11 @@ function validateMemoryCreationContext() {
     return { context, group, isGroupChat };
 }
 
-async function resolveAutoSummaryLorebook() {
+async function resolveAutoSummaryLorebook(options = {}) {
+    const sceneContext = options.sceneContext || null;
+    const currentMessageCount = Number.isFinite(Number(options.currentMessageCount))
+        ? Math.max(0, Math.trunc(Number(options.currentMessageCount)))
+        : chat.length;
     if (!getModuleSettings().manualModeEnabled) {
         try {
             const lorebookName = await ensureLorebookName();
@@ -3986,7 +4005,7 @@ async function resolveAutoSummaryLorebook() {
         }
     }
 
-    const state = getStmbState();
+    const state = getStmbState(sceneContext);
     let lorebookName = String(state.manualLorebook || '').trim();
     if (!lorebookName) {
         const decision = await showAutoSummaryDecisionPopup();
@@ -3994,7 +4013,7 @@ async function resolveAutoSummaryLorebook() {
             const postponeMessages = Number.isFinite(Number(decision.postponeMessages))
                 ? Number(decision.postponeMessages)
                 : 10;
-            state.autoSummaryNextPromptAt = chat.length + postponeMessages;
+            state.autoSummaryNextPromptAt = currentMessageCount + postponeMessages;
             return {
                 valid: false,
                 lorebookName: null,
@@ -4058,7 +4077,7 @@ async function checkAutoSummaryTrigger(options = {}) {
     }
 
     const sceneContext = options.sceneContext || buildStmbSceneContext();
-    const state = getStmbState();
+    const state = getStmbState(sceneContext);
     const rangeInfo = await fetchStmbChatRangeInfo({ saveFirst: false, sceneContext });
     const currentLastMessage = Number(rangeInfo?.lastAvailableMessageId);
     if (!Number.isInteger(currentLastMessage) || currentLastMessage < 0) {
@@ -4090,14 +4109,14 @@ async function checkAutoSummaryTrigger(options = {}) {
         return;
     }
 
-    const lorebookResolution = await resolveAutoSummaryLorebook();
+    const lorebookResolution = await resolveAutoSummaryLorebook({ sceneContext, currentMessageCount });
     if (!lorebookResolution.valid) {
         console.warn('STMB auto-summary blocked by lorebook resolution', lorebookResolution.error);
         return;
     }
 
     if (Number.isInteger(state.autoSummaryNextPromptAt)) {
-        getStmbState().autoSummaryNextPromptAt = null;
+        getStmbState(sceneContext).autoSummaryNextPromptAt = null;
     }
 
     const sceneStart = highestProcessed + 1;
@@ -4106,7 +4125,7 @@ async function checkAutoSummaryTrigger(options = {}) {
         return;
     }
 
-    setSceneRange(sceneStart, sceneEnd);
+    setSceneRange(sceneStart, sceneEnd, sceneContext);
     await initiateMemoryCreation({ range: { sceneStart, sceneEnd }, keepSceneMarkers: false, sceneContext, source: 'autoSummary' });
 }
 

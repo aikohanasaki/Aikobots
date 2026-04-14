@@ -1,6 +1,8 @@
 import {
     chat,
     getCurrentChatId,
+    isChatFullyHydrated,
+    isSplitTailChat,
     name1,
     name2,
     saveChatConditional,
@@ -109,6 +111,14 @@ function isCurrentSceneContext(sceneContext = null) {
     const targetChatKey = getStmbChatKey(sceneContext || buildStmbSceneContext());
     const currentChatKey = getStmbChatKey(buildStmbSceneContext());
     return Boolean(targetChatKey) && targetChatKey === currentChatKey;
+}
+
+function canUseLocalSceneShortcut(sceneContext = null) {
+    if (!isCurrentSceneContext(sceneContext)) {
+        return false;
+    }
+
+    return !isSplitTailChat() || isChatFullyHydrated();
 }
 
 function countRangeMessages(messages = [], start, end) {
@@ -244,10 +254,13 @@ async function saveChatIfNeeded(saveFirst = true, sceneContext = null) {
 export async function fetchStmbChatRangeInfo(options = {}) {
     const { signal = null, saveFirst = false, rangeStart = null, rangeEnd = null, sceneContext: sceneContextOverride = null } = options;
     const sceneContext = sceneContextOverride || buildStmbSceneContext();
-    if (isCurrentSceneContext(sceneContext)) {
+    if (saveFirst !== true && canUseLocalSceneShortcut(sceneContext)) {
         return buildLocalRangeInfo(rangeStart, rangeEnd);
     }
-    await saveChatIfNeeded(saveFirst, sceneContext);
+    const shouldSaveFirst = isCurrentSceneContext(sceneContext) && !canUseLocalSceneShortcut(sceneContext)
+        ? true
+        : saveFirst;
+    await saveChatIfNeeded(shouldSaveFirst, sceneContext);
 
     return getStmbChatRangeInfo({
         ...sceneContext,
@@ -265,14 +278,17 @@ export async function captureStmbSceneRange(range, options = {}) {
         sceneContext: sceneContextOverride = null,
     } = options;
     const sceneContext = sceneContextOverride || buildStmbSceneContext();
-    if (isCurrentSceneContext(sceneContext) && allowPartial !== true) {
+    if (saveFirst !== true && canUseLocalSceneShortcut(sceneContext) && allowPartial !== true) {
         return buildLocalCompiledScene(range, {
             skipSystemMessages,
             allowPartial,
             sceneContext,
         });
     }
-    await saveChatIfNeeded(saveFirst, sceneContext);
+    const shouldSaveFirst = isCurrentSceneContext(sceneContext) && !canUseLocalSceneShortcut(sceneContext)
+        ? true
+        : saveFirst;
+    await saveChatIfNeeded(shouldSaveFirst, sceneContext);
 
     return captureStmbScene({
         ...sceneContext,
