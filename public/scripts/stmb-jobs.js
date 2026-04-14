@@ -25,7 +25,6 @@ const RENDER_INTERVAL_MS = 1000;
 let jobIdCounter = 0;
 let topBarButton = null;
 let topBarBadge = null;
-let topBarLabel = null;
 let jobsPanel = null;
 let jobsSummary = null;
 let jobsRows = null;
@@ -432,7 +431,7 @@ function renderStmbJobsUi() {
     topBarButton.classList.toggle('disabled', !canOpenPanel);
     topBarButton.classList.toggle('active', hasActiveJobs);
     topBarButton.title = tooltip;
-    topBarLabel.textContent = 'Memory Books Jobs';
+    topBarButton.setAttribute('aria-label', `Memory Books Jobs. ${tooltip}`);
     topBarBadge.textContent = hasActiveJobs ? String(activeCount) : (recentFailureCount > 0 ? String(recentFailureCount) : '');
     topBarBadge.style.display = canOpenPanel ? 'inline-flex' : 'none';
     topBarBadge.classList.toggle('stmb-jobs-badge-failed', !hasActiveJobs && recentFailureCount > 0);
@@ -494,37 +493,22 @@ export function initStmbJobsUi() {
         return;
     }
 
-    const topBar = document.getElementById('top-bar');
-    if (!topBar) {
+    const wrapper = document.getElementById('stmb-jobs-topbar');
+    if (!wrapper) {
         setTimeout(() => initStmbJobsUi(), 250);
         return;
     }
 
-    const wrapper = document.createElement('div');
-    wrapper.className = 'stmb-jobs-topbar';
-    wrapper.innerHTML = `
-        <button id="stmb-jobs-topbar-button" type="button" class="menu_button stmb-jobs-topbar-button disabled" disabled title="No Memory Books jobs">
-            <span id="stmb-jobs-topbar-label">Memory Books Jobs</span>
-            <span id="stmb-jobs-topbar-badge" class="stmb-jobs-badge" style="display:none;"></span>
-        </button>
-        <div id="stmb-jobs-panel" class="stmb-jobs-panel" hidden>
-            <div class="stmb-jobs-panel-header">
-                <strong>Memory Books Jobs</strong>
-                <div id="stmb-jobs-summary" class="stmb-jobs-summary">No active jobs</div>
-            </div>
-            <div id="stmb-jobs-actions" class="stmb-jobs-actions"></div>
-            <div id="stmb-jobs-rows" class="stmb-jobs-rows"></div>
-        </div>
-    `;
-    topBar.appendChild(wrapper);
-
     topBarButton = wrapper.querySelector('#stmb-jobs-topbar-button');
     topBarBadge = wrapper.querySelector('#stmb-jobs-topbar-badge');
-    topBarLabel = wrapper.querySelector('#stmb-jobs-topbar-label');
     jobsPanel = wrapper.querySelector('#stmb-jobs-panel');
     jobsSummary = wrapper.querySelector('#stmb-jobs-summary');
     jobsRows = wrapper.querySelector('#stmb-jobs-rows');
     jobsActions = wrapper.querySelector('#stmb-jobs-actions');
+    if (!topBarButton || !topBarBadge || !jobsPanel || !jobsSummary || !jobsRows || !jobsActions) {
+        setTimeout(() => initStmbJobsUi(), 250);
+        return;
+    }
 
     topBarButton.addEventListener('click', handleTopBarButtonClick);
     jobsPanel.addEventListener('click', handlePanelClick);

@@ -1,4 +1,7 @@
-import { getRequestHeaders } from '../script.js';
+import { extractMessageFromData, getRequestHeaders } from '../script.js';
+import { ChatCompletionService } from './custom-request.js';
+import { parseStructuredMemoryResponse } from './stmb-core.js';
+import { parseSummaryJsonResponse } from './stmb-summary.js';
 
 async function postStmb(path, payload) {
     const response = await fetch(`/api/stmb/${path}`, {
@@ -37,17 +40,42 @@ export async function captureStmbScene(payload, options = {}) {
 
 export async function generateStmbMemory(payload, options = {}) {
     const { signal = null } = options;
-    return postStmbWithSignal('generate-memory', payload, signal);
+    const providerResponse = await generateStmbProviderResponse(payload, signal);
+
+    try {
+        return {
+            ok: true,
+            memory: parseStructuredMemoryResponse(providerResponse),
+            providerResponse,
+        };
+    } catch (error) {
+        throw decorateStmbParseError(error, providerResponse);
+    }
 }
 
 export async function generateStmbSummary(payload, options = {}) {
     const { signal = null } = options;
-    return postStmbWithSignal('generate-summary', payload, signal);
+    const providerResponse = await generateStmbProviderResponse(payload, signal);
+
+    try {
+        return {
+            ok: true,
+            parsed: parseSummaryJsonResponse(providerResponse),
+            providerResponse,
+        };
+    } catch (error) {
+        throw decorateStmbParseError(error, providerResponse);
+    }
 }
 
 export async function generateStmbText(payload, options = {}) {
     const { signal = null } = options;
-    return postStmbWithSignal('generate-text', payload, signal);
+    const providerResponse = await generateStmbProviderResponse(payload, signal);
+    return {
+        ok: true,
+        text: extractProviderText(providerResponse),
+        providerResponse,
+    };
 }
 
 export async function commitStmbSummaries(payload, options = {}) {
@@ -84,4 +112,85 @@ async function postStmbWithSignal(path, payload, signal) {
     }
 
     return data;
+}
+
+async function generateStmbProviderResponse(payload, signal = null) {
+    const generateData = payload?.generateData;
+    if (!generateData || typeof generateData !== 'object') {
+        throw new Error('generateData is required.');
+    }
+
+    try {
+        return await ChatCompletionService.sendRequest({ ...generateData, stream: false }, false, signal);
+    } catch (error) {
+        throw normalizeStmbClientError(error);
+    }
+}
+
+function extractProviderText(providerResponse) {
+    if (typeof providerResponse === 'string') {
+        return providerResponse;
+    }
+    if (!providerResponse || typeof providerResponse !== 'object') {
+        return String(providerResponse ?? '');
+    }
+
+    const extracted = extractMessageFromData(providerResponse, 'openai');
+    if (typeof extracted === 'string' && extracted) {
+        return extracted;
+    }
+    if (Array.isArray(extracted)) {
+        const joined = extracted.map(part => typeof part?.text === 'string' ? part.text : '').join('');
+        if (joined) {
+            return joined;
+        }
+    }
+
+    const geminiParts = providerResponse?.candidates?.[0]?.content?.parts;
+    if (Array.isArray(geminiParts)) {
+        return geminiParts
+            .map(part => typeof part?.text === 'string' ? part.text : '')
+            .join('');
+    }
+
+    return '';
+}
+
+function serializeProviderBody(providerResponse) {
+    if (typeof providerResponse === 'string' && providerResponse.trim()) {
+        return providerResponse.trim();
+    }
+
+    try {
+        return JSON.stringify(providerResponse ?? {}, null, 2);
+    } catch {
+        return String(providerResponse ?? '').trim();
+    }
+}
+
+function normalizeStmbClientError(error) {
+    if (error instanceof Error) {
+        return error;
+    }
+
+    const message = String(error?.error?.message || error?.message || 'STMB generation failed.');
+    const normalized = new Error(message);
+    if (error && typeof error === 'object') {
+        Object.assign(normalized, error);
+        if (error.error && typeof error.error === 'object') {
+            Object.assign(normalized, error.error);
+        }
+    }
+    return normalized;
+}
+
+function decorateStmbParseError(error, providerResponse) {
+    const normalized = normalizeStmbClientError(error);
+    if (!normalized.rawResponse) {
+        normalized.rawResponse = serializeProviderBody(providerResponse);
+    }
+    if (!normalized.providerBody) {
+        normalized.providerBody = serializeProviderBody(providerResponse);
+    }
+    return normalized;
 }
