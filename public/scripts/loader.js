@@ -1,10 +1,17 @@
 let activeLoaderHandle = null;
 let loaderHandleCounter = 0;
+let pendingLoader = null;
 
 const PRELOADER_SELECTOR = '#preloader';
 
 function getPreloaderElement() {
     return document.querySelector(PRELOADER_SELECTOR);
+}
+
+function getNow() {
+    return typeof performance !== 'undefined' && typeof performance.now === 'function'
+        ? performance.now()
+        : Date.now();
 }
 
 function resetLoaderState(handle = activeLoaderHandle) {
@@ -13,6 +20,59 @@ function resetLoaderState(handle = activeLoaderHandle) {
     }
 
     activeLoaderHandle = null;
+}
+
+function resetPendingLoaderState(pending = pendingLoader) {
+    if (pending && pendingLoader !== pending) {
+        return;
+    }
+
+    pendingLoader = null;
+}
+
+export function isLoaderVisible() {
+    const preloader = getPreloaderElement();
+    return Boolean(preloader && !preloader.classList.contains('loader-hidden'));
+}
+
+export async function waitForLoaderPaint() {
+    if (!isLoaderVisible()) {
+        return;
+    }
+
+    await new Promise((resolve) => {
+        if (typeof requestAnimationFrame !== 'function') {
+            setTimeout(resolve, 0);
+            return;
+        }
+
+        requestAnimationFrame(() => requestAnimationFrame(resolve));
+    });
+}
+
+async function ensurePendingLoaderShown(pending, { force = false } = {}) {
+    if (!pending || pending.cleared) {
+        await waitForLoaderPaint();
+        return false;
+    }
+
+    const elapsed = getNow() - pending.startedAt;
+    if (!force && elapsed < pending.delayMs) {
+        return false;
+    }
+
+    clearTimeout(pending.timer);
+
+    if (!pending.handle) {
+        pending.handle = showLoader();
+    }
+
+    await waitForLoaderPaint();
+    return true;
+}
+
+export async function ensureDeferredLoaderShown({ force = false } = {}) {
+    return ensurePendingLoaderShown(pendingLoader, { force });
 }
 
 export function showLoader() {
@@ -32,27 +92,42 @@ export function showLoader() {
 }
 
 export function deferLoader({ delayMs = 250 } = {}) {
-    let handle = null;
-    let cleared = false;
-    const timer = setTimeout(() => {
-        if (cleared) {
+    const pending = {
+        handle: null,
+        cleared: false,
+        delayMs,
+        startedAt: getNow(),
+        timer: null,
+    };
+
+    pendingLoader = pending;
+    pending.timer = setTimeout(() => {
+        if (pending.cleared || pendingLoader !== pending) {
             return;
         }
 
-        handle = showLoader();
+        pending.handle = showLoader();
     }, delayMs);
 
     return {
+        async ensureShown({ force = false } = {}) {
+            if (pending.cleared) {
+                return false;
+            }
+
+            return ensurePendingLoaderShown(pending, { force });
+        },
         async clear() {
-            if (cleared) {
+            if (pending.cleared) {
                 return;
             }
 
-            cleared = true;
-            clearTimeout(timer);
+            pending.cleared = true;
+            clearTimeout(pending.timer);
+            resetPendingLoaderState(pending);
 
-            if (handle) {
-                await hideLoader(handle);
+            if (pending.handle) {
+                await hideLoader(pending.handle);
             }
         },
     };

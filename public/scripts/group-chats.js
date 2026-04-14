@@ -19,9 +19,9 @@ import {
     waitUntilCondition,
 } from './utils.js';
 import { RA_CountCharTokens, humanizedDateTime, dragElement, favsToHotswap, getMessageTimeStamp } from './RossAscends-mods.js';
-import { power_user, loadMovingUIState, sortEntitiesList } from './power-user.js';
+import { LONG_CHAT_DISPLAY_MIN, power_user, loadMovingUIState, sortEntitiesList } from './power-user.js';
 import { debounce_timeout } from './constants.js';
-import { deferLoader } from './loader.js';
+import { deferLoader, ensureDeferredLoaderShown, waitForLoaderPaint } from './loader.js';
 
 import {
     chat,
@@ -283,6 +283,8 @@ export async function getGroupChat(groupId, reload = false) {
     const freshChat = !metadata.tainted && (!Array.isArray(data) || !data.length);
 
     updateChatMetadata(metadata, true);
+    await ensureDeferredLoaderShown({ force: (Array.isArray(data) ? data.length : 0) >= LONG_CHAT_DISPLAY_MIN || freshChat });
+    await waitForLoaderPaint();
 
     await loadItemizedPrompts(getCurrentChatId());
 
