@@ -25,7 +25,6 @@ const RENDER_INTERVAL_MS = 1000;
 let jobIdCounter = 0;
 let topBarButton = null;
 let topBarBadge = null;
-let topBarLabel = null;
 let jobsPanel = null;
 let jobsSummary = null;
 let jobsRows = null;
@@ -432,7 +431,7 @@ function renderStmbJobsUi() {
     topBarButton.classList.toggle('disabled', !canOpenPanel);
     topBarButton.classList.toggle('active', hasActiveJobs);
     topBarButton.title = tooltip;
-    topBarLabel.textContent = 'Memory Books Jobs';
+    topBarButton.setAttribute('aria-label', `Memory Books Jobs. ${tooltip}`);
     topBarBadge.textContent = hasActiveJobs ? String(activeCount) : (recentFailureCount > 0 ? String(recentFailureCount) : '');
     topBarBadge.style.display = canOpenPanel ? 'inline-flex' : 'none';
     topBarBadge.classList.toggle('stmb-jobs-badge-failed', !hasActiveJobs && recentFailureCount > 0);
@@ -503,8 +502,9 @@ export function initStmbJobsUi() {
     const wrapper = document.createElement('div');
     wrapper.className = 'stmb-jobs-topbar';
     wrapper.innerHTML = `
-        <button id="stmb-jobs-topbar-button" type="button" class="menu_button stmb-jobs-topbar-button disabled" disabled title="No Memory Books jobs">
-            <span id="stmb-jobs-topbar-label">Memory Books Jobs</span>
+        <button id="stmb-jobs-topbar-button" type="button" class="menu_button menu_button_icon stmb-jobs-topbar-button disabled" disabled title="No Memory Books jobs" aria-label="Memory Books Jobs. No Memory Books jobs">
+            <i class="fa-solid fa-book-open stmb-jobs-topbar-icon" aria-hidden="true"></i>
+            <span class="sr-only">Memory Books Jobs</span>
             <span id="stmb-jobs-topbar-badge" class="stmb-jobs-badge" style="display:none;"></span>
         </button>
         <div id="stmb-jobs-panel" class="stmb-jobs-panel" hidden>
@@ -520,7 +520,6 @@ export function initStmbJobsUi() {
 
     topBarButton = wrapper.querySelector('#stmb-jobs-topbar-button');
     topBarBadge = wrapper.querySelector('#stmb-jobs-topbar-badge');
-    topBarLabel = wrapper.querySelector('#stmb-jobs-topbar-label');
     jobsPanel = wrapper.querySelector('#stmb-jobs-panel');
     jobsSummary = wrapper.querySelector('#stmb-jobs-summary');
     jobsRows = wrapper.querySelector('#stmb-jobs-rows');

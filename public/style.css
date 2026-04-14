@@ -6915,27 +6915,48 @@ body:not(.movingUI) .drawer-content.maximized {
     position: relative;
     display: inline-flex;
     align-items: center;
-    margin: 0 6px;
+    margin: 0 4px;
+    vertical-align: top;
 }
 
 .stmb-jobs-topbar-button {
+    position: relative;
     display: inline-flex;
     align-items: center;
-    gap: 8px;
+    justify-content: center;
+    width: 34px;
+    min-width: 34px;
+    height: 34px;
+    min-height: 34px;
+    padding: 0;
+    gap: 0;
     white-space: nowrap;
 }
 
+.stmb-jobs-topbar-icon {
+    font-size: 14px;
+    line-height: 1;
+}
+
+.stmb-jobs-topbar-button.disabled .stmb-jobs-topbar-icon {
+    opacity: 0.7;
+}
+
 .stmb-jobs-badge {
-    min-width: 20px;
-    height: 20px;
-    padding: 0 6px;
+    position: absolute;
+    top: -4px;
+    right: -4px;
+    min-width: 18px;
+    height: 18px;
+    padding: 0 5px;
     border-radius: 999px;
     align-items: center;
     justify-content: center;
     background: var(--SmartThemeQuoteColor, #4f8cff);
     color: var(--SmartThemeBodyColor, #fff);
-    font-size: 11px;
+    font-size: 10px;
     font-weight: 700;
+    line-height: 1;
 }
 
 .stmb-jobs-badge.stmb-jobs-badge-failed {
