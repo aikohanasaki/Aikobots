@@ -1290,8 +1290,6 @@ async function enqueueDurableWave(sceneContext, jobs, source, successMessage = '
 }
 let stmbJobExecutorsRegistered = false;
 const STMB_VOLATILE_STATE_KEYS = new Set([
-    'sceneStart',
-    'sceneEnd',
     'autoSummaryNextPromptAt',
     'autoConsolidationLastPromptKey',
 ]);
@@ -4878,6 +4876,7 @@ function setSceneMarker(kind, messageId) {
 
     state.sceneStart = nextStart;
     state.sceneEnd = nextEnd;
+    saveMetadataDebounced();
     renderAllSceneButtons();
     refreshOpenSettingsPopupSceneState().catch(error => {
         console.warn('STMB settings popup scene refresh failed', error);
@@ -4888,6 +4887,7 @@ function setSceneRange(sceneStart, sceneEnd, chatScope = null) {
     const state = getStmbState(chatScope);
     state.sceneStart = Number(sceneStart);
     state.sceneEnd = Number(sceneEnd);
+    saveMetadataDebounced();
     renderAllSceneButtons();
     refreshOpenSettingsPopupSceneState().catch(error => {
         console.warn('STMB settings popup scene refresh failed', error);
@@ -4898,6 +4898,7 @@ function clearSceneMarkers() {
     const state = getStmbState();
     delete state.sceneStart;
     delete state.sceneEnd;
+    saveMetadataDebounced();
     renderAllSceneButtons();
     refreshOpenSettingsPopupSceneState().catch(error => {
         console.warn('STMB settings popup scene refresh failed', error);
@@ -5294,6 +5295,7 @@ function validateSceneMarkers() {
     }
 
     if (changed) {
+        saveMetadataDebounced();
         refreshOpenSettingsPopupSceneState().catch(error => {
             console.warn('STMB settings popup scene refresh failed', error);
         });
@@ -5309,9 +5311,6 @@ function handleMessageDeletion(deletedId) {
     }
 
     const state = getStmbState();
-    const previousHighestProcessed = Number.isInteger(state.highestMemoryProcessed) ? state.highestMemoryProcessed : null;
-    const hadHighestProcessed = Object.hasOwn(state, 'highestMemoryProcessed');
-    const hadHighestProcessedManuallySet = Object.hasOwn(state, 'highestMemoryProcessedManuallySet');
     const result = applyDeletedMessageToSceneState(state, id, chat.length);
 
     if (result.changed) {
@@ -5322,11 +5321,7 @@ function handleMessageDeletion(deletedId) {
             delete state.highestMemoryProcessed;
             delete state.highestMemoryProcessedManuallySet;
         }
-        const shouldPersistHighestProcessed = previousHighestProcessed !== result.highestProcessed
-            || (result.highestProcessed === null && (hadHighestProcessed || hadHighestProcessedManuallySet));
-        if (shouldPersistHighestProcessed) {
-            saveMetadataDebounced();
-        }
+        saveMetadataDebounced();
         if (result.sceneChanged && getModuleSettings().showNotifications) {
             toastr.warning(result.toastrMessage, 'STMB');
         }
