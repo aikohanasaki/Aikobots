@@ -5,7 +5,7 @@ import express from 'express';
 import mime from 'mime-types';
 import { getSettingsBackupFilePrefix } from './settings.js';
 import { CHAT_BACKUPS_PREFIX, getLogicalChatData, serializeJsonl } from './chats.js';
-import { isPathUnderParent, tryParse } from '../util.js';
+import { tryParse } from '../util.js';
 import { SETTINGS_FILE } from '../constants.js';
 
 const sha256 = str => crypto.createHash('sha256').update(str).digest('hex');
@@ -13,6 +13,47 @@ const isHeadChatFile = (fileName) => String(fileName).endsWith('.head.jsonl');
 const getSplitHeadPath = (filePath) => {
     const parsedPath = path.parse(filePath);
     return path.join(parsedPath.dir, `${parsedPath.name}.head.jsonl`);
+};
+const normalizeComparablePath = filePath => process.platform === 'win32'
+    ? path.normalize(filePath).toLowerCase()
+    : path.normalize(filePath);
+const resolveComparablePath = async filePath => {
+    try {
+        return normalizeComparablePath(await fs.promises.realpath(filePath));
+    } catch {
+        return normalizeComparablePath(path.resolve(filePath));
+    }
+};
+const isPathInAllowedDirectories = async (directories, filePath) => {
+    const resolvedFilePath = await resolveComparablePath(filePath);
+    const uniqueDirectories = [...new Set(Object.values(directories).filter(Boolean))];
+
+    for (const directory of uniqueDirectories) {
+        const resolvedDirectory = await resolveComparablePath(directory);
+        const relativePath = path.relative(resolvedDirectory, resolvedFilePath);
+
+        if (!relativePath || (!relativePath.startsWith('..') && !path.isAbsolute(relativePath))) {
+            return true;
+        }
+    }
+
+    return false;
+};
+const buildTokenPathsFromReport = report => Object.values(report)
+    .filter(value => Array.isArray(value))
+    .flat()
+    .map(filePath => ({ path: filePath, hash: sha256(filePath) }));
+const getAuthorizedPathsForUser = async (user, token) => {
+    const tokenEntry = DataMaidService.TOKENS.get(token);
+
+    if (tokenEntry) {
+        return tokenEntry.handle === user.profile.handle ? tokenEntry.paths : null;
+    }
+
+    console.warn('[Data Maid] Token not found in memory; regenerating report for authorization fallback.');
+    const dataMaid = new DataMaidService(user.profile.handle, user.directories);
+    const rawReport = await dataMaid.generateReport();
+    return buildTokenPathsFromReport(rawReport);
 };
 
 /**
@@ -692,12 +733,12 @@ router.post('/finalize', async (req, res) => {
         }
 
         const token = req.body.token.toString();
-        if (!DataMaidService.TOKENS.has(token)) {
-            return res.sendStatus(403);
+        const tokenEntry = DataMaidService.TOKENS.get(token);
+        if (!tokenEntry) {
+            return res.sendStatus(204);
         }
 
-        const tokenEntry = DataMaidService.TOKENS.get(token);
-        if (!tokenEntry || tokenEntry.handle !== req.user.profile.handle) {
+        if (tokenEntry.handle !== req.user.profile.handle) {
             return res.sendStatus(403);
         }
 
@@ -723,22 +764,18 @@ router.get('/view', async (req, res) => {
         const token = req.query.token.toString();
         const hash = req.query.hash.toString();
 
-        if (!DataMaidService.TOKENS.has(token)) {
+        const authorizedPaths = await getAuthorizedPathsForUser(req.user, token);
+        if (!authorizedPaths) {
             return res.sendStatus(403);
         }
 
-        const tokenEntry = DataMaidService.TOKENS.get(token);
-        if (!tokenEntry || tokenEntry.handle !== req.user.profile.handle) {
-            return res.sendStatus(403);
-        }
-
-        const fileEntry = tokenEntry.paths.find(entry => entry.hash === hash);
+        const fileEntry = authorizedPaths.find(entry => entry.hash === hash);
         if (!fileEntry) {
             return res.sendStatus(404);
         }
 
-        if (!isPathUnderParent(req.user.directories.root, fileEntry.path)) {
-            console.warn('[Data Maid] Attempted access to a file outside of the user directory:', fileEntry.path);
+        if (!await isPathInAllowedDirectories(req.user.directories, fileEntry.path)) {
+            console.warn('[Data Maid] Attempted access to a file outside of the user directories:', fileEntry.path);
             return res.sendStatus(403);
         }
 
@@ -773,23 +810,19 @@ router.post('/delete', async (req, res) => {
             return res.sendStatus(400);
         }
 
-        if (!DataMaidService.TOKENS.has(token)) {
-            return res.sendStatus(403);
-        }
-
-        const tokenEntry = DataMaidService.TOKENS.get(token);
-        if (!tokenEntry || tokenEntry.handle !== req.user.profile.handle) {
+        const authorizedPaths = await getAuthorizedPathsForUser(req.user, token);
+        if (!authorizedPaths) {
             return res.sendStatus(403);
         }
 
         for (const hash of hashes) {
-            const fileEntry = tokenEntry.paths.find(entry => entry.hash === hash);
+            const fileEntry = authorizedPaths.find(entry => entry.hash === hash);
             if (!fileEntry) {
                 continue;
             }
 
-            if (!isPathUnderParent(req.user.directories.root, fileEntry.path)) {
-                console.warn('[Data Maid] Attempted deletion of a file outside of the user directory:', fileEntry.path);
+            if (!await isPathInAllowedDirectories(req.user.directories, fileEntry.path)) {
+                console.warn('[Data Maid] Attempted deletion of a file outside of the user directories:', fileEntry.path);
                 continue;
             }
 

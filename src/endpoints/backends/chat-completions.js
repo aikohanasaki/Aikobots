@@ -1,8 +1,12 @@
+import path from 'node:path';
+import { promises as fsPromises } from 'node:fs';
 import process from 'node:process';
 import util from 'node:util';
 import express from 'express';
 import fetch from 'node-fetch';
 import urlJoin from 'url-join';
+import sanitize from 'sanitize-filename';
+import writeFileAtomic from 'write-file-atomic';
 
 import {
     AIMLAPI_HEADERS,
@@ -88,8 +92,7 @@ const API_ZANITY_ALTERNATE = 'https://api.zanity.xyz/rp';
 const API_ZAI_COMMON = 'https://api.z.ai/api/paas/v4';
 const API_ZAI_CODING = 'https://api.z.ai/api/coding/paas/v4';
 const API_SILICONFLOW = 'https://api.siliconflow.com/v1';
-const MAX_PROMPT_INSPECTION_SNAPSHOTS = 100;
-const promptInspectionSnapshots = new Map();
+const PROMPT_INSPECTION_DIRECTORY = ['_secure', 'prompt-inspection'];
 const STREAM_HEARTBEAT_INTERVAL_MS = 15000;
 
 // blocked due to site policy, unblocking august 2026
@@ -1903,6 +1906,51 @@ function sanitizePromptSnapshotKeyPart(value) {
     return String(value ?? '').replace(/\|/g, '').trim();
 }
 
+function getPromptInspectionSnapshotDirectory() {
+    return path.join(path.resolve(String(globalThis.DATA_ROOT || '.')), ...PROMPT_INSPECTION_DIRECTORY);
+}
+
+function normalizePromptInspectionSnapshotFileHandle(value) {
+    const sanitizedValue = sanitize(sanitizePromptSnapshotKeyPart(value)).trim();
+    if (!sanitizedValue) {
+        throw new Error('Invalid prompt inspection user handle.');
+    }
+
+    return sanitizedValue;
+}
+
+function getPromptInspectionSnapshotPathForHandle(handle) {
+    return path.join(getPromptInspectionSnapshotDirectory(), `${normalizePromptInspectionSnapshotFileHandle(handle)}.json`);
+}
+
+async function readPromptInspectionSnapshotForHandle(handle) {
+    if (!handle) {
+        return null;
+    }
+
+    try {
+        const snapshotText = await fsPromises.readFile(getPromptInspectionSnapshotPathForHandle(handle), 'utf8');
+        const parsedSnapshot = JSON.parse(snapshotText);
+        return clonePromptInspectionSnapshot(parsedSnapshot);
+    } catch (error) {
+        if (error?.code === 'ENOENT' || error instanceof SyntaxError) {
+            return null;
+        }
+
+        throw error;
+    }
+}
+
+async function writePromptInspectionSnapshotForHandle(handle, snapshot) {
+    if (!handle || !snapshot || typeof snapshot !== 'object') {
+        return;
+    }
+
+    const outputPath = getPromptInspectionSnapshotPathForHandle(handle);
+    await fsPromises.mkdir(path.dirname(outputPath), { recursive: true });
+    await writeFileAtomic(outputPath, JSON.stringify(clonePromptInspectionSnapshot(snapshot), null, 4));
+}
+
 function buildPromptSnapshotKey(username, chatScope, mesId, swipeId) {
     const normalizedUsername = sanitizePromptSnapshotKeyPart(username);
     const normalizedChatScope = sanitizePromptSnapshotKeyPart(chatScope);
@@ -1955,61 +2003,71 @@ function getPromptInspectionInfo(request) {
     return { key, username, chatScope, mesId, swipeId };
 }
 
-function setPromptInspectionSnapshot(key, snapshot) {
-    if (!key) {
+async function setPromptInspectionSnapshot(key, snapshot) {
+    const parsedKey = parsePromptSnapshotKey(key);
+    if (!parsedKey) {
         return;
     }
 
-    if (promptInspectionSnapshots.has(key)) {
-        promptInspectionSnapshots.delete(key);
-    }
-
-    promptInspectionSnapshots.set(key, clonePromptInspectionSnapshot(snapshot));
-
-    while (promptInspectionSnapshots.size > MAX_PROMPT_INSPECTION_SNAPSHOTS) {
-        const oldestKey = promptInspectionSnapshots.keys().next().value;
-        promptInspectionSnapshots.delete(oldestKey);
-    }
+    await writePromptInspectionSnapshotForHandle(parsedKey.username, snapshot);
 }
 
-function getPromptInspectionSnapshot(key) {
-    if (!key || !promptInspectionSnapshots.has(key)) {
+async function getPromptInspectionSnapshot(key) {
+    const parsedKey = parsePromptSnapshotKey(key);
+    if (!parsedKey) {
         return null;
     }
 
-    const snapshot = promptInspectionSnapshots.get(key);
-    promptInspectionSnapshots.delete(key);
-    promptInspectionSnapshots.set(key, snapshot);
-    return clonePromptInspectionSnapshot(snapshot);
+    const snapshot = await readPromptInspectionSnapshotForHandle(parsedKey.username);
+    return snapshot?.key === key ? snapshot : null;
 }
 
-function deletePromptInspectionSnapshot(key) {
-    if (!key) {
+async function deletePromptInspectionSnapshot(key) {
+    const parsedKey = parsePromptSnapshotKey(key);
+    if (!parsedKey) {
         return false;
     }
 
-    return promptInspectionSnapshots.delete(key);
-}
-
-function rekeyPromptInspectionSnapshot(fromKey, toKey) {
-    if (!fromKey || !toKey || fromKey === toKey || !promptInspectionSnapshots.has(fromKey)) {
+    const snapshot = await readPromptInspectionSnapshotForHandle(parsedKey.username);
+    if (!snapshot || snapshot.key !== key) {
         return false;
     }
 
-    const snapshot = promptInspectionSnapshots.get(fromKey);
-    promptInspectionSnapshots.delete(fromKey);
+    try {
+        await fsPromises.unlink(getPromptInspectionSnapshotPathForHandle(parsedKey.username));
+        return true;
+    } catch (error) {
+        if (error?.code === 'ENOENT') {
+            return false;
+        }
 
-    const parsedKey = parsePromptSnapshotKey(toKey);
+        throw error;
+    }
+}
+
+async function rekeyPromptInspectionSnapshot(fromKey, toKey) {
+    const parsedFromKey = parsePromptSnapshotKey(fromKey);
+    const parsedToKey = parsePromptSnapshotKey(toKey);
+
+    if (!parsedFromKey || !parsedToKey || fromKey === toKey || parsedFromKey.username !== parsedToKey.username) {
+        return false;
+    }
+
+    const snapshot = await readPromptInspectionSnapshotForHandle(parsedFromKey.username);
+    if (!snapshot || snapshot.key !== fromKey) {
+        return false;
+    }
+
     const rekeyedSnapshot = clonePromptInspectionSnapshot(snapshot);
-    if (rekeyedSnapshot && parsedKey) {
+    if (rekeyedSnapshot) {
         rekeyedSnapshot.key = toKey;
-        rekeyedSnapshot.username = parsedKey.username;
-        rekeyedSnapshot.chatScope = parsedKey.chatScope;
-        rekeyedSnapshot.mesId = parsedKey.mesId;
-        rekeyedSnapshot.swipeId = parsedKey.swipeId;
+        rekeyedSnapshot.username = parsedToKey.username;
+        rekeyedSnapshot.chatScope = parsedToKey.chatScope;
+        rekeyedSnapshot.mesId = parsedToKey.mesId;
+        rekeyedSnapshot.swipeId = parsedToKey.swipeId;
     }
 
-    setPromptInspectionSnapshot(toKey, rekeyedSnapshot);
+    await writePromptInspectionSnapshotForHandle(parsedFromKey.username, rekeyedSnapshot);
     return true;
 }
 
@@ -3078,6 +3136,7 @@ export async function handleChatCompletionsGenerate(request, response) {
         if (promptInspectionInfo) {
             assembledPromptSnapshot = assembled;
             const promptSnapshotCount = Math.max(1, Number(request.body.n) || 1);
+            let latestPromptInspectionSnapshot = null;
             for (let index = 0; index < promptSnapshotCount; index++) {
                 const snapshotInfo = index === 0
                     ? promptInspectionInfo
@@ -3092,8 +3151,15 @@ export async function handleChatCompletionsGenerate(request, response) {
                         ),
                     };
                 if (snapshotInfo?.key) {
-                    setPromptInspectionSnapshot(snapshotInfo.key, createPromptInspectionSnapshot(request, assembled, snapshotInfo));
+                    latestPromptInspectionSnapshot = {
+                        key: snapshotInfo.key,
+                        snapshot: createPromptInspectionSnapshot(request, assembled, snapshotInfo),
+                    };
                 }
+            }
+
+            if (latestPromptInspectionSnapshot?.key) {
+                await setPromptInspectionSnapshot(latestPromptInspectionSnapshot.key, latestPromptInspectionSnapshot.snapshot);
             }
         }
         rewriteSystemMessagesForO1Model(request.body.prompt_context.model, request.body.prompt_context.chatCompletionSource, assembled.chat);
@@ -3674,7 +3740,7 @@ router.get('/debug/prompt-snapshot', async function (request, response) {
         return response.sendStatus(403);
     }
 
-    const snapshot = getPromptInspectionSnapshot(key);
+    const snapshot = await getPromptInspectionSnapshot(key);
     if (!snapshot) {
         return response.status(404).send({ error: { message: 'No prompt inspection snapshot is available for this key.' } });
     }
@@ -3699,11 +3765,11 @@ router.post('/debug/prompt-snapshot/maintenance', async function (request, respo
     }
 
     for (const key of deletes) {
-        deletePromptInspectionSnapshot(String(key || ''));
+        await deletePromptInspectionSnapshot(String(key || ''));
     }
 
     for (const rekey of rekeys) {
-        rekeyPromptInspectionSnapshot(String(rekey?.from || ''), String(rekey?.to || ''));
+        await rekeyPromptInspectionSnapshot(String(rekey?.from || ''), String(rekey?.to || ''));
     }
 
     return response.send({ ok: true });

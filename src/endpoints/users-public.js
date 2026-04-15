@@ -4,12 +4,13 @@ import storage from 'node-persist';
 import express from 'express';
 import { RateLimiterMemory, RateLimiterRes } from 'rate-limiter-flexible';
 import { getIpFromRequest, getRealIpFromHeader } from '../express-common.js';
-import { color, Cache, getConfigValue } from '../util.js';
+import { color, getConfigValue } from '../util.js';
 import { KEY_PREFIX, getUserAvatar, toKey, getPasswordHash, getPasswordSalt } from '../users.js';
+import { clearUserFlowState, getUserFlowState, setUserFlowState } from './user-flow-state.js';
 
 const DISCREET_LOGIN = getConfigValue('enableDiscreetLogin', false, 'boolean');
 const PREFER_REAL_IP_HEADER = getConfigValue('rateLimiting.preferRealIpHeader', false, 'boolean');
-const MFA_CACHE = new Cache(5 * 60 * 1000);
+const PASSWORD_RECOVERY_FLOW = 'password-recovery';
 
 const getIpAddress = (request) => PREFER_REAL_IP_HEADER ? getRealIpFromHeader(request) : getIpFromRequest(request);
 
@@ -132,7 +133,7 @@ router.post('/recover-step1', async (request, response) => {
         console.log();
         console.log(color.blue(`${user.name}, your password recovery code is: `) + color.magenta(mfaCode));
         console.log();
-        MFA_CACHE.set(user.handle, mfaCode);
+        await setUserFlowState(PASSWORD_RECOVERY_FLOW, user.handle, mfaCode);
         return response.sendStatus(204);
     } catch (error) {
         if (error instanceof RateLimiterRes) {
@@ -166,7 +167,7 @@ router.post('/recover-step2', async (request, response) => {
             return response.status(403).json({ error: 'User is disabled' });
         }
 
-        const mfaCode = MFA_CACHE.get(user.handle);
+        const mfaCode = await getUserFlowState(PASSWORD_RECOVERY_FLOW, user.handle);
 
         if (request.body.code !== mfaCode) {
             await recoverLimiter.consume(ip);
@@ -186,7 +187,7 @@ router.post('/recover-step2', async (request, response) => {
         }
 
         await recoverLimiter.delete(ip);
-        MFA_CACHE.remove(user.handle);
+        await clearUserFlowState(PASSWORD_RECOVERY_FLOW, user.handle);
         return response.sendStatus(204);
     } catch (error) {
         if (error instanceof RateLimiterRes) {

@@ -9,9 +9,10 @@ import { getUserAvatar, toKey, getPasswordHash, getPasswordSalt, createBackupArc
 import { SETTINGS_FILE } from '../constants.js';
 import { getPersonasPath } from '../persona-repository.js';
 import { checkForNewContent, CONTENT_TYPES } from './content-manager.js';
-import { color, Cache } from '../util.js';
+import { color } from '../util.js';
+import { clearUserFlowState, getUserFlowState, setUserFlowState } from './user-flow-state.js';
 
-const RESET_CACHE = new Cache(5 * 60 * 1000);
+const ACCOUNT_RESET_FLOW = 'account-reset';
 
 export const router = express.Router();
 
@@ -216,7 +217,7 @@ router.post('/reset-step1', async (request, response) => {
         console.log();
         console.log(color.magenta(`${request.user.profile.name}, your account reset code is: `) + color.red(resetCode));
         console.log();
-        RESET_CACHE.set(request.user.profile.handle, resetCode);
+        await setUserFlowState(ACCOUNT_RESET_FLOW, request.user.profile.handle, resetCode);
         return response.sendStatus(204);
     } catch (error) {
         console.error('Recover step 1 failed:', error);
@@ -236,7 +237,7 @@ router.post('/reset-step2', async (request, response) => {
             return response.status(400).json({ error: 'Incorrect password' });
         }
 
-        const code = RESET_CACHE.get(request.user.profile.handle);
+        const code = await getUserFlowState(ACCOUNT_RESET_FLOW, request.user.profile.handle);
 
         if (!code || code !== request.body.code) {
             console.warn('Recover step 2 failed: Incorrect code');
@@ -249,7 +250,7 @@ router.post('/reset-step2', async (request, response) => {
         await ensurePublicDirectoriesExist();
         await checkForNewContent([request.user.directories]);
 
-        RESET_CACHE.remove(request.user.profile.handle);
+        await clearUserFlowState(ACCOUNT_RESET_FLOW, request.user.profile.handle);
         return response.sendStatus(204);
     } catch (error) {
         console.error('Recover step 2 failed:', error);
