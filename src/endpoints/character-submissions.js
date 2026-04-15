@@ -85,6 +85,9 @@ router.post('/submit', async (request, response) => {
             user: request.user,
             ownerHandle: request.user.profile.handle,
             originalFilename,
+            requestedDistributionMode: request.body?.requestedDistributionMode,
+            requestedTargetHandles: request.body?.requestedTargetHandles,
+            requestedBlacklistHandles: request.body?.requestedBlacklistHandles,
         });
 
         if (!request.file) {
@@ -173,7 +176,7 @@ router.post('/review', requireAdminMiddleware, async (request, response) => {
 
         const record = await getSubmissionRecord(submissionId);
         if (record.status !== SUBMISSION_STATUSES.PENDING) {
-            return response.status(409).json({ error: 'This submission has already been reviewed.' });
+            return response.status(409).json({ error: 'This submission has already been processed.' });
         }
 
         if (action === 'reject') {
@@ -190,7 +193,7 @@ router.post('/review', requireAdminMiddleware, async (request, response) => {
         }
 
         if (action !== 'approve') {
-            return response.status(400).json({ error: 'Invalid review action.' });
+            return response.status(400).json({ error: 'Invalid admin distribution action.' });
         }
 
         const publishMode = String(request.body?.publishMode || '').trim();
@@ -236,7 +239,7 @@ router.post('/review', requireAdminMiddleware, async (request, response) => {
         });
     } catch (error) {
         console.error('Character submission review failed:', error);
-        return response.status(400).json({ error: error.message || 'Character review failed.' });
+        return response.status(400).json({ error: error.message || 'Character admin distribution failed.' });
     }
 });
 

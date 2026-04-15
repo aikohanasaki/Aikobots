@@ -25,6 +25,12 @@ export const PUBLISH_MODES = Object.freeze({
     GLOBAL: 'global',
 });
 
+export const SUBMISSION_DISTRIBUTION_MODES = Object.freeze({
+    WHITELIST: 'whitelist',
+    GLOBAL: 'global',
+    GLOBAL_BLACKLIST: 'global_blacklist',
+});
+
 export const SUBMISSION_CLEANUP_MODES = Object.freeze({
     ASSET: 'asset',
     ALL: 'all',
@@ -156,6 +162,9 @@ function getSubmissionsRoot() {
  * @property {'selected'|'global'|null} publishMode
  * @property {string[]} targetHandles
  * @property {string | null} publishedFilename
+ * @property {'whitelist'|'global'|'global_blacklist'} [requestedDistributionMode]
+ * @property {string[]} [requestedTargetHandles]
+ * @property {string[]} [requestedBlacklistHandles]
  */
 
 /**
@@ -242,6 +251,54 @@ function normalizeSubmissionOwnerHandle(value) {
  */
 function normalizeSubmissionFileName(value) {
     return normalizeCharacterFileName(value, 'character');
+}
+
+function normalizeHandleList(value) {
+    return [...new Set((Array.isArray(value) ? value : [])
+        .map(handle => String(handle || '').trim())
+        .filter(Boolean))];
+}
+
+function normalizeSubmissionRequestedDistributionMode(value, fallback = null) {
+    if (value === null || value === undefined || value === '') {
+        return fallback;
+    }
+
+    const normalizedValue = String(value).trim().toLowerCase();
+    return Object.values(SUBMISSION_DISTRIBUTION_MODES).includes(normalizedValue)
+        ? normalizedValue
+        : fallback;
+}
+
+function normalizeSubmissionRecord(record) {
+    const normalizedRequestedDistributionMode = normalizeSubmissionRequestedDistributionMode(record?.requestedDistributionMode, null);
+    const normalizedTargetHandles = normalizeHandleList(record?.targetHandles);
+    const normalizedRequestedTargetHandles = normalizeHandleList(record?.requestedTargetHandles);
+    const normalizedRequestedBlacklistHandles = normalizeHandleList(record?.requestedBlacklistHandles);
+
+    return {
+        ...record,
+        status: Object.values(SUBMISSION_STATUSES).includes(record?.status) ? record.status : SUBMISSION_STATUSES.PENDING,
+        ownerHandle: String(record?.ownerHandle || '').trim(),
+        ownerHandles: normalizeHandleList(record?.ownerHandles).length > 0
+            ? normalizeHandleList(record?.ownerHandles)
+            : normalizeHandleList([record?.ownerHandle]),
+        sharedCharacterKey: String(record?.sharedCharacterKey || '').trim(),
+        submittedFilename: String(record?.submittedFilename || '').trim(),
+        reviewedAt: Number.isFinite(record?.reviewedAt) ? record.reviewedAt : null,
+        reviewedBy: record?.reviewedBy ? String(record.reviewedBy).trim() : null,
+        reviewNote: String(record?.reviewNote || ''),
+        publishMode: Object.values(PUBLISH_MODES).includes(record?.publishMode) ? record.publishMode : null,
+        targetHandles: normalizedTargetHandles,
+        publishedFilename: record?.publishedFilename ? String(record.publishedFilename).trim() : null,
+        requestedDistributionMode: normalizedRequestedDistributionMode,
+        requestedTargetHandles: normalizedRequestedDistributionMode === SUBMISSION_DISTRIBUTION_MODES.WHITELIST
+            ? normalizedRequestedTargetHandles
+            : [],
+        requestedBlacklistHandles: normalizedRequestedDistributionMode === SUBMISSION_DISTRIBUTION_MODES.GLOBAL_BLACKLIST
+            ? normalizedRequestedBlacklistHandles
+            : [],
+    };
 }
 
 /**
@@ -440,6 +497,39 @@ async function validateSelectedTargets(targetHandles, actingUserHandle) {
     return validateDistributionHandles(targetHandles, actingUserHandle, { requireAtLeastOne: true });
 }
 
+async function normalizeSubmissionDistributionRequest({
+    requestedDistributionMode,
+    requestedTargetHandles = [],
+    requestedBlacklistHandles = [],
+    actingUserHandle,
+}) {
+    const normalizedRequestedDistributionMode = normalizeSubmissionRequestedDistributionMode(
+        requestedDistributionMode,
+        SUBMISSION_DISTRIBUTION_MODES.GLOBAL,
+    );
+
+    switch (normalizedRequestedDistributionMode) {
+        case SUBMISSION_DISTRIBUTION_MODES.WHITELIST:
+            return {
+                requestedDistributionMode: normalizedRequestedDistributionMode,
+                requestedTargetHandles: await validateSelectedTargets(requestedTargetHandles, actingUserHandle),
+                requestedBlacklistHandles: [],
+            };
+        case SUBMISSION_DISTRIBUTION_MODES.GLOBAL_BLACKLIST:
+            return {
+                requestedDistributionMode: normalizedRequestedDistributionMode,
+                requestedTargetHandles: [],
+                requestedBlacklistHandles: await validateDistributionHandles(requestedBlacklistHandles, actingUserHandle, { requireAtLeastOne: true }),
+            };
+        default:
+            return {
+                requestedDistributionMode: SUBMISSION_DISTRIBUTION_MODES.GLOBAL,
+                requestedTargetHandles: [],
+                requestedBlacklistHandles: [],
+            };
+    }
+}
+
 /**
  * Reads a source card once and prepares the shared payload used for distribution.
  * The distributed copy should preserve owner and lorebook metadata while stripping
@@ -518,7 +608,7 @@ async function buildDistributionPayload(sourcePath, { sourceOwnerHandle = '' } =
 export async function getSubmissionRecord(submissionId) {
     const { recordPath } = getSubmissionPaths(submissionId);
     const raw = await fsPromises.readFile(recordPath, 'utf8');
-    return JSON.parse(raw);
+    return normalizeSubmissionRecord(JSON.parse(raw));
 }
 
 /**
@@ -527,9 +617,10 @@ export async function getSubmissionRecord(submissionId) {
  * @returns {Promise<void>}
  */
 export async function writeSubmissionRecord(record) {
-    const { basePath, recordPath } = getSubmissionPaths(record.id);
+    const normalizedRecord = normalizeSubmissionRecord(record);
+    const { basePath, recordPath } = getSubmissionPaths(normalizedRecord.id);
     await fsPromises.mkdir(basePath, { recursive: true });
-    await writeFileAtomic(recordPath, JSON.stringify(record, null, 4));
+    await writeFileAtomic(recordPath, JSON.stringify(normalizedRecord, null, 4));
 }
 
 /**
@@ -559,7 +650,15 @@ export async function cleanupSubmission({ submissionId, deleteMode }) {
  * @param {{ uploadPath: string, user: import('./users.js').User, ownerHandle: string, originalFilename: string }} params
  * @returns {Promise<SubmissionRecord>}
  */
-export async function createCharacterSubmission({ uploadPath, user, ownerHandle, originalFilename }) {
+export async function createCharacterSubmission({
+    uploadPath,
+    user,
+    ownerHandle,
+    originalFilename,
+    requestedDistributionMode,
+    requestedTargetHandles,
+    requestedBlacklistHandles,
+}) {
     await ensureSubmissionStore();
 
     const { rawBuffer, card } = await readCharacterCardFile(uploadPath);
@@ -584,6 +683,13 @@ export async function createCharacterSubmission({ uploadPath, user, ownerHandle,
     clearCharacterFavoriteState(card);
     stripPrivateShareFields(card);
 
+    const requestedDistribution = await normalizeSubmissionDistributionRequest({
+        requestedDistributionMode,
+        requestedTargetHandles,
+        requestedBlacklistHandles,
+        actingUserHandle: String(user?.profile?.handle || ownerHandle || '').trim(),
+    });
+
     await fsPromises.mkdir(basePath, { recursive: true });
     await writeCharacterCardFile(rawBuffer, card, cardPath);
 
@@ -602,6 +708,9 @@ export async function createCharacterSubmission({ uploadPath, user, ownerHandle,
         publishMode: null,
         targetHandles: [],
         publishedFilename: null,
+        requestedDistributionMode: requestedDistribution.requestedDistributionMode,
+        requestedTargetHandles: requestedDistribution.requestedTargetHandles,
+        requestedBlacklistHandles: requestedDistribution.requestedBlacklistHandles,
     };
 
     await writeSubmissionRecord(record);

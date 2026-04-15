@@ -13,6 +13,11 @@ export let accountsEnabled = false;
 // Extend the session every 10 minutes
 const SESSION_EXTEND_INTERVAL = 10 * 60 * 1000;
 const MESSAGE_SUMMARY_INTERVAL = 60 * 1000;
+const SUBMISSION_DISTRIBUTION_MODES = Object.freeze({
+    WHITELIST: 'whitelist',
+    GLOBAL: 'global',
+    GLOBAL_BLACKLIST: 'global_blacklist',
+});
 
 /**
  * Enable or disable user account controls in the UI.
@@ -328,11 +333,16 @@ async function getCharacterDistributionPolicy(ownerHandle, publishedFilename, ch
 }
 
 /**
- * Submits an existing character card for admin review.
+ * Submits an existing character card with an admin distribution request.
  * @param {string} sourceAvatar
  * @returns {Promise<object | null>}
  */
-async function submitCharacterSubmission(sourceAvatar) {
+async function submitCharacterSubmission({
+    sourceAvatar,
+    requestedDistributionMode = SUBMISSION_DISTRIBUTION_MODES.GLOBAL,
+    requestedTargetHandles = [],
+    requestedBlacklistHandles = [],
+}) {
     try {
         const avatar = String(sourceAvatar || '').trim();
         if (!avatar) {
@@ -342,7 +352,12 @@ async function submitCharacterSubmission(sourceAvatar) {
         const response = await fetch('/api/character-submissions/submit', {
             method: 'POST',
             headers: getRequestHeaders(),
-            body: JSON.stringify({ sourceAvatar: avatar }),
+            body: JSON.stringify({
+                sourceAvatar: avatar,
+                requestedDistributionMode,
+                requestedTargetHandles,
+                requestedBlacklistHandles,
+            }),
         });
 
         const data = await response.json().catch(() => ({}));
@@ -359,7 +374,7 @@ async function submitCharacterSubmission(sourceAvatar) {
 }
 
 /**
- * Sends a review action for a submission.
+ * Sends an admin distribution action for a submission.
  * @param {object} payload
  * @returns {Promise<object | null>}
  */
@@ -373,13 +388,13 @@ async function reviewCharacterSubmission(payload) {
 
         const data = await response.json().catch(() => ({}));
         if (!response.ok) {
-            throw new Error(data?.error || 'Failed to review character submission');
+            throw new Error(data?.error || 'Failed to process character admin distribution');
         }
 
         return data;
     } catch (error) {
         console.error('Error reviewing submission:', error);
-        toastr.error(error.message || 'Unknown error', 'Submission review failed');
+        toastr.error(error.message || 'Unknown error', 'Admin distribution failed');
         return null;
     }
 }
@@ -411,43 +426,23 @@ async function cleanupCharacterSubmission(payload) {
 }
 
 /**
- * Builds a user checklist for distribution/review dialogs.
- * @param {import('../../src/users.js').UserViewModel[]} users
- * @param {string[]} [selectedHandles]
- * @returns {JQuery<HTMLElement>}
- */
-function buildUserChecklist(users, selectedHandles = []) {
-    const wrapper = $('<div class="flex-container flexFlowColumn flexGap5"></div>');
-
-    for (const user of users) {
-        const label = $('<label class="flex-container alignItemsCenter flexGap10"></label>');
-        const input = $('<input type="checkbox" class="distribution-target">')
-            .val(user.handle)
-            .prop('checked', selectedHandles.includes(user.handle));
-
-        label.append(input);
-        label.append($('<span></span>').text(user.name));
-        label.append($('<small class="opacity50p"></small>').text(user.handle));
-        wrapper.append(label);
-    }
-
-    return wrapper;
-}
-
-/**
- * Gets the currently-selected handles from a checklist container.
- * @param {JQuery<HTMLElement>} container
+ * Parses a typed username list into unique handles.
+ * Accepts commas, whitespace, and newlines as separators.
+ * @param {string} value
  * @returns {string[]}
  */
-function getSelectedHandles(container) {
-    return container.find('.distribution-target:checked').map((_, element) => String($(element).val())).get();
+function parseDistributionHandles(value) {
+    return [...new Set(String(value || '')
+        .split(/[\s,]+/g)
+        .map(handle => handle.trim())
+        .filter(Boolean))];
 }
 
-function setSelectedHandles(container, selectedHandles = []) {
-    const selected = new Set((Array.isArray(selectedHandles) ? selectedHandles : []).map(handle => String(handle || '').trim()).filter(Boolean));
-    container.find('.distribution-target').each((_, element) => {
-        $(element).prop('checked', selected.has(String($(element).val())));
-    });
+function formatDistributionHandles(handles = []) {
+    return (Array.isArray(handles) ? handles : [])
+        .map(handle => String(handle || '').trim())
+        .filter(Boolean)
+        .join(', ');
 }
 
 /**
@@ -462,7 +457,37 @@ function getSubmissionStatusLabel(status) {
         case 'rejected':
             return 'Rejected';
         default:
-            return 'Pending Review';
+            return 'Pending Admin Distribution';
+    }
+}
+
+function normalizeSubmissionDistributionMode(value) {
+    const normalizedValue = String(value || '').trim().toLowerCase();
+    return Object.values(SUBMISSION_DISTRIBUTION_MODES).includes(normalizedValue)
+        ? normalizedValue
+        : null;
+}
+
+function getSubmissionDistributionSettings(distributionMode) {
+    switch (distributionMode) {
+        case SUBMISSION_DISTRIBUTION_MODES.WHITELIST:
+            return {
+                publishMode: 'selected',
+                applyBlacklist: false,
+                persistWhitelist: true,
+            };
+        case SUBMISSION_DISTRIBUTION_MODES.GLOBAL_BLACKLIST:
+            return {
+                publishMode: 'global',
+                applyBlacklist: true,
+                persistWhitelist: false,
+            };
+        default:
+            return {
+                publishMode: 'global',
+                applyBlacklist: false,
+                persistWhitelist: false,
+            };
     }
 }
 
@@ -486,7 +511,7 @@ function buildSubmissionCard(submission, { admin = false, onReview = null } = {}
                 <div class="submission_meta">
                     <div><span>Owner:</span> <span class="submission_owner"></span></div>
                     <div><span>Submitted:</span> <span class="submission_submitted"></span></div>
-                    <div class="submission_reviewed_row"><span>Reviewed:</span> <span class="submission_reviewed"></span></div>
+                    <div class="submission_reviewed_row"><span>Admin Action:</span> <span class="submission_reviewed"></span></div>
                     <div class="submission_publish_row"><span>Published As:</span> <span class="submission_published"></span></div>
                     <div class="submission_targets_row"><span>Targets:</span> <span class="submission_targets"></span></div>
                 </div>
@@ -516,12 +541,12 @@ function buildSubmissionCard(submission, { admin = false, onReview = null } = {}
     card.find('.submission_notes')
         .toggle(Boolean(submission.reviewNote || submission.creatorNotes))
         .append(Boolean(submission.creatorNotes) ? $('<div class="submission_review_note"></div>').text(submission.creatorNotes) : '')
-        .append(Boolean(submission.reviewNote) ? $('<div class="submission_review_note opacity50p"></div>').text(`Review note: ${submission.reviewNote}`) : '');
+        .append(Boolean(submission.reviewNote) ? $('<div class="submission_review_note opacity50p"></div>').text(`Admin note: ${submission.reviewNote}`) : '');
     card.find('.submission_tags').toggle(Array.isArray(submission.tags) && submission.tags.length > 0).text(Array.isArray(submission.tags) ? submission.tags.join(', ') : '');
 
     if (admin && typeof onReview === 'function') {
         const actionButton = submission.status === 'pending' && submission.hasStoredCard !== false
-            ? $('<div class="menu_button menu_button_icon"><i class="fa-fw fa-solid fa-gavel"></i><span>Review</span></div>')
+            ? $('<div class="menu_button menu_button_icon"><i class="fa-fw fa-solid fa-gavel"></i><span>Admin Distribution</span></div>')
             : $('<div class="menu_button menu_button_icon"><i class="fa-fw fa-solid fa-box-archive"></i><span>Manage</span></div>');
         actionButton.on('click', () => onReview(submission));
         card.find('.submission_actions').append(actionButton);
@@ -567,7 +592,7 @@ async function openMySubmissionsPopup() {
 }
 
 /**
- * Submits the selected character for review.
+ * Submits the selected character for admin distribution.
  * @param {{ name?: string, avatar?: string }} character
  * @returns {Promise<object | null>}
  */
@@ -579,23 +604,83 @@ export async function submitSelectedCharacterForReview(character) {
     }
 
     const displayName = String(character?.name || avatar);
+    let requestedDistributionMode = SUBMISSION_DISTRIBUTION_MODES.GLOBAL;
     const container = $('<div class="flex-container flexFlowColumn flexGap10"></div>');
     container.append('<h3 class="margin0">Submit Character</h3>');
     const text = $('<div></div>');
-    text.append(document.createTextNode('Submit '));
+    text.append(document.createTextNode('Choose the requested admin distribution for '));
     text.append($('<strong></strong>').text(displayName));
-    text.append(document.createTextNode(' for admin review and distribution?'));
+    text.append(document.createTextNode('.'));
     container.append(text);
+    container.append('<div class="opacity50p">Admins can edit these lists or approve them as-is.</div>');
+    container.append($(`
+        <label class="flex-container flexFlowColumn flexNoGap">
+            <span>Admin Distribution</span>
+            <select class="text_pole submission-distribution-mode">
+                <option value="${SUBMISSION_DISTRIBUTION_MODES.WHITELIST}">Whitelist</option>
+                <option value="${SUBMISSION_DISTRIBUTION_MODES.GLOBAL}">Global</option>
+                <option value="${SUBMISSION_DISTRIBUTION_MODES.GLOBAL_BLACKLIST}">Global With Blacklist</option>
+            </select>
+        </label>
+    `));
+    container.append(`
+        <label class="submission-whitelist-targets-block flex-container flexFlowColumn flexNoGap">
+            <span>Whitelisted Usernames</span>
+            <small class="opacity50p">Type in the usernames separated by a comma.</small>
+            <textarea class="text_pole submission-whitelist-targets" rows="3" placeholder="Comma or newline separated usernames"></textarea>
+        </label>
+    `);
+    container.append(`
+        <label class="submission-blacklist-targets-block flex-container flexFlowColumn flexNoGap">
+            <span>Blacklisted Usernames</span>
+            <small class="opacity50p">Type in the usernames separated by a comma.</small>
+            <textarea class="text_pole submission-blacklist-targets" rows="3" placeholder="Comma or newline separated usernames"></textarea>
+        </label>
+    `);
+    container.find('.submission-distribution-mode').val(requestedDistributionMode).on('change', function () {
+        requestedDistributionMode = String($(this).val());
+        syncSubmissionDistributionBlocks();
+    });
+
+    function syncSubmissionDistributionBlocks() {
+        container.find('.submission-whitelist-targets-block').toggle(requestedDistributionMode === SUBMISSION_DISTRIBUTION_MODES.WHITELIST);
+        container.find('.submission-blacklist-targets-block').toggle(requestedDistributionMode === SUBMISSION_DISTRIBUTION_MODES.GLOBAL_BLACKLIST);
+    }
+
+    syncSubmissionDistributionBlocks();
 
     const result = await callGenericPopup(container, POPUP_TYPE.CONFIRM, '', {
         okButton: 'Submit',
         cancelButton: 'Cancel',
+        wide: true,
+        allowVerticalScrolling: true,
     });
     if (result !== POPUP_RESULT.AFFIRMATIVE) {
         return null;
     }
 
-    const submission = await submitCharacterSubmission(avatar);
+    const requestedTargetHandles = requestedDistributionMode === SUBMISSION_DISTRIBUTION_MODES.WHITELIST
+        ? parseDistributionHandles(container.find('.submission-whitelist-targets').val())
+        : [];
+    const requestedBlacklistHandles = requestedDistributionMode === SUBMISSION_DISTRIBUTION_MODES.GLOBAL_BLACKLIST
+        ? parseDistributionHandles(container.find('.submission-blacklist-targets').val())
+        : [];
+    if (requestedDistributionMode === SUBMISSION_DISTRIBUTION_MODES.WHITELIST && requestedTargetHandles.length === 0) {
+        toastr.error('Choose at least one whitelisted user.', 'Submission unavailable');
+        return null;
+    }
+
+    if (requestedDistributionMode === SUBMISSION_DISTRIBUTION_MODES.GLOBAL_BLACKLIST && requestedBlacklistHandles.length === 0) {
+        toastr.error('Choose at least one blacklisted user.', 'Submission unavailable');
+        return null;
+    }
+
+    const submission = await submitCharacterSubmission({
+        sourceAvatar: avatar,
+        requestedDistributionMode,
+        requestedTargetHandles,
+        requestedBlacklistHandles,
+    });
     if (!submission) {
         return null;
     }
@@ -605,25 +690,32 @@ export async function submitSelectedCharacterForReview(character) {
 }
 
 /**
- * Opens the review dialog for an admin.
+ * Opens the admin distribution dialog for a submission.
  * @param {object} submission
  * @param {function} callback
  * @returns {Promise<void>}
  */
 async function openSubmissionReviewPopup(submission, callback) {
-    const users = (await getUsers() || []).filter(user => user.enabled);
     const ownerHandle = String(submission.ownerHandle || getCurrentUserHandle()).trim();
     const characterKey = String(submission.sharedCharacterKey || '').trim().replace(/\.png$/i, '');
-    let publishMode = submission.publishMode || 'global';
+    const requestedDistributionMode = normalizeSubmissionDistributionMode(submission.requestedDistributionMode);
+    const requestedDistributionSettings = getSubmissionDistributionSettings(requestedDistributionMode);
+    const hasRequestedDistribution = Boolean(requestedDistributionMode);
+    const requestedTargetHandles = Array.isArray(submission.requestedTargetHandles) ? submission.requestedTargetHandles : [];
+    const requestedBlacklistHandles = Array.isArray(submission.requestedBlacklistHandles) ? submission.requestedBlacklistHandles : [];
+    let publishMode = submission.publishMode || requestedDistributionSettings.publishMode || 'global';
     let reviewNote = String(submission.reviewNote || '');
     let publishedFilename = String((submission.publishedFilename || submission.characterName || submission.submittedFilename || '').replace(/\.png$/i, ''));
-    let applyBlacklist = false;
-    let persistWhitelist = false;
+    let applyBlacklist = hasRequestedDistribution ? requestedDistributionSettings.applyBlacklist : false;
+    let persistWhitelist = hasRequestedDistribution ? requestedDistributionSettings.persistWhitelist : false;
     let policyRequestId = 0;
     let policyRefreshTimer = null;
-    const initialTargetHandles = Array.isArray(submission.targetHandles) ? submission.targetHandles : [];
-    const checklist = buildUserChecklist(users, initialTargetHandles);
-    const blacklistChecklist = buildUserChecklist(users);
+    const initialTargetHandles = hasRequestedDistribution
+        ? (requestedDistributionMode === SUBMISSION_DISTRIBUTION_MODES.WHITELIST ? requestedTargetHandles : [])
+        : (Array.isArray(submission.targetHandles) ? submission.targetHandles : []);
+    const initialBlacklistHandles = hasRequestedDistribution && requestedDistributionMode === SUBMISSION_DISTRIBUTION_MODES.GLOBAL_BLACKLIST
+        ? requestedBlacklistHandles
+        : [];
     const REVIEW_POPUP_RESULT_REJECT = POPUP_RESULT.CUSTOM1;
     const REVIEW_POPUP_RESULT_DELETE_ASSET = POPUP_RESULT.CUSTOM2;
     const REVIEW_POPUP_RESULT_DELETE_ALL = POPUP_RESULT.CUSTOM3;
@@ -655,17 +747,21 @@ async function openSubmissionReviewPopup(submission, callback) {
                 <span>Apply blacklist</span>
             </label>
             <div class="review-blacklist-targets-block flex-container flexFlowColumn flexGap5">
-                <span>Blacklisted Users</span>
+                <span>Blacklisted Usernames</span>
+                <small class="opacity50p">Type in the usernames separated by a comma.</small>
+                <textarea class="text_pole review-blacklist-targets" rows="3" placeholder="Comma or newline separated usernames"></textarea>
             </div>
             <div class="review-targets-block flex-container flexFlowColumn flexGap5">
-                <span>Recipients</span>
+                <span>Recipient Usernames</span>
+                <small class="opacity50p">Type in the usernames separated by a comma.</small>
+                <textarea class="text_pole review-targets" rows="3" placeholder="Comma or newline separated usernames"></textarea>
             </div>
             <label class="review-persist-whitelist-block flex-container alignItemsCenter flexGap10">
                 <input type="checkbox" class="review-persist-whitelist">
                 <span>Save whitelist for future selected pushes</span>
             </label>
             <label class="flex-container flexFlowColumn flexNoGap">
-                <span>Review Note</span>
+                <span>Admin Note</span>
                 <textarea class="text_pole review-note" rows="3"></textarea>
             </label>
         </div>
@@ -696,6 +792,17 @@ async function openSubmissionReviewPopup(submission, callback) {
             return;
         }
 
+        if (hasRequestedDistribution) {
+            applyBlacklist = requestedDistributionSettings.applyBlacklist;
+            persistWhitelist = requestedDistributionSettings.persistWhitelist;
+            container.find('.review-apply-blacklist').prop('checked', applyBlacklist);
+            container.find('.review-persist-whitelist').prop('checked', persistWhitelist);
+            container.find('.review-blacklist-targets').val(formatDistributionHandles(initialBlacklistHandles));
+            container.find('.review-targets').val(formatDistributionHandles(initialTargetHandles));
+            syncPolicyBlocks();
+            return;
+        }
+
         const requestId = ++policyRequestId;
         const policy = await getCharacterDistributionPolicy(ownerHandle, publishedFilename, characterKey);
         if (requestId !== policyRequestId) {
@@ -706,21 +813,21 @@ async function openSubmissionReviewPopup(submission, callback) {
         persistWhitelist = policy.hasWhitelist;
         container.find('.review-apply-blacklist').prop('checked', applyBlacklist);
         container.find('.review-persist-whitelist').prop('checked', persistWhitelist);
-        setSelectedHandles(blacklistChecklist, policy.blacklistHandles);
+        container.find('.review-blacklist-targets').val(formatDistributionHandles(policy.blacklistHandles));
 
         if (policy.hasWhitelist) {
-            setSelectedHandles(checklist, policy.whitelistHandles);
+            container.find('.review-targets').val(formatDistributionHandles(policy.whitelistHandles));
         } else if (overwriteRecipients) {
-            setSelectedHandles(checklist, initialTargetHandles);
+            container.find('.review-targets').val(formatDistributionHandles(initialTargetHandles));
         } else {
-            setSelectedHandles(checklist, []);
+            container.find('.review-targets').val('');
         }
 
         syncPolicyBlocks();
     }
 
     function queuePolicyRefresh() {
-        if (!canApprove) {
+        if (!canApprove || hasRequestedDistribution) {
             return;
         }
 
@@ -749,13 +856,11 @@ async function openSubmissionReviewPopup(submission, callback) {
     container.find('.review-persist-whitelist').on('change', function () {
         persistWhitelist = Boolean($(this).prop('checked'));
     });
-    container.find('.review-targets-block').append(checklist);
-    container.find('.review-blacklist-targets-block').append(blacklistChecklist);
     syncPolicyBlocks();
     await loadPolicyForCurrentFilename({ overwriteRecipients: true });
 
     const result = await callGenericPopup(container, POPUP_TYPE.CONFIRM, '', {
-        okButton: canApprove ? 'Approve & Publish' : false,
+        okButton: canApprove ? 'Approve & Distribute' : false,
         cancelButton: 'Cancel',
         wide: true,
         allowVerticalScrolling: true,
@@ -791,7 +896,7 @@ async function openSubmissionReviewPopup(submission, callback) {
         });
 
         if (rejected) {
-            toastr.success('Submission rejected', 'Review updated');
+            toastr.success('Submission rejected', 'Admin distribution updated');
             callback();
         }
         return;
@@ -829,10 +934,10 @@ async function openSubmissionReviewPopup(submission, callback) {
         return;
     }
 
-    const targetHandles = getSelectedHandles(checklist);
-    const blacklistHandles = applyBlacklist ? getSelectedHandles(blacklistChecklist) : [];
+    const targetHandles = parseDistributionHandles(container.find('.review-targets').val());
+    const blacklistHandles = applyBlacklist ? parseDistributionHandles(container.find('.review-blacklist-targets').val()) : [];
     if (publishMode === 'selected' && targetHandles.length === 0) {
-        toastr.error('Choose at least one recipient.', 'Review cancelled');
+        toastr.error('Choose at least one recipient.', 'Admin distribution cancelled');
         return;
     }
 
@@ -853,7 +958,7 @@ async function openSubmissionReviewPopup(submission, callback) {
         const skippedNotice = Array.isArray(approved.skippedHandles) && approved.skippedHandles.length > 0
             ? ` Skipped: ${approved.skippedHandles.join(', ')}`
             : '';
-        toastr.success(`Published ${approved.publishedFilename || approved.characterName}${skippedNotice}`, 'Submission approved');
+        toastr.success(`Published ${approved.publishedFilename || approved.characterName}${skippedNotice}`, 'Admin distribution approved');
         callback();
     }
 }
