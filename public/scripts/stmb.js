@@ -1321,11 +1321,6 @@ async function refreshSidePromptCache() {
 }
 
 window.addEventListener('stmb-sideprompts-updated', refreshSidePromptCache);
-try {
-    refreshSidePromptCache();
-} catch {
-    // noop
-}
 
 function findCachedSidePromptByName(name, entries = sidePromptNameCache) {
     const target = String(name || '').toLowerCase();
