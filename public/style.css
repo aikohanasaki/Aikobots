@@ -896,6 +896,16 @@ body.movingUI #top_chat_bar {
 }
 
 .top_chat_bar_button {
+    appearance: none;
+    -webkit-appearance: none;
+    margin: 0;
+    padding: 0;
+    border: 0;
+    background: transparent;
+    box-shadow: none;
+    color: inherit;
+    font: inherit;
+    line-height: inherit;
     opacity: 0.8;
     transition: opacity var(--animation-duration-2x), filter var(--animation-duration-2x);
     cursor: pointer;
@@ -913,76 +923,6 @@ body.movingUI #top_chat_bar {
 .top_chat_bar_button.not-in-chat {
     opacity: 0.4;
     pointer-events: none;
-}
-
-.stmb-planner-status-button {
-    appearance: none;
-    -webkit-appearance: none;
-    position: relative;
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    width: 28px;
-    height: 28px;
-    min-width: 28px;
-    margin: 0;
-    padding: 0;
-    border: 0;
-    border-radius: 8px;
-    background: transparent;
-    box-shadow: none;
-    color: inherit;
-    font: inherit;
-    line-height: 1;
-}
-
-.stmb-planner-status-icon {
-    display: inline-block;
-    line-height: 1;
-}
-
-.stmb-planner-status-button.stmb-planner-status-attention {
-    color: var(--SmartThemeEmColor);
-}
-
-.stmb-planner-status-button.stmb-planner-status-failed {
-    color: var(--SmartThemeRedColor, #ff6b6b);
-}
-
-.stmb-planner-status-button:hover,
-.stmb-planner-status-button.active {
-    background: color-mix(in srgb, var(--SmartThemeBorderColor) 22%, transparent);
-}
-
-.stmb-planner-status-badge {
-    position: absolute;
-    top: -7px;
-    right: -8px;
-    min-width: 18px;
-    height: 18px;
-    padding: 0 5px;
-    border-radius: 999px;
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    background: var(--SmartThemeQuoteColor, #4f8cff);
-    color: var(--SmartThemeBodyColor, #fff);
-    font-size: 11px;
-    font-weight: 700;
-    line-height: 1;
-}
-
-.stmb-planner-status-badge[hidden] {
-    display: none;
-}
-
-.stmb-planner-status-badge.stmb-planner-status-badge-attention {
-    background: var(--SmartThemeEmColor, #f0c36d);
-    color: var(--SmartThemeBlurTintColor, #111);
-}
-
-.stmb-planner-status-badge.stmb-planner-status-badge-failed {
-    background: var(--SmartThemeRedColor, #ff6b6b);
 }
 
 .stmb-planner-status-tone-running {

@@ -574,6 +574,8 @@ function syncPlannerToggleButton() {
 
     plannerButton.className = 'top_chat_bar_button stmb-planner-status-button';
     plannerButton.title = plannerVisible ? 'Close Memory Books sidebar' : 'Open Memory Books sidebar';
+    plannerButton.setAttribute('aria-label', plannerButton.title);
+    plannerButton.setAttribute('aria-pressed', String(plannerVisible));
     plannerButton.classList.toggle('active', plannerVisible);
     plannerButton.classList.toggle('stmb-planner-status-attention', summary.awaitingApproval > 0);
     plannerButton.classList.toggle('stmb-planner-status-failed', summary.active === 0 && summary.recentFailures > 0);
@@ -797,16 +799,6 @@ async function openChatSidebar() {
 }
 
 function handlePlannerSidebarButtonInteraction(event) {
-    const shouldInterceptKeydown = event.type === 'keydown'
-        && !(event.key === 'Enter' || event.key === ' ');
-    if (shouldInterceptKeydown) {
-        return;
-    }
-
-    if (event.type === 'keydown') {
-        event.preventDefault();
-    }
-
     if (isPlannerSidebarVisible()) {
         event.preventDefault();
         openTopChatSidebarClosed().catch(error => {
@@ -847,14 +839,17 @@ function ensurePlannerStatusUi() {
 
     const { chatButton, plannerButton, sidebar } = getSharedSidebarElements();
     if (!(chatButton instanceof HTMLElement)
-        || !(plannerButton instanceof HTMLElement)
         || !(sidebar instanceof HTMLElement)) {
         setTimeout(() => ensurePlannerStatusUi(), 250);
         return;
     }
 
+    if (!(plannerButton instanceof HTMLElement)) {
+        plannerStatusUiInitialized = true;
+        return;
+    }
+
     plannerButton.addEventListener('click', handlePlannerSidebarButtonInteraction);
-    plannerButton.addEventListener('keydown', handlePlannerSidebarButtonInteraction);
 
     const observer = new MutationObserver(() => {
         renderPlannerStatusUi();

@@ -953,6 +953,9 @@ function setTopChatActionDisabled(element, disabled) {
     }
 
     element.classList.toggle('not-in-chat', disabled);
+    if (element instanceof HTMLButtonElement) {
+        element.disabled = disabled;
+    }
     element.setAttribute('aria-disabled', String(disabled));
 }
 
@@ -1255,6 +1258,7 @@ export async function toggleTopChatSidebar(forceVisible = undefined, { animate =
         ? forceVisible
         : (shouldSwitchFromAlternateMode ? true : !sidebar.classList.contains('visible'));
     topChatButtons.toggleSidebar?.classList.toggle('active', shouldShow);
+    topChatButtons.toggleSidebar?.setAttribute('aria-pressed', String(shouldShow));
 
     if (shouldShow) {
         sidebar.dataset.sidebarMode = 'chat';
@@ -1441,6 +1445,7 @@ async function toggleTopChatConnectionProfiles(forceVisible = undefined, { save 
     const shouldShow = typeof forceVisible === 'boolean' ? forceVisible : !topChatConnectionProfiles.classList.contains('visible');
     topChatConnectionProfiles.classList.toggle('visible', shouldShow);
     topChatButtons.toggleConnectionProfiles?.classList.toggle('active', shouldShow);
+    topChatButtons.toggleConnectionProfiles?.setAttribute('aria-pressed', String(shouldShow));
 
     if (shouldShow) {
         await refreshTopChatConnectionProfiles();
@@ -1498,13 +1503,6 @@ function bindTopChatButton(element, handler) {
         }
 
         void handler();
-    });
-
-    element.addEventListener('keydown', (event) => {
-        if (event.key === 'Enter' || event.key === ' ') {
-            event.preventDefault();
-            element.click();
-        }
     });
 }
 
@@ -1702,13 +1700,13 @@ const topChatConnectionProfilesSelect = /** @type {HTMLSelectElement} */ (docume
 const topChatConnectionProfilesStatus = /** @type {HTMLDivElement} */ (document.getElementById('top_chat_connection_profiles_status'));
 const topChatConnectionProfilesModelIcon = /** @type {HTMLDivElement} */ (document.getElementById('top_chat_connection_profiles_model_icon'));
 const topChatButtons = {
-    toggleSidebar: /** @type {HTMLDivElement} */ (document.getElementById('top_chat_bar_toggle_sidebar')),
-    toggleConnectionProfiles: /** @type {HTMLDivElement} */ (document.getElementById('top_chat_bar_toggle_connection_profiles')),
-    chatManager: /** @type {HTMLDivElement} */ (document.getElementById('top_chat_bar_chat_manager')),
-    newChat: /** @type {HTMLDivElement} */ (document.getElementById('top_chat_bar_new_chat')),
-    renameChat: /** @type {HTMLDivElement} */ (document.getElementById('top_chat_bar_rename_chat')),
-    deleteChat: /** @type {HTMLDivElement} */ (document.getElementById('top_chat_bar_delete_chat')),
-    closeChat: /** @type {HTMLDivElement} */ (document.getElementById('top_chat_bar_close_chat')),
+    toggleSidebar: /** @type {HTMLButtonElement} */ (document.getElementById('top_chat_bar_toggle_sidebar')),
+    toggleConnectionProfiles: /** @type {HTMLButtonElement} */ (document.getElementById('top_chat_bar_toggle_connection_profiles')),
+    chatManager: /** @type {HTMLButtonElement} */ (document.getElementById('top_chat_bar_chat_manager')),
+    newChat: /** @type {HTMLButtonElement} */ (document.getElementById('top_chat_bar_new_chat')),
+    renameChat: /** @type {HTMLButtonElement} */ (document.getElementById('top_chat_bar_rename_chat')),
+    deleteChat: /** @type {HTMLButtonElement} */ (document.getElementById('top_chat_bar_delete_chat')),
+    closeChat: /** @type {HTMLButtonElement} */ (document.getElementById('top_chat_bar_close_chat')),
 };
 let isTopChatConnectionProfilesBound = false;
 let topChatSidebarPopulateToken = '';

@@ -2768,13 +2768,15 @@
                 </div>
                 <div id="bg-scrollable-content">
                     <div id="look-and-feel-sections" class="flex-container flexFlowColumn flexNoGap">
-                        <div class="inline-drawer wide100p flexFlowColumn">
-                            <div class="inline-drawer-toggle inline-drawer-header standoutHeader" title="Display and presentation options." data-i18n="[title]Display and presentation options.">
-                                <b><span data-i18n="Display">Display</span></b>
-                                <div class="fa-solid fa-circle-chevron-down inline-drawer-icon down"></div>
-                            </div>
-                            <div class="inline-drawer-content">
-                                <div class="flex-container flexFlowColumn flexNoGap">
+                        <div class="look-and-feel-panel-columns look-and-feel-full-span">
+                            <div class="look-and-feel-panel-column">
+                                <div class="inline-drawer wide100p flexFlowColumn">
+                                    <div class="inline-drawer-toggle inline-drawer-header standoutHeader" title="Display and presentation options." data-i18n="[title]Display and presentation options.">
+                                        <b><span data-i18n="Display">Display</span></b>
+                                        <div class="fa-solid fa-circle-chevron-down inline-drawer-icon down"></div>
+                                    </div>
+                                    <div class="inline-drawer-content">
+                                        <div class="flex-container flexFlowColumn flexNoGap">
                                     <div class="flex-container alignItemsBaseline">
                                         <span data-i18n="Avatar Style:">Avatars:</span>
                                         <select id="avatar_style" class="widthNatural flex1 margin0 text_pole">
@@ -2850,132 +2852,13 @@
                                 </div>
                             </div>
                         </div>
-                        <div class="inline-drawer wide100p flexFlowColumn">
-                            <div class="inline-drawer-toggle inline-drawer-header standoutHeader" title="Theme presets, colors, fonts, and visual effects." data-i18n="[title]Theme presets, colors, fonts, and visual effects.">
-                                <b><span data-i18n="Theme">Theme</span></b>
-                                <div class="fa-solid fa-circle-chevron-down inline-drawer-icon down"></div>
-                            </div>
-                            <div class="inline-drawer-content">
-                                <div id="UI-presets-block" class="flex-container flexFlowColumn">
-                                    <h4 class="title_restorable">
-                                        <span data-i18n="UI Theme">UI Theme</span>
-                                        <div class="flex-container">
-                                            <div id="ui_preset_import_button" class="menu_button menu_button_icon margin0" title="Import a theme file" data-i18n="[title]Import a theme file">
-                                                <i class="fa-solid fa-file-import"></i>
-                                            </div>
-                                            <div id="ui_preset_export_button" class="menu_button menu_button_icon margin0" title="Export a theme file" data-i18n="[title]Export a theme file">
-                                                <i class="fa-solid fa-file-export"></i>
-                                            </div>
-                                            <div id="ui-preset-delete-button" class="menu_button menu_button_icon margin0" title="Delete a theme" data-i18n="[title]Delete a theme">
-                                                <i class="fa-solid fa-trash-can"></i>
-                                            </div>
-                                        </div>
-                                        <input type="file" id="ui_preset_import_file" accept=".json" hidden>
-                                    </h4>
-                                    <div class="flex-container flexnowrap alignitemscenter">
-                                        <select id="themes" class="margin0">
-                                        </select>
-                                        <div id="ui-preset-update-button" title="Update a theme file" data-i18n="[title]Update a theme file" class="menu_button margin0">
-                                            <i class="fa-solid fa-save"></i>
-                                        </div>
-                                        <div id="ui-preset-save-button" title="Save as a new theme" data-i18n="[title]Save as a new theme" class="menu_button margin0">
-                                            <i class="fa-solid fa-file-circle-plus"></i>
-                                        </div>
-                                    </div>
-                                </div>
                                 <div class="inline-drawer wide100p flexFlowColumn">
-                                    <div class="inline-drawer-toggle inline-drawer-header" title="Specify colors for your theme." data-i18n="[title]Specify colors for your theme.">
-                                        <b><span data-i18n="Theme Colors">Theme Colors</span></b>
+                                    <div class="inline-drawer-toggle inline-drawer-header standoutHeader" title="Layout controls, movable panels, and custom CSS." data-i18n="[title]Layout controls, movable panels, and custom CSS.">
+                                        <b><span data-i18n="Layout">Layout</span></b>
                                         <div class="fa-solid fa-circle-chevron-down inline-drawer-icon down"></div>
                                     </div>
                                     <div class="inline-drawer-content">
-                                        <div id="color-picker-block" class="flex-container flexFlowColumn flexNoGap">
-                                            <div class="flex-container">
-                                                <toolcool-color-picker id="main-text-color-picker"></toolcool-color-picker>
-                                                <span data-i18n="Main Text">Main Text</span>
-                                            </div>
-                                            <div class="flex-container">
-                                                <toolcool-color-picker id="italics-color-picker"></toolcool-color-picker>
-                                                <span data-i18n="Italics Text">Italics Text</span>
-                                            </div>
-                                            <div class="flex-container">
-                                                <toolcool-color-picker id="underline-color-picker"></toolcool-color-picker>
-                                                <span data-i18n="Underlined Text">Underlined Text</span>
-                                            </div>
-                                            <div class="flex-container">
-                                                <toolcool-color-picker id="quote-color-picker"></toolcool-color-picker>
-                                                <span data-i18n="Quote Text">Quote Text</span>
-                                            </div>
-                                            <div class="flex-container">
-                                                <toolcool-color-picker id="shadow-color-picker"></toolcool-color-picker>
-                                                <span data-i18n="Shadow Color">Text Shadow</span>
-                                            </div>
-                                            <div class="flex-container">
-                                                <toolcool-color-picker id="chat-tint-color-picker"></toolcool-color-picker>
-                                                <span data-i18n="Chat Background">Chat Background</span>
-                                            </div>
-                                            <div class="flex-container">
-                                                <toolcool-color-picker id="blur-tint-color-picker"></toolcool-color-picker>
-                                                <span data-i18n="UI Background">UI Background</span>
-                                            </div>
-                                            <div class="flex-container">
-                                                <toolcool-color-picker id="border-color-picker"></toolcool-color-picker>
-                                                <span data-i18n="UI Border">UI Border</span>
-                                            </div>
-                                            <div class="flex-container">
-                                                <toolcool-color-picker id="user-mes-blur-tint-color-picker"></toolcool-color-picker>
-                                                <span data-i18n="User Message Blur Tint">User Message</span>
-                                            </div>
-                                            <div class="flex-container">
-                                                <toolcool-color-picker id="bot-mes-blur-tint-color-picker"></toolcool-color-picker>
-                                                <span data-i18n="AI Message Blur Tint">AI Message</span>
-                                            </div>
-                                        </div>
-                                    </div>
-                                </div>
-                                <div class="inline-drawer wide100p flexFlowColumn">
-                                    <div class="inline-drawer-toggle inline-drawer-header" title="Specify fonts for your theme." data-i18n="[title]Specify fonts for your theme.">
-                                        <b><span data-i18n="Theme Fonts">Theme Fonts</span></b>
-                                        <div class="fa-solid fa-circle-chevron-down inline-drawer-icon down"></div>
-                                    </div>
-                                    <div class="inline-drawer-content">
-                                        <div class="flex-container flexFlowColumn flexNoGap">
-                                            <div class="flex-container">
-                                                <span data-i18n="Main Font:">Main Font:</span>
-                                                <input type="text" id="main-font-input" class="text_pole" data-i18n="[placeholder]Main Font (e.g. Arial)" placeholder="Main Font (e.g. Arial)">
-                                            </div>
-                                            <div class="flex-container">
-                                                <span data-i18n="Mono Font:">Mono Font:</span>
-                                                <input type="text" id="mono-font-input" class="text_pole" data-i18n="[placeholder]Mono Font (e.g. Consolas)" placeholder="Mono Font (e.g. Consolas)">
-                                            </div>
-                                        </div>
-                                    </div>
-                                </div>
-                                <label for="reduced_motion" class="checkbox_label" title="Disable animations and transitions" data-i18n="[title]Disables animations and transitions">
-                                    <input id="reduced_motion" type="checkbox" />
-                                    <small data-i18n="Reduced Motion">Reduced Motion</small>
-                                </label>
-                                <label for="fast_ui_mode" class="checkbox_label" title="Remove blur from window backgrounds, for faster rendering." data-i18n="[title]removes blur from window backgrounds">
-                                    <input id="fast_ui_mode" type="checkbox" />
-                                    <small data-i18n="No Blur Effect">No Blur Effect</small>
-                                </label>
-                                <label for="noShadowsmode" class="checkbox_label" title="Remove text shadow effect." data-i18n="[title]Remove text shadow effect">
-                                    <input id="noShadowsmode" type="checkbox" />
-                                    <small data-i18n="No Text Shadows">No Text Shadows</small>
-                                </label>
-                                <label for="waifuMode" class="checkbox_label" title="Reduce chat height, and put a static sprite behind the chat window." data-i18n="[title]Reduce chat height, and put a static sprite behind the chat window">
-                                    <input id="waifuMode" type="checkbox" />
-                                    <small data-i18n="Waifu Mode">Visual Novel Mode</small>
-                                </label>
-                            </div>
-                        </div>
-                        <div class="inline-drawer wide100p flexFlowColumn">
-                            <div class="inline-drawer-toggle inline-drawer-header standoutHeader" title="Layout controls, movable panels, and custom CSS." data-i18n="[title]Layout controls, movable panels, and custom CSS.">
-                                <b><span data-i18n="Layout">Layout</span></b>
-                                <div class="fa-solid fa-circle-chevron-down inline-drawer-icon down"></div>
-                            </div>
-                            <div class="inline-drawer-content">
-                                <div name="FontBlurChatWidthBlock" class="flex-container">
+                                        <div name="FontBlurChatWidthBlock" class="flex-container">
                                     <div class="alignitemscenter flex-container flexFlowColumn flexBasis48p flexGrow flexShrink gap0">
                                         <small>
                                             <span>
@@ -3044,6 +2927,129 @@
                                     </h4>
                                     <div id="CustomCSS-textAreaBlock" class="flex-container flexnowrap alignitemscenter">
                                         <textarea id="customCSS" class="text_pole margin0 margin-r5 textarea_compact monospace" rows="8"></textarea>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                            </div>
+                            <div class="look-and-feel-panel-column">
+                                <div class="inline-drawer wide100p flexFlowColumn">
+                                    <div class="inline-drawer-toggle inline-drawer-header standoutHeader" title="Theme presets, colors, fonts, and visual effects." data-i18n="[title]Theme presets, colors, fonts, and visual effects.">
+                                        <b><span data-i18n="Theme">Theme</span></b>
+                                        <div class="fa-solid fa-circle-chevron-down inline-drawer-icon down"></div>
+                                    </div>
+                                    <div class="inline-drawer-content">
+                                        <div id="UI-presets-block" class="flex-container flexFlowColumn">
+                                            <h4 class="title_restorable">
+                                                <span data-i18n="UI Theme">UI Theme</span>
+                                                <div class="flex-container">
+                                                    <div id="ui_preset_import_button" class="menu_button menu_button_icon margin0" title="Import a theme file" data-i18n="[title]Import a theme file">
+                                                        <i class="fa-solid fa-file-import"></i>
+                                                    </div>
+                                                    <div id="ui_preset_export_button" class="menu_button menu_button_icon margin0" title="Export a theme file" data-i18n="[title]Export a theme file">
+                                                        <i class="fa-solid fa-file-export"></i>
+                                                    </div>
+                                                    <div id="ui-preset-delete-button" class="menu_button menu_button_icon margin0" title="Delete a theme" data-i18n="[title]Delete a theme">
+                                                        <i class="fa-solid fa-trash-can"></i>
+                                                    </div>
+                                                </div>
+                                                <input type="file" id="ui_preset_import_file" accept=".json" hidden>
+                                            </h4>
+                                            <div class="flex-container flexnowrap alignitemscenter">
+                                                <select id="themes" class="margin0">
+                                                </select>
+                                                <div id="ui-preset-update-button" title="Update a theme file" data-i18n="[title]Update a theme file" class="menu_button margin0">
+                                                    <i class="fa-solid fa-save"></i>
+                                                </div>
+                                                <div id="ui-preset-save-button" title="Save as a new theme" data-i18n="[title]Save as a new theme" class="menu_button margin0">
+                                                    <i class="fa-solid fa-file-circle-plus"></i>
+                                                </div>
+                                            </div>
+                                        </div>
+                                        <div class="inline-drawer wide100p flexFlowColumn">
+                                            <div class="inline-drawer-toggle inline-drawer-header" title="Specify colors for your theme." data-i18n="[title]Specify colors for your theme.">
+                                                <b><span data-i18n="Theme Colors">Theme Colors</span></b>
+                                                <div class="fa-solid fa-circle-chevron-down inline-drawer-icon down"></div>
+                                            </div>
+                                            <div class="inline-drawer-content">
+                                                <div id="color-picker-block" class="flex-container flexFlowColumn flexNoGap">
+                                                    <div class="flex-container">
+                                                        <toolcool-color-picker id="main-text-color-picker"></toolcool-color-picker>
+                                                        <span data-i18n="Main Text">Main Text</span>
+                                                    </div>
+                                                    <div class="flex-container">
+                                                        <toolcool-color-picker id="italics-color-picker"></toolcool-color-picker>
+                                                        <span data-i18n="Italics Text">Italics Text</span>
+                                                    </div>
+                                                    <div class="flex-container">
+                                                        <toolcool-color-picker id="underline-color-picker"></toolcool-color-picker>
+                                                        <span data-i18n="Underlined Text">Underlined Text</span>
+                                                    </div>
+                                                    <div class="flex-container">
+                                                        <toolcool-color-picker id="quote-color-picker"></toolcool-color-picker>
+                                                        <span data-i18n="Quote Text">Quote Text</span>
+                                                    </div>
+                                                    <div class="flex-container">
+                                                        <toolcool-color-picker id="shadow-color-picker"></toolcool-color-picker>
+                                                        <span data-i18n="Shadow Color">Text Shadow</span>
+                                                    </div>
+                                                    <div class="flex-container">
+                                                        <toolcool-color-picker id="chat-tint-color-picker"></toolcool-color-picker>
+                                                        <span data-i18n="Chat Background">Chat Background</span>
+                                                    </div>
+                                                    <div class="flex-container">
+                                                        <toolcool-color-picker id="blur-tint-color-picker"></toolcool-color-picker>
+                                                        <span data-i18n="UI Background">UI Background</span>
+                                                    </div>
+                                                    <div class="flex-container">
+                                                        <toolcool-color-picker id="border-color-picker"></toolcool-color-picker>
+                                                        <span data-i18n="UI Border">UI Border</span>
+                                                    </div>
+                                                    <div class="flex-container">
+                                                        <toolcool-color-picker id="user-mes-blur-tint-color-picker"></toolcool-color-picker>
+                                                        <span data-i18n="User Message Blur Tint">User Message</span>
+                                                    </div>
+                                                    <div class="flex-container">
+                                                        <toolcool-color-picker id="bot-mes-blur-tint-color-picker"></toolcool-color-picker>
+                                                        <span data-i18n="AI Message Blur Tint">AI Message</span>
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        </div>
+                                        <div class="inline-drawer wide100p flexFlowColumn">
+                                            <div class="inline-drawer-toggle inline-drawer-header" title="Specify fonts for your theme." data-i18n="[title]Specify fonts for your theme.">
+                                                <b><span data-i18n="Theme Fonts">Theme Fonts</span></b>
+                                                <div class="fa-solid fa-circle-chevron-down inline-drawer-icon down"></div>
+                                            </div>
+                                            <div class="inline-drawer-content">
+                                                <div class="flex-container flexFlowColumn flexNoGap">
+                                                    <div class="flex-container">
+                                                        <span data-i18n="Main Font:">Main Font:</span>
+                                                        <input type="text" id="main-font-input" class="text_pole" data-i18n="[placeholder]Main Font (e.g. Arial)" placeholder="Main Font (e.g. Arial)">
+                                                    </div>
+                                                    <div class="flex-container">
+                                                        <span data-i18n="Mono Font:">Mono Font:</span>
+                                                        <input type="text" id="mono-font-input" class="text_pole" data-i18n="[placeholder]Mono Font (e.g. Consolas)" placeholder="Mono Font (e.g. Consolas)">
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        </div>
+                                        <label for="reduced_motion" class="checkbox_label" title="Disable animations and transitions" data-i18n="[title]Disables animations and transitions">
+                                            <input id="reduced_motion" type="checkbox" />
+                                            <small data-i18n="Reduced Motion">Reduced Motion</small>
+                                        </label>
+                                        <label for="fast_ui_mode" class="checkbox_label" title="Remove blur from window backgrounds, for faster rendering." data-i18n="[title]removes blur from window backgrounds">
+                                            <input id="fast_ui_mode" type="checkbox" />
+                                            <small data-i18n="No Blur Effect">No Blur Effect</small>
+                                        </label>
+                                        <label for="noShadowsmode" class="checkbox_label" title="Remove text shadow effect." data-i18n="[title]Remove text shadow effect">
+                                            <input id="noShadowsmode" type="checkbox" />
+                                            <small data-i18n="No Text Shadows">No Text Shadows</small>
+                                        </label>
+                                        <label for="waifuMode" class="checkbox_label" title="Reduce chat height, and put a static sprite behind the chat window." data-i18n="[title]Reduce chat height, and put a static sprite behind the chat window">
+                                            <input id="waifuMode" type="checkbox" />
+                                            <small data-i18n="Waifu Mode">Visual Novel Mode</small>
+                                        </label>
                                     </div>
                                 </div>
                             </div>
@@ -5338,14 +5344,15 @@
     <div id="sheld">
         <div id="sheldheader" class="fa-solid fa-grip drag-grabber"></div>
         <div id="top_chat_bar">
-            <div id="top_chat_bar_toggle_sidebar" class="top_chat_bar_button fa-fw fa-solid fa-box-archive" title="Toggle chat sidebar" tabindex="0"></div>
-            <div id="top_chat_bar_toggle_stmb_sidebar" class="top_chat_bar_button stmb-planner-status-button" title="Open Memory Books sidebar" tabindex="0">
-                <i class="fa-fw fa-solid fa-book stmb-planner-status-icon" aria-hidden="true"></i>
-            </div>
-            <div id="top_chat_bar_toggle_connection_profiles" class="top_chat_bar_button fa-fw fa-solid fa-plug" title="Show connection profiles" tabindex="0"></div>
+            <button id="top_chat_bar_toggle_sidebar" type="button" class="top_chat_bar_button" title="Toggle chat sidebar" aria-label="Toggle chat sidebar">
+                <i class="fa-fw fa-solid fa-box-archive" aria-hidden="true"></i>
+            </button>
+            <button id="top_chat_bar_toggle_connection_profiles" type="button" class="top_chat_bar_button" title="Show connection profiles" aria-label="Show connection profiles">
+                <i class="fa-fw fa-solid fa-plug" aria-hidden="true"></i>
+            </button>
             <div id="stmb-jobs-topbar" class="stmb-jobs-topbar">
                 <button id="stmb-jobs-topbar-button" type="button" class="menu_button menu_button_icon top_chat_bar_button stmb-jobs-topbar-button disabled" disabled title="No Memory Books jobs" aria-label="Memory Books Jobs. No Memory Books jobs">
-                    <i class="fa-solid fa-book-open stmb-jobs-topbar-icon" aria-hidden="true"></i>
+                    <i class="fa-solid fa-book stmb-jobs-topbar-icon" aria-hidden="true"></i>
                     <span class="sr-only">Memory Books Jobs</span>
                     <span id="stmb-jobs-topbar-badge" class="stmb-jobs-badge" style="display:none;"></span>
                 </button>
@@ -5353,11 +5360,21 @@
             <select id="top_chat_bar_chat_name" title="Current chat" disabled>
                 <option selected>No chat selected</option>
             </select>
-            <div id="top_chat_bar_chat_manager" class="top_chat_bar_button fa-fw fa-solid fa-address-book" title="Manage chat files" tabindex="0"></div>
-            <div id="top_chat_bar_new_chat" class="top_chat_bar_button fa-fw fa-solid fa-comments" title="Start new chat" tabindex="0"></div>
-            <div id="top_chat_bar_rename_chat" class="top_chat_bar_button fa-fw fa-solid fa-edit" title="Rename chat" tabindex="0"></div>
-            <div id="top_chat_bar_delete_chat" class="top_chat_bar_button fa-fw fa-solid fa-trash" title="Delete chat" tabindex="0"></div>
-            <div id="top_chat_bar_close_chat" class="top_chat_bar_button fa-fw fa-solid fa-times" title="Close chat" tabindex="0"></div>
+            <button id="top_chat_bar_chat_manager" type="button" class="top_chat_bar_button" title="Manage chat files" aria-label="Manage chat files">
+                <i class="fa-fw fa-solid fa-address-book" aria-hidden="true"></i>
+            </button>
+            <button id="top_chat_bar_new_chat" type="button" class="top_chat_bar_button" title="Start new chat" aria-label="Start new chat">
+                <i class="fa-fw fa-solid fa-comments" aria-hidden="true"></i>
+            </button>
+            <button id="top_chat_bar_rename_chat" type="button" class="top_chat_bar_button" title="Rename chat" aria-label="Rename chat">
+                <i class="fa-fw fa-solid fa-edit" aria-hidden="true"></i>
+            </button>
+            <button id="top_chat_bar_delete_chat" type="button" class="top_chat_bar_button" title="Delete chat" aria-label="Delete chat">
+                <i class="fa-fw fa-solid fa-trash" aria-hidden="true"></i>
+            </button>
+            <button id="top_chat_bar_close_chat" type="button" class="top_chat_bar_button" title="Close chat" aria-label="Close chat">
+                <i class="fa-fw fa-solid fa-times" aria-hidden="true"></i>
+            </button>
         </div>
         <div id="top_chat_connection_profiles">
             <div id="top_chat_connection_profiles_icon" class="fa-fw fa-solid fa-network-wired"></div>
@@ -5370,7 +5387,7 @@
         <div id="top_chat_stmb_jobs">
             <div class="stmb-jobs-panel-header">
                 <div class="stmb-jobs-drawer-title">
-                    <i class="fa-fw fa-solid fa-book-open" aria-hidden="true"></i>
+                    <i class="fa-fw fa-solid fa-book" aria-hidden="true"></i>
                     <strong>Memory Books Jobs</strong>
                 </div>
                 <div id="stmb-jobs-summary" class="stmb-jobs-summary">No active jobs</div>
