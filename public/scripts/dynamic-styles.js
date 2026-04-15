@@ -1,3 +1,5 @@
+import { INTERACTABLE_CONTROL_CLASS } from './keyboard.js';
+
 /** @type {CSSStyleSheet} */
 let dynamicStyleSheet = null;
 /** @type {CSSStyleSheet} */
@@ -34,12 +36,234 @@ const observer = new MutationObserver(mutations => {
  */
 function applyDynamicFocusStyles(styleSheet, { fromExtension = false } = {}) {
     /** @typedef {{ type: 'media'|'supports'|'container', conditionText: string }} WrapperCond */
-    /** @type {{baseSelector: string, rule: CSSStyleRule, wrappers: WrapperCond[]}[]} */
+    /** @type {{focusBaseSelector: string, focusSelector: string, styleText: string, wrappers: WrapperCond[]}[]} */
     const hoverRules = [];
     /** @type {Set<string>} */
     const focusRules = new Set();
 
     const PLACEHOLDER = ':__PLACEHOLDER__';
+    const NATIVE_FOCUSABLE_TAGS = new Set(['a', 'button', 'input', 'select', 'textarea', 'summary']);
+
+    /**
+     * Checks whether the given character is escaped by an odd number of preceding backslashes
+     *
+     * @param {string} value
+     * @param {number} index
+     * @returns {boolean}
+     */
+    function isEscaped(value, index) {
+        let backslashCount = 0;
+
+        for (let i = index - 1; i >= 0 && value[i] === '\\'; i--) {
+            backslashCount++;
+        }
+
+        return backslashCount % 2 === 1;
+    }
+
+    /**
+     * Finds all top-level :hover occurrences, ignoring nested selectors inside [] and ()
+     *
+     * @param {string} selector
+     * @returns {number[]}
+     */
+    function findTopLevelHoverIndices(selector) {
+        const indices = [];
+        let bracketDepth = 0;
+        let parenDepth = 0;
+
+        for (let i = 0; i < selector.length; i++) {
+            if (isEscaped(selector, i)) continue;
+
+            const char = selector[i];
+
+            if (char === '[') {
+                bracketDepth++;
+                continue;
+            }
+
+            if (char === ']') {
+                bracketDepth = Math.max(0, bracketDepth - 1);
+                continue;
+            }
+
+            if (char === '(') {
+                parenDepth++;
+                continue;
+            }
+
+            if (char === ')') {
+                parenDepth = Math.max(0, parenDepth - 1);
+                continue;
+            }
+
+            if (bracketDepth === 0 && parenDepth === 0 && selector.startsWith(':hover', i)) {
+                const nextChar = selector[i + 6];
+                if (!nextChar || !/[\w-]/.test(nextChar)) {
+                    indices.push(i);
+                }
+            }
+        }
+
+        return indices;
+    }
+
+    /**
+     * Finds the start of the top-level compound selector containing the given index
+     *
+     * @param {string} selector
+     * @param {number} index
+     * @returns {number}
+     */
+    function findCompoundStart(selector, index) {
+        let bracketDepth = 0;
+        let parenDepth = 0;
+
+        for (let i = index - 1; i >= 0; i--) {
+            if (isEscaped(selector, i)) continue;
+
+            const char = selector[i];
+
+            if (char === ']') {
+                bracketDepth++;
+                continue;
+            }
+
+            if (char === '[') {
+                bracketDepth = Math.max(0, bracketDepth - 1);
+                continue;
+            }
+
+            if (char === ')') {
+                parenDepth++;
+                continue;
+            }
+
+            if (char === '(') {
+                parenDepth = Math.max(0, parenDepth - 1);
+                continue;
+            }
+
+            if (bracketDepth === 0 && parenDepth === 0 && /[\s>+~]/.test(char)) {
+                return i + 1;
+            }
+        }
+
+        return 0;
+    }
+
+    /**
+     * Finds the end of the top-level compound selector containing the given index
+     *
+     * @param {string} selector
+     * @param {number} index
+     * @returns {number}
+     */
+    function findCompoundEnd(selector, index) {
+        let bracketDepth = 0;
+        let parenDepth = 0;
+
+        for (let i = index; i < selector.length; i++) {
+            if (isEscaped(selector, i)) continue;
+
+            const char = selector[i];
+
+            if (char === '[') {
+                bracketDepth++;
+                continue;
+            }
+
+            if (char === ']') {
+                bracketDepth = Math.max(0, bracketDepth - 1);
+                continue;
+            }
+
+            if (char === '(') {
+                parenDepth++;
+                continue;
+            }
+
+            if (char === ')') {
+                parenDepth = Math.max(0, parenDepth - 1);
+                continue;
+            }
+
+            if (bracketDepth === 0 && parenDepth === 0 && /[\s>+~]/.test(char)) {
+                return i;
+            }
+        }
+
+        return selector.length;
+    }
+
+    /**
+     * Checks whether the hovered subject is already a native or explicitly focusable control
+     *
+     * @param {string} compoundBeforeHover
+     * @returns {boolean}
+     */
+    function isObviouslyFocusable(compoundBeforeHover) {
+        const trimmed = compoundBeforeHover.trim();
+        const typeMatch = trimmed.match(/^([a-zA-Z][\w-]*)(?=[#.\[:]|$)/);
+
+        if (typeMatch && NATIVE_FOCUSABLE_TAGS.has(typeMatch[1].toLowerCase())) {
+            return true;
+        }
+
+        return trimmed.includes(`.${INTERACTABLE_CONTROL_CLASS}`)
+            || trimmed.includes('[tabindex')
+            || trimmed.includes('[contenteditable')
+            || trimmed.includes('[href')
+            || trimmed.includes(':any-link')
+            || trimmed.includes(':link')
+            || trimmed.includes(':visited');
+    }
+
+    /**
+     * Checks whether the browser accepts the given selector
+     *
+     * @param {string} selector
+     * @returns {boolean}
+     */
+    function isSupportedSelector(selector) {
+        try {
+            return typeof CSS?.supports !== 'function' || CSS.supports(`selector(${selector})`);
+        } catch {
+            return false;
+        }
+    }
+
+    /**
+     * Converts a hover selector into the focus selector that should be auto-generated.
+     * Only rightmost hovered subjects are transformed. Parent-hover patterns should define explicit focus CSS.
+     *
+     * @param {string} selector
+     * @returns {{ focusBaseSelector: string, focusSelector: string } | null}
+     */
+    function buildDynamicFocusSelector(selector) {
+        const hoverIndices = findTopLevelHoverIndices(selector);
+        if (hoverIndices.length !== 1) return null;
+
+        const hoverIndex = hoverIndices[0];
+        const compoundStart = findCompoundStart(selector, hoverIndex);
+        const compoundEnd = findCompoundEnd(selector, hoverIndex + 6);
+
+        // Skip parent-hover patterns like `.container:hover .child`.
+        if (compoundEnd !== selector.length) return null;
+
+        const compoundBeforeHover = selector.slice(compoundStart, hoverIndex);
+        if (compoundBeforeHover.includes('::')) return null;
+
+        const focusInsertion = isObviouslyFocusable(compoundBeforeHover)
+            ? ':focus-visible'
+            : `.${INTERACTABLE_CONTROL_CLASS}:focus-visible`;
+
+        const focusSelector = `${selector.slice(0, hoverIndex)}${focusInsertion}${selector.slice(hoverIndex + 6)}`;
+        if (!isSupportedSelector(focusSelector)) return null;
+
+        const focusBaseSelector = focusSelector.replace(/:focus(-within|-visible)?/g, PLACEHOLDER).trim();
+        return { focusBaseSelector, focusSelector };
+    }
 
     /**
      * Builds a stable signature string for a chain of wrapper conditions so we can distinguish
@@ -75,8 +299,16 @@ function applyDynamicFocusStyles(styleSheet, { fromExtension = false } = {}) {
                         // We currently do nothing here. Rules containing both hover and focus are very specific and should never be automatically touched
                     }
                     else if (isHover) {
-                        const baseSelector = selector.replace(/:hover/g, PLACEHOLDER).trim();
-                        hoverRules.push({ baseSelector, rule, wrappers: [...wrappers] });
+                        const dynamicFocusSelector = buildDynamicFocusSelector(selector);
+
+                        if (dynamicFocusSelector) {
+                            hoverRules.push({
+                                focusBaseSelector: dynamicFocusSelector.focusBaseSelector,
+                                focusSelector: dynamicFocusSelector.focusSelector,
+                                styleText: rule.style.cssText,
+                                wrappers: [...wrappers],
+                            });
+                        }
                     } else if (isFocus) {
                         // We need to make sure that we remember all existing :focus, :focus-within and :focus-visible rules
                         const baseSelector = selector.replace(/:focus(-within|-visible)?/g, PLACEHOLDER).trim();
@@ -115,19 +347,19 @@ function applyDynamicFocusStyles(styleSheet, { fromExtension = false } = {}) {
     let targetStyleSheet = null;
 
     // Now finally create the dynamic focus rules
-    hoverRules.forEach(({ baseSelector, rule, wrappers }) => {
-        if (!focusRules.has(`${baseSelector}|${wrapperSignature(wrappers)}`)) {
+    hoverRules.forEach(({ focusBaseSelector, focusSelector, styleText, wrappers }) => {
+        if (!focusRules.has(`${focusBaseSelector}|${wrapperSignature(wrappers)}`)) {
             // Only initialize the dynamic stylesheet if needed
             targetStyleSheet ??= getDynamicStyleSheet({ fromExtension });
 
             // The closest keyboard-equivalent to :hover styling is utilizing the :focus-visible rule from modern browsers.
-            // It let's the browser decide whether a focus highlighting is expected and makes sense.
+            // It lets the browser decide whether a focus highlighting is expected and makes sense.
             // So we take all :hover rules that don't have a manually defined focus rule yet, and create their
             // :focus-visible counterpart, which will make the styling work the same for keyboard and mouse.
+            // Parent-hover patterns such as `.parent:hover .child` must define explicit focus CSS instead of relying on this heuristic.
             // If something like :focus-within or a more specific selector like `.blah:has(:focus-visible)` for elements inside,
             // it should be manually defined in CSS.
-            const focusSelector = rule.selectorText.replace(/:hover/g, ':focus-visible');
-            let focusRule = `${focusSelector} { ${rule.style.cssText} }`;
+            let focusRule = `${focusSelector} { ${styleText} }`;
 
             // Wrap the generated rule into the same @media/@supports/@container chain (if any)
             if (wrappers.length > 0) {

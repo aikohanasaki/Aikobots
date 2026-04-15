@@ -286,6 +286,17 @@ table.responsiveTable {
     overflow: hidden;
 }
 
+.has_hover_label.interactable:focus-visible .label {
+    opacity: 1;
+    max-width: 100px;
+}
+
+.has_hover_label.interactable:focus-visible .label_icon {
+    opacity: 0;
+    max-width: 0;
+    overflow: hidden;
+}
+
 /* Keyboard/focus navigation styling */
 /* Mimic the outline of keyboard navigation for most most focusable controls */
 .interactable {
@@ -5736,8 +5747,10 @@ a:hover {
 .mes_img_container:hover .mes_img_controls,
 .mes_img_container:focus-within .mes_img_controls,
 .mes_video_container:hover .mes_video_controls,
+.mes_video_container:focus-within .mes_video_controls,
 .mes_video_container:has(.mes_video.error) .mes_img_swipes,
-.mes_video_container:hover .mes_img_swipes {
+.mes_video_container:hover .mes_img_swipes,
+.mes_video_container:focus-within .mes_img_swipes {
     opacity: 1;
 }
 
