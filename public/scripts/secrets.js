@@ -528,7 +528,6 @@ function updateInputDataLists() {
     for (const [key, inputSelector] of Object.entries(INPUT_MAP)) {
         const inputElements = document.querySelectorAll(inputSelector);
         if (inputElements.length === 0) {
-            console.warn(`No input elements found for key: ${key}`);
             continue;
         }
 
