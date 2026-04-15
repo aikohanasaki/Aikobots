@@ -38,6 +38,7 @@ import {
     setCharacterId,
     setCharacterName,
     setEditedMessageId,
+    this_chid,
     is_send_press,
     name1,
     name2,
@@ -1065,9 +1066,7 @@ async function generateGroupWrapper(by_auto_mode, type = null, params = {}) {
             deactivateSendButtons();
             setCharacterId(chId);
             setCharacterName(characters[chId].name);
-            if (power_user.show_group_chat_queue) {
-                printGroupMembers();
-            }
+            printGroupMembers();
             await eventSource.emit(event_types.GROUP_MEMBER_DRAFTED, chId);
 
             // Wait for generation to finish
@@ -1090,10 +1089,8 @@ async function generateGroupWrapper(by_auto_mode, type = null, params = {}) {
         is_group_generating = false;
         setSendButtonState(false);
         setCharacterId(undefined);
-        if (power_user.show_group_chat_queue) {
-            groupChatQueueOrder = new Map();
-            printGroupMembers();
-        }
+        groupChatQueueOrder = new Map();
+        printGroupMembers();
         setCharacterName('');
         activateSendButtons();
         showSwipeButtons();
@@ -1597,10 +1594,11 @@ function getGroupCharacterBlock(character) {
     const avatar = getThumbnailUrl('avatar', character.avatar);
     const template = $('#group_member_template .group_member').clone();
     const isFav = character.fav || character.fav == 'true';
+    const characterIndex = characters.indexOf(character);
     template.data('id', character.avatar);
     template.find('.avatar img').attr({ 'src': avatar, 'title': character.avatar });
     template.find('.ch_name').text(character.name);
-    template.attr('data-chid', characters.indexOf(character));
+    template.attr('data-chid', characterIndex);
     template.find('.ch_fav').val(isFav);
     template.toggleClass('is_fav', isFav);
 
@@ -1614,17 +1612,18 @@ function getGroupCharacterBlock(character) {
     }
 
     let queuePosition = groupChatQueueOrder.get(character.avatar);
+    const isCurrentDraft = is_group_generating && String(characterIndex) === String(this_chid);
     if (queuePosition) {
         template.find('.queue_position').text(queuePosition);
         template.toggleClass('is_queued', queuePosition > 1);
-        template.toggleClass('is_active', queuePosition === 1);
     }
+    template.toggleClass('is_active', isCurrentDraft || queuePosition === 1);
 
     template.toggleClass('disabled', isGroupMemberDisabled(character.avatar));
 
     // Display inline tags
     const tagsElement = template.find('.tags');
-    printTagList(tagsElement, { forEntityOrKey: characters.indexOf(character), tagOptions: { isCharacterList: true } });
+    printTagList(tagsElement, { forEntityOrKey: characterIndex, tagOptions: { isCharacterList: true } });
 
     if (!openGroupId) {
         template.find('[data-action="speak"]').hide();
@@ -1896,7 +1895,7 @@ async function onGroupActionClick(event) {
     if (action === 'speak') {
         const chid = Number(member.attr('data-chid'));
         if (Number.isInteger(chid)) {
-            Generate('normal', { force_chid: chid });
+            await Generate('normal', { force_chid: chid });
         }
     }
 
