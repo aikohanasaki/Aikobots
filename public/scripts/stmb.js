@@ -9,6 +9,7 @@ import {
     getFirstDisplayedMessageId,
     name1,
     name2,
+    reloadCurrentChat,
     renderMessageWindow,
     scrollChatToBottom,
     saveSettingsDebounced,
@@ -133,12 +134,14 @@ import { ensureResolvedLorebookName, isStmbLorebookHandledError } from './stmb-l
 import { createStmbTask, getActiveStmbTaskCount, hasActiveStmbTasks, isStmbAbortError, stopAllStmbTasks, throwIfStmbAborted } from './stmb-tasks.js';
 import { getTokenCountAsync } from './tokenizers.js';
 import {
+    awaitStmbJobApproval,
     cancelAllStmbJobs,
     enqueueStmbJob,
     getStmbJobStoreSnapshot,
     hasActiveStmbJobs,
     initStmbJobsUi,
     registerStmbJobExecutor,
+    respondToStmbJobApproval,
 } from './stmb-jobs.js';
 
 const $ = window.jQuery;
@@ -153,6 +156,7 @@ let stmbUiBound = false;
 let sidePromptNameCache = [];
 let activeSettingsPopupDialog = null;
 const pendingPassiveChecksByChat = new Map();
+const deferredPostSaveEffectsByChat = new Map();
 let plannerStatusPollHandle = null;
 let plannerStatusPollInFlight = false;
 const handledPlannerTerminalJobUpdates = new Map();
@@ -196,7 +200,28 @@ function getClientPlannerJobStatus(job = {}) {
 }
 
 function getClientPlannerJobKind(job = {}) {
-    switch (String(job?.type || '')) {
+    const type = String(job?.type || '');
+    const approvalKind = String(job?.approvalRequest?.kind || '');
+    const state = String(job?.state || '');
+
+    if (approvalKind === 'memoryApproval' || approvalKind === 'sidePromptApproval') {
+        return approvalKind;
+    }
+
+    if (state === 'awaiting_approval') {
+        if (type === 'sidePrompt' || type === 'sidePromptBatch') {
+            return 'sidePromptApproval';
+        }
+        if (type === 'memory') {
+            return 'memoryApproval';
+        }
+    }
+
+    switch (type) {
+        case 'memoryApproval':
+            return 'memoryApproval';
+        case 'sidePromptApproval':
+            return 'sidePromptApproval';
         case 'sidePrompt':
         case 'sidePromptBatch':
             return 'sidePrompt';
@@ -209,7 +234,7 @@ function getClientPlannerJobKind(job = {}) {
 }
 
 function mapClientJobToPlannerJob(job = {}) {
-    const updatedAt = Number(job?.finishedAt || job?.startedAt || job?.createdAt || Date.now());
+    const updatedAt = Number(job?.updatedAt || job?.finishedAt || job?.startedAt || job?.createdAt || Date.now());
     return {
         id: String(job?.id || ''),
         status: getClientPlannerJobStatus(job),
@@ -221,6 +246,7 @@ function mapClientJobToPlannerJob(job = {}) {
         error: job?.error ? structuredClone(job.error) : null,
         result: job?.result ? structuredClone(job.result) : null,
         payload: job?.payload ? structuredClone(job.payload) : {},
+        approvalRequest: job?.approvalRequest ? structuredClone(job.approvalRequest) : null,
         sceneContext: job?.sceneContext ? structuredClone(job.sceneContext) : null,
     };
 }
@@ -251,8 +277,8 @@ async function getStmbPlannerChatState({ sceneContext } = {}) {
     };
 }
 
-async function respondStmbPlannerApproval() {
-    return { ok: false, unsupported: true };
+async function respondStmbPlannerApproval(input = {}) {
+    return respondToStmbJobApproval(input);
 }
 
 async function acknowledgeStmbPlannerJobs() {
@@ -300,6 +326,14 @@ function getCurrentPlannerChatKey() {
     } catch {
         return '';
     }
+}
+
+function isSceneContextCurrent(sceneContext = null) {
+    const targetChatKey = sceneContext
+        ? String(getStmbChatKey(sceneContext) || '').trim()
+        : getCurrentPlannerChatKey();
+    const currentChatKey = getCurrentPlannerChatKey();
+    return Boolean(targetChatKey) && targetChatKey === currentChatKey;
 }
 
 function getPlannerJobChatKey(job = {}) {
@@ -1021,6 +1055,107 @@ function buildPlannerApprovalProfile(profile = {}) {
     return { name: 'Queued STMB Job' };
 }
 
+function queueDeferredPostSaveEffects(sceneContext = null, effects = {}) {
+    const chatKey = String(getStmbChatKey(sceneContext || buildStmbSceneContext()) || '').trim();
+    if (!chatKey) {
+        return;
+    }
+
+    const pending = deferredPostSaveEffectsByChat.get(chatKey) || {
+        highestProcessedMessageId: null,
+        clearSceneMarkers: false,
+        hideRanges: [],
+        autoConsolidationChecks: [],
+    };
+
+    if (Number.isInteger(Number(effects.highestProcessedMessageId))) {
+        const nextHighest = Math.trunc(Number(effects.highestProcessedMessageId));
+        pending.highestProcessedMessageId = pending.highestProcessedMessageId === null
+            ? nextHighest
+            : Math.max(Number(pending.highestProcessedMessageId) || 0, nextHighest);
+    }
+
+    if (effects.clearSceneMarkers === true) {
+        pending.clearSceneMarkers = true;
+    }
+
+    if (Array.isArray(effects.hideRanges)) {
+        for (const hideRange of effects.hideRanges) {
+            const start = Math.trunc(Number(hideRange?.start));
+            const end = Math.trunc(Number(hideRange?.end));
+            if (!Number.isInteger(start) || !Number.isInteger(end) || end < start) {
+                continue;
+            }
+
+            if (!pending.hideRanges.some(existing => existing.start === start && existing.end === end)) {
+                pending.hideRanges.push({ start, end });
+            }
+        }
+    }
+
+    if (Array.isArray(effects.autoConsolidationChecks)) {
+        for (const check of effects.autoConsolidationChecks) {
+            const targetTier = Math.min(6, Math.max(1, Math.trunc(Number(check?.targetTier) || 1)));
+            const lorebookName = String(check?.lorebookName || '').trim();
+            const dedupeKey = `${targetTier}:${lorebookName}`;
+            if (!pending.autoConsolidationChecks.some(existing => `${existing.targetTier}:${existing.lorebookName}` === dedupeKey)) {
+                pending.autoConsolidationChecks.push({ targetTier, lorebookName });
+            }
+        }
+    }
+
+    deferredPostSaveEffectsByChat.set(chatKey, pending);
+}
+
+async function flushDeferredPostSaveEffects(sceneContext = buildStmbSceneContext()) {
+    const chatKey = String(getStmbChatKey(sceneContext || buildStmbSceneContext()) || '').trim();
+    if (!chatKey || !isSceneContextCurrent(sceneContext)) {
+        return;
+    }
+
+    const pending = deferredPostSaveEffectsByChat.get(chatKey);
+    if (!pending) {
+        return;
+    }
+
+    try {
+        for (const hideRange of pending.hideRanges) {
+            await hideChatMessageRange(hideRange.start, hideRange.end, false, null, false);
+        }
+
+        if (Number.isInteger(Number(pending.highestProcessedMessageId))) {
+            setHighestProcessedMessageId(Math.trunc(Number(pending.highestProcessedMessageId)));
+        }
+
+        if (pending.clearSceneMarkers) {
+            clearSceneMarkers();
+        }
+
+        for (const check of pending.autoConsolidationChecks) {
+            await maybePromptAutoConsolidation(check.targetTier, {
+                sceneContext,
+                lorebookName: check.lorebookName,
+            });
+        }
+
+        deferredPostSaveEffectsByChat.delete(chatKey);
+    } catch (error) {
+        deferredPostSaveEffectsByChat.set(chatKey, pending);
+        console.warn('STMB deferred post-save effects failed', error);
+    }
+}
+
+function buildMemoryApprovalRequest(memoryObject, compiledScene, range, profile) {
+    return {
+        kind: 'memoryApproval',
+        memory: structuredClone(memoryObject || {}),
+        sceneData: buildMemorySceneData(compiledScene, range),
+        profile: buildPlannerApprovalProfile(profile),
+        allowRetry: true,
+        lockTitle: false,
+    };
+}
+
 async function handlePlannerApprovalRequests(jobs = []) {
     const now = Date.now();
     pruneHandledPlannerTerminalJobs(now);
@@ -1077,6 +1212,10 @@ async function handlePlannerApprovalRequests(jobs = []) {
             }
 
             if (previewResult?.action === 'cancel') {
+                await respondStmbPlannerApproval({
+                    jobId,
+                    decision: 'reject',
+                });
                 continue;
             }
 
@@ -5698,7 +5837,35 @@ function shouldQueueAutoConsolidationCheck(settings, targetTier = 1) {
     return configuredTargetTiers.includes(Math.min(6, Math.max(1, Math.trunc(Number(targetTier) || 1))));
 }
 
-async function applyPostSaveLorebookEffects(lorebookName, range) {
+function buildPostSaveHideRanges(range) {
+    const autoHideMode = String(getModuleSettings().autoHideMode || 'none').toLowerCase();
+    if (autoHideMode === 'none') {
+        return [];
+    }
+
+    const unhiddenCount = Number.isFinite(Number(getModuleSettings().unhiddenEntriesCount))
+        ? Math.max(0, Math.trunc(Number(getModuleSettings().unhiddenEntriesCount)))
+        : 2;
+
+    if (autoHideMode === 'all') {
+        const hideEnd = unhiddenCount === 0 ? range.sceneEnd : range.sceneEnd - unhiddenCount;
+        return hideEnd >= 0 ? [{ start: 0, end: hideEnd }] : [];
+    }
+
+    if (autoHideMode === 'last') {
+        const sceneSize = range.sceneEnd - range.sceneStart + 1;
+        if (unhiddenCount >= sceneSize) {
+            return [];
+        }
+
+        const hideEnd = unhiddenCount === 0 ? range.sceneEnd : range.sceneEnd - unhiddenCount;
+        return hideEnd >= range.sceneStart ? [{ start: range.sceneStart, end: hideEnd }] : [];
+    }
+
+    return [];
+}
+
+async function applyPostSaveLorebookEffects(lorebookName, range, sceneContext = null) {
     if (getModuleSettings().refreshEditor !== false) {
         try {
             await Promise.resolve(reloadEditor(lorebookName));
@@ -5707,34 +5874,19 @@ async function applyPostSaveLorebookEffects(lorebookName, range) {
         }
     }
 
-    const autoHideMode = String(getModuleSettings().autoHideMode || 'none').toLowerCase();
-    if (autoHideMode === 'none') {
+    const hideRanges = buildPostSaveHideRanges(range);
+    if (hideRanges.length === 0) {
         return;
     }
 
-    const unhiddenCount = Number.isFinite(Number(getModuleSettings().unhiddenEntriesCount))
-        ? Math.max(0, Math.trunc(Number(getModuleSettings().unhiddenEntriesCount)))
-        : 2;
+    if (!isSceneContextCurrent(sceneContext)) {
+        queueDeferredPostSaveEffects(sceneContext, { hideRanges });
+        return;
+    }
 
     try {
-        if (autoHideMode === 'all') {
-            const hideEnd = unhiddenCount === 0 ? range.sceneEnd : range.sceneEnd - unhiddenCount;
-            if (hideEnd >= 0) {
-                await hideChatMessageRange(0, hideEnd, false, null, false);
-            }
-            return;
-        }
-
-        if (autoHideMode === 'last') {
-            const sceneSize = range.sceneEnd - range.sceneStart + 1;
-            if (unhiddenCount >= sceneSize) {
-                return;
-            }
-
-            const hideEnd = unhiddenCount === 0 ? range.sceneEnd : range.sceneEnd - unhiddenCount;
-            if (hideEnd >= range.sceneStart) {
-                await hideChatMessageRange(range.sceneStart, hideEnd, false, null, false);
-            }
+        for (const hideRange of hideRanges) {
+            await hideChatMessageRange(hideRange.start, hideRange.end, false, null, false);
         }
     } catch (error) {
         console.warn('STMB auto-hide failed', error);
@@ -5820,7 +5972,7 @@ async function maybePreviewMemory(memoryObject, compiledScene, range, profile) {
     return memoryObject;
 }
 
-async function saveMemoryObjectToLorebook(memoryObject, { lorebookName, range, compiledScene, profile, keepSceneMarkers = false, signal = null, showSuccessToast = true }) {
+async function saveMemoryObjectToLorebook(memoryObject, { lorebookName, range, compiledScene, profile, keepSceneMarkers = false, sceneContext = null, signal = null, showSuccessToast = true }) {
     throwIfStmbAborted(signal);
     const result = await saveStmbMemoryEntry({
         lorebookName,
@@ -5831,12 +5983,20 @@ async function saveMemoryObjectToLorebook(memoryObject, { lorebookName, range, c
     }, { signal });
     throwIfStmbAborted(signal);
     worldInfoCache.delete(lorebookName);
-    await applyPostSaveLorebookEffects(lorebookName, range);
+    await applyPostSaveLorebookEffects(lorebookName, range, sceneContext);
     throwIfStmbAborted(signal);
     showOrderClampNotifications(result?.orderClampNotifications);
-    setHighestProcessedMessageId(range.sceneEnd);
-    if (!keepSceneMarkers || getModuleSettings().autoClearSceneAfterMemory) {
-        clearSceneMarkers();
+    const shouldClearSceneMarkers = !keepSceneMarkers || getModuleSettings().autoClearSceneAfterMemory;
+    if (isSceneContextCurrent(sceneContext)) {
+        setHighestProcessedMessageId(range.sceneEnd);
+        if (shouldClearSceneMarkers) {
+            clearSceneMarkers();
+        }
+    } else {
+        queueDeferredPostSaveEffects(sceneContext, {
+            highestProcessedMessageId: range.sceneEnd,
+            clearSceneMarkers: shouldClearSceneMarkers,
+        });
     }
 
     if (showSuccessToast && getModuleSettings().showNotifications) {
@@ -5996,22 +6156,29 @@ async function showSummaryConsolidationPopup({ initialTargetTier = 1 } = {}) {
     });
 }
 
-async function maybePromptAutoConsolidation(targetTier) {
+async function maybePromptAutoConsolidation(targetTier, options = {}) {
     try {
-        if (!getModuleSettings().autoConsolidationPromptEnabled) {
-            return;
-        }
-
+        const sceneContext = options?.sceneContext || null;
         const normalizedTargetTier = Math.min(6, Math.max(1, Math.trunc(Number(targetTier) || 1)));
         const configuredTargetTiers = normalizeAutoConsolidationTargetTiers(
             getModuleSettings().autoConsolidationTargetTiers,
         );
-        if (!configuredTargetTiers.includes(normalizedTargetTier)) {
+        if (!getModuleSettings().autoConsolidationPromptEnabled || !configuredTargetTiers.includes(normalizedTargetTier)) {
             return;
         }
 
-        const lorebookName = resolveLorebookName();
+        const lorebookName = String(options?.lorebookName || resolveLorebookName() || '').trim();
         if (!lorebookName) {
+            return;
+        }
+
+        if (sceneContext && !isSceneContextCurrent(sceneContext)) {
+            queueDeferredPostSaveEffects(sceneContext, {
+                autoConsolidationChecks: [{
+                    targetTier: normalizedTargetTier,
+                    lorebookName,
+                }],
+            });
             return;
         }
 
@@ -6030,7 +6197,7 @@ async function maybePromptAutoConsolidation(targetTier) {
             return;
         }
 
-        const state = getStmbState();
+        const state = getStmbState(sceneContext);
         const promptKey = `${normalizedTargetTier}:${eligibleCount}`;
         if (state.autoConsolidationLastPromptKey === promptKey) {
             return;
@@ -6081,6 +6248,7 @@ async function applyManualFixedMemoryJson(correctedRaw, context) {
                 compiledScene: context.compiledScene,
                 profile: context.profile,
                 keepSceneMarkers: context.keepSceneMarkers,
+                sceneContext: context.sceneContext || null,
                 signal: task.signal,
             });
 
@@ -6088,6 +6256,7 @@ async function applyManualFixedMemoryJson(correctedRaw, context) {
                 await enqueueAfterMemorySidePromptJobs(context.compiledScene, stmbSettings, context.profile, {
                     lorebookName: context.lorebookName,
                     range: context.range,
+                    sceneContext: context.sceneContext || null,
                     signal: task.signal,
                 });
             } catch (error) {
@@ -6096,7 +6265,10 @@ async function applyManualFixedMemoryJson(correctedRaw, context) {
                 }
             }
 
-            await maybePromptAutoConsolidation(1);
+            await maybePromptAutoConsolidation(1, {
+                sceneContext: context.sceneContext || null,
+                lorebookName: context.lorebookName,
+            });
 
             return saved;
         }
@@ -6205,16 +6377,30 @@ async function executeMemoryJob(job, context) {
         );
 
         if (requestSettings.moduleSettings?.showMemoryPreviews) {
-            context.setState('awaiting_approval', { detail: `Messages ${range.sceneStart}-${range.sceneEnd}` });
-            const maybeEdited = await maybePreviewMemory(memoryCandidate, compiledScene, range, profile);
-            if (maybeEdited === null) {
+            const approvalResult = await awaitStmbJobApproval(
+                context,
+                buildMemoryApprovalRequest(memoryCandidate, compiledScene, range, profile),
+                { detail: `Messages ${range.sceneStart}-${range.sceneEnd}` },
+            );
+
+            if (!approvalResult || approvalResult.decision === 'cancel' || approvalResult.decision === 'reject') {
                 context.patch({ state: 'canceled', detail: 'Canceled in approval' });
                 return;
             }
-            if (maybeEdited === 'retry') {
+            if (approvalResult.decision === 'retry') {
                 continue;
             }
-            memoryCandidate = maybeEdited;
+            if (approvalResult.editedData && typeof approvalResult.editedData === 'object') {
+                memoryCandidate = {
+                    title: String(approvalResult.editedData.title || memoryCandidate?.title || '').trim(),
+                    content: String(approvalResult.editedData.content || memoryCandidate?.content || '').trim(),
+                    keywords: Array.isArray(approvalResult.editedData.keywords)
+                        ? approvalResult.editedData.keywords.slice()
+                        : Array.isArray(memoryCandidate?.keywords)
+                            ? memoryCandidate.keywords.slice()
+                            : [],
+                };
+            }
         }
 
         context.setState('saving', { detail: lorebookName });
@@ -6224,6 +6410,7 @@ async function executeMemoryJob(job, context) {
             compiledScene,
             profile,
             keepSceneMarkers: Boolean(payload.keepSceneMarkers),
+            sceneContext: job?.sceneContext || null,
             signal: context.signal,
             showSuccessToast: false,
         });
@@ -6241,7 +6428,10 @@ async function executeMemoryJob(job, context) {
             sceneContext: job?.sceneContext || buildStmbSceneContext(),
             signal: context.signal,
         });
-        await maybePromptAutoConsolidation(1);
+        await maybePromptAutoConsolidation(1, {
+            sceneContext: job?.sceneContext || null,
+            lorebookName,
+        });
         return;
     }
 }
@@ -7078,6 +7268,9 @@ export function initStmb() {
 
     eventSource.on(event_types.CHAT_CHANGED, () => {
         void pollCurrentChatPlannerState();
+        flushDeferredPostSaveEffects().catch(error => {
+            console.warn('STMB deferred post-save flush failed', error);
+        });
         setTimeout(() => {
             validateSceneMarkers();
             renderAllSceneButtons();

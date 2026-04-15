@@ -21,6 +21,7 @@ const ACTIVE_JOB_STATES = new Set([
 const TERMINAL_JOB_STATES = new Set(['completed', 'failed', 'canceled']);
 const RECENT_HISTORY_LIMIT = 20;
 const RENDER_INTERVAL_MS = 1000;
+const pendingApprovals = new Map();
 
 let jobIdCounter = 0;
 let topBarButton = null;
@@ -70,6 +71,7 @@ function cloneJobForView(job = {}) {
         createdAt: Number(job.createdAt || 0),
         startedAt: Number(job.startedAt || 0),
         finishedAt: Number(job.finishedAt || 0),
+        updatedAt: Number(job.updatedAt || job.finishedAt || job.startedAt || job.createdAt || 0),
         error: job.error ? { ...job.error } : null,
         result: job.result ? structuredClone(job.result) : null,
         detail: String(job.detail || ''),
@@ -77,8 +79,15 @@ function cloneJobForView(job = {}) {
         chatTitle: String(job.chatTitle || ''),
         characterName: String(job.characterName || ''),
         payload: job.payload ? structuredClone(job.payload) : {},
+        approvalRequest: job.approvalRequest ? structuredClone(job.approvalRequest) : null,
         sceneContext: job.sceneContext ? structuredClone(job.sceneContext) : null,
     };
+}
+
+function markJobUpdated(job, timestamp = Date.now()) {
+    if (job && typeof job === 'object') {
+        job.updatedAt = Number(timestamp) || Date.now();
+    }
 }
 
 function notifyJobListeners() {
@@ -265,6 +274,7 @@ async function runNextJob(chatKey) {
     nextJob.startedAt = Date.now();
     nextJob.state = ACTIVE_JOB_STATES.has(nextJob.state) ? nextJob.state : 'queued';
     nextJob.abortController = new AbortController();
+    markJobUpdated(nextJob, nextJob.startedAt);
     store.runningJob = nextJob;
     touchStore(store);
 
@@ -290,7 +300,23 @@ async function runNextJob(chatKey) {
             globalThis.toastr?.error?.(`${getJobTypeLabel(nextJob.type)} job failed: ${nextJob.error.message}`, 'STMB');
         }
     } finally {
+        const pendingApproval = pendingApprovals.get(String(nextJob.id || ''));
+        if (pendingApproval) {
+            pendingApprovals.delete(String(nextJob.id || ''));
+            pendingApproval.cleanup?.();
+            try {
+                pendingApproval.resolve({
+                    decision: 'cancel',
+                    aborted: true,
+                });
+            } catch (error) {
+                console.warn('STMB approval cleanup failed', error);
+            }
+        }
+
         nextJob.finishedAt = Date.now();
+        delete nextJob.approvalRequest;
+        markJobUpdated(nextJob, nextJob.finishedAt);
         delete nextJob.abortController;
         if (store.runningJob && String(store.runningJob.id) === String(nextJob.id)) {
             store.runningJob = null;
@@ -311,24 +337,30 @@ async function runNextJob(chatKey) {
 
 function createJobContext(store, job) {
     return {
+        store,
+        job,
         signal: job.abortController.signal,
         setState(state, options = {}) {
             job.state = String(state || job.state || 'queued');
             if (typeof options.detail === 'string') {
                 job.detail = options.detail;
             }
+            markJobUpdated(job);
             touchStore(store);
         },
         setDetail(detail) {
             job.detail = String(detail || '');
+            markJobUpdated(job);
             touchStore(store);
         },
         setResult(result) {
             job.result = structuredClone(result);
+            markJobUpdated(job);
             touchStore(store);
         },
         patch(patch = {}) {
             Object.assign(job, patch);
+            markJobUpdated(job);
             touchStore(store);
         },
         enqueue(nextJob) {
@@ -355,6 +387,7 @@ function normalizeJobInput(input = {}) {
         createdAt: Date.now(),
         startedAt: null,
         finishedAt: null,
+        updatedAt: Date.now(),
         error: null,
         result: null,
         detail: String(input.detail || ''),
@@ -362,7 +395,144 @@ function normalizeJobInput(input = {}) {
         chatTitle: String(input.chatTitle || ''),
         characterName: String(input.characterName || sceneContext?.characterName || ''),
         payload: input.payload ? structuredClone(input.payload) : {},
+        approvalRequest: input.approvalRequest ? structuredClone(input.approvalRequest) : null,
         sceneContext,
+    };
+}
+
+function findMutableJobRecordById(jobId) {
+    const targetId = String(jobId || '').trim();
+    if (!targetId) {
+        return null;
+    }
+
+    for (const [chatKey, store] of jobStores.entries()) {
+        if (String(store?.runningJob?.id || '') === targetId) {
+            return { chatKey, store, job: store.runningJob, source: 'runningJob' };
+        }
+
+        const queuedJob = Array.isArray(store?.queue)
+            ? store.queue.find(job => String(job?.id || '') === targetId)
+            : null;
+        if (queuedJob) {
+            return { chatKey, store, job: queuedJob, source: 'queue' };
+        }
+
+        const recentJob = Array.isArray(store?.recentHistory)
+            ? store.recentHistory.find(job => String(job?.id || '') === targetId)
+            : null;
+        if (recentJob) {
+            return { chatKey, store, job: recentJob, source: 'recentHistory' };
+        }
+    }
+
+    return null;
+}
+
+export async function awaitStmbJobApproval(context, approvalRequest = {}, options = {}) {
+    const store = context?.store || null;
+    const job = context?.job || null;
+    const signal = context?.signal || null;
+    const jobId = String(job?.id || '').trim();
+    if (!store || !job || !jobId) {
+        throw new Error('STMB approval request requires a live job context.');
+    }
+
+    const previousApproval = pendingApprovals.get(jobId);
+    if (previousApproval) {
+        pendingApprovals.delete(jobId);
+        previousApproval.cleanup?.();
+        previousApproval.resolve({
+            decision: 'cancel',
+            superseded: true,
+        });
+    }
+
+    return await new Promise(resolve => {
+        const settle = response => {
+            if (pendingApprovals.get(jobId)?.resolve !== resolve) {
+                return;
+            }
+            pendingApprovals.delete(jobId);
+            cleanup();
+            delete job.approvalRequest;
+            markJobUpdated(job);
+            touchStore(store);
+            resolve(response ? structuredClone(response) : null);
+        };
+
+        const onAbort = () => settle({
+            decision: 'cancel',
+            aborted: true,
+        });
+        const cleanup = () => signal?.removeEventListener?.('abort', onAbort);
+
+        job.approvalRequest = structuredClone(approvalRequest || {});
+        job.state = 'awaiting_approval';
+        if (typeof options.detail === 'string') {
+            job.detail = options.detail;
+        }
+        markJobUpdated(job);
+        pendingApprovals.set(jobId, { resolve, cleanup });
+        if (signal?.aborted) {
+            settle({
+                decision: 'cancel',
+                aborted: true,
+            });
+            return;
+        }
+        signal?.addEventListener?.('abort', onAbort, { once: true });
+        touchStore(store);
+    });
+}
+
+export function respondToStmbJobApproval(input = {}) {
+    const jobId = String(input?.jobId || '').trim();
+    if (!jobId) {
+        return { ok: false, error: 'jobId is required.' };
+    }
+
+    const pendingApproval = pendingApprovals.get(jobId);
+    if (!pendingApproval) {
+        return { ok: false, error: 'No pending approval for this job.' };
+    }
+
+    const record = findMutableJobRecordById(jobId);
+    if (!record?.job || !record?.store) {
+        pendingApprovals.delete(jobId);
+        pendingApproval.cleanup?.();
+        return { ok: false, error: 'Approval job is no longer active.' };
+    }
+
+    const decision = String(input?.decision || '').trim().toLowerCase();
+    if (!['approve', 'retry', 'reject', 'cancel'].includes(decision)) {
+        return { ok: false, error: `Unsupported approval decision "${decision || 'unknown'}".` };
+    }
+
+    const job = record.job;
+    delete job.approvalRequest;
+    if (decision === 'approve') {
+        job.state = 'saving';
+    } else if (decision === 'retry') {
+        job.state = 'generating';
+    } else {
+        job.state = 'canceled';
+        job.detail = 'Canceled in approval';
+    }
+
+    markJobUpdated(job);
+    touchStore(record.store);
+
+    pendingApprovals.delete(jobId);
+    pendingApproval.cleanup?.();
+    pendingApproval.resolve({
+        decision,
+        editedData: input?.editedData ? structuredClone(input.editedData) : null,
+    });
+
+    return {
+        ok: true,
+        status: job.state,
     };
 }
 

@@ -30,7 +30,7 @@ import {
     parseSidePromptCommandInput,
 } from './stmb-sideprompt-macros.js';
 import { findTemplateByName, firstRunInitSidePrompts, getTemplate, listByTrigger, listTemplates, upsertTemplate } from './stmb-sideprompts-manager.js';
-import { enqueueStmbJob, registerStmbJobExecutor } from './stmb-jobs.js';
+import { awaitStmbJobApproval, enqueueStmbJob, registerStmbJobExecutor } from './stmb-jobs.js';
 
 let trackerEvaluationPromise = null;
 let previewQueue = Promise.resolve();
@@ -534,6 +534,25 @@ function buildSidePromptPreviewSceneData(compiledScene) {
     };
 }
 
+function buildSidePromptApprovalRequest({
+    template,
+    unifiedTitle,
+    text,
+    compiledScene,
+    profile,
+    allowRetry = true,
+}) {
+    return {
+        kind: 'sidePromptApproval',
+        title: String(unifiedTitle || template?.name || 'Side Prompt'),
+        content: String(text || ''),
+        sceneData: buildSidePromptPreviewSceneData(compiledScene),
+        profile: profile ? structuredClone(profile) : null,
+        allowRetry,
+        lockTitle: true,
+    };
+}
+
 async function resolveSidePromptPreview({
     template,
     unifiedTitle,
@@ -1004,27 +1023,37 @@ async function executeSidePromptJob(job, context) {
     }
 
     if (settings?.moduleSettings?.showMemoryPreviews) {
-        context.setState('awaiting_approval', { detail: template.name || 'Side Prompt' });
-        const previewResult = await resolveSidePromptPreview({
-            template,
-            unifiedTitle: prepared.unifiedTitle,
-            initialText: resultText,
-            finalPrompt: prepared.finalPrompt,
-            settings,
-            profile: prepared.profile,
-            compiledScene,
-            signal,
-            queuePreview: true,
-            retryTaskLabel: `SidePrompt:${payload.trigger || 'queued'}:retry:${getSidePromptTaskKey(template)}`,
-        });
-        if (previewResult?.blank) {
-            throw new Error(`SidePrompt "${template?.name || 'Unknown'}" returned blank content.`);
-        }
-        if (!previewResult?.approved) {
+        const approvalResult = await awaitStmbJobApproval(
+            context,
+            buildSidePromptApprovalRequest({
+                template,
+                unifiedTitle: prepared.unifiedTitle,
+                text: resultText,
+                compiledScene,
+                profile: prepared.profile,
+                allowRetry: true,
+            }),
+            { detail: template.name || 'Side Prompt' },
+        );
+        if (!approvalResult || approvalResult.decision === 'cancel' || approvalResult.decision === 'reject') {
             context.patch({ state: 'canceled', detail: 'Canceled in approval' });
             return;
         }
-        resultText = String(previewResult.text ?? resultText);
+        if (approvalResult.decision === 'retry') {
+            resultText = await runSidePromptAttempt({
+                template,
+                taskLabel: `SidePrompt:${payload.trigger || 'queued'}:retry:${getSidePromptTaskKey(template)}`,
+                finalPrompt: prepared.finalPrompt,
+                settings,
+                profile: prepared.profile,
+                signal,
+            });
+            if (!ensureSidePromptTextNotBlank(resultText, template, `${payload.trigger || 'queued'}-retry`)) {
+                throw new Error(`SidePrompt "${template?.name || 'Unknown'}" returned blank content.`);
+            }
+        } else if (approvalResult.editedData && typeof approvalResult.editedData === 'object') {
+            resultText = String(approvalResult.editedData.content || resultText);
+        }
     }
 
     context.setState('saving', { detail: prepared.unifiedTitle });
@@ -1176,31 +1205,42 @@ async function executeSidePromptBatchJob(job, context) {
         }
 
         if (settings?.moduleSettings?.showMemoryPreviews) {
-            context.setState('awaiting_approval', { detail: template?.name || 'Side Prompt' });
-            const previewResult = await resolveSidePromptPreview({
-                template,
-                unifiedTitle: prepared.unifiedTitle,
-                initialText: resultText,
-                finalPrompt: prepared.finalPrompt,
-                settings,
-                profile: prepared.profile,
-                compiledScene,
-                signal,
-                queuePreview: true,
-                retryTaskLabel: `SidePrompt:${payload.trigger || 'batch'}:retry:${getSidePromptTaskKey(template)}`,
-            });
-            if (previewResult?.blank) {
+            const approvalResult = await awaitStmbJobApproval(
+                context,
+                buildSidePromptApprovalRequest({
+                    template,
+                    unifiedTitle: prepared.unifiedTitle,
+                    text: resultText,
+                    compiledScene,
+                    profile: prepared.profile,
+                    allowRetry: true,
+                }),
+                { detail: template?.name || 'Side Prompt' },
+            );
+            if (approvalResult?.decision === 'retry') {
+                resultText = await runSidePromptAttempt({
+                    template,
+                    taskLabel: `SidePrompt:${payload.trigger || 'batch'}:retry:${getSidePromptTaskKey(template)}`,
+                    finalPrompt: prepared.finalPrompt,
+                    settings,
+                    profile: prepared.profile,
+                    signal,
+                });
+            }
+            if (!ensureSidePromptTextNotBlank(resultText, template, `${payload.trigger || 'batch'}-retry`)) {
                 failures.push({
                     templateName: String(template?.name || 'Unknown'),
                     message: 'SidePrompt returned blank content.',
                 });
                 continue;
             }
-            if (!previewResult?.approved) {
+            if (!approvalResult || approvalResult.decision === 'cancel' || approvalResult.decision === 'reject') {
                 canceled.push(String(template?.name || 'Unknown'));
                 continue;
             }
-            resultText = String(previewResult.text ?? resultText);
+            if (approvalResult.editedData && typeof approvalResult.editedData === 'object') {
+                resultText = String(approvalResult.editedData.content || resultText);
+            }
         }
 
         const lorebookSettings = getEffectiveLorebookSettingsForTemplate(template);

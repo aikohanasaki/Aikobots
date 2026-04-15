@@ -204,6 +204,50 @@ function setJsonObjectFormat(bodyParams, messages, jsonSchema) {
 }
 
 /**
+ * @param {Record<string, any> | string | undefined | null} responseFormat
+ * @returns {'json_object' | 'json_schema' | 'text' | null}
+ */
+function getStructuredOutputMode(responseFormat) {
+    if (typeof responseFormat === 'string') {
+        return ['json_object', 'json_schema', 'text'].includes(responseFormat)
+            ? responseFormat
+            : null;
+    }
+
+    if (typeof responseFormat?.type === 'string') {
+        return ['json_object', 'json_schema', 'text'].includes(responseFormat.type)
+            ? responseFormat.type
+            : null;
+    }
+
+    return null;
+}
+
+/**
+ * Some OpenAI-compatible backends validate `response_format` directly as a string enum
+ * instead of the OpenAI-style `{ type: ... }` object. Detect that from the provider error
+ * so fallback retries can use the shape the backend actually accepts.
+ * @param {string} responseText
+ * @param {Record<string, any>} currentRequestBody
+ * @returns {'object' | 'string'}
+ */
+function detectResponseFormatShape(responseText, currentRequestBody) {
+    if (typeof currentRequestBody?.response_format === 'string') {
+        return 'string';
+    }
+
+    const parsedPayload = tryParse(responseText);
+    const providerMessage = extractProviderErrorMessage(parsedPayload ?? responseText, '');
+    const normalized = `${String(responseText || '')}\n${providerMessage}`.toLowerCase();
+
+    if (/"path"\s*:\s*\[\s*"response_format"\s*\]/i.test(normalized)) {
+        return 'string';
+    }
+
+    return 'object';
+}
+
+/**
  * @param {object[]} messages
  * @param {{ value?: Record<string, any> }} jsonSchema
  */
@@ -273,9 +317,7 @@ function detectStructuredOutputFallbackMode(responseText, currentRequestBody, js
     const parsedPayload = tryParse(responseText);
     const message = extractProviderErrorMessage(parsedPayload ?? responseText, '').toLowerCase();
     const combinedText = `${String(responseText || '')}\n${message}`.toLowerCase();
-    const currentMode = typeof currentRequestBody?.response_format?.type === 'string'
-        ? currentRequestBody.response_format.type
-        : 'text';
+    const currentMode = getStructuredOutputMode(currentRequestBody?.response_format) || 'text';
     const supportedModes = extractStructuredOutputModesFromError(combinedText);
     const attempted = new Set(attemptedModes);
     const mentionsResponseFormat = combinedText.includes('response_format');
@@ -315,9 +357,10 @@ function detectStructuredOutputFallbackMode(responseText, currentRequestBody, js
  * @param {Record<string, any>} requestBody
  * @param {{ value?: Record<string, any> }} jsonSchema
  * @param {'json_object' | 'text'} targetMode
+ * @param {'object' | 'string'} responseFormatShape
  * @returns {Record<string, any>}
  */
-function buildStructuredOutputFallbackRequestBody(requestBody, jsonSchema, targetMode) {
+function buildStructuredOutputFallbackRequestBody(requestBody, jsonSchema, targetMode, responseFormatShape = 'object') {
     const fallbackRequestBody = {
         ...requestBody,
         messages: Array.isArray(requestBody.messages)
@@ -326,9 +369,18 @@ function buildStructuredOutputFallbackRequestBody(requestBody, jsonSchema, targe
     };
 
     if (targetMode === 'json_object') {
-        setJsonObjectFormat(fallbackRequestBody, fallbackRequestBody.messages, jsonSchema);
+        if (responseFormatShape === 'string') {
+            fallbackRequestBody['response_format'] = 'json_object';
+            upsertJsonSchemaInstructionMessage(fallbackRequestBody.messages, jsonSchema);
+        } else {
+            setJsonObjectFormat(fallbackRequestBody, fallbackRequestBody.messages, jsonSchema);
+        }
     } else {
-        setTextFormat(fallbackRequestBody);
+        if (responseFormatShape === 'string') {
+            fallbackRequestBody['response_format'] = 'text';
+        } else {
+            setTextFormat(fallbackRequestBody);
+        }
         upsertJsonSchemaInstructionMessage(fallbackRequestBody.messages, jsonSchema);
     }
 
@@ -3818,7 +3870,7 @@ export async function handleChatCompletionsGenerate(request, response) {
         attemptedStructuredOutputFallbacks = [],
     } = {}) {
         const canRetryStructuredOutput = request.body.json_schema
-            && currentRequestBody?.response_format?.type;
+            && getStructuredOutputMode(currentRequestBody?.response_format);
 
         if (canRetryStructuredOutput) {
             const errorText = await errorResponse.clone().text().catch(() => '');
@@ -3830,10 +3882,12 @@ export async function handleChatCompletionsGenerate(request, response) {
             );
 
             if (fallbackMode) {
+                const responseFormatShape = detectResponseFormatShape(errorText, currentRequestBody);
                 const fallbackRequestBody = buildStructuredOutputFallbackRequestBody(
                     currentRequestBody,
                     request.body.json_schema,
                     fallbackMode,
+                    responseFormatShape,
                 );
                 const fallbackConfig = {
                     ...config,
