@@ -445,8 +445,33 @@ function getPromptSnapshotTarget(type) {
     };
 }
 
-function applyPromptInspectionResponseDataToMessage(messageId, promptInspectionResponseData) {
-    const promptSnapshotKey = promptInspectionResponseData?.promptSnapshotKey;
+function buildPromptSnapshotKeyForMessage(messageId, swipeId = null) {
+    const mesId = Number(messageId);
+    if (!Number.isFinite(mesId) || mesId < 0) {
+        return null;
+    }
+
+    const item = chat[messageId];
+    if (!item) {
+        return null;
+    }
+
+    const targetSwipeId = Number(swipeId ?? item?.swipe_id ?? 0) || 0;
+    const username = String(currentUser?.handle || 'default-user').trim() || 'default-user';
+    const chatScope = getPromptSnapshotChatScope();
+    return buildPromptSnapshotKey({
+        username,
+        chatScope,
+        mesId,
+        swipeId: targetSwipeId,
+    });
+}
+
+function applyPromptInspectionResponseDataToMessage(messageId, promptInspectionResponseData, { allowFallbackPromptSnapshotKey = false } = {}) {
+    let promptSnapshotKey = promptInspectionResponseData?.promptSnapshotKey;
+    if ((typeof promptSnapshotKey !== 'string' || !promptSnapshotKey) && allowFallbackPromptSnapshotKey) {
+        promptSnapshotKey = buildPromptSnapshotKeyForMessage(messageId);
+    }
     if (typeof promptSnapshotKey !== 'string' || !promptSnapshotKey) {
         return null;
     }
@@ -5385,7 +5410,7 @@ class StreamingProcessor {
             worldInfoResponseData,
         } = consumeOpenAIResponseData(this.generator?.openAIRequestId ?? null);
         applyTimedWorldInfoToMessage(messageId, timedWorldInfo);
-        applyPromptInspectionResponseDataToMessage(messageId, promptInspectionResponseData);
+        applyPromptInspectionResponseDataToMessage(messageId, promptInspectionResponseData, { allowFallbackPromptSnapshotKey: true });
         applyWorldInfoResponseDataToMessage(messageId, worldInfoResponseData);
 
         if (Array.isArray(this.swipes) && this.swipes.length > 0) {
@@ -8055,7 +8080,9 @@ export async function saveReply({ type, getMessage, fromStreaming = false, title
         item.extra = {};
     }
     applyTimedWorldInfoToMessage(chat.length - 1, timedWorldInfo);
-    applyPromptInspectionResponseDataToMessage(chat.length - 1, promptInspectionResponseData);
+    applyPromptInspectionResponseDataToMessage(chat.length - 1, promptInspectionResponseData, {
+        allowFallbackPromptSnapshotKey: !fromStreaming,
+    });
     applyWorldInfoResponseDataToMessage(chat.length - 1, worldInfoResponseData);
     if (item['swipe_info'] === undefined) {
         item['swipe_info'] = [];

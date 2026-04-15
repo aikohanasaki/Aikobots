@@ -1,12 +1,14 @@
 import { localforage } from '../lib.js';
 import { chat, event_types, eventSource, getCurrentChatId, reloadCurrentChat } from '../script.js';
 import { t } from './i18n.js';
+import { selected_group } from './group-chats.js';
 import { fetchPromptInspectionSnapshot, oai_settings } from './openai.js';
 import { Popup, POPUP_TYPE } from './popup.js';
 import { power_user, registerDebugFunction } from './power-user.js';
 import { isMobile } from './RossAscends-mods.js';
 import { renderTemplateAsync } from './templates.js';
 import { getFriendlyTokenizerName, getTokenCountAsync } from './tokenizers.js';
+import { getCurrentUserHandle } from './user.js';
 import { copyText } from './utils.js';
 
 let PromptArrayItemForRawPromptDisplay;
@@ -158,15 +160,69 @@ function buildWorldInfoPreview(content, maxLength = 240) {
 }
 
 function isSnapshotBackedPrompt(itemizedPrompt) {
-    return Boolean(itemizedPrompt?.serverPromptAssembly && typeof itemizedPrompt?.promptSnapshotKey === 'string' && itemizedPrompt.promptSnapshotKey);
+    return Boolean(itemizedPrompt?.serverPromptAssembly && getPromptSnapshotKey(itemizedPrompt, itemizedPrompt?.mesId));
 }
 
-async function fetchSnapshotBackedPrompt(itemizedPrompt) {
-    if (!isSnapshotBackedPrompt(itemizedPrompt)) {
+function buildFallbackPromptSnapshotKey(itemizedPrompt, incomingMesId = null) {
+    if (!itemizedPrompt?.serverPromptAssembly) {
+        return '';
+    }
+
+    const username = String(getCurrentUserHandle() || '').replace(/\|/g, '').trim();
+    const chatId = String(getCurrentChatId() || '').replace(/\|/g, '').trim();
+    const numericMesId = Number(incomingMesId ?? itemizedPrompt?.mesId);
+    const currentMessage = chat[numericMesId];
+    const swipeId = Number.isInteger(Number(itemizedPrompt?.swipeId))
+        ? Number(itemizedPrompt.swipeId)
+        : (Number.isInteger(Number(currentMessage?.swipe_id)) ? Number(currentMessage.swipe_id) : 0);
+    const chatScope = selected_group
+        ? `group:${String(selected_group || '').replace(/\|/g, '').trim()}:${chatId}`
+        : `chat:${chatId}`;
+
+    if (!username || !chatId || !Number.isFinite(numericMesId) || numericMesId < 0 || !Number.isFinite(swipeId) || swipeId < 0) {
+        return '';
+    }
+
+    return `${username}|${chatScope}|${numericMesId}|${swipeId}`;
+}
+
+function getPromptSnapshotKey(itemizedPrompt, incomingMesId = null) {
+    if (!itemizedPrompt?.serverPromptAssembly) {
+        return '';
+    }
+
+    const storedPromptSnapshotKey = typeof itemizedPrompt?.promptSnapshotKey === 'string'
+        ? itemizedPrompt.promptSnapshotKey.trim()
+        : '';
+    if (storedPromptSnapshotKey) {
+        return storedPromptSnapshotKey;
+    }
+
+    const numericMesId = Number(incomingMesId ?? itemizedPrompt?.mesId);
+    const messagePromptSnapshotKey = typeof chat[numericMesId]?.extra?.promptSnapshotKey === 'string'
+        ? chat[numericMesId].extra.promptSnapshotKey.trim()
+        : '';
+    if (messagePromptSnapshotKey) {
+        itemizedPrompt.promptSnapshotKey = messagePromptSnapshotKey;
+        return messagePromptSnapshotKey;
+    }
+
+    const fallbackPromptSnapshotKey = buildFallbackPromptSnapshotKey(itemizedPrompt, incomingMesId);
+    if (fallbackPromptSnapshotKey) {
+        itemizedPrompt.promptSnapshotKey = fallbackPromptSnapshotKey;
+        return fallbackPromptSnapshotKey;
+    }
+
+    return '';
+}
+
+async function fetchSnapshotBackedPrompt(itemizedPrompt, incomingMesId = null) {
+    const promptSnapshotKey = getPromptSnapshotKey(itemizedPrompt, incomingMesId);
+    if (!promptSnapshotKey) {
         return null;
     }
 
-    return await fetchPromptInspectionSnapshot(itemizedPrompt.promptSnapshotKey);
+    return await fetchPromptInspectionSnapshot(promptSnapshotKey);
 }
 
 function formatHiddenWorldInfoPlaceholder(placement) {
@@ -561,7 +617,7 @@ export async function promptItemize(itemizedPrompts, requestedMesId) {
     let snapshot = null;
     if (isSnapshotBackedPrompt(itemizedPrompt)) {
         try {
-            snapshot = await fetchSnapshotBackedPrompt(itemizedPrompt);
+            snapshot = await fetchSnapshotBackedPrompt(itemizedPrompt, incomingMesId);
         } catch (error) {
             console.error('Failed to fetch prompt inspection snapshot', error);
             toastr.info(t`The prompt snapshot is no longer available.`);
@@ -651,6 +707,17 @@ export async function promptItemize(itemizedPrompts, requestedMesId) {
     await popup.show();
 }
 
+function getPromptInspectorMessageId(button) {
+    const mesElement = button?.closest?.('.mes');
+    if (!(mesElement instanceof HTMLElement)) {
+        return null;
+    }
+
+    const rawMesId = mesElement.getAttribute('mesid') ?? mesElement.getAttribute('mesId');
+    const mesId = Number(rawMesId);
+    return Number.isFinite(mesId) ? mesId : null;
+}
+
 export function initItemizedPrompts() {
     registerDebugFunction('clearPrompts', 'Delete itemized prompts', 'Deletes all itemized prompts from the local storage.', async () => {
         await clearItemizedPrompts();
@@ -661,8 +728,11 @@ export function initItemizedPrompts() {
     });
 
     $(document).on('pointerup', '.mes_prompt', async function () {
-        let mesIdForItemization = $(this).closest('.mes').attr('mesId');
+        const mesIdForItemization = getPromptInspectorMessageId(this);
         console.log(`looking for mesID: ${mesIdForItemization}`);
+        if (!Number.isFinite(mesIdForItemization)) {
+            return;
+        }
         if (itemizedPrompts.length !== undefined && itemizedPrompts.length !== 0) {
             const itemizedPrompt = getLatestItemizedPrompt();
             if (Number(itemizedPrompt?.mesId) !== Number(mesIdForItemization)) {
