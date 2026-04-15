@@ -4428,7 +4428,7 @@
                                 <div class="WIEntryHeaderControls flex-container">
                                     <div name="PositionBlock" class="world_entry_form_control world_entry_form_radios wi-enter-footer-text WIEntryPositionControl">
                                         <label for="position" class="WIEntryHeaderTitleMobile" data-i18n="Position:">Position:</label>
-                                        <select name="position" class="text_pole widthNatural margin0" data-i18n="[title]T_Position" title="↑Char: Before Character Definitions&#13;↓Char: After Character Definitions&#13;↑EM: Before Example Messages&#13;↓EM: After Example Messages&#13;↑AN: Before Author's Note&#13;↓AN: After Author's Note&#13;@D ⚙️: at Depth (System)&#13;@D 👤: at Depth (User)&#13;@D 🤖: at Depth (Assistant)">
+                                        <select id="position" name="position" class="text_pole widthNatural margin0" data-i18n="[title]T_Position" title="↑Char: Before Character Definitions&#13;↓Char: After Character Definitions&#13;↑EM: Before Example Messages&#13;↓EM: After Example Messages&#13;↑AN: Before Author's Note&#13;↓AN: After Author's Note&#13;@D ⚙️: at Depth (System)&#13;@D 👤: at Depth (User)&#13;@D 🤖: at Depth (Assistant)">
                                             <option value="0" data-role="" data-i18n="Before Char Defs">
                                                 ↑Char
                                             </option>
@@ -4463,15 +4463,15 @@
                                     </div>
                                     <div class="world_entry_form_control wi-enter-footer-text flex-container flexNoGap WIEntryDepthControl">
                                         <label for="depth" class="WIEntryHeaderTitleMobile" data-i18n="Depth:">Depth:</label>
-                                        <input title="Depth" class="text_pole wideMax100px margin0" type="number" name="depth" data-i18n="[title]Depth" placeholder="" min="0" max="9999" />
+                                        <input id="depth" title="Depth" class="text_pole wideMax100px margin0" type="number" name="depth" data-i18n="[title]Depth" placeholder="" min="0" max="9999" />
                                     </div>
                                     <div class="world_entry_form_control wi-enter-footer-text  flex-container flexNoGap WIEntryOrderControl">
                                         <label for="order" class="WIEntryHeaderTitleMobile" data-i18n="Order:">Order:</label>
-                                        <input title="Order" data-i18n="[title]Order" class="text_pole wideMax100px margin0" type="number" name="order" placeholder="" min="0" max="9999" />
+                                        <input id="order" title="Order" data-i18n="[title]Order" class="text_pole wideMax100px margin0" type="number" name="order" placeholder="" min="0" max="9999" />
                                     </div>
                                     <div class="world_entry_form_control wi-enter-footer-text flex-container flexNoGap probabilityContainer WIEntryProbabilityControl">
-                                        <label for="order" class="WIEntryHeaderTitleMobile" data-i18n="Trigger %:">Trigger %:</label>
-                                        <input title="Probability" data-i18n="[title]Probability" class="text_pole wideMax100px margin0" type="number" name="probability" placeholder="" min="0" max="100" />
+                                        <label for="probability" class="WIEntryHeaderTitleMobile" data-i18n="Trigger %:">Trigger %:</label>
+                                        <input id="probability" title="Probability" data-i18n="[title]Probability" class="text_pole wideMax100px margin0" type="number" name="probability" placeholder="" min="0" max="100" />
                                     </div>
                                 </div>
                             </div>

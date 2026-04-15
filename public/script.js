@@ -106,10 +106,8 @@ import {
     setOpenAIMessageExamples,
     setOpenAIMessages,
     setupChatCompletionPromptManager,
-    consumeOpenAIWorldInfoResponseData,
+    consumeOpenAIResponseData,
     buildServerAssemblyPayload,
-    consumeOpenAITimedWorldInfo,
-    consumeOpenAIPromptInspectionResponseData,
     debugServerAssemblyDump,
     getLastServerAssemblyDebugDump,
     maintainPromptInspectionSnapshots,
@@ -1554,6 +1552,9 @@ function restoreTopChatPanelsState() {
 
     try {
         const state = JSON.parse(rawState);
+        if (state?.sidebarVisible) {
+            void toggleTopChatSidebar(true, { save: false });
+        }
         if (state?.connectionProfilesVisible) {
             void toggleTopChatConnectionProfiles(true, { save: false });
         }
@@ -2331,6 +2332,42 @@ export async function getOneCharacter(avatarUrl) {
             toastr.error(t`Character ${avatarUrl} not found in the list`, t`Error`, { timeOut: 5000, preventDuplicates: true });
         }
     }
+}
+
+export async function persistCharacterFavorite(avatarUrl, value, { sharedCharacterKey = '' } = {}) {
+    const response = await fetch('/api/favorites/set', {
+        method: 'POST',
+        headers: getRequestHeaders(),
+        body: JSON.stringify({
+            entityType: 'character',
+            avatar: avatarUrl,
+            sharedCharacterKey,
+            value,
+        }),
+    });
+
+    if (!response.ok) {
+        let errorMessage = '';
+        try {
+            const errorData = await response.json();
+            errorMessage = errorData?.error || errorData?.message || '';
+        } catch {
+            errorMessage = '';
+        }
+
+        toastr.error(errorMessage || t`Character favorite could not be updated.`);
+        return false;
+    }
+
+    const character = characters.find(entry => entry.avatar === avatarUrl);
+    if (character) {
+        character.fav = value;
+        character.data = character.data || {};
+        character.data.extensions = character.data.extensions || {};
+        character.data.extensions.fav = value;
+    }
+
+    return true;
 }
 
 function getCharacterSource(chId = this_chid) {
@@ -4236,10 +4273,10 @@ export function addOneMessage(mes, { type = 'normal', insertAfter = null, scroll
     const renderedMessage = getMessageFromTemplate(params);
 
     if (type !== 'swipe') {
-        if (!insertAfter && !insertBefore) {
+        if (insertAfter == null && insertBefore == null) {
             chatElement.append(renderedMessage);
         }
-        else if (insertAfter) {
+        else if (insertAfter != null) {
             const target = chatElement.find(`.mes[mesid="${insertAfter}"]`);
             $(renderedMessage).insertAfter(target);
         } else {
@@ -4312,7 +4349,7 @@ export function addOneMessage(mes, { type = 'normal', insertAfter = null, scroll
     refreshPromptInspectorButton();
 
     // Don't scroll if not inserting last
-    if (!insertAfter && !insertBefore && scroll) {
+    if (insertAfter == null && insertBefore == null && scroll) {
         scrollChatToBottom();
     }
 
@@ -5311,9 +5348,11 @@ class StreamingProcessor {
 
         await this.reasoningHandler.finish(messageId);
 
-        const timedWorldInfo = consumeOpenAITimedWorldInfo();
-        const promptInspectionResponseData = consumeOpenAIPromptInspectionResponseData();
-        const worldInfoResponseData = consumeOpenAIWorldInfoResponseData();
+        const {
+            timedWorldInfo,
+            promptInspectionResponseData,
+            worldInfoResponseData,
+        } = consumeOpenAIResponseData(this.generator?.openAIRequestId ?? null);
         applyTimedWorldInfoToMessage(messageId, timedWorldInfo);
         applyPromptInspectionResponseDataToMessage(messageId, promptInspectionResponseData);
         applyWorldInfoResponseDataToMessage(messageId, worldInfoResponseData);
@@ -6862,10 +6901,10 @@ export async function Generate(type, { automatic_trigger, force_name2, quiet_pro
      * @throws {Error} Throws an error if the response data contains an error message
      */
     async function onSuccess(data) {
+        const openAIRequestId = data?.openAIRequestId ?? streamingProcessor?.generator?.openAIRequestId ?? null;
+
         if (!data) {
-            consumeOpenAITimedWorldInfo();
-            consumeOpenAIPromptInspectionResponseData();
-            consumeOpenAIWorldInfoResponseData();
+            consumeOpenAIResponseData(openAIRequestId);
             return;
         }
 
@@ -6878,6 +6917,7 @@ export async function Generate(type, { automatic_trigger, force_name2, quiet_pro
         // if an error was returned in data (textgenwebui), show it and throw it
         if (data.error) {
             unblockGeneration(type);
+            consumeOpenAIResponseData(openAIRequestId);
 
             if (data?.response) {
                 toastr.error(data.response, t`API Error`, { preventDuplicates: true });
@@ -6887,9 +6927,7 @@ export async function Generate(type, { automatic_trigger, force_name2, quiet_pro
 
         if (jsonSchema) {
             unblockGeneration(type);
-            consumeOpenAITimedWorldInfo();
-            consumeOpenAIPromptInspectionResponseData();
-            consumeOpenAIWorldInfoResponseData();
+            consumeOpenAIResponseData(openAIRequestId);
             return extractJsonFromData(data);
         }
 
@@ -6932,24 +6970,20 @@ export async function Generate(type, { automatic_trigger, force_name2, quiet_pro
         if (isImpersonate) {
             $('#send_textarea').val(getMessage)[0].dispatchEvent(new Event('input', { bubbles: true }));
             await eventSource.emit(event_types.IMPERSONATE_READY, getMessage);
-            consumeOpenAITimedWorldInfo();
-            consumeOpenAIPromptInspectionResponseData();
-            consumeOpenAIWorldInfoResponseData();
+            consumeOpenAIResponseData(openAIRequestId);
         }
         else if (type == 'quiet') {
             unblockGeneration(type);
-            consumeOpenAITimedWorldInfo();
-            consumeOpenAIPromptInspectionResponseData();
-            consumeOpenAIWorldInfoResponseData();
+            consumeOpenAIResponseData(openAIRequestId);
             return getMessage;
         }
         else {
             // Without streaming we'll be having a full message on continuation. Treat it as a last chunk.
             if (originalType !== 'continue') {
-                ({ type, getMessage } = await saveReply({ type, getMessage, title, swipes, reasoning, imageUrls }));
+                ({ type, getMessage } = await saveReply({ type, getMessage, title, swipes, reasoning, imageUrls, openAIRequestId }));
             }
             else {
-                ({ type, getMessage } = await saveReply({ type: 'appendFinal', getMessage, title, swipes, reasoning, imageUrls }));
+                ({ type, getMessage } = await saveReply({ type: 'appendFinal', getMessage, title, swipes, reasoning, imageUrls, openAIRequestId }));
             }
 
             // This relies on `saveReply` having been called to add the message to the chat, so it must be last.
@@ -7011,9 +7045,7 @@ export async function Generate(type, { automatic_trigger, force_name2, quiet_pro
             toastr.error(exception.error.message, t`Text generation error`, { timeOut: 10000, extendedTimeOut: 20000 });
         }
 
-        consumeOpenAITimedWorldInfo();
-        consumeOpenAIPromptInspectionResponseData();
-        consumeOpenAIWorldInfoResponseData();
+        consumeOpenAIResponseData(streamingProcessor?.generator?.openAIRequestId ?? null);
         unblockGeneration(type);
         console.log(exception);
         streamingProcessor = null;
@@ -7837,7 +7869,7 @@ async function processImageAttachment(message, { imageUrls }) {
  * @property {string} type Type of generation
  * @property {string} getMessage Generated message
  */
-export async function saveReply({ type, getMessage, fromStreaming = false, title = '', swipes = [], reasoning = '', imageUrls = [] }) {
+export async function saveReply({ type, getMessage, fromStreaming = false, title = '', swipes = [], reasoning = '', imageUrls = [], openAIRequestId = null }) {
     // Backward compatibility
     if (arguments.length > 1 && typeof arguments[0] !== 'object') {
         console.trace('saveReply called with positional arguments. Please use an object instead.');
@@ -7862,9 +7894,17 @@ export async function saveReply({ type, getMessage, fromStreaming = false, title
         reasoning = '';
     }
 
-    const timedWorldInfo = fromStreaming ? null : consumeOpenAITimedWorldInfo();
-    const promptInspectionResponseData = fromStreaming ? null : consumeOpenAIPromptInspectionResponseData();
-    const worldInfoResponseData = fromStreaming ? null : consumeOpenAIWorldInfoResponseData();
+    const {
+        timedWorldInfo,
+        promptInspectionResponseData,
+        worldInfoResponseData,
+    } = fromStreaming
+        ? {
+            timedWorldInfo: null,
+            promptInspectionResponseData: null,
+            worldInfoResponseData: null,
+        }
+        : consumeOpenAIResponseData(openAIRequestId);
 
     let oldMessage = '';
     const generationFinished = new Date();
@@ -14198,11 +14238,29 @@ jQuery(async function () {
         $('#creator_notes_spoiler').html(formatCreatorNotes(notes, avatar));
     });
 
-    $('#favorite_button').on('click', function () {
-        updateFavButtonState(!fav_ch_checked);
-        if (menu_type != 'create') {
-            markCharacterEditorDirty();
+    $('#favorite_button').on('click', async function () {
+        const nextValue = !fav_ch_checked;
+        updateFavButtonState(nextValue);
+
+        if (menu_type === 'create') {
+            return;
         }
+
+        const character = characters[this_chid];
+        if (!character) {
+            updateFavButtonState(!nextValue);
+            return;
+        }
+
+        const saved = await persistCharacterFavorite(character.avatar, nextValue, {
+            sharedCharacterKey: character.sharedCharacterKey || character.data?.extensions?.aikobots?.shared_character_key || '',
+        });
+        if (!saved) {
+            updateFavButtonState(!nextValue);
+            return;
+        }
+
+        await printCharacters(false);
     });
 
     /* $("#renameCharButton").on('click', renameCharacter); */

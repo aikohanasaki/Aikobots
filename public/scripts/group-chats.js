@@ -26,6 +26,7 @@ import { deferLoader, ensureDeferredLoaderShown, waitForLoaderPaint } from './lo
 import {
     chat,
     sendSystemMessage,
+    printCharacters,
     printMessages,
     substituteParams,
     characters,
@@ -793,6 +794,38 @@ async function getGroups() {
             delete group.past_metadata;
         }
     }
+}
+
+async function persistGroupFavorite(groupId, value) {
+    const response = await fetch('/api/favorites/set', {
+        method: 'POST',
+        headers: getRequestHeaders(),
+        body: JSON.stringify({
+            entityType: 'group',
+            id: groupId,
+            value,
+        }),
+    });
+
+    if (!response.ok) {
+        let errorMessage = '';
+        try {
+            const errorData = await response.json();
+            errorMessage = errorData?.error || errorData?.message || '';
+        } catch {
+            errorMessage = '';
+        }
+
+        toastr.error(errorMessage || t`Group favorite could not be updated.`);
+        return false;
+    }
+
+    const group = groups.find(entry => entry.id === groupId);
+    if (group) {
+        group.fav = value;
+    }
+
+    return true;
 }
 
 export function getGroupBlock(group) {
@@ -1624,12 +1657,16 @@ async function onDeleteGroupClick() {
 }
 
 async function onFavoriteGroupClick() {
-    updateFavButtonState(!fav_grp_checked);
+    const nextValue = !fav_grp_checked;
+    updateFavButtonState(nextValue);
     if (openGroupId) {
-        let _thisGroup = groups.find((x) => x.id == openGroupId);
-        _thisGroup.fav = fav_grp_checked;
-        await editGroup(openGroupId, false, false);
-        favsToHotswap();
+        const saved = await persistGroupFavorite(openGroupId, nextValue);
+        if (!saved) {
+            updateFavButtonState(!nextValue);
+            return;
+        }
+
+        await printCharacters(false);
     }
 }
 

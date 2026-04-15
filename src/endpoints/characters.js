@@ -38,6 +38,15 @@ import { getChatInfo } from './chats.js';
 import { ByafParser } from '../byaf.js';
 import cacheBuster from '../middleware/cacheBuster.js';
 import { DISTRIBUTION_SOURCE_TYPES, PUBLISH_MODES, SUBMISSION_STATUSES, distributeCharacterFile, getSubmissionPaths, getSubmissionRecord } from '../character-submissions.js';
+import {
+    clearCharacterFavoriteState,
+    createFavoritesState,
+    flushFavoritesState,
+    getCharacterFavorite,
+    getLegacyCharacterFavoriteState,
+    moveAvatarFavorite,
+    setCharacterFavorite,
+} from '../favorites-repository.js';
 
 // With 100 MB limit it would take roughly 3000 characters to reach this limit
 const memoryCacheCapacity = getConfigValue('performance.memoryCacheCapacity', '100mb');
@@ -47,6 +56,28 @@ const isAndroid = process.platform === 'android';
 // Use shallow character data for the character list
 const useShallowCharacters = !!getConfigValue('performance.lazyLoadCharacters', false, 'boolean');
 const useDiskCache = !!getConfigValue('performance.useDiskCache', true, 'boolean');
+
+function coerceFavoriteValue(...values) {
+    for (const value of values) {
+        if (value === undefined) {
+            continue;
+        }
+
+        return value === true || value === 'true';
+    }
+
+    return undefined;
+}
+
+function normalizeCharacterJsonForPersistence(data) {
+    try {
+        const character = JSON.parse(data);
+        clearCharacterFavoriteState(character);
+        return JSON.stringify(character);
+    } catch {
+        return data;
+    }
+}
 
 function getCharacterOwnerLabel(characterCard) {
     const ownerHandles = getCharacterOwnerHandles(characterCard);
@@ -275,7 +306,7 @@ async function writeCharacterData(inputFile, data, outputFile, request, crop = u
         const inputImage = await getInputImage();
 
         // Get the chunks
-        const outputImage = write(inputImage, data);
+        const outputImage = write(inputImage, normalizeCharacterJsonForPersistence(data));
         const outputImagePath = path.join(request.user.directories.characters, `${outputFile}.png`);
 
         writeFileAtomicSync(outputImagePath, outputImage);
@@ -468,7 +499,7 @@ function applyCharacterManagementMetadata(character, metadata) {
  * @param  {boolean} options.shallow If true, only return the core character's metadata
  * @return {Promise<object>}     A Promise that resolves when the character processing is done.
  */
-const processCharacter = async (item, directories, { shallow, user = null, sharedIndex = null }) => {
+const processCharacter = async (item, directories, { shallow, user = null, sharedIndex = null, favoritesState = null }) => {
     try {
         const imgFile = path.join(directories.characters, item);
         const imgData = await readCharacterData(imgFile);
@@ -498,6 +529,13 @@ const processCharacter = async (item, directories, { shallow, user = null, share
             user,
             sharedIndex,
         }));
+        const favorite = getCharacterFavorite(favoritesState || directories, {
+            avatar: item,
+            sharedCharacterKey: String(character.sharedCharacterKey || _.get(character, 'data.extensions.aikobots.shared_character_key', '') || '').trim(),
+            legacyFavorite: getLegacyCharacterFavoriteState(character),
+        });
+        _.set(character, 'fav', favorite);
+        _.set(character, 'data.extensions.fav', favorite);
         return shallow ? toShallow(character) : character;
     }
     catch (err) {
@@ -1216,6 +1254,7 @@ router.post('/create', getFileNameValidationFunction('file_name'), async functio
         if (!request.body) return response.sendStatus(400);
 
         request.body.ch_name = sanitize(request.body.ch_name);
+        const requestedFavorite = coerceFavoriteValue(request.body.fav) === true;
 
         const char = JSON.stringify(charaFormatData(request.body, request.user.directories));
         const internalName = request.body.file_name || getPngName(request.body.ch_name, request.user.directories);
@@ -1227,13 +1266,21 @@ router.post('/create', getFileNameValidationFunction('file_name'), async functio
         if (!fs.existsSync(chatsPath)) fs.mkdirSync(chatsPath);
 
         if (!request.file) {
-            await writeCharacterData(DEFAULT_AVATAR_PATH, char, internalName, request);
+            const wasWritten = await writeCharacterData(DEFAULT_AVATAR_PATH, char, internalName, request);
+            if (!wasWritten) {
+                return response.sendStatus(500);
+            }
+            setCharacterFavorite(request.user.directories, { avatar: avatarName, value: requestedFavorite });
             return response.send(avatarName);
         } else {
             const crop = tryParse(request.query.crop);
             const uploadPath = path.join(request.file.destination, request.file.filename);
-            await writeCharacterData(uploadPath, char, internalName, request, crop);
+            const wasWritten = await writeCharacterData(uploadPath, char, internalName, request, crop);
             fs.unlinkSync(uploadPath);
+            if (!wasWritten) {
+                return response.sendStatus(500);
+            }
+            setCharacterFavorite(request.user.directories, { avatar: avatarName, value: requestedFavorite });
             return response.send(avatarName);
         }
     } catch (err) {
@@ -1292,6 +1339,7 @@ router.post('/rename', validateAvatarUrlMiddleware, async function (request, res
 
         // Remove the old character file
         fs.unlinkSync(oldAvatarPath);
+        moveAvatarFavorite(request.user.directories, { oldAvatar: oldAvatarName, newAvatar: newAvatarName });
 
         // Return new avatar name to ST
         return response.send({ avatar: newAvatarName });
@@ -1320,6 +1368,7 @@ router.post('/edit', validateAvatarUrlMiddleware, async function (request, respo
         const avatarPath = path.join(request.user.directories.characters, request.body.avatar_url);
         const rawCharacterData = await readCharacterData(avatarPath);
         const existingCharacter = rawCharacterData ? getCharaCardV2(JSON.parse(rawCharacterData), request.user.directories, false) : null;
+        const requestedFavorite = coerceFavoriteValue(request.body.fav);
         const canEditLorebooks = canEditCharacterLorebooks(existingCharacter, request);
 
         if (existingCharacter && !canEditLorebooks) {
@@ -1362,16 +1411,30 @@ router.post('/edit', validateAvatarUrlMiddleware, async function (request, respo
         let targetFile = (request.body.avatar_url).replace('.png', '');
 
         if (!request.file) {
-            await writeCharacterData(avatarPath, char, targetFile, request);
+            const wasWritten = await writeCharacterData(avatarPath, char, targetFile, request);
+            if (!wasWritten) {
+                return response.sendStatus(500);
+            }
         } else {
             const crop = tryParse(request.query.crop);
             const newAvatarPath = path.join(request.file.destination, request.file.filename);
             invalidateThumbnail(request.user.directories, 'avatar', request.body.avatar_url);
-            await writeCharacterData(newAvatarPath, char, targetFile, request, crop);
+            const wasWritten = await writeCharacterData(newAvatarPath, char, targetFile, request, crop);
             fs.unlinkSync(newAvatarPath);
+            if (!wasWritten) {
+                return response.sendStatus(500);
+            }
 
             // Bust cache to reload the new avatar
             cacheBuster.bust(request, response);
+        }
+
+        if (requestedFavorite !== undefined) {
+            setCharacterFavorite(request.user.directories, {
+                avatar: String(request.body.avatar_url || `${targetFile}.png`),
+                sharedCharacterKey: getCharacterSharedKey(existingCharacter) || getCharacterSharedKey(tryParse(char)),
+                value: requestedFavorite,
+            });
         }
 
         return response.sendStatus(200);
@@ -1507,6 +1570,7 @@ router.post('/edit-attribute', validateAvatarUrlMiddleware, async function (requ
 router.post('/merge-attributes', getFileNameValidationFunction('avatar'), async function (request, response) {
     try {
         const update = request.body;
+        const requestedFavorite = coerceFavoriteValue(update?.fav, _.get(update, 'data.extensions.fav'));
         await assertSharedCharacterCheckoutForMutation(request, update.avatar);
         const avatarPath = path.join(request.user.directories.characters, update.avatar);
 
@@ -1531,6 +1595,8 @@ router.post('/merge-attributes', getFileNameValidationFunction('avatar'), async 
         }
 
         _.unset(update, 'json_data');
+        _.unset(update, 'fav');
+        _.unset(update, 'data.extensions.fav');
         _.unset(character, 'json_data');
 
         character = deepMerge(character, update);
@@ -1548,7 +1614,17 @@ router.post('/merge-attributes', getFileNameValidationFunction('avatar'), async 
 
         //Accept either V1 or V2.
         if (validator.validate()) {
-            await writeCharacterData(avatarPath, JSON.stringify(character), targetImg, request);
+            const wasWritten = await writeCharacterData(avatarPath, JSON.stringify(character), targetImg, request);
+            if (!wasWritten) {
+                return response.status(500).send({ message: 'Unexpected error while saving character.' });
+            }
+            if (requestedFavorite !== undefined) {
+                setCharacterFavorite(request.user.directories, {
+                    avatar: String(update.avatar || ''),
+                    sharedCharacterKey: getCharacterSharedKey(character),
+                    value: requestedFavorite,
+                });
+            }
             response.sendStatus(200);
         } else {
             console.warn(validator.lastValidationError);
@@ -1714,6 +1790,7 @@ router.post('/delete', validateAvatarUrlMiddleware, async function (request, res
  * @return {void}
  */
 router.post('/all', async function (request, response) {
+    const favoritesState = createFavoritesState(request.user.directories);
     try {
         const files = fs.readdirSync(request.user.directories.characters);
         const pngFiles = files.filter(file => file.endsWith('.png'));
@@ -1722,6 +1799,7 @@ router.post('/all', async function (request, response) {
             shallow: useShallowCharacters,
             user: request.user,
             sharedIndex,
+            favoritesState,
         }));
         const data = (await Promise.all(processingPromises)).filter(c => c.name);
         return response.send(data);
@@ -1729,10 +1807,13 @@ router.post('/all', async function (request, response) {
         console.error(err);
         const isRangeError = err instanceof RangeError;
         response.status(500).send({ overflow: isRangeError, error: true });
+    } finally {
+        flushFavoritesState(favoritesState);
     }
 });
 
 router.post('/get', validateAvatarUrlMiddleware, async function (request, response) {
+    const favoritesState = createFavoritesState(request.user.directories);
     try {
         if (!request.body) return response.sendStatus(400);
         const item = request.body.avatar_url;
@@ -1742,12 +1823,18 @@ router.post('/get', validateAvatarUrlMiddleware, async function (request, respon
             return response.sendStatus(404);
         }
 
-        const data = await processCharacter(item, request.user.directories, { shallow: false, user: request.user });
+        const data = await processCharacter(item, request.user.directories, {
+            shallow: false,
+            user: request.user,
+            favoritesState,
+        });
 
         return response.send(data);
     } catch (err) {
         console.error(err);
         response.sendStatus(500);
+    } finally {
+        flushFavoritesState(favoritesState);
     }
 });
 
@@ -2055,7 +2142,12 @@ router.post('/duplicate', validateAvatarUrlMiddleware, async function (request, 
             suffix++;
         }
 
-        fs.copyFileSync(filename, newFilename);
+        const duplicatedCharacter = rawCharacterData ? JSON.parse(rawCharacterData) : null;
+        clearCharacterFavoriteState(duplicatedCharacter);
+        const wasWritten = await writeCharacterData(filename, JSON.stringify(duplicatedCharacter), path.parse(newFilename).name, request);
+        if (!wasWritten) {
+            return response.send({ error: true });
+        }
         console.info(`${filename} was copied to ${newFilename}`);
         response.send({ path: path.parse(newFilename).base });
     }

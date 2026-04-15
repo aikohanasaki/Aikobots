@@ -4146,6 +4146,20 @@ export async function getWorldEntry(name, data, entry) {
     headerTemplate.data('uid', entry.uid);
     headerTemplate.attr('uid', entry.uid);
 
+    const headerControlIdPrefix = `world_entry_${entry.uid}`;
+    const positionInput = headerTemplate.find('select[name="position"]');
+    const depthInput = headerTemplate.find('input[name="depth"]');
+    const orderInput = headerTemplate.find('input[name="order"]');
+    const probabilityInput = headerTemplate.find('input[name="probability"]');
+    positionInput.attr('id', `${headerControlIdPrefix}_position`);
+    depthInput.attr('id', `${headerControlIdPrefix}_depth`);
+    orderInput.attr('id', `${headerControlIdPrefix}_order`);
+    probabilityInput.attr('id', `${headerControlIdPrefix}_probability`);
+    headerTemplate.find('.WIEntryPositionControl label[for="position"]').attr('for', `${headerControlIdPrefix}_position`);
+    headerTemplate.find('.WIEntryDepthControl label[for="depth"]').attr('for', `${headerControlIdPrefix}_depth`);
+    headerTemplate.find('.WIEntryOrderControl label[for="order"]').attr('for', `${headerControlIdPrefix}_order`);
+    headerTemplate.find('.WIEntryProbabilityControl label[for="probability"]').attr('for', `${headerControlIdPrefix}_probability`);
+
     if (typeof power_user.wi_key_input_plaintext === 'undefined') power_user.wi_key_input_plaintext = true;
 
     // Comment
@@ -4167,7 +4181,6 @@ export async function getWorldEntry(name, data, entry) {
     commentInput.val(entry.comment).trigger('input', { skipReset: true, noSave: true });
 
     // Order
-    const orderInput = headerTemplate.find('input[name="order"]');
     orderInput.data('uid', entry.uid);
     orderInput.on('input', async function (_, { noSave = false } = {}) {
         const uid = $(this).data('uid');
@@ -4180,24 +4193,22 @@ export async function getWorldEntry(name, data, entry) {
     orderInput.val(entry.order).trigger('input', { noSave: true });
 
     // Probability
-    handleProbabilityInputHelper({ probabilityInput: headerTemplate.find('input[name="probability"]'), data, entry, name });
+    handleProbabilityInputHelper({ probabilityInput, data, entry, name });
 
     // Depth
     handleNumberInputHelper({
-        inputElem: headerTemplate.find('input[name="depth"]'),
+        inputElem: depthInput,
         entry, entryKey: 'depth', data, name, min: 0, max: MAX_SCAN_DEPTH, clamp: false,
     });
 
     // Position
     if (entry.position === undefined) entry.position = 0;
-    const positionInput = headerTemplate.find('select[name="position"]');
     positionInput.data('uid', entry.uid);
     positionInput.on('click', e => e.stopPropagation());
     positionInput.on('input', async function (_, { noSave = false } = {}) {
         const uid = $(this).data('uid');
         const value = Number($(this).val());
         data.entries[uid].position = !isNaN(value) ? value : 0;
-        const depthInput = headerTemplate.find('input[name="depth"]');
         if (value === world_info_position.atDepth) {
             depthInput.prop('disabled', false);
             depthInput.css('visibility', 'visible');

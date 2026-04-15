@@ -115,6 +115,7 @@
 }
 
 .WIEntryHeaderMainControls {
+    display: flex;
     gap: var(--wi-entry-header-gap);
     flex: 1 1 auto;
     min-width: 0;

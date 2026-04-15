@@ -12,6 +12,7 @@ import { getCharacterOwnerHandles, getCharacterSharedKey, validateSubmittedChara
 import { getSharedCharacterKeyForFilePath } from './character-sharing-repository.js';
 import { invalidateThumbnail } from './endpoints/thumbnails.js';
 import { getAllEnabledUsers, getUserDirectories } from './users.js';
+import { clearCharacterFavoriteState, getCharacterFavorite, getLegacyCharacterFavoriteState } from './favorites-repository.js';
 
 export const SUBMISSION_STATUSES = Object.freeze({
     PENDING: 'pending',
@@ -309,25 +310,6 @@ function getCharacterName(card) {
 }
 
 /**
- * Gets the favorite state stored in a card.
- * @param {object} card
- * @returns {boolean}
- */
-function getFavoriteState(card) {
-    return Boolean(_.get(card, 'data.extensions.fav', _.get(card, 'fav', false)));
-}
-
-/**
- * Sets the favorite state in a card.
- * @param {object} card
- * @param {boolean} favorite
- */
-function setFavoriteState(card, favorite) {
-    _.set(card, 'fav', favorite);
-    _.set(card, 'data.extensions.fav', favorite);
-}
-
-/**
  * Removes chat/private session fields before sharing.
  * @param {object} card
  */
@@ -469,6 +451,7 @@ async function prepareCharacterCardForDistribution(sourcePath) {
     const { rawBuffer, card } = await readCharacterCardFile(sourcePath);
     stripPrivateShareFields(card);
     normalizeDistributedCharacterCard(card, getSharedCharacterKeyForFilePath(sourcePath));
+    clearCharacterFavoriteState(card);
     return { rawBuffer, card };
 }
 
@@ -496,27 +479,25 @@ async function persistCharacterOwnerIfMissing({ filePath, ownerHandle = '' }) {
 }
 
 /**
- * Writes a prepared distributed character card to a destination while preserving/overriding the favorite state.
+ * Writes a prepared distributed character card to a destination with favorite fields cleared.
  * @param {{ rawBuffer: Buffer, card: object }} preparedCard
  * @param {string} destinationPath
- * @param {boolean} favoriteState
  * @returns {Promise<void>}
  */
-async function writePreparedCharacterCard(preparedCard, destinationPath, favoriteState) {
+async function writePreparedCharacterCard(preparedCard, destinationPath) {
     const card = structuredClone(preparedCard.card);
-    setFavoriteState(card, favoriteState);
+    clearCharacterFavoriteState(card);
     await writeCharacterCardFile(preparedCard.rawBuffer, card, destinationPath);
 }
 
 /**
- * Copies a prepared distribution card to a destination while preserving/overriding the favorite state.
+ * Copies a prepared distribution card to a destination with favorite fields cleared.
  * @param {{ rawBuffer: Buffer, card: object }} preparedCard
  * @param {string} destinationPath
- * @param {boolean} favoriteState
  * @returns {Promise<void>}
  */
-async function copyPreparedCharacterCard(preparedCard, destinationPath, favoriteState) {
-    await writePreparedCharacterCard(preparedCard, destinationPath, favoriteState);
+async function copyPreparedCharacterCard(preparedCard, destinationPath) {
+    await writePreparedCharacterCard(preparedCard, destinationPath);
 }
 
 /**
@@ -600,7 +581,7 @@ export async function createCharacterSubmission({ uploadPath, user, ownerHandle,
     if (existingSharedCharacterKey) {
         _.set(card, 'data.extensions.aikobots.shared_character_key', existingSharedCharacterKey);
     }
-    setFavoriteState(card, false);
+    clearCharacterFavoriteState(card);
     stripPrivateShareFields(card);
 
     await fsPromises.mkdir(basePath, { recursive: true });
@@ -840,19 +821,22 @@ export async function distributeCharacterFile({
             continue;
         }
 
-        let favoriteState = false;
         if (fs.existsSync(destinationPath)) {
             const { card } = await readCharacterCardFile(destinationPath);
-            favoriteState = getFavoriteState(card);
+            getCharacterFavorite(directories, {
+                avatar: outputFilename,
+                sharedCharacterKey: resolvedCharacterKey,
+                legacyFavorite: getLegacyCharacterFavoriteState(card),
+            });
         }
 
-        await copyPreparedCharacterCard(distributionPayload, destinationPath, favoriteState);
+        await copyPreparedCharacterCard(distributionPayload, destinationPath);
         invalidateThumbnail(directories, 'avatar', outputFilename);
     }
 
     if (publishMode === PUBLISH_MODES.GLOBAL) {
         const defaultContentPath = path.join(DEFAULT_CONTENT_ROOT, 'characters', outputFilename);
-        await copyPreparedCharacterCard(distributionPayload, defaultContentPath, false);
+        await copyPreparedCharacterCard(distributionPayload, defaultContentPath);
         await upsertDefaultContentCharacter(path.join('characters', outputFilename).replaceAll('\\', '/'));
     }
 

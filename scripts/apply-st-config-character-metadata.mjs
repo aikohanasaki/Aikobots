@@ -48,27 +48,27 @@ import {
 import { serverDirectory } from '../src/server-directory.js';
 import { buildHiddenLorebookTemplateSource } from './generate-hidden-lorebook-template-source.mjs';
 
-function getConfiguredDefaultScaffoldRoot(configPath = path.join(serverDirectory, 'config.yaml')) {
+function getConfiguredDefaultContentRoot(configPath = path.join(serverDirectory, 'config.yaml')) {
     try {
         if (!fs.existsSync(configPath)) {
-            return './default/scaffold';
+            return './default/content';
         }
 
         const config = yaml.parse(fs.readFileSync(configPath, 'utf8'));
-        return String(config?.defaultScaffoldRoot || './default/scaffold');
+        return String(config?.defaultContentRoot || './default/content');
     } catch {
-        return './default/scaffold';
+        return './default/content';
     }
 }
 
-const configuredDefaultScaffoldRoot = getConfiguredDefaultScaffoldRoot();
+const configuredDefaultContentRoot = getConfiguredDefaultContentRoot();
 
 function parseArgs(argv) {
     const options = {
         input: undefined,
         charactersDir: undefined,
         dataRoot: undefined,
-        scaffoldRoot: configuredDefaultScaffoldRoot,
+        contentRoot: configuredDefaultContentRoot,
         defaultOwner: 'default-user',
         dryRun: false,
         help: false,
@@ -86,8 +86,11 @@ function parseArgs(argv) {
             case '--data-root':
                 options.dataRoot = argv[++index] ?? undefined;
                 break;
+            case '--content-root':
+                options.contentRoot = argv[++index] ?? undefined;
+                break;
             case '--scaffold-root':
-                options.scaffoldRoot = argv[++index] ?? undefined;
+                options.contentRoot = argv[++index] ?? undefined;
                 break;
             case '--default-owner':
                 options.defaultOwner = argv[++index] ?? options.defaultOwner;
@@ -111,7 +114,7 @@ function printUsage() {
     console.log('Usage:');
     console.log('  node .\\scripts\\apply-st-config-character-metadata.mjs --input C:\\path\\to\\st_config.py --characters-dir C:\\path\\to\\characters');
     console.log('  node .\\scripts\\apply-st-config-character-metadata.mjs --input C:\\path\\to\\st_config.py --characters-dir C:\\path\\to\\characters --data-root C:\\path\\to\\data');
-    console.log('  node .\\scripts\\apply-st-config-character-metadata.mjs --input C:\\path\\to\\st_config.py --characters-dir C:\\path\\to\\characters --scaffold-root C:\\path\\to\\scaffold');
+    console.log('  node .\\scripts\\apply-st-config-character-metadata.mjs --input C:\\path\\to\\st_config.py --characters-dir C:\\path\\to\\characters --content-root C:\\path\\to\\default\\content');
     console.log('  node .\\scripts\\apply-st-config-character-metadata.mjs --input C:\\path\\to\\st_config.py --characters-dir C:\\path\\to\\characters --data-root C:\\path\\to\\data --dry-run');
 }
 
@@ -150,8 +153,8 @@ function readContentIndex(indexPath) {
     }
 }
 
-function upsertScaffoldCharacterIndex(scaffoldRoot, fileName) {
-    const indexPath = path.join(scaffoldRoot, 'index.json');
+function upsertDefaultContentCharacterIndex(contentRoot, fileName) {
+    const indexPath = path.join(contentRoot, 'index.json');
     const relativeFilename = path.join('characters', fileName).replaceAll('\\', '/');
     const index = readContentIndex(indexPath);
     const existingIndex = index.findIndex(item => item?.filename === relativeFilename);
@@ -385,20 +388,20 @@ export async function runStConfigCharacterMetadataMigration({
     inputPath,
     charactersDir,
     dataRoot,
-    scaffoldRoot = configuredDefaultScaffoldRoot,
+    contentRoot = configuredDefaultContentRoot,
     defaultOwner = 'default-user',
     dryRun = false,
 } = {}) {
     const resolvedInputPath = assertFileExists(inputPath, 'Input file');
     const resolvedCharactersDir = assertDirectoryExists(charactersDir, 'Characters directory');
     const resolvedDataRoot = dataRoot ? assertDirectoryExists(dataRoot, 'Data root') : '';
-    const resolvedScaffoldRoot = scaffoldRoot ? path.resolve(String(scaffoldRoot)) : '';
+    const resolvedContentRoot = contentRoot ? path.resolve(String(contentRoot)) : '';
     const stConfigText = await fs.promises.readFile(resolvedInputPath, 'utf8');
     const templateSource = buildHiddenLorebookTemplateSource(stConfigText);
     const discoveredFiles = collectPngFiles(resolvedCharactersDir);
     const plan = buildCharacterMetadataMigrationPlan(templateSource, discoveredFiles, { defaultOwner });
     const updated = [];
-    const scaffoldUpdated = [];
+    const contentUpdated = [];
 
     if (plan.duplicateMatches.length > 0) {
         throw new Error(`Found duplicate PNG filenames for ${plan.duplicateMatches.length} character(s). Resolve duplicates before running this migration.`);
@@ -410,11 +413,11 @@ export async function runStConfigCharacterMetadataMigration({
             applySingleOwnerPushedMetadata(card, assignment);
             await writeCharacterCardFile(rawBuffer, card, assignment.filePath);
 
-            if (resolvedScaffoldRoot) {
-                const scaffoldCharactersDir = path.join(resolvedScaffoldRoot, 'characters');
-                const scaffoldPath = path.join(scaffoldCharactersDir, assignment.fileName);
-                await writeCharacterCardFile(rawBuffer, card, scaffoldPath);
-                upsertScaffoldCharacterIndex(resolvedScaffoldRoot, assignment.fileName);
+            if (resolvedContentRoot) {
+                const contentCharactersDir = path.join(resolvedContentRoot, 'characters');
+                const contentPath = path.join(contentCharactersDir, assignment.fileName);
+                await writeCharacterCardFile(rawBuffer, card, contentPath);
+                upsertDefaultContentCharacterIndex(resolvedContentRoot, assignment.fileName);
             }
         }
 
@@ -426,10 +429,10 @@ export async function runStConfigCharacterMetadataMigration({
             hiddenTemplates: assignment.hiddenTemplates,
         });
 
-        if (resolvedScaffoldRoot) {
-            scaffoldUpdated.push({
+        if (resolvedContentRoot) {
+            contentUpdated.push({
                 characterName: assignment.characterName,
-                filePath: path.join(resolvedScaffoldRoot, 'characters', assignment.fileName),
+                filePath: path.join(resolvedContentRoot, 'characters', assignment.fileName),
             });
         }
     }
@@ -454,7 +457,7 @@ export async function runStConfigCharacterMetadataMigration({
             inputPath: resolvedInputPath,
             charactersDir: resolvedCharactersDir,
             dataRoot: resolvedDataRoot || null,
-            scaffoldRoot: resolvedScaffoldRoot || null,
+            contentRoot: resolvedContentRoot || null,
             defaultOwner,
             dryRun: Boolean(dryRun),
         },
@@ -463,10 +466,10 @@ export async function runStConfigCharacterMetadataMigration({
             matchedCharacters: plan.matched.length,
             missingCharacters: plan.missing.length,
             updatedCharacters: updated.length,
-            scaffoldCharacters: scaffoldUpdated.length,
+            contentCharacters: contentUpdated.length,
         },
         updated,
-        scaffoldUpdated,
+        contentUpdated,
         missing: plan.missing,
         hiddenTemplatePatch,
         hiddenTemplateSource,
@@ -491,7 +494,7 @@ async function main() {
         inputPath: options.input,
         charactersDir: options.charactersDir,
         dataRoot: options.dataRoot,
-        scaffoldRoot: options.scaffoldRoot,
+        contentRoot: options.contentRoot,
         defaultOwner: options.defaultOwner,
         dryRun: options.dryRun,
     });
@@ -499,7 +502,7 @@ async function main() {
     console.log(`Scanned PNG files: ${result.counts.scannedPngFiles}`);
     console.log(`Matched characters: ${result.counts.matchedCharacters}`);
     console.log(`Updated characters: ${result.counts.updatedCharacters}`);
-    console.log(`Scaffold characters: ${result.counts.scaffoldCharacters}`);
+    console.log(`Default content characters: ${result.counts.contentCharacters}`);
     console.log(`Missing characters: ${result.counts.missingCharacters}`);
 
     if (result.options.dataRoot) {

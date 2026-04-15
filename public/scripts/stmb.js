@@ -177,8 +177,8 @@ const DURABLE_SYNC_STATE_KEYS = [
     'autoConsolidationLastPromptKey',
 ];
 
-function applyServerPlannerStateToLocal(state = {}) {
-    const localState = getStmbState();
+function applyServerPlannerStateToLocal(state = {}, chatScope = null) {
+    const localState = getStmbState(chatScope);
     const hasServerState = DURABLE_SYNC_STATE_KEYS.some(key => Object.hasOwn(state, key));
     if (!hasServerState) {
         return;
@@ -194,9 +194,13 @@ function applyServerPlannerStateToLocal(state = {}) {
 }
 
 async function syncCurrentChatPlannerState(sceneContext = buildStmbSceneContext()) {
+    const sceneChatKey = resolveStmbStateChatKey(sceneContext);
     try {
         const result = await getStmbPlannerChatState({ sceneContext });
-        applyServerPlannerStateToLocal(result?.state || {});
+        if (sceneChatKey !== getCurrentPlannerChatKey()) {
+            return;
+        }
+        applyServerPlannerStateToLocal(result?.state || {}, sceneContext);
         renderAllSceneButtons();
         await refreshOpenSettingsPopupSceneState();
     } catch (error) {
@@ -991,32 +995,32 @@ async function handlePlannerApprovalRequests(jobs = []) {
                 continue;
             }
 
-            if (previewResult?.action === 'edit' && previewResult.memoryData) {
-                await respondStmbPlannerApproval({
-                    jobId,
-                    decision: 'approve',
-                    editedData: isSidePrompt
-                        ? {
-                            title: String(previewResult.memoryData.extractedTitle || previewResult.memoryData.title || approvalRequest.title || '').trim(),
-                            content: String(previewResult.memoryData.content || '').trim(),
-                        }
-                        : {
-                        title: String(previewResult.memoryData.extractedTitle || previewResult.memoryData.title || '').trim(),
-                        content: String(previewResult.memoryData.content || '').trim(),
-                        keywords: Array.isArray(previewResult.memoryData.suggestedKeys)
-                            ? previewResult.memoryData.suggestedKeys.slice()
-                            : Array.isArray(previewResult.memoryData.keywords)
-                                ? previewResult.memoryData.keywords.slice()
-                                : [],
-                    },
-                });
+            if (previewResult?.action === 'cancel') {
                 continue;
             }
 
-            await respondStmbPlannerApproval({
+            const approvalResponse = {
                 jobId,
-                decision: 'reject',
-            });
+                decision: 'approve',
+            };
+            if (previewResult?.memoryData) {
+                approvalResponse.editedData = isSidePrompt
+                    ? {
+                        title: String(previewResult.memoryData.extractedTitle || previewResult.memoryData.title || approvalRequest.title || '').trim(),
+                        content: String(previewResult.memoryData.content || '').trim(),
+                    }
+                    : {
+                    title: String(previewResult.memoryData.extractedTitle || previewResult.memoryData.title || '').trim(),
+                    content: String(previewResult.memoryData.content || '').trim(),
+                    keywords: Array.isArray(previewResult.memoryData.suggestedKeys)
+                        ? previewResult.memoryData.suggestedKeys.slice()
+                        : Array.isArray(previewResult.memoryData.keywords)
+                            ? previewResult.memoryData.keywords.slice()
+                            : [],
+                };
+            }
+
+            await respondStmbPlannerApproval(approvalResponse);
         } catch (error) {
             handledPlannerApprovalPrompts.delete(jobId);
             console.warn('STMB planner approval response failed', error);
@@ -5097,9 +5101,9 @@ async function resolveAutoSummaryLorebook(options = {}) {
     try {
         const resolvedLorebookName = await ensureResolvedLorebookName({
             manualMode: true,
-            getManualLorebook: () => getStmbState().manualLorebook,
+            getManualLorebook: () => state.manualLorebook,
             setManualLorebook: async selectedLorebook => {
-                getStmbState().manualLorebook = String(selectedLorebook || '').trim();
+                state.manualLorebook = String(selectedLorebook || '').trim();
                 saveMetadataDebounced();
             },
             createContext: 'auto-summary',
@@ -6973,6 +6977,7 @@ export function initStmb() {
 
     createMainEntryUi();
     ensurePlannerStatusUi();
+    void pollCurrentChatPlannerState();
     $(document).on('click', '#stmb-menu-item', () => {
         showMainEntryPopup().catch(error => {
             console.warn('STMB main entry popup failed', error);
@@ -7000,6 +7005,7 @@ export function initStmb() {
     }, 0);
 
     eventSource.on(event_types.CHAT_CHANGED, () => {
+        void pollCurrentChatPlannerState();
         setTimeout(() => {
             validateSceneMarkers();
             renderAllSceneButtons();

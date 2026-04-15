@@ -12,6 +12,7 @@ import { getConfigValue, color, setPermissionsSync, isValidUrl } from '../util.j
 import { parse, write } from '../character-card-parser.js';
 import { getCharacterDistributionPolicy } from '../character-distribution-registry.js';
 import { getCharacterSharedKey } from '../character-linked-lorebooks.js';
+import { clearCharacterFavoriteState, getCharacterFavorite, getLegacyCharacterFavoriteState } from '../favorites-repository.js';
 import { Jimp, JimpMime } from '../jimp.js';
 import { DEFAULT_AVATAR_PATH } from '../constants.js';
 
@@ -80,21 +81,6 @@ function filesAreIdentical(leftPath, rightPath) {
     }
 }
 
-function getCharacterFavoriteState(card) {
-    return Boolean(card?.data?.extensions?.fav ?? card?.fav ?? false);
-}
-
-function setCharacterFavoriteState(card, favorite) {
-    if (!card || typeof card !== 'object') {
-        return;
-    }
-
-    card.fav = favorite;
-    card.data = card.data || {};
-    card.data.extensions = card.data.extensions || {};
-    card.data.extensions.fav = favorite;
-}
-
 async function characterFilesAreEquivalentIgnoringFavorite(leftPath, rightPath) {
     try {
         const [leftBuffer, rightBuffer, leftRawCard, rightRawCard] = await Promise.all([
@@ -106,8 +92,8 @@ async function characterFilesAreEquivalentIgnoringFavorite(leftPath, rightPath) 
 
         const leftCard = JSON.parse(leftRawCard);
         const rightCard = JSON.parse(rightRawCard);
-        setCharacterFavoriteState(leftCard, false);
-        setCharacterFavoriteState(rightCard, false);
+        clearCharacterFavoriteState(leftCard);
+        clearCharacterFavoriteState(rightCard);
 
         const normalizedLeft = write(leftBuffer, JSON.stringify(leftCard));
         const normalizedRight = write(rightBuffer, JSON.stringify(rightCard));
@@ -117,16 +103,14 @@ async function characterFilesAreEquivalentIgnoringFavorite(leftPath, rightPath) 
     }
 }
 
-async function refreshScaffoldCharacterPreservingFavorite(sourcePath, targetPath) {
-    const [sourceBuffer, sourceRawCard, targetRawCard] = await Promise.all([
+async function writeCharacterFileWithoutFavorite(sourcePath, targetPath) {
+    const [sourceBuffer, sourceRawCard] = await Promise.all([
         fs.promises.readFile(sourcePath),
         parse(sourcePath, 'png'),
-        parse(targetPath, 'png'),
     ]);
 
     const sourceCard = JSON.parse(sourceRawCard);
-    const targetCard = JSON.parse(targetRawCard);
-    setCharacterFavoriteState(sourceCard, getCharacterFavoriteState(targetCard));
+    clearCharacterFavoriteState(sourceCard);
     writeFileAtomicSync(targetPath, write(sourceBuffer, JSON.stringify(sourceCard)));
 }
 
@@ -301,14 +285,34 @@ async function seedContentForUser(contentIndex, directories, forceCategories) {
                 continue;
             }
 
-            await refreshScaffoldCharacterPreservingFavorite(contentPath, targetPath);
+            if (contentItem.type === CONTENT_TYPES.CHARACTER) {
+                try {
+                    const targetRawCard = await parse(targetPath, 'png');
+                    const targetCard = JSON.parse(targetRawCard);
+                    getCharacterFavorite(directories, {
+                        avatar: path.parse(targetPath).base,
+                        sharedCharacterKey: getCharacterSharedKey(targetCard),
+                        legacyFavorite: getLegacyCharacterFavoriteState(targetCard),
+                    });
+                } catch (error) {
+                    console.warn(`Failed to backfill favorite state before refreshing ${targetPath}`, error);
+                }
+
+                await writeCharacterFileWithoutFavorite(contentPath, targetPath);
+            } else {
+                fs.cpSync(contentPath, targetPath, { recursive: true, force: true });
+            }
             setPermissionsSync(targetPath);
             console.info(`Scaffold character ${contentItem.filename} refreshed in ${contentTarget}`);
             anyContentAdded = true;
             continue;
         }
 
-        fs.cpSync(contentPath, targetPath, { recursive: true, force: false });
+        if (contentItem.type === CONTENT_TYPES.CHARACTER) {
+            await writeCharacterFileWithoutFavorite(contentPath, targetPath);
+        } else {
+            fs.cpSync(contentPath, targetPath, { recursive: true, force: false });
+        }
         setPermissionsSync(targetPath);
         console.info(`Content file ${contentItem.filename} copied to ${contentTarget}`);
         anyContentAdded = true;

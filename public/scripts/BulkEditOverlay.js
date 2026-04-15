@@ -11,6 +11,7 @@ import {
     characterToEntity,
     printCharactersDebounced,
     deleteCharacter,
+    persistCharacterFavorite,
 } from '../script.js';
 
 import { favsToHotswap } from './RossAscends-mods.js';
@@ -68,31 +69,13 @@ class CharacterContextMenu {
      */
     static favorite = async (characterId) => {
         const character = CharacterContextMenu.#getCharacter(characterId);
-        const newFavState = !character.data.extensions.fav;
-
-        const data = {
-            name: character.name,
-            avatar: character.avatar,
-            data: {
-                extensions: {
-                    fav: newFavState,
-                },
-            },
-            fav: newFavState,
-        };
-
-        const mergeResponse = await fetch('/api/characters/merge-attributes', {
-            method: 'POST',
-            headers: getRequestHeaders(),
-            body: JSON.stringify(data),
+        const newFavState = !(character.data?.extensions?.fav || character.fav);
+        const saved = await persistCharacterFavorite(character.avatar, newFavState, {
+            sharedCharacterKey: character.sharedCharacterKey || character.data?.extensions?.aikobots?.shared_character_key || '',
         });
 
-        if (!mergeResponse.ok) {
-            const error = await mergeResponse.json().catch(() => null);
-            const message = error?.message || 'Character not saved.';
-            const field = error?.error ? ` Field: ${error.error}` : '';
-            toastr.error(`${message}${field}`);
-            throw new Error(message);
+        if (!saved) {
+            throw new Error('Character favorite not saved.');
         }
     };
 

@@ -7,6 +7,7 @@ import { sync as writeFileAtomicSync } from 'write-file-atomic';
 
 import { humanizedISO8601DateTime } from '../util.js';
 import { getFileNameValidationFunction } from '../middleware/validateFileName.js';
+import { createFavoritesState, flushFavoritesState, getGroupFavorite, setGroupFavorite } from '../favorites-repository.js';
 
 export const router = express.Router();
 const getSplitHeadPath = (filePath) => {
@@ -14,7 +15,7 @@ const getSplitHeadPath = (filePath) => {
     return path.join(parsedPath.dir, `${parsedPath.name}.head.jsonl`);
 };
 
-const sanitizeGroupPayload = (group) => {
+const sanitizeGroupPayload = (group, { stripFavorite = true } = {}) => {
     if (!group || typeof group !== 'object') {
         return group;
     }
@@ -22,54 +23,69 @@ const sanitizeGroupPayload = (group) => {
     const sanitizedGroup = JSON.parse(JSON.stringify(group));
     delete sanitizedGroup.chat_metadata;
     delete sanitizedGroup.past_metadata;
+    if (stripFavorite) {
+        delete sanitizedGroup.fav;
+    }
     return sanitizedGroup;
 };
 
+const coerceFavoriteValue = (value) => value === true || value === 'true';
+
 router.post('/all', (request, response) => {
+    const favoritesState = createFavoritesState(request.user.directories);
     const groups = [];
 
-    if (!fs.existsSync(request.user.directories.groups)) {
-        fs.mkdirSync(request.user.directories.groups);
-    }
+    try {
+        if (!fs.existsSync(request.user.directories.groups)) {
+            fs.mkdirSync(request.user.directories.groups);
+        }
 
-    const files = fs.readdirSync(request.user.directories.groups).filter(x => path.extname(x) === '.json');
-    const chats = fs.readdirSync(request.user.directories.groupChats).filter(x => path.extname(x) === '.jsonl');
+        const files = fs.readdirSync(request.user.directories.groups).filter(x => path.extname(x) === '.json');
+        const chats = fs.readdirSync(request.user.directories.groupChats).filter(x => path.extname(x) === '.jsonl');
 
-    files.forEach(function (file) {
-        try {
-            const filePath = path.join(request.user.directories.groups, file);
-            const fileContents = fs.readFileSync(filePath, 'utf8');
-            const group = sanitizeGroupPayload(JSON.parse(fileContents));
-            const groupStat = fs.statSync(filePath);
-            group['date_added'] = groupStat.birthtimeMs;
-            group['create_date'] = humanizedISO8601DateTime(groupStat.birthtimeMs);
+        files.forEach(function (file) {
+            try {
+                const filePath = path.join(request.user.directories.groups, file);
+                const fileContents = fs.readFileSync(filePath, 'utf8');
+                const rawGroup = JSON.parse(fileContents);
+                const group = sanitizeGroupPayload(rawGroup, { stripFavorite: false });
+                const groupStat = fs.statSync(filePath);
+                group['date_added'] = groupStat.birthtimeMs;
+                group['create_date'] = humanizedISO8601DateTime(groupStat.birthtimeMs);
+                group['fav'] = getGroupFavorite(favoritesState, {
+                    id: String(group.id || ''),
+                    legacyFavorite: Boolean(rawGroup?.fav),
+                });
 
-            let chat_size = 0;
-            let date_last_chat = 0;
+                let chat_size = 0;
+                let date_last_chat = 0;
 
-            if (Array.isArray(group.chats) && Array.isArray(chats)) {
-                for (const chat of chats) {
-                    if (group.chats.includes(path.parse(chat).name)) {
-                        const chatPath = path.join(request.user.directories.groupChats, chat);
-                        const chatStat = fs.statSync(chatPath);
-                        const headPath = getSplitHeadPath(chatPath);
-                        const headStat = fs.existsSync(headPath) ? fs.statSync(headPath) : null;
-                        chat_size += chatStat.size + (headStat?.size || 0);
-                        date_last_chat = Math.max(date_last_chat, chatStat.mtimeMs, headStat?.mtimeMs || 0);
+                if (Array.isArray(group.chats) && Array.isArray(chats)) {
+                    for (const chat of chats) {
+                        if (group.chats.includes(path.parse(chat).name)) {
+                            const chatPath = path.join(request.user.directories.groupChats, chat);
+                            const chatStat = fs.statSync(chatPath);
+                            const headPath = getSplitHeadPath(chatPath);
+                            const headStat = fs.existsSync(headPath) ? fs.statSync(headPath) : null;
+                            chat_size += chatStat.size + (headStat?.size || 0);
+                            date_last_chat = Math.max(date_last_chat, chatStat.mtimeMs, headStat?.mtimeMs || 0);
+                        }
                     }
                 }
+
+                group['date_last_chat'] = date_last_chat;
+                group['chat_size'] = chat_size;
+                groups.push(group);
             }
+            catch (error) {
+                console.error(error);
+            }
+        });
 
-            group['date_last_chat'] = date_last_chat;
-            group['chat_size'] = chat_size;
-            groups.push(group);
-        }
-        catch (error) {
-            console.error(error);
-        }
-    });
-
-    return response.send(groups);
+        return response.send(groups);
+    } finally {
+        flushFavoritesState(favoritesState);
+    }
 });
 
 router.post('/create', (request, response) => {
@@ -78,6 +94,7 @@ router.post('/create', (request, response) => {
     }
 
     const id = String(Date.now());
+    const requestedFavorite = coerceFavoriteValue(request.body.fav);
     const groupMetadata = sanitizeGroupPayload({
         id: id,
         name: request.body.name ?? 'New Group',
@@ -102,6 +119,7 @@ router.post('/create', (request, response) => {
     }
 
     writeFileAtomicSync(pathToFile, fileData);
+    groupMetadata.fav = setGroupFavorite(request.user.directories, { id, value: requestedFavorite });
     return response.send(groupMetadata);
 });
 
@@ -114,6 +132,9 @@ router.post('/edit', getFileNameValidationFunction('id'), (request, response) =>
     const fileData = JSON.stringify(sanitizeGroupPayload(request.body), null, 4);
 
     writeFileAtomicSync(pathToFile, fileData);
+    if (request.body.fav !== undefined) {
+        setGroupFavorite(request.user.directories, { id, value: coerceFavoriteValue(request.body.fav) });
+    }
     return response.send({ ok: true });
 });
 

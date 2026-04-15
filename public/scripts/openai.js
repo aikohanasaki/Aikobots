@@ -89,12 +89,63 @@ export {
     MessageCollection,
 };
 
-let pendingTimedWorldInfo = null;
-let pendingWorldInfoSummary = null;
-let pendingWorldInfoReport = null;
-let pendingPromptSnapshotKey = null;
+let nextOpenAIResponseMetadataId = 0;
+const pendingOpenAIResponseMetadata = new Map();
 let lastServerAssemblyPromptContext = null;
 let lastServerAssemblyDebugDump = null;
+
+function createOpenAIResponseMetadataId() {
+    nextOpenAIResponseMetadataId += 1;
+    return `openai-response-${nextOpenAIResponseMetadataId}`;
+}
+
+function getOpenAIResponseMetadataEntry(requestId, { create = false } = {}) {
+    if (typeof requestId !== 'string' || !requestId) {
+        return null;
+    }
+
+    let entry = pendingOpenAIResponseMetadata.get(requestId);
+    if (!entry && create) {
+        entry = {
+            timedWorldInfo: null,
+            promptSnapshotKey: null,
+            worldInfoSummary: null,
+            worldInfoReport: null,
+        };
+        pendingOpenAIResponseMetadata.set(requestId, entry);
+    }
+
+    return entry;
+}
+
+function cleanupOpenAIResponseMetadataEntry(requestId) {
+    const entry = getOpenAIResponseMetadataEntry(requestId);
+    if (!entry) {
+        return;
+    }
+
+    const hasTimedWorldInfo = entry.timedWorldInfo && typeof entry.timedWorldInfo === 'object';
+    const hasPromptSnapshotKey = typeof entry.promptSnapshotKey === 'string' && entry.promptSnapshotKey;
+    const hasWorldInfoSummary = entry.worldInfoSummary && typeof entry.worldInfoSummary === 'object';
+    const hasWorldInfoReport = entry.worldInfoReport && typeof entry.worldInfoReport === 'object';
+    if (!hasTimedWorldInfo && !hasPromptSnapshotKey && !hasWorldInfoSummary && !hasWorldInfoReport) {
+        pendingOpenAIResponseMetadata.delete(requestId);
+    }
+}
+
+function attachOpenAIResponseMetadataOwner(target, requestId) {
+    if ((!target || typeof target !== 'object') && typeof target !== 'function') {
+        return target;
+    }
+
+    Object.defineProperty(target, 'openAIRequestId', {
+        value: requestId,
+        enumerable: false,
+        configurable: true,
+    });
+
+    return target;
+}
 
 function sanitizeForServerPayload(value, seen = new WeakSet()) {
     if (value === null || value === undefined) {
@@ -986,55 +1037,79 @@ function applyAssemblyResponseMetadata(response, type) {
     setInContextMessages(messagesCount, type);
 }
 
-function applyTimedWorldInfoResponseData(data) {
+function applyTimedWorldInfoResponseData(data, requestId) {
+    const entry = getOpenAIResponseMetadataEntry(requestId, { create: true });
     const promptSnapshotKey = data?.x_sillytavern?.promptSnapshotKey;
-    if (typeof promptSnapshotKey === 'string' && promptSnapshotKey) {
-        pendingPromptSnapshotKey = promptSnapshotKey;
+    if (entry && typeof promptSnapshotKey === 'string' && promptSnapshotKey) {
+        entry.promptSnapshotKey = promptSnapshotKey;
     }
     const timedWorldInfo = data?.x_sillytavern?.timedWorldInfo;
-    if (timedWorldInfo && typeof timedWorldInfo === 'object') {
-        pendingTimedWorldInfo = structuredClone(timedWorldInfo);
+    if (entry && timedWorldInfo && typeof timedWorldInfo === 'object') {
+        entry.timedWorldInfo = structuredClone(timedWorldInfo);
     }
     const worldInfoSummary = data?.x_sillytavern?.worldInfoSummary;
-    if (worldInfoSummary && typeof worldInfoSummary === 'object') {
-        pendingWorldInfoSummary = structuredClone(worldInfoSummary);
+    if (entry && worldInfoSummary && typeof worldInfoSummary === 'object') {
+        entry.worldInfoSummary = structuredClone(worldInfoSummary);
     }
     const worldInfoReport = data?.x_sillytavern?.worldInfoReport;
-    if (worldInfoReport && typeof worldInfoReport === 'object') {
-        pendingWorldInfoReport = structuredClone(worldInfoReport);
+    if (entry && worldInfoReport && typeof worldInfoReport === 'object') {
+        entry.worldInfoReport = structuredClone(worldInfoReport);
     }
     maybeNotifyWorldInfoOverflow(data);
 }
 
-export function consumeOpenAITimedWorldInfo() {
-    const value = pendingTimedWorldInfo && typeof pendingTimedWorldInfo === 'object'
-        ? structuredClone(pendingTimedWorldInfo)
+export function consumeOpenAITimedWorldInfo(requestId = null) {
+    const entry = getOpenAIResponseMetadataEntry(requestId);
+    const value = entry?.timedWorldInfo && typeof entry.timedWorldInfo === 'object'
+        ? structuredClone(entry.timedWorldInfo)
         : null;
-    pendingTimedWorldInfo = null;
+    if (entry) {
+        entry.timedWorldInfo = null;
+        cleanupOpenAIResponseMetadataEntry(requestId);
+    }
     return value;
 }
 
-export function consumeOpenAIPromptInspectionResponseData() {
-    const value = typeof pendingPromptSnapshotKey === 'string' && pendingPromptSnapshotKey
-        ? { promptSnapshotKey: pendingPromptSnapshotKey }
+export function consumeOpenAIPromptInspectionResponseData(requestId = null) {
+    const entry = getOpenAIResponseMetadataEntry(requestId);
+    const promptSnapshotKey = typeof entry?.promptSnapshotKey === 'string' && entry.promptSnapshotKey
+        ? entry.promptSnapshotKey
+        : null;
+    const value = promptSnapshotKey
+        ? { promptSnapshotKey }
         : { promptSnapshotKey: null };
-    pendingPromptSnapshotKey = null;
+    if (entry) {
+        entry.promptSnapshotKey = null;
+        cleanupOpenAIResponseMetadataEntry(requestId);
+    }
     return value;
 }
 
-export function consumeOpenAIWorldInfoResponseData() {
+export function consumeOpenAIWorldInfoResponseData(requestId = null) {
+    const entry = getOpenAIResponseMetadataEntry(requestId);
     const value = {
-        worldInfoSummary: pendingWorldInfoSummary && typeof pendingWorldInfoSummary === 'object'
-            ? structuredClone(pendingWorldInfoSummary)
+        worldInfoSummary: entry?.worldInfoSummary && typeof entry.worldInfoSummary === 'object'
+            ? structuredClone(entry.worldInfoSummary)
             : null,
-        worldInfoReport: pendingWorldInfoReport && typeof pendingWorldInfoReport === 'object'
-            ? structuredClone(pendingWorldInfoReport)
+        worldInfoReport: entry?.worldInfoReport && typeof entry.worldInfoReport === 'object'
+            ? structuredClone(entry.worldInfoReport)
             : null,
     };
 
-    pendingWorldInfoSummary = null;
-    pendingWorldInfoReport = null;
+    if (entry) {
+        entry.worldInfoSummary = null;
+        entry.worldInfoReport = null;
+        cleanupOpenAIResponseMetadataEntry(requestId);
+    }
     return value;
+}
+
+export function consumeOpenAIResponseData(requestId = null) {
+    return {
+        timedWorldInfo: consumeOpenAITimedWorldInfo(requestId),
+        promptInspectionResponseData: consumeOpenAIPromptInspectionResponseData(requestId),
+        worldInfoResponseData: consumeOpenAIWorldInfoResponseData(requestId),
+    };
 }
 
 export async function buildServerAssemblyPayload({
@@ -2162,10 +2237,7 @@ function getVerbosity() {
 
 async function buildOpenAIGenerateData(type, messages, { jsonSchema = null } = {}) {
     const promptContext = !Array.isArray(messages) && messages && typeof messages === 'object' ? messages.promptContext : null;
-    pendingTimedWorldInfo = null;
-    pendingWorldInfoSummary = null;
-    pendingWorldInfoReport = null;
-    pendingPromptSnapshotKey = null;
+    const requestId = createOpenAIResponseMetadataId();
     storeServerAssemblyPromptContext(promptContext);
 
     if (!promptContext && !Array.isArray(messages)) {
@@ -2516,6 +2588,7 @@ async function buildOpenAIGenerateData(type, messages, { jsonSchema = null } = {
         stream,
         canMultiSwipe,
         hasForcedActivations: Array.isArray(promptContext?.worldInfoRequest?.forcedActivations) && promptContext.worldInfoRequest.forcedActivations.length > 0,
+        requestId,
     };
 }
 
@@ -2530,6 +2603,7 @@ async function sendOpenAIRequest(type, messages, signal, { jsonSchema = null } =
         stream,
         canMultiSwipe,
         hasForcedActivations,
+        requestId,
     } = await buildOpenAIGenerateData(type, messages, { jsonSchema });
 
     const generate_url = '/api/backends/chat-completions/generate';
@@ -2574,7 +2648,7 @@ async function sendOpenAIRequest(type, messages, signal, { jsonSchema = null } =
                 const parsed = JSON.parse(rawData);
 
                 if (parsed?.x_sillytavern) {
-                    applyTimedWorldInfoResponseData(parsed);
+                    applyTimedWorldInfoResponseData(parsed, requestId);
                     continue;
                 }
 
@@ -2591,10 +2665,12 @@ async function sendOpenAIRequest(type, messages, signal, { jsonSchema = null } =
                 yield { text, swipes: swipes, logprobs: parseChatCompletionLogprobs(parsed), toolCalls: toolCalls, state: state };
             }
         };
+
+        return attachOpenAIResponseMetadataOwner(streamData, requestId);
     }
     else {
         const data = await response.json();
-        applyTimedWorldInfoResponseData(data);
+        applyTimedWorldInfoResponseData(data, requestId);
 
         checkQuotaError(data);
         checkModerationError(data);
@@ -2612,7 +2688,7 @@ async function sendOpenAIRequest(type, messages, signal, { jsonSchema = null } =
             delay(1).then(() => saveLogprobsForActiveMessage(logprobs, null));
         }
 
-        return data;
+        return attachOpenAIResponseMetadataOwner(data, requestId);
     }
 }
 
