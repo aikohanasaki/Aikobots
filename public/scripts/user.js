@@ -538,9 +538,16 @@ function buildSubmissionCard(submission, { admin = false, onReview = null } = {}
     card.find('.submission_published').text(submission.publishedFilename || '');
     card.find('.submission_targets_row').toggle(Array.isArray(submission.targetHandles) && submission.targetHandles.length > 0);
     card.find('.submission_targets').text(Array.isArray(submission.targetHandles) ? submission.targetHandles.join(', ') : '');
+    const primaryNote = admin
+        ? (submission.status === 'pending'
+            ? String(submission.adminQueueReason || '').trim() || 'Reason unavailable.'
+            : '')
+        : String(submission.creatorNotes || '').trim();
     card.find('.submission_notes')
-        .toggle(Boolean(submission.reviewNote || submission.creatorNotes))
-        .append(Boolean(submission.creatorNotes) ? $('<div class="submission_review_note"></div>').text(submission.creatorNotes) : '')
+        .toggle(Boolean(submission.reviewNote || primaryNote))
+        .append(Boolean(primaryNote)
+            ? $('<div class="submission_review_note"></div>').text(admin ? `Inbox reason: ${primaryNote}` : primaryNote)
+            : '')
         .append(Boolean(submission.reviewNote) ? $('<div class="submission_review_note opacity50p"></div>').text(`Admin note: ${submission.reviewNote}`) : '');
     card.find('.submission_tags').toggle(Array.isArray(submission.tags) && submission.tags.length > 0).text(Array.isArray(submission.tags) ? submission.tags.join(', ') : '');
 

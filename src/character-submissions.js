@@ -164,6 +164,7 @@ function getSubmissionsRoot() {
  * @property {'selected'|'global'|null} publishMode
  * @property {string[]} targetHandles
  * @property {string | null} publishedFilename
+ * @property {string} [adminQueueReason]
  * @property {'whitelist'|'global'|'global_blacklist'} [requestedDistributionMode]
  * @property {string[]} [requestedTargetHandles]
  * @property {string[]} [requestedBlacklistHandles]
@@ -293,6 +294,7 @@ function normalizeSubmissionRecord(record) {
         publishMode: Object.values(PUBLISH_MODES).includes(record?.publishMode) ? record.publishMode : null,
         targetHandles: normalizedTargetHandles,
         publishedFilename: record?.publishedFilename ? String(record.publishedFilename).trim() : null,
+        adminQueueReason: String(record?.adminQueueReason || '').trim(),
         requestedDistributionMode: normalizedRequestedDistributionMode,
         requestedTargetHandles: normalizedRequestedDistributionMode === SUBMISSION_DISTRIBUTION_MODES.WHITELIST
             ? normalizedRequestedTargetHandles
@@ -640,6 +642,34 @@ function isRequestedDistributionUnchanged(requestedDistribution, existingDistrib
         && areHandleListsEqual(requestedDistribution.requestedBlacklistHandles, existingDistribution.requestedBlacklistHandles);
 }
 
+function buildAdminQueueReason({
+    existingApprovedRecord,
+    existingApprovedDistribution,
+    requestedDistribution,
+    autoApprovalError = null,
+}) {
+    if (autoApprovalError) {
+        const errorMessage = String(autoApprovalError?.message || '').trim();
+        return errorMessage
+            ? `Automatic redistribution failed: ${errorMessage}`
+            : 'Automatic redistribution failed.';
+    }
+
+    if (!existingApprovedRecord) {
+        return 'First submission.';
+    }
+
+    if (!existingApprovedDistribution) {
+        return 'Previous approval could not be reused.';
+    }
+
+    if (!isRequestedDistributionUnchanged(requestedDistribution, existingApprovedDistribution)) {
+        return 'Distribution list changed.';
+    }
+
+    return '';
+}
+
 /**
  * Reads a source card once and prepares the shared payload used for distribution.
  * The distributed copy should preserve owner and lorebook metadata while stripping
@@ -827,6 +857,7 @@ export async function createCharacterSubmission({
         publishMode: null,
         targetHandles: [],
         publishedFilename: null,
+        adminQueueReason: '',
         requestedDistributionMode: requestedDistribution.requestedDistributionMode,
         requestedTargetHandles: requestedDistribution.requestedTargetHandles,
         requestedBlacklistHandles: requestedDistribution.requestedBlacklistHandles,
@@ -834,6 +865,7 @@ export async function createCharacterSubmission({
 
     let autoApproved = false;
     let autoApprovalDistribution = null;
+    let autoApprovalError = null;
     if (existingApprovedDistribution && isRequestedDistributionUnchanged(requestedDistribution, existingApprovedDistribution)) {
         try {
             autoApprovalDistribution = await distributeCharacterFile({
@@ -854,8 +886,18 @@ export async function createCharacterSubmission({
             };
             autoApproved = true;
         } catch (error) {
+            autoApprovalError = error;
             console.warn(`Automatic submission approval failed for ${submissionId}. Falling back to pending admin distribution.`, error);
         }
+    }
+
+    if (!autoApproved) {
+        record.adminQueueReason = buildAdminQueueReason({
+            existingApprovedRecord,
+            existingApprovedDistribution,
+            requestedDistribution,
+            autoApprovalError,
+        });
     }
 
     await writeSubmissionRecord(record);
@@ -904,6 +946,7 @@ export async function buildSubmissionSummary(record) {
             characterName: '',
             creator: '',
             creatorNotes: '',
+            adminQueueReason: String(record.adminQueueReason || '').trim(),
             tags: [],
             ownerMetadata: '',
             sharedCharacterKey: String(record.sharedCharacterKey || '').trim(),
@@ -919,6 +962,7 @@ export async function buildSubmissionSummary(record) {
             characterName: getCharacterName(card),
             creator: String(_.get(card, 'data.creator', _.get(card, 'creator', '')) || ''),
             creatorNotes: String(_.get(card, 'data.creator_notes', _.get(card, 'creatorcomment', '')) || ''),
+            adminQueueReason: String(record.adminQueueReason || '').trim(),
             tags: _.get(card, 'data.tags', _.get(card, 'tags', [])) || [],
             ownerMetadata: String(_.get(card, 'data.extensions.aikobots.owner_handle', '')),
             ownerHandles: getSubmissionOwnerHandles(card),
@@ -932,6 +976,7 @@ export async function buildSubmissionSummary(record) {
             characterName: '',
             creator: '',
             creatorNotes: '',
+            adminQueueReason: String(record.adminQueueReason || '').trim(),
             tags: [],
             ownerMetadata: '',
             ownerHandles: Array.isArray(record.ownerHandles) ? record.ownerHandles : [record.ownerHandle].filter(Boolean),
