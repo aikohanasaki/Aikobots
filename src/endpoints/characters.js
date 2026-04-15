@@ -887,6 +887,20 @@ function preserveProtectedLorebookFields(targetCharacter, sourceCharacter) {
     }
 }
 
+/**
+ * Removes an embedded lorebook when no primary lorebook is linked.
+ * Keeps the cleanup tied to persisted character state instead of relying on
+ * the client-side editor to strip the field first.
+ * @param {object} characterCard Character card to mutate
+ */
+function sanitizeEmbeddedLorebookForPrimaryWorld(characterCard) {
+    const primaryLorebook = String(_.get(characterCard, 'data.extensions.world', '') || '').trim();
+
+    if (!primaryLorebook) {
+        _.unset(characterCard, 'data.character_book');
+    }
+}
+
 function sendSharedCharacterError(response, error) {
     if (error instanceof CharacterSharingRepositoryError) {
         return response.status(error.status || 400).json({
@@ -1401,6 +1415,8 @@ router.post('/edit', validateAvatarUrlMiddleware, async function (request, respo
             preserveProtectedLorebookFields(char, existingCharacter);
         }
 
+        sanitizeEmbeddedLorebookForPrimaryWorld(char);
+
         if (canEditLorebooks) {
             validateOwnedCharacterLinkedLorebooks(request.user, char);
         }
@@ -1604,6 +1620,8 @@ router.post('/merge-attributes', getFileNameValidationFunction('avatar'), async 
         if (!canEditLorebooks) {
             preserveProtectedLorebookFields(character, existingCharacter);
         }
+
+        sanitizeEmbeddedLorebookForPrimaryWorld(character);
 
         if (updatesSecureLorebooks && canEditLorebooks) {
             validateOwnedCharacterLinkedLorebooks(request.user, character);
