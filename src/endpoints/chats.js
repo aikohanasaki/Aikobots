@@ -1309,18 +1309,24 @@ export async function getChatInfo(pathToFile, additionalData = {}, isGroup = fal
         const stats = await fs.promises.stat(pathToFile);
 
         if (isGroup) {
-            const fileObjects = readJsonlObjects(pathToFile);
-            const lastMessage = fileObjects.at(-1);
-            const fallbackTimestamp = Math.round(stats.mtimeMs);
+            const fileStats = getChatFileStats(pathToFile);
+            const payload = getGroupChatPayload(pathToFile);
+            const messages = payload.messages;
+            const lastMessage = messages.at(-1);
+            const fallbackTimestamp = Math.round(fileStats.latestMtimeMs);
             const chatData = {
                 file_id: parsedPath.name,
                 file_name: parsedPath.base,
-                file_size: `${(stats.size / 1024).toFixed(2)}kb`,
-                chat_items: fileObjects.length,
+                file_size: `${(fileStats.totalSize / 1024).toFixed(2)}kb`,
+                chat_items: messages.length,
                 mes: lastMessage?.mes || '[The chat is empty]',
                 last_mes: normalizeChatTimestamp(lastMessage?.send_date, fallbackTimestamp),
                 ...additionalData,
             };
+
+            if (withMetadata && _.isObject(payload.header?.chat_metadata)) {
+                chatData.chat_metadata = payload.header.chat_metadata;
+            }
 
             return res(chatData);
         }
