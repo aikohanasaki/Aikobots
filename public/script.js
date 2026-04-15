@@ -12124,7 +12124,7 @@ export async function deleteSwipe(swipeId = null, messageId = chat.length - 1) {
 
 export async function saveMetadata() {
     if (selected_group) {
-        await editGroup(selected_group, true, false);
+        await saveGroupChat(selected_group, true);
     }
     else {
         await saveChatConditional();
