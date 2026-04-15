@@ -400,6 +400,65 @@ function normalizeJobInput(input = {}) {
     };
 }
 
+function getRangeIdentity(range = null) {
+    const sceneStart = Number(range?.sceneStart);
+    const sceneEnd = Number(range?.sceneEnd);
+    return Number.isInteger(sceneStart) && Number.isInteger(sceneEnd)
+        ? `${sceneStart}:${sceneEnd}`
+        : '';
+}
+
+function getSidePromptBatchTemplateIdentity(job = {}) {
+    const templates = Array.isArray(job?.payload?.templates) ? job.payload.templates : [];
+    return templates
+        .map(template => String(template?.templateKey || template?.templateName || '').trim())
+        .filter(Boolean)
+        .sort()
+        .join('|');
+}
+
+function getSidePromptJobIdentity(job = {}) {
+    return {
+        type: String(job?.type || ''),
+        trigger: String(job?.payload?.trigger || ''),
+        range: getRangeIdentity(job?.range || job?.payload?.range),
+        templateKey: String(job?.payload?.templateKey || ''),
+        templates: getSidePromptBatchTemplateIdentity(job),
+        lorebookName: String(job?.lorebookName || job?.payload?.lorebookName || '').trim(),
+    };
+}
+
+function areJobsEquivalentForDedupe(left = {}, right = {}) {
+    const leftIdentity = getSidePromptJobIdentity(left);
+    const rightIdentity = getSidePromptJobIdentity(right);
+    if (!leftIdentity.type || !rightIdentity.type || leftIdentity.type !== rightIdentity.type) {
+        return false;
+    }
+
+    if (leftIdentity.trigger !== rightIdentity.trigger || leftIdentity.range !== rightIdentity.range || leftIdentity.lorebookName !== rightIdentity.lorebookName) {
+        return false;
+    }
+
+    if (leftIdentity.type === 'sidePromptBatch' && leftIdentity.trigger === 'onAfterMemory') {
+        return Boolean(leftIdentity.templates) && leftIdentity.templates === rightIdentity.templates;
+    }
+
+    if (leftIdentity.type === 'sidePrompt' && leftIdentity.trigger === 'onInterval') {
+        return Boolean(leftIdentity.templateKey) && leftIdentity.templateKey === rightIdentity.templateKey;
+    }
+
+    return false;
+}
+
+function findDuplicateActiveOrQueuedJob(store, job) {
+    const activeJobs = [
+        ...(store?.runningJob ? [store.runningJob] : []),
+        ...(Array.isArray(store?.queue) ? store.queue : []),
+    ];
+
+    return activeJobs.find(candidate => areJobsEquivalentForDedupe(candidate, job)) || null;
+}
+
 function findMutableJobRecordById(jobId) {
     const targetId = String(jobId || '').trim();
     if (!targetId) {
@@ -708,6 +767,10 @@ export function subscribeToStmbJobs(listener) {
 export function enqueueStmbJob(input = {}) {
     const job = normalizeJobInput(input);
     const store = ensureChatStore(job.chatKey);
+    const duplicateJob = findDuplicateActiveOrQueuedJob(store, job);
+    if (duplicateJob) {
+        return cloneJobForView(duplicateJob);
+    }
     store.queue.push(job);
     touchStore(store);
     syncRenderTimer();

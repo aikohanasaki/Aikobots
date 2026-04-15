@@ -367,11 +367,21 @@ async function countSentencepieceTokens(tokenizer, text) {
 
     let cleaned = text; // cleanText(text); <-- cleaning text can result in an incorrect tokenization
 
-    let ids = instance.encodeIds(cleaned);
-    return {
-        ids,
-        count: ids.length,
-    };
+    try {
+        const ids = instance.encodeIds(cleaned);
+        return {
+            ids,
+            count: ids.length,
+        };
+    } catch (error) {
+        console.warn('Sentencepiece tokenizer encode failed, falling back to estimated token count.', {
+            message: error?.message || String(error),
+        });
+        return {
+            ids: [],
+            count: Math.ceil(cleaned.length / CHARS_PER_TOKEN),
+        };
+    }
 }
 
 /**

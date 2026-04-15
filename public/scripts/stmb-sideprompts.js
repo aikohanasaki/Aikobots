@@ -90,11 +90,11 @@ function resolveLorebookName(settings) {
 }
 
 function resolveSidePromptMaxConcurrent(settings) {
-    const parsed = Number(settings?.moduleSettings?.sidePromptsMaxConcurrent ?? 2);
+    const parsed = Number(settings?.moduleSettings?.sidePromptsMaxConcurrent ?? 1);
     if (!Number.isFinite(parsed)) {
-        return 2;
+        return 1;
     }
-    return Math.max(1, Math.min(5, Math.trunc(parsed)));
+    return Math.max(1, Math.min(2, Math.trunc(parsed)));
 }
 
 function renderLorebookNameFromTemplate(settings) {
@@ -298,14 +298,40 @@ function resolveSidePromptProfile(settings, overrideProfileIndex = null) {
     return getActiveStmbProfile(settings, null);
 }
 
-async function runTextGeneration(prompt, settings, profile = null, signal = null) {
+function formatRateLimitDelay(delayMs) {
+    const seconds = Math.max(1, Math.ceil(Math.max(0, Number(delayMs) || 0) / 1000));
+    return `${seconds}s`;
+}
+
+async function runWithConcurrencyLimit(items, limit, worker) {
+    const source = Array.isArray(items) ? items : [];
+    const results = new Array(source.length);
+    const concurrency = Math.max(1, Math.trunc(Number(limit) || 1));
+    let nextIndex = 0;
+
+    async function runWorker() {
+        for (;;) {
+            const currentIndex = nextIndex++;
+            if (currentIndex >= source.length) {
+                return;
+            }
+
+            results[currentIndex] = await worker(source[currentIndex], currentIndex);
+        }
+    }
+
+    await Promise.all(Array.from({ length: Math.min(concurrency, source.length) }, () => runWorker()));
+    return results;
+}
+
+async function runTextGeneration(prompt, settings, profile = null, signal = null, onRateLimitWait = null) {
     const { generateData } = await buildOpenAIGenerateData('quiet', [{ role: 'user', content: String(prompt || '') }], {});
     const result = await generateStmbText({
         generateData: applyStmbMaxTokensToGenerateData(
             applyStmbProfileToGenerateData(generateData, profile, getStmbProviderDefaults()),
             settings?.moduleSettings?.maxTokens,
         ),
-    }, { signal });
+    }, { signal, onRateLimitWait });
     return String(result?.text ?? '');
 }
 
@@ -320,6 +346,7 @@ async function runSidePromptAttempt({
     settings,
     profile = null,
     signal = null,
+    onRateLimitWait = null,
 }) {
     throwIfStmbAborted(signal);
     const task = createStmbTask(taskLabel || `SidePrompt:${getSidePromptTaskKey(template)}`);
@@ -334,7 +361,7 @@ async function runSidePromptAttempt({
     }
 
     try {
-        const text = await runTextGeneration(finalPrompt, settings, profile, task.signal);
+        const text = await runTextGeneration(finalPrompt, settings, profile, task.signal, onRateLimitWait);
         throwIfStmbAborted(signal);
         task.throwIfAborted();
         return text;
@@ -1017,6 +1044,9 @@ async function executeSidePromptJob(job, context) {
         settings,
         profile: prepared.profile,
         signal,
+        onRateLimitWait: wait => context.setState('generating', {
+            detail: `Rate limited, retrying in ${formatRateLimitDelay(wait?.delayMs)}`,
+        }),
     });
     if (!ensureSidePromptTextNotBlank(resultText, template, payload.trigger || 'queued')) {
         throw new Error(`SidePrompt "${template?.name || 'Unknown'}" returned blank content.`);
@@ -1047,6 +1077,9 @@ async function executeSidePromptJob(job, context) {
                 settings,
                 profile: prepared.profile,
                 signal,
+                onRateLimitWait: wait => context.setState('generating', {
+                    detail: `Rate limited, retrying in ${formatRateLimitDelay(wait?.delayMs)}`,
+                }),
             });
             if (!ensureSidePromptTextNotBlank(resultText, template, `${payload.trigger || 'queued'}-retry`)) {
                 throw new Error(`SidePrompt "${template?.name || 'Unknown'}" returned blank content.`);
@@ -1123,7 +1156,7 @@ async function executeSidePromptBatchJob(job, context) {
     context.setState('generating', {
         detail: templateInputs.length === 1 ? '1 side prompt' : `${templateInputs.length} side prompts`,
     });
-    const generationResults = await Promise.all(templateInputs.map(async input => {
+    const generationResults = await runWithConcurrencyLimit(templateInputs, resolveSidePromptMaxConcurrent(settings), async input => {
         const template = input?.templateKey
             ? await getTemplate(input.templateKey)
             : await findTemplateByName(input?.templateName || '');
@@ -1155,6 +1188,9 @@ async function executeSidePromptBatchJob(job, context) {
                 settings,
                 profile: prepared.profile,
                 signal,
+                onRateLimitWait: wait => context.setState('generating', {
+                    detail: `Rate limited, retrying in ${formatRateLimitDelay(wait?.delayMs)} (${template?.name || 'Side Prompt'})`,
+                }),
             });
             return {
                 ok: true,
@@ -1177,7 +1213,7 @@ async function executeSidePromptBatchJob(job, context) {
                 completedOrder: completionOrder++,
             };
         }
-    }));
+    });
 
     generationResults.sort((left, right) => left.completedOrder - right.completedOrder);
 
@@ -1225,6 +1261,9 @@ async function executeSidePromptBatchJob(job, context) {
                     settings,
                     profile: prepared.profile,
                     signal,
+                    onRateLimitWait: wait => context.setState('generating', {
+                        detail: `Rate limited, retrying in ${formatRateLimitDelay(wait?.delayMs)} (${template?.name || 'Side Prompt'})`,
+                    }),
                 });
             }
             if (!ensureSidePromptTextNotBlank(resultText, template, `${payload.trigger || 'batch'}-retry`)) {

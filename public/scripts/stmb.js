@@ -3486,10 +3486,10 @@ async function openSidePromptEditorPopup({ templateKey = null } = {}) {
 
 async function showSidePromptManagerPopup({ onChange = null } = {}) {
     let selectedTemplateKey = null;
-    const parsedMaxConcurrent = Number(stmbSettings?.moduleSettings?.sidePromptsMaxConcurrent ?? 2);
+    const parsedMaxConcurrent = Number(stmbSettings?.moduleSettings?.sidePromptsMaxConcurrent ?? 1);
     const maxConcurrent = Number.isFinite(parsedMaxConcurrent)
         ? Math.max(1, Math.min(5, Math.trunc(parsedMaxConcurrent)))
-        : 2;
+        : 1;
     const popup = new Popup(DOMPurify.sanitize(`
         <div class="stmb-sideprompt-manager-popup">
             <h3>Trackers & Side Prompts</h3>
@@ -3502,7 +3502,7 @@ async function showSidePromptManagerPopup({ onChange = null } = {}) {
             <div class="world_entry_form_control">
                 <label for="stmb-sp-max-concurrent"><h4>How many concurrent prompts to run at once</h4></label>
                 <input type="number" id="stmb-sp-max-concurrent" class="text_pole" min="1" max="5" step="1" value="${escapeHtml(String(maxConcurrent))}">
-                <small class="opacity70p">Range 1-5. Defaults to 2.</small>
+                <small class="opacity70p">Range 1-5. Defaults to 1. Runtime generation is capped at 2.</small>
             </div>
             <div id="stmb-sp-list" class="padding10 marginBot10" style="max-height: 400px; overflow-y: auto;"></div>
             <div class="buttons_block justifyCenter gap10px whitespacenowrap">
@@ -3533,7 +3533,7 @@ async function showSidePromptManagerPopup({ onChange = null } = {}) {
 
     popup.dlg?.querySelector('#stmb-sp-max-concurrent')?.addEventListener('change', async event => {
         const target = event.target;
-        const value = Math.max(1, Math.min(5, Number(target?.value || 2)));
+        const value = Math.max(1, Math.min(5, Number(target?.value || 1)));
         if (target) {
             target.value = String(value);
         }
@@ -5538,7 +5538,7 @@ function buildSummaryPromptMessages(prompt) {
     return [{ role: 'user', content: String(prompt || '') }];
 }
 
-async function requestStructuredMemory(compiledScene, profile, lorebookName, summaryCount, signal) {
+async function requestStructuredMemory(compiledScene, profile, lorebookName, summaryCount, signal, onRateLimitWait = null) {
     const requestSettings = {
         ...stmbSettings,
         moduleSettings: {
@@ -5563,13 +5563,13 @@ async function requestStructuredMemory(compiledScene, profile, lorebookName, sum
     if (!getModuleSettings().useRegex) {
         const result = await generateStmbMemory({
             generateData: finalGenerateData,
-        }, { signal });
+        }, { signal, onRateLimitWait });
         return result.memory;
     }
 
     const result = await generateStmbText({
         generateData: finalGenerateData,
-    }, { signal });
+    }, { signal, onRateLimitWait });
     const rawText = String(result.text || '');
     assertNoProviderTruncation(result.providerResponse, rawText);
     const cleanedText = applySelectedRegex(rawText, getModuleSettings().selectedRegexIncoming);
@@ -5620,7 +5620,7 @@ function assertNoProviderTruncation(providerResponse, fallbackText = '') {
     }
 }
 
-async function requestStructuredSummaryDetailed(prompt, profile, signal) {
+async function requestStructuredSummaryDetailed(prompt, profile, signal, onRateLimitWait = null) {
     const { generateData } = await buildOpenAIGenerateData('quiet', buildSummaryPromptMessages(prompt), {
         jsonSchema: getSummarySchema(),
     });
@@ -5629,7 +5629,7 @@ async function requestStructuredSummaryDetailed(prompt, profile, signal) {
             applyStmbProfileToGenerateData(generateData, profile, getStmbProviderDefaults()),
             getModuleSettings().maxTokens,
         ),
-    }, { signal });
+    }, { signal, onRateLimitWait });
     return {
         parsed: result.parsed,
         providerResponse: result.providerResponse,
@@ -5637,9 +5637,9 @@ async function requestStructuredSummaryDetailed(prompt, profile, signal) {
     };
 }
 
-async function requestStructuredSummaryWithRetry(prompt, profile, signal) {
+async function requestStructuredSummaryWithRetry(prompt, profile, signal, onRateLimitWait = null) {
     try {
-        return await requestStructuredSummaryDetailed(prompt, profile, signal);
+        return await requestStructuredSummaryDetailed(prompt, profile, signal, onRateLimitWait);
     } catch (error) {
         if (isStmbAbortError(error) || !error?.rawResponse) {
             throw error;
@@ -5647,7 +5647,7 @@ async function requestStructuredSummaryWithRetry(prompt, profile, signal) {
 
         const repairPrompt = `${prompt}\n\nReturn ONLY the JSON object, nothing else. Ensure arrays and commas are valid.`;
         try {
-            const repaired = await requestStructuredSummaryDetailed(repairPrompt, profile, signal);
+            const repaired = await requestStructuredSummaryDetailed(repairPrompt, profile, signal, onRateLimitWait);
             return {
                 ...repaired,
                 rawResponse: String(error.rawResponse || '').trim() || repaired.rawResponse,
@@ -5677,7 +5677,7 @@ async function estimateSummaryPromptTokens(prompt, estimatedOutput = 500) {
     };
 }
 
-async function runSequentialSummaryAnalysis(sourceEntries, options = {}, profile, signal) {
+async function runSequentialSummaryAnalysis(sourceEntries, options = {}, profile, signal, onRateLimitWait = null) {
     const {
         presetKey = 'arc_default',
         maxItemsPerPass = 15,
@@ -5757,7 +5757,7 @@ async function runSequentialSummaryAnalysis(sourceEntries, options = {}, profile
             break;
         }
 
-        const response = await requestStructuredSummaryWithRetry(prompt, profile, signal);
+        const response = await requestStructuredSummaryWithRetry(prompt, profile, signal, onRateLimitWait);
         lastRawResponse = String(response.rawResponse || '').trim();
         lastRetryRawResponse = String(response.retryRawResponse || '').trim();
 
@@ -6238,6 +6238,7 @@ async function applyManualFixedMemoryJson(correctedRaw, context) {
                     context.lorebookName,
                     context.summaryCount,
                     task.signal,
+                    null,
                 );
                 continue;
             }
@@ -6374,6 +6375,9 @@ async function executeMemoryJob(job, context) {
             lorebookName,
             payload.summaryCount,
             context.signal,
+            wait => context.setState('generating', {
+                detail: `Rate limited, retrying in ${Math.max(1, Math.ceil(Math.max(0, Number(wait?.delayMs) || 0) / 1000))}s`,
+            }),
         );
 
         if (requestSettings.moduleSettings?.showMemoryPreviews) {
@@ -6656,7 +6660,7 @@ function buildSummaryRepairHandler(contextBase = {}) {
     };
 }
 
-async function runSummaryConsolidationNow(payload = {}, signal = null) {
+async function runSummaryConsolidationNow(payload = {}, signal = null, onRateLimitWait = null) {
     const normalizedTargetTier = Math.min(6, Math.max(1, Math.trunc(Number(payload.normalizedTargetTier || payload.targetTier) || 1)));
     const lorebookName = String(payload.lorebookName || '').trim() || await ensureLorebookName();
     const lorebookData = await loadWorldInfo(lorebookName) || { entries: {} };
@@ -6705,7 +6709,7 @@ async function runSummaryConsolidationNow(payload = {}, signal = null) {
             targetTier: normalizedTargetTier,
             previousSummary: previousSummary?.content || null,
             previousOrder: previousSummary ? (parseSequenceFromTitle(previousSummary.comment || '') ?? null) : null,
-        }, profile, signal);
+        }, profile, signal, onRateLimitWait);
         const { summaryCandidates, leftovers, rawResponse, retryRawResponse } = analysisResult;
         if (summaryCandidates.length === 0) {
             const emptyError = new Error(`Model did not return a usable ${getSummaryTierLabel(normalizedTargetTier).toLowerCase()} summary`);
@@ -6768,7 +6772,9 @@ async function executeConsolidationJob(job, context) {
         detail: `${getSummaryTierLabel(getSourceTierForTarget(normalizedTargetTier))} -> ${getSummaryTierLabel(normalizedTargetTier)}`,
     });
     context.setState('generating', { detail: getSummaryTierLabel(normalizedTargetTier) });
-    const result = await runSummaryConsolidationNow(payload, context.signal);
+    const result = await runSummaryConsolidationNow(payload, context.signal, wait => context.setState('generating', {
+        detail: `Rate limited, retrying in ${Math.max(1, Math.ceil(Math.max(0, Number(wait?.delayMs) || 0) / 1000))}s`,
+    }));
     context.setState('saving', { detail: payload.lorebookName || job?.lorebookName || '' });
     context.setResult(result);
 }

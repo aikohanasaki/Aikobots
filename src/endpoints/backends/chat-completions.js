@@ -585,6 +585,29 @@ function sanitizeProviderErrorMetadata(metadata) {
 }
 
 /**
+ * @param {string | null | undefined} value
+ * @returns {number | null}
+ */
+function parseRetryAfterHeader(value) {
+    if (typeof value !== 'string' || !value.trim()) {
+        return null;
+    }
+
+    const normalized = value.trim();
+    const seconds = Number(normalized);
+    if (Number.isFinite(seconds) && seconds >= 0) {
+        return Math.max(0, Math.round(seconds * 1000));
+    }
+
+    const dateMs = Date.parse(normalized);
+    if (Number.isFinite(dateMs)) {
+        return Math.max(0, dateMs - Date.now());
+    }
+
+    return null;
+}
+
+/**
  * @param {any} payload
  * @param {string} fallbackMessage
  * @returns {{ error: Record<string, any>, quota_error?: boolean }}
@@ -628,6 +651,7 @@ function sanitizeProviderErrorPayload(payload, fallbackMessage = 'Unknown error 
  *   provider?: string | null,
  *   upstreamStatus?: number | null,
  *   retryable?: boolean | null,
+ *   retryAfterMs?: number | null,
  * }} [options]
  * @returns {{ error: Record<string, any>, quota_error?: boolean }}
  */
@@ -639,6 +663,7 @@ function annotateErrorPayload(payload, {
     provider = null,
     upstreamStatus = null,
     retryable = null,
+    retryAfterMs = null,
 } = {}) {
     const existingError = payload?.error && typeof payload.error === 'object' ? payload.error : null;
     const result = sanitizeProviderErrorPayload(payload, fallbackMessage);
@@ -675,6 +700,10 @@ function annotateErrorPayload(payload, {
         result.error.request_id = existingError.request_id;
     }
 
+    if (Number.isFinite(Number(existingError?.retry_after_ms)) && !Number.isFinite(Number(result.error.retry_after_ms))) {
+        result.error.retry_after_ms = Math.max(0, Math.trunc(Number(existingError.retry_after_ms)));
+    }
+
     if (stage && typeof result.error.stage !== 'string') {
         result.error.stage = stage;
     }
@@ -690,6 +719,10 @@ function annotateErrorPayload(payload, {
 
     if (typeof retryable === 'boolean' && typeof result.error.retryable !== 'boolean') {
         result.error.retryable = retryable;
+    }
+
+    if (Number.isFinite(Number(retryAfterMs)) && Number(retryAfterMs) >= 0 && !Number.isFinite(Number(result.error.retry_after_ms))) {
+        result.error.retry_after_ms = Math.max(0, Math.trunc(Number(retryAfterMs)));
     }
 
     if (request?.requestId) {
@@ -766,6 +799,9 @@ async function buildSanitizedErrorResponse(fetchResponse, { request = null, stag
 
     const fallbackMessage = fetchResponse.statusText || 'Unknown error occurred';
     const summarizedBody = responseText ? sanitizeProviderErrorMessage(responseText, fallbackMessage) : '';
+    const retryAfterMs = fetchResponse.status === 429
+        ? parseRetryAfterHeader(fetchResponse.headers?.get('retry-after'))
+        : null;
 
     logChatCompletionFailure(request ?? undefined, 'Chat completion request error', {
         stage,
@@ -782,6 +818,7 @@ async function buildSanitizedErrorResponse(fetchResponse, { request = null, stag
             provider,
             upstreamStatus: fetchResponse.status || null,
             retryable: isRetryableStatus(fetchResponse.status || 500),
+            retryAfterMs,
         }),
     };
 }

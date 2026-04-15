@@ -67,12 +67,19 @@ function estimateTokenCount(value) {
 
 async function countSentencepieceArrayTokens(tokenizer, array) {
     const instance = await tokenizer?.get();
+    const fallbackBody = JSON.stringify(array);
     if (!instance) {
-        const fallbackBody = JSON.stringify(array);
         return Math.ceil(fallbackBody.length / 3.35);
     }
-    const jsonBody = array.flatMap(item => Object.values(item)).join('\n\n');
-    return instance.encodeIds(jsonBody).length;
+    try {
+        const jsonBody = array.flatMap(item => Object.values(item)).join('\n\n');
+        return instance.encodeIds(jsonBody).length;
+    } catch (error) {
+        console.warn('World info sentencepiece token count failed, using fallback estimate.', {
+            message: error?.message || String(error),
+        });
+        return Math.ceil(fallbackBody.length / 3.35);
+    }
 }
 
 async function countTokensOpenAIAsync(messages, model, full = false) {

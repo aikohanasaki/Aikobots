@@ -3,6 +3,9 @@ import { ChatCompletionService } from './custom-request.js';
 import { parseStructuredMemoryResponse } from './stmb-core.js';
 import { parseSummaryJsonResponse } from './stmb-summary.js';
 
+const STMB_RATE_LIMIT_RETRY_DELAYS_MS = [3000, 8000];
+const stmbGenerationCooldowns = new Map();
+
 async function postStmb(path, payload) {
     const response = await fetch(`/api/stmb/${path}`, {
         method: 'POST',
@@ -39,8 +42,8 @@ export async function captureStmbScene(payload, options = {}) {
 }
 
 export async function generateStmbMemory(payload, options = {}) {
-    const { signal = null } = options;
-    const providerResponse = await generateStmbProviderResponse(payload, signal);
+    const { signal = null, onRateLimitWait = null } = options;
+    const providerResponse = await generateStmbProviderResponse(payload, signal, onRateLimitWait);
 
     try {
         return {
@@ -54,8 +57,8 @@ export async function generateStmbMemory(payload, options = {}) {
 }
 
 export async function generateStmbSummary(payload, options = {}) {
-    const { signal = null } = options;
-    const providerResponse = await generateStmbProviderResponse(payload, signal);
+    const { signal = null, onRateLimitWait = null } = options;
+    const providerResponse = await generateStmbProviderResponse(payload, signal, onRateLimitWait);
 
     try {
         return {
@@ -69,8 +72,8 @@ export async function generateStmbSummary(payload, options = {}) {
 }
 
 export async function generateStmbText(payload, options = {}) {
-    const { signal = null } = options;
-    const providerResponse = await generateStmbProviderResponse(payload, signal);
+    const { signal = null, onRateLimitWait = null } = options;
+    const providerResponse = await generateStmbProviderResponse(payload, signal, onRateLimitWait);
     return {
         ok: true,
         text: extractProviderText(providerResponse),
@@ -114,17 +117,37 @@ async function postStmbWithSignal(path, payload, signal) {
     return data;
 }
 
-async function generateStmbProviderResponse(payload, signal = null) {
+async function generateStmbProviderResponse(payload, signal = null, onRateLimitWait = null) {
     const generateData = payload?.generateData;
     if (!generateData || typeof generateData !== 'object') {
         throw new Error('generateData is required.');
     }
 
-    try {
-        return await ChatCompletionService.sendRequest({ ...generateData, stream: false }, false, signal);
-    } catch (error) {
-        throw normalizeStmbClientError(error);
+    const requestBody = { ...generateData, stream: false };
+    const providerKey = getStmbProviderKey(requestBody);
+
+    for (let attempt = 0; attempt <= STMB_RATE_LIMIT_RETRY_DELAYS_MS.length; attempt++) {
+        await waitForStmbProviderCooldown(providerKey, signal, onRateLimitWait);
+
+        try {
+            return await ChatCompletionService.sendRequest(requestBody, false, signal);
+        } catch (error) {
+            const normalized = normalizeStmbClientError(error);
+            if (!isStmbRateLimitError(normalized) || attempt >= STMB_RATE_LIMIT_RETRY_DELAYS_MS.length) {
+                throw normalized;
+            }
+
+            const retryDelayMs = getStmbRetryDelayMs(normalized, attempt);
+            const activeCooldown = stmbGenerationCooldowns.get(providerKey);
+            const cooldownUntil = Math.max(
+                Date.now() + retryDelayMs,
+                Number(activeCooldown?.until || 0),
+            );
+            stmbGenerationCooldowns.set(providerKey, { until: cooldownUntil });
+        }
     }
+
+    throw new Error('STMB generation failed.');
 }
 
 function extractProviderText(providerResponse) {
@@ -193,4 +216,81 @@ function decorateStmbParseError(error, providerResponse) {
         normalized.providerBody = serializeProviderBody(providerResponse);
     }
     return normalized;
+}
+
+function getStmbProviderKey(generateData = {}) {
+    return JSON.stringify({
+        provider: String(generateData?.chat_completion_source || ''),
+        endpoint: String(generateData?.custom_url || generateData?.reverse_proxy || ''),
+        model: String(generateData?.model || ''),
+    });
+}
+
+async function waitForStmbProviderCooldown(providerKey, signal = null, onRateLimitWait = null) {
+    for (;;) {
+        if (signal?.aborted) {
+            throw normalizeStmbClientError(signal.reason ?? 'stmb-stop');
+        }
+
+        const cooldown = stmbGenerationCooldowns.get(providerKey);
+        const delayMs = Math.max(0, Number(cooldown?.until || 0) - Date.now());
+        if (delayMs <= 0) {
+            if (cooldown) {
+                stmbGenerationCooldowns.delete(providerKey);
+            }
+            return;
+        }
+
+        onRateLimitWait?.({
+            delayMs,
+            providerKey,
+        });
+        await delayWithAbort(delayMs, signal);
+    }
+}
+
+async function delayWithAbort(delayMs, signal = null) {
+    const waitMs = Math.max(0, Math.trunc(Number(delayMs) || 0));
+    if (waitMs <= 0) {
+        return;
+    }
+
+    await new Promise((resolve, reject) => {
+        const timeoutId = setTimeout(() => {
+            cleanup();
+            resolve();
+        }, waitMs);
+
+        const onAbort = () => {
+            cleanup();
+            reject(normalizeStmbClientError(signal?.reason ?? 'stmb-stop'));
+        };
+        const cleanup = () => {
+            clearTimeout(timeoutId);
+            signal?.removeEventListener?.('abort', onAbort);
+        };
+
+        if (signal?.aborted) {
+            cleanup();
+            reject(normalizeStmbClientError(signal.reason ?? 'stmb-stop'));
+            return;
+        }
+
+        signal?.addEventListener?.('abort', onAbort, { once: true });
+    });
+}
+
+function isStmbRateLimitError(error) {
+    return Number(error?.upstream_status) === 429
+        || Number(error?.status) === 429
+        || String(error?.code || '').trim() === '429';
+}
+
+function getStmbRetryDelayMs(error, attempt) {
+    const retryAfterMs = Number(error?.retry_after_ms);
+    if (Number.isFinite(retryAfterMs) && retryAfterMs > 0) {
+        return retryAfterMs;
+    }
+
+    return STMB_RATE_LIMIT_RETRY_DELAYS_MS[Math.max(0, Math.min(STMB_RATE_LIMIT_RETRY_DELAYS_MS.length - 1, Number(attempt) || 0))];
 }

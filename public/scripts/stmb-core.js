@@ -303,6 +303,7 @@ export function createDefaultStmbSettings() {
             autoConsolidationTargetTiers: [1],
             autoCreateLorebook: false,
             lorebookNameTemplate: 'LTM - {{char}} - {{chat}}',
+            sidePromptsMaxConcurrent: 1,
             useRegex: false,
             selectedRegexOutgoing: [],
             selectedRegexIncoming: [],
@@ -577,7 +578,7 @@ export function normalizeStmbSettings(rawSettings, legacySettings = null) {
     moduleSettings.convertExistingRecursion = Boolean(moduleSettings.convertExistingRecursion);
     moduleSettings.sidePromptsMaxConcurrent = Number.isFinite(Number(moduleSettings.sidePromptsMaxConcurrent))
         ? Math.max(1, Math.min(5, Math.trunc(Number(moduleSettings.sidePromptsMaxConcurrent))))
-        : 2;
+        : defaults.moduleSettings.sidePromptsMaxConcurrent;
     moduleSettings.autoConsolidationTargetTiers = Array.isArray(moduleSettings.autoConsolidationTargetTiers)
         ? moduleSettings.autoConsolidationTargetTiers.map(value => Number(value)).filter(Number.isFinite)
         : defaults.moduleSettings.autoConsolidationTargetTiers.slice();
