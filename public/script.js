@@ -943,6 +943,10 @@ function hasActiveChatContext() {
     return Boolean(selected_group || this_chid !== undefined || chat.length || name2 === neutralCharacterName);
 }
 
+function isTopChatInteractionBusy() {
+    return Boolean(is_send_press || (selected_group && is_group_generating));
+}
+
 function normalizeTopChatFileName(name) {
     return String(name ?? '').replace(/\.jsonl$/i, '');
 }
@@ -967,11 +971,13 @@ function saveTopChatPanelsState() {
 }
 
 function setTopChatAvailabilityState(hasChat) {
-    setTopChatActionDisabled(topChatButtons.chatManager, false);
-    setTopChatActionDisabled(topChatButtons.newChat, false);
-    setTopChatActionDisabled(topChatButtons.closeChat, !hasActiveChatContext());
-    setTopChatActionDisabled(topChatButtons.renameChat, !hasChat);
-    setTopChatActionDisabled(topChatButtons.deleteChat, !hasChat);
+    const isChatBusy = isTopChatInteractionBusy();
+    const canOpenManageChats = (selected_group && !is_group_generating) || (!selected_group && !is_send_press);
+    setTopChatActionDisabled(topChatButtons.chatManager, !canOpenManageChats || isManageChatsActionPending);
+    setTopChatActionDisabled(topChatButtons.newChat, isChatBusy);
+    setTopChatActionDisabled(topChatButtons.closeChat, !hasActiveChatContext() || isChatBusy);
+    setTopChatActionDisabled(topChatButtons.renameChat, !hasChat || isChatBusy);
+    setTopChatActionDisabled(topChatButtons.deleteChat, !hasChat || isChatBusy);
 }
 
 async function getTopChatChatFiles() {
@@ -1008,6 +1014,10 @@ async function getTopChatSelectorEntries() {
 }
 
 async function openTopChatById(chatId) {
+    if (isTopChatInteractionBusy()) {
+        return;
+    }
+
     const normalizedChatId = normalizeTopChatFileName(chatId);
     if (!normalizedChatId) {
         return;
@@ -1025,25 +1035,33 @@ async function openTopChatById(chatId) {
 
 async function handleManageChatsAction({ fromSlashCommand = false } = {}) {
     const canOpenManageChats = fromSlashCommand || (selected_group && !is_group_generating) || (!selected_group && !is_send_press);
-    if (!canOpenManageChats) {
+    if (!canOpenManageChats || isManageChatsActionPending) {
         return;
     }
 
-    await displayPastChats();
+    isManageChatsActionPending = true;
+    setTopChatActionDisabled(topChatButtons.chatManager, true);
 
-    // Avoid the extra overlay when invoked from slash commands.
-    if (fromSlashCommand) {
-        return;
+    try {
+        // Show the popup before loading chats so the interaction doesn't feel frozen.
+        if (!fromSlashCommand) {
+            console.log('displaying shadow');
+            $('#shadow_select_chat_popup').css('display', 'block');
+            $('#shadow_select_chat_popup').css('opacity', 0.0);
+            $('#shadow_select_chat_popup').transition({
+                opacity: 1.0,
+                duration: animation_duration,
+                easing: animation_easing,
+            });
+            $('#select_chat_div').empty().append(`<div class="text_muted padding10px">${t`Loading chats...`}</div>`);
+            await delay(1);
+        }
+
+        await displayPastChats();
+    } finally {
+        isManageChatsActionPending = false;
+        setTopChatAvailabilityState(Boolean(normalizeTopChatFileName(getCurrentChatId())));
     }
-
-    console.log('displaying shadow');
-    $('#shadow_select_chat_popup').css('display', 'block');
-    $('#shadow_select_chat_popup').css('opacity', 0.0);
-    $('#shadow_select_chat_popup').transition({
-        opacity: 1.0,
-        duration: animation_duration,
-        easing: animation_easing,
-    });
 }
 
 async function handleStartNewChatAction() {
@@ -1067,7 +1085,7 @@ async function handleStartNewChatAction() {
 }
 
 async function handleCloseChatAction() {
-    if (!hasActiveChatContext()) {
+    if (!hasActiveChatContext() || isTopChatInteractionBusy()) {
         return;
     }
 
@@ -1459,6 +1477,7 @@ async function toggleTopChatConnectionProfiles(forceVisible = undefined, { save 
 async function refreshTopChatBarState() {
     const currentChatId = normalizeTopChatFileName(getCurrentChatId());
     const hasChat = Boolean(currentChatId);
+    const isChatBusy = isTopChatInteractionBusy();
     setTopChatAvailabilityState(hasChat);
 
     if (!topChatBarChatNameSelect) {
@@ -1486,7 +1505,7 @@ async function refreshTopChatBarState() {
             topChatBarChatNameSelect.append(option);
         }
 
-        topChatBarChatNameSelect.disabled = false;
+        topChatBarChatNameSelect.disabled = isChatBusy;
     }
 
     await populateTopChatSidebar();
@@ -1507,6 +1526,10 @@ function bindTopChatButton(element, handler) {
 }
 
 async function renameCurrentTopChat() {
+    if (isTopChatInteractionBusy()) {
+        return;
+    }
+
     const currentChatId = normalizeTopChatFileName(getCurrentChatId());
     if (!currentChatId) {
         return;
@@ -1522,6 +1545,10 @@ async function renameCurrentTopChat() {
 }
 
 async function deleteCurrentTopChat() {
+    if (isTopChatInteractionBusy()) {
+        return;
+    }
+
     const currentChatId = normalizeTopChatFileName(getCurrentChatId());
     if (!currentChatId) {
         return;
@@ -1595,6 +1622,9 @@ function initTopChatUi() {
     eventSource.on(event_types.CHAT_CHANGED, refreshTopChatUiDebounced);
     eventSource.on(event_types.CHAT_DELETED, refreshTopChatUiDebounced);
     eventSource.on(event_types.GROUP_CHAT_DELETED, refreshTopChatUiDebounced);
+    eventSource.on(event_types.GENERATION_STARTED, refreshTopChatUiDebounced);
+    eventSource.on(event_types.GENERATION_STOPPED, refreshTopChatUiDebounced);
+    eventSource.on(event_types.GENERATION_ENDED, refreshTopChatUiDebounced);
     eventSource.on(event_types.ONLINE_STATUS_CHANGED, refreshTopChatConnectionProfilesDebounced);
     eventSource.on(event_types.CONNECTION_PROFILE_LOADED, refreshTopChatConnectionProfilesDebounced);
     eventSource.on(event_types.CHATCOMPLETION_SOURCE_CHANGED, refreshTopChatConnectionProfilesDebounced);
@@ -1710,6 +1740,7 @@ const topChatButtons = {
 };
 let isTopChatConnectionProfilesBound = false;
 let topChatSidebarPopulateToken = '';
+let isManageChatsActionPending = false;
 
 export let token;
 
