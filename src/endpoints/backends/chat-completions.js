@@ -200,11 +200,147 @@ function setJsonObjectFormat(bodyParams, messages, jsonSchema) {
     bodyParams['response_format'] = {
         type: 'json_object',
     };
+    upsertJsonSchemaInstructionMessage(messages, jsonSchema);
+}
+
+/**
+ * @param {object[]} messages
+ * @param {{ value?: Record<string, any> }} jsonSchema
+ */
+function upsertJsonSchemaInstructionMessage(messages, jsonSchema) {
+    if (!Array.isArray(messages) || !jsonSchema?.value) {
+        return;
+    }
+
+    const content = `JSON schema for the response:\n${JSON.stringify(jsonSchema.value, null, 4)}`;
+    const existingInstructionIndex = messages.findIndex(message =>
+        message?.role === 'user'
+        && typeof message?.content === 'string'
+        && message.content.startsWith('JSON schema for the response:\n'));
+
+    if (existingInstructionIndex >= 0) {
+        messages[existingInstructionIndex] = {
+            ...messages[existingInstructionIndex],
+            content,
+        };
+        return;
+    }
+
     const message = {
         role: 'user',
-        content: `JSON schema for the response:\n${JSON.stringify(jsonSchema.value, null, 4)}`,
+        content,
     };
     messages.push(message);
+}
+
+/**
+ * @param {object} bodyParams
+ */
+function setTextFormat(bodyParams) {
+    delete bodyParams['response_format'];
+}
+
+/**
+ * @param {string} responseText
+ * @returns {Set<string>}
+ */
+function extractStructuredOutputModesFromError(responseText) {
+    const supportedModes = new Set();
+    const normalized = String(responseText || '').toLowerCase();
+    const valuesMatch = normalized.match(/"values"\s*:\s*\[([^\]]+)\]/i);
+    const valuesSegment = valuesMatch?.[1] || normalized;
+
+    for (const match of valuesSegment.matchAll(/"(text|json_object|json_schema)"/g)) {
+        supportedModes.add(match[1]);
+    }
+
+    return supportedModes;
+}
+
+/**
+ * Detects provider structured-output capability mismatches and suggests a weaker fallback mode.
+ * @param {string} responseText
+ * @param {Record<string, any>} currentRequestBody
+ * @param {{ value?: Record<string, any> }} jsonSchema
+ * @param {string[]} attemptedModes
+ * @returns {'json_object' | 'text' | null}
+ */
+function detectStructuredOutputFallbackMode(responseText, currentRequestBody, jsonSchema, attemptedModes = []) {
+    if (!responseText || !jsonSchema?.value) {
+        return null;
+    }
+
+    const parsedPayload = tryParse(responseText);
+    const message = extractProviderErrorMessage(parsedPayload ?? responseText, '').toLowerCase();
+    const combinedText = `${String(responseText || '')}\n${message}`.toLowerCase();
+    const currentMode = typeof currentRequestBody?.response_format?.type === 'string'
+        ? currentRequestBody.response_format.type
+        : 'text';
+    const supportedModes = extractStructuredOutputModesFromError(combinedText);
+    const attempted = new Set(attemptedModes);
+    const mentionsResponseFormat = combinedText.includes('response_format');
+    const mentionsStructuredOutput = combinedText.includes('json_schema')
+        || combinedText.includes('json_object')
+        || combinedText.includes('json schema');
+    const capabilityError = (mentionsResponseFormat || mentionsStructuredOutput)
+        && (
+            combinedText.includes('invalid option')
+            || combinedText.includes('invalid_value')
+            || combinedText.includes('not supported')
+            || combinedText.includes('unsupported')
+            || combinedText.includes('expected one of')
+        );
+
+    if (!capabilityError) {
+        return null;
+    }
+
+    if (currentMode === 'json_schema' && !attempted.has('json_object')) {
+        const likelySupportsJsonObject = supportedModes.has('json_object')
+            || !supportedModes.size
+            || combinedText.includes('json_schema');
+
+        if (likelySupportsJsonObject) {
+            return 'json_object';
+        }
+    }
+
+    const canUseText = !attempted.has('text')
+        && (supportedModes.has('text') || currentMode === 'json_object');
+
+    return canUseText ? 'text' : null;
+}
+
+/**
+ * @param {Record<string, any>} requestBody
+ * @param {{ value?: Record<string, any> }} jsonSchema
+ * @param {'json_object' | 'text'} targetMode
+ * @returns {Record<string, any>}
+ */
+function buildStructuredOutputFallbackRequestBody(requestBody, jsonSchema, targetMode) {
+    const fallbackRequestBody = {
+        ...requestBody,
+        messages: Array.isArray(requestBody.messages)
+            ? requestBody.messages.map(message => message && typeof message === 'object' ? { ...message } : message)
+            : requestBody.messages,
+    };
+
+    if (targetMode === 'json_object') {
+        setJsonObjectFormat(fallbackRequestBody, fallbackRequestBody.messages, jsonSchema);
+    } else {
+        setTextFormat(fallbackRequestBody);
+        upsertJsonSchemaInstructionMessage(fallbackRequestBody.messages, jsonSchema);
+    }
+
+    return fallbackRequestBody;
+}
+
+/**
+ * @param {'json_object' | 'text'} targetMode
+ * @returns {string}
+ */
+function getStructuredOutputFallbackLabel(targetMode) {
+    return targetMode === 'json_object' ? 'json_object' : 'text';
 }
 
 function createProviderJsonResult(body, { status = 200, ok = true } = {}) {
@@ -3652,7 +3788,10 @@ export async function handleChatCompletionsGenerate(request, response) {
     /**
      * @param {import("node-fetch").Response} fetchResponse
      */
-    async function handleFetchResponse(fetchResponse) {
+    async function handleFetchResponse(fetchResponse, {
+        currentRequestBody = requestBody,
+        attemptedStructuredOutputFallbacks = [],
+    } = {}) {
         if (request.body.stream) {
             console.info('Streaming request in progress');
             return createProviderStreamResult(fetchResponse);
@@ -3665,13 +3804,61 @@ export async function handleChatCompletionsGenerate(request, response) {
             return createProviderJsonResult(json);
         }
 
-        return await handleErrorResponse(fetchResponse);
+        return await handleErrorResponse(fetchResponse, {
+            currentRequestBody,
+            attemptedStructuredOutputFallbacks,
+        });
     }
 
     /**
      * @param {import("node-fetch").Response} errorResponse
      */
-    async function handleErrorResponse(errorResponse) {
+    async function handleErrorResponse(errorResponse, {
+        currentRequestBody = requestBody,
+        attemptedStructuredOutputFallbacks = [],
+    } = {}) {
+        const canRetryStructuredOutput = request.body.json_schema
+            && currentRequestBody?.response_format?.type;
+
+        if (canRetryStructuredOutput) {
+            const errorText = await errorResponse.clone().text().catch(() => '');
+            const fallbackMode = detectStructuredOutputFallbackMode(
+                errorText,
+                currentRequestBody,
+                request.body.json_schema,
+                attemptedStructuredOutputFallbacks,
+            );
+
+            if (fallbackMode) {
+                const fallbackRequestBody = buildStructuredOutputFallbackRequestBody(
+                    currentRequestBody,
+                    request.body.json_schema,
+                    fallbackMode,
+                );
+                const fallbackConfig = {
+                    ...config,
+                    body: JSON.stringify(fallbackRequestBody),
+                };
+
+                console.warn('Provider rejected structured output format; retrying with weaker fallback.', {
+                    requestId: request.requestId,
+                    provider: request.body.chat_completion_source,
+                    model: request.body.model,
+                    fallbackMode: getStructuredOutputFallbackLabel(fallbackMode),
+                });
+
+                try {
+                    const fallbackResponse = await fetch(endpointUrl, fallbackConfig);
+                    return await handleFetchResponse(fallbackResponse, {
+                        currentRequestBody: fallbackRequestBody,
+                        attemptedStructuredOutputFallbacks: [...attemptedStructuredOutputFallbacks, fallbackMode],
+                    });
+                } catch (fallbackError) {
+                    console.warn('Structured output fallback request failed:', fallbackError?.message || fallbackError);
+                }
+            }
+        }
+
         return await createSanitizedProviderErrorResult(errorResponse, request);
     }
     })().catch((error) => {
