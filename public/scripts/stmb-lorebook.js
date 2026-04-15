@@ -72,7 +72,7 @@ async function autoCreateAndBindLorebook(lorebookNameTemplate) {
 
 export async function getLorebookStats() {
     try {
-        const context = await getContext();
+        const context = getContext();
         const lorebookName = String(context?.chatMetadata?.[METADATA_KEY] || '').trim();
 
         if (!lorebookName) {

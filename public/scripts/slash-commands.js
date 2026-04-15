@@ -2377,6 +2377,7 @@ export function initDefaultSlashCommands() {
                 enumList: [
                     new SlashCommandEnumValue('custom', 'custom OpenAI-compatible', enumTypes.enum, 'O'),
                     new SlashCommandEnumValue('zai', 'Z.AI', enumTypes.enum, 'Z'),
+                    new SlashCommandEnumValue('zanity', 'Zanity', enumTypes.enum, 'Z'),
                 ],
             }),
             SlashCommandNamedArgument.fromProps({

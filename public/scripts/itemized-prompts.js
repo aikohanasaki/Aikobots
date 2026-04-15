@@ -174,6 +174,12 @@ function formatHiddenWorldInfoPlaceholder(placement) {
     return '(hidden entry)';
 }
 
+function normalizeRawPromptText(rawPrompt) {
+    return Array.isArray(rawPrompt)
+        ? rawPrompt.map(x => x.content).join('\n')
+        : String(rawPrompt ?? '');
+}
+
 function aggregatePromptInspectorWorldInfoEntries(entries = []) {
     const visibleEntries = [];
     const hiddenEntries = [];
@@ -291,15 +297,15 @@ function getRedactedRawPromptText(itemizedPrompt, incomingMesId, snapshot = null
 
     const entries = getPromptWorldInfoEntries(itemizedPrompt, incomingMesId, snapshot);
     const hasHiddenEntries = entries.some(entry => entry?.hidden);
-    const rawPrompt = itemizedPrompt?.rawPrompt;
+    const rawPromptText = normalizeRawPromptText(itemizedPrompt?.rawPrompt);
 
     if (!hasHiddenEntries) {
-        return Array.isArray(rawPrompt) ? rawPrompt.map(x => x.content).join('\n') : String(rawPrompt ?? '');
+        return rawPromptText;
     }
 
     const messagesState = snapshot?.assembly?.messagesState ?? itemizedPrompt?.serverAssemblyDebugDump?.assembly?.messagesState;
     if (!messagesState || typeof messagesState !== 'object') {
-        return Array.isArray(rawPrompt) ? rawPrompt.map(x => x.content).join('\n') : String(rawPrompt ?? '');
+        return '';
     }
 
     const placementMap = buildWorldInfoPlacementRedactionMap(entries);
@@ -587,17 +593,26 @@ export async function promptItemize(itemizedPrompts, requestedMesId) {
     initializeWorldInfoEntryToggles(popup);
 
     const currentPromptText = getPromptText(PromptArrayItemForRawPromptDisplay);
-    const fallbackPromptText = currentPromptText.trim() ? currentPromptText : '(hidden entry)';
-    const hasCurrentPromptText = Boolean(fallbackPromptText.trim());
+    const hasCurrentPromptText = typeof currentPromptText === 'string' && currentPromptText.trim().length > 0;
+    const unavailablePromptText = t`No redacted prompt available.`;
+    const setPromptActionUnavailable = (element) => {
+        if (!(element instanceof HTMLElement)) {
+            return;
+        }
+
+        element.classList.add('disabled');
+        element.setAttribute('aria-disabled', 'true');
+        element.title = unavailablePromptText;
+    };
 
     const copyPromptToClipboard = popup.dlg.querySelector('#copyPromptToClipboard');
     if (hasCurrentPromptText) {
         copyPromptToClipboard.addEventListener('pointerup', async function () {
-            await copyText(fallbackPromptText);
+            await copyText(currentPromptText);
             toastr.info(t`Copied!`);
         });
     } else {
-        copyPromptToClipboard.style.display = 'none';
+        setPromptActionUnavailable(copyPromptToClipboard);
     }
 
     const showRawPrompt = popup.dlg.querySelector('#showRawPrompt');
@@ -607,7 +622,7 @@ export async function promptItemize(itemizedPrompts, requestedMesId) {
         console.log(PromptArrayItemForRawPromptDisplay);
         console.log(itemizedPrompts);
         console.log(itemizedPrompts[PromptArrayItemForRawPromptDisplay].rawPrompt);
-        const rawPrompt = fallbackPromptText;
+        const rawPrompt = currentPromptText;
 
         // Mobile needs special handholding. The side-view on the popup wouldn't work,
         // so we just show an additional popup for this.
@@ -626,7 +641,11 @@ export async function promptItemize(itemizedPrompts, requestedMesId) {
         $('#rawPromptPopup').slideToggle();
         });
     } else {
-        showRawPrompt.style.display = 'none';
+        setPromptActionUnavailable(showRawPrompt);
+        const rawPromptWrapper = popup.dlg.querySelector('#rawPromptWrapper');
+        if (rawPromptWrapper instanceof HTMLElement) {
+            rawPromptWrapper.innerText = unavailablePromptText;
+        }
     }
 
     await popup.show();

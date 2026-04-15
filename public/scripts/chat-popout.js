@@ -122,7 +122,7 @@ function getPopupAssetUrls() {
     ];
 }
 
-function getChatPopoutThemeVariablesCss() {
+function getChatPopoutThemeVariables() {
     const themeVariables = new Map();
 
     for (const element of [document.documentElement, document.body]) {
@@ -143,11 +143,7 @@ function getChatPopoutThemeVariablesCss() {
         }
     }
 
-    const serializedVariables = [...themeVariables.entries()]
-        .map(([property, value]) => `            ${property}: ${value};`)
-        .join('\n');
-
-    return `:root {\n${serializedVariables}\n        }`;
+    return themeVariables;
 }
 
 function getChatPopoutColorScheme() {
@@ -171,7 +167,6 @@ function buildChatPopoutHtml({ focusMessageId = null, context = null } = {}) {
         .join('');
     const normalizedFocusMessageId = Number.isInteger(Number(focusMessageId)) ? Number(focusMessageId) : null;
     const serializedContext = JSON.stringify(context ?? null).replace(/</g, '\\u003c');
-    const themeVariablesCss = getChatPopoutThemeVariablesCss();
     const colorScheme = getChatPopoutColorScheme();
     const bodyClasses = ['chat-popout'];
 
@@ -190,8 +185,6 @@ function buildChatPopoutHtml({ focusMessageId = null, context = null } = {}) {
         :root {
             color-scheme: ${colorScheme};
         }
-
-        ${themeVariablesCss}
     </style>
 </head>
 <body class="${bodyClasses.join(' ')}">
@@ -557,6 +550,7 @@ export function openChatPopoutWindow({ focusMessageId = null } = {}) {
         return null;
     }
 
+    const themeVariables = getChatPopoutThemeVariables();
     const popup = window.open('', 'core-chat-popout', 'popup=yes,width=960,height=900,resizable=yes,scrollbars=yes');
     if (!popup) {
         toastr.error('The chat popout was blocked by the browser.');
@@ -566,6 +560,9 @@ export function openChatPopoutWindow({ focusMessageId = null } = {}) {
     popup.document.open();
     popup.document.write(buildChatPopoutHtml({ focusMessageId, context }));
     popup.document.close();
+    for (const [property, value] of themeVariables.entries()) {
+        popup.document.documentElement.style.setProperty(property, value);
+    }
     popup.focus();
     return popup;
 }
