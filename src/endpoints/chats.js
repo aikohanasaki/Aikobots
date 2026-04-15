@@ -862,6 +862,56 @@ function resolveGroupLogicalChat(filePath) {
     };
 }
 
+function buildLogicalChatSummary(pathToFile, {
+    additionalData = {},
+    isGroup = false,
+    withMetadata = false,
+} = {}) {
+    const parsedPath = path.parse(pathToFile);
+    const fileStats = getChatFileStats(pathToFile);
+    const logicalChat = isGroup
+        ? resolveGroupLogicalChat(pathToFile)
+        : resolveDirectLogicalChat(pathToFile);
+    const fallbackTimestamp = Math.round(fileStats.latestMtimeMs);
+    const chatData = {
+        file_id: parsedPath.name,
+        file_name: parsedPath.base,
+        file_size: `${(fileStats.totalSize / 1024).toFixed(2)}kb`,
+        chat_items: 0,
+        mes: '[The chat is empty]',
+        last_mes: fallbackTimestamp,
+        ...additionalData,
+    };
+
+    if (!isGroup && fileStats.tailStats.size === 0) {
+        console.warn(`Found an empty chat file: ${pathToFile}`);
+        return {};
+    }
+
+    if (withMetadata && _.isObject(logicalChat.header?.chat_metadata)) {
+        chatData.chat_metadata = logicalChat.header.chat_metadata;
+    }
+
+    const lastMessageId = logicalChat.lastAvailableMessageId;
+    const lastMessage = lastMessageId >= 0 ? logicalChat.messages[lastMessageId] : null;
+
+    if (lastMessage || logicalChat.header) {
+        chatData.chat_items = logicalChat.totalMessages;
+        chatData.mes = lastMessage?.mes || (isGroup && logicalChat.totalMessages === 0
+            ? '[The chat is empty]'
+            : '[The message is empty]');
+        chatData.last_mes = normalizeChatTimestamp(lastMessage?.send_date, fallbackTimestamp);
+        return chatData;
+    }
+
+    if (!isGroup) {
+        console.warn('Found an invalid or corrupted chat file:', pathToFile);
+        return {};
+    }
+
+    return chatData;
+}
+
 export function resolveLogicalChatReference(directories, chatRef) {
     const reference = chatRef && typeof chatRef === 'object' ? chatRef : {};
 
@@ -1304,77 +1354,7 @@ async function checkChatIntegrity(filePath, integritySlug) {
  * @returns {Promise<ChatInfo>}
  */
 export async function getChatInfo(pathToFile, additionalData = {}, isGroup = false, withMetadata = false) {
-    return new Promise(async (res) => {
-        const parsedPath = path.parse(pathToFile);
-        const stats = await fs.promises.stat(pathToFile);
-
-        if (isGroup) {
-            const fileStats = getChatFileStats(pathToFile);
-            const payload = getGroupChatPayload(pathToFile);
-            const messages = payload.messages;
-            const lastMessage = messages.at(-1);
-            const fallbackTimestamp = Math.round(fileStats.latestMtimeMs);
-            const chatData = {
-                file_id: parsedPath.name,
-                file_name: parsedPath.base,
-                file_size: `${(fileStats.totalSize / 1024).toFixed(2)}kb`,
-                chat_items: messages.length,
-                mes: lastMessage?.mes || '[The chat is empty]',
-                last_mes: normalizeChatTimestamp(lastMessage?.send_date, fallbackTimestamp),
-                ...additionalData,
-            };
-
-            if (withMetadata && _.isObject(payload.header?.chat_metadata)) {
-                chatData.chat_metadata = payload.header.chat_metadata;
-            }
-
-            return res(chatData);
-        }
-
-        const segments = getChatSegments(pathToFile);
-        const headStats = segments.storage && fs.existsSync(segments.headPath)
-            ? await fs.promises.stat(segments.headPath)
-            : null;
-        const totalSize = stats.size + (headStats?.size || 0);
-        const fileSizeInKB = `${(totalSize / 1024).toFixed(2)}kb`;
-
-        const chatData = {
-            file_id: parsedPath.name,
-            file_name: parsedPath.base,
-            file_size: fileSizeInKB,
-            chat_items: 0,
-            mes: '[The chat is empty]',
-            last_mes: Math.round(stats.mtimeMs),
-            ...additionalData,
-        };
-
-        if (stats.size === 0 && !isGroup) {
-            console.warn(`Found an empty chat file: ${pathToFile}`);
-            res({});
-            return;
-        }
-
-        if (stats.size === 0 && isGroup) {
-            res(chatData);
-            return;
-        }
-
-        if (withMetadata && segments.header && _.isObject(segments.header.chat_metadata)) {
-            chatData.chat_metadata = segments.header.chat_metadata;
-        }
-
-        const lastMessage = segments.messages.at(-1);
-
-        if (lastMessage || segments.header) {
-            chatData.chat_items = getSegmentLayout(segments).totalMessages;
-            chatData.mes = lastMessage?.mes || '[The message is empty]';
-            chatData.last_mes = normalizeChatTimestamp(lastMessage?.send_date, Math.round(stats.mtimeMs));
-            res(chatData);
-        } else {
-            console.warn('Found an invalid or corrupted chat file:', pathToFile);
-            res({});
-        }
-    });
+    return buildLogicalChatSummary(pathToFile, { additionalData, isGroup, withMetadata });
 }
 
 export const router = express.Router();
