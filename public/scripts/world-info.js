@@ -4552,7 +4552,7 @@ export async function getWorldEntry(name, data, entry) {
             const uid = $(this).data('uid');
             const content = $(this).val();
             const value = content === '' ? (typeof data.entries[uid].delayUntilRecursion === 'boolean' ? data.entries[uid].delayUntilRecursion : true)
-                : content === 1 ? true
+                : content === '1' ? true
                     : !isNaN(Number(content)) ? Number(content)
                         : false;
             data.entries[uid].delayUntilRecursion = value;
@@ -6502,6 +6502,7 @@ export async function moveWorldInfoEntries(sourceName, targetName, uids, { delet
             return false;
         }
 
+        const originalTargetData = deleteOriginal ? structuredClone(targetData) : null;
         const sourceEntries = entryUidStrings.map(uid => sourceData.entries[uid]);
         if (sourceEntries.some(entry => !entry)) {
             toastr.error(t`One or more selected entries were not found in source lorebook '${sourceName}'.`);
@@ -6532,7 +6533,28 @@ export async function moveWorldInfoEntries(sourceName, targetName, uids, { delet
 
         await saveWorldInfo(targetName, targetData, true);
         if (deleteOriginal) {
-            await saveWorldInfo(sourceName, sourceData, true);
+            try {
+                await saveWorldInfo(sourceName, sourceData, true);
+            } catch (sourceSaveError) {
+                try {
+                    await saveWorldInfo(targetName, originalTargetData, true);
+                    toastr.error(t`Could not complete the move because saving the source lorebook failed. The copied entries were rolled back from '${targetName}'.`);
+                } catch (rollbackError) {
+                    toastr.error(t`Could not complete the move because saving the source lorebook failed, and rolling back '${targetName}' also failed. The entries may now exist in both lorebooks.`);
+                    console.error('[WI Move] Failed to rollback target lorebook after source save failure.', rollbackError);
+                }
+
+                const currentEditorBookIndex = Number($('#world_editor_select').val());
+                if (!isNaN(currentEditorBookIndex)) {
+                    const currentEditorBookName = world_names[currentEditorBookIndex];
+                    if (currentEditorBookName === sourceName || currentEditorBookName === targetName) {
+                        reloadEditor(currentEditorBookName);
+                    }
+                }
+
+                console.error('[WI Move] Failed to save source lorebook after target save.', sourceSaveError);
+                return false;
+            }
         }
 
         const currentEditorBookIndex = Number($('#world_editor_select').val());
@@ -6707,7 +6729,9 @@ export async function charUpdatePrimaryWorld(name) {
 export async function charUpdateAddAuxWorld(characterKey, nameOrNames) {
     const fileName = getCharaFilename(null, { manualAvatarKey: characterKey });
     const toAdd = Array.isArray(nameOrNames) ? nameOrNames : [nameOrNames];
-    await charSetAuxWorlds(fileName, [...getEditableCharacterExtraBooks(fileName), ...toAdd]);
+    const state = getCharacterExtraBookState(fileName);
+    const existingBooks = state.hasMetadataValue ? state.metadataBooks : state.mergedBooks;
+    await charSetAuxWorlds(fileName, [...existingBooks, ...toAdd]);
 }
 
 /**
