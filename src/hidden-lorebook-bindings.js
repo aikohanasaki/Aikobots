@@ -50,6 +50,7 @@ function normalizeCharacterKey(value) {
 }
 
 export function normalizeHiddenLorebookBindings(data = {}) {
+    const global = normalizeLorebookNames(data?.global);
     const characters = {};
     const source = data?.characters && typeof data.characters === 'object' && !Array.isArray(data.characters)
         ? data.characters
@@ -57,14 +58,14 @@ export function normalizeHiddenLorebookBindings(data = {}) {
 
     for (const [key, value] of Object.entries(source)) {
         const normalizedKey = normalizeCharacterKey(key);
-        const normalizedBooks = normalizeLorebookNames(value);
+        const isValidBindingValue = Array.isArray(value) || typeof value === 'string';
 
-        if (normalizedKey && normalizedBooks.length) {
-            characters[normalizedKey] = normalizedBooks;
+        if (normalizedKey && isValidBindingValue) {
+            characters[normalizedKey] = normalizeLorebookNames(value);
         }
     }
 
-    return { characters };
+    return { global, characters };
 }
 
 function getCachedRegistry(filePath, stat) {
@@ -138,10 +139,10 @@ export function writeHiddenLorebookBindings(data = {}, { rootDir = globalThis.DA
 
 export function getHiddenLorebooksForCharacter(characterKey, { rootDir = globalThis.DATA_ROOT || process.cwd() } = {}) {
     const normalizedKey = normalizeCharacterKey(characterKey);
-    if (!normalizedKey) {
-        return [];
+    const registry = readHiddenLorebookBindings({ rootDir });
+    if (normalizedKey && Object.prototype.hasOwnProperty.call(registry.characters, normalizedKey)) {
+        return [...registry.characters[normalizedKey]];
     }
 
-    const registry = readHiddenLorebookBindings({ rootDir });
-    return [...(registry.characters[normalizedKey] ?? [])];
+    return [...(registry.global ?? [])];
 }

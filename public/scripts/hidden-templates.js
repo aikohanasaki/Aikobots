@@ -39,8 +39,38 @@ function normalizeStringArray(value) {
     return [...unique].sort(compareStrings);
 }
 
+function normalizeAssignmentEntry(value) {
+    if (Array.isArray(value) || typeof value === 'string') {
+        return {
+            templates: [],
+            add: normalizeStringArray(value),
+            remove: [],
+        };
+    }
+
+    const source = value && typeof value === 'object' && !Array.isArray(value) ? value : {};
+    return {
+        templates: normalizeStringArray(source.templates),
+        add: normalizeStringArray(source.add),
+        remove: normalizeStringArray(source.remove),
+    };
+}
+
+function createEmptyAssignmentEntry() {
+    return {
+        templates: [],
+        add: [],
+        remove: [],
+    };
+}
+
+function hasAssignmentData(entry = createEmptyAssignmentEntry()) {
+    return entry.templates.length > 0 || entry.add.length > 0 || entry.remove.length > 0;
+}
+
 function normalizeSourceData(data = {}) {
     const templates = {};
+    const global = normalizeAssignmentEntry(data?.global);
     const charactersMap = {};
     const templateSource = data?.templates && typeof data.templates === 'object' && !Array.isArray(data.templates)
         ? data.templates
@@ -70,69 +100,65 @@ function normalizeSourceData(data = {}) {
             continue;
         }
 
-        const characterEntry = characterSource[characterKey];
-        const normalizedEntry = Array.isArray(characterEntry) || typeof characterEntry === 'string'
-            ? {
-                templates: [],
-                add: normalizeStringArray(characterEntry),
-                remove: [],
-            }
-            : {
-                templates: normalizeStringArray(characterEntry?.templates),
-                add: normalizeStringArray(characterEntry?.add),
-                remove: normalizeStringArray(characterEntry?.remove),
-            };
+        const normalizedEntry = normalizeAssignmentEntry(characterSource[characterKey]);
 
-        if (normalizedEntry.templates.length || normalizedEntry.add.length || normalizedEntry.remove.length) {
+        if (hasAssignmentData(normalizedEntry)) {
             charactersMap[normalizedCharacterKey] = normalizedEntry;
         }
     }
 
-    return { templates, characters: charactersMap };
+    return { templates, global, characters: charactersMap };
+}
+
+function applyAssignmentEntry(baseBooks, entry, templates) {
+    const templateAdds = new Set();
+    const templateRemoves = new Set();
+
+    for (const templateName of entry.templates) {
+        const templateEntry = templates[templateName];
+        if (!templateEntry) {
+            continue;
+        }
+
+        for (const lorebookName of templateEntry.add) {
+            templateAdds.add(lorebookName);
+        }
+
+        for (const lorebookName of templateEntry.remove) {
+            templateRemoves.add(lorebookName);
+        }
+    }
+
+    const compiledBooks = new Set(Array.isArray(baseBooks) ? baseBooks : []);
+
+    for (const lorebookName of templateAdds) {
+        compiledBooks.add(lorebookName);
+    }
+
+    for (const lorebookName of templateRemoves) {
+        compiledBooks.delete(lorebookName);
+    }
+
+    for (const lorebookName of entry.add) {
+        compiledBooks.add(lorebookName);
+    }
+
+    for (const lorebookName of entry.remove) {
+        compiledBooks.delete(lorebookName);
+    }
+
+    return [...compiledBooks].sort(compareStrings);
 }
 
 function buildCompiledBindings(source = {}) {
     const normalized = normalizeSourceData(source);
-    const compiled = { characters: {} };
+    const compiled = {
+        global: applyAssignmentEntry([], normalized.global, normalized.templates),
+        characters: {},
+    };
 
     for (const characterKey of Object.keys(normalized.characters).sort(compareStrings)) {
-        const characterEntry = normalized.characters[characterKey];
-        const templateAdds = new Set();
-        const templateRemoves = new Set();
-
-        for (const templateName of characterEntry.templates) {
-            const templateEntry = normalized.templates[templateName];
-            if (!templateEntry) {
-                continue;
-            }
-
-            for (const lorebookName of templateEntry.add) {
-                templateAdds.add(lorebookName);
-            }
-
-            for (const lorebookName of templateEntry.remove) {
-                templateRemoves.add(lorebookName);
-            }
-        }
-
-        const compiledBooks = new Set(templateAdds);
-
-        for (const lorebookName of templateRemoves) {
-            compiledBooks.delete(lorebookName);
-        }
-
-        for (const lorebookName of characterEntry.add) {
-            compiledBooks.add(lorebookName);
-        }
-
-        for (const lorebookName of characterEntry.remove) {
-            compiledBooks.delete(lorebookName);
-        }
-
-        const finalBooks = [...compiledBooks].sort(compareStrings);
-        if (finalBooks.length > 0) {
-            compiled.characters[characterKey] = finalBooks;
-        }
+        compiled.characters[characterKey] = applyAssignmentEntry(compiled.global, normalized.characters[characterKey], normalized.templates);
     }
 
     return compiled;
@@ -143,34 +169,18 @@ function getCurrentCharacterKey() {
     return currentCharacter?.avatar ? getCharaFilename(null, { manualAvatarKey: currentCharacter.avatar }) : '';
 }
 
-function createEmptyCharacterEntry() {
-    return {
-        templates: [],
-        add: [],
-        remove: [],
-    };
-}
-
-function hasCharacterData(entry = createEmptyCharacterEntry()) {
-    return entry.templates.length > 0 || entry.add.length > 0 || entry.remove.length > 0;
-}
-
 function ensureCharacterEntry(panel, characterKey) {
     if (!panel.source.characters[characterKey]) {
-        panel.source.characters[characterKey] = createEmptyCharacterEntry();
+        panel.source.characters[characterKey] = createEmptyAssignmentEntry();
     }
 
     return panel.source.characters[characterKey];
 }
 
 function upsertCharacterEntry(panel, characterKey, entry) {
-    const normalizedEntry = {
-        templates: normalizeStringArray(entry.templates),
-        add: normalizeStringArray(entry.add),
-        remove: normalizeStringArray(entry.remove),
-    };
+    const normalizedEntry = normalizeAssignmentEntry(entry);
 
-    if (hasCharacterData(normalizedEntry)) {
+    if (hasAssignmentData(normalizedEntry)) {
         panel.source.characters[characterKey] = normalizedEntry;
     } else {
         delete panel.source.characters[characterKey];
@@ -226,6 +236,9 @@ function initializeLorebookSelect2(panel) {
     const lorebookSelects = [
         panel.templateAdd,
         panel.templateRemove,
+        panel.globalTemplates,
+        panel.globalAdd,
+        panel.globalRemove,
         panel.characterTemplates,
         panel.characterAdd,
         panel.characterRemove,
@@ -236,7 +249,7 @@ function initializeLorebookSelect2(panel) {
             continue;
         }
 
-        const isTemplateSelector = select.is(panel.characterTemplates);
+        const isTemplateSelector = select.is(panel.globalTemplates) || select.is(panel.characterTemplates);
         select.select2({
             width: '100%',
             placeholder: isTemplateSelector ? 'No templates selected. Click here to select.' : 'No lorebooks selected. Click here to select.',
@@ -361,6 +374,23 @@ function renderTemplateEditor(panel) {
     syncSelect2(panel.templateRemove);
 }
 
+function renderGlobalEditor(panel) {
+    const sourceEntry = panel.source.global ?? createEmptyAssignmentEntry();
+    const templateOptions = Object.keys(panel.source.templates).sort(compareStrings).map(name => ({ label: name, value: name }));
+    const lorebookOptions = panel.availableLorebooks.map(name => ({ label: name, value: name }));
+
+    fillMultiSelect(panel.globalTemplates, templateOptions, sourceEntry.templates);
+    fillMultiSelect(panel.globalAdd, lorebookOptions, sourceEntry.add);
+    fillMultiSelect(panel.globalRemove, lorebookOptions, sourceEntry.remove);
+
+    panel.globalTemplates.prop('disabled', panel.busy || templateOptions.length === 0);
+    panel.globalAdd.prop('disabled', panel.busy || lorebookOptions.length === 0);
+    panel.globalRemove.prop('disabled', panel.busy || lorebookOptions.length === 0);
+    syncSelect2(panel.globalTemplates);
+    syncSelect2(panel.globalAdd);
+    syncSelect2(panel.globalRemove);
+}
+
 function renderCharacterEditor(panel) {
     const currentCharacterKey = panel.availableCharacters.some(item => item.key === panel.currentCharacter)
         ? panel.currentCharacter
@@ -370,7 +400,7 @@ function renderCharacterEditor(panel) {
     const characterOptions = panel.availableCharacters.map(item => ({ label: item.label, value: item.key }));
     fillSingleSelect(panel.characterSelect, characterOptions, currentCharacterKey, '(No characters)');
 
-    const sourceEntry = currentCharacterKey ? (panel.source.characters[currentCharacterKey] ?? createEmptyCharacterEntry()) : createEmptyCharacterEntry();
+    const sourceEntry = currentCharacterKey ? (panel.source.characters[currentCharacterKey] ?? createEmptyAssignmentEntry()) : createEmptyAssignmentEntry();
     const templateOptions = Object.keys(panel.source.templates).sort(compareStrings).map(name => ({ label: name, value: name }));
     const lorebookOptions = panel.availableLorebooks.map(name => ({ label: name, value: name }));
     const hasCharacter = Boolean(currentCharacterKey);
@@ -389,12 +419,17 @@ function renderCharacterEditor(panel) {
 
 function renderCompiledPreview(panel) {
     const compiled = buildCompiledBindings(panel.source);
-    const compiledLorebooks = panel.currentCharacter ? (compiled.characters[panel.currentCharacter] ?? []) : [];
+    const compiledLorebooks = panel.currentCharacter
+        ? (Object.prototype.hasOwnProperty.call(compiled.characters, panel.currentCharacter)
+            ? compiled.characters[panel.currentCharacter]
+            : compiled.global)
+        : compiled.global;
     panel.compiledPreview.text(compiledLorebooks.length > 0 ? compiledLorebooks.join('\n') : '(No compiled hidden lorebooks)');
 }
 
 function renderPanel(panel) {
     renderTemplateEditor(panel);
+    renderGlobalEditor(panel);
     renderCharacterEditor(panel);
     renderCompiledPreview(panel);
 }
@@ -414,11 +449,16 @@ async function compileSource(panel) {
     await saveSource(panel, { silent: true });
     const response = await postJson('/api/worldinfo/hidden-templates/compile', {});
     const compiledCharacterCount = Object.keys(response?.compiled?.characters ?? {}).length;
-    const missingTemplateCount = Object.keys(response?.missingTemplates ?? {}).length;
-    let message = `Compiled hidden lorebook bindings for ${compiledCharacterCount} character${compiledCharacterCount === 1 ? '' : 's'}.`;
+    const missingTemplates = response?.missingTemplates && typeof response.missingTemplates === 'object' ? response.missingTemplates : {};
+    const missingCharacterCount = Object.keys(missingTemplates).filter(key => key !== 'global').length;
+    let message = `Compiled global hidden lorebooks and ${compiledCharacterCount} character override${compiledCharacterCount === 1 ? '' : 's'}.`;
 
-    if (missingTemplateCount > 0) {
-        message += ` Missing template references were ignored for ${missingTemplateCount} character${missingTemplateCount === 1 ? '' : 's'}.`;
+    if (Array.isArray(missingTemplates.global) && missingTemplates.global.length > 0) {
+        message += ' Missing universal template references were ignored.';
+    }
+
+    if (missingCharacterCount > 0) {
+        message += ` Missing template references were ignored for ${missingCharacterCount} character${missingCharacterCount === 1 ? '' : 's'}.`;
     }
 
     setPanelStatus(panel, message);
@@ -572,6 +612,24 @@ function bindHiddenTemplatesPanelEvents(panel) {
         renderCompiledPreview(panel);
     });
 
+    panel.globalTemplates.on('change', () => {
+        panel.source.global.templates = getSelectedValues(panel.globalTemplates);
+        panel.source.global = normalizeAssignmentEntry(panel.source.global);
+        renderCompiledPreview(panel);
+    });
+
+    panel.globalAdd.on('change', () => {
+        panel.source.global.add = getSelectedValues(panel.globalAdd);
+        panel.source.global = normalizeAssignmentEntry(panel.source.global);
+        renderCompiledPreview(panel);
+    });
+
+    panel.globalRemove.on('change', () => {
+        panel.source.global.remove = getSelectedValues(panel.globalRemove);
+        panel.source.global = normalizeAssignmentEntry(panel.source.global);
+        renderCompiledPreview(panel);
+    });
+
     panel.characterTemplates.on('change', () => {
         if (!panel.currentCharacter) {
             return;
@@ -649,6 +707,8 @@ function bindHiddenTemplatesPanelEvents(panel) {
         panel.source.templates[nextTemplateName] = panel.source.templates[currentTemplateName];
         delete panel.source.templates[currentTemplateName];
 
+        panel.source.global.templates = normalizeStringArray(panel.source.global.templates.map(templateName => templateName === currentTemplateName ? nextTemplateName : templateName));
+
         for (const [characterKey, entry] of Object.entries(panel.source.characters)) {
             entry.templates = normalizeStringArray(entry.templates.map(templateName => templateName === currentTemplateName ? nextTemplateName : templateName));
             upsertCharacterEntry(panel, characterKey, entry);
@@ -676,6 +736,7 @@ function bindHiddenTemplatesPanelEvents(panel) {
         }
 
         delete panel.source.templates[currentTemplateName];
+        panel.source.global.templates = panel.source.global.templates.filter(templateName => templateName !== currentTemplateName);
 
         for (const [characterKey, entry] of Object.entries(panel.source.characters)) {
             entry.templates = entry.templates.filter(templateName => templateName !== currentTemplateName);
@@ -709,12 +770,15 @@ async function ensureHiddenTemplatesPanel() {
         templateSelect: panelRoot.find('#core_template_select'),
         templateAdd: panelRoot.find('#core_template_add'),
         templateRemove: panelRoot.find('#core_template_remove'),
+        globalTemplates: panelRoot.find('#core_global_templates'),
+        globalAdd: panelRoot.find('#core_global_add'),
+        globalRemove: panelRoot.find('#core_global_remove'),
         characterSelect: panelRoot.find('#core_character_select'),
         characterTemplates: panelRoot.find('#core_character_templates'),
         characterAdd: panelRoot.find('#core_character_add'),
         characterRemove: panelRoot.find('#core_character_remove'),
         compiledPreview: panelRoot.find('#core_compiled_preview'),
-        source: { templates: {}, characters: {} },
+        source: { templates: {}, global: createEmptyAssignmentEntry(), characters: {} },
         availableCharacters: [],
         availableLorebooks: [],
         currentTemplate: '',

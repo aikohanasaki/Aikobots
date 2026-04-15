@@ -45,6 +45,27 @@
 
                 <section class="core_hidden_templates_section">
                     <div class="core_hidden_templates_section_header">
+                        <h4 class="margin0">Universal Assignments</h4>
+                    </div>
+
+                    <label class="core_hidden_templates_field">
+                        <span>Assigned Templates</span>
+                        <select id="core_global_templates" class="text_pole core_multi_select" multiple></select>
+                    </label>
+
+                    <label class="core_hidden_templates_field">
+                        <span>Universal Add Lorebooks</span>
+                        <select id="core_global_add" class="text_pole core_multi_select" multiple></select>
+                    </label>
+
+                    <label class="core_hidden_templates_field">
+                        <span>Universal Remove Lorebooks</span>
+                        <select id="core_global_remove" class="text_pole core_multi_select" multiple></select>
+                    </label>
+                </section>
+
+                <section class="core_hidden_templates_section">
+                    <div class="core_hidden_templates_section_header">
                         <h4 class="margin0">Character Assignments</h4>
                     </div>
 
@@ -74,7 +95,7 @@
                 <div class="core_hidden_templates_section_header">
                     <h4 class="margin0">Compiled Preview</h4>
                 </div>
-                <div class="core_hidden_templates_preview_copy">This preview shows the flat hidden lorebook list that will be written for the selected character when you compile.</div>
+                <div class="core_hidden_templates_preview_copy">This preview shows the compiled hidden lorebook list for the selected character, including universal rules and any character-specific overrides.</div>
                 <pre id="core_compiled_preview" class="core_hidden_templates_preview" tabindex="0"></pre>
             </section>
         </div>

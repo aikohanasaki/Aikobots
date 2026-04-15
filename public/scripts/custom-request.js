@@ -3,6 +3,7 @@ import { extractJsonFromData, extractMessageFromData, getRequestHeaders } from '
 import { extractReasoningFromData } from './reasoning.js';
 import { getStreamingReply, tryParseStreamingError } from './openai.js';
 import EventSourceStream from './sse-stream.js';
+import { consumeChatCompletionStream } from './chat-completion-stream.js';
 
 // #region Type Definitions
 /**
@@ -135,33 +136,63 @@ export class ChatCompletionService {
             throw new Error(`Got response status ${response.status}`);
         }
 
-        const eventStream = new EventSourceStream();
-        response.body.pipeThrough(eventStream);
-        const reader = eventStream.readable.getReader();
         return async function* streamData() {
-            let text = '';
-            const swipes = [];
-            const state = { reasoning: '', image: '' };
-            while (true) {
-                const { done, value } = await reader.read();
-                if (done) return;
-                const rawData = value.data;
-                if (rawData === '[DONE]') return;
-                tryParseStreamingError(response, rawData, { quiet: true });
-                const parsed = JSON.parse(rawData);
+            const queue = [];
+            let waitForItem = null;
+            let streamError = null;
+            let streamEnded = false;
 
-                const reply = getStreamingReply(parsed, state, {
+            const notify = () => {
+                if (typeof waitForItem === 'function') {
+                    const resolve = waitForItem;
+                    waitForItem = null;
+                    resolve();
+                }
+            };
+
+            consumeChatCompletionStream(response, {
+                createEventStream: () => new EventSourceStream(),
+                createState: () => ({ reasoning: '', image: '' }),
+                getReply: (parsed, state) => getStreamingReply(parsed, state, {
                     chatCompletionSource: data.chat_completion_source,
                     overrideShowThoughts: true,
-                });
-                if (Array.isArray(parsed?.choices) && parsed?.choices?.[0]?.index > 0) {
-                    const swipeIndex = parsed.choices[0].index - 1;
-                    swipes[swipeIndex] = (swipes[swipeIndex] || '') + reply;
-                } else {
-                    text += reply;
-                }
+                }),
+                allowSwipe: parsed => Array.isArray(parsed?.choices) && parsed?.choices?.[0]?.index > 0,
+                handleChunkError: parsed => {
+                    try {
+                        tryParseStreamingError(response, JSON.stringify(parsed), { quiet: true });
+                        return null;
+                    } catch (error) {
+                        return error instanceof Error ? error : new Error(String(error));
+                    }
+                },
+                handleChunk: () => ({
+                    afterAccumulate: context => {
+                        queue.push({ text: context.text, swipes: context.swipes, state: context.state });
+                        notify();
+                    },
+                }),
+            }).catch(error => {
+                streamError = error;
+            }).finally(() => {
+                streamEnded = true;
+                notify();
+            });
 
-                yield { text, swipes: swipes, state };
+            while (true) {
+                if (queue.length > 0) {
+                    yield queue.shift();
+                    continue;
+                }
+                if (streamEnded) {
+                    if (streamError) {
+                        throw streamError;
+                    }
+                    return;
+                }
+                await new Promise(resolve => {
+                    waitForItem = resolve;
+                });
             }
         };
     }

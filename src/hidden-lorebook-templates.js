@@ -82,12 +82,58 @@ function normalizeCharacterEntry(value) {
     };
 }
 
-function hasCharacterData(value) {
+function hasAssignmentData(value) {
     return value.templates.length > 0 || value.add.length > 0 || value.remove.length > 0;
+}
+
+function applyAssignmentEntry(baseBooks, entry, templates) {
+    const templateAdds = new Set();
+    const templateRemoves = new Set();
+    const unresolvedTemplates = new Set();
+
+    for (const templateName of entry.templates) {
+        const templateEntry = templates[templateName];
+        if (!templateEntry) {
+            unresolvedTemplates.add(templateName);
+            continue;
+        }
+
+        for (const bookName of templateEntry.add) {
+            templateAdds.add(bookName);
+        }
+
+        for (const bookName of templateEntry.remove) {
+            templateRemoves.add(bookName);
+        }
+    }
+
+    const compiledBooks = new Set(Array.isArray(baseBooks) ? baseBooks : []);
+
+    for (const bookName of templateAdds) {
+        compiledBooks.add(bookName);
+    }
+
+    for (const bookName of templateRemoves) {
+        compiledBooks.delete(bookName);
+    }
+
+    for (const bookName of entry.add) {
+        compiledBooks.add(bookName);
+    }
+
+    for (const bookName of entry.remove) {
+        compiledBooks.delete(bookName);
+    }
+
+    return {
+        books: [...compiledBooks].sort(compareStrings),
+        unresolvedTemplates: [...unresolvedTemplates].sort(compareStrings),
+    };
 }
 
 export function normalizeHiddenLorebookTemplates(data = {}) {
     const templates = {};
+    const global = normalizeCharacterEntry(data?.global);
     const characters = {};
     const templateSource = data?.templates && typeof data.templates === 'object' && !Array.isArray(data.templates)
         ? data.templates
@@ -109,12 +155,12 @@ export function normalizeHiddenLorebookTemplates(data = {}) {
         const normalizedKey = normalizeCharacterKey(key);
         const normalizedValue = normalizeCharacterEntry(characterSource[key]);
 
-        if (normalizedKey && hasCharacterData(normalizedValue)) {
+        if (normalizedKey && hasAssignmentData(normalizedValue)) {
             characters[normalizedKey] = normalizedValue;
         }
     }
 
-    return { templates, characters };
+    return { templates, global, characters };
 }
 
 function getCachedRegistryEntry(filePath, stat) {
@@ -222,57 +268,28 @@ export function compileHiddenLorebookTemplateRegistry(data = {}) {
     const normalized = normalizeHiddenLorebookTemplates(data);
     const compiledCharacters = {};
     const missingTemplates = {};
+    const resolvedGlobal = applyAssignmentEntry([], normalized.global, normalized.templates);
+
+    if (resolvedGlobal.unresolvedTemplates.length > 0) {
+        missingTemplates.global = resolvedGlobal.unresolvedTemplates;
+    }
 
     for (const characterKey of Object.keys(normalized.characters).sort(compareStrings)) {
         const characterEntry = normalized.characters[characterKey];
-        const templateAdds = new Set();
-        const templateRemoves = new Set();
-        const unresolvedTemplates = new Set();
+        const resolvedCharacter = applyAssignmentEntry(resolvedGlobal.books, characterEntry, normalized.templates);
+        compiledCharacters[characterKey] = resolvedCharacter.books;
 
-        for (const templateName of characterEntry.templates) {
-            const templateEntry = normalized.templates[templateName];
-            if (!templateEntry) {
-                unresolvedTemplates.add(templateName);
-                continue;
-            }
-
-            for (const bookName of templateEntry.add) {
-                templateAdds.add(bookName);
-            }
-
-            for (const bookName of templateEntry.remove) {
-                templateRemoves.add(bookName);
-            }
-        }
-
-        const compiledBooks = new Set(templateAdds);
-
-        for (const bookName of templateRemoves) {
-            compiledBooks.delete(bookName);
-        }
-
-        for (const bookName of characterEntry.add) {
-            compiledBooks.add(bookName);
-        }
-
-        for (const bookName of characterEntry.remove) {
-            compiledBooks.delete(bookName);
-        }
-
-        const finalBooks = [...compiledBooks].sort(compareStrings);
-
-        if (finalBooks.length > 0) {
-            compiledCharacters[characterKey] = finalBooks;
-        }
-
-        if (unresolvedTemplates.size > 0) {
-            missingTemplates[characterKey] = [...unresolvedTemplates].sort(compareStrings);
+        if (resolvedCharacter.unresolvedTemplates.length > 0) {
+            missingTemplates[characterKey] = resolvedCharacter.unresolvedTemplates;
         }
     }
 
     return {
         source: normalized,
-        compiled: { characters: compiledCharacters },
+        compiled: {
+            global: resolvedGlobal.books,
+            characters: compiledCharacters,
+        },
         missingTemplates,
     };
 }

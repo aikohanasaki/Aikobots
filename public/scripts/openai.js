@@ -74,6 +74,7 @@ import { t } from './i18n.js';
 import { ToolManager } from './tool-calling.js';
 import { accountStorage } from './util/AccountStorage.js';
 import { COMETAPI_IGNORE_PATTERNS, IGNORE_SYMBOL } from './constants.js';
+import { consumeChatCompletionStream } from './chat-completion-stream.js';
 
 export {
     oai_settings,
@@ -2631,38 +2632,82 @@ async function sendOpenAIRequest(type, messages, signal, { jsonSchema = null } =
     applyAssemblyResponseMetadata(response, type);
 
     if (stream) {
-        const eventStream = getEventSourceStream();
-        response.body.pipeThrough(eventStream);
-        const reader = eventStream.readable.getReader();
         return async function* streamData() {
-            let text = '';
-            const swipes = [];
             const toolCalls = [];
-            const state = { reasoning: '', images: [] };
-            while (true) {
-                const { done, value } = await reader.read();
-                if (done) return;
-                const rawData = value.data;
-                if (rawData === '[DONE]') return;
-                tryParseStreamingError(response, rawData);
-                const parsed = JSON.parse(rawData);
+            const queue = [];
+            let waitForItem = null;
+            let streamError = null;
+            let streamEnded = false;
 
-                if (parsed?.x_sillytavern) {
-                    applyTimedWorldInfoResponseData(parsed, requestId);
+            const notify = () => {
+                if (typeof waitForItem === 'function') {
+                    const resolve = waitForItem;
+                    waitForItem = null;
+                    resolve();
+                }
+            };
+
+            consumeChatCompletionStream(response, {
+                createEventStream: () => getEventSourceStream(),
+                createState: () => ({ reasoning: '', images: [] }),
+                getReply: (parsed, state) => {
+                    const isSwipe = canMultiSwipe && Array.isArray(parsed?.choices) && parsed?.choices?.[0]?.index > 0;
+                    if (isSwipe) {
+                        // FIXME: state.reasoning should be an array to support multi-swipe
+                        return getStreamingReply(parsed, state, { overrideShowThoughts: false });
+                    }
+                    return getStreamingReply(parsed, state);
+                },
+                allowSwipe: parsed => canMultiSwipe && Array.isArray(parsed?.choices) && parsed?.choices?.[0]?.index > 0,
+                handleChunkError: parsed => {
+                    try {
+                        tryParseStreamingError(response, JSON.stringify(parsed));
+                        return null;
+                    } catch (error) {
+                        return error instanceof Error ? error : new Error(String(error));
+                    }
+                },
+                handleChunk: parsed => {
+                    if (parsed?.x_sillytavern) {
+                        applyTimedWorldInfoResponseData(parsed, requestId);
+                        return { skip: true };
+                    }
+
+                    ToolManager.parseToolCalls(toolCalls, parsed);
+                    return {
+                        afterAccumulate: context => {
+                            queue.push({
+                                text: context.text,
+                                swipes: context.swipes,
+                                logprobs: parseChatCompletionLogprobs(parsed),
+                                toolCalls: toolCalls,
+                                state: context.state,
+                            });
+                            notify();
+                        },
+                    };
+                },
+            }).catch(error => {
+                streamError = error;
+            }).finally(() => {
+                streamEnded = true;
+                notify();
+            });
+
+            while (true) {
+                if (queue.length > 0) {
+                    yield queue.shift();
                     continue;
                 }
-
-                if (canMultiSwipe && Array.isArray(parsed?.choices) && parsed?.choices?.[0]?.index > 0) {
-                    const swipeIndex = parsed.choices[0].index - 1;
-                    // FIXME: state.reasoning should be an array to support multi-swipe
-                    swipes[swipeIndex] = (swipes[swipeIndex] || '') + getStreamingReply(parsed, state, { overrideShowThoughts: false });
-                } else {
-                    text += getStreamingReply(parsed, state);
+                if (streamEnded) {
+                    if (streamError) {
+                        throw streamError;
+                    }
+                    return;
                 }
-
-                ToolManager.parseToolCalls(toolCalls, parsed);
-
-                yield { text, swipes: swipes, logprobs: parseChatCompletionLogprobs(parsed), toolCalls: toolCalls, state: state };
+                await new Promise(resolve => {
+                    waitForItem = resolve;
+                });
             }
         };
 

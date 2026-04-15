@@ -5665,6 +5665,27 @@ function serializeSummaryProviderResponse(providerResponse, fallback = '') {
     if (typeof providerResponse === 'string' && providerResponse.trim()) {
         return providerResponse.trim();
     }
+    if (Array.isArray(providerResponse?.choices)) {
+        const messageContent = providerResponse.choices[0]?.message?.content;
+        if (typeof messageContent === 'string' && messageContent.trim()) {
+            return messageContent.trim();
+        }
+        if (Array.isArray(messageContent)) {
+            const joinedText = messageContent
+                .map(part => typeof part?.text === 'string' ? part.text : '')
+                .join('')
+                .trim();
+            if (joinedText) {
+                return joinedText;
+            }
+        }
+        if (typeof providerResponse.choices[0]?.text === 'string' && providerResponse.choices[0].text.trim()) {
+            return providerResponse.choices[0].text.trim();
+        }
+    }
+    if (typeof providerResponse?.content === 'string' && providerResponse.content.trim()) {
+        return providerResponse.content.trim();
+    }
     try {
         return JSON.stringify(providerResponse ?? {}, null, 2);
     } catch {

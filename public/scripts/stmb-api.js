@@ -1,7 +1,9 @@
 import { extractMessageFromData, getRequestHeaders } from '../script.js';
-import { ChatCompletionService } from './custom-request.js';
+import { getStreamingReply } from './openai.js';
+import EventSourceStream from './sse-stream.js';
 import { parseStructuredMemoryResponse } from './stmb-core.js';
 import { parseSummaryJsonResponse } from './stmb-summary.js';
+import { consumeChatCompletionStream } from './chat-completion-stream.js';
 
 const STMB_RATE_LIMIT_RETRY_DELAYS_MS = [3000, 8000];
 const stmbGenerationCooldowns = new Map();
@@ -123,14 +125,14 @@ async function generateStmbProviderResponse(payload, signal = null, onRateLimitW
         throw new Error('generateData is required.');
     }
 
-    const requestBody = { ...generateData, stream: false };
+    const requestBody = applyStmbRequestTransport(generateData);
     const providerKey = getStmbProviderKey(requestBody);
 
     for (let attempt = 0; attempt <= STMB_RATE_LIMIT_RETRY_DELAYS_MS.length; attempt++) {
         await waitForStmbProviderCooldown(providerKey, signal, onRateLimitWait);
 
         try {
-            return await ChatCompletionService.sendRequest(requestBody, false, signal);
+            return await sendStmbStreamingRequest(requestBody, signal);
         } catch (error) {
             const normalized = normalizeStmbClientError(error);
             if (!isStmbRateLimitError(normalized) || attempt >= STMB_RATE_LIMIT_RETRY_DELAYS_MS.length) {
@@ -148,6 +150,168 @@ async function generateStmbProviderResponse(payload, signal = null, onRateLimitW
     }
 
     throw new Error('STMB generation failed.');
+}
+
+function applyStmbRequestTransport(generateData) {
+    const next = { ...generateData, stream: true };
+    delete next.frequency_penalty;
+    delete next.presence_penalty;
+    return next;
+}
+
+async function sendStmbStreamingRequest(requestBody, signal = null) {
+    const response = await fetch('/api/backends/chat-completions/generate', {
+        method: 'POST',
+        headers: getRequestHeaders(),
+        cache: 'no-cache',
+        body: JSON.stringify(requestBody),
+        signal,
+    });
+
+    if (!response.ok) {
+        const text = await response.text();
+        throw createStmbStreamingError(response, safeJsonParse(text), `Got response status ${response.status}`);
+    }
+
+    if (!response.body) {
+        throw new Error('STMB streaming response body is missing.');
+    }
+
+    const { text, state, lastChunk } = await consumeChatCompletionStream(response, {
+        createEventStream: () => new EventSourceStream(),
+        createState: () => ({ reasoning: '', image: '' }),
+        getReply: (parsed, streamState) => getStreamingReply(parsed, streamState, {
+            chatCompletionSource: requestBody.chat_completion_source,
+            overrideShowThoughts: true,
+        }),
+        allowSwipe: () => false,
+        handleChunkError: parsed => getStmbStreamingChunkError(response, parsed),
+        handleChunk: parsed => {
+            if (Array.isArray(parsed?.choices) && parsed?.choices?.[0]?.index > 0) {
+                return { skip: true };
+            }
+        },
+    });
+    return buildStmbStreamingResponse(text, lastChunk, state, requestBody);
+}
+
+function safeJsonParse(value) {
+    try {
+        return JSON.parse(value);
+    } catch {
+        return null;
+    }
+}
+
+function getStmbStreamingChunkError(response, data) {
+    if (!data || typeof data !== 'object') {
+        return null;
+    }
+    if (data.error || data.message || data.detail) {
+        return createStmbStreamingError(response, data);
+    }
+    return null;
+}
+
+function createStmbStreamingError(response, data = null, fallbackMessage = null) {
+    const message = String(
+        data?.error?.message
+        || data?.message
+        || data?.detail?.error?.message
+        || fallbackMessage
+        || response?.statusText
+        || 'STMB generation failed.',
+    );
+
+    const error = new Error(message);
+    if (data && typeof data === 'object') {
+        Object.assign(error, data);
+        if (data.error && typeof data.error === 'object') {
+            Object.assign(error, data.error);
+        }
+        if (data.detail && typeof data.detail === 'object') {
+            Object.assign(error, data.detail);
+        }
+        if (data.detail?.error && typeof data.detail.error === 'object') {
+            Object.assign(error, data.detail.error);
+        }
+    }
+
+    const responseStatus = Number(response?.status || 0);
+    if (responseStatus >= 400) {
+        if (!Number.isFinite(Number(error.status))) {
+            error.status = responseStatus;
+        }
+        if (!Number.isFinite(Number(error.upstream_status))) {
+            error.upstream_status = responseStatus;
+        }
+        if (!error.code && responseStatus === 429) {
+            error.code = '429';
+        }
+    }
+
+    const retryAfterMs = getStmbRetryAfterMs(response, data);
+    if (retryAfterMs > 0 && !Number.isFinite(Number(error.retry_after_ms))) {
+        error.retry_after_ms = retryAfterMs;
+    }
+
+    return error;
+}
+
+function getStmbRetryAfterMs(response, data = null) {
+    const parsedRetryAfterMs = Number(
+        data?.retry_after_ms
+        ?? data?.error?.retry_after_ms
+        ?? data?.detail?.retry_after_ms
+        ?? data?.detail?.error?.retry_after_ms,
+    );
+    if (Number.isFinite(parsedRetryAfterMs) && parsedRetryAfterMs > 0) {
+        return parsedRetryAfterMs;
+    }
+
+    const retryAfterHeader = String(response?.headers?.get('retry-after') || '').trim();
+    if (!retryAfterHeader) {
+        return 0;
+    }
+
+    const retryAfterSeconds = Number(retryAfterHeader);
+    if (Number.isFinite(retryAfterSeconds) && retryAfterSeconds > 0) {
+        return Math.round(retryAfterSeconds * 1000);
+    }
+
+    const retryAfterTime = Date.parse(retryAfterHeader);
+    if (Number.isFinite(retryAfterTime)) {
+        return Math.max(0, retryAfterTime - Date.now());
+    }
+
+    return 0;
+}
+
+function buildStmbStreamingResponse(text, lastChunk, state, requestBody) {
+    const response = {
+        choices: [{
+            message: { content: text },
+            finish_reason: lastChunk?.choices?.[0]?.finish_reason ?? lastChunk?.finish_reason ?? null,
+        }],
+    };
+
+    if (requestBody?.model) {
+        response.model = requestBody.model;
+    }
+    if (typeof state?.reasoning === 'string' && state.reasoning) {
+        response.reasoning = state.reasoning;
+    }
+    if (typeof state?.image === 'string' && state.image) {
+        response.image = state.image;
+    }
+    if (lastChunk?.stop_reason !== undefined) {
+        response.stop_reason = lastChunk.stop_reason;
+    }
+    if (lastChunk?.truncated === true) {
+        response.truncated = true;
+    }
+
+    return response;
 }
 
 function extractProviderText(providerResponse) {
@@ -182,6 +346,11 @@ function extractProviderText(providerResponse) {
 function serializeProviderBody(providerResponse) {
     if (typeof providerResponse === 'string' && providerResponse.trim()) {
         return providerResponse.trim();
+    }
+
+    const extracted = extractProviderText(providerResponse);
+    if (typeof extracted === 'string' && extracted.trim()) {
+        return extracted.trim();
     }
 
     try {
