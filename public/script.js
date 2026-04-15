@@ -1577,8 +1577,10 @@ function restoreTopChatPanelsState() {
 
     try {
         const state = JSON.parse(rawState);
+        // The archive sidebar should always start closed on load.
         if (state?.sidebarVisible) {
-            void toggleTopChatSidebar(true, { save: false });
+            state.sidebarVisible = false;
+            localStorage.setItem(TOP_CHAT_PANELS_STATE_KEY, JSON.stringify(state));
         }
         if (state?.connectionProfilesVisible) {
             void toggleTopChatConnectionProfiles(true, { save: false });
