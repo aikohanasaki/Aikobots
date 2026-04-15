@@ -685,7 +685,14 @@ export async function submitSelectedCharacterForReview(character) {
         return null;
     }
 
-    toastr.success(`Submitted ${submission.submittedFilename}`, 'Character submitted');
+    if (submission.autoApproved) {
+        const skippedNotice = Array.isArray(submission.skippedHandles) && submission.skippedHandles.length > 0
+            ? ` Skipped: ${submission.skippedHandles.join(', ')}`
+            : '';
+        toastr.success(`Published ${submission.publishedFilename || submission.submittedFilename}${skippedNotice}`, 'Character auto-approved');
+    } else {
+        toastr.success(`Submitted ${submission.submittedFilename}`, 'Character submitted');
+    }
     return submission;
 }
 

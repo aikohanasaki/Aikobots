@@ -104,10 +104,13 @@ router.post('/submit', async (request, response) => {
         return response.json({
             id: record.id,
             status: record.status,
+            autoApproved: Boolean(record.autoApproved),
             ownerHandle: record.ownerHandle,
             ownerHandles: Array.isArray(record.ownerHandles) ? record.ownerHandles : [record.ownerHandle].filter(Boolean),
             sharedCharacterKey: String(record.sharedCharacterKey || '').trim(),
             submittedFilename: record.submittedFilename,
+            publishedFilename: record.publishedFilename,
+            skippedHandles: Array.isArray(record.skippedHandles) ? record.skippedHandles : [],
         });
     } catch (error) {
         console.error('Character submission failed:', error);

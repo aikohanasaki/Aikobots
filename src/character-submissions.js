@@ -31,6 +31,8 @@ export const SUBMISSION_DISTRIBUTION_MODES = Object.freeze({
     GLOBAL_BLACKLIST: 'global_blacklist',
 });
 
+const AUTO_APPROVED_REVIEWED_BY = 'Automatic';
+
 export const SUBMISSION_CLEANUP_MODES = Object.freeze({
     ASSET: 'asset',
     ALL: 'all',
@@ -301,6 +303,17 @@ function normalizeSubmissionRecord(record) {
     };
 }
 
+function areHandleListsEqual(left, right) {
+    const normalizedLeft = normalizeHandleList(left).sort();
+    const normalizedRight = normalizeHandleList(right).sort();
+
+    if (normalizedLeft.length !== normalizedRight.length) {
+        return false;
+    }
+
+    return normalizedLeft.every((handle, index) => handle === normalizedRight[index]);
+}
+
 /**
  * Builds the deterministic submission id from owner + bot name.
  * @param {{ ownerHandle: string, submittedFilename: string }} params
@@ -530,6 +543,103 @@ async function normalizeSubmissionDistributionRequest({
     }
 }
 
+async function findExistingApprovedSubmissionRecord({ submissionId, ownerHandle, sharedCharacterKey }) {
+    try {
+        const existingRecord = await getSubmissionRecord(submissionId);
+        if (existingRecord.status === SUBMISSION_STATUSES.APPROVED) {
+            return existingRecord;
+        }
+    } catch {
+        // No previous record for this submission id.
+    }
+
+    const normalizedOwnerHandle = String(ownerHandle || '').trim();
+    const normalizedSharedCharacterKey = String(sharedCharacterKey || '').trim();
+    if (!normalizedSharedCharacterKey) {
+        return null;
+    }
+
+    const records = await listSubmissionRecords();
+    return records.find(record =>
+        record.status === SUBMISSION_STATUSES.APPROVED
+        && String(record.sharedCharacterKey || '').trim() === normalizedSharedCharacterKey
+        && (String(record.ownerHandle || '').trim() === normalizedOwnerHandle
+            || (Array.isArray(record.ownerHandles) && record.ownerHandles.includes(normalizedOwnerHandle))),
+    ) || null;
+}
+
+async function getExistingApprovedDistributionConfiguration(record) {
+    if (!record || record.status !== SUBMISSION_STATUSES.APPROVED || !record.publishMode) {
+        return null;
+    }
+
+    const publishedFilename = normalizeCharacterFileName(record.publishedFilename || record.submittedFilename, 'character');
+    const distributionPolicy = await getCharacterDistributionPolicy({
+        ownerHandle: record.ownerHandle,
+        characterKey: record.sharedCharacterKey,
+        publishedFilename,
+    });
+
+    if (record.publishMode === PUBLISH_MODES.SELECTED) {
+        const targetHandles = distributionPolicy.hasWhitelist
+            ? distributionPolicy.whitelistHandles
+            : normalizeHandleList(record.targetHandles);
+
+        return {
+            requestedDistributionMode: SUBMISSION_DISTRIBUTION_MODES.WHITELIST,
+            requestedTargetHandles: targetHandles,
+            requestedBlacklistHandles: [],
+            distributeParams: {
+                publishedFilename,
+                publishMode: PUBLISH_MODES.SELECTED,
+                targetHandles,
+                persistWhitelist: distributionPolicy.hasWhitelist,
+                whitelistHandles: distributionPolicy.hasWhitelist ? distributionPolicy.whitelistHandles : [],
+            },
+        };
+    }
+
+    if (record.publishMode === PUBLISH_MODES.GLOBAL) {
+        if (distributionPolicy.hasBlacklist) {
+            return {
+                requestedDistributionMode: SUBMISSION_DISTRIBUTION_MODES.GLOBAL_BLACKLIST,
+                requestedTargetHandles: [],
+                requestedBlacklistHandles: distributionPolicy.blacklistHandles,
+                distributeParams: {
+                    publishedFilename,
+                    publishMode: PUBLISH_MODES.GLOBAL,
+                    applyBlacklist: true,
+                    blacklistHandles: distributionPolicy.blacklistHandles,
+                },
+            };
+        }
+
+        return {
+            requestedDistributionMode: SUBMISSION_DISTRIBUTION_MODES.GLOBAL,
+            requestedTargetHandles: [],
+            requestedBlacklistHandles: [],
+            distributeParams: {
+                publishedFilename,
+                publishMode: PUBLISH_MODES.GLOBAL,
+                applyBlacklist: false,
+                blacklistHandles: [],
+            },
+        };
+    }
+
+    return null;
+}
+
+function isRequestedDistributionUnchanged(requestedDistribution, existingDistribution) {
+    if (!requestedDistribution || !existingDistribution) {
+        return false;
+    }
+
+    return requestedDistribution.requestedDistributionMode === existingDistribution.requestedDistributionMode
+        && areHandleListsEqual(requestedDistribution.requestedTargetHandles, existingDistribution.requestedTargetHandles)
+        && areHandleListsEqual(requestedDistribution.requestedBlacklistHandles, existingDistribution.requestedBlacklistHandles);
+}
+
 /**
  * Reads a source card once and prepares the shared payload used for distribution.
  * The distributed copy should preserve owner and lorebook metadata while stripping
@@ -693,8 +803,17 @@ export async function createCharacterSubmission({
     await fsPromises.mkdir(basePath, { recursive: true });
     await writeCharacterCardFile(rawBuffer, card, cardPath);
 
+    const existingApprovedRecord = await findExistingApprovedSubmissionRecord({
+        submissionId,
+        ownerHandle,
+        sharedCharacterKey: existingSharedCharacterKey || '',
+    });
+    const existingApprovedDistribution = existingApprovedRecord
+        ? await getExistingApprovedDistributionConfiguration(existingApprovedRecord)
+        : null;
+
     /** @type {SubmissionRecord} */
-    const record = {
+    let record = {
         id: submissionId,
         status: SUBMISSION_STATUSES.PENDING,
         ownerHandle: existingOwnerHandle || ownerHandle,
@@ -713,8 +832,39 @@ export async function createCharacterSubmission({
         requestedBlacklistHandles: requestedDistribution.requestedBlacklistHandles,
     };
 
+    let autoApproved = false;
+    let autoApprovalDistribution = null;
+    if (existingApprovedDistribution && isRequestedDistributionUnchanged(requestedDistribution, existingApprovedDistribution)) {
+        try {
+            autoApprovalDistribution = await distributeCharacterFile({
+                sourcePath: cardPath,
+                actingUserHandle: ownerHandle,
+                sourceOwnerHandle: existingOwnerHandle || ownerHandle,
+                ...existingApprovedDistribution.distributeParams,
+            });
+
+            record = {
+                ...record,
+                status: SUBMISSION_STATUSES.APPROVED,
+                reviewedAt: Date.now(),
+                reviewedBy: AUTO_APPROVED_REVIEWED_BY,
+                publishMode: existingApprovedDistribution.distributeParams.publishMode || PUBLISH_MODES.GLOBAL,
+                targetHandles: autoApprovalDistribution.targetHandles,
+                publishedFilename: autoApprovalDistribution.publishedFilename,
+            };
+            autoApproved = true;
+        } catch (error) {
+            console.warn(`Automatic submission approval failed for ${submissionId}. Falling back to pending admin distribution.`, error);
+        }
+    }
+
     await writeSubmissionRecord(record);
-    return record;
+    return {
+        ...record,
+        autoApproved,
+        skippedHandles: autoApprovalDistribution?.skippedHandles || [],
+        distributionPolicy: autoApprovalDistribution?.distributionPolicy || null,
+    };
 }
 
 /**
