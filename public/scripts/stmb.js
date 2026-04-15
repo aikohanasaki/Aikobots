@@ -135,6 +135,7 @@ import { getTokenCountAsync } from './tokenizers.js';
 import {
     cancelAllStmbJobs,
     enqueueStmbJob,
+    getStmbJobStoreSnapshot,
     hasActiveStmbJobs,
     initStmbJobsUi,
     registerStmbJobExecutor,
@@ -176,6 +177,91 @@ const DURABLE_SYNC_STATE_KEYS = [
     'manualLorebook',
     'autoConsolidationLastPromptKey',
 ];
+
+function getClientPlannerJobStatus(job = {}) {
+    switch (String(job?.state || '')) {
+        case 'queued':
+            return 'pending';
+        case 'awaiting_approval':
+            return 'awaiting_approval';
+        case 'completed':
+            return 'completed';
+        case 'failed':
+            return 'failed';
+        case 'canceled':
+            return 'canceled';
+        default:
+            return 'running';
+    }
+}
+
+function getClientPlannerJobKind(job = {}) {
+    switch (String(job?.type || '')) {
+        case 'sidePrompt':
+        case 'sidePromptBatch':
+            return 'sidePrompt';
+        case 'consolidation':
+            return 'consolidationCheck';
+        case 'memory':
+        default:
+            return 'memory';
+    }
+}
+
+function mapClientJobToPlannerJob(job = {}) {
+    const updatedAt = Number(job?.finishedAt || job?.startedAt || job?.createdAt || Date.now());
+    return {
+        id: String(job?.id || ''),
+        status: getClientPlannerJobStatus(job),
+        kind: getClientPlannerJobKind(job),
+        createdAt: Number(job?.createdAt || 0),
+        startedAt: Number(job?.startedAt || 0),
+        updatedAt,
+        clientHandledAt: updatedAt,
+        error: job?.error ? structuredClone(job.error) : null,
+        result: job?.result ? structuredClone(job.result) : null,
+        payload: job?.payload ? structuredClone(job.payload) : {},
+        sceneContext: job?.sceneContext ? structuredClone(job.sceneContext) : null,
+    };
+}
+
+async function listStmbPlannerJobs() {
+    const snapshot = getStmbJobStoreSnapshot();
+    const jobs = [];
+
+    for (const store of Object.values(snapshot || {})) {
+        if (store?.runningJob) {
+            jobs.push(mapClientJobToPlannerJob(store.runningJob));
+        }
+        if (Array.isArray(store?.queue)) {
+            jobs.push(...store.queue.map(mapClientJobToPlannerJob));
+        }
+        if (Array.isArray(store?.recentHistory)) {
+            jobs.push(...store.recentHistory.map(mapClientJobToPlannerJob));
+        }
+    }
+
+    jobs.sort((left, right) => Number(right?.updatedAt || 0) - Number(left?.updatedAt || 0));
+    return { jobs };
+}
+
+async function getStmbPlannerChatState({ sceneContext } = {}) {
+    return {
+        state: structuredClone(getStmbState(resolveStmbStateChatKey(sceneContext))),
+    };
+}
+
+async function respondStmbPlannerApproval() {
+    return { ok: false, unsupported: true };
+}
+
+async function acknowledgeStmbPlannerJobs() {
+    return { ok: true };
+}
+
+async function enqueueStmbPlannerWave() {
+    return { ok: false, unsupported: true };
+}
 
 function applyServerPlannerStateToLocal(state = {}, chatScope = null) {
     const localState = getStmbState(chatScope);
