@@ -142,6 +142,24 @@ function getZanityApiUrl(endpoint) {
 }
 
 /**
+ * Accept either an OpenAI-compatible base URL or a full chat completions endpoint.
+ * @param {string} apiUrl
+ * @returns {string}
+ */
+function buildChatCompletionsEndpointUrl(apiUrl) {
+    const url = new URL(String(apiUrl || ''));
+    const normalizedPath = url.pathname.replace(/\/+$/, '');
+
+    if (normalizedPath.endsWith('/chat/completions')) {
+        url.pathname = normalizedPath;
+        return url.toString();
+    }
+
+    url.pathname = `${normalizedPath}/chat/completions`;
+    return url.toString();
+}
+
+/**
  * Gets OpenRouter transforms based on the request.
  * @param {import('express').Request} request Express request
  * @returns {string[] | undefined} OpenRouter transforms
@@ -3515,7 +3533,7 @@ export async function handleChatCompletionsGenerate(request, response) {
 
     let endpointUrl;
     try {
-        endpointUrl = new URL(`${trimTrailingSlash(String(apiUrl || ''))}/chat/completions`).toString();
+        endpointUrl = buildChatCompletionsEndpointUrl(apiUrl);
     } catch {
         return response.status(400).send({
             error: {

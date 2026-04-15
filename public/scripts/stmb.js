@@ -3604,8 +3604,9 @@ function buildProfileEditorHtml(profile, options = {}) {
             </div>
             <div id="stmb-profile-editor-manual-section" class="${String(connection.api || 'current_st') === 'full-manual' ? '' : 'displayNone'}">
                 <div class="world_entry_form_control">
-                    <label for="stmb-profile-editor-endpoint">API Endpoint URL</label>
+                    <label for="stmb-profile-editor-endpoint">API Base URL</label>
                     <input id="stmb-profile-editor-endpoint" class="text_pole" value="${escapeHtml(String(connection.endpoint || ''))}">
+                    <small>Use the provider base URL, for example <code>https://hanasaki.ai/v1</code>. <code>/chat/completions</code> is added automatically.</small>
                 </div>
                 <div class="world_entry_form_control">
                     <label for="stmb-profile-editor-apikey">API Key</label>
