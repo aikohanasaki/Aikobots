@@ -265,6 +265,7 @@ export function createDefaultStmbProfile() {
         name: STMB_DEFAULT_PROFILE_NAME,
         isBuiltinCurrentST: true,
         preset: 'summary',
+        skipStructuredOutput: false,
         connection: {
             api: 'current_st',
         },
@@ -367,6 +368,7 @@ function sanitizeProfile(rawProfile) {
         name: typeof profile.name === 'string' && profile.name.trim() ? profile.name.trim() : fallback.name,
         isBuiltinCurrentST: Boolean(profile.isBuiltinCurrentST),
         preset,
+        skipStructuredOutput: Boolean(profile.skipStructuredOutput),
         connection: {
             api: connectionApi,
         },

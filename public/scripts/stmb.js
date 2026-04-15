@@ -3732,6 +3732,9 @@ function buildProfileEditorHtml(profile, options = {}) {
                 </select>
             </div>
             <div class="world_entry_form_control">
+                <label class="checkbox_label"><input id="stmb-profile-editor-skip-structured-output" type="checkbox" ${profile?.skipStructuredOutput ? 'checked' : ''}> <span>Skip structured-output and use plain-text completion</span></label>
+            </div>
+            <div class="world_entry_form_control">
                 <label for="stmb-profile-editor-model">Model</label>
                 <input id="stmb-profile-editor-model" class="text_pole" value="${escapeHtml(String(connection.model || ''))}" ${String(connection.api || 'current_st') === 'current_st' ? 'disabled' : ''}>
             </div>
@@ -3874,6 +3877,7 @@ function buildProfileFromEditor(dialog, baseProfile = null) {
     profile.connection.api = isBuiltin
         ? 'current_st'
         : String(dialog.querySelector('#stmb-profile-editor-api')?.value || profile.connection.api || 'current_st').trim();
+    profile.skipStructuredOutput = Boolean(dialog.querySelector('#stmb-profile-editor-skip-structured-output')?.checked);
 
     const model = String(dialog.querySelector('#stmb-profile-editor-model')?.value || '').trim();
     const temperature = Number(dialog.querySelector('#stmb-profile-editor-temperature')?.value ?? 0.7);
@@ -5538,6 +5542,75 @@ function buildSummaryPromptMessages(prompt) {
     return [{ role: 'user', content: String(prompt || '') }];
 }
 
+async function buildStmbGenerateData(messages, profile, { jsonSchema = null } = {}) {
+    const options = jsonSchema ? { jsonSchema } : {};
+    const { generateData } = await buildOpenAIGenerateData('quiet', messages, options);
+    return applyStmbMaxTokensToGenerateData(
+        applyStmbProfileToGenerateData(generateData, profile, getStmbProviderDefaults()),
+        getModuleSettings().maxTokens,
+    );
+}
+
+function shouldSkipStructuredOutput(profile) {
+    return Boolean(profile?.skipStructuredOutput);
+}
+
+function shouldFallbackToPlainTextGeneration(error, generateData) {
+    if (!generateData?.json_schema || isStmbAbortError(error)) {
+        return false;
+    }
+
+    const provider = String(generateData?.chat_completion_source || '').toLowerCase();
+    const stage = String(error?.stage || '').toLowerCase();
+    const upstreamStatus = Number(error?.upstream_status || error?.status || 0);
+    const combinedText = [
+        error?.message,
+        error?.providerBody,
+        error?.rawResponse,
+    ].map(value => String(value || '')).join('\n').toLowerCase();
+
+    if (provider === 'custom' && (stage === 'provider_response' || stage === 'provider_request' || upstreamStatus >= 400)) {
+        return true;
+    }
+
+    return combinedText.includes('response_format')
+        || combinedText.includes('json_schema')
+        || combinedText.includes('json_object')
+        || combinedText.includes('structured output');
+}
+
+async function requestPlainTextMemory(promptText, profile, signal, onRateLimitWait = null, { applyIncomingRegex = false } = {}) {
+    const result = await generateStmbText({
+        generateData: await buildStmbGenerateData([{ role: 'user', content: promptText }], profile),
+    }, { signal, onRateLimitWait });
+    const rawText = String(result.text || '');
+    assertNoProviderTruncation(result.providerResponse, rawText);
+    const cleanedText = applyIncomingRegex
+        ? applySelectedRegex(rawText, getModuleSettings().selectedRegexIncoming)
+        : rawText;
+
+    try {
+        return parseStructuredMemoryResponse(cleanedText);
+    } catch (error) {
+        error.rawResponse = cleanedText || rawText || JSON.stringify(result?.providerResponse ?? {});
+        error.providerBody = JSON.stringify(result?.providerResponse ?? {});
+        throw error;
+    }
+}
+
+async function requestPlainTextSummaryDetailed(prompt, profile, signal, onRateLimitWait = null) {
+    const result = await generateStmbText({
+        generateData: await buildStmbGenerateData(buildSummaryPromptMessages(prompt), profile),
+    }, { signal, onRateLimitWait });
+    const rawText = String(result.text || '');
+    assertNoProviderTruncation(result.providerResponse, rawText);
+    return {
+        parsed: parseSummaryJsonResponse(rawText),
+        providerResponse: result.providerResponse,
+        rawResponse: serializeSummaryProviderResponse(result.providerResponse, rawText),
+    };
+}
+
 async function requestStructuredMemory(compiledScene, profile, lorebookName, summaryCount, signal, onRateLimitWait = null) {
     const requestSettings = {
         ...stmbSettings,
@@ -5552,35 +5625,37 @@ async function requestStructuredMemory(compiledScene, profile, lorebookName, sum
         promptText = applySelectedRegex(promptText, getModuleSettings().selectedRegexOutgoing);
     }
 
-    const { generateData } = await buildOpenAIGenerateData('quiet', [{ role: 'user', content: promptText }], {
-        jsonSchema: getMemorySchema(),
-    });
-    const finalGenerateData = applyStmbMaxTokensToGenerateData(
-        applyStmbProfileToGenerateData(generateData, profile, getStmbProviderDefaults()),
-        getModuleSettings().maxTokens,
-    );
+    if (shouldSkipStructuredOutput(profile)) {
+        return await requestPlainTextMemory(promptText, profile, signal, onRateLimitWait, {
+            applyIncomingRegex: Boolean(getModuleSettings().useRegex),
+        });
+    }
 
     if (!getModuleSettings().useRegex) {
-        const result = await generateStmbMemory({
-            generateData: finalGenerateData,
-        }, { signal, onRateLimitWait });
-        return result.memory;
+        const finalGenerateData = await buildStmbGenerateData(
+            [{ role: 'user', content: promptText }],
+            profile,
+            { jsonSchema: getMemorySchema() },
+        );
+        try {
+            const result = await generateStmbMemory({
+                generateData: finalGenerateData,
+            }, { signal, onRateLimitWait });
+            return result.memory;
+        } catch (error) {
+            if (!shouldFallbackToPlainTextGeneration(error, finalGenerateData)) {
+                throw error;
+            }
+
+            console.warn('STMB structured memory request failed; retrying as plain-text chat completion.', {
+                provider: finalGenerateData.chat_completion_source,
+                model: finalGenerateData.model,
+            });
+            return await requestPlainTextMemory(promptText, profile, signal, onRateLimitWait);
+        }
     }
 
-    const result = await generateStmbText({
-        generateData: finalGenerateData,
-    }, { signal, onRateLimitWait });
-    const rawText = String(result.text || '');
-    assertNoProviderTruncation(result.providerResponse, rawText);
-    const cleanedText = applySelectedRegex(rawText, getModuleSettings().selectedRegexIncoming);
-
-    try {
-        return parseStructuredMemoryResponse(cleanedText);
-    } catch (error) {
-        error.rawResponse = cleanedText || rawText || JSON.stringify(result?.providerResponse ?? {});
-        error.providerBody = JSON.stringify(result?.providerResponse ?? {});
-        throw error;
-    }
+    return await requestPlainTextMemory(promptText, profile, signal, onRateLimitWait, { applyIncomingRegex: true });
 }
 
 function serializeSummaryProviderResponse(providerResponse, fallback = '') {
@@ -5621,20 +5696,36 @@ function assertNoProviderTruncation(providerResponse, fallbackText = '') {
 }
 
 async function requestStructuredSummaryDetailed(prompt, profile, signal, onRateLimitWait = null) {
-    const { generateData } = await buildOpenAIGenerateData('quiet', buildSummaryPromptMessages(prompt), {
-        jsonSchema: getSummarySchema(),
-    });
-    const result = await generateStmbSummary({
-        generateData: applyStmbMaxTokensToGenerateData(
-            applyStmbProfileToGenerateData(generateData, profile, getStmbProviderDefaults()),
-            getModuleSettings().maxTokens,
-        ),
-    }, { signal, onRateLimitWait });
-    return {
-        parsed: result.parsed,
-        providerResponse: result.providerResponse,
-        rawResponse: serializeSummaryProviderResponse(result.providerResponse),
-    };
+    if (shouldSkipStructuredOutput(profile)) {
+        return await requestPlainTextSummaryDetailed(prompt, profile, signal, onRateLimitWait);
+    }
+
+    const finalGenerateData = await buildStmbGenerateData(
+        buildSummaryPromptMessages(prompt),
+        profile,
+        { jsonSchema: getSummarySchema() },
+    );
+
+    try {
+        const result = await generateStmbSummary({
+            generateData: finalGenerateData,
+        }, { signal, onRateLimitWait });
+        return {
+            parsed: result.parsed,
+            providerResponse: result.providerResponse,
+            rawResponse: serializeSummaryProviderResponse(result.providerResponse),
+        };
+    } catch (error) {
+        if (!shouldFallbackToPlainTextGeneration(error, finalGenerateData)) {
+            throw error;
+        }
+
+        console.warn('STMB structured summary request failed; retrying as plain-text chat completion.', {
+            provider: finalGenerateData.chat_completion_source,
+            model: finalGenerateData.model,
+        });
+        return await requestPlainTextSummaryDetailed(prompt, profile, signal, onRateLimitWait);
+    }
 }
 
 async function requestStructuredSummaryWithRetry(prompt, profile, signal, onRateLimitWait = null) {
