@@ -54,7 +54,14 @@ export let world_info_match_whole_words = false;
 export let world_info_use_group_scoring = false;
 export let world_info_budget_cap = 0;
 export let world_info_max_recursion_steps = 0;
-const saveWorldDebounced = debounce(async (name, data) => await _save(name, data), debounce_timeout.relaxed);
+const saveWorldDebounced = debounce(async (name, data, saveToken) => {
+    try {
+        await _save(name, data);
+    } catch (error) {
+        rollbackWorldInfoCache(name, saveToken);
+        console.error(`Failed to save lorebook "${name}" in debounced mode.`, error);
+    }
+}, debounce_timeout.relaxed);
 const saveSettingsDebounced = debounce(() => {
     Object.assign(world_info, { globalSelect: selected_world_info });
     saveSettings();
@@ -649,6 +656,7 @@ async function moveWorldInfoStorage(name) {
         return false;
     }
 
+    const loadToken = worldEditorLoadToken;
     const movingToSecure = item.storage !== 'secure';
     const confirmed = await Popup.show.confirm(
         movingToSecure ? t`Make "${name}" a secure lorebook?` : t`Remove lorebook security from "${name}"?`,
@@ -673,15 +681,19 @@ async function moveWorldInfoStorage(name) {
         return false;
     }
 
+    await updateWorldInfoList();
     worldInfoCache.delete(name);
     const updatedData = await loadWorldInfo(name);
-    await updateWorldInfoList();
+
+    if (loadToken !== worldEditorLoadToken) {
+        return true;
+    }
 
     const selectedIndex = world_names.indexOf(name);
     if (selectedIndex !== -1) {
         $('#world_editor_select').val(String(selectedIndex)).trigger('change');
     } else if (updatedData) {
-        await displayWorldEntries(name, updatedData);
+        await displayWorldEntries(name, updatedData, navigation_option.none, true, loadToken);
     }
 
     return true;
@@ -697,6 +709,8 @@ async function getDefaultSharedLorebookName(name = '') {
 }
 
 async function refreshWorldInfoAfterMetadataChange(name) {
+    const loadToken = worldEditorLoadToken;
+
     if (name && worldInfoCache.has(name)) {
         worldInfoCache.delete(name);
     }
@@ -704,8 +718,12 @@ async function refreshWorldInfoAfterMetadataChange(name) {
     await updateWorldInfoList();
 
     const updatedData = await loadWorldInfo(name);
+    if (loadToken !== worldEditorLoadToken) {
+        return;
+    }
+
     if (updatedData) {
-        await displayWorldEntries(name, updatedData, navigation_option.previous, false);
+        await displayWorldEntries(name, updatedData, navigation_option.previous, false, loadToken);
     } else {
         await hideWorldEditor();
     }
@@ -1357,6 +1375,40 @@ export const wi_anchor_position = {
  * @type {StructuredCloneMap<string,object>}
  * */
 export const worldInfoCache = new StructuredCloneMap({ cloneOnGet: true, cloneOnSet: false });
+const persistedWorldInfoCache = new StructuredCloneMap({ cloneOnGet: true, cloneOnSet: true });
+const worldInfoSaveTokens = new Map();
+
+function setPersistedWorldInfoSnapshot(name, data) {
+    if (!name || !data) {
+        return;
+    }
+
+    persistedWorldInfoCache.set(name, data);
+}
+
+function clearPersistedWorldInfoSnapshot(name) {
+    persistedWorldInfoCache.delete(name);
+    worldInfoSaveTokens.delete(name);
+}
+
+function nextWorldInfoSaveToken(name) {
+    const nextToken = (worldInfoSaveTokens.get(name) ?? 0) + 1;
+    worldInfoSaveTokens.set(name, nextToken);
+    return nextToken;
+}
+
+function rollbackWorldInfoCache(name, saveToken) {
+    if (worldInfoSaveTokens.get(name) !== saveToken) {
+        return;
+    }
+
+    if (persistedWorldInfoCache.has(name)) {
+        worldInfoCache.set(name, persistedWorldInfoCache.get(name));
+        return;
+    }
+
+    worldInfoCache.delete(name);
+}
 
 export function getForcedActivationEntriesSnapshot() {
     return Array.from(forcedActivationEntries.values()).map(entry => structuredClone(entry));
@@ -2762,7 +2814,7 @@ export async function showWorldEditor(name) {
         return;
     }
 
-    await displayWorldEntries(name, wiData);
+    await displayWorldEntries(name, wiData, navigation_option.none, true, loadToken);
 }
 
 /**
@@ -2804,6 +2856,7 @@ export async function loadWorldInfo(name) {
 
         if (data) {
             worldInfoCache.set(name, data);
+            setPersistedWorldInfoSnapshot(name, data);
             return data;
         }
     }
@@ -3045,8 +3098,12 @@ function clearEntryList($list) {
 }
 
 //MARK: displayWorldEntries
-async function displayWorldEntries(name, data, navigation = navigation_option.none, flashOnNav = true) {
-    updateEditor = async (navigation, flashOnNav = true) => await displayWorldEntries(name, data, navigation, flashOnNav);
+async function displayWorldEntries(name, data, navigation = navigation_option.none, flashOnNav = true, loadToken = worldEditorLoadToken) {
+    if (loadToken !== worldEditorLoadToken) {
+        return;
+    }
+
+    updateEditor = async (navigation, flashOnNav = true) => await displayWorldEntries(name, data, navigation, flashOnNav, loadToken);
 
     const worldEntriesList = $('#world_popup_entries_list');
     clearEntryList(worldEntriesList);
@@ -3172,20 +3229,40 @@ async function displayWorldEntries(name, data, navigation = navigation_option.no
         showNavigator: true,
         callback: async function (/** @type {object[]} */ page) {
             try {
+                if (loadToken !== worldEditorLoadToken) {
+                    return;
+                }
+
                 clearEntryList(worldEntriesList);
 
                 const keywordHeaders = await renderTemplateAsync('worldInfoKeywordHeaders');
+                if (loadToken !== worldEditorLoadToken) {
+                    return;
+                }
+
                 const blocks = [];
 
                 for (const entry of page) {
                     try {
+                        if (loadToken !== worldEditorLoadToken) {
+                            return;
+                        }
+
                         const block = await getWorldEntry(name, data, entry);
+                        if (loadToken !== worldEditorLoadToken) {
+                            return;
+                        }
+
                         if (block) {
                             blocks.push(block);
                         }
                     } catch (error) {
                         console.error(`Error while processing entry ${entry.uid}:`, error);
                     }
+                }
+
+                if (loadToken !== worldEditorLoadToken) {
+                    return;
                 }
 
                 const isCustomOrder = $('#world_info_sort_order').find(':selected').data('rule') === 'custom';
@@ -3983,19 +4060,19 @@ function handleProbabilityToggleHelper({ probabilityToggle, data, entry, name, p
     probabilityToggle.on('input', async function (_, { noSave = false } = {}) {
         const uid = $(this).data('uid');
         const value = $(this).prop('checked');
-        data.entries[uid].useProbability = value;
         const probabilityContainer = $(this).closest('.world_entry').find('.probabilityContainer');
-        !noSave && await saveWorldInfo(name, data);
+        let probabilityValue = value ? (data.entries[uid].probability ?? 100) : null;
+
+        if (!noSave) {
+            data.entries[uid].useProbability = value;
+            data.entries[uid].probability = probabilityValue;
+            await saveWorldInfo(name, data);
+        }
+
         probabilityContainer.toggleClass('wi-column-hidden', !value);
-        if (value && data.entries[uid].probability === null) {
-            data.entries[uid].probability = 100;
-        }
-        if (!value) {
-            data.entries[uid].probability = null;
-        }
-        probabilityInput.val(data.entries[uid].probability).trigger('input', { noSave });
+        probabilityInput.val(probabilityValue);
     });
-    probabilityToggle.prop('checked', true).trigger('input', { noSave: true });
+    probabilityToggle.prop('checked', entry.useProbability ?? false).trigger('input', { noSave: true });
     probabilityToggle.parent().hide();
 }
 
@@ -4352,11 +4429,15 @@ export async function getWorldEntry(name, data, entry) {
             const uid = $(this).data('uid');
             const value = $(this).prop('checked');
             const commentContainer = $(this).closest('.world_entry').find('.commentContainer');
-            data.entries[uid].addMemo = value;
-            !noSave && await saveWorldInfo(name, data);
+
+            if (!noSave) {
+                data.entries[uid].addMemo = value;
+                await saveWorldInfo(name, data);
+            }
+
             value ? commentContainer.show() : commentContainer.hide();
         });
-        commentToggle.prop('checked', true).trigger('input', { noSave: true });
+        commentToggle.prop('checked', entry.addMemo ?? !!entry.comment).trigger('input', { noSave: true });
         commentToggle.parent().hide();
 
         // Logic AND/NOT
@@ -4378,17 +4459,21 @@ export async function getWorldEntry(name, data, entry) {
         selectiveInput.on('input', async function (_, { noSave = false } = {}) {
             const uid = $(this).data('uid');
             const value = $(this).prop('checked');
-            data.entries[uid].selective = value;
-            setWIOriginalDataValue(data, uid, 'selective', data.entries[uid].selective);
-            !noSave && await saveWorldInfo(name, data);
             const keysecondary = $(this).closest('.world_entry').find('.keysecondary');
             const keysecondarytextpole = $(this).closest('.world_entry').find('.keysecondarytextpole');
             const keyprimaryselect = $(this).closest('.world_entry').find('.keyprimaryselect');
             const keyprimaryHeight = keyprimaryselect.outerHeight();
+
+            if (!noSave) {
+                data.entries[uid].selective = value;
+                setWIOriginalDataValue(data, uid, 'selective', data.entries[uid].selective);
+                await saveWorldInfo(name, data);
+            }
+
             keysecondarytextpole.css('height', keyprimaryHeight + 'px');
             value ? keysecondary.show() : keysecondary.hide();
         });
-        selectiveInput.prop('checked', true).trigger('input', { noSave: true });
+        selectiveInput.prop('checked', entry.selective ?? true).trigger('input', { noSave: true });
         selectiveInput.parent().hide();
 
         // Character filter
@@ -4914,6 +4999,7 @@ async function _save(name, data) {
         upsertWorldInfoItem(responseData.metadata);
     }
     maybeWarnSecureShadowing(responseData, name);
+    setPersistedWorldInfoSnapshot(name, sanitizedData);
     await eventSource.emit(event_types.WORLDINFO_UPDATED, name, data);
 }
 
@@ -4936,6 +5022,8 @@ export async function saveWorldInfo(name, data, immediately = false) {
         return;
     }
 
+    const saveToken = nextWorldInfoSaveToken(name);
+
     // Update cache immediately, so any future call can pull from this
     worldInfoCache.set(name, data);
 
@@ -4943,12 +5031,12 @@ export async function saveWorldInfo(name, data, immediately = false) {
         try {
             return await _save(name, data);
         } catch (error) {
-            worldInfoCache.delete(name);
+            rollbackWorldInfoCache(name, saveToken);
             throw error;
         }
     }
 
-    saveWorldDebounced(name, data);
+    saveWorldDebounced(name, data, saveToken);
 }
 
 async function renameWorldInfo(name, data) {
@@ -5035,6 +5123,7 @@ export async function deleteWorldInfo(worldInfoName) {
     if (worldInfoCache.has(worldInfoName)) {
         worldInfoCache.delete(worldInfoName);
     }
+    clearPersistedWorldInfoSnapshot(worldInfoName);
 
     const existingWorldIndex = selected_world_info.findIndex((e) => e === worldInfoName);
     if (existingWorldIndex !== -1) {
