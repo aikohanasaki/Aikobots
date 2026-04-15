@@ -888,15 +888,21 @@ function preserveProtectedLorebookFields(targetCharacter, sourceCharacter) {
 }
 
 /**
- * Removes an embedded lorebook when no primary lorebook is linked.
- * Keeps the cleanup tied to persisted character state instead of relying on
- * the client-side editor to strip the field first.
+ * Removes an embedded lorebook when the edit request explicitly clears the
+ * embedded-lorebook selector and the submitted JSON no longer carries the
+ * embedded book payload.
+ * This avoids stripping imported external card embeds on unrelated saves.
  * @param {object} characterCard Character card to mutate
+ * @param {object|null} requestedJsonCard Parsed json_data payload from the edit form
+ * @param {string} requestedWorld Embedded lorebook selector value from the edit form
  */
-function sanitizeEmbeddedLorebookForPrimaryWorld(characterCard) {
-    const primaryLorebook = String(_.get(characterCard, 'data.extensions.world', '') || '').trim();
+function sanitizeEmbeddedLorebookForPrimaryWorld(characterCard, requestedJsonCard, requestedWorld) {
+    const normalizedRequestedWorld = String(requestedWorld || '').trim();
+    const requestRemovedEmbeddedLorebook = normalizedRequestedWorld === ''
+        && requestedJsonCard
+        && !_.has(requestedJsonCard, 'data.character_book');
 
-    if (!primaryLorebook) {
+    if (requestRemovedEmbeddedLorebook) {
         _.unset(characterCard, 'data.character_book');
     }
 }
@@ -1384,12 +1390,12 @@ router.post('/edit', validateAvatarUrlMiddleware, async function (request, respo
         const existingCharacter = rawCharacterData ? getCharaCardV2(JSON.parse(rawCharacterData), request.user.directories, false) : null;
         const requestedFavorite = coerceFavoriteValue(request.body.fav);
         const canEditLorebooks = canEditCharacterLorebooks(existingCharacter, request);
+        const requestedJsonData = tryParse(request.body.json_data);
+        const requestedJsonCard = requestedJsonData ? getCharaCardV2(requestedJsonData, request.user.directories, false) : null;
+        const requestedWorld = String(request.body.world || '');
 
         if (existingCharacter && !canEditLorebooks) {
-            const requestedJsonData = tryParse(request.body.json_data);
-            const requestedJsonCard = requestedJsonData ? getCharaCardV2(requestedJsonData, request.user.directories, false) : null;
             const existingWorld = String(_.get(existingCharacter, 'data.extensions.world', '') || '');
-            const requestedWorld = String(request.body.world || '');
             const requestedJsonWorld = requestedJsonCard
                 ? String(_.get(requestedJsonCard, 'data.extensions.world', existingWorld) || '')
                 : existingWorld;
@@ -1415,7 +1421,7 @@ router.post('/edit', validateAvatarUrlMiddleware, async function (request, respo
             preserveProtectedLorebookFields(char, existingCharacter);
         }
 
-        sanitizeEmbeddedLorebookForPrimaryWorld(char);
+        sanitizeEmbeddedLorebookForPrimaryWorld(char, requestedJsonCard, requestedWorld);
 
         if (canEditLorebooks) {
             validateOwnedCharacterLinkedLorebooks(request.user, char);
@@ -1620,8 +1626,6 @@ router.post('/merge-attributes', getFileNameValidationFunction('avatar'), async 
         if (!canEditLorebooks) {
             preserveProtectedLorebookFields(character, existingCharacter);
         }
-
-        sanitizeEmbeddedLorebookForPrimaryWorld(character);
 
         if (updatesSecureLorebooks && canEditLorebooks) {
             validateOwnedCharacterLinkedLorebooks(request.user, character);
