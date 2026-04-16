@@ -295,6 +295,10 @@ async function createNamedBookmark(messageNum, title) {
     }
 
     const bookmarks = getNamedBookmarks();
+    if (bookmarks.some(bookmark => bookmark.messageNum === messageNum && bookmark.title === normalizedTitle)) {
+        return { success: false, error: 'An identical bookmark already exists.' };
+    }
+
     if (bookmarks.length >= MAX_NAMED_BOOKMARKS) {
         return { success: false, error: `Maximum ${MAX_NAMED_BOOKMARKS} bookmarks reached.` };
     }
