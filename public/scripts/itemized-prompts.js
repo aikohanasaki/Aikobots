@@ -504,7 +504,7 @@ export async function itemizedParams(itemizedPrompts, thisPromptSet, incomingMes
         params.ActualChatHistoryTokensPercentage = getPercentage(params.ActualChatHistoryTokens, params.finalPromptTokens);
         params.promptBiasTokensPercentage = getPercentage(params.oaiBiasTokens, params.finalPromptTokens);
         params.worldInfoTotalTokensPercentage = getPercentage(params.worldInfoTotalTokens, params.finalPromptTokens);
-        params.worldInfoStringTokensPercentage = params.worldInfoTotalTokensPercentage;
+        params.worldInfoStringTokensPercentage = getPercentage(params.worldInfoStringTokens, params.finalPromptTokens);
         params.allAnchorsTokensPercentage = getPercentage(params.allAnchorsTokens, params.finalPromptTokens);
         params.selectedTokenizer = getFriendlyTokenizerName(params.this_main_api).tokenizerName;
         params.oaiSystemTokens = params.oaiImpersonateTokens + params.oaiJailbreakTokens + params.oaiNudgeTokens + params.oaiStartTokens + params.oaiNsfwTokens + params.oaiMainTokens;
@@ -541,7 +541,7 @@ export async function itemizedParams(itemizedPrompts, thisPromptSet, incomingMes
         params.ActualChatHistoryTokensPercentage = getPercentage(params.ActualChatHistoryTokens, params.totalTokensInPrompt);
         params.promptBiasTokensPercentage = getPercentage(params.promptBiasTokens, params.totalTokensInPrompt);
         params.worldInfoTotalTokensPercentage = getPercentage(params.worldInfoTotalTokens, params.totalTokensInPrompt);
-        params.worldInfoStringTokensPercentage = params.worldInfoTotalTokensPercentage;
+        params.worldInfoStringTokensPercentage = getPercentage(params.worldInfoStringTokens, params.totalTokensInPrompt);
         params.allAnchorsTokensPercentage = getPercentage(params.allAnchorsTokens, params.totalTokensInPrompt);
         params.selectedTokenizer = itemizedPrompt.tokenizer || getFriendlyTokenizerName(params.this_main_api).tokenizerName;
         params.hiddenPromptTokens = params.hiddenWorldInfoTokens;
