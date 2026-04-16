@@ -518,7 +518,10 @@ export function evaluateMacros(content, env, postProcessFn) {
         { regex: /<USER>/gi, replace: () => typeof env.user === 'function' ? env.user() : env.user },
         { regex: /<BOT>/gi, replace: () => typeof env.char === 'function' ? env.char() : env.char },
         { regex: /<CHAR>/gi, replace: () => typeof env.char === 'function' ? env.char() : env.char },
-        { regex: /<CHARIFNOTGROUP>/gi, replace: () => typeof env.group === 'function' ? env.group() : env.group },
+        { regex: /<CHARIFNOTGROUP>/gi, replace: () => {
+            const group = typeof env.group === 'function' ? env.group() : env.group;
+            return group ? '' : (typeof env.char === 'function' ? env.char() : env.char);
+        } },
         { regex: /<GROUP>/gi, replace: () => typeof env.group === 'function' ? env.group() : env.group },
         getDiceRollMacro(),
         ...getVariableMacros(),

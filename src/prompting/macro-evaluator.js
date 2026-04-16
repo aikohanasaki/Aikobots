@@ -170,7 +170,7 @@ export function evaluatePromptMacros(content, env = {}, { additional = {}, macro
         { regex: /<USER>/gi, replace: () => getValue('user') },
         { regex: /<BOT>/gi, replace: () => getValue('char') },
         { regex: /<CHAR>/gi, replace: () => getValue('char') },
-        { regex: /<CHARIFNOTGROUP>/gi, replace: () => getValue('group') },
+        { regex: /<CHARIFNOTGROUP>/gi, replace: () => getValue('group') ? '' : getValue('char') },
         { regex: /<GROUP>/gi, replace: () => getValue('group') },
         { regex: /{{roll[: ]([^}]+)}}/gi, replace: (_, formulaText) => {
             let formula = String(formulaText || '').trim();

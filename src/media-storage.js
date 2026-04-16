@@ -2,11 +2,17 @@ import fs from 'node:fs';
 import path from 'node:path';
 
 import mime from 'mime-types';
+import writeFileAtomic from 'write-file-atomic';
 
 import { clientRelativePath, isPathUnderParent, uuidv4 } from './util.js';
 
 const MEDIA_INDEX_FILE = '.media-index.json';
+const MEDIA_INDEX_LOCK_SUFFIX = '.lock';
+const MEDIA_INDEX_LOCK_RETRY_MS = 50;
+const MEDIA_INDEX_LOCK_TIMEOUT_MS = 10_000;
+const MEDIA_INDEX_LOCK_STALE_MS = 60_000;
 const MEDIA_FOLDER = 'media';
+const mediaIndexMutationQueues = new Map();
 
 /**
  * @typedef {object} StoredMediaRecord
@@ -32,8 +38,125 @@ function getMediaIndexPath(directories) {
  * @param {import('./users.js').UserDirectoryList} directories
  * @returns {string}
  */
+function getMediaIndexLockPath(directories) {
+    return `${getMediaIndexPath(directories)}${MEDIA_INDEX_LOCK_SUFFIX}`;
+}
+
+/**
+ * @param {import('./users.js').UserDirectoryList} directories
+ * @returns {string}
+ */
 function getMediaRootPath(directories) {
     return path.join(directories.userImages, MEDIA_FOLDER);
+}
+
+/**
+ * @param {number} ms
+ */
+function sleepSync(ms) {
+    if (ms <= 0) {
+        return;
+    }
+
+    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+}
+
+/**
+ * @param {string} lockPath
+ * @returns {boolean}
+ */
+function isMediaIndexLockStale(lockPath) {
+    try {
+        const stats = fs.statSync(lockPath);
+        return Date.now() - stats.mtimeMs > MEDIA_INDEX_LOCK_STALE_MS;
+    } catch (error) {
+        if (error?.code === 'ENOENT') {
+            return false;
+        }
+
+        throw error;
+    }
+}
+
+/**
+ * @param {string} lockPath
+ */
+function removeMediaIndexLock(lockPath) {
+    try {
+        fs.rmdirSync(lockPath);
+    } catch (error) {
+        if (error?.code === 'ENOENT') {
+            return;
+        }
+
+        if (error?.code === 'ENOTEMPTY') {
+            fs.rmSync(lockPath, { recursive: true, force: false });
+            return;
+        }
+
+        throw error;
+    }
+}
+
+/**
+ * @param {import('./users.js').UserDirectoryList} directories
+ * @returns {() => void}
+ */
+function acquireMediaIndexWriteLock(directories) {
+    const lockPath = getMediaIndexLockPath(directories);
+    fs.mkdirSync(path.dirname(lockPath), { recursive: true });
+    const deadline = Date.now() + MEDIA_INDEX_LOCK_TIMEOUT_MS;
+
+    while (true) {
+        try {
+            fs.mkdirSync(lockPath);
+            return () => removeMediaIndexLock(lockPath);
+        } catch (error) {
+            if (error?.code !== 'EEXIST') {
+                throw error;
+            }
+
+            if (isMediaIndexLockStale(lockPath)) {
+                removeMediaIndexLock(lockPath);
+                continue;
+            }
+
+            if (Date.now() >= deadline) {
+                throw new Error('Timed out waiting to update the media index.');
+            }
+
+            sleepSync(MEDIA_INDEX_LOCK_RETRY_MS);
+        }
+    }
+}
+
+/**
+ * Serializes media index mutations across requests and PM2 workers.
+ * @template T
+ * @param {import('./users.js').UserDirectoryList} directories
+ * @param {() => Promise<T>} operation
+ * @returns {Promise<T>}
+ */
+function runWithMediaIndexLock(directories, operation) {
+    const indexPath = getMediaIndexPath(directories);
+    const previousOperation = mediaIndexMutationQueues.get(indexPath) || Promise.resolve();
+    const queuedOperation = previousOperation.catch(() => { }).then(async () => {
+        const release = acquireMediaIndexWriteLock(directories);
+
+        try {
+            return await operation();
+        } finally {
+            release();
+        }
+    });
+    const queueTail = queuedOperation.catch(() => { });
+    mediaIndexMutationQueues.set(indexPath, queueTail);
+    queueTail.finally(() => {
+        if (mediaIndexMutationQueues.get(indexPath) === queueTail) {
+            mediaIndexMutationQueues.delete(indexPath);
+        }
+    });
+    return queuedOperation;
 }
 
 /**
@@ -75,7 +198,7 @@ export async function readMediaIndex(directories) {
 export async function writeMediaIndex(directories, index) {
     const indexPath = getMediaIndexPath(directories);
     await fs.promises.mkdir(path.dirname(indexPath), { recursive: true });
-    await fs.promises.writeFile(indexPath, JSON.stringify(index, null, 2), 'utf8');
+    await writeFileAtomic(indexPath, JSON.stringify(index, null, 2));
 }
 
 /**
@@ -170,9 +293,24 @@ export async function ingestImageBuffer(directories, buffer, mimeType, originalF
         ...(sourceUrl ? { sourceUrl: String(sourceUrl) } : {}),
     });
 
-    const index = await readMediaIndex(directories);
-    index[record.mediaId] = record;
-    await writeMediaIndex(directories, index);
+    try {
+        await runWithMediaIndexLock(directories, async () => {
+            const index = await readMediaIndex(directories);
+            index[record.mediaId] = record;
+            await writeMediaIndex(directories, index);
+        });
+    } catch (error) {
+        try {
+            await fs.promises.unlink(absolutePath);
+        } catch (unlinkError) {
+            if (unlinkError?.code !== 'ENOENT') {
+                console.warn(`Failed to clean up stored media bytes for ${mediaId}`, unlinkError);
+            }
+        }
+
+        throw error;
+    }
+
     return record;
 }
 
@@ -192,36 +330,38 @@ export async function registerExistingImageUrl(directories, url) {
         throw new Error('Image URL is outside the internal image store');
     }
 
-    const stats = await fs.promises.stat(absolutePath);
-    if (!stats.isFile()) {
-        throw new Error('Image URL does not point to a file');
-    }
+    return await runWithMediaIndexLock(directories, async () => {
+        const stats = await fs.promises.stat(absolutePath);
+        if (!stats.isFile()) {
+            throw new Error('Image URL does not point to a file');
+        }
 
-    const mimeType = String(mime.lookup(absolutePath) || '').toLowerCase();
-    if (!isSupportedImageMimeType(mimeType)) {
-        throw new Error('Existing file is not a supported image');
-    }
+        const mimeType = String(mime.lookup(absolutePath) || '').toLowerCase();
+        if (!isSupportedImageMimeType(mimeType)) {
+            throw new Error('Existing file is not a supported image');
+        }
 
-    const normalizedRelativePath = clientRelativePath(directories.root, absolutePath);
-    const index = await readMediaIndex(directories);
-    const existingRecord = Object.values(index).find(record => String(record.relativePath || '') === normalizedRelativePath);
-    if (existingRecord) {
-        return normalizeStoredMediaRecord(directories, existingRecord);
-    }
+        const normalizedRelativePath = clientRelativePath(directories.root, absolutePath);
+        const index = await readMediaIndex(directories);
+        const existingRecord = Object.values(index).find(record => String(record.relativePath || '') === normalizedRelativePath);
+        if (existingRecord) {
+            return normalizeStoredMediaRecord(directories, existingRecord);
+        }
 
-    const record = normalizeStoredMediaRecord(directories, {
-        mediaId: uuidv4(),
-        relativePath: normalizedRelativePath,
-        mimeType,
-        byteLength: stats.size,
-        createdAt: Date.now(),
-        originalFilename: path.basename(absolutePath),
-        managed: false,
+        const record = normalizeStoredMediaRecord(directories, {
+            mediaId: uuidv4(),
+            relativePath: normalizedRelativePath,
+            mimeType,
+            byteLength: stats.size,
+            createdAt: Date.now(),
+            originalFilename: path.basename(absolutePath),
+            managed: false,
+        });
+
+        index[record.mediaId] = record;
+        await writeMediaIndex(directories, index);
+        return record;
     });
-
-    index[record.mediaId] = record;
-    await writeMediaIndex(directories, index);
-    return record;
 }
 
 /**
@@ -235,24 +375,26 @@ export async function deleteStoredMedia(directories, mediaId) {
         return false;
     }
 
-    const index = await readMediaIndex(directories);
-    const record = index[normalizedMediaId];
-    if (!record) {
-        return false;
-    }
+    return await runWithMediaIndexLock(directories, async () => {
+        const index = await readMediaIndex(directories);
+        const storedRecord = index[normalizedMediaId];
+        if (!storedRecord) {
+            return false;
+        }
 
-    delete index[normalizedMediaId];
-    await writeMediaIndex(directories, index);
+        delete index[normalizedMediaId];
+        await writeMediaIndex(directories, index);
 
-    if (record?.managed) {
-        try {
-            await fs.promises.unlink(resolveStoredMediaPath(directories, record));
-        } catch (error) {
-            if (error?.code !== 'ENOENT') {
-                console.warn(`Failed to delete stored media bytes for ${normalizedMediaId}`, error);
+        if (storedRecord?.managed) {
+            try {
+                await fs.promises.unlink(resolveStoredMediaPath(directories, storedRecord));
+            } catch (error) {
+                if (error?.code !== 'ENOENT') {
+                    console.warn(`Failed to delete stored media bytes for ${normalizedMediaId}`, error);
+                }
             }
         }
-    }
 
-    return true;
+        return true;
+    });
 }
