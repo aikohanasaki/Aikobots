@@ -704,6 +704,7 @@ let chatSaveRevision = 0;
 let chatSaveSessionId = '';
 let chatSaveDirty = false;
 let chatSaveQueuePromise = null;
+let chatSaveRequestOptions = {};
 const CHAT_SAVE_RESULT = {
     SAVED: 'saved',
     FAILED: 'failed',
@@ -1068,7 +1069,7 @@ async function syncCurrentChatToServer() {
 
     startSyncCurrentChatCooldown();
     toastr.info(t`Syncing chat to server`);
-    const syncResult = await saveChatConditional();
+    const syncResult = await saveChatConditional({ syncLoadedMessages: true, refreshTailAfterSave: true });
 
     if (syncResult === CHAT_SAVE_RESULT.SAVED) {
         toastr.success(t`Chat sync successful`);
@@ -2848,6 +2849,36 @@ function getDenseChatMessages(startId, endId) {
     return messages;
 }
 
+function getContiguousLoadedChatRangeForSave() {
+    if (!isSplitTailChat() || isChatFullyHydrated()) {
+        return null;
+    }
+
+    if (chatLoadState.loadedRanges.length !== 1) {
+        return null;
+    }
+
+    const range = chatLoadState.loadedRanges[0];
+    const start = Number(range?.start);
+    const end = Number(range?.end);
+    const expectedEnd = getTotalChatMessages() - 1;
+
+    if (!Number.isInteger(start) || !Number.isInteger(end) || start < 0 || end !== expectedEnd || start > end) {
+        return null;
+    }
+
+    const messages = [];
+    for (let messageId = start; messageId <= end; messageId++) {
+        if (!chat[messageId]) {
+            return null;
+        }
+
+        messages.push(chat[messageId]);
+    }
+
+    return { start, messages };
+}
+
 function setParentPromptCache(messages, tailStartId) {
     const normalizedTailStartId = Math.max(0, Number(tailStartId) || 0);
     chatLoadState.parentPromptCache = Array.isArray(messages)
@@ -3004,6 +3035,23 @@ async function replaceChunkedChatPayloadPreservingWindow(response, { scrollToTai
     if (nextView === 'tail' && scrollToTail) {
         scrollChatToBottom({ waitForFrame: true });
     }
+}
+
+async function replaceChunkedChatPayloadWithLatestTail(response) {
+    applyChunkedChatPayload(response, { replace: true, currentView: 'tail' });
+
+    if (!chat.length) {
+        await renderMessageWindow(0, getConfiguredLongChatDisplayCount());
+        return;
+    }
+
+    const count = getConfiguredLongChatDisplayCount();
+    const startId = isSplitTailChat() && !isChatFullyHydrated()
+        ? Math.max(chatLoadState.tailStartId, chatLoadState.tailEndId - count + 1)
+        : Math.max(0, chat.length - getConfiguredChatWindowSize(count));
+
+    await renderMessageWindow(startId, count);
+    scrollChatToBottom({ waitForFrame: true });
 }
 
 async function fetchChunkedChat({ rangeStart = null, count = null, hydrateFull = false, includeParentPromptCache = false } = {}) {
@@ -8852,10 +8900,12 @@ export function saveChatDebounced() {
  * @param {object} [options.withMetadata] Additional metadata to save with the chat
  * @param {number} [options.mesId] The message ID to save the chat up to
  * @param {boolean} [options.force] Force the saving despite the integrity check result
+ * @param {boolean} [options.syncLoadedMessages] Save the contiguous loaded message range on split-tail save
+ * @param {boolean} [options.refreshTailAfterSave] Reload the newest server tail after a successful split-tail save
  *
  * @returns {Promise<void>}
  */
-export async function saveChat({ chatName, withMetadata, mesId, force = false } = {}) {
+export async function saveChat({ chatName, withMetadata, mesId, force = false, syncLoadedMessages = false, refreshTailAfterSave = false } = {}) {
     if (arguments.length > 0 && typeof arguments[0] !== 'object') {
         console.trace('saveChat called with positional arguments. Please use an object instead.');
         [chatName, withMetadata, mesId, force] = arguments;
@@ -8891,12 +8941,25 @@ export async function saveChat({ chatName, withMetadata, mesId, force = false } 
     let trimmedChat = [];
     let saveMode = undefined;
     let absoluteStartId = undefined;
+    let loadedRangeStart = undefined;
     const shouldTrackRevision = chatName === undefined && normalizedMesId === undefined;
 
     if (isSplitTailChat() && !isChatFullyHydrated() && chatName === undefined && normalizedMesId === undefined) {
-        absoluteStartId = chatLoadState.tailStartId;
-        trimmedChat = getDenseChatMessages(absoluteStartId, getTotalChatMessages() - 1);
-        saveMode = 'tail';
+        if (syncLoadedMessages) {
+            const loadedRange = getContiguousLoadedChatRangeForSave();
+            if (!loadedRange) {
+                toastr.warning(t`Loaded chat messages are not contiguous. Reload the chat before syncing.`, t`Chat sync blocked`);
+                return CHAT_SAVE_RESULT.FAILED;
+            }
+
+            loadedRangeStart = loadedRange.start;
+            trimmedChat = loadedRange.messages;
+            saveMode = 'loaded_range';
+        } else {
+            absoluteStartId = chatLoadState.tailStartId;
+            trimmedChat = getDenseChatMessages(absoluteStartId, getTotalChatMessages() - 1);
+            saveMode = 'tail';
+        }
     } else {
         const endId = normalizedMesId !== undefined
             ? Math.min(normalizedMesId, getTotalChatMessages() - 1)
@@ -8924,6 +8987,8 @@ export async function saveChat({ chatName, withMetadata, mesId, force = false } 
                 force: force,
                 save_mode: saveMode,
                 absolute_start_id: absoluteStartId,
+                loaded_range_start: loadedRangeStart,
+                refresh_tail: Boolean(refreshTailAfterSave && isSplitTailChat()),
                 ...(shouldTrackRevision ? {
                     base_revision: getChatSaveRevision(),
                     save_session_id: getChatSaveSessionId(),
@@ -8939,7 +9004,9 @@ export async function saveChat({ chatName, withMetadata, mesId, force = false } 
                 setChatSaveRevision(responseData?.chat_revision);
             }
 
-            if (isSplitTailChat() && !isChatFullyHydrated() && saveMode === 'tail') {
+            if (refreshTailAfterSave && responseData?.payload) {
+                await replaceChunkedChatPayloadWithLatestTail(responseData.payload);
+            } else if (isSplitTailChat() && !isChatFullyHydrated() && saveMode === 'tail') {
                 syncSplitTailStateAfterMutation();
 
                 if (responseData?.payload) {
@@ -8994,7 +9061,7 @@ export async function saveChat({ chatName, withMetadata, mesId, force = false } 
             return CHAT_SAVE_RESULT.FAILED;
         }
 
-        return await saveChat({ chatName, withMetadata, mesId, force: true });
+        return await saveChat({ chatName, withMetadata, mesId, force: true, syncLoadedMessages, refreshTailAfterSave });
     } catch (error) {
         console.error(error);
         toastr.error(t`Check the server connection and reload the page to prevent data loss.`, t`Chat could not be saved`);
@@ -12299,7 +12366,7 @@ export async function saveMetadata() {
     await saveChatConditional();
 }
 
-async function saveChatOnce() {
+async function saveChatOnce(options = {}) {
     let savedChatId = '';
     let savedIsGroup = false;
     let savedGroupId = null;
@@ -12340,7 +12407,7 @@ async function saveChatOnce() {
             }
         }
         else {
-            const chatSaved = await saveChat();
+            const chatSaved = await saveChat(options);
             if (chatSaved === CHAT_SAVE_RESULT.FAILED || chatSaved === false) {
                 throw new Error('Chat could not be saved');
             }
@@ -12380,7 +12447,9 @@ async function drainChatSaveQueue() {
     try {
         while (chatSaveDirty) {
             chatSaveDirty = false;
-            const result = await saveChatOnce();
+            const options = chatSaveRequestOptions;
+            chatSaveRequestOptions = {};
+            const result = await saveChatOnce(options);
             finalResult = result;
 
             if (result !== CHAT_SAVE_RESULT.SAVED) {
@@ -12396,8 +12465,12 @@ async function drainChatSaveQueue() {
     }
 }
 
-export async function saveChatConditional() {
+export async function saveChatConditional(options = {}) {
     chatSaveDirty = true;
+    chatSaveRequestOptions = {
+        ...chatSaveRequestOptions,
+        ...(options || {}),
+    };
 
     if (!chatSaveQueuePromise) {
         chatSaveQueuePromise = drainChatSaveQueue().catch((error) => {

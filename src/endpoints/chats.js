@@ -498,6 +498,33 @@ function hasValidChatPayload(chat) {
     return Array.isArray(chat) && _.isPlainObject(chat[0]);
 }
 
+function applyLoadedMessageRange(logicalChatData, rangeStart, rangeMessages) {
+    const startId = Number(rangeStart);
+    if (!Number.isInteger(startId) || startId < 0 || !Array.isArray(rangeMessages) || rangeMessages.length === 0) {
+        return { ok: false, error: 'invalid_loaded_range' };
+    }
+
+    for (const message of rangeMessages) {
+        if (!_.isPlainObject(message)) {
+            return { ok: false, error: 'invalid_loaded_range' };
+        }
+    }
+
+    const existingMessageCount = Math.max(0, logicalChatData.length - 1);
+    if (startId > existingMessageCount) {
+        return { ok: false, error: 'invalid_loaded_range' };
+    }
+
+    return {
+        ok: true,
+        chatData: [
+            logicalChatData[0],
+            ...logicalChatData.slice(1, startId + 1),
+            ...rangeMessages,
+        ],
+    };
+}
+
 export function serializeJsonl(data) {
     return data.map(x => JSON.stringify(x)).join('\n');
 }
@@ -1686,10 +1713,30 @@ router.post('/save', validateAvatarUrlMiddleware, async function (request, respo
                     ...chatData.slice(1),
                 ];
                 requestedTailStartId = absoluteStartId;
+            } else if (request.body.save_mode === 'loaded_range') {
+                const existingChat = getLogicalChatData(filePath);
+                if (existingChat.length === 0) {
+                    return response.status(400).send({ error: 'invalid_loaded_range' });
+                }
+
+                const loadedRangeResult = applyLoadedMessageRange(existingChat, request.body.loaded_range_start, chatData.slice(1));
+                if (!loadedRangeResult.ok) {
+                    return response.status(400).send({ error: loadedRangeResult.error });
+                }
+
+                logicalChatData = [
+                    chatData[0] ?? existingChat[0],
+                    ...loadedRangeResult.chatData.slice(1),
+                ];
+                requestedTailStartId = Number.isInteger(existingTailStartId) ? existingTailStartId : null;
             } else if (Number.isInteger(existingTailStartId)) {
                 requestedTailStartId = existingTailStartId;
             } else if (chatData.length > (config.bufferMax + 1)) {
                 requestedTailStartId = Math.max(0, chatData.length - 1 - config.displayCount);
+            }
+
+            if (request.body.refresh_tail === true && (['tail', 'loaded_range'].includes(request.body.save_mode) || existingSegments?.storage)) {
+                requestedTailStartId = Math.max(0, logicalChatData.length - 1 - config.displayCount);
             }
 
             const header = setChatRevision(logicalChatData[0], revisionCheck.nextRevision, getRequestSaveSessionId(request.body));
@@ -1702,7 +1749,8 @@ router.post('/save', validateAvatarUrlMiddleware, async function (request, respo
             getBackupFunction(request.user.profile.handle)(request.user.directories.backups, directoryName, writeResult.fullJsonl);
 
             const refreshRequired = writeResult.compacted
-                || (existingSegments?.storage?.mode ?? 'full') !== writeResult.storageMode;
+                || (existingSegments?.storage?.mode ?? 'full') !== writeResult.storageMode
+                || request.body.refresh_tail === true;
 
             return response.send({
                 result: 'ok',
