@@ -272,6 +272,7 @@ export const power_user = {
     reduced_motion: false,
     compact_input_area: true,
     show_swipe_num_all_messages: false,
+    bring_back_truck_kun: false,
     auto_connect: false,
     auto_load_chat: false,
     delete_current_chat_to_welcome: false,
@@ -517,6 +518,12 @@ function switchCompactInputArea() {
 function switchSwipeNumAllMessages() {
     $('#show_swipe_num_all_messages').prop('checked', power_user.show_swipe_num_all_messages);
     $('body').toggleClass('swipeAllMessages', !!power_user.show_swipe_num_all_messages);
+}
+
+function updateTruckKunIcon() {
+    $('#world_bulk_move_mode')
+        .toggleClass('fa-truck', !!power_user.bring_back_truck_kun)
+        .toggleClass('fa-right-left', !power_user.bring_back_truck_kun);
 }
 
 var originalSliderValues = [];
@@ -1358,6 +1365,7 @@ export function applyPowerUserSettings() {
     switchTokenCount();
     switchMessageActions();
     switchSwipeNumAllMessages();
+    updateTruckKunIcon();
 }
 
 export function applyStylePins() {
@@ -1669,6 +1677,7 @@ export async function loadPowerUserSettings(settings, data) {
     $('#shadow-color-picker').attr('color', power_user.shadow_color);
     $('#border-color-picker').attr('color', power_user.border_color);
     $('#reduced_motion').prop('checked', power_user.reduced_motion);
+    $('#bring_back_truck_kun').prop('checked', power_user.bring_back_truck_kun);
     $('#auto-connect-checkbox').prop('checked', power_user.auto_connect);
     $('#auto-load-chat-checkbox').prop('checked', power_user.auto_load_chat);
     $('#delete-current-chat-to-welcome').prop('checked', power_user.delete_current_chat_to_welcome);
@@ -1698,6 +1707,7 @@ export async function loadPowerUserSettings(settings, data) {
     $(`#character_sort_order option[data-order="${power_user.sort_order}"][data-field="${power_user.sort_field}"]`).prop('selected', true);
     switchReducedMotion();
     switchCompactInputArea();
+    updateTruckKunIcon();
     reloadMarkdownProcessor();
     await loadReasoningTemplates(data);
     loadMaxContextUnlocked();
@@ -3745,6 +3755,12 @@ jQuery(() => {
     $('#show_swipe_num_all_messages').on('input', function () {
         power_user.show_swipe_num_all_messages = !!$(this).prop('checked');
         switchSwipeNumAllMessages();
+        saveSettingsDebounced();
+    });
+
+    $('#bring_back_truck_kun').on('input', function () {
+        power_user.bring_back_truck_kun = !!$(this).prop('checked');
+        updateTruckKunIcon();
         saveSettingsDebounced();
     });
 
