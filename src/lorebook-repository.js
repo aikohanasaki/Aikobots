@@ -1793,6 +1793,10 @@ function deleteAllSecureLorebookCopies(user, record, userHandles = []) {
             return buildDeletedSecureLorebookResponse(record, user, beforeState.userHandlesWithCopies);
         }
 
+        if (error instanceof LorebookRepositoryError) {
+            throw error;
+        }
+
         throw new LorebookRepositoryError(
             'LorebookStateRepairFailed',
             `Failed to delete all copies of secure lorebook "${canonicalName}" cleanly. Manual repair may be required.`,
