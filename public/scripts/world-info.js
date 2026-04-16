@@ -2211,6 +2211,7 @@ function buildFloatingBookPanelModel(snapshot, settings) {
                 name,
                 rows,
                 count: rows.filter(row => row.type === 'entry').length,
+                tokens: rows.reduce((sum, row) => sum + (row.hidden ? 0 : row.tokens), 0),
             }))
             .sort((a, b) => a.name.toLocaleLowerCase().localeCompare(b.name.toLocaleLowerCase()));
 
@@ -2480,7 +2481,18 @@ function createWorldInfoFloatingBookController() {
                     title.className = 'wi-floating-book-group-title';
                     const label = document.createElement('span');
                     label.className = 'wi-floating-book-group-label';
-                    label.textContent = group.name;
+                    const name = document.createElement('span');
+                    name.className = 'wi-floating-book-group-name';
+                    name.textContent = group.name;
+                    label.append(name);
+
+                    if (group.tokens > 0) {
+                        const tokens = document.createElement('small');
+                        tokens.className = 'wi-floating-book-group-tokens';
+                        tokens.title = `${group.tokens} tokens`;
+                        tokens.textContent = `${group.tokens}t`;
+                        label.append(tokens);
+                    }
                     title.append(label);
 
                     const toggle = document.createElement('span');
