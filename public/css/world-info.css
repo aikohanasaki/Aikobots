@@ -777,6 +777,7 @@ select.keyselect+span.select2-container .select2-selection--multiple {
 .wi-floating-book-panel {
     position: fixed;
     z-index: 3499;
+    box-sizing: border-box;
     display: none;
     flex-direction: column;
     gap: 8px;

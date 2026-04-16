@@ -1368,7 +1368,6 @@ const FLOATING_BOOK_STORAGE_KEYS = Object.freeze({
     order: 'world_info_floating_book_order',
     messages: 'world_info_floating_book_messages',
     drag: 'world_info_floating_book_drag',
-    side: 'world_info_floating_book_side',
     position: 'world_info_floating_book_pos',
 });
 
@@ -1377,7 +1376,6 @@ const FLOATING_BOOK_DEFAULT_SETTINGS = Object.freeze({
     order: true,
     messages: true,
     drag: false,
-    side: 'left',
 });
 
 const FLOATING_BOOK_HIDDEN_GROUP_NAME = 'Hidden Secure Entries';
@@ -1400,15 +1398,6 @@ function readFloatingBookBool(key, fallback) {
 
 function writeFloatingBookBool(key, value) {
     accountStorage.setItem(key, value ? 'true' : 'false');
-}
-
-function readFloatingBookSide() {
-    const raw = accountStorage.getItem(FLOATING_BOOK_STORAGE_KEYS.side);
-    return raw === 'right' ? 'right' : FLOATING_BOOK_DEFAULT_SETTINGS.side;
-}
-
-function writeFloatingBookSide(value) {
-    accountStorage.setItem(FLOATING_BOOK_STORAGE_KEYS.side, value === 'right' ? 'right' : 'left');
 }
 
 function readFloatingBookPosition() {
@@ -1453,7 +1442,6 @@ function getFloatingBookSettings() {
         order: readFloatingBookBool(FLOATING_BOOK_STORAGE_KEYS.order, FLOATING_BOOK_DEFAULT_SETTINGS.order),
         messages: readFloatingBookBool(FLOATING_BOOK_STORAGE_KEYS.messages, FLOATING_BOOK_DEFAULT_SETTINGS.messages),
         drag: readFloatingBookBool(FLOATING_BOOK_STORAGE_KEYS.drag, FLOATING_BOOK_DEFAULT_SETTINGS.drag),
-        side: readFloatingBookSide(),
     };
 }
 
@@ -2309,12 +2297,6 @@ function createWorldInfoFloatingBookController() {
             controller.renderConfigPanel();
             controller.scheduleRefresh();
         },
-        updateSide(value) {
-            controller.settings.side = value === 'right' ? 'right' : 'left';
-            writeFloatingBookSide(controller.settings.side);
-            controller.renderConfigPanel();
-            controller.ensurePanelsVisible();
-        },
         resetPosition() {
             clearFloatingBookPosition();
             trigger.style.left = '';
@@ -2357,13 +2339,17 @@ function createWorldInfoFloatingBookController() {
             targetPanel.style.display = 'flex';
 
             const triggerRect = trigger.getBoundingClientRect();
-            const opensLeft = controller.settings.side === 'right';
-            const availableWidth = opensLeft
-                ? triggerRect.left - FLOATING_BOOK_PANEL_GAP
-                : window.innerWidth - triggerRect.right - FLOATING_BOOK_PANEL_GAP;
-            const minWidth = window.matchMedia(FLOATING_BOOK_MOBILE_MEDIA).matches
+            const availableLeft = Math.max(0, triggerRect.left - FLOATING_BOOK_PANEL_GAP);
+            const availableRight = Math.max(0, window.innerWidth - triggerRect.right - FLOATING_BOOK_PANEL_GAP);
+            const isMobile = window.matchMedia(FLOATING_BOOK_MOBILE_MEDIA).matches;
+            const minWidth = isMobile
                 ? 0
                 : window.innerWidth * FLOATING_BOOK_DESKTOP_MIN_WIDTH_RATIO;
+            const minReadableWidth = isMobile
+                ? Math.min(300, Math.max(0, window.innerWidth - 20))
+                : minWidth;
+            const opensLeft = availableRight < minReadableWidth && availableLeft > availableRight;
+            const availableWidth = opensLeft ? availableLeft : availableRight;
             const maxWidth = Math.max(minWidth, availableWidth);
 
             targetPanel.style.minWidth = `${Math.round(minWidth)}px`;
@@ -2542,32 +2528,6 @@ function createWorldInfoFloatingBookController() {
                 checkbox.checked = Boolean(controller.settings[option.key]);
                 checkbox.addEventListener('change', () => controller.updateSetting(option.key, checkbox.checked));
                 label.append(checkbox);
-
-                const text = document.createElement('span');
-                text.textContent = option.label;
-                label.append(text);
-
-                configPanel.append(label);
-            }
-
-            for (const option of [
-                { value: 'left', label: 'Book left' },
-                { value: 'right', label: 'Book right' },
-            ]) {
-                const label = document.createElement('label');
-                label.className = 'wi-floating-book-config-row';
-
-                const radio = document.createElement('input');
-                radio.type = 'radio';
-                radio.name = 'wi-floating-book-side';
-                radio.value = option.value;
-                radio.checked = controller.settings.side === option.value;
-                radio.addEventListener('change', () => {
-                    if (radio.checked) {
-                        controller.updateSide(option.value);
-                    }
-                });
-                label.append(radio);
 
                 const text = document.createElement('span');
                 text.textContent = option.label;
