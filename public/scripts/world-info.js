@@ -1776,6 +1776,18 @@ function isWorldInfoReportConstantLike(entry) {
     return entry?.activationSource === 'constant' || entry?.activationSource === 'sticky';
 }
 
+function getFloatingBookStrategyType(entry) {
+    if (entry?.constant === true || isWorldInfoReportConstantLike(entry)) {
+        return 'constant';
+    }
+
+    if (entry?.vectorized === true) {
+        return 'vectorized';
+    }
+
+    return 'normal';
+}
+
 function getWorldInfoReportUniqueKeywordCount(entries = []) {
     const keywords = new Set();
 
@@ -2035,22 +2047,25 @@ function buildFloatingBookEntryRows(snapshot, settings) {
             ? snapshot.summary.activeEntries
             : [];
 
-    const rows = reportEntries.map(entry => ({
-        type: 'entry',
-        hidden: Boolean(entry?.hidden),
-        title: getFloatingBookEntryTitle(entry),
-        preview: entry?.hidden ? 'Hidden secure lorebook activation.' : String(entry?.displayContent || '').trim(),
-        keywordText: entry?.hidden ? '' : getWorldInfoReportKeywordText(entry).replace(/^\s*/, ''),
-        book: entry?.hidden ? null : String(entry?.book || '').trim(),
-        groupName: entry?.hidden ? FLOATING_BOOK_HIDDEN_GROUP_NAME : (String(entry?.book || '').trim() || 'World Info'),
-        placementLabel: getFloatingBookPlacementLabel(entry),
-        position: getFloatingBookEntryPosition(entry),
-        depth: getFloatingBookEntryDepth(entry),
-        order: entryHasOrder(entry) ? Number(entry.order) : null,
-        roundIndex: Number(entry?.roundIndex ?? 0) || 0,
-        tokens: Number(entry?.tokens ?? 0) || 0,
-        constant: isWorldInfoReportConstantLike(entry),
-    }));
+    const rows = reportEntries.map(entry => {
+        const hidden = Boolean(entry?.hidden);
+        return {
+            type: 'entry',
+            hidden,
+            title: getFloatingBookEntryTitle(entry),
+            strategyType: hidden ? '' : getFloatingBookStrategyType(entry),
+            keywordText: hidden ? '' : getWorldInfoReportKeywordText(entry).replace(/^\s*/, ''),
+            book: hidden ? null : String(entry?.book || '').trim(),
+            groupName: hidden ? FLOATING_BOOK_HIDDEN_GROUP_NAME : (String(entry?.book || '').trim() || 'World Info'),
+            placementLabel: hidden ? '' : getFloatingBookPlacementLabel(entry),
+            position: hidden ? Number.MAX_SAFE_INTEGER : getFloatingBookEntryPosition(entry),
+            depth: hidden ? null : getFloatingBookEntryDepth(entry),
+            order: hidden || !entryHasOrder(entry) ? null : Number(entry.order),
+            roundIndex: Number(entry?.roundIndex ?? 0) || 0,
+            tokens: hidden ? 0 : (Number(entry?.tokens ?? 0) || 0),
+            constant: hidden ? false : isWorldInfoReportConstantLike(entry),
+        };
+    });
 
     rows.sort(settings.order ? compareFloatingBookEntries : compareFloatingBookEntriesAlphabetically);
     return rows;
@@ -2269,32 +2284,48 @@ function createWorldInfoFloatingBookController() {
                 element.classList.add('wi-floating-book-entry-constant');
             }
 
+            const header = document.createElement('div');
+            header.className = 'wi-floating-book-entry-header';
+
+            const strategy = document.createElement('div');
+            strategy.className = 'wi-floating-book-entry-strategy';
+            if (!row.hidden) {
+                strategy.classList.add(`wi-floating-book-entry-strategy-${row.strategyType || 'normal'}`);
+                strategy.textContent = row.strategyType === 'constant'
+                    ? '🔵'
+                    : row.strategyType === 'vectorized'
+                        ? '🔗'
+                        : '🟢';
+            }
+            header.append(strategy);
+
             const title = document.createElement('div');
             title.className = 'wi-floating-book-entry-title';
             title.textContent = row.title;
-            element.append(title);
+            header.append(title);
+            element.append(header);
 
-            const metaParts = [row.placementLabel];
-            if (Number.isFinite(row.order) && controller.settings.order) {
-                metaParts.push(`Order ${row.order}`);
-            }
-            if (row.tokens > 0) {
-                metaParts.push(`${row.tokens} tokens`);
-            }
-            if (row.keywordText && !row.hidden) {
-                metaParts.push(row.keywordText);
+            const metaParts = [];
+            if (!row.hidden) {
+                if (row.placementLabel) {
+                    metaParts.push(row.placementLabel);
+                }
+                if (Number.isFinite(row.order) && controller.settings.order) {
+                    metaParts.push(`Order ${row.order}`);
+                }
+                if (row.tokens > 0) {
+                    metaParts.push(`${row.tokens} tokens`);
+                }
+                if (row.keywordText) {
+                    metaParts.push(row.keywordText);
+                }
             }
 
-            const meta = document.createElement('div');
-            meta.className = 'wi-floating-book-entry-meta';
-            meta.textContent = metaParts.filter(Boolean).join(' • ');
-            element.append(meta);
-
-            if (row.preview) {
-                const preview = document.createElement('div');
-                preview.className = 'wi-floating-book-entry-preview';
-                preview.textContent = row.preview;
-                element.append(preview);
+            if (metaParts.length > 0) {
+                const meta = document.createElement('div');
+                meta.className = 'wi-floating-book-entry-meta';
+                meta.textContent = metaParts.join(' • ');
+                element.append(meta);
             }
 
             return element;

@@ -808,6 +808,18 @@ select.keyselect+span.select2-container .select2-selection--multiple {
     font-weight: 600;
 }
 
+.wi-floating-book-entry-header {
+    display: flex;
+    align-items: flex-start;
+    gap: 8px;
+}
+
+.wi-floating-book-entry-strategy {
+    min-width: 1.2em;
+    line-height: 1.1;
+    text-align: center;
+}
+
 .wi-floating-book-group-title {
     margin-top: 4px;
     padding-top: 4px;
