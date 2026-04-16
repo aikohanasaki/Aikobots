@@ -14,7 +14,7 @@ import {
     stripPersonaRegistryFromSettings,
     writePersonasDocument,
 } from '../persona-repository.js';
-import { getConfigValue, generateTimestamp, removeOldBackups } from '../util.js';
+import { delay, getConfigValue, generateTimestamp, removeOldBackups } from '../util.js';
 import { getAllUserHandles, getUserDirectories } from '../users.js';
 import { getFileNameValidationFunction } from '../middleware/validateFileName.js';
 import { listLorebooksForManagement } from '../lorebook-repository.js';
@@ -25,6 +25,9 @@ const ENABLE_ACCOUNTS = !!getConfigValue('enableUserAccounts', false, 'boolean')
 
 // 10 minutes
 const AUTOSAVE_INTERVAL = 10 * 60 * 1000;
+const SETTINGS_PERSONAS_LOCK_RETRY_MS = 50;
+const SETTINGS_PERSONAS_LOCK_TIMEOUT_MS = 10_000;
+const SETTINGS_PERSONAS_LOCK_STALE_MS = 60_000;
 
 /**
  * Map of functions to trigger settings autosave for a user.
@@ -277,6 +280,128 @@ function parseSnapshotSettings(content, label) {
     }
 }
 
+function getSettingsPath(directories) {
+    return path.join(directories.root, SETTINGS_FILE);
+}
+
+function getSettingsPersonasLockPath(directories) {
+    return path.join(directories.root, `${SETTINGS_FILE}.personas.lock`);
+}
+
+function isSettingsPersonasLockStale(lockPath) {
+    try {
+        const stats = fs.statSync(lockPath);
+        return Date.now() - stats.mtimeMs > SETTINGS_PERSONAS_LOCK_STALE_MS;
+    } catch (error) {
+        if (error?.code === 'ENOENT') {
+            return false;
+        }
+
+        throw error;
+    }
+}
+
+function removeSettingsPersonasLock(lockPath) {
+    try {
+        fs.rmdirSync(lockPath);
+    } catch (error) {
+        if (error?.code === 'ENOENT') {
+            return;
+        }
+
+        if (error?.code === 'ENOTEMPTY') {
+            fs.rmSync(lockPath, { recursive: true, force: false });
+            return;
+        }
+
+        throw error;
+    }
+}
+
+async function acquireSettingsPersonasLock(directories) {
+    const lockPath = getSettingsPersonasLockPath(directories);
+    const deadline = Date.now() + SETTINGS_PERSONAS_LOCK_TIMEOUT_MS;
+    fs.mkdirSync(path.dirname(lockPath), { recursive: true });
+
+    while (true) {
+        try {
+            fs.mkdirSync(lockPath);
+            return () => removeSettingsPersonasLock(lockPath);
+        } catch (error) {
+            if (error?.code !== 'EEXIST') {
+                throw error;
+            }
+
+            if (isSettingsPersonasLockStale(lockPath)) {
+                removeSettingsPersonasLock(lockPath);
+                continue;
+            }
+
+            if (Date.now() >= deadline) {
+                const timeoutError = new Error('Timed out waiting to update settings and personas.');
+                timeoutError.status = 503;
+                throw timeoutError;
+            }
+
+            await delay(SETTINGS_PERSONAS_LOCK_RETRY_MS);
+        }
+    }
+}
+
+async function withSettingsPersonasLock(directories, operation) {
+    const release = await acquireSettingsPersonasLock(directories);
+
+    try {
+        return await operation();
+    } finally {
+        release();
+    }
+}
+
+function readFileSnapshot(filePath) {
+    if (!fs.existsSync(filePath)) {
+        return { exists: false, content: null };
+    }
+
+    return { exists: true, content: fs.readFileSync(filePath) };
+}
+
+function restoreFileSnapshot(filePath, snapshot) {
+    if (snapshot.exists) {
+        writeFileAtomicSync(filePath, snapshot.content);
+        return;
+    }
+
+    fs.rmSync(filePath, { force: true });
+}
+
+async function withSettingsPersonasTransaction(directories, operation) {
+    return await withSettingsPersonasLock(directories, async () => {
+        const pathToSettings = getSettingsPath(directories);
+        const pathToPersonas = getPersonasPath(directories);
+        const settingsSnapshot = readFileSnapshot(pathToSettings);
+        const personasSnapshot = readFileSnapshot(pathToPersonas);
+
+        try {
+            return await operation({ pathToSettings, pathToPersonas });
+        } catch (error) {
+            try {
+                restoreFileSnapshot(pathToSettings, settingsSnapshot);
+                restoreFileSnapshot(pathToPersonas, personasSnapshot);
+            } catch (rollbackError) {
+                console.error('Failed to rollback settings/personas state:', rollbackError);
+                throw rollbackError;
+            }
+
+            throw error;
+        }
+    });
+}
+
+function isEmptyPersonasDocument(document) {
+    return !Object.keys(document?.personas || {}).length && !document?.defaultPersona;
+}
+
 /**
  * Gets the latest backup file for a user.
  * @param {string} handle User handle
@@ -296,41 +421,37 @@ function getLatestBackup(handle) {
 
 export const router = express.Router();
 
-router.post('/save', function (request, response) {
+router.post('/save', async function (request, response) {
     try {
-        const pathToSettings = path.join(request.user.directories.root, SETTINGS_FILE);
         const settings = structuredClone(request.body ?? {});
         const personasDocument = buildPersonasDocumentFromLegacySettings(settings);
         const strippedSettings = stripPersonaRegistryFromSettings(settings);
 
-        writePersonasDocument(request.user.directories, personasDocument);
-        writeFileAtomicSync(pathToSettings, JSON.stringify(strippedSettings, null, 4), 'utf8');
+        await withSettingsPersonasTransaction(request.user.directories, ({ pathToSettings }) => {
+            writePersonasDocument(request.user.directories, personasDocument);
+            writeFileAtomicSync(pathToSettings, JSON.stringify(strippedSettings, null, 4), 'utf8');
+        });
         triggerAutoSave(request.user.profile.handle);
         response.send({ result: 'ok' });
     } catch (err) {
         console.error(err);
-        response.send(err);
+        response.status(err.status || 500).send({ error: err.message || String(err) });
     }
 });
 
 // Wintermute's code
 router.post('/get', async (request, response) => {
-    let settings;
-    try {
-        const pathToSettings = path.join(request.user.directories.root, SETTINGS_FILE);
-        settings = JSON.parse(fs.readFileSync(pathToSettings, 'utf8'));
-    } catch (e) {
-        return response.sendStatus(500);
-    }
-
-    let personasDocument;
     let settingsString;
     try {
-        personasDocument = readOrMigratePersonasDocument(request.user.directories, settings);
-        settingsString = buildMergedSettingsString(settings, personasDocument);
+        settingsString = await withSettingsPersonasLock(request.user.directories, () => {
+            const pathToSettings = getSettingsPath(request.user.directories);
+            const settings = JSON.parse(fs.readFileSync(pathToSettings, 'utf8'));
+            const personasDocument = readOrMigratePersonasDocument(request.user.directories, settings);
+            return buildMergedSettingsString(settings, personasDocument);
+        });
     } catch (error) {
-        console.error('Failed to load personas for settings payload:', error);
-        return response.sendStatus(500);
+        console.error('Failed to load settings/personas payload:', error);
+        return response.sendStatus(error.status || 500);
     }
 
     // OpenAI Settings
@@ -461,20 +582,20 @@ router.post('/restore-snapshot', getFileNameValidationFunction('name'), async (r
         const personasDocument = fs.existsSync(personasSnapshotPath)
             ? JSON.parse(fs.readFileSync(personasSnapshotPath, 'utf8'))
             : buildPersonasDocumentFromLegacySettings(settings);
-        const pathToSettings = path.join(request.user.directories.root, SETTINGS_FILE);
-        const pathToPersonas = getPersonasPath(request.user.directories);
         const strippedSettings = stripPersonaRegistryFromSettings(settings);
 
-        writePersonasDocument(request.user.directories, personasDocument);
-        writeFileAtomicSync(pathToSettings, JSON.stringify(strippedSettings, null, 4), 'utf8');
-        if (!Object.keys(personasDocument?.personas || {}).length && !personasDocument?.defaultPersona) {
-            fs.rmSync(pathToPersonas, { force: true });
-        }
+        await withSettingsPersonasTransaction(request.user.directories, ({ pathToSettings, pathToPersonas }) => {
+            writePersonasDocument(request.user.directories, personasDocument);
+            writeFileAtomicSync(pathToSettings, JSON.stringify(strippedSettings, null, 4), 'utf8');
+            if (isEmptyPersonasDocument(personasDocument)) {
+                fs.rmSync(pathToPersonas, { force: true });
+            }
+        });
 
         response.sendStatus(204);
     } catch (error) {
         console.error(error);
-        response.sendStatus(500);
+        response.sendStatus(error.status || 500);
     }
 });
 
