@@ -814,12 +814,12 @@ select.keyselect+span.select2-container .select2-selection--multiple {
 .wi-floating-book-entry-header {
     display: flex;
     align-items: flex-start;
-    gap: 8px;
+    gap: 6px;
 }
 
 .wi-floating-book-entry-strategy {
     min-width: 1.2em;
-    line-height: 1.1;
+    line-height: 1.2;
     text-align: center;
 }
 
@@ -872,8 +872,8 @@ select.keyselect+span.select2-container .select2-selection--multiple {
 .wi-floating-book-chat-row {
     display: flex;
     flex-direction: column;
-    gap: 4px;
-    padding: 6px 8px;
+    gap: 2px;
+    padding: 4px 7px;
     border-radius: 10px;
     background: color-mix(in srgb, var(--SmartThemeShadowColor) 45%, transparent);
     opacity: 0.82;
@@ -913,7 +913,10 @@ select.keyselect+span.select2-container .select2-selection--multiple {
 
 .wi-floating-book-entry-title,
 .wi-floating-book-chat-preview {
+    font-size: 12px;
     line-height: 1.2;
+    min-width: 0;
+    overflow-wrap: anywhere;
 }
 
 .wi-floating-book-empty {

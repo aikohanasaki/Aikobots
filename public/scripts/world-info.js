@@ -1368,6 +1368,7 @@ const FLOATING_BOOK_STORAGE_KEYS = Object.freeze({
     order: 'world_info_floating_book_order',
     messages: 'world_info_floating_book_messages',
     drag: 'world_info_floating_book_drag',
+    side: 'world_info_floating_book_side',
     position: 'world_info_floating_book_pos',
 });
 
@@ -1376,12 +1377,15 @@ const FLOATING_BOOK_DEFAULT_SETTINGS = Object.freeze({
     order: true,
     messages: true,
     drag: false,
+    side: 'left',
 });
 
 const FLOATING_BOOK_HIDDEN_GROUP_NAME = 'Hidden Secure Entries';
 const FLOATING_BOOK_PANEL_GAP = 8;
 const FLOATING_BOOK_TRIGGER_CLICK_SUPPRESS_MS = 250;
 const FLOATING_BOOK_BADGE_ANIMATION_MS = 280;
+const FLOATING_BOOK_DESKTOP_MIN_WIDTH_RATIO = 0.1;
+const FLOATING_BOOK_MOBILE_MEDIA = '(max-width: 700px)';
 
 let worldInfoFloatingBookController = null;
 
@@ -1396,6 +1400,15 @@ function readFloatingBookBool(key, fallback) {
 
 function writeFloatingBookBool(key, value) {
     accountStorage.setItem(key, value ? 'true' : 'false');
+}
+
+function readFloatingBookSide() {
+    const raw = accountStorage.getItem(FLOATING_BOOK_STORAGE_KEYS.side);
+    return raw === 'right' ? 'right' : FLOATING_BOOK_DEFAULT_SETTINGS.side;
+}
+
+function writeFloatingBookSide(value) {
+    accountStorage.setItem(FLOATING_BOOK_STORAGE_KEYS.side, value === 'right' ? 'right' : 'left');
 }
 
 function readFloatingBookPosition() {
@@ -1440,6 +1453,7 @@ function getFloatingBookSettings() {
         order: readFloatingBookBool(FLOATING_BOOK_STORAGE_KEYS.order, FLOATING_BOOK_DEFAULT_SETTINGS.order),
         messages: readFloatingBookBool(FLOATING_BOOK_STORAGE_KEYS.messages, FLOATING_BOOK_DEFAULT_SETTINGS.messages),
         drag: readFloatingBookBool(FLOATING_BOOK_STORAGE_KEYS.drag, FLOATING_BOOK_DEFAULT_SETTINGS.drag),
+        side: readFloatingBookSide(),
     };
 }
 
@@ -2128,19 +2142,65 @@ function buildFloatingBookEntryRows(snapshot, settings) {
     return rows;
 }
 
+function getFloatingBookHiddenBookNames(rows) {
+    return new Set(rows
+        .filter(row => row.hidden)
+        .map(row => row.groupName)
+        .filter(Boolean));
+}
+
+function createFloatingBookHiddenPlaceholder(bookName = '') {
+    return {
+        type: 'entry',
+        hidden: true,
+        title: bookName ? `${bookName}: (hidden entries)` : '(hidden entries)',
+        strategyType: '',
+        keywordText: '',
+        placementLabel: '',
+        order: null,
+        tokens: 0,
+        constant: false,
+    };
+}
+
+function collapseFloatingBookHiddenRows(rows) {
+    const displayRows = [];
+    const hiddenBookNames = new Set();
+
+    for (const row of rows) {
+        if (!row.hidden) {
+            displayRows.push(row);
+            continue;
+        }
+
+        if (!hiddenBookNames.has(row.groupName)) {
+            hiddenBookNames.add(row.groupName);
+            displayRows.push(createFloatingBookHiddenPlaceholder(row.groupName));
+        }
+    }
+
+    return displayRows;
+}
+
 function buildFloatingBookPanelModel(snapshot, settings) {
     const entryRows = buildFloatingBookEntryRows(snapshot, settings);
     const hiddenCount = entryRows.filter(row => row.hidden).length;
     const visibleCount = entryRows.length - hiddenCount;
+    const hiddenBookCount = getFloatingBookHiddenBookNames(entryRows).size;
     const activeEntriesCount = Number(snapshot?.summary?.activeEntriesCount);
-    const totalTokens = Number(snapshot?.summary?.totalTokens ?? 0) || 0;
-    const totalCount = Number.isFinite(activeEntriesCount) ? activeEntriesCount : entryRows.length;
+    const visibleTokens = entryRows.reduce((sum, row) => sum + (row.hidden ? 0 : row.tokens), 0);
+    const summaryTokens = Number(snapshot?.summary?.totalTokens ?? 0) || 0;
+    const totalTokens = hiddenCount > 0 ? visibleTokens : (summaryTokens || visibleTokens);
+    const totalCount = hiddenCount > 0
+        ? visibleCount + hiddenBookCount
+        : Number.isFinite(activeEntriesCount) ? activeEntriesCount : entryRows.length;
     const overflowed = Boolean(snapshot?.summary?.overflowed ?? snapshot?.report?.overflowed);
 
     if (!entryRows.length) {
         return {
             totalCount,
             hiddenCount,
+            hiddenBookCount,
             visibleCount,
             totalTokens,
             overflowed,
@@ -2169,6 +2229,7 @@ function buildFloatingBookPanelModel(snapshot, settings) {
         return {
             totalCount,
             hiddenCount,
+            hiddenBookCount,
             visibleCount,
             totalTokens,
             overflowed,
@@ -2180,11 +2241,12 @@ function buildFloatingBookPanelModel(snapshot, settings) {
     return {
         totalCount,
         hiddenCount,
+        hiddenBookCount,
         visibleCount,
         totalTokens,
         overflowed,
         groups: [],
-        rows: settings.order && settings.messages ? appendFloatingBookChatRows(entryRows) : entryRows,
+        rows: collapseFloatingBookHiddenRows(settings.order && settings.messages ? appendFloatingBookChatRows(entryRows) : entryRows),
     };
 }
 
@@ -2247,6 +2309,12 @@ function createWorldInfoFloatingBookController() {
             controller.renderConfigPanel();
             controller.scheduleRefresh();
         },
+        updateSide(value) {
+            controller.settings.side = value === 'right' ? 'right' : 'left';
+            writeFloatingBookSide(controller.settings.side);
+            controller.renderConfigPanel();
+            controller.ensurePanelsVisible();
+        },
         resetPosition() {
             clearFloatingBookPosition();
             trigger.style.left = '';
@@ -2256,11 +2324,11 @@ function createWorldInfoFloatingBookController() {
             controller.ensurePanelsVisible();
         },
         clampPosition(left, top) {
-            const maxLeft = Math.max(0, window.innerWidth - trigger.offsetWidth - 4);
-            const maxTop = Math.max(0, window.innerHeight - trigger.offsetHeight - 4);
+            const maxLeft = Math.max(0, window.innerWidth - trigger.offsetWidth);
+            const maxTop = Math.max(0, window.innerHeight - trigger.offsetHeight);
             return {
-                left: Math.max(4, Math.min(left, maxLeft)),
-                top: Math.max(4, Math.min(top, maxTop)),
+                left: Math.max(0, Math.min(left, maxLeft)),
+                top: Math.max(0, Math.min(top, maxTop)),
             };
         },
         applySavedPosition() {
@@ -2289,20 +2357,30 @@ function createWorldInfoFloatingBookController() {
             targetPanel.style.display = 'flex';
 
             const triggerRect = trigger.getBoundingClientRect();
+            const opensLeft = controller.settings.side === 'right';
+            const availableWidth = opensLeft
+                ? triggerRect.left - FLOATING_BOOK_PANEL_GAP
+                : window.innerWidth - triggerRect.right - FLOATING_BOOK_PANEL_GAP;
+            const minWidth = window.matchMedia(FLOATING_BOOK_MOBILE_MEDIA).matches
+                ? 0
+                : window.innerWidth * FLOATING_BOOK_DESKTOP_MIN_WIDTH_RATIO;
+            const maxWidth = Math.max(minWidth, availableWidth);
+
+            targetPanel.style.minWidth = `${Math.round(minWidth)}px`;
+            targetPanel.style.maxWidth = `${Math.max(0, Math.round(maxWidth))}px`;
+
             const panelWidth = targetPanel.offsetWidth || 320;
             const panelHeight = targetPanel.offsetHeight || 240;
 
-            let left = triggerRect.right + FLOATING_BOOK_PANEL_GAP;
-            if (left + panelWidth > window.innerWidth - 4) {
-                left = triggerRect.left - panelWidth - FLOATING_BOOK_PANEL_GAP;
-            }
+            const left = opensLeft
+                ? triggerRect.left - panelWidth - FLOATING_BOOK_PANEL_GAP
+                : triggerRect.right + FLOATING_BOOK_PANEL_GAP;
 
             let top = triggerRect.top;
             if (top + panelHeight > window.innerHeight - 4) {
                 top = Math.max(4, window.innerHeight - panelHeight - 4);
             }
 
-            left = Math.max(4, Math.min(left, Math.max(4, window.innerWidth - panelWidth - 4)));
             top = Math.max(4, Math.min(top, Math.max(4, window.innerHeight - panelHeight - 4)));
 
             targetPanel.style.left = `${left}px`;
@@ -2354,32 +2432,9 @@ function createWorldInfoFloatingBookController() {
 
             const title = document.createElement('div');
             title.className = 'wi-floating-book-entry-title';
-            title.textContent = row.title;
+            title.textContent = row.keywordText ? `${row.title} ${row.keywordText}` : row.title;
             header.append(title);
             element.append(header);
-
-            const metaParts = [];
-            if (!row.hidden) {
-                if (row.placementLabel) {
-                    metaParts.push(row.placementLabel);
-                }
-                if (Number.isFinite(row.order) && controller.settings.order) {
-                    metaParts.push(`Order ${row.order}`);
-                }
-                if (row.tokens > 0) {
-                    metaParts.push(`${row.tokens} tokens`);
-                }
-                if (row.keywordText) {
-                    metaParts.push(row.keywordText);
-                }
-            }
-
-            if (metaParts.length > 0) {
-                const meta = document.createElement('div');
-                meta.className = 'wi-floating-book-entry-meta';
-                meta.textContent = metaParts.join(' • ');
-                element.append(meta);
-            }
 
             return element;
         },
@@ -2412,9 +2467,6 @@ function createWorldInfoFloatingBookController() {
             const summary = document.createElement('div');
             summary.className = 'wi-floating-book-summary';
             const summaryParts = [`Active entries: ${model.totalCount}`];
-            if (model.hiddenCount > 0) {
-                summaryParts.push(`Hidden: ${model.hiddenCount}`);
-            }
             if (model.totalTokens > 0) {
                 summaryParts.push(`Tokens: ${model.totalTokens}`);
             }
@@ -2460,18 +2512,7 @@ function createWorldInfoFloatingBookController() {
                     }
 
                     if (hiddenRows.length > 0) {
-                        const hiddenPlaceholder = {
-                            type: 'entry',
-                            hidden: true,
-                            title: '(hidden entries)',
-                            strategyType: '',
-                            keywordText: '',
-                            placementLabel: '',
-                            order: null,
-                            tokens: 0,
-                            constant: false,
-                        };
-                        drawer.append(controller.createEntryRow(hiddenPlaceholder));
+                        drawer.append(controller.createEntryRow(createFloatingBookHiddenPlaceholder()));
                     }
                     panel.append(drawer);
                 }
@@ -2509,6 +2550,32 @@ function createWorldInfoFloatingBookController() {
                 configPanel.append(label);
             }
 
+            for (const option of [
+                { value: 'left', label: 'Book left' },
+                { value: 'right', label: 'Book right' },
+            ]) {
+                const label = document.createElement('label');
+                label.className = 'wi-floating-book-config-row';
+
+                const radio = document.createElement('input');
+                radio.type = 'radio';
+                radio.name = 'wi-floating-book-side';
+                radio.value = option.value;
+                radio.checked = controller.settings.side === option.value;
+                radio.addEventListener('change', () => {
+                    if (radio.checked) {
+                        controller.updateSide(option.value);
+                    }
+                });
+                label.append(radio);
+
+                const text = document.createElement('span');
+                text.textContent = option.label;
+                label.append(text);
+
+                configPanel.append(label);
+            }
+
             const reset = document.createElement('button');
             reset.type = 'button';
             reset.className = 'wi-floating-book-reset menu_button';
@@ -2527,9 +2594,9 @@ function createWorldInfoFloatingBookController() {
             controller.renderPanel(model);
             controller.updateBadge(model.totalCount, JSON.stringify({
                 totalCount: model.totalCount,
-                hiddenCount: model.hiddenCount,
+                hiddenBookCount: model.hiddenBookCount,
                 rows: controller.settings.group
-                    ? model.groups.map(group => [group.name, group.rows.map(row => row.title)])
+                    ? model.groups.map(group => [group.name, group.rows.filter(row => !row.hidden).map(row => row.title), group.rows.some(row => row.hidden) ? 'hidden' : ''])
                     : model.rows.map(row => row.type === 'chat' ? `chat:${row.from}-${row.to}` : row.title),
             }));
             controller.ensurePanelsVisible();
