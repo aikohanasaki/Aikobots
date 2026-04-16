@@ -69,6 +69,11 @@ import {
     eventSource,
     event_types,
     getCurrentChatId,
+    CHAT_SAVE_RESULT,
+    getChatSaveRevision,
+    getChatSaveSessionId,
+    setChatSaveRevision,
+    warnStaleChatSave,
     setCharacterSettingsOverrides,
     system_avatar,
     isChatSaving,
@@ -223,6 +228,7 @@ async function loadGroupChat(chatId, { withMetadata = false } = {}) {
             return {
                 messages: Array.isArray(data?.messages) ? data.messages : [],
                 chat_metadata: cloneGroupChatMetadata(data?.chat_metadata),
+                chat_revision: Number.isInteger(Number(data?.chat_revision)) ? Number(data.chat_revision) : 0,
             };
         }
 
@@ -284,6 +290,7 @@ export async function getGroupChat(groupId, reload = false) {
     const metadata = payload.chat_metadata;
     const freshChat = !metadata.tainted && (!Array.isArray(data) || !data.length);
 
+    setChatSaveRevision(payload.chat_revision);
     updateChatMetadata(metadata, true);
     await ensureDeferredLoaderShown({ force: (Array.isArray(data) ? data.length : 0) >= LONG_CHAT_DISPLAY_MIN || freshChat });
     await waitForLoaderPaint();
@@ -664,6 +671,7 @@ async function saveGroupChat(groupId, shouldSaveGroup) {
     const group = groups.find(x => x.id == groupId);
     const chat_id = group.chat_id;
     group['date_last_chat'] = Date.now();
+    const shouldTrackRevision = String(selected_group) === String(groupId) && String(getCurrentChatId() || '') === String(chat_id || '');
     const response = await fetch('/api/chats/group/save', {
         method: 'POST',
         headers: getRequestHeaders(),
@@ -671,18 +679,40 @@ async function saveGroupChat(groupId, shouldSaveGroup) {
             id: chat_id,
             chat: [...chat],
             chat_metadata: JSON.parse(JSON.stringify(chat_metadata)),
+            ...(shouldTrackRevision ? {
+                base_revision: getChatSaveRevision(),
+                save_session_id: getChatSaveSessionId(),
+            } : {}),
         }),
     });
 
     if (!response.ok) {
+        try {
+            const errorData = await response.json();
+            if (errorData?.error === 'stale_revision') {
+                warnStaleChatSave(errorData);
+                console.error('Group chat save rejected as stale', errorData);
+                return CHAT_SAVE_RESULT.FAILED;
+            }
+        } catch {
+            // Fall through to the generic connection error below.
+        }
+
         toastr.error(t`Check the server connection and reload the page to prevent data loss.`, t`Group Chat could not be saved`);
         console.error('Group chat could not be saved', response);
-        return;
+        return CHAT_SAVE_RESULT.FAILED;
+    }
+
+    const responseData = await response.json();
+    if (shouldTrackRevision) {
+        setChatSaveRevision(responseData?.chat_revision);
     }
 
     if (shouldSaveGroup) {
         await editGroup(groupId, true, false);
     }
+
+    return CHAT_SAVE_RESULT.SAVED;
 }
 
 async function persistActiveGroupChat(groupId) {

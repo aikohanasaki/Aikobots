@@ -19,6 +19,7 @@ import {
     formatBytes,
     getUniqueName,
     sanitizeSafeCharacterReplacements,
+    delay,
 } from '../util.js';
 
 const isBackupEnabled = !!getConfigValue('backups.chat.enabled', true, 'boolean');
@@ -26,6 +27,8 @@ const maxTotalChatBackups = Number(getConfigValue('backups.chat.maxTotalBackups'
 const throttleInterval = Number(getConfigValue('backups.chat.throttleInterval', 10_000, 'number'));
 const checkIntegrity = !!getConfigValue('backups.chat.checkIntegrity', true, 'boolean');
 const CHAT_STORAGE_KEY = 'chat_storage';
+const CHAT_REVISION_KEY = 'chat_revision';
+const CHAT_LAST_SAVE_SESSION_KEY = 'last_save_session_id';
 const CHAT_STORAGE_MODE_SPLIT_TAIL = 'split-tail';
 const CHAT_HEAD_FILE_SUFFIX = '.head.jsonl';
 const GROUP_CHAT_HEADER_VERSION = 1;
@@ -38,6 +41,9 @@ const LONG_CHAT_BUFFER_MIN = LONG_CHAT_DISPLAY_MIN + LONG_CHAT_BUFFER_GAP;
 const LONG_CHAT_BUFFER_MAX = 500;
 const LONG_CHAT_DISPLAY_DEFAULT = 100;
 const LONG_CHAT_BUFFER_DEFAULT = 200;
+const CHAT_SAVE_LOCK_RETRY_MS = 25;
+const CHAT_SAVE_LOCK_TIMEOUT_MS = 10_000;
+const CHAT_SAVE_LOCK_STALE_MS = 10 * 60_000;
 
 export const CHAT_BACKUPS_PREFIX = 'chat_';
 
@@ -63,6 +69,124 @@ function stripChatStorage(header) {
 function getChatStorage(header) {
     const storage = header?.[CHAT_STORAGE_KEY];
     return storage?.mode === CHAT_STORAGE_MODE_SPLIT_TAIL ? storage : null;
+}
+
+function getChatRevision(header) {
+    const revision = Number(header?.[CHAT_REVISION_KEY]);
+    return Number.isInteger(revision) && revision >= 0 ? revision : 0;
+}
+
+function normalizeSaveSessionId(sessionId) {
+    const normalizedSessionId = String(sessionId || '').trim();
+    return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(normalizedSessionId)
+        ? normalizedSessionId
+        : '';
+}
+
+function getChatLastSaveSessionId(header) {
+    return normalizeSaveSessionId(header?.[CHAT_LAST_SAVE_SESSION_KEY]);
+}
+
+function getRequestSaveSessionId(requestBody) {
+    return normalizeSaveSessionId(requestBody?.save_session_id);
+}
+
+function setChatRevision(header, revision, saveSessionId = '') {
+    const normalizedRevision = Number(revision);
+    const revisedHeader = {
+        ...(_.isPlainObject(header) ? header : {}),
+        [CHAT_REVISION_KEY]: Number.isInteger(normalizedRevision) && normalizedRevision >= 0 ? normalizedRevision : 0,
+    };
+    const normalizedSessionId = normalizeSaveSessionId(saveSessionId);
+
+    if (normalizedSessionId) {
+        revisedHeader[CHAT_LAST_SAVE_SESSION_KEY] = normalizedSessionId;
+    } else {
+        delete revisedHeader[CHAT_LAST_SAVE_SESSION_KEY];
+    }
+
+    return revisedHeader;
+}
+
+function getRequestBaseRevision(requestBody) {
+    if (!Object.prototype.hasOwnProperty.call(requestBody || {}, 'base_revision')) {
+        return null;
+    }
+
+    const revision = Number(requestBody.base_revision);
+    return Number.isInteger(revision) && revision >= 0 ? revision : NaN;
+}
+
+function validateSaveRevision(requestBody, existingHeader) {
+    const baseRevision = getRequestBaseRevision(requestBody);
+    const currentRevision = getChatRevision(existingHeader);
+    const lastSaveSessionId = getChatLastSaveSessionId(existingHeader);
+
+    if (baseRevision === null) {
+        return { ok: true, currentRevision, nextRevision: currentRevision + 1 };
+    }
+
+    if (!Number.isInteger(baseRevision)) {
+        return { ok: false, status: 400, error: 'invalid_revision', currentRevision };
+    }
+
+    if (baseRevision !== currentRevision) {
+        return { ok: false, status: 409, error: 'stale_revision', currentRevision, lastSaveSessionId };
+    }
+
+    return { ok: true, currentRevision, nextRevision: currentRevision + 1 };
+}
+
+async function withChatSaveLock(filePath, callback) {
+    const lockPath = `${filePath}.lock`;
+    const started = Date.now();
+    let lockHandle = null;
+
+    while (lockHandle === null) {
+        try {
+            lockHandle = fs.openSync(lockPath, 'wx');
+        } catch (error) {
+            if (error?.code !== 'EEXIST') {
+                throw error;
+            }
+
+            try {
+                const lockStats = fs.statSync(lockPath);
+                if ((Date.now() - lockStats.mtimeMs) > CHAT_SAVE_LOCK_STALE_MS) {
+                    fs.unlinkSync(lockPath);
+                    continue;
+                }
+            } catch (statError) {
+                if (statError?.code !== 'ENOENT') {
+                    throw statError;
+                }
+            }
+
+            if ((Date.now() - started) > CHAT_SAVE_LOCK_TIMEOUT_MS) {
+                const timeoutError = new Error(`Timed out waiting for chat save lock: ${filePath}`);
+                timeoutError.code = 'CHAT_SAVE_LOCK_TIMEOUT';
+                throw timeoutError;
+            }
+
+            await delay(CHAT_SAVE_LOCK_RETRY_MS);
+        }
+    }
+
+    try {
+        return await callback();
+    } finally {
+        try {
+            fs.closeSync(lockHandle);
+        } finally {
+            try {
+                fs.unlinkSync(lockPath);
+            } catch (error) {
+                if (error?.code !== 'ENOENT') {
+                    console.warn(`Failed to remove chat save lock: ${lockPath}`, error);
+                }
+            }
+        }
+    }
 }
 
 function isGroupChatHeader(record) {
@@ -242,6 +366,8 @@ function normalizeImportedHeader(header) {
         delete normalizedHeader.chat_metadata.integrity;
         delete normalizedHeader.chat_metadata.chat_id_hash;
     }
+
+    delete normalizedHeader?.[CHAT_REVISION_KEY];
 
     return normalizedHeader;
 }
@@ -974,6 +1100,42 @@ export function resolveSplitCoreChatPayload(chatsDirectory, coreChatPayload) {
     return [...parentMessages, ...tailMessages];
 }
 
+function getLatestChatBackupFile(directory, prefix) {
+    const backupFiles = fs.readdirSync(directory)
+        .filter(file => file.startsWith(prefix) && path.extname(file) === '.jsonl')
+        .map(file => {
+            const filePath = path.join(directory, file);
+            try {
+                return {
+                    filePath,
+                    mtimeMs: fs.statSync(filePath).mtimeMs,
+                };
+            } catch {
+                return null;
+            }
+        })
+        .filter(Boolean)
+        .sort((a, b) => b.mtimeMs - a.mtimeMs);
+
+    return backupFiles[0]?.filePath || null;
+}
+
+function shouldSkipChatBackup(directory, prefix) {
+    const latestBackupFile = getLatestChatBackupFile(directory, prefix);
+
+    if (!latestBackupFile) {
+        return false;
+    }
+
+    try {
+        const latestBackupStats = fs.statSync(latestBackupFile);
+        // Chat backups are time-gated; edits and deletions inside the interval are coalesced.
+        return Date.now() - latestBackupStats.mtimeMs < throttleInterval;
+    } catch {
+        return false;
+    }
+}
+
 /**
  * Saves a chat to the backups directory.
  * @param {string} directory The user's backups directory.
@@ -988,11 +1150,16 @@ function backupChat(directory, name, chat) {
 
         // replace non-alphanumeric characters with underscores
         name = sanitize(name).replace(/[^a-z0-9]/gi, '_').toLowerCase();
+        const backupPrefix = `${CHAT_BACKUPS_PREFIX}${name}_`;
+
+        if (shouldSkipChatBackup(directory, backupPrefix)) {
+            return;
+        }
 
         const backupFile = path.join(directory, `${CHAT_BACKUPS_PREFIX}${name}_${generateTimestamp()}.jsonl`);
         writeFileAtomicSync(backupFile, chat, 'utf-8');
 
-        removeOldBackups(directory, `${CHAT_BACKUPS_PREFIX}${name}_`);
+        removeOldBackups(directory, backupPrefix);
 
         if (isNaN(maxTotalChatBackups) || maxTotalChatBackups < 0) {
             return;
@@ -1359,6 +1526,107 @@ export async function getChatInfo(pathToFile, additionalData = {}, isGroup = fal
 
 export const router = express.Router();
 
+router.post('/message-visibility', validateAvatarUrlMiddleware, async function (request, response) {
+    try {
+        const directoryName = String(request.body.avatar_url).replace('.png', '');
+        const fileName = `${String(request.body.file_name || '')}.jsonl`;
+        const directoryPath = path.join(request.user.directories.chats, directoryName);
+        const filePath = path.join(directoryPath, sanitize(fileName));
+        const start = Number(request.body.start);
+        const end = request.body.end === undefined ? start : Number(request.body.end);
+        const hide = request.body.unhide !== true;
+        const nameFilter = String(request.body.name_filter || '').trim();
+        const config = normalizeLongChatConfig({
+            displayCount: request.body.display_count,
+            bufferMax: request.body.buffer_max,
+        });
+
+        if (!String(request.body.file_name || '').trim() || !Number.isInteger(start) || !Number.isInteger(end) || start < 0 || end < start) {
+            return response.status(400).send({ error: 'invalid_visibility_range' });
+        }
+
+        if (!fs.existsSync(filePath)) {
+            return response.status(404).send({ error: 'chat_not_found' });
+        }
+
+        return await withChatSaveLock(filePath, async () => {
+            const segments = getChatSegments(filePath);
+            const layout = getSegmentLayout(segments);
+
+            if (!segments.header) {
+                return response.status(404).send({ error: 'chat_not_found' });
+            }
+
+            const revisionCheck = validateSaveRevision(request.body, segments.header);
+            if (!revisionCheck.ok) {
+                return response.status(revisionCheck.status).send({
+                    error: revisionCheck.error,
+                    current_revision: revisionCheck.currentRevision,
+                    last_save_session_id: revisionCheck.lastSaveSessionId,
+                });
+            }
+
+            if (layout.headMessagesMissing) {
+                return response.status(409).send({ error: 'incomplete_split_chat' });
+            }
+
+            if (end >= layout.totalMessages) {
+                return response.status(400).send({ error: 'invalid_visibility_range' });
+            }
+
+            const messages = segments.messages.slice();
+            let changed = 0;
+            for (let messageId = start; messageId <= end; messageId++) {
+                const message = messages[messageId];
+                if (!message || (nameFilter && message.name !== nameFilter)) {
+                    continue;
+                }
+
+                if (message.is_system !== hide) {
+                    changed++;
+                }
+                message.is_system = hide;
+            }
+
+            if (changed === 0) {
+                return response.send({
+                    result: 'ok',
+                    changed: 0,
+                    chat_revision: getChatRevision(segments.header),
+                    storage_mode: segments.storage ? CHAT_STORAGE_MODE_SPLIT_TAIL : 'full',
+                    tailStartId: layout.tailStartId,
+                    tailEndId: layout.tailEndId,
+                    headCount: layout.headCount,
+                    tailCount: layout.tailCount,
+                });
+            }
+
+            const nextRevision = revisionCheck.nextRevision;
+            const header = setChatRevision(stripChatStorage(segments.header), nextRevision, getRequestSaveSessionId(request.body));
+            const writeResult = writeLogicalChat(filePath, header, messages, {
+                displayCount: config.displayCount,
+                bufferMax: config.bufferMax,
+                tailStartId: segments.storage ? layout.tailStartId : null,
+            });
+            getBackupFunction(request.user.profile.handle)(request.user.directories.backups, directoryName, writeResult.fullJsonl);
+
+            return response.send({
+                result: 'ok',
+                changed,
+                chat_revision: nextRevision,
+                storage_mode: writeResult.storageMode,
+                tailStartId: writeResult.tailStartId,
+                tailEndId: writeResult.tailEndId,
+                headCount: writeResult.headCount,
+                tailCount: writeResult.tailCount,
+            });
+        });
+    } catch (error) {
+        console.error(error);
+        return response.status(500).send({ error: 'visibility_update_failed' });
+    }
+});
+
 router.post('/save', validateAvatarUrlMiddleware, async function (request, response) {
     try {
         const directoryName = String(request.body.avatar_url).replace('.png', '');
@@ -1372,73 +1640,91 @@ router.post('/save', validateAvatarUrlMiddleware, async function (request, respo
             bufferMax: request.body.buffer_max,
         });
         const fileName = `${String(request.body.file_name)}.jsonl`;
-        const filePath = path.join(request.user.directories.chats, directoryName, sanitize(fileName));
-        if (checkIntegrity && !request.body.force) {
-            const integritySlug = chatData?.[0]?.chat_metadata?.integrity;
-            const isIntact = await checkChatIntegrity(filePath, integritySlug);
-            if (!isIntact) {
-                console.error(`Chat integrity check failed for ${filePath}`);
-                return response.status(400).send({ error: 'integrity' });
-            }
+        const directoryPath = path.join(request.user.directories.chats, directoryName);
+        const filePath = path.join(directoryPath, sanitize(fileName));
+
+        if (!fs.existsSync(directoryPath)) {
+            fs.mkdirSync(directoryPath, { recursive: true });
         }
 
-        let logicalChatData = chatData;
-        let requestedTailStartId = null;
-        const existingSegments = fs.existsSync(filePath) ? getChatSegments(filePath) : null;
-        const existingTailStartId = existingSegments?.storage?.head_count;
-
-        if (request.body.save_mode === 'tail') {
-            const existingChat = getLogicalChatData(filePath);
-            const absoluteStartId = Number(request.body.absolute_start_id);
-
-            if (!Number.isInteger(absoluteStartId) || absoluteStartId < 0 || existingChat.length === 0 || absoluteStartId > (existingChat.length - 1)) {
-                return response.status(400).send({ error: 'invalid_tail_save' });
+        return await withChatSaveLock(filePath, async () => {
+            if (checkIntegrity && !request.body.force) {
+                const integritySlug = chatData?.[0]?.chat_metadata?.integrity;
+                const isIntact = await checkChatIntegrity(filePath, integritySlug);
+                if (!isIntact) {
+                    console.error(`Chat integrity check failed for ${filePath}`);
+                    return response.status(400).send({ error: 'integrity' });
+                }
             }
 
-            logicalChatData = [
-                chatData[0] ?? existingChat[0],
-                ...existingChat.slice(1, absoluteStartId + 1),
-                ...chatData.slice(1),
-            ];
-            requestedTailStartId = absoluteStartId;
-        } else if (Number.isInteger(existingTailStartId)) {
-            requestedTailStartId = existingTailStartId;
-        } else if (chatData.length > (config.bufferMax + 1)) {
-            requestedTailStartId = Math.max(0, chatData.length - 1 - config.displayCount);
-        }
+            let logicalChatData = chatData;
+            let requestedTailStartId = null;
+            const existingSegments = fs.existsSync(filePath) ? getChatSegments(filePath) : null;
+            const existingTailStartId = existingSegments?.storage?.head_count;
+            const revisionCheck = validateSaveRevision(request.body, existingSegments?.header);
 
-        const header = logicalChatData[0];
-        const messages = logicalChatData.slice(1);
-        const writeResult = writeLogicalChat(filePath, header, messages, {
-            displayCount: config.displayCount,
-            bufferMax: config.bufferMax,
-            tailStartId: requestedTailStartId,
-        });
-        getBackupFunction(request.user.profile.handle)(request.user.directories.backups, directoryName, writeResult.fullJsonl);
+            if (!revisionCheck.ok) {
+                return response.status(revisionCheck.status).send({
+                    error: revisionCheck.error,
+                    current_revision: revisionCheck.currentRevision,
+                    last_save_session_id: revisionCheck.lastSaveSessionId,
+                });
+            }
 
-        const refreshRequired = writeResult.compacted
-            || (existingSegments?.storage?.mode ?? 'full') !== writeResult.storageMode;
+            if (request.body.save_mode === 'tail') {
+                const existingChat = getLogicalChatData(filePath);
+                const absoluteStartId = Number(request.body.absolute_start_id);
 
-        return response.send({
-            result: 'ok',
-            storage_mode: writeResult.storageMode,
-            tailStartId: writeResult.tailStartId,
-            tailEndId: writeResult.tailEndId,
-            headCount: writeResult.headCount,
-            tailCount: writeResult.tailCount,
-            payload: refreshRequired
-                ? buildChunkedChatPayload(filePath, {
-                    count: writeResult.storageMode === CHAT_STORAGE_MODE_SPLIT_TAIL ? writeResult.tailCount : messages.length,
-                    hydrateFull: writeResult.storageMode !== CHAT_STORAGE_MODE_SPLIT_TAIL,
-                    displayCount: config.displayCount,
-                    bufferMax: config.bufferMax,
-                    includeParentPromptCache: writeResult.storageMode === CHAT_STORAGE_MODE_SPLIT_TAIL,
-                })
-                : null,
+                if (!Number.isInteger(absoluteStartId) || absoluteStartId < 0 || existingChat.length === 0 || absoluteStartId > (existingChat.length - 1)) {
+                    return response.status(400).send({ error: 'invalid_tail_save' });
+                }
+
+                logicalChatData = [
+                    chatData[0] ?? existingChat[0],
+                    ...existingChat.slice(1, absoluteStartId + 1),
+                    ...chatData.slice(1),
+                ];
+                requestedTailStartId = absoluteStartId;
+            } else if (Number.isInteger(existingTailStartId)) {
+                requestedTailStartId = existingTailStartId;
+            } else if (chatData.length > (config.bufferMax + 1)) {
+                requestedTailStartId = Math.max(0, chatData.length - 1 - config.displayCount);
+            }
+
+            const header = setChatRevision(logicalChatData[0], revisionCheck.nextRevision, getRequestSaveSessionId(request.body));
+            const messages = logicalChatData.slice(1);
+            const writeResult = writeLogicalChat(filePath, header, messages, {
+                displayCount: config.displayCount,
+                bufferMax: config.bufferMax,
+                tailStartId: requestedTailStartId,
+            });
+            getBackupFunction(request.user.profile.handle)(request.user.directories.backups, directoryName, writeResult.fullJsonl);
+
+            const refreshRequired = writeResult.compacted
+                || (existingSegments?.storage?.mode ?? 'full') !== writeResult.storageMode;
+
+            return response.send({
+                result: 'ok',
+                chat_revision: revisionCheck.nextRevision,
+                storage_mode: writeResult.storageMode,
+                tailStartId: writeResult.tailStartId,
+                tailEndId: writeResult.tailEndId,
+                headCount: writeResult.headCount,
+                tailCount: writeResult.tailCount,
+                payload: refreshRequired
+                    ? buildChunkedChatPayload(filePath, {
+                        count: writeResult.storageMode === CHAT_STORAGE_MODE_SPLIT_TAIL ? writeResult.tailCount : messages.length,
+                        hydrateFull: writeResult.storageMode !== CHAT_STORAGE_MODE_SPLIT_TAIL,
+                        displayCount: config.displayCount,
+                        bufferMax: config.bufferMax,
+                        includeParentPromptCache: writeResult.storageMode === CHAT_STORAGE_MODE_SPLIT_TAIL,
+                    })
+                    : null,
+            });
         });
     } catch (error) {
         console.error(error);
-        return response.send(error);
+        return response.status(500).send({ error: 'save_failed' });
     }
 });
 
@@ -1471,7 +1757,6 @@ router.post('/get', validateAvatarUrlMiddleware, async function (request, respon
                 displayCount: request.body.display_count,
                 bufferMax: request.body.buffer_max,
             });
-            ensureSplitTailStorage(filePath, config);
             const rangeStart = request.body.range_start === undefined ? null : Number(request.body.range_start);
             const count = request.body.count === undefined ? null : Number(request.body.count);
             const hydrateFull = request.body.hydrate_full === true;
@@ -1480,14 +1765,17 @@ router.post('/get', validateAvatarUrlMiddleware, async function (request, respon
             } catch (error) {
                 console.error('Failed to update user last activity for direct chat read:', error);
             }
-            return response.send(buildChunkedChatPayload(filePath, {
-                rangeStart,
-                count,
-                hydrateFull,
-                displayCount: config.displayCount,
-                bufferMax: config.bufferMax,
-                includeParentPromptCache: request.body.include_parent_prompt_cache === true,
-            }));
+            return await withChatSaveLock(filePath, async () => {
+                ensureSplitTailStorage(filePath, config);
+                return response.send(buildChunkedChatPayload(filePath, {
+                    rangeStart,
+                    count,
+                    hydrateFull,
+                    displayCount: config.displayCount,
+                    bufferMax: config.bufferMax,
+                    includeParentPromptCache: request.body.include_parent_prompt_cache === true,
+                }));
+            });
         }
 
         try {
@@ -1849,49 +2137,53 @@ router.post('/group/get', async (request, response) => {
     const withMetadata = request.body.with_metadata === true;
 
     if (fs.existsSync(pathToFile)) {
-        const payload = ensureGroupChatHeader(request.user, id, pathToFile);
-        const jsonData = payload.messages;
-        const chatMetadata = _.cloneDeep(payload.header?.chat_metadata || {});
-        try {
-            await touchUserActivity(request.user.profile.handle);
-        } catch (error) {
-            console.error('Failed to update user last activity for group chat read:', error);
-        }
+        return await withChatSaveLock(pathToFile, async () => {
+            const payload = ensureGroupChatHeader(request.user, id, pathToFile);
+            const jsonData = payload.messages;
+            const chatMetadata = _.cloneDeep(payload.header?.chat_metadata || {});
+            try {
+                await touchUserActivity(request.user.profile.handle);
+            } catch (error) {
+                console.error('Failed to update user last activity for group chat read:', error);
+            }
 
-        if (request.body.chunked) {
-            const totalMessages = jsonData.length;
-            const requestedStart = request.body.range_start === undefined ? Math.max(0, totalMessages - 50) : Number(request.body.range_start);
-            const requestedCount = request.body.count === undefined ? 50 : Number(request.body.count);
-            const loadedRangeStart = Number.isInteger(requestedStart) ? Math.max(0, Math.min(requestedStart, Math.max(0, totalMessages - 1))) : 0;
-            const count = Number.isInteger(requestedCount) && requestedCount > 0 ? requestedCount : 50;
-            const loadedRangeEnd = totalMessages > 0
-                ? Math.min(totalMessages - 1, loadedRangeStart + count - 1)
-                : -1;
+            if (request.body.chunked) {
+                const totalMessages = jsonData.length;
+                const requestedStart = request.body.range_start === undefined ? Math.max(0, totalMessages - 50) : Number(request.body.range_start);
+                const requestedCount = request.body.count === undefined ? 50 : Number(request.body.count);
+                const loadedRangeStart = Number.isInteger(requestedStart) ? Math.max(0, Math.min(requestedStart, Math.max(0, totalMessages - 1))) : 0;
+                const count = Number.isInteger(requestedCount) && requestedCount > 0 ? requestedCount : 50;
+                const loadedRangeEnd = totalMessages > 0
+                    ? Math.min(totalMessages - 1, loadedRangeStart + count - 1)
+                    : -1;
 
-            return response.send({
-                mode: 'full',
-                isHydrated: true,
-                totalMessages,
-                loadedRangeStart,
-                loadedRangeEnd,
-                ...(withMetadata ? { chat_metadata: chatMetadata } : {}),
-                messages: loadedRangeEnd >= loadedRangeStart
-                    ? jsonData.slice(loadedRangeStart, loadedRangeEnd + 1)
-                    : [],
-            });
-        }
+                return response.send({
+                    mode: 'full',
+                    isHydrated: true,
+                    chat_revision: getChatRevision(payload.header),
+                    totalMessages,
+                    loadedRangeStart,
+                    loadedRangeEnd,
+                    ...(withMetadata ? { chat_metadata: chatMetadata } : {}),
+                    messages: loadedRangeEnd >= loadedRangeStart
+                        ? jsonData.slice(loadedRangeStart, loadedRangeEnd + 1)
+                        : [],
+                });
+            }
 
-        if (withMetadata) {
-            return response.send({
-                messages: jsonData,
-                chat_metadata: chatMetadata,
-            });
-        }
+            if (withMetadata) {
+                return response.send({
+                    messages: jsonData,
+                    chat_metadata: chatMetadata,
+                    chat_revision: getChatRevision(payload.header),
+                });
+            }
 
-        return response.send(jsonData);
+            return response.send(jsonData);
+        });
     } else {
         return response.send(withMetadata
-            ? { messages: [], chat_metadata: {} }
+            ? { messages: [], chat_metadata: {}, chat_revision: 0 }
             : []);
     }
 });
@@ -1916,7 +2208,7 @@ router.post('/group/delete', (request, response) => {
     return response.send({ error: true });
 });
 
-router.post('/group/save', (request, response) => {
+router.post('/group/save', async (request, response) => {
     if (!request.body || !request.body.id) {
         return response.sendStatus(400);
     }
@@ -1929,19 +2221,41 @@ router.post('/group/save', (request, response) => {
     const pathToFile = path.join(request.user.directories.groupChats, `${id}.jsonl`);
 
     if (!fs.existsSync(request.user.directories.groupChats)) {
-        fs.mkdirSync(request.user.directories.groupChats);
+        fs.mkdirSync(request.user.directories.groupChats, { recursive: true });
     }
 
-    let chat_data = request.body.chat;
-    const existingPayload = getGroupChatPayload(pathToFile);
-    const chatMetadata = _.isPlainObject(request.body.chat_metadata)
-        ? _.cloneDeep(request.body.chat_metadata)
-        : (existingPayload.hasHeader
-            ? _.cloneDeep(existingPayload.header?.chat_metadata || {})
-            : resolveLegacyGroupChatMetadata(request.user, id));
-    const writeResult = writeGroupChat(pathToFile, chat_data, chatMetadata, existingPayload.header);
-    getBackupFunction(request.user.profile.handle)(request.user.directories.backups, String(id), writeResult.fullJsonl);
-    return response.send({ ok: true });
+    try {
+        return await withChatSaveLock(pathToFile, async () => {
+            const chat_data = request.body.chat;
+            const existingPayload = getGroupChatPayload(pathToFile);
+            const revisionCheck = validateSaveRevision(request.body, existingPayload.header);
+
+            if (!revisionCheck.ok) {
+                return response.status(revisionCheck.status).send({
+                    error: revisionCheck.error,
+                    current_revision: revisionCheck.currentRevision,
+                    last_save_session_id: revisionCheck.lastSaveSessionId,
+                });
+            }
+
+            const chatMetadata = _.isPlainObject(request.body.chat_metadata)
+                ? _.cloneDeep(request.body.chat_metadata)
+                : (existingPayload.hasHeader
+                    ? _.cloneDeep(existingPayload.header?.chat_metadata || {})
+                    : resolveLegacyGroupChatMetadata(request.user, id));
+            const header = setChatRevision(
+                buildGroupChatHeader(chatMetadata, existingPayload.header),
+                revisionCheck.nextRevision,
+                getRequestSaveSessionId(request.body),
+            );
+            const writeResult = writeLogicalChat(pathToFile, header, chat_data);
+            getBackupFunction(request.user.profile.handle)(request.user.directories.backups, String(id), writeResult.fullJsonl);
+            return response.send({ ok: true, chat_revision: revisionCheck.nextRevision });
+        });
+    } catch (error) {
+        console.error(error);
+        return response.status(500).send({ error: 'save_failed' });
+    }
 });
 
 router.post('/search', validateAvatarUrlMiddleware, function (request, response) {

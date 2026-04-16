@@ -32,6 +32,10 @@ import {
     chatElement,
     hydrateCurrentChatForEditing,
     isHistoricalChatMessage,
+    getChatSaveRevision,
+    getChatSaveSessionId,
+    setChatSaveRevision,
+    warnStaleChatSave,
 } from '../script.js';
 import { selected_group } from './group-chats.js';
 import { power_user } from './power-user.js';
@@ -433,6 +437,72 @@ async function ensurePromptRelevantMessageEditable(messageId) {
     return hydrateCurrentChatForEditing();
 }
 
+const CHAT_MESSAGE_VISIBILITY_SAVE_RESULT = {
+    SAVED: 'saved',
+    FAILED: 'failed',
+    STALE: 'stale',
+};
+
+async function updateServerChatMessageVisibility(start, end, unhide, nameFilter = null) {
+    if (selected_group) {
+        toastr.warning(t`Changing historical message visibility in group chats is not supported yet.`, t`Chat message visibility`);
+        return CHAT_MESSAGE_VISIBILITY_SAVE_RESULT.FAILED;
+    }
+
+    if (this_chid === undefined || !characters[this_chid]) {
+        toastr.warning(t`Select a character chat before changing historical message visibility.`, t`Chat message visibility`);
+        return CHAT_MESSAGE_VISIBILITY_SAVE_RESULT.FAILED;
+    }
+
+    const handleSaveFailure = (error) => {
+        toastr.error(t`Check the server connection and reload the page to prevent data loss.`, t`Chat could not be saved`);
+        console.error('Chat message visibility could not be saved', error);
+        return CHAT_MESSAGE_VISIBILITY_SAVE_RESULT.FAILED;
+    };
+
+    try {
+        const response = await fetch('/api/chats/message-visibility', {
+            method: 'POST',
+            headers: getRequestHeaders(),
+            body: JSON.stringify({
+                ch_name: characters[this_chid].name,
+                file_name: getCurrentChatId(),
+                avatar_url: characters[this_chid].avatar,
+                start,
+                end,
+                unhide: Boolean(unhide),
+                name_filter: String(nameFilter || '').trim(),
+                base_revision: getChatSaveRevision(),
+                save_session_id: getChatSaveSessionId(),
+                display_count: power_user.long_chat_display_count,
+                buffer_max: power_user.long_chat_buffer_max,
+            }),
+            cache: 'no-cache',
+        });
+
+        if (!response.ok) {
+            try {
+                const errorData = await response.json();
+                if (errorData?.error === 'stale_revision') {
+                    warnStaleChatSave(errorData);
+                    console.error('Chat message visibility rejected as stale', errorData);
+                    return CHAT_MESSAGE_VISIBILITY_SAVE_RESULT.STALE;
+                }
+            } catch {
+                // Fall through to the generic connection error below.
+            }
+
+            return handleSaveFailure(response);
+        }
+
+        const data = await response.json();
+        setChatSaveRevision(data?.chat_revision);
+        return CHAT_MESSAGE_VISIBILITY_SAVE_RESULT.SAVED;
+    } catch (error) {
+        return handleSaveFailure(error);
+    }
+}
+
 /**
  * @type {Record<string, ConverterFunction>} File converters
  */
@@ -506,6 +576,21 @@ export async function hideChatMessageRange(start, end, unhide, nameFitler = null
 
     for (let messageId = start; messageId <= end; messageId++) {
         hydratedHistoricalMessages ||= isHistoricalChatMessage(messageId);
+    }
+
+    if (persist && hydratedHistoricalMessages) {
+        const saveResult = await updateServerChatMessageVisibility(start, end, unhide, nameFitler);
+        if (saveResult === CHAT_MESSAGE_VISIBILITY_SAVE_RESULT.SAVED) {
+            await reloadCurrentChat();
+            return;
+        }
+
+        if (saveResult === CHAT_MESSAGE_VISIBILITY_SAVE_RESULT.STALE) {
+            return;
+        }
+    }
+
+    for (let messageId = start; messageId <= end; messageId++) {
         if (await ensurePromptRelevantMessageEditable(messageId)) {
             continue;
         }
@@ -532,9 +617,6 @@ export async function hideChatMessageRange(start, end, unhide, nameFitler = null
         await saveChatConditional();
     }
 
-    if (persist && hydratedHistoricalMessages) {
-        await reloadCurrentChat();
-    }
 }
 
 /**

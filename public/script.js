@@ -700,6 +700,20 @@ export let isSwipingAllowed = true; //false when a swipe is in progress, or swip
 let chatSaveTimeout;
 let importFlashTimeout;
 export let isChatSaving = false;
+let chatSaveRevision = 0;
+let chatSaveSessionId = '';
+let chatSaveDirty = false;
+let chatSaveQueuePromise = null;
+const CHAT_SAVE_RESULT = {
+    SAVED: 'saved',
+    FAILED: 'failed',
+};
+export { CHAT_SAVE_RESULT };
+const CHAT_SAVE_SESSION_ID_KEY = 'aikobots_chat_save_session_id';
+const SYNC_CURRENT_CHAT_COOLDOWN_MS = 60_000;
+const SYNC_CURRENT_CHAT_TITLE = 'update server with current browser chat state';
+let syncCurrentChatCooldownUntil = 0;
+let syncCurrentChatCooldownInterval = null;
 let chat_create_date = '';
 let firstRun = false;
 let settingsReady = false;
@@ -961,6 +975,103 @@ export function getCurrentChatId() {
     }
     else if (this_chid !== undefined) {
         return characters[this_chid]?.chat;
+    }
+}
+
+export function getChatSaveRevision() {
+    return Number.isInteger(chatSaveRevision) && chatSaveRevision >= 0 ? chatSaveRevision : 0;
+}
+
+export function setChatSaveRevision(revision) {
+    const normalizedRevision = Number(revision);
+    chatSaveRevision = Number.isInteger(normalizedRevision) && normalizedRevision >= 0 ? normalizedRevision : 0;
+}
+
+export function getChatSaveSessionId() {
+    if (chatSaveSessionId) {
+        return chatSaveSessionId;
+    }
+
+    try {
+        chatSaveSessionId = sessionStorage.getItem(CHAT_SAVE_SESSION_ID_KEY) || '';
+        if (!chatSaveSessionId) {
+            chatSaveSessionId = uuidv4();
+            sessionStorage.setItem(CHAT_SAVE_SESSION_ID_KEY, chatSaveSessionId);
+        }
+    } catch {
+        chatSaveSessionId = uuidv4();
+    }
+
+    return chatSaveSessionId;
+}
+
+export function warnStaleChatSave(errorData) {
+    const lastSaveSessionId = String(errorData?.last_save_session_id || '');
+    const conflictMessage = lastSaveSessionId && lastSaveSessionId !== getChatSaveSessionId()
+        ? t`Another browser session has a newer save. Close all other browser sessions before trying again.`
+        : t`This chat has a newer save. Close other browser sessions before trying again.`;
+
+    toastr.warning(conflictMessage, t`Chat save conflict`);
+}
+
+function getSyncCurrentChatCooldownSeconds() {
+    return Math.max(0, Math.ceil((syncCurrentChatCooldownUntil - Date.now()) / 1000));
+}
+
+function updateSyncCurrentChatCooldownState() {
+    const button = document.getElementById('option_sync_current_chat');
+    if (!button) {
+        return;
+    }
+
+    const cooldownSeconds = getSyncCurrentChatCooldownSeconds();
+    if (cooldownSeconds > 0) {
+        button.setAttribute('title', `save cooldown, ${cooldownSeconds} seconds remaining`);
+        button.setAttribute('aria-disabled', 'true');
+        button.classList.add('disabled');
+        return;
+    }
+
+    button.setAttribute('title', SYNC_CURRENT_CHAT_TITLE);
+    button.setAttribute('aria-disabled', 'false');
+    button.classList.remove('disabled');
+
+    if (syncCurrentChatCooldownInterval !== null) {
+        clearInterval(syncCurrentChatCooldownInterval);
+        syncCurrentChatCooldownInterval = null;
+    }
+}
+
+function startSyncCurrentChatCooldown() {
+    syncCurrentChatCooldownUntil = Date.now() + SYNC_CURRENT_CHAT_COOLDOWN_MS;
+    updateSyncCurrentChatCooldownState();
+
+    if (syncCurrentChatCooldownInterval !== null) {
+        clearInterval(syncCurrentChatCooldownInterval);
+    }
+
+    syncCurrentChatCooldownInterval = setInterval(updateSyncCurrentChatCooldownState, 1000);
+}
+
+// The cooldown is intentionally per-click and not per-successful-save. 
+// This prevents users from hammering the server with save requests by repeatedly clicking the button when they have a large chat that takes a while to save.
+
+async function syncCurrentChatToServer() {
+    if (getSyncCurrentChatCooldownSeconds() > 0) {
+        updateSyncCurrentChatCooldownState();
+        return;
+    }
+
+    if (!hasActiveChatContext()) {
+        return;
+    }
+
+    startSyncCurrentChatCooldown();
+    toastr.info(t`Syncing chat to server`);
+    const syncResult = await saveChatConditional();
+
+    if (syncResult === CHAT_SAVE_RESULT.SAVED) {
+        toastr.success(t`Chat sync successful`);
     }
 }
 
@@ -2842,6 +2953,8 @@ export function applyChunkedChatPayload(response, { replace = false, currentView
     } else if (!isSplitTailChat() || isChatFullyHydrated()) {
         setParentPromptCache([], 0);
     }
+
+    setChatSaveRevision(header?.chat_revision);
 
     return header;
 }
@@ -8430,6 +8543,7 @@ export function resetChatState() {
     chat.splice(0, chat.length, ...SAFETY_CHAT);
     // resets chat metadata
     chat_metadata = {};
+    setChatSaveRevision(0);
     // resets the characters array, forcing getcharacters to reset
     characters.length = 0;
 }
@@ -8762,6 +8876,7 @@ export async function saveChat({ chatName, withMetadata, mesId, force = false } 
     let trimmedChat = [];
     let saveMode = undefined;
     let absoluteStartId = undefined;
+    const shouldTrackRevision = chatName === undefined && normalizedMesId === undefined;
 
     if (isSplitTailChat() && !isChatFullyHydrated() && chatName === undefined && normalizedMesId === undefined) {
         absoluteStartId = chatLoadState.tailStartId;
@@ -8794,6 +8909,10 @@ export async function saveChat({ chatName, withMetadata, mesId, force = false } 
                 force: force,
                 save_mode: saveMode,
                 absolute_start_id: absoluteStartId,
+                ...(shouldTrackRevision ? {
+                    base_revision: getChatSaveRevision(),
+                    save_session_id: getChatSaveSessionId(),
+                } : {}),
                 display_count: getConfiguredLongChatDisplayCount(),
                 buffer_max: getConfiguredLongChatBufferMax(),
             }),
@@ -8801,6 +8920,10 @@ export async function saveChat({ chatName, withMetadata, mesId, force = false } 
 
         if (result.ok) {
             const responseData = await result.json();
+            if (shouldTrackRevision) {
+                setChatSaveRevision(responseData?.chat_revision);
+            }
+
             if (isSplitTailChat() && !isChatFullyHydrated() && saveMode === 'tail') {
                 syncSplitTailStateAfterMutation();
 
@@ -8826,10 +8949,15 @@ export async function saveChat({ chatName, withMetadata, mesId, force = false } 
                     syncParentPromptCacheForTailStartChange(chatLoadState.tailStartId, previousTailStartId);
                 }
             }
-            return;
+            return CHAT_SAVE_RESULT.SAVED;
         }
 
         const errorData = await result.json();
+        if (errorData?.error === 'stale_revision') {
+            warnStaleChatSave(errorData);
+            return CHAT_SAVE_RESULT.FAILED;
+        }
+
         const isIntegrityError = errorData?.error === 'integrity' && !force;
         if (!isIntegrityError) {
             throw new Error(result.statusText);
@@ -8848,13 +8976,14 @@ export async function saveChat({ chatName, withMetadata, mesId, force = false } 
         if (!forceSaveConfirmed) {
             console.warn('Chat integrity check failed, and user did not confirm the overwrite. Reloading the page.');
             window.location.reload();
-            return;
+            return CHAT_SAVE_RESULT.FAILED;
         }
 
-        await saveChat({ chatName, withMetadata, mesId, force: true });
+        return await saveChat({ chatName, withMetadata, mesId, force: true });
     } catch (error) {
         console.error(error);
         toastr.error(t`Check the server connection and reload the page to prevent data loss.`, t`Chat could not be saved`);
+        return CHAT_SAVE_RESULT.FAILED;
     }
 }
 
@@ -12150,15 +12279,19 @@ export async function deleteSwipe(swipeId = null, messageId = chat.length - 1) {
 }
 
 export async function saveMetadata() {
+<<<<<<< Updated upstream
     if (selected_group) {
         await saveGroupChat(selected_group, true);
     }
     else {
         await saveChatConditional();
     }
+=======
+    await saveChatConditional();
+>>>>>>> Stashed changes
 }
 
-export async function saveChatConditional() {
+async function saveChatOnce() {
     let savedChatId = '';
     let savedIsGroup = false;
     let savedGroupId = null;
@@ -12168,16 +12301,8 @@ export async function saveChatConditional() {
     let saveSucceeded = false;
 
     try {
-        await waitUntilCondition(() => !isChatSaving, DEFAULT_SAVE_EDIT_TIMEOUT, 100);
-    } catch {
-        console.warn('Timeout waiting for chat to save');
-        return;
-    }
-
-    try {
         cancelDebouncedChatSave();
 
-        isChatSaving = true;
         savedChatId = String(getCurrentChatId() || '');
         savedIsGroup = Boolean(selected_group);
         savedGroupId = savedIsGroup ? selected_group : null;
@@ -12201,10 +12326,16 @@ export async function saveChatConditional() {
         // Non-urgent for now; defer until temp-chat/STMB save-flow cleanup.
 
         if (savedIsGroup) {
-            await saveGroupChat(savedGroupId, true);
+            const groupSaved = await saveGroupChat(savedGroupId, true);
+            if (groupSaved === CHAT_SAVE_RESULT.FAILED || groupSaved === false) {
+                throw new Error('Group chat could not be saved');
+            }
         }
         else {
-            await saveChat();
+            const chatSaved = await saveChat();
+            if (chatSaved === CHAT_SAVE_RESULT.FAILED || chatSaved === false) {
+                throw new Error('Chat could not be saved');
+            }
             savedChatId = String(getCurrentChatId() || savedChatId || '');
             savedFileName = savedChatId;
             if (savedChatRef?.type === 'character') {
@@ -12218,8 +12349,6 @@ export async function saveChatConditional() {
         saveSucceeded = true;
     } catch (error) {
         console.error('Error saving chat', error);
-    } finally {
-        isChatSaving = false;
     }
 
     if (saveSucceeded) {
@@ -12232,6 +12361,45 @@ export async function saveChatConditional() {
             fileName: savedFileName,
         });
     }
+
+    return saveSucceeded ? CHAT_SAVE_RESULT.SAVED : CHAT_SAVE_RESULT.FAILED;
+}
+
+async function drainChatSaveQueue() {
+    isChatSaving = true;
+    let finalResult = CHAT_SAVE_RESULT.SAVED;
+
+    try {
+        while (chatSaveDirty) {
+            chatSaveDirty = false;
+            const result = await saveChatOnce();
+            finalResult = result;
+
+            if (result !== CHAT_SAVE_RESULT.SAVED) {
+                chatSaveDirty = false;
+                break;
+            }
+        }
+
+        return finalResult;
+    } finally {
+        isChatSaving = false;
+        chatSaveQueuePromise = null;
+    }
+}
+
+export async function saveChatConditional() {
+    chatSaveDirty = true;
+
+    if (!chatSaveQueuePromise) {
+        chatSaveQueuePromise = drainChatSaveQueue().catch((error) => {
+            console.error('Error saving chat', error);
+            chatSaveDirty = false;
+            return CHAT_SAVE_RESULT.FAILED;
+        });
+    }
+
+    return chatSaveQueuePromise;
 }
 
 /**
@@ -14415,6 +14583,10 @@ jQuery(async function () {
 
         if (id == 'option_select_chat') {
             await handleManageChatsAction({ fromSlashCommand });
+        }
+
+        else if (id == 'option_sync_current_chat') {
+            await syncCurrentChatToServer();
         }
 
         else if (id == 'option_start_new_chat') {
