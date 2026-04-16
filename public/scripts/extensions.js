@@ -1616,14 +1616,15 @@ export async function writeExtensionField(characterId, key, value) {
     if (!mergeResponse.ok) {
         let errorMessage = '';
         try {
-            const errorData = await mergeResponse.json();
-            errorMessage = errorData?.error || errorData?.message || '';
-        } catch {
+            const responseText = await mergeResponse.text();
             try {
-                errorMessage = await mergeResponse.text();
+                const errorData = JSON.parse(responseText);
+                errorMessage = errorData?.error || errorData?.message || '';
             } catch {
-                errorMessage = '';
+                errorMessage = responseText;
             }
+        } catch {
+            errorMessage = '';
         }
 
         console.error('Failed to save extension field', errorMessage || mergeResponse.statusText);
