@@ -273,6 +273,19 @@ function normalizeSubmissionRequestedDistributionMode(value, fallback = null) {
         : fallback;
 }
 
+function normalizeSubmissionRequestedDistributionModeForRequest(value, fallback = SUBMISSION_DISTRIBUTION_MODES.GLOBAL) {
+    if (value === undefined) {
+        return fallback;
+    }
+
+    const normalizedValue = String(value).trim().toLowerCase();
+    if (Object.values(SUBMISSION_DISTRIBUTION_MODES).includes(normalizedValue)) {
+        return normalizedValue;
+    }
+
+    throw new Error('Invalid distribution mode.');
+}
+
 function normalizeSubmissionRecord(record) {
     const normalizedRequestedDistributionMode = normalizeSubmissionRequestedDistributionMode(record?.requestedDistributionMode, null);
     const normalizedTargetHandles = normalizeHandleList(record?.targetHandles);
@@ -518,7 +531,7 @@ async function normalizeSubmissionDistributionRequest({
     requestedBlacklistHandles = [],
     actingUserHandle,
 }) {
-    const normalizedRequestedDistributionMode = normalizeSubmissionRequestedDistributionMode(
+    const normalizedRequestedDistributionMode = normalizeSubmissionRequestedDistributionModeForRequest(
         requestedDistributionMode,
         SUBMISSION_DISTRIBUTION_MODES.GLOBAL,
     );

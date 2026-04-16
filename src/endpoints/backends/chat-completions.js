@@ -3370,6 +3370,7 @@ export async function handleChatCompletionsGenerate(request, response) {
     let assembledWorldInfoOverflowed = false;
     let assembledPromptSnapshot = null;
     let promptInspectionInfo = null;
+    let dispatchedPromptSnapshotKey = null;
     if (!Array.isArray(request.body.messages) && request.body.prompt_context && typeof request.body.prompt_context === 'object') {
         request.body.prompt_context.includeItemization = true;
         await prepareServerPromptContext(request.user, request.user.directories, request.body.prompt_context);
@@ -3402,6 +3403,7 @@ export async function handleChatCompletionsGenerate(request, response) {
 
             if (latestPromptInspectionSnapshot?.key) {
                 await setPromptInspectionSnapshot(latestPromptInspectionSnapshot.key, latestPromptInspectionSnapshot.snapshot);
+                dispatchedPromptSnapshotKey = latestPromptInspectionSnapshot.key;
             }
         }
         rewriteSystemMessagesForO1Model(request.body.prompt_context.model, request.body.prompt_context.chatCompletionSource, assembled.chat);
@@ -3466,7 +3468,7 @@ export async function handleChatCompletionsGenerate(request, response) {
             timedWorldInfo: assembledTimedWorldInfo,
             worldInfoOverflowed: assembledWorldInfoOverflowed,
             worldInfo: assembledPromptSnapshot?.worldInfo || null,
-            promptSnapshotKey: promptInspectionInfo?.key || null,
+            promptSnapshotKey: dispatchedPromptSnapshotKey || promptInspectionInfo?.key || null,
         });
     }
 
@@ -3829,7 +3831,7 @@ export async function handleChatCompletionsGenerate(request, response) {
         timedWorldInfo: assembledTimedWorldInfo,
         worldInfoOverflowed: assembledWorldInfoOverflowed,
         worldInfo: assembledPromptSnapshot?.worldInfo || null,
-        promptSnapshotKey: promptInspectionInfo?.key || null,
+        promptSnapshotKey: dispatchedPromptSnapshotKey || promptInspectionInfo?.key || null,
     });
 
     /**
