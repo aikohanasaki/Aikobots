@@ -4177,7 +4177,7 @@ async function sendMessage(prompt, image, generationType, additionalNegativePref
     const mediaType = isVideo(format) ? MEDIA_TYPE.VIDEO : MEDIA_TYPE.IMAGE;
     const { createImageAttachmentFromUrl } = await import('../../chats.js');
     /** @type {MediaAttachment} */
-    const mediaAttachment = mediaType === MEDIA_TYPE.IMAGE
+    let mediaAttachment = mediaType === MEDIA_TYPE.IMAGE
         ? await createImageAttachmentFromUrl(image, {
             title: prompt,
             source: MEDIA_SOURCE.GENERATED,
@@ -4190,7 +4190,13 @@ async function sendMessage(prompt, image, generationType, additionalNegativePref
             source: MEDIA_SOURCE.GENERATED,
         };
     if (!mediaAttachment) {
-        return;
+        toastr.error('Generated image could not be attached to the message.', 'Image Generation');
+        mediaAttachment = {
+            url: image,
+            type: mediaType,
+            title: prompt,
+            source: MEDIA_SOURCE.GENERATED,
+        };
     }
     mediaAttachment.type = mediaType;
     mediaAttachment.generation_type = generationType;

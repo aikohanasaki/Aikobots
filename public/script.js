@@ -12197,6 +12197,9 @@ export async function saveChatConditional() {
             };
         }
 
+        // TODO: saveChatConditional() may emit CHAT_SAVED for non-persistent temp Assistant chats.
+        // Non-urgent for now; defer until temp-chat/STMB save-flow cleanup.
+
         if (savedIsGroup) {
             await saveGroupChat(savedGroupId, true);
         }
