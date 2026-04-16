@@ -1363,6 +1363,86 @@ export const wi_anchor_position = {
     after: 1,
 };
 
+const FLOATING_BOOK_STORAGE_KEYS = Object.freeze({
+    group: 'world_info_floating_book_group',
+    order: 'world_info_floating_book_order',
+    messages: 'world_info_floating_book_messages',
+    drag: 'world_info_floating_book_drag',
+    position: 'world_info_floating_book_pos',
+});
+
+const FLOATING_BOOK_DEFAULT_SETTINGS = Object.freeze({
+    group: true,
+    order: true,
+    messages: true,
+    drag: false,
+});
+
+const FLOATING_BOOK_HIDDEN_GROUP_NAME = 'Hidden Secure Entries';
+const FLOATING_BOOK_PANEL_GAP = 8;
+const FLOATING_BOOK_TRIGGER_CLICK_SUPPRESS_MS = 250;
+const FLOATING_BOOK_BADGE_ANIMATION_MS = 280;
+
+let worldInfoFloatingBookController = null;
+
+function readFloatingBookBool(key, fallback) {
+    const raw = accountStorage.getItem(key);
+    if (raw === null) {
+        return fallback;
+    }
+
+    return isTrueBoolean(raw);
+}
+
+function writeFloatingBookBool(key, value) {
+    accountStorage.setItem(key, value ? 'true' : 'false');
+}
+
+function readFloatingBookPosition() {
+    const raw = accountStorage.getItem(FLOATING_BOOK_STORAGE_KEYS.position);
+    if (!raw) {
+        return null;
+    }
+
+    try {
+        const parsed = JSON.parse(raw);
+        const left = Number(parsed?.left);
+        const top = Number(parsed?.top);
+
+        if (!Number.isFinite(left) || !Number.isFinite(top)) {
+            return null;
+        }
+
+        return { left, top };
+    } catch {
+        return null;
+    }
+}
+
+function writeFloatingBookPosition(position) {
+    if (!position || !Number.isFinite(position.left) || !Number.isFinite(position.top)) {
+        return;
+    }
+
+    accountStorage.setItem(FLOATING_BOOK_STORAGE_KEYS.position, JSON.stringify({
+        left: Math.round(position.left),
+        top: Math.round(position.top),
+    }));
+}
+
+function clearFloatingBookPosition() {
+    accountStorage.removeItem(FLOATING_BOOK_STORAGE_KEYS.position);
+}
+
+function getFloatingBookSettings() {
+    return {
+        group: readFloatingBookBool(FLOATING_BOOK_STORAGE_KEYS.group, FLOATING_BOOK_DEFAULT_SETTINGS.group),
+        order: readFloatingBookBool(FLOATING_BOOK_STORAGE_KEYS.order, FLOATING_BOOK_DEFAULT_SETTINGS.order),
+        messages: readFloatingBookBool(FLOATING_BOOK_STORAGE_KEYS.messages, FLOATING_BOOK_DEFAULT_SETTINGS.messages),
+        drag: readFloatingBookBool(FLOATING_BOOK_STORAGE_KEYS.drag, FLOATING_BOOK_DEFAULT_SETTINGS.drag),
+    };
+}
+
 /**
  * The cache of all world info data that was loaded from the backend.
  *
@@ -1507,6 +1587,7 @@ export function setWorldInfoSettings(settings, data) {
     $('#world_info_sort_order').val(accountStorage.getItem(SORT_ORDER_KEY) || '0');
     $('#world_info').trigger('change');
     $('#world_editor_select').trigger('change');
+    initWorldInfoFloatingBook();
 
     eventSource.on(event_types.CHAT_CHANGED, async () => {
         const hasWorldInfo = hasBoundWorldInfo(chat_metadata[METADATA_KEY]);
@@ -1544,6 +1625,18 @@ export function reloadEditor(file, loadIfNotSelected = false) {
 }
 
 async function getWorldInfoReportSnapshot(messageId = null) {
+    async function getPromptSnapshotData(promptSnapshotKey) {
+        if (typeof promptSnapshotKey !== 'string' || !promptSnapshotKey) {
+            return null;
+        }
+
+        try {
+            return await fetchPromptInspectionSnapshot(promptSnapshotKey);
+        } catch {
+            return null;
+        }
+    }
+
     if (typeof messageId === 'number' && Number.isFinite(messageId) && messageId >= 0) {
         const message = chat[messageId];
         if (!message) {
@@ -1557,20 +1650,22 @@ async function getWorldInfoReportSnapshot(messageId = null) {
 
         const promptSnapshotKey = message.extra?.promptSnapshotKey;
         if (typeof promptSnapshotKey === 'string' && promptSnapshotKey) {
-            const snapshot = await fetchPromptInspectionSnapshot(promptSnapshotKey);
-            return {
-                messageId,
-                report: snapshot?.worldInfoReport || snapshot?.worldInfo || null,
-                summary: snapshot?.worldInfoSummary || null,
-                missingSnapshot: false,
-            };
+            const snapshot = await getPromptSnapshotData(promptSnapshotKey);
+            if (snapshot) {
+                return {
+                    messageId,
+                    report: snapshot?.worldInfoReport || snapshot?.worldInfo || null,
+                    summary: snapshot?.worldInfoSummary || null,
+                    missingSnapshot: false,
+                };
+            }
         }
 
         const snapshot = {
             messageId,
             report: message.extra?.worldInfoReport || null,
             summary: message.extra?.worldInfoSummary || null,
-            missingSnapshot: false,
+            missingSnapshot: Boolean(promptSnapshotKey),
         };
         if ((snapshot.report && typeof snapshot.report === 'object') || (snapshot.summary && typeof snapshot.summary === 'object')) {
             return snapshot;
@@ -1582,13 +1677,15 @@ async function getWorldInfoReportSnapshot(messageId = null) {
     for (let index = chat.length - 1; index >= 0; index--) {
         const promptSnapshotKey = chat[index]?.extra?.promptSnapshotKey;
         if (typeof promptSnapshotKey === 'string' && promptSnapshotKey) {
-            const snapshot = await fetchPromptInspectionSnapshot(promptSnapshotKey);
-            return {
-                messageId: index,
-                report: snapshot?.worldInfoReport || snapshot?.worldInfo || null,
-                summary: snapshot?.worldInfoSummary || null,
-                missingSnapshot: false,
-            };
+            const snapshot = await getPromptSnapshotData(promptSnapshotKey);
+            if (snapshot) {
+                return {
+                    messageId: index,
+                    report: snapshot?.worldInfoReport || snapshot?.worldInfo || null,
+                    summary: snapshot?.worldInfoSummary || null,
+                    missingSnapshot: false,
+                };
+            }
         }
 
         const report = chat[index]?.extra?.worldInfoReport;
@@ -1598,7 +1695,7 @@ async function getWorldInfoReportSnapshot(messageId = null) {
                 messageId: index,
                 report: report || null,
                 summary: summary || null,
-                missingSnapshot: false,
+                missingSnapshot: Boolean(promptSnapshotKey),
             };
         }
     }
@@ -1713,6 +1810,727 @@ function buildWorldInfoReportRounds(report, activeEntries) {
     }
 
     return [];
+}
+
+function getFloatingBookEntryPosition(entry) {
+    const numericPosition = Number(entry?.position);
+    if (Number.isFinite(numericPosition)) {
+        return numericPosition;
+    }
+
+    const placement = String(entry?.placement || '').trim().toLowerCase();
+    if (placement.startsWith('depth:')) {
+        return world_info_position.atDepth;
+    }
+
+    switch (placement) {
+        case 'before':
+            return world_info_position.before;
+        case 'after':
+            return world_info_position.after;
+        case 'example_top':
+            return world_info_position.EMTop;
+        case 'example_bottom':
+            return world_info_position.EMBottom;
+        default:
+            return Number.MAX_SAFE_INTEGER;
+    }
+}
+
+function getFloatingBookEntryDepth(entry) {
+    const numericDepth = Number(entry?.depth);
+    if (Number.isFinite(numericDepth)) {
+        return numericDepth;
+    }
+
+    const placement = String(entry?.placement || '').trim().toLowerCase();
+    if (placement.startsWith('depth:')) {
+        const depth = Number(placement.slice('depth:'.length));
+        return Number.isFinite(depth) ? depth : null;
+    }
+
+    return null;
+}
+
+function isFloatingBookDepthPosition(position) {
+    return [world_info_position.ANBottom, world_info_position.ANTop, world_info_position.atDepth].includes(position);
+}
+
+function getFloatingBookPlacementLabel(entry) {
+    const position = getFloatingBookEntryPosition(entry);
+    const depth = getFloatingBookEntryDepth(entry);
+
+    switch (position) {
+        case world_info_position.before:
+            return 'Before character';
+        case world_info_position.after:
+            return 'After character';
+        case world_info_position.ANTop:
+            return 'Author note top';
+        case world_info_position.ANBottom:
+            return 'Author note bottom';
+        case world_info_position.atDepth:
+            return Number.isFinite(depth) ? `Depth ${depth}` : 'Depth';
+        case world_info_position.EMTop:
+            return 'Example top';
+        case world_info_position.EMBottom:
+            return 'Example bottom';
+        default:
+            return humanizeWorldInfoReportValue(entry?.placement || 'Prompt');
+    }
+}
+
+function getFloatingBookEntryTitle(entry) {
+    if (entry?.hidden) {
+        return '(hidden entry)';
+    }
+
+    return getWorldInfoReportEntryLabel(entry);
+}
+
+function compareFloatingBookEntries(a, b) {
+    const aRound = Number(a?.roundIndex ?? 0) || 0;
+    const bRound = Number(b?.roundIndex ?? 0) || 0;
+    if (aRound !== bRound) {
+        return aRound - bRound;
+    }
+
+    const aPosition = getFloatingBookEntryPosition(a);
+    const bPosition = getFloatingBookEntryPosition(b);
+    const aIsDepth = isFloatingBookDepthPosition(aPosition);
+    const bIsDepth = isFloatingBookDepthPosition(bPosition);
+
+    if (!aIsDepth && !bIsDepth && aPosition !== bPosition) {
+        return aPosition - bPosition;
+    }
+
+    if (aIsDepth && !bIsDepth) {
+        return 1;
+    }
+
+    if (!aIsDepth && bIsDepth) {
+        return -1;
+    }
+
+    const aDepth = Number(getFloatingBookEntryDepth(a) ?? Number.MAX_SAFE_INTEGER);
+    const bDepth = Number(getFloatingBookEntryDepth(b) ?? Number.MAX_SAFE_INTEGER);
+    if (aDepth !== bDepth) {
+        return bDepth - aDepth;
+    }
+
+    const aOrder = Number(entryHasOrder(a) ? a.order : Number.MAX_SAFE_INTEGER);
+    const bOrder = Number(entryHasOrder(b) ? b.order : Number.MAX_SAFE_INTEGER);
+    if (aOrder !== bOrder) {
+        return aOrder - bOrder;
+    }
+
+    const aTitle = getFloatingBookEntryTitle(a).toLocaleLowerCase();
+    const bTitle = getFloatingBookEntryTitle(b).toLocaleLowerCase();
+    return aTitle.localeCompare(bTitle);
+}
+
+function entryHasOrder(entry) {
+    const order = Number(entry?.order);
+    return Number.isFinite(order);
+}
+
+function compareFloatingBookEntriesAlphabetically(a, b) {
+    return getFloatingBookEntryTitle(a)
+        .toLocaleLowerCase()
+        .localeCompare(getFloatingBookEntryTitle(b).toLocaleLowerCase());
+}
+
+function getFloatingBookChatMessages() {
+    return Array.isArray(chat)
+        ? chat.filter(item => typeof item?.mes === 'string' && item.mes.trim().length > 0)
+        : [];
+}
+
+function buildFloatingBookChatSummary(messages) {
+    const text = messages
+        .map(item => String(item?.mes || ''))
+        .map(item => item.replace(/```.+?```/gs, '').replace(/<[^>]+?>/g, '').trim())
+        .filter(Boolean)
+        .join('\n');
+
+    if (!text) {
+        return '';
+    }
+
+    const sentences = typeof Intl?.Segmenter === 'function'
+        ? [...new Intl.Segmenter('en', { granularity: 'sentence' }).segment(text)]
+            .map(segment => segment.segment.trim())
+            .filter(Boolean)
+        : text.split(/(?<=[.!?])\s+/).map(segment => segment.trim()).filter(Boolean);
+
+    if (sentences.length <= 1) {
+        return sentences[0] || text.slice(0, 180);
+    }
+
+    return `${sentences[0]} ... ${sentences.at(-1)}`;
+}
+
+function appendFloatingBookChatRows(entries) {
+    const rows = entries.slice();
+    const currentChat = getFloatingBookChatMessages();
+
+    if (!currentChat.length) {
+        return rows;
+    }
+
+    let currentDepth = currentChat.length - 1;
+    let dumpedBeforeChat = false;
+
+    for (let index = rows.length - 1; index >= -1; index--) {
+        const row = rows[index];
+        const rowPosition = row?.type === 'entry' ? row.position : null;
+        const rowIsDepth = row?.type === 'entry' && isFloatingBookDepthPosition(rowPosition) && Number.isFinite(row.depth);
+
+        if ((index < 0 && currentDepth >= 0) || (index >= 0 && !rowIsDepth)) {
+            if (dumpedBeforeChat || currentDepth < 0) {
+                continue;
+            }
+
+            const messageSlice = currentChat.slice(0, currentDepth + 1);
+            rows.splice(index + 1, 0, {
+                type: 'chat',
+                count: messageSlice.length,
+                from: 0,
+                to: currentDepth,
+                summary: buildFloatingBookChatSummary(messageSlice),
+            });
+            currentDepth = -1;
+            dumpedBeforeChat = true;
+            continue;
+        }
+
+        const nextDepth = Math.max(-1, currentChat.length - row.depth - 1);
+        if (nextDepth >= currentDepth || nextDepth === currentDepth) {
+            continue;
+        }
+
+        const messageSlice = currentChat.slice(nextDepth + 1, currentDepth + 1);
+        if (!messageSlice.length) {
+            currentDepth = nextDepth;
+            continue;
+        }
+
+        rows.splice(index + 1, 0, {
+            type: 'chat',
+            count: messageSlice.length,
+            from: nextDepth + 1,
+            to: currentDepth,
+            summary: buildFloatingBookChatSummary(messageSlice),
+        });
+        currentDepth = nextDepth;
+    }
+
+    return rows;
+}
+
+function buildFloatingBookEntryRows(snapshot, settings) {
+    const reportEntries = Array.isArray(snapshot?.report?.activatedEntries)
+        ? snapshot.report.activatedEntries.filter(entry => entry?.status === 'admitted')
+        : Array.isArray(snapshot?.summary?.activeEntries)
+            ? snapshot.summary.activeEntries
+            : [];
+
+    const rows = reportEntries.map(entry => ({
+        type: 'entry',
+        hidden: Boolean(entry?.hidden),
+        title: getFloatingBookEntryTitle(entry),
+        preview: entry?.hidden ? 'Hidden secure lorebook activation.' : String(entry?.displayContent || '').trim(),
+        keywordText: entry?.hidden ? '' : getWorldInfoReportKeywordText(entry).replace(/^\s*/, ''),
+        book: entry?.hidden ? null : String(entry?.book || '').trim(),
+        groupName: entry?.hidden ? FLOATING_BOOK_HIDDEN_GROUP_NAME : (String(entry?.book || '').trim() || 'World Info'),
+        placementLabel: getFloatingBookPlacementLabel(entry),
+        position: getFloatingBookEntryPosition(entry),
+        depth: getFloatingBookEntryDepth(entry),
+        order: entryHasOrder(entry) ? Number(entry.order) : null,
+        roundIndex: Number(entry?.roundIndex ?? 0) || 0,
+        tokens: Number(entry?.tokens ?? 0) || 0,
+        constant: isWorldInfoReportConstantLike(entry),
+    }));
+
+    rows.sort(settings.order ? compareFloatingBookEntries : compareFloatingBookEntriesAlphabetically);
+    return rows;
+}
+
+function buildFloatingBookPanelModel(snapshot, settings) {
+    const entryRows = buildFloatingBookEntryRows(snapshot, settings);
+    const hiddenCount = entryRows.filter(row => row.hidden).length;
+    const visibleCount = entryRows.length - hiddenCount;
+    const activeEntriesCount = Number(snapshot?.summary?.activeEntriesCount);
+    const totalTokens = Number(snapshot?.summary?.totalTokens ?? 0) || 0;
+    const totalCount = Number.isFinite(activeEntriesCount) ? activeEntriesCount : entryRows.length;
+    const overflowed = Boolean(snapshot?.summary?.overflowed ?? snapshot?.report?.overflowed);
+
+    if (!entryRows.length) {
+        return {
+            totalCount,
+            hiddenCount,
+            visibleCount,
+            totalTokens,
+            overflowed,
+            groups: [],
+            rows: [],
+        };
+    }
+
+    if (settings.group) {
+        const grouped = new Map();
+        for (const row of entryRows) {
+            if (!grouped.has(row.groupName)) {
+                grouped.set(row.groupName, []);
+            }
+            grouped.get(row.groupName).push(row);
+        }
+
+        const groups = [...grouped.entries()]
+            .map(([name, rows]) => ({ name, rows }))
+            .sort((a, b) => {
+                if (a.name === FLOATING_BOOK_HIDDEN_GROUP_NAME) {
+                    return 1;
+                }
+                if (b.name === FLOATING_BOOK_HIDDEN_GROUP_NAME) {
+                    return -1;
+                }
+                return a.name.toLocaleLowerCase().localeCompare(b.name.toLocaleLowerCase());
+            });
+
+        return {
+            totalCount,
+            hiddenCount,
+            visibleCount,
+            totalTokens,
+            overflowed,
+            groups,
+            rows: [],
+        };
+    }
+
+    return {
+        totalCount,
+        hiddenCount,
+        visibleCount,
+        totalTokens,
+        overflowed,
+        groups: [],
+        rows: settings.order && settings.messages ? appendFloatingBookChatRows(entryRows) : entryRows,
+    };
+}
+
+function createWorldInfoFloatingBookController() {
+    const trigger = document.createElement('button');
+    trigger.type = 'button';
+    trigger.className = 'wi-floating-book-trigger fa-solid fa-book-atlas';
+    trigger.title = 'Active World Info';
+    trigger.setAttribute('aria-label', 'Active World Info');
+
+    const panel = document.createElement('div');
+    panel.className = 'wi-floating-book-panel';
+
+    const configPanel = document.createElement('div');
+    configPanel.className = 'wi-floating-book-panel wi-floating-book-config';
+
+    document.body.append(trigger, panel, configPanel);
+
+    const controller = {
+        trigger,
+        panel,
+        configPanel,
+        settings: getFloatingBookSettings(),
+        lastBadgeSignature: '',
+        refreshToken: 0,
+        dragging: false,
+        movedEnough: false,
+        suppressNextClick: false,
+        dragStartX: 0,
+        dragStartY: 0,
+        baseLeft: 0,
+        baseTop: 0,
+        scheduleRefresh: debounce(() => controller.refresh(), 50),
+        isOpen(element) {
+            return element.classList.contains('wi-floating-book-panel-visible');
+        },
+        setOpen(element, open) {
+            element.classList.toggle('wi-floating-book-panel-visible', open);
+            if (open) {
+                controller.placePanel(element);
+            }
+        },
+        closePanels() {
+            controller.setOpen(panel, false);
+            controller.setOpen(configPanel, false);
+        },
+        togglePanel() {
+            const nextOpen = !controller.isOpen(panel);
+            controller.setOpen(configPanel, false);
+            controller.setOpen(panel, nextOpen);
+        },
+        toggleConfigPanel() {
+            const nextOpen = !controller.isOpen(configPanel);
+            controller.setOpen(panel, false);
+            controller.setOpen(configPanel, nextOpen);
+        },
+        updateSetting(key, value) {
+            controller.settings[key] = value;
+            writeFloatingBookBool(FLOATING_BOOK_STORAGE_KEYS[key], value);
+            controller.renderConfigPanel();
+            controller.scheduleRefresh();
+        },
+        resetPosition() {
+            clearFloatingBookPosition();
+            trigger.style.left = '';
+            trigger.style.top = '';
+            trigger.style.right = '';
+            trigger.style.bottom = '';
+            controller.ensurePanelsVisible();
+        },
+        clampPosition(left, top) {
+            const maxLeft = Math.max(0, window.innerWidth - trigger.offsetWidth - 4);
+            const maxTop = Math.max(0, window.innerHeight - trigger.offsetHeight - 4);
+            return {
+                left: Math.max(4, Math.min(left, maxLeft)),
+                top: Math.max(4, Math.min(top, maxTop)),
+            };
+        },
+        applySavedPosition() {
+            const saved = readFloatingBookPosition();
+            if (!saved) {
+                return;
+            }
+
+            const clamped = controller.clampPosition(saved.left, saved.top);
+            trigger.style.left = `${clamped.left}px`;
+            trigger.style.top = `${clamped.top}px`;
+            trigger.style.right = 'auto';
+            trigger.style.bottom = 'auto';
+            if (clamped.left !== saved.left || clamped.top !== saved.top) {
+                writeFloatingBookPosition(clamped);
+            }
+        },
+        placePanel(targetPanel) {
+            if (!controller.isOpen(targetPanel)) {
+                return;
+            }
+
+            const previousVisibility = targetPanel.style.visibility;
+            const previousDisplay = targetPanel.style.display;
+            targetPanel.style.visibility = 'hidden';
+            targetPanel.style.display = 'flex';
+
+            const triggerRect = trigger.getBoundingClientRect();
+            const panelWidth = targetPanel.offsetWidth || 320;
+            const panelHeight = targetPanel.offsetHeight || 240;
+
+            let left = triggerRect.right + FLOATING_BOOK_PANEL_GAP;
+            if (left + panelWidth > window.innerWidth - 4) {
+                left = triggerRect.left - panelWidth - FLOATING_BOOK_PANEL_GAP;
+            }
+
+            let top = triggerRect.top;
+            if (top + panelHeight > window.innerHeight - 4) {
+                top = Math.max(4, window.innerHeight - panelHeight - 4);
+            }
+
+            left = Math.max(4, Math.min(left, Math.max(4, window.innerWidth - panelWidth - 4)));
+            top = Math.max(4, Math.min(top, Math.max(4, window.innerHeight - panelHeight - 4)));
+
+            targetPanel.style.left = `${left}px`;
+            targetPanel.style.top = `${top}px`;
+            targetPanel.style.right = 'auto';
+            targetPanel.style.bottom = 'auto';
+            targetPanel.style.visibility = previousVisibility;
+            targetPanel.style.display = previousDisplay;
+        },
+        ensurePanelsVisible() {
+            controller.placePanel(panel);
+            controller.placePanel(configPanel);
+        },
+        updateBadge(count, signature) {
+            trigger.dataset.count = String(count);
+            trigger.classList.toggle('wi-floating-book-trigger-empty', count <= 0);
+            if (controller.lastBadgeSignature && controller.lastBadgeSignature !== signature) {
+                trigger.classList.remove('wi-floating-book-trigger-bounce');
+                void trigger.offsetWidth;
+                trigger.classList.add('wi-floating-book-trigger-bounce');
+                setTimeout(() => trigger.classList.remove('wi-floating-book-trigger-bounce'), FLOATING_BOOK_BADGE_ANIMATION_MS);
+            }
+            controller.lastBadgeSignature = signature;
+        },
+        createEntryRow(row) {
+            const element = document.createElement('div');
+            element.className = 'wi-floating-book-entry';
+            if (row.hidden) {
+                element.classList.add('wi-floating-book-entry-hidden');
+            }
+            if (row.constant) {
+                element.classList.add('wi-floating-book-entry-constant');
+            }
+
+            const title = document.createElement('div');
+            title.className = 'wi-floating-book-entry-title';
+            title.textContent = row.title;
+            element.append(title);
+
+            const metaParts = [row.placementLabel];
+            if (Number.isFinite(row.order) && controller.settings.order) {
+                metaParts.push(`Order ${row.order}`);
+            }
+            if (row.tokens > 0) {
+                metaParts.push(`${row.tokens} tokens`);
+            }
+            if (row.keywordText && !row.hidden) {
+                metaParts.push(row.keywordText);
+            }
+
+            const meta = document.createElement('div');
+            meta.className = 'wi-floating-book-entry-meta';
+            meta.textContent = metaParts.filter(Boolean).join(' • ');
+            element.append(meta);
+
+            if (row.preview) {
+                const preview = document.createElement('div');
+                preview.className = 'wi-floating-book-entry-preview';
+                preview.textContent = row.preview;
+                element.append(preview);
+            }
+
+            return element;
+        },
+        createChatRow(row) {
+            const element = document.createElement('div');
+            element.className = 'wi-floating-book-chat-row';
+
+            const title = document.createElement('div');
+            title.className = 'wi-floating-book-chat-title';
+            title.textContent = `Messages ${row.from + 1}-${row.to + 1}`;
+            element.append(title);
+
+            const meta = document.createElement('div');
+            meta.className = 'wi-floating-book-chat-meta';
+            meta.textContent = `${row.count} message${row.count === 1 ? '' : 's'}`;
+            element.append(meta);
+
+            if (row.summary) {
+                const summary = document.createElement('div');
+                summary.className = 'wi-floating-book-chat-preview';
+                summary.textContent = row.summary;
+                element.append(summary);
+            }
+
+            return element;
+        },
+        renderPanel(model) {
+            panel.replaceChildren();
+
+            const summary = document.createElement('div');
+            summary.className = 'wi-floating-book-summary';
+            const summaryParts = [`Active entries: ${model.totalCount}`];
+            if (model.hiddenCount > 0) {
+                summaryParts.push(`Hidden: ${model.hiddenCount}`);
+            }
+            if (model.totalTokens > 0) {
+                summaryParts.push(`Tokens: ${model.totalTokens}`);
+            }
+            if (model.overflowed) {
+                summaryParts.push('Overflowed');
+            }
+            summary.textContent = summaryParts.join(' • ');
+            panel.append(summary);
+
+            if (!model.totalCount) {
+                const empty = document.createElement('div');
+                empty.className = 'wi-floating-book-empty';
+                empty.textContent = 'No active entries';
+                panel.append(empty);
+                return;
+            }
+
+            if (controller.settings.group) {
+                for (const group of model.groups) {
+                    const title = document.createElement('div');
+                    title.className = 'wi-floating-book-group-title';
+                    title.textContent = group.name;
+                    panel.append(title);
+
+                    for (const row of group.rows) {
+                        panel.append(controller.createEntryRow(row));
+                    }
+                }
+                return;
+            }
+
+            for (const row of model.rows) {
+                panel.append(row.type === 'chat' ? controller.createChatRow(row) : controller.createEntryRow(row));
+            }
+        },
+        renderConfigPanel() {
+            configPanel.replaceChildren();
+
+            const options = [
+                { key: 'group', label: 'Group by book' },
+                { key: 'order', label: 'Show in order' },
+                { key: 'messages', label: 'Show message separators' },
+                { key: 'drag', label: 'Enable drag to move' },
+            ];
+
+            for (const option of options) {
+                const label = document.createElement('label');
+                label.className = 'wi-floating-book-config-row';
+
+                const checkbox = document.createElement('input');
+                checkbox.type = 'checkbox';
+                checkbox.checked = Boolean(controller.settings[option.key]);
+                checkbox.addEventListener('change', () => controller.updateSetting(option.key, checkbox.checked));
+                label.append(checkbox);
+
+                const text = document.createElement('span');
+                text.textContent = option.label;
+                label.append(text);
+
+                configPanel.append(label);
+            }
+
+            const reset = document.createElement('button');
+            reset.type = 'button';
+            reset.className = 'wi-floating-book-reset menu_button';
+            reset.textContent = 'Reset position';
+            reset.addEventListener('click', () => controller.resetPosition());
+            configPanel.append(reset);
+        },
+        async refresh() {
+            const refreshToken = ++controller.refreshToken;
+            const snapshot = await getWorldInfoReportSnapshot();
+            if (refreshToken !== controller.refreshToken) {
+                return;
+            }
+
+            const model = buildFloatingBookPanelModel(snapshot, controller.settings);
+            controller.renderPanel(model);
+            controller.updateBadge(model.totalCount, JSON.stringify({
+                totalCount: model.totalCount,
+                hiddenCount: model.hiddenCount,
+                rows: controller.settings.group
+                    ? model.groups.map(group => [group.name, group.rows.map(row => row.title)])
+                    : model.rows.map(row => row.type === 'chat' ? `chat:${row.from}-${row.to}` : row.title),
+            }));
+            controller.ensurePanelsVisible();
+        },
+    };
+
+    trigger.addEventListener('click', (event) => {
+        if (controller.suppressNextClick) {
+            event.preventDefault();
+            event.stopImmediatePropagation();
+            return;
+        }
+
+        controller.togglePanel();
+    });
+
+    trigger.addEventListener('contextmenu', (event) => {
+        event.preventDefault();
+        controller.toggleConfigPanel();
+    });
+
+    trigger.addEventListener('pointerdown', (event) => {
+        if (!controller.settings.drag) {
+            return;
+        }
+
+        if (event.button !== 0 && event.pointerType !== 'touch') {
+            return;
+        }
+
+        const rect = trigger.getBoundingClientRect();
+        controller.dragging = true;
+        controller.movedEnough = false;
+        controller.dragStartX = event.clientX;
+        controller.dragStartY = event.clientY;
+        controller.baseLeft = rect.left;
+        controller.baseTop = rect.top;
+        trigger.setPointerCapture?.(event.pointerId);
+        event.preventDefault();
+    });
+
+    window.addEventListener('pointermove', (event) => {
+        if (!controller.dragging) {
+            return;
+        }
+
+        const dx = event.clientX - controller.dragStartX;
+        const dy = event.clientY - controller.dragStartY;
+        if (!controller.movedEnough && (Math.abs(dx) > 4 || Math.abs(dy) > 4)) {
+            controller.movedEnough = true;
+        }
+
+        const nextPosition = controller.clampPosition(controller.baseLeft + dx, controller.baseTop + dy);
+        trigger.style.left = `${nextPosition.left}px`;
+        trigger.style.top = `${nextPosition.top}px`;
+        trigger.style.right = 'auto';
+        trigger.style.bottom = 'auto';
+        controller.ensurePanelsVisible();
+    });
+
+    const endDrag = (event) => {
+        if (!controller.dragging) {
+            return;
+        }
+
+        controller.dragging = false;
+        trigger.releasePointerCapture?.(event?.pointerId);
+        if (controller.movedEnough) {
+            const rect = trigger.getBoundingClientRect();
+            writeFloatingBookPosition({ left: rect.left, top: rect.top });
+            controller.suppressNextClick = true;
+            setTimeout(() => {
+                controller.suppressNextClick = false;
+            }, FLOATING_BOOK_TRIGGER_CLICK_SUPPRESS_MS);
+        }
+
+        controller.ensurePanelsVisible();
+    };
+
+    window.addEventListener('pointerup', endDrag);
+    window.addEventListener('pointercancel', endDrag);
+    window.addEventListener('resize', () => {
+        controller.applySavedPosition();
+        controller.ensurePanelsVisible();
+    });
+
+    controller.renderConfigPanel();
+    controller.applySavedPosition();
+    controller.refresh();
+
+    const refreshEvents = [
+        event_types.CHAT_CHANGED,
+        event_types.MESSAGE_SWIPED,
+        event_types.MESSAGE_DELETED,
+        event_types.MESSAGE_SWIPE_DELETED,
+        event_types.GENERATION_ENDED,
+        event_types.WORLDINFO_UPDATED,
+        event_types.WORLDINFO_SETTINGS_UPDATED,
+    ];
+
+    for (const eventType of refreshEvents) {
+        eventSource.on(eventType, () => controller.scheduleRefresh());
+    }
+
+    return controller;
+}
+
+function initWorldInfoFloatingBook() {
+    if (!worldInfoFloatingBookController) {
+        worldInfoFloatingBookController = createWorldInfoFloatingBookController();
+    } else {
+        worldInfoFloatingBookController.settings = getFloatingBookSettings();
+        worldInfoFloatingBookController.renderConfigPanel();
+        worldInfoFloatingBookController.scheduleRefresh();
+    }
+
+    return worldInfoFloatingBookController;
 }
 
 async function showWorldInfoReportPopup(messageId = null) {

@@ -467,7 +467,11 @@ class PromptManager {
 
         // Open edit form and load selected prompt
         this.handleInspect = (event) => {
-            if(!isAdmin()) return; // Disable function for non-Admin users
+            if (!this.hasPromptInspectionAccess()) {
+                event?.preventDefault?.();
+                event?.stopPropagation?.();
+                return;
+            }
             this.clearEditForm();
             this.clearInspectForm();
 
@@ -1069,8 +1073,15 @@ class PromptManager {
      * @returns {boolean} True if the user is an admin, false otherwise.
      */
     isPromptInspectionAllowed(prompt) {
-        if(!isAdmin()) return false; // Disable function for non-Admin users
-        return true;
+        return this.hasPromptInspectionAccess();
+    }
+
+    /**
+     * Check whether the current user can inspect prompt contents.
+     * @returns {boolean}
+     */
+    hasPromptInspectionAccess() {
+        return isAdmin();
     }
 
     /**
@@ -1836,9 +1847,11 @@ class PromptManager {
             el.addEventListener('click', this.handleDetach);
         });
 
-        Array.from(promptManagerList.getElementsByClassName('prompt-manager-inspect-action')).forEach(el => {
-            el.addEventListener('click', this.handleInspect);
-        });
+        if (this.hasPromptInspectionAccess()) {
+            Array.from(promptManagerList.getElementsByClassName('prompt-manager-inspect-action')).forEach(el => {
+                el.addEventListener('click', this.handleInspect);
+            });
+        }
 
         Array.from(promptManagerList.getElementsByClassName('prompt-manager-edit-action')).forEach(el => {
             el.addEventListener('click', this.handleEdit);
