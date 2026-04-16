@@ -2070,8 +2070,8 @@ function buildFloatingBookEntryRows(snapshot, settings) {
             title: getFloatingBookEntryTitle(entry),
             strategyType: hidden ? '' : getFloatingBookStrategyType(entry),
             keywordText: hidden ? '' : getWorldInfoReportKeywordText(entry).replace(/^\s*/, ''),
-            book: hidden ? null : String(entry?.book || '').trim(),
-            groupName: hidden ? FLOATING_BOOK_HIDDEN_GROUP_NAME : (String(entry?.book || '').trim() || 'World Info'),
+            book: String(entry?.book || '').trim(),
+            groupName: String(entry?.book || '').trim() || FLOATING_BOOK_HIDDEN_GROUP_NAME,
             placementLabel: hidden ? '' : getFloatingBookPlacementLabel(entry),
             position: hidden ? Number.MAX_SAFE_INTEGER : getFloatingBookEntryPosition(entry),
             depth: hidden ? null : getFloatingBookEntryDepth(entry),
@@ -2122,15 +2122,7 @@ function buildFloatingBookPanelModel(snapshot, settings) {
                 rows,
                 count: rows.filter(row => row.type === 'entry').length,
             }))
-            .sort((a, b) => {
-                if (a.name === FLOATING_BOOK_HIDDEN_GROUP_NAME) {
-                    return 1;
-                }
-                if (b.name === FLOATING_BOOK_HIDDEN_GROUP_NAME) {
-                    return -1;
-                }
-                return a.name.toLocaleLowerCase().localeCompare(b.name.toLocaleLowerCase());
-            });
+            .sort((a, b) => a.name.toLocaleLowerCase().localeCompare(b.name.toLocaleLowerCase()));
 
         return {
             totalCount,
@@ -2418,8 +2410,26 @@ function createWorldInfoFloatingBookController() {
                     title.append(toggle);
                     drawer.append(title);
 
-                    for (const row of group.rows) {
+                    const visibleRows = group.rows.filter(row => !row.hidden);
+                    const hiddenRows = group.rows.filter(row => row.hidden);
+
+                    for (const row of visibleRows) {
                         drawer.append(controller.createEntryRow(row));
+                    }
+
+                    if (hiddenRows.length > 0) {
+                        const hiddenPlaceholder = {
+                            type: 'entry',
+                            hidden: true,
+                            title: '(hidden entries)',
+                            strategyType: '',
+                            keywordText: '',
+                            placementLabel: '',
+                            order: null,
+                            tokens: 0,
+                            constant: false,
+                        };
+                        drawer.append(controller.createEntryRow(hiddenPlaceholder));
                     }
                     panel.append(drawer);
                 }

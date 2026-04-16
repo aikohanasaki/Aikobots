@@ -2431,7 +2431,6 @@ function sanitizeWorldInfoEntryForResponse(entry, user) {
     if (!canView) {
         sanitizedEntry.key = null;
         sanitizedEntry.uid = null;
-        sanitizedEntry.book = null;
         sanitizedEntry.displayName = null;
         sanitizedEntry.comment = null;
         sanitizedEntry.matchedPrimaryKey = null;
