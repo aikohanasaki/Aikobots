@@ -2,7 +2,6 @@ import { cancelTtsPlay, eventSource, event_types, getCurrentChatId, isStreamingE
 import { ModuleWorkerWrapper, extension_settings, getContext, renderExtensionTemplateAsync } from '../../extensions.js';
 import { delay, escapeRegex, getBase64Async, getStringHash, onlyUnique } from '../../utils.js';
 import { EdgeTtsProvider } from './edge.js';
-import { ElevenLabsTtsProvider } from './elevenlabs.js';
 import { SileroTtsProvider } from './silerotts.js';
 import { GptSovitsV2Provider } from './gpt-sovits-v2.js';
 import { CoquiTtsProvider } from './coqui.js';
@@ -47,6 +46,7 @@ let periodicMessageGenerationTimer = null;
 let lastPositionOfParagraphEnd = -1;
 let currentInitVoiceMapPromise = null;
 
+const FALLBACK_TTS_PROVIDER = 'System';
 const DEFAULT_VOICE_MARKER = '[Default Voice]';
 const DISABLED_VOICE_MARKER = 'disabled';
 
@@ -123,7 +123,6 @@ const ttsProviders = {
     Coqui: CoquiTtsProvider,
     'CosyVoice (Unofficial)': CosyVoiceProvider,
     Edge: EdgeTtsProvider,
-    ElevenLabs: ElevenLabsTtsProvider,
     'Electron Hub': ElectronHubTtsProvider,
     'Google Translate': GoogleTranslateTtsProvider,
     'Google Gemini TTS': GoogleNativeTtsProvider,
@@ -146,6 +145,17 @@ const ttsProviders = {
 let ttsProvider;
 let ttsProviderName;
 
+function getTtsProviderOrFallback(provider) {
+    if (provider && ttsProviders[provider]) {
+        return provider;
+    }
+
+    if (provider) {
+        console.warn(`TTS provider "${provider}" is unavailable. Falling back to ${FALLBACK_TTS_PROVIDER}.`);
+    }
+
+    return FALLBACK_TTS_PROVIDER;
+}
 
 async function onNarrateOneMessage() {
     audioElement.src = '/sounds/silence.mp3';
@@ -809,6 +819,7 @@ function loadSettings() {
             extension_settings.tts[key] = defaultSettings[key];
         }
     }
+    extension_settings.tts.currentProvider = getTtsProviderOrFallback(extension_settings.tts.currentProvider);
     $('#tts_provider').val(extension_settings.tts.currentProvider);
     $('#tts_enabled').prop(
         'checked',
@@ -835,7 +846,7 @@ function loadSettings() {
 const defaultSettings = {
     voiceMap: '',
     ttsEnabled: false,
-    currentProvider: 'ElevenLabs',
+    currentProvider: FALLBACK_TTS_PROVIDER,
     auto_generation: true,
     narrate_user: false,
     playback_rate: 1,
@@ -951,6 +962,7 @@ async function loadTtsProvider(provider) {
     if (!provider) {
         return;
     }
+    provider = getTtsProviderOrFallback(provider);
 
     // Init provider references
     extension_settings.tts.currentProvider = provider;
