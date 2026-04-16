@@ -919,16 +919,25 @@ export async function branchChat(mesId) {
 
 function registerBookmarksSlashCommands() {
     /**
-     * Validates a message ID. (Is a number, exists as a message)
+     * Validates a message ID.
      *
      * @param {number} mesId - The message ID to validate.
      * @param {string} context - The context of the slash command. Will be used as the title of any toasts.
+     * @param {Object} [options={}] - Optional validation parameters.
+     * @param {boolean} [options.requireLoaded=true] - Whether the message must already be loaded in chat.
      * @returns {boolean} - Returns true if the message ID is valid, otherwise false.
      */
-    function validateMessageId(mesId, context) {
-        if (isNaN(mesId)) {
+    function validateMessageId(mesId, context, { requireLoaded = true } = {}) {
+        if (!Number.isInteger(mesId)) {
             toastr.warning('Invalid message ID was provided', context);
             return false;
+        }
+        if (mesId < 0 || mesId >= getTotalChatMessages()) {
+            toastr.warning(`Message for id ${mesId} not found`, context);
+            return false;
+        }
+        if (!requireLoaded) {
+            return true;
         }
         if (!chat[mesId]) {
             toastr.warning(`Message for id ${mesId} not found`, context);
@@ -942,7 +951,7 @@ function registerBookmarksSlashCommands() {
         returns: 'Name of the new branch',
         callback: async (args, text) => {
             const mesId = Number(args.mesId ?? text ?? getLastMessageId());
-            if (!validateMessageId(mesId, 'Create Branch')) return '';
+            if (!validateMessageId(mesId, 'Create Branch', { requireLoaded: false })) return '';
 
             const branchName = await branchChat(mesId);
             return branchName ?? '';
@@ -977,7 +986,7 @@ function registerBookmarksSlashCommands() {
             }
 
             const messageNum = Number(args.shift());
-            if (!validateMessageId(messageNum, 'Bookmarks')) return '';
+            if (!validateMessageId(messageNum, 'Bookmarks', { requireLoaded: false })) return '';
 
             const title = args.join(' ').trim();
             const result = await createNamedBookmark(messageNum, title);
@@ -1080,9 +1089,10 @@ function registerBookmarksSlashCommands() {
 
                 const mode = String(args.mode ?? 'overwrite').toLowerCase() === 'merge' ? 'merge' : 'overwrite';
                 const existingBookmarks = mode === 'merge' ? getNamedBookmarks() : [];
+                const maxMessageCount = getTotalChatMessages();
                 const normalizedBookmarks = parsed
                     .map(normalizeNamedBookmarkEntry)
-                    .filter(Boolean);
+                    .filter(bookmark => bookmark && bookmark.messageNum < maxMessageCount);
                 const dedupedBookmarks = dedupeNamedBookmarks([...existingBookmarks, ...normalizedBookmarks]);
                 const importedBookmarks = dedupedBookmarks
                     .slice(0, MAX_NAMED_BOOKMARKS);
@@ -1148,7 +1158,7 @@ function registerBookmarksSlashCommands() {
         returns: 'Name of the new checkpoint',
         callback: async (args, text) => {
             const mesId = Number(args.mesId ?? getLastMessageId());
-            if (!validateMessageId(mesId, 'Create Checkpoint')) return '';
+            if (!validateMessageId(mesId, 'Create Checkpoint', { requireLoaded: false })) return '';
 
             if (typeof text !== 'string') {
                 toastr.warning('Checkpoint name must be a string or empty', 'Create Checkpoint');

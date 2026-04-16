@@ -237,9 +237,11 @@ async function loadGroupChat(chatId, { withMetadata = false } = {}) {
             : (Array.isArray(data?.messages) ? data.messages : []);
     }
 
-    return withMetadata
-        ? { messages: [], chat_metadata: {} }
-        : [];
+    if (withMetadata) {
+        throw new Error(`Failed to load group chat "${chatId}". Status: ${response.status}`);
+    }
+
+    return [];
 }
 
 async function validateGroup(group) {
@@ -285,7 +287,15 @@ export async function getGroupChat(groupId, reload = false) {
     await unshallowGroupMembers(groupId);
 
     const chat_id = group.chat_id;
-    const payload = await loadGroupChat(chat_id, { withMetadata: true });
+    let payload;
+    try {
+        payload = await loadGroupChat(chat_id, { withMetadata: true });
+    } catch (error) {
+        toastr.error(t`Check the server connection and reload the page to prevent data loss.`, t`Group chat could not be loaded`);
+        console.error('Group chat could not be loaded', error);
+        return;
+    }
+
     const data = payload.messages;
     const metadata = payload.chat_metadata;
     const freshChat = !metadata.tainted && (!Array.isArray(data) || !data.length);
