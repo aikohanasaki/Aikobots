@@ -12279,16 +12279,7 @@ export async function deleteSwipe(swipeId = null, messageId = chat.length - 1) {
 }
 
 export async function saveMetadata() {
-<<<<<<< Updated upstream
-    if (selected_group) {
-        await saveGroupChat(selected_group, true);
-    }
-    else {
-        await saveChatConditional();
-    }
-=======
     await saveChatConditional();
->>>>>>> Stashed changes
 }
 
 async function saveChatOnce() {
