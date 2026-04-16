@@ -1897,7 +1897,22 @@ function getFloatingBookEntryTitle(entry) {
         return '(hidden entry)';
     }
 
-    return getWorldInfoReportEntryLabel(entry);
+    const uid = entry?.uid === null || entry?.uid === undefined ? '' : String(entry.uid).trim();
+    const comment = String(entry?.displayName ?? entry?.comment ?? '').trim();
+
+    if (uid && comment) {
+        return `${uid} - ${comment}`;
+    }
+
+    if (comment) {
+        return comment;
+    }
+
+    if (uid) {
+        return uid;
+    }
+
+    return 'Entry';
 }
 
 function compareFloatingBookEntries(a, b) {
@@ -2102,7 +2117,11 @@ function buildFloatingBookPanelModel(snapshot, settings) {
         }
 
         const groups = [...grouped.entries()]
-            .map(([name, rows]) => ({ name, rows }))
+            .map(([name, rows]) => ({
+                name,
+                rows,
+                count: rows.filter(row => row.type === 'entry').length,
+            }))
             .sort((a, b) => {
                 if (a.name === FLOATING_BOOK_HIDDEN_GROUP_NAME) {
                     return 1;
@@ -2381,14 +2400,28 @@ function createWorldInfoFloatingBookController() {
 
             if (controller.settings.group) {
                 for (const group of model.groups) {
-                    const title = document.createElement('div');
+                    const drawer = document.createElement('details');
+                    drawer.className = 'wi-floating-book-group';
+                    drawer.open = true;
+
+                    const title = document.createElement('summary');
                     title.className = 'wi-floating-book-group-title';
-                    title.textContent = group.name;
-                    panel.append(title);
+                    const label = document.createElement('span');
+                    label.className = 'wi-floating-book-group-label';
+                    label.textContent = group.name;
+                    title.append(label);
+
+                    const toggle = document.createElement('span');
+                    toggle.className = 'wi-floating-book-group-toggle';
+                    toggle.setAttribute('aria-hidden', 'true');
+                    toggle.textContent = '▾';
+                    title.append(toggle);
+                    drawer.append(title);
 
                     for (const row of group.rows) {
-                        panel.append(controller.createEntryRow(row));
+                        drawer.append(controller.createEntryRow(row));
                     }
+                    panel.append(drawer);
                 }
                 return;
             }

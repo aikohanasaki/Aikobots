@@ -780,8 +780,10 @@ select.keyselect+span.select2-container .select2-selection--multiple {
     display: none;
     flex-direction: column;
     gap: 8px;
-    width: min(360px, calc(100vw - 24px));
-    max-height: min(70vh, 560px);
+    width: fit-content;
+    min-width: min(320px, calc(100vw - 24px));
+    max-width: min(80dvw, 720px);
+    max-height: 78dvh;
     overflow-y: auto;
     padding: 10px;
     border: 1px solid var(--SmartThemeBorderColor);
@@ -789,6 +791,7 @@ select.keyselect+span.select2-container .select2-selection--multiple {
     background: color-mix(in srgb, var(--SmartThemeBlurTintColor, var(--SmartThemeShadowColor)) 94%, transparent);
     box-shadow: 0 10px 28px var(--black30a);
     backdrop-filter: blur(10px);
+    font-size: small;
 }
 
 .wi-floating-book-panel-visible {
@@ -805,7 +808,7 @@ select.keyselect+span.select2-container .select2-selection--multiple {
 .wi-floating-book-group-title,
 .wi-floating-book-entry-title,
 .wi-floating-book-chat-title {
-    font-weight: 600;
+    font-weight: 500;
 }
 
 .wi-floating-book-entry-header {
@@ -820,16 +823,49 @@ select.keyselect+span.select2-container .select2-selection--multiple {
     text-align: center;
 }
 
+.wi-floating-book-group {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    margin: 0;
+    padding: 0;
+}
+
 .wi-floating-book-group-title {
     margin-top: 4px;
     padding-top: 4px;
     border-top: 1px solid color-mix(in srgb, var(--SmartThemeBorderColor) 65%, transparent);
+    cursor: pointer;
+    list-style: none;
+    font-weight: 600;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
 }
 
-.wi-floating-book-group-title:first-of-type {
+.wi-floating-book-group-title::-webkit-details-marker {
+    display: none;
+}
+
+.wi-floating-book-group:first-of-type .wi-floating-book-group-title {
     margin-top: 0;
     padding-top: 0;
     border-top: none;
+}
+
+.wi-floating-book-group-label {
+    min-width: 0;
+}
+
+.wi-floating-book-group-toggle {
+    flex: 0 0 auto;
+    opacity: 0.75;
+    transition: transform 0.15s ease, opacity 0.15s ease;
+}
+
+.wi-floating-book-group:not([open]) .wi-floating-book-group-toggle {
+    transform: rotate(-90deg);
 }
 
 .wi-floating-book-entry,
@@ -837,9 +873,16 @@ select.keyselect+span.select2-container .select2-selection--multiple {
     display: flex;
     flex-direction: column;
     gap: 4px;
-    padding: 8px 9px;
+    padding: 6px 8px;
     border-radius: 10px;
     background: color-mix(in srgb, var(--SmartThemeShadowColor) 45%, transparent);
+    opacity: 0.82;
+    transition: opacity 0.2s ease;
+}
+
+.wi-floating-book-entry:hover,
+.wi-floating-book-chat-row:hover {
+    opacity: 1;
 }
 
 .wi-floating-book-entry-hidden {
@@ -853,9 +896,24 @@ select.keyselect+span.select2-container .select2-selection--multiple {
 .wi-floating-book-entry-preview,
 .wi-floating-book-chat-preview {
     opacity: 0.92;
-    font-size: 13px;
+    font-size: 12px;
     line-height: 1.35;
     word-break: break-word;
+}
+
+.wi-floating-book-chat-row {
+    font-size: 0.75em;
+}
+
+.wi-floating-book-chat-title {
+    display: flex;
+    flex-direction: column;
+    width: 0;
+}
+
+.wi-floating-book-entry-title,
+.wi-floating-book-chat-preview {
+    line-height: 1.2;
 }
 
 .wi-floating-book-empty {
@@ -897,7 +955,8 @@ select.keyselect+span.select2-container .select2-selection--multiple {
     }
 
     .wi-floating-book-panel {
-        width: min(320px, calc(100vw - 20px));
-        max-height: min(62vh, 460px);
+        min-width: min(300px, calc(100vw - 20px));
+        max-width: calc(100vw - 20px);
+        max-height: 72dvh;
     }
 }
