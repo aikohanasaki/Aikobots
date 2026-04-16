@@ -36,6 +36,7 @@ import {
     getChatSaveSessionId,
     setChatSaveRevision,
     warnStaleChatSave,
+    isPromptHiddenChatMessage,
 } from '../script.js';
 import { selected_group } from './group-chats.js';
 import { power_user } from './power-user.js';
@@ -607,7 +608,7 @@ export async function hideChatMessageRange(start, end, unhide, nameFitler = null
         // Also toggle "hidden" state for all visible messages
         const messageBlock = $(`.mes[mesid="${messageId}"]`);
         if (!messageBlock.length) continue;
-        messageBlock.attr('is_system', String(hide));
+        messageBlock.attr('is_system', String(isPromptHiddenChatMessage(message)));
     }
 
     // Reload swipes. Useful when a last message is hidden.

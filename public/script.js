@@ -2909,6 +2909,18 @@ function isPromptExcludedChatMessage(message) {
     return Boolean(message?.extra?.[IGNORE_SYMBOL] || message?.extra?.ignore);
 }
 
+export function isPromptHiddenChatMessage(message, { allowToolInvocations = false } = {}) {
+    if (isPromptExcludedChatMessage(message)) {
+        return true;
+    }
+
+    if (!message?.is_system) {
+        return false;
+    }
+
+    return !(allowToolInvocations && Array.isArray(message?.extra?.tool_invocations));
+}
+
 function getCoreChatPayloadForAssembly(coreChat) {
     return coreChat;
 }
@@ -3827,6 +3839,7 @@ function getMessageFromTemplate({
     tokenCount,
     extra,
     type,
+    isPromptHidden,
 }) {
     const mes = messageTemplate.clone();
     mes.attr({
@@ -3834,7 +3847,7 @@ function getMessageFromTemplate({
         'swipeid': swipeId,
         'ch_name': characterName,
         'is_user': isUser,
-        'is_system': !!isSystem,
+        'is_system': !!(isPromptHidden ?? isSystem),
         'bookmark_link': bookmarkLink,
         'force_avatar': !!forceAvatar,
         'timestamp': timestamp,
@@ -4382,6 +4395,7 @@ export function addOneMessage(mes, { type = 'normal', insertAfter = null, scroll
 
     let avatarImg = getThumbnailUrl('persona', user_avatar);
     const isSystem = mes.is_system;
+    const isPromptHidden = isPromptHiddenChatMessage(mes);
     const title = mes.title;
 
     //for non-user mesages
@@ -4436,6 +4450,7 @@ export function addOneMessage(mes, { type = 'normal', insertAfter = null, scroll
         extra: mes.extra,
         tokenCount: mes.extra?.token_count ?? 0,
         type: mes.extra?.type ?? '',
+        isPromptHidden,
         ...formatGenerationTimer(mes.gen_started, mes.gen_finished, mes.extra?.token_count, mes.extra?.reasoning_duration, mes.extra?.time_to_first_token),
     };
 
@@ -6251,7 +6266,7 @@ export async function Generate(type, { automatic_trigger, force_name2, quiet_pro
     // Collect messages with usable content
     const canUseTools = ToolManager.isToolCallingSupported();
     const canPerformToolCalls = !dryRun && ToolManager.canPerformToolCalls(type) && depth < ToolManager.RECURSE_LIMIT;
-    let coreChat = logicalChat.filter(x => !isPromptExcludedChatMessage(x) && (!x.is_system || (canUseTools && Array.isArray(x.extra?.tool_invocations))));
+    let coreChat = logicalChat.filter(x => !isPromptHiddenChatMessage(x, { allowToolInvocations: canUseTools }));
     if (type === 'swipe') {
         coreChat.pop();
     }
@@ -9162,6 +9177,7 @@ export function renderDetachedMessage(mes, messageId) {
 
     let avatarImg = getThumbnailUrl('persona', user_avatar);
     const isSystem = mes?.is_system;
+    const isPromptHidden = isPromptHiddenChatMessage(mes);
     const title = mes?.title;
 
     if (!mes?.is_user) {
@@ -9205,6 +9221,7 @@ export function renderDetachedMessage(mes, messageId) {
         extra: mes?.extra,
         tokenCount: mes?.extra?.token_count ?? 0,
         type: mes?.extra?.type ?? '',
+        isPromptHidden,
         ...formatGenerationTimer(mes?.gen_started, mes?.gen_finished, mes?.extra?.token_count, mes?.extra?.reasoning_duration, mes?.extra?.time_to_first_token),
     };
 

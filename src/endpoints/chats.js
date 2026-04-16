@@ -865,8 +865,9 @@ export function buildChunkedChatPayload(filePath, {
             : [];
     }
 
+    // Keep this as a logical parent slice. Prompt filtering happens after it is merged with the loaded tail.
     const parentPromptMessages = segments.storage && !hydrateFull && !shouldServeTailUsingDeclaredIds && (includeParentPromptCache || rangeStart === null)
-        ? segments.messages.slice(0, tailStartId).filter(isResidentParentPromptMessage)
+        ? segments.messages.slice(0, tailStartId)
         : undefined;
 
     return {
