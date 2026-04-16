@@ -15,6 +15,7 @@ import { getCharacterSharedKey } from '../character-linked-lorebooks.js';
 import { clearCharacterFavoriteState, getCharacterFavorite, getLegacyCharacterFavoriteState } from '../favorites-repository.js';
 import { Jimp, JimpMime } from '../jimp.js';
 import { DEFAULT_AVATAR_PATH } from '../constants.js';
+import { serverDirectory } from '../server-directory.js';
 
 const contentDirectory = globalThis.DEFAULT_CONTENT_ROOT;
 const scaffoldDirectory = globalThis.DEFAULT_SCAFFOLD_ROOT;
