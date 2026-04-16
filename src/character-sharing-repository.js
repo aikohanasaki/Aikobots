@@ -516,6 +516,11 @@ export async function getCharacterMetadata({ characterCard = null, filenameStem 
 export async function promoteCharacterToShared(user, avatarName, ownerHandles) {
     const canonicalName = normalizeCharacterName(avatarName);
     const normalizedOwners = normalizeOwnerHandles(ownerHandles);
+    const promoterHandle = String(user?.profile?.handle || '').trim();
+    if (!promoterHandle || !normalizedOwners.includes(promoterHandle)) {
+        throw new CharacterSharingRepositoryError('CharacterOwnersInvalid', 'Promoting users must be included in shared character owners.', 400);
+    }
+
     if (normalizedOwners.length < 2) {
         throw new CharacterSharingRepositoryError('CharacterOwnersInvalid', 'Shared characters must have at least two owners.', 400);
     }
@@ -544,7 +549,7 @@ export async function promoteCharacterToShared(user, avatarName, ownerHandles) {
 
         for (const handle of normalizedOwners) {
             const targetPath = getUserCharacterPath(handle, canonicalName);
-            if (handle !== user.profile.handle && fs.existsSync(targetPath)) {
+            if (handle !== promoterHandle && fs.existsSync(targetPath)) {
                 throw new CharacterSharingRepositoryError('CharacterAlreadyExists', `Character "${canonicalName}" already exists for ${handle}.`, 409);
             }
         }
@@ -563,8 +568,8 @@ export async function promoteCharacterToShared(user, avatarName, ownerHandles) {
         wroteCanonicalCharacter = true;
 
         const linkHandles = [
-            ...normalizedOwners.filter(handle => handle !== user.profile.handle),
-            ...normalizedOwners.filter(handle => handle === user.profile.handle),
+            ...normalizedOwners.filter(handle => handle !== promoterHandle),
+            ...normalizedOwners.filter(handle => handle === promoterHandle),
         ];
 
         for (const handle of linkHandles) {
@@ -584,8 +589,8 @@ export async function promoteCharacterToShared(user, avatarName, ownerHandles) {
             checkedOutAt: null,
             createdAt: timestamp,
             updatedAt: timestamp,
-            createdBy: user.profile.handle,
-            updatedBy: user.profile.handle,
+            createdBy: promoterHandle,
+            updatedBy: promoterHandle,
         };
 
         return buildCharacterMetadata(getSharedCharacterIndexRecord(index, canonicalName), user);
@@ -601,7 +606,7 @@ export async function promoteCharacterToShared(user, avatarName, ownerHandles) {
                 }
             }
 
-            if (normalizedOwners.includes(user.profile.handle) && !fs.existsSync(sourcePath) && originalRawBuffer && originalCard) {
+            if (normalizedOwners.includes(promoterHandle) && !fs.existsSync(sourcePath) && originalRawBuffer && originalCard) {
                 await writeCharacterCardFile(originalRawBuffer, originalCard, sourcePath);
             }
 
