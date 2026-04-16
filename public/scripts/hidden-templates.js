@@ -392,12 +392,22 @@ function renderGlobalEditor(panel) {
 }
 
 function renderCharacterEditor(panel) {
-    const currentCharacterKey = panel.availableCharacters.some(item => item.key === panel.currentCharacter)
+    const sourceOnlyCharacters = Object.keys(panel.source.characters)
+        .filter(key => !panel.availableCharacters.some(item => item.key === key))
+        .map(key => ({ key, label: `${key} (missing character)` }));
+    const allCharacters = [...panel.availableCharacters, ...sourceOnlyCharacters]
+        .sort((left, right) => compareStrings(left.label, right.label));
+    const activeCharacterKey = getCurrentCharacterKey();
+    const fallbackCharacterKey = allCharacters.some(item => item.key === activeCharacterKey)
+        ? activeCharacterKey
+        : (allCharacters[0]?.key || '');
+
+    const currentCharacterKey = allCharacters.some(item => item.key === panel.currentCharacter)
         ? panel.currentCharacter
-        : (getCurrentCharacterKey() || panel.availableCharacters[0]?.key || '');
+        : fallbackCharacterKey;
     panel.currentCharacter = currentCharacterKey;
 
-    const characterOptions = panel.availableCharacters.map(item => ({ label: item.label, value: item.key }));
+    const characterOptions = allCharacters.map(item => ({ label: item.label, value: item.key }));
     fillSingleSelect(panel.characterSelect, characterOptions, currentCharacterKey, '(No characters)');
 
     const sourceEntry = currentCharacterKey ? (panel.source.characters[currentCharacterKey] ?? createEmptyAssignmentEntry()) : createEmptyAssignmentEntry();
