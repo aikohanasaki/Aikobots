@@ -162,19 +162,23 @@ async function loadDoc(settings = null) {
             headers: getRequestHeaders(),
         });
 
-        if (!response.ok) {
+        if (response.status === 404) {
             shouldCreate = true;
+        } else if (!response.ok) {
+            throw new Error(`Failed to load prompts: ${response.status} ${response.statusText}`);
         } else {
             const text = await response.text();
             const parsed = JSON.parse(text);
             if (!validatePromptsFile(parsed)) {
-                shouldCreate = true;
+                throw new Error('Invalid prompts file structure');
             } else {
                 data = parsed;
             }
         }
-    } catch {
-        shouldCreate = true;
+    } catch (error) {
+        if (!shouldCreate) {
+            throw error;
+        }
     }
 
     if (shouldCreate) {

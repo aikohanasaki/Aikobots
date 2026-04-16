@@ -37,7 +37,7 @@ router.post('/set', async function (request, response) {
                 return response.status(400).json({ error: 'A valid group id is required.' });
             }
 
-            setGroupFavorite(request.user.directories, { id, value });
+            await setGroupFavorite(request.user.directories, { id, value });
             return response.send({ ok: true, value });
         }
 
