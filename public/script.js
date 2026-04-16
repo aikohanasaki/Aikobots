@@ -3107,6 +3107,16 @@ async function ensureChatRangeLoaded(startId, count = null) {
     return true;
 }
 
+async function ensureChatSuffixLoaded(startId) {
+    if (!isSplitTailChat() || isChatFullyHydrated()) {
+        return true;
+    }
+
+    const normalizedStartId = clamp(Number(startId) || 0, 0, Math.max(0, getTotalChatMessages() - 1));
+    const count = Math.max(1, getTotalChatMessages() - normalizedStartId);
+    return ensureChatRangeLoaded(normalizedStartId, count);
+}
+
 export async function returnToLiveTailView(navigationToken = null) {
     return serializeHistoryWindowNavigation(async (activeNavigationToken) => {
         if (!isSplitTailChat() || isChatFullyHydrated()) {
@@ -3252,7 +3262,11 @@ export async function renderMessageWindow(startId = 0, count = null, navigationT
         const windowSize = getConfiguredChatWindowSize(count);
         const endId = Math.min(chat.length - 1, normalizedStartId + windowSize - 1);
 
-        await ensureChatRangeLoaded(normalizedStartId, windowSize);
+        if (isSplitTailChat() && !isChatFullyHydrated()) {
+            await ensureChatSuffixLoaded(normalizedStartId);
+        } else {
+            await ensureChatRangeLoaded(normalizedStartId, windowSize);
+        }
 
         for (let i = normalizedStartId; i <= endId; i++) {
             if (!chat[i]) {
@@ -3292,7 +3306,6 @@ export async function jumpToMessageWindow(messageId, count = null, navigationTok
                 0,
                 Math.max(0, chat.length - windowSize),
             );
-            await ensureChatRangeLoaded(startId, windowSize);
             await renderMessageWindow(startId, windowSize, activeNavigationToken);
         }
 
