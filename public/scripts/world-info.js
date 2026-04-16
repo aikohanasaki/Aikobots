@@ -1708,6 +1708,48 @@ async function getWorldInfoReportSnapshot(messageId = null) {
     };
 }
 
+async function getLatestWorldInfoReportSnapshot() {
+    const latestMessageId = Array.isArray(chat) && chat.length > 0 ? chat.length - 1 : null;
+    if (latestMessageId !== null) {
+        const message = chat[latestMessageId];
+        const promptSnapshotKey = message?.extra?.promptSnapshotKey;
+
+        if (typeof promptSnapshotKey === 'string' && promptSnapshotKey) {
+            try {
+                const snapshot = await fetchPromptInspectionSnapshot(promptSnapshotKey);
+                if (snapshot?.worldInfoReport || snapshot?.worldInfo || snapshot?.worldInfoSummary) {
+                    return {
+                        messageId: latestMessageId,
+                        report: snapshot?.worldInfoReport || snapshot?.worldInfo || null,
+                        summary: snapshot?.worldInfoSummary || null,
+                        missingSnapshot: false,
+                    };
+                }
+            } catch {
+                // Fall through to the message-local/chat-local latest state.
+            }
+        }
+
+        const report = message?.extra?.worldInfoReport;
+        const summary = message?.extra?.worldInfoSummary;
+        if ((report && typeof report === 'object') || (summary && typeof summary === 'object')) {
+            return {
+                messageId: latestMessageId,
+                report: report || null,
+                summary: summary || null,
+                missingSnapshot: false,
+            };
+        }
+    }
+
+    return {
+        messageId: latestMessageId,
+        report: chat_metadata.worldInfoReport || null,
+        summary: chat_metadata.worldInfoSummary || null,
+        missingSnapshot: false,
+    };
+}
+
 function getVisibleWorldInfoReportEntries(entries = []) {
     return entries.filter(entry => !entry?.hidden);
 }
@@ -2476,7 +2518,7 @@ function createWorldInfoFloatingBookController() {
         },
         async refresh() {
             const refreshToken = ++controller.refreshToken;
-            const snapshot = await getWorldInfoReportSnapshot();
+            const snapshot = await getLatestWorldInfoReportSnapshot();
             if (refreshToken !== controller.refreshToken) {
                 return;
             }
@@ -2580,6 +2622,9 @@ function createWorldInfoFloatingBookController() {
 
     const refreshEvents = [
         event_types.CHAT_CHANGED,
+        event_types.MESSAGE_RECEIVED,
+        event_types.MESSAGE_UPDATED,
+        event_types.CHARACTER_MESSAGE_RENDERED,
         event_types.MESSAGE_SWIPED,
         event_types.MESSAGE_DELETED,
         event_types.MESSAGE_SWIPE_DELETED,
