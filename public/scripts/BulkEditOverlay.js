@@ -69,7 +69,8 @@ class CharacterContextMenu {
      */
     static favorite = async (characterId) => {
         const character = CharacterContextMenu.#getCharacter(characterId);
-        const newFavState = !(character.data?.extensions?.fav || character.fav);
+        const currentFavState = character.data?.extensions?.fav ?? character.fav;
+        const newFavState = !(currentFavState === true || currentFavState === 'true');
         const saved = await persistCharacterFavorite(character.avatar, newFavState, {
             sharedCharacterKey: character.sharedCharacterKey || character.data?.extensions?.aikobots?.shared_character_key || '',
         });
