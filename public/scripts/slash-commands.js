@@ -2698,9 +2698,9 @@ export function initDefaultSlashCommands() {
 
             const chatContainer = document.getElementById('chat');
             const target = await jumpToMessageWindow(messageIndex);
-            const messageElement = target.get(0);
+            const messageElement = target?.get?.(0);
 
-            if (messageElement instanceof HTMLElement && chatContainer instanceof HTMLElement) {
+            if (target?.length && messageElement instanceof HTMLElement && chatContainer instanceof HTMLElement) {
                 chatContainer.scrollTo({
                     top: messageElement.offsetTop,
                     behavior: 'smooth',
