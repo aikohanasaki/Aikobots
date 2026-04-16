@@ -1039,20 +1039,31 @@ function applyAssemblyResponseMetadata(response, type) {
 }
 
 function applyTimedWorldInfoResponseData(data, requestId) {
-    const entry = getOpenAIResponseMetadataEntry(requestId, { create: true });
     const promptSnapshotKey = data?.x_sillytavern?.promptSnapshotKey;
+    const timedWorldInfo = data?.x_sillytavern?.timedWorldInfo;
+    const worldInfoSummary = data?.x_sillytavern?.worldInfoSummary;
+    const worldInfoReport = data?.x_sillytavern?.worldInfoReport;
+    const hasMetadata =
+        (typeof promptSnapshotKey === 'string' && promptSnapshotKey) ||
+        (timedWorldInfo && typeof timedWorldInfo === 'object') ||
+        (worldInfoSummary && typeof worldInfoSummary === 'object') ||
+        (worldInfoReport && typeof worldInfoReport === 'object');
+
+    if (!hasMetadata) {
+        maybeNotifyWorldInfoOverflow(data);
+        return;
+    }
+
+    const entry = getOpenAIResponseMetadataEntry(requestId, { create: true });
     if (entry && typeof promptSnapshotKey === 'string' && promptSnapshotKey) {
         entry.promptSnapshotKey = promptSnapshotKey;
     }
-    const timedWorldInfo = data?.x_sillytavern?.timedWorldInfo;
     if (entry && timedWorldInfo && typeof timedWorldInfo === 'object') {
         entry.timedWorldInfo = structuredClone(timedWorldInfo);
     }
-    const worldInfoSummary = data?.x_sillytavern?.worldInfoSummary;
     if (entry && worldInfoSummary && typeof worldInfoSummary === 'object') {
         entry.worldInfoSummary = structuredClone(worldInfoSummary);
     }
-    const worldInfoReport = data?.x_sillytavern?.worldInfoReport;
     if (entry && worldInfoReport && typeof worldInfoReport === 'object') {
         entry.worldInfoReport = structuredClone(worldInfoReport);
     }
