@@ -204,6 +204,9 @@ function buildLocalCompiledScene(range, { skipSystemMessages = true, allowPartia
     const resolvedSceneContext = sceneContext || buildStmbSceneContext();
     const requestedStart = Number(range?.sceneStart);
     const requestedEnd = Number(range?.sceneEnd);
+    if (!Number.isInteger(requestedStart) || !Number.isInteger(requestedEnd) || requestedStart < 0 || requestedEnd < requestedStart) {
+        throw new Error('Invalid scene range.');
+    }
     const missingRanges = findMissingRanges(chat, requestedStart, requestedEnd);
     if (allowPartial !== true && missingRanges.length > 0) {
         const firstMissing = missingRanges[0];
