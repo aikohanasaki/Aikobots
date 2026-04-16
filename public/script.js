@@ -9879,7 +9879,7 @@ function getManageChatsOwnerFromElement(element) {
 }
 
 function isManageChatsSelectableCharacter(character) {
-    return !!character && character.avatar !== getPermanentAssistantAvatar();
+    return !!character;
 }
 
 export function getCurrentManageChatsOwner() {
