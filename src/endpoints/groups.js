@@ -54,7 +54,7 @@ router.post('/all', (request, response) => {
                 group['create_date'] = humanizedISO8601DateTime(groupStat.birthtimeMs);
                 group['fav'] = getGroupFavorite(favoritesState, {
                     id: String(group.id || ''),
-                    legacyFavorite: Boolean(rawGroup?.fav),
+                    legacyFavorite: coerceFavoriteValue(rawGroup?.fav),
                 });
 
                 let chat_size = 0;
