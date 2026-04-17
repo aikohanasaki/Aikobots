@@ -7121,6 +7121,13 @@ body:not(.movingUI) .drawer-content.maximized {
     background: rgba(255, 255, 255, 0.03);
 }
 
+.stmb-jobs-store-label {
+    margin: 6px 0 0;
+    font-size: 12px;
+    font-weight: 600;
+    opacity: 0.82;
+}
+
 .stmb-jobs-row-header {
     align-items: center;
     gap: 8px;
