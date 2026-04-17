@@ -6131,6 +6131,40 @@ function removeLastMessage() {
     });
 }
 
+function refreshChatStateAfterSaveRollback() {
+    syncSplitTailStateAfterMutation();
+    syncVisibleChatRangeFromDom();
+    updateHistoryControls();
+    refreshSwipeButtons();
+    refreshPromptInspectorButton();
+    updateEditArrowClasses();
+}
+
+function rollbackUnsavedInsertedMessage(messageId, message) {
+    if (!message || chat[messageId] !== message || messageId !== chat.length - 1) {
+        console.warn('Could not roll back unsaved inserted message after failed save');
+        return false;
+    }
+
+    chat.length = chat.length - 1;
+    chatElement.children(`.mes[mesid="${messageId}"]`).remove();
+    refreshChatStateAfterSaveRollback();
+    return true;
+}
+
+function restoreUnsavedDeletedLastMessage(messageId, message) {
+    if (!message || messageId !== chat.length) {
+        console.warn('Could not restore deleted message after failed save');
+        return false;
+    }
+
+    chat.push(message);
+    addOneMessage(message, { forceId: messageId, scroll: false });
+    restoreTimedWorldInfoFromChat(messageId);
+    refreshChatStateAfterSaveRollback();
+    return true;
+}
+
 /**
  * @typedef {object} JsonSchema
  * @property {string} name Name of the schema.
@@ -6267,6 +6301,9 @@ export async function Generate(type, { automatic_trigger, force_name2, quiet_pro
 
     let textareaText;
     let generationStartMutatedChat = false;
+    let generationStartDeletedId = null;
+    let generationStartDeletedMessage = null;
+    let continueTimerRollback = null;
     if (type !== 'regenerate' && type !== 'swipe' && type !== 'quiet' && !isImpersonate && !dryRun) {
         is_send_press = true;
         textareaText = String($('#send_textarea').val());
@@ -6278,11 +6315,14 @@ export async function Generate(type, { automatic_trigger, force_name2, quiet_pro
         }
         else if (type !== 'quiet' && type !== 'swipe' && !isImpersonate && !dryRun && chat.length) {
             const deletedId = chat.length - 1;
+            const deletedMessage = chat[deletedId];
             chat.length = chat.length - 1;
+            syncSplitTailStateAfterMutation();
             restoreTimedWorldInfoFromChat();
             await removeLastMessage();
-            await eventSource.emit(event_types.MESSAGE_DELETED, deletedId, chat.length);
             generationStartMutatedChat = true;
+            generationStartDeletedId = deletedId;
+            generationStartDeletedMessage = deletedMessage;
         }
     }
 
@@ -6290,13 +6330,18 @@ export async function Generate(type, { automatic_trigger, force_name2, quiet_pro
 
     // Rewrite the generation timer to account for the time passed for all the continuations.
     if (isContinue && chat.length) {
-        const prevFinished = chat[chat.length - 1]['gen_finished'];
-        const prevStarted = chat[chat.length - 1]['gen_started'];
+        const continuedMessage = chat[chat.length - 1];
+        const prevFinished = continuedMessage['gen_finished'];
+        const prevStarted = continuedMessage['gen_started'];
 
         if (prevFinished && prevStarted) {
             const timePassed = Number(prevFinished) - Number(prevStarted);
             generation_started = new Date(Date.now() - timePassed);
-            chat[chat.length - 1]['gen_started'] = generation_started;
+            continueTimerRollback = {
+                message: continuedMessage,
+                gen_started: continuedMessage['gen_started'],
+            };
+            continuedMessage['gen_started'] = generation_started;
         }
     }
 
@@ -6322,9 +6367,12 @@ export async function Generate(type, { automatic_trigger, force_name2, quiet_pro
     if ((textareaText != '' || (hasPendingFileAttachment() && !noAttachTypes.includes(type))) && !automatic_trigger && type !== 'quiet' && !dryRun) {
         // If user message contains no text other than bias - send as a system message
         if (messageBias && !removeMacros(textareaText)) {
+            const insertedMessageId = chat.length;
             sendSystemMessage(system_message_types.GENERIC, ' ', { bias: messageBias });
+            const insertedMessage = chat[insertedMessageId];
             const saveResult = await saveChatConditional();
             if (saveResult !== CHAT_SAVE_RESULT.SAVED) {
+                rollbackUnsavedInsertedMessage(insertedMessageId, insertedMessage);
                 unblockGeneration(type);
                 return Promise.resolve();
             }
@@ -6341,9 +6389,14 @@ export async function Generate(type, { automatic_trigger, force_name2, quiet_pro
     if (generationStartMutatedChat) {
         const saveResult = await saveChatConditional();
         if (saveResult !== CHAT_SAVE_RESULT.SAVED) {
+            if (continueTimerRollback?.message) {
+                continueTimerRollback.message['gen_started'] = continueTimerRollback.gen_started;
+            }
+            restoreUnsavedDeletedLastMessage(generationStartDeletedId, generationStartDeletedMessage);
             unblockGeneration(type);
             return Promise.resolve();
         }
+        await eventSource.emit(event_types.MESSAGE_DELETED, generationStartDeletedId, chat.length);
     }
 
     let {
