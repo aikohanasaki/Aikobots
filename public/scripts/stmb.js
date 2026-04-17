@@ -6098,7 +6098,7 @@ async function saveMemoryObjectToLorebook(memoryObject, { lorebookName, range, c
     await applyPostSaveLorebookEffects(lorebookName, range, sceneContext);
     throwIfStmbAborted(signal);
     showOrderClampNotifications(result?.orderClampNotifications);
-    const shouldClearSceneMarkers = !keepSceneMarkers || getModuleSettings().autoClearSceneAfterMemory;
+    const shouldClearSceneMarkers = !keepSceneMarkers && getModuleSettings().autoClearSceneAfterMemory === true;
     if (isSceneContextCurrent(sceneContext)) {
         setHighestProcessedMessageId(range.sceneEnd);
         if (shouldClearSceneMarkers) {
