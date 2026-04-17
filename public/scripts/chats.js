@@ -1111,65 +1111,12 @@ export function decodeStyleTags(text, { prefix } = { prefix: '.mes_text ' }) {
 }
 
 /**
- * Class to manage style preferences for characters.
- */
-class StylesPreference {
-    /**
-     * Creates a new StylesPreference instance.
-     * @param {string|null} avatarId - The avatar ID of the character
-     */
-    constructor(avatarId) {
-        this.avatarId = avatarId;
-    }
-
-    /**
-     * Gets the account storage key for the style preference.
-     */
-    get key() {
-        return `AllowGlobalStyles-${this.avatarId}`;
-    }
-
-    /**
-     * Checks if a preference exists for this character.
-     * @returns {boolean} True if preference exists, false otherwise
-     */
-    exists() {
-        return this.avatarId
-            ? accountStorage.getItem(this.key) !== null
-            : true; // No character == assume preference is set
-    }
-
-    /**
-     * Gets the current style preference.
-     * @returns {boolean} True if global styles are allowed, false otherwise
-     */
-    get() {
-        return this.avatarId
-            ? accountStorage.getItem(this.key) === 'true'
-            : false; // Always disabled when creating a new character
-    }
-
-    /**
-     * Sets the global styles preference.
-     * @param {boolean} allowed - Whether global styles are allowed
-     */
-    set(allowed) {
-        if (this.avatarId) {
-            accountStorage.setItem(this.key, String(allowed));
-        }
-    }
-}
-
-/**
  * Formats creator notes in the message text.
  * @param {string} text Raw Markdown text
- * @param {string} avatarId Avatar ID
  * @returns {string} Formatted HTML text
  */
-export function formatCreatorNotes(text, avatarId) {
-    const preference = new StylesPreference(avatarId);
-    const sanitizeStyles = !preference.get();
-    const decodeStyleParam = { prefix: sanitizeStyles ? '#creator_notes_spoiler ' : '' };
+export function formatCreatorNotes(text) {
+    const decodeStyleParam = { prefix: '#creator_notes_spoiler ' };
     /** @type {import('dompurify').Config & { MESSAGE_SANITIZE: boolean }} */
     const config = {
         RETURN_DOM: false,
@@ -1185,122 +1132,6 @@ export function formatCreatorNotes(text, avatarId) {
     html = decodeStyleTags(html, decodeStyleParam);
 
     return html;
-}
-
-async function openGlobalStylesPreferenceDialog() {
-    if (selected_group) {
-        toastr.info(t`To change the global styles preference, please select a character individually.`);
-        return;
-    }
-
-    const entityId = getCurrentEntityId();
-    const preference = new StylesPreference(entityId);
-    const currentValue = preference.get();
-
-    const template = $(await renderTemplateAsync('globalStylesPreference'));
-
-    const allowedRadio = template.find('#global_styles_allowed');
-    const forbiddenRadio = template.find('#global_styles_forbidden');
-
-    allowedRadio.on('change', () => {
-        preference.set(true);
-        allowedRadio.prop('checked', true);
-        forbiddenRadio.prop('checked', false);
-    });
-
-    forbiddenRadio.on('change', () => {
-        preference.set(false);
-        allowedRadio.prop('checked', false);
-        forbiddenRadio.prop('checked', true);
-    });
-
-    const currentPreferenceRadio = currentValue ? allowedRadio : forbiddenRadio;
-    template.find(currentPreferenceRadio).prop('checked', true);
-
-    await callGenericPopup(template, POPUP_TYPE.TEXT, '', { wide: false, large: false });
-
-    // Re-render the notes if the preference changed
-    const newValue = preference.get();
-    if (newValue !== currentValue) {
-        $('#rm_button_selected_ch').trigger('click');
-        setGlobalStylesButtonClass(newValue);
-    }
-}
-
-async function checkForCreatorNotesStyles() {
-    // Don't do anything if in group chat or not in a chat
-    if (selected_group || this_chid === undefined) {
-        return;
-    }
-
-    const notes = characters[this_chid].data?.creator_notes || characters[this_chid].creatorcomment;
-    const avatarId = characters[this_chid].avatar;
-    const styleContents = getStyleContentsFromMarkdown(notes);
-
-    if (!styleContents) {
-        setGlobalStylesButtonClass(null);
-        return;
-    }
-
-    const preference = new StylesPreference(avatarId);
-    const hasPreference = preference.exists();
-    if (!hasPreference) {
-        const template = $(await renderTemplateAsync('globalStylesPopup'));
-        template.find('textarea').val(styleContents);
-        const confirmResult = await callGenericPopup(template, POPUP_TYPE.CONFIRM, '', {
-            wide: false,
-            large: false,
-            okButton: t`Just to Creator's Notes`,
-            cancelButton: t`Apply to the entire app`,
-        });
-
-        switch (confirmResult) {
-            case POPUP_RESULT.AFFIRMATIVE:
-                preference.set(false);
-                break;
-            case POPUP_RESULT.NEGATIVE:
-                preference.set(true);
-                break;
-            case POPUP_RESULT.CANCELLED:
-                preference.set(false);
-                break;
-        }
-
-        $('#rm_button_selected_ch').trigger('click');
-    }
-
-    const currentPreference = preference.get();
-    setGlobalStylesButtonClass(currentPreference);
-}
-
-/**
- * Sets the class of the global styles button based on the state.
- * @param {boolean|null} state State of the button
- */
-function setGlobalStylesButtonClass(state) {
-    const button = $('#creators_note_styles_button');
-    button.toggleClass('empty', state === null);
-    button.toggleClass('allowed', state === true);
-    button.toggleClass('forbidden', state === false);
-}
-
-/**
- * Extracts the contents of all style elements from the Markdown text.
- * @param {string} text Markdown text
- * @returns {string} The joined contents of all style elements
- */
-function getStyleContentsFromMarkdown(text) {
-    if (!text) {
-        return '';
-    }
-
-    const html = converter.makeHtml(substituteParams(text));
-    const parsedDocument = new DOMParser().parseFromString(html, 'text/html');
-    const styleElements = Array.from(parsedDocument.querySelectorAll('style'));
-    return styleElements
-        .filter(s => s.textContent.trim().length > 0)
-        .map(s => s.textContent.trim())
-        .join('\n\n');
 }
 
 async function openExternalMediaOverridesDialog() {
@@ -2798,11 +2629,6 @@ export function initChatUtilities() {
         reloadCurrentChat();
     });
 
-    $('#creators_note_styles_button').on('click', function (e) {
-        e.stopPropagation();
-        openGlobalStylesPreferenceDialog();
-    });
-
     /**
      * Returns information about the closest media container.
      * @returns {MediaContainerInfo} Information about the media container
@@ -2926,6 +2752,4 @@ export function initChatUtilities() {
         fileInput.files = dataTransfer.files;
         await onFileAttach(fileInput.files);
     }
-
-    eventSource.on(event_types.CHAT_CHANGED, checkForCreatorNotesStyles);
 }
