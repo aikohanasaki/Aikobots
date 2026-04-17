@@ -1273,6 +1273,49 @@ function formatProviderErrorMessage(error, fallbackMessage) {
     return details.length ? `${baseMessage} (${details.join(', ')})` : baseMessage;
 }
 
+function formatProviderDetailMessage(detail, fallbackMessage) {
+    const detailError = detail?.error ?? detail;
+
+    if (typeof detailError === 'string') {
+        return detailError.trim() || fallbackMessage;
+    }
+
+    if (Array.isArray(detailError)) {
+        const messages = detailError.map(item => {
+            if (typeof item === 'string') {
+                return item.trim();
+            }
+
+            if (item && typeof item === 'object') {
+                const message = typeof item.message === 'string' && item.message.trim()
+                    ? item.message.trim()
+                    : typeof item.msg === 'string' && item.msg.trim()
+                        ? item.msg.trim()
+                        : '';
+                const location = Array.isArray(item.loc)
+                    ? item.loc.map(part => String(part ?? '').trim()).filter(Boolean).join('.')
+                    : '';
+
+                return location && message ? `${location}: ${message}` : message;
+            }
+
+            return '';
+        }).filter(Boolean);
+
+        if (messages.length) {
+            return messages.slice(0, 3).join('; ');
+        }
+
+        return fallbackMessage;
+    }
+
+    if (detailError && typeof detailError === 'object') {
+        return formatProviderErrorMessage(detailError, fallbackMessage);
+    }
+
+    return fallbackMessage;
+}
+
 /**
  * Handles errors during streaming requests.
  * @param {Response} response
@@ -1307,8 +1350,8 @@ export function tryParseStreamingError(response, decoded, { quiet = false } = {}
         throw new Error(data.message);
     }
 
-    if (data.detail) {
-        const message = formatProviderErrorMessage(data.detail?.error, response.statusText || `HTTP ${response.status}`);
+    if (data.detail !== undefined && data.detail !== null) {
+        const message = formatProviderDetailMessage(data.detail, response.statusText || `HTTP ${response.status}`);
         !quiet && toastr.error(message, 'Chat Completion API');
         throw new Error(message);
     }
@@ -1328,8 +1371,8 @@ function getResponseErrorMessage(response, errorText, parsed = null) {
         return parsed.message;
     }
 
-    if (parsed?.detail?.error) {
-        return formatProviderErrorMessage(parsed.detail.error, httpMessage);
+    if (parsed?.detail !== undefined && parsed.detail !== null) {
+        return formatProviderDetailMessage(parsed.detail, httpMessage);
     }
 
     const trimmed = typeof errorText === 'string' ? errorText.trim() : '';
