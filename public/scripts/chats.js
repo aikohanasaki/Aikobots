@@ -37,6 +37,8 @@ import {
     setChatSaveRevision,
     warnStaleChatSave,
     isPromptHiddenChatMessage,
+    flushDebouncedChatSave,
+    CHAT_SAVE_RESULT,
 } from '../script.js';
 import { selected_group } from './group-chats.js';
 import { power_user } from './power-user.js';
@@ -580,6 +582,12 @@ export async function hideChatMessageRange(start, end, unhide, nameFitler = null
     }
 
     if (persist && hydratedHistoricalMessages) {
+        const flushResult = await flushDebouncedChatSave();
+        if (flushResult !== CHAT_SAVE_RESULT.SAVED) {
+            toastr.warning(t`Message visibility was not changed because the pending chat save failed.`, t`Chat message visibility`);
+            return;
+        }
+
         const saveResult = await updateServerChatMessageVisibility(start, end, unhide, nameFitler);
         if (saveResult === CHAT_MESSAGE_VISIBILITY_SAVE_RESULT.SAVED) {
             await reloadCurrentChat();

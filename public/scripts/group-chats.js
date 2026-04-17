@@ -1358,7 +1358,7 @@ async function deleteGroup(id) {
     }
 
     if (response.ok) {
-        await clearChat();
+        await clearChat({ flushPendingSave: false });
         selected_group = null;
         delete tag_map[id];
         resetChatState();

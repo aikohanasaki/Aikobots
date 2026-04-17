@@ -821,8 +821,10 @@ function getDefaultChatLoadState() {
 
 let chatLoadState = getDefaultChatLoadState();
 
-/** @type {debounce_timeout} The debounce timeout used for chat/settings save. debounce_timeout.long: 1.000 ms */
+/** @type {debounce_timeout} The debounce timeout used for settings save. debounce_timeout.relaxed: 1000 ms */
 export const DEFAULT_SAVE_EDIT_TIMEOUT = debounce_timeout.relaxed;
+/** @type {number} The debounce timeout used for debounced chat saves: 15000 ms */
+const DEFAULT_CHAT_SAVE_EDIT_TIMEOUT = 15_000;
 /** @type {debounce_timeout} The debounce timeout used for printing. debounce_timeout.quick: 100 ms */
 export const DEFAULT_PRINT_TIMEOUT = debounce_timeout.quick;
 
@@ -3465,8 +3467,38 @@ export function cancelDebouncedChatSave() {
     }
 }
 
-export async function clearChat() {
+function hasPendingDebouncedChatSave() {
+    return Boolean(chatSaveTimeout);
+}
+
+export async function flushDebouncedChatSave() {
+    if (!hasPendingDebouncedChatSave()) {
+        return chatSaveQueuePromise
+            ? await chatSaveQueuePromise
+            : CHAT_SAVE_RESULT.SAVED;
+    }
+
     cancelDebouncedChatSave();
+    toastr.info(t`Please wait until the chat is saved.`, t`Your chat is still saving...`);
+    const result = await saveChatConditional();
+
+    if (result !== CHAT_SAVE_RESULT.SAVED) {
+        saveChatDebounced();
+    }
+
+    return result;
+}
+
+export async function clearChat({ flushPendingSave = true } = {}) {
+    if (flushPendingSave) {
+        const saveResult = await flushDebouncedChatSave();
+        if (saveResult !== CHAT_SAVE_RESULT.SAVED) {
+            throw new Error('Pending chat save failed before clearing chat');
+        }
+    } else {
+        cancelDebouncedChatSave();
+    }
+
     cancelDebouncedMetadataSave();
     closeMessageEditor();
     extension_prompts = {};
@@ -3564,7 +3596,11 @@ export async function deleteMessage(id, swipeDeletionIndex = undefined, askConfi
 
     const startIndex = [0, minId].includes(id) ? id : null;
     updateViewMessageIds(startIndex);
-    saveChatDebounced();
+    if (askConfirmation) {
+        await saveChatConditional();
+    } else {
+        saveChatDebounced();
+    }
 
     if (this_edit_mes_id === id) {
         this_edit_mes_id = undefined;
@@ -6135,6 +6171,12 @@ export async function Generate(type, { automatic_trigger, force_name2, quiet_pro
         return Promise.resolve();
     }
 
+    const pendingSaveResult = await flushDebouncedChatSave();
+    if (pendingSaveResult !== CHAT_SAVE_RESULT.SAVED) {
+        is_send_press = false;
+        return Promise.resolve();
+    }
+
     // Prevent generation from shallow characters
     await unshallowCharacter(this_chid);
 
@@ -6224,6 +6266,7 @@ export async function Generate(type, { automatic_trigger, force_name2, quiet_pro
     }
 
     let textareaText;
+    let generationStartMutatedChat = false;
     if (type !== 'regenerate' && type !== 'swipe' && type !== 'quiet' && !isImpersonate && !dryRun) {
         is_send_press = true;
         textareaText = String($('#send_textarea').val());
@@ -6239,6 +6282,7 @@ export async function Generate(type, { automatic_trigger, force_name2, quiet_pro
             restoreTimedWorldInfoFromChat();
             await removeLastMessage();
             await eventSource.emit(event_types.MESSAGE_DELETED, deletedId, chat.length);
+            generationStartMutatedChat = true;
         }
     }
 
@@ -6279,6 +6323,11 @@ export async function Generate(type, { automatic_trigger, force_name2, quiet_pro
         // If user message contains no text other than bias - send as a system message
         if (messageBias && !removeMacros(textareaText)) {
             sendSystemMessage(system_message_types.GENERIC, ' ', { bias: messageBias });
+            const saveResult = await saveChatConditional();
+            if (saveResult !== CHAT_SAVE_RESULT.SAVED) {
+                unblockGeneration(type);
+                return Promise.resolve();
+            }
         }
         else {
             await sendMessageAsUser(textareaText, messageBias);
@@ -6287,6 +6336,14 @@ export async function Generate(type, { automatic_trigger, force_name2, quiet_pro
     else if (textareaText == '' && !automatic_trigger && !dryRun && type === undefined && main_api == 'openai' && oai_settings.send_if_empty.trim().length > 0) {
         // Use send_if_empty if set and the user message is empty. Only when sending messages normally
         await sendMessageAsUser(oai_settings.send_if_empty.trim(), messageBias);
+    }
+
+    if (generationStartMutatedChat) {
+        const saveResult = await saveChatConditional();
+        if (saveResult !== CHAT_SAVE_RESULT.SAVED) {
+            unblockGeneration(type);
+            return Promise.resolve();
+        }
     }
 
     let {
@@ -8890,6 +8947,8 @@ export function saveChatDebounced() {
     cancelDebouncedChatSave();
 
     chatSaveTimeout = setTimeout(async () => {
+        chatSaveTimeout = null;
+
         if (selectedGroup !== selected_group) {
             console.warn('Chat save timeout triggered, but group changed. Aborting.');
             return;
@@ -8903,7 +8962,7 @@ export function saveChatDebounced() {
         console.debug('Chat save timeout triggered');
         await saveChatConditional();
         console.debug('Chat saved');
-    }, DEFAULT_SAVE_EDIT_TIMEOUT);
+    }, DEFAULT_CHAT_SAVE_EDIT_TIMEOUT);
 }
 
 /**
@@ -13326,7 +13385,7 @@ export async function swipe(_event, direction, { source, repeated, message = cha
             is_send_press = true;
             generation = Generate('swipe');
         } else if (Number(chat[mesId]['swipe_id']) !== chat[mesId]['swipes'].length) {
-            saveChatDebounced();
+            await saveChatConditional();
         }
 
         //Swipe in.
@@ -13907,7 +13966,7 @@ export async function deleteCharacter(characterKey, { deleteChats = true, delete
  */
 async function removeCharacterFromUI() {
     preserveNeutralChat();
-    await clearChat();
+    await clearChat({ flushPendingSave: false });
     $('#character_cross').trigger('click');
     resetChatState();
     $(document.getElementById('rm_button_selected_ch')).children('h2').text('');
@@ -15715,7 +15774,8 @@ jQuery(async function () {
     await firstLoadInit();
 
     window.addEventListener('beforeunload', (e) => {
-        if (isChatSaving || this_edit_mes_id >= 0 || hasUnsavedCharacterEdits()) {
+        if (isChatSaving || hasPendingDebouncedChatSave() || this_edit_mes_id >= 0
+            || hasUnsavedCharacterEdits()) {
             e.preventDefault();
             e.returnValue = true;
         }
