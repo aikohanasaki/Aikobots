@@ -761,7 +761,13 @@ function createLocalProviderErrorResult(error, request, { provider = null, fallb
     const status = getLocalProviderErrorStatus(error);
     const type = typeof error?.name === 'string' && error.name ? error.name : 'ProviderRequestError';
     const message = sanitizeProviderErrorMessage(error?.message, fallbackMessage);
-    const body = annotateErrorPayload({ error: { message } }, {
+    const body = annotateErrorPayload({
+        error: {
+            message,
+            type: typeof error?.type === 'string' && error.type ? error.type : undefined,
+            code: typeof error?.code === 'string' || typeof error?.code === 'number' ? error.code : undefined,
+        },
+    }, {
         request,
         type,
         stage: 'provider_request',
@@ -3865,7 +3871,13 @@ export async function handleChatCompletionsGenerate(request, response) {
                 ? `Connection refused: ${error.message}`
                 : error.message || 'Unknown error occurred';
 
-            const payload = annotateErrorPayload({ error: { message } }, {
+            const payload = annotateErrorPayload({
+                error: {
+                    message,
+                    type: typeof error?.type === 'string' && error.type ? error.type : undefined,
+                    code: typeof error?.code === 'string' || typeof error?.code === 'number' ? error.code : undefined,
+                },
+            }, {
                 request,
                 type: typeof error?.name === 'string' && error.name ? error.name : 'ProviderRequestError',
                 stage: 'provider_request',

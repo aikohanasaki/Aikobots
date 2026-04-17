@@ -1246,6 +1246,33 @@ export async function buildServerAssemblyPayload({
     };
 }
 
+function isTimeoutErrorCode(code) {
+    return ['ETIMEDOUT', 'UND_ERR_CONNECT_TIMEOUT', 'UND_ERR_HEADERS_TIMEOUT', 'ERR_SOCKET_CONNECTION_TIMEOUT']
+        .includes(String(code || '').toUpperCase());
+}
+
+function formatProviderErrorMessage(error, fallbackMessage) {
+    const message = String(error?.message || fallbackMessage || '').trim();
+    const type = typeof error?.type === 'string' || typeof error?.type === 'number' ? String(error.type).trim() : '';
+    const code = typeof error?.code === 'string' || typeof error?.code === 'number' ? String(error.code).trim() : '';
+    const details = [];
+
+    if (type) {
+        details.push(`type: ${type}`);
+    }
+
+    if (code) {
+        details.push(`code: ${code}`);
+    }
+
+    const shouldLabelTimeout = isTimeoutErrorCode(code) || /\b(timeout|timed\s*out|etimedout)\b/i.test(message);
+    const baseMessage = shouldLabelTimeout && !/\btimed\s*out\b/i.test(message)
+        ? `Request timed out. ${message || fallbackMessage || ''}`.trim()
+        : message || (shouldLabelTimeout ? t`Request timed out.` : fallbackMessage);
+
+    return details.length ? `${baseMessage} (${details.join(', ')})` : baseMessage;
+}
+
 /**
  * Handles errors during streaming requests.
  * @param {Response} response
@@ -1270,7 +1297,7 @@ export function tryParseStreamingError(response, decoded, { quiet = false } = {}
     checkModerationError(data, { quiet });
 
     if (data.error) {
-        const message = data.error.message || response.statusText || `HTTP ${response.status}`;
+        const message = formatProviderErrorMessage(data.error, response.statusText || `HTTP ${response.status}`);
         !quiet && toastr.error(message, 'Chat Completion API');
         throw new Error(message);
     }
@@ -1281,7 +1308,7 @@ export function tryParseStreamingError(response, decoded, { quiet = false } = {}
     }
 
     if (data.detail) {
-        const message = data.detail?.error?.message || response.statusText || `HTTP ${response.status}`;
+        const message = formatProviderErrorMessage(data.detail?.error, response.statusText || `HTTP ${response.status}`);
         !quiet && toastr.error(message, 'Chat Completion API');
         throw new Error(message);
     }
@@ -1293,16 +1320,16 @@ function getResponseErrorMessage(response, errorText, parsed = null) {
     const statusText = response.statusText ? ` ${response.statusText}` : '';
     const httpMessage = `HTTP ${response.status}${statusText}`;
 
-    if (parsed?.error?.message) {
-        return parsed.error.message;
+    if (parsed?.error) {
+        return formatProviderErrorMessage(parsed.error, httpMessage);
     }
 
     if (parsed?.message) {
         return parsed.message;
     }
 
-    if (parsed?.detail?.error?.message) {
-        return parsed.detail.error.message;
+    if (parsed?.detail?.error) {
+        return formatProviderErrorMessage(parsed.detail.error, httpMessage);
     }
 
     const trimmed = typeof errorText === 'string' ? errorText.trim() : '';
@@ -2732,7 +2759,7 @@ async function sendOpenAIRequest(type, messages, signal, { jsonSchema = null } =
         checkModerationError(data);
 
         if (data.error) {
-            const message = data.error.message || response.statusText || t`Unknown error`;
+            const message = formatProviderErrorMessage(data.error, response.statusText || t`Unknown error`);
             toastr.error(message, t`API returned an error`);
             throw new Error(message);
         }
