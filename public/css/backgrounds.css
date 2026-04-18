@@ -105,6 +105,7 @@
     display: flex;
     gap: 10px;
     align-items: flex-start;
+    width: 100%;
 }
 
 .look-and-feel-panel-column {
@@ -134,7 +135,13 @@
 
 @media screen and (max-width: 1000px) {
     .look-and-feel-panel-columns {
+        align-items: stretch;
         flex-direction: column;
+    }
+
+    .look-and-feel-panel-column {
+        flex-basis: auto;
+        width: 100%;
     }
 }
 
