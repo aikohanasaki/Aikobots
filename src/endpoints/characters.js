@@ -17,7 +17,7 @@ import { default as validateAvatarUrlMiddleware, getFileNameValidationFunction }
 import { deepMerge, humanizedISO8601DateTime, tryParse, extractFileFromZipBuffer, MemoryLimitedMap, getConfigValue, mutateJsonString, clientRelativePath, getUniqueName, sanitizeSafeCharacterReplacements } from '../util.js';
 import { TavernCardValidator } from '../validator/TavernCardValidator.js';
 import { parse, read, write } from '../character-card-parser.js';
-import { getCharacterDistributionPolicy, setCharacterDistributionPolicy } from '../character-distribution-registry.js';
+import { getCharacterDistributionPolicy, getCharacterDistributionUserBlacklistEntries, setCharacterDistributionPolicy } from '../character-distribution-registry.js';
 import { getCharacterOwnerHandle, getCharacterOwnerHandles, getCharacterSharedKey, validateOwnedCharacterLinkedLorebooks } from '../character-linked-lorebooks.js';
 import {
     CharacterSharingRepositoryError,
@@ -38,6 +38,11 @@ import { getChatInfo } from './chats.js';
 import { ByafParser } from '../byaf.js';
 import cacheBuster from '../middleware/cacheBuster.js';
 import { DISTRIBUTION_SOURCE_TYPES, PUBLISH_MODES, SUBMISSION_STATUSES, distributeCharacterFile, getSubmissionPaths, getSubmissionRecord } from '../character-submissions.js';
+import {
+    reconcileCharacterRepushBlacklistEntries,
+    removeCharacterRepushBlacklistEntry,
+    upsertCharacterRepushBlacklistEntry,
+} from '../character-repush-blacklist-settings.js';
 import {
     clearCharacterFavoriteState,
     createFavoritesState,
@@ -1725,17 +1730,25 @@ router.post('/delete', validateAvatarUrlMiddleware, async function (request, res
         const characterKey = getCharacterSharedKey(characterCard);
         const publishedFilename = path.parse(avatarPath).name;
         const policy = await getCharacterDistributionPolicy({ ownerHandle, characterKey, publishedFilename });
+        let nextPolicy = policy;
 
-        if (policy.blacklistHandles.includes(deletingUserHandle)) {
-            return;
+        if (!policy.userBlacklistHandles.includes(deletingUserHandle)) {
+            nextPolicy = await setCharacterDistributionPolicy({
+                ownerHandle,
+                characterKey,
+                publishedFilename,
+                userBlacklistHandles: [...policy.userBlacklistHandles, deletingUserHandle],
+                updatedBy: deletingUserHandle,
+            });
         }
 
-        await setCharacterDistributionPolicy({
+        await upsertCharacterRepushBlacklistEntry(request.user.directories, {
+            key: nextPolicy.key,
             ownerHandle,
             characterKey,
             publishedFilename,
-            blacklistHandles: [...policy.blacklistHandles, deletingUserHandle],
-            updatedBy: deletingUserHandle,
+            characterName: _.get(characterCard, 'data.name') || _.get(characterCard, 'name') || publishedFilename,
+            addedAt: Date.now(),
         });
     }
 
@@ -1973,6 +1986,70 @@ router.post('/import', async function (request, response) {
 
         console.error(err);
         response.send({ error: true });
+    }
+});
+
+router.post('/repush-blacklist/list', async function (request, response) {
+    try {
+        const userHandle = String(request.user?.profile?.handle || '').trim();
+        const registryEntries = await getCharacterDistributionUserBlacklistEntries(userHandle);
+
+        return response.json({
+            entries: await reconcileCharacterRepushBlacklistEntries(request.user.directories, registryEntries),
+        });
+    } catch (error) {
+        console.error('Failed to list character repush blacklist entries', error);
+        return response.status(500).json({ error: 'Failed to list character repush blacklist entries.' });
+    }
+});
+
+router.post('/repush-blacklist/remove', async function (request, response) {
+    try {
+        const key = String(request.body?.key || '').trim();
+        const userHandle = String(request.user?.profile?.handle || '').trim();
+
+        if (!key) {
+            return response.status(400).json({ error: 'Missing blacklist entry key.' });
+        }
+
+        if (!userHandle) {
+            return response.status(400).json({ error: 'Missing user handle.' });
+        }
+
+        const registryEntries = await getCharacterDistributionUserBlacklistEntries(userHandle);
+        const entries = await reconcileCharacterRepushBlacklistEntries(request.user.directories, registryEntries);
+        const entry = entries.find(item => item.key === key);
+        if (!entry) {
+            return response.status(404).json({ error: 'Blacklist entry not found.' });
+        }
+
+        const policy = await getCharacterDistributionPolicy({
+            ownerHandle: entry.ownerHandle,
+            characterKey: entry.characterKey,
+            publishedFilename: entry.publishedFilename,
+        });
+        const userBlacklistHandles = policy.userBlacklistHandles.filter(handle => handle !== userHandle);
+
+        if (userBlacklistHandles.length !== policy.userBlacklistHandles.length) {
+            await setCharacterDistributionPolicy({
+                ownerHandle: entry.ownerHandle,
+                characterKey: entry.characterKey,
+                publishedFilename: entry.publishedFilename,
+                userBlacklistHandles,
+                updatedBy: userHandle,
+            });
+        }
+
+        const result = await removeCharacterRepushBlacklistEntry(request.user.directories, key);
+
+        return response.json({
+            removed: true,
+            removedEntry: result.removedEntry,
+            entries: result.entries,
+        });
+    } catch (error) {
+        console.error('Failed to remove character repush blacklist entry', error);
+        return response.status(500).json({ error: 'Failed to remove character repush blacklist entry.' });
     }
 });
 

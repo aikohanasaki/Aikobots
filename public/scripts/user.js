@@ -289,8 +289,12 @@ function createEmptyCharacterDistributionPolicy(ownerHandle = '', publishedFilen
         characterKey: String(characterKey || '').trim(),
         publishedFilename: String(publishedFilename || '').trim().replace(/\.png$/i, ''),
         blacklistHandles: [],
+        adminBlacklistHandles: [],
+        userBlacklistHandles: [],
         whitelistHandles: [],
         hasBlacklist: false,
+        hasAdminBlacklist: false,
+        hasUserBlacklist: false,
         hasWhitelist: false,
         updatedAt: null,
         updatedBy: null,
@@ -438,11 +442,14 @@ function parseDistributionHandles(value) {
         .filter(Boolean))];
 }
 
-function formatDistributionHandles(handles = []) {
-    return (Array.isArray(handles) ? handles : [])
+function normalizeDistributionHandles(handles = []) {
+    return [...new Set((Array.isArray(handles) ? handles : [])
         .map(handle => String(handle || '').trim())
-        .filter(Boolean)
-        .join(', ');
+        .filter(Boolean))];
+}
+
+function formatDistributionHandles(handles = []) {
+    return normalizeDistributionHandles(handles).join(', ');
 }
 
 /**
@@ -722,6 +729,8 @@ async function openSubmissionReviewPopup(submission, callback) {
     let publishedFilename = String((submission.publishedFilename || submission.characterName || submission.submittedFilename || '').replace(/\.png$/i, ''));
     let applyBlacklist = hasRequestedDistribution ? requestedDistributionSettings.applyBlacklist : false;
     let persistWhitelist = hasRequestedDistribution ? requestedDistributionSettings.persistWhitelist : false;
+    let hasUserBlacklist = false;
+    let currentUserBlacklistHandles = [];
     let policyRequestId = 0;
     let policyRefreshTimer = null;
     const initialTargetHandles = hasRequestedDistribution
@@ -758,11 +767,11 @@ async function openSubmissionReviewPopup(submission, callback) {
             </label>
             <label class="review-apply-blacklist-block flex-container alignItemsCenter flexGap10">
                 <input type="checkbox" class="review-apply-blacklist">
-                <span>Apply blacklist</span>
+                <span>Apply admin blacklist</span>
             </label>
             <div class="review-blacklist-targets-block flex-container flexFlowColumn flexGap5">
                 <span>Blacklisted Usernames</span>
-                <small class="opacity50p">Type in the usernames separated by a comma.</small>
+                <small class="opacity50p review-blacklist-help">Type in the usernames separated by a comma.</small>
                 <textarea class="text_pole review-blacklist-targets" rows="3" placeholder="Comma or newline separated usernames"></textarea>
             </div>
             <div class="review-targets-block flex-container flexFlowColumn flexGap5">
@@ -798,22 +807,11 @@ async function openSubmissionReviewPopup(submission, callback) {
         container.find('.review-targets-block').toggle(canApprove && publishMode === 'selected');
         container.find('.review-persist-whitelist-block').toggle(canApprove && publishMode === 'selected');
         container.find('.review-apply-blacklist-block').toggle(canApprove && publishMode === 'global');
-        container.find('.review-blacklist-targets-block').toggle(canApprove && publishMode === 'global' && applyBlacklist);
+        container.find('.review-blacklist-targets-block').toggle(canApprove && publishMode === 'global' && (applyBlacklist || hasUserBlacklist));
     }
 
     async function loadPolicyForCurrentFilename({ overwriteRecipients = false } = {}) {
         if (!canApprove) {
-            return;
-        }
-
-        if (hasRequestedDistribution) {
-            applyBlacklist = requestedDistributionSettings.applyBlacklist;
-            persistWhitelist = requestedDistributionSettings.persistWhitelist;
-            container.find('.review-apply-blacklist').prop('checked', applyBlacklist);
-            container.find('.review-persist-whitelist').prop('checked', persistWhitelist);
-            container.find('.review-blacklist-targets').val(formatDistributionHandles(initialBlacklistHandles));
-            container.find('.review-targets').val(formatDistributionHandles(initialTargetHandles));
-            syncPolicyBlocks();
             return;
         }
 
@@ -822,12 +820,36 @@ async function openSubmissionReviewPopup(submission, callback) {
         if (requestId !== policyRequestId) {
             return;
         }
+        hasUserBlacklist = policy.hasUserBlacklist;
+        currentUserBlacklistHandles = normalizeDistributionHandles(policy.userBlacklistHandles);
 
-        applyBlacklist = policy.hasBlacklist;
+        if (hasRequestedDistribution) {
+            const mergedBlacklistHandles = normalizeDistributionHandles([
+                ...initialBlacklistHandles,
+                ...policy.blacklistHandles,
+            ]);
+            applyBlacklist = publishMode === 'global'
+                && (requestedDistributionSettings.applyBlacklist || policy.hasAdminBlacklist);
+            persistWhitelist = requestedDistributionSettings.persistWhitelist;
+            container.find('.review-apply-blacklist').prop('checked', applyBlacklist);
+            container.find('.review-persist-whitelist').prop('checked', persistWhitelist);
+            container.find('.review-blacklist-targets').val(formatDistributionHandles((applyBlacklist || hasUserBlacklist) ? mergedBlacklistHandles : []));
+            container.find('.review-targets').val(formatDistributionHandles(initialTargetHandles));
+            container.find('.review-blacklist-help').text(hasUserBlacklist
+                ? 'User opt-outs are included and always apply. The checkbox controls admin-managed blacklist entries.'
+                : 'Type in the usernames separated by a comma.');
+            syncPolicyBlocks();
+            return;
+        }
+
+        applyBlacklist = policy.hasAdminBlacklist;
         persistWhitelist = policy.hasWhitelist;
         container.find('.review-apply-blacklist').prop('checked', applyBlacklist);
         container.find('.review-persist-whitelist').prop('checked', persistWhitelist);
-        container.find('.review-blacklist-targets').val(formatDistributionHandles(policy.blacklistHandles));
+        container.find('.review-blacklist-targets').val(formatDistributionHandles((applyBlacklist || hasUserBlacklist) ? policy.blacklistHandles : []));
+        container.find('.review-blacklist-help').text(hasUserBlacklist
+            ? 'User opt-outs are included and always apply. The checkbox controls admin-managed blacklist entries.'
+            : 'Type in the usernames separated by a comma.');
 
         if (policy.hasWhitelist) {
             container.find('.review-targets').val(formatDistributionHandles(policy.whitelistHandles));
@@ -841,7 +863,7 @@ async function openSubmissionReviewPopup(submission, callback) {
     }
 
     function queuePolicyRefresh() {
-        if (!canApprove || hasRequestedDistribution) {
+        if (!canApprove) {
             return;
         }
 
@@ -855,6 +877,9 @@ async function openSubmissionReviewPopup(submission, callback) {
     container.find('.review-publish-mode').val(publishMode).on('change', function () {
         publishMode = String($(this).val());
         syncPolicyBlocks();
+        if (publishMode === 'global') {
+            void loadPolicyForCurrentFilename();
+        }
     });
     container.find('.review-published-filename').val(publishedFilename).on('input', function () {
         publishedFilename = String($(this).val());
@@ -949,7 +974,10 @@ async function openSubmissionReviewPopup(submission, callback) {
     }
 
     const targetHandles = parseDistributionHandles(container.find('.review-targets').val());
-    const blacklistHandles = applyBlacklist ? parseDistributionHandles(container.find('.review-blacklist-targets').val()) : [];
+    const userBlacklist = new Set(currentUserBlacklistHandles);
+    const blacklistHandles = applyBlacklist
+        ? parseDistributionHandles(container.find('.review-blacklist-targets').val()).filter(handle => !userBlacklist.has(handle))
+        : [];
     if (publishMode === 'selected' && targetHandles.length === 0) {
         toastr.error('Choose at least one recipient.', 'Admin distribution cancelled');
         return;

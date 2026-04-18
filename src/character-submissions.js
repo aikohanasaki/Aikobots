@@ -168,6 +168,7 @@ function getSubmissionsRoot() {
  * @property {'whitelist'|'global'|'global_blacklist'} [requestedDistributionMode]
  * @property {string[]} [requestedTargetHandles]
  * @property {string[]} [requestedBlacklistHandles]
+ * @property {string[]} [userBlacklistHandles]
  */
 
 /**
@@ -291,6 +292,7 @@ function normalizeSubmissionRecord(record) {
     const normalizedTargetHandles = normalizeHandleList(record?.targetHandles);
     const normalizedRequestedTargetHandles = normalizeHandleList(record?.requestedTargetHandles);
     const normalizedRequestedBlacklistHandles = normalizeHandleList(record?.requestedBlacklistHandles);
+    const normalizedUserBlacklistHandles = normalizeHandleList(record?.userBlacklistHandles);
 
     return {
         ...record,
@@ -315,6 +317,7 @@ function normalizeSubmissionRecord(record) {
         requestedBlacklistHandles: normalizedRequestedDistributionMode === SUBMISSION_DISTRIBUTION_MODES.GLOBAL_BLACKLIST
             ? normalizedRequestedBlacklistHandles
             : [],
+        userBlacklistHandles: normalizedUserBlacklistHandles,
     };
 }
 
@@ -672,6 +675,7 @@ async function getExistingApprovedDistributionConfiguration(record) {
             requestedDistributionMode: SUBMISSION_DISTRIBUTION_MODES.WHITELIST,
             requestedTargetHandles: targetHandles,
             requestedBlacklistHandles: [],
+            userBlacklistHandles: [],
             distributeParams: {
                 publishedFilename,
                 publishMode: PUBLISH_MODES.SELECTED,
@@ -683,16 +687,17 @@ async function getExistingApprovedDistributionConfiguration(record) {
     }
 
     if (record.publishMode === PUBLISH_MODES.GLOBAL) {
-        if (distributionPolicy.hasBlacklist) {
+        if (distributionPolicy.hasAdminBlacklist) {
             return {
                 requestedDistributionMode: SUBMISSION_DISTRIBUTION_MODES.GLOBAL_BLACKLIST,
                 requestedTargetHandles: [],
-                requestedBlacklistHandles: distributionPolicy.blacklistHandles,
+                requestedBlacklistHandles: distributionPolicy.adminBlacklistHandles,
+                userBlacklistHandles: distributionPolicy.userBlacklistHandles,
                 distributeParams: {
                     publishedFilename,
                     publishMode: PUBLISH_MODES.GLOBAL,
                     applyBlacklist: true,
-                    blacklistHandles: distributionPolicy.blacklistHandles,
+                    blacklistHandles: distributionPolicy.adminBlacklistHandles,
                 },
             };
         }
@@ -701,6 +706,7 @@ async function getExistingApprovedDistributionConfiguration(record) {
             requestedDistributionMode: SUBMISSION_DISTRIBUTION_MODES.GLOBAL,
             requestedTargetHandles: [],
             requestedBlacklistHandles: [],
+            userBlacklistHandles: distributionPolicy.userBlacklistHandles,
             distributeParams: {
                 publishedFilename,
                 publishMode: PUBLISH_MODES.GLOBAL,
@@ -943,6 +949,7 @@ export async function createCharacterSubmission({
         requestedDistributionMode: requestedDistribution.requestedDistributionMode,
         requestedTargetHandles: requestedDistribution.requestedTargetHandles,
         requestedBlacklistHandles: requestedDistribution.requestedBlacklistHandles,
+        userBlacklistHandles: [],
     };
 
     let autoApproved = false;
@@ -967,6 +974,14 @@ export async function createCharacterSubmission({
                     ? autoApprovalDistribution.targetHandles
                     : [],
                 publishedFilename: autoApprovalDistribution.publishedFilename,
+                requestedBlacklistHandles: existingApprovedDistribution.distributeParams.publishMode === PUBLISH_MODES.GLOBAL
+                    && autoApprovalDistribution.distributionPolicy?.hasAdminBlacklist
+                    ? autoApprovalDistribution.distributionPolicy.adminBlacklistHandles
+                    : record.requestedBlacklistHandles,
+                userBlacklistHandles: existingApprovedDistribution.distributeParams.publishMode === PUBLISH_MODES.GLOBAL
+                    && autoApprovalDistribution.distributionPolicy?.hasUserBlacklist
+                    ? autoApprovalDistribution.distributionPolicy.userBlacklistHandles
+                    : [],
             };
             autoApproved = true;
         } catch (error) {
@@ -1018,15 +1033,20 @@ export async function persistCharacterSubmissionOwner({ filePath, ownerHandle })
 /**
  * Gets the card preview/summary metadata for a submission.
  * @param {SubmissionRecord} record
+ * @param {{ includeUserBlacklist?: boolean }} [options]
  * @returns {Promise<object>}
  */
-export async function buildSubmissionSummary(record) {
+export async function buildSubmissionSummary(record, { includeUserBlacklist = false } = {}) {
     const { cardPath } = getSubmissionPaths(record.id);
     const hasStoredCard = fs.existsSync(cardPath);
+    const summaryRecord = { ...record };
+    if (!includeUserBlacklist) {
+        delete summaryRecord.userBlacklistHandles;
+    }
 
     if (!hasStoredCard) {
         return {
-            ...record,
+            ...summaryRecord,
             characterName: '',
             creator: '',
             creatorNotes: '',
@@ -1042,7 +1062,7 @@ export async function buildSubmissionSummary(record) {
         const { card } = await readCharacterCardFile(cardPath);
 
         return {
-            ...record,
+            ...summaryRecord,
             characterName: getCharacterName(card),
             creator: String(_.get(card, 'data.creator', _.get(card, 'creator', '')) || ''),
             creatorNotes: String(_.get(card, 'data.creator_notes', _.get(card, 'creatorcomment', '')) || ''),
@@ -1056,7 +1076,7 @@ export async function buildSubmissionSummary(record) {
     } catch (error) {
         console.warn(`Failed to read submission card metadata for ${record.id}.`, error);
         return {
-            ...record,
+            ...summaryRecord,
             characterName: '',
             creator: '',
             creatorNotes: '',

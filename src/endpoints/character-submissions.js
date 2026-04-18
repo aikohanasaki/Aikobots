@@ -111,7 +111,7 @@ router.post('/submit', async (request, response) => {
             sharedCharacterKey: String(record.sharedCharacterKey || '').trim(),
             submittedFilename: record.submittedFilename,
             publishedFilename: record.publishedFilename,
-            skippedHandles: Array.isArray(record.skippedHandles) ? record.skippedHandles : [],
+            skippedHandles: request.user.profile.admin && Array.isArray(record.skippedHandles) ? record.skippedHandles : [],
         });
     } catch (error) {
         console.error('Character submission failed:', error);
@@ -141,8 +141,9 @@ router.post('/list', async (request, response) => {
             return !statusFilter || record.status === statusFilter;
         });
 
+        const includeUserBlacklist = Boolean(request.user.profile.admin);
         const summaries = await Promise.all(visibleRecords.map(async record => ({
-            ...(await buildSubmissionSummary(record)),
+            ...(await buildSubmissionSummary(record, { includeUserBlacklist })),
             previewUrl: `/api/character-submissions/file/${encodeURIComponent(record.id)}`,
         })));
 
@@ -193,7 +194,7 @@ router.post('/review', requireAdminMiddleware, async (request, response) => {
             record.publishedFilename = null;
             await writeSubmissionRecord(record);
 
-            return response.json(await buildSubmissionSummary(record));
+            return response.json(await buildSubmissionSummary(record, { includeUserBlacklist: true }));
         }
 
         if (action !== 'approve') {
@@ -240,13 +241,16 @@ router.post('/review', requireAdminMiddleware, async (request, response) => {
                 ? SUBMISSION_DISTRIBUTION_MODES.GLOBAL_BLACKLIST
                 : SUBMISSION_DISTRIBUTION_MODES.GLOBAL;
         record.requestedTargetHandles = publishMode === PUBLISH_MODES.SELECTED ? distribution.targetHandles : [];
-        record.requestedBlacklistHandles = publishMode === PUBLISH_MODES.GLOBAL && distribution.distributionPolicy?.hasBlacklist
-            ? distribution.distributionPolicy.blacklistHandles
+        record.requestedBlacklistHandles = publishMode === PUBLISH_MODES.GLOBAL && distribution.distributionPolicy?.hasAdminBlacklist
+            ? distribution.distributionPolicy.adminBlacklistHandles
+            : [];
+        record.userBlacklistHandles = publishMode === PUBLISH_MODES.GLOBAL && distribution.distributionPolicy?.hasUserBlacklist
+            ? distribution.distributionPolicy.userBlacklistHandles
             : [];
         await writeSubmissionRecord(record);
 
         return response.json({
-            ...(await buildSubmissionSummary(record)),
+            ...(await buildSubmissionSummary(record, { includeUserBlacklist: true })),
             skippedHandles: distribution.skippedHandles,
             distributionPolicy: distribution.distributionPolicy,
         });
@@ -281,7 +285,7 @@ router.post('/cleanup', requireAdminMiddleware, async (request, response) => {
         }
 
         return response.json({
-            ...(await buildSubmissionSummary(record)),
+            ...(await buildSubmissionSummary(record, { includeUserBlacklist: true })),
             deleted: false,
             deleteMode,
         });

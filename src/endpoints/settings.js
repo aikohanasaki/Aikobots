@@ -14,10 +14,12 @@ import {
     stripPersonaRegistryFromSettings,
     writePersonasDocument,
 } from '../persona-repository.js';
-import { delay, getConfigValue, generateTimestamp, removeOldBackups } from '../util.js';
+import { getConfigValue, generateTimestamp, removeOldBackups } from '../util.js';
 import { getAllUserHandles, getUserDirectories } from '../users.js';
 import { getFileNameValidationFunction } from '../middleware/validateFileName.js';
 import { listLorebooksForManagement } from '../lorebook-repository.js';
+import { preserveCharacterRepushBlacklistSettings } from '../character-repush-blacklist-settings.js';
+import { withSettingsPersonasLock } from '../settings-lock.js';
 
 const ENABLE_EXTENSIONS = !!getConfigValue('extensions.enabled', true, 'boolean');
 const ENABLE_EXTENSIONS_AUTO_UPDATE = !!getConfigValue('extensions.autoUpdate', true, 'boolean');
@@ -25,10 +27,6 @@ const ENABLE_ACCOUNTS = !!getConfigValue('enableUserAccounts', false, 'boolean')
 
 // 10 minutes
 const AUTOSAVE_INTERVAL = 10 * 60 * 1000;
-const SETTINGS_PERSONAS_LOCK_RETRY_MS = 50;
-const SETTINGS_PERSONAS_LOCK_TIMEOUT_MS = 10_000;
-const SETTINGS_PERSONAS_LOCK_STALE_MS = 60_000;
-
 /**
  * Map of functions to trigger settings autosave for a user.
  * @type {Map<string, function>}
@@ -280,82 +278,20 @@ function parseSnapshotSettings(content, label) {
     }
 }
 
+function readExistingSettingsForPreservedKeys(pathToSettings) {
+    if (!fs.existsSync(pathToSettings)) {
+        return {};
+    }
+
+    try {
+        return JSON.parse(fs.readFileSync(pathToSettings, 'utf8'));
+    } catch (error) {
+        throw new Error(`Failed to read existing settings while preserving server-managed settings: ${error.message}`);
+    }
+}
+
 function getSettingsPath(directories) {
     return path.join(directories.root, SETTINGS_FILE);
-}
-
-function getSettingsPersonasLockPath(directories) {
-    return path.join(directories.root, `${SETTINGS_FILE}.personas.lock`);
-}
-
-function isSettingsPersonasLockStale(lockPath) {
-    try {
-        const stats = fs.statSync(lockPath);
-        return Date.now() - stats.mtimeMs > SETTINGS_PERSONAS_LOCK_STALE_MS;
-    } catch (error) {
-        if (error?.code === 'ENOENT') {
-            return false;
-        }
-
-        throw error;
-    }
-}
-
-function removeSettingsPersonasLock(lockPath) {
-    try {
-        fs.rmdirSync(lockPath);
-    } catch (error) {
-        if (error?.code === 'ENOENT') {
-            return;
-        }
-
-        if (error?.code === 'ENOTEMPTY') {
-            fs.rmSync(lockPath, { recursive: true, force: false });
-            return;
-        }
-
-        throw error;
-    }
-}
-
-async function acquireSettingsPersonasLock(directories) {
-    const lockPath = getSettingsPersonasLockPath(directories);
-    const deadline = Date.now() + SETTINGS_PERSONAS_LOCK_TIMEOUT_MS;
-    fs.mkdirSync(path.dirname(lockPath), { recursive: true });
-
-    while (true) {
-        try {
-            fs.mkdirSync(lockPath);
-            return () => removeSettingsPersonasLock(lockPath);
-        } catch (error) {
-            if (error?.code !== 'EEXIST') {
-                throw error;
-            }
-
-            if (isSettingsPersonasLockStale(lockPath)) {
-                removeSettingsPersonasLock(lockPath);
-                continue;
-            }
-
-            if (Date.now() >= deadline) {
-                const timeoutError = new Error('Timed out waiting to update settings and personas.');
-                timeoutError.status = 503;
-                throw timeoutError;
-            }
-
-            await delay(SETTINGS_PERSONAS_LOCK_RETRY_MS);
-        }
-    }
-}
-
-async function withSettingsPersonasLock(directories, operation) {
-    const release = await acquireSettingsPersonasLock(directories);
-
-    try {
-        return await operation();
-    } finally {
-        release();
-    }
 }
 
 function readFileSnapshot(filePath) {
@@ -428,8 +364,11 @@ router.post('/save', async function (request, response) {
         const strippedSettings = stripPersonaRegistryFromSettings(settings);
 
         await withSettingsPersonasTransaction(request.user.directories, ({ pathToSettings }) => {
+            const existingSettings = readExistingSettingsForPreservedKeys(pathToSettings);
+            const settingsToWrite = preserveCharacterRepushBlacklistSettings(strippedSettings, existingSettings);
+
             writePersonasDocument(request.user.directories, personasDocument);
-            writeFileAtomicSync(pathToSettings, JSON.stringify(strippedSettings, null, 4), 'utf8');
+            writeFileAtomicSync(pathToSettings, JSON.stringify(settingsToWrite, null, 4), 'utf8');
         });
         triggerAutoSave(request.user.profile.handle);
         response.send({ result: 'ok' });
@@ -585,8 +524,11 @@ router.post('/restore-snapshot', getFileNameValidationFunction('name'), async (r
         const strippedSettings = stripPersonaRegistryFromSettings(settings);
 
         await withSettingsPersonasTransaction(request.user.directories, ({ pathToSettings, pathToPersonas }) => {
+            const existingSettings = readExistingSettingsForPreservedKeys(pathToSettings);
+            const settingsToWrite = preserveCharacterRepushBlacklistSettings(strippedSettings, existingSettings);
+
             writePersonasDocument(request.user.directories, personasDocument);
-            writeFileAtomicSync(pathToSettings, JSON.stringify(strippedSettings, null, 4), 'utf8');
+            writeFileAtomicSync(pathToSettings, JSON.stringify(settingsToWrite, null, 4), 'utf8');
             if (isEmptyPersonasDocument(personasDocument)) {
                 fs.rmSync(pathToPersonas, { force: true });
             }

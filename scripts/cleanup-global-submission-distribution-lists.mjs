@@ -17,7 +17,7 @@ import process from 'node:process';
 import { sync as writeFileAtomicSync } from 'write-file-atomic';
 
 const SUBMISSIONS_DIRECTORY = ['_system', 'character-submissions'];
-const DISTRIBUTION_REGISTRY_PATH = ['_system', 'character-distribution-registry', 'index.json'];
+const GLOBAL_REQUESTED_DISTRIBUTION_MODES = new Set(['global', 'global_blacklist']);
 
 function parseArgs(argv) {
     const options = {
@@ -70,10 +70,6 @@ function normalizeHandles(handles) {
         .filter(Boolean))];
 }
 
-function normalizeFilenameStem(value) {
-    return path.parse(String(value || '')).name || String(value || '').trim();
-}
-
 function readJsonFile(filePath, fallback = null) {
     if (!fs.existsSync(filePath)) {
         return fallback;
@@ -107,24 +103,14 @@ function getSubmissionRecordPaths(submissionsRoot) {
     return recordPaths;
 }
 
-function getRegistryEntry(registry, record) {
-    const publishedFilename = normalizeFilenameStem(record.publishedFilename || record.submittedFilename);
-    if (!publishedFilename) {
-        return null;
-    }
-
-    const ownerHandle = String(record.ownerHandle || '').trim();
-    const sharedCharacterKey = normalizeFilenameStem(record.sharedCharacterKey || '');
-    const key = sharedCharacterKey ? `${sharedCharacterKey}::${publishedFilename}` : `${ownerHandle}::${publishedFilename}`;
-    const legacyKey = sharedCharacterKey && ownerHandle ? `${ownerHandle}::${publishedFilename}` : '';
-    const characters = registry?.characters && typeof registry.characters === 'object' && !Array.isArray(registry.characters)
-        ? registry.characters
-        : {};
-
-    return characters[key] || (legacyKey ? characters[legacyKey] : null);
+function normalizeGlobalRequestedDistributionMode(value) {
+    const normalizedValue = String(value || '').trim().toLowerCase();
+    return GLOBAL_REQUESTED_DISTRIBUTION_MODES.has(normalizedValue)
+        ? normalizedValue
+        : 'global';
 }
 
-function sanitizeGlobalApprovalRecord(record, registry) {
+function sanitizeGlobalApprovalRecord(record) {
     if (!record || typeof record !== 'object' || Array.isArray(record)) {
         return { changed: false, nextRecord: record, reasons: [] };
     }
@@ -135,13 +121,11 @@ function sanitizeGlobalApprovalRecord(record, registry) {
 
     const nextRecord = structuredClone(record);
     const reasons = [];
-    const registryEntry = getRegistryEntry(registry, record);
-    const registryBlacklistHandles = normalizeHandles(registryEntry?.blacklist);
-    const existingBlacklistHandles = normalizeHandles(nextRecord.requestedBlacklistHandles);
-    const nextBlacklistHandles = existingBlacklistHandles.length > 0
-        ? existingBlacklistHandles
-        : registryBlacklistHandles;
-    const nextRequestedDistributionMode = nextBlacklistHandles.length > 0 ? 'global_blacklist' : 'global';
+    const nextRequestedDistributionMode = normalizeGlobalRequestedDistributionMode(nextRecord.requestedDistributionMode);
+    const nextBlacklistHandles = nextRequestedDistributionMode === 'global_blacklist'
+        ? normalizeHandles(nextRecord.requestedBlacklistHandles)
+        : [];
+    const nextUserBlacklistHandles = normalizeHandles(nextRecord.userBlacklistHandles);
 
     if (normalizeHandles(nextRecord.targetHandles).length > 0) {
         nextRecord.targetHandles = [];
@@ -169,6 +153,11 @@ function sanitizeGlobalApprovalRecord(record, registry) {
         reasons.push('normalized global blacklist exceptions');
     }
 
+    if (JSON.stringify(normalizeHandles(nextRecord.userBlacklistHandles)) !== JSON.stringify(nextUserBlacklistHandles)) {
+        nextRecord.userBlacklistHandles = nextUserBlacklistHandles;
+        reasons.push('normalized user blacklist opt-outs');
+    }
+
     return {
         changed: reasons.length > 0,
         nextRecord,
@@ -184,8 +173,6 @@ function main() {
     }
 
     const submissionsRoot = path.join(options.dataRoot, ...SUBMISSIONS_DIRECTORY);
-    const registryPath = path.join(options.dataRoot, ...DISTRIBUTION_REGISTRY_PATH);
-    const registry = readJsonFile(registryPath, { version: 1, characters: {} });
     const recordPaths = getSubmissionRecordPaths(submissionsRoot);
     let changedCount = 0;
     let scannedCount = 0;
@@ -193,7 +180,7 @@ function main() {
     for (const recordPath of recordPaths) {
         scannedCount++;
         const record = readJsonFile(recordPath);
-        const result = sanitizeGlobalApprovalRecord(record, registry);
+        const result = sanitizeGlobalApprovalRecord(record);
         if (!result.changed) {
             continue;
         }
