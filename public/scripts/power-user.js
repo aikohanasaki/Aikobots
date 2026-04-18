@@ -49,7 +49,7 @@ import { ARGUMENT_TYPE, SlashCommandArgument, SlashCommandNamedArgument } from '
 import { AUTOCOMPLETE_SELECT_KEY, AUTOCOMPLETE_STATE, AUTOCOMPLETE_WIDTH } from './autocomplete/AutoComplete.js';
 import { SlashCommandEnumValue, enumTypes } from './slash-commands/SlashCommandEnumValue.js';
 import { commonEnumProviders, enumIcons } from './slash-commands/SlashCommandCommonEnumsProvider.js';
-import { POPUP_TYPE, callGenericPopup, fixToastrForDialogs } from './popup.js';
+import { POPUP_RESULT, POPUP_TYPE, callGenericPopup, fixToastrForDialogs } from './popup.js';
 import { fuzzySearchCategories } from './filters.js';
 import { IMAGE_OVERSWIPE, MEDIA_DISPLAY } from './constants.js';
 import { t } from './i18n.js';
@@ -1504,6 +1504,118 @@ export function registerDebugFunction(functionId, name, description, func) {
 async function showDebugMenu() {
     const template = await renderTemplateAsync('debug', { functions: debug_functions });
     callGenericPopup(template, POPUP_TYPE.TEXT, '', { wide: true, large: true, allowVerticalScrolling: true });
+}
+
+async function getRepushBlacklistEntries() {
+    const response = await fetch('/api/characters/repush-blacklist/list', {
+        method: 'POST',
+        headers: getRequestHeaders(),
+    });
+
+    if (!response.ok) {
+        throw new Error(`Failed to load blacklisted characters: ${response.statusText}`);
+    }
+
+    const data = await response.json();
+    return Array.isArray(data?.entries) ? data.entries : [];
+}
+
+async function removeRepushBlacklistEntry(key) {
+    const response = await fetch('/api/characters/repush-blacklist/remove', {
+        method: 'POST',
+        headers: getRequestHeaders(),
+        body: JSON.stringify({ key }),
+    });
+
+    if (!response.ok) {
+        const data = await response.json().catch(() => ({}));
+        throw new Error(data?.error || `Failed to remove blacklisted character: ${response.statusText}`);
+    }
+
+    const data = await response.json();
+    return Array.isArray(data?.entries) ? data.entries : [];
+}
+
+function renderRepushBlacklistEntries(list, entries) {
+    list.empty();
+
+    if (!entries.length) {
+        list.append($('<div class="opacity50p"></div>').text(t`No blacklisted characters found.`));
+        return;
+    }
+
+    for (const entry of entries) {
+        const row = $('<div class="flex-container alignitemscenter flexGap10 wide100p"></div>');
+        const details = $('<div class="flex-container flexFlowColumn flex1 overflowHidden"></div>');
+        const characterName = String(entry.characterName || entry.publishedFilename || '').trim() || t`Unknown character`;
+        const filename = String(entry.publishedFilename || '').trim();
+        const ownerHandle = String(entry.ownerHandle || '').trim();
+        const metadata = [filename, ownerHandle ? `by ${ownerHandle}` : ''].filter(Boolean).join(' ');
+        const removeButton = $('<button type="button" class="menu_button menu_button_icon margin0 red_button"></button>');
+
+        details
+            .append($('<strong></strong>').text(characterName))
+            .append($('<small class="opacity50p"></small>').text(metadata));
+        removeButton
+            .append('<i class="fa-fw fa-solid fa-trash"></i>')
+            .append($('<span></span>').text(t`Remove`))
+            .on('click', async () => {
+                const confirm = await callGenericPopup(
+                    $('<div></div>').text(t`Remove this character from your repush blacklist?`),
+                    POPUP_TYPE.CONFIRM,
+                    '',
+                    { okButton: t`Remove`, cancelButton: t`Cancel` },
+                );
+
+                if (confirm !== POPUP_RESULT.AFFIRMATIVE) {
+                    return;
+                }
+
+                try {
+                    removeButton.addClass('disabled').prop('disabled', true);
+                    const nextEntries = await removeRepushBlacklistEntry(entry.key);
+                    renderRepushBlacklistEntries(list, nextEntries);
+                    toastr.success(t`Character removed from repush blacklist.`);
+                } catch (error) {
+                    console.error(error);
+                    toastr.error(String(error?.message || error), t`Failed to update blacklist`);
+                    removeButton.removeClass('disabled').prop('disabled', false);
+                }
+            });
+
+        row.append(details, removeButton);
+        list.append(row);
+    }
+}
+
+async function openRepushBlacklistPopup() {
+    const container = $('<div class="flex-container flexFlowColumn flexGap10"></div>');
+    const header = $('<div class="flex-container alignitemscenter flexGap10"></div>');
+    const list = $('<div class="flex-container flexFlowColumn flexGap10"></div>');
+    const refreshButton = $('<button type="button" class="menu_button menu_button_icon"></button>');
+
+    container.append(header, list);
+    header
+        .append($('<h3 class="margin0 flex1"></h3>').text(t`Blacklisted Characters`))
+        .append(refreshButton);
+    refreshButton
+        .append('<i class="fa-fw fa-solid fa-rotate"></i>')
+        .append($('<span></span>').text(t`Refresh`));
+    refreshButton.on('click', async () => {
+        try {
+            refreshButton.addClass('disabled').prop('disabled', true);
+            renderRepushBlacklistEntries(list, await getRepushBlacklistEntries());
+        } catch (error) {
+            console.error(error);
+            toastr.error(String(error?.message || error), t`Failed to load blacklist`);
+        } finally {
+            refreshButton.removeClass('disabled').prop('disabled', false);
+        }
+    });
+
+    list.append($('<div class="opacity50p"></div>').text(t`Loading...`));
+    callGenericPopup(container, POPUP_TYPE.TEXT, '', { okButton: t`Close`, wide: true, allowVerticalScrolling: true });
+    refreshButton.trigger('click');
 }
 
 export function applyPowerUserSettings() {
@@ -3855,6 +3967,10 @@ jQuery(() => {
 
     $('#debug_menu').on('click', function () {
         showDebugMenu();
+    });
+
+    $('#edit_blacklisted_characters').on('click', function () {
+        openRepushBlacklistPopup();
     });
 
     $('#bogus_folders').on('input', function () {
