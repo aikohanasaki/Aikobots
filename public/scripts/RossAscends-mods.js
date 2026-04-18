@@ -520,7 +520,7 @@ export async function favsToHotswap() {
 
 //changes input bar and send button display depending on connection status
 function RA_checkOnlineStatus() {
-    const hasCustomApiIcon = Boolean(power_user.top_bar_icon_overrides?.['sys-settings-button']);
+    const hasCustomApiIcon = Boolean(power_user?.top_bar_icon_overrides?.['sys-settings-button']);
     if (online_status == 'no_connection') {
         const send_textarea = $('#send_textarea');
         send_textarea.attr('placeholder', send_textarea.attr('no_connection_text')); //Input bar placeholder tells users they are not connected
