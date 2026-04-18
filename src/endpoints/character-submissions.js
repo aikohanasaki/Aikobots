@@ -7,6 +7,7 @@ import sanitize from 'sanitize-filename';
 
 import {
     PUBLISH_MODES,
+    SUBMISSION_DISTRIBUTION_MODES,
     SUBMISSION_STATUSES,
     SUBMISSION_CLEANUP_MODES,
     canAccessSubmission,
@@ -231,8 +232,17 @@ router.post('/review', requireAdminMiddleware, async (request, response) => {
         record.reviewedBy = request.user.profile.handle;
         record.reviewNote = reviewNote;
         record.publishMode = publishMode;
-        record.targetHandles = distribution.targetHandles;
+        record.targetHandles = publishMode === PUBLISH_MODES.SELECTED ? distribution.targetHandles : [];
         record.publishedFilename = distribution.publishedFilename;
+        record.requestedDistributionMode = publishMode === PUBLISH_MODES.SELECTED
+            ? SUBMISSION_DISTRIBUTION_MODES.WHITELIST
+            : distribution.distributionPolicy?.hasBlacklist
+                ? SUBMISSION_DISTRIBUTION_MODES.GLOBAL_BLACKLIST
+                : SUBMISSION_DISTRIBUTION_MODES.GLOBAL;
+        record.requestedTargetHandles = publishMode === PUBLISH_MODES.SELECTED ? distribution.targetHandles : [];
+        record.requestedBlacklistHandles = publishMode === PUBLISH_MODES.GLOBAL && distribution.distributionPolicy?.hasBlacklist
+            ? distribution.distributionPolicy.blacklistHandles
+            : [];
         await writeSubmissionRecord(record);
 
         return response.json({

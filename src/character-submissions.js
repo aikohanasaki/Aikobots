@@ -490,6 +490,27 @@ async function upsertDefaultContentCharacter(relativeFilename) {
 }
 
 /**
+ * Checks whether a globally published character is listed in default content.
+ * @param {string} outputFilename
+ * @returns {Promise<boolean>}
+ */
+async function isDefaultContentCharacterIndexed(outputFilename) {
+    if (!fs.existsSync(DEFAULT_CONTENT_INDEX)) {
+        return false;
+    }
+
+    try {
+        const raw = await fsPromises.readFile(DEFAULT_CONTENT_INDEX, 'utf8');
+        const parsed = JSON.parse(raw);
+        const relativeFilename = path.join('characters', outputFilename).replaceAll('\\', '/');
+        return Array.isArray(parsed) && parsed.some(item => item?.type === 'character' && item?.filename === relativeFilename);
+    } catch (error) {
+        console.warn('Failed to read default content index while checking global character approval.', error);
+        return false;
+    }
+}
+
+/**
  * Resolves enabled publish targets. Falls back to the acting user in single-user mode.
  * @param {string} actingUserHandle
  * @returns {Promise<string[]>}
@@ -558,7 +579,54 @@ async function normalizeSubmissionDistributionRequest({
     }
 }
 
-async function findExistingApprovedSubmissionRecord({ submissionId, ownerHandle, sharedCharacterKey }) {
+async function findExistingGlobalPublicationApproval({ ownerHandle, sharedCharacterKey, submittedFilename }) {
+    const publishedFilename = normalizeCharacterFileName(submittedFilename, 'character');
+    const outputFilename = `${publishedFilename}.png`;
+    const defaultContentPath = path.join(DEFAULT_CONTENT_ROOT, 'characters', outputFilename);
+    if (!fs.existsSync(defaultContentPath) || !(await isDefaultContentCharacterIndexed(outputFilename))) {
+        return null;
+    }
+
+    try {
+        const { card } = await readCharacterCardFile(defaultContentPath);
+        const normalizedOwnerHandle = String(ownerHandle || '').trim();
+        const normalizedSharedCharacterKey = String(sharedCharacterKey || '').trim();
+        const publishedOwnerHandle = getSubmissionOwnerHandle(card);
+        const publishedOwnerHandles = getSubmissionOwnerHandles(card);
+        const publishedSharedCharacterKey = getCharacterSharedKey(card);
+        const ownerMatches = normalizedOwnerHandle
+            && (publishedOwnerHandle === normalizedOwnerHandle || publishedOwnerHandles.includes(normalizedOwnerHandle));
+        const sharedKeyMatches = normalizedSharedCharacterKey
+            && publishedSharedCharacterKey === normalizedSharedCharacterKey;
+
+        if (!ownerMatches && !sharedKeyMatches) {
+            return null;
+        }
+
+        return {
+            id: buildSubmissionId({ ownerHandle: normalizedOwnerHandle || publishedOwnerHandle, submittedFilename: outputFilename }),
+            status: SUBMISSION_STATUSES.APPROVED,
+            ownerHandle: publishedOwnerHandle || normalizedOwnerHandle,
+            ownerHandles: publishedOwnerHandles.length > 0
+                ? publishedOwnerHandles
+                : [publishedOwnerHandle || normalizedOwnerHandle].filter(Boolean),
+            sharedCharacterKey: publishedSharedCharacterKey || normalizedSharedCharacterKey,
+            submittedAt: 0,
+            submittedFilename: outputFilename,
+            reviewedAt: null,
+            reviewedBy: AUTO_APPROVED_REVIEWED_BY,
+            reviewNote: '',
+            publishMode: PUBLISH_MODES.GLOBAL,
+            targetHandles: [],
+            publishedFilename: outputFilename,
+        };
+    } catch (error) {
+        console.warn(`Failed to verify existing global character publication for ${outputFilename}.`, error);
+        return null;
+    }
+}
+
+async function findExistingApprovedSubmissionRecord({ submissionId, ownerHandle, sharedCharacterKey, submittedFilename }) {
     try {
         const existingRecord = await getSubmissionRecord(submissionId);
         if (existingRecord.status === SUBMISSION_STATUSES.APPROVED) {
@@ -571,7 +639,7 @@ async function findExistingApprovedSubmissionRecord({ submissionId, ownerHandle,
     const normalizedOwnerHandle = String(ownerHandle || '').trim();
     const normalizedSharedCharacterKey = String(sharedCharacterKey || '').trim();
     if (!normalizedSharedCharacterKey) {
-        return null;
+        return await findExistingGlobalPublicationApproval({ ownerHandle, sharedCharacterKey, submittedFilename });
     }
 
     const records = await listSubmissionRecords();
@@ -580,7 +648,7 @@ async function findExistingApprovedSubmissionRecord({ submissionId, ownerHandle,
         && String(record.sharedCharacterKey || '').trim() === normalizedSharedCharacterKey
         && (String(record.ownerHandle || '').trim() === normalizedOwnerHandle
             || (Array.isArray(record.ownerHandles) && record.ownerHandles.includes(normalizedOwnerHandle))),
-    ) || null;
+    ) || await findExistingGlobalPublicationApproval({ ownerHandle, sharedCharacterKey, submittedFilename });
 }
 
 async function getExistingApprovedDistributionConfiguration(record) {
@@ -850,6 +918,7 @@ export async function createCharacterSubmission({
         submissionId,
         ownerHandle,
         sharedCharacterKey: existingSharedCharacterKey || '',
+        submittedFilename,
     });
     const existingApprovedDistribution = existingApprovedRecord
         ? await getExistingApprovedDistributionConfiguration(existingApprovedRecord)
@@ -894,7 +963,9 @@ export async function createCharacterSubmission({
                 reviewedAt: Date.now(),
                 reviewedBy: AUTO_APPROVED_REVIEWED_BY,
                 publishMode: existingApprovedDistribution.distributeParams.publishMode || PUBLISH_MODES.GLOBAL,
-                targetHandles: autoApprovalDistribution.targetHandles,
+                targetHandles: existingApprovedDistribution.distributeParams.publishMode === PUBLISH_MODES.SELECTED
+                    ? autoApprovalDistribution.targetHandles
+                    : [],
                 publishedFilename: autoApprovalDistribution.publishedFilename,
             };
             autoApproved = true;
