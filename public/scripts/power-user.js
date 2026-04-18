@@ -76,6 +76,37 @@ const unlockedMaxContextStep = 512;
 const maxContextMin = 512;
 const maxContextStep = 64;
 const defaultToastPosition = 'toast-top-center';
+const topBarIconDefaults = [
+    { drawerId: 'ai-config-button', controlId: 'top_bar_icon_ai_config', icon: 'fa-sliders' },
+    { drawerId: 'sys-settings-button', controlId: 'top_bar_icon_api', icon: 'fa-plug-circle-exclamation', runtimeIcons: ['fa-plug'] },
+    { drawerId: 'advanced-prompting-button', controlId: 'top_bar_icon_prompting', icon: 'fa-font' },
+    { drawerId: 'WI-SP-button', controlId: 'top_bar_icon_world_info', icon: 'fa-book-atlas' },
+    { drawerId: 'user-settings-button', controlId: 'top_bar_icon_user_settings', icon: 'fa-user-cog' },
+    { drawerId: 'backgrounds-button', controlId: 'top_bar_icon_backgrounds', icon: 'fa-panorama' },
+    { drawerId: 'extensions-settings-button', controlId: 'top_bar_icon_extensions', icon: 'fa-cubes' },
+    { drawerId: 'persona-management-button', controlId: 'top_bar_icon_persona', icon: 'fa-face-smile' },
+    { drawerId: 'rightNavHolder', controlId: 'top_bar_icon_characters', icon: 'fa-address-card' },
+];
+const fontAwesomeIconClassRegex = /^fa-[a-z0-9]+(?:-[a-z0-9]+)*$/i;
+const fontAwesomeNonIconClasses = new Set([
+    'fa',
+    'fa-solid',
+    'fa-regular',
+    'fa-brands',
+    'fa-fw',
+    'fa-xs',
+    'fa-sm',
+    'fa-lg',
+    'fa-xl',
+    'fa-2xl',
+    'fa-spin',
+    'fa-pulse',
+    'fa-flip',
+    'fa-beat',
+    'fa-fade',
+    'fa-bounce',
+    'fa-shake',
+]);
 
 const avatar_styles = {
     ROUND: 0,
@@ -151,6 +182,11 @@ export const power_user = {
     sort_order: 'asc',
     sort_rule: null,
     font_scale: 1,
+    chat_text_line_height: 1,
+    chat_text_letter_spacing: 0,
+    top_bar_icon_scale: 1,
+    top_bar_icon_spacing: 0,
+    top_bar_icon_overrides: {},
     blur_strength: 10,
     shadow_width: 2,
 
@@ -1057,6 +1093,101 @@ function applyFontScale(type) {
     $('#font_scale').val(power_user.font_scale);
 }
 
+function sanitizeFiniteNumber(value, fallback, min = -Infinity, max = Infinity) {
+    const number = Number(value);
+    if (!Number.isFinite(number)) {
+        return fallback;
+    }
+    return Math.min(Math.max(number, min), max);
+}
+
+function sanitizeFontAwesomeIconClass(value) {
+    const tokens = String(value ?? '').trim().split(/\s+/).filter(Boolean);
+    for (let index = tokens.length - 1; index >= 0; index--) {
+        const token = tokens[index];
+        if (fontAwesomeIconClassRegex.test(token) && !fontAwesomeNonIconClasses.has(token)) {
+            return token;
+        }
+    }
+    return '';
+}
+
+function applyChatTextSpacing() {
+    power_user.chat_text_line_height = sanitizeFiniteNumber(power_user.chat_text_line_height, 1, 0.75, 1.75);
+    power_user.chat_text_letter_spacing = sanitizeFiniteNumber(power_user.chat_text_letter_spacing, 0, -1, 4);
+    document.documentElement.style.setProperty('--chatTextLineHeightScale', String(power_user.chat_text_line_height));
+    document.documentElement.style.setProperty('--chatTextLetterSpacing', `${power_user.chat_text_letter_spacing}px`);
+    $('#chat_text_line_height').val(power_user.chat_text_line_height);
+    $('#chat_text_line_height_counter').val(power_user.chat_text_line_height);
+    $('#chat_text_letter_spacing').val(power_user.chat_text_letter_spacing);
+    $('#chat_text_letter_spacing_counter').val(power_user.chat_text_letter_spacing);
+}
+
+function applyTopBarLayout() {
+    power_user.top_bar_icon_scale = sanitizeFiniteNumber(power_user.top_bar_icon_scale, 1, 0.6, 1.6);
+    power_user.top_bar_icon_spacing = sanitizeFiniteNumber(power_user.top_bar_icon_spacing, 0, 0, 30);
+    document.documentElement.style.setProperty('--topBarIconScale', String(power_user.top_bar_icon_scale));
+    document.documentElement.style.setProperty('--topBarIconSpacing', `${power_user.top_bar_icon_spacing}px`);
+    $('#top_bar_icon_scale').val(power_user.top_bar_icon_scale);
+    $('#top_bar_icon_scale_counter').val(power_user.top_bar_icon_scale);
+    $('#top_bar_icon_spacing').val(power_user.top_bar_icon_spacing);
+    $('#top_bar_icon_spacing_counter').val(power_user.top_bar_icon_spacing);
+}
+
+export function applyTopBarIconOverrides() {
+    if (!power_user.top_bar_icon_overrides || typeof power_user.top_bar_icon_overrides !== 'object') {
+        power_user.top_bar_icon_overrides = {};
+    }
+
+    for (const iconConfig of topBarIconDefaults) {
+        const icon = document.getElementById(iconConfig.drawerId)?.querySelector('.drawer-icon');
+        const customIcon = sanitizeFontAwesomeIconClass(power_user.top_bar_icon_overrides[iconConfig.drawerId]);
+
+        const control = $(`#${iconConfig.controlId}`);
+        if (!control.is(':focus')) {
+            control.val(customIcon);
+        }
+
+        if (!icon) {
+            continue;
+        }
+
+        const previousCustomIcon = icon.dataset.customFaIcon || '';
+        const removableIconClasses = new Set([
+            iconConfig.icon,
+            previousCustomIcon,
+            ...(iconConfig.runtimeIcons || []),
+        ]);
+
+        if (!customIcon) {
+            if (previousCustomIcon) {
+                icon.classList.remove(previousCustomIcon);
+            }
+            if (iconConfig.drawerId === 'sys-settings-button') {
+                const hasRuntimeIcon = icon.classList.contains('fa-plug') || icon.classList.contains(iconConfig.icon);
+                if (!hasRuntimeIcon) {
+                    icon.classList.add(online_status && online_status !== 'no_connection' ? 'fa-plug' : iconConfig.icon);
+                }
+            } else if (!icon.classList.contains(iconConfig.icon)) {
+                icon.classList.add(iconConfig.icon);
+            }
+            delete icon.dataset.customFaIcon;
+            delete power_user.top_bar_icon_overrides[iconConfig.drawerId];
+            continue;
+        }
+
+        for (const iconClass of removableIconClasses) {
+            if (iconClass) {
+                icon.classList.remove(iconClass);
+            }
+        }
+
+        icon.classList.add(customIcon);
+        icon.dataset.customFaIcon = customIcon;
+        power_user.top_bar_icon_overrides[iconConfig.drawerId] = customIcon;
+    }
+}
+
 /**
  * Checks if the chat needs to be reloaded to apply media display settings.
  * @returns {boolean} True if the chat needs reload to apply media display settings
@@ -1137,6 +1268,36 @@ function applyTheme(name) {
             key: 'font_scale',
             action: () => {
                 applyFontScale('forced');
+            },
+        },
+        {
+            key: 'chat_text_line_height',
+            action: () => {
+                applyChatTextSpacing();
+            },
+        },
+        {
+            key: 'chat_text_letter_spacing',
+            action: () => {
+                applyChatTextSpacing();
+            },
+        },
+        {
+            key: 'top_bar_icon_scale',
+            action: () => {
+                applyTopBarLayout();
+            },
+        },
+        {
+            key: 'top_bar_icon_spacing',
+            action: () => {
+                applyTopBarLayout();
+            },
+        },
+        {
+            key: 'top_bar_icon_overrides',
+            action: () => {
+                applyTopBarIconOverrides();
             },
         },
         {
@@ -1348,6 +1509,9 @@ async function showDebugMenu() {
 export function applyPowerUserSettings() {
     switchUiMode();
     applyFontScale('forced');
+    applyChatTextSpacing();
+    applyTopBarLayout();
+    applyTopBarIconOverrides();
     applyThemeColor();
     applyChatWidth('forced');
     applyAvatarStyle();
@@ -1513,6 +1677,10 @@ export async function loadPowerUserSettings(settings, data) {
         power_user.chat_width = 50;
     }
 
+    if (!power_user.top_bar_icon_overrides || typeof power_user.top_bar_icon_overrides !== 'object') {
+        power_user.top_bar_icon_overrides = {};
+    }
+
     if (power_user.tokenizer === tokenizers.LEGACY) {
         power_user.tokenizer = tokenizers.GPT2;
     }
@@ -1646,6 +1814,9 @@ export async function loadPowerUserSettings(settings, data) {
 
     $('#font_scale').val(power_user.font_scale);
     $('#font_scale_counter').val(power_user.font_scale);
+    applyChatTextSpacing();
+    applyTopBarLayout();
+    applyTopBarIconOverrides();
 
     $('#main-font-input').val(power_user.main_font);
     $('#mono-font-input').val(power_user.mono_font);
@@ -2174,6 +2345,11 @@ function getThemeObject(name) {
         shadow_width: power_user.shadow_width,
         border_color: power_user.border_color,
         font_scale: power_user.font_scale,
+        chat_text_line_height: power_user.chat_text_line_height,
+        chat_text_letter_spacing: power_user.chat_text_letter_spacing,
+        top_bar_icon_scale: power_user.top_bar_icon_scale,
+        top_bar_icon_spacing: power_user.top_bar_icon_spacing,
+        top_bar_icon_overrides: { ...power_user.top_bar_icon_overrides },
         fast_ui_mode: power_user.fast_ui_mode,
         waifuMode: power_user.waifuMode,
         avatar_style: power_user.avatar_style,
@@ -3185,6 +3361,51 @@ jQuery(() => {
         applyFontScale(applyMode);
         saveSettingsDebounced();
     });
+
+    $('input[name="chat_text_line_height"]').on('input', function () {
+        power_user.chat_text_line_height = Number($(this).val());
+        $('#chat_text_line_height_counter').val(power_user.chat_text_line_height);
+        applyChatTextSpacing();
+        saveSettingsDebounced();
+    });
+
+    $('input[name="chat_text_letter_spacing"]').on('input', function () {
+        power_user.chat_text_letter_spacing = Number($(this).val());
+        $('#chat_text_letter_spacing_counter').val(power_user.chat_text_letter_spacing);
+        applyChatTextSpacing();
+        saveSettingsDebounced();
+    });
+
+    $('input[name="top_bar_icon_scale"]').on('input', function () {
+        power_user.top_bar_icon_scale = Number($(this).val());
+        $('#top_bar_icon_scale_counter').val(power_user.top_bar_icon_scale);
+        applyTopBarLayout();
+        saveSettingsDebounced();
+    });
+
+    $('input[name="top_bar_icon_spacing"]').on('input', function () {
+        power_user.top_bar_icon_spacing = Number($(this).val());
+        $('#top_bar_icon_spacing_counter').val(power_user.top_bar_icon_spacing);
+        applyTopBarLayout();
+        saveSettingsDebounced();
+    });
+
+    for (const iconConfig of topBarIconDefaults) {
+        $(`#${iconConfig.controlId}`).on('input', function () {
+            const rawIconClass = String($(this).val()).trim();
+            const iconClass = sanitizeFontAwesomeIconClass(rawIconClass);
+            if (rawIconClass && !iconClass) {
+                return;
+            }
+            if (iconClass) {
+                power_user.top_bar_icon_overrides[iconConfig.drawerId] = iconClass;
+            } else {
+                delete power_user.top_bar_icon_overrides[iconConfig.drawerId];
+            }
+            applyTopBarIconOverrides();
+            saveSettingsDebounced();
+        });
+    }
 
     $('input[name="blur_strength"]').on('input', async function (e) {
         power_user.blur_strength = Number($(this).val());
