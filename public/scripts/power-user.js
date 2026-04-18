@@ -1125,7 +1125,7 @@ function applyChatTextSpacing() {
 
 function applyTopBarLayout() {
     power_user.top_bar_icon_scale = sanitizeFiniteNumber(power_user.top_bar_icon_scale, 1, 0.6, 1.6);
-    power_user.top_bar_icon_spacing = sanitizeFiniteNumber(power_user.top_bar_icon_spacing, 0, 0, 30);
+    power_user.top_bar_icon_spacing = sanitizeFiniteNumber(power_user.top_bar_icon_spacing, 0, -12, 30);
     document.documentElement.style.setProperty('--topBarIconScale', String(power_user.top_bar_icon_scale));
     document.documentElement.style.setProperty('--topBarIconSpacing', `${power_user.top_bar_icon_spacing}px`);
     $('#top_bar_icon_scale').val(power_user.top_bar_icon_scale);
