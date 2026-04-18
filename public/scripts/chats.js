@@ -1025,15 +1025,111 @@ export function encodeStyleTags(text) {
     });
 }
 
+const GOOGLE_FONTS_STYLESHEET_HOST = 'fonts.googleapis.com';
+const GOOGLE_FONTS_STYLESHEET_PATHS = new Set(['/css', '/css2']);
+const GOOGLE_FONTS_STYLESHEET_PARAMS = new Set(['family', 'display', 'text', 'subset']);
+const GOOGLE_FONTS_DISPLAY_VALUES = new Set(['auto', 'block', 'swap', 'fallback', 'optional']);
+
+/**
+ * Validates and normalizes a Google Fonts stylesheet URL.
+ * @param {string} value Stylesheet URL
+ * @returns {string|null} Normalized URL if allowed; otherwise null
+ */
+function normalizeGoogleFontsStylesheetUrl(value) {
+    try {
+        const url = new URL(String(value), window.location.origin);
+
+        if (
+            url.protocol !== 'https:' ||
+            url.hostname !== GOOGLE_FONTS_STYLESHEET_HOST ||
+            url.username ||
+            url.password ||
+            url.port ||
+            !GOOGLE_FONTS_STYLESHEET_PATHS.has(url.pathname) ||
+            !url.searchParams.has('family')
+        ) {
+            return null;
+        }
+
+        for (const [key, parameterValue] of url.searchParams) {
+            if (!GOOGLE_FONTS_STYLESHEET_PARAMS.has(key)) {
+                return null;
+            }
+
+            if (key === 'family' && !parameterValue.trim()) {
+                return null;
+            }
+
+            if (key === 'display' && !GOOGLE_FONTS_DISPLAY_VALUES.has(parameterValue)) {
+                return null;
+            }
+        }
+
+        url.hash = '';
+        return url.href;
+    } catch {
+        return null;
+    }
+}
+
+/**
+ * Extracts the URL from a CSS @import rule value.
+ * @param {string} importValue CSS import value
+ * @returns {string|null} Extracted URL
+ */
+function extractCssImportUrl(importValue) {
+    const value = String(importValue || '').trim();
+    const urlImport = value.match(/^url\(\s*(?:"([^"]+)"|'([^']+)'|([^'")]+))\s*\)(?:\s+[^;]+)?$/i);
+    const stringImport = value.match(/^(?:"([^"]+)"|'([^']+)')(?:\s+[^;]+)?$/);
+    const match = urlImport || stringImport;
+
+    if (!match) {
+        return null;
+    }
+
+    return match.slice(1).find(Boolean)?.trim() || null;
+}
+
+/**
+ * Replaces allowed Google Fonts stylesheet links with encoded style tags.
+ * @param {string} text HTML text
+ * @returns {string} HTML text with allowed font links encoded
+ */
+function encodeGoogleFontStylesheetLinks(text) {
+    const template = document.createElement('template');
+    template.innerHTML = text;
+
+    for (const link of template.content.querySelectorAll('link[rel][href]')) {
+        const rel = String(link.getAttribute('rel') || '').toLowerCase().split(/\s+/);
+
+        if (!rel.includes('stylesheet')) {
+            continue;
+        }
+
+        const href = normalizeGoogleFontsStylesheetUrl(link.getAttribute('href'));
+
+        if (!href) {
+            continue;
+        }
+
+        const customStyle = document.createElement('custom-style');
+        customStyle.textContent = encodeURIComponent(`@import url("${href}");`);
+        link.replaceWith(customStyle);
+    }
+
+    return template.innerHTML;
+}
+
 /**
  * Sanitizes custom style tags in the message text to prevent DOM pollution.
  * @param {string} text Message text
  * @param {object} options Options object
  * @param {string} options.prefix Prefix the selectors with this value
+ * @param {boolean} [options.allowGoogleFonts=false] Preserve Google Fonts imports
  * @returns {string} Sanitized message text
  * @copyright https://github.com/kwaroran/risuAI
  */
-export function decodeStyleTags(text, { prefix } = { prefix: '.mes_text ' }) {
+export function decodeStyleTags(text, { prefix = '.mes_text ', allowGoogleFonts = false } = {}) {
     const styleDecodeRegex = /<custom-style>(.+?)<\/custom-style>/gms;
     const mediaAllowed = isExternalMediaAllowed();
 
@@ -1081,13 +1177,37 @@ export function decodeStyleTags(text, { prefix } = { prefix: '.mes_text ' }) {
         }).join(' ');
     }
 
-    function sanitizeRuleSet(ruleSet) {
+    function sanitizeRuleSet(ruleSet, { allowImports = false } = {}) {
         if (Array.isArray(ruleSet.selectors) || Array.isArray(ruleSet.declarations)) {
             sanitizeRule(ruleSet);
         }
 
         if (Array.isArray(ruleSet.rules)) {
-            ruleSet.rules = ruleSet.rules.filter(rule => rule.type !== 'import');
+            const importRules = [];
+            const rules = [];
+
+            for (const rule of ruleSet.rules) {
+                if (rule.type !== 'import') {
+                    rules.push(rule);
+                    continue;
+                }
+
+                if (!allowImports || !allowGoogleFonts) {
+                    continue;
+                }
+
+                const importUrl = extractCssImportUrl(rule.import);
+                const normalizedUrl = importUrl && normalizeGoogleFontsStylesheetUrl(importUrl);
+
+                if (!normalizedUrl) {
+                    continue;
+                }
+
+                rule.import = `url("${normalizedUrl}")`;
+                importRules.push(rule);
+            }
+
+            ruleSet.rules = [...importRules, ...rules];
 
             for (const mediaRule of ruleSet.rules) {
                 sanitizeRuleSet(mediaRule);
@@ -1101,7 +1221,7 @@ export function decodeStyleTags(text, { prefix } = { prefix: '.mes_text ' }) {
             const ast = css.parse(styleCleaned);
             const sheet = ast?.stylesheet;
             if (sheet) {
-                sanitizeRuleSet(ast.stylesheet);
+                sanitizeRuleSet(ast.stylesheet, { allowImports: allowGoogleFonts });
             }
             return `<style>${css.stringify(ast)}</style>`;
         } catch (error) {
@@ -1116,7 +1236,7 @@ export function decodeStyleTags(text, { prefix } = { prefix: '.mes_text ' }) {
  * @returns {string} Formatted HTML text
  */
 export function formatCreatorNotes(text) {
-    const decodeStyleParam = { prefix: '#creator_notes_spoiler ' };
+    const decodeStyleParam = { prefix: '#creator_notes_spoiler ', allowGoogleFonts: true };
     /** @type {import('dompurify').Config & { MESSAGE_SANITIZE: boolean }} */
     const config = {
         RETURN_DOM: false,
@@ -1128,6 +1248,7 @@ export function formatCreatorNotes(text) {
 
     let html = converter.makeHtml(substituteParams(text));
     html = encodeStyleTags(html);
+    html = encodeGoogleFontStylesheetLinks(html);
     html = DOMPurify.sanitize(html, config);
     html = decodeStyleTags(html, decodeStyleParam);
 
