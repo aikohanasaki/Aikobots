@@ -2884,6 +2884,38 @@
                                     </div>
                                     <div class="alignitemscenter flex-container flexFlowColumn flexBasis48p flexGrow flexShrink gap0">
                                         <small>
+                                            <span>Message Line Height</span>
+                                            <div class="fa-solid fa-circle-info opacity50p" title="Line height for chat message text."></div>
+                                        </small>
+                                        <input class="neo-range-slider" type="range" id="chat_text_line_height" name="chat_text_line_height" min="0.75" max="1.75" step="0.01">
+                                        <input class="neo-range-input" type="number" min="0.75" max="1.75" step="0.01" data-for="chat_text_line_height" id="chat_text_line_height_counter">
+                                    </div>
+                                    <div class="alignitemscenter flex-container flexFlowColumn flexBasis48p flexGrow flexShrink gap0">
+                                        <small>
+                                            <span>Message Text Spacing</span>
+                                            <div class="fa-solid fa-circle-info opacity50p" title="Letter spacing for chat message text, in pixels."></div>
+                                        </small>
+                                        <input class="neo-range-slider" type="range" id="chat_text_letter_spacing" name="chat_text_letter_spacing" min="-1" max="4" step="0.1">
+                                        <input class="neo-range-input" type="number" min="-1" max="4" step="0.1" data-for="chat_text_letter_spacing" id="chat_text_letter_spacing_counter">
+                                    </div>
+                                    <div class="alignitemscenter flex-container flexFlowColumn flexBasis48p flexGrow flexShrink gap0">
+                                        <small>
+                                            <span>Top Bar Icon Size</span>
+                                            <div class="fa-solid fa-circle-info opacity50p" title="Scale the top bar drawer icons."></div>
+                                        </small>
+                                        <input class="neo-range-slider" type="range" id="top_bar_icon_scale" name="top_bar_icon_scale" min="0.6" max="1.6" step="0.01">
+                                        <input class="neo-range-input" type="number" min="0.6" max="1.6" step="0.01" data-for="top_bar_icon_scale" id="top_bar_icon_scale_counter">
+                                    </div>
+                                    <div class="alignitemscenter flex-container flexFlowColumn flexBasis48p flexGrow flexShrink gap0">
+                                        <small>
+                                            <span>Top Bar Spacing</span>
+                                            <div class="fa-solid fa-circle-info opacity50p" title="Spacing between top bar drawer icons, in pixels."></div>
+                                        </small>
+                                        <input class="neo-range-slider" type="range" id="top_bar_icon_spacing" name="top_bar_icon_spacing" min="-12" max="30" step="1">
+                                        <input class="neo-range-input" type="number" min="-12" max="30" step="1" data-for="top_bar_icon_spacing" id="top_bar_icon_spacing_counter">
+                                    </div>
+                                    <div class="alignitemscenter flex-container flexFlowColumn flexBasis48p flexGrow flexShrink gap0">
+                                        <small>
                                             <span data-i18n="Blur Strength">Blur Strength</span>
                                             <div class="fa-solid fa-circle-info opacity50p" data-i18n="[title]Blur strength on UI panels." title="Blur strength on UI panels."></div>
                                         </small>
@@ -2922,6 +2954,52 @@
                                             </div>
                                         </label>
                                         <div id="movingui-preset-save-button" title="Save changes to a new MovingUI preset file." data-i18n="[title]Save movingUI changes to a new file" class="menu_button margin0 fa-solid fa-save"></div>
+                                    </div>
+                                </div>
+                                <div class="inline-drawer wide100p flexFlowColumn">
+                                    <div class="inline-drawer-toggle inline-drawer-header" title="Swap top bar Font Awesome icons. Use icon class names such as fa-wand-magic-sparkles.">
+                                        <b><span>Top Bar Icons</span></b>
+                                        <div class="fa-solid fa-circle-chevron-down inline-drawer-icon down"></div>
+                                    </div>
+                                    <div class="inline-drawer-content">
+                                        <div class="flex-container flexFlowColumn flexNoGap">
+                                            <div class="flex-container">
+                                                <span>AI Config:</span>
+                                                <input type="text" id="top_bar_icon_ai_config" class="text_pole" placeholder="fa-sliders">
+                                            </div>
+                                            <div class="flex-container">
+                                                <span>API:</span>
+                                                <input type="text" id="top_bar_icon_api" class="text_pole" placeholder="fa-plug-circle-exclamation">
+                                            </div>
+                                            <div class="flex-container">
+                                                <span>Prompting:</span>
+                                                <input type="text" id="top_bar_icon_prompting" class="text_pole" placeholder="fa-font">
+                                            </div>
+                                            <div class="flex-container">
+                                                <span>World Info:</span>
+                                                <input type="text" id="top_bar_icon_world_info" class="text_pole" placeholder="fa-book-atlas">
+                                            </div>
+                                            <div class="flex-container">
+                                                <span>User Settings:</span>
+                                                <input type="text" id="top_bar_icon_user_settings" class="text_pole" placeholder="fa-user-cog">
+                                            </div>
+                                            <div class="flex-container">
+                                                <span>Backgrounds:</span>
+                                                <input type="text" id="top_bar_icon_backgrounds" class="text_pole" placeholder="fa-panorama">
+                                            </div>
+                                            <div class="flex-container">
+                                                <span>Extensions:</span>
+                                                <input type="text" id="top_bar_icon_extensions" class="text_pole" placeholder="fa-cubes">
+                                            </div>
+                                            <div class="flex-container">
+                                                <span>Persona:</span>
+                                                <input type="text" id="top_bar_icon_persona" class="text_pole" placeholder="fa-face-smile">
+                                            </div>
+                                            <div class="flex-container">
+                                                <span>Characters:</span>
+                                                <input type="text" id="top_bar_icon_characters" class="text_pole" placeholder="fa-address-card">
+                                            </div>
+                                        </div>
                                     </div>
                                 </div>
                                 <div id="CustomCSS-block" class="flex-container flexFlowColumn">

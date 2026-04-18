@@ -94,6 +94,8 @@
     --mainFontSize: calc(var(--fontScale) * 15px);
     --mainFontFamily: "Noto Sans", sans-serif;
     --monoFontFamily: 'Noto Sans Mono', 'Courier New', Consolas, monospace;
+    --chatTextLineHeightScale: 1;
+    --chatTextLetterSpacing: 0px;
 
     /* base variable for blur strength slider calculations */
     --blurStrength: 10;
@@ -107,7 +109,9 @@
     --bottomFormBlockSize: calc(var(--bottomFormIconSize) + var(--bottomFormBlockPadding));
 
     /*Top Bar Scaling Variables*/
-    --topBarIconSize: calc(var(--mainFontSize) * 2);
+    --topBarIconScale: 1;
+    --topBarIconSpacing: 0px;
+    --topBarIconSize: calc(var(--mainFontSize) * 2 * var(--topBarIconScale));
     --topBarBlockSize: calc(var(--topBarIconSize) + var(--topBarBlockPadding));
     --topBarBlockPadding: calc(var(--mainFontSize) / 3);
 
@@ -822,7 +826,7 @@ hr {
     left: 0;
     right: 0;
     display: inline-block;
-    height: var(--bottomFormBlockSize);
+    height: var(--topBarBlockSize);
     position: absolute;
     /* border-bottom: 1px solid var(--SmartThemeBorderColor); */
     box-shadow: 0 2px 20px 0 var(--black70a);
@@ -1899,9 +1903,21 @@ body.swipeAllMessages .mes:not(.last_mes) .swipes-counter {
 .mes_text,
 .mes_reasoning {
     font-weight: 500;
-    line-height: calc(var(--mainFontSize) + .5rem);
+    line-height: calc((var(--mainFontSize) + .5rem) * var(--chatTextLineHeightScale));
+    letter-spacing: var(--chatTextLetterSpacing);
     max-width: 100%;
     overflow-wrap: anywhere;
+}
+
+.mes_text pre,
+.mes_text code,
+.mes_text kbd,
+.mes_text samp,
+.mes_reasoning pre,
+.mes_reasoning code,
+.mes_reasoning kbd,
+.mes_reasoning samp {
+    letter-spacing: normal;
 }
 
 .mes_text {
@@ -5934,12 +5950,17 @@ body:not(.caption) .mes_img_caption {
 #top-settings-holder {
     display: flex;
     margin: 0 auto;
+    column-gap: var(--topBarIconSpacing);
     height: var(--topBarBlockSize);
     justify-content: center;
     z-index: 3005;
     position: relative;
     width: var(--sheldWidth);
 
+}
+
+#top-settings-holder>.drawer {
+    flex: 0 0 auto;
 }
 
 body:has(.drawer-content.maximized) #top-settings-holder:has(.drawer-content.openDrawer:not(.fillLeft):not(.fillRight)),
@@ -5953,7 +5974,8 @@ body:has(#character_popup.open) #top-settings-holder:has(.drawer-content.openDra
     justify-content: center;
     display: flex;
     flex-flow: row;
-    width: 100%;
+    flex: 1 1 0;
+    width: auto;
 }
 
 .drawer-icon {
