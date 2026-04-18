@@ -7162,6 +7162,15 @@ body:not(.movingUI) .drawer-content.maximized {
     align-self: center;
 }
 
+.stmb-jobs-row[data-action="open-approval"] {
+    cursor: pointer;
+}
+
+.stmb-jobs-row[data-action="open-approval"]:hover,
+.stmb-jobs-row[data-action="open-approval"]:focus-visible {
+    background: color-mix(in srgb, currentcolor 10%, rgba(255, 255, 255, 0.03));
+}
+
 .stmb-jobs-action-link {
     margin-left: auto;
     padding: 0;

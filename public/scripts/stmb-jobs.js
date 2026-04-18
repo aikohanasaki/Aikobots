@@ -33,6 +33,7 @@ let jobsActions = null;
 let jobsUiInitialized = false;
 let jobsRenderTimer = null;
 let jobsPanelOpen = false;
+const OPEN_APPROVAL_EVENT = 'stmb:open-job-approval';
 
 function nextJobId() {
     jobIdCounter += 1;
@@ -286,6 +287,51 @@ function getJobStoreRecordsForView(currentChatKey = '') {
     });
 
     return records;
+}
+
+function isJobAwaitingApproval(job = {}) {
+    return String(job?.state || '') === 'awaiting_approval'
+        && job?.approvalRequest
+        && typeof job.approvalRequest === 'object';
+}
+
+function findFirstAwaitingApprovalJob() {
+    const records = getJobStoreRecordsForView(getCurrentChatKey());
+
+    for (const record of records) {
+        const runningJob = record.store?.runningJob ? [record.store.runningJob] : [];
+        const queuedJobs = Array.isArray(record.store?.queue) ? record.store.queue : [];
+        const job = [...runningJob, ...queuedJobs].find(isJobAwaitingApproval);
+        if (job) {
+            return job;
+        }
+    }
+
+    return null;
+}
+
+function getAwaitingApprovalCount() {
+    let count = 0;
+
+    for (const store of jobStores.values()) {
+        const runningJob = store?.runningJob ? [store.runningJob] : [];
+        const queuedJobs = Array.isArray(store?.queue) ? store.queue : [];
+        count += [...runningJob, ...queuedJobs].filter(isJobAwaitingApproval).length;
+    }
+
+    return count;
+}
+
+function dispatchOpenApprovalEvent(job = {}) {
+    const jobId = String(job?.id || '').trim();
+    if (!jobId) {
+        return false;
+    }
+
+    window.dispatchEvent(new CustomEvent(OPEN_APPROVAL_EVENT, {
+        detail: { jobId },
+    }));
+    return true;
 }
 
 function getStoreDisplayLabel(record = {}) {
@@ -694,11 +740,15 @@ function renderJobRows(records = []) {
         sections.push(...orderedJobs.map(job => {
             const rangeLabel = getRangeLabel(job.range);
             const elapsedLabel = formatElapsed(job);
+            const isAwaitingApproval = isJobAwaitingApproval(job);
+            const approvalAttrs = isAwaitingApproval
+                ? ` data-action="open-approval" data-job-id="${esc(job.id)}" role="button" tabindex="0" title="Review approval request"`
+                : '';
             const retryButton = job.state === 'failed'
                 ? `<button type="button" class="menu_button stmb-jobs-row-action" data-action="retry" data-chat-key="${esc(record.chatKey)}" data-job-id="${esc(job.id)}">Retry failed</button>`
                 : '';
             return `
-                <div class="stmb-jobs-row ${getStatusToneClass(job)}">
+                <div class="stmb-jobs-row ${getStatusToneClass(job)}"${approvalAttrs}>
                     <div class="stmb-jobs-row-main">
                         <div class="stmb-jobs-row-header">
                             <span class="stmb-jobs-row-icon"></span>
@@ -779,6 +829,13 @@ function handleTopBarButtonClick() {
         return;
     }
 
+    if (getAwaitingApprovalCount() === 1) {
+        const approvalJob = findFirstAwaitingApprovalJob();
+        if (approvalJob && dispatchOpenApprovalEvent(approvalJob)) {
+            return;
+        }
+    }
+
     jobsPanelOpen = !jobsPanelOpen;
     renderStmbJobsUi();
 }
@@ -817,12 +874,33 @@ function handlePanelClick(event) {
         }
         return;
     }
+    if (action === 'open-approval') {
+        const record = findMutableJobRecordById(actionButton.dataset.jobId);
+        if (record?.job && isJobAwaitingApproval(record.job)) {
+            dispatchOpenApprovalEvent(record.job);
+        }
+        return;
+    }
     if (action === 'retry') {
         const retryChatKey = actionButton.dataset.chatKey || currentChatKey;
         if (retryChatKey) {
             retryFailedStmbJob(retryChatKey, actionButton.dataset.jobId);
         }
     }
+}
+
+function handlePanelKeydown(event) {
+    if (event.key !== 'Enter' && event.key !== ' ') {
+        return;
+    }
+
+    const actionButton = event.target.closest?.('[data-action="open-approval"]');
+    if (!actionButton) {
+        return;
+    }
+
+    event.preventDefault();
+    actionButton.click();
 }
 
 export function initStmbJobsUi() {
@@ -853,6 +931,7 @@ export function initStmbJobsUi() {
     topBarButton.setAttribute('aria-expanded', 'false');
     topBarButton.addEventListener('click', handleTopBarButtonClick);
     jobsPanel.addEventListener('click', handlePanelClick);
+    jobsPanel.addEventListener('keydown', handlePanelKeydown);
 
     eventSource.on(event_types.CHAT_CHANGED, () => renderStmbJobsUi());
     jobsUiInitialized = true;

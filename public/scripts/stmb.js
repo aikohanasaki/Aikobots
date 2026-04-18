@@ -162,6 +162,8 @@ let plannerStatusPollInFlight = false;
 const handledPlannerTerminalJobUpdates = new Map();
 const handledPlannerApprovalPrompts = new Map();
 let plannerChatReloadPromise = null;
+const activePlannerApprovalPrompts = new Set();
+const OPEN_APPROVAL_EVENT = 'stmb:open-job-approval';
 const PLANNER_ACTIVE_JOB_STATUSES = new Set(['pending', 'running', 'awaiting_approval']);
 const PLANNER_TERMINAL_JOB_STATUSES = new Set(['completed', 'failed', 'canceled', 'rejected', 'skipped']);
 const PLANNER_RECENT_JOB_WINDOW_MS = 15 * 60 * 1000;
@@ -681,6 +683,13 @@ function findPlannerSidebarActionButton(container, action) {
 function createPlannerSidebarJobItem(job) {
     const item = document.createElement('div');
     item.className = `top_chat_sidebar_item stmb-top-chat-item ${getPlannerStatusTone(job)}`.trim();
+    if (isPlannerApprovalJob(job)) {
+        item.dataset.action = 'open-approval';
+        item.dataset.jobId = String(job?.id || '');
+        item.setAttribute('role', 'button');
+        item.setAttribute('tabindex', '0');
+        item.title = 'Review approval request';
+    }
 
     const nameRow = document.createElement('div');
     nameRow.className = 'top_chat_sidebar_name_row';
@@ -719,6 +728,36 @@ function createPlannerSidebarJobItem(job) {
 
     item.append(nameRow, messageRow);
     return item;
+}
+
+function handlePlannerSidebarJobInteraction(event) {
+    const item = event.target.closest?.('.stmb-top-chat-item[data-action="open-approval"]');
+    if (!(item instanceof HTMLElement)) {
+        return;
+    }
+
+    const jobId = String(item.dataset.jobId || '').trim();
+    if (!jobId) {
+        return;
+    }
+
+    openPlannerApprovalByJobId(jobId).catch(error => {
+        console.warn('STMB approval popup failed from shared sidebar', error);
+    });
+}
+
+function handlePlannerSidebarJobKeydown(event) {
+    if (event.key !== 'Enter' && event.key !== ' ') {
+        return;
+    }
+
+    const item = event.target.closest?.('.stmb-top-chat-item[data-action="open-approval"]');
+    if (!(item instanceof HTMLElement)) {
+        return;
+    }
+
+    event.preventDefault();
+    handlePlannerSidebarJobInteraction(event);
 }
 
 function renderPlannerSidebarContent() {
@@ -801,7 +840,10 @@ function renderPlannerSidebarContent() {
         container.append(empty);
     } else {
         for (const job of rows) {
-            container.append(createPlannerSidebarJobItem(job));
+            const item = createPlannerSidebarJobItem(job);
+            item.addEventListener('click', handlePlannerSidebarJobInteraction);
+            item.addEventListener('keydown', handlePlannerSidebarJobKeydown);
+            container.append(item);
         }
     }
 
@@ -959,13 +1001,15 @@ async function pollCurrentChatPlannerState() {
         latestPlannerJobs = jobs;
         pruneDismissedPlannerNotifications(jobs);
         renderPlannerStatusUi();
-        await handlePlannerApprovalRequests(jobs);
-        await refreshPlannerEffectsFromJobs(jobs);
-        latestPlannerJobs = jobs;
-        pruneDismissedPlannerNotifications(jobs);
+        const handledApproval = await handlePlannerApprovalRequests(jobs);
+        const currentPlannerState = handledApproval ? await listStmbPlannerJobs() : plannerState;
+        const currentJobs = Array.isArray(currentPlannerState?.jobs) ? currentPlannerState.jobs : [];
+        await refreshPlannerEffectsFromJobs(currentJobs);
+        latestPlannerJobs = currentJobs;
+        pruneDismissedPlannerNotifications(currentJobs);
         renderPlannerStatusUi();
-        const hasActiveJobs = jobs.some(job => ['pending', 'running', 'awaiting_approval'].includes(String(job?.status || '')));
-        const hasRecentTerminal = jobs.some(job => ['completed', 'failed', 'canceled', 'rejected', 'skipped'].includes(String(job?.status || '')) && Number(job?.updatedAt || 0) > (Date.now() - 15_000));
+        const hasActiveJobs = currentJobs.some(job => ['pending', 'running', 'awaiting_approval'].includes(String(job?.status || '')));
+        const hasRecentTerminal = currentJobs.some(job => ['completed', 'failed', 'canceled', 'rejected', 'skipped'].includes(String(job?.status || '')) && Number(job?.updatedAt || 0) > (Date.now() - 15_000));
         if (hasActiveJobs || hasRecentTerminal) {
             ensurePlannerStatusPolling();
             await syncCurrentChatPlannerState(sceneContext);
@@ -1156,80 +1200,82 @@ function buildMemoryApprovalRequest(memoryObject, compiledScene, range, profile)
     };
 }
 
-async function handlePlannerApprovalRequests(jobs = []) {
-    const now = Date.now();
-    pruneHandledPlannerTerminalJobs(now);
+function isPlannerApprovalJob(job = {}) {
+    return String(job?.status || '') === 'awaiting_approval'
+        && ['memoryApproval', 'sidePromptApproval'].includes(String(job?.kind || ''))
+        && job?.approvalRequest
+        && typeof job.approvalRequest === 'object';
+}
 
-    const pendingApprovals = (Array.isArray(jobs) ? jobs : [])
-        .filter(job => String(job?.status || '') === 'awaiting_approval' && ['memoryApproval', 'sidePromptApproval'].includes(String(job?.kind || '')))
-        .sort((left, right) => Number(left?.updatedAt || 0) - Number(right?.updatedAt || 0));
+async function openPlannerApprovalPopup(job = {}, { force = false } = {}) {
+    if (!isPlannerApprovalJob(job)) {
+        return false;
+    }
 
-    for (const job of pendingApprovals) {
-        const jobId = String(job?.id || '');
-        const updatedAt = Number(job?.updatedAt || 0);
-        if (!jobId) {
-            continue;
-        }
-        if ((handledPlannerApprovalPrompts.get(jobId) || 0) >= updatedAt) {
-            continue;
-        }
+    const jobId = String(job?.id || '');
+    const updatedAt = Number(job?.updatedAt || 0);
+    if (!jobId || activePlannerApprovalPrompts.has(jobId)) {
+        return false;
+    }
+    if (!force && (handledPlannerApprovalPrompts.get(jobId) || 0) >= updatedAt) {
+        return false;
+    }
 
-        handledPlannerApprovalPrompts.set(jobId, updatedAt || now);
-        const approvalRequest = job?.approvalRequest && typeof job.approvalRequest === 'object'
-            ? job.approvalRequest
-            : {};
+    handledPlannerApprovalPrompts.set(jobId, updatedAt || Date.now());
+    activePlannerApprovalPrompts.add(jobId);
+    const approvalRequest = job.approvalRequest;
 
-        try {
-            const isSidePrompt = String(job?.kind || '') === 'sidePromptApproval';
-            const previewResult = await showMemoryPreviewPopup(
-                isSidePrompt
-                    ? {
-                        extractedTitle: String(approvalRequest.title || ''),
-                        title: String(approvalRequest.title || ''),
-                        content: String(approvalRequest.content || ''),
-                        suggestedKeys: [],
-                        keywords: [],
-                    }
-                    : normalizePreviewMemory(approvalRequest.memory || {}),
-                approvalRequest.sceneData || {
-                    sceneStart: Number(job?.payload?.range?.sceneStart || 0),
-                    sceneEnd: Number(job?.payload?.range?.sceneEnd || 0),
-                    messageCount: Number(job?.payload?.sceneData?.messageCount || 0),
-                },
-                buildPlannerApprovalProfile(approvalRequest.profile),
-                {
-                    allowRetry: approvalRequest.allowRetry !== false,
-                    lockTitle: approvalRequest.lockTitle === true,
-                },
-            );
+    try {
+        const isSidePrompt = String(job?.kind || '') === 'sidePromptApproval';
+        const previewResult = await showMemoryPreviewPopup(
+            isSidePrompt
+                ? {
+                    extractedTitle: String(approvalRequest.title || ''),
+                    title: String(approvalRequest.title || ''),
+                    content: String(approvalRequest.content || ''),
+                    suggestedKeys: [],
+                    keywords: [],
+                }
+                : normalizePreviewMemory(approvalRequest.memory || {}),
+            approvalRequest.sceneData || {
+                sceneStart: Number(job?.payload?.range?.sceneStart || 0),
+                sceneEnd: Number(job?.payload?.range?.sceneEnd || 0),
+                messageCount: Number(job?.payload?.sceneData?.messageCount || 0),
+            },
+            buildPlannerApprovalProfile(approvalRequest.profile),
+            {
+                allowRetry: approvalRequest.allowRetry !== false,
+                lockTitle: approvalRequest.lockTitle === true,
+            },
+        );
 
-            if (previewResult?.action === 'retry') {
-                await respondStmbPlannerApproval({
-                    jobId,
-                    decision: 'retry',
-                });
-                continue;
-            }
-
-            if (previewResult?.action === 'cancel') {
-                await respondStmbPlannerApproval({
-                    jobId,
-                    decision: 'reject',
-                });
-                continue;
-            }
-
-            const approvalResponse = {
+        if (previewResult?.action === 'retry') {
+            await respondStmbPlannerApproval({
                 jobId,
-                decision: 'approve',
-            };
-            if (previewResult?.memoryData) {
-                approvalResponse.editedData = isSidePrompt
-                    ? {
-                        title: String(previewResult.memoryData.extractedTitle || previewResult.memoryData.title || approvalRequest.title || '').trim(),
-                        content: String(previewResult.memoryData.content || '').trim(),
-                    }
-                    : {
+                decision: 'retry',
+            });
+            return true;
+        }
+
+        if (previewResult?.action === 'cancel') {
+            await respondStmbPlannerApproval({
+                jobId,
+                decision: 'reject',
+            });
+            return true;
+        }
+
+        const approvalResponse = {
+            jobId,
+            decision: 'approve',
+        };
+        if (previewResult?.memoryData) {
+            approvalResponse.editedData = isSidePrompt
+                ? {
+                    title: String(previewResult.memoryData.extractedTitle || previewResult.memoryData.title || approvalRequest.title || '').trim(),
+                    content: String(previewResult.memoryData.content || '').trim(),
+                }
+                : {
                     title: String(previewResult.memoryData.extractedTitle || previewResult.memoryData.title || '').trim(),
                     content: String(previewResult.memoryData.content || '').trim(),
                     keywords: Array.isArray(previewResult.memoryData.suggestedKeys)
@@ -1238,14 +1284,62 @@ async function handlePlannerApprovalRequests(jobs = []) {
                             ? previewResult.memoryData.keywords.slice()
                             : [],
                 };
-            }
+        }
 
-            await respondStmbPlannerApproval(approvalResponse);
+        await respondStmbPlannerApproval(approvalResponse);
+        return true;
+    } catch (error) {
+        handledPlannerApprovalPrompts.delete(jobId);
+        throw error;
+    } finally {
+        activePlannerApprovalPrompts.delete(jobId);
+    }
+}
+
+async function openPlannerApprovalByJobId(jobId) {
+    const targetJobId = String(jobId || '').trim();
+    if (!targetJobId) {
+        return false;
+    }
+
+    const plannerState = await listStmbPlannerJobs();
+    const jobs = Array.isArray(plannerState?.jobs) ? plannerState.jobs : [];
+    const job = jobs.find(candidate => String(candidate?.id || '') === targetJobId);
+    const opened = await openPlannerApprovalPopup(job, { force: true });
+    const refreshedPlannerState = opened ? await listStmbPlannerJobs() : plannerState;
+    const refreshedJobs = Array.isArray(refreshedPlannerState?.jobs) ? refreshedPlannerState.jobs : [];
+    await refreshPlannerEffectsFromJobs(refreshedJobs);
+    latestPlannerJobs = refreshedJobs;
+    pruneDismissedPlannerNotifications(refreshedJobs);
+    const hasActiveJobs = refreshedJobs.some(isPlannerJobActive);
+    const hasRecentTerminal = refreshedJobs.some(job => isPlannerJobTerminal(job) && Number(job?.updatedAt || 0) > (Date.now() - 15_000));
+    if (hasActiveJobs || hasRecentTerminal) {
+        ensurePlannerStatusPolling();
+    } else {
+        stopPlannerStatusPolling();
+    }
+    renderPlannerStatusUi();
+    return opened;
+}
+
+async function handlePlannerApprovalRequests(jobs = []) {
+    const now = Date.now();
+    pruneHandledPlannerTerminalJobs(now);
+
+    const pendingApprovals = (Array.isArray(jobs) ? jobs : [])
+        .filter(isPlannerApprovalJob)
+        .sort((left, right) => Number(left?.updatedAt || 0) - Number(right?.updatedAt || 0));
+
+    let handledAny = false;
+    for (const job of pendingApprovals) {
+        try {
+            handledAny = await openPlannerApprovalPopup(job) || handledAny;
         } catch (error) {
-            handledPlannerApprovalPrompts.delete(jobId);
             console.warn('STMB planner approval response failed', error);
         }
     }
+
+    return handledAny;
 }
 
 async function acknowledgePlannerJobHandled(job) {
@@ -7361,6 +7455,16 @@ export function initStmb() {
     $(document).on('click', '#stmb-menu-item', () => {
         showMainEntryPopup().catch(error => {
             console.warn('STMB main entry popup failed', error);
+        });
+    });
+    window.addEventListener(OPEN_APPROVAL_EVENT, event => {
+        const jobId = String(event?.detail?.jobId || '').trim();
+        if (!jobId) {
+            return;
+        }
+
+        openPlannerApprovalByJobId(jobId).catch(error => {
+            console.warn('STMB approval popup failed from job notification', error);
         });
     });
     bindSceneButtons();
