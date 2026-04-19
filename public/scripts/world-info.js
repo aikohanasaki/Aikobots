@@ -2306,6 +2306,17 @@ function createWorldInfoFloatingBookController() {
             trigger.style.bottom = '';
             controller.ensurePanelsVisible();
         },
+        centerPosition() {
+            const left = (window.innerWidth - trigger.offsetWidth) / 2;
+            const top = (window.innerHeight - trigger.offsetHeight) / 2;
+            const nextPosition = controller.clampPosition(left, top);
+            trigger.style.left = `${nextPosition.left}px`;
+            trigger.style.top = `${nextPosition.top}px`;
+            trigger.style.right = 'auto';
+            trigger.style.bottom = 'auto';
+            writeFloatingBookPosition(nextPosition);
+            controller.ensurePanelsVisible();
+        },
         clampPosition(left, top) {
             const maxLeft = Math.max(0, window.innerWidth - trigger.offsetWidth);
             const maxTop = Math.max(0, window.innerHeight - trigger.offsetHeight);
@@ -2820,6 +2831,12 @@ function registerWorldInfoSlashCommands() {
             : Number(value);
         const messageId = Number.isFinite(parsedMessageId) ? parsedMessageId : null;
         return showWorldInfoReportPopup(messageId);
+    }
+
+    function centerFloatingBookCallback() {
+        initWorldInfoFloatingBook().centerPosition();
+        toastr.info(t`World Info floating book centered.`);
+        return '';
     }
 
     /**
@@ -3353,6 +3370,16 @@ function registerWorldInfoSlashCommands() {
             </div>
         `,
         aliases: ['lore-report'],
+    }));
+    SlashCommandParser.addCommandObject(SlashCommand.fromProps({
+        name: 'wi-book-center',
+        callback: centerFloatingBookCallback,
+        helpString: `
+            <div>
+                Move the active World Info floating book icon to the center of the current screen.
+            </div>
+        `,
+        aliases: [],
     }));
     SlashCommandParser.addCommandObject(SlashCommand.fromProps({
         name: 'world',
