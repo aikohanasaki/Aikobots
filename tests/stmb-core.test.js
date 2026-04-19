@@ -5,6 +5,7 @@ import {
     STMB_DEFAULT_PROFILE_NAME,
     STMB_MANAGED_FLAG,
     applyStmbMaxTokensToGenerateData,
+    applyStmbProfileToGenerateData,
     compileScene,
     createDefaultStmbSettings,
     createManagedLorebookEntryData,
@@ -17,6 +18,7 @@ import {
     getRangeFromManagedMemoryEntry,
     identifyManagedMemoryEntries,
     importLegacyStmbSettings,
+    normalizeNavyReasoningEffort,
     normalizeStmbSettings,
     parseSceneMemoryCommandRange,
     parseSceneRange,
@@ -182,6 +184,33 @@ describe('stmb core settings', () => {
             model: 'claude-3-7-sonnet',
             max_tokens: 2048,
         });
+    });
+
+    it('normalizes Navy reasoning effort when an STMB profile overrides the current provider', () => {
+        expect(normalizeNavyReasoningEffort('min')).toBe('minimal');
+        expect(normalizeNavyReasoningEffort('max')).toBe('xhigh');
+        expect(normalizeNavyReasoningEffort('auto')).toBeUndefined();
+
+        const generateData = applyStmbProfileToGenerateData({
+            chat_completion_source: 'openai',
+            model: 'gpt-5',
+            max_completion_tokens: 123,
+            reasoning_effort: 'min',
+        }, {
+            connection: {
+                api: 'navy',
+                model: 'gpt-5',
+                temperature: 0.7,
+            },
+        });
+
+        expect(generateData).toMatchObject({
+            chat_completion_source: 'navy',
+            model: 'gpt-5',
+            max_tokens: 123,
+            reasoning_effort: 'minimal',
+        });
+        expect(generateData.max_completion_tokens).toBeUndefined();
     });
 });
 

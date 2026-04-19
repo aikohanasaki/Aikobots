@@ -134,6 +134,34 @@ function isNavyChatModel(model) {
 }
 
 /**
+ * @param {unknown} value
+ * @returns {string | undefined}
+ */
+function normalizeNavyReasoningEffort(value) {
+    const normalized = String(value || '').trim().toLowerCase();
+    switch (normalized) {
+        case '':
+        case 'auto':
+            return undefined;
+        case 'min':
+        case 'minimum':
+            return 'minimal';
+        case 'max':
+        case 'maximum':
+            return 'xhigh';
+        case 'none':
+        case 'minimal':
+        case 'low':
+        case 'medium':
+        case 'high':
+        case 'xhigh':
+            return normalized;
+        default:
+            return undefined;
+    }
+}
+
+/**
  * @param {string} endpoint
  * @returns {string}
  */
@@ -3732,8 +3760,9 @@ export async function handleChatCompletionsGenerate(request, response) {
         apiKey = readSecret(request.user.directories, SECRET_KEYS.NAVY);
         headers = {};
         bodyParams = {};
-        if (request.body.reasoning_effort) {
-            bodyParams.reasoning_effort = request.body.reasoning_effort;
+        const reasoningEffort = normalizeNavyReasoningEffort(request.body.reasoning_effort);
+        if (reasoningEffort) {
+            bodyParams.reasoning_effort = reasoningEffort;
         }
     } else {
         console.warn('This chat completion source is not supported yet.');

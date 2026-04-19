@@ -660,6 +660,30 @@ function usesOpenAIMaxCompletionTokens(modelId) {
     return isOpenAIReasoningModel(modelId) || /^(gpt-5|gpt-4o)/i.test(String(modelId || '').trim());
 }
 
+export function normalizeNavyReasoningEffort(value) {
+    const normalized = String(value || '').trim().toLowerCase();
+    switch (normalized) {
+        case '':
+        case 'auto':
+            return undefined;
+        case 'min':
+        case 'minimum':
+            return 'minimal';
+        case 'max':
+        case 'maximum':
+            return 'xhigh';
+        case 'none':
+        case 'minimal':
+        case 'low':
+        case 'medium':
+        case 'high':
+        case 'xhigh':
+            return normalized;
+        default:
+            return undefined;
+    }
+}
+
 export function resolveStmbProfileConnection(profile) {
     const connection = profile?.connection && typeof profile.connection === 'object' ? profile.connection : {};
     const api = normalizeCompletionSource(connection.api || 'openai');
@@ -799,6 +823,15 @@ export function applyStmbProfileToGenerateData(generateData, profile, providerDe
             delete next.presence_penalty;
             delete next.logit_bias;
             delete next.stop;
+        }
+    }
+
+    if (provider === 'navy') {
+        const reasoningEffort = normalizeNavyReasoningEffort(next.reasoning_effort);
+        if (reasoningEffort) {
+            next.reasoning_effort = reasoningEffort;
+        } else {
+            delete next.reasoning_effort;
         }
     }
 

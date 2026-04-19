@@ -1,7 +1,7 @@
 import { extractMessageFromData, getRequestHeaders } from '../script.js';
 import { getStreamingReply } from './openai.js';
 import EventSourceStream from './sse-stream.js';
-import { parseStructuredMemoryResponse } from './stmb-core.js';
+import { normalizeNavyReasoningEffort, parseStructuredMemoryResponse } from './stmb-core.js';
 import { parseSummaryJsonResponse } from './stmb-summary.js';
 import { consumeChatCompletionStream } from './chat-completion-stream.js';
 
@@ -156,6 +156,16 @@ function applyStmbRequestTransport(generateData) {
     const next = { ...generateData, stream: true };
     delete next.frequency_penalty;
     delete next.presence_penalty;
+
+    if (String(next.chat_completion_source || '').toLowerCase() === 'navy') {
+        const reasoningEffort = normalizeNavyReasoningEffort(next.reasoning_effort);
+        if (reasoningEffort) {
+            next.reasoning_effort = reasoningEffort;
+        } else {
+            delete next.reasoning_effort;
+        }
+    }
+
     return next;
 }
 
