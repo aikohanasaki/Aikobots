@@ -4756,11 +4756,22 @@ function getZaiMaxContext(model, isUnlocked) {
     }
 
     const contextMap = {
+        'glm-5.1': max_200k,
+        'glm-5-turbo': max_200k,
+        'glm-5v-turbo': max_200k,
+        'glm-5': max_200k,
+        'glm-4.7': max_200k,
+        'glm-4.7-flash': max_200k,
+        'glm-4.7-flashx': max_200k,
+        'glm-4.6v': max_128k,
+        'glm-4.6v-flash': max_128k,
+        'glm-4.6v-flashx': max_128k,
         'glm-4.6': max_200k,
         'glm-4.5': max_128k,
         'glm-4-32b-0414-128k': max_128k,
         'glm-4.5-air': max_128k,
         'glm-4.5v': max_64k,
+        'autoglm-phone-multilingual': max_64k,
     };
 
     // Return context size if model found, otherwise default to 128k
@@ -5800,6 +5811,8 @@ export function isImageInliningSupported() {
         // Z.AI (GLM)
         'glm-4.5v',
         'glm-4.6v',
+        'glm-5v-turbo',
+        'autoglm-phone',
         // SiliconFlow
         'Qwen/Qwen3-VL-32B-Instruct',
         'Qwen/Qwen3-VL-8B-Instruct',
@@ -5877,6 +5890,7 @@ export function isVideoInliningSupported() {
         'gemini-3',
         'glm-4.5v',
         'glm-4.6v',
+        'glm-5v-turbo',
     ];
 
     switch (oai_settings.chat_completion_source) {
