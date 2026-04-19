@@ -162,6 +162,61 @@ function normalizeNavyReasoningEffort(value) {
 }
 
 /**
+ * @param {string} model
+ * @returns {boolean}
+ */
+function isNavyRestrictedSamplingModel(model) {
+    const normalized = String(model || '').trim().toLowerCase();
+    return /^(o1|o3|o4)/.test(normalized)
+        || (/^gpt-5/.test(normalized) && !/chat-latest/.test(normalized));
+}
+
+/**
+ * @param {string} model
+ * @returns {boolean}
+ */
+function isNavyReasoningEffortModel(model) {
+    const normalized = String(model || '').trim().toLowerCase();
+    return isNavyRestrictedSamplingModel(normalized)
+        || normalized.includes('reasoning')
+        || normalized.includes('thinking')
+        || normalized.includes('deepseek-r1')
+        || normalized.includes('gemini-2.5')
+        || normalized.includes('grok-3-mini')
+        || normalized.includes('grok-4');
+}
+
+/**
+ * Navy exposes an OpenAI-compatible surface over several upstream providers.
+ * Keep model-dependent optional controls out of the request unless they are
+ * known to be valid for the selected model.
+ * @param {Record<string, any>} bodyParams
+ * @param {Record<string, any>} requestBody
+ */
+function applyNavyRequestCompatibility(bodyParams, requestBody) {
+    if (requestBody.chat_completion_source !== CHAT_COMPLETION_SOURCES.NAVY) {
+        return;
+    }
+
+    const topK = Number(requestBody.top_k);
+    bodyParams.top_k = Number.isInteger(topK) && topK > 0 ? topK : undefined;
+
+    if (!isNavyReasoningEffortModel(requestBody.model)) {
+        bodyParams.reasoning_effort = undefined;
+    }
+
+    if (isNavyRestrictedSamplingModel(requestBody.model)) {
+        bodyParams.temperature = undefined;
+        bodyParams.top_p = undefined;
+        bodyParams.top_k = undefined;
+        bodyParams.stop = undefined;
+        bodyParams.logit_bias = undefined;
+        bodyParams.presence_penalty = undefined;
+        bodyParams.frequency_penalty = undefined;
+    }
+}
+
+/**
  * @param {string} endpoint
  * @returns {string}
  */
@@ -268,7 +323,7 @@ function detectResponseFormatShape(responseText, currentRequestBody) {
     const providerMessage = extractProviderErrorMessage(parsedPayload ?? responseText, '');
     const normalized = `${String(responseText || '')}\n${providerMessage}`.toLowerCase();
 
-    if (/"path"\s*:\s*\[\s*"response_format"\s*\]/i.test(normalized)) {
+    if (/"(?:path|loc)"\s*:\s*\[[^\]]*"response_format"[^\]]*\]/i.test(normalized)) {
         return 'string';
     }
 
@@ -356,6 +411,8 @@ function detectStructuredOutputFallbackMode(responseText, currentRequestBody, js
         && (
             combinedText.includes('invalid option')
             || combinedText.includes('invalid_value')
+            || combinedText.includes('input should be')
+            || combinedText.includes('literal_error')
             || combinedText.includes('not supported')
             || combinedText.includes('unsupported')
             || combinedText.includes('expected one of')
@@ -581,6 +638,12 @@ function extractProviderErrorMessage(source, fallback = 'Unknown error occurred'
         source?.error?.message,
         source?.detail?.error?.message,
         source?.message,
+        Array.isArray(source?.detail)
+            ? source.detail
+                .map(detail => detail?.msg || detail?.message || detail?.type || '')
+                .filter(Boolean)
+                .join('; ')
+            : null,
         typeof source?.detail === 'string' ? source.detail : null,
         typeof source?.error === 'string' ? source.error : null,
         typeof source === 'string' ? source : null,
@@ -3825,6 +3888,8 @@ export async function handleChatCompletionsGenerate(request, response) {
         };
     }
 
+    applyNavyRequestCompatibility(bodyParams, request.body);
+
     const requestBody = {
         'messages': request.body.messages,
         'model': request.body.model,
@@ -3908,7 +3973,7 @@ export async function handleChatCompletionsGenerate(request, response) {
         currentRequestBody = requestBody,
         attemptedStructuredOutputFallbacks = [],
     } = {}) {
-        if (request.body.stream) {
+        if (request.body.stream && fetchResponse.ok) {
             console.info('Streaming request in progress');
             return createProviderStreamResult(fetchResponse);
         }
