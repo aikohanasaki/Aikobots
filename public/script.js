@@ -238,7 +238,7 @@ import { applyBrowserFixes } from './scripts/browser-fixes.js';
 import { initServerHistory } from './scripts/server-history.js';
 import { initBulkEdit } from './scripts/bulk-edit.js';
 import { getContext } from './scripts/st-context.js';
-import { extractReasoningFromData, initReasoning, parseReasoningInSwipes, PromptReasoning, ReasoningHandler, removeReasoningFromString, updateReasoningUI } from './scripts/reasoning.js';
+import { extractReasoningFromData, initReasoning, parseReasoningInSwipes, PromptReasoning, ReasoningHandler, ReasoningType, removeReasoningFromString, updateReasoningUI } from './scripts/reasoning.js';
 import { accountStorage } from './scripts/util/AccountStorage.js';
 import { initWelcomeScreen, openPermanentAssistantChat, getPermanentAssistantAvatar } from './scripts/welcome-screen.js';
 import { initDataMaid } from './scripts/data-maid.js';
@@ -5457,6 +5457,7 @@ class StreamingProcessor {
         this.createdAt = new Date();
         this.continueMessage = type === 'continue' ? continueMessage : '';
         this.swipes = [];
+        this.swipeReasoning = [];
         /** @type {import('./scripts/logprobs.js').TokenLogprobs[]} */
         this.messageLogprobs = [];
         this.toolCalls = [];
@@ -5667,6 +5668,7 @@ class StreamingProcessor {
                 return swipeInfoClone;
             });
             parseReasoningInSwipes(this.swipes, swipeInfoArray, message.extra?.reasoning_duration);
+            applyReasoningToSwipeInfoArray(this.swipeReasoning, swipeInfoArray, message.extra?.reasoning_duration);
             chat[messageId].swipes.push(...this.swipes);
             chat[messageId].swipe_info.push(...swipeInfoArray);
         }
@@ -5767,6 +5769,7 @@ class StreamingProcessor {
                 this.toolCalls = toolCalls;
                 this.result = text;
                 this.swipes = Array.from(swipes ?? []);
+                this.swipeReasoning = Array.from(state?.swipeReasoning ?? []);
                 if (logprobs) {
                     this.messageLogprobs.push(...(Array.isArray(logprobs) ? logprobs : [logprobs]));
                 }
@@ -7297,6 +7300,7 @@ export async function Generate(type, { automatic_trigger, force_name2, quiet_pro
         let imageUrls = extractImagesFromData(data);
 
         const swipes = extractMultiSwipes(data, type);
+        const swipeReasoning = extractMultiSwipeReasoning(data, type);
 
         messageChunk = cleanUpMessage({
             getMessage: getMessage,
@@ -7339,10 +7343,10 @@ export async function Generate(type, { automatic_trigger, force_name2, quiet_pro
         else {
             // Without streaming we'll be having a full message on continuation. Treat it as a last chunk.
             if (originalType !== 'continue') {
-                ({ type, getMessage } = await saveReply({ type, getMessage, title, swipes, reasoning, imageUrls, openAIRequestId }));
+                ({ type, getMessage } = await saveReply({ type, getMessage, title, swipes, swipeReasoning, reasoning, imageUrls, openAIRequestId }));
             }
             else {
-                ({ type, getMessage } = await saveReply({ type: 'appendFinal', getMessage, title, swipes, reasoning, imageUrls, openAIRequestId }));
+                ({ type, getMessage } = await saveReply({ type: 'appendFinal', getMessage, title, swipes, swipeReasoning, reasoning, imageUrls, openAIRequestId }));
             }
 
             // This relies on `saveReply` having been called to add the message to the chat, so it must be last.
@@ -8029,6 +8033,50 @@ function extractMultiSwipes(data, type) {
 }
 
 /**
+ * Extracts multiswipe reasoning blocks from the response data.
+ * @param {Object} data Response data
+ * @param {string} type Type of generation
+ * @returns {string[]} Array of extra swipe reasoning blocks
+ */
+function extractMultiSwipeReasoning(data, type) {
+    const reasoning = [];
+
+    if (!data) {
+        return reasoning;
+    }
+
+    if (type === 'continue' || type === 'impersonate' || type === 'quiet') {
+        return reasoning;
+    }
+
+    if (!Array.isArray(data.choices)) {
+        return reasoning;
+    }
+
+    const multiSwipeCount = data.choices.length - 1;
+
+    if (multiSwipeCount <= 0) {
+        return reasoning;
+    }
+
+    for (let i = 1; i < data.choices.length; i++) {
+        const text = extractMessageFromData({ choices: [data.choices[i]] }, 'openai');
+        const cleanedText = cleanUpMessage({
+            getMessage: text,
+            isImpersonate: false,
+            isContinue: false,
+            displayIncompleteSentences: false,
+        });
+
+        if (cleanedText) {
+            reasoning.push(extractReasoningFromData({ choices: [data.choices[i]] }));
+        }
+    }
+
+    return reasoning;
+}
+
+/**
  * Formats a message according to user settings
  * @param {object} [options] - Additional options.
  * @param {string} [options.getMessage] The message to clean up
@@ -8221,6 +8269,7 @@ async function processImageAttachment(message, { imageUrls }) {
  * @property {boolean} [fromStreaming] If the message is from streaming
  * @property {string} [title] Message tooltip
  * @property {string[]} [swipes] Extra swipes
+ * @property {string[]} [swipeReasoning] Reasoning for extra swipes
  * @property {string} [reasoning] Message reasoning
  * @property {string[]} [imageUrls] Links to images
  *
@@ -8228,7 +8277,7 @@ async function processImageAttachment(message, { imageUrls }) {
  * @property {string} type Type of generation
  * @property {string} getMessage Generated message
  */
-export async function saveReply({ type, getMessage, fromStreaming = false, title = '', swipes = [], reasoning = '', imageUrls = [], openAIRequestId = null }) {
+export async function saveReply({ type, getMessage, fromStreaming = false, title = '', swipes = [], swipeReasoning = [], reasoning = '', imageUrls = [], openAIRequestId = null }) {
     // Backward compatibility
     if (arguments.length > 1 && typeof arguments[0] !== 'object') {
         console.trace('saveReply called with positional arguments. Please use an object instead.');
@@ -8435,6 +8484,7 @@ export async function saveReply({ type, getMessage, fromStreaming = false, title
             return swipeInfoClone;
         });
         parseReasoningInSwipes(swipes, swipeInfoArray, item.extra?.reasoning_duration);
+        applyReasoningToSwipeInfoArray(swipeReasoning, swipeInfoArray, item.extra?.reasoning_duration);
         item.swipes.push(...swipes);
         item.swipe_info.push(...swipeInfoArray);
     }
@@ -8677,6 +8727,29 @@ export function syncSwipeToMes(messageId = null, swipeId = null) {
     restoreTimedWorldInfoFromChat();
 
     return true;
+}
+
+/**
+ * Applies model-provided reasoning blocks to generated swipe metadata.
+ * @param {string[]} swipeReasoning Reasoning strings for generated swipes
+ * @param {{extra: object}[]} swipeInfoArray Swipe metadata objects
+ * @param {number?} duration Reasoning duration to associate with the swipe
+ */
+function applyReasoningToSwipeInfoArray(swipeReasoning, swipeInfoArray, duration) {
+    if (power_user.strip_ai_thinking_from_response || !Array.isArray(swipeReasoning) || !Array.isArray(swipeInfoArray)) {
+        return;
+    }
+
+    for (let index = 0; index < swipeInfoArray.length; index++) {
+        const reasoning = trimSpaces(swipeReasoning[index] || '');
+        if (!reasoning) {
+            continue;
+        }
+
+        swipeInfoArray[index].extra.reasoning = getRegexedString(reasoning, regex_placement.REASONING);
+        swipeInfoArray[index].extra.reasoning_duration = duration ?? null;
+        swipeInfoArray[index].extra.reasoning_type = ReasoningType.Model;
+    }
 }
 
 /**

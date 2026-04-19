@@ -2731,12 +2731,20 @@ async function sendOpenAIRequest(type, messages, signal, { jsonSchema = null } =
 
             consumeChatCompletionStream(response, {
                 createEventStream: () => getEventSourceStream(),
-                createState: () => ({ reasoning: '', images: [] }),
+                createState: () => ({ reasoning: '', swipeReasoning: [], images: [] }),
                 getReply: (parsed, state) => {
                     const isSwipe = canMultiSwipe && Array.isArray(parsed?.choices) && parsed?.choices?.[0]?.index > 0;
                     if (isSwipe) {
-                        // FIXME: state.reasoning should be an array to support multi-swipe
-                        return getStreamingReply(parsed, state, { overrideShowThoughts: false });
+                        const swipeIndex = Number(parsed?.choices?.[0]?.index) - 1;
+                        const swipeState = {
+                            reasoning: Number.isInteger(swipeIndex) && swipeIndex >= 0 ? state.swipeReasoning[swipeIndex] || '' : '',
+                            images: [],
+                        };
+                        const reply = getStreamingReply(parsed, swipeState);
+                        if (Number.isInteger(swipeIndex) && swipeIndex >= 0) {
+                            state.swipeReasoning[swipeIndex] = swipeState.reasoning;
+                        }
+                        return reply;
                     }
                     return getStreamingReply(parsed, state);
                 },
