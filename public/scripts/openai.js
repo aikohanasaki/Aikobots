@@ -2577,6 +2577,7 @@ async function buildOpenAIGenerateData(type, messages, { jsonSchema = null } = {
         generate_data['top_p'] = generate_data.top_p || 0.01;
         generate_data['stop'] = getCustomStoppingStrings(1);
         generate_data['zai_endpoint'] = oai_settings.zai_endpoint || ZAI_ENDPOINT.COMMON;
+        delete generate_data.top_k;
         delete generate_data.presence_penalty;
         delete generate_data.frequency_penalty;
     }

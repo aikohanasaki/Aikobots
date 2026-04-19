@@ -3851,21 +3851,6 @@ export async function handleChatCompletionsGenerate(request, response) {
             const fetchResponse = await fetch(endpointUrl, config);
             return await handleFetchResponse(fetchResponse);
         } catch (error) {
-            if (!controller.signal.aborted
-                && request.body.chat_completion_source === CHAT_COMPLETION_SOURCES.ZAI
-                && request.body.zai_endpoint === ZAI_ENDPOINT.CODING) {
-                const fallbackUrl = new URL(`${trimTrailingSlash(API_ZAI_COMMON)}/chat/completions`).toString();
-                console.warn('Z.AI coding endpoint request failed, retrying with common endpoint:', error?.message || error);
-
-                try {
-                    const fallbackResponse = await fetch(fallbackUrl, config);
-                    return await handleFetchResponse(fallbackResponse);
-                } catch (fallbackError) {
-                    console.warn('Z.AI common endpoint fallback failed:', fallbackError?.message || fallbackError);
-                    error = fallbackError;
-                }
-            }
-
             logChatCompletionFailure(request, 'Generation failed', { stage: 'provider_request' }, error);
             const message = error.code === 'ECONNREFUSED'
                 ? `Connection refused: ${error.message}`
