@@ -148,6 +148,10 @@ class SentencePieceTokenizer {
      */
     #instance;
     /**
+     * @type {Promise<import('@agnai/sentencepiece-js').SentencePieceProcessor|null>|null} Sentencepiece tokenizer load promise
+     */
+    #loadPromise = null;
+    /**
      * @type {string} Path to the tokenizer model
      */
     #model;
@@ -175,10 +179,23 @@ class SentencePieceTokenizer {
             return this.#instance;
         }
 
+        if (this.#loadPromise) {
+            return this.#loadPromise;
+        }
+
+        this.#loadPromise = this.#load().finally(() => {
+            this.#loadPromise = null;
+        });
+
+        return this.#loadPromise;
+    }
+
+    async #load() {
         try {
             const pathToModel = await getPathToTokenizer(this.#model, this.#fallbackModel);
-            this.#instance = new SentencePieceProcessor();
-            await this.#instance.load(pathToModel);
+            const instance = new SentencePieceProcessor();
+            await instance.load(pathToModel);
+            this.#instance = instance;
             console.info('Instantiated the tokenizer for', path.parse(pathToModel).name);
             return this.#instance;
         } catch (error) {
@@ -196,6 +213,10 @@ class WebTokenizer {
      * @type {Tokenizer} Web tokenizer instance
      */
     #instance;
+    /**
+     * @type {Promise<Tokenizer|null>|null} Web tokenizer load promise
+     */
+    #loadPromise = null;
     /**
      * @type {string} Path to the tokenizer model
      */
@@ -224,6 +245,18 @@ class WebTokenizer {
             return this.#instance;
         }
 
+        if (this.#loadPromise) {
+            return this.#loadPromise;
+        }
+
+        this.#loadPromise = this.#load().finally(() => {
+            this.#loadPromise = null;
+        });
+
+        return this.#loadPromise;
+    }
+
+    async #load() {
         try {
             const pathToModel = await getPathToTokenizer(this.#model, this.#fallbackModel);
             const fileBuffer = await fs.promises.readFile(pathToModel);
