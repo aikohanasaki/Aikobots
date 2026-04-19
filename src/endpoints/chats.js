@@ -525,6 +525,28 @@ function applyLoadedMessageRange(logicalChatData, rangeStart, rangeMessages) {
     };
 }
 
+function normalizeLogicalChatDataForNoopCompare(chatData) {
+    if (!Array.isArray(chatData) || !_.isPlainObject(chatData[0])) {
+        return [];
+    }
+
+    const header = sanitizeChatHeaderForPersistence(chatData[0]);
+    delete header[CHAT_REVISION_KEY];
+    delete header[CHAT_LAST_SAVE_SESSION_KEY];
+
+    return [
+        header,
+        ...chatData.slice(1).map(message => sanitizeChatMessageForPersistence(message)),
+    ];
+}
+
+function isLogicalChatSaveNoop(existingChatData, nextChatData) {
+    return _.isEqual(
+        normalizeLogicalChatDataForNoopCompare(existingChatData),
+        normalizeLogicalChatDataForNoopCompare(nextChatData),
+    );
+}
+
 export function serializeJsonl(data) {
     return data.map(x => JSON.stringify(x)).join('\n');
 }
@@ -1689,15 +1711,6 @@ router.post('/save', validateAvatarUrlMiddleware, async function (request, respo
             let requestedTailStartId = null;
             const existingSegments = fs.existsSync(filePath) ? getChatSegments(filePath) : null;
             const existingTailStartId = existingSegments?.storage?.head_count;
-            const revisionCheck = validateSaveRevision(request.body, existingSegments?.header);
-
-            if (!revisionCheck.ok) {
-                return response.status(revisionCheck.status).send({
-                    error: revisionCheck.error,
-                    current_revision: revisionCheck.currentRevision,
-                    last_save_session_id: revisionCheck.lastSaveSessionId,
-                });
-            }
 
             if (request.body.save_mode === 'tail') {
                 const existingChat = getLogicalChatData(filePath);
@@ -1737,6 +1750,43 @@ router.post('/save', validateAvatarUrlMiddleware, async function (request, respo
 
             if (request.body.refresh_tail === true && (['tail', 'loaded_range'].includes(request.body.save_mode) || existingSegments?.storage)) {
                 requestedTailStartId = Math.max(0, logicalChatData.length - 1 - config.displayCount);
+            }
+
+            const revisionCheck = validateSaveRevision(request.body, existingSegments?.header);
+            const existingChatData = existingSegments?.header ? getLogicalChatData(filePath) : [];
+            const canAcceptNoopSave = revisionCheck.ok || revisionCheck.error === 'stale_revision';
+            const saveIsNoop = canAcceptNoopSave && existingChatData.length > 0 && isLogicalChatSaveNoop(existingChatData, logicalChatData);
+
+            if (saveIsNoop) {
+                const layout = getSegmentLayout(existingSegments);
+                const storageMode = existingSegments.storage ? CHAT_STORAGE_MODE_SPLIT_TAIL : 'full';
+
+                return response.send({
+                    result: 'ok',
+                    chat_revision: revisionCheck.currentRevision,
+                    storage_mode: storageMode,
+                    tailStartId: layout.tailStartId,
+                    tailEndId: layout.tailEndId,
+                    headCount: layout.headCount,
+                    tailCount: layout.tailCount,
+                    payload: request.body.refresh_tail === true
+                        ? buildChunkedChatPayload(filePath, {
+                            count: storageMode === CHAT_STORAGE_MODE_SPLIT_TAIL ? layout.tailCount : layout.totalMessages,
+                            hydrateFull: storageMode !== CHAT_STORAGE_MODE_SPLIT_TAIL,
+                            displayCount: config.displayCount,
+                            bufferMax: config.bufferMax,
+                            includeParentPromptCache: storageMode === CHAT_STORAGE_MODE_SPLIT_TAIL,
+                        })
+                        : null,
+                });
+            }
+
+            if (!revisionCheck.ok) {
+                return response.status(revisionCheck.status).send({
+                    error: revisionCheck.error,
+                    current_revision: revisionCheck.currentRevision,
+                    last_save_session_id: revisionCheck.lastSaveSessionId,
+                });
             }
 
             const header = setChatRevision(logicalChatData[0], revisionCheck.nextRevision, getRequestSaveSessionId(request.body));

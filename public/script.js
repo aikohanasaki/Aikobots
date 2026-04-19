@@ -2856,14 +2856,18 @@ function getContiguousLoadedChatRangeForSave() {
         return null;
     }
 
-    if (chatLoadState.loadedRanges.length !== 1) {
+    if (!chatLoadState.loadedRanges.length) {
         return null;
     }
 
-    const range = chatLoadState.loadedRanges[0];
-    const start = Number(range?.start);
-    const end = Number(range?.end);
     const expectedEnd = getTotalChatMessages() - 1;
+    const tailRange = chatLoadState.loadedRanges.find(range => Number(range?.end) === expectedEnd);
+    if (!tailRange) {
+        return null;
+    }
+
+    const start = Number(tailRange.start);
+    const end = Number(tailRange.end);
 
     if (!Number.isInteger(start) || !Number.isInteger(end) || start < 0 || end !== expectedEnd || start > end) {
         return null;
@@ -9167,7 +9171,8 @@ export async function saveChat({ chatName, withMetadata, mesId, force = false, s
 
         const isIntegrityError = errorData?.error === 'integrity' && !force;
         if (!isIntegrityError) {
-            throw new Error(result.statusText);
+            const errorReason = errorData?.error || result.statusText || `HTTP ${result.status}`;
+            throw new Error(`Chat save failed: ${errorReason}`);
         }
 
         const popupResult = await Popup.show.input(
@@ -12528,13 +12533,13 @@ async function saveChatOnce(options = {}) {
         if (savedIsGroup) {
             const groupSaved = await saveGroupChat(savedGroupId, true);
             if (groupSaved === CHAT_SAVE_RESULT.FAILED || groupSaved === false) {
-                throw new Error('Group chat could not be saved');
+                return CHAT_SAVE_RESULT.FAILED;
             }
         }
         else {
             const chatSaved = await saveChat(options);
             if (chatSaved === CHAT_SAVE_RESULT.FAILED || chatSaved === false) {
-                throw new Error('Chat could not be saved');
+                return CHAT_SAVE_RESULT.FAILED;
             }
             savedChatId = String(getCurrentChatId() || savedChatId || '');
             savedFileName = savedChatId;
