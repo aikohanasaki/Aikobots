@@ -201,6 +201,7 @@ describe('stmb core settings', () => {
                 api: 'navy',
                 model: 'gpt-5',
                 temperature: 0.7,
+                apiKey: 'sk-navy-test',
             },
         });
 
@@ -209,6 +210,7 @@ describe('stmb core settings', () => {
             model: 'gpt-5',
             max_tokens: 123,
             reasoning_effort: 'minimal',
+            navy_api_key: 'sk-navy-test',
         });
         expect(generateData.max_completion_tokens).toBeUndefined();
     });

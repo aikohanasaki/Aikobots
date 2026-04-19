@@ -165,6 +165,8 @@ function applyStmbRequestTransport(generateData) {
 
     if (String(next.chat_completion_source || '').toLowerCase() === 'navy') {
         next.stream = false;
+        delete next.seed;
+        delete next.top_k;
         const reasoningEffort = normalizeNavyReasoningEffort(next.reasoning_effort);
         if (reasoningEffort) {
             next.reasoning_effort = reasoningEffort;

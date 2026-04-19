@@ -753,6 +753,8 @@ export function applyStmbProfileToGenerateData(generateData, profile, providerDe
             next.custom_api_key = connection.apiKey;
         } else if (provider === 'azure_openai') {
             next.azure_api_key = connection.apiKey;
+        } else if (provider === 'navy') {
+            next.navy_api_key = connection.apiKey;
         } else if ('reverse_proxy' in next && next.reverse_proxy) {
             next.proxy_password = connection.apiKey;
         }

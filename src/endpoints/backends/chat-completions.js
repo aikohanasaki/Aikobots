@@ -3820,7 +3820,9 @@ export async function handleChatCompletionsGenerate(request, response) {
         }
     } else if (request.body.chat_completion_source === CHAT_COMPLETION_SOURCES.NAVY) {
         apiUrl = API_NAVY;
-        apiKey = readSecret(request.user.directories, SECRET_KEYS.NAVY);
+        apiKey = typeof request.body.navy_api_key === 'string'
+            ? request.body.navy_api_key
+            : readSecret(request.user.directories, SECRET_KEYS.NAVY);
         headers = {};
         bodyParams = {};
         const reasoningEffort = normalizeNavyReasoningEffort(request.body.reasoning_effort);
@@ -3846,8 +3848,9 @@ export async function handleChatCompletionsGenerate(request, response) {
     }
 
     if (!apiKey && !request.body.reverse_proxy && request.body.chat_completion_source !== CHAT_COMPLETION_SOURCES.CUSTOM) {
-        console.warn('OpenAI API key is missing.');
-        return response.status(400).send({ error: true });
+        const providerName = request.body.chat_completion_source === CHAT_COMPLETION_SOURCES.NAVY ? 'Navy' : 'OpenAI';
+        console.warn(`${providerName} API key is missing.`);
+        return response.status(400).send({ error: { message: `${providerName} API key is missing.` } });
     }
 
     // Add custom stop sequences
