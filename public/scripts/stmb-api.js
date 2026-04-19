@@ -132,9 +132,15 @@ async function generateStmbProviderResponse(payload, signal = null, onRateLimitW
         await waitForStmbProviderCooldown(providerKey, signal, onRateLimitWait);
 
         try {
-            return await sendStmbStreamingRequest(requestBody, signal);
+            return requestBody.stream === true
+                ? await sendStmbStreamingRequest(requestBody, signal)
+                : await sendStmbNonStreamingRequest(requestBody, signal);
         } catch (error) {
             const normalized = normalizeStmbClientError(error);
+            if (shouldRetryStmbNonStreaming(normalized, requestBody)) {
+                return await sendStmbNonStreamingRequest(requestBody, signal);
+            }
+
             if (!isStmbRateLimitError(normalized) || attempt >= STMB_RATE_LIMIT_RETRY_DELAYS_MS.length) {
                 throw normalized;
             }
@@ -158,6 +164,7 @@ function applyStmbRequestTransport(generateData) {
     delete next.presence_penalty;
 
     if (String(next.chat_completion_source || '').toLowerCase() === 'navy') {
+        next.stream = false;
         const reasoningEffort = normalizeNavyReasoningEffort(next.reasoning_effort);
         if (reasoningEffort) {
             next.reasoning_effort = reasoningEffort;
@@ -203,6 +210,37 @@ async function sendStmbStreamingRequest(requestBody, signal = null) {
         },
     });
     return buildStmbStreamingResponse(text, lastChunk, state, requestBody);
+}
+
+async function sendStmbNonStreamingRequest(requestBody, signal = null) {
+    const nonStreamingBody = { ...requestBody, stream: false };
+    const response = await fetch('/api/backends/chat-completions/generate', {
+        method: 'POST',
+        headers: getRequestHeaders(),
+        cache: 'no-cache',
+        body: JSON.stringify(nonStreamingBody),
+        signal,
+    });
+
+    const text = await response.text();
+    const data = safeJsonParse(text);
+    if (!response.ok) {
+        throw createStmbStreamingError(response, data, `Got response status ${response.status}`);
+    }
+
+    return data ?? buildStmbStreamingResponse(text, null, null, nonStreamingBody);
+}
+
+function shouldRetryStmbNonStreaming(error, requestBody) {
+    if (String(requestBody?.chat_completion_source || '').toLowerCase() !== 'navy') {
+        return false;
+    }
+    if (requestBody?.stream !== true) {
+        return false;
+    }
+
+    const status = Number(error?.upstream_status || error?.status || 0);
+    return status >= 400 && status < 500 && status !== 401 && status !== 403 && status !== 429;
 }
 
 function safeJsonParse(value) {
