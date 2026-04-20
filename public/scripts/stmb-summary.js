@@ -716,7 +716,18 @@ export function createSummaryCandidatesFromResponse(parsedResponse, sourceEntrie
         idResolver.set(String(index + 1), uid);
     });
 
-    const resolveId = value => idResolver.get(String(value || '').trim());
+    const resolveId = value => {
+        const rawValue = String(value || '').trim();
+        if (!rawValue) return null;
+
+        const exactMatch = idResolver.get(rawValue);
+        if (exactMatch) return exactMatch;
+
+        const sequence = parseSequenceFromTitle(rawValue);
+        if (!Number.isFinite(sequence)) return null;
+
+        return idResolver.get(String(sequence).padStart(3, '0')) || idResolver.get(String(sequence)) || null;
+    };
     const allBriefIds = briefs.map(brief => String(brief.id));
     const unassignedIds = new Set();
     for (const item of parsedResponse.unassigned_items || []) {

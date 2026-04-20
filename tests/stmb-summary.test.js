@@ -98,6 +98,26 @@ describe('stmb summary helpers', () => {
         expect(result.summaryCandidates[0].memberIds).toEqual(['10', '11']);
     });
 
+    it('maps labeled member ids back to lorebook entry ids', () => {
+        const parsed = {
+            summaries: [
+                { title: 'Opening Arcs', summary: 'Summary text', keywords: ['apple'], member_ids: ['Arc 001', 'Arc 002'] },
+                { title: 'Later Arc', summary: 'More summary text', keywords: ['orange'], member_ids: ['Arc 003'] },
+            ],
+            unassigned_items: [],
+        };
+        const sourceEntries = [
+            { uid: 10, comment: '[ARC 001] - Opening', content: 'Scene one' },
+            { uid: 11, comment: '[ARC 002] - Followup', content: 'Scene two' },
+            { uid: 12, comment: '[ARC 003] - Later', content: 'Scene three' },
+        ];
+
+        const result = createSummaryCandidatesFromResponse(parsed, sourceEntries);
+        expect(result.summaryCandidates).toHaveLength(2);
+        expect(result.summaryCandidates[0].memberIds).toEqual(['10', '11']);
+        expect(result.summaryCandidates[1].memberIds).toEqual(['12']);
+    });
+
     it('formats summary titles with tier defaults', () => {
         expect(formatSummaryTitle(1, getDefaultSummaryTitleFormat(1), 'Arc One', 3)).toBe('[ARC 003] - Arc One');
     });
