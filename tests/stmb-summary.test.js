@@ -118,6 +118,43 @@ describe('stmb summary helpers', () => {
         expect(result.summaryCandidates[1].memberIds).toEqual(['12']);
     });
 
+    it('infers member ids from text when provided member ids are character names', () => {
+        const parsed = {
+            summaries: [
+                {
+                    title: 'Foundations of Power',
+                    summary: 'A D-Rank raid, proposal, Beijing dungeon, System interface, and Iron Key establish the opening arc.',
+                    keywords: ['D-Rank raid', 'Beijing', 'Iron Key'],
+                    member_ids: ['Jinwoo', 'Mari'],
+                },
+                {
+                    title: 'Deals and Destinies',
+                    summary: 'Hwang Dong-Suk betrays the party, Jinho makes a contract, and Cerberus guards the Demon Castle.',
+                    keywords: ['Hwang Dong-Suk', 'Jinho', 'Cerberus'],
+                    member_ids: ['Jinwoo', 'Mari'],
+                },
+                {
+                    title: 'The Red Gate Survival',
+                    summary: 'A frozen Red Gate strands the team until Kim Chul falls and Baruka becomes a shadow.',
+                    keywords: ['Red Gate', 'Kim Chul', 'Baruka'],
+                    member_ids: ['Jinwoo', 'Mari'],
+                },
+            ],
+            unassigned_items: [],
+        };
+        const sourceEntries = [
+            { uid: 10, comment: '[ARC 001] - Opening', content: 'D-Rank raid proposal Beijing dungeon System interface Iron Key' },
+            { uid: 11, comment: '[ARC 002] - Betrayal', content: 'Hwang Dong-Suk betrayal Jinho contract Cerberus Demon Castle' },
+            { uid: 12, comment: '[ARC 003] - Red Gate', content: 'frozen Red Gate Kim Chul Baruka shadow extraction' },
+        ];
+
+        const result = createSummaryCandidatesFromResponse(parsed, sourceEntries);
+        expect(result.summaryCandidates).toHaveLength(3);
+        expect(result.summaryCandidates[0].memberIds).toEqual(['10']);
+        expect(result.summaryCandidates[1].memberIds).toEqual(['11']);
+        expect(result.summaryCandidates[2].memberIds).toEqual(['12']);
+    });
+
     it('formats summary titles with tier defaults', () => {
         expect(formatSummaryTitle(1, getDefaultSummaryTitleFormat(1), 'Arc One', 3)).toBe('[ARC 003] - Arc One');
     });

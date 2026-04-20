@@ -329,6 +329,138 @@ function normalizeKeywords(keywords) {
     return normalized;
 }
 
+const SUMMARY_MEMBER_INFERENCE_STOPWORDS = new Set([
+    'about',
+    'after',
+    'again',
+    'against',
+    'all',
+    'and',
+    'are',
+    'but',
+    'can',
+    'chapter',
+    'character',
+    'continuity',
+    'during',
+    'each',
+    'from',
+    'has',
+    'into',
+    'key',
+    'major',
+    'not',
+    'outcome',
+    'plot',
+    'premise',
+    'rank',
+    'summary',
+    'the',
+    'their',
+    'then',
+    'this',
+    'through',
+    'time',
+    'title',
+    'with',
+]);
+
+function tokenizeSummaryInferenceText(text) {
+    return Array.from(String(text || '').toLowerCase().matchAll(/[\p{L}\p{N}]+/gu))
+        .map(match => match[0])
+        .filter(token => token.length >= 3 && !/^\d+$/.test(token) && !SUMMARY_MEMBER_INFERENCE_STOPWORDS.has(token));
+}
+
+function getSummaryInferenceText(summary) {
+    return [
+        summary?.title,
+        summary?.summary,
+        Array.isArray(summary?.keywords) ? summary.keywords.join(' ') : '',
+    ].filter(Boolean).join(' ');
+}
+
+function scoreSummaryBriefMembership(summaryTokens, briefTokens, briefTokenFrequency) {
+    let score = 0;
+    for (const token of summaryTokens) {
+        if (!briefTokens.has(token)) continue;
+        score += 1 / Math.max(1, briefTokenFrequency.get(token) || 1);
+    }
+    return score;
+}
+
+function inferSummaryMemberIdsFromText(summaries, briefs) {
+    if (!Array.isArray(summaries) || summaries.length === 0 || !Array.isArray(briefs) || briefs.length === 0) {
+        return [];
+    }
+
+    const briefTokenSets = briefs.map(brief => new Set(tokenizeSummaryInferenceText(`${brief.title || ''} ${brief.content || ''}`)));
+    const briefTokenFrequency = new Map();
+    for (const tokenSet of briefTokenSets) {
+        for (const token of tokenSet) {
+            briefTokenFrequency.set(token, (briefTokenFrequency.get(token) || 0) + 1);
+        }
+    }
+
+    const summaryTokenSets = summaries.map(summary => new Set(tokenizeSummaryInferenceText(getSummaryInferenceText(summary))));
+    const scoreMatrix = summaryTokenSets.map(summaryTokens =>
+        briefTokenSets.map(briefTokens => scoreSummaryBriefMembership(summaryTokens, briefTokens, briefTokenFrequency)),
+    );
+
+    const summaryCount = summaries.length;
+    const briefCount = briefs.length;
+    if (summaryCount > briefCount) {
+        return scoreMatrix.map(row => {
+            let bestIndex = -1;
+            let bestScore = 0;
+            for (let index = 0; index < row.length; index++) {
+                if (row[index] > bestScore) {
+                    bestScore = row[index];
+                    bestIndex = index;
+                }
+            }
+            return bestIndex >= 0 ? [String(briefs[bestIndex].id)] : [];
+        });
+    }
+
+    const segmentScores = scoreMatrix.map(row => {
+        const prefix = [0];
+        for (const score of row) {
+            prefix.push(prefix[prefix.length - 1] + score);
+        }
+        return (start, endExclusive) => prefix[endExclusive] - prefix[start];
+    });
+    const dp = Array.from({ length: summaryCount + 1 }, () => Array(briefCount + 1).fill(-Infinity));
+    const previousBoundary = Array.from({ length: summaryCount + 1 }, () => Array(briefCount + 1).fill(-1));
+    dp[0][0] = 0;
+
+    for (let summaryIndex = 1; summaryIndex <= summaryCount; summaryIndex++) {
+        for (let briefEnd = summaryIndex; briefEnd <= briefCount; briefEnd++) {
+            for (let briefStart = summaryIndex - 1; briefStart < briefEnd; briefStart++) {
+                const candidateScore = dp[summaryIndex - 1][briefStart]
+                    + segmentScores[summaryIndex - 1](briefStart, briefEnd);
+                if (candidateScore > dp[summaryIndex][briefEnd]) {
+                    dp[summaryIndex][briefEnd] = candidateScore;
+                    previousBoundary[summaryIndex][briefEnd] = briefStart;
+                }
+            }
+        }
+    }
+
+    if (!Number.isFinite(dp[summaryCount][briefCount]) || dp[summaryCount][briefCount] <= 0) {
+        return [];
+    }
+
+    const inferred = Array.from({ length: summaryCount }, () => []);
+    let briefEnd = briefCount;
+    for (let summaryIndex = summaryCount; summaryIndex >= 1; summaryIndex--) {
+        const briefStart = previousBoundary[summaryIndex][briefEnd];
+        if (briefStart < 0) return [];
+        inferred[summaryIndex - 1] = briefs.slice(briefStart, briefEnd).map(brief => String(brief.id));
+        briefEnd = briefStart;
+    }
+    return inferred;
+}
+
 function extractClaudeText(response) {
     if (!response || typeof response !== 'object' || !Array.isArray(response.content)) {
         return null;
@@ -625,6 +757,9 @@ export function buildSummaryAnalysisPrompt({
     const childPluralLabel = childPlural.toUpperCase();
     const lines = [];
 
+    lines.push('Important: member_ids must refer to the numbered source entries below, such as "001" or "Memory 001", not character names, groups, or participants.');
+    lines.push('');
+
     if (previousSummary) {
         lines.push(`=== PREVIOUS ${targetLabel} (CANON — DO NOT REWRITE, DO NOT INCLUDE IN YOUR NEW SUMMARY) ===`);
         if (previousOrder !== null && previousOrder !== undefined) {
@@ -734,13 +869,18 @@ export function createSummaryCandidatesFromResponse(parsedResponse, sourceEntrie
         const resolved = resolveId(item.id);
         if (resolved) unassignedIds.add(resolved);
     }
+    const inferredMemberIds = summaries.length > 1 ? inferSummaryMemberIdsFromText(summaries, briefs) : [];
 
     const summaryCandidates = [];
-    for (const item of summaries) {
+    for (let index = 0; index < summaries.length; index++) {
+        const item = summaries[index];
         const hasExplicitMemberIds = Array.isArray(item.member_ids) && item.member_ids.length > 0;
         let memberIds = hasExplicitMemberIds
             ? item.member_ids.map(resolveId).filter(Boolean)
             : [];
+        if (memberIds.length === 0 && summaries.length > 1 && hasExplicitMemberIds) {
+            memberIds = inferredMemberIds[index] || [];
+        }
         if (memberIds.length === 0 && summaries.length > 1) {
             throw makeSummaryParseError(
                 'AMBIGUOUS_MEMBER_IDS',
