@@ -3820,9 +3820,7 @@ export async function handleChatCompletionsGenerate(request, response) {
         }
     } else if (request.body.chat_completion_source === CHAT_COMPLETION_SOURCES.NAVY) {
         apiUrl = API_NAVY;
-        apiKey = typeof request.body.navy_api_key === 'string'
-            ? request.body.navy_api_key
-            : readSecret(request.user.directories, SECRET_KEYS.NAVY);
+        apiKey = readSecret(request.user.directories, SECRET_KEYS.NAVY);
         headers = {};
         bodyParams = {};
         const reasoningEffort = normalizeNavyReasoningEffort(request.body.reasoning_effort);

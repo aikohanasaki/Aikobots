@@ -9,6 +9,9 @@ export const STMB_MANAGED_FLAG = 'stmemorybooks';
 export const STMB_DEFAULT_PROFILE_NAME = 'Current SillyTavern Settings';
 export const STMB_DEFAULT_TITLE_FORMAT = '[000] - {{title}}';
 export const STMB_DEFAULT_MAX_TOKENS = 4000;
+export const STMB_CONNECTION_PROFILE_API_KEY_ERROR = 'please confirm that your API key is entered in Connection Profiles';
+
+const STMB_REVERSE_PROXY_PROFILE_APIS = new Set(['openai', 'claude', 'mistralai', 'makersuite', 'vertexai', 'deepseek', 'xai']);
 
 export const STMB_DEFAULT_TITLE_FORMATS = Object.freeze([
     '[000] - {{title}} ({{profile}})',
@@ -709,6 +712,16 @@ export function resolveStmbProfileConnection(profile) {
     };
 }
 
+export function getStmbConnectionProfileApiKeyError(profile, options = {}) {
+    const connection = resolveStmbProfileConnection(profile);
+    const hasStoredApiKey = Boolean(options.hasStoredApiKey);
+    if (connection.useCurrentStSettings || connection.api === 'full-manual') {
+        return '';
+    }
+
+    return hasStoredApiKey ? '' : STMB_CONNECTION_PROFILE_API_KEY_ERROR;
+}
+
 export function applyStmbProfileToGenerateData(generateData, profile, providerDefaults = {}) {
     if (!generateData || typeof generateData !== 'object' || !profile || typeof profile !== 'object') {
         return generateData;
@@ -743,21 +756,13 @@ export function applyStmbProfileToGenerateData(generateData, profile, providerDe
         } else if (provider === 'azure_openai') {
             next.azure_base_url = connection.endpoint;
             next.azure_deployment_name = connection.model || providerDefaults.azure_deployment_name || next.azure_deployment_name;
-        } else if (['openai', 'claude', 'mistralai', 'makersuite', 'vertexai', 'deepseek', 'xai'].includes(provider)) {
+        } else if (STMB_REVERSE_PROXY_PROFILE_APIS.has(provider)) {
             next.reverse_proxy = connection.endpoint;
         }
     }
 
-    if (connection.apiKey) {
-        if (provider === 'custom') {
-            next.custom_api_key = connection.apiKey;
-        } else if (provider === 'azure_openai') {
-            next.azure_api_key = connection.apiKey;
-        } else if (provider === 'navy') {
-            next.navy_api_key = connection.apiKey;
-        } else if ('reverse_proxy' in next && next.reverse_proxy) {
-            next.proxy_password = connection.apiKey;
-        }
+    if (connection.apiKey && originalApi === 'full-manual') {
+        next.custom_api_key = connection.apiKey;
     }
 
     if (provider === 'azure_openai') {

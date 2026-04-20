@@ -137,10 +137,6 @@ async function generateStmbProviderResponse(payload, signal = null, onRateLimitW
                 : await sendStmbNonStreamingRequest(requestBody, signal);
         } catch (error) {
             const normalized = normalizeStmbClientError(error);
-            if (shouldRetryStmbNonStreaming(normalized, requestBody)) {
-                return await sendStmbNonStreamingRequest(requestBody, signal);
-            }
-
             if (!isStmbRateLimitError(normalized) || attempt >= STMB_RATE_LIMIT_RETRY_DELAYS_MS.length) {
                 throw normalized;
             }
@@ -159,12 +155,11 @@ async function generateStmbProviderResponse(payload, signal = null, onRateLimitW
 }
 
 function applyStmbRequestTransport(generateData) {
-    const next = { ...generateData, stream: true };
+    const next = { ...generateData };
     delete next.frequency_penalty;
     delete next.presence_penalty;
 
     if (String(next.chat_completion_source || '').toLowerCase() === 'navy') {
-        next.stream = false;
         delete next.seed;
         delete next.top_k;
         const reasoningEffort = normalizeNavyReasoningEffort(next.reasoning_effort);
@@ -215,12 +210,11 @@ async function sendStmbStreamingRequest(requestBody, signal = null) {
 }
 
 async function sendStmbNonStreamingRequest(requestBody, signal = null) {
-    const nonStreamingBody = { ...requestBody, stream: false };
     const response = await fetch('/api/backends/chat-completions/generate', {
         method: 'POST',
         headers: getRequestHeaders(),
         cache: 'no-cache',
-        body: JSON.stringify(nonStreamingBody),
+        body: JSON.stringify({ ...requestBody, stream: false }),
         signal,
     });
 
@@ -230,19 +224,7 @@ async function sendStmbNonStreamingRequest(requestBody, signal = null) {
         throw createStmbStreamingError(response, data, `Got response status ${response.status}`);
     }
 
-    return data ?? buildStmbStreamingResponse(text, null, null, nonStreamingBody);
-}
-
-function shouldRetryStmbNonStreaming(error, requestBody) {
-    if (String(requestBody?.chat_completion_source || '').toLowerCase() !== 'navy') {
-        return false;
-    }
-    if (requestBody?.stream !== true) {
-        return false;
-    }
-
-    const status = Number(error?.upstream_status || error?.status || 0);
-    return status >= 400 && status < 500 && status !== 401 && status !== 403 && status !== 429;
+    return data ?? buildStmbStreamingResponse(text, null, null, requestBody);
 }
 
 function safeJsonParse(value) {

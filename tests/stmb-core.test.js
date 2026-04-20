@@ -16,6 +16,7 @@ import {
     getEntryByTitle,
     getNextManagedMemorySequenceNumber,
     getRangeFromManagedMemoryEntry,
+    getStmbConnectionProfileApiKeyError,
     identifyManagedMemoryEntries,
     importLegacyStmbSettings,
     normalizeNavyReasoningEffort,
@@ -201,7 +202,6 @@ describe('stmb core settings', () => {
                 api: 'navy',
                 model: 'gpt-5',
                 temperature: 0.7,
-                apiKey: 'sk-navy-test',
             },
         });
 
@@ -210,9 +210,102 @@ describe('stmb core settings', () => {
             model: 'gpt-5',
             max_tokens: 123,
             reasoning_effort: 'minimal',
-            navy_api_key: 'sk-navy-test',
         });
         expect(generateData.max_completion_tokens).toBeUndefined();
+    });
+
+    it('uses profile API keys only for full manual STMB profiles', () => {
+        const fullManual = applyStmbProfileToGenerateData({
+            chat_completion_source: 'openai',
+            model: 'gpt-5',
+        }, {
+            connection: {
+                api: 'full-manual',
+                model: 'manual-model',
+                endpoint: 'https://manual.example/v1',
+                apiKey: 'manual-key',
+            },
+        });
+
+        expect(fullManual).toMatchObject({
+            chat_completion_source: 'custom',
+            custom_url: 'https://manual.example/v1',
+            custom_api_key: 'manual-key',
+        });
+
+        const azure = applyStmbProfileToGenerateData({
+            chat_completion_source: 'openai',
+            model: 'gpt-5',
+        }, {
+            connection: {
+                api: 'azure_openai',
+                model: 'deployment',
+                endpoint: 'https://azure.example',
+                apiKey: 'ignored-key',
+            },
+        });
+
+        expect(azure.azure_api_key).toBeUndefined();
+
+        const proxied = applyStmbProfileToGenerateData({
+            chat_completion_source: 'openai',
+            model: 'gpt-5',
+        }, {
+            connection: {
+                api: 'openai',
+                model: 'gpt-5',
+                endpoint: 'https://proxy.example/v1',
+                apiKey: 'ignored-key',
+            },
+        });
+
+        expect(proxied.proxy_password).toBeUndefined();
+    });
+
+    it('requires API keys for non-manual STMB connection profiles', () => {
+        expect(getStmbConnectionProfileApiKeyError({
+            connection: { api: 'navy', model: 'gpt-5' },
+        })).toBe('please confirm that your API key is entered in Connection Profiles');
+
+        expect(getStmbConnectionProfileApiKeyError({
+            connection: { api: 'navy', model: 'gpt-5' },
+        }, {
+            hasStoredApiKey: true,
+        })).toBe('');
+
+        expect(getStmbConnectionProfileApiKeyError({
+            connection: { api: 'navy', model: 'gpt-5', apiKey: 'sk-navy-test' },
+        })).toBe('please confirm that your API key is entered in Connection Profiles');
+
+        expect(getStmbConnectionProfileApiKeyError({
+            connection: { api: 'ai21', model: 'jamba-large', apiKey: 'sk-ai21-test' },
+        })).toBe('please confirm that your API key is entered in Connection Profiles');
+
+        expect(getStmbConnectionProfileApiKeyError({
+            connection: { api: 'ai21', model: 'jamba-large' },
+        }, {
+            hasStoredApiKey: true,
+        })).toBe('');
+
+        expect(getStmbConnectionProfileApiKeyError({
+            connection: { api: 'openai', model: 'gpt-5', apiKey: 'sk-openai-test' },
+        })).toBe('please confirm that your API key is entered in Connection Profiles');
+
+        expect(getStmbConnectionProfileApiKeyError({
+            connection: { api: 'openai', model: 'gpt-5', endpoint: 'https://proxy.example/v1', apiKey: 'proxy-key' },
+        })).toBe('please confirm that your API key is entered in Connection Profiles');
+
+        expect(getStmbConnectionProfileApiKeyError({
+            connection: { api: 'azure_openai', model: 'deployment', apiKey: 'azure-key' },
+        })).toBe('please confirm that your API key is entered in Connection Profiles');
+
+        expect(getStmbConnectionProfileApiKeyError({
+            connection: { api: 'full-manual', model: 'gpt-5' },
+        })).toBe('');
+
+        expect(getStmbConnectionProfileApiKeyError({
+            connection: { api: 'current_st' },
+        })).toBe('');
     });
 });
 

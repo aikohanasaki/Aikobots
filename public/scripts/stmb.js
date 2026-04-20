@@ -38,6 +38,7 @@ import { groups, selected_group } from './group-chats.js';
 import { getRegexScripts, runRegexScript, substitute_find_regex } from './extensions/regex/engine.js';
 import { getLorebookStorageForRequest, loadWorldInfo, METADATA_KEY, reloadEditor, world_names, worldInfoCache } from './world-info.js';
 import { buildOpenAIGenerateData, oai_settings } from './openai.js';
+import { SECRET_KEYS, secret_state } from './secrets.js';
 import { buildMemoryPromptText } from './stmb-prompt-assembly.js';
 import {
     applyDeletedMessageToSceneState,
@@ -56,6 +57,7 @@ import {
     STMB_METADATA_KEY,
     compileScene,
     getActiveStmbProfile,
+    getStmbConnectionProfileApiKeyError,
     identifyManagedMemoryEntries,
     normalizeStmbSettings,
     parseSequenceFromTitle,
@@ -2357,6 +2359,33 @@ const STMB_SUMMARY_PROMPT_DISPLAY_NAMES = Object.freeze({
     aelemar: 'Aelemar - Focuses on plot points and character memories. By Aelemar on ST Discord',
     comprehensive: 'Comprehensive - Synopsis plus improved keywords extraction',
 });
+
+const STMB_PROFILE_SECRET_KEYS = Object.freeze({
+    ai21: SECRET_KEYS.AI21,
+    aimlapi: SECRET_KEYS.AIMLAPI,
+    azure_openai: SECRET_KEYS.AZURE_OPENAI,
+    claude: SECRET_KEYS.CLAUDE,
+    cohere: SECRET_KEYS.COHERE,
+    cometapi: SECRET_KEYS.COMETAPI,
+    deepseek: SECRET_KEYS.DEEPSEEK,
+    electronhub: SECRET_KEYS.ELECTRONHUB,
+    fireworks: SECRET_KEYS.FIREWORKS,
+    groq: SECRET_KEYS.GROQ,
+    makersuite: SECRET_KEYS.MAKERSUITE,
+    mistralai: SECRET_KEYS.MISTRALAI,
+    moonshot: SECRET_KEYS.MOONSHOT,
+    nanogpt: SECRET_KEYS.NANOGPT,
+    navy: SECRET_KEYS.NAVY,
+    openai: SECRET_KEYS.OPENAI,
+    openrouter: SECRET_KEYS.OPENROUTER,
+    perplexity: SECRET_KEYS.PERPLEXITY,
+    siliconflow: SECRET_KEYS.SILICONFLOW,
+    vertexai: SECRET_KEYS.VERTEXAI,
+    xai: SECRET_KEYS.XAI,
+    zai: SECRET_KEYS.ZAI,
+    zanity: SECRET_KEYS.ZANITY,
+});
+const STMB_PROFILE_KEYLESS_SOURCES = new Set(['custom', 'pollinations']);
 
 function toTitleCase(text) {
     return String(text || '').replace(/\w\S*/g, token => token.charAt(0).toUpperCase() + token.slice(1).toLowerCase());
@@ -4865,6 +4894,9 @@ async function showAndGetMemorySettings(compiledScene, range, lorebookName, sele
 
     if (!shouldShowConfirmation) {
         const profile = getActiveStmbProfile(stmbSettings, selectedProfileIndex ?? null);
+        if (!validateConnectionProfilePreflight(profile)) {
+            return null;
+        }
         return {
             profileSettings: structuredClone(profile),
             summaryCount: Math.max(0, Math.min(7, Number(getModuleSettings().defaultMemoryCount ?? 0))),
@@ -4900,8 +4932,12 @@ async function showAndGetMemorySettings(compiledScene, range, lorebookName, sele
     }
 
     if (confirmation.action === 'confirm') {
+        const profile = getActiveStmbProfile(stmbSettings, confirmation.profileIndex);
+        if (!validateConnectionProfilePreflight(profile)) {
+            return null;
+        }
         return {
-            profileSettings: structuredClone(getActiveStmbProfile(stmbSettings, confirmation.profileIndex)),
+            profileSettings: structuredClone(profile),
             summaryCount: Math.max(0, Math.min(7, Number(getModuleSettings().defaultMemoryCount ?? 0))),
             tokenThreshold,
         };
@@ -4945,6 +4981,9 @@ async function showAndGetMemorySettings(compiledScene, range, lorebookName, sele
             throw new Error('Please enter a profile name');
         }
         const saved = saveAdvancedProfile(selectedProfile, advanced, currentUiConnection);
+        if (!validateConnectionProfilePreflight(saved)) {
+            return null;
+        }
         toastr.success(`Profile "${saved.name}" saved successfully`, 'STMB');
         return {
             profileSettings: structuredClone(saved),
@@ -4965,6 +5004,10 @@ async function showAndGetMemorySettings(compiledScene, range, lorebookName, sele
             model: '',
             temperature: currentUiConnection.temperature,
         };
+    }
+
+    if (!validateConnectionProfilePreflight(effectiveProfile)) {
+        return null;
     }
 
     return {
@@ -5614,6 +5657,26 @@ async function validateLorebookPreflight() {
         toastr.error(`No lorebook available: ${String(error?.message || 'Unknown lorebook error')}`, 'STMB');
         return false;
     }
+}
+
+function getConnectionProfilePreflightMessage(profile) {
+    const connectionApi = String(profile?.connection?.api || '').trim().toLowerCase();
+    const secretKey = STMB_PROFILE_SECRET_KEYS[connectionApi];
+    return getStmbConnectionProfileApiKeyError(profile, {
+        hasStoredApiKey: STMB_PROFILE_KEYLESS_SOURCES.has(connectionApi) || Boolean(secretKey && secret_state[secretKey]),
+    });
+}
+
+function validateConnectionProfilePreflight(profile, { showToast = true } = {}) {
+    const message = getConnectionProfilePreflightMessage(profile);
+    if (!message) {
+        return true;
+    }
+
+    if (showToast) {
+        toastr.error(message, 'STMB');
+    }
+    return false;
 }
 
 function getMemorySchema() {
@@ -6573,6 +6636,11 @@ async function executeMemoryJob(job, context) {
     }
 
     for (;;) {
+        const preflightMessage = getConnectionProfilePreflightMessage(profile);
+        if (preflightMessage) {
+            throw new Error(preflightMessage);
+        }
+
         context.setState('assembling_prompt', { detail: profile?.name || 'Memory' });
         context.setState('generating', { detail: profile?.name || 'Memory' });
         let memoryCandidate = await requestStructuredMemory(
