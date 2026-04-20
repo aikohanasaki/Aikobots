@@ -10,9 +10,8 @@
     <meta name="darkreader-lock">
     <meta name="robots" content="noindex, nofollow" />
     <style>
-        /* Put critical CSS here. The rest should go in stylesheets. */
         body {
-            background-color: rgb(36, 36, 37);
+            background-color: rgb(13, 14, 26);
         }
     </style>
     <link rel="preload" as="style" href="style.css">
@@ -30,28 +29,497 @@
     <link href="css/fontawesome.min.css" rel="stylesheet">
     <link href="css/solid.min.css" rel="stylesheet">
     <link href="css/user.css" rel="stylesheet">
+    <style>
+        :root {
+            --bg-deep: #0d0e1a;
+            --bg-mid: #17182a;
+            --panel: rgba(19, 20, 37, 0.82);
+            --panel-edge: rgba(167, 139, 250, 0.22);
+            --text-main: #f4f3ff;
+            --text-soft: #b6b4d6;
+            --text-muted: #8481a8;
+            --accent: #a78bfa;
+            --accent-2: #60a5fa;
+            --accent-3: #f0abfc;
+            --danger: #ffb3c8;
+            --field-bg: rgba(255, 255, 255, 0.06);
+            --field-border: rgba(255, 255, 255, 0.12);
+            --shadow-lg: 0 30px 80px rgba(0, 0, 0, 0.45);
+            --shadow-glow: 0 0 35px rgba(167, 139, 250, 0.18);
+        }
+
+        * {
+            box-sizing: border-box;
+        }
+
+        html,
+        body {
+            min-height: 100%;
+        }
+
+        body.login {
+            min-height: 100vh;
+            margin: 0;
+            background:
+                radial-gradient(circle at top, rgba(96, 165, 250, 0.14), transparent 28%),
+                radial-gradient(circle at 20% 20%, rgba(167, 139, 250, 0.16), transparent 22%),
+                radial-gradient(circle at 80% 15%, rgba(240, 171, 252, 0.12), transparent 18%),
+                linear-gradient(180deg, #0d0e1a 0%, #101223 45%, #0a0b14 100%);
+            color: var(--text-main);
+            font-family: 'Noto Sans', 'Segoe UI', system-ui, sans-serif;
+            overflow: hidden;
+            position: relative;
+        }
+
+        body.login::before,
+        body.login::after {
+            content: "";
+            position: fixed;
+            inset: auto;
+            width: 340px;
+            height: 340px;
+            border-radius: 50%;
+            filter: blur(90px);
+            pointer-events: none;
+            z-index: 0;
+            opacity: 0.35;
+        }
+
+        body.login::before {
+            top: -90px;
+            left: -80px;
+            background: rgba(167, 139, 250, 0.6);
+        }
+
+        body.login::after {
+            right: -100px;
+            bottom: -120px;
+            background: rgba(96, 165, 250, 0.42);
+        }
+
+        .stars {
+            position: fixed;
+            inset: 0;
+            pointer-events: none;
+            z-index: 0;
+        }
+
+        .star {
+            position: absolute;
+            border-radius: 50%;
+            background: rgba(255, 255, 255, 0.95);
+            animation: twinkle var(--d) ease-in-out infinite alternate;
+        }
+
+        .login-orb {
+            position: fixed;
+            border-radius: 50%;
+            pointer-events: none;
+            filter: blur(50px);
+            z-index: 0;
+            opacity: 0.16;
+        }
+
+        .login-orb-a {
+            width: 220px;
+            height: 220px;
+            top: 18%;
+            right: 12%;
+            background: var(--accent);
+        }
+
+        .login-orb-b {
+            width: 180px;
+            height: 180px;
+            bottom: 15%;
+            left: 10%;
+            background: var(--accent-2);
+        }
+
+        @keyframes twinkle {
+            from {
+                opacity: var(--a1);
+                transform: scale(1);
+            }
+
+            to {
+                opacity: var(--a2);
+                transform: scale(1.45);
+            }
+        }
+
+        @keyframes orbit {
+            from {
+                transform: rotate(0deg);
+            }
+
+            to {
+                transform: rotate(360deg);
+            }
+        }
+
+        @keyframes float {
+            0%,
+            100% {
+                transform: translateY(0);
+            }
+
+            50% {
+                transform: translateY(-8px);
+            }
+        }
+
+        @keyframes fadeInUp {
+            from {
+                opacity: 0;
+                transform: translateY(16px);
+            }
+
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        @keyframes pulseRing {
+            0%,
+            100% {
+                box-shadow: 0 0 0 0 rgba(167, 139, 250, 0.45);
+            }
+
+            50% {
+                box-shadow: 0 0 0 10px rgba(167, 139, 250, 0);
+            }
+        }
+
+        @keyframes bounce {
+            0%,
+            80%,
+            100% {
+                transform: translateY(0);
+                opacity: 0.45;
+            }
+
+            40% {
+                transform: translateY(-8px);
+                opacity: 1;
+            }
+        }
+
+        #shadow_popup {
+            position: relative;
+            z-index: 1;
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 32px 18px;
+            transition: opacity 0.45s ease;
+        }
+
+        #dialogue_popup {
+            width: min(100%, 560px);
+            border-radius: 30px;
+            background: linear-gradient(180deg, rgba(26, 28, 50, 0.92) 0%, rgba(14, 16, 31, 0.88) 100%);
+            border: 1px solid var(--panel-edge);
+            box-shadow: var(--shadow-lg), var(--shadow-glow), inset 0 1px 0 rgba(255, 255, 255, 0.06);
+            backdrop-filter: blur(18px);
+            -webkit-backdrop-filter: blur(18px);
+            overflow-x: hidden;
+        }
+
+        #dialogue_popup::before {
+            content: "";
+            position: absolute;
+            inset: 0;
+            background: linear-gradient(135deg, rgba(167, 139, 250, 0.08), transparent 32%, rgba(96, 165, 250, 0.06) 72%, transparent 100%);
+            pointer-events: none;
+        }
+
+        #userSelectBlock {
+            position: relative;
+            z-index: 1;
+            width: 100%;
+            padding: 34px 30px 30px;
+            text-align: center;
+            animation: fadeInUp 0.75s ease both;
+        }
+
+        .login-kicker {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            padding: 8px 14px;
+            margin-bottom: 18px;
+            border-radius: 999px;
+            background: rgba(255, 255, 255, 0.055);
+            border: 1px solid rgba(255, 255, 255, 0.08);
+            color: #d8d4ff;
+            font-size: 0.78rem;
+            font-weight: 600;
+            letter-spacing: 0.08em;
+            text-transform: uppercase;
+            box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04);
+        }
+
+        .login-kicker::before,
+        .login-kicker::after {
+            content: "✦";
+            color: #c4b5fd;
+            font-size: 0.75rem;
+        }
+
+        .mascot-wrap {
+            position: relative;
+            width: 156px;
+            height: 156px;
+            margin: 2px auto 18px;
+        }
+
+        .ring {
+            position: absolute;
+            inset: 0;
+            border-radius: 50%;
+            border: 2px solid transparent;
+            pointer-events: none;
+            animation: orbit var(--s) linear infinite;
+        }
+
+        .ring-1 {
+            inset: -10px;
+            border-top-color: rgba(167, 139, 250, 0.65);
+            border-right-color: rgba(167, 139, 250, 0.14);
+            --s: 7s;
+        }
+
+        .ring-2 {
+            inset: -22px;
+            border-bottom-color: rgba(96, 165, 250, 0.55);
+            border-left-color: rgba(96, 165, 250, 0.14);
+            animation-direction: reverse;
+            --s: 10s;
+        }
+
+        .ring-3 {
+            inset: 6px;
+            border-top-color: rgba(240, 171, 252, 0.4);
+            --s: 4.5s;
+        }
+
+        .mascot-wrap img {
+            width: 156px;
+            height: 156px;
+            display: block;
+            object-fit: cover;
+            object-position: center;
+            border-radius: 50%;
+            border: 3px solid rgba(167, 139, 250, 0.32);
+            box-shadow: 0 0 30px rgba(167, 139, 250, 0.2), 0 12px 30px rgba(0, 0, 0, 0.35);
+            animation: float 4.6s ease-in-out infinite;
+            background: rgba(255, 255, 255, 0.05);
+        }
+
+        .dot-pulse {
+            position: absolute;
+            right: 8px;
+            bottom: 8px;
+            width: 16px;
+            height: 16px;
+            border-radius: 50%;
+            background: var(--accent);
+            border: 3px solid #101223;
+            animation: pulseRing 2s ease-in-out infinite;
+        }
+
+        .login-title {
+            margin: 0;
+            color: var(--text-main);
+            font-size: clamp(2rem, 6vw, 2.5rem);
+            line-height: 1.05;
+            font-weight: 700;
+            letter-spacing: -0.03em;
+        }
+
+        .login-subtitle {
+            margin: 10px auto 18px;
+            max-width: 30ch;
+            color: var(--text-soft);
+            font-size: 1rem;
+            line-height: 1.6;
+        }
+
+        .login-subtitle strong {
+            color: #d8d4ff;
+            font-weight: 700;
+        }
+
+        .login-dots {
+            display: flex;
+            justify-content: center;
+            gap: 8px;
+            margin: 0 0 22px;
+        }
+
+        .login-dots span {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: var(--accent);
+            animation: bounce 1.2s ease-in-out infinite;
+        }
+
+        .login-dots span:nth-child(2) {
+            animation-delay: 0.2s;
+            background: #818cf8;
+        }
+
+        .login-dots span:nth-child(3) {
+            animation-delay: 0.4s;
+            background: var(--accent-2);
+        }
+
+        #handleEntryBlock,
+        #passwordEntryBlock {
+            width: 100%;
+            gap: 12px;
+            margin-top: 14px;
+        }
+
+        #handleEntryBlock .text_pole,
+        #passwordEntryBlock .text_pole,
+        #userHandle,
+        #userPassword {
+            width: min(100%, 360px);
+            padding: 14px 16px;
+            border-radius: 16px;
+            border: 1px solid var(--field-border);
+            background: var(--field-bg);
+            color: var(--text-main);
+            font-size: 0.98rem;
+            outline: none;
+            box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04);
+            transition: border-color 0.18s ease, box-shadow 0.18s ease, background 0.18s ease;
+        }
+
+        #handleEntryBlock .text_pole::placeholder,
+        #passwordEntryBlock .text_pole::placeholder,
+        #userHandle::placeholder,
+        #userPassword::placeholder {
+            color: #9793bc;
+        }
+
+        #handleEntryBlock .text_pole:focus,
+        #passwordEntryBlock .text_pole:focus,
+        #userHandle:focus,
+        #userPassword:focus {
+            border-color: rgba(167, 139, 250, 0.6);
+            background: rgba(255, 255, 255, 0.08);
+            box-shadow: 0 0 0 4px rgba(167, 139, 250, 0.12);
+        }
+
+        #passwordEntryBlock .flex-container {
+            justify-content: center;
+        }
+
+        #loginButton.menu_button,
+        #loginButton {
+            min-width: 180px;
+            padding: 13px 18px;
+            border-radius: 999px;
+            border: 1px solid rgba(255, 255, 255, 0.08);
+            background: linear-gradient(135deg, rgba(167, 139, 250, 0.95), rgba(96, 165, 250, 0.92));
+            color: #fdfcff;
+            font-weight: 700;
+            letter-spacing: 0.01em;
+            box-shadow: 0 14px 30px rgba(96, 165, 250, 0.18), 0 10px 24px rgba(167, 139, 250, 0.22);
+            transition: transform 0.18s ease, box-shadow 0.18s ease, filter 0.18s ease;
+        }
+
+        #loginButton.menu_button:hover,
+        #loginButton:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 18px 34px rgba(96, 165, 250, 0.22), 0 12px 28px rgba(167, 139, 250, 0.28);
+            filter: brightness(1.03);
+        }
+
+        #forgotPassword {
+            display: block;
+            max-width: 34ch;
+            margin-top: 2px;
+            color: var(--text-muted);
+            line-height: 1.5;
+            font-size: 0.84rem;
+        }
+
+        #errorMessage {
+            min-height: 24px;
+            margin-top: 16px;
+            padding: 0 10px;
+            color: var(--danger);
+            font-size: 0.92rem;
+            line-height: 1.45;
+            text-wrap: balance;
+        }
+
+        @media (max-width: 640px) {
+            #shadow_popup {
+                padding: 18px 12px;
+            }
+
+            #dialogue_popup {
+                border-radius: 24px;
+            }
+
+            #userSelectBlock {
+                padding: 26px 18px 22px;
+            }
+
+            .mascot-wrap {
+                width: 132px;
+                height: 132px;
+                margin-bottom: 14px;
+            }
+
+            .mascot-wrap img {
+                width: 132px;
+                height: 132px;
+            }
+
+            #userList>* {
+                min-width: calc(50% - 6px);
+            }
+        }
+    </style>
     <title>Aikobots</title>
 </head>
 
 <body class="login">
+    <div class="stars" id="stars"></div>
+    <div class="login-orb login-orb-a"></div>
+    <div class="login-orb login-orb-b"></div>
+
     <div id="shadow_popup" style="opacity: 0;">
         <div id="dialogue_popup">
             <div id="dialogue_popup_holder">
                 <div id="dialogue_popup_text">
                     <div id="userSelectBlock" class="flex-container flexFlowColumn alignItemsCenter">
-                        <h2 id="logoBlock" class="flex-container" style="margin-top: 5px;">
-                            <img src="img/okia.png" alt="Okia">
-                        </h2>
-                        <h2 id="logoBlock" class="flex-container">
-                            <span>Welcome to Aikobots</span>
-                        </h2>
+                        <div class="login-kicker">Aikobots Portal</div>
+
+                        <div class="mascot-wrap" aria-hidden="true">
+                            <div class="ring ring-1"></div>
+                            <div class="ring ring-2"></div>
+                            <div class="ring ring-3"></div>
+                            <img src="img/logo.png" alt="Aikobots mascot" onerror="this.onerror=null;this.src='img/okia.png';">
+                            <div class="dot-pulse"></div>
+                        </div>
+                        <h1 class="login-title">Welcome to Aikobots</h1>
+
                         <div id="userListBlock" class="wide100p">
                             <div id="userList" class="flex-container justifySpaceEvenly"></div>
                             <div id="handleEntryBlock" style="display:none;" class="flex-container flexFlowColumn alignItemsCenter">
                                 <input id="userHandle" class="text_pole" type="text" placeholder="User handle" autocomplete="username">
                             </div>
-                            <div id="passwordEntryBlock" style="display:none;"
-                                class="flex-container flexFlowColumn alignItemsCenter">
+                            <div id="passwordEntryBlock" style="display:none;" class="flex-container flexFlowColumn alignItemsCenter">
                                 <input id="userPassword" class="text_pole" type="password" placeholder="Password" autocomplete="current-password">
                                 <div class="flex-container">
                                     <div id="loginButton" class="menu_button">Login</div>
@@ -59,14 +527,23 @@
                                 <small id="forgotPassword">Forgot your password? Contact Aiko to get it reset.</small>
                             </div>
                         </div>
-                        <div class="neutral_warning" id="errorMessage">
-                        </div>
+                        <div class="neutral_warning" id="errorMessage"></div>
                     </div>
                 </div>
             </div>
         </div>
     </div>
 
+    <script>
+        const starField = document.getElementById('stars');
+        for (let i = 0; i < 80; i++) {
+            const el = document.createElement('div');
+            el.className = 'star';
+            const size = Math.random() * 2.4 + 0.6;
+            el.style.cssText = `width:${size}px;height:${size}px;top:${Math.random() * 100}%;left:${Math.random() * 100}%;--d:${(Math.random() * 3 + 1.8).toFixed(1)}s;--a1:${(Math.random() * 0.25 + 0.1).toFixed(2)};--a2:${(Math.random() * 0.45 + 0.45).toFixed(2)};animation-delay:${(Math.random() * 3).toFixed(1)}s;`;
+            starField.appendChild(el);
+        }
+    </script>
     <script src="lib/jquery-3.5.1.min.js"></script>
     <script src="scripts/login.js" type="module"></script>
 </body>
