@@ -498,7 +498,7 @@ function hasValidChatPayload(chat) {
     return Array.isArray(chat) && _.isPlainObject(chat[0]);
 }
 
-function applyLoadedMessageRange(logicalChatData, rangeStart, rangeMessages) {
+export function applyLoadedMessageRange(logicalChatData, rangeStart, rangeMessages, rangeEnd = undefined) {
     const startId = Number(rangeStart);
     if (!Number.isInteger(startId) || startId < 0 || !Array.isArray(rangeMessages) || rangeMessages.length === 0) {
         return { ok: false, error: 'invalid_loaded_range' };
@@ -515,14 +515,47 @@ function applyLoadedMessageRange(logicalChatData, rangeStart, rangeMessages) {
         return { ok: false, error: 'invalid_loaded_range' };
     }
 
+    const endId = startId + rangeMessages.length - 1;
+    const declaredEndId = Number(rangeEnd);
+    if (rangeEnd !== undefined && (!Number.isInteger(declaredEndId) || declaredEndId !== endId)) {
+        return { ok: false, error: 'invalid_loaded_range' };
+    }
+
     return {
         ok: true,
         chatData: [
             logicalChatData[0],
             ...logicalChatData.slice(1, startId + 1),
             ...rangeMessages,
+            ...logicalChatData.slice(endId + 2),
         ],
     };
+}
+
+export function validateTailSavePayload({ existingMessageCount, absoluteStartId, rangeMessages, savedMessageCount }) {
+    const existingCount = Number(existingMessageCount);
+    const startId = Number(absoluteStartId);
+    const declaredSavedCount = Number(savedMessageCount);
+
+    if (!Number.isInteger(existingCount) || existingCount < 0 || !Number.isInteger(startId) || startId < 0 || !Array.isArray(rangeMessages)) {
+        return { ok: false, error: 'invalid_tail_save' };
+    }
+
+    const submittedEndExclusive = startId + rangeMessages.length;
+
+    if (Number.isInteger(declaredSavedCount)) {
+        if (declaredSavedCount < 0 || submittedEndExclusive !== declaredSavedCount) {
+            return { ok: false, error: 'incomplete_tail_save' };
+        }
+
+        return { ok: true };
+    }
+
+    if (submittedEndExclusive < existingCount) {
+        return { ok: false, error: 'incomplete_tail_save' };
+    }
+
+    return { ok: true };
 }
 
 function normalizeLogicalChatDataForNoopCompare(chatData) {
@@ -817,16 +850,35 @@ export function writeLogicalChat(filePath, header, messages, { displayCount = LO
     }
 }
 
-function ensureSplitTailStorage(filePath, { displayCount = LONG_CHAT_DISPLAY_DEFAULT, bufferMax = LONG_CHAT_BUFFER_DEFAULT } = {}) {
+export function ensureSplitTailStorage(filePath, { displayCount = LONG_CHAT_DISPLAY_DEFAULT, bufferMax = LONG_CHAT_BUFFER_DEFAULT } = {}) {
     const segments = getChatSegments(filePath);
-    if (!segments.header || segments.storage || segments.messages.length <= normalizeLongChatConfig({ displayCount, bufferMax }).bufferMax) {
+    const config = normalizeLongChatConfig({ displayCount, bufferMax });
+    if (!segments.header) {
+        return false;
+    }
+
+    if (segments.storage) {
+        const layout = getSegmentLayout(segments);
+        if (layout.headMessagesMissing || layout.tailCount <= config.bufferMax) {
+            return false;
+        }
+
+        writeLogicalChat(filePath, segments.header, segments.messages, {
+            displayCount: config.displayCount,
+            bufferMax: config.bufferMax,
+            tailStartId: layout.tailStartId,
+        });
+        return true;
+    }
+
+    if (segments.messages.length <= config.bufferMax) {
         return false;
     }
 
     writeLogicalChat(filePath, segments.header, segments.messages, {
-        displayCount,
-        bufferMax,
-        tailStartId: Math.max(0, segments.messages.length - normalizeLongChatConfig({ displayCount, bufferMax }).displayCount),
+        displayCount: config.displayCount,
+        bufferMax: config.bufferMax,
+        tailStartId: Math.max(0, segments.messages.length - config.displayCount),
     });
     return true;
 }
@@ -1720,6 +1772,16 @@ router.post('/save', validateAvatarUrlMiddleware, async function (request, respo
                     return response.status(400).send({ error: 'invalid_tail_save' });
                 }
 
+                const tailSaveValidation = validateTailSavePayload({
+                    existingMessageCount: Math.max(0, existingChat.length - 1),
+                    absoluteStartId,
+                    rangeMessages: chatData.slice(1),
+                    savedMessageCount: request.body.saved_message_count,
+                });
+                if (!tailSaveValidation.ok) {
+                    return response.status(400).send({ error: tailSaveValidation.error });
+                }
+
                 logicalChatData = [
                     chatData[0] ?? existingChat[0],
                     ...existingChat.slice(1, absoluteStartId + 1),
@@ -1732,7 +1794,7 @@ router.post('/save', validateAvatarUrlMiddleware, async function (request, respo
                     return response.status(400).send({ error: 'invalid_loaded_range' });
                 }
 
-                const loadedRangeResult = applyLoadedMessageRange(existingChat, request.body.loaded_range_start, chatData.slice(1));
+                const loadedRangeResult = applyLoadedMessageRange(existingChat, request.body.loaded_range_start, chatData.slice(1), request.body.loaded_range_end);
                 if (!loadedRangeResult.ok) {
                     return response.status(400).send({ error: loadedRangeResult.error });
                 }

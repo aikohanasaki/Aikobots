@@ -8,6 +8,7 @@ reviews:
   - "!.vscode/**"
   - "!colab/**"
   - "!data/**"
+  - "!docs/**"
   - "!default/content/**"
   - "!default/scaffold/**"
   - "!docker/**"

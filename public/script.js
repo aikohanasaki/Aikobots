@@ -2851,6 +2851,27 @@ function getDenseChatMessages(startId, endId) {
     return messages;
 }
 
+function getContiguousChatMessagesForSave(startId, endId) {
+    const start = Number(startId);
+    const end = Number(endId);
+
+    if (!Number.isInteger(start) || !Number.isInteger(end) || start < 0 || end < start - 1) {
+        return null;
+    }
+
+    const messages = [];
+    for (let messageId = start; messageId <= end; messageId++) {
+        const message = chat[messageId];
+        if (!message || typeof message !== 'object') {
+            return null;
+        }
+
+        messages.push(message);
+    }
+
+    return messages;
+}
+
 function getContiguousLoadedChatRangeForSave() {
     if (!isSplitTailChat() || isChatFullyHydrated()) {
         return null;
@@ -9159,7 +9180,15 @@ export async function saveChat({ chatName, withMetadata, mesId, force = false, s
             saveMode = 'loaded_range';
         } else {
             absoluteStartId = chatLoadState.tailStartId;
-            trimmedChat = getDenseChatMessages(absoluteStartId, getTotalChatMessages() - 1);
+            trimmedChat = getContiguousChatMessagesForSave(absoluteStartId, getTotalChatMessages() - 1);
+            if (!trimmedChat) {
+                await ensureChatSuffixLoaded(absoluteStartId);
+                trimmedChat = getContiguousChatMessagesForSave(absoluteStartId, getTotalChatMessages() - 1);
+            }
+            if (!trimmedChat) {
+                toastr.warning(t`The loaded chat tail is incomplete. Reload the chat before saving.`, t`Chat save blocked`);
+                return CHAT_SAVE_RESULT.FAILED;
+            }
             saveMode = 'tail';
         }
     } else {
@@ -9190,6 +9219,8 @@ export async function saveChat({ chatName, withMetadata, mesId, force = false, s
                 save_mode: saveMode,
                 absolute_start_id: absoluteStartId,
                 loaded_range_start: loadedRangeStart,
+                loaded_range_end: loadedRangeStart === undefined ? undefined : loadedRangeStart + trimmedChat.length - 1,
+                saved_message_count: getTotalChatMessages(),
                 refresh_tail: Boolean(refreshTailAfterSave && isSplitTailChat()),
                 ...(shouldTrackRevision ? {
                     base_revision: getChatSaveRevision(),
