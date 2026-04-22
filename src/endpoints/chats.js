@@ -498,6 +498,10 @@ function hasValidChatPayload(chat) {
     return Array.isArray(chat) && _.isPlainObject(chat[0]);
 }
 
+function hasValidGroupChatPayload(chat) {
+    return Array.isArray(chat) && chat.every(message => _.isPlainObject(message));
+}
+
 export function applyLoadedMessageRange(logicalChatData, rangeStart, rangeMessages, rangeEnd = undefined) {
     const startId = Number(rangeStart);
     if (!Number.isInteger(startId) || startId < 0 || !Array.isArray(rangeMessages) || rangeMessages.length === 0) {
@@ -2374,7 +2378,7 @@ router.post('/group/save', async (request, response) => {
         return response.sendStatus(400);
     }
 
-    if (!hasValidChatPayload(request.body.chat)) {
+    if (!hasValidGroupChatPayload(request.body.chat)) {
         return response.status(400).send({ error: 'invalid_chat_payload' });
     }
 

@@ -824,7 +824,6 @@ export async function convertSoloToGroupChat() {
             allow_self_responses: false,
             activation_strategy: group_activation_strategy.NATURAL,
             disabled_members: [],
-            chat_metadata: metadata,
             fav: favChecked,
             chat_id: chatName,
             chats: chats,
@@ -848,21 +847,19 @@ export async function convertSoloToGroupChat() {
     await getCharacters();
 
     // Convert chat to group format
-    const groupChat = chat.slice();
+    const groupChat = chat.map(message => structuredClone(message));
     const genIdFirst = Date.now();
 
     for (let index = 0; index < groupChat.length; index++) {
         const message = groupChat[index];
 
-        // Save group-chat marker
-        if (index == 0) {
-            // @ts-ignore
-            message.is_group = true;
-        }
-
         // Skip messages we don't care about
         if (message.is_user || message.is_system || message.extra?.type === system_message_types.NARRATOR || message.force_avatar !== undefined) {
             continue;
+        }
+
+        if (!message.extra || typeof message.extra !== 'object') {
+            message.extra = {};
         }
 
         // Set force fields for solo character
@@ -871,16 +868,18 @@ export async function convertSoloToGroupChat() {
         message.force_avatar = getThumbnailUrl('avatar', character.avatar);
 
         // Allow regens of a single message in group
-        if (typeof message.extra !== 'object') {
-            message.extra = { gen_id: genIdFirst + index };
-        }
+        message.extra.gen_id = genIdFirst + index;
     }
 
     // Save group chat
     const createChatResponse = await fetch('/api/chats/group/save', {
         method: 'POST',
         headers: getRequestHeaders(),
-        body: JSON.stringify({ id: chatName, chat: groupChat }),
+        body: JSON.stringify({
+            id: chatName,
+            chat: groupChat,
+            chat_metadata: metadata,
+        }),
     });
 
     if (!createChatResponse.ok) {

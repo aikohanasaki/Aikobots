@@ -774,7 +774,9 @@ function filterGroupsByTimedEffects(groups, timedEffects, removeEntry) {
                     removeEntry(entry);
                 }
             }
+            groups[key] = stickyEntries;
             hasStickyMap.set(key, true);
+            continue;
         }
 
         for (const type of ['cooldown', 'delay']) {
@@ -783,6 +785,11 @@ function filterGroupsByTimedEffects(groups, timedEffects, removeEntry) {
                 removeEntry(entry);
             }
         }
+
+        groups[key] = group.filter(entry =>
+            !timedEffects.isEffectActive('cooldown', entry) &&
+            !timedEffects.isEffectActive('delay', entry),
+        );
     }
 
     return hasStickyMap;

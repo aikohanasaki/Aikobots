@@ -244,6 +244,55 @@ await runScenario('group drafted responder overrides are used', async () => {
     );
 });
 
+await runScenario('timed group filtering keeps sticky winner in synced group', async () => {
+    const result = await scanWorldInfo({
+        chat: ['previous message'],
+        maxContext: 100,
+        settings: {
+            world_info_budget: 100,
+            world_info_budget_cap: 0,
+            world_info_recursive: false,
+        },
+        timedWorldInfo: {
+            sticky: {
+                'Alpha.1': { hash: 'sticky-entry', start: 0, end: 5 },
+            },
+            cooldown: {
+                'Alpha.1': { hash: 'sticky-entry', start: 0, end: 5, protected: true },
+            },
+        },
+        sortedEntries: [
+            {
+                uid: 1,
+                world: 'Alpha',
+                hash: 'sticky-entry',
+                order: 100,
+                content: 'sticky entry',
+                group: 'timed-sync',
+                sticky: 5,
+                cooldown: 5,
+                lorebookSettings: { budgetMode: 'default' },
+            },
+            {
+                uid: 2,
+                world: 'Alpha',
+                hash: 'valid-entry',
+                order: 90,
+                content: 'valid entry',
+                group: 'timed-sync',
+                constant: true,
+                lorebookSettings: { budgetMode: 'default' },
+            },
+        ],
+    });
+
+    const activated = result.allActivatedEntries.map(entry => `${entry.world}.${entry.uid}`);
+    assert(
+        JSON.stringify(activated) === JSON.stringify(['Alpha.1']),
+        `timed group filtering failed: ${JSON.stringify(activated)}`,
+    );
+});
+
 await runScenario('speaker overrides match by name, avatar basename, and filename', async () => {
     const worldEntries = {
         NameBook: [{
