@@ -54,14 +54,22 @@ export let world_info_match_whole_words = false;
 export let world_info_use_group_scoring = false;
 export let world_info_budget_cap = 0;
 export let world_info_max_recursion_steps = 0;
-const saveWorldDebounced = debounce(async (name, data, saveToken) => {
-    try {
-        await _save(name, data);
-    } catch (error) {
-        rollbackWorldInfoCache(name, saveToken);
-        console.error(`Failed to save lorebook "${name}" in debounced mode.`, error);
+const saveWorldDebouncedByName = new Map();
+
+function getSaveWorldDebounced(name) {
+    if (!saveWorldDebouncedByName.has(name)) {
+        saveWorldDebouncedByName.set(name, debounce(async (data, saveToken) => {
+            try {
+                await _save(name, data);
+            } catch (error) {
+                rollbackWorldInfoCache(name, saveToken);
+                console.error(`Failed to save lorebook "${name}" in debounced mode.`, error);
+            }
+        }, debounce_timeout.relaxed));
     }
-}, debounce_timeout.relaxed);
+
+    return saveWorldDebouncedByName.get(name);
+}
 const saveSettingsDebounced = debounce(() => {
     Object.assign(world_info, { globalSelect: selected_world_info });
     saveSettings();
@@ -5981,7 +5989,7 @@ export function createWorldInfoEntry(_name, data) {
 
 async function _save(name, data) {
     // Prevent double saving if both immediate and debounced save are called
-    cancelDebounce(saveWorldDebounced);
+    cancelDebounce(getSaveWorldDebounced(name));
     const sanitizedData = stripTransientWorldInfoMetadata(data);
 
     const response = await fetch('/api/worldinfo/edit', {
@@ -6039,7 +6047,7 @@ export async function saveWorldInfo(name, data, immediately = false) {
         }
     }
 
-    saveWorldDebounced(name, data, saveToken);
+    getSaveWorldDebounced(name)(data, saveToken);
 }
 
 async function renameWorldInfo(name, data) {
