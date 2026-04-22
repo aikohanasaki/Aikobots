@@ -3250,6 +3250,26 @@ input[type="file"] {
     align-items: center;
 }
 
+#rm_print_characters_block .character_panel_status {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 12px;
+    min-height: 90px;
+    text-align: left;
+}
+
+#rm_print_characters_block .character_panel_status_text {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+#rm_print_characters_block .character_panel_status[data-status="error"] {
+    opacity: 1;
+    color: var(--error-color, #e87f7f);
+}
+
 .hidden_block {
     cursor: default;
 }

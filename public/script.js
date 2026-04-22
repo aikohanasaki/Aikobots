@@ -730,6 +730,8 @@ export let characters = [];
  */
 export let this_chid;
 let saveCharactersPage = 0;
+let charactersLoadRequestId = 0;
+let characterPanelRenderId = 0;
 export const default_avatar = 'img/ai4.png';
 export const system_avatar = 'img/five.png';
 export const comment_avatar = 'img/quill.png';
@@ -2161,6 +2163,55 @@ function getBackBlock() {
     return template;
 }
 
+const CHARACTER_PANEL_LOAD_STATE = {
+    LOADING: 'loading',
+    EMPTY: 'empty',
+    ERROR: 'error',
+    LOADED: 'loaded',
+};
+
+function getCharacterPanelStatusBlock(state, title, detail = '') {
+    const icon = state === CHARACTER_PANEL_LOAD_STATE.ERROR
+        ? 'fa-circle-exclamation'
+        : state === CHARACTER_PANEL_LOAD_STATE.LOADING
+            ? 'fa-spinner fa-spin'
+            : 'fa-circle-info';
+    const block = $('<div class="text_block character_panel_status"></div>');
+    block.attr('data-status', state);
+    block.append($('<i class="fa-solid fa-2x"></i>').addClass(icon));
+    const text = $('<div class="character_panel_status_text"></div>');
+    text.append($('<strong></strong>').text(title));
+    if (detail) {
+        text.append($('<small></small>').text(detail));
+    }
+    block.append(text);
+    return block;
+}
+
+function disableCharacterPanelPagination() {
+    const pagination = $('#rm_print_characters_pagination');
+    const paginationData = pagination.data('pagination');
+    if (paginationData?.initialized) {
+        pagination.pagination('disable');
+    }
+    pagination.empty();
+    saveCharactersPage = 0;
+}
+
+function setCharacterPanelLoadState(state, { title = '', detail = '', replaceList = false } = {}) {
+    const list = $('#rm_print_characters_block');
+    list.attr('data-load-state', state);
+    if (replaceList || state === CHARACTER_PANEL_LOAD_STATE.ERROR) {
+        characterPanelRenderId++;
+    }
+    if (state === CHARACTER_PANEL_LOAD_STATE.ERROR) {
+        disableCharacterPanelPagination();
+    }
+    if (replaceList) {
+        list.empty().append(getCharacterPanelStatusBlock(state, title, detail));
+    }
+}
+
 async function getEmptyBlock() {
     const icons = ['fa-dragon', 'fa-otter', 'fa-kiwi-bird', 'fa-crow', 'fa-frog'];
     const texts = [t`Here be dragons`, t`Otterly empty`, t`Kiwibunga`, t`Pump-a-Rum`, t`Croak it`];
@@ -2170,7 +2221,7 @@ async function getEmptyBlock() {
         icon: icons[roll],
     };
     const emptyBlock = await renderTemplateAsync('emptyBlock', params);
-    return $(emptyBlock);
+    return emptyBlock ? $(emptyBlock) : getCharacterPanelStatusBlock(CHARACTER_PANEL_LOAD_STATE.EMPTY, t`No characters or groups found.`);
 }
 
 /**
@@ -2249,6 +2300,8 @@ function getCharacterBlock(item, id) {
  * @param {boolean} fullRefresh - If true, the list is fully refreshed and the navigation is being reset
  */
 export async function printCharacters(fullRefresh = false) {
+    const printRenderId = ++characterPanelRenderId;
+    let paginationCallbackRenderId = 0;
     const storageKey = 'Characters_PerPage';
     const listId = '#rm_print_characters_block';
 
@@ -2258,6 +2311,9 @@ export async function printCharacters(fullRefresh = false) {
         saveCharactersPage = 0;
         currentScrollTop = 0;
         await delay(1);
+        if (printRenderId !== characterPanelRenderId) {
+            return;
+        }
     }
 
     // Before printing the personas, we check if we should enable/disable search sorting
@@ -2289,39 +2345,73 @@ export async function printCharacters(fullRefresh = false) {
         formatSizeChanger: renderPaginationDropdown(pageSize, sizeChangerOptions),
         showNavigator: true,
         callback: async function (/** @type {Entity[]} */ data) {
-            $(listId).empty();
-            if (power_user.bogus_folders && isBogusFolderOpen()) {
-                $(listId).append(getBackBlock());
-            }
-            if (!data.length) {
-                const emptyBlock = await getEmptyBlock();
-                $(listId).append(emptyBlock);
-            }
-            let displayCount = 0;
-            for (const i of data) {
-                switch (i.type) {
-                    case 'character':
-                        $(listId).append(getCharacterBlock(i.item, i.id));
-                        displayCount++;
-                        break;
-                    case 'group':
-                        $(listId).append(getGroupBlock(i.item));
-                        displayCount++;
-                        break;
-                    case 'tag':
-                        $(listId).append(getTagBlock(i.item, i.entities, i.hidden, i.isUseless));
-                        break;
+            const renderId = ++paginationCallbackRenderId;
+            const isCurrentRender = () =>
+                printRenderId === characterPanelRenderId && renderId === paginationCallbackRenderId;
+            try {
+                if (!isCurrentRender()) {
+                    return;
                 }
-            }
+                $(listId).empty();
+                if (power_user.bogus_folders && isBogusFolderOpen()) {
+                    if (!isCurrentRender()) {
+                        return;
+                    }
+                    $(listId).append(getBackBlock());
+                }
+                if (!data.length) {
+                    const emptyBlock = await getEmptyBlock();
+                    if (!isCurrentRender()) {
+                        return;
+                    }
+                    $(listId).append(emptyBlock);
+                }
+                let displayCount = 0;
+                for (const i of data) {
+                    if (!isCurrentRender()) {
+                        return;
+                    }
+                    switch (i.type) {
+                        case 'character':
+                            $(listId).append(getCharacterBlock(i.item, i.id));
+                            displayCount++;
+                            break;
+                        case 'group':
+                            $(listId).append(getGroupBlock(i.item));
+                            displayCount++;
+                            break;
+                        case 'tag':
+                            $(listId).append(getTagBlock(i.item, i.entities, i.hidden, i.isUseless));
+                            break;
+                    }
+                }
 
-            const hidden = (characters.length + groups.length) - displayCount;
-            if (hidden > 0 && entitiesFilter.hasAnyFilter()) {
-                const hiddenBlock = await getHiddenBlock(hidden);
-                $(listId).append(hiddenBlock);
-            }
-            localizePagination($('#rm_print_characters_pagination'));
+                const hidden = (characters.length + groups.length) - displayCount;
+                if (hidden > 0 && entitiesFilter.hasAnyFilter()) {
+                    const hiddenBlock = await getHiddenBlock(hidden);
+                    if (!isCurrentRender()) {
+                        return;
+                    }
+                    $(listId).append(hiddenBlock);
+                }
+                if (!isCurrentRender()) {
+                    return;
+                }
+                localizePagination($('#rm_print_characters_pagination'));
+                setCharacterPanelLoadState(data.length ? CHARACTER_PANEL_LOAD_STATE.LOADED : CHARACTER_PANEL_LOAD_STATE.EMPTY);
 
-            eventSource.emit(event_types.CHARACTER_PAGE_LOADED);
+                eventSource.emit(event_types.CHARACTER_PAGE_LOADED);
+            } catch (error) {
+                if (!isCurrentRender()) {
+                    return;
+                }
+                console.error('[Characters] Failed to render characters panel.', error);
+                setCharacterPanelLoadState(CHARACTER_PANEL_LOAD_STATE.ERROR, {
+                    title: t`Characters failed to render.`,
+                    detail: error?.message || '',
+                    replaceList: true,
+                });
+            }
         },
         afterSizeSelectorChange: function (e, size) {
             accountStorage.setItem(storageKey, e.target.value);
@@ -2588,26 +2678,84 @@ function getCharacterSource(chId = this_chid) {
 }
 
 export async function getCharacters() {
-    const response = await fetch('/api/characters/all', {
-        method: 'POST',
-        headers: getRequestHeaders(),
-        body: JSON.stringify({}),
+    const requestId = ++charactersLoadRequestId;
+    const startedAt = performance.now();
+    const charactersBlock = $('#rm_print_characters_block');
+    const listHasContent = charactersBlock.children().length > 0;
+    const currentLoadState = charactersBlock.attr('data-load-state');
+    const shouldReplaceWithLoading = !listHasContent
+        || currentLoadState === CHARACTER_PANEL_LOAD_STATE.ERROR
+        || currentLoadState === CHARACTER_PANEL_LOAD_STATE.EMPTY
+        || currentLoadState === CHARACTER_PANEL_LOAD_STATE.LOADING;
+    setCharacterPanelLoadState(CHARACTER_PANEL_LOAD_STATE.LOADING, {
+        title: t`Loading characters...`,
+        replaceList: shouldReplaceWithLoading,
     });
-    if (response.ok) {
-        const previousAvatar = this_chid !== undefined ? characters[this_chid]?.avatar : null;
-        characters.splice(0, characters.length);
-        const getData = await response.json();
-        for (let i = 0; i < getData.length; i++) {
-            characters[i] = getData[i];
-            characters[i]['name'] = DOMPurify.sanitize(characters[i]['name']);
 
-            // For dropped-in cards
-            if (!characters[i]['chat']) {
-                characters[i]['chat'] = `${characters[i]['name']} - ${humanizedDateTime()}`;
+    try {
+        const response = await fetch('/api/characters/all', {
+            method: 'POST',
+            headers: getRequestHeaders(),
+            body: JSON.stringify({}),
+        });
+        const serverRequestId = response.headers.get('x-aikobots-character-request') || '';
+        const serverInstanceId = response.headers.get('x-aikobots-character-instance') || '';
+
+        if (requestId !== charactersLoadRequestId) {
+            console.debug('[Characters] Ignoring stale characters response.', { requestId, serverRequestId, serverInstanceId });
+            return;
+        }
+
+        if (!response.ok) {
+            const errorData = await readCharacterLoadError(response);
+            const status = `${response.status} ${response.statusText}`.trim();
+            console.error('[Characters] Failed to fetch characters.', {
+                status,
+                serverRequestId,
+                serverInstanceId,
+                error: errorData,
+            });
+            setCharacterPanelLoadState(CHARACTER_PANEL_LOAD_STATE.ERROR, {
+                title: t`Characters failed to load.`,
+                detail: status,
+                replaceList: true,
+            });
+            if (errorData?.overflow) {
+                await Popup.show.text(t`Character data length limit reached`, t`To resolve this, set "performance.lazyLoadCharacters" to "true" in config.yaml and restart the server.`);
+            }
+            return;
+        }
+
+        const getData = await response.json();
+        if (!Array.isArray(getData)) {
+            throw new Error(`Unexpected characters response shape: ${typeof getData}`);
+        }
+
+        const previousAvatar = this_chid !== undefined ? characters[this_chid]?.avatar : null;
+        const nextCharacters = [];
+        for (let i = 0; i < getData.length; i++) {
+            const character = getData[i];
+            if (!character || typeof character !== 'object') {
+                throw new Error(`Invalid character entry at index ${i}`);
             }
 
-            characters[i]['chat'] = String(characters[i]['chat']);
+            character['name'] = DOMPurify.sanitize(character['name']);
+
+            // For dropped-in cards
+            if (!character['chat']) {
+                character['chat'] = `${character['name']} - ${humanizedDateTime()}`;
+            }
+
+            character['chat'] = String(character['chat']);
+            nextCharacters[i] = character;
         }
+
+        if (requestId !== charactersLoadRequestId) {
+            console.debug('[Characters] Ignoring stale parsed characters response.', { requestId, serverRequestId, serverInstanceId });
+            return;
+        }
+
+        characters.splice(0, characters.length, ...nextCharacters);
 
         if (previousAvatar) {
             const newCharacterId = characters.findIndex(x => x.avatar === previousAvatar);
@@ -2620,14 +2768,49 @@ export async function getCharacters() {
             }
         }
 
-        await getGroups();
-        await printCharacters(true);
-    } else {
-        console.error('Failed to fetch characters:', response.statusText);
-        const errorData = await response.json();
-        if (errorData?.overflow) {
-            await Popup.show.text(t`Character data length limit reached`, t`To resolve this, set "performance.lazyLoadCharacters" to "true" in config.yaml and restart the server.`);
+        try {
+            await getGroups();
+        } catch (error) {
+            console.error('[Characters] Failed to fetch groups while refreshing characters panel.', error);
         }
+
+        if (requestId !== charactersLoadRequestId) {
+            console.debug('[Characters] Ignoring stale characters render request.', { requestId, serverRequestId, serverInstanceId });
+            return;
+        }
+
+        await printCharacters(true);
+        console.debug('[Characters] Characters data loaded; render scheduled.', {
+            requestId,
+            serverRequestId,
+            serverInstanceId,
+            characters: characters.length,
+            elapsedMs: Math.round(performance.now() - startedAt),
+        });
+    } catch (error) {
+        if (requestId !== charactersLoadRequestId) {
+            console.debug('[Characters] Ignoring stale characters load error.', { requestId, error });
+            return;
+        }
+
+        console.error('[Characters] Characters load failed before render.', error);
+        setCharacterPanelLoadState(CHARACTER_PANEL_LOAD_STATE.ERROR, {
+            title: t`Characters failed to load.`,
+            detail: error?.message || '',
+            replaceList: true,
+        });
+    }
+}
+
+async function readCharacterLoadError(response) {
+    try {
+        const contentType = response.headers.get('content-type') || '';
+        if (contentType.includes('application/json')) {
+            return await response.json();
+        }
+        return { message: await response.text() };
+    } catch (error) {
+        return { message: error?.message || 'Unable to read error response.' };
     }
 }
 

@@ -61,6 +61,8 @@ const isAndroid = process.platform === 'android';
 // Use shallow character data for the character list
 const useShallowCharacters = !!getConfigValue('performance.lazyLoadCharacters', false, 'boolean');
 const useDiskCache = !!getConfigValue('performance.useDiskCache', true, 'boolean');
+const characterEndpointInstanceId = `${process.pid}-${Date.now().toString(36)}`;
+let characterListRequestCounter = 0;
 
 function coerceFavoriteValue(...values) {
     for (const value of values) {
@@ -1825,6 +1827,10 @@ router.post('/delete', validateAvatarUrlMiddleware, async function (request, res
  * @return {void}
  */
 router.post('/all', async function (request, response) {
+    const requestId = `${characterEndpointInstanceId}-${++characterListRequestCounter}`;
+    const startedAt = Date.now();
+    response.set('X-Aikobots-Character-Request', requestId);
+    response.set('X-Aikobots-Character-Instance', characterEndpointInstanceId);
     const favoritesState = createFavoritesState(request.user.directories);
     try {
         const files = fs.readdirSync(request.user.directories.characters);
@@ -1836,10 +1842,33 @@ router.post('/all', async function (request, response) {
             sharedIndex,
             favoritesState,
         }));
-        const data = (await Promise.all(processingPromises)).filter(c => c.name);
+        const processed = await Promise.all(processingPromises);
+        const data = processed.filter(c => c.name);
+        response.set('X-Aikobots-Character-Count', String(data.length));
+        response.set('X-Aikobots-Character-File-Count', String(pngFiles.length));
+        console.debug('[Characters] Loaded character list.', {
+            requestId,
+            user: request.user?.profile?.handle,
+            files: pngFiles.length,
+            returned: data.length,
+            invalid: processed.length - data.length,
+            shallow: useShallowCharacters,
+            elapsedMs: Date.now() - startedAt,
+        });
+        if (processed.length !== data.length) {
+            console.warn('[Characters] Some character files were skipped while loading the list.', {
+                requestId,
+                skipped: processed.length - data.length,
+            });
+        }
         return response.send(data);
     } catch (err) {
-        console.error(err);
+        console.error('[Characters] Failed to load character list.', {
+            requestId,
+            user: request.user?.profile?.handle,
+            elapsedMs: Date.now() - startedAt,
+            error: err,
+        });
         const isRangeError = err instanceof RangeError;
         response.status(500).send({ overflow: isRangeError, error: true });
     } finally {
