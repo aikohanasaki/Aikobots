@@ -975,6 +975,7 @@ async function sendClaudeRequest(request) {
     const apiKey = request.body.reverse_proxy ? request.body.proxy_password : readSecret(request.user.directories, SECRET_KEYS.CLAUDE);
     const divider = '-'.repeat(process.stdout.columns);
     const enableSystemPromptCache = getConfigValue('claude.enableSystemPromptCache', false, 'boolean');
+    const enableAdaptiveThinking = getConfigValue('claude.enableAdaptiveThinking', true, 'boolean');
     let cachingAtDepth = getConfigValue('claude.cachingAtDepth', -1, 'number');
     // Disabled if not an integer or negative
     if (!Number.isInteger(cachingAtDepth) || cachingAtDepth < 0) {
@@ -993,13 +994,16 @@ async function sendClaudeRequest(request) {
             controller.abort();
         });
         const additionalHeaders = {};
-        const betaHeaders = ['output-128k-2025-02-19'];
+        const betaHeaders = ['output-128k-2025-02-19', 'context-1m-2025-08-07'];
         const useTools = Array.isArray(request.body.tools) && request.body.tools.length > 0;
         const useSystemPrompt = Boolean(request.body.claude_use_sysprompt);
         const convertedPrompt = convertClaudeMessages(request.body.messages, request.body.assistant_prefill, useSystemPrompt, useTools, getPromptNames(request));
-        const useThinking = /^claude-(3-7|opus-4|sonnet-4|haiku-4-5)/.test(request.body.model);
-        const useWebSearch = /^claude-(3-5|3-7|opus-4|sonnet-4|haiku-4-5)/.test(request.body.model) && Boolean(request.body.enable_web_search);
-        const isLimitedSampling = /^claude-(opus-4-1|sonnet-4-5|haiku-4-5)/.test(request.body.model);
+        const useThinking = /^claude-(3-7|opus-4|sonnet-4|haiku-4-5|opus-4-5|opus-4-6|sonnet-4-6)/.test(request.body.model);
+        const useWebSearch = /^claude-(3-5|3-7|opus-4|sonnet-4|haiku-4-5|opus-4-5|opus-4-6|sonnet-4-6)/.test(request.body.model) && Boolean(request.body.enable_web_search);
+        const isLimitedSampling = /^claude-(opus-4-1|sonnet-4-5|haiku-4-5|opus-4-5|opus-4-6|sonnet-4-6)/.test(request.body.model);
+        const useVerbosity = /^claude-(opus-4-5|opus-4-6|sonnet-4-6)/.test(request.body.model);
+        const noPrefillModel = /^claude-(opus-4-6|sonnet-4-6)/.test(request.body.model);
+        const isAdaptiveModel = enableAdaptiveThinking && /^claude-(opus-4-6|sonnet-4-6)/.test(request.body.model);
         const cacheTTL = getConfigValue('claude.extendedTTL', false, 'boolean') ? '1h' : '5m';
         let fixThinkingPrefill = false;
         // Add custom stop sequences
@@ -1078,9 +1082,16 @@ async function sendClaudeRequest(request) {
         }
 
         const reasoningEffort = request.body.reasoning_effort;
-        const budgetTokens = calculateClaudeBudgetTokens(requestBody.max_tokens, reasoningEffort, requestBody.stream);
+        const budgetTokens = calculateClaudeBudgetTokens(requestBody.max_tokens, reasoningEffort, requestBody.stream, isAdaptiveModel);
 
-        if (useThinking && Number.isInteger(budgetTokens)) {
+        if (useThinking && typeof budgetTokens === 'string') {
+            // No prefill when thinking
+            fixThinkingPrefill = true;
+            requestBody.thinking = { type: 'adaptive' };
+            requestBody.output_config ??= {};
+            requestBody.output_config.effort = budgetTokens;
+            delete requestBody.top_k;
+        } else if (useThinking && Number.isInteger(budgetTokens)) {
             // No prefill when thinking
             fixThinkingPrefill = true;
             const minThinkTokens = 1024;
@@ -1101,8 +1112,15 @@ async function sendClaudeRequest(request) {
             delete requestBody.top_k;
         }
 
-        if (fixThinkingPrefill && convertedPrompt.messages.length && convertedPrompt.messages[convertedPrompt.messages.length - 1].role === 'assistant') {
+        if ((fixThinkingPrefill || noPrefillModel) && convertedPrompt.messages.length && convertedPrompt.messages[convertedPrompt.messages.length - 1].role === 'assistant') {
             convertedPrompt.messages[convertedPrompt.messages.length - 1].role = 'user';
+        }
+
+        // Verbosity = 'effort' (same values as OpenAI) - only if not already set by adaptive thinking
+        if (useVerbosity && request.body.verbosity && !requestBody.output_config?.effort) {
+            betaHeaders.push('effort-2025-11-24');
+            requestBody.output_config ??= {};
+            requestBody.output_config.effort = request.body.verbosity;
         }
 
         if (betaHeaders.length) {
