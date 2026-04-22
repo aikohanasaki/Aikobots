@@ -326,7 +326,7 @@ async function withSettingsPersonasTransaction(directories, operation) {
                 restoreFileSnapshot(pathToPersonas, personasSnapshot);
             } catch (rollbackError) {
                 console.error('Failed to rollback settings/personas state:', rollbackError);
-                throw rollbackError;
+                error.rollbackError = rollbackError;
             }
 
             throw error;
@@ -480,7 +480,7 @@ router.post('/load-snapshot', getFileNameValidationFunction('name'), async (requ
         const settingsContent = fs.readFileSync(snapshotPath, 'utf8');
         const settings = parseSnapshotSettings(settingsContent, `settings snapshot "${snapshotName}"`);
         const personasDocument = fs.existsSync(personasSnapshotPath)
-            ? JSON.parse(fs.readFileSync(personasSnapshotPath, 'utf8'))
+            ? parseSnapshotSettings(fs.readFileSync(personasSnapshotPath, 'utf8'), `personas snapshot for "${snapshotName}"`)
             : buildPersonasDocumentFromLegacySettings(settings);
 
         response.send(buildMergedSettingsString(settings, personasDocument));
@@ -519,7 +519,7 @@ router.post('/restore-snapshot', getFileNameValidationFunction('name'), async (r
         const settingsContent = fs.readFileSync(snapshotPath, 'utf8');
         const settings = parseSnapshotSettings(settingsContent, `settings snapshot "${snapshotName}"`);
         const personasDocument = fs.existsSync(personasSnapshotPath)
-            ? JSON.parse(fs.readFileSync(personasSnapshotPath, 'utf8'))
+            ? parseSnapshotSettings(fs.readFileSync(personasSnapshotPath, 'utf8'), `personas snapshot for "${snapshotName}"`)
             : buildPersonasDocumentFromLegacySettings(settings);
         const strippedSettings = stripPersonaRegistryFromSettings(settings);
 
