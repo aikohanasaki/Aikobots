@@ -1,6 +1,6 @@
 import { Fuse } from '../lib.js';
 
-import { saveSettings, substituteParams, getRequestHeaders, chat, chat_metadata, this_chid, characters, saveCharacterDebounced, menu_type, eventSource, event_types, saveMetadata, getCurrentChatId, extension_prompt_roles, create_save, name1, canEditCharacterMetadata } from '../script.js';
+import { saveSettings, substituteParams, getRequestHeaders, chat, chat_metadata, this_chid, characters, markCharacterEditorDirty, menu_type, eventSource, event_types, saveMetadata, getCurrentChatId, extension_prompt_roles, create_save, name1, canEditCharacterMetadata } from '../script.js';
 import { download, debounce, delay, initScrollHeight, resetScrollHeight, parseJsonFile, extractDataFromPng, getFileBuffer, getCharaFilename, getSortableDelay, PAGINATION_TEMPLATE, navigation_option, waitUntilCondition, isTrueBoolean, setValueByPath, flashHighlight, select2ModifyOptions, getSelect2OptionId, dynamicSelect2DataViaAjax, highlightRegex, select2ChoiceClickSubscribe, isFalseBoolean, getSanitizedFilename, checkOverwriteExistingData, parseStringArray, cancelDebounce, findChar, onlyUnique, equalsIgnoreCaseAndAccents, uuidv4, normalizeArray, getUniqueName } from './utils.js';
 import { getContext, writeExtensionField } from './extensions.js';
 import { isMobile } from './RossAscends-mods.js';
@@ -6141,7 +6141,7 @@ export async function deleteWorldInfo(worldInfoName) {
         $('#character_world').val('').trigger('change');
         setWorldInfoButtonClass(undefined, false);
         if (menu_type != 'create') {
-            saveCharacterDebounced();
+            markCharacterEditorDirty();
         }
     }
 
@@ -7808,7 +7808,7 @@ export async function charUpdatePrimaryWorld(name) {
         }
     }
 
-    saveCharacterDebounced();
+    markCharacterEditorDirty();
 
     setWorldInfoButtonClass(undefined, !!name);
 }
@@ -8021,7 +8021,7 @@ export function initWorldInfo() {
             openWorldInfoEditor(worldName);
         } else if (hasEmbed && !event.shiftKey) {
             await importEmbeddedWorldInfo();
-            saveCharacterDebounced();
+            markCharacterEditorDirty();
         }
         else {
             openSetWorldMenu();

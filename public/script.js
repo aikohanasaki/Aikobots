@@ -413,6 +413,42 @@ async function syncLatestPromptInspectorAfterMessageDeletion(deletedMessageId) {
     await saveItemizedPrompts(getCurrentChatId());
 }
 
+async function syncLatestPromptInspectorAfterMessageMove(sourceId, targetId) {
+    const retainedPrompt = getLatestItemizedPrompt();
+    const retainedMesId = Number(retainedPrompt?.mesId);
+    if (!retainedPrompt || !Number.isFinite(retainedMesId)) {
+        refreshPromptInspectorButton();
+        return;
+    }
+
+    let nextMesId = retainedMesId;
+    if (retainedMesId === Number(sourceId)) {
+        nextMesId = Number(targetId);
+    } else if (retainedMesId === Number(targetId)) {
+        nextMesId = Number(sourceId);
+    } else {
+        refreshPromptInspectorButton();
+        return;
+    }
+
+    const message = chat[nextMesId];
+    if (!message) {
+        setLatestItemizedPrompt(null);
+    } else {
+        setLatestItemizedPrompt({
+            ...structuredClone(retainedPrompt),
+            mesId: nextMesId,
+            swipeId: Number(message?.swipe_id ?? retainedPrompt.swipeId ?? 0) || 0,
+            promptSnapshotKey: typeof retainedPrompt.promptSnapshotKey === 'string'
+                ? retainedPrompt.promptSnapshotKey
+                : null,
+        });
+    }
+
+    refreshPromptInspectorButton();
+    await saveItemizedPrompts(getCurrentChatId());
+}
+
 function getPromptSnapshotChatScope() {
     const currentChatId = getCurrentChatId() || '';
     if (selected_group) {
@@ -833,10 +869,6 @@ export const DEFAULT_PRINT_TIMEOUT = debounce_timeout.quick;
 export const saveSettingsDebounced = debounce((loopCounter = 0) => saveSettings(loopCounter), DEFAULT_SAVE_EDIT_TIMEOUT);
 let isCharacterEditorDirty = false;
 
-export function saveCharacterDebounced() {
-    markCharacterEditorDirty();
-}
-
 function isCharacterEditorInEditMode() {
     return $('#form_create').attr('actiontype') === 'editcharacter' && this_chid !== undefined && !!characters[this_chid];
 }
@@ -856,7 +888,7 @@ function updateCharacterSaveButtonState() {
     $('#create_button').attr('aria-label', isEditMode ? t`Save Character` : t`Create Character`);
 }
 
-function markCharacterEditorDirty() {
+export function markCharacterEditorDirty() {
     if (!isCharacterEditorInEditMode()) {
         return;
     }
@@ -10375,6 +10407,7 @@ async function messageEditMove(sourceId, targetId) {
     }
 
     updateViewMessageIds();
+    await syncLatestPromptInspectorAfterMessageMove(sourceId, targetId);
     await saveChatConditional();
     return true;
 }
@@ -15197,7 +15230,10 @@ jQuery(async function () {
             chatElement.find(`.mes[mesid="${this_del_mes}"]`).nextAll('div').remove();
             chatElement.find(`.mes[mesid="${this_del_mes}"]`).remove();
             chat.length = this_del_mes;
+            syncSplitTailStateAfterMutation();
+            syncVisibleChatRangeFromDom();
             restoreTimedWorldInfoFromChat();
+            updateHistoryControls();
             chat_metadata['tainted'] = true;
             await saveChatConditional();
             chatElement.scrollTop(chatElement[0].scrollHeight);
@@ -15885,7 +15921,7 @@ jQuery(async function () {
                 break;
             case 'import_character_info':
                 await importEmbeddedWorldInfo();
-                saveCharacterDebounced();
+                markCharacterEditorDirty();
                 break;
             case 'character_source': {
                 const source = getCharacterSource(this_chid);
