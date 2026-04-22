@@ -3656,7 +3656,7 @@ export async function printMessages() {
     }
 
     await renderMessageWindow(startIndex, count);
-    scrollChatToBottom();
+    scrollChatToBottom({ waitForFrame: true });
     delay(debounce_timeout.short).then(() => scrollOnMediaLoad());
 }
 
@@ -4871,7 +4871,7 @@ export function addOneMessage(mes, { type = 'normal', insertAfter = null, scroll
 
     // Don't scroll if not inserting last
     if (insertAfter == null && insertBefore == null && scroll) {
-        scrollChatToBottom();
+        scrollChatToBottom({ waitForFrame: true });
     }
 
     applyCharacterTagsToMessageDivs({ mesIds: newMessageId });
