@@ -717,6 +717,11 @@ export async function showAdvancedOptionsPopup(data) {
                     toastr.error('Please enter a profile name', 'STMB');
                     return false;
                 }
+                const promptText = String(dialog.querySelector('#stmb-advanced-prompt')?.value || '').trim();
+                if (!promptText) {
+                    toastr.error('Prompt cannot be empty', 'STMB');
+                    return false;
+                }
             }
 
             if (popupInstance.result === POPUP_RESULT.AFFIRMATIVE) {
