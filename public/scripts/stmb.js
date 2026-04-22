@@ -198,6 +198,10 @@ function getClientPlannerJobStatus(job = {}) {
             return 'failed';
         case 'canceled':
             return 'canceled';
+        case 'rejected':
+            return 'rejected';
+        case 'skipped':
+            return 'skipped';
         default:
             return 'running';
     }
@@ -246,7 +250,7 @@ function mapClientJobToPlannerJob(job = {}) {
         createdAt: Number(job?.createdAt || 0),
         startedAt: Number(job?.startedAt || 0),
         updatedAt,
-        clientHandledAt: updatedAt,
+        clientHandledAt: Number(job?.clientHandledAt || 0),
         error: job?.error ? structuredClone(job.error) : null,
         result: job?.result ? structuredClone(job.result) : null,
         payload: job?.payload ? structuredClone(job.payload) : {},
@@ -4483,7 +4487,7 @@ async function showMainEntryPopup() {
         }
         if (target.matches('#stmb-settings-token-warning-threshold')) {
             const value = Number.parseInt(target.value, 10);
-            if (!Number.isFinite(value) || value < 1000 || value > 100000) {
+            if (!Number.isFinite(value) || value < 1000 || value > 200000) {
                 return;
             }
             moduleSettings.tokenWarningThreshold = value;
