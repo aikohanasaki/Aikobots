@@ -803,6 +803,14 @@ function assertSharedSecureNameAvailable(name) {
     }
 }
 
+function assertUserLorebookNameAvailable(canonicalName) {
+    const secureRecord = getSecureIndexEntry(canonicalName);
+    const sharedSecureRecord = getSharedSecureIndexEntry(canonicalName);
+    if (secureRecord || sharedSecureRecord) {
+        throw new LorebookRepositoryError('LorebookAlreadyExists', `Lorebook "${canonicalName}" already exists in secure storage.`, 409);
+    }
+}
+
 function writeSecureLorebookMetadata(name, ownerHandle, actorHandle, existingMetadata = null) {
     const timestamp = new Date().toISOString();
     const canonicalName = assertCanonicalName(name);
@@ -1959,6 +1967,7 @@ export async function saveLorebookForManagement(user, name, data, storage = 'use
             return buildLorebookMetadata(getSecureIndexEntry(canonicalName) || secureRecord, user);
         }
 
+        assertUserLorebookNameAvailable(canonicalName);
         writeUserLorebook(user.profile.handle, canonicalName, sanitizedData);
         return {
             name: canonicalName,
@@ -1973,9 +1982,7 @@ export async function saveLorebookForManagement(user, name, data, storage = 'use
             canCheckIn: false,
             canForceCheckout: false,
             canManageOwners: false,
-            // True when an admin saves a user-storage lorebook that shadows another user's secure lorebook.
-            shadowingSecure: Boolean((secureRecord && secureRecord.ownerHandle !== user.profile.handle && canManageSecureLorebook(user, secureRecord))
-                || (sharedSecureRecord && canManageSecureLorebook(user, sharedSecureRecord))),
+            shadowingSecure: false,
         };
     });
 }
@@ -2007,6 +2014,28 @@ export async function deleteLorebookForManagement(user, name, options = {}) {
             }
 
             return deleteAllSecureLorebookCopies(user, secureTarget, allUserHandles);
+        }
+
+        if (preferredStorage === 'user') {
+            if (!userRecord || isSecureBackingLorebook) {
+                throw new LorebookRepositoryError('LorebookNotFound', `Lorebook "${canonicalName}" not found.`, 404);
+            }
+
+            try {
+                fs.unlinkSync(userRecord.path);
+            } catch (error) {
+                if (error?.code === 'ENOENT') {
+                    throw new LorebookRepositoryError('LorebookNotFound', `Lorebook "${canonicalName}" not found.`, 404);
+                }
+
+                throw new LorebookRepositoryError('LorebookDeleteFailed', `Failed to delete lorebook "${canonicalName}".`, 500);
+            }
+
+            return {
+                name: canonicalName,
+                storage: 'user',
+                ownerHandle: user.profile.handle,
+            };
         }
 
         if (sharedSecureRecord) {

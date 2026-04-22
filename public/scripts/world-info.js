@@ -7855,6 +7855,11 @@ export async function charSetAuxWorlds(fileName, books) {
         return;
     }
 
+    if (!canEditCharacterMetadata(characterIndex)) {
+        toastr.info(t`Only the character's owner and site admins may access character lore for this character.`, t`Character locked`);
+        return;
+    }
+
     await setCharacterExtraBooks(characterIndex, nextBooks);
 }
 

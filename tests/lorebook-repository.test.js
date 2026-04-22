@@ -6,7 +6,6 @@ import { afterEach, beforeEach, describe, expect, it, jest } from '@jest/globals
 
 import {
     deleteLorebookForManagement,
-    LorebookRepositoryError,
     readLorebookForGeneration,
     readWorldInfoFile,
     saveLorebookForManagement,
@@ -29,22 +28,18 @@ describe('lorebook repository json name normalization', () => {
         }
     });
 
-    it('rejects manual lorebook saves whose names end with .json', () => {
+    it('rejects manual lorebook saves whose names end with .json', async () => {
         const user = {
             profile: {
                 handle: 'alice',
             },
         };
 
-        let error = null;
-        try {
-            saveLorebookForManagement(user, 'mybook.json', { entries: {} });
-        } catch (caughtError) {
-            error = caughtError;
-        }
-
-        expect(error).toBeInstanceOf(LorebookRepositoryError);
-        expect(error?.type).toBe('LorebookInvalidName');
+        await expect(saveLorebookForManagement(user, 'mybook.json', { entries: {} }))
+            .rejects
+            .toMatchObject({
+                type: 'LorebookInvalidName',
+            });
     });
 
     it('repairs legacy world info files named *.json.json when reading from a directory', () => {
@@ -75,7 +70,60 @@ describe('lorebook repository json name normalization', () => {
         expect(fs.existsSync(legacyPath)).toBe(false);
     });
 
-    it('deletes a user lorebook shadow even when another user owns a secure lorebook with the same name', () => {
+    it('rejects user lorebook saves that would shadow a secure lorebook with the same name', async () => {
+        const user = {
+            profile: {
+                handle: 'alice',
+                admin: false,
+            },
+        };
+        const userWorldsDir = path.join(dataRoot, 'alice', 'worlds');
+        const secureWorldsDir = path.join(dataRoot, '_secure', 'worlds');
+        const userLorebookPath = path.join(userWorldsDir, 'shadowed.json');
+        const secureLorebookPath = path.join(secureWorldsDir, 'shadowed.json');
+        const secureIndexPath = path.join(secureWorldsDir, 'index.json');
+
+        fs.mkdirSync(userWorldsDir, { recursive: true });
+        fs.mkdirSync(secureWorldsDir, { recursive: true });
+        fs.writeFileSync(secureLorebookPath, JSON.stringify({ entries: { 2: { uid: 2, content: 'secure copy' } } }), 'utf8');
+        fs.writeFileSync(secureIndexPath, JSON.stringify({
+            version: 1,
+            books: {
+                shadowed: {
+                    ownerHandle: 'bob',
+                    createdAt: '2026-01-01T00:00:00.000Z',
+                    updatedAt: '2026-01-01T00:00:00.000Z',
+                    createdBy: 'bob',
+                    updatedBy: 'bob',
+                },
+            },
+        }), 'utf8');
+
+        const originalLstatSync = fs.lstatSync;
+        const lstatSpy = jest.spyOn(fs, 'lstatSync').mockImplementation((targetPath, options) => {
+            if (path.resolve(String(targetPath)) === path.resolve(secureLorebookPath)) {
+                return {
+                    isSymbolicLink: () => true,
+                };
+            }
+
+            return originalLstatSync(targetPath, options);
+        });
+
+        try {
+            await expect(saveLorebookForManagement(user, 'shadowed', { entries: {} }, 'user'))
+                .rejects
+                .toMatchObject({
+                    type: 'LorebookAlreadyExists',
+                });
+
+            expect(fs.existsSync(userLorebookPath)).toBe(false);
+        } finally {
+            lstatSpy.mockRestore();
+        }
+    });
+
+    it('deletes a legacy user lorebook shadow when user storage is requested explicitly', async () => {
         const user = {
             profile: {
                 handle: 'alice',
@@ -117,7 +165,7 @@ describe('lorebook repository json name normalization', () => {
         });
 
         try {
-            const result = deleteLorebookForManagement(user, 'shadowed');
+            const result = await deleteLorebookForManagement(user, 'shadowed', { storage: 'user' });
 
             expect(result).toEqual({
                 name: 'shadowed',
