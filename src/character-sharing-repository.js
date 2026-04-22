@@ -1,5 +1,6 @@
 import path from 'node:path';
 import fs from 'node:fs';
+import { randomUUID } from 'node:crypto';
 import { promises as fsPromises } from 'node:fs';
 
 import sanitize from 'sanitize-filename';
@@ -15,6 +16,8 @@ const SHARED_CHARACTER_INDEX_LOCK_SUFFIX = '.lock';
 const SHARED_CHARACTER_INDEX_LOCK_RETRY_MS = 50;
 const SHARED_CHARACTER_INDEX_LOCK_TIMEOUT_MS = 10_000;
 const SHARED_CHARACTER_INDEX_LOCK_STALE_MS = 60_000;
+const SHARED_CHARACTER_INDEX_LOCK_HEARTBEAT_MS = 15_000;
+const SHARED_CHARACTER_INDEX_LOCK_OWNER_FILENAME = 'owner.json';
 let sharedCharacterWriteQueue = Promise.resolve();
 
 export class CharacterSharingRepositoryError extends Error {
@@ -68,6 +71,10 @@ function getSharedCharacterIndexLockPath() {
     return `${getSharedCharacterIndexPath()}${SHARED_CHARACTER_INDEX_LOCK_SUFFIX}`;
 }
 
+function getSharedCharacterIndexLockOwnerPath(lockPath) {
+    return path.join(lockPath, SHARED_CHARACTER_INDEX_LOCK_OWNER_FILENAME);
+}
+
 function sleep(ms) {
     if (ms <= 0) {
         return Promise.resolve();
@@ -76,9 +83,96 @@ function sleep(ms) {
     return new Promise(resolve => setTimeout(resolve, ms));
 }
 
+async function readSharedCharacterIndexLockOwner(lockPath) {
+    try {
+        const raw = await fsPromises.readFile(getSharedCharacterIndexLockOwnerPath(lockPath), 'utf8');
+        const owner = JSON.parse(raw);
+        return {
+            token: String(owner?.token || ''),
+            pid: Number(owner?.pid) || null,
+            createdAt: owner?.createdAt || null,
+        };
+    } catch (error) {
+        if (error?.code === 'ENOENT') {
+            return null;
+        }
+
+        if (error instanceof SyntaxError) {
+            return null;
+        }
+
+        throw error;
+    }
+}
+
+async function writeSharedCharacterIndexLockOwner(lockPath, token) {
+    const timestamp = new Date().toISOString();
+    const owner = {
+        token,
+        pid: process.pid,
+        createdAt: timestamp,
+    };
+    await fsPromises.writeFile(getSharedCharacterIndexLockOwnerPath(lockPath), JSON.stringify(owner), { flag: 'wx' });
+}
+
+async function ownsSharedCharacterIndexLock(lockPath, token) {
+    const owner = await readSharedCharacterIndexLockOwner(lockPath);
+    return owner?.token === token;
+}
+
+async function refreshSharedCharacterIndexLock(lockPath, token) {
+    if (!await ownsSharedCharacterIndexLock(lockPath, token)) {
+        return false;
+    }
+
+    const now = new Date();
+    await fsPromises.utimes(getSharedCharacterIndexLockOwnerPath(lockPath), now, now);
+    return true;
+}
+
+function startSharedCharacterIndexLockHeartbeat(lockPath, token) {
+    let pending = false;
+    let stopped = false;
+    let timer = null;
+    const stop = () => {
+        stopped = true;
+        if (timer) {
+            clearInterval(timer);
+        }
+    };
+    const beat = () => {
+        if (pending || stopped) {
+            return;
+        }
+
+        pending = true;
+        refreshSharedCharacterIndexLock(lockPath, token)
+            .then(ownsLock => {
+                if (!ownsLock) {
+                    stop();
+                }
+            })
+            .catch(error => {
+                if (error?.code !== 'ENOENT') {
+                    console.warn('[Characters] Failed to refresh shared character index lock.', error);
+                }
+            })
+            .finally(() => {
+                pending = false;
+            });
+    };
+
+    timer = setInterval(beat, SHARED_CHARACTER_INDEX_LOCK_HEARTBEAT_MS);
+    timer.unref?.();
+    return stop;
+}
+
 async function isSharedCharacterIndexLockStale(lockPath) {
     try {
-        const stats = await fsPromises.stat(lockPath);
+        const ownerPath = getSharedCharacterIndexLockOwnerPath(lockPath);
+        const stats = fs.existsSync(ownerPath)
+            ? await fsPromises.stat(ownerPath)
+            : await fsPromises.stat(lockPath);
         return Date.now() - stats.mtimeMs > SHARED_CHARACTER_INDEX_LOCK_STALE_MS;
     } catch (error) {
         if (error?.code === 'ENOENT') {
@@ -89,8 +183,16 @@ async function isSharedCharacterIndexLockStale(lockPath) {
     }
 }
 
-async function removeSharedCharacterIndexLock(lockPath) {
+async function removeSharedCharacterIndexLock(lockPath, token = null) {
     try {
+        if (token) {
+            if (!await ownsSharedCharacterIndexLock(lockPath, token)) {
+                return;
+            }
+
+            await fsPromises.unlink(getSharedCharacterIndexLockOwnerPath(lockPath));
+        }
+
         await fsPromises.rmdir(lockPath);
     } catch (error) {
         if (error?.code === 'ENOENT') {
@@ -98,6 +200,10 @@ async function removeSharedCharacterIndexLock(lockPath) {
         }
 
         if (error?.code === 'ENOTEMPTY') {
+            if (token) {
+                throw error;
+            }
+
             await fsPromises.rm(lockPath, { recursive: true, force: false });
             return;
         }
@@ -114,7 +220,18 @@ async function acquireSharedCharacterWriteLock() {
     while (true) {
         try {
             await fsPromises.mkdir(lockPath);
-            return () => removeSharedCharacterIndexLock(lockPath);
+            const token = randomUUID();
+            try {
+                await writeSharedCharacterIndexLockOwner(lockPath, token);
+            } catch (error) {
+                await removeSharedCharacterIndexLock(lockPath);
+                throw error;
+            }
+            const stopHeartbeat = startSharedCharacterIndexLockHeartbeat(lockPath, token);
+            return async () => {
+                stopHeartbeat();
+                await removeSharedCharacterIndexLock(lockPath, token);
+            };
         } catch (error) {
             if (error?.code !== 'EEXIST') {
                 throw error;
@@ -314,10 +431,10 @@ function buildCharacterMetadata(record, user = null) {
         checkedOutBy: sharingMode === 'shared' ? (String(record?.checkedOutBy || '').trim() || null) : null,
         checkedOutAt: sharingMode === 'shared' ? (record?.checkedOutAt || null) : null,
         checkoutState,
-        canCheckOut: sharingMode === 'shared' && canManage && checkoutState !== 'self',
+        canCheckOut: sharingMode === 'shared' && canManage && checkoutState === 'available',
         canCheckIn: sharingMode === 'shared' && checkoutState === 'self',
         canForceCheckout: sharingMode === 'shared' && isAdmin && checkoutState === 'other',
-        canManageOwners: sharingMode === 'shared' && canManage && checkoutState === 'self',
+        canManageOwners: sharingMode === 'shared' && (isAdmin || (canManage && checkoutState === 'self')),
     };
 }
 
