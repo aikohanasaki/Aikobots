@@ -1,6 +1,6 @@
 import libs from './lib';
 import getContext from './scripts/st-context';
-import { power_user } from './scripts/power-user';
+import { power_user, getThemeObject } from './scripts/power-user';
 import { QuickReplyApi } from './scripts/extensions/quick-reply/api/QuickReplyApi';
 import { oai_settings } from './scripts/openai';
 import { FileAttachment } from './scripts/chats';
@@ -11,6 +11,7 @@ declare global {
     type ReasoningSettings = typeof power_user.reasoning;
     type ChatCompletionSettings = typeof oai_settings;
     type MessageTimestamp = string | number | Date;
+    type Theme = ReturnType<typeof getThemeObject>;
 
     interface ChatMessage {
         name?: string;

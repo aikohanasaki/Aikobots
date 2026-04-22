@@ -124,6 +124,13 @@
     gap: 8px;
 }
 
+#ui-preset-generate-from-bg-button {
+    width: auto;
+    min-width: min(100%, 18em);
+    line-height: 1.2;
+    white-space: normal;
+}
+
 #look-and-feel-sections > .look-and-feel-backgrounds-heading,
 #look-and-feel-sections > .look-and-feel-full-span {
     grid-column: 1 / -1;

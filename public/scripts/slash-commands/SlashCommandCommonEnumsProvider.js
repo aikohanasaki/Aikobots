@@ -329,4 +329,8 @@ export const commonEnumProviders = {
         new SlashCommandEnumValue('null', null, enumTypes.type, enumIcons.null),
         new SlashCommandEnumValue('undefined', null, enumTypes.type, enumIcons.undefined),
     ],
+
+    backgrounds: () => Array.from(document.querySelectorAll('.bg_example'))
+        .map(it => new SlashCommandEnumValue(it.getAttribute('bgfile')))
+        .filter(it => it.value?.length),
 };
