@@ -874,6 +874,33 @@ function canManageCharacterOwnership(characterCard, request) {
 }
 
 /**
+ * Removes shared-character identity metadata from a copied card.
+ * @param {object|null|undefined} characterCard Character card to mutate
+ */
+function clearCharacterSharingIdentityMetadata(characterCard) {
+    if (!characterCard) {
+        return;
+    }
+
+    _.unset(characterCard, 'data.extensions.aikobots.owner_handle');
+    _.unset(characterCard, 'data.extensions.aikobots.owner_handles');
+    _.unset(characterCard, 'data.extensions.aikobots.sharing_mode');
+    _.unset(characterCard, 'data.extensions.aikobots.shared_character_key');
+
+    _.unset(characterCard, 'ownerHandle');
+    _.unset(characterCard, 'ownerHandles');
+    _.unset(characterCard, 'sharingMode');
+    _.unset(characterCard, 'sharedCharacterKey');
+    _.unset(characterCard, 'checkedOutBy');
+    _.unset(characterCard, 'checkedOutAt');
+    _.unset(characterCard, 'checkoutState');
+    _.unset(characterCard, 'canCheckOut');
+    _.unset(characterCard, 'canCheckIn');
+    _.unset(characterCard, 'canForceCheckout');
+    _.unset(characterCard, 'canManageOwners');
+}
+
+/**
  * Copies protected lorebook fields from one character card to another.
  * @param {object} targetCharacter Character card to mutate
  * @param {object} sourceCharacter Character card to copy from
@@ -1428,9 +1455,8 @@ router.post('/edit', validateAvatarUrlMiddleware, async function (request, respo
             preserveProtectedLorebookFields(char, existingCharacter);
         }
 
-        sanitizeEmbeddedLorebookForPrimaryWorld(char, requestedJsonCard, requestedWorld);
-
         if (canEditLorebooks) {
+            sanitizeEmbeddedLorebookForPrimaryWorld(char, requestedJsonCard, requestedWorld);
             validateOwnedCharacterLinkedLorebooks(request.user, char);
         }
 
@@ -1634,7 +1660,7 @@ router.post('/merge-attributes', getFileNameValidationFunction('avatar'), async 
             preserveProtectedLorebookFields(character, existingCharacter);
         }
 
-        if (updatesSecureLorebooks && canEditLorebooks) {
+        if (updatesProtectedLorebookFields && canEditLorebooks) {
             validateOwnedCharacterLinkedLorebooks(request.user, character);
         }
 
@@ -2272,6 +2298,7 @@ router.post('/duplicate', validateAvatarUrlMiddleware, async function (request, 
 
         const duplicatedCharacter = rawCharacterData ? JSON.parse(rawCharacterData) : null;
         clearCharacterFavoriteState(duplicatedCharacter);
+        clearCharacterSharingIdentityMetadata(duplicatedCharacter);
         const wasWritten = await writeCharacterData(filename, JSON.stringify(duplicatedCharacter), path.parse(newFilename).name, request);
         if (!wasWritten) {
             return response.send({ error: true });
