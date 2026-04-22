@@ -1783,6 +1783,9 @@ body.swipeAllMessages .mes:not(.last_mes) .swipes-counter {
 }
 
 .carousel-arrow {
+    appearance: none;
+    border: 0;
+    padding: 0;
     position: absolute;
     top: 50%;
     transform: translateY(-50%);
@@ -1796,6 +1799,7 @@ body.swipeAllMessages .mes:not(.last_mes) .swipes-counter {
     user-select: none;
     color: var(--main-font-color, inherit);
     background: linear-gradient(to right, var(--black30a), transparent);
+    font: inherit;
     text-shadow: 0 0 6px var(--black70a);
 }
 

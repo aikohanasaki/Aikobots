@@ -31,6 +31,15 @@ export const CUSTOM_INTERACTABLE_CONTROL_CLASS = 'custom_interactable';
 
 export const NOT_FOCUSABLE_CONTROL_CLASS = 'not_focusable';
 export const DISABLED_CONTROL_CLASS = 'disabled';
+const nativeInteractableSelector = [
+    'button',
+    'input',
+    'select',
+    'textarea',
+    'summary',
+    'a[href]',
+    '[contenteditable="true"]',
+].join(', ');
 
 /**
  * An observer that will check if any new interactables or scroll reset containers are added to the body
@@ -220,6 +229,10 @@ function handleGlobalKeyDown(event) {
 
         // Trigger click if a valid interactable is found and it's not disabled
         if (target && !target.classList.contains(DISABLED_CONTROL_CLASS)) {
+            if (target.matches(nativeInteractableSelector)) {
+                return;
+            }
+
             console.debug('Triggering click on keyboard-focused interactable control via Enter', target);
             target.click();
         }

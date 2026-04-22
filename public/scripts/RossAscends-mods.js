@@ -333,11 +333,13 @@ function ensureFavoritesCarouselShell() {
         wrapper.id = 'favorites_carousel_wrapper';
         wrapper.className = 'alignitemscenter flex-container margin0auto wide100p';
 
-        const leftArrow = document.createElement('div');
+        const leftArrow = document.createElement('button');
         leftArrow.id = 'favorites_carousel_left';
+        leftArrow.type = 'button';
         leftArrow.className = 'carousel-arrow';
         leftArrow.title = 'Scroll left';
-        leftArrow.innerHTML = '<i class="fa-solid fa-chevron-left"></i>';
+        leftArrow.setAttribute('aria-label', 'Scroll left');
+        leftArrow.innerHTML = '<i class="fa-solid fa-chevron-left" aria-hidden="true"></i>';
 
         const carousel = document.createElement('div');
         carousel.id = 'favorites_carousel';
@@ -345,11 +347,13 @@ function ensureFavoritesCarouselShell() {
         carousel.setAttribute('data-i18n', '[no_favs]Favorite characters to add them to HotSwaps');
         carousel.setAttribute('no_favs', noFavsMessage);
 
-        const rightArrow = document.createElement('div');
+        const rightArrow = document.createElement('button');
         rightArrow.id = 'favorites_carousel_right';
+        rightArrow.type = 'button';
         rightArrow.className = 'carousel-arrow';
         rightArrow.title = 'Scroll right';
-        rightArrow.innerHTML = '<i class="fa-solid fa-chevron-right"></i>';
+        rightArrow.setAttribute('aria-label', 'Scroll right');
+        rightArrow.innerHTML = '<i class="fa-solid fa-chevron-right" aria-hidden="true"></i>';
 
         wrapper.append(leftArrow, carousel, rightArrow);
         hotSwapWrapper.append(wrapper);
@@ -371,8 +375,8 @@ function resetFavoritesCarousel(shell) {
     shell.carousel.removeClass('desktop mobile');
     shell.carousel.scrollLeft(0);
     shell.wrapper.removeClass('with-arrows');
-    shell.left.off('.favCarousel').hide().removeClass('disabled');
-    shell.right.off('.favCarousel').hide().removeClass('disabled');
+    shell.left.off('.favCarousel').hide().removeClass('disabled').prop('disabled', false);
+    shell.right.off('.favCarousel').hide().removeClass('disabled').prop('disabled', false);
 }
 
 function makeInfiniteScroll($carousel) {
@@ -451,20 +455,22 @@ function setupFavoritesCarousel() {
         shell.wrapper.toggleClass('with-arrows', showArrows);
 
         if (!showArrows) {
-            shell.left.removeClass('disabled');
-            shell.right.removeClass('disabled');
+            shell.left.removeClass('disabled').prop('disabled', false);
+            shell.right.removeClass('disabled').prop('disabled', false);
             return;
         }
 
         if (infinite) {
-            shell.left.removeClass('disabled');
-            shell.right.removeClass('disabled');
+            shell.left.removeClass('disabled').prop('disabled', false);
+            shell.right.removeClass('disabled').prop('disabled', false);
             return;
         }
 
         const maxScroll = shell.carousel[0].scrollWidth - shell.carousel[0].clientWidth;
-        shell.left.toggleClass('disabled', shell.carousel.scrollLeft() <= 0);
-        shell.right.toggleClass('disabled', shell.carousel.scrollLeft() >= maxScroll - 1);
+        const leftDisabled = shell.carousel.scrollLeft() <= 0;
+        const rightDisabled = shell.carousel.scrollLeft() >= maxScroll - 1;
+        shell.left.toggleClass('disabled', leftDisabled).prop('disabled', leftDisabled);
+        shell.right.toggleClass('disabled', rightDisabled).prop('disabled', rightDisabled);
     }
 
     shell.left.off('.favCarousel').on('click.favCarousel', () => {

@@ -35,12 +35,12 @@ export class CharacterSharingRepositoryError extends Error {
 
 function runWithSharedCharacterLock(operation) {
     const queuedOperation = sharedCharacterWriteQueue.catch(() => { }).then(async () => {
-        const release = acquireSharedCharacterWriteLock();
+        const release = await acquireSharedCharacterWriteLock();
 
         try {
             return await operation();
         } finally {
-            release();
+            await release();
         }
     });
     sharedCharacterWriteQueue = queuedOperation.catch(() => { });
@@ -68,17 +68,17 @@ function getSharedCharacterIndexLockPath() {
     return `${getSharedCharacterIndexPath()}${SHARED_CHARACTER_INDEX_LOCK_SUFFIX}`;
 }
 
-function sleepSync(ms) {
+function sleep(ms) {
     if (ms <= 0) {
-        return;
+        return Promise.resolve();
     }
 
-    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+    return new Promise(resolve => setTimeout(resolve, ms));
 }
 
-function isSharedCharacterIndexLockStale(lockPath) {
+async function isSharedCharacterIndexLockStale(lockPath) {
     try {
-        const stats = fs.statSync(lockPath);
+        const stats = await fsPromises.stat(lockPath);
         return Date.now() - stats.mtimeMs > SHARED_CHARACTER_INDEX_LOCK_STALE_MS;
     } catch (error) {
         if (error?.code === 'ENOENT') {
@@ -89,16 +89,16 @@ function isSharedCharacterIndexLockStale(lockPath) {
     }
 }
 
-function removeSharedCharacterIndexLock(lockPath) {
+async function removeSharedCharacterIndexLock(lockPath) {
     try {
-        fs.rmdirSync(lockPath);
+        await fsPromises.rmdir(lockPath);
     } catch (error) {
         if (error?.code === 'ENOENT') {
             return;
         }
 
         if (error?.code === 'ENOTEMPTY') {
-            fs.rmSync(lockPath, { recursive: true, force: false });
+            await fsPromises.rm(lockPath, { recursive: true, force: false });
             return;
         }
 
@@ -106,30 +106,31 @@ function removeSharedCharacterIndexLock(lockPath) {
     }
 }
 
-function acquireSharedCharacterWriteLock() {
+async function acquireSharedCharacterWriteLock() {
     const lockPath = getSharedCharacterIndexLockPath();
     ensureDirectory(path.dirname(lockPath));
     const deadline = Date.now() + SHARED_CHARACTER_INDEX_LOCK_TIMEOUT_MS;
 
     while (true) {
         try {
-            fs.mkdirSync(lockPath);
+            await fsPromises.mkdir(lockPath);
             return () => removeSharedCharacterIndexLock(lockPath);
         } catch (error) {
             if (error?.code !== 'EEXIST') {
                 throw error;
             }
 
-            if (isSharedCharacterIndexLockStale(lockPath)) {
-                removeSharedCharacterIndexLock(lockPath);
+            if (await isSharedCharacterIndexLockStale(lockPath)) {
+                await removeSharedCharacterIndexLock(lockPath);
                 continue;
             }
 
-            if (Date.now() >= deadline) {
+            const remainingMs = deadline - Date.now();
+            if (remainingMs <= 0) {
                 throw new CharacterSharingRepositoryError('CharacterIndexBusy', 'Timed out waiting to update the shared character index.', 503);
             }
 
-            sleepSync(SHARED_CHARACTER_INDEX_LOCK_RETRY_MS);
+            await sleep(Math.min(SHARED_CHARACTER_INDEX_LOCK_RETRY_MS, remainingMs));
         }
     }
 }
