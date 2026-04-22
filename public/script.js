@@ -6396,14 +6396,33 @@ function rollbackUnsavedInsertedMessage(messageId, message) {
 }
 
 function restoreUnsavedDeletedLastMessage(messageId, message) {
-    if (!message || messageId !== chat.length) {
+    const normalizedMessageId = Number(messageId);
+    if (!message || !Number.isInteger(normalizedMessageId) || normalizedMessageId < 0) {
         console.warn('Could not restore deleted message after failed save');
         return false;
     }
 
-    chat.push(message);
-    addOneMessage(message, { forceId: messageId, scroll: false });
-    restoreTimedWorldInfoFromChat(messageId);
+    if (chat[normalizedMessageId] && chat[normalizedMessageId] !== message) {
+        console.warn('Could not restore deleted message after failed save');
+        return false;
+    }
+
+    if (chat.length < normalizedMessageId) {
+        console.warn('Could not restore deleted message after failed save');
+        return false;
+    }
+
+    if (chat.length === normalizedMessageId) {
+        chat.push(message);
+    } else {
+        chat[normalizedMessageId] = message;
+    }
+
+    if (chatElement.children(`.mes[mesid="${normalizedMessageId}"]`).length === 0) {
+        addOneMessage(message, { forceId: normalizedMessageId, scroll: false });
+    }
+
+    restoreTimedWorldInfoFromChat(normalizedMessageId);
     refreshChatStateAfterSaveRollback();
     return true;
 }
@@ -12665,53 +12684,62 @@ export function showSwipeButtons(mesId = chat.length - 1) {
         return;
     }
 
+    const message = chat[mesId];
+    if (!message) {
+        return;
+    }
+
     if (
-        chat[mesId].is_system ||
+        message.is_system ||
         !swipes ||
         Number($('.mes:last').attr('mesid')) < 0 ||
-        chat[mesId].is_user ||
+        message.is_user ||
         (selected_group && is_group_generating)
     ) {
         return;
     }
 
     // swipe_id should be set if alternate greetings are added
-    if (chat.length == 1 && chat[0].swipe_id === undefined) {
+    if (chat.length == 1 && message.swipe_id === undefined) {
         return;
     }
 
     //had to add this to make the swipe counter work
     //(copied from the onclick functions for swipe buttons..
     //don't know why the array isn't set for non-swipe messages in Generate or addOneMessage..)
-    if (chat[mesId]['swipe_id'] === undefined) {              // if there is no swipe-message in the last spot of the chat array
-        chat[mesId]['swipe_id'] = 0;                        // set it to id 0
-        chat[mesId]['swipes'] = [];                         // empty the array
-        chat[mesId]['swipes'][0] = chat[mesId]['mes'];  //assign swipe array with last message from chat
-        chat[mesId]['swipe_info'] = [];
-        chat[mesId]['swipe_info'][0] = {
-            'send_date': chat[mesId]['send_date'],
-            'gen_started': chat[mesId]['gen_started'],
-            'gen_finished': chat[mesId]['gen_finished'],
-            'extra': structuredClone(chat[mesId]['extra']),
+    if (message['swipe_id'] === undefined) {              // if there is no swipe-message in the last spot of the chat array
+        message['swipe_id'] = 0;                        // set it to id 0
+        message['swipes'] = [];                         // empty the array
+        message['swipes'][0] = message['mes'];  //assign swipe array with last message from chat
+        message['swipe_info'] = [];
+        message['swipe_info'][0] = {
+            'send_date': message['send_date'],
+            'gen_started': message['gen_started'],
+            'gen_finished': message['gen_finished'],
+            'extra': structuredClone(message['extra']),
         };
     }
 
     const currentMessage = chatElement.children().filter(`[mesid="${mesId}"]`);
-    const swipeId = chat[mesId].swipe_id;
-    const swipeCounterText = formatSwipeCounter((swipeId + 1), chat[mesId]['swipes'].length);
+    if (currentMessage.length === 0) {
+        return;
+    }
+
+    const swipeId = message.swipe_id;
+    const swipeCounterText = formatSwipeCounter((swipeId + 1), message['swipes'].length);
     const swipeRight = currentMessage.find('.swipe_right');
     const swipeLeft = currentMessage.find('.swipe_left');
     const swipeCounter = currentMessage.find('.swipes-counter');
 
-    if (swipeId !== undefined && (chat[mesId].swipes.length > 1 || swipeId > 0)) {
+    if (swipeId !== undefined && (message.swipes.length > 1 || swipeId > 0)) {
         swipeLeft.css('display', 'flex');
     }
     //only show right when generate is off, or when next right swipe would not make a generate happen
-    if (is_send_press === false || chat[mesId].swipes.length >= swipeId) {
+    if (is_send_press === false || message.swipes.length >= swipeId) {
         swipeRight.css('display', 'flex').css('opacity', '0.3');
         swipeCounter.css('opacity', '0.3');
     }
-    if ((chat[mesId].swipes.length - swipeId) === 1) {
+    if ((message.swipes.length - swipeId) === 1) {
         //chevron was moved out of hardcode in HTML to class toggle dependent on last_mes or not
         //necessary for 'swipe_right' div in past messages to have no chevron if 'show swipes for all messages' is turned on
         swipeRight.css('opacity', '0.7');
