@@ -387,6 +387,38 @@ export async function showSummaryConsolidationOptionsPopup(data = {}) {
         wide: true,
         large: true,
         allowVerticalScrolling: true,
+        onClosing: popupInstance => {
+            if (popupInstance.result !== POPUP_RESULT.AFFIRMATIVE) {
+                return true;
+            }
+
+            const popupDialog = popupInstance?.dlg;
+            if (!popupDialog) {
+                return true;
+            }
+
+            if (!hasLorebook) {
+                toastr.error('Assign a lorebook before running consolidation', 'STMB');
+                return false;
+            }
+
+            const currentTier = Number(popupDialog.querySelector('#stmb-summary-tier')?.value ?? targetTier);
+            const config = getTierConfig(currentTier);
+            const selectedCount = Array.from(popupDialog.querySelectorAll('.stmb-summary-source-item') || [])
+                .filter(input => input.checked)
+                .length;
+            const requiredMin = readInt(
+                popupDialog.querySelector('#stmb-summary-required-min')?.value,
+                config.requiredMin ?? data?.requiredMin ?? 5,
+            );
+
+            if (selectedCount < requiredMin) {
+                toastr.error(`Select at least ${requiredMin} ${String(config.sourcePlural || 'source entries').toLowerCase()} before running consolidation`, 'STMB');
+                return false;
+            }
+
+            return true;
+        },
         onClose: () => {
             try {
                 persistSelections();
@@ -467,9 +499,14 @@ export async function showSummaryConsolidationOptionsPopup(data = {}) {
         const selectedCount = Array.from(dialog?.querySelectorAll('.stmb-summary-source-item') || []).filter(input => input.checked).length;
         if (popup.okButton) {
             const locked = selectedCount < requiredMin;
-            popup.okButton.style.pointerEvents = locked ? 'none' : '';
-            popup.okButton.style.opacity = locked ? '0.5' : '';
-            popup.okButton.title = locked ? `Need at least ${requiredMin} selected ${String(config.sourcePlural || 'source entries').toLowerCase()}` : '';
+            const disabled = locked || !hasLorebook;
+            popup.okButton.disabled = disabled;
+            popup.okButton.style.opacity = disabled ? '0.5' : '';
+            popup.okButton.title = !hasLorebook
+                ? 'Assign a lorebook before running consolidation'
+                : locked
+                    ? `Need at least ${requiredMin} selected ${String(config.sourcePlural || 'source entries').toLowerCase()}`
+                    : '';
         }
     };
     const refreshPresetOptions = (selectedKey = null) => {
@@ -1276,6 +1313,10 @@ export function showFailedSummaryResponsePopup(error, { onApply } = {}) {
     });
 
     const dlg = popup.dlg;
+    const applyButton = dlg.querySelector('#stmb-summary-apply-corrected-raw');
+    const closeButton = dlg.querySelector('.popup_button_cancel');
+    let isApplying = false;
+
     dlg.querySelector('#stmb-summary-copy-raw')?.addEventListener('click', async () => {
         try {
             await navigator.clipboard.writeText(rawResponse);
@@ -1315,12 +1356,18 @@ export function showFailedSummaryResponsePopup(error, { onApply } = {}) {
         }
         toastr.success('Filled JSON from fields', 'STMB');
     });
-    dlg.querySelector('#stmb-summary-apply-corrected-raw')?.addEventListener('click', async () => {
-        if (!canApply) {
+    applyButton?.addEventListener('click', async () => {
+        if (!canApply || isApplying) {
             return;
         }
 
         const correctedRaw = String(dlg.querySelector('#stmb-summary-corrected-raw')?.value ?? rawResponse);
+        isApplying = true;
+        applyButton.disabled = true;
+        if (closeButton) {
+            closeButton.disabled = true;
+        }
+
         try {
             const applied = await onApply(correctedRaw);
             if (!applied) {
@@ -1331,6 +1378,14 @@ export function showFailedSummaryResponsePopup(error, { onApply } = {}) {
         } catch (applyError) {
             console.error('STMB manual summary repair failed', applyError);
             toastr.error(String(applyError?.message || 'Failed to create summary from corrected JSON'), 'STMB');
+        } finally {
+            if (popup.dlg?.open) {
+                isApplying = false;
+                applyButton.disabled = !canApply;
+                if (closeButton) {
+                    closeButton.disabled = false;
+                }
+            }
         }
     });
 
