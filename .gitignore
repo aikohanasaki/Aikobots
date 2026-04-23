@@ -11,7 +11,7 @@
 /public/error/
 /node_modules/
 /plugins/
-/stmb-reference/
+/tests/node_modules/
 *.code-workspace
 *.jsonl
 config.yaml
