@@ -123,6 +123,35 @@ function normalizeInternalImageUrl(url) {
     return isRemoteUrl(normalizedUrl) ? '' : normalizedUrl;
 }
 
+function isLikelyImageUrl(url) {
+    const normalizedUrl = String(url || '').trim();
+    if (!normalizedUrl) {
+        return false;
+    }
+
+    if (normalizeInternalImageUrl(normalizedUrl)) {
+        return true;
+    }
+
+    try {
+        const parsedUrl = new URL(normalizedUrl, window.location.origin);
+        return /\.(?:avif|bmp|gif|jpe?g|png|svg|webp)$/i.test(parsedUrl.pathname);
+    } catch {
+        return /\.(?:avif|bmp|gif|jpe?g|png|svg|webp)(?:[?#]|$)/i.test(normalizedUrl);
+    }
+}
+
+function insertTextIntoTextarea(textarea, text, start = textarea.selectionStart, end = textarea.selectionEnd) {
+    if (!(textarea instanceof HTMLTextAreaElement)) {
+        return;
+    }
+
+    const normalizedStart = clamp(Number(start), 0, textarea.value.length);
+    const normalizedEnd = clamp(Number(end), normalizedStart, textarea.value.length);
+    textarea.setRangeText(String(text || ''), normalizedStart, normalizedEnd, 'end');
+    textarea.dispatchEvent(new Event('input', { bubbles: true }));
+}
+
 function getMediaContentUrl(mediaId) {
     return mediaId ? `/api/media/${encodeURIComponent(mediaId)}/content` : '';
 }
@@ -2810,31 +2839,42 @@ export function initChatUtilities() {
 
     document.getElementById('send_textarea').addEventListener('paste', async function (event) {
         if (event.clipboardData.files.length === 0) {
-            const pastedText = String(event.clipboardData.getData('text/plain') || '').trim();
+            const clipboardText = String(event.clipboardData.getData('text/plain') || '');
+            const pastedText = clipboardText.trim();
             if (!/^https?:\/\/\S+$/i.test(pastedText)) {
                 return;
             }
 
+            if (!isLikelyImageUrl(pastedText)) {
+                return;
+            }
+
+            const selectionStart = this.selectionStart;
+            const selectionEnd = this.selectionEnd;
             event.preventDefault();
             event.stopPropagation();
 
-            const attachment = await createImageAttachmentFromUrl(pastedText, {
-                title: pastedText,
-                source: MEDIA_SOURCE.UPLOAD,
-                unavailableOnFailure: true,
-            });
+            let attachment;
+            try {
+                attachment = await createImageAttachmentFromUrl(pastedText, {
+                    title: pastedText,
+                    source: MEDIA_SOURCE.UPLOAD,
+                });
+            } catch (error) {
+                console.warn('Could not attach pasted image URL', error);
+                insertTextIntoTextarea(this, clipboardText, selectionStart, selectionEnd);
+                toastr.warning(t`Could not attach pasted image URL. Pasted as text instead.`, t`Image unavailable`);
+                return;
+            }
 
             if (!attachment) {
+                insertTextIntoTextarea(this, clipboardText, selectionStart, selectionEnd);
                 return;
             }
 
             pendingImageAttachments.push(attachment);
             updateFileFormUi();
             registerFileFormResetOnChatChange();
-
-            if (attachment.status === 'unavailable') {
-                toastr.warning(attachment.error || t`Failed to ingest remote image. It will be skipped during generation.`, t`Image unavailable`);
-            }
             return;
         }
 
