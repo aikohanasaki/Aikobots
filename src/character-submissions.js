@@ -13,6 +13,7 @@ import { getSharedCharacterKeyForFilePath } from './character-sharing-repository
 import { invalidateThumbnail } from './endpoints/thumbnails.js';
 import { getAllEnabledUsers, getUserDirectories } from './users.js';
 import { FAVORITES_FILE, clearCharacterFavoriteState, getCharacterFavorite, getLegacyCharacterFavoriteState } from './favorites-repository.js';
+import { withDirectoryLock } from './file-system-lock.js';
 
 export const SUBMISSION_STATUSES = Object.freeze({
     PENDING: 'pending',
@@ -49,6 +50,7 @@ const DEFAULT_CONTENT_INDEX_LOCK_SUFFIX = '.lock';
 const DEFAULT_CONTENT_INDEX_LOCK_RETRY_MS = 50;
 const DEFAULT_CONTENT_INDEX_LOCK_TIMEOUT_MS = 10_000;
 const DEFAULT_CONTENT_INDEX_LOCK_STALE_MS = 60_000;
+const DEFAULT_CONTENT_INDEX_LOCK_HEARTBEAT_MS = 15_000;
 let defaultContentIndexWriteQueue = Promise.resolve();
 
 /**
@@ -58,87 +60,20 @@ let defaultContentIndexWriteQueue = Promise.resolve();
  * @returns {Promise<T>}
  */
 function runWithDefaultContentIndexLock(operation) {
-    const queuedOperation = defaultContentIndexWriteQueue.catch(() => { }).then(async () => {
-        const release = acquireDefaultContentIndexWriteLock();
-
-        try {
-            return await operation();
-        } finally {
-            release();
-        }
-    });
+    const queuedOperation = defaultContentIndexWriteQueue.catch(() => { }).then(() => withDirectoryLock({
+        lockPath: getDefaultContentIndexLockPath(),
+        retryMs: DEFAULT_CONTENT_INDEX_LOCK_RETRY_MS,
+        timeoutMs: DEFAULT_CONTENT_INDEX_LOCK_TIMEOUT_MS,
+        staleMs: DEFAULT_CONTENT_INDEX_LOCK_STALE_MS,
+        heartbeatMs: DEFAULT_CONTENT_INDEX_LOCK_HEARTBEAT_MS,
+        timeoutMessage: 'Timed out waiting to update the default content index.',
+    }, operation));
     defaultContentIndexWriteQueue = queuedOperation.catch(() => { });
     return queuedOperation;
 }
 
 function getDefaultContentIndexLockPath() {
     return `${DEFAULT_CONTENT_INDEX}${DEFAULT_CONTENT_INDEX_LOCK_SUFFIX}`;
-}
-
-function sleepSync(ms) {
-    if (ms <= 0) {
-        return;
-    }
-
-    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
-}
-
-function isDefaultContentIndexLockStale(lockPath) {
-    try {
-        const stats = fs.statSync(lockPath);
-        return Date.now() - stats.mtimeMs > DEFAULT_CONTENT_INDEX_LOCK_STALE_MS;
-    } catch (error) {
-        if (error?.code === 'ENOENT') {
-            return false;
-        }
-
-        throw error;
-    }
-}
-
-function removeDefaultContentIndexLock(lockPath) {
-    try {
-        fs.rmdirSync(lockPath);
-    } catch (error) {
-        if (error?.code === 'ENOENT') {
-            return;
-        }
-
-        if (error?.code === 'ENOTEMPTY') {
-            fs.rmSync(lockPath, { recursive: true, force: false });
-            return;
-        }
-
-        throw error;
-    }
-}
-
-function acquireDefaultContentIndexWriteLock() {
-    const lockPath = getDefaultContentIndexLockPath();
-    fs.mkdirSync(path.dirname(lockPath), { recursive: true });
-    const deadline = Date.now() + DEFAULT_CONTENT_INDEX_LOCK_TIMEOUT_MS;
-
-    while (true) {
-        try {
-            fs.mkdirSync(lockPath);
-            return () => removeDefaultContentIndexLock(lockPath);
-        } catch (error) {
-            if (error?.code !== 'EEXIST') {
-                throw error;
-            }
-
-            if (isDefaultContentIndexLockStale(lockPath)) {
-                removeDefaultContentIndexLock(lockPath);
-                continue;
-            }
-
-            if (Date.now() >= deadline) {
-                throw new Error('Timed out waiting to update the default content index.');
-            }
-
-            sleepSync(DEFAULT_CONTENT_INDEX_LOCK_RETRY_MS);
-        }
-    }
 }
 
 /**
