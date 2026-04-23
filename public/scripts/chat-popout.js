@@ -1,4 +1,4 @@
-import { characters, chat, getRequestHeaders, getCurrentChatId, renderDetachedMessage, this_chid } from '../script.js';
+import { characters, getRequestHeaders, getCurrentChatId, renderDetachedMessage, this_chid } from '../script.js';
 import { selected_group } from './group-chats.js';
 
 const READER_BATCH_SIZE = 50;
@@ -77,21 +77,8 @@ async function renderReaderChunkHtml(messages = [], loadedRangeStart = 0) {
 
     for (let index = 0; index < messages.length; index++) {
         const absoluteId = loadedRangeStart + index;
-        const existingMessage = chat[absoluteId];
-        const insertedTemporaryMessage = !existingMessage;
-
-        try {
-            if (insertedTemporaryMessage) {
-                chat[absoluteId] = messages[index];
-            }
-
-            const rendered = renderDetachedMessage(messages[index], absoluteId);
-            htmlParts.push(rendered.prop('outerHTML'));
-        } finally {
-            if (insertedTemporaryMessage) {
-                delete chat[absoluteId];
-            }
-        }
+        const rendered = renderDetachedMessage(messages[index], absoluteId);
+        htmlParts.push(rendered.prop('outerHTML'));
     }
 
     return htmlParts.join('');

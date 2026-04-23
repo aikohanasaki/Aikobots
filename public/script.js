@@ -9777,8 +9777,8 @@ export function renderDetachedMessage(mes, messageId) {
     addCopyToCodeBlocks(messageElement);
 
     if (!params.isUser && messageId !== 0 && messageId !== chat.length - 1) {
-        const swipesNum = chat[messageId]?.swipes?.length;
-        const swipeId = (chat[messageId]?.swipe_id ?? 0) + 1;
+        const swipesNum = mes?.swipes?.length;
+        const swipeId = (mes?.swipe_id ?? 0) + 1;
         if (swipesNum) {
             messageElement.find('.swipes-counter').text(formatSwipeCounter(swipeId, swipesNum));
         }
