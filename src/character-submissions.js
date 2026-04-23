@@ -12,7 +12,7 @@ import { getCharacterOwnerHandles, getCharacterSharedKey, validateSubmittedChara
 import { getSharedCharacterKeyForFilePath } from './character-sharing-repository.js';
 import { invalidateThumbnail } from './endpoints/thumbnails.js';
 import { getAllEnabledUsers, getUserDirectories } from './users.js';
-import { clearCharacterFavoriteState, getCharacterFavorite, getLegacyCharacterFavoriteState } from './favorites-repository.js';
+import { FAVORITES_FILE, clearCharacterFavoriteState, getCharacterFavorite, getLegacyCharacterFavoriteState } from './favorites-repository.js';
 
 export const SUBMISSION_STATUSES = Object.freeze({
     PENDING: 'pending',
@@ -356,6 +356,79 @@ async function removeSubmissionOwnerDirectoryIfEmpty(directoryPath) {
 
         throw error;
     }
+}
+
+/**
+ * Captures a file's current state so a failed distribution can be compensated.
+ * @param {string} filePath
+ * @returns {Promise<{ filePath: string, exists: boolean, buffer: Buffer | null }>}
+ */
+async function snapshotFile(filePath) {
+    try {
+        return {
+            filePath,
+            exists: true,
+            buffer: await fsPromises.readFile(filePath),
+        };
+    } catch (error) {
+        if (error?.code === 'ENOENT') {
+            return {
+                filePath,
+                exists: false,
+                buffer: null,
+            };
+        }
+
+        throw error;
+    }
+}
+
+/**
+ * Restores a previously captured file state.
+ * @param {{ filePath: string, exists: boolean, buffer: Buffer | null }} snapshot
+ * @returns {Promise<void>}
+ */
+async function restoreFileSnapshot(snapshot) {
+    if (snapshot.exists) {
+        await fsPromises.mkdir(path.dirname(snapshot.filePath), { recursive: true });
+        await writeFileAtomic(snapshot.filePath, snapshot.buffer);
+        return;
+    }
+
+    await fsPromises.rm(snapshot.filePath, { force: true });
+}
+
+/**
+ * Executes compensation actions in reverse order while preserving the original error.
+ * @param {(() => Promise<void>)[]} rollbackActions
+ * @returns {Promise<void>}
+ */
+async function rollbackDistributionChanges(rollbackActions) {
+    for (const rollback of rollbackActions.reverse()) {
+        try {
+            await rollback();
+        } catch (error) {
+            console.warn('Failed to roll back character distribution side effect.', error);
+        }
+    }
+}
+
+/**
+ * Restores a distribution policy to its prior effective state.
+ * @param {object} policy
+ * @param {string} fallbackUpdatedBy
+ * @returns {Promise<void>}
+ */
+async function restoreDistributionPolicy(policy, fallbackUpdatedBy) {
+    await setCharacterDistributionPolicy({
+        ownerHandle: policy.ownerHandle,
+        characterKey: policy.characterKey,
+        publishedFilename: policy.publishedFilename,
+        blacklistHandles: policy.adminBlacklistHandles,
+        userBlacklistHandles: policy.userBlacklistHandles,
+        whitelistHandles: policy.whitelistHandles,
+        updatedBy: policy.updatedBy || fallbackUpdatedBy,
+    });
 }
 
 /**
@@ -776,23 +849,29 @@ async function prepareCharacterCardForDistribution(sourcePath) {
  * Persists owner metadata to a source character card when it is missing.
  * Used by direct admin distribution so pushed characters carry an owner forward.
  * @param {{ filePath: string, ownerHandle?: string }} params
- * @returns {Promise<void>}
+ * @returns {Promise<{ filePath: string, exists: boolean, buffer: Buffer | null } | null>}
  */
 async function persistCharacterOwnerIfMissing({ filePath, ownerHandle = '' }) {
     const normalizedOwnerHandle = String(ownerHandle || '').trim();
     if (!normalizedOwnerHandle) {
-        return;
+        return null;
     }
 
     const { rawBuffer, card } = await readCharacterCardFile(filePath);
     const existingOwnerHandle = getSubmissionOwnerHandle(card);
 
     if (existingOwnerHandle) {
-        return;
+        return null;
     }
 
+    const snapshot = {
+        filePath,
+        exists: true,
+        buffer: rawBuffer,
+    };
     setCharacterOwnerHandle(card, normalizedOwnerHandle);
     await writeCharacterCardFile(rawBuffer, card, filePath);
+    return snapshot;
 }
 
 /**
@@ -815,16 +894,6 @@ async function writePreparedCharacterCard(preparedCard, destinationPath) {
  */
 async function copyPreparedCharacterCard(preparedCard, destinationPath) {
     await writePreparedCharacterCard(preparedCard, destinationPath);
-}
-
-/**
- * Creates the destination card used for global/selected distribution.
- * @param {string} sourcePath
- * @returns {Promise<{ rawBuffer: Buffer, card: object }>}
- */
-async function buildDistributionPayload(sourcePath, { sourceOwnerHandle = '' } = {}) {
-    await persistCharacterOwnerIfMissing({ filePath: sourcePath, ownerHandle: sourceOwnerHandle });
-    return await prepareCharacterCardForDistribution(sourcePath);
 }
 
 /**
@@ -1165,93 +1234,127 @@ export async function distributeCharacterFile({
         throw new Error('Character source file was not found.');
     }
 
+    /** @type {(() => Promise<void>)[]} */
+    const rollbackActions = [];
     const sourceName = normalizeCharacterFileName(publishedFilename, path.parse(sourcePath).name);
     const outputFilename = `${sourceName}.png`;
-    const distributionPayload = await buildDistributionPayload(sourcePath, { sourceOwnerHandle });
-    const resolvedOwnerHandle = getSubmissionOwnerHandle(distributionPayload.card) || String(sourceOwnerHandle || actingUserHandle || '').trim();
-    const resolvedCharacterKey = getCharacterSharedKey(distributionPayload.card) || getSharedCharacterKeyForFilePath(sourcePath);
-    let distributionPolicy = await getCharacterDistributionPolicy({
-        ownerHandle: resolvedOwnerHandle,
-        characterKey: resolvedCharacterKey,
-        publishedFilename: sourceName,
-    });
 
-    /** @type {string[]} */
-    let recipients = [];
-    /** @type {string[]} */
-    let skippedHandles = [];
-    if (publishMode === PUBLISH_MODES.GLOBAL) {
-        const nextBlacklistHandles = typeof applyBlacklist === 'boolean'
-            ? await validateDistributionHandles(blacklistHandles, actingUserHandle)
-            : undefined;
+    try {
+        const sourceSnapshot = await persistCharacterOwnerIfMissing({ filePath: sourcePath, ownerHandle: sourceOwnerHandle });
+        if (sourceSnapshot) {
+            rollbackActions.push(() => restoreFileSnapshot(sourceSnapshot));
+        }
 
-        if (typeof applyBlacklist === 'boolean') {
-            distributionPolicy = await setCharacterDistributionPolicy({
-                ownerHandle: resolvedOwnerHandle,
-                characterKey: resolvedCharacterKey,
-                publishedFilename: sourceName,
-                blacklistHandles: applyBlacklist ? nextBlacklistHandles : [],
-                updatedBy: actingUserHandle,
+        const distributionPayload = await prepareCharacterCardForDistribution(sourcePath);
+        const resolvedOwnerHandle = getSubmissionOwnerHandle(distributionPayload.card) || String(sourceOwnerHandle || actingUserHandle || '').trim();
+        const resolvedCharacterKey = getCharacterSharedKey(distributionPayload.card) || getSharedCharacterKeyForFilePath(sourcePath);
+        let distributionPolicy = await getCharacterDistributionPolicy({
+            ownerHandle: resolvedOwnerHandle,
+            characterKey: resolvedCharacterKey,
+            publishedFilename: sourceName,
+        });
+
+        /** @type {string[]} */
+        let recipients = [];
+        /** @type {string[]} */
+        let skippedHandles = [];
+        if (publishMode === PUBLISH_MODES.GLOBAL) {
+            const nextBlacklistHandles = typeof applyBlacklist === 'boolean'
+                ? await validateDistributionHandles(blacklistHandles, actingUserHandle)
+                : undefined;
+
+            if (typeof applyBlacklist === 'boolean') {
+                const previousDistributionPolicy = distributionPolicy;
+                distributionPolicy = await setCharacterDistributionPolicy({
+                    ownerHandle: resolvedOwnerHandle,
+                    characterKey: resolvedCharacterKey,
+                    publishedFilename: sourceName,
+                    blacklistHandles: applyBlacklist ? nextBlacklistHandles : [],
+                    updatedBy: actingUserHandle,
+                });
+                rollbackActions.push(() => restoreDistributionPolicy(previousDistributionPolicy, actingUserHandle));
+            }
+
+            recipients = await getEnabledPublishTargets(actingUserHandle);
+            if (distributionPolicy.blacklistHandles.length > 0) {
+                const blacklist = new Set(distributionPolicy.blacklistHandles);
+                skippedHandles = recipients.filter(handle => blacklist.has(handle));
+                recipients = recipients.filter(handle => !blacklist.has(handle));
+            }
+        } else if (publishMode === PUBLISH_MODES.SELECTED) {
+            recipients = await validateSelectedTargets(targetHandles, actingUserHandle);
+
+            if (typeof persistWhitelist === 'boolean') {
+                const previousDistributionPolicy = distributionPolicy;
+                distributionPolicy = await setCharacterDistributionPolicy({
+                    ownerHandle: resolvedOwnerHandle,
+                    characterKey: resolvedCharacterKey,
+                    publishedFilename: sourceName,
+                    whitelistHandles: persistWhitelist
+                        ? (Array.isArray(whitelistHandles) && whitelistHandles.length > 0
+                            ? await validateDistributionHandles(whitelistHandles, actingUserHandle)
+                            : recipients)
+                        : [],
+                    updatedBy: actingUserHandle,
+                });
+                rollbackActions.push(() => restoreDistributionPolicy(previousDistributionPolicy, actingUserHandle));
+            }
+        } else {
+            throw new Error('Invalid publish mode.');
+        }
+
+        for (const handle of recipients) {
+            const directories = getUserDirectories(handle);
+            const destinationPath = path.join(directories.characters, outputFilename);
+
+            if (path.resolve(sourcePath) === path.resolve(destinationPath)) {
+                continue;
+            }
+
+            const destinationSnapshot = await snapshotFile(destinationPath);
+            rollbackActions.push(async () => {
+                await restoreFileSnapshot(destinationSnapshot);
+                invalidateThumbnail(directories, 'avatar', outputFilename);
             });
+
+            if (fs.existsSync(destinationPath)) {
+                const favoritesPath = path.join(directories.root, FAVORITES_FILE);
+                const favoritesSnapshot = await snapshotFile(favoritesPath);
+                rollbackActions.push(() => restoreFileSnapshot(favoritesSnapshot));
+
+                const { card } = await readCharacterCardFile(destinationPath);
+                getCharacterFavorite(directories, {
+                    avatar: outputFilename,
+                    sharedCharacterKey: resolvedCharacterKey,
+                    legacyFavorite: getLegacyCharacterFavoriteState(card),
+                });
+            }
+
+            await copyPreparedCharacterCard(distributionPayload, destinationPath);
+            invalidateThumbnail(directories, 'avatar', outputFilename);
         }
 
-        recipients = await getEnabledPublishTargets(actingUserHandle);
-        if (distributionPolicy.blacklistHandles.length > 0) {
-            const blacklist = new Set(distributionPolicy.blacklistHandles);
-            skippedHandles = recipients.filter(handle => blacklist.has(handle));
-            recipients = recipients.filter(handle => !blacklist.has(handle));
-        }
-    } else if (publishMode === PUBLISH_MODES.SELECTED) {
-        recipients = await validateSelectedTargets(targetHandles, actingUserHandle);
+        if (publishMode === PUBLISH_MODES.GLOBAL) {
+            const defaultContentPath = path.join(DEFAULT_CONTENT_ROOT, 'characters', outputFilename);
+            const defaultContentSnapshot = await snapshotFile(defaultContentPath);
+            rollbackActions.push(() => restoreFileSnapshot(defaultContentSnapshot));
 
-        if (typeof persistWhitelist === 'boolean') {
-            distributionPolicy = await setCharacterDistributionPolicy({
-                ownerHandle: resolvedOwnerHandle,
-                characterKey: resolvedCharacterKey,
-                publishedFilename: sourceName,
-                whitelistHandles: persistWhitelist
-                    ? (Array.isArray(whitelistHandles) && whitelistHandles.length > 0
-                        ? await validateDistributionHandles(whitelistHandles, actingUserHandle)
-                        : recipients)
-                    : [],
-                updatedBy: actingUserHandle,
-            });
+            await copyPreparedCharacterCard(distributionPayload, defaultContentPath);
+
+            const defaultContentIndexSnapshot = await snapshotFile(DEFAULT_CONTENT_INDEX);
+            rollbackActions.push(() => runWithDefaultContentIndexLock(() => restoreFileSnapshot(defaultContentIndexSnapshot)));
+
+            await upsertDefaultContentCharacter(path.join('characters', outputFilename).replaceAll('\\', '/'));
         }
-    } else {
-        throw new Error('Invalid publish mode.');
+
+        return {
+            publishedFilename: outputFilename,
+            targetHandles: recipients,
+            skippedHandles,
+            distributionPolicy,
+        };
+    } catch (error) {
+        await rollbackDistributionChanges(rollbackActions);
+        throw error;
     }
-
-    for (const handle of recipients) {
-        const directories = getUserDirectories(handle);
-        const destinationPath = path.join(directories.characters, outputFilename);
-
-        if (path.resolve(sourcePath) === path.resolve(destinationPath)) {
-            continue;
-        }
-
-        if (fs.existsSync(destinationPath)) {
-            const { card } = await readCharacterCardFile(destinationPath);
-            getCharacterFavorite(directories, {
-                avatar: outputFilename,
-                sharedCharacterKey: resolvedCharacterKey,
-                legacyFavorite: getLegacyCharacterFavoriteState(card),
-            });
-        }
-
-        await copyPreparedCharacterCard(distributionPayload, destinationPath);
-        invalidateThumbnail(directories, 'avatar', outputFilename);
-    }
-
-    if (publishMode === PUBLISH_MODES.GLOBAL) {
-        const defaultContentPath = path.join(DEFAULT_CONTENT_ROOT, 'characters', outputFilename);
-        await copyPreparedCharacterCard(distributionPayload, defaultContentPath);
-        await upsertDefaultContentCharacter(path.join('characters', outputFilename).replaceAll('\\', '/'));
-    }
-
-    return {
-        publishedFilename: outputFilename,
-        targetHandles: recipients,
-        skippedHandles,
-        distributionPolicy,
-    };
 }
