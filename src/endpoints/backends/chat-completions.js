@@ -97,6 +97,58 @@ const STREAM_HEARTBEAT_INTERVAL_MS = 15000;
 
 // blocked due to site policy, unblocking august 2026
 const BLOCKED_CUSTOM_ENDPOINT_HOSTNAME = 'voidai.app';
+const REQUEST_SOCKET_ABORT_CLEANUPS = Symbol('requestSocketAbortCleanups');
+
+function removeEmitterListener(emitter, eventName, listener) {
+    if (typeof emitter?.off === 'function') {
+        emitter.off(eventName, listener);
+        return;
+    }
+
+    if (typeof emitter?.removeListener === 'function') {
+        emitter.removeListener(eventName, listener);
+    }
+}
+
+function cleanupRequestSocketAbortListeners(request) {
+    const cleanups = request?.[REQUEST_SOCKET_ABORT_CLEANUPS];
+
+    if (!Array.isArray(cleanups)) {
+        return;
+    }
+
+    while (cleanups.length) {
+        cleanups.pop()?.();
+    }
+}
+
+function bindAbortControllerToRequestSocket(request, controller) {
+    if (typeof request?.socket?.on !== 'function') {
+        return;
+    }
+
+    const socket = request.socket;
+    const onClose = () => controller.abort();
+    let cleanedUp = false;
+    const cleanup = () => {
+        if (cleanedUp) {
+            return;
+        }
+
+        cleanedUp = true;
+        removeEmitterListener(socket, 'close', onClose);
+        controller.signal.removeEventListener('abort', cleanup);
+    };
+
+    socket.on('close', onClose);
+    controller.signal.addEventListener('abort', cleanup, { once: true });
+
+    if (!Array.isArray(request[REQUEST_SOCKET_ABORT_CLEANUPS])) {
+        request[REQUEST_SOCKET_ABORT_CLEANUPS] = [];
+    }
+
+    request[REQUEST_SOCKET_ABORT_CLEANUPS].push(cleanup);
+}
 
 /**
  * @param {string} hostname
@@ -926,44 +978,48 @@ async function sendProviderDispatchResult(result, request, response, {
     worldInfo = null,
     promptSnapshotKey = null,
 } = {}) {
-    if (!result || typeof result !== 'object') {
-        return response.status(500).send({ error: true });
-    }
-
-    if (result.kind === 'stream') {
-        if (!result.response) {
+    try {
+        if (!result || typeof result !== 'object') {
             return response.status(500).send({ error: true });
         }
 
-        if (!result.ok) {
-            const sanitizedError = await buildSanitizedErrorResponse(result.response, { request });
-            return response.status(sanitizedError.status).send(sanitizedError.body);
+        if (result.kind === 'stream') {
+            if (!result.response) {
+                return response.status(500).send({ error: true });
+            }
+
+            if (!result.ok) {
+                const sanitizedError = await buildSanitizedErrorResponse(result.response, { request });
+                return response.status(sanitizedError.status).send(sanitizedError.body);
+            }
+
+            return await forwardFetchResponseWithWorldInfo(
+                result.response,
+                response,
+                request,
+                timedWorldInfo,
+                worldInfoOverflowed,
+                worldInfo,
+                promptSnapshotKey,
+            );
         }
 
-        return await forwardFetchResponseWithWorldInfo(
-            result.response,
-            response,
-            request,
-            timedWorldInfo,
-            worldInfoOverflowed,
-            worldInfo,
-            promptSnapshotKey,
-        );
+        if (result.kind !== 'json') {
+            return response.status(500).send({ error: true });
+        }
+
+        const payload = result.ok
+            ? attachWorldInfoResponseData(result.body, request, timedWorldInfo, worldInfoOverflowed, worldInfo, promptSnapshotKey)
+            : annotateErrorPayload(result.body, {
+                request,
+                stage: 'provider_response',
+                retryable: isRetryableStatus(result.status || 500),
+            });
+
+        return response.status(result.status || 200).send(payload);
+    } finally {
+        cleanupRequestSocketAbortListeners(request);
     }
-
-    if (result.kind !== 'json') {
-        return response.status(500).send({ error: true });
-    }
-
-    const payload = result.ok
-        ? attachWorldInfoResponseData(result.body, request, timedWorldInfo, worldInfoOverflowed, worldInfo, promptSnapshotKey)
-        : annotateErrorPayload(result.body, {
-            request,
-            stage: 'provider_response',
-            retryable: isRetryableStatus(result.status || 500),
-        });
-
-    return response.status(result.status || 200).send(payload);
 }
 
 /**
@@ -989,10 +1045,7 @@ async function sendClaudeRequest(request) {
 
     try {
         const controller = new AbortController();
-        request.socket.removeAllListeners('close');
-        request.socket.on('close', function () {
-            controller.abort();
-        });
+        bindAbortControllerToRequestSocket(request, controller);
         const additionalHeaders = {};
         const betaHeaders = ['output-128k-2025-02-19', 'context-1m-2025-08-07'];
         const useTools = Array.isArray(request.body.tools) && request.body.tools.length > 0;
@@ -1320,10 +1373,7 @@ async function sendMakerSuiteRequest(request) {
 
     try {
         const controller = new AbortController();
-        request.socket.removeAllListeners('close');
-        request.socket.on('close', function () {
-            controller.abort();
-        });
+        bindAbortControllerToRequestSocket(request, controller);
 
         const apiVersion = getConfigValue('gemini.apiVersion', 'v1beta');
         const responseType = (stream ? 'streamGenerateContent' : 'generateContent');
@@ -1443,10 +1493,7 @@ async function sendAI21Request(request) {
 
     const bodyParams = {};
     const controller = new AbortController();
-    request.socket.removeAllListeners('close');
-    request.socket.on('close', function () {
-        controller.abort();
-    });
+    bindAbortControllerToRequestSocket(request, controller);
     // Hack to support JSON schema
     if (request.body.json_schema) {
         bodyParams.response_format = {
@@ -1517,10 +1564,7 @@ async function sendMistralAIRequest(request) {
     try {
         const messages = convertMistralMessages(request.body.messages, getPromptNames(request));
         const controller = new AbortController();
-        request.socket.removeAllListeners('close');
-        request.socket.on('close', function () {
-            controller.abort();
-        });
+        bindAbortControllerToRequestSocket(request, controller);
 
         const requestBody = {
             'model': request.body.model,
@@ -1590,10 +1634,7 @@ async function sendMistralAIRequest(request) {
 async function sendCohereRequest(request) {
     const apiKey = readSecret(request.user.directories, SECRET_KEYS.COHERE);
     const controller = new AbortController();
-    request.socket.removeAllListeners('close');
-    request.socket.on('close', function () {
-        controller.abort();
-    });
+    bindAbortControllerToRequestSocket(request, controller);
 
     if (!apiKey) {
         console.warn('Cohere API key is missing.');
@@ -1689,10 +1730,7 @@ async function sendDeepSeekRequest(request) {
     }
 
     const controller = new AbortController();
-    request.socket.removeAllListeners('close');
-    request.socket.on('close', function () {
-        controller.abort();
-    });
+    bindAbortControllerToRequestSocket(request, controller);
 
     try {
         let bodyParams = {};
@@ -1787,10 +1825,7 @@ async function sendXaiRequest(request) {
     }
 
     const controller = new AbortController();
-    request.socket.removeAllListeners('close');
-    request.socket.on('close', function () {
-        controller.abort();
-    });
+    bindAbortControllerToRequestSocket(request, controller);
 
     try {
         let bodyParams = {};
@@ -1896,10 +1931,7 @@ async function sendAimlapiRequest(request) {
     }
 
     const controller = new AbortController();
-    request.socket.removeAllListeners('close');
-    request.socket.on('close', function () {
-        controller.abort();
-    });
+    bindAbortControllerToRequestSocket(request, controller);
 
     try {
         let bodyParams = {};
@@ -1993,10 +2025,7 @@ async function sendElectronHubRequest(request) {
     }
 
     const controller = new AbortController();
-    request.socket.removeAllListeners('close');
-    request.socket.on('close', function () {
-        controller.abort();
-    });
+    bindAbortControllerToRequestSocket(request, controller);
 
     try {
         let bodyParams = {};
@@ -2127,8 +2156,7 @@ async function sendAzureOpenAIRequest(request) {
         : undefined;
 
     const controller = new AbortController();
-    request.socket.removeAllListeners('close');
-    request.socket.on('close', () => controller.abort());
+    bindAbortControllerToRequestSocket(request, controller);
 
     const config = {
         method: 'POST',
@@ -2977,6 +3005,7 @@ async function forwardFetchResponseWithWorldInfo(from, to, request, timedWorldIn
 
     writeWorldInfoSseEvent(to, request, timedWorldInfo, worldInfoOverflowed, worldInfo, promptSnapshotKey);
     const heartbeat = startStreamHeartbeat(to);
+    const responseSocket = to.socket;
 
     const decoder = new TextDecoder();
     let buffer = '';
@@ -2989,14 +3018,16 @@ async function forwardFetchResponseWithWorldInfo(from, to, request, timedWorldIn
         to.write(`${eventBlock}\n\n`);
     };
 
-    to.socket.on('close', function () {
+    const onSocketClose = function () {
         stopStreamHeartbeat(heartbeat);
         from.body.once?.('error', () => {});
         from.body.destroy?.();
         if (!to.writableEnded) {
             to.end();
         }
-    });
+    };
+
+    responseSocket.on('close', onSocketClose);
 
     try {
         for await (const chunk of from.body) {
@@ -3016,13 +3047,11 @@ async function forwardFetchResponseWithWorldInfo(from, to, request, timedWorldIn
         }
 
         console.info('Streaming request finished');
-        stopStreamHeartbeat(heartbeat);
-        if (!to.writableEnded) {
-            to.end();
-        }
     } catch (error) {
         console.error('Streaming request failed', error);
+    } finally {
         stopStreamHeartbeat(heartbeat);
+        removeEmitterListener(responseSocket, 'close', onSocketClose);
         if (!to.writableEnded) {
             to.end();
         }
@@ -3888,10 +3917,7 @@ export async function handleChatCompletionsGenerate(request, response) {
     }
 
     const controller = new AbortController();
-    request.socket.removeAllListeners('close');
-    request.socket.on('close', function () {
-        controller.abort();
-    });
+    bindAbortControllerToRequestSocket(request, controller);
 
     if (Array.isArray(request.body.tools) && request.body.tools.length > 0) {
         bodyParams['tools'] = request.body.tools;
@@ -4066,6 +4092,7 @@ export async function handleChatCompletionsGenerate(request, response) {
         return await createSanitizedProviderErrorResult(errorResponse, request);
     }
     })().catch((error) => {
+        cleanupRequestSocketAbortListeners(request);
         if (request.requestId && !error?.requestId) {
             error.requestId = request.requestId;
         }
