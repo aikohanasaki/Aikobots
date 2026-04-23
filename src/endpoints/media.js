@@ -6,6 +6,7 @@ import express from 'express';
 
 import {
     deleteStoredMedia,
+    detectSupportedImageMimeTypeFromFile,
     getStoredMediaContentUrl,
     getStoredMediaRecord,
     ingestImageBuffer,
@@ -24,10 +25,6 @@ router.post('/ingest-image', async (request, response) => {
 
         if (!data) {
             return response.status(400).send({ error: 'No image data provided' });
-        }
-
-        if (!mimeType) {
-            return response.status(400).send({ error: 'No image MIME type provided' });
         }
 
         const record = await ingestImageBuffer(
@@ -80,7 +77,13 @@ router.get('/:mediaId/content', async (request, response) => {
             return response.sendStatus(404);
         }
 
-        response.setHeader('Content-Type', record.mimeType || 'application/octet-stream');
+        const mimeType = await detectSupportedImageMimeTypeFromFile(absolutePath);
+        if (!mimeType) {
+            return response.sendStatus(415);
+        }
+
+        response.setHeader('X-Content-Type-Options', 'nosniff');
+        response.setHeader('Content-Type', mimeType);
         await pipeline(fs.createReadStream(absolutePath), response);
         return;
     } catch (error) {

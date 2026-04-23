@@ -12,6 +12,16 @@ const MEDIA_INDEX_LOCK_RETRY_MS = 50;
 const MEDIA_INDEX_LOCK_TIMEOUT_MS = 10_000;
 const MEDIA_INDEX_LOCK_STALE_MS = 60_000;
 const MEDIA_FOLDER = 'media';
+const SUPPORTED_IMAGE_SIGNATURES = Object.freeze({
+    'image/png': Buffer.from([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A]),
+    'image/jpeg': Buffer.from([0xFF, 0xD8, 0xFF]),
+});
+const SUPPORTED_IMAGE_MIME_TYPES = new Set([
+    'image/png',
+    'image/jpeg',
+    'image/webp',
+    'image/gif',
+]);
 const mediaIndexMutationQueues = new Map();
 
 /**
@@ -165,8 +175,52 @@ function runWithMediaIndexLock(directories, operation) {
  */
 export function isSupportedImageMimeType(mimeType) {
     const normalizedMimeType = String(mimeType || '').toLowerCase();
-    const extension = mime.extension(normalizedMimeType);
-    return normalizedMimeType.startsWith('image/') && typeof extension === 'string' && extension.length > 0;
+    return SUPPORTED_IMAGE_MIME_TYPES.has(normalizedMimeType);
+}
+
+/**
+ * @param {Buffer | Uint8Array} buffer
+ * @returns {string}
+ */
+export function detectSupportedImageMimeType(buffer) {
+    const bytes = Buffer.isBuffer(buffer) ? buffer : Buffer.from(buffer || []);
+
+    for (const [mimeType, signature] of Object.entries(SUPPORTED_IMAGE_SIGNATURES)) {
+        if (bytes.length >= signature.length && bytes.subarray(0, signature.length).equals(signature)) {
+            return mimeType;
+        }
+    }
+
+    const gifHeader = bytes.subarray(0, 6).toString('ascii');
+    if (gifHeader === 'GIF87a' || gifHeader === 'GIF89a') {
+        return 'image/gif';
+    }
+
+    const isWebp = bytes.length >= 16
+        && bytes.subarray(0, 4).toString('ascii') === 'RIFF'
+        && bytes.subarray(8, 12).toString('ascii') === 'WEBP'
+        && ['VP8 ', 'VP8L', 'VP8X'].includes(bytes.subarray(12, 16).toString('ascii'));
+    if (isWebp) {
+        return 'image/webp';
+    }
+
+    return '';
+}
+
+/**
+ * @param {string} absolutePath
+ * @returns {Promise<string>}
+ */
+export async function detectSupportedImageMimeTypeFromFile(absolutePath) {
+    const fileHandle = await fs.promises.open(absolutePath, 'r');
+
+    try {
+        const header = Buffer.alloc(16);
+        const { bytesRead } = await fileHandle.read(header, 0, header.length, 0);
+        return detectSupportedImageMimeType(header.subarray(0, bytesRead));
+    } finally {
+        await fileHandle.close();
+    }
 }
 
 /**
@@ -262,14 +316,14 @@ export async function getStoredMediaRecord(directories, mediaId) {
 /**
  * @param {import('./users.js').UserDirectoryList} directories
  * @param {Buffer} buffer
- * @param {string} mimeType
+ * @param {string} _mimeType Client-supplied MIME type retained for caller compatibility.
  * @param {string} [originalFilename]
  * @param {string} [sourceUrl]
  * @returns {Promise<StoredMediaRecord>}
  */
-export async function ingestImageBuffer(directories, buffer, mimeType, originalFilename = '', sourceUrl = '') {
-    const normalizedMimeType = String(mimeType || '').toLowerCase();
-    if (!isSupportedImageMimeType(normalizedMimeType)) {
+export async function ingestImageBuffer(directories, buffer, _mimeType, originalFilename = '', sourceUrl = '') {
+    const normalizedMimeType = detectSupportedImageMimeType(buffer);
+    if (!normalizedMimeType) {
         throw new Error('Unsupported image MIME type');
     }
 
@@ -336,8 +390,8 @@ export async function registerExistingImageUrl(directories, url) {
             throw new Error('Image URL does not point to a file');
         }
 
-        const mimeType = String(mime.lookup(absolutePath) || '').toLowerCase();
-        if (!isSupportedImageMimeType(mimeType)) {
+        const mimeType = await detectSupportedImageMimeTypeFromFile(absolutePath);
+        if (!mimeType) {
             throw new Error('Existing file is not a supported image');
         }
 
@@ -345,7 +399,18 @@ export async function registerExistingImageUrl(directories, url) {
         const index = await readMediaIndex(directories);
         const existingRecord = Object.values(index).find(record => String(record.relativePath || '') === normalizedRelativePath);
         if (existingRecord) {
-            return normalizeStoredMediaRecord(directories, existingRecord);
+            const normalizedExistingRecord = normalizeStoredMediaRecord(directories, existingRecord);
+            if (normalizedExistingRecord.mimeType !== mimeType || normalizedExistingRecord.byteLength !== stats.size) {
+                index[normalizedExistingRecord.mediaId] = normalizeStoredMediaRecord(directories, {
+                    ...normalizedExistingRecord,
+                    mimeType,
+                    byteLength: stats.size,
+                });
+                await writeMediaIndex(directories, index);
+                return index[normalizedExistingRecord.mediaId];
+            }
+
+            return normalizedExistingRecord;
         }
 
         const record = normalizeStoredMediaRecord(directories, {

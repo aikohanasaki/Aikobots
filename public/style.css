@@ -878,7 +878,7 @@ hr {
 }
 
 #top_chat_bar {
-    height: var(--bottomFormBlockSize);
+    height: var(--topBarBlockSize);
     border-radius: 10px 10px 0 0;
 }
 
@@ -889,9 +889,8 @@ hr {
 }
 
 #top_chat_connection_profiles {
-    height: calc(var(--bottomFormBlockSize) * 0.75);
+    height: calc(var(--topBarBlockSize) * 0.75);
 }
-
 #top_chat_connection_profiles.visible {
     display: flex;
 }

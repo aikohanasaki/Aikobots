@@ -964,12 +964,19 @@ export function enqueueStmbJob(input = {}) {
 }
 
 export function getStmbJobStoreSnapshot(chatKey = null) {
+    const cloneStore = (store) => ({
+        queue: Array.isArray(store?.queue) ? store.queue.map(job => cloneJobForView(job)) : [],
+        runningJob: store?.runningJob ? cloneJobForView(store.runningJob) : null,
+        recentHistory: Array.isArray(store?.recentHistory) ? store.recentHistory.map(job => cloneJobForView(job)) : [],
+        lastUpdated: Number(store?.lastUpdated || 0),
+    });
+
     if (chatKey) {
-        return structuredClone(ensureChatStore(chatKey));
+        return cloneStore(ensureChatStore(chatKey));
     }
     const snapshot = {};
     for (const [key, store] of jobStores.entries()) {
-        snapshot[key] = structuredClone(store);
+        snapshot[key] = cloneStore(store);
     }
     return snapshot;
 }

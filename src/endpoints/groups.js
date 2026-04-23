@@ -31,6 +31,13 @@ const sanitizeGroupPayload = (group, { stripFavorite = true } = {}) => {
 
 const coerceFavoriteValue = (value) => value === true || value === 'true';
 
+const setAndFlushGroupFavorite = (directories, { id, value }) => {
+    const favoritesState = createFavoritesState(directories);
+    const favorite = setGroupFavorite(favoritesState, { id, value });
+    flushFavoritesState(favoritesState);
+    return favorite;
+};
+
 router.post('/all', (request, response) => {
     const favoritesState = createFavoritesState(request.user.directories);
     const groups = [];
@@ -118,8 +125,8 @@ router.post('/create', (request, response) => {
         fs.mkdirSync(request.user.directories.groups);
     }
 
+    groupMetadata.fav = setAndFlushGroupFavorite(request.user.directories, { id, value: requestedFavorite });
     writeFileAtomicSync(pathToFile, fileData);
-    groupMetadata.fav = setGroupFavorite(request.user.directories, { id, value: requestedFavorite });
     return response.send(groupMetadata);
 });
 
@@ -131,10 +138,10 @@ router.post('/edit', getFileNameValidationFunction('id'), (request, response) =>
     const pathToFile = path.join(request.user.directories.groups, sanitize(`${id}.json`));
     const fileData = JSON.stringify(sanitizeGroupPayload(request.body), null, 4);
 
-    writeFileAtomicSync(pathToFile, fileData);
     if (request.body.fav !== undefined) {
-        setGroupFavorite(request.user.directories, { id, value: coerceFavoriteValue(request.body.fav) });
+        setAndFlushGroupFavorite(request.user.directories, { id, value: coerceFavoriteValue(request.body.fav) });
     }
+    writeFileAtomicSync(pathToFile, fileData);
     return response.send({ ok: true });
 });
 
