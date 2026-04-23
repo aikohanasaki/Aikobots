@@ -2246,6 +2246,8 @@ function rewriteSystemMessagesForO1Model(model, chatCompletionSource, messages) 
     return messages;
 }
 
+// Prompt snapshots are intentionally scoped to last generation only.
+
 /**
  * @param {any} user
  * @returns {boolean}

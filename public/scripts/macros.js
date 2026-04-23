@@ -337,7 +337,7 @@ function warnBannedMacroDeprecated() {
  * @returns {Macro}
  */
 function getBannedWordsMacro() {
-    const banPattern = /{{banned ".*"}}/gi;
+    const banPattern = /{{banned\s+"[^"\r\n]*"}}/gi;
     const banReplace = () => {
         warnBannedMacroDeprecated();
         return '';
