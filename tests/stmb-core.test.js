@@ -510,6 +510,17 @@ describe('stmb core parsing and persistence', () => {
         expect(payload.STMB_createdAt).toBeUndefined();
     });
 
+    it('adds trailing blank lines to managed lorebook content to keep activated entries separated', () => {
+        const payload = createManagedLorebookEntryData(
+            { title: 'Arrival', content: 'They arrived.', keywords: ['arrival'] },
+            { sceneStart: 4, sceneEnd: 9 },
+            { titleFormat: '[000] - {{title}}' },
+            3,
+        );
+
+        expect(payload.content).toBe('They arrived.\n\n');
+    });
+
     it('reads managed memory scene ranges from STMB metadata', () => {
         expect(getRangeFromManagedMemoryEntry({ STMB_start: 3, STMB_end: 8 })).toEqual({ start: 3, end: 8 });
         expect(getRangeFromManagedMemoryEntry({ STMB_start: '3', STMB_end: 8 })).toBeNull();

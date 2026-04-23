@@ -1912,9 +1912,10 @@ export function createManagedLorebookEntryData(memoryObject, context, profile, s
         profileName: profile?.name || '',
     }, sequenceNumber);
 
+    const normalizedContent = String(memoryObject.content || '').trim();
     const entry = {
         comment: title,
-        content: String(memoryObject.content || '').trim(),
+        content: normalizedContent ? `${normalizedContent}\n\n` : '',
         key: normalizeKeywords(memoryObject.keywords),
         [STMB_MANAGED_FLAG]: true,
     };
