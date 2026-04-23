@@ -2712,7 +2712,7 @@ async function sendOpenAIRequest(type, messages, signal, { jsonSchema = null } =
     applyAssemblyResponseMetadata(response, type);
 
     if (stream) {
-        return async function* streamData() {
+        const streamData = async function* streamData() {
             const toolCalls = [];
             const queue = [];
             let waitForItem = null;
