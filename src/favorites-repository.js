@@ -48,6 +48,25 @@ function createEmptyFavoritesDocument() {
     };
 }
 
+function createEmptyFavoritesChanges() {
+    return {
+        characters: {
+            favorites: {
+                bySharedKey: {},
+                byAvatar: {},
+            },
+            migrated: {
+                bySharedKey: {},
+                byAvatar: {},
+            },
+        },
+        groups: {
+            favorites: {},
+            migrated: {},
+        },
+    };
+}
+
 function normalizeFavoritesDocument(document) {
     const source = isPlainObject(document) ? document : {};
     const sourceCharacters = isPlainObject(source.characters) ? source.characters : {};
@@ -75,6 +94,7 @@ function isFavoritesState(value) {
     return Boolean(value)
         && typeof value === 'object'
         && isPlainObject(value.document)
+        && isPlainObject(value.changes)
         && value.directories
         && typeof value.dirty === 'boolean';
 }
@@ -98,8 +118,71 @@ function getCharacterMigrationMap(document, mapKey) {
     return document.migrated.characters[mapKey];
 }
 
+function getCharacterMigrationChanges(state, mapKey) {
+    return state.changes.characters.migrated[mapKey];
+}
+
 function getCharacterFavoritesMap(document, mapKey) {
     return document.characters[mapKey];
+}
+
+function getCharacterFavoriteChanges(state, mapKey) {
+    return state.changes.characters.favorites[mapKey];
+}
+
+function getGroupMigrationChanges(state) {
+    return state.changes.groups.migrated;
+}
+
+function getGroupFavoriteChanges(state) {
+    return state.changes.groups.favorites;
+}
+
+function setTrueMapValue(targetMap, key, value) {
+    if (!key) {
+        return false;
+    }
+
+    const nextValue = value === true;
+    const hasValue = targetMap[key] === true;
+
+    if (nextValue) {
+        if (!hasValue) {
+            targetMap[key] = true;
+            return true;
+        }
+
+        return false;
+    }
+
+    if (hasValue) {
+        delete targetMap[key];
+        return true;
+    }
+
+    return false;
+}
+
+function recordTrueMapChange(changeMap, key, value) {
+    if (!key) {
+        return;
+    }
+
+    changeMap[key] = value === true;
+}
+
+function setGroupMigrationInState(state, id, value) {
+    if (setTrueMapValue(state.document.migrated.groups, id, value)) {
+        recordTrueMapChange(getGroupMigrationChanges(state), id, value);
+        state.dirty = true;
+    }
+}
+
+function setGroupFavoriteInState(state, id, value) {
+    if (setTrueMapValue(state.document.groups, id, value)) {
+        recordTrueMapChange(getGroupFavoriteChanges(state), id, value);
+        state.dirty = true;
+    }
 }
 
 function markCharacterMigrated(state, mapKey, key) {
@@ -108,12 +191,10 @@ function markCharacterMigrated(state, mapKey, key) {
     }
 
     const migrationMap = getCharacterMigrationMap(state.document, mapKey);
-    if (migrationMap[key] === true) {
-        return;
+    if (setTrueMapValue(migrationMap, key, true)) {
+        recordTrueMapChange(getCharacterMigrationChanges(state, mapKey), key, true);
+        state.dirty = true;
     }
-
-    migrationMap[key] = true;
-    state.dirty = true;
 }
 
 function setCharacterFavoriteInDocument(state, mapKey, key, value) {
@@ -122,18 +203,8 @@ function setCharacterFavoriteInDocument(state, mapKey, key, value) {
     }
 
     const favoritesMap = getCharacterFavoritesMap(state.document, mapKey);
-    const nextValue = value === true;
-
-    if (nextValue) {
-        if (favoritesMap[key] !== true) {
-            favoritesMap[key] = true;
-            state.dirty = true;
-        }
-        return;
-    }
-
-    if (favoritesMap[key] === true) {
-        delete favoritesMap[key];
+    if (setTrueMapValue(favoritesMap, key, value)) {
+        recordTrueMapChange(getCharacterFavoriteChanges(state, mapKey), key, value);
         state.dirty = true;
     }
 }
@@ -182,12 +253,10 @@ function resolveGroupFavoriteInState(state, { id = '', legacyFavorite = false })
         return false;
     }
 
-    state.document.migrated.groups[normalizedId] = true;
-    state.dirty = true;
+    setGroupMigrationInState(state, normalizedId, true);
 
     if (legacyFavorite === true) {
-        state.document.groups[normalizedId] = true;
-        state.dirty = true;
+        setGroupFavoriteInState(state, normalizedId, true);
         return true;
     }
 
@@ -226,10 +295,30 @@ export function writeFavoritesDocument(directories, document) {
     return normalizedDocument;
 }
 
+function applyTrueMapChanges(targetMap, changes) {
+    for (const [key, value] of Object.entries(changes)) {
+        setTrueMapValue(targetMap, key, value === true);
+    }
+}
+
+function applyFavoritesChanges(document, changes) {
+    const nextDocument = normalizeFavoritesDocument(document);
+
+    applyTrueMapChanges(nextDocument.characters.bySharedKey, changes.characters.favorites.bySharedKey);
+    applyTrueMapChanges(nextDocument.characters.byAvatar, changes.characters.favorites.byAvatar);
+    applyTrueMapChanges(nextDocument.migrated.characters.bySharedKey, changes.characters.migrated.bySharedKey);
+    applyTrueMapChanges(nextDocument.migrated.characters.byAvatar, changes.characters.migrated.byAvatar);
+    applyTrueMapChanges(nextDocument.groups, changes.groups.favorites);
+    applyTrueMapChanges(nextDocument.migrated.groups, changes.groups.migrated);
+
+    return nextDocument;
+}
+
 export function createFavoritesState(directories) {
     return {
         directories,
         document: readFavoritesDocument(directories),
+        changes: createEmptyFavoritesChanges(),
         dirty: false,
     };
 }
@@ -239,7 +328,9 @@ export function flushFavoritesState(state) {
         return state?.document ?? null;
     }
 
-    state.document = writeFavoritesDocument(state.directories, state.document);
+    const mergedDocument = applyFavoritesChanges(readFavoritesDocument(state.directories), state.changes);
+    state.document = writeFavoritesDocument(state.directories, mergedDocument);
+    state.changes = createEmptyFavoritesChanges();
     state.dirty = false;
     return state.document;
 }
@@ -298,19 +389,24 @@ export function moveAvatarFavorite(target, { oldAvatar = '', newAvatar = '' }) {
     const migrationMap = state.document.migrated.characters.byAvatar;
 
     if (favoriteMap[normalizedOldAvatar] === true) {
-        favoriteMap[normalizedNewAvatar] = true;
-        delete favoriteMap[normalizedOldAvatar];
-        state.dirty = true;
+        setCharacterFavoriteInDocument(state, 'byAvatar', normalizedNewAvatar, true);
+        setCharacterFavoriteInDocument(state, 'byAvatar', normalizedOldAvatar, false);
     }
 
     if (migrationMap[normalizedOldAvatar] === true && migrationMap[normalizedNewAvatar] !== true) {
-        migrationMap[normalizedNewAvatar] = true;
-        state.dirty = true;
+        const migrationChanges = getCharacterMigrationChanges(state, 'byAvatar');
+        if (setTrueMapValue(migrationMap, normalizedNewAvatar, true)) {
+            recordTrueMapChange(migrationChanges, normalizedNewAvatar, true);
+            state.dirty = true;
+        }
     }
 
     if (migrationMap[normalizedOldAvatar] === true) {
-        delete migrationMap[normalizedOldAvatar];
-        state.dirty = true;
+        const migrationChanges = getCharacterMigrationChanges(state, 'byAvatar');
+        if (setTrueMapValue(migrationMap, normalizedOldAvatar, false)) {
+            recordTrueMapChange(migrationChanges, normalizedOldAvatar, false);
+            state.dirty = true;
+        }
     }
 
     if (autoFlush) {
@@ -340,20 +436,8 @@ export function setGroupFavorite(target, { id = '', value = false }) {
         return false;
     }
 
-    if (value === true) {
-        if (state.document.groups[normalizedId] !== true) {
-            state.document.groups[normalizedId] = true;
-            state.dirty = true;
-        }
-    } else if (state.document.groups[normalizedId] === true) {
-        delete state.document.groups[normalizedId];
-        state.dirty = true;
-    }
-
-    if (state.document.migrated.groups[normalizedId] !== true) {
-        state.document.migrated.groups[normalizedId] = true;
-        state.dirty = true;
-    }
+    setGroupFavoriteInState(state, normalizedId, value);
+    setGroupMigrationInState(state, normalizedId, true);
 
     if (autoFlush) {
         flushFavoritesState(state);

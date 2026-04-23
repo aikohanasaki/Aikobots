@@ -595,7 +595,7 @@ export function countWebTokenizerTokens(tokenizer, messages) {
  * @param {SentencePieceTokenizer} tokenizer Sentencepiece tokenizer
  * @returns {TokenizationHandler} Handler function
  */
-function createSentencepieceEncodingHandler(tokenizer) {
+export function createSentencepieceEncodingHandler(tokenizer) {
     /**
      * Request handler for encoding Sentencepiece tokens.
      * @param {import('express').Request} request
@@ -610,7 +610,18 @@ function createSentencepieceEncodingHandler(tokenizer) {
             const text = request.body.text || '';
             const instance = await tokenizer?.get();
             const { ids, count } = await countSentencepieceTokens(tokenizer, text);
-            const chunks = instance?.encodePieces(text);
+            let chunks = [];
+
+            if (instance) {
+                try {
+                    chunks = instance.encodePieces(text);
+                } catch (error) {
+                    console.warn('Sentencepiece tokenizer chunk encode failed, returning count without chunks.', {
+                        message: error?.message || String(error),
+                    });
+                }
+            }
+
             return response.send({ ids, count, chunks });
         } catch (error) {
             console.error(error);

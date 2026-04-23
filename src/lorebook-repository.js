@@ -2067,22 +2067,6 @@ export async function deleteLorebookForManagement(user, name, options = {}) {
         if (!userRecord) {
             throw new LorebookRepositoryError('LorebookNotFound', `Lorebook "${canonicalName}" not found.`, 404);
         }
-
-        try {
-            fs.unlinkSync(userRecord.path);
-        } catch (error) {
-            if (error?.code === 'ENOENT') {
-                throw new LorebookRepositoryError('LorebookNotFound', `Lorebook "${canonicalName}" not found.`, 404);
-            }
-
-            throw new LorebookRepositoryError('LorebookDeleteFailed', `Failed to delete lorebook "${canonicalName}".`, 500);
-        }
-
-        return {
-            name: canonicalName,
-            storage: 'user',
-            ownerHandle: user.profile.handle,
-        };
     });
 }
 

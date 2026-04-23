@@ -4,6 +4,29 @@ import { LorebookRepositoryError } from '../src/lorebook-repository.js';
 import { resolveSortedEntriesPayload } from '../src/endpoints/worldinfo.js';
 
 describe('resolveSortedEntriesPayload hidden bindings', () => {
+    it('preserves escaped decorator lines as literal content', async () => {
+        const result = await resolveSortedEntriesPayload(
+            { profile: { handle: 'tester' } },
+            {
+                selectedWorldInfo: ['Escaped'],
+            },
+            {
+                readEntries: async () => [{
+                    uid: 1,
+                    world: 'Escaped',
+                    order: 1,
+                    content: '@@@activate\nvisible body',
+                }],
+                getHiddenBooks: () => [],
+                hasLorebook: () => true,
+            },
+        );
+
+        expect(result.entries).toHaveLength(1);
+        expect(result.entries[0].decorators).toEqual([]);
+        expect(result.entries[0].content).toBe('@@activate\nvisible body');
+    });
+
     it('merges hidden bindings into character lore without duplicating visible lorebooks', async () => {
         const worldEntries = {
             Global: [{ uid: 1, world: 'Global', order: 1, content: 'global' }],

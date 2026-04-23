@@ -146,7 +146,8 @@ function parseDecorators(content) {
         }
 
         if (line.startsWith('@@@') && !fallbacked) {
-            continue;
+            newContent = [line.substring(1), ...lines.slice(index + 1)].join('\n');
+            break;
         }
 
         if (isKnownDecorator(line)) {

@@ -6925,7 +6925,8 @@ function parseDecorators(content) {
         for (let i = 0; i < splited.length; i++) {
             if (splited[i].startsWith('@@')) {
                 if (splited[i].startsWith('@@@') && !fallbacked) {
-                    continue;
+                    newContent = [splited[i].substring(1), ...splited.slice(i + 1)].join('\n');
+                    break;
                 }
 
                 if (isKnownDecorator(splited[i])) {
