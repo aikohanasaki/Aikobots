@@ -868,6 +868,9 @@ export const DEFAULT_SAVE_EDIT_TIMEOUT = debounce_timeout.relaxed;
 const DEFAULT_CHAT_SAVE_EDIT_TIMEOUT = 15_000;
 /** @type {debounce_timeout} The debounce timeout used for printing. debounce_timeout.quick: 100 ms */
 export const DEFAULT_PRINT_TIMEOUT = debounce_timeout.quick;
+const CHAT_SAVE_METADATA_STRIP_KEYS = Object.freeze(['timedWorldInfo', 'worldInfoSummary', 'worldInfoReport']);
+const CHAT_SAVE_EXTRA_STRIP_KEYS = Object.freeze(['timedWorldInfo', 'worldInfoSummary', 'worldInfoReport']);
+const CHAT_SWIPE_INFO_EXTRA_STRIP_KEYS = Object.freeze(['worldInfoSummary', 'worldInfoReport']);
 
 export const saveSettingsDebounced = debounce((loopCounter = 0) => saveSettings(loopCounter), DEFAULT_SAVE_EDIT_TIMEOUT);
 let isCharacterEditorDirty = false;
@@ -3067,6 +3070,91 @@ function getDenseChatMessages(startId, endId) {
     }
 
     return messages;
+}
+
+function omitTransientChatKeys(source, keys) {
+    if (!source || typeof source !== 'object' || Array.isArray(source)) {
+        return source;
+    }
+
+    let sanitized = null;
+    for (const key of keys) {
+        if (!Object.prototype.hasOwnProperty.call(source, key)) {
+            continue;
+        }
+
+        sanitized ??= { ...source };
+        delete sanitized[key];
+    }
+
+    return sanitized ?? source;
+}
+
+function sanitizeChatMetadataForSave(metadata) {
+    return omitTransientChatKeys(metadata, CHAT_SAVE_METADATA_STRIP_KEYS);
+}
+
+function sanitizeChatExtraForSave(extra) {
+    return omitTransientChatKeys(extra, CHAT_SAVE_EXTRA_STRIP_KEYS);
+}
+
+function sanitizeChatExtraForSwipeInfo(extra) {
+    return omitTransientChatKeys(extra, CHAT_SWIPE_INFO_EXTRA_STRIP_KEYS);
+}
+
+function sanitizeChatMessageForSave(message) {
+    if (!message || typeof message !== 'object' || Array.isArray(message)) {
+        return message;
+    }
+
+    const sanitizedExtra = sanitizeChatExtraForSave(message.extra);
+    let sanitizedSwipeInfo = message.swipe_info;
+
+    if (Array.isArray(message.swipe_info)) {
+        let swipeInfoChanged = false;
+        const nextSwipeInfo = message.swipe_info.map((swipeInfo) => {
+            if (!swipeInfo || typeof swipeInfo !== 'object' || Array.isArray(swipeInfo)) {
+                return swipeInfo;
+            }
+
+            const sanitizedSwipeExtra = sanitizeChatExtraForSave(swipeInfo.extra);
+            if (sanitizedSwipeExtra === swipeInfo.extra) {
+                return swipeInfo;
+            }
+
+            swipeInfoChanged = true;
+            return {
+                ...swipeInfo,
+                extra: sanitizedSwipeExtra,
+            };
+        });
+
+        if (swipeInfoChanged) {
+            sanitizedSwipeInfo = nextSwipeInfo;
+        }
+    }
+
+    if (sanitizedExtra === message.extra && sanitizedSwipeInfo === message.swipe_info) {
+        return message;
+    }
+
+    return {
+        ...message,
+        ...(sanitizedExtra !== message.extra ? { extra: sanitizedExtra } : {}),
+        ...(sanitizedSwipeInfo !== message.swipe_info ? { swipe_info: sanitizedSwipeInfo } : {}),
+    };
+}
+
+function createSwipeInfoExtra(extra, { includeReasoning = true } = {}) {
+    const swipeInfoExtra = { ...(sanitizeChatExtraForSwipeInfo(extra) ?? {}) };
+
+    if (!includeReasoning) {
+        delete swipeInfoExtra.token_count;
+        delete swipeInfoExtra.reasoning;
+        delete swipeInfoExtra.reasoning_duration;
+    }
+
+    return swipeInfoExtra;
 }
 
 function getContiguousChatMessagesForSave(startId, endId) {
@@ -5889,7 +5977,7 @@ class StreamingProcessor {
                     'send_date': chat[messageId]['send_date'],
                     'gen_started': chat[messageId]['gen_started'],
                     'gen_finished': chat[messageId]['gen_finished'],
-                    'extra': structuredClone(chat[messageId]['extra']),
+                    'extra': createSwipeInfoExtra(chat[messageId]['extra']),
                 };
             }
 
@@ -5942,15 +6030,11 @@ class StreamingProcessor {
 
         if (Array.isArray(this.swipes) && this.swipes.length > 0) {
             const message = chat[messageId];
-            const swipeInfoExtra = structuredClone(message.extra ?? {});
-            delete swipeInfoExtra.token_count;
-            delete swipeInfoExtra.reasoning;
-            delete swipeInfoExtra.reasoning_duration;
             const swipeInfo = {
                 send_date: message.send_date,
                 gen_started: message.gen_started,
                 gen_finished: message.gen_finished,
-                extra: swipeInfoExtra,
+                extra: createSwipeInfoExtra(message.extra, { includeReasoning: false }),
             };
             const startingSwipeIndex = Array.isArray(message.swipes) ? message.swipes.length : 0;
             const basePromptSnapshotKey = typeof message.extra?.promptSnapshotKey === 'string' ? message.extra.promptSnapshotKey : null;
@@ -6024,7 +6108,7 @@ class StreamingProcessor {
                     'send_date': chat[messageId]['send_date'],
                     'gen_started': chat[messageId]['gen_started'],
                     'gen_finished': chat[messageId]['gen_finished'],
-                    'extra': structuredClone(chat[messageId]['extra']),
+                    'extra': createSwipeInfoExtra(chat[messageId]['extra']),
                 };
             }
         }
@@ -8776,7 +8860,7 @@ export async function saveReply({ type, getMessage, fromStreaming = false, title
             send_date: item['send_date'],
             gen_started: item['gen_started'],
             gen_finished: item['gen_finished'],
-            extra: structuredClone(item['extra']),
+            extra: createSwipeInfoExtra(item['extra']),
         };
     } else {
         item['swipe_id'] = 0;
@@ -8786,20 +8870,16 @@ export async function saveReply({ type, getMessage, fromStreaming = false, title
             send_date: chat[chat.length - 1]['send_date'],
             gen_started: chat[chat.length - 1]['gen_started'],
             gen_finished: chat[chat.length - 1]['gen_finished'],
-            extra: structuredClone(chat[chat.length - 1]['extra']),
+            extra: createSwipeInfoExtra(chat[chat.length - 1]['extra']),
         };
     }
 
     if (Array.isArray(swipes) && swipes.length > 0) {
-        const swipeInfoExtra = structuredClone(item.extra ?? {});
-        delete swipeInfoExtra.token_count;
-        delete swipeInfoExtra.reasoning;
-        delete swipeInfoExtra.reasoning_duration;
         const swipeInfo = {
             send_date: item.send_date,
             gen_started: item.gen_started,
             gen_finished: item.gen_finished,
-            extra: swipeInfoExtra,
+            extra: createSwipeInfoExtra(item.extra, { includeReasoning: false }),
         };
         const startingSwipeIndex = Array.isArray(item.swipes) ? item.swipes.length : 0;
         const basePromptSnapshotKey = typeof item.extra?.promptSnapshotKey === 'string' ? item.extra.promptSnapshotKey : null;
@@ -8918,7 +8998,7 @@ export function syncMesToSwipe(messageId = null) {
     targetSwipeInfo.send_date = targetMessage.send_date;
     targetSwipeInfo.gen_started = targetMessage.gen_started;
     targetSwipeInfo.gen_finished = targetMessage.gen_finished;
-    targetSwipeInfo.extra = structuredClone(targetMessage.extra);
+    targetSwipeInfo.extra = createSwipeInfoExtra(targetMessage.extra);
 
     return true;
 }
@@ -9445,7 +9525,7 @@ export async function saveChat({ chatName, withMetadata, mesId, force = false, s
 
     const normalizedMesId = Number.isInteger(Number(mesId)) ? Number(mesId) : undefined;
 
-    const metadata = { ...chat_metadata, ...(withMetadata || {}) };
+    const metadata = sanitizeChatMetadataForSave({ ...chat_metadata, ...(withMetadata || {}) });
     const fileName = chatName ?? characters[this_chid]?.chat;
 
     if (!fileName && name2 === neutralCharacterName) {
@@ -9512,7 +9592,7 @@ export async function saveChat({ chatName, withMetadata, mesId, force = false, s
         character_name: name2,
         create_date: chat_create_date,
         chat_metadata: metadata,
-    }, ...trimmedChat];
+    }, ...trimmedChat.map(sanitizeChatMessageForSave)];
 
     try {
         const result = await fetch('/api/chats/save', {
@@ -12795,7 +12875,7 @@ export function showSwipeButtons(mesId = chat.length - 1) {
             'send_date': message['send_date'],
             'gen_started': message['gen_started'],
             'gen_finished': message['gen_finished'],
-            'extra': structuredClone(message['extra']),
+            'extra': createSwipeInfoExtra(message['extra']),
         };
     }
 
@@ -13899,7 +13979,7 @@ export async function swipe(_event, direction, { source, repeated, message = cha
                 'send_date': chat[mesId]['send_date'],
                 'gen_started': chat[mesId]['gen_started'],
                 'gen_finished': chat[mesId]['gen_finished'],
-                'extra': structuredClone(chat[mesId]['extra']),
+                'extra': createSwipeInfoExtra(chat[mesId]['extra']),
             };
         }
         // If the user is holding down the key and we're at the last or first swipe, don't do anything.
