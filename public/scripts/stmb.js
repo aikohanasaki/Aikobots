@@ -7603,6 +7603,10 @@ export function initStmb() {
         }
     });
 
+    eventSource.on(event_types.MORE_MESSAGES_LOADED, () => {
+        renderAllSceneButtons();
+    });
+
     eventSource.on(event_types.SETTINGS_LOADED, () => {
         renderAllSceneButtons();
     });
