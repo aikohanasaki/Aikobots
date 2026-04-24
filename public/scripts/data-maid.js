@@ -3,7 +3,7 @@ import { VIDEO_EXTENSIONS } from './constants.js';
 import { t } from './i18n.js';
 import { callGenericPopup, Popup, POPUP_TYPE } from './popup.js';
 import { renderTemplateAsync } from './templates.js';
-import { humanFileSize, timestampToMoment } from './utils.js';
+import { appendErrorCode, humanFileSize, timestampToMoment } from './utils.js';
 
 /**
  * @typedef {object} DataMaidReportResult
@@ -132,8 +132,8 @@ class DataMaidDialog {
             this.token = report.token;
         } catch (error) {
             this.hideSpinner();
-            toastr.error(t`An error has occurred. Check the console for details.`);
             console.error('Error generating Data Maid report:', error);
+            toastr.error(appendErrorCode(t`An error has occurred. Check the console for details.`, error));
         } finally {
             this.isScanning = false;
         }

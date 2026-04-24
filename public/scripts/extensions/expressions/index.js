@@ -4,7 +4,7 @@ import { characters, eventSource, event_types, generateQuietPrompt, generateRaw,
 import { dragElement, isMobile } from '../../RossAscends-mods.js';
 import { getContext, getApiUrl, modules, extension_settings, ModuleWorkerWrapper, doExtrasFetch, renderExtensionTemplateAsync } from '../../extensions.js';
 import { loadMovingUIState, performFuzzySearch, power_user } from '../../power-user.js';
-import { onlyUnique, debounce, getCharaFilename, trimToEndSentence, trimToStartSentence, waitUntilCondition, findChar, isFalseBoolean } from '../../utils.js';
+import { appendErrorCode, onlyUnique, debounce, getCharaFilename, trimToEndSentence, trimToStartSentence, waitUntilCondition, findChar, isFalseBoolean } from '../../utils.js';
 import { hideMutedSprites, selected_group } from '../../group-chats.js';
 import { debounce_timeout } from '../../constants.js';
 import { SlashCommandParser } from '../../slash-commands/SlashCommandParser.js';
@@ -1075,8 +1075,8 @@ export async function getExpressionLabel(text, expressionsApi = extension_settin
             }
         }
     } catch (error) {
-        toastr.error('Could not classify expression. Check the console or your backend for more information.');
         console.error(error);
+        toastr.error(appendErrorCode('Could not classify expression. Check the console or your backend for more information.', error));
         return extension_settings.expressions.fallback_expression;
     }
 }

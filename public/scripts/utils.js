@@ -154,6 +154,120 @@ export function escapeHtml(str) {
         .replace(/'/g, '&#39;');
 }
 
+function formatErrorCodeValue(value) {
+    if (value === null || value === undefined) {
+        return '';
+    }
+
+    const text = String(value).trim();
+    if (!text) {
+        return '';
+    }
+
+    return /^\d{3}$/.test(text) ? `HTTP ${text}` : text;
+}
+
+function getStatusCodeLabel(status) {
+    const numericStatus = Number(status);
+    return Number.isInteger(numericStatus) && numericStatus >= 100 && numericStatus <= 599
+        ? `HTTP ${numericStatus}`
+        : '';
+}
+
+function extractErrorCodeFromText(text) {
+    const value = String(text ?? '').trim();
+    if (!value) {
+        return '';
+    }
+
+    const httpMatch = value.match(/\bHTTP(?:\s+Error(?:\s+Response)?)?\s*:?\s*(\d{3})\b/i)
+        || value.match(/\bresponse status\s+(\d{3})\b/i)
+        || value.match(/\bstatus\s*:?\s*(\d{3})\b/i);
+    if (httpMatch) {
+        return `HTTP ${httpMatch[1]}`;
+    }
+
+    const namedCodeMatch = value.match(/\b(?:error\s+code|code)\s*[:=]\s*([A-Z0-9_:-]+)\b/i);
+    if (namedCodeMatch) {
+        return formatErrorCodeValue(namedCodeMatch[1]);
+    }
+
+    return '';
+}
+
+/**
+ * Extracts a user-friendly error code from common error shapes.
+ * @param {any} error Error-like value
+ * @param {Set<any>} [seen] Cycle guard for nested error objects
+ * @returns {string}
+ */
+export function getErrorCode(error, seen = new Set()) {
+    if (error === null || error === undefined) {
+        return '';
+    }
+
+    if (typeof error !== 'object') {
+        return extractErrorCodeFromText(error);
+    }
+
+    if (seen.has(error)) {
+        return '';
+    }
+
+    seen.add(error);
+
+    if (error instanceof Response) {
+        return getStatusCodeLabel(error.status);
+    }
+
+    const directCode = formatErrorCodeValue(error.code);
+    if (directCode) {
+        return directCode;
+    }
+
+    const directStatus = getStatusCodeLabel(error.status);
+    if (directStatus) {
+        return directStatus;
+    }
+
+    const responseStatus = getStatusCodeLabel(error.response?.status);
+    if (responseStatus) {
+        return responseStatus;
+    }
+
+    const xhrStatus = getStatusCodeLabel(error.xhr?.status ?? error.target?.status ?? error.currentTarget?.status);
+    if (xhrStatus) {
+        return xhrStatus;
+    }
+
+    const nestedErrorCode = getErrorCode(error.cause, seen)
+        || getErrorCode(error.response, seen)
+        || getErrorCode(error.error, seen);
+    if (nestedErrorCode) {
+        return nestedErrorCode;
+    }
+
+    const messageCode = extractErrorCodeFromText(error.message)
+        || extractErrorCodeFromText(error.statusText)
+        || extractErrorCodeFromText(error.name);
+    if (messageCode) {
+        return messageCode;
+    }
+
+    return '';
+}
+
+/**
+ * Appends an error code to a user-facing message when one can be determined.
+ * @param {string} message Base message
+ * @param {any} error Error-like value
+ * @returns {string}
+ */
+export function appendErrorCode(message, error) {
+    const code = getErrorCode(error);
+    return code ? `${message} (Error code: ${code})` : message;
+}
+
 /**
  * Make string safe for use as a CSS selector.
  * @param {string} str String to sanitize

@@ -58,6 +58,7 @@ import {
     convertTextToBase64,
     isSameFile,
     clamp,
+    appendErrorCode,
 } from './utils.js';
 import { extension_settings, renderExtensionTemplateAsync, saveMetadataDebounced } from './extensions.js';
 import { POPUP_RESULT, POPUP_TYPE, Popup, callGenericPopup } from './popup.js';
@@ -2189,7 +2190,7 @@ async function runScraper(scraperId, target, callback) {
     }
     catch (error) {
         console.error('Scraping failed', error);
-        toastr.error(t`Check browser console for details.`, t`Scraping failed`);
+        toastr.error(appendErrorCode(t`Check browser console for details.`, error), t`Scraping failed`);
     }
 }
 

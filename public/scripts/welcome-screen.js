@@ -34,7 +34,7 @@ import { callGenericPopup, POPUP_TYPE } from './popup.js';
 import { getMessageTimeStamp } from './RossAscends-mods.js';
 import { renderTemplateAsync } from './templates.js';
 import { accountStorage } from './util/AccountStorage.js';
-import { flashHighlight, sortMoments, timestampToMoment } from './utils.js';
+import { appendErrorCode, flashHighlight, sortMoments, timestampToMoment } from './utils.js';
 
 const assistantAvatarKey = 'assistant';
 const pinnedChatsKey = 'pinnedChats';
@@ -472,7 +472,7 @@ async function openRecentCharacterChat(avatarId, fileName) {
         await openCharacterChat(fileName);
     } catch (error) {
         console.error('Error opening recent chat:', error);
-        toastr.error(t`Failed to open recent chat. See console for details.`);
+        toastr.error(appendErrorCode(t`Failed to open recent chat. See console for details.`, error));
     }
 }
 
@@ -500,7 +500,7 @@ async function openRecentGroupChat(groupId, fileName) {
         await openGroupChat(groupId, fileName);
     } catch (error) {
         console.error('Error opening recent group chat:', error);
-        toastr.error(t`Failed to open recent group chat. See console for details.`);
+        toastr.error(appendErrorCode(t`Failed to open recent group chat. See console for details.`, error));
     }
 }
 
@@ -533,7 +533,7 @@ async function renameRecentCharacterChat(avatarId, fileName) {
         toastr.success(t`Chat renamed.`);
     } catch (error) {
         console.error('Error renaming recent character chat:', error);
-        toastr.error(t`Failed to rename recent chat. See console for details.`);
+        toastr.error(appendErrorCode(t`Failed to rename recent chat. See console for details.`, error));
     }
 }
 
@@ -565,7 +565,7 @@ async function renameRecentGroupChat(groupId, fileName) {
         toastr.success(t`Group chat renamed.`);
     } catch (error) {
         console.error('Error renaming recent group chat:', error);
-        toastr.error(t`Failed to rename recent group chat. See console for details.`);
+        toastr.error(appendErrorCode(t`Failed to rename recent group chat. See console for details.`, error));
     }
 }
 
@@ -591,7 +591,7 @@ async function deleteRecentCharacterChat(avatarId, fileName) {
         toastr.success(t`Chat deleted.`);
     } catch (error) {
         console.error('Error deleting recent character chat:', error);
-        toastr.error(t`Failed to delete recent chat. See console for details.`);
+        toastr.error(appendErrorCode(t`Failed to delete recent chat. See console for details.`, error));
     }
 }
 
@@ -617,7 +617,7 @@ async function deleteRecentGroupChat(groupId, fileName) {
         toastr.success(t`Group chat deleted.`);
     } catch (error) {
         console.error('Error deleting recent group chat:', error);
-        toastr.error(t`Failed to delete recent group chat. See console for details.`);
+        toastr.error(appendErrorCode(t`Failed to delete recent group chat. See console for details.`, error));
     }
 }
 
@@ -750,7 +750,7 @@ export async function openPermanentAssistantChat({ tryCreate = true, created = f
         }
         catch (error) {
             console.error('Error creating permanent assistant:', error);
-            toastr.error(t`Failed to create ${neutralCharacterName}. See console for details.`);
+            toastr.error(appendErrorCode(t`Failed to create ${neutralCharacterName}. See console for details.`, error));
             return;
         }
     }
@@ -763,7 +763,7 @@ export async function openPermanentAssistantChat({ tryCreate = true, created = f
         console.log(`Opened permanent assistant chat for ${neutralCharacterName}.`, getCurrentChatId());
     } catch (error) {
         console.error('Error opening permanent assistant chat:', error);
-        toastr.error(t`Failed to open permanent assistant chat. See console for details.`);
+        toastr.error(appendErrorCode(t`Failed to open permanent assistant chat. See console for details.`, error));
     }
 }
 

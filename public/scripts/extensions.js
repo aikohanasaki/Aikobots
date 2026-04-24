@@ -4,7 +4,7 @@ import { eventSource, event_types, saveSettings, saveSettingsDebounced, getReque
 import { showLoader } from './loader.js';
 import { POPUP_RESULT, POPUP_TYPE, Popup, callGenericPopup } from './popup.js';
 import { renderTemplate, renderTemplateAsync } from './templates.js';
-import { delay, isSubsetOf, sanitizeSelector, setValueByPath, versionCompare } from './utils.js';
+import { appendErrorCode, delay, isSubsetOf, sanitizeSelector, setValueByPath, versionCompare } from './utils.js';
 import { getContext } from './st-context.js';
 import { isAdmin } from './user.js';
 import { addLocaleData, getCurrentLocale, t } from './i18n.js';
@@ -968,8 +968,8 @@ async function showExtensionsDetails() {
         popup.content.scrollTop = initialScrollTop;
         checkForUpdatesManual(sortFn, abortController.signal).finally(() => htmlLoading.remove());
     } catch (error) {
-        toastr.error(t`Error loading extensions. See browser console for details.`);
         console.error(error);
+        toastr.error(appendErrorCode(t`Error loading extensions. See browser console for details.`, error));
     }
     if (popupPromise) {
         await popupPromise;

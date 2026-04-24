@@ -41,7 +41,7 @@ import { tokenizers } from './tokenizers.js';
 import { BIAS_CACHE } from './logit-bias.js';
 import { renderTemplateAsync } from './templates.js';
 
-import { countOccurrences, debounce, delay, download, getFileText, getSanitizedFilename, isOdd, isTrueBoolean, onlyUnique, shuffle, sortMoments, stringToRange, timestampToMoment } from './utils.js';
+import { appendErrorCode, countOccurrences, debounce, delay, download, getFileText, getSanitizedFilename, isOdd, isTrueBoolean, onlyUnique, shuffle, sortMoments, stringToRange, timestampToMoment } from './utils.js';
 import { FILTER_TYPES } from './filters.js';
 import { PARSER_FLAG, SlashCommandParser } from './slash-commands/SlashCommandParser.js';
 import { SlashCommand } from './slash-commands/SlashCommand.js';
@@ -2317,7 +2317,8 @@ async function deleteTheme() {
     });
 
     if (!response.ok) {
-        toastr.error('Failed to delete theme. Check the console for more information.');
+        console.error('Failed to delete theme', response.status, response.statusText);
+        toastr.error(appendErrorCode('Failed to delete theme. Check the console for more information.', response));
         return;
     }
 

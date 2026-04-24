@@ -24,7 +24,7 @@ import {
 import { collapseNewlines, registerDebugFunction } from '../../power-user.js';
 import { SECRET_KEYS, secret_state } from '../../secrets.js';
 import { getDataBankAttachments, getDataBankAttachmentsForSource, getFileAttachment } from '../../chats.js';
-import { debounce, getStringHash as calculateHash, waitUntilCondition, onlyUnique, splitRecursive, trimToStartSentence, trimToEndSentence, escapeHtml } from '../../utils.js';
+import { appendErrorCode, debounce, getStringHash as calculateHash, waitUntilCondition, onlyUnique, splitRecursive, trimToStartSentence, trimToEndSentence, escapeHtml } from '../../utils.js';
 import { debounce_timeout } from '../../constants.js';
 import { getSortedEntries } from '../../world-info.js';
 import { SlashCommandParser } from '../../slash-commands/SlashCommandParser.js';
@@ -705,7 +705,7 @@ async function rearrangeChat(chat, _contextSize, _abort, type) {
         const insertedText = getPromptText(queriedMessages);
         setExtensionPrompt(EXTENSION_PROMPT_TAG, insertedText, settings.position, settings.depth, settings.include_wi);
     } catch (error) {
-        toastr.error('Generation interceptor aborted. Check browser console for more details.', 'Vector Storage');
+        toastr.error(appendErrorCode('Generation interceptor aborted. Check browser console for more details.', error), 'Vector Storage');
         console.error('Vectors: Failed to rearrange chat', error);
     }
 }
