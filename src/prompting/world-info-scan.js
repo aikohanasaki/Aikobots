@@ -631,13 +631,38 @@ class WorldInfoTimedEffects {
         return entry.hash;
     }
 
+    #getEntryName(entry) {
+        const value = entry?.comment ?? entry?.displayName ?? entry?.name ?? entry?.uid ?? '';
+        return String(value || '').trim();
+    }
+
     #getEntryKey(entry) {
-        return `${entry.world}.${entry.uid}`;
+        return `${String(entry?.world ?? entry?.book ?? '').trim()}::${this.#getEntryName(entry)}`;
+    }
+
+    #findEntryForEffect(key, effect) {
+        const canonicalKey = this.#getEntryKey(effect);
+        if (canonicalKey && canonicalKey !== '::') {
+            const entry = this.#entries.find(item => this.#getEntryKey(item) === canonicalKey);
+            if (entry) {
+                return entry;
+            }
+        }
+
+        if (effect?.hash !== undefined && effect?.hash !== null) {
+            const entry = this.#entries.find(item => String(this.#getEntryHash(item)) === String(effect.hash));
+            if (entry) {
+                return entry;
+            }
+        }
+
+        return this.#entries.find(item => this.#getEntryKey(item) === String(key || '').trim()) ?? null;
     }
 
     #getEntryTimedEffect(type, entry, isProtected) {
         return {
-            hash: this.#getEntryHash(entry),
+            book: String(entry?.world ?? '').trim(),
+            name: this.#getEntryName(entry),
             start: this.#chatLength,
             end: this.#chatLength + Number(entry[type]),
             protected: !!isProtected,
@@ -647,10 +672,20 @@ class WorldInfoTimedEffects {
     #checkTimedEffectOfType(type, buffer, onEnded) {
         const effects = Object.entries(this.#timedWorldInfo[type] || {});
         for (const [key, value] of effects) {
-            const entry = this.#entries.find(item => String(this.#getEntryHash(item)) === String(value?.hash));
+            const entry = this.#findEntryForEffect(key, value);
+            const canonicalKey = entry ? this.#getEntryKey(entry) : null;
+
+            if (entry && canonicalKey && canonicalKey !== key) {
+                this.#timedWorldInfo[type][canonicalKey] = {
+                    ...value,
+                    book: String(entry?.world ?? value?.book ?? '').trim(),
+                    name: this.#getEntryName(entry),
+                };
+                delete this.#timedWorldInfo[type][key];
+            }
 
             if (this.#chatLength <= Number(value?.start) && !value?.protected) {
-                delete this.#timedWorldInfo[type][key];
+                delete this.#timedWorldInfo[type][canonicalKey ?? key];
                 continue;
             }
 
@@ -662,12 +697,12 @@ class WorldInfoTimedEffects {
             }
 
             if (!entry[type]) {
-                delete this.#timedWorldInfo[type][key];
+                delete this.#timedWorldInfo[type][canonicalKey ?? key];
                 continue;
             }
 
             if (this.#chatLength >= Number(value?.end)) {
-                delete this.#timedWorldInfo[type][key];
+                delete this.#timedWorldInfo[type][canonicalKey ?? key];
                 if (typeof onEnded === 'function') {
                     onEnded(entry);
                 }

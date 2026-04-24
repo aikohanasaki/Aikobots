@@ -45,6 +45,7 @@ import {
     getEditableCharacterExtraBooks,
     getLegacyCharacterExtraBooks,
     getForcedActivationEntriesSnapshot,
+    recomputeTimedWorldInfoState,
 } from './scripts/world-info.js';
 
 import {
@@ -3906,7 +3907,7 @@ export async function deleteLastMessage() {
     await syncLatestPromptInspectorAfterMessageDeletion(deletedId);
     await maintainPromptSnapshotKeys({ deletes: deletedSnapshotKeys });
     updateHistoryControls();
-    restoreTimedWorldInfoFromChat();
+    await recomputeTimedWorldInfo();
     await eventSource.emit(event_types.MESSAGE_DELETED, deletedId, chat.length);
 }
 
@@ -3967,7 +3968,7 @@ export async function deleteMessage(id, swipeDeletionIndex = undefined, askConfi
     }
     await syncLatestPromptInspectorAfterMessageDeletion(id);
     messageElement.remove();
-    restoreTimedWorldInfoFromChat();
+    await recomputeTimedWorldInfo();
     await maintainPromptSnapshotKeys({ deletes: deletedSnapshotKeys, rekeys });
 
     chat_metadata['tainted'] = true;
@@ -6536,7 +6537,7 @@ function refreshChatStateAfterSaveRollback() {
     updateEditArrowClasses();
 }
 
-function rollbackUnsavedInsertedMessage(messageId, message) {
+async function rollbackUnsavedInsertedMessage(messageId, message) {
     if (!message || chat[messageId] !== message || messageId !== chat.length - 1) {
         console.warn('Could not roll back unsaved inserted message after failed save');
         return false;
@@ -6544,11 +6545,12 @@ function rollbackUnsavedInsertedMessage(messageId, message) {
 
     chat.length = chat.length - 1;
     chatElement.children(`.mes[mesid="${messageId}"]`).remove();
+    await recomputeTimedWorldInfo();
     refreshChatStateAfterSaveRollback();
     return true;
 }
 
-function restoreUnsavedDeletedLastMessage(messageId, message) {
+async function restoreUnsavedDeletedLastMessage(messageId, message) {
     const normalizedMessageId = Number(messageId);
     if (!message || !Number.isInteger(normalizedMessageId) || normalizedMessageId < 0) {
         console.warn('Could not restore deleted message after failed save');
@@ -6575,7 +6577,7 @@ function restoreUnsavedDeletedLastMessage(messageId, message) {
         addOneMessage(message, { forceId: normalizedMessageId, scroll: false });
     }
 
-    restoreTimedWorldInfoFromChat(normalizedMessageId);
+    await recomputeTimedWorldInfo();
     refreshChatStateAfterSaveRollback();
     return true;
 }
@@ -6733,7 +6735,7 @@ export async function Generate(type, { automatic_trigger, force_name2, quiet_pro
             const deletedMessage = chat[deletedId];
             chat.length = chat.length - 1;
             syncSplitTailStateAfterMutation();
-            restoreTimedWorldInfoFromChat();
+            await recomputeTimedWorldInfo();
             await removeLastMessage();
             generationStartMutatedChat = true;
             generationStartDeletedId = deletedId;
@@ -6787,7 +6789,7 @@ export async function Generate(type, { automatic_trigger, force_name2, quiet_pro
             const insertedMessage = chat[insertedMessageId];
             const saveResult = await saveChatConditional();
             if (saveResult !== CHAT_SAVE_RESULT.SAVED) {
-                rollbackUnsavedInsertedMessage(insertedMessageId, insertedMessage);
+                await rollbackUnsavedInsertedMessage(insertedMessageId, insertedMessage);
                 unblockGeneration(type);
                 return Promise.resolve();
             }
@@ -6807,7 +6809,7 @@ export async function Generate(type, { automatic_trigger, force_name2, quiet_pro
             if (continueTimerRollback?.message) {
                 continueTimerRollback.message['gen_started'] = continueTimerRollback.gen_started;
             }
-            restoreUnsavedDeletedLastMessage(generationStartDeletedId, generationStartDeletedMessage);
+            await restoreUnsavedDeletedLastMessage(generationStartDeletedId, generationStartDeletedMessage);
             unblockGeneration(type);
             return Promise.resolve();
         }
@@ -8120,6 +8122,7 @@ export async function sendMessageAsUser(messageText, messageBias, insertAt = nul
 
     if (typeof insertAt === 'number' && insertAt >= 0 && insertAt <= chat.length) {
         chat.splice(insertAt, 0, message);
+        await recomputeTimedWorldInfo();
         await saveChatConditional();
         await eventSource.emit(event_types.MESSAGE_SENT, insertAt);
         await reloadCurrentChat();
@@ -8917,8 +8920,6 @@ function applyTimedWorldInfoToMessage(messageId, timedWorldInfo) {
         return;
     }
 
-    item.extra ??= {};
-    item.extra.timedWorldInfo = structuredClone(timedWorldInfo);
     chat_metadata.timedWorldInfo = structuredClone(timedWorldInfo);
 }
 
@@ -8927,6 +8928,7 @@ function applyWorldInfoResponseDataToMessage(messageId, worldInfoResponseData) {
         return;
     }
 
+    // TODO: Retrieve WI inspection data from the saved prompt snapshot on demand instead of caching report blobs in chat state.
     const item = chat[messageId];
     if (!item) {
         return;
@@ -8948,6 +8950,162 @@ function applyWorldInfoResponseDataToMessage(messageId, worldInfoResponseData) {
     if (worldInfoReport && typeof worldInfoReport === 'object') {
         item.extra.worldInfoReport = structuredClone(worldInfoReport);
         chat_metadata.worldInfoReport = structuredClone(worldInfoReport);
+    }
+}
+
+function hasActiveTimedWorldInfo(timedWorldInfo) {
+    if (!timedWorldInfo || typeof timedWorldInfo !== 'object') {
+        return false;
+    }
+
+    return ['sticky', 'cooldown'].some(type =>
+        timedWorldInfo[type] && typeof timedWorldInfo[type] === 'object' && Object.keys(timedWorldInfo[type]).length > 0,
+    );
+}
+
+async function buildTimedWorldInfoReplayMessages() {
+    const logicalChat = structuredClone(getLogicalChatForPromptAssembly());
+    if (logicalChat.length) {
+        logicalChat[0].mes = substituteParams(logicalChat[0].mes);
+    }
+
+    const canUseTools = ToolManager.isToolCallingSupported();
+    let coreChat = logicalChat.filter(message => message && !isPromptHiddenChatMessage(message, { allowToolInvocations: canUseTools }));
+
+    coreChat = await Promise.all(coreChat.map(async (chatItem, index) => {
+        let regexedMessage = getRegexedString(chatItem.mes, chatItem.is_user ? regex_placement.USER_INPUT : regex_placement.AI_OUTPUT, {
+            isPrompt: true,
+            depth: coreChat.length - index - 1,
+        });
+        regexedMessage = await appendFileContent(chatItem, regexedMessage);
+
+        const titles = [];
+        if (chatItem?.extra?.append_title && chatItem?.extra?.title) {
+            titles.push(chatItem.extra.title);
+        }
+        if (Array.isArray(chatItem?.extra?.media)) {
+            for (const mediaItem of chatItem.extra.media) {
+                if (mediaItem?.title && mediaItem?.append_title) {
+                    titles.push(mediaItem.title);
+                }
+            }
+        }
+        if (titles.length > 0) {
+            regexedMessage = `${regexedMessage}\n\n${titles.join('\n\n')}`;
+        }
+
+        return {
+            ...chatItem,
+            mes: regexedMessage,
+            index,
+        };
+    }));
+
+    const promptReasoning = new PromptReasoning();
+    for (let index = coreChat.length - 1; index >= 0; index--) {
+        const depth = coreChat.length - index - 1;
+        coreChat[index] = {
+            ...coreChat[index],
+            mes: promptReasoning.addToMessage(
+                coreChat[index].mes,
+                getRegexedString(
+                    String(coreChat[index].extra?.reasoning ?? ''),
+                    regex_placement.REASONING,
+                    { isPrompt: true, depth },
+                ),
+                false,
+                coreChat[index].extra?.reasoning_duration,
+            ),
+        };
+        if (promptReasoning.isLimitReached()) {
+            break;
+        }
+    }
+
+    return coreChat;
+}
+
+async function buildTimedWorldInfoRecomputeRequest() {
+    const activeCharacter = globalThis.promptManager?.activeCharacter ?? characters[this_chid];
+    const activeCharacterId = activeCharacter?.id ?? this_chid;
+    const activeCharacterFilename = getCharaFilename(activeCharacterId);
+    const cardFields = getCharacterCardFields({ chid: activeCharacterId });
+    const tagKey = getTagKeyForEntity(activeCharacterId);
+    const replayMessages = await buildTimedWorldInfoReplayMessages();
+
+    return {
+        chatMessages: getCoreChatPayloadForAssembly(replayMessages),
+        includeNames: world_info_include_names,
+        maxContext: getMaxContextSize(),
+        globalScanData: {
+            personaDescription: cardFields.persona,
+            characterDescription: cardFields.description,
+            characterPersonality: cardFields.personality,
+            characterDepthPrompt: cardFields.charDepthPrompt,
+            scenario: cardFields.scenario,
+            creatorNotes: cardFields.creatorNotes,
+            trigger: 'normal',
+        },
+        regexScripts: getWorldInfoRegexScripts(),
+        selectedWorldInfo: selected_world_info,
+        chatWorld: chat_metadata[METADATA_KEY] || '',
+        personaWorld: power_user.persona_description_lorebook || '',
+        characterWorld: characters[activeCharacterId]?.data?.extensions?.world || '',
+        characterExtraBooks: getCharacterExtraBooks(activeCharacterFilename),
+        selectedGroup: Boolean(selected_group),
+        activeSpeaker: {
+            name: activeCharacter?.name || name2 || '',
+            avatar: activeCharacter?.avatar || characters[this_chid]?.avatar || '',
+            filename: String(activeCharacter?.avatar || characters[this_chid]?.avatar || '').replace(/\.[^/.]+$/, '') || activeCharacterFilename,
+        },
+        currentCharacterFilename: activeCharacterFilename,
+        currentCharacterTags: Array.isArray(tag_map?.[tagKey]) ? tag_map[tagKey] : [],
+        forcedActivations: getForcedActivationEntriesSnapshot(),
+        settings: {
+            world_info_depth,
+            world_info_min_activations,
+            world_info_min_activations_depth_max,
+            world_info_budget,
+            world_info_recursive,
+            world_info_case_sensitive,
+            world_info_match_whole_words,
+            world_info_budget_cap,
+            world_info_use_group_scoring,
+            world_info_max_recursion_steps,
+        },
+        worldInfoPosition: world_info_position,
+        tokenizerModel: getTokenizerModel(),
+        promptState: await getServerPromptState(),
+        macroSnapshot: getServerMacroSnapshot(),
+    };
+}
+
+async function recomputeTimedWorldInfoUnsafe() {
+    if (!Array.isArray(chat) || chat.length === 0) {
+        delete chat_metadata.timedWorldInfo;
+        return false;
+    }
+
+    const payload = await buildTimedWorldInfoRecomputeRequest();
+    const timedWorldInfo = await recomputeTimedWorldInfoState(payload);
+
+    if (hasActiveTimedWorldInfo(timedWorldInfo)) {
+        chat_metadata.timedWorldInfo = structuredClone(timedWorldInfo);
+    } else {
+        delete chat_metadata.timedWorldInfo;
+    }
+
+    return true;
+}
+
+const recomputeTimedWorldInfoMutex = new SimpleMutex(recomputeTimedWorldInfoUnsafe);
+
+async function recomputeTimedWorldInfo() {
+    try {
+        return await recomputeTimedWorldInfoMutex.update();
+    } catch (error) {
+        console.error('Failed to recompute timed world info', error);
+        return false;
     }
 }
 
@@ -9001,31 +9159,6 @@ export function syncMesToSwipe(messageId = null) {
     targetSwipeInfo.extra = createSwipeInfoExtra(targetMessage.extra);
 
     return true;
-}
-
-function restoreTimedWorldInfoFromChat(messageId = null) {
-    restoreWorldInfoResponseDataFromChat(messageId);
-
-    if (!Array.isArray(chat) || chat.length === 0) {
-        delete chat_metadata.timedWorldInfo;
-        return false;
-    }
-
-    const startIndex = Math.min(
-        typeof messageId === 'number' ? messageId : chat.length - 1,
-        chat.length - 1,
-    );
-
-    for (let index = startIndex; index >= 0; index--) {
-        const snapshot = chat[index]?.extra?.timedWorldInfo;
-        if (snapshot && typeof snapshot === 'object') {
-            chat_metadata.timedWorldInfo = structuredClone(snapshot);
-            return true;
-        }
-    }
-
-    delete chat_metadata.timedWorldInfo;
-    return false;
 }
 
 function restoreWorldInfoResponseDataFromChat(messageId = null) {
@@ -9134,7 +9267,6 @@ export function syncSwipeToMes(messageId = null, swipeId = null) {
     targetMessage.gen_started = targetSwipeInfo?.gen_started;
     targetMessage.gen_finished = targetSwipeInfo?.gen_finished;
     targetMessage.extra = structuredClone(targetSwipeInfo?.extra) ?? {};
-    restoreTimedWorldInfoFromChat();
 
     return true;
 }
@@ -9962,6 +10094,7 @@ async function getChatResult() {
     }
     await loadItemizedPrompts(getCurrentChatId());
     await printMessages();
+    await recomputeTimedWorldInfo();
     select_selected_character(this_chid);
 
     await eventSource.emit(event_types.CHAT_CHANGED, (getCurrentChatId()));
@@ -10030,6 +10163,7 @@ export async function refreshPristineFirstMessage() {
     await clearChat();
     await printMessages();
     await eventSource.emit(event_types.CHARACTER_MESSAGE_RENDERED, messageId, 'first_message');
+    await recomputeTimedWorldInfo();
     await saveChatConditional();
 
     return true;
@@ -10582,6 +10716,7 @@ async function messageEditMove(sourceId, targetId) {
 
     updateViewMessageIds();
     await syncLatestPromptInspectorAfterMessageMove(sourceId, targetId);
+    await recomputeTimedWorldInfo();
     await saveChatConditional();
     return true;
 }
@@ -12991,6 +13126,7 @@ export async function deleteSwipe(swipeId = null, messageId = chat.length - 1) {
 
     chat_metadata['tainted'] = true;
 
+    await recomputeTimedWorldInfo();
     await eventSource.emit(event_types.MESSAGE_SWIPE_DELETED, { messageId, swipeId, newSwipeId });
 
     await saveChatConditional();
@@ -15419,7 +15555,7 @@ jQuery(async function () {
             chat.length = this_del_mes;
             syncSplitTailStateAfterMutation();
             syncVisibleChatRangeFromDom();
-            restoreTimedWorldInfoFromChat();
+            await recomputeTimedWorldInfo();
             updateHistoryControls();
             chat_metadata['tainted'] = true;
             await saveChatConditional();
@@ -15672,6 +15808,7 @@ jQuery(async function () {
         addOneMessage(clone, { insertAfter: this_edit_mes_id });
 
         updateViewMessageIds();
+        await recomputeTimedWorldInfo();
         await saveChatConditional();
         chatElement[0].scrollTop = oldScroll;
         showSwipeButtons();

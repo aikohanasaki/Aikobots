@@ -973,7 +973,8 @@ function stripTransientWorldInfoMetadata(data) {
 
 /**
  * @typedef {object} WITimedEffect Timed effect for world info
- * @property {number} hash Hash of the entry that triggered the effect
+ * @property {string} book Lorebook name for the entry that triggered the effect
+ * @property {string} name Display name for the entry that triggered the effect
  * @property {number} start The chat index where the effect starts
  * @property {number} end The chat index where the effect ends
  * @property {boolean} protected The protected effect can't be removed if the chat does not advance
@@ -1130,12 +1131,47 @@ class WorldInfoTimedEffects {
     }
 
     /**
+     * Gets the display name used to persist timed effect references.
+     * @param {WIScanEntry|WITimedEffect} entry WI entry
+     * @returns {string} Display name for the entry
+     */
+    #getEntryName(entry) {
+        const value = entry?.comment ?? entry?.displayName ?? entry?.name ?? entry?.uid ?? '';
+        return String(value || '').trim();
+    }
+
+    /**
      * Gets a unique-ish key for a WI entry.
-     * @param {WIScanEntry} entry WI entry
+     * @param {WIScanEntry|WITimedEffect} entry WI entry
      * @returns {string} String key for the entry
      */
     #getEntryKey(entry) {
-        return `${entry.world}.${entry.uid}`;
+        return `${String(entry?.world ?? entry?.book ?? '').trim()}::${this.#getEntryName(entry)}`;
+    }
+
+    /**
+     * Resolves an entry for a stored timed effect.
+     * @param {string} key Stored key
+     * @param {WITimedEffect} effect Stored timed effect
+     * @returns {WIScanEntry?} Matching WI entry
+     */
+    #findEntryForEffect(key, effect) {
+        const canonicalKey = this.#getEntryKey(effect);
+        if (canonicalKey && canonicalKey !== '::') {
+            const entry = this.#entries.find(item => this.#getEntryKey(item) === canonicalKey);
+            if (entry) {
+                return entry;
+            }
+        }
+
+        if (effect?.hash !== undefined && effect?.hash !== null) {
+            const entry = this.#entries.find(item => String(this.#getEntryHash(item)) === String(effect.hash));
+            if (entry) {
+                return entry;
+            }
+        }
+
+        return this.#entries.find(item => this.#getEntryKey(item) === String(key || '').trim()) ?? null;
     }
 
     /**
@@ -1147,7 +1183,8 @@ class WorldInfoTimedEffects {
      */
     #getEntryTimedEffect(type, entry, isProtected) {
         return {
-            hash: this.#getEntryHash(entry),
+            book: String(entry?.world ?? '').trim(),
+            name: this.#getEntryName(entry),
             start: this.#chat.length,
             end: this.#chat.length + Number(entry[type]),
             protected: !!isProtected,
@@ -1165,11 +1202,21 @@ class WorldInfoTimedEffects {
         const effects = Object.entries(chat_metadata.timedWorldInfo[type]);
         for (const [key, value] of effects) {
             console.log(`[WI] Processing ${type} entry ${key}`, value);
-            const entry = this.#entries.find(x => String(this.#getEntryHash(x)) === String(value.hash));
+            const entry = this.#findEntryForEffect(key, value);
+            const canonicalKey = entry ? this.#getEntryKey(entry) : null;
+
+            if (entry && canonicalKey && canonicalKey !== key) {
+                chat_metadata.timedWorldInfo[type][canonicalKey] = {
+                    ...value,
+                    book: String(entry?.world ?? value?.book ?? '').trim(),
+                    name: this.#getEntryName(entry),
+                };
+                delete chat_metadata.timedWorldInfo[type][key];
+            }
 
             if (this.#chat.length <= Number(value.start) && !value.protected) {
                 console.log(`[WI] Removing ${type} entry ${key} from timedWorldInfo: chat not advanced`, value);
-                delete chat_metadata.timedWorldInfo[type][key];
+                delete chat_metadata.timedWorldInfo[type][canonicalKey ?? key];
                 continue;
             }
 
@@ -1185,13 +1232,13 @@ class WorldInfoTimedEffects {
             // Ignore invalid entries (not configured for timed effects)
             if (!entry[type]) {
                 console.log(`[WI] Removing ${type} entry from timedWorldInfo: entry not ${type}`, entry);
-                delete chat_metadata.timedWorldInfo[type][key];
+                delete chat_metadata.timedWorldInfo[type][canonicalKey ?? key];
                 continue;
             }
 
             if (this.#chat.length >= Number(value.end)) {
                 console.log(`[WI] Removing ${type} entry from timedWorldInfo: ${type} interval passed`, entry);
-                delete chat_metadata.timedWorldInfo[type][key];
+                delete chat_metadata.timedWorldInfo[type][canonicalKey ?? key];
                 if (typeof onEnded === 'function') {
                     onEnded(entry);
                 }
@@ -6291,6 +6338,34 @@ export async function getSortedEntries() {
         console.warn('[WI] Failed to resolve world info entries on server.', error);
         return [];
     }
+}
+
+export async function recomputeTimedWorldInfoState(payload = {}) {
+    const response = await fetch('/api/worldinfo/timed-effects/recompute', {
+        method: 'POST',
+        headers: getRequestHeaders(),
+        body: JSON.stringify(payload),
+        cache: 'no-cache',
+    });
+
+    const responseText = await response.text();
+    let data = null;
+    try {
+        data = responseText ? JSON.parse(responseText) : null;
+    } catch {
+        data = null;
+    }
+
+    if (!response.ok) {
+        const message =
+            data?.error?.message ||
+            data?.message ||
+            responseText?.trim() ||
+            `Failed to recompute timed world info: ${response.status}`;
+        throw new Error(message);
+    }
+
+    return structuredClone(data?.timedWorldInfo || {});
 }
 
 function findLorebookIndexByName(name = '') {
