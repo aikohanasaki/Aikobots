@@ -3854,7 +3854,16 @@ export async function deleteMessage(id, swipeDeletionIndex = undefined, askConfi
     await eventSource.emit(event_types.MESSAGE_DELETED, id, chat.length);
 }
 
-export async function reloadCurrentChat() {
+export const reloadChatMutex = new SimpleMutex(reloadCurrentChatUnsafe);
+
+export const reloadCurrentChat = reloadChatMutex.update.bind(reloadChatMutex);
+
+/**
+ * Reloads the current chat unsafely, without mutex protection.
+ * Use `reloadCurrentChat` instead to ensure thread safety.
+ * @returns {Promise<void>} A promise that resolves when the chat is reloaded.
+ */
+export async function reloadCurrentChatUnsafe() {
     const deferredLoader = isLoaderVisible() ? null : deferLoader();
 
     try {
