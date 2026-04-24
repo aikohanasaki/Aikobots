@@ -47,6 +47,7 @@ import {
     postProcessPrompt,
     PROMPT_PROCESSING_TYPE,
     addAssistantPrefix,
+    addOpenRouterSignatures,
     embedOpenRouterMedia,
 } from '../../prompt-converters.js';
 import { assembleChatCompletionPrompt } from '../../prompting/chat-completion-assembly.js';
@@ -3704,6 +3705,7 @@ export async function handleChatCompletionsGenerate(request, response) {
         const cacheTTL = getConfigValue('claude.extendedTTL', false, 'boolean') ? '1h' : '5m';
         if (Array.isArray(request.body.messages)) {
             embedOpenRouterMedia(request.body.messages);
+            addOpenRouterSignatures(request.body.messages, request.body.model);
             if (Number.isInteger(cachingAtDepth) && cachingAtDepth >= 0 && isClaude3or4) {
                 cachingAtDepthForOpenRouterClaude(request.body.messages, cachingAtDepth, cacheTTL);
             }

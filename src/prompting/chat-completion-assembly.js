@@ -43,6 +43,14 @@ const character_names_behavior = {
     CONTENT: 2,
 };
 
+function isReasoningSignatureSupported(serviceSettings = {}) {
+    const source = serviceSettings.chat_completion_source;
+    const model = String(serviceSettings.openrouter_model || '');
+    const isGoogle = source === 'vertexai' || source === 'makersuite';
+    const isOpenRouterGemini = source === 'openrouter' && /google\/gemini/i.test(model);
+    return isGoogle || isOpenRouterGemini;
+}
+
 const DEFAULT_ORDER = 100;
 const MEDIA_FETCH_PROTOCOLS = new Set(['http:', 'https:']);
 const promptStateModuleMap = {
@@ -196,6 +204,7 @@ class Message {
             : undefined;
         this.tokens = 0;
         this.tokenHandler = tokenHandler;
+        this.signature = null;
     }
 
     static async createAsync(role, content, identifier, tokenHandler, contentSegments = undefined) {
@@ -231,6 +240,7 @@ class Message {
             ...(this.content !== undefined ? { content: this.content } : {}),
             ...(this.name ? { name: this.name } : {}),
             ...(this.tool_calls ? { tool_calls: this.tool_calls } : {}),
+            ...(this.signature ? { signature: this.signature } : {}),
         };
         this.tokens = await this.tokenHandler.countAsync(payload);
     }
@@ -240,7 +250,7 @@ class Message {
         await this.refreshTokens();
     }
 
-    async setToolCalls(invocations) {
+    async setToolCalls(invocations, includeSignature = false) {
         this.tool_calls = invocations.map(invocation => ({
             id: invocation.id,
             type: 'function',
@@ -248,6 +258,7 @@ class Message {
                 arguments: invocation.parameters,
                 name: invocation.name,
             },
+            ...(includeSignature && invocation.signature ? { signature: invocation.signature } : {}),
         }));
         await this.refreshTokens();
     }
@@ -524,6 +535,7 @@ class ChatCompletion {
                         ...(message.name ? { name: message.name } : {}),
                         ...(message.tool_calls ? { tool_calls: message.tool_calls } : {}),
                         ...(message.role === 'tool' ? { tool_call_id: message.identifier } : {}),
+                        ...(message.signature ? { signature: message.signature } : {}),
                     });
                 }
             }
@@ -554,6 +566,7 @@ function serializeMessageNode(node) {
         injected: Boolean(node.injected),
         systemPrompt: Boolean(node.systemPrompt),
         tool_calls: node.tool_calls,
+        signature: node.signature,
     };
 }
 
@@ -1891,6 +1904,7 @@ async function populateChatHistory(messages, prompts, chatCompletion, context) {
 
     const chatPool = [...messages].reverse();
     const mediaSupport = context.mediaSupport || {};
+    const includeSignature = isReasoningSignatureSupported(context.serviceSettings);
     for (let index = 0; index < chatPool.length; index++) {
         const chatPrompt = chatPool[index];
         const prompt = new Prompt(chatPrompt);
@@ -1953,7 +1967,7 @@ async function populateChatHistory(messages, prompts, chatCompletion, context) {
         if (context.canUseTools && Array.isArray(chatPrompt.invocations)) {
             const toolCallMessage = await Message.createAsync(chatMessage.role, undefined, `toolCall-${chatMessage.identifier}`, context.tokenHandler);
             const toolResultMessages = await Promise.all(chatPrompt.invocations.slice().reverse().map(invocation => Message.createAsync('tool', invocation.result || '[No content]', invocation.id, context.tokenHandler)));
-            await toolCallMessage.setToolCalls(chatPrompt.invocations);
+            await toolCallMessage.setToolCalls(chatPrompt.invocations, includeSignature);
             if (chatCompletion.canAffordAll([toolCallMessage, ...toolResultMessages])) {
                 for (const resultMessage of toolResultMessages) {
                     chatCompletion.insertAtStart(resultMessage, 'chatHistory');
@@ -1963,6 +1977,10 @@ async function populateChatHistory(messages, prompts, chatCompletion, context) {
                 break;
             }
             continue;
+        }
+
+        if (includeSignature && chatPrompt.signature) {
+            chatMessage.signature = chatPrompt.signature;
         }
 
         if (chatCompletion.canAfford(chatMessage)) {

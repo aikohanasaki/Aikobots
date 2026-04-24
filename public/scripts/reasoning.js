@@ -103,7 +103,7 @@ function clearStoredReasoningFields(extra) {
     }
 
     let changed = false;
-    for (const field of ['reasoning', 'reasoning_duration', 'reasoning_type', 'reasoning_display_text']) {
+    for (const field of ['reasoning', 'reasoning_duration', 'reasoning_type', 'reasoning_display_text', 'reasoning_signature']) {
         if (Object.hasOwn(extra, field)) {
             delete extra[field];
             changed = true;
@@ -282,6 +282,50 @@ export function extractReasoningFromData(data, {
     }
 
     return '';
+}
+
+/**
+ * Extracts encrypted reasoning signature from the response data.
+ * These signatures are used to maintain reasoning context across multi-turn conversations.
+ * @param {object} data Response data
+ * @param {object} [options] Optional parameters
+ * @param {string|null} [options.mainApi] Override for main API
+ * @param {string|null} [options.chatCompletionSource] Override for chat completion source
+ * @returns {string?} Encrypted signature of the reasoning text
+ */
+export function extractReasoningSignatureFromData(data, {
+    mainApi = null,
+    chatCompletionSource = null,
+} = {}) {
+    if ((mainApi ?? main_api) !== 'openai') {
+        return null;
+    }
+
+    const source = chatCompletionSource ?? oai_settings.chat_completion_source;
+    const isGemini = source === chat_completion_sources.MAKERSUITE || source === chat_completion_sources.VERTEXAI;
+    const isOpenRouter = source === chat_completion_sources.OPENROUTER;
+
+    if (!isGemini && !isOpenRouter) {
+        return null;
+    }
+
+    if (isOpenRouter && Array.isArray(data?.choices?.[0]?.message?.reasoning_details)) {
+        for (const detail of data.choices[0].message.reasoning_details) {
+            if (!/^tool_/.test(detail?.id) && detail?.type === 'reasoning.encrypted' && detail?.data) {
+                return detail.data;
+            }
+        }
+    }
+
+    if (isGemini && Array.isArray(data?.responseContent?.parts)) {
+        for (const part of data.responseContent.parts) {
+            if (part?.thoughtSignature && typeof part?.text === 'string') {
+                return part.thoughtSignature;
+            }
+        }
+    }
+
+    return null;
 }
 
 /**
@@ -1463,6 +1507,7 @@ export function parseReasoningFromString(str, { strict = true } = {}) {
  * @property {string} reasoning Reasoning block
  * @property {number} reasoning_duration Duration of the reasoning block
  * @property {string} reasoning_type Type of reasoning block
+ * @property {string?} reasoning_signature Encrypted signature of the reasoning block
  */
 export function parseReasoningInSwipes(swipes, swipeInfoArray, duration) {
     if (shouldStripAiThinkingFromResponses()) {

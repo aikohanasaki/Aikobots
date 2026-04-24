@@ -1,6 +1,6 @@
 import { DOMPurify } from '../lib.js';
 
-import { addOneMessage, chat, event_types, eventSource, main_api, saveChatConditional, system_avatar, systemUserName } from '../script.js';
+import { addOneMessage, chat, event_types, eventSource, getGeneratingApi, getGeneratingModel, main_api, saveChatConditional, system_avatar, systemUserName } from '../script.js';
 import { chat_completion_sources, custom_prompt_post_processing_types, model_list, oai_settings } from './openai.js';
 import { Popup } from './popup.js';
 import { SlashCommand } from './slash-commands/SlashCommand.js';
@@ -19,6 +19,7 @@ import { isTrueBoolean } from './utils.js';
  * @property {string} name - The name of the tool.
  * @property {string} parameters - The parameters for the tool invocation.
  * @property {string} result - The result of the tool invocation.
+ * @property {string?} signature - The thought signature associated with the tool invocation.
  */
 
 /**
@@ -418,9 +419,10 @@ export class ToolManager {
      * Utility function to parse tool calls from a parsed response.
      * @param {any[]} toolCalls The tool calls to update.
      * @param {any} parsed The parsed response from the OpenAI API.
+     * @param {Record<string, string>} toolSignatures Optional mapping of tool call IDs to thought signatures.
      * @returns {void}
      */
-    static parseToolCalls(toolCalls, parsed) {
+    static parseToolCalls(toolCalls, parsed, toolSignatures = {}) {
         if (!this.isToolCallingSupported()) {
             return;
         }
@@ -457,6 +459,10 @@ export class ToolManager {
                     const targetToolCall = toolCalls[choiceIndex][toolCallIndex];
 
                     ToolManager.#applyToolCallDelta(targetToolCall, toolCallDelta);
+
+                    if (Object.hasOwn(toolSignatures, targetToolCall.id)) {
+                        targetToolCall.signature = toolSignatures[targetToolCall.id];
+                    }
                 }
             }
         }
@@ -537,6 +543,9 @@ export class ToolManager {
                                 toolCalls[choiceIndex][toolCallIndex] = {};
                             }
                             const targetToolCall = toolCalls[choiceIndex][toolCallIndex];
+                            if (part.thoughtSignature) {
+                                targetToolCall.signature = part.thoughtSignature;
+                            }
                             ToolManager.#applyToolCallDelta(targetToolCall, part.functionCall);
                         }
                     }
@@ -690,7 +699,11 @@ export class ToolManager {
         const isClaudeToolCall = c => Array.isArray(c) ? c.filter(x => x).every(isClaudeToolCall) : c?.input && c?.name && c?.id;
         const isGoogleToolCall = c => Array.isArray(c) ? c.filter(x => x).every(isGoogleToolCall) : c?.name && c?.args;
         const convertClaudeToolCall = c => ({ id: c.id, function: { name: c.name, arguments: c.input } });
-        const convertGoogleToolCall = (c) => ({ id: getRandomId(), function: { name: c.name, arguments: c.args } });
+        const convertGoogleToolCall = (c, signature = null) => ({
+            id: getRandomId(),
+            function: { name: c.name, arguments: c.args },
+            ...(signature ? { signature } : {}),
+        });
 
         // Parsed tool calls from streaming data
         if (Array.isArray(data) && data.length > 0 && Array.isArray(data[0])) {
@@ -699,7 +712,7 @@ export class ToolManager {
             }
 
             if (isGoogleToolCall(data[0])) {
-                return data[0].filter(x => x).map(convertGoogleToolCall);
+                return data[0].filter(x => x).map(c => convertGoogleToolCall(c, c.signature));
             }
 
             if (typeof data[0]?.[0]?.tool_calls === 'object') {
@@ -711,7 +724,7 @@ export class ToolManager {
 
         // Google AI Studio tool calls
         if (Array.isArray(data?.responseContent?.parts)) {
-            return data.responseContent.parts.filter(p => p.functionCall).map(p => convertGoogleToolCall(p.functionCall));
+            return data.responseContent.parts.filter(p => p.functionCall).map(p => convertGoogleToolCall(p.functionCall, p.thoughtSignature));
         }
 
         // Parsed tool calls from non-streaming data
@@ -719,7 +732,16 @@ export class ToolManager {
             // Find a choice with 0-index
             const choice = data.choices.find(choice => choice.index === 0);
 
-            if (choice) {
+            if (choice && typeof choice.message === 'object' && Array.isArray(choice.message.tool_calls)) {
+                if (Array.isArray(choice.message.reasoning_details)) {
+                    for (const toolCall of choice.message.tool_calls) {
+                        const reasoningDetail = choice.message.reasoning_details.find(detail => detail?.id === toolCall?.id);
+                        if (reasoningDetail?.type === 'reasoning.encrypted' && reasoningDetail?.data) {
+                            toolCall.signature = reasoningDetail.data;
+                        }
+                    }
+                }
+
                 return choice.message.tool_calls;
             }
         }
@@ -802,6 +824,7 @@ export class ToolManager {
                 name,
                 parameters: stringify(parameters),
                 result: toolResult,
+                signature: toolCall.signature || null,
             };
             result.invocations.push(invocation);
         }
@@ -863,6 +886,8 @@ export class ToolManager {
             extra: {
                 isSmallSys: true,
                 tool_invocations: invocations,
+                api: getGeneratingApi(),
+                model: getGeneratingModel(),
             },
         };
         chat.push(message);

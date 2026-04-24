@@ -31,11 +31,15 @@ declare global {
     };
 
     interface ChatMessageExtra {
+        api?: string;
+        model?: string;
+        type?: string;
         bias?: string;
         uses_system_ui?: boolean;
         memory?: string;
         display_text?: string;
         reasoning_display_text?: string;
+        reasoning_signature?: string;
         tool_invocations?: any[];
         title?: string;
         isSmallSys?: boolean;

@@ -827,6 +827,8 @@ async function validateReverseProxy() {
 function setOpenAIMessages(chat) {
     // clean openai msgs
     const messages = [];
+    const currentApi = oai_settings.chat_completion_source;
+    const currentModel = getChatCompletionModel();
     for (let i = chat.length - 1; i >= 0; i--) {
         let role = chat[i]['is_user'] ? 'user' : 'assistant';
         let content = chat[i]['mes'];
@@ -871,8 +873,23 @@ function setOpenAIMessages(chat) {
         const media = chat[i]?.extra?.media;
         const mediaDisplay = getMediaDisplay(chat[i]);
         const mediaIndex = getMediaIndex(chat[i]);
-        const invocations = chat[i]?.extra?.tool_invocations;
-        messages.push({ 'role': role, 'content': content, name: name, 'media': media, 'mediaDisplay': mediaDisplay, 'mediaIndex': mediaIndex, 'invocations': invocations });
+        const invocations = Array.isArray(chat[i]?.extra?.tool_invocations) ? chat[i].extra.tool_invocations.slice() : chat[i]?.extra?.tool_invocations;
+        const originApi = chat[i]?.extra?.api;
+        const originModel = chat[i]?.extra?.model;
+        const isSameModel = originApi === currentApi && originModel === currentModel;
+        const signature = isSameModel ? chat[i]?.extra?.reasoning_signature : null;
+
+        if (Array.isArray(invocations) && invocations.length > 0 && !isSameModel) {
+            invocations.forEach((invocation, index) => {
+                if (invocation?.signature) {
+                    const clone = structuredClone(invocation);
+                    delete clone.signature;
+                    invocations[index] = clone;
+                }
+            });
+        }
+
+        messages.push({ 'role': role, 'content': content, name: name, 'media': media, 'mediaDisplay': mediaDisplay, 'mediaIndex': mediaIndex, 'invocations': invocations, 'signature': signature });
     }
 
     return messages;
@@ -2729,7 +2746,7 @@ async function sendOpenAIRequest(type, messages, signal, { jsonSchema = null } =
 
             consumeChatCompletionStream(response, {
                 createEventStream: () => getEventSourceStream(),
-                createState: () => ({ reasoning: '', swipeReasoning: [], images: [] }),
+                createState: () => ({ reasoning: '', swipeReasoning: [], images: [], signature: '', toolSignatures: {} }),
                 getReply: (parsed, state) => {
                     const isSwipe = canMultiSwipe && Array.isArray(parsed?.choices) && parsed?.choices?.[0]?.index > 0;
                     if (isSwipe) {
@@ -2737,6 +2754,8 @@ async function sendOpenAIRequest(type, messages, signal, { jsonSchema = null } =
                         const swipeState = {
                             reasoning: Number.isInteger(swipeIndex) && swipeIndex >= 0 ? state.swipeReasoning[swipeIndex] || '' : '',
                             images: [],
+                            signature: '',
+                            toolSignatures: {},
                         };
                         const reply = getStreamingReply(parsed, swipeState);
                         if (Number.isInteger(swipeIndex) && swipeIndex >= 0) {
@@ -2755,13 +2774,13 @@ async function sendOpenAIRequest(type, messages, signal, { jsonSchema = null } =
                         return error instanceof Error ? error : new Error(String(error));
                     }
                 },
-                handleChunk: parsed => {
+                handleChunk: (parsed, context) => {
                     if (parsed?.x_sillytavern) {
                         applyTimedWorldInfoResponseData(parsed, requestId);
                         return { skip: true };
                     }
 
-                    ToolManager.parseToolCalls(toolCalls, parsed);
+                    ToolManager.parseToolCalls(toolCalls, parsed, context?.state?.toolSignatures);
                     return {
                         afterAccumulate: context => {
                             queue.push({
@@ -2837,6 +2856,10 @@ async function sendOpenAIRequest(type, messages, signal, { jsonSchema = null } =
 export function getStreamingReply(data, state, { chatCompletionSource = null, overrideShowThoughts = null } = {}) {
     const chat_completion_source = chatCompletionSource ?? oai_settings.chat_completion_source;
     const show_thoughts = overrideShowThoughts ?? oai_settings.show_thoughts;
+    state.reasoning ??= '';
+    state.images ??= [];
+    state.signature ??= '';
+    state.toolSignatures ??= {};
 
     if (chat_completion_source === chat_completion_sources.CLAUDE) {
         if (show_thoughts) {
@@ -2851,6 +2874,12 @@ export function getStreamingReply(data, state, { chatCompletionSource = null, ov
         if (show_thoughts) {
             state.reasoning += (data?.candidates?.[0]?.content?.parts?.filter(x => x.thought)?.map(x => x.text)?.[0] || '');
         }
+        const parts = data?.candidates?.[0]?.content?.parts || [];
+        parts.forEach((part) => {
+            if (part?.thoughtSignature && typeof part?.text === 'string') {
+                state.signature = part.thoughtSignature;
+            }
+        });
         return data?.candidates?.[0]?.content?.parts?.filter(x => !x.thought)?.map(x => x.text)?.[0] || '';
     } else if (chat_completion_source === chat_completion_sources.COHERE) {
         return data?.delta?.message?.content?.text || data?.delta?.message?.tool_plan || '';
@@ -2872,6 +2901,16 @@ export function getStreamingReply(data, state, { chatCompletionSource = null, ov
         if (show_thoughts) {
             state.reasoning += (data.choices?.filter(x => x?.delta?.reasoning)?.[0]?.delta?.reasoning || '');
         }
+        const reasoningDetails = data?.choices?.[0]?.delta?.reasoning_details || [];
+        reasoningDetails.forEach((detail) => {
+            if (detail?.type === 'reasoning.encrypted' && detail?.data) {
+                if (/^tool_/.test(detail.id)) {
+                    state.toolSignatures[detail.id] = detail.data;
+                } else {
+                    state.signature = detail.data;
+                }
+            }
+        });
         return data.choices?.[0]?.delta?.content ?? data.choices?.[0]?.message?.content ?? data.choices?.[0]?.text ?? '';
     } else if ([chat_completion_sources.CUSTOM, chat_completion_sources.POLLINATIONS, chat_completion_sources.AIMLAPI, chat_completion_sources.MOONSHOT, chat_completion_sources.COMETAPI, chat_completion_sources.ELECTRONHUB, chat_completion_sources.NAVY, chat_completion_sources.ZANITY, chat_completion_sources.NANOGPT, chat_completion_sources.ZAI, chat_completion_sources.SILICONFLOW].includes(chat_completion_source)) {
         if (show_thoughts) {
