@@ -254,6 +254,7 @@ import { initDomHandlers } from './scripts/dom-handlers.js';
 import { SimpleMutex } from './scripts/util/SimpleMutex.js';
 import { AudioPlayer } from './scripts/audio-player.js';
 import { getStmbSettings, initStmb, loadStmbSettings } from './scripts/stmb.js';
+import { syncManageChatsBackupsBrowser } from './scripts/chat-backups.js';
 
 export { sanitizeMessageHtml } from './scripts/chats.js';
 
@@ -11678,6 +11679,7 @@ async function displayDeletedCharacterChats(orphanKey = manageChatsSelectedOrpha
     manageChatsMode = 'deleted';
     initManageChatsUi();
     refreshManageChatsModeUi();
+    syncManageChatsBackupsBrowser({ enabled: false });
     try {
         await fetchManageChatsOrphanEntries();
     } catch (error) {
@@ -11809,6 +11811,7 @@ export async function displayPastChats(hightlightNames = [], ownerContext = getC
     updateManageChatsHeader(details.ownerContext);
 
     if (!details.ownerContext) {
+        syncManageChatsBackupsBrowser({ enabled: false });
         $('#select_chat_div').empty();
         $('#select_chat_search').val('').off('input');
         $('#select_chat_div').append(`<div class="text_muted padding10px">${t`Choose a character`}</div>`);
@@ -11833,6 +11836,8 @@ export async function displayPastChats(hightlightNames = [], ownerContext = getC
         const textSearchElement = $('#select_chat_search');
         textSearchElement.trigger('click').trigger('focus').trigger('select');
     }, 200);
+
+    syncManageChatsBackupsBrowser({ enabled: true, ownerDetails: details });
 }
 
 async function displayChats(searchQuery, chatDetails, highlightNames) {
@@ -12970,7 +12975,7 @@ export async function saveChatConditional(options = {}) {
  * @param {boolean} [options.refresh] Whether to refresh the group chat list after import
  * @returns {Promise<string[]>} List of imported file names.
  */
-async function importCharacterChat(formData, { refresh = true } = {}) {
+export async function importCharacterChat(formData, { refresh = true } = {}) {
     const fetchResult = await fetch('/api/chats/import', {
         method: 'POST',
         body: formData,

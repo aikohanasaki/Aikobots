@@ -2293,6 +2293,8 @@ export async function importGroupChat(formData, { refresh = true, groupId = sele
                     await displayPastChats();
                 }
             }
+
+            return data?.fileNames || [`${chatId}.jsonl`];
         }
 
         return data?.fileNames || [];
