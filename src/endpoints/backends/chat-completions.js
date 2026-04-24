@@ -3684,6 +3684,10 @@ export async function handleChatCompletionsGenerate(request, response) {
             bodyParams['reasoning'] = { effort: request.body.reasoning_effort };
         }
 
+        if (request.body.verbosity) {
+            bodyParams['verbosity'] = request.body.verbosity;
+        }
+
         if (request.body.json_schema) {
             bodyParams['response_format'] = {
                 type: 'json_schema',
@@ -3897,7 +3901,7 @@ export async function handleChatCompletionsGenerate(request, response) {
         }
     }
 
-    if (request.body.verbosity && request.body.chat_completion_source === CHAT_COMPLETION_SOURCES.OPENAI) {
+    if (request.body.verbosity && [CHAT_COMPLETION_SOURCES.CUSTOM, CHAT_COMPLETION_SOURCES.OPENAI].includes(request.body.chat_completion_source)) {
         if (OPENAI_VERBOSITY_MODELS.test(request.body.model)) {
             bodyParams['verbosity'] = request.body.verbosity;
         }
