@@ -992,6 +992,89 @@ export function buildChunkedChatPayload(filePath, {
     };
 }
 
+function buildChunkedChatPayloadFromLogicalChatData(chatData, {
+    rangeStart = null,
+    count = null,
+    hydrateFull = false,
+    displayCount = LONG_CHAT_DISPLAY_DEFAULT,
+    bufferMax = LONG_CHAT_BUFFER_DEFAULT,
+    includeParentPromptCache = false,
+    storageMode = 'full',
+    tailStartId = 0,
+} = {}) {
+    const config = normalizeLongChatConfig({ displayCount, bufferMax });
+    const header = sanitizeChatHeaderForPersistence(Array.isArray(chatData) ? chatData[0] : null);
+    const logicalMessages = Array.isArray(chatData)
+        ? chatData.slice(1).map(message => sanitizeChatMessageForPersistence(message))
+        : [];
+    const totalMessages = logicalMessages.length;
+    const isSplitTail = storageMode === CHAT_STORAGE_MODE_SPLIT_TAIL;
+    const normalizedTailStartId = isSplitTail
+        ? Math.max(0, Math.min(Number.isInteger(tailStartId) ? tailStartId : 0, totalMessages))
+        : 0;
+    const normalizedTailEndId = totalMessages > 0 ? totalMessages - 1 : -1;
+    const normalizedTailCount = isSplitTail
+        ? Math.max(0, totalMessages - normalizedTailStartId)
+        : totalMessages;
+
+    if (!header) {
+        return {
+            mode: 'full',
+            header: null,
+            messages: [],
+            totalMessages: 0,
+            loadedRangeStart: 0,
+            loadedRangeEnd: -1,
+            tailStartId: 0,
+            tailEndId: -1,
+            headCount: 0,
+            tailCount: 0,
+        };
+    }
+
+    let startId = 0;
+    let endId = totalMessages - 1;
+    let loadedRangeStart = totalMessages > 0 ? 0 : 0;
+    let loadedRangeEnd = totalMessages > 0 ? endId : -1;
+    let messages = totalMessages > 0
+        ? logicalMessages.slice(startId, endId + 1)
+        : [];
+
+    if (!hydrateFull && isSplitTail) {
+        const normalizedCount = Math.max(1, Number(count) || normalizedTailCount || config.displayCount);
+        startId = Number.isInteger(rangeStart)
+            ? rangeStart
+            : normalizedTailStartId;
+        startId = Math.max(0, Math.min(startId, Math.max(0, totalMessages - 1)));
+        endId = Math.min(totalMessages - 1, startId + normalizedCount - 1);
+        loadedRangeStart = startId;
+        loadedRangeEnd = endId;
+        messages = totalMessages > 0
+            ? logicalMessages.slice(startId, endId + 1)
+            : [];
+    }
+
+    const parentPromptMessages = isSplitTail && !hydrateFull && (includeParentPromptCache || rangeStart === null)
+        ? logicalMessages.slice(0, normalizedTailStartId)
+        : undefined;
+
+    return {
+        mode: isSplitTail ? CHAT_STORAGE_MODE_SPLIT_TAIL : 'full',
+        header,
+        messages,
+        parentPromptMessages,
+        totalMessages,
+        loadedRangeStart,
+        loadedRangeEnd,
+        tailStartId: normalizedTailStartId,
+        tailEndId: normalizedTailEndId,
+        headCount: normalizedTailStartId,
+        tailCount: normalizedTailCount,
+        displayCount: config.displayCount,
+        isHydrated: hydrateFull || !isSplitTail,
+    };
+}
+
 function getCharacterChatFilePath(chatsDirectory, avatarUrl, fileName) {
     const directoryName = String(avatarUrl || '').replace('.png', '');
     const normalizedFileName = String(fileName || '').endsWith('.jsonl')
@@ -1842,12 +1925,14 @@ router.post('/save', validateAvatarUrlMiddleware, async function (request, respo
                     headCount: layout.headCount,
                     tailCount: layout.tailCount,
                     payload: request.body.refresh_tail === true
-                        ? buildChunkedChatPayload(filePath, {
+                        ? buildChunkedChatPayloadFromLogicalChatData(existingChatData, {
                             count: storageMode === CHAT_STORAGE_MODE_SPLIT_TAIL ? layout.tailCount : layout.totalMessages,
                             hydrateFull: storageMode !== CHAT_STORAGE_MODE_SPLIT_TAIL,
                             displayCount: config.displayCount,
                             bufferMax: config.bufferMax,
                             includeParentPromptCache: storageMode === CHAT_STORAGE_MODE_SPLIT_TAIL,
+                            storageMode,
+                            tailStartId: layout.tailStartId,
                         })
                         : null,
                 });
@@ -1883,12 +1968,14 @@ router.post('/save', validateAvatarUrlMiddleware, async function (request, respo
                 headCount: writeResult.headCount,
                 tailCount: writeResult.tailCount,
                 payload: refreshRequired
-                    ? buildChunkedChatPayload(filePath, {
+                    ? buildChunkedChatPayloadFromLogicalChatData([header, ...messages], {
                         count: writeResult.storageMode === CHAT_STORAGE_MODE_SPLIT_TAIL ? writeResult.tailCount : messages.length,
                         hydrateFull: writeResult.storageMode !== CHAT_STORAGE_MODE_SPLIT_TAIL,
                         displayCount: config.displayCount,
                         bufferMax: config.bufferMax,
                         includeParentPromptCache: writeResult.storageMode === CHAT_STORAGE_MODE_SPLIT_TAIL,
+                        storageMode: writeResult.storageMode,
+                        tailStartId: writeResult.tailStartId,
                     })
                     : null,
             });

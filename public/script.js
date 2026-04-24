@@ -3247,6 +3247,39 @@ export function applyChunkedChatPayload(response, { replace = false, currentView
     return header;
 }
 
+function shouldApplyLatestTailPayload(response, localTotalMessages = getTotalChatMessages()) {
+    const responseTotalMessages = Number(response?.totalMessages);
+    const responseLoadedRangeEnd = Number(response?.loadedRangeEnd);
+
+    if (!Number.isInteger(responseTotalMessages) || responseTotalMessages < 0) {
+        console.warn('Skipping chat payload replacement because totalMessages is invalid.', {
+            totalMessages: response?.totalMessages,
+        });
+        return false;
+    }
+
+    if (responseTotalMessages < localTotalMessages) {
+        console.warn('Skipping chat payload replacement because the payload regresses the local chat length.', {
+            localTotalMessages,
+            responseTotalMessages,
+        });
+        return false;
+    }
+
+    const expectedTailEndId = responseTotalMessages - 1;
+    if (expectedTailEndId >= 0 && responseLoadedRangeEnd !== expectedTailEndId) {
+        console.warn('Skipping chat payload replacement because the payload does not include the latest tail message.', {
+            localTotalMessages,
+            responseTotalMessages,
+            responseLoadedRangeEnd,
+            expectedTailEndId,
+        });
+        return false;
+    }
+
+    return true;
+}
+
 async function replaceChunkedChatPayloadPreservingWindow(response, { scrollToTail = false } = {}) {
     const previousChatLength = chat.length;
     const previousStartId = getFirstDisplayedMessageId();
@@ -3254,6 +3287,11 @@ async function replaceChunkedChatPayloadPreservingWindow(response, { scrollToTai
         1,
         chatElement.find('.mes').length || getConfiguredChatWindowSize(),
     );
+
+    if (!shouldApplyLatestTailPayload(response, previousChatLength)) {
+        return;
+    }
+
     const wasShowingLatest = Number.isFinite(previousStartId)
         ? previousStartId + previousCount >= previousChatLength
         : chatLoadState.currentView !== 'history';
@@ -3283,6 +3321,10 @@ async function replaceChunkedChatPayloadPreservingWindow(response, { scrollToTai
 }
 
 async function replaceChunkedChatPayloadWithLatestTail(response) {
+    if (!shouldApplyLatestTailPayload(response)) {
+        return;
+    }
+
     applyChunkedChatPayload(response, { replace: true, currentView: 'tail' });
 
     if (!chat.length) {
