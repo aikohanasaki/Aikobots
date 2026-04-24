@@ -1000,6 +1000,13 @@ function getCharacterChatFilePath(chatsDirectory, avatarUrl, fileName) {
     return path.join(chatsDirectory, directoryName, sanitize(normalizedFileName));
 }
 
+function getGroupChatFilePath(groupChatsDirectory, chatId) {
+    const normalizedFileName = String(chatId || '').endsWith('.jsonl')
+        ? String(chatId)
+        : `${String(chatId)}.jsonl`;
+    return path.join(groupChatsDirectory, sanitize(normalizedFileName));
+}
+
 function buildSplitLogicalMessages(segments, layout) {
     if (!segments?.storage || !layout?.headMessagesMissing) {
         return Array.isArray(segments?.messages) ? segments.messages.slice() : [];
@@ -1153,8 +1160,7 @@ export function resolveLogicalChatReference(directories, chatRef) {
             return resolveGroupLogicalChat('');
         }
 
-        const normalizedFileName = chatId.endsWith('.jsonl') ? chatId : `${chatId}.jsonl`;
-        const filePath = path.join(directories.groupChats, sanitize(normalizedFileName));
+        const filePath = getGroupChatFilePath(directories.groupChats, chatId);
         return resolveGroupLogicalChat(filePath);
     }
 
@@ -2157,7 +2163,7 @@ router.post('/group/import', function (request, response) {
             return response.status(400).send({ error: true, message: unsupportedImportMessage });
         }
 
-        const pathToNewFile = path.join(request.user.directories.groupChats, `${chatname}.jsonl`);
+        const pathToNewFile = getGroupChatFilePath(request.user.directories.groupChats, chatname);
         fs.copyFileSync(pathToUpload, pathToNewFile);
         fs.unlinkSync(pathToUpload);
         return response.send({ res: chatname });
@@ -2298,7 +2304,7 @@ router.post('/group/get', async (request, response) => {
     }
 
     const id = request.body.id;
-    const pathToFile = path.join(request.user.directories.groupChats, `${id}.jsonl`);
+    const pathToFile = getGroupChatFilePath(request.user.directories.groupChats, id);
     const withMetadata = request.body.with_metadata === true;
 
     if (fs.existsSync(pathToFile)) {
@@ -2359,7 +2365,7 @@ router.post('/group/delete', (request, response) => {
     }
 
     const id = request.body.id;
-    const pathToFile = path.join(request.user.directories.groupChats, `${id}.jsonl`);
+    const pathToFile = getGroupChatFilePath(request.user.directories.groupChats, id);
 
     if (fs.existsSync(pathToFile)) {
         fs.unlinkSync(pathToFile);
@@ -2383,7 +2389,7 @@ router.post('/group/save', async (request, response) => {
     }
 
     const id = request.body.id;
-    const pathToFile = path.join(request.user.directories.groupChats, `${id}.jsonl`);
+    const pathToFile = getGroupChatFilePath(request.user.directories.groupChats, id);
 
     if (!fs.existsSync(request.user.directories.groupChats)) {
         fs.mkdirSync(request.user.directories.groupChats, { recursive: true });
@@ -2456,7 +2462,7 @@ router.post('/search', validateAvatarUrlMiddleware, function (request, response)
             const groupChatsDir = path.join(request.user.directories.groupChats);
             chatFiles = targetGroup.chats
                 .map(chatId => {
-                    const filePath = path.join(groupChatsDir, `${chatId}.jsonl`);
+                    const filePath = getGroupChatFilePath(groupChatsDir, chatId);
                     if (!fs.existsSync(filePath)) return null;
                     const fileStats = getChatFileStats(filePath);
                     return {
@@ -2598,7 +2604,7 @@ router.post('/orphaned', async function (request, response) {
                 const groupChats = fragments.length
                     ? (Array.isArray(group.chats) ? group.chats : [])
                         .map(chatId => {
-                            const filePath = path.join(request.user.directories.groupChats, `${chatId}.jsonl`);
+                            const filePath = getGroupChatFilePath(request.user.directories.groupChats, chatId);
                             if (!fs.existsSync(filePath)) {
                                 return null;
                             }
@@ -2614,7 +2620,7 @@ router.post('/orphaned', async function (request, response) {
                         .sort((a, b) => b.last_mes - a.last_mes)
                     : (await Promise.allSettled(
                         (Array.isArray(group.chats) ? group.chats : []).map(chatId => {
-                            const filePath = path.join(request.user.directories.groupChats, `${chatId}.jsonl`);
+                            const filePath = getGroupChatFilePath(request.user.directories.groupChats, chatId);
                             if (!fs.existsSync(filePath)) {
                                 return Promise.resolve(null);
                             }
@@ -2696,7 +2702,7 @@ router.post('/recent', async function (request, response) {
 
                     if (Array.isArray(groupData.chats)) {
                         for (const chat of groupData.chats) {
-                            const filePath = path.join(request.user.directories.groupChats, `${chat}.jsonl`);
+                            const filePath = getGroupChatFilePath(request.user.directories.groupChats, chat);
                             if (!fs.existsSync(filePath)) {
                                 continue;
                             }

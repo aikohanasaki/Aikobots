@@ -3306,10 +3306,11 @@ async function fetchChunkedChat({ rangeStart = null, count = null, hydrateFull =
         ? Number(count)
         : getConfiguredLongChatBufferMax();
 
-    return await $.ajax({
-        type: 'POST',
-        url: '/api/chats/get',
-        data: JSON.stringify({
+    const response = await fetch('/api/chats/get', {
+        method: 'POST',
+        headers: getRequestHeaders(),
+        cache: 'no-cache',
+        body: JSON.stringify({
             ch_name: characters[this_chid].name,
             file_name: characters[this_chid].chat,
             avatar_url: characters[this_chid].avatar,
@@ -3321,9 +3322,13 @@ async function fetchChunkedChat({ rangeStart = null, count = null, hydrateFull =
             hydrate_full: hydrateFull,
             include_parent_prompt_cache: includeParentPromptCache,
         }),
-        dataType: 'json',
-        contentType: 'application/json',
     });
+
+    if (!response.ok) {
+        throw new Error('Chunked chat could not be loaded');
+    }
+
+    return await response.json();
 }
 
 async function ensureChatRangeLoaded(startId, count = null) {
