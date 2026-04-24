@@ -219,7 +219,7 @@ import {
 import { getBackgrounds, initBackgrounds, loadBackgroundSettings, background_settings } from './scripts/backgrounds.js';
 import { deferLoader, ensureDeferredLoaderShown, hideLoader, isLoaderVisible, showLoader, waitForLoaderPaint } from './scripts/loader.js';
 import { BulkEditOverlay } from './scripts/BulkEditOverlay.js';
-import { appendFileContent, backfillImageMediaIdsForMessages, createImageAttachmentFromUrl, getMediaAttachmentUrl, hasPendingFileAttachment, hydrateMediaAttachment, markImageAttachmentUnavailable, populateFileAttachment, decodeStyleTags, encodeStyleTags, isExternalMediaAllowed, preserveNeutralChat, restoreNeutralChat, formatCreatorNotes, initChatUtilities, addDOMPurifyHooks } from './scripts/chats.js';
+import { appendFileContent, backfillImageMediaIdsForMessages, createImageAttachmentFromUrl, getMediaAttachmentUrl, hasPendingFileAttachment, hydrateMediaAttachment, markImageAttachmentUnavailable, populateFileAttachment, decodeStyleTags, encodeStyleTags, isExternalMediaAllowed, preserveNeutralChat, restoreNeutralChat, formatCreatorNotes, initChatUtilities, addDOMPurifyHooks, sanitizeMessageHtml } from './scripts/chats.js';
 import { getPresetManager, initPresetManager } from './scripts/preset-manager.js';
 import { evaluateMacros, getLastMessageId, initMacros, MacrosParser } from './scripts/macros.js';
 import { currentUser, setUserControls, submitSelectedCharacterForReview } from './scripts/user.js';
@@ -254,6 +254,8 @@ import { initDomHandlers } from './scripts/dom-handlers.js';
 import { SimpleMutex } from './scripts/util/SimpleMutex.js';
 import { AudioPlayer } from './scripts/audio-player.js';
 import { getStmbSettings, initStmb, loadStmbSettings } from './scripts/stmb.js';
+
+export { sanitizeMessageHtml } from './scripts/chats.js';
 
 let pendingPromptInspectorRecord = null;
 
@@ -4084,17 +4086,17 @@ export function messageFormatting(mes, ch_name, isSystem, isUser, messageId, san
         mes = mes.replace(new RegExp(`(^|\n)${escapeRegex(ch_name)}:`, 'g'), '$1');
     }
 
+    const { MESSAGE_ALLOW_SYSTEM_UI: messageAllowSystemUi = false, ...domPurifyOverrides } = sanitizerOverrides;
     /** @type {import('dompurify').Config & { RETURN_DOM_FRAGMENT: false; RETURN_DOM: false }} */
     const config = {
         RETURN_DOM: false,
         RETURN_DOM_FRAGMENT: false,
         RETURN_TRUSTED_TYPE: false,
-        MESSAGE_SANITIZE: true,
         ADD_TAGS: ['custom-style'],
-        ...sanitizerOverrides,
+        ...domPurifyOverrides,
     };
     mes = encodeStyleTags(mes);
-    mes = DOMPurify.sanitize(mes, config);
+    mes = sanitizeMessageHtml(mes, config, { allowSystemUi: messageAllowSystemUi });
     mes = decodeStyleTags(mes, { prefix: '.mes_text ' });
 
     return mes;

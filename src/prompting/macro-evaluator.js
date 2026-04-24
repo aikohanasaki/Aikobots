@@ -280,17 +280,28 @@ export function evaluatePromptMacros(content, env = {}, { additional = {}, macro
         } },
     );
 
-    for (const macro of macros) {
-        if (!result) {
-            break;
+    const MAX_MACRO_PASSES = 10;
+    for (let pass = 0; pass < MAX_MACRO_PASSES && result; pass++) {
+        let changed = false;
+
+        for (const macro of macros) {
+            if (!macro.regex.source.startsWith('<') && !result.includes('{{')) {
+                break;
+            }
+            try {
+                const next = result.replace(
+                    macro.regex,
+                    (...args) => postProcessFn(sanitizeMacroValue(macro.replace(...args))),
+                );
+                changed ||= next !== result;
+                result = next;
+            } catch (error) {
+                console.warn(`Macro replacement failed for pattern: ${macro.regex.source}`, error);
+            }
         }
-        if (!macro.regex.source.startsWith('<') && !result.includes('{{')) {
+
+        if (!changed) {
             break;
-        }
-        try {
-            result = result.replace(macro.regex, (...args) => postProcessFn(sanitizeMacroValue(macro.replace(...args))));
-        } catch (error) {
-            console.warn(`Macro replacement failed for pattern: ${macro.regex.source}`, error);
         }
     }
 

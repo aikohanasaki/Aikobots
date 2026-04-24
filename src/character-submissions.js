@@ -472,19 +472,23 @@ function getSubmissionOwnerHandles(card) {
  * @returns {Promise<void>}
  */
 async function upsertDefaultContentCharacter(relativeFilename) {
-    return runWithDefaultContentIndexLock(async () => {
+    return runWithDefaultContentIndexLock(async (lock) => {
         await fsPromises.mkdir(path.dirname(DEFAULT_CONTENT_INDEX), { recursive: true });
 
         /** @type {{filename: string, type: string}[]} */
         let contentIndex = [];
         if (fs.existsSync(DEFAULT_CONTENT_INDEX)) {
             try {
-                const raw = await fsPromises.readFile(DEFAULT_CONTENT_INDEX, 'utf8');
+                const raw = await lock.run(async () => await fsPromises.readFile(DEFAULT_CONTENT_INDEX, 'utf8'));
                 const parsed = JSON.parse(raw);
                 if (Array.isArray(parsed)) {
                     contentIndex = parsed;
                 }
             } catch (error) {
+                if (error?.code === 'ELOCKLOST') {
+                    throw error;
+                }
+
                 console.warn('Failed to read default content index. Recreating it.', error);
             }
         }
@@ -496,7 +500,7 @@ async function upsertDefaultContentCharacter(relativeFilename) {
             contentIndex[existingIndex].type = 'character';
         }
 
-        await writeFileAtomic(DEFAULT_CONTENT_INDEX, JSON.stringify(contentIndex, null, 4));
+        await lock.run(async () => await writeFileAtomic(DEFAULT_CONTENT_INDEX, JSON.stringify(contentIndex, null, 4)));
     });
 }
 
@@ -1277,7 +1281,7 @@ export async function distributeCharacterFile({
             await copyPreparedCharacterCard(distributionPayload, defaultContentPath);
 
             const defaultContentIndexSnapshot = await snapshotFile(DEFAULT_CONTENT_INDEX);
-            rollbackActions.push(() => runWithDefaultContentIndexLock(() => restoreFileSnapshot(defaultContentIndexSnapshot)));
+            rollbackActions.push(() => runWithDefaultContentIndexLock(lock => lock.run(async () => await restoreFileSnapshot(defaultContentIndexSnapshot))));
 
             await upsertDefaultContentCharacter(path.join('characters', outputFilename).replaceAll('\\', '/'));
         }

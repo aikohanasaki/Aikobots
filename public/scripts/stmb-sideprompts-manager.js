@@ -277,37 +277,39 @@ async function saveDoc(document) {
 export async function loadSidePrompts() {
     if (cachedDoc) return cachedDoc;
 
-    let data = null;
-    try {
-        const response = await fetch(`/user/files/${SIDE_PROMPTS_FILE}`, {
-            method: 'GET',
-            credentials: 'include',
-            headers: getRequestHeaders(),
-        });
+    const response = await fetch(`/user/files/${SIDE_PROMPTS_FILE}`, {
+        method: 'GET',
+        credentials: 'include',
+        headers: getRequestHeaders(),
+    });
 
-        if (!response.ok) {
-            data = createBaseDoc();
-            await saveDoc(data);
-        } else {
-            const text = await response.text();
-            const parsed = JSON.parse(text);
-            if (looksLikeV1SidePrompts(parsed)) {
-                data = migrateV1toV2(parsed);
-                migrateBuiltinTemplateKeys(data);
-                await saveDoc(data);
-            } else if (!validateSidePromptsFileV2(parsed)) {
-                data = createBaseDoc();
-                await saveDoc(data);
-            } else {
-                data = parsed;
-                if (migrateBuiltinTemplateKeys(data)) {
-                    await saveDoc(data);
-                }
-            }
-        }
-    } catch {
+    let data = null;
+    if (response.status === 404) {
         data = createBaseDoc();
         await saveDoc(data);
+    } else if (!response.ok) {
+        throw new Error(`Failed to load side prompts: ${response.status} ${response.statusText}`);
+    } else {
+        const text = await response.text();
+        let parsed = null;
+        try {
+            parsed = JSON.parse(text);
+        } catch {
+            throw new Error('Failed to parse side prompts file');
+        }
+
+        if (looksLikeV1SidePrompts(parsed)) {
+            data = migrateV1toV2(parsed);
+            migrateBuiltinTemplateKeys(data);
+            await saveDoc(data);
+        } else if (!validateSidePromptsFileV2(parsed)) {
+            throw new Error('Invalid side prompts file structure');
+        } else {
+            data = parsed;
+            if (migrateBuiltinTemplateKeys(data)) {
+                await saveDoc(data);
+            }
+        }
     }
 
     cachedDoc = data;

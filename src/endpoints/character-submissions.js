@@ -22,11 +22,54 @@ import {
     persistCharacterSubmissionOwner,
     writeSubmissionRecord,
 } from '../character-submissions.js';
+import { appendUserAdminUserMessage } from '../user-admin-messages.js';
 import { requireAdminMiddleware } from '../users.js';
 
 export const router = express.Router();
 
 const PNG_SIGNATURE = Buffer.from([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A]);
+
+function formatRequestedDistributionLabel(record) {
+    switch (record?.requestedDistributionMode) {
+        case SUBMISSION_DISTRIBUTION_MODES.WHITELIST:
+            return 'Selected users';
+        case SUBMISSION_DISTRIBUTION_MODES.GLOBAL_BLACKLIST:
+            return 'Global with blacklist';
+        case SUBMISSION_DISTRIBUTION_MODES.GLOBAL:
+        default:
+            return 'Global';
+    }
+}
+
+async function notifyAdminsAboutSubmission({ request, record }) {
+    if (!record || record.status !== SUBMISSION_STATUSES.PENDING) {
+        return;
+    }
+
+    const submittedName = String(record.submittedFilename || '').replace(/\.png$/i, '') || 'Unnamed bot';
+    const requestedDistribution = formatRequestedDistributionLabel(record);
+    const queueReason = String(record.adminQueueReason || '').trim();
+    const messageLines = [
+        `Submitted bot **${submittedName}** for admin review.`,
+        '',
+        `Requested distribution: ${requestedDistribution}`,
+    ];
+
+    if (queueReason) {
+        messageLines.push(`Queue reason: ${queueReason}`);
+    }
+
+    try {
+        await appendUserAdminUserMessage({
+            userHandle: request.user.profile.handle,
+            senderHandle: request.user.profile.handle,
+            senderName: request.user.profile.name,
+            body: messageLines.join('\n'),
+        });
+    } catch (error) {
+        console.warn(`Character submission succeeded, but failed to create the admin inbox notification for ${record.id}.`, error);
+    }
+}
 
 async function isPngFile(filePath) {
     const fileHandle = await fsPromises.open(filePath, 'r');
@@ -90,6 +133,8 @@ router.post('/submit', async (request, response) => {
             requestedTargetHandles: request.body?.requestedTargetHandles,
             requestedBlacklistHandles: request.body?.requestedBlacklistHandles,
         });
+
+        await notifyAdminsAboutSubmission({ request, record });
 
         if (!request.file) {
             try {

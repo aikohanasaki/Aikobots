@@ -312,18 +312,18 @@ function restoreFileSnapshot(filePath, snapshot) {
 }
 
 async function withSettingsPersonasTransaction(directories, operation) {
-    return await withSettingsPersonasLock(directories, async () => {
+    return await withSettingsPersonasLock(directories, async (lock) => {
         const pathToSettings = getSettingsPath(directories);
         const pathToPersonas = getPersonasPath(directories);
-        const settingsSnapshot = readFileSnapshot(pathToSettings);
-        const personasSnapshot = readFileSnapshot(pathToPersonas);
+        const settingsSnapshot = await lock.run(() => readFileSnapshot(pathToSettings));
+        const personasSnapshot = await lock.run(() => readFileSnapshot(pathToPersonas));
 
         try {
-            return await operation({ pathToSettings, pathToPersonas });
+            return await operation({ lock, pathToSettings, pathToPersonas });
         } catch (error) {
             try {
-                restoreFileSnapshot(pathToSettings, settingsSnapshot);
-                restoreFileSnapshot(pathToPersonas, personasSnapshot);
+                await lock.run(() => restoreFileSnapshot(pathToSettings, settingsSnapshot));
+                await lock.run(() => restoreFileSnapshot(pathToPersonas, personasSnapshot));
             } catch (rollbackError) {
                 console.error('Failed to rollback settings/personas state:', rollbackError);
                 error.rollbackError = rollbackError;
@@ -363,12 +363,12 @@ router.post('/save', async function (request, response) {
         const personasDocument = buildPersonasDocumentFromLegacySettings(settings);
         const strippedSettings = stripPersonaRegistryFromSettings(settings);
 
-        await withSettingsPersonasTransaction(request.user.directories, ({ pathToSettings }) => {
-            const existingSettings = readExistingSettingsForPreservedKeys(pathToSettings);
+        await withSettingsPersonasTransaction(request.user.directories, async ({ lock, pathToSettings }) => {
+            const existingSettings = await lock.run(() => readExistingSettingsForPreservedKeys(pathToSettings));
             const settingsToWrite = preserveCharacterRepushBlacklistSettings(strippedSettings, existingSettings);
 
-            writePersonasDocument(request.user.directories, personasDocument);
-            writeFileAtomicSync(pathToSettings, JSON.stringify(settingsToWrite, null, 4), 'utf8');
+            await lock.run(() => writePersonasDocument(request.user.directories, personasDocument));
+            await lock.run(() => writeFileAtomicSync(pathToSettings, JSON.stringify(settingsToWrite, null, 4), 'utf8'));
         });
         triggerAutoSave(request.user.profile.handle);
         response.send({ result: 'ok' });

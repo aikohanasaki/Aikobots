@@ -102,12 +102,12 @@ function writeUserSettings(directories, settings, guard) {
 }
 
 async function withRepushBlacklistSettingsMutation(directories, mutation) {
-    return await withSettingsPersonasLock(directories, () => {
-        const settings = readUserSettings(directories);
+    return await withSettingsPersonasLock(directories, async (lock) => {
+        const settings = await lock.run(() => readUserSettings(directories));
         const result = mutation(settings);
 
         if (result?.write !== false) {
-            writeUserSettings(directories, settings, SETTINGS_MUTATION_GUARD);
+            await lock.run(() => writeUserSettings(directories, settings, SETTINGS_MUTATION_GUARD));
         }
 
         return result?.value;

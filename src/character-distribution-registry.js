@@ -185,8 +185,8 @@ export async function setCharacterDistributionPolicy({ ownerHandle, characterKey
         : `${normalizedOwnerHandle}::${normalizedPublishedFilename}`;
     const legacyKey = normalizedCharacterKey ? `${normalizedOwnerHandle}::${normalizedPublishedFilename}` : '';
 
-    return runWithRegistryLock(async () => {
-        const index = await readRegistryIndex();
+    return runWithRegistryLock(async (lock) => {
+        const index = await lock.run(async () => await readRegistryIndex());
         const nextEntry = normalizeRegistryEntry(index.characters[key] || (legacyKey ? index.characters[legacyKey] : null));
 
         if (blacklistHandles !== undefined) {
@@ -218,7 +218,7 @@ export async function setCharacterDistributionPolicy({ ownerHandle, characterKey
             }
         }
 
-        await writeRegistryIndex(index);
+        await lock.run(async () => await writeRegistryIndex(index));
 
         return buildPolicyResponse({
             ownerHandle: normalizedOwnerHandle,

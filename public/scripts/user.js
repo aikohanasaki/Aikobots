@@ -1,5 +1,4 @@
-import { DOMPurify } from '../lib.js';
-import { getRequestHeaders, messageFormatting } from '../script.js';
+import { getRequestHeaders, messageFormatting, sanitizeMessageHtml } from '../script.js';
 import { POPUP_RESULT, POPUP_TYPE, Popup, callGenericPopup } from './popup.js';
 import { renderTemplateAsync } from './templates.js';
 import { ensureImageFormatSupported, getBase64Async, humanFileSize } from './utils.js';
@@ -184,11 +183,10 @@ async function sendAdminMessage(handle, body) {
 
 function getMessageHtml(message) {
     if (typeof message?.html === 'string' && message.html.length) {
-        return DOMPurify.sanitize(message.html, {
+        return sanitizeMessageHtml(message.html, {
             RETURN_DOM: false,
             RETURN_DOM_FRAGMENT: false,
             RETURN_TRUSTED_TYPE: false,
-            MESSAGE_SANITIZE: true,
         });
     }
 

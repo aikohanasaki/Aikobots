@@ -1,15 +1,19 @@
-import path from 'node:path';
-import crypto from 'node:crypto';
 import { promises as fsPromises } from 'node:fs';
 
 import express from 'express';
 import showdown from 'showdown';
 import storage from 'node-persist';
 
-import { getAllUserHandles, getUserDirectories, requireAdminMiddleware, requireLoginMiddleware, toKey } from '../users.js';
+import { getAllUserHandles, requireAdminMiddleware, requireLoginMiddleware, toKey } from '../users.js';
+import {
+    appendUserAdminThreadMetaIfMissing,
+    appendUserAdminThreadRecord,
+    createUserAdminMessageId,
+    getUserAdminThreadFilePath,
+    USER_ADMIN_THREAD_ID,
+} from '../user-admin-messages.js';
 
-const THREAD_ID = 'admin';
-const THREAD_FILE_NAME = 'admin.jsonl';
+const THREAD_ID = USER_ADMIN_THREAD_ID;
 const MESSAGE_LIMIT = 4000;
 
 const markdownConverter = new showdown.Converter({
@@ -28,28 +32,7 @@ export const router = express.Router();
 router.use(requireLoginMiddleware);
 
 function getThreadFilePath(userHandle) {
-    return path.join(getUserDirectories(userHandle).messages, THREAD_FILE_NAME);
-}
-
-function escapeHtml(value) {
-    return String(value ?? '')
-        .replaceAll('&', '&amp;')
-        .replaceAll('<', '&lt;')
-        .replaceAll('>', '&gt;')
-        .replaceAll('"', '&quot;')
-        .replaceAll('\'', '&#39;');
-}
-
-function renderMessageHtml(body) {
-    return markdownConverter.makeHtml(escapeHtml(body)).trim();
-}
-
-function buildMessagePreview(body) {
-    return String(body ?? '').replace(/\s+/g, ' ').trim().slice(0, 140);
-}
-
-function createMessageId() {
-    return `m_${Date.now()}_${crypto.randomBytes(4).toString('hex')}`;
+    return getUserAdminThreadFilePath(userHandle);
 }
 
 function getValidatedBody(body) {
@@ -67,39 +50,21 @@ function getValidatedBody(body) {
     return { body: normalized };
 }
 
-async function ensureMessagesDirectory(userHandle) {
-    await fsPromises.mkdir(getUserDirectories(userHandle).messages, { recursive: true });
+function escapeHtml(value) {
+    return String(value ?? '')
+        .replaceAll('&', '&amp;')
+        .replaceAll('<', '&lt;')
+        .replaceAll('>', '&gt;')
+        .replaceAll('"', '&quot;')
+        .replaceAll('\'', '&#39;');
 }
 
-async function appendThreadRecord(userHandle, record) {
-    const filePath = getThreadFilePath(userHandle);
-    await ensureMessagesDirectory(userHandle);
-    await fsPromises.appendFile(filePath, `${JSON.stringify(record)}\n`, 'utf8');
+function renderMessageHtml(body) {
+    return markdownConverter.makeHtml(escapeHtml(body)).trim();
 }
 
-async function appendThreadMetaIfMissing(userHandle) {
-    const filePath = getThreadFilePath(userHandle);
-    const threadMetaRecord = `${JSON.stringify({
-        type: 'thread_meta',
-        threadId: THREAD_ID,
-        userHandle,
-        createdAt: Date.now(),
-    })}\n`;
-
-    await ensureMessagesDirectory(userHandle);
-
-    let handle;
-
-    try {
-        handle = await fsPromises.open(filePath, 'wx');
-        await handle.writeFile(threadMetaRecord, 'utf8');
-    } catch (error) {
-        if (error?.code !== 'EEXIST') {
-            throw error;
-        }
-    } finally {
-        await handle?.close();
-    }
+function buildMessagePreview(body) {
+    return String(body ?? '').replace(/\s+/g, ' ').trim().slice(0, 140);
 }
 
 async function parseThread(userHandle) {
@@ -205,7 +170,7 @@ async function appendReadMarkerIfNeeded(userHandle, actorRole, actorHandle, thre
         return;
     }
 
-    await appendThreadRecord(userHandle, {
+    await appendUserAdminThreadRecord(userHandle, {
         type: 'read_marker',
         actorRole,
         actorHandle,
@@ -278,10 +243,10 @@ router.post('/thread', async (request, response) => {
             return response.status(400).json({ error: validated.error });
         }
 
-        await appendThreadMetaIfMissing(request.user.profile.handle);
-        await appendThreadRecord(request.user.profile.handle, {
+        await appendUserAdminThreadMetaIfMissing(request.user.profile.handle);
+        await appendUserAdminThreadRecord(request.user.profile.handle, {
             type: 'message',
-            id: createMessageId(),
+            id: createUserAdminMessageId(),
             senderHandle: request.user.profile.handle,
             senderName: request.user.profile.name,
             senderRole: 'user',
@@ -360,10 +325,10 @@ router.post('/admin/threads/:handle', requireAdminMiddleware, async (request, re
             return response.status(400).json({ error: validated.error });
         }
 
-        await appendThreadMetaIfMissing(handle);
-        await appendThreadRecord(handle, {
+        await appendUserAdminThreadMetaIfMissing(handle);
+        await appendUserAdminThreadRecord(handle, {
             type: 'message',
-            id: createMessageId(),
+            id: createUserAdminMessageId(),
             senderHandle: request.user.profile.handle,
             senderName: request.user.profile.name,
             senderRole: 'admin',

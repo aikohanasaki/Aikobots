@@ -6,6 +6,16 @@ import { delay } from './util.js';
 
 const LOCK_OWNER_FILENAME = 'owner.json';
 
+function createLockOwnershipLostError(lockPath, cause) {
+    const error = new Error(`Lost directory lock ownership for "${lockPath}" while running a protected operation.`);
+    error.code = 'ELOCKLOST';
+    error.status = 503;
+    if (cause) {
+        error.cause = cause;
+    }
+    return error;
+}
+
 function getOwnerPath(lockPath) {
     return path.join(lockPath, LOCK_OWNER_FILENAME);
 }
@@ -127,35 +137,90 @@ async function acquireDirectoryLock({ lockPath, retryMs, timeoutMs, staleMs, hea
             }
 
             let released = false;
+            let ownershipLostError = null;
             let heartbeatInFlight = Promise.resolve();
+            let ownerStateInFlight = Promise.resolve();
+            const markOwnershipLost = (cause) => {
+                if (!ownershipLostError) {
+                    ownershipLostError = createLockOwnershipLostError(lockPath, cause);
+                }
+
+                return ownershipLostError;
+            };
+            const runOwnerStateTask = async (task) => {
+                const nextTask = ownerStateInFlight.then(async () => await task());
+                ownerStateInFlight = nextTask.catch(() => { });
+                return await nextTask;
+            };
+            const assertOwnership = async () => {
+                if (ownershipLostError) {
+                    throw ownershipLostError;
+                }
+
+                await runOwnerStateTask(async () => {
+                    if (ownershipLostError) {
+                        throw ownershipLostError;
+                    }
+
+                    const currentOwner = await readOwner(lockPath);
+                    if (currentOwner?.token !== token) {
+                        throw markOwnershipLost();
+                    }
+                });
+            };
             const heartbeatOnce = async () => {
-                if (released) {
+                if (released || ownershipLostError) {
                     return;
                 }
 
-                const currentOwner = await readOwner(lockPath);
-                if (currentOwner?.token !== token || released) {
-                    return;
-                }
+                await runOwnerStateTask(async () => {
+                    if (released || ownershipLostError) {
+                        return;
+                    }
 
-                await writeOwner(lockPath, owner);
+                    const currentOwner = await readOwner(lockPath);
+                    if (currentOwner?.token !== token) {
+                        throw markOwnershipLost();
+                    }
+
+                    await writeOwner(lockPath, owner);
+                });
             };
             const heartbeat = setInterval(() => {
-                heartbeatInFlight = heartbeatInFlight.then(heartbeatOnce).catch(() => { });
+                heartbeatInFlight = heartbeatInFlight
+                    .then(heartbeatOnce)
+                    .catch(error => {
+                        markOwnershipLost(error);
+                    });
             }, heartbeatMs);
             heartbeat.unref?.();
 
-            return async () => {
-                released = true;
-                clearInterval(heartbeat);
-                await heartbeatInFlight.catch(() => { });
+            return {
+                lock: {
+                    async assertOwnership() {
+                        await heartbeatInFlight.catch(() => { });
+                        await assertOwnership();
+                    },
+                    async run(task) {
+                        await this.assertOwnership();
+                        const result = await task();
+                        await this.assertOwnership();
+                        return result;
+                    },
+                },
+                release: async () => {
+                    released = true;
+                    clearInterval(heartbeat);
+                    await heartbeatInFlight.catch(() => { });
+                    await ownerStateInFlight.catch(() => { });
 
-                const currentOwner = await readOwner(lockPath);
-                if (currentOwner?.token !== token) {
-                    return;
-                }
+                    const currentOwner = await readOwner(lockPath);
+                    if (currentOwner?.token !== token) {
+                        return;
+                    }
 
-                await fsPromises.rm(lockPath, { recursive: true, force: true });
+                    await fsPromises.rm(lockPath, { recursive: true, force: true });
+                },
             };
         } catch (error) {
             if (error?.code !== 'EEXIST') {
@@ -176,10 +241,10 @@ async function acquireDirectoryLock({ lockPath, retryMs, timeoutMs, staleMs, hea
 }
 
 export async function withDirectoryLock(options, operation) {
-    const release = await acquireDirectoryLock(options);
+    const { lock, release } = await acquireDirectoryLock(options);
 
     try {
-        return await operation();
+        return await operation(lock);
     } finally {
         await release();
     }

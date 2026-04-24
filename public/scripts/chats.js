@@ -1259,6 +1259,31 @@ export function decodeStyleTags(text, { prefix = '.mes_text ', allowGoogleFonts 
     });
 }
 
+const messageSanitizeContextStack = [];
+
+function getCurrentMessageSanitizeContext() {
+    return messageSanitizeContextStack.at(-1);
+}
+
+/**
+ * Sanitizes message HTML while enabling the message-specific DOMPurify hooks.
+ * @param {string} html HTML to sanitize
+ * @param {import('dompurify').Config} [config] DOMPurify config
+ * @param {{ allowSystemUi?: boolean }} [options] Message sanitizer options
+ * @returns {string}
+ */
+export function sanitizeMessageHtml(html, config = {}, options = {}) {
+    messageSanitizeContextStack.push({
+        allowSystemUi: Boolean(options.allowSystemUi),
+    });
+
+    try {
+        return DOMPurify.sanitize(html, config);
+    } finally {
+        messageSanitizeContextStack.pop();
+    }
+}
+
 /**
  * Formats creator notes in the message text.
  * @param {string} text Raw Markdown text
@@ -1266,19 +1291,18 @@ export function decodeStyleTags(text, { prefix = '.mes_text ', allowGoogleFonts 
  */
 export function formatCreatorNotes(text) {
     const decodeStyleParam = { prefix: '#creator_notes_spoiler ', allowGoogleFonts: true };
-    /** @type {import('dompurify').Config & { MESSAGE_SANITIZE: boolean }} */
+    /** @type {import('dompurify').Config} */
     const config = {
         RETURN_DOM: false,
         RETURN_DOM_FRAGMENT: false,
         RETURN_TRUSTED_TYPE: false,
-        MESSAGE_SANITIZE: true,
         ADD_TAGS: ['custom-style'],
     };
 
     let html = converter.makeHtml(substituteParams(text));
     html = encodeStyleTags(html);
     html = encodeGoogleFontStylesheetLinks(html);
-    html = DOMPurify.sanitize(html, config);
+    html = sanitizeMessageHtml(html, config);
     html = decodeStyleTags(html, decodeStyleParam);
 
     return html;
@@ -2394,14 +2418,15 @@ export function addDOMPurifyHooks() {
         }
     });
 
-    DOMPurify.addHook('uponSanitizeAttribute', (node, data, config) => {
-        if (!config['MESSAGE_SANITIZE']) {
+    DOMPurify.addHook('uponSanitizeAttribute', (node, data) => {
+        const messageSanitizeContext = getCurrentMessageSanitizeContext();
+        if (!messageSanitizeContext) {
             return;
         }
 
         /* Retain the classes on UI elements of messages that interact with the main UI */
         const permittedNodeTypes = ['BUTTON', 'DIV'];
-        if (config['MESSAGE_ALLOW_SYSTEM_UI'] && node.classList.contains('menu_button') && permittedNodeTypes.includes(node.nodeName)) {
+        if (messageSanitizeContext.allowSystemUi && node.classList.contains('menu_button') && permittedNodeTypes.includes(node.nodeName)) {
             return;
         }
 
@@ -2421,8 +2446,8 @@ export function addDOMPurifyHooks() {
         }
     });
 
-    DOMPurify.addHook('uponSanitizeElement', (node, _, config) => {
-        if (!config['MESSAGE_SANITIZE']) {
+    DOMPurify.addHook('uponSanitizeElement', (node) => {
+        if (!getCurrentMessageSanitizeContext()) {
             return;
         }
 
