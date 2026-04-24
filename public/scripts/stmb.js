@@ -5204,32 +5204,11 @@ function setHighestProcessedMessageId(messageId) {
     });
 }
 
-function ensureSceneButtonContainer(messageElement) {
-    let extraButtons = messageElement.querySelector('.extraMesButtons');
-    if (!extraButtons) {
-        extraButtons = document.createElement('div');
-        extraButtons.classList.add('extraMesButtons');
-        const messageBlock = messageElement.querySelector('.mes_block');
-        if (messageBlock) {
-            messageBlock.appendChild(extraButtons);
-        } else {
-            messageElement.appendChild(extraButtons);
-        }
-    }
-
-    if (!extraButtons.querySelector('.mes_stmb_start')) {
-        const startButton = document.createElement('div');
-        startButton.className = 'mes_stmb_start mes_button fa-solid fa-caret-right interactable';
-        startButton.title = 'Mark scene start';
-        extraButtons.appendChild(startButton);
-    }
-
-    if (!extraButtons.querySelector('.mes_stmb_end')) {
-        const endButton = document.createElement('div');
-        endButton.className = 'mes_stmb_end mes_button fa-solid fa-caret-left interactable';
-        endButton.title = 'Mark scene end';
-        extraButtons.appendChild(endButton);
-    }
+function getSceneButtonElements(messageElement) {
+    return {
+        startButton: messageElement.querySelector('.mes_stmb_start'),
+        endButton: messageElement.querySelector('.mes_stmb_end'),
+    };
 }
 
 function renderSceneButtonsForMessage(messageElement) {
@@ -5238,10 +5217,8 @@ function renderSceneButtonsForMessage(messageElement) {
         return;
     }
 
-    ensureSceneButtonContainer(messageElement);
     const { sceneStart, sceneEnd } = getSceneMarkers();
-    const startButton = messageElement.querySelector('.mes_stmb_start');
-    const endButton = messageElement.querySelector('.mes_stmb_end');
+    const { startButton, endButton } = getSceneButtonElements(messageElement);
     if (!startButton || !endButton) {
         return;
     }
