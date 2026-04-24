@@ -276,11 +276,21 @@ function getPromptWorldInfoEntries(itemizedPrompt, incomingMesId, snapshot = nul
         ? snapshot.worldInfoReport.activatedEntries
         : Array.isArray(snapshot?.worldInfo?.activatedEntries)
             ? snapshot.worldInfo.activatedEntries
-            : Array.isArray(snapshot?.assembly?.worldInfo?.activatedEntries)
-                ? snapshot.assembly.worldInfo.activatedEntries
-                : null;
+                : Array.isArray(snapshot?.assembly?.worldInfo?.activatedEntries)
+                    ? snapshot.assembly.worldInfo.activatedEntries
+                    : null;
     if (Array.isArray(snapshotEntries)) {
         return snapshotEntries.filter(entry => entry?.status === 'admitted');
+    }
+
+    const storedPromptSnapshotKey = typeof itemizedPrompt?.promptSnapshotKey === 'string'
+        ? itemizedPrompt.promptSnapshotKey.trim()
+        : '';
+    const messagePromptSnapshotKey = typeof chat[incomingMesId]?.extra?.promptSnapshotKey === 'string'
+        ? chat[incomingMesId].extra.promptSnapshotKey.trim()
+        : '';
+    if (storedPromptSnapshotKey || messagePromptSnapshotKey) {
+        return [];
     }
 
     const messageWorldInfoReport = chat[incomingMesId]?.extra?.worldInfoReport;

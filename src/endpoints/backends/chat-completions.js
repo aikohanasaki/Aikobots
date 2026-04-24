@@ -2892,8 +2892,9 @@ function buildWorldInfoSummaryResponseData(worldInfo, user) {
 }
 
 function buildXSillyTavernPayload(request, timedWorldInfo, worldInfoOverflowed = false, worldInfo = null, promptSnapshotKey = null) {
+    void request;
+    void worldInfo;
     const xSillyTavern = {};
-    const { worldInfoSummary, worldInfoReport } = buildWorldInfoSummaryResponseData(worldInfo, request?.user);
 
     if (typeof promptSnapshotKey === 'string' && promptSnapshotKey) {
         xSillyTavern.promptSnapshotKey = promptSnapshotKey;
@@ -2904,17 +2905,13 @@ function buildXSillyTavernPayload(request, timedWorldInfo, worldInfoOverflowed =
     if (worldInfoOverflowed) {
         xSillyTavern.worldInfoOverflowed = true;
     }
-    if (worldInfoSummary) {
-        xSillyTavern.worldInfoSummary = worldInfoSummary;
-    }
-    if (worldInfoReport) {
-        xSillyTavern.worldInfoReport = worldInfoReport;
-    }
 
     return xSillyTavern;
 }
 
 function attachWorldInfoResponseData(payload, request, timedWorldInfo, worldInfoOverflowed = false, worldInfo = null, promptSnapshotKey = null) {
+    void request;
+    void worldInfo;
     if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
         return payload;
     }
@@ -2923,10 +2920,6 @@ function attachWorldInfoResponseData(payload, request, timedWorldInfo, worldInfo
         ...(payload.x_sillytavern && typeof payload.x_sillytavern === 'object' ? payload.x_sillytavern : {}),
         ...buildXSillyTavernPayload(request, timedWorldInfo, worldInfoOverflowed, worldInfo, promptSnapshotKey),
     };
-    const { sanitizedWorldInfo } = buildWorldInfoSummaryResponseData(worldInfo, request?.user);
-    if (sanitizedWorldInfo) {
-        payload.worldInfo = structuredClone(sanitizedWorldInfo);
-    }
 
     if (!Object.keys(xSillyTavern).length) {
         return payload;

@@ -110,8 +110,6 @@ function getOpenAIResponseMetadataEntry(requestId, { create = false } = {}) {
         entry = {
             timedWorldInfo: null,
             promptSnapshotKey: null,
-            worldInfoSummary: null,
-            worldInfoReport: null,
         };
         pendingOpenAIResponseMetadata.set(requestId, entry);
     }
@@ -127,9 +125,7 @@ function cleanupOpenAIResponseMetadataEntry(requestId) {
 
     const hasTimedWorldInfo = entry.timedWorldInfo && typeof entry.timedWorldInfo === 'object';
     const hasPromptSnapshotKey = typeof entry.promptSnapshotKey === 'string' && entry.promptSnapshotKey;
-    const hasWorldInfoSummary = entry.worldInfoSummary && typeof entry.worldInfoSummary === 'object';
-    const hasWorldInfoReport = entry.worldInfoReport && typeof entry.worldInfoReport === 'object';
-    if (!hasTimedWorldInfo && !hasPromptSnapshotKey && !hasWorldInfoSummary && !hasWorldInfoReport) {
+    if (!hasTimedWorldInfo && !hasPromptSnapshotKey) {
         pendingOpenAIResponseMetadata.delete(requestId);
     }
 }
@@ -1056,13 +1052,9 @@ function applyAssemblyResponseMetadata(response, type) {
 function applyTimedWorldInfoResponseData(data, requestId) {
     const promptSnapshotKey = data?.x_sillytavern?.promptSnapshotKey;
     const timedWorldInfo = data?.x_sillytavern?.timedWorldInfo;
-    const worldInfoSummary = data?.x_sillytavern?.worldInfoSummary;
-    const worldInfoReport = data?.x_sillytavern?.worldInfoReport;
     const hasMetadata =
         (typeof promptSnapshotKey === 'string' && promptSnapshotKey) ||
-        (timedWorldInfo && typeof timedWorldInfo === 'object') ||
-        (worldInfoSummary && typeof worldInfoSummary === 'object') ||
-        (worldInfoReport && typeof worldInfoReport === 'object');
+        (timedWorldInfo && typeof timedWorldInfo === 'object');
 
     if (!hasMetadata) {
         maybeNotifyWorldInfoOverflow(data);
@@ -1075,12 +1067,6 @@ function applyTimedWorldInfoResponseData(data, requestId) {
     }
     if (entry && timedWorldInfo && typeof timedWorldInfo === 'object') {
         entry.timedWorldInfo = structuredClone(timedWorldInfo);
-    }
-    if (entry && worldInfoSummary && typeof worldInfoSummary === 'object') {
-        entry.worldInfoSummary = structuredClone(worldInfoSummary);
-    }
-    if (entry && worldInfoReport && typeof worldInfoReport === 'object') {
-        entry.worldInfoReport = structuredClone(worldInfoReport);
     }
     maybeNotifyWorldInfoOverflow(data);
 }
@@ -1113,22 +1099,11 @@ export function consumeOpenAIPromptInspectionResponseData(requestId = null) {
 }
 
 export function consumeOpenAIWorldInfoResponseData(requestId = null) {
-    const entry = getOpenAIResponseMetadataEntry(requestId);
-    const value = {
-        worldInfoSummary: entry?.worldInfoSummary && typeof entry.worldInfoSummary === 'object'
-            ? structuredClone(entry.worldInfoSummary)
-            : null,
-        worldInfoReport: entry?.worldInfoReport && typeof entry.worldInfoReport === 'object'
-            ? structuredClone(entry.worldInfoReport)
-            : null,
+    void requestId;
+    return {
+        worldInfoSummary: null,
+        worldInfoReport: null,
     };
-
-    if (entry) {
-        entry.worldInfoSummary = null;
-        entry.worldInfoReport = null;
-        cleanupOpenAIResponseMetadataEntry(requestId);
-    }
-    return value;
 }
 
 export function consumeOpenAIResponseData(requestId = null) {

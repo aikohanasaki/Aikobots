@@ -1694,15 +1694,19 @@ async function getWorldInfoReportSnapshot(messageId = null) {
         }
     }
 
+    function getLegacyWorldInfoSnapshot(targetMessageId, report, summary, missingSnapshot = false) {
+        return {
+            messageId: targetMessageId,
+            report: report || null,
+            summary: summary || null,
+            missingSnapshot,
+        };
+    }
+
     if (typeof messageId === 'number' && Number.isFinite(messageId) && messageId >= 0) {
         const message = chat[messageId];
         if (!message) {
-            return {
-                messageId,
-                report: null,
-                summary: null,
-                missingSnapshot: false,
-            };
+            return getLegacyWorldInfoSnapshot(messageId, null, null);
         }
 
         const promptSnapshotKey = message.extra?.promptSnapshotKey;
@@ -1716,20 +1720,14 @@ async function getWorldInfoReportSnapshot(messageId = null) {
                     missingSnapshot: false,
                 };
             }
+
+            return getLegacyWorldInfoSnapshot(messageId, null, null, true);
         }
 
-        const snapshot = {
-            messageId,
-            report: message.extra?.worldInfoReport || null,
-            summary: message.extra?.worldInfoSummary || null,
-            missingSnapshot: Boolean(promptSnapshotKey),
-        };
-        if ((snapshot.report && typeof snapshot.report === 'object') || (snapshot.summary && typeof snapshot.summary === 'object')) {
-            return snapshot;
-        }
-
-        return snapshot;
+        return getLegacyWorldInfoSnapshot(messageId, message.extra?.worldInfoReport, message.extra?.worldInfoSummary);
     }
+
+    let missingSnapshot = false;
 
     for (let index = chat.length - 1; index >= 0; index--) {
         const promptSnapshotKey = chat[index]?.extra?.promptSnapshotKey;
@@ -1743,26 +1741,19 @@ async function getWorldInfoReportSnapshot(messageId = null) {
                     missingSnapshot: false,
                 };
             }
+
+            missingSnapshot = true;
+            continue;
         }
 
         const report = chat[index]?.extra?.worldInfoReport;
         const summary = chat[index]?.extra?.worldInfoSummary;
         if ((report && typeof report === 'object') || (summary && typeof summary === 'object')) {
-            return {
-                messageId: index,
-                report: report || null,
-                summary: summary || null,
-                missingSnapshot: Boolean(promptSnapshotKey),
-            };
+            return getLegacyWorldInfoSnapshot(index, report, summary, missingSnapshot);
         }
     }
 
-    return {
-        messageId: null,
-        report: chat_metadata.worldInfoReport || null,
-        summary: chat_metadata.worldInfoSummary || null,
-        missingSnapshot: false,
-    };
+    return getLegacyWorldInfoSnapshot(null, chat_metadata.worldInfoReport, chat_metadata.worldInfoSummary, missingSnapshot);
 }
 
 async function getLatestWorldInfoReportSnapshot() {
@@ -1783,8 +1774,15 @@ async function getLatestWorldInfoReportSnapshot() {
                     };
                 }
             } catch {
-                // Fall through to the message-local/chat-local latest state.
+                // Fall through to the missing-snapshot state for snapshot-backed chats.
             }
+
+            return {
+                messageId: latestMessageId,
+                report: null,
+                summary: null,
+                missingSnapshot: true,
+            };
         }
 
         const report = message?.extra?.worldInfoReport;
@@ -2770,6 +2768,10 @@ async function showWorldInfoReportPopup(messageId = null) {
     const summary = snapshot?.summary;
 
     if ((!report || typeof report !== 'object') && (!summary || typeof summary !== 'object')) {
+        if (snapshot?.missingSnapshot) {
+            toastr.info(t`The World Info snapshot is no longer available.`);
+            return '';
+        }
         toastr.info(t`No World Info report is available for this chat yet.`);
         return '';
     }

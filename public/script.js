@@ -8924,33 +8924,9 @@ function applyTimedWorldInfoToMessage(messageId, timedWorldInfo) {
 }
 
 function applyWorldInfoResponseDataToMessage(messageId, worldInfoResponseData) {
-    if (!worldInfoResponseData || typeof worldInfoResponseData !== 'object') {
-        return;
-    }
-
-    // TODO: Retrieve WI inspection data from the saved prompt snapshot on demand instead of caching report blobs in chat state.
-    const item = chat[messageId];
-    if (!item) {
-        return;
-    }
-
-    const worldInfoSummary = worldInfoResponseData.worldInfoSummary;
-    const worldInfoReport = worldInfoResponseData.worldInfoReport;
-    if ((!worldInfoSummary || typeof worldInfoSummary !== 'object') && (!worldInfoReport || typeof worldInfoReport !== 'object')) {
-        return;
-    }
-
-    item.extra ??= {};
-
-    if (worldInfoSummary && typeof worldInfoSummary === 'object') {
-        item.extra.worldInfoSummary = structuredClone(worldInfoSummary);
-        chat_metadata.worldInfoSummary = structuredClone(worldInfoSummary);
-    }
-
-    if (worldInfoReport && typeof worldInfoReport === 'object') {
-        item.extra.worldInfoReport = structuredClone(worldInfoReport);
-        chat_metadata.worldInfoReport = structuredClone(worldInfoReport);
-    }
+    void messageId;
+    void worldInfoResponseData;
+    // WI inspection data is fetched from the saved prompt snapshot on demand.
 }
 
 function hasActiveTimedWorldInfo(timedWorldInfo) {
@@ -9159,44 +9135,6 @@ export function syncMesToSwipe(messageId = null) {
     targetSwipeInfo.extra = createSwipeInfoExtra(targetMessage.extra);
 
     return true;
-}
-
-function restoreWorldInfoResponseDataFromChat(messageId = null) {
-    if (!Array.isArray(chat) || chat.length === 0) {
-        delete chat_metadata.worldInfoSummary;
-        delete chat_metadata.worldInfoReport;
-        return false;
-    }
-
-    const startIndex = Math.min(
-        typeof messageId === 'number' ? messageId : chat.length - 1,
-        chat.length - 1,
-    );
-
-    for (let index = startIndex; index >= 0; index--) {
-        const summarySnapshot = chat[index]?.extra?.worldInfoSummary;
-        const reportSnapshot = chat[index]?.extra?.worldInfoReport;
-
-        if ((summarySnapshot && typeof summarySnapshot === 'object') || (reportSnapshot && typeof reportSnapshot === 'object')) {
-            if (summarySnapshot && typeof summarySnapshot === 'object') {
-                chat_metadata.worldInfoSummary = structuredClone(summarySnapshot);
-            } else {
-                delete chat_metadata.worldInfoSummary;
-            }
-
-            if (reportSnapshot && typeof reportSnapshot === 'object') {
-                chat_metadata.worldInfoReport = structuredClone(reportSnapshot);
-            } else {
-                delete chat_metadata.worldInfoReport;
-            }
-
-            return true;
-        }
-    }
-
-    delete chat_metadata.worldInfoSummary;
-    delete chat_metadata.worldInfoReport;
-    return false;
 }
 
 /**
