@@ -913,6 +913,128 @@ function hasUnsavedCharacterEdits() {
     return isCharacterEditorInEditMode() && isCharacterEditorDirty;
 }
 
+function resetCharacterAvatarInput() {
+    $('#add_avatar_button').replaceWith(
+        $('#add_avatar_button').val('').clone(true),
+    );
+}
+
+function isCharacterThumbnailUrlForAvatar(src, avatarFileName) {
+    if (typeof src !== 'string' || !src || !avatarFileName) {
+        return false;
+    }
+
+    try {
+        const parsedUrl = new URL(src, window.location.origin);
+        return parsedUrl.pathname === '/thumbnail'
+            && parsedUrl.searchParams.get('type') === 'avatar'
+            && parsedUrl.searchParams.get('file') === avatarFileName;
+    } catch {
+        return false;
+    }
+}
+
+function refreshRenderedCharacterAvatar(avatarFileName) {
+    const refreshedAvatarUrl = getThumbnailUrl('avatar', avatarFileName, true);
+    $('#avatar_load_preview').attr('src', refreshedAvatarUrl);
+
+    $('img').each(function () {
+        const image = $(this);
+        if (isCharacterThumbnailUrlForAvatar(image.attr('src'), avatarFileName)) {
+            image.attr('src', refreshedAvatarUrl);
+        }
+    });
+}
+
+async function ensureSelectedSharedCharacterCheckedOutForAvatarEdit() {
+    if (this_chid === undefined || !characters[this_chid] || !isSharedCharacter(this_chid)) {
+        return true;
+    }
+
+    if (String(characters[this_chid]?.checkoutState || 'available') === 'self') {
+        return true;
+    }
+
+    await toggleSelectedSharedCharacterCheckout();
+    return String(characters[this_chid]?.checkoutState || 'available') === 'self';
+}
+
+async function uploadSelectedCharacterAvatar(file, { previousPreviewSrc = '', hadUnsavedEdits = false } = {}) {
+    if (!isCharacterEditorInEditMode() || this_chid === undefined || !characters[this_chid]) {
+        return false;
+    }
+
+    const avatarFileName = String(characters[this_chid].avatar || '').trim();
+    if (!avatarFileName || avatarFileName === 'none') {
+        return false;
+    }
+
+    const loader = showLoader();
+    toastr.info('Updating avatar...', 'Character');
+
+    try {
+        const formData = new FormData();
+        formData.set('avatar_url', avatarFileName);
+        formData.set('avatar', await ensureImageFormatSupported(file));
+
+        let url = '/api/characters/edit-avatar';
+        if (crop_data != undefined) {
+            url += `?crop=${encodeURIComponent(JSON.stringify(crop_data))}`;
+        }
+
+        const response = await fetch(url, {
+            method: 'POST',
+            headers: getRequestHeaders({ omitContentType: true }),
+            body: formData,
+            cache: 'no-cache',
+        });
+
+        if (!response.ok) {
+            let errorMessage = '';
+            const contentType = response.headers.get('content-type') || '';
+            if (contentType.includes('application/json')) {
+                const errorData = await response.json().catch(() => null);
+                errorMessage = errorData?.error?.message || errorData?.error || errorData?.message || '';
+            } else {
+                errorMessage = await response.text().catch(() => '');
+            }
+
+            throw new Error(errorMessage || 'Failed to update character avatar.');
+        }
+
+        await fetch(getThumbnailUrl('avatar', avatarFileName), {
+            method: 'GET',
+            cache: 'reload',
+        });
+
+        await getOneCharacter(avatarFileName);
+        refreshRenderedCharacterAvatar(avatarFileName);
+        printCharactersDebounced();
+
+        if (!hadUnsavedEdits) {
+            clearCharacterEditorDirtyState();
+        }
+
+        toastr.success('Avatar updated.', 'Character');
+        return true;
+    } catch (error) {
+        if (previousPreviewSrc) {
+            $('#avatar_load_preview').attr('src', previousPreviewSrc);
+        }
+
+        if (!hadUnsavedEdits) {
+            clearCharacterEditorDirtyState();
+        }
+
+        toastr.error(error?.message || 'Could not update the avatar.', 'Character');
+        return false;
+    } finally {
+        crop_data = undefined;
+        resetCharacterAvatarInput();
+        await hideLoader(loader);
+    }
+}
+
 async function discardUnsavedCharacterEdits() {
     if (!isCharacterEditorInEditMode()) {
         clearCharacterEditorDirtyState();
@@ -9769,12 +9891,28 @@ export async function saveChat({ chatName, withMetadata, mesId, force = false, s
  */
 async function read_avatar_load(input) {
     if (input.files && input.files[0]) {
+        const file = input.files[0];
+        if (!file) {
+            return;
+        }
+
         if (selected_button == 'create') {
             create_save.avatar = input.files;
         }
 
+        const isCreateMode = menu_type == 'create';
+        const hadUnsavedEdits = hasUnsavedCharacterEdits();
+        const previousPreviewSrc = $('#avatar_load_preview').attr('src');
+
+        if (!isCreateMode) {
+            const hasCheckout = await ensureSelectedSharedCharacterCheckedOutForAvatarEdit();
+            if (!hasCheckout) {
+                resetCharacterAvatarInput();
+                return;
+            }
+        }
+
         crop_data = undefined;
-        const file = input.files[0];
         const fileData = await getBase64Async(file);
 
         if (!power_user.never_resize_avatars) {
@@ -9791,12 +9929,12 @@ async function read_avatar_load(input) {
             $('#avatar_load_preview').attr('src', fileData);
         }
 
-        if (menu_type == 'create') {
+        if (isCreateMode) {
             return;
         }
 
         markCharacterEditorDirty();
-        console.log('Avatar preview updated; save required to persist');
+        await uploadSelectedCharacterAvatar(file, { previousPreviewSrc, hadUnsavedEdits });
     }
 }
 
