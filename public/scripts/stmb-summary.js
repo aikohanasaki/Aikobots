@@ -756,8 +756,9 @@ export function buildSummaryAnalysisPrompt({
     const childPlural = /y$/i.test(childTierLabel) ? `${childTierLabel.slice(0, -1)}ies` : `${childTierLabel}s`;
     const childPluralLabel = childPlural.toUpperCase();
     const lines = [];
+    const numberedSourceExample = `${childTierLabel} 001`;
 
-    lines.push('Important: member_ids must refer to the numbered source entries below, such as "001" or "Memory 001", not character names, groups, or participants.');
+    lines.push(`Important: member_ids must refer to the numbered source entries below, such as "001" or "${numberedSourceExample}", not character names, groups, or participants.`);
     lines.push('');
 
     if (previousSummary) {

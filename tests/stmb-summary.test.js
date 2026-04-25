@@ -36,6 +36,21 @@ describe('stmb summary helpers', () => {
         expect(prompt).toContain('=== MEMORIES ===');
         expect(prompt).toContain('=== Memory 001 ===');
         expect(prompt).toContain('Title: [001] - Opening');
+        expect(prompt).toContain('"001" or "Memory 001"');
+    });
+
+    it('uses tier-aware member_id examples for higher-tier consolidation', () => {
+        const prompt = buildSummaryAnalysisPrompt({
+            briefs: [
+                { id: '13', title: '[ARC 001] - Opening Arc', content: 'Arc one' },
+                { id: '14', title: '[ARC 002] - Followup Arc', content: 'Arc two' },
+            ],
+            targetTier: 2,
+        });
+
+        expect(prompt).toContain('=== ARCS ===');
+        expect(prompt).toContain('=== Arc 001 ===');
+        expect(prompt).toContain('"001" or "Arc 001"');
     });
 
     it('parses summary JSON from text envelopes', () => {
