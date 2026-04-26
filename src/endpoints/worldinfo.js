@@ -560,6 +560,78 @@ function sendLorebookError(response, error) {
     });
 }
 
+function getTimedWorldInfoReplayGenerationBoundary(message) {
+    const promptSnapshotKey = message?.extra?.promptSnapshotKey;
+    if (typeof promptSnapshotKey === 'string' && promptSnapshotKey) {
+        return true;
+    }
+
+    return Boolean(message && !message.is_user && !message.is_system);
+}
+
+function formatTimedWorldInfoReplayChat(messages = [], includeNames = false) {
+    return messages.map(message => {
+        const text = String(message?.mes ?? '');
+        if (includeNames && message?.name) {
+            return `${message.name}: ${text}`;
+        }
+
+        return text;
+    }).reverse();
+}
+
+export async function recomputeTimedWorldInfoFromChat(user, body = {}, options = {}) {
+    const { scanWorldInfo } = await import('../prompting/world-info-scan.js');
+    const payload = await resolveSortedEntriesPayload(user, body, options);
+    const extensionPrompts = inflatePromptState(body.promptState || {}, body.quietPrompt || '');
+    const sortedEntries = prepareEntriesForScan(payload.entries, {
+        promptState: body.promptState || {},
+        quietPrompt: body.quietPrompt || '',
+        macroSnapshot: body.macroSnapshot || {},
+        regexScripts: body.regexScripts,
+        worldInfoPosition: body.worldInfoPosition,
+    });
+    const chatMessages = Array.isArray(body.chatMessages)
+        ? structuredClone(body.chatMessages).filter(message => message && typeof message === 'object')
+        : [];
+
+    /** @type {Record<string, any>} */
+    let timedWorldInfo = {};
+    const replayMessages = [];
+
+    for (const message of chatMessages) {
+        if (getTimedWorldInfoReplayGenerationBoundary(message)) {
+            const scanResult = await scanWorldInfo({
+                chat: formatTimedWorldInfoReplayChat(replayMessages, body.includeNames),
+                includeNames: Boolean(body.includeNames),
+                maxContext: Number(body.maxContext) || 0,
+                globalScanData: structuredClone(body.globalScanData || {}),
+                extensionPrompts,
+                currentCharacterFilename: String(body.currentCharacterFilename || ''),
+                currentCharacterTags: Array.isArray(body.currentCharacterTags) ? structuredClone(body.currentCharacterTags) : [],
+                sortedEntries,
+                forcedActivations: Array.isArray(body.forcedActivations) ? structuredClone(body.forcedActivations) : [],
+                timedWorldInfo,
+                settings: structuredClone(body.settings || {}),
+                worldInfoPosition: structuredClone(body.worldInfoPosition || {}),
+                tokenizerModel: body.tokenizerModel ?? null,
+                includeDebugInfo: false,
+            });
+            timedWorldInfo = structuredClone(scanResult.timedWorldInfo || {});
+        }
+
+        replayMessages.push({
+            name: String(message?.name || ''),
+            mes: String(message?.mes ?? ''),
+            is_user: Boolean(message?.is_user),
+            is_system: Boolean(message?.is_system),
+            extra: message?.extra && typeof message.extra === 'object' ? structuredClone(message.extra) : {},
+        });
+    }
+
+    return timedWorldInfo;
+}
+
 async function validateSharedOwnerHandles(ownerHandles = [], actingHandle = '') {
     const normalizedActingHandle = String(actingHandle || '').trim();
     const normalizedOwnerHandles = [...new Set([
@@ -856,6 +928,19 @@ router.post('/sorted-entries', async (request, response) => {
     try {
         const payload = await resolveSortedEntriesPayload(request.user, request.body);
         return response.send(sanitizeSortedEntriesPayloadForResponse(request.user, payload));
+    } catch (error) {
+        return sendLorebookError(response, error);
+    }
+});
+
+router.post('/timed-effects/recompute', async (request, response) => {
+    if (!request.body) {
+        return response.sendStatus(400);
+    }
+
+    try {
+        const timedWorldInfo = await recomputeTimedWorldInfoFromChat(request.user, request.body);
+        return response.send({ timedWorldInfo });
     } catch (error) {
         return sendLorebookError(response, error);
     }
