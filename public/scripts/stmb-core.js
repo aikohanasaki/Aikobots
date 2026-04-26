@@ -12,6 +12,7 @@ export const STMB_DEFAULT_MAX_TOKENS = 4000;
 export const STMB_CONNECTION_PROFILE_API_KEY_ERROR = 'please confirm that your API key is entered in Connection Profiles';
 
 const STMB_REVERSE_PROXY_PROFILE_APIS = new Set(['openai', 'claude', 'mistralai', 'makersuite', 'vertexai', 'deepseek', 'xai']);
+const STMB_OPENAI_COMPAT_GENERATE_DATA = Symbol('stmbOpenAICompatGenerateData');
 
 export const STMB_DEFAULT_TITLE_FORMATS = Object.freeze([
     '[000] - {{title}} ({{profile}})',
@@ -663,6 +664,10 @@ function usesOpenAIMaxCompletionTokens(modelId) {
     return isOpenAIReasoningModel(modelId) || /^(gpt-5|gpt-4o)/i.test(String(modelId || '').trim());
 }
 
+function isOpenAICompatibleStmbRequest(provider, originalApi = '') {
+    return provider === 'openai' || provider === 'azure_openai' || originalApi === 'full-manual';
+}
+
 export function normalizeNavyReasoningEffort(value) {
     const normalized = String(value || '').trim().toLowerCase();
     switch (normalized) {
@@ -742,6 +747,12 @@ export function applyStmbProfileToGenerateData(generateData, profile, providerDe
     const originalApi = connection.api;
     const provider = originalApi === 'full-manual' ? 'custom' : originalApi;
     next.chat_completion_source = provider;
+    if (originalApi === 'full-manual') {
+        Object.defineProperty(next, STMB_OPENAI_COMPAT_GENERATE_DATA, {
+            value: true,
+            enumerable: false,
+        });
+    }
 
     if (connection.model) {
         next.model = connection.model;
@@ -782,7 +793,7 @@ export function applyStmbProfileToGenerateData(generateData, profile, providerDe
     }
 
     const model = String(next.model || '');
-    const isOpenAICompat = provider === 'openai' || provider === 'azure_openai';
+    const isOpenAICompat = isOpenAICompatibleStmbRequest(provider, originalApi);
     const isReasoningModel = isOpenAICompat && isOpenAIReasoningModel(model);
     const isGpt5Model = isOpenAICompat && /^gpt-5/i.test(model);
 
@@ -858,7 +869,10 @@ export function applyStmbMaxTokensToGenerateData(generateData, stmbMaxTokens) {
     const next = { ...generateData };
     const provider = String(next.chat_completion_source || '').toLowerCase();
     const modelId = String(next.model || '').toLowerCase();
-    const usesMaxCompletionTokens = (provider === 'openai' || provider === 'azure_openai')
+    const usesMaxCompletionTokens = (
+        isOpenAICompatibleStmbRequest(provider)
+        || Boolean(generateData[STMB_OPENAI_COMPAT_GENERATE_DATA])
+    )
         && usesOpenAIMaxCompletionTokens(modelId);
 
     if (usesMaxCompletionTokens) {

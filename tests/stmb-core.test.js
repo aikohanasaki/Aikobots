@@ -187,6 +187,50 @@ describe('stmb core settings', () => {
         });
     });
 
+    it('uses OpenAI-compatible GPT-5 parameters for full-manual STMB profiles', () => {
+        const generateData = applyStmbProfileToGenerateData({
+            chat_completion_source: 'openai',
+            model: 'gpt-4o-mini',
+            max_tokens: 123,
+            temperature: 0.8,
+            top_p: 0.9,
+            frequency_penalty: 0.2,
+            presence_penalty: 0.3,
+            logit_bias: { 1: 2 },
+            stop: ['END'],
+        }, {
+            connection: {
+                api: 'full-manual',
+                model: 'gpt-5.2',
+                endpoint: 'https://manual.example/v1',
+                apiKey: 'manual-key',
+            },
+        });
+
+        expect(generateData).toMatchObject({
+            chat_completion_source: 'custom',
+            model: 'gpt-5.2',
+            custom_url: 'https://manual.example/v1',
+            custom_api_key: 'manual-key',
+            max_completion_tokens: 123,
+        });
+        expect(generateData.max_tokens).toBeUndefined();
+        expect(generateData.temperature).toBeUndefined();
+        expect(generateData.top_p).toBeUndefined();
+        expect(generateData.frequency_penalty).toBeUndefined();
+        expect(generateData.presence_penalty).toBeUndefined();
+        expect(generateData.logit_bias).toBeUndefined();
+        expect(generateData.stop).toBeUndefined();
+
+        const withStmbMaxTokens = applyStmbMaxTokensToGenerateData(generateData, 4000);
+        expect(withStmbMaxTokens).toMatchObject({
+            chat_completion_source: 'custom',
+            model: 'gpt-5.2',
+            max_completion_tokens: 4000,
+        });
+        expect(withStmbMaxTokens.max_tokens).toBeUndefined();
+    });
+
     it('normalizes Navy reasoning effort when an STMB profile overrides the current provider', () => {
         expect(normalizeNavyReasoningEffort('min')).toBe('minimal');
         expect(normalizeNavyReasoningEffort('max')).toBe('xhigh');
