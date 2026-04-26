@@ -45,7 +45,6 @@ import {
     getEditableCharacterExtraBooks,
     getLegacyCharacterExtraBooks,
     getForcedActivationEntriesSnapshot,
-    recomputeTimedWorldInfoState,
 } from './scripts/world-info.js';
 
 import {
@@ -872,6 +871,8 @@ export const DEFAULT_PRINT_TIMEOUT = debounce_timeout.quick;
 const CHAT_SAVE_METADATA_STRIP_KEYS = Object.freeze(['timedWorldInfo', 'worldInfoSummary', 'worldInfoReport']);
 const CHAT_SAVE_EXTRA_STRIP_KEYS = Object.freeze(['timedWorldInfo', 'worldInfoSummary', 'worldInfoReport']);
 const CHAT_SWIPE_INFO_EXTRA_STRIP_KEYS = Object.freeze(['worldInfoSummary', 'worldInfoReport']);
+const TIMED_WORLD_INFO_CHECKPOINT_KEY = 'timedWorldInfoCheckpoint';
+const TIMED_WORLD_INFO_CHECKPOINT_VERSION = 1;
 
 export const saveSettingsDebounced = debounce((loopCounter = 0) => saveSettings(loopCounter), DEFAULT_SAVE_EDIT_TIMEOUT);
 let isCharacterEditorDirty = false;
@@ -3278,6 +3279,76 @@ function createSwipeInfoExtra(extra, { includeReasoning = true } = {}) {
     }
 
     return swipeInfoExtra;
+}
+
+function normalizeTimedWorldInfoState(timedWorldInfo) {
+    if (!timedWorldInfo || typeof timedWorldInfo !== 'object' || Array.isArray(timedWorldInfo)) {
+        return null;
+    }
+
+    const state = structuredClone(timedWorldInfo);
+    for (const type of ['sticky', 'cooldown']) {
+        if (!state[type] || typeof state[type] !== 'object' || Array.isArray(state[type])) {
+            state[type] = {};
+        }
+    }
+
+    return state;
+}
+
+function createTimedWorldInfoCheckpoint(messageId, timedWorldInfo) {
+    const state = normalizeTimedWorldInfoState(timedWorldInfo);
+    if (!state) {
+        return null;
+    }
+
+    return {
+        version: TIMED_WORLD_INFO_CHECKPOINT_VERSION,
+        messageId: Number(messageId),
+        timedWorldInfo: state,
+    };
+}
+
+function getTimedWorldInfoCheckpointFromExtra(extra, messageId) {
+    const checkpoint = extra?.[TIMED_WORLD_INFO_CHECKPOINT_KEY];
+    if (!checkpoint || typeof checkpoint !== 'object' || Array.isArray(checkpoint)) {
+        return null;
+    }
+
+    if (Number(checkpoint.version) !== TIMED_WORLD_INFO_CHECKPOINT_VERSION) {
+        return null;
+    }
+
+    if (Number(checkpoint.messageId) !== Number(messageId)) {
+        return null;
+    }
+
+    return normalizeTimedWorldInfoState(checkpoint.timedWorldInfo);
+}
+
+function getActiveSwipeExtra(message) {
+    if (!message || typeof message !== 'object' || !Array.isArray(message.swipe_info)) {
+        return null;
+    }
+
+    const swipeId = Number(message.swipe_id);
+    if (!Number.isInteger(swipeId) || swipeId < 0) {
+        return null;
+    }
+
+    const swipeExtra = message.swipe_info[swipeId]?.extra;
+    return swipeExtra && typeof swipeExtra === 'object' && !Array.isArray(swipeExtra)
+        ? swipeExtra
+        : null;
+}
+
+function getTimedWorldInfoCheckpointFromMessage(message, messageId) {
+    const swipeCheckpoint = getTimedWorldInfoCheckpointFromExtra(getActiveSwipeExtra(message), messageId);
+    if (swipeCheckpoint) {
+        return swipeCheckpoint;
+    }
+
+    return getTimedWorldInfoCheckpointFromExtra(message?.extra, messageId);
 }
 
 function getContiguousChatMessagesForSave(startId, endId) {
@@ -9033,7 +9104,8 @@ export async function saveReply({ type, getMessage, fromStreaming = false, title
 }
 
 function applyTimedWorldInfoToMessage(messageId, timedWorldInfo) {
-    if (!timedWorldInfo || typeof timedWorldInfo !== 'object') {
+    const state = normalizeTimedWorldInfoState(timedWorldInfo);
+    if (!state) {
         return;
     }
 
@@ -9042,7 +9114,12 @@ function applyTimedWorldInfoToMessage(messageId, timedWorldInfo) {
         return;
     }
 
-    chat_metadata.timedWorldInfo = structuredClone(timedWorldInfo);
+    if (!item.extra || typeof item.extra !== 'object') {
+        item.extra = {};
+    }
+
+    chat_metadata.timedWorldInfo = structuredClone(state);
+    item.extra[TIMED_WORLD_INFO_CHECKPOINT_KEY] = createTimedWorldInfoCheckpoint(messageId, state);
 }
 
 function applyWorldInfoResponseDataToMessage(messageId, worldInfoResponseData) {
@@ -9061,139 +9138,29 @@ function hasActiveTimedWorldInfo(timedWorldInfo) {
     );
 }
 
-async function buildTimedWorldInfoReplayMessages() {
-    const logicalChat = structuredClone(getLogicalChatForPromptAssembly());
-    if (logicalChat.length) {
-        logicalChat[0].mes = substituteParams(logicalChat[0].mes);
-    }
-
-    const canUseTools = ToolManager.isToolCallingSupported();
-    let coreChat = logicalChat.filter(message => message && !isPromptHiddenChatMessage(message, { allowToolInvocations: canUseTools }));
-
-    coreChat = await Promise.all(coreChat.map(async (chatItem, index) => {
-        let regexedMessage = getRegexedString(chatItem.mes, chatItem.is_user ? regex_placement.USER_INPUT : regex_placement.AI_OUTPUT, {
-            isPrompt: true,
-            depth: coreChat.length - index - 1,
-        });
-        regexedMessage = await appendFileContent(chatItem, regexedMessage);
-
-        const titles = [];
-        if (chatItem?.extra?.append_title && chatItem?.extra?.title) {
-            titles.push(chatItem.extra.title);
-        }
-        if (Array.isArray(chatItem?.extra?.media)) {
-            for (const mediaItem of chatItem.extra.media) {
-                if (mediaItem?.title && mediaItem?.append_title) {
-                    titles.push(mediaItem.title);
-                }
-            }
-        }
-        if (titles.length > 0) {
-            regexedMessage = `${regexedMessage}\n\n${titles.join('\n\n')}`;
-        }
-
-        return {
-            ...chatItem,
-            mes: regexedMessage,
-            index,
-        };
-    }));
-
-    const promptReasoning = new PromptReasoning();
-    for (let index = coreChat.length - 1; index >= 0; index--) {
-        const depth = coreChat.length - index - 1;
-        coreChat[index] = {
-            ...coreChat[index],
-            mes: promptReasoning.addToMessage(
-                coreChat[index].mes,
-                getRegexedString(
-                    String(coreChat[index].extra?.reasoning ?? ''),
-                    regex_placement.REASONING,
-                    { isPrompt: true, depth },
-                ),
-                false,
-                coreChat[index].extra?.reasoning_duration,
-            ),
-        };
-        if (promptReasoning.isLimitReached()) {
-            break;
-        }
-    }
-
-    return coreChat;
-}
-
-async function buildTimedWorldInfoRecomputeRequest() {
-    const activeCharacter = globalThis.promptManager?.activeCharacter ?? characters[this_chid];
-    const activeCharacterId = activeCharacter?.id ?? this_chid;
-    const activeCharacterFilename = getCharaFilename(activeCharacterId);
-    const cardFields = getCharacterCardFields({ chid: activeCharacterId });
-    const tagKey = getTagKeyForEntity(activeCharacterId);
-    const replayMessages = await buildTimedWorldInfoReplayMessages();
-
-    return {
-        chatMessages: getCoreChatPayloadForAssembly(replayMessages),
-        includeNames: world_info_include_names,
-        maxContext: getMaxContextSize(),
-        globalScanData: {
-            personaDescription: cardFields.persona,
-            characterDescription: cardFields.description,
-            characterPersonality: cardFields.personality,
-            characterDepthPrompt: cardFields.charDepthPrompt,
-            scenario: cardFields.scenario,
-            creatorNotes: cardFields.creatorNotes,
-            trigger: 'normal',
-        },
-        regexScripts: getWorldInfoRegexScripts(),
-        selectedWorldInfo: selected_world_info,
-        chatWorld: chat_metadata[METADATA_KEY] || '',
-        personaWorld: power_user.persona_description_lorebook || '',
-        characterWorld: characters[activeCharacterId]?.data?.extensions?.world || '',
-        characterExtraBooks: getCharacterExtraBooks(activeCharacterFilename),
-        selectedGroup: Boolean(selected_group),
-        activeSpeaker: {
-            name: activeCharacter?.name || name2 || '',
-            avatar: activeCharacter?.avatar || characters[this_chid]?.avatar || '',
-            filename: String(activeCharacter?.avatar || characters[this_chid]?.avatar || '').replace(/\.[^/.]+$/, '') || activeCharacterFilename,
-        },
-        currentCharacterFilename: activeCharacterFilename,
-        currentCharacterTags: Array.isArray(tag_map?.[tagKey]) ? tag_map[tagKey] : [],
-        forcedActivations: getForcedActivationEntriesSnapshot(),
-        settings: {
-            world_info_depth,
-            world_info_min_activations,
-            world_info_min_activations_depth_max,
-            world_info_budget,
-            world_info_recursive,
-            world_info_case_sensitive,
-            world_info_match_whole_words,
-            world_info_budget_cap,
-            world_info_use_group_scoring,
-            world_info_max_recursion_steps,
-        },
-        worldInfoPosition: world_info_position,
-        tokenizerModel: getTokenizerModel(),
-        promptState: await getServerPromptState(),
-        macroSnapshot: getServerMacroSnapshot(),
-    };
-}
-
 async function recomputeTimedWorldInfoUnsafe() {
     if (!Array.isArray(chat) || chat.length === 0) {
         delete chat_metadata.timedWorldInfo;
         return false;
     }
 
-    const payload = await buildTimedWorldInfoRecomputeRequest();
-    const timedWorldInfo = await recomputeTimedWorldInfoState(payload);
+    for (let messageId = chat.length - 1; messageId >= 0; messageId--) {
+        const timedWorldInfo = getTimedWorldInfoCheckpointFromMessage(chat[messageId], messageId);
+        if (!timedWorldInfo) {
+            continue;
+        }
 
-    if (hasActiveTimedWorldInfo(timedWorldInfo)) {
-        chat_metadata.timedWorldInfo = structuredClone(timedWorldInfo);
-    } else {
-        delete chat_metadata.timedWorldInfo;
+        if (hasActiveTimedWorldInfo(timedWorldInfo)) {
+            chat_metadata.timedWorldInfo = structuredClone(timedWorldInfo);
+        } else {
+            delete chat_metadata.timedWorldInfo;
+        }
+
+        return true;
     }
 
-    return true;
+    delete chat_metadata.timedWorldInfo;
+    return false;
 }
 
 const recomputeTimedWorldInfoMutex = new SimpleMutex(recomputeTimedWorldInfoUnsafe);
@@ -10170,7 +10137,7 @@ async function getChatResult() {
     }
     await loadItemizedPrompts(getCurrentChatId());
     await printMessages();
-    await recomputeTimedWorldInfo();
+    void recomputeTimedWorldInfo();
     select_selected_character(this_chid);
 
     await eventSource.emit(event_types.CHAT_CHANGED, (getCurrentChatId()));

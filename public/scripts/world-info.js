@@ -6342,34 +6342,6 @@ export async function getSortedEntries() {
     }
 }
 
-export async function recomputeTimedWorldInfoState(payload = {}) {
-    const response = await fetch('/api/worldinfo/timed-effects/recompute', {
-        method: 'POST',
-        headers: getRequestHeaders(),
-        body: JSON.stringify(payload),
-        cache: 'no-cache',
-    });
-
-    const responseText = await response.text();
-    let data = null;
-    try {
-        data = responseText ? JSON.parse(responseText) : null;
-    } catch {
-        data = null;
-    }
-
-    if (!response.ok) {
-        const message =
-            data?.error?.message ||
-            data?.message ||
-            responseText?.trim() ||
-            `Failed to recompute timed world info: ${response.status}`;
-        throw new Error(message);
-    }
-
-    return structuredClone(data?.timedWorldInfo || {});
-}
-
 function findLorebookIndexByName(name = '') {
     const target = String(name || '').trim().toLowerCase();
     if (!target || !Array.isArray(world_names)) {

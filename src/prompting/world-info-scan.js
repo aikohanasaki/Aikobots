@@ -928,6 +928,7 @@ export async function scanWorldInfo(payload = {}) {
     const currentCharacterFilename = String(payload.currentCharacterFilename || '');
     const currentCharacterTags = Array.isArray(payload.currentCharacterTags) ? payload.currentCharacterTags : [];
     const isDryRun = Boolean(payload.isDryRun);
+    const includeDebugInfo = payload.includeDebugInfo !== false;
     const tokenCountCache = new Map();
 
     const buffer = new WorldInfoBuffer(chat, globalScanData, injects, settings, payload.forcedActivations);
@@ -989,20 +990,22 @@ export async function scanWorldInfo(payload = {}) {
             allActivatedEntries: [],
             timedWorldInfo: timedEffects.getTimedWorldInfo(),
             overflowed: false,
-            worldInfo: {
-                activatedEntries: [],
-                beforeEntries: [],
-                afterEntries: [],
-                depthEntries: [],
-                exampleEntries: [],
-                timedState: timedEffects.getTimedWorldInfo(),
-                overflowed: false,
-                rounds: [],
-                budgetUsed: {
-                    global: { used: 0, limit: 0 },
-                    lorebooks: [],
-                },
-            },
+            worldInfo: includeDebugInfo
+                ? {
+                    activatedEntries: [],
+                    beforeEntries: [],
+                    afterEntries: [],
+                    depthEntries: [],
+                    exampleEntries: [],
+                    timedState: timedEffects.getTimedWorldInfo(),
+                    overflowed: false,
+                    rounds: [],
+                    budgetUsed: {
+                        global: { used: 0, limit: 0 },
+                        lorebooks: [],
+                    },
+                }
+                : null,
         };
     }
 
@@ -1416,16 +1419,18 @@ export async function scanWorldInfo(payload = {}) {
 
     timedEffects.setTimedEffects(result.allActivatedEntries);
     timedEffects.cleanUp();
-    result.worldInfo = await buildWorldInfoDebugSummary(
-        entryDebug,
-        payload,
-        tokenCountCache,
-        budget,
-        lorebookBudgets,
-        lorebookActivatedText,
-        timedEffects.getTimedWorldInfo(),
-        result.overflowed,
-    );
+    result.worldInfo = includeDebugInfo
+        ? await buildWorldInfoDebugSummary(
+            entryDebug,
+            payload,
+            tokenCountCache,
+            budget,
+            lorebookBudgets,
+            lorebookActivatedText,
+            timedEffects.getTimedWorldInfo(),
+            result.overflowed,
+        )
+        : null;
 
     return result;
 }

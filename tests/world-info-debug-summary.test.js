@@ -14,6 +14,44 @@ const worldInfoPosition = {
 };
 
 describe('scanWorldInfo debug summary', () => {
+    it('can skip debug summary generation while preserving timed state updates', async () => {
+        const result = await scanWorldInfo({
+            chat: ['The moonwell ledger is missing.'],
+            maxContext: 100,
+            worldInfoPosition,
+            includeDebugInfo: false,
+            settings: {
+                world_info_budget: 100,
+                world_info_budget_cap: 0,
+                world_info_recursive: false,
+            },
+            timedWorldInfo: {
+                sticky: {},
+                cooldown: {},
+            },
+            sortedEntries: [
+                {
+                    uid: 1,
+                    world: 'Alpha',
+                    order: 300,
+                    position: worldInfoPosition.before,
+                    content: 'Before entry',
+                    decorators: ['@@activate'],
+                    sticky: 3,
+                    lorebookSettings: { budgetMode: 'default' },
+                },
+            ],
+        });
+
+        expect(result.worldInfo).toBeNull();
+        expect(result.timedWorldInfo.sticky['Alpha::1']).toMatchObject({
+            book: 'Alpha',
+            name: '1',
+            start: 1,
+            end: 4,
+        });
+    });
+
     it('groups admitted entries by placement', async () => {
         const result = await scanWorldInfo({
             chat: ['The moonwell ledger is missing.'],
