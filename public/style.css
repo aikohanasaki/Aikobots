@@ -6168,6 +6168,7 @@ body:not(.movingUI) .drawer-content.maximized {
 .fillRight.openDrawer {
     display: flex;
     height: 100%;
+    overflow-y: hidden;
 
     @starting-style {
         height: 0;
@@ -6188,6 +6189,14 @@ body:not(.movingUI) .drawer-content.maximized {
 .scrollableInner {
     overflow-x: hidden;
     height: 100%;
+}
+
+.fillLeft.openDrawer > .scrollableInner,
+.fillRight.openDrawer > .scrollableInner {
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow-y: auto;
+    scrollbar-gutter: stable;
 }
 
 .scrollableInnerFull {
