@@ -364,6 +364,55 @@ function rekeyPromptSnapshotKey(promptSnapshotKey, { mesId = null, swipeId = nul
     });
 }
 
+function remapTimedWorldInfoState(timedWorldInfo, remapIndex) {
+    const state = normalizeTimedWorldInfoState(timedWorldInfo);
+    if (!state) {
+        return null;
+    }
+
+    if (typeof remapIndex !== 'function') {
+        return state;
+    }
+
+    for (const type of ['sticky', 'cooldown']) {
+        for (const effect of Object.values(state[type])) {
+            if (!effect || typeof effect !== 'object' || Array.isArray(effect)) {
+                continue;
+            }
+
+            if (Number.isFinite(Number(effect.start))) {
+                effect.start = remapIndex(Number(effect.start));
+            }
+            if (Number.isFinite(Number(effect.end))) {
+                effect.end = remapIndex(Number(effect.end));
+            }
+        }
+    }
+
+    return state;
+}
+
+function rekeyTimedWorldInfoCheckpoint(extra, messageId, remapIndex = null) {
+    const checkpoint = extra?.[TIMED_WORLD_INFO_CHECKPOINT_KEY];
+    if (!checkpoint || typeof checkpoint !== 'object' || Array.isArray(checkpoint)) {
+        return;
+    }
+
+    const targetMessageId = Number(messageId);
+    if (!Number.isFinite(targetMessageId) || targetMessageId < 0) {
+        delete extra[TIMED_WORLD_INFO_CHECKPOINT_KEY];
+        return;
+    }
+
+    const state = remapTimedWorldInfoState(checkpoint.timedWorldInfo, remapIndex);
+    if (!state) {
+        delete extra[TIMED_WORLD_INFO_CHECKPOINT_KEY];
+        return;
+    }
+
+    extra[TIMED_WORLD_INFO_CHECKPOINT_KEY] = createTimedWorldInfoCheckpoint(targetMessageId, state);
+}
+
 async function commitLatestPromptInspectorRecord(messageId) {
     if (!pendingPromptInspectorRecord) {
         return null;
@@ -409,6 +458,39 @@ async function syncLatestPromptInspectorAfterMessageDeletion(deletedMessageId) {
             ...structuredClone(retainedPrompt),
             mesId: retainedMesId - 1,
             promptSnapshotKey: nextPromptSnapshotKey,
+        });
+    }
+
+    refreshPromptInspectorButton();
+    await saveItemizedPrompts(getCurrentChatId());
+}
+
+async function syncLatestPromptInspectorAfterMessageInsertion(insertedMessageId) {
+    const retainedPrompt = getLatestItemizedPrompt();
+    const retainedMesId = Number(retainedPrompt?.mesId);
+    if (!retainedPrompt || !Number.isFinite(retainedMesId)) {
+        refreshPromptInspectorButton();
+        return;
+    }
+
+    const insertAt = Number(insertedMessageId);
+    if (!Number.isFinite(insertAt) || insertAt < 0 || retainedMesId < insertAt) {
+        refreshPromptInspectorButton();
+        return;
+    }
+
+    const nextMesId = retainedMesId + 1;
+    const message = chat[nextMesId];
+    if (!message) {
+        setLatestItemizedPrompt(null);
+    } else {
+        setLatestItemizedPrompt({
+            ...structuredClone(retainedPrompt),
+            mesId: nextMesId,
+            swipeId: Number(message?.swipe_id ?? retainedPrompt.swipeId ?? 0) || 0,
+            promptSnapshotKey: typeof message?.extra?.promptSnapshotKey === 'string'
+                ? message.extra.promptSnapshotKey
+                : null,
         });
     }
 
@@ -545,6 +627,27 @@ function getPromptSnapshotKeysFromMessage(message) {
     return [...keys];
 }
 
+function clearPromptSnapshotKeysFromMessage(message) {
+    if (!message || typeof message !== 'object') {
+        return;
+    }
+
+    if (message.extra && typeof message.extra === 'object' && !Array.isArray(message.extra)) {
+        delete message.extra.promptSnapshotKey;
+    }
+
+    if (!Array.isArray(message.swipe_info)) {
+        return;
+    }
+
+    for (const swipeInfo of message.swipe_info) {
+        const swipeExtra = swipeInfo?.extra;
+        if (swipeExtra && typeof swipeExtra === 'object' && !Array.isArray(swipeExtra)) {
+            delete swipeExtra.promptSnapshotKey;
+        }
+    }
+}
+
 function addPromptSnapshotRekeyOperation(rekeys, fromKey, toKey) {
     if (!fromKey || !toKey || fromKey === toKey) {
         return;
@@ -553,9 +656,37 @@ function addPromptSnapshotRekeyOperation(rekeys, fromKey, toKey) {
     rekeys.push({ from: fromKey, to: toKey });
 }
 
-function rekeyMessagePromptSnapshotKeys(message, mesId, rekeys) {
+function createInsertMessageIndexMapper(insertAt) {
+    const insertedMessageId = Number(insertAt);
+    return (messageId) => messageId >= insertedMessageId ? messageId + 1 : messageId;
+}
+
+function createDeleteMessageIndexMapper(deletedMessageId) {
+    const deletedId = Number(deletedMessageId);
+    return (messageId) => messageId > deletedId ? messageId - 1 : messageId;
+}
+
+function createSwapMessageIndexMapper(sourceId, targetId) {
+    const sourceMessageId = Number(sourceId);
+    const targetMessageId = Number(targetId);
+    return (messageId) => {
+        if (messageId === sourceMessageId) {
+            return targetMessageId;
+        }
+        if (messageId === targetMessageId) {
+            return sourceMessageId;
+        }
+        return messageId;
+    };
+}
+
+function rekeyMessagePromptSnapshotKeys(message, mesId, rekeys, { remapTimedWorldInfoIndex = null } = {}) {
     if (!message || typeof message !== 'object') {
         return;
+    }
+
+    if (message.extra && typeof message.extra === 'object' && !Array.isArray(message.extra)) {
+        rekeyTimedWorldInfoCheckpoint(message.extra, mesId, remapTimedWorldInfoIndex);
     }
 
     if (typeof message?.extra?.promptSnapshotKey === 'string' && message.extra.promptSnapshotKey) {
@@ -575,6 +706,10 @@ function rekeyMessagePromptSnapshotKeys(message, mesId, rekeys) {
 
     for (let index = 0; index < message.swipe_info.length; index++) {
         const swipeExtra = message.swipe_info[index]?.extra;
+        if (swipeExtra && typeof swipeExtra === 'object' && !Array.isArray(swipeExtra)) {
+            rekeyTimedWorldInfoCheckpoint(swipeExtra, mesId, remapTimedWorldInfoIndex);
+        }
+
         const swipeKey = swipeExtra?.promptSnapshotKey;
         if (typeof swipeKey !== 'string' || !swipeKey) {
             continue;
@@ -4156,8 +4291,9 @@ export async function deleteMessage(id, swipeDeletionIndex = undefined, askConfi
     chat.splice(id, 1);
     syncSplitTailStateAfterMutation();
     const rekeys = [];
+    const remapTimedWorldInfoIndex = createDeleteMessageIndexMapper(id);
     for (let messageIndex = id; messageIndex < chat.length; messageIndex++) {
-        rekeyMessagePromptSnapshotKeys(chat[messageIndex], messageIndex, rekeys);
+        rekeyMessagePromptSnapshotKeys(chat[messageIndex], messageIndex, rekeys, { remapTimedWorldInfoIndex });
     }
     await syncLatestPromptInspectorAfterMessageDeletion(id);
     messageElement.remove();
@@ -8315,6 +8451,13 @@ export async function sendMessageAsUser(messageText, messageBias, insertAt = nul
 
     if (typeof insertAt === 'number' && insertAt >= 0 && insertAt <= chat.length) {
         chat.splice(insertAt, 0, message);
+        const rekeys = [];
+        const remapTimedWorldInfoIndex = createInsertMessageIndexMapper(insertAt);
+        for (let messageIndex = chat.length - 1; messageIndex > insertAt; messageIndex--) {
+            rekeyMessagePromptSnapshotKeys(chat[messageIndex], messageIndex, rekeys, { remapTimedWorldInfoIndex });
+        }
+        await syncLatestPromptInspectorAfterMessageInsertion(insertAt);
+        await maintainPromptSnapshotKeys({ rekeys });
         await recomputeTimedWorldInfo();
         await saveChatConditional();
         await eventSource.emit(event_types.MESSAGE_SENT, insertAt);
@@ -10137,7 +10280,7 @@ async function getChatResult() {
     }
     await loadItemizedPrompts(getCurrentChatId());
     await printMessages();
-    void recomputeTimedWorldInfo();
+    await recomputeTimedWorldInfo();
     select_selected_character(this_chid);
 
     await eventSource.emit(event_types.CHAT_CHANGED, (getCurrentChatId()));
@@ -10732,6 +10875,7 @@ async function messageEditMove(sourceId, targetId) {
 
     const targetMessageDiv = chatElement.find(`.mes[mesid="${targetId}"]`);
     const sourceMessageDiv = chatElement.find(`.mes[mesid="${sourceId}"]`);
+    const rekeys = [];
 
     if (sourceMessageDiv.length === 0 || targetMessageDiv.length === 0) {
         console.error(`Message #${sourceId} or #${targetId} were not found.`);
@@ -10751,6 +10895,9 @@ async function messageEditMove(sourceId, targetId) {
 
     // Swap chat array entries.
     [chat[sourceId], chat[targetId]] = [chat[targetId], chat[sourceId]];
+    const remapTimedWorldInfoIndex = createSwapMessageIndexMapper(sourceId, targetId);
+    rekeyMessagePromptSnapshotKeys(chat[sourceId], sourceId, rekeys, { remapTimedWorldInfoIndex });
+    rekeyMessagePromptSnapshotKeys(chat[targetId], targetId, rekeys, { remapTimedWorldInfoIndex });
 
     // Update edited message id
     if (this_edit_mes_id === sourceId) {
@@ -10759,6 +10906,7 @@ async function messageEditMove(sourceId, targetId) {
 
     updateViewMessageIds();
     await syncLatestPromptInspectorAfterMessageMove(sourceId, targetId);
+    await maintainPromptSnapshotKeys({ rekeys });
     await recomputeTimedWorldInfo();
     await saveChatConditional();
     return true;
@@ -15845,12 +15993,22 @@ jQuery(async function () {
         if (power_user.trim_spaces) {
             clone.mes = clone.mes.trim();
         }
+        clearPromptSnapshotKeysFromMessage(clone);
 
-        chat.splice(Number(this_edit_mes_id) + 1, 0, clone);
+        const insertIndex = Number(this_edit_mes_id) + 1;
+        chat.splice(insertIndex, 0, clone);
         syncSplitTailStateAfterMutation();
         addOneMessage(clone, { insertAfter: this_edit_mes_id });
 
         updateViewMessageIds();
+        const rekeys = [];
+        const remapTimedWorldInfoIndex = createInsertMessageIndexMapper(insertIndex);
+        for (let messageIndex = chat.length - 1; messageIndex >= insertIndex; messageIndex--) {
+            rekeyMessagePromptSnapshotKeys(chat[messageIndex], messageIndex, rekeys, { remapTimedWorldInfoIndex });
+        }
+        syncMesToSwipe(insertIndex);
+        await syncLatestPromptInspectorAfterMessageInsertion(insertIndex);
+        await maintainPromptSnapshotKeys({ rekeys });
         await recomputeTimedWorldInfo();
         await saveChatConditional();
         chatElement[0].scrollTop = oldScroll;
