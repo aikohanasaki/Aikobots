@@ -1767,6 +1767,15 @@ function getEffectivePromptText(profile) {
     return getCachedSummaryPromptText(profile?.preset, stmbSettings);
 }
 
+function buildEffectiveMemoryProfile(profile) {
+    const effectiveProfile = structuredClone(profile || getActiveStmbProfile(stmbSettings));
+    const effectivePrompt = getEffectivePromptText(effectiveProfile);
+    if (typeof effectivePrompt === 'string' && effectivePrompt.trim()) {
+        effectiveProfile.promptText = effectivePrompt;
+    }
+    return effectiveProfile;
+}
+
 function getProfileDisplayName(profile) {
     return profile?.isBuiltinCurrentST ? 'Current SillyTavern Settings' : String(profile?.name || 'Profile');
 }
@@ -4902,7 +4911,7 @@ async function showAndGetMemorySettings(compiledScene, range, lorebookName, sele
             return null;
         }
         return {
-            profileSettings: structuredClone(profile),
+            profileSettings: buildEffectiveMemoryProfile(profile),
             summaryCount: Math.max(0, Math.min(7, Number(getModuleSettings().defaultMemoryCount ?? 0))),
             tokenThreshold,
         };
@@ -4941,7 +4950,7 @@ async function showAndGetMemorySettings(compiledScene, range, lorebookName, sele
             return null;
         }
         return {
-            profileSettings: structuredClone(profile),
+            profileSettings: buildEffectiveMemoryProfile(profile),
             summaryCount: Math.max(0, Math.min(7, Number(getModuleSettings().defaultMemoryCount ?? 0))),
             tokenThreshold,
         };
@@ -4989,8 +4998,13 @@ async function showAndGetMemorySettings(compiledScene, range, lorebookName, sele
             return null;
         }
         toastr.success(`Profile "${saved.name}" saved successfully`, 'STMB');
+        const effectiveSavedProfile = buildEffectiveMemoryProfile(saved);
+        const savedPromptText = String(advanced.promptText || '').trim();
+        if (savedPromptText) {
+            effectiveSavedProfile.promptText = advanced.promptText;
+        }
         return {
-            profileSettings: structuredClone(saved),
+            profileSettings: effectiveSavedProfile,
             summaryCount: Math.max(0, Math.min(7, Number(advanced.memoryCount ?? 0))),
             tokenThreshold,
         };
@@ -4999,9 +5013,7 @@ async function showAndGetMemorySettings(compiledScene, range, lorebookName, sele
     const effectiveProfile = structuredClone(selectedProfile);
     const basePrompt = String(getEffectivePromptText(selectedProfile) || '').trim();
     const nextPrompt = String(advanced.promptText || '').trim();
-    if (nextPrompt && nextPrompt !== basePrompt) {
-        effectiveProfile.promptText = advanced.promptText;
-    }
+    effectiveProfile.promptText = nextPrompt || basePrompt;
     if (advanced.overrideSettings) {
         effectiveProfile.connection = {
             api: 'current_st',
@@ -6583,7 +6595,7 @@ async function executeMemoryJob(job, context) {
     const range = job?.range || payload.range || null;
     const lorebookName = String(job?.lorebookName || payload.lorebookName || '').trim();
     const requestSettings = buildMemoryRequestSettings(payload.summaryCount);
-    const profile = payload.profile ? structuredClone(payload.profile) : getActiveStmbProfile(stmbSettings, job?.profileIndex ?? null);
+    const profile = buildEffectiveMemoryProfile(payload.profile || getActiveStmbProfile(stmbSettings, job?.profileIndex ?? null));
 
     if (!Number.isInteger(Number(range?.sceneStart)) || !Number.isInteger(Number(range?.sceneEnd))) {
         throw new Error('Memory job is missing a valid scene range.');
