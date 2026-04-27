@@ -5877,6 +5877,8 @@ export function isImageInliningSupported() {
             return true;
         case chat_completion_sources.MOONSHOT:
             return visionSupportedModels.some(model => oai_settings.moonshot_model.includes(model));
+        case chat_completion_sources.NAVY:
+            return visionSupportedModels.some(model => oai_settings.navy_model.includes(model));
         case chat_completion_sources.NANOGPT:
             return (Array.isArray(model_list) && model_list.find(m => m.id === oai_settings.nanogpt_model)?.capabilities?.vision);
         case chat_completion_sources.ZAI:
