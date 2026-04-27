@@ -892,12 +892,6 @@ export function applyStmbMaxTokensToGenerateData(generateData, stmbMaxTokens) {
     return next;
 }
 
-export function getPresetPrompt(settings, presetName) {
-    const normalized = normalizeStmbSettings(settings);
-    const customPrompts = normalized.promptPresets && typeof normalized.promptPresets === 'object' ? normalized.promptPresets : {};
-    return customPrompts[presetName] || STMB_DEFAULT_PROMPTS[presetName] || STMB_DEFAULT_PROMPTS.summary;
-}
-
 export function compileScene(messages, sceneRequest, options = {}) {
     const sourceMessages = Array.isArray(messages) ? messages : [];
     const sceneStart = Number(sceneRequest?.sceneStart);

@@ -259,6 +259,11 @@ export async function showSummaryConsolidationOptionsPopup(data = {}) {
         requiredMin: Number(data?.requiredMin ?? 5),
         candidates: [],
     };
+    const getSelectedPresetPromptText = selectedKey => {
+        const normalizedKey = String(selectedKey || data?.defaultPresetKey || 'arc_default');
+        const preset = presets.find(option => String(option.value) === normalizedKey);
+        return String(preset?.prompt || '');
+    };
     const renderPresetOptions = (selectedKey = null) => presets
         .map(option => `<option value="${escapeHtml(String(option.value))}" ${String(option.value) === String(selectedKey || data?.defaultPresetKey || 'arc_default') ? 'selected' : ''}>${escapeHtml(String(option.label))}</option>`)
         .join('');
@@ -285,6 +290,10 @@ export async function showSummaryConsolidationOptionsPopup(data = {}) {
                     </select>
                     ${data?.allowPresetRebuild ? '<button id="stmb-summary-preset-rebuild" class="menu_button whitespacenowrap" type="button">Rebuild from built-ins</button>' : ''}
                 </div>
+            </div>
+            <div class="world_entry_form_control">
+                <label>Effective prompt</label>
+                <pre id="stmb-summary-effective-prompt" class="text_pole" style="white-space:pre-wrap; max-height:220px; overflow:auto;"></pre>
             </div>
             <div class="world_entry_form_control">
                 <label for="stmb-summary-required-min">Minimum eligible source entries</label>
@@ -431,6 +440,13 @@ export async function showSummaryConsolidationOptionsPopup(data = {}) {
     const dialog = popup.dlg;
     const getCurrentTier = () => Number(dialog?.querySelector('#stmb-summary-tier')?.value ?? targetTier);
     const getActiveTierConfig = () => getTierConfig(getCurrentTier());
+    const getCurrentPresetKey = () => String(dialog?.querySelector('#stmb-summary-preset')?.value || data?.defaultPresetKey || 'arc_default');
+    const syncEffectivePrompt = () => {
+        const promptEl = dialog?.querySelector('#stmb-summary-effective-prompt');
+        if (promptEl) {
+            promptEl.textContent = getSelectedPresetPromptText(getCurrentPresetKey()) || '(none)';
+        }
+    };
     const readSummaryEntrySettings = () => ({
         constVectMode: String(dialog?.querySelector('#stmb-summary-entry-const-vect')?.value || initialEntrySettings.constVectMode || 'link'),
         position: readInt(dialog?.querySelector('#stmb-summary-entry-position')?.value, initialEntrySettings.position ?? 0),
@@ -515,7 +531,9 @@ export async function showSummaryConsolidationOptionsPopup(data = {}) {
             return;
         }
         presetSelect.innerHTML = renderPresetOptions(selectedKey);
+        syncEffectivePrompt();
     };
+    dialog?.querySelector('#stmb-summary-preset')?.addEventListener('change', syncEffectivePrompt);
 
     dialog?.querySelector('#stmb-summary-tier')?.addEventListener('change', () => {
         const config = getActiveTierConfig();
@@ -580,6 +598,7 @@ export async function showSummaryConsolidationOptionsPopup(data = {}) {
     }
 
     syncEntrySettingsVisibility();
+    syncEffectivePrompt();
     renderTierState();
 
     const result = await popup.show();
@@ -595,7 +614,8 @@ export async function showSummaryConsolidationOptionsPopup(data = {}) {
     return {
         action: 'run',
         targetTier: getCurrentTier(),
-        presetKey: String(dialog?.querySelector('#stmb-summary-preset')?.value || data?.defaultPresetKey || 'arc_default'),
+        presetKey: getCurrentPresetKey(),
+        promptText: getSelectedPresetPromptText(getCurrentPresetKey()),
         requiredMin: readInt(dialog?.querySelector('#stmb-summary-required-min')?.value, activeConfig.requiredMin ?? data?.requiredMin ?? 5),
         maxItemsPerPass: readInt(dialog?.querySelector('#stmb-summary-max-items-per-pass')?.value, data?.maxItemsPerPass ?? 15),
         tokenTarget: readInt(dialog?.querySelector('#stmb-summary-token-target')?.value, data?.tokenTarget ?? 30000),

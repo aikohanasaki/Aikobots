@@ -747,8 +747,12 @@ export function buildSummaryAnalysisPrompt({
     promptText = null,
     targetTier = 1,
 }) {
+    if (!(typeof promptText === 'string' && promptText.trim())) {
+        throw new Error('STMB consolidation prompt text is required before building an AI request.');
+    }
+
     const header = resolveSummaryPromptPlaceholders(
-        promptText || STMB_DEFAULT_SUMMARY_PROMPTS.arc_default,
+        promptText,
         { targetTier },
     );
     const targetLabel = getSummaryTierLabel(targetTier).toUpperCase();

@@ -437,6 +437,7 @@ export async function buildQueuedSidePromptJob({
         sceneContext: sceneContext ? structuredClone(sceneContext) : structuredClone(buildStmbSceneContext()),
         title: String(template?.name || 'Side Prompt'),
         payload: {
+            template: template ? structuredClone(template) : null,
             templateKey: String(template?.key || ''),
             templateName: String(template?.name || ''),
             lorebookName,
@@ -493,6 +494,7 @@ export async function buildQueuedAfterMemorySidePromptJobs({
                 profile: profile ? structuredClone(profile) : null,
                 trigger: 'onAfterMemory',
                 templates: waveTemplates.map(template => ({
+                    template: template ? structuredClone(template) : null,
                     templateKey: String(template?.key || ''),
                     templateName: String(template?.name || ''),
                     runtimeMacros: {},
@@ -991,9 +993,11 @@ async function executeSidePromptJob(job, context) {
     const payload = job?.payload || {};
     const settings = payload.settings || null;
     const signal = context.signal;
-    const template = payload.templateKey
-        ? await getTemplate(payload.templateKey)
-        : await findTemplateByName(payload.templateName || job?.title || '');
+    const template = payload.template && typeof payload.template === 'object'
+        ? structuredClone(payload.template)
+        : payload.templateKey
+            ? await getTemplate(payload.templateKey)
+            : await findTemplateByName(payload.templateName || job?.title || '');
     if (!template) {
         throw new Error(`SidePrompt template "${payload.templateName || payload.templateKey || job?.title || 'unknown'}" not found.`);
     }
@@ -1157,9 +1161,11 @@ async function executeSidePromptBatchJob(job, context) {
         detail: templateInputs.length === 1 ? '1 side prompt' : `${templateInputs.length} side prompts`,
     });
     const generationResults = await runWithConcurrencyLimit(templateInputs, resolveSidePromptMaxConcurrent(settings), async input => {
-        const template = input?.templateKey
-            ? await getTemplate(input.templateKey)
-            : await findTemplateByName(input?.templateName || '');
+        const template = input?.template && typeof input.template === 'object'
+            ? structuredClone(input.template)
+            : input?.templateKey
+                ? await getTemplate(input.templateKey)
+                : await findTemplateByName(input?.templateName || '');
         if (!template) {
             return {
                 ok: false,

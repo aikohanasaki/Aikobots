@@ -1,9 +1,9 @@
 import {
     compiledSceneToText,
-    getPresetPrompt,
     identifyManagedMemoryEntries,
 } from './stmb-core.js';
 import { applySidePromptMacros } from './stmb-sideprompt-macros.js';
+import { getRequiredSummaryPromptText } from './stmb-summary-prompt-manager.js';
 
 export function fetchPreviousMemories(worldInfo, count) {
     if (!Number.isFinite(Number(count)) || Number(count) <= 0) {
@@ -26,7 +26,7 @@ export function buildMemoryPromptMessages(compiledScene, profile, worldInfo, stm
 export function buildMemoryPromptText(compiledScene, profile, worldInfo, stmbSettings = {}) {
     const basePrompt = typeof profile?.promptText === 'string' && profile.promptText.trim()
         ? profile.promptText
-        : getPresetPrompt(stmbSettings, profile?.preset);
+        : getRequiredSummaryPromptText(profile?.preset, stmbSettings);
     const presetPrompt = String(basePrompt || '')
         .replace(/\{\{user\}\}/g, String(compiledScene?.metadata?.userName || 'User'))
         .replace(/\{\{char\}\}/g, String(compiledScene?.metadata?.characterName || 'Character'));

@@ -26,6 +26,7 @@ describe('stmb summary helpers', () => {
 
     it('builds a tier-aware consolidation prompt', () => {
         const prompt = buildSummaryAnalysisPrompt({
+            promptText: 'Create summaries for {{childTypePlural}} into {{targetTypePlural}}.',
             briefs: [
                 { id: '10', title: '[001] - Opening', content: 'Scene one' },
                 { id: '11', title: '[002] - Followup', content: 'Scene two' },
@@ -41,6 +42,7 @@ describe('stmb summary helpers', () => {
 
     it('uses tier-aware member_id examples for higher-tier consolidation', () => {
         const prompt = buildSummaryAnalysisPrompt({
+            promptText: 'Create summaries for {{childTypePlural}} into {{targetTypePlural}}.',
             briefs: [
                 { id: '13', title: '[ARC 001] - Opening Arc', content: 'Arc one' },
                 { id: '14', title: '[ARC 002] - Followup Arc', content: 'Arc two' },
@@ -51,6 +53,13 @@ describe('stmb summary helpers', () => {
         expect(prompt).toContain('=== ARCS ===');
         expect(prompt).toContain('=== Arc 001 ===');
         expect(prompt).toContain('"001" or "Arc 001"');
+    });
+
+    it('requires resolved consolidation prompt text', () => {
+        expect(() => buildSummaryAnalysisPrompt({
+            briefs: [{ id: '10', title: '[001] - Opening', content: 'Scene one' }],
+            targetTier: 1,
+        })).toThrow('STMB consolidation prompt text is required');
     });
 
     it('parses summary JSON from text envelopes', () => {

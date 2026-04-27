@@ -416,7 +416,9 @@ async function runNextJob(chatKey) {
             nextJob.error = {
                 message: String(error?.message || 'Unknown STMB job failure'),
             };
-            globalThis.toastr?.error?.(`${getJobTypeLabel(nextJob.type)} job failed: ${nextJob.error.message}`, 'STMB');
+            if (!error?.stmbToastrShown) {
+                globalThis.toastr?.error?.(`${getJobTypeLabel(nextJob.type)} job failed: ${nextJob.error.message}`, 'STMB');
+            }
         }
     } finally {
         const pendingApproval = pendingApprovals.get(String(nextJob.id || ''));

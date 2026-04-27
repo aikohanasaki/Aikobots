@@ -42,6 +42,19 @@ const SUMMARY_PROMPT_DISPLAY_NAMES = Object.freeze({
 
 let cachedDoc = null;
 
+function createMissingSummaryPromptError(key) {
+    const normalizedKey = String(key || 'summary').trim() || 'summary';
+    const message = `STMB summary prompt with key '${normalizedKey}' is missing from ${SUMMARY_PROMPTS_FILE}`;
+    const error = new Error(message);
+    error.code = 'STMB_SUMMARY_PROMPT_MISSING';
+    error.promptKey = normalizedKey;
+    error.expectedSource = SUMMARY_PROMPTS_FILE;
+    error.stmbToastrShown = true;
+    console.error(message);
+    globalThis.toastr?.error?.(message, 'STMB');
+    return error;
+}
+
 function toTitleCase(text) {
     return String(text || '').replace(/\w\S*/g, token => token.charAt(0).toUpperCase() + token.slice(1).toLowerCase());
 }
@@ -213,6 +226,21 @@ export function getCachedSummaryPromptText(key, fallbackSettings = null) {
     return STMB_DEFAULT_PROMPTS[normalizedKey] || STMB_DEFAULT_PROMPTS.summary;
 }
 
+export function getRequiredSummaryPromptText(key, fallbackSettings = null) {
+    const normalizedKey = String(key || 'summary').trim() || 'summary';
+    const cachedPrompt = cachedDoc?.overrides?.[normalizedKey]?.prompt;
+    if (typeof cachedPrompt === 'string' && cachedPrompt.trim()) {
+        return cachedPrompt;
+    }
+
+    const fallbackPrompt = fallbackSettings?.promptPresets?.[normalizedKey];
+    if (typeof fallbackPrompt === 'string' && fallbackPrompt.trim()) {
+        return fallbackPrompt;
+    }
+
+    throw createMissingSummaryPromptError(normalizedKey);
+}
+
 export function getCachedSummaryPromptDisplayName(key, fallbackSettings = null) {
     const normalizedKey = String(key || '').trim();
     const cachedDisplayName = cachedDoc?.overrides?.[normalizedKey]?.displayName;
@@ -334,15 +362,19 @@ export async function importSummaryPromptPresetsJsonFile(text) {
 
 export async function recreateBuiltInSummaryPromptOverridesFile() {
     const data = await loadDoc();
-    let removed = 0;
-    for (const key of Object.keys(STMB_DEFAULT_PROMPTS || {})) {
-        if (Object.prototype.hasOwnProperty.call(data.overrides, key)) {
-            delete data.overrides[key];
-            removed++;
-        }
+    const timestamp = new Date().toISOString();
+    let replaced = 0;
+    for (const [key, prompt] of Object.entries(STMB_DEFAULT_PROMPTS || {})) {
+        data.overrides[key] = {
+            displayName: getDefaultDisplayName(key),
+            prompt: String(prompt || ''),
+            createdAt: data.overrides?.[key]?.createdAt || timestamp,
+            updatedAt: timestamp,
+        };
+        replaced++;
     }
     await saveDoc(data);
-    return { removed };
+    return { replaced };
 }
 
 export function clearSummaryPromptPresetCache() {

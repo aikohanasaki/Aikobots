@@ -50,7 +50,6 @@ import {
     findOverlappingManagedMemoryEntry,
     normalizeLorebookEntrySettings,
     STMB_DEFAULT_MAX_TOKENS,
-    STMB_DEFAULT_PROMPTS,
     STMB_DEFAULT_MEMORY_SCHEMA,
     STMB_DEFAULT_TITLE_FORMAT,
     STMB_DEFAULT_TITLE_FORMATS,
@@ -94,6 +93,7 @@ import {
     exportArcPromptPresetsJsonFile,
     getCachedArcPromptDisplayName,
     getCachedArcPromptText,
+    getRequiredArcPromptText,
     importArcPromptPresetsJsonFile,
     listCachedArcPromptPresets,
     recreateBuiltInArcPromptOverridesFile,
@@ -106,6 +106,7 @@ import {
     firstRunInitSummaryPromptPresets,
     getCachedSummaryPromptDisplayName,
     getCachedSummaryPromptText,
+    getRequiredSummaryPromptText,
     importSummaryPromptPresetsJsonFile,
     listCachedSummaryPromptPresets,
     recreateBuiltInSummaryPromptOverridesFile,
@@ -1764,7 +1765,7 @@ function getEffectivePromptText(profile) {
         return profile.promptText;
     }
 
-    return getCachedSummaryPromptText(profile?.preset, stmbSettings);
+    return getRequiredSummaryPromptText(profile?.preset, stmbSettings);
 }
 
 function buildEffectiveMemoryProfile(profile) {
@@ -2862,7 +2863,7 @@ async function showSummaryPromptManagerPopup({ onChange = null, targetProfileInd
                         return;
                     }
                     const result = await recreateBuiltInSummaryPromptOverrides();
-                    toastr.success(`Removed ${result.removed || 0} built-in overrides`, 'Memory Books');
+                    toastr.success(`Recreated ${result.replaced || 0} built-in prompt overrides`, 'Memory Books');
                     await notifyChange();
                     await reopenManager();
                 } catch (error) {
@@ -3051,7 +3052,7 @@ async function showArcPromptManagerPopup({ onChange = null } = {}) {
         if (event.target.closest('#stmb-apm-recreate-builtins')) {
             const confirm = await Popup.show.confirm(
                 'Recreate Built-in Consolidation Prompts',
-                'This removes overrides for all built-in consolidation presets. Custom presets are not affected.',
+                'This overwrites all built-in consolidation presets in your prompt file. Custom presets are not affected.',
             );
             if (!confirm) {
                 return;
@@ -3059,7 +3060,7 @@ async function showArcPromptManagerPopup({ onChange = null } = {}) {
             const result = await recreateBuiltInArcPromptOverridesFile();
             selectedPresetKey = null;
             refreshArcPromptManagerList(popup.dlg, selectedPresetKey);
-            toastr.success(`Removed ${result.removed} built-in consolidation prompt overrides`, 'STMB');
+            toastr.success(`Recreated ${result.replaced} built-in consolidation prompt overrides`, 'STMB');
             await notifyChange();
         }
     });
@@ -5762,6 +5763,7 @@ async function requestPlainTextSummaryDetailed(prompt, profile, signal, onRateLi
 }
 
 async function requestStructuredMemory(compiledScene, profile, lorebookName, summaryCount, signal, onRateLimitWait = null) {
+    await firstRunInitSummaryPromptPresets(stmbSettings);
     const requestSettings = {
         ...stmbSettings,
         moduleSettings: {
@@ -5949,6 +5951,7 @@ async function runSequentialSummaryAnalysis(sourceEntries, options = {}, profile
         targetTier = 1,
         previousSummary = null,
         previousOrder = null,
+        promptText: promptTextOverride = null,
     } = options;
 
     const briefs = buildBriefsFromEntries(sourceEntries);
@@ -5961,7 +5964,12 @@ async function runSequentialSummaryAnalysis(sourceEntries, options = {}, profile
     const maxItems = Math.max(1, Math.trunc(Number(maxItemsPerPass) || 15));
     const minimumProgress = Math.max(1, Math.trunc(Number(requiredMin) || 1));
     const baseTokenTarget = Math.max(1000, Math.trunc(Number(tokenTarget) || 30000));
-    const promptText = getCachedArcPromptText(presetKey, stmbSettings);
+    if (!(typeof promptTextOverride === 'string' && promptTextOverride.trim())) {
+        await firstRunInitArcPromptPresets(stmbSettings);
+    }
+    const promptText = typeof promptTextOverride === 'string' && promptTextOverride.trim()
+        ? promptTextOverride
+        : getRequiredArcPromptText(presetKey);
 
     let previousSummaryText = typeof previousSummary === 'string' && previousSummary.trim() ? previousSummary.trim() : null;
     let previousOrderValue = Number.isFinite(Number(previousOrder)) ? Math.trunc(Number(previousOrder)) : null;
@@ -6295,6 +6303,7 @@ function listSummaryConsolidationPresets() {
     return listCachedArcPromptPresets(stmbSettings).map(preset => ({
         value: preset.key,
         label: preset.displayName,
+        prompt: getRequiredArcPromptText(preset.key),
     }));
 }
 
@@ -6386,7 +6395,7 @@ async function showSummaryConsolidationPopup({ initialTargetTier = 1 } = {}) {
         allowPresetRebuild: true,
         onPresetRebuild: async () => {
             const result = await recreateBuiltInArcPromptOverridesFile();
-            toastr.success(`Removed ${result.removed} built-in consolidation prompt overrides`, 'STMB');
+            toastr.success(`Recreated ${result.replaced} built-in consolidation prompt overrides`, 'STMB');
             return listSummaryConsolidationPresets();
         },
         onPersist: persistSummaryConsolidationPopupSettings,
@@ -6409,6 +6418,7 @@ async function showSummaryConsolidationPopup({ initialTargetTier = 1 } = {}) {
     return createSummaryForTier(popupResult.targetTier, {
         requiredMin: persisted.requiredMin,
         presetKey: popupResult.presetKey,
+        promptText: popupResult.promptText,
         maxItemsPerPass: popupResult.maxItemsPerPass,
         maxPasses: popupResult.maxPasses,
         tokenTarget: popupResult.tokenTarget,
@@ -6811,6 +6821,7 @@ export async function createSummaryForTier(targetTier, options = {}) {
     if (hasActiveStmbTasks()) {
         throw new Error('STMB generation is already in progress');
     }
+    await firstRunInitArcPromptPresets(stmbSettings);
 
     const lorebookName = await ensureLorebookName();
     const lorebookData = await loadWorldInfo(lorebookName) || { entries: {} };
@@ -6844,6 +6855,9 @@ export async function createSummaryForTier(targetTier, options = {}) {
     const presetKey = typeof options.presetKey === 'string' && options.presetKey.trim()
         ? options.presetKey.trim()
         : 'arc_default';
+    const promptText = typeof options.promptText === 'string' && options.promptText.trim()
+        ? options.promptText
+        : getRequiredArcPromptText(presetKey);
     const chosenSummaryEntrySettings = normalizeLorebookEntrySettings(
         options.summaryEntrySettings || getModuleSettings().summaryEntrySettings || {},
         getModuleSettings().summaryEntrySettings || {},
@@ -6864,6 +6878,7 @@ export async function createSummaryForTier(targetTier, options = {}) {
             requiredMin: requiredMinimum,
             profileIndex: options.profileIndex ?? null,
             presetKey,
+            promptText,
             maxItemsPerPass: Math.max(1, Math.trunc(Number(options.maxItemsPerPass) || 15)),
             maxPasses: Math.max(1, Math.trunc(Number(options.maxPasses) || 10)),
             tokenTarget: Math.max(1000, Math.trunc(Number(options.tokenTarget) || (getModuleSettings().tokenWarningThreshold ?? 30000))),
@@ -6969,6 +6984,7 @@ async function runSummaryConsolidationNow(payload = {}, signal = null, onRateLim
     try {
         const analysisResult = await runSequentialSummaryAnalysis(sourceEntries, {
             presetKey: typeof payload.presetKey === 'string' && payload.presetKey.trim() ? payload.presetKey.trim() : 'arc_default',
+            promptText: typeof payload.promptText === 'string' && payload.promptText.trim() ? payload.promptText : null,
             maxItemsPerPass: Math.max(1, Math.trunc(Number(payload.maxItemsPerPass) || 15)),
             maxPasses: Math.max(1, Math.trunc(Number(payload.maxPasses) || 10)),
             requiredMin: requiredMinimum,

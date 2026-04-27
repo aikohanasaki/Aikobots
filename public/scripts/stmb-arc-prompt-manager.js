@@ -12,6 +12,19 @@ const ARC_PROMPT_DISPLAY_NAMES = Object.freeze({
 
 let cachedDoc = null;
 
+function createMissingArcPromptError(key) {
+    const normalizedKey = String(key || 'arc_default').trim() || 'arc_default';
+    const message = `STMB arc prompt with key '${normalizedKey}' is missing from ${ARC_PROMPTS_FILE}`;
+    const error = new Error(message);
+    error.code = 'STMB_ARC_PROMPT_MISSING';
+    error.promptKey = normalizedKey;
+    error.expectedSource = ARC_PROMPTS_FILE;
+    error.stmbToastrShown = true;
+    console.error(message);
+    globalThis.toastr?.error?.(message, 'STMB');
+    return error;
+}
+
 function toTitleCase(text) {
     return String(text || '').replace(/\w\S*/g, token => token.charAt(0).toUpperCase() + token.slice(1).toLowerCase());
 }
@@ -197,6 +210,16 @@ export function getCachedArcPromptText(key, fallbackSettings = null) {
     return STMB_DEFAULT_SUMMARY_PROMPTS[normalizedKey] || STMB_DEFAULT_SUMMARY_PROMPTS.arc_default;
 }
 
+export function getRequiredArcPromptText(key) {
+    const normalizedKey = String(key || 'arc_default').trim() || 'arc_default';
+    const cachedPrompt = cachedDoc?.overrides?.[normalizedKey]?.prompt;
+    if (typeof cachedPrompt === 'string' && cachedPrompt.trim()) {
+        return cachedPrompt;
+    }
+
+    throw createMissingArcPromptError(normalizedKey);
+}
+
 export function getCachedArcPromptDisplayName(key, fallbackSettings = null) {
     const normalizedKey = String(key || '').trim();
     const cachedDisplayName = cachedDoc?.overrides?.[normalizedKey]?.displayName;
@@ -317,13 +340,17 @@ export async function importArcPromptPresetsJsonFile(text) {
 
 export async function recreateBuiltInArcPromptOverridesFile() {
     const doc = structuredClone(await loadDoc());
-    let removed = 0;
-    for (const key of Object.keys(STMB_DEFAULT_SUMMARY_PROMPTS || {})) {
-        if (Object.prototype.hasOwnProperty.call(doc.overrides, key)) {
-            delete doc.overrides[key];
-            removed++;
-        }
+    const timestamp = new Date().toISOString();
+    let replaced = 0;
+    for (const [key, prompt] of Object.entries(STMB_DEFAULT_SUMMARY_PROMPTS || {})) {
+        doc.overrides[key] = {
+            displayName: getDefaultDisplayName(key, prompt),
+            prompt: String(prompt || ''),
+            createdAt: doc.overrides?.[key]?.createdAt || timestamp,
+            updatedAt: timestamp,
+        };
+        replaced++;
     }
     await saveDoc(doc);
-    return { removed };
+    return { replaced };
 }
