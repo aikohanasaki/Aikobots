@@ -1405,8 +1405,11 @@ function getSearchFragments(query) {
     return String(query || '').trim().toLowerCase().split(/\s+/).filter(Boolean);
 }
 
-function getChatSearchResult(chatFile, fragments = []) {
-    const messages = getLogicalChatMessages(chatFile.path)
+function getChatSearchResult(chatFile, fragments = [], { isGroup = false } = {}) {
+    const logicalMessages = isGroup
+        ? resolveGroupLogicalChat(chatFile.path).messages
+        : getLogicalChatMessages(chatFile.path);
+    const messages = logicalMessages
         .filter(message => message && typeof message.mes === 'string');
 
     if (fragments.length && messages.length === 0) {
@@ -1414,7 +1417,7 @@ function getChatSearchResult(chatFile, fragments = []) {
     }
 
     const lastMessage = messages[messages.length - 1];
-    const fallbackTimestamp = Math.round(fs.statSync(chatFile.path).mtimeMs);
+    const fallbackTimestamp = Math.round(getChatFileStats(chatFile.path).latestMtimeMs);
     const lastMesDate = normalizeChatTimestamp(lastMessage?.send_date, fallbackTimestamp);
     const result = {
         file_name: chatFile.file_name,
@@ -2586,7 +2589,7 @@ router.post('/search', validateAvatarUrlMiddleware, function (request, response)
         const results = [];
 
         for (const chatFile of chatFiles) {
-            const searchResult = getChatSearchResult(chatFile, fragments);
+            const searchResult = getChatSearchResult(chatFile, fragments, { isGroup: Boolean(group_id) });
             if (searchResult) {
                 results.push(searchResult);
             }
@@ -2701,7 +2704,7 @@ router.post('/orphaned', async function (request, response) {
                                 file_name: `${chatId}.jsonl`,
                                 file_size: formatBytes(fileStats.totalSize),
                                 path: filePath,
-                            }, fragments);
+                            }, fragments, { isGroup: true });
                         })
                         .filter(Boolean)
                         .sort((a, b) => b.last_mes - a.last_mes)
