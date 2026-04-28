@@ -9827,7 +9827,7 @@ export async function saveChat({ chatName, withMetadata, mesId, force = false, s
 
     if (selected_group) {
         toastr.error(t`Trying to save group chat with regular saveChat function. Aborting to prevent corruption.`, t`saveChat called for a group chat`);
-        throw new Error('saveChat called for a group chat');
+        return CHAT_SAVE_RESULT.FAILED;
     }
 
     const normalizedMesId = Number.isInteger(Number(mesId)) ? Number(mesId) : undefined;
