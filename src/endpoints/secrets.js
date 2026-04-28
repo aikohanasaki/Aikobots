@@ -100,7 +100,7 @@ const EXPORTABLE_KEYS = [
     SECRET_KEYS.DEEPLX_URL,
 ];
 
-const allowKeysExposure = !!getConfigValue('allowKeysExposure', false, 'boolean');
+export const allowKeysExposure = !!getConfigValue('allowKeysExposure', false, 'boolean');
 
 /**
  * SecretManager class to handle all secret operations

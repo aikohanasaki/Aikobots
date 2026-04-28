@@ -16,7 +16,7 @@ import sanitize from 'sanitize-filename';
 
 import { USER_DIRECTORY_TEMPLATE, DEFAULT_USER, PUBLIC_DIRECTORIES, SETTINGS_FILE, UPLOADS_DIRECTORY } from './constants.js';
 import { getConfigValue, color, delay, generateTimestamp, invalidateFirefoxCache } from './util.js';
-import { readSecret, writeSecret } from './endpoints/secrets.js';
+import { allowKeysExposure, readSecret, SECRETS_FILE, writeSecret } from './endpoints/secrets.js';
 import { buildPersonasDocumentFromLegacySettings, getPersonasPath, readPersonasDocument } from './persona-repository.js';
 import { serverDirectory } from './server-directory.js';
 
@@ -847,9 +847,10 @@ async function basicUserLogin(request) {
         return false;
     }
 
-    const [username, password] = Buffer.from(credentials, 'base64')
+    const [username, ...passwordParts] = Buffer.from(credentials, 'base64')
         .toString('utf8')
         .split(':');
+    const password = passwordParts.join(':');
 
     const userHandles = await getAllUserHandles();
     for (const userHandle of userHandles) {
@@ -1085,8 +1086,16 @@ export async function createBackupArchive(handle, response) {
     // @ts-ignore
     archive.pipe(response);
 
-    // Append files from a sub-directory, putting its contents at the root of archive
-    archive.directory(directories.root, false);
+    const ignore = allowKeysExposure ? [] : [SECRETS_FILE];
+
+    // Append files from the user's data root, putting its contents at the root of archive.
+    archive.glob('**/*', {
+        cwd: directories.root,
+        follow: false,
+        stat: true,
+        dot: true,
+        ignore,
+    });
     archive.finalize();
 }
 

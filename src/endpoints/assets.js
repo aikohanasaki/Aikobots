@@ -5,12 +5,13 @@ import { finished } from 'node:stream/promises';
 import mime from 'mime-types';
 import express from 'express';
 import sanitize from 'sanitize-filename';
-import fetch from 'node-fetch';
 
 import { UNSAFE_EXTENSIONS } from '../constants.js';
-import { clientRelativePath } from '../util.js';
+import { clientRelativePath, getConfigValue } from '../util.js';
+import { getUrlHostname, safeFetch, UrlSecurityError } from '../url-security.js';
 
 const VALID_CATEGORIES = ['bgm', 'ambient', 'blip', 'live2d', 'vrm', 'character', 'temp'];
+const WHITELIST_GENERIC_URL_DOWNLOAD_SOURCES = getConfigValue('whitelistImportDomains', []);
 
 /**
  * Validates the input filename for the asset.
@@ -189,7 +190,7 @@ router.post('/get', async (request, response) => {
  * @returns {void}
  */
 router.post('/download', async (request, response) => {
-    const url = request.body.url;
+    const url = String(request.body.url || '');
     const inputCategory = request.body.category;
 
     // Check category
@@ -215,16 +216,17 @@ router.post('/download', async (request, response) => {
 
     try {
         // Download to temp
-        const res = await fetch(url);
+        const res = await safeFetch(url, {}, {
+            protocols: ['https:'],
+            allowedHosts: WHITELIST_GENERIC_URL_DOWNLOAD_SOURCES,
+        });
         if (!res.ok || res.body === null) {
             throw new Error(`Unexpected response ${res.statusText}`);
         }
         const destination = path.resolve(temp_path);
         // Delete if previous download failed
         if (fs.existsSync(temp_path)) {
-            fs.unlink(temp_path, (err) => {
-                if (err) throw err;
-            });
+            await fs.promises.unlink(temp_path);
         }
         const fileStream = fs.createWriteStream(destination, { flags: 'wx' });
         // @ts-ignore
@@ -246,6 +248,10 @@ router.post('/download', async (request, response) => {
         response.sendStatus(200);
     }
     catch (error) {
+        if (error instanceof UrlSecurityError) {
+            console.warn(`Asset download rejected for "${getUrlHostname(url)}": ${error.message}`);
+            return response.sendStatus(error.statusCode || 400);
+        }
         console.error(error);
         response.sendStatus(500);
     }
@@ -284,17 +290,14 @@ router.post('/delete', async (request, response) => {
     try {
         // Delete if previous download failed
         if (fs.existsSync(file_path)) {
-            fs.unlink(file_path, (err) => {
-                if (err) throw err;
-            });
+            await fs.promises.unlink(file_path);
             console.info('Asset deleted.');
+            return response.sendStatus(200);
         }
         else {
             console.error('Asset not found.');
-            response.sendStatus(400);
+            return response.sendStatus(400);
         }
-        // Move into asset place
-        response.sendStatus(200);
     }
     catch (error) {
         console.error(error);

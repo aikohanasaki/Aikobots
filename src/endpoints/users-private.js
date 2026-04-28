@@ -9,7 +9,7 @@ import { getUserAvatar, toKey, getPasswordHash, getPasswordSalt, createBackupArc
 import { SETTINGS_FILE } from '../constants.js';
 import { getPersonasPath } from '../persona-repository.js';
 import { checkForNewContent, CONTENT_TYPES } from './content-manager.js';
-import { color } from '../util.js';
+import { color, getConfigValue } from '../util.js';
 import { clearUserFlowState, getUserFlowState, setUserFlowState } from './user-flow-state.js';
 
 const ACCOUNT_RESET_FLOW = 'account-reset';
@@ -140,6 +140,10 @@ router.post('/change-password', async (request, response) => {
 
 router.post('/backup', async (request, response) => {
     try {
+        if (!getConfigValue('backups.allowFullDataBackup', true, 'boolean')) {
+            return response.status(403).json({ error: 'Full data backup is disabled' });
+        }
+
         const handle = request.body.handle;
 
         if (!handle) {

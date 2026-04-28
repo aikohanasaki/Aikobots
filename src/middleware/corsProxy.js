@@ -1,5 +1,5 @@
-import fetch from 'node-fetch';
 import { forwardFetchResponse } from '../util.js';
+import { safeFetch, UrlSecurityError } from '../url-security.js';
 
 /**
  * Middleware to proxy requests to a different domain
@@ -28,15 +28,21 @@ export default async function corsProxyMiddleware(req, res) {
 
         const bodyMethods = ['POST', 'PUT', 'PATCH'];
 
-        const response = await fetch(url, {
+        const response = await safeFetch(url, {
             method: req.method,
             headers: headers,
             body: bodyMethods.includes(req.method) ? JSON.stringify(req.body) : undefined,
+        }, {
+            protocols: ['http:', 'https:'],
+            rejectSingleLabelHosts: true,
         });
 
         // Copy over relevant response params to the proxy response
         forwardFetchResponse(response, res);
     } catch (error) {
+        if (error instanceof UrlSecurityError) {
+            return res.status(error.statusCode || 400).send(error.message);
+        }
         res.status(500).send('Error occurred while trying to proxy to: ' + url + ' ' + error);
     }
 }

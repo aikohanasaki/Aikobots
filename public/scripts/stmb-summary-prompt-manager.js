@@ -141,8 +141,49 @@ function buildInitialOverrides(settings = null) {
     return overrides;
 }
 
+function buildNormalizedPromptsDoc(source = null, settings = null) {
+    const normalized = {
+        version: SUMMARY_PROMPTS_VERSION,
+        overrides: buildInitialOverrides(settings),
+    };
+
+    const sourceOverrides = source?.overrides && typeof source.overrides === 'object'
+        ? source.overrides
+        : {};
+
+    for (const [key, value] of Object.entries(sourceOverrides)) {
+        if (!key || typeof key !== 'string') continue;
+        if (!value || typeof value !== 'object') continue;
+
+        const prompt = typeof value.prompt === 'string' ? value.prompt.trim() : '';
+        if (!prompt) continue;
+
+        normalized.overrides[key] = {
+            ...value,
+            displayName: typeof value.displayName === 'string' && value.displayName.trim()
+                ? value.displayName.trim()
+                : getDefaultDisplayName(key),
+            prompt,
+        };
+    }
+
+    return normalized;
+}
+
+function isMissingBuiltInPromptOverride(doc) {
+    const overrides = doc?.overrides && typeof doc.overrides === 'object'
+        ? doc.overrides
+        : {};
+
+    return Object.keys(STMB_DEFAULT_PROMPTS || {}).some(key => {
+        const prompt = overrides[key]?.prompt;
+        return typeof prompt !== 'string' || !prompt.trim();
+    });
+}
+
 async function saveDoc(doc) {
-    const json = JSON.stringify(doc, null, 2);
+    const normalizedDoc = buildNormalizedPromptsDoc(doc);
+    const json = JSON.stringify(normalizedDoc, null, 2);
     const base64 = btoa(unescape(encodeURIComponent(json)));
     const response = await fetch('/api/files/upload', {
         method: 'POST',
@@ -158,7 +199,7 @@ async function saveDoc(doc) {
         throw new Error(`Failed to save prompts: ${response.status} ${response.statusText}`);
     }
 
-    cachedDoc = doc;
+    cachedDoc = normalizedDoc;
 }
 
 async function loadDoc(settings = null) {
@@ -167,7 +208,7 @@ async function loadDoc(settings = null) {
     }
 
     let data = null;
-    let shouldCreate = false;
+    let shouldSave = false;
     try {
         const response = await fetch(`/user/files/${SUMMARY_PROMPTS_FILE}`, {
             method: 'GET',
@@ -176,29 +217,35 @@ async function loadDoc(settings = null) {
         });
 
         if (response.status === 404) {
-            shouldCreate = true;
+            data = buildNormalizedPromptsDoc(null, settings);
+            shouldSave = true;
         } else if (!response.ok) {
             throw new Error(`Failed to load prompts: ${response.status} ${response.statusText}`);
         } else {
             const text = await response.text();
-            const parsed = JSON.parse(text);
+            let parsed = null;
+            try {
+                parsed = JSON.parse(text);
+            } catch (error) {
+                console.warn(`Invalid JSON in ${SUMMARY_PROMPTS_FILE}; recreating built-in summary prompts.`, error);
+            }
             if (!validatePromptsFile(parsed)) {
-                throw new Error('Invalid prompts file structure');
+                console.warn(`Invalid ${SUMMARY_PROMPTS_FILE} structure; recreating built-in summary prompts.`);
+                data = buildNormalizedPromptsDoc(parsed, settings);
+                shouldSave = true;
             } else {
                 data = parsed;
+                if (isMissingBuiltInPromptOverride(data)) {
+                    data = buildNormalizedPromptsDoc(data, settings);
+                    shouldSave = true;
+                }
             }
         }
     } catch (error) {
-        if (!shouldCreate) {
-            throw error;
-        }
+        throw error;
     }
 
-    if (shouldCreate) {
-        data = {
-            version: SUMMARY_PROMPTS_VERSION,
-            overrides: buildInitialOverrides(settings),
-        };
+    if (shouldSave) {
         await saveDoc(data);
     }
 

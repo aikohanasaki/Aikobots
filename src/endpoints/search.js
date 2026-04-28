@@ -5,6 +5,7 @@ import { decode } from 'html-entities';
 import { readSecret, SECRET_KEYS } from './secrets.js';
 import { trimV1 } from '../util.js';
 import { setAdditionalHeaders } from '../additional-headers.js';
+import { safeFetch, UrlSecurityError } from '../url-security.js';
 
 export const router = express.Router();
 
@@ -24,6 +25,8 @@ const visitHeaders = {
     'Sec-Fetch-Site': 'none',
     'Sec-Fetch-User': '?1',
 };
+
+const SEARCH_URL_PROTOCOLS = ['http:', 'https:'];
 
 /**
  * Extract the transcript of a YouTube video
@@ -171,8 +174,9 @@ router.post('/searxng', async (request, response) => {
 
         console.debug('SearXNG query', baseUrl, query);
 
-        const mainPageUrl = new URL(baseUrl);
-        const mainPageRequest = await fetch(mainPageUrl, { headers: visitHeaders });
+        const mainPageRequest = await safeFetch(baseUrl, { headers: visitHeaders }, {
+            protocols: SEARCH_URL_PROTOCOLS,
+        });
 
         if (!mainPageRequest.ok) {
             console.error('SearXNG request failed', mainPageRequest.statusText);
@@ -184,7 +188,9 @@ router.post('/searxng', async (request, response) => {
 
         if (clientHref) {
             const clientUrl = new URL(clientHref, baseUrl);
-            await fetch(clientUrl, { headers: visitHeaders });
+            await safeFetch(clientUrl, { headers: visitHeaders }, {
+                protocols: SEARCH_URL_PROTOCOLS,
+            });
         }
 
         const searchUrl = new URL('/search', baseUrl);
@@ -198,7 +204,9 @@ router.post('/searxng', async (request, response) => {
         }
         searchUrl.search = searchParams.toString();
 
-        const searchResult = await fetch(searchUrl, { headers: visitHeaders });
+        const searchResult = await safeFetch(searchUrl, { headers: visitHeaders }, {
+            protocols: SEARCH_URL_PROTOCOLS,
+        });
 
         if (!searchResult.ok) {
             const text = await searchResult.text();
@@ -209,6 +217,10 @@ router.post('/searxng', async (request, response) => {
         const data = await searchResult.text();
         return response.send(data);
     } catch (error) {
+        if (error instanceof UrlSecurityError) {
+            console.error('Invalid url provided for /searxng', request.body.baseUrl, error.message);
+            return response.sendStatus(error.statusCode || 400);
+        }
         console.error('SearXNG request failed', error);
         return response.sendStatus(500);
     }
@@ -351,36 +363,12 @@ router.post('/visit', async (request, response) => {
             return response.sendStatus(400);
         }
 
-        try {
-            const urlObj = new URL(url);
-
-            // Reject relative URLs
-            if (urlObj.protocol === null || urlObj.host === null) {
-                throw new Error('Invalid URL format');
-            }
-
-            // Reject non-HTTP URLs
-            if (urlObj.protocol !== 'http:' && urlObj.protocol !== 'https:') {
-                throw new Error('Invalid protocol');
-            }
-
-            // Reject URLs with a non-standard port
-            if (urlObj.port !== '') {
-                throw new Error('Invalid port');
-            }
-
-            // Reject IP addresses
-            if (urlObj.hostname.match(/^\d+\.\d+\.\d+\.\d+$/)) {
-                throw new Error('Invalid hostname');
-            }
-        } catch (error) {
-            console.error('Invalid url provided for /visit', url);
-            return response.sendStatus(400);
-        }
-
         console.info('Visiting web URL', url);
 
-        const result = await fetch(url, { headers: visitHeaders });
+        const result = await safeFetch(url, { headers: visitHeaders }, {
+            protocols: SEARCH_URL_PROTOCOLS,
+            rejectNonDefaultPort: true,
+        });
 
         if (!result.ok) {
             console.error(`Visit failed ${result.status} ${result.statusText}`);
@@ -403,6 +391,10 @@ router.post('/visit', async (request, response) => {
         const buffer = await result.arrayBuffer();
         return response.send(Buffer.from(buffer));
     } catch (error) {
+        if (error instanceof UrlSecurityError) {
+            console.error('Invalid url provided for /visit', request.body.url, error.message);
+            return response.sendStatus(error.statusCode || 400);
+        }
         console.error(error);
         return response.sendStatus(500);
     }

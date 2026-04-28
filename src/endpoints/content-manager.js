@@ -4,11 +4,11 @@ import zlib from 'node:zlib';
 import { Buffer } from 'node:buffer';
 
 import express from 'express';
-import fetch from 'node-fetch';
 import sanitize from 'sanitize-filename';
 import { sync as writeFileAtomicSync } from 'write-file-atomic';
 
 import { getConfigValue, color, setPermissionsSync, isValidUrl } from '../util.js';
+import { getUrlHostname, isHostAllowed, safeFetch, validateExternalUrl, UrlSecurityError } from '../url-security.js';
 import { parse, write } from '../character-card-parser.js';
 import { getCharacterDistributionPolicy } from '../character-distribution-registry.js';
 import { getCharacterSharedKey } from '../character-linked-lorebooks.js';
@@ -25,6 +25,13 @@ let contentCheckQueue = Promise.resolve();
 
 const WHITELIST_GENERIC_URL_DOWNLOAD_SOURCES = getConfigValue('whitelistImportDomains', []);
 const USER_AGENT = 'SillyTavern';
+const IMPORT_URL_PROTOCOLS = ['https:'];
+const CHUB_HOSTS = ['chub.ai', 'characterhub.org'];
+const JANNY_HOSTS = ['janitorai.com', 'janitorai.me', 'jannyai.com'];
+const PYGMALION_HOSTS = ['pygmalion.chat'];
+const AICC_HOSTS = ['aicharactercards.com'];
+const RISU_HOSTS = ['realm.risuai.net'];
+const PERCHANCE_HOSTS = ['perchance.org'];
 
 function getAttachmentContentDisposition(fileName) {
     const originalName = String(fileName || 'download');
@@ -479,9 +486,12 @@ function getContentLog(contentLogPath) {
 
 async function downloadChubLorebook(id) {
     const [lorebooks, creatorName, projectName] = id.split('/');
-    const result = await fetch(`https://api.chub.ai/api/${lorebooks}/${creatorName}/${projectName}`, {
+    const result = await safeFetch(`https://api.chub.ai/api/${lorebooks}/${creatorName}/${projectName}`, {
         method: 'GET',
         headers: { 'Accept': 'application/json', 'User-Agent': USER_AGENT },
+    }, {
+        protocols: IMPORT_URL_PROTOCOLS,
+        allowedHosts: ['api.chub.ai'],
     });
 
     if (!result.ok) {
@@ -499,9 +509,12 @@ async function downloadChubLorebook(id) {
     }
 
     const downloadUrl = `https://api.chub.ai/api/v4/projects/${projectId}/repository/files/raw%252Fsillytavern_raw.json/raw`;
-    const downloadResult = await fetch(downloadUrl, {
+    const downloadResult = await safeFetch(downloadUrl, {
         method: 'GET',
         headers: { 'Accept': 'application/json', 'User-Agent': USER_AGENT },
+    }, {
+        protocols: IMPORT_URL_PROTOCOLS,
+        allowedHosts: ['api.chub.ai'],
     });
 
     if (!downloadResult.ok) {
@@ -520,9 +533,12 @@ async function downloadChubLorebook(id) {
 
 async function downloadChubCharacter(id) {
     const [creatorName, projectName] = id.split('/');
-    const result = await fetch(`https://api.chub.ai/api/characters/${creatorName}/${projectName}?full=true`, {
+    const result = await safeFetch(`https://api.chub.ai/api/characters/${creatorName}/${projectName}?full=true`, {
         method: 'GET',
         headers: { 'Accept': 'application/json', 'User-Agent': USER_AGENT },
+    }, {
+        protocols: IMPORT_URL_PROTOCOLS,
+        allowedHosts: ['api.chub.ai'],
     });
 
     if (!result.ok) {
@@ -566,7 +582,7 @@ async function downloadChubCharacter(id) {
     const imageUrl = metadata.node?.max_res_url;
 
     if (imageUrl) {
-        const downloadResult = await fetch(imageUrl);
+        const downloadResult = await safeFetch(imageUrl, {}, { protocols: IMPORT_URL_PROTOCOLS });
         if (downloadResult.ok) {
             imageBuffer = Buffer.from(await downloadResult.arrayBuffer());
         }
@@ -585,7 +601,10 @@ async function downloadChubCharacter(id) {
  * @returns {Promise<{buffer: Buffer, fileName: string, fileType: string}>}
  */
 async function downloadPygmalionCharacter(id) {
-    const result = await fetch(`https://server.pygmalion.chat/api/export/character/${id}/v2`);
+    const result = await safeFetch(`https://server.pygmalion.chat/api/export/character/${id}/v2`, {}, {
+        protocols: IMPORT_URL_PROTOCOLS,
+        allowedHosts: ['server.pygmalion.chat'],
+    });
 
     if (!result.ok) {
         const text = await result.text();
@@ -610,7 +629,7 @@ async function downloadPygmalionCharacter(id) {
             throw new Error('Failed to download avatar');
         }
 
-        const avatarResult = await fetch(avatarUrl);
+        const avatarResult = await safeFetch(avatarUrl, {}, { protocols: IMPORT_URL_PROTOCOLS });
         const avatarBuffer = Buffer.from(await avatarResult.arrayBuffer());
 
         const cardBuffer = write(avatarBuffer, JSON.stringify(characterData));
@@ -677,19 +696,22 @@ async function downloadJannyCharacter(uuid) {
     // This endpoint is being guarded behind Bot Fight Mode of Cloudflare
     // So hosted ST on Azure/AWS/GCP/Collab might get blocked by IP
     // Should work normally on self-host PC/Android
-    const result = await fetch('https://api.jannyai.com/api/v1/download', {
+    const result = await safeFetch('https://api.jannyai.com/api/v1/download', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
             'characterId': uuid,
         }),
+    }, {
+        protocols: IMPORT_URL_PROTOCOLS,
+        allowedHosts: ['api.jannyai.com'],
     });
 
     if (result.ok) {
         /** @type {any} */
         const downloadResult = await result.json();
         if (downloadResult.status === 'ok') {
-            const imageResult = await fetch(downloadResult.downloadUrl);
+            const imageResult = await safeFetch(downloadResult.downloadUrl, {}, { protocols: IMPORT_URL_PROTOCOLS });
             const buffer = Buffer.from(await imageResult.arrayBuffer());
             const fileName = `${sanitize(uuid)}.png`;
             const fileType = imageResult.headers.get('content-type');
@@ -709,7 +731,10 @@ async function downloadJannyCharacter(uuid) {
 async function downloadAICCCharacter(id) {
     const apiURL = `https://aicharactercards.com/wp-json/pngapi/v1/image/${id}`;
     try {
-        const response = await fetch(apiURL);
+        const response = await safeFetch(apiURL, {}, {
+            protocols: IMPORT_URL_PROTOCOLS,
+            allowedHosts: AICC_HOSTS,
+        });
         if (!response.ok) {
             throw new Error(`Failed to download character: ${response.statusText}`);
         }
@@ -750,7 +775,10 @@ function parseAICC(url) {
  */
 async function downloadGenericPng(url) {
     try {
-        const result = await fetch(url);
+        const result = await safeFetch(url, {}, {
+            protocols: IMPORT_URL_PROTOCOLS,
+            allowedHosts: WHITELIST_GENERIC_URL_DOWNLOAD_SOURCES,
+        });
 
         if (result.ok) {
             const buffer = Buffer.from(await result.arrayBuffer());
@@ -801,7 +829,10 @@ function parseRisuUrl(url) {
  * @returns {Promise<{buffer: Buffer, fileName: string, fileType: string}>}
  */
 async function downloadRisuCharacter(uuid) {
-    const result = await fetch(`https://realm.risuai.net/api/v1/download/png-v3/${uuid}?non_commercial=true`);
+    const result = await safeFetch(`https://realm.risuai.net/api/v1/download/png-v3/${uuid}?non_commercial=true`, {}, {
+        protocols: IMPORT_URL_PROTOCOLS,
+        allowedHosts: RISU_HOSTS,
+    });
 
     if (!result.ok) {
         const text = await result.text();
@@ -856,8 +887,11 @@ async function downloadPerchanceCharacter(slug) {
     try {
         const charURL = `${perchanceBaseURL}/${slug}`;
         console.log('Downloading Perchance character from URL:', charURL);
-        const result = await fetch(charURL, {
+        const result = await safeFetch(charURL, {
             headers: { 'Content-Type': 'application/json', 'User-Agent': USER_AGENT },
+        }, {
+            protocols: IMPORT_URL_PROTOCOLS,
+            allowedHosts: ['user.uploads.dev'],
         });
 
         //decompress gzipped content
@@ -976,7 +1010,7 @@ async function fetchPerchanceAvatar(avatarUrl, isAvatarBase64) {
 
     // Fetch avatar from URL
     console.log('Fetching Perchance avatar from URL:', avatarUrl);
-    const avatarResponse = await fetch(avatarUrl, { headers: { 'User-Agent': USER_AGENT } });
+    const avatarResponse = await safeFetch(avatarUrl, { headers: { 'User-Agent': USER_AGENT } }, { protocols: IMPORT_URL_PROTOCOLS });
 
     if (avatarResponse.ok) {
         const avatarContentType = avatarResponse.headers.get('content-type');
@@ -1023,13 +1057,8 @@ function getUuidFromUrl(url) {
  * @param {String} url URL to strip
  * @returns {String} Domain name
  */
-function getHostFromUrl(url) {
-    try {
-        const urlObj = new URL(url);
-        return urlObj.hostname;
-    } catch {
-        return '';
-    }
+export function getHostFromUrl(url) {
+    return getUrlHostname(url);
 }
 
 /**
@@ -1037,8 +1066,8 @@ function getHostFromUrl(url) {
  * @param {String} host Host to check
  * @returns {boolean} If the host is on the whitelist.
  */
-function isHostWhitelisted(host) {
-    return WHITELIST_GENERIC_URL_DOWNLOAD_SOURCES.includes(host);
+export function isHostWhitelisted(host) {
+    return isHostAllowed(host, WHITELIST_GENERIC_URL_DOWNLOAD_SOURCES);
 }
 
 export const router = express.Router();
@@ -1049,17 +1078,18 @@ router.post('/importURL', async (request, response) => {
     }
 
     try {
-        const url = request.body.url;
+        const url = String(request.body.url);
+        await validateExternalUrl(url, { protocols: IMPORT_URL_PROTOCOLS });
         const host = getHostFromUrl(url);
         let result;
         let type;
 
-        const isChub = host.includes('chub.ai') || host.includes('characterhub.org');
-        const isJannyContent = host.includes('janitorai');
-        const isPygmalionContent = host.includes('pygmalion.chat');
-        const isAICharacterCardsContent = host.includes('aicharactercards.com');
-        const isRisu = host.includes('realm.risuai.net');
-        const isPerchance = host.includes('perchance.org');
+        const isChub = isHostAllowed(host, CHUB_HOSTS, { allowSubdomains: true });
+        const isJannyContent = isHostAllowed(host, JANNY_HOSTS, { allowSubdomains: true });
+        const isPygmalionContent = isHostAllowed(host, PYGMALION_HOSTS, { allowSubdomains: true });
+        const isAICharacterCardsContent = isHostAllowed(host, AICC_HOSTS, { allowSubdomains: true });
+        const isRisu = isHostAllowed(host, RISU_HOSTS, { allowSubdomains: true });
+        const isPerchance = isHostAllowed(host, PERCHANCE_HOSTS, { allowSubdomains: true });
         const isGeneric = isHostWhitelisted(host);
 
         if (isPygmalionContent) {
@@ -1133,6 +1163,10 @@ router.post('/importURL', async (request, response) => {
         response.set('X-Custom-Content-Type', type);
         return response.send(result.buffer);
     } catch (error) {
+        if (error instanceof UrlSecurityError) {
+            console.error('Importing custom content rejected:', error.message);
+            return response.sendStatus(error.statusCode || 400);
+        }
         console.error('Importing custom content failed', error);
         return response.sendStatus(500);
     }

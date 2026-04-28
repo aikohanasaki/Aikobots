@@ -152,6 +152,8 @@ rateLimiting:
 
 ## BACKUP CONFIGURATION
 backups:
+  # Allow users to create a full backup archive of their data
+  allowFullDataBackup: true
   # Common settings for all backup types
   common:
     # Number of backups to keep for each chat and settings file
@@ -209,7 +211,6 @@ whitelistImportDomains:
   - cdn.discordapp.com
   - files.catbox.moe
   - raw.githubusercontent.com
-  - char-archive.evulid.cc
 # API request overrides (for KoboldAI and Text Completion APIs)
 ## Note: host includes the port number if it's not the default (80 or 443)
 ## Format is an array of objects:
