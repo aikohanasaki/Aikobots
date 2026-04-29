@@ -37,6 +37,7 @@ import { getAllEnabledUsers, getUserDirectories, requireAdminMiddleware } from '
 import { getChatInfo } from './chats.js';
 import { ByafParser } from '../byaf.js';
 import cacheBuster from '../middleware/cacheBuster.js';
+import { assertPathUnderParent, assertSafeFileName, PathSecurityError, resolvePathUnderParent } from '../path-security.js';
 import { DISTRIBUTION_SOURCE_TYPES, PUBLISH_MODES, SUBMISSION_STATUSES, distributeCharacterFile, getSubmissionPaths, getSubmissionRecord } from '../character-submissions.js';
 import {
     reconcileCharacterRepushBlacklistEntries,
@@ -63,6 +64,46 @@ const useShallowCharacters = !!getConfigValue('performance.lazyLoadCharacters', 
 const useDiskCache = !!getConfigValue('performance.useDiskCache', true, 'boolean');
 const characterEndpointInstanceId = `${process.pid}-${Date.now().toString(36)}`;
 let characterListRequestCounter = 0;
+const ALLOWED_CHARACTER_IMAGE_EXTENSIONS = new Set(['.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp']);
+
+function resolveUploadedFilePath(file) {
+    return assertPathUnderParent(file.destination, path.join(file.destination, file.filename), 'upload');
+}
+
+function resolveCharacterFilePath(directories, avatarName) {
+    const fileName = assertSafeFileName(avatarName, 'avatar');
+    if (sanitize(fileName) !== fileName || path.extname(fileName).toLowerCase() !== '.png') {
+        throw new PathSecurityError('Invalid avatar filename.');
+    }
+    return resolvePathUnderParent(directories.characters, fileName, 'avatar');
+}
+
+function resolveCharacterOutputPath(directories, outputFile) {
+    const internalName = assertSafeFileName(outputFile, 'character');
+    return resolveCharacterFilePath(directories, `${internalName}.png`);
+}
+
+function resolveCharacterChatDirectory(directories, internalName) {
+    const safeName = assertSafeFileName(internalName, 'character chat directory');
+    return resolvePathUnderParent(directories.chats, safeName, 'character chat directory');
+}
+
+function resolveCharacterChatFilePath(directories, internalName, chatFileName) {
+    const fileName = assertSafeFileName(chatFileName, 'chat file');
+    if (path.extname(fileName).toLowerCase() !== '.jsonl') {
+        throw new PathSecurityError('Invalid chat file extension.');
+    }
+    return resolvePathUnderParent(resolveCharacterChatDirectory(directories, internalName), fileName, 'chat file');
+}
+
+function resolveCharacterImagePath(parentDirectory, fileName) {
+    const safeFileName = assertSafeFileName(fileName, 'image file');
+    const extension = path.extname(safeFileName).toLowerCase();
+    if (!ALLOWED_CHARACTER_IMAGE_EXTENSIONS.has(extension)) {
+        throw new PathSecurityError('Invalid image extension.');
+    }
+    return resolvePathUnderParent(parentDirectory, safeFileName, 'image file');
+}
 
 function coerceFavoriteValue(...values) {
     for (const value of values) {
@@ -314,7 +355,7 @@ async function writeCharacterData(inputFile, data, outputFile, request, crop = u
 
         // Get the chunks
         const outputImage = write(inputImage, normalizeCharacterJsonForPersistence(data));
-        const outputImagePath = path.join(request.user.directories.characters, `${outputFile}.png`);
+        const outputImagePath = resolveCharacterOutputPath(request.user.directories, outputFile);
 
         writeFileAtomicSync(outputImagePath, outputImage);
         return true;
@@ -1106,7 +1147,7 @@ async function importFromByaf(uploadPath, { request }, preservedFileName) {
         */
         const createChatAsCurrentPersona = (scenario) => {
             const chatName = sanitize(`${scenario.title || card.name} - ${humanizedISO8601DateTime()} imported.jsonl`, { replacement: sanitizeSafeCharacterReplacements });
-            const filePath = path.join(request.user.directories.chats, path.basename(fileName), chatName);
+            const filePath = resolveCharacterChatFilePath(request.user.directories, path.basename(fileName), chatName);
             const dir = path.dirname(filePath);
             if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
             writeFileAtomicSync(filePath, ByafParser.getChatFromScenario(scenario, request.body.user_name, card.name, byafData.chatBackgrounds), 'utf8');
@@ -1118,13 +1159,14 @@ async function importFromByaf(uploadPath, { request }, preservedFileName) {
         for (const bg of byafData.chatBackgrounds) {
             const extension = path.extname(bg.paths?.[0]) || '.png';
             const baseName = `${path.basename(fileName)}_bg`;
-            const filePath = path.join(request.user.directories.userImages, fileName);
+            const filePath = resolvePathUnderParent(request.user.directories.userImages, assertSafeFileName(fileName, 'BYAF image directory'), 'BYAF image directory');
             if (!fs.existsSync(filePath)) fs.mkdirSync(filePath, { recursive: true });
-            const file = getUniqueName(baseName, (name) => fs.existsSync(path.join(filePath, `${name}${extension}`)));
+            const file = getUniqueName(baseName, (name) => fs.existsSync(resolveCharacterImagePath(filePath, `${name}${extension}`)));
             if (Buffer.isBuffer(bg.data)) {
                 const newFile = `${file}${extension}`;
-                writeFileAtomicSync(path.join(filePath, newFile), bg.data);
-                bg.name = clientRelativePath(request.user.directories.root, path.join(filePath, newFile)); // Update background name to the new file
+                const newFilePath = resolveCharacterImagePath(filePath, newFile);
+                writeFileAtomicSync(newFilePath, bg.data);
+                bg.name = clientRelativePath(request.user.directories.root, newFilePath); // Update background name to the new file
                 console.log(`Created ${newFile} background from BYAF import`);
             }
         }
@@ -1147,12 +1189,12 @@ async function importFromByaf(uploadPath, { request }, preservedFileName) {
             // BYAF does not support character expressions, so using the same structure will not result in conflicts,
             // even if the expression system did not tolerate additional icons that are not mapped to expressions.
             // This will not yet allow changing icons within the UI but at least the icons will be available for manual selection, rather than being lost.
-            const altImagesFolder = path.join(request.user.directories.characters, sanitize(card.name));
+            const altImagesFolder = resolvePathUnderParent(request.user.directories.characters, assertSafeFileName(sanitize(card.name), 'alternate image directory'), 'alternate image directory');
             if (!fs.existsSync(altImagesFolder)) fs.mkdirSync(altImagesFolder, { recursive: true });
             const extension = path.extname(icon.filename) || '.png';
-            const file = getUniqueName(`${sanitize(icon.label, { replacement: sanitizeSafeCharacterReplacements }) || 'alt'}`, (name) => fs.existsSync(path.join(altImagesFolder, `${name}${extension}`)));
+            const file = getUniqueName(`${sanitize(icon.label, { replacement: sanitizeSafeCharacterReplacements }) || 'alt'}`, (name) => fs.existsSync(resolveCharacterImagePath(altImagesFolder, `${name}${extension}`)));
             if (Buffer.isBuffer(icon.image)) {
-                writeFileAtomicSync(path.join(altImagesFolder, `${file}${extension}`), icon.image);
+                writeFileAtomicSync(resolveCharacterImagePath(altImagesFolder, `${file}${extension}`), icon.image);
                 console.log(`Created ${file}${extension} alternate icon from BYAF import`);
             }
         }
@@ -1313,7 +1355,7 @@ router.post('/create', getFileNameValidationFunction('file_name'), async functio
         const char = JSON.stringify(charaFormatData(request.body, request.user.directories));
         const internalName = request.body.file_name || getPngName(request.body.ch_name, request.user.directories);
         const avatarName = `${internalName}.png`;
-        const chatsPath = path.join(request.user.directories.chats, internalName);
+        const chatsPath = resolveCharacterChatDirectory(request.user.directories, internalName);
 
         await assertSharedCharacterCheckoutForMutation(request, avatarName);
 
@@ -1328,7 +1370,7 @@ router.post('/create', getFileNameValidationFunction('file_name'), async functio
             return response.send(avatarName);
         } else {
             const crop = tryParse(request.query.crop);
-            const uploadPath = path.join(request.file.destination, request.file.filename);
+            const uploadPath = resolveUploadedFilePath(request.file);
             const wasWritten = await writeCharacterData(uploadPath, char, internalName, request, crop);
             fs.unlinkSync(uploadPath);
             if (!wasWritten) {
@@ -1338,6 +1380,10 @@ router.post('/create', getFileNameValidationFunction('file_name'), async functio
             return response.send(avatarName);
         }
     } catch (err) {
+        if (err instanceof PathSecurityError) {
+            return response.status(400).json({ error: err.message });
+        }
+
         if (err instanceof CharacterSharingRepositoryError) {
             return sendSharedCharacterError(response, err);
         }
@@ -1358,12 +1404,11 @@ router.post('/rename', validateAvatarUrlMiddleware, async function (request, res
     const newInternalName = getPngName(newName, request.user.directories);
     const newAvatarName = `${newInternalName}.png`;
 
-    const oldAvatarPath = path.join(request.user.directories.characters, oldAvatarName);
-
-    const oldChatsPath = path.join(request.user.directories.chats, oldInternalName);
-    const newChatsPath = path.join(request.user.directories.chats, newInternalName);
-
     try {
+        const oldAvatarPath = resolveCharacterFilePath(request.user.directories, oldAvatarName);
+        const oldChatsPath = resolveCharacterChatDirectory(request.user.directories, oldInternalName);
+        const newChatsPath = resolveCharacterChatDirectory(request.user.directories, newInternalName);
+
         // Read old file, replace name int it
         const rawOldData = await readCharacterData(oldAvatarPath);
         if (rawOldData === undefined) throw new Error('Failed to read character file');
@@ -1399,6 +1444,9 @@ router.post('/rename', validateAvatarUrlMiddleware, async function (request, res
         return response.send({ avatar: newAvatarName });
     }
     catch (err) {
+        if (err instanceof PathSecurityError) {
+            return response.status(400).json({ error: err.message });
+        }
         console.error(err);
         return response.sendStatus(500);
     }
@@ -1419,7 +1467,7 @@ router.post('/edit', validateAvatarUrlMiddleware, async function (request, respo
 
     try {
         await assertSharedCharacterCheckoutForMutation(request, request.body.avatar_url);
-        const avatarPath = path.join(request.user.directories.characters, request.body.avatar_url);
+        const avatarPath = resolveCharacterFilePath(request.user.directories, request.body.avatar_url);
         const rawCharacterData = await readCharacterData(avatarPath);
         const existingCharacter = rawCharacterData ? getCharaCardV2(JSON.parse(rawCharacterData), request.user.directories, false) : null;
         const requestedFavorite = coerceFavoriteValue(request.body.fav);
@@ -1472,7 +1520,7 @@ router.post('/edit', validateAvatarUrlMiddleware, async function (request, respo
             }
         } else {
             const crop = tryParse(request.query.crop);
-            const newAvatarPath = path.join(request.file.destination, request.file.filename);
+            const newAvatarPath = resolveUploadedFilePath(request.file);
             invalidateThumbnail(request.user.directories, 'avatar', request.body.avatar_url);
             const wasWritten = await writeCharacterData(newAvatarPath, char, targetFile, request, crop);
             fs.unlinkSync(newAvatarPath);
@@ -1494,6 +1542,10 @@ router.post('/edit', validateAvatarUrlMiddleware, async function (request, respo
 
         return response.sendStatus(200);
     } catch (err) {
+        if (err instanceof PathSecurityError) {
+            return response.status(400).json({ error: err.message });
+        }
+
         if (err?.status === 400) {
             return response.status(400).json({ error: err.message });
         }
@@ -1517,11 +1569,11 @@ router.post('/edit-avatar', validateAvatarUrlMiddleware, async function (request
             return response.status(400).send('Error: no avatar_url in request body');
         }
 
-        const uploadPath = path.join(request.file.destination, request.file.filename);
+        const uploadPath = resolveUploadedFilePath(request.file);
         if (!fs.existsSync(uploadPath)) {
             return response.status(400).send('Error: uploaded file does not exist');
         }
-        const characterPath = path.join(request.user.directories.characters, request.body.avatar_url);
+        const characterPath = resolveCharacterFilePath(request.user.directories, request.body.avatar_url);
         if (!fs.existsSync(characterPath)) {
             return response.status(400).send('Error: character file does not exist');
         }
@@ -1546,6 +1598,10 @@ router.post('/edit-avatar', validateAvatarUrlMiddleware, async function (request
 
         return response.sendStatus(200);
     } catch (err) {
+        if (err instanceof PathSecurityError) {
+            return response.status(400).send(err.message);
+        }
+
         if (err instanceof CharacterSharingRepositoryError) {
             return sendSharedCharacterError(response, err);
         }
@@ -1584,7 +1640,7 @@ router.post('/edit-attribute', validateAvatarUrlMiddleware, async function (requ
 
     try {
         await assertSharedCharacterCheckoutForMutation(request, request.body.avatar_url);
-        const avatarPath = path.join(request.user.directories.characters, request.body.avatar_url);
+        const avatarPath = resolveCharacterFilePath(request.user.directories, request.body.avatar_url);
         const charJSON = await readCharacterData(avatarPath);
         if (typeof charJSON !== 'string') throw new Error('Failed to read character file');
 
@@ -1602,6 +1658,10 @@ router.post('/edit-attribute', validateAvatarUrlMiddleware, async function (requ
         await writeCharacterData(avatarPath, newCharJSON, targetFile, request);
         return response.sendStatus(200);
     } catch (err) {
+        if (err instanceof PathSecurityError) {
+            return response.status(400).send(err.message);
+        }
+
         if (err instanceof CharacterSharingRepositoryError) {
             return sendSharedCharacterError(response, err);
         }
@@ -1627,7 +1687,7 @@ router.post('/merge-attributes', getFileNameValidationFunction('avatar'), async 
         const update = request.body;
         const requestedFavorite = coerceFavoriteValue(update?.fav, _.get(update, 'data.extensions.fav'));
         await assertSharedCharacterCheckoutForMutation(request, update.avatar);
-        const avatarPath = path.join(request.user.directories.characters, update.avatar);
+        const avatarPath = resolveCharacterFilePath(request.user.directories, update.avatar);
 
         const pngStringData = await readCharacterData(avatarPath);
 
@@ -1722,7 +1782,7 @@ router.post('/delete', validateAvatarUrlMiddleware, async function (request, res
     }
 
     async function deleteCharacterFromDirectories(directories) {
-        const avatarPath = path.join(directories.characters, avatarUrl);
+        const avatarPath = resolveCharacterFilePath(directories, avatarUrl);
         const avatarExists = fs.existsSync(avatarPath);
 
         if (avatarExists) {
@@ -1731,7 +1791,7 @@ router.post('/delete', validateAvatarUrlMiddleware, async function (request, res
         }
 
         if (request.body.delete_chats == true) {
-            await fs.promises.rm(path.join(directories.chats, sanitize(dir_name)), { recursive: true, force: true });
+            await fs.promises.rm(resolveCharacterChatDirectory(directories, dir_name), { recursive: true, force: true });
         }
 
         return avatarExists;
@@ -1800,6 +1860,10 @@ router.post('/delete', validateAvatarUrlMiddleware, async function (request, res
                 return response.sendStatus(400);
             }
         } catch (err) {
+            if (err instanceof PathSecurityError) {
+                return response.status(400).json({ error: err.message });
+            }
+
             if (err instanceof CharacterSharingRepositoryError) {
                 return sendSharedCharacterError(response, err);
             }
@@ -1811,7 +1875,16 @@ router.post('/delete', validateAvatarUrlMiddleware, async function (request, res
         return response.sendStatus(200);
     }
 
-    const avatarPath = path.join(request.user.directories.characters, avatarUrl);
+    let avatarPath;
+    try {
+        avatarPath = resolveCharacterFilePath(request.user.directories, avatarUrl);
+    } catch (err) {
+        if (err instanceof PathSecurityError) {
+            return response.status(400).json({ error: err.message });
+        }
+        console.error(err);
+        return response.sendStatus(500);
+    }
     if (!fs.existsSync(avatarPath)) {
         return response.sendStatus(400);
     }
@@ -1831,6 +1904,10 @@ router.post('/delete', validateAvatarUrlMiddleware, async function (request, res
 
         await deleteCharacterFromDirectories(request.user.directories);
     } catch (err) {
+        if (err instanceof PathSecurityError) {
+            return response.status(400).json({ error: err.message });
+        }
+
         console.error(err);
         return response.sendStatus(500);
     }
@@ -1907,7 +1984,7 @@ router.post('/get', validateAvatarUrlMiddleware, async function (request, respon
     try {
         if (!request.body) return response.sendStatus(400);
         const item = request.body.avatar_url;
-        const filePath = path.join(request.user.directories.characters, item);
+        const filePath = resolveCharacterFilePath(request.user.directories, item);
 
         if (!fs.existsSync(filePath)) {
             return response.sendStatus(404);
@@ -1921,6 +1998,10 @@ router.post('/get', validateAvatarUrlMiddleware, async function (request, respon
 
         return response.send(data);
     } catch (err) {
+        if (err instanceof PathSecurityError) {
+            return response.status(400).json({ error: err.message });
+        }
+
         console.error(err);
         response.sendStatus(500);
     } finally {
@@ -1933,7 +2014,7 @@ router.post('/chats', validateAvatarUrlMiddleware, async function (request, resp
         if (!request.body) return response.sendStatus(400);
 
         const characterDirectory = (request.body.avatar_url).replace('.png', '');
-        const chatsDirectory = path.join(request.user.directories.chats, characterDirectory);
+        const chatsDirectory = resolveCharacterChatDirectory(request.user.directories, characterDirectory);
 
         if (!fs.existsSync(chatsDirectory)) {
             return response.send({ error: true });
@@ -1954,7 +2035,7 @@ router.post('/chats', validateAvatarUrlMiddleware, async function (request, resp
 
         const jsonFilesPromise = jsonFiles.map((file) => {
             const withMetadata = !!request.body.metadata;
-            const pathToFile = path.join(request.user.directories.chats, characterDirectory, file);
+            const pathToFile = resolveCharacterChatFilePath(request.user.directories, characterDirectory, file);
             return getChatInfo(pathToFile, {}, false, withMetadata);
         });
 
@@ -1963,6 +2044,10 @@ router.post('/chats', validateAvatarUrlMiddleware, async function (request, resp
 
         return response.send(validFiles);
     } catch (error) {
+        if (error instanceof PathSecurityError) {
+            return response.status(400).json({ error: error.message });
+        }
+
         console.error(error);
         return response.send({ error: true });
     }
@@ -1976,8 +2061,9 @@ router.post('/chats', validateAvatarUrlMiddleware, async function (request, resp
  */
 function getPngName(file, directories) {
     let i = 1;
+    file = sanitize(String(file || ''), { replacement: sanitizeSafeCharacterReplacements });
     const baseName = file;
-    while (fs.existsSync(path.join(directories.characters, `${file}.png`))) {
+    while (fs.existsSync(resolveCharacterOutputPath(directories, file))) {
         file = baseName + i;
         i++;
     }
@@ -1990,17 +2076,17 @@ function getPngName(file, directories) {
  * @returns {string | undefined} - The preserved name if the request is valid, otherwise undefined
  */
 function getPreservedName(request) {
-    return typeof request.body.preserved_name === 'string' && request.body.preserved_name.length > 0
-        ? path.parse(request.body.preserved_name).name
-        : undefined;
+    if (typeof request.body.preserved_name !== 'string' || request.body.preserved_name.length === 0) {
+        return undefined;
+    }
+
+    return path.parse(assertSafeFileName(request.body.preserved_name, 'preserved_name')).name;
 }
 
 router.post('/import', async function (request, response) {
     if (!request.body || !request.file) return response.sendStatus(400);
 
-    const uploadPath = path.join(request.file.destination, request.file.filename);
     const format = request.body.file_type;
-    const preservedFileName = getPreservedName(request);
 
     const formatImportFunctions = {
         'yaml': importFromYaml,
@@ -2012,6 +2098,8 @@ router.post('/import', async function (request, response) {
     };
 
     try {
+        const uploadPath = resolveUploadedFilePath(request.file);
+        const preservedFileName = getPreservedName(request);
         const importFunction = formatImportFunctions[format];
 
         if (!importFunction) {
@@ -2035,6 +2123,10 @@ router.post('/import', async function (request, response) {
 
         response.send({ file_name: fileName });
     } catch (err) {
+        if (err instanceof PathSecurityError) {
+            return response.status(400).json({ error: err.message });
+        }
+
         if (err instanceof CharacterSharingRepositoryError) {
             return sendSharedCharacterError(response, err);
         }
@@ -2195,12 +2287,12 @@ router.post('/distribute', requireAdminMiddleware, async function (request, resp
         let sourcePath = '';
 
         if (sourceType === DISTRIBUTION_SOURCE_TYPES.CHARACTER) {
-            const sourceAvatar = sanitize(String(request.body?.sourceAvatar || ''));
+            const sourceAvatar = String(request.body?.sourceAvatar || '').trim();
             if (!sourceAvatar) {
                 return response.status(400).json({ error: 'Missing source character.' });
             }
 
-            sourcePath = path.join(request.user.directories.characters, sourceAvatar);
+            sourcePath = resolveCharacterFilePath(request.user.directories, sourceAvatar);
         } else if (sourceType === DISTRIBUTION_SOURCE_TYPES.SUBMISSION) {
             const submissionId = String(request.body?.submissionId || '').trim();
             if (!submissionId) {
@@ -2246,6 +2338,10 @@ router.post('/distribute', requireAdminMiddleware, async function (request, resp
 
         return response.json(distribution);
     } catch (error) {
+        if (error instanceof PathSecurityError) {
+            return response.status(400).json({ error: error.message });
+        }
+
         console.error('Character distribution failed', error);
         return response.status(400).json({ error: error.message || 'Character distribution failed.' });
     }
@@ -2258,7 +2354,7 @@ router.post('/duplicate', validateAvatarUrlMiddleware, async function (request, 
             console.debug(request.body);
             return response.sendStatus(400);
         }
-        let filename = path.join(request.user.directories.characters, sanitize(request.body.avatar_url));
+        let filename = resolveCharacterFilePath(request.user.directories, request.body.avatar_url);
         if (!fs.existsSync(filename)) {
             console.error('file for dupe not found', filename);
             return response.sendStatus(404);
@@ -2288,11 +2384,11 @@ router.post('/duplicate', validateAvatarUrlMiddleware, async function (request, 
             baseName = nameParts.join('_'); // original filename is completely the baseName
         }
 
-        newFilename = path.join(request.user.directories.characters, `${baseName}_${suffix}${path.extname(filename)}`);
+        newFilename = resolveCharacterFilePath(request.user.directories, `${baseName}_${suffix}${path.extname(filename)}`);
 
         while (fs.existsSync(newFilename)) {
             let suffixStr = '_' + suffix;
-            newFilename = path.join(request.user.directories.characters, `${baseName}${suffixStr}${path.extname(filename)}`);
+            newFilename = resolveCharacterFilePath(request.user.directories, `${baseName}${suffixStr}${path.extname(filename)}`);
             suffix++;
         }
 
@@ -2307,6 +2403,10 @@ router.post('/duplicate', validateAvatarUrlMiddleware, async function (request, 
         response.send({ path: path.parse(newFilename).base });
     }
     catch (error) {
+        if (error instanceof PathSecurityError) {
+            return response.status(400).json({ error: error.message });
+        }
+
         console.error(error);
         return response.send({ error: true });
     }
@@ -2318,7 +2418,7 @@ router.post('/export', validateAvatarUrlMiddleware, async function (request, res
             return response.sendStatus(400);
         }
 
-        let filename = path.join(request.user.directories.characters, sanitize(request.body.avatar_url));
+        let filename = resolveCharacterFilePath(request.user.directories, request.body.avatar_url);
 
         if (!fs.existsSync(filename)) {
             return response.sendStatus(404);
@@ -2351,6 +2451,10 @@ router.post('/export', validateAvatarUrlMiddleware, async function (request, res
 
         return response.sendStatus(400);
     } catch (err) {
+        if (err instanceof PathSecurityError) {
+            return response.status(400).json({ error: err.message });
+        }
+
         console.error('Character export failed', err);
         response.sendStatus(500);
     }

@@ -7,6 +7,7 @@ import { sync as writeFileSyncAtomic } from 'write-file-atomic';
 
 import { validateAssetFileName } from './assets.js';
 import { clientRelativePath } from '../util.js';
+import { assertPathUnderParent } from '../path-security.js';
 
 export const router = express.Router();
 
@@ -57,8 +58,11 @@ router.post('/delete', async (request, response) => {
             return response.status(400).send('No path specified');
         }
 
-        const pathToDelete = path.join(request.user.directories.root, request.body.path);
-        if (!pathToDelete.startsWith(request.user.directories.files)) {
+        let pathToDelete;
+        try {
+            pathToDelete = assertPathUnderParent(request.user.directories.root, path.join(request.user.directories.root, request.body.path), 'path');
+            assertPathUnderParent(request.user.directories.files, pathToDelete, 'path');
+        } catch {
             return response.status(400).send('Invalid path');
         }
 
@@ -84,8 +88,11 @@ router.post('/verify', async (request, response) => {
         const verified = {};
 
         for (const url of request.body.urls) {
-            const pathToVerify = path.join(request.user.directories.root, url);
-            if (!pathToVerify.startsWith(request.user.directories.files)) {
+            let pathToVerify;
+            try {
+                pathToVerify = assertPathUnderParent(request.user.directories.root, path.join(request.user.directories.root, url), 'path');
+                assertPathUnderParent(request.user.directories.files, pathToVerify, 'path');
+            } catch {
                 console.warn(`File verification: Invalid path: ${pathToVerify}`);
                 continue;
             }

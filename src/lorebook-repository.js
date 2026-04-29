@@ -7,6 +7,7 @@ import { sync as writeFileAtomicSync } from 'write-file-atomic';
 import { write as writeCharacterCard, read as readCharacterCard } from './character-card-parser.js';
 import { SETTINGS_FILE } from './constants.js';
 import { getUserDirectories } from './users.js';
+import { assertPathUnderParent, hasUnsafePathSegment } from './path-security.js';
 
 const SECURE_LOREBOOK_DIRECTORY = ['_secure', 'worlds'];
 const SHARED_SECURE_LOREBOOK_DIRECTORY = ['_secure', 'shared-worlds'];
@@ -77,7 +78,7 @@ function getLegacyLorebookName(canonicalName) {
 }
 
 function getLorebookPathFromCanonical(directory, canonicalName) {
-    return path.join(directory, `${canonicalName}.json`);
+    return assertPathUnderParent(directory, path.join(directory, `${canonicalName}.json`), 'lorebook');
 }
 
 function getLegacyLorebookPathFromCanonical(directory, canonicalName) {
@@ -730,6 +731,10 @@ function canManageSecureLorebook(user, record) {
 }
 
 function assertCanonicalName(name) {
+    if (hasUnsafePathSegment(name)) {
+        throw new LorebookRepositoryError('LorebookInvalidName', 'Lorebook name must not contain path separators or traversal.', 400);
+    }
+
     const canonicalName = getCanonicalLorebookName(name);
     if (!canonicalName) {
         throw new LorebookRepositoryError('LorebookInvalidName', 'Lorebook must have a valid name.', 400);
@@ -739,6 +744,10 @@ function assertCanonicalName(name) {
 }
 
 function assertLorebookSaveNameAllowed(name) {
+    if (hasUnsafePathSegment(name)) {
+        throw new LorebookRepositoryError('LorebookInvalidName', 'World/Lorebook names must not contain path separators or traversal.', 400);
+    }
+
     if (hasTrailingJsonExtension(name)) {
         throw new LorebookRepositoryError('LorebookInvalidName', 'World/Lorebook names must not end with ".json". Enter the name without the file extension.', 400);
     }

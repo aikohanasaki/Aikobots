@@ -6,6 +6,7 @@ import sanitize from 'sanitize-filename';
 import { createMacroState, evaluatePromptMacros } from '../prompting/macro-evaluator.js';
 import { getRegexedString, regex_placement } from '../prompting/regex-runtime.js';
 import { getHiddenLorebooksForCharacter } from '../hidden-lorebook-bindings.js';
+import { assertPathUnderParent, assertSafeFileName, PathSecurityError } from '../path-security.js';
 import {
     compileAndWriteHiddenLorebookTemplates,
     readHiddenLorebookTemplates,
@@ -33,6 +34,37 @@ import { getAllEnabledUsers, getAllUserHandles, requireAdminMiddleware } from '.
 export const readWorldInfoFile = readUserWorldInfoFile;
 
 export const router = express.Router();
+
+function resolveUploadedWorldInfoPath(file) {
+    return assertPathUnderParent(file.destination, file.path || path.join(file.destination, file.filename), 'upload');
+}
+
+function cleanupUploadedWorldInfoFile(file, validatedPath) {
+    let uploadPath = validatedPath;
+    if (!uploadPath && file?.destination) {
+        const rawUploadPath = file.path || (file.filename ? path.join(file.destination, file.filename) : null);
+        try {
+            uploadPath = rawUploadPath ? assertPathUnderParent(file.destination, rawUploadPath, 'upload') : null;
+        } catch {
+            try {
+                const safeFileName = file.filename ? assertSafeFileName(path.basename(file.filename), 'upload') : '';
+                uploadPath = safeFileName ? assertPathUnderParent(file.destination, path.join(file.destination, safeFileName), 'upload') : null;
+            } catch {
+                uploadPath = null;
+            }
+        }
+    }
+
+    if (!uploadPath) {
+        return;
+    }
+
+    try {
+        fs.rmSync(uploadPath, { force: true });
+    } catch (error) {
+        console.warn('Failed to remove temporary world info upload', error);
+    }
+}
 
 const KNOWN_DECORATORS = ['@@activate', '@@dont_activate'];
 const DEFAULT_LOREBOOK_PRIORITY = 3;
@@ -711,34 +743,34 @@ router.post('/delete', async (request, response) => {
 router.post('/import', async (request, response) => {
     if (!request.file) return response.sendStatus(400);
 
-    const importedName = path.parse(sanitize(request.file.originalname)).name;
-    const removedTrailingJsonSuffix = /\.json$/i.test(importedName);
-    const worldName = importedName.replace(/\.json$/i, '');
-
-    let fileContents = null;
-
-    if (request.body.convertedData) {
-        fileContents = request.body.convertedData;
-    } else {
-        const pathToUpload = path.join(request.file.destination, request.file.filename);
-        fileContents = fs.readFileSync(pathToUpload, 'utf8');
-        fs.unlinkSync(pathToUpload);
-    }
-
+    let pathToUpload = null;
     try {
-        const worldContent = JSON.parse(fileContents);
-        if (!('entries' in worldContent)) {
-            throw new Error('File must contain a world info entries list');
+        pathToUpload = resolveUploadedWorldInfoPath(request.file);
+
+        const importedName = path.parse(sanitize(assertSafeFileName(request.file.originalname, 'world file'))).name;
+        const worldName = importedName.replace(/\.json$/i, '');
+        const removedTrailingJsonSuffix = worldName !== importedName;
+
+        let fileContents = null;
+        if (request.body.convertedData) {
+            fileContents = request.body.convertedData;
+        } else {
+            fileContents = fs.readFileSync(pathToUpload, 'utf8');
         }
-    } catch (err) {
-        return response.status(400).send('Is not a valid world info file');
-    }
 
-    if (!worldName) {
-        return response.status(400).send('World file must have a name');
-    }
+        try {
+            const worldContent = JSON.parse(fileContents);
+            if (!('entries' in worldContent)) {
+                throw new Error('File must contain a world info entries list');
+            }
+        } catch (err) {
+            return response.status(400).send('Is not a valid world info file');
+        }
 
-    try {
+        if (!worldName) {
+            return response.status(400).send('World file must have a name');
+        }
+
         const metadata = await saveLorebookForManagement(request.user, worldName, JSON.parse(fileContents), request.body.storage || 'user');
         return response.send({
             name: metadata.name,
@@ -749,7 +781,12 @@ router.post('/import', async (request, response) => {
             metadata,
         });
     } catch (error) {
+        if (error instanceof PathSecurityError) {
+            return response.status(400).send(error.message);
+        }
         return sendLorebookError(response, error);
+    } finally {
+        cleanupUploadedWorldInfoFile(request.file, pathToUpload);
     }
 });
 

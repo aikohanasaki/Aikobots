@@ -7,8 +7,24 @@ import sanitize from 'sanitize-filename';
 import { dimensions, invalidateThumbnail } from './thumbnails.js';
 import { getImages } from '../util.js';
 import { getFileNameValidationFunction } from '../middleware/validateFileName.js';
+import { assertPathUnderParent, assertSafeFileName, PathSecurityError, resolvePathUnderParent } from '../path-security.js';
 
 export const router = express.Router();
+const ALLOWED_BACKGROUND_EXTENSIONS = new Set(['.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp']);
+
+function resolveBackgroundPath(backgroundsDirectory, name) {
+    const fileName = assertSafeFileName(name, 'background');
+    if (sanitize(fileName) !== fileName) {
+        throw new PathSecurityError('Invalid background name.');
+    }
+
+    const extension = path.extname(fileName).toLowerCase();
+    if (!ALLOWED_BACKGROUND_EXTENSIONS.has(extension)) {
+        throw new PathSecurityError('Invalid background extension.');
+    }
+
+    return resolvePathUnderParent(backgroundsDirectory, fileName, 'background');
+}
 
 router.post('/all', function (request, response) {
     const images = getImages(request.user.directories.backgrounds);
@@ -24,7 +40,13 @@ router.post('/delete', getFileNameValidationFunction('bg'), function (request, r
         return response.sendStatus(403);
     }
 
-    const fileName = path.join(request.user.directories.backgrounds, sanitize(request.body.bg));
+    let fileName;
+    try {
+        fileName = resolveBackgroundPath(request.user.directories.backgrounds, request.body.bg);
+    } catch (error) {
+        console.error('Invalid BG delete path prevented', error);
+        return response.sendStatus(400);
+    }
 
     if (!fs.existsSync(fileName)) {
         console.error('BG file not found');
@@ -39,8 +61,15 @@ router.post('/delete', getFileNameValidationFunction('bg'), function (request, r
 router.post('/rename', function (request, response) {
     if (!request.body) return response.sendStatus(400);
 
-    const oldFileName = path.join(request.user.directories.backgrounds, sanitize(request.body.old_bg));
-    const newFileName = path.join(request.user.directories.backgrounds, sanitize(request.body.new_bg));
+    let oldFileName;
+    let newFileName;
+    try {
+        oldFileName = resolveBackgroundPath(request.user.directories.backgrounds, request.body.old_bg);
+        newFileName = resolveBackgroundPath(request.user.directories.backgrounds, request.body.new_bg);
+    } catch (error) {
+        console.error('Invalid BG rename path prevented', error);
+        return response.sendStatus(400);
+    }
 
     if (!fs.existsSync(oldFileName)) {
         console.error('BG file not found');
@@ -61,16 +90,29 @@ router.post('/rename', function (request, response) {
 router.post('/upload', function (request, response) {
     if (!request.body || !request.file) return response.sendStatus(400);
 
-    const img_path = path.join(request.file.destination, request.file.filename);
-    const filename = request.file.originalname;
-
+    let img_path;
     try {
-        fs.copyFileSync(img_path, path.join(request.user.directories.backgrounds, filename));
-        fs.unlinkSync(img_path);
+        img_path = assertPathUnderParent(request.file.destination, path.join(request.file.destination, request.file.filename), 'upload');
+        const filename = assertSafeFileName(request.file.originalname, 'background');
+        const destinationPath = resolveBackgroundPath(request.user.directories.backgrounds, filename);
+
+        fs.copyFileSync(img_path, destinationPath);
         invalidateThumbnail(request.user.directories, 'bg', filename);
         response.send(filename);
     } catch (err) {
+        if (err instanceof PathSecurityError) {
+            console.error('Invalid BG upload path prevented', err);
+            return response.sendStatus(400);
+        }
         console.error(err);
         response.sendStatus(500);
+    } finally {
+        if (img_path) {
+            try {
+                fs.rmSync(img_path, { force: true });
+            } catch (error) {
+                console.warn('Failed to remove temporary background upload', error);
+            }
+        }
     }
 });
