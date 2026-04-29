@@ -1295,6 +1295,11 @@ async function switchExtensionBranch(extensionName, isGlobal, branch) {
  * @returns {Promise<void>}
  */
 export async function installExtension(url, global, branch = '') {
+    if (!isAdmin()) {
+        toastr.error(t`Extension installation is restricted to administrators`);
+        return;
+    }
+
     console.debug('Extension installation started', url);
 
     toastr.info(t`Please wait...`, t`Installing extension`);
@@ -1645,6 +1650,11 @@ export async function writeExtensionField(characterId, key, value) {
  */
 export async function openThirdPartyExtensionMenu(suggestUrl = '') {
     const isCurrentUserAdmin = isAdmin();
+    if (!isCurrentUserAdmin) {
+        toastr.error(t`Extension installation is restricted to administrators`);
+        return;
+    }
+
     const html = await renderTemplateAsync('installExtension', { isCurrentUserAdmin });
     const okButton = isCurrentUserAdmin ? t`Install just for me` : t`Install`;
 

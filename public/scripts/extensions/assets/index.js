@@ -11,6 +11,7 @@ import { executeSlashCommandsWithOptions } from '../../slash-commands.js';
 import { accountStorage } from '../../util/AccountStorage.js';
 import { flashHighlight, getStringHash, isValidUrl } from '../../utils.js';
 import { t, translate } from '../../i18n.js';
+import { isAdmin } from '../../user.js';
 export { MODULE_NAME };
 
 const MODULE_NAME = 'assets';
@@ -142,6 +143,7 @@ async function downloadAssetsList(url) {
                     for (const i in availableAssets[assetType].sort((a, b) => a?.name && b?.name && a['name'].localeCompare(b['name']))) {
                         const asset = availableAssets[assetType][i];
                         const elemId = `assets_install_${assetType}_${i}`;
+                        const canInstall = assetType !== 'extension' || isAdmin();
                         let element = $('<div />', { id: elemId, class: 'asset-download-button right_menu_button' });
                         const label = $('<i class="fa-fw fa-solid fa-download fa-lg"></i>');
                         element.append(label);
@@ -204,7 +206,14 @@ async function downloadAssetsList(url) {
                         else {
                             console.debug(DEBUG_PREFIX, 'not installed, unchecked');
                             element.prop('checked', false);
-                            element.on('click', assetInstall);
+                            if (canInstall) {
+                                element.on('click', assetInstall);
+                            } else {
+                                element.addClass('disabled');
+                                element.attr('title', t`Extension installation is restricted to administrators`);
+                                label.removeClass('fa-download');
+                                label.addClass('fa-lock');
+                            }
                         }
 
                         console.debug(DEBUG_PREFIX, 'Created element for ', asset['id']);
@@ -455,6 +464,9 @@ jQuery(async () => {
     });
 
     const installHintButton = windowHtml.find('.assets-install-hint-link');
+    if (!isAdmin()) {
+        installHintButton.parent().hide();
+    }
     installHintButton.on('click', async function () {
         const installButton = $('#third_party_extension_button');
         flashHighlight(installButton, 5000);

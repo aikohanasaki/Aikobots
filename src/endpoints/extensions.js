@@ -71,6 +71,11 @@ export const router = express.Router();
  * @returns {void}
  */
 router.post('/install', async (request, response) => {
+    if (!request.user.profile.admin) {
+        console.error(`User ${request.user.profile.handle} does not have permission to install extensions.`);
+        return response.status(403).json({ error: 'Extension installation is restricted to administrators' });
+    }
+
     if (!request.body.url) {
         return response.status(400).send('Bad Request: URL is required in the request body.');
     }
@@ -80,20 +85,15 @@ router.post('/install', async (request, response) => {
         const git = simpleGit();
 
         // make sure the third-party directory exists
-        if (!fs.existsSync(path.join(request.user.directories.extensions))) {
-            fs.mkdirSync(path.join(request.user.directories.extensions));
+        if (!fs.existsSync(request.user.directories.extensions)) {
+            fs.mkdirSync(request.user.directories.extensions, { recursive: true });
         }
 
         if (!fs.existsSync(PUBLIC_DIRECTORIES.globalExtensions)) {
-            fs.mkdirSync(PUBLIC_DIRECTORIES.globalExtensions);
+            fs.mkdirSync(PUBLIC_DIRECTORIES.globalExtensions, { recursive: true });
         }
 
         const { url, global, branch } = request.body;
-
-        if (global && !request.user.profile.admin) {
-            console.error(`User ${request.user.profile.handle} does not have permission to install global extensions.`);
-            return response.status(403).send('Forbidden: No permission to install global extensions.');
-        }
 
         const basePath = global ? PUBLIC_DIRECTORIES.globalExtensions : request.user.directories.extensions;
         const extensionPath = path.join(basePath, sanitize(path.basename(url, '.git')));
@@ -418,12 +418,12 @@ router.post('/delete', async (request, response) => {
  * If the folder is called third-party, search for subfolders instead
  */
 router.get('/discover', function (request, response) {
-    if (!fs.existsSync(path.join(request.user.directories.extensions))) {
-        fs.mkdirSync(path.join(request.user.directories.extensions));
+    if (!fs.existsSync(request.user.directories.extensions)) {
+        fs.mkdirSync(request.user.directories.extensions, { recursive: true });
     }
 
     if (!fs.existsSync(PUBLIC_DIRECTORIES.globalExtensions)) {
-        fs.mkdirSync(PUBLIC_DIRECTORIES.globalExtensions);
+        fs.mkdirSync(PUBLIC_DIRECTORIES.globalExtensions, { recursive: true });
     }
 
     // Get all folders in system extensions folder, excluding third-party
@@ -435,7 +435,7 @@ router.get('/discover', function (request, response) {
 
     // Get all folders in local extensions folder
     const userExtensions = fs
-        .readdirSync(path.join(request.user.directories.extensions))
+        .readdirSync(request.user.directories.extensions)
         .filter(f => fs.statSync(path.join(request.user.directories.extensions, f)).isDirectory())
         .map(f => ({ type: 'local', name: `third-party/${f}` }));
 
