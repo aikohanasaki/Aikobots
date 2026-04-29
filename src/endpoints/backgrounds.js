@@ -90,9 +90,10 @@ router.post('/rename', function (request, response) {
 router.post('/upload', function (request, response) {
     if (!request.body || !request.file) return response.sendStatus(400);
 
-    let img_path;
+    const rawUploadPath = request.file?.path || path.join(request.file.destination, request.file.filename);
+    let img_path = null;
     try {
-        img_path = assertPathUnderParent(request.file.destination, path.join(request.file.destination, request.file.filename), 'upload');
+        img_path = assertPathUnderParent(request.file.destination, rawUploadPath, 'upload');
         const filename = assertSafeFileName(request.file.originalname, 'background');
         const destinationPath = resolveBackgroundPath(request.user.directories.backgrounds, filename);
 
@@ -107,9 +108,10 @@ router.post('/upload', function (request, response) {
         console.error(err);
         response.sendStatus(500);
     } finally {
-        if (img_path) {
+        const cleanupPath = img_path || rawUploadPath;
+        if (cleanupPath) {
             try {
-                fs.rmSync(img_path, { force: true });
+                fs.rmSync(cleanupPath, { force: true });
             } catch (error) {
                 console.warn('Failed to remove temporary background upload', error);
             }
