@@ -4363,16 +4363,14 @@ function createMainEntryUi() {
     }
 
     const menuItem = $(`
-        <div id="stmb-menu-item-container" class="extension_container interactable" tabindex="0">
-            <div id="stmb-menu-item" class="list-group-item flex-container flexGap5 interactable" tabindex="0">
-                <div class="fa-fw fa-solid fa-book extensionsMenuExtensionButton"></div>
-                <span>Memory Books</span>
-            </div>
+        <div id="stmb-menu-item" class="list-group-item flex-container flexGap5 interactable" tabindex="0">
+            <div class="fa-fw fa-solid fa-book extensionsMenuExtensionButton"></div>
+            <span>Memory Books</span>
         </div>
     `);
-    const extensionsMenu = $('#extensionsMenu');
-    if (extensionsMenu.length > 0) {
-        extensionsMenu.append(menuItem);
+    const memoryBooksWandContainer = $('#memory_books_wand_container');
+    if (memoryBooksWandContainer.length > 0) {
+        memoryBooksWandContainer.append(menuItem);
         stmbUiBound = true;
     } else {
         setTimeout(() => {
