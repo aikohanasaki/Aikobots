@@ -1318,7 +1318,7 @@ function registerBookmarksSlashCommands() {
 
 export function initBookmarks() {
     $('#option_new_bookmark').on('click', saveBookmarkMenu);
-    $('#option_manage_bookmarks').on('click', showNamedBookmarksPopup);
+    $(document).on('click', '#option_manage_bookmarks', showNamedBookmarksPopup);
     $('#option_back_to_main').on('click', backToMainChat);
     $('#option_convert_to_group').on('click', convertSoloToGroupChat);
 
