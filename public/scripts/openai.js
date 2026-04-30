@@ -734,6 +734,244 @@ const default_settings = {
     extensions: {},
 };
 
+/**
+ * Low-risk provider metadata shared by chat completion helpers.
+ * Behavior-specific request handling still lives in the provider branches below.
+ * @type {Record<string, {
+ *     modelSetting: string,
+ *     modelSelector: string,
+ *     defaultModel?: string,
+ *     apiKey?: string,
+ *     apiKeySelector?: string,
+ *     supportsReverseProxy?: boolean,
+ *     supportsStatusCheck?: boolean,
+ * }>}
+ */
+const providerConfigs = {
+    [chat_completion_sources.OPENAI]: {
+        modelSetting: 'openai_model',
+        modelSelector: settingsToUpdate.openai_model[0],
+        defaultModel: default_settings.openai_model,
+        apiKey: SECRET_KEYS.OPENAI,
+        apiKeySelector: '#api_key_openai',
+        supportsReverseProxy: true,
+        supportsStatusCheck: true,
+    },
+    [chat_completion_sources.CLAUDE]: {
+        modelSetting: 'claude_model',
+        modelSelector: settingsToUpdate.claude_model[0],
+        defaultModel: default_settings.claude_model,
+        apiKey: SECRET_KEYS.CLAUDE,
+        apiKeySelector: '#api_key_claude',
+        supportsReverseProxy: true,
+        supportsStatusCheck: false,
+    },
+    [chat_completion_sources.OPENROUTER]: {
+        modelSetting: 'openrouter_model',
+        modelSelector: settingsToUpdate.openrouter_model[0],
+        defaultModel: default_settings.openrouter_model,
+        apiKey: SECRET_KEYS.OPENROUTER,
+        apiKeySelector: '#api_key_openrouter',
+        supportsReverseProxy: false,
+        supportsStatusCheck: true,
+    },
+    [chat_completion_sources.AI21]: {
+        modelSetting: 'ai21_model',
+        modelSelector: settingsToUpdate.ai21_model[0],
+        defaultModel: default_settings.ai21_model,
+        apiKey: SECRET_KEYS.AI21,
+        apiKeySelector: '#api_key_ai21',
+        supportsReverseProxy: false,
+        supportsStatusCheck: false,
+    },
+    [chat_completion_sources.MAKERSUITE]: {
+        modelSetting: 'google_model',
+        modelSelector: settingsToUpdate.google_model[0],
+        defaultModel: default_settings.google_model,
+        apiKey: SECRET_KEYS.MAKERSUITE,
+        apiKeySelector: '#api_key_makersuite',
+        supportsReverseProxy: true,
+        supportsStatusCheck: true,
+    },
+    [chat_completion_sources.VERTEXAI]: {
+        modelSetting: 'vertexai_model',
+        modelSelector: settingsToUpdate.vertexai_model[0],
+        defaultModel: default_settings.vertexai_model,
+        apiKey: SECRET_KEYS.VERTEXAI,
+        apiKeySelector: '#api_key_vertexai',
+        supportsReverseProxy: true,
+        supportsStatusCheck: false,
+    },
+    [chat_completion_sources.MISTRALAI]: {
+        modelSetting: 'mistralai_model',
+        modelSelector: settingsToUpdate.mistralai_model[0],
+        defaultModel: default_settings.mistralai_model,
+        apiKey: SECRET_KEYS.MISTRALAI,
+        apiKeySelector: '#api_key_mistralai',
+        supportsReverseProxy: true,
+        supportsStatusCheck: true,
+    },
+    [chat_completion_sources.CUSTOM]: {
+        modelSetting: 'custom_model',
+        modelSelector: settingsToUpdate.custom_model[0],
+        defaultModel: default_settings.custom_model,
+        apiKey: SECRET_KEYS.CUSTOM,
+        apiKeySelector: '#api_key_custom',
+        supportsReverseProxy: false,
+        supportsStatusCheck: true,
+    },
+    [chat_completion_sources.COHERE]: {
+        modelSetting: 'cohere_model',
+        modelSelector: settingsToUpdate.cohere_model[0],
+        defaultModel: default_settings.cohere_model,
+        apiKey: SECRET_KEYS.COHERE,
+        apiKeySelector: '#api_key_cohere',
+        supportsReverseProxy: false,
+        supportsStatusCheck: true,
+    },
+    [chat_completion_sources.PERPLEXITY]: {
+        modelSetting: 'perplexity_model',
+        modelSelector: settingsToUpdate.perplexity_model[0],
+        defaultModel: default_settings.perplexity_model,
+        apiKey: SECRET_KEYS.PERPLEXITY,
+        apiKeySelector: '#api_key_perplexity',
+        supportsReverseProxy: false,
+        supportsStatusCheck: false,
+    },
+    [chat_completion_sources.GROQ]: {
+        modelSetting: 'groq_model',
+        modelSelector: settingsToUpdate.groq_model[0],
+        defaultModel: default_settings.groq_model,
+        apiKey: SECRET_KEYS.GROQ,
+        apiKeySelector: '#api_key_groq',
+        supportsReverseProxy: false,
+        supportsStatusCheck: true,
+    },
+    [chat_completion_sources.SILICONFLOW]: {
+        modelSetting: 'siliconflow_model',
+        modelSelector: settingsToUpdate.siliconflow_model[0],
+        defaultModel: default_settings.siliconflow_model,
+        apiKey: SECRET_KEYS.SILICONFLOW,
+        apiKeySelector: '#api_key_siliconflow',
+        supportsReverseProxy: false,
+        supportsStatusCheck: true,
+    },
+    [chat_completion_sources.ELECTRONHUB]: {
+        modelSetting: 'electronhub_model',
+        modelSelector: settingsToUpdate.electronhub_model[0],
+        defaultModel: default_settings.electronhub_model,
+        apiKey: SECRET_KEYS.ELECTRONHUB,
+        apiKeySelector: '#api_key_electronhub',
+        supportsReverseProxy: false,
+        supportsStatusCheck: true,
+    },
+    [chat_completion_sources.NAVY]: {
+        modelSetting: 'navy_model',
+        modelSelector: settingsToUpdate.navy_model[0],
+        defaultModel: default_settings.navy_model,
+        apiKey: SECRET_KEYS.NAVY,
+        apiKeySelector: '#api_key_navy',
+        supportsReverseProxy: false,
+        supportsStatusCheck: true,
+    },
+    [chat_completion_sources.NANOGPT]: {
+        modelSetting: 'nanogpt_model',
+        modelSelector: settingsToUpdate.nanogpt_model[0],
+        defaultModel: default_settings.nanogpt_model,
+        apiKey: SECRET_KEYS.NANOGPT,
+        apiKeySelector: '#api_key_nanogpt',
+        supportsReverseProxy: false,
+        supportsStatusCheck: true,
+    },
+    [chat_completion_sources.DEEPSEEK]: {
+        modelSetting: 'deepseek_model',
+        modelSelector: settingsToUpdate.deepseek_model[0],
+        defaultModel: default_settings.deepseek_model,
+        apiKey: SECRET_KEYS.DEEPSEEK,
+        apiKeySelector: '#api_key_deepseek',
+        supportsReverseProxy: true,
+        supportsStatusCheck: true,
+    },
+    [chat_completion_sources.AIMLAPI]: {
+        modelSetting: 'aimlapi_model',
+        modelSelector: settingsToUpdate.aimlapi_model[0],
+        defaultModel: default_settings.aimlapi_model,
+        apiKey: SECRET_KEYS.AIMLAPI,
+        apiKeySelector: '#api_key_aimlapi',
+        supportsReverseProxy: false,
+        supportsStatusCheck: true,
+    },
+    [chat_completion_sources.XAI]: {
+        modelSetting: 'xai_model',
+        modelSelector: settingsToUpdate.xai_model[0],
+        defaultModel: default_settings.xai_model,
+        apiKey: SECRET_KEYS.XAI,
+        apiKeySelector: '#api_key_xai',
+        supportsReverseProxy: true,
+        supportsStatusCheck: true,
+    },
+    [chat_completion_sources.POLLINATIONS]: {
+        modelSetting: 'pollinations_model',
+        modelSelector: settingsToUpdate.pollinations_model[0],
+        defaultModel: default_settings.pollinations_model,
+        supportsStatusCheck: true,
+    },
+    [chat_completion_sources.MOONSHOT]: {
+        modelSetting: 'moonshot_model',
+        modelSelector: settingsToUpdate.moonshot_model[0],
+        defaultModel: default_settings.moonshot_model,
+        apiKey: SECRET_KEYS.MOONSHOT,
+        apiKeySelector: '#api_key_moonshot',
+        supportsReverseProxy: false,
+        supportsStatusCheck: true,
+    },
+    [chat_completion_sources.FIREWORKS]: {
+        modelSetting: 'fireworks_model',
+        modelSelector: settingsToUpdate.fireworks_model[0],
+        defaultModel: default_settings.fireworks_model,
+        apiKey: SECRET_KEYS.FIREWORKS,
+        apiKeySelector: '#api_key_fireworks',
+        supportsReverseProxy: false,
+        supportsStatusCheck: true,
+    },
+    [chat_completion_sources.COMETAPI]: {
+        modelSetting: 'cometapi_model',
+        modelSelector: settingsToUpdate.cometapi_model[0],
+        defaultModel: default_settings.cometapi_model,
+        apiKey: SECRET_KEYS.COMETAPI,
+        apiKeySelector: '#api_key_cometapi',
+        supportsReverseProxy: false,
+        supportsStatusCheck: true,
+    },
+    [chat_completion_sources.AZURE_OPENAI]: {
+        modelSetting: 'azure_openai_model',
+        modelSelector: settingsToUpdate.azure_openai_model[0],
+        defaultModel: default_settings.azure_openai_model,
+        apiKey: SECRET_KEYS.AZURE_OPENAI,
+        apiKeySelector: '#api_key_azure_openai',
+        supportsReverseProxy: false,
+        supportsStatusCheck: true,
+    },
+    [chat_completion_sources.ZANITY]: {
+        modelSetting: 'zanity_model',
+        modelSelector: settingsToUpdate.zanity_model[0],
+        defaultModel: default_settings.zanity_model,
+        apiKey: SECRET_KEYS.ZANITY,
+        apiKeySelector: '#api_key_zanity',
+        supportsReverseProxy: false,
+        supportsStatusCheck: true,
+    },
+    [chat_completion_sources.ZAI]: {
+        modelSetting: 'zai_model',
+        modelSelector: settingsToUpdate.zai_model[0],
+        defaultModel: default_settings.zai_model,
+        apiKey: SECRET_KEYS.ZAI,
+        apiKeySelector: '#api_key_zai',
+        supportsReverseProxy: false,
+        supportsStatusCheck: false,
+    },
+};
+
 const oai_settings = structuredClone(default_settings);
 
 export let proxies = [
@@ -1424,65 +1662,24 @@ function checkModerationError(data, { quiet = false } = {}) {
 /**
  * Gets the API model for the selected chat completion source.
  * @param {string} source If it's set, ignores active source
- * @returns {string} API model
+ * @returns {string|null} API model
  */
 export function getChatCompletionModel(source = null) {
     const activeSource = source ?? oai_settings.chat_completion_source;
-    switch (activeSource) {
-        case chat_completion_sources.CLAUDE:
-            return oai_settings.claude_model;
-        case chat_completion_sources.OPENAI:
-            return oai_settings.openai_model;
-        case chat_completion_sources.MAKERSUITE:
-            return oai_settings.google_model;
-        case chat_completion_sources.VERTEXAI:
-            return oai_settings.vertexai_model;
-        case chat_completion_sources.OPENROUTER:
-            return oai_settings.openrouter_model !== openrouter_website_model ? oai_settings.openrouter_model : null;
-        case chat_completion_sources.AI21:
-            return oai_settings.ai21_model;
-        case chat_completion_sources.MISTRALAI:
-            return oai_settings.mistralai_model;
-        case chat_completion_sources.CUSTOM:
-            return oai_settings.custom_model;
-        case chat_completion_sources.COHERE:
-            return oai_settings.cohere_model;
-        case chat_completion_sources.PERPLEXITY:
-            return oai_settings.perplexity_model;
-        case chat_completion_sources.GROQ:
-            return oai_settings.groq_model;
-        case chat_completion_sources.SILICONFLOW:
-            return oai_settings.siliconflow_model;
-        case chat_completion_sources.ELECTRONHUB:
-            return oai_settings.electronhub_model;
-        case chat_completion_sources.NAVY:
-            return oai_settings.navy_model;
-        case chat_completion_sources.NANOGPT:
-            return oai_settings.nanogpt_model;
-        case chat_completion_sources.DEEPSEEK:
-            return oai_settings.deepseek_model;
-        case chat_completion_sources.AIMLAPI:
-            return oai_settings.aimlapi_model;
-        case chat_completion_sources.XAI:
-            return oai_settings.xai_model;
-        case chat_completion_sources.POLLINATIONS:
-            return oai_settings.pollinations_model;
-        case chat_completion_sources.COMETAPI:
-            return oai_settings.cometapi_model;
-        case chat_completion_sources.MOONSHOT:
-            return oai_settings.moonshot_model;
-        case chat_completion_sources.FIREWORKS:
-            return oai_settings.fireworks_model;
-        case chat_completion_sources.AZURE_OPENAI:
-            return oai_settings.azure_openai_model;
-        case chat_completion_sources.ZANITY:
-            return oai_settings.zanity_model;
-        case chat_completion_sources.ZAI:
-            return oai_settings.zai_model;
-        default:
-            console.error(`Unknown chat completion source: ${activeSource}`);
-            return '';
+    const providerConfig = providerConfigs[activeSource];
+
+    if (!providerConfig) {
+        console.error(`Unknown chat completion source: ${activeSource}`);
+        return '';
     }
+
+    const model = oai_settings[providerConfig.modelSetting];
+
+    if (activeSource === chat_completion_sources.OPENROUTER && model === openrouter_website_model) {
+        return null;
+    }
+
+    return model;
 }
 
 function getOpenRouterModelTemplate(option) {
