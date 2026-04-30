@@ -745,6 +745,7 @@ const default_settings = {
  *     apiKeySelector?: string,
  *     supportsReverseProxy?: boolean,
  *     supportsStatusCheck?: boolean,
+ *     nullModelValue?: string,
  * }>}
  */
 const providerConfigs = {
@@ -774,6 +775,7 @@ const providerConfigs = {
         apiKeySelector: '#api_key_openrouter',
         supportsReverseProxy: false,
         supportsStatusCheck: true,
+        nullModelValue: openrouter_website_model,
     },
     [chat_completion_sources.AI21]: {
         modelSetting: 'ai21_model',
@@ -1675,7 +1677,7 @@ export function getChatCompletionModel(source = null) {
 
     const model = oai_settings[providerConfig.modelSetting];
 
-    if (activeSource === chat_completion_sources.OPENROUTER && model === openrouter_website_model) {
+    if (providerConfig.nullModelValue !== undefined && model === providerConfig.nullModelValue) {
         return null;
     }
 
@@ -4158,14 +4160,8 @@ function setContinuePostfixControls() {
 }
 
 async function getStatusOpen() {
-    const noValidateSources = [
-        chat_completion_sources.CLAUDE,
-        chat_completion_sources.AI21,
-        chat_completion_sources.VERTEXAI,
-        chat_completion_sources.PERPLEXITY,
-        chat_completion_sources.ZAI,
-    ];
-    if (noValidateSources.includes(oai_settings.chat_completion_source)) {
+    const providerConfig = providerConfigs[oai_settings.chat_completion_source];
+    if (providerConfig?.supportsStatusCheck === false) {
         let status = t`Key saved; press \"Test Message\" to verify.`;
         setOnlineStatus(status);
         updateFeatureSupportFlags();
@@ -4196,16 +4192,7 @@ async function getStatusOpen() {
         chat_completion_source: oai_settings.chat_completion_source,
     };
 
-    const validateProxySources = [
-        chat_completion_sources.CLAUDE,
-        chat_completion_sources.OPENAI,
-        chat_completion_sources.MISTRALAI,
-        chat_completion_sources.MAKERSUITE,
-        chat_completion_sources.VERTEXAI,
-        chat_completion_sources.DEEPSEEK,
-        chat_completion_sources.XAI,
-    ];
-    if (oai_settings.reverse_proxy && validateProxySources.includes(oai_settings.chat_completion_source)) {
+    if (oai_settings.reverse_proxy && providerConfig?.supportsReverseProxy) {
         await validateReverseProxy();
     }
 
@@ -5763,37 +5750,17 @@ function onReverseProxyInput() {
 async function onConnectButtonClick(e) {
     e.stopPropagation();
 
-    /** @type {Object.<string, {key: string, selector: string, proxy?: boolean, keyless?: boolean}>} */
-    const apiSourceConfig = {
-        [chat_completion_sources.OPENROUTER]: { key: SECRET_KEYS.OPENROUTER, selector: '#api_key_openrouter', proxy: false },
-        [chat_completion_sources.MAKERSUITE]: { key: SECRET_KEYS.MAKERSUITE, selector: '#api_key_makersuite', proxy: true },
-        [chat_completion_sources.CLAUDE]: { key: SECRET_KEYS.CLAUDE, selector: '#api_key_claude', proxy: true },
-        [chat_completion_sources.OPENAI]: { key: SECRET_KEYS.OPENAI, selector: '#api_key_openai', proxy: true },
-        [chat_completion_sources.AI21]: { key: SECRET_KEYS.AI21, selector: '#api_key_ai21', proxy: false },
-        [chat_completion_sources.MISTRALAI]: { key: SECRET_KEYS.MISTRALAI, selector: '#api_key_mistralai', proxy: true },
-        [chat_completion_sources.CUSTOM]: { key: SECRET_KEYS.CUSTOM, selector: '#api_key_custom', proxy: false, keyless: true },
-        [chat_completion_sources.COHERE]: { key: SECRET_KEYS.COHERE, selector: '#api_key_cohere', proxy: false },
-        [chat_completion_sources.PERPLEXITY]: { key: SECRET_KEYS.PERPLEXITY, selector: '#api_key_perplexity', proxy: false },
-        [chat_completion_sources.GROQ]: { key: SECRET_KEYS.GROQ, selector: '#api_key_groq', proxy: false },
-        [chat_completion_sources.SILICONFLOW]: { key: SECRET_KEYS.SILICONFLOW, selector: '#api_key_siliconflow', proxy: false },
-        [chat_completion_sources.ELECTRONHUB]: { key: SECRET_KEYS.ELECTRONHUB, selector: '#api_key_electronhub', proxy: false },
-        [chat_completion_sources.NAVY]: { key: SECRET_KEYS.NAVY, selector: '#api_key_navy', proxy: false },
-        [chat_completion_sources.ZANITY]: { key: SECRET_KEYS.ZANITY, selector: '#api_key_zanity', proxy: false },
-        [chat_completion_sources.NANOGPT]: { key: SECRET_KEYS.NANOGPT, selector: '#api_key_nanogpt', proxy: false },
-        [chat_completion_sources.DEEPSEEK]: { key: SECRET_KEYS.DEEPSEEK, selector: '#api_key_deepseek', proxy: true },
-        [chat_completion_sources.XAI]: { key: SECRET_KEYS.XAI, selector: '#api_key_xai', proxy: true },
-        [chat_completion_sources.AIMLAPI]: { key: SECRET_KEYS.AIMLAPI, selector: '#api_key_aimlapi', proxy: false },
-        [chat_completion_sources.MOONSHOT]: { key: SECRET_KEYS.MOONSHOT, selector: '#api_key_moonshot', proxy: false },
-        [chat_completion_sources.FIREWORKS]: { key: SECRET_KEYS.FIREWORKS, selector: '#api_key_fireworks', proxy: false },
-        [chat_completion_sources.COMETAPI]: { key: SECRET_KEYS.COMETAPI, selector: '#api_key_cometapi', proxy: false },
-        [chat_completion_sources.AZURE_OPENAI]: { key: SECRET_KEYS.AZURE_OPENAI, selector: '#api_key_azure_openai', proxy: false },
-        [chat_completion_sources.ZAI]: { key: SECRET_KEYS.ZAI, selector: '#api_key_zai', proxy: false },
-    };
+    const providerConfig = providerConfigs[oai_settings.chat_completion_source];
 
-    // Vertex AI Express version - use API key
-    if (oai_settings.vertexai_auth_mode === 'express') {
-        apiSourceConfig[chat_completion_sources.VERTEXAI] = { key: SECRET_KEYS.VERTEXAI, selector: '#api_key_vertexai', proxy: true };
-    }
+    /** @type {{key: string, selector: string, proxy?: boolean, keyless?: boolean}|null} */
+    const config = providerConfig?.apiKey && providerConfig?.apiKeySelector && !(oai_settings.chat_completion_source === chat_completion_sources.VERTEXAI && oai_settings.vertexai_auth_mode === 'full')
+        ? {
+            key: providerConfig.apiKey,
+            selector: providerConfig.apiKeySelector,
+            proxy: Boolean(providerConfig.supportsReverseProxy),
+            keyless: oai_settings.chat_completion_source === chat_completion_sources.CUSTOM,
+        }
+        : null;
 
     // Vertex AI Full version - use service account
     if (oai_settings.chat_completion_source === chat_completion_sources.VERTEXAI && oai_settings.vertexai_auth_mode === 'full') {
@@ -5804,7 +5771,6 @@ async function onConnectButtonClick(e) {
     }
 
     // Other generic configs
-    const config = apiSourceConfig[oai_settings.chat_completion_source];
     if (config) {
         const apiKey = String($(config.selector).val()).trim();
         if (apiKey.length) {
