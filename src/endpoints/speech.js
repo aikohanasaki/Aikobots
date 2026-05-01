@@ -3,9 +3,19 @@ import express from 'express';
 import wavefile from 'wavefile';
 import fetch from 'node-fetch';
 import { getPipeline } from '../transformers.js';
-import { forwardFetchResponse } from '../util.js';
+import { forwardFetchResponse, getConfigValue } from '../util.js';
 
 export const router = express.Router();
+
+const SPEECH_DISABLED_MESSAGE = 'Speech features are disabled on this server.';
+
+function areSpeechFeaturesEnabled() {
+    return getConfigValue('extensions.speech.enabled', false, 'boolean');
+}
+
+function rejectDisabledSpeechFeatures(res) {
+    return res.status(403).send(SPEECH_DISABLED_MESSAGE);
+}
 
 /**
  * Gets the audio data from a base64-encoded audio file.
@@ -36,6 +46,10 @@ function getWaveFile(audio) {
 }
 
 router.post('/recognize', async (req, res) => {
+    if (!areSpeechFeaturesEnabled()) {
+        return rejectDisabledSpeechFeatures(res);
+    }
+
     try {
         const TASK = 'automatic-speech-recognition';
         const { model, audio, lang } = req.body;
@@ -55,6 +69,10 @@ router.post('/recognize', async (req, res) => {
 });
 
 router.post('/synthesize', async (req, res) => {
+    if (!areSpeechFeaturesEnabled()) {
+        return rejectDisabledSpeechFeatures(res);
+    }
+
     try {
         const TASK = 'text-to-speech';
         const { text, model, speaker } = req.body;

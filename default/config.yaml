@@ -229,8 +229,12 @@ extensions:
   enabled: true
   # Automatically update extensions when a release version changes
   autoUpdate: true
+  speech:
+    # Enables local speech recognition and synthesis endpoints
+    enabled: false
   models:
     # Enables automatic model download from HuggingFace
+    # Recommended production setting: false
     autoDownload: true
     # Additional models for extensions. Expects model IDs from HuggingFace model hub in ONNX format
     classification: Cohee/distilbert-base-uncased-go-emotions-onnx
