@@ -1,6 +1,6 @@
 export const STMB_PARITY = Object.freeze({
     sourceRepo: 'aikohanasaki/SillyTavern-MemoryBooks',
-    sourceCommit: '8f21abc8de6079544333911bda3bb8cb9e112beb',
+    sourceCommit: 'c712a9b7aa9d178e6849bbe7da389389da6509d7',
 });
 
 export const STMB_SETTINGS_VERSION = 4;
@@ -1028,6 +1028,64 @@ export function parseSceneMemoryCommandRange(rangeText, chatEntries = []) {
         sceneStart: startId,
         sceneEnd: endId,
     };
+}
+
+function parseRequiredIntegerArgument(rawValue, name) {
+    const value = rawValue && typeof rawValue === 'object' && 'value' in rawValue
+        ? rawValue.value
+        : rawValue;
+    if (value === undefined || value === null || value === '') {
+        throw new Error(`Missing or invalid ${name}. Use: /stmb-catchup interval:<chunk size> start:<message id> end:<message id>`);
+    }
+
+    const parsed = Number(value);
+    if (!Number.isFinite(parsed) || !Number.isInteger(parsed)) {
+        throw new Error(`Missing or invalid ${name}. Use: /stmb-catchup interval:<chunk size> start:<message id> end:<message id>`);
+    }
+
+    return parsed;
+}
+
+export function parseStmbCatchupCommandArgs(namedArgs = {}) {
+    return {
+        interval: parseRequiredIntegerArgument(namedArgs?.interval, 'interval'),
+        start: parseRequiredIntegerArgument(namedArgs?.start, 'start'),
+        end: parseRequiredIntegerArgument(namedArgs?.end, 'end'),
+    };
+}
+
+export function buildStmbCatchupChunks({ interval, start, end, lastAvailableMessageId, missingRanges = [] } = {}) {
+    const normalizedInterval = Number(interval);
+    const normalizedStart = Number(start);
+    const normalizedEnd = Number(end);
+    const normalizedLast = Number(lastAvailableMessageId);
+
+    if (!Number.isInteger(normalizedInterval) || normalizedInterval <= 0) {
+        throw new Error('Interval must be a positive whole number.');
+    }
+    if (!Number.isInteger(normalizedLast) || normalizedLast < 0) {
+        throw new Error('There are no messages in this chat yet.');
+    }
+    if (!Number.isInteger(normalizedStart) || !Number.isInteger(normalizedEnd) || normalizedStart < 0 || normalizedEnd < 0 || normalizedStart > normalizedLast || normalizedEnd > normalizedLast) {
+        throw new Error(`Message IDs out of range. Valid range: 0-${normalizedLast}`);
+    }
+    if (normalizedStart > normalizedEnd) {
+        throw new Error('Start message cannot be greater than end message');
+    }
+    if (Array.isArray(missingRanges) && missingRanges.length > 0) {
+        const missing = missingRanges[0];
+        throw new Error(`Cannot run /stmb-catchup because messages ${missing.start}-${missing.end} are unavailable in chat storage.`);
+    }
+
+    const chunks = [];
+    for (let sceneStart = normalizedStart; sceneStart <= normalizedEnd; sceneStart += normalizedInterval) {
+        chunks.push({
+            sceneStart,
+            sceneEnd: Math.min(sceneStart + normalizedInterval - 1, normalizedEnd),
+        });
+    }
+
+    return chunks;
 }
 
 export function readSidePromptCheckpoint(templateKey, existingEntry, { includeLegacyScore = false } = {}) {

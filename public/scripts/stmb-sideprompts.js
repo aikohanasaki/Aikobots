@@ -7,7 +7,7 @@ import {
 import { getContext } from './extensions.js';
 import { generateStmbText, upsertStmbEntriesBatch, upsertStmbEntryByTitle } from './stmb-api.js';
 import { saveMetadataDebounced } from './extensions.js';
-import { getLorebookStorageForRequest, loadWorldInfo, METADATA_KEY, reloadEditor, worldInfoCache } from './world-info.js';
+import { getLorebookStorageForRequest, loadWorldInfo, reloadEditor, world_names, worldInfoCache } from './world-info.js';
 import { buildOpenAIGenerateData, oai_settings } from './openai.js';
 import { showMemoryPreviewPopup } from './stmb-popups.js';
 import { ensureResolvedLorebookName, isStmbLorebookHandledError } from './stmb-lorebook.js';
@@ -80,13 +80,85 @@ function resolveSidePromptCheckpoint(templateKey, existingEntry, options = {}) {
     };
 }
 
-function resolveLorebookName(settings) {
-    const moduleSettings = settings?.moduleSettings || {};
-    if (moduleSettings.manualModeEnabled) {
-        const manualLorebook = String(chat_metadata.STMemoryBooks?.manualLorebook || '').trim();
-        return manualLorebook;
+function getSidePromptChatLorebookOverrides() {
+    const state = getStmbChatState();
+    return state?.sidePromptLorebookOverrides && typeof state.sidePromptLorebookOverrides === 'object'
+        ? state.sidePromptLorebookOverrides
+        : {};
+}
+
+function isExistingLorebookName(name) {
+    return Boolean(name && Array.isArray(world_names) && world_names.includes(name));
+}
+
+async function tryLoadSidePromptTargetLorebook(lorebookName, source, template) {
+    if (!isExistingLorebookName(lorebookName)) {
+        return null;
     }
-    return String(chat_metadata[METADATA_KEY] || '').trim();
+
+    try {
+        const data = await loadWorldInfo(lorebookName);
+        if (data) {
+            return { name: lorebookName, data, source };
+        }
+    } catch (error) {
+        console.warn(`STMB side prompt failed to load ${source} lorebook target for "${template?.name || template?.key || 'unknown'}"`, error);
+    }
+
+    return null;
+}
+
+async function resolveMemoryDefaultLorebook(settings, resolveContext = null, source = 'memoryDefault') {
+    if (resolveContext && !resolveContext.memoryLorebookPromise) {
+        resolveContext.memoryLorebookPromise = (async () => {
+            const lorebookName = String(resolveContext.memoryLorebookName || await ensureLorebookName(settings)).trim();
+            const lorebookData = resolveContext.memoryLorebookData || await loadWorldInfo(lorebookName);
+            if (!lorebookName || !lorebookData) {
+                throw new Error('No memory lorebook available.');
+            }
+            return { name: lorebookName, data: lorebookData };
+        })();
+    }
+
+    const lorebook = resolveContext
+        ? await resolveContext.memoryLorebookPromise
+        : {
+            name: await ensureLorebookName(settings),
+            data: null,
+        };
+    if (!lorebook.data) {
+        lorebook.data = await loadWorldInfo(lorebook.name);
+    }
+    if (!lorebook.name || !lorebook.data) {
+        throw new Error('No memory lorebook available.');
+    }
+
+    return { ...lorebook, source };
+}
+
+async function resolveSidePromptLorebook(template, settings, resolveContext = null) {
+    const templateKey = String(template?.key || '').trim();
+    const chatOverrides = getSidePromptChatLorebookOverrides();
+    if (templateKey && Object.hasOwn(chatOverrides, templateKey)) {
+        const chatOverride = String(chatOverrides[templateKey] || '').trim();
+        if (chatOverride === '__memory__') {
+            return resolveMemoryDefaultLorebook(settings, resolveContext, 'chatOverride');
+        }
+
+        const chatTarget = await tryLoadSidePromptTargetLorebook(chatOverride, 'chatOverride', template);
+        if (chatTarget) {
+            return chatTarget;
+        }
+        return resolveMemoryDefaultLorebook(settings, resolveContext, 'chatOverride');
+    }
+
+    const templateOverride = String(template?.settings?.lorebook?.targetLorebookName || '').trim();
+    const templateTarget = await tryLoadSidePromptTargetLorebook(templateOverride, 'templateOverride', template);
+    if (templateTarget) {
+        return templateTarget;
+    }
+
+    return resolveMemoryDefaultLorebook(settings, resolveContext, 'memoryDefault');
 }
 
 function resolveSidePromptMaxConcurrent(settings) {
@@ -133,6 +205,7 @@ function getEffectiveLorebookSettingsForTemplate(template) {
         outletName: String(lorebook.outletName || ''),
         entryTitleOverride: String(lorebook.entryTitleOverride || ''),
         entryKeywords: String(lorebook.entryKeywords || ''),
+        targetLorebookName: String(lorebook.targetLorebookName || ''),
     };
 }
 
@@ -470,48 +543,60 @@ export async function buildQueuedAfterMemorySidePromptJobs({
     const maxConcurrent = resolveSidePromptMaxConcurrent(settings);
     const checkpointTimestamp = new Date().toISOString();
     const jobs = [];
+    const resolveContext = { memoryLorebookName: lorebookName };
+    const templatesByLorebook = new Map();
 
-    for (let index = 0; index < templates.length; index += maxConcurrent) {
-        const waveTemplates = templates.slice(index, index + maxConcurrent);
-        jobs.push({
-            type: 'sidePromptBatch',
-            range: range ? structuredClone(range) : (compiledScene?.metadata
-                ? {
-                    sceneStart: compiledScene.metadata.sceneStart,
-                    sceneEnd: compiledScene.metadata.sceneEnd,
-                }
-                : null),
-            lorebookName,
-            sceneContext: sceneContext ? structuredClone(sceneContext) : structuredClone(buildStmbSceneContext()),
-            title: waveTemplates.length === 1
-                ? String(waveTemplates[0]?.name || 'Side Prompt')
-                : `Side Prompt Wave (${waveTemplates.length})`,
-            payload: {
-                lorebookName,
-                compiledScene: compiledScene ? structuredClone(compiledScene) : null,
-                range: range ? structuredClone(range) : null,
-                settings: settings ? structuredClone(settings) : null,
-                profile: profile ? structuredClone(profile) : null,
-                trigger: 'onAfterMemory',
-                templates: waveTemplates.map(template => ({
-                    template: template ? structuredClone(template) : null,
-                    templateKey: String(template?.key || ''),
-                    templateName: String(template?.name || ''),
-                    runtimeMacros: {},
-                    fallbackKinds: ['plotpoints', 'scoreboard'],
-                    metadataUpdates: buildSidePromptCheckpointMetadata(template.key, {
-                        lastRunAt: checkpointTimestamp,
-                        includeLastMsgId: false,
-                        includeTrackerFallback: false,
-                    }),
-                    commitCheckpoint: {
-                        templateKey: template.key,
-                        includeLastMsgId: false,
-                        includeTrackerFallback: false,
-                    },
-                })),
-            },
-        });
+    for (const template of templates) {
+        const target = await resolveSidePromptLorebook(template, settings, resolveContext);
+        if (!templatesByLorebook.has(target.name)) {
+            templatesByLorebook.set(target.name, []);
+        }
+        templatesByLorebook.get(target.name).push(template);
+    }
+
+    for (const [targetLorebookName, targetTemplates] of templatesByLorebook.entries()) {
+        for (let index = 0; index < targetTemplates.length; index += maxConcurrent) {
+            const waveTemplates = targetTemplates.slice(index, index + maxConcurrent);
+            jobs.push({
+                type: 'sidePromptBatch',
+                range: range ? structuredClone(range) : (compiledScene?.metadata
+                    ? {
+                        sceneStart: compiledScene.metadata.sceneStart,
+                        sceneEnd: compiledScene.metadata.sceneEnd,
+                    }
+                    : null),
+                lorebookName: targetLorebookName,
+                sceneContext: sceneContext ? structuredClone(sceneContext) : structuredClone(buildStmbSceneContext()),
+                title: waveTemplates.length === 1
+                    ? String(waveTemplates[0]?.name || 'Side Prompt')
+                    : `Side Prompt Wave (${waveTemplates.length})`,
+                payload: {
+                    lorebookName: targetLorebookName,
+                    compiledScene: compiledScene ? structuredClone(compiledScene) : null,
+                    range: range ? structuredClone(range) : null,
+                    settings: settings ? structuredClone(settings) : null,
+                    profile: profile ? structuredClone(profile) : null,
+                    trigger: 'onAfterMemory',
+                    templates: waveTemplates.map(template => ({
+                        template: template ? structuredClone(template) : null,
+                        templateKey: String(template?.key || ''),
+                        templateName: String(template?.name || ''),
+                        runtimeMacros: {},
+                        fallbackKinds: ['plotpoints', 'scoreboard'],
+                        metadataUpdates: buildSidePromptCheckpointMetadata(template.key, {
+                            lastRunAt: checkpointTimestamp,
+                            includeLastMsgId: false,
+                            includeTrackerFallback: false,
+                        }),
+                        commitCheckpoint: {
+                            templateKey: template.key,
+                            includeLastMsgId: false,
+                            includeTrackerFallback: false,
+                        },
+                    })),
+                },
+            });
+        }
     }
 
     return jobs;
@@ -737,89 +822,91 @@ export async function evaluateTrackers(settings, options = {}) {
     }
 
     trackerEvaluationPromise = (async () => {
-    const parentTask = options.signal ? null : createStmbTask('SidePrompts:onInterval');
-    const signal = options.signal || parentTask?.signal || null;
-    const sceneContext = options.sceneContext || null;
-    try {
-        const templates = await listByTrigger('onInterval');
-        if (!templates || templates.length === 0) return;
+        const parentTask = options.signal ? null : createStmbTask('SidePrompts:onInterval');
+        const signal = options.signal || parentTask?.signal || null;
+        const sceneContext = options.sceneContext || null;
+        try {
+            const templates = await listByTrigger('onInterval');
+            if (!templates || templates.length === 0) return;
 
-        const lorebookName = await ensureLorebookName(settings);
-        const lorebookData = await loadWorldInfo(lorebookName) || { entries: {} };
-        const chatRangeInfo = await fetchStmbChatRangeInfo({ saveFirst: false, sceneContext });
-        const currentLast = Number(chatRangeInfo?.lastAvailableMessageId);
-        if (currentLast < 0) return;
-        const jobs = [];
+            const chatRangeInfo = await fetchStmbChatRangeInfo({ saveFirst: false, sceneContext });
+            const currentLast = Number(chatRangeInfo?.lastAvailableMessageId);
+            if (currentLast < 0) return;
+            const jobs = [];
+            const lorebookResolveContext = {};
 
-        for (const template of templates) {
-            throwIfStmbAborted(signal);
-            const lookupTitles = getSidePromptLookupTitles(template, {}, ['tracker']);
-            const existing = findFirstLorebookEntryByTitle(lorebookData, lookupTitles);
-            const checkpoint = resolveSidePromptCheckpoint(template.key, existing);
-            const lastMessageId = checkpoint.lastMsgId;
-            const lastRunAt = checkpoint.lastRunAt;
-            if (lastRunAt && Date.now() - lastRunAt < 10000) {
-                continue;
+            for (const template of templates) {
+                throwIfStmbAborted(signal);
+                const targetLorebook = await resolveSidePromptLorebook(template, settings, lorebookResolveContext);
+                const lorebookName = targetLorebook.name;
+                const lorebookData = targetLorebook.data || { entries: {} };
+                const lookupTitles = getSidePromptLookupTitles(template, {}, ['tracker']);
+                const existing = findFirstLorebookEntryByTitle(lorebookData, lookupTitles);
+                const checkpoint = resolveSidePromptCheckpoint(template.key, existing);
+                const lastMessageId = checkpoint.lastMsgId;
+                const lastRunAt = checkpoint.lastRunAt;
+                if (lastRunAt && Date.now() - lastRunAt < 10000) {
+                    continue;
+                }
+
+                const threshold = Math.max(1, Number(template?.triggers?.onInterval?.visibleMessages ?? 50));
+                const rangeInfo = await fetchStmbChatRangeInfo({
+                    rangeStart: Math.max(0, lastMessageId + 1),
+                    rangeEnd: currentLast,
+                    saveFirst: false,
+                    sceneContext,
+                });
+                if (Array.isArray(rangeInfo?.missingRanges) && rangeInfo.missingRanges.length > 0) {
+                    continue;
+                }
+                const visibleSince = Number(rangeInfo?.visibleMessageCount) || 0;
+                if (visibleSince < threshold) continue;
+
+                const start = Math.max(0, lastMessageId + 1);
+                const boundedStart = Math.max(start, currentLast - 199);
+                let compiledScene;
+                try {
+                    compiledScene = await compileRange(boundedStart, currentLast, settings, { saveFirst: false, sceneContext });
+                } catch {
+                    continue;
+                }
+
+                const endId = compiledScene?.metadata?.sceneEnd ?? currentLast;
+                const checkpointTimestamp = new Date().toISOString();
+                jobs.push(await buildQueuedSidePromptJob({
+                    template,
+                    lorebookName,
+                    compiledScene,
+                    settings,
+                    fallbackKinds: ['tracker'],
+                    trigger: 'onInterval',
+                    metadataUpdates: buildSidePromptCheckpointMetadata(template.key, {
+                        lastMsgId: endId,
+                        lastRunAt: checkpointTimestamp,
+                    }),
+                    commitCheckpoint: {
+                        templateKey: template.key,
+                        lastMsgId: endId,
+                        includeLastMsgId: true,
+                        includeTrackerFallback: true,
+                    },
+                    sceneContext,
+                }));
             }
 
-            const threshold = Math.max(1, Number(template?.triggers?.onInterval?.visibleMessages ?? 50));
-            const rangeInfo = await fetchStmbChatRangeInfo({
-                rangeStart: Math.max(0, lastMessageId + 1),
-                rangeEnd: currentLast,
-                saveFirst: false,
-                sceneContext,
-            });
-            if (Array.isArray(rangeInfo?.missingRanges) && rangeInfo.missingRanges.length > 0) {
-                continue;
+            if (jobs.length > 0) {
+                ensureSidePromptJobExecutorRegistered();
+                for (const job of jobs) {
+                    enqueueStmbJob(job);
+                }
             }
-            const visibleSince = Number(rangeInfo?.visibleMessageCount) || 0;
-            if (visibleSince < threshold) continue;
-
-            const start = Math.max(0, lastMessageId + 1);
-            const boundedStart = Math.max(start, currentLast - 199);
-            let compiledScene;
-            try {
-                compiledScene = await compileRange(boundedStart, currentLast, settings, { saveFirst: false, sceneContext });
-            } catch {
-                continue;
+        } catch (error) {
+            if (!isStmbAbortError(error) && !isStmbLorebookHandledError(error)) {
+                console.warn('STMB evaluateTrackers failed', error);
             }
-
-            const endId = compiledScene?.metadata?.sceneEnd ?? currentLast;
-            const checkpointTimestamp = new Date().toISOString();
-            jobs.push(await buildQueuedSidePromptJob({
-                template,
-                lorebookName,
-                compiledScene,
-                settings,
-                fallbackKinds: ['tracker'],
-                trigger: 'onInterval',
-                metadataUpdates: buildSidePromptCheckpointMetadata(template.key, {
-                    lastMsgId: endId,
-                    lastRunAt: checkpointTimestamp,
-                }),
-                commitCheckpoint: {
-                    templateKey: template.key,
-                    lastMsgId: endId,
-                    includeLastMsgId: true,
-                    includeTrackerFallback: true,
-                },
-                sceneContext,
-            }));
+        } finally {
+            parentTask?.cleanup();
         }
-
-        if (jobs.length > 0) {
-            ensureSidePromptJobExecutorRegistered();
-            for (const job of jobs) {
-                enqueueStmbJob(job);
-            }
-        }
-    } catch (error) {
-        if (!isStmbAbortError(error) && !isStmbLorebookHandledError(error)) {
-            console.warn('STMB evaluateTrackers failed', error);
-        }
-    } finally {
-        parentTask?.cleanup();
-    }
     })();
 
     try {
@@ -862,8 +949,6 @@ export async function runSidePrompt(rawInput, settings, options = {}) {
     let activeTemplateName = '';
     try {
         const sceneContext = options.sceneContext || buildStmbSceneContext();
-        const lorebookName = await ensureLorebookName(settings);
-        const lorebookData = await loadWorldInfo(lorebookName) || { entries: {} };
         const parsed = parseSidePromptCommandInput(rawInput);
         if (parsed.error || !parsed.name) {
             toastr.error('SidePrompt name not provided. Usage: /sideprompt "Name" {{macro}}="value" [X-Y]', 'STMB');
@@ -876,6 +961,9 @@ export async function runSidePrompt(rawInput, settings, options = {}) {
             return '';
         }
         activeTemplateName = String(template.name || '');
+        const targetLorebook = await resolveSidePromptLorebook(template, settings);
+        const lorebookName = targetLorebook.name;
+        const lorebookData = targetLorebook.data || { entries: {} };
 
         const manualEnabled = Array.isArray(template?.triggers?.commands)
             && template.triggers.commands.some(command => String(command).toLowerCase() === 'sideprompt');

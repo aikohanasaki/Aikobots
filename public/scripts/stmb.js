@@ -31,7 +31,7 @@ import { Popup, POPUP_RESULT, POPUP_TYPE } from './popup.js';
 import { applyLocale, translate } from './i18n.js';
 import { SlashCommandParser } from './slash-commands/SlashCommandParser.js';
 import { SlashCommand } from './slash-commands/SlashCommand.js';
-import { ARGUMENT_TYPE, SlashCommandArgument } from './slash-commands/SlashCommandArgument.js';
+import { ARGUMENT_TYPE, SlashCommandArgument, SlashCommandNamedArgument } from './slash-commands/SlashCommandArgument.js';
 import { SlashCommandEnumValue } from './slash-commands/SlashCommandEnumValue.js';
 import { hideChatMessageRange } from './chats.js';
 import { groups, selected_group } from './group-chats.js';
@@ -59,8 +59,10 @@ import {
     getStmbConnectionProfileApiKeyError,
     identifyManagedMemoryEntries,
     normalizeStmbSettings,
+    parseStmbCatchupCommandArgs,
     parseSequenceFromTitle,
     parseStructuredMemoryResponse,
+    buildStmbCatchupChunks,
 } from './stmb-core.js';
 import { buildStmbSceneContext, captureStmbSceneRange, fetchStmbChatRangeInfo, getStmbChatKey, isPassiveStmbFlushSuppressedForChat } from './stmb-scene.js';
 import {
@@ -3294,6 +3296,141 @@ function buildSidePromptProfileOptionsHtml(selectedIndex) {
     `).join('');
 }
 
+function getSidePromptMemoryLorebookName() {
+    return getModuleSettings().manualModeEnabled
+        ? String(getStmbState().manualLorebook || '').trim()
+        : String(chat_metadata?.[METADATA_KEY] || '').trim();
+}
+
+function getChatSidePromptLorebookOverrides() {
+    const state = getStmbState();
+    return state.sidePromptLorebookOverrides && typeof state.sidePromptLorebookOverrides === 'object'
+        ? state.sidePromptLorebookOverrides
+        : {};
+}
+
+function setChatSidePromptLorebookOverride(templateKey, lorebookName) {
+    const key = String(templateKey || '').trim();
+    if (!key) {
+        return;
+    }
+
+    const state = getStmbState();
+    if (!state.sidePromptLorebookOverrides || typeof state.sidePromptLorebookOverrides !== 'object') {
+        state.sidePromptLorebookOverrides = {};
+    }
+
+    const target = String(lorebookName || '').trim();
+    if (target) {
+        state.sidePromptLorebookOverrides[key] = target;
+    } else {
+        delete state.sidePromptLorebookOverrides[key];
+        if (Object.keys(state.sidePromptLorebookOverrides).length === 0) {
+            delete state.sidePromptLorebookOverrides;
+        }
+    }
+    saveMetadataDebounced();
+}
+
+function getSidePromptLorebookTargetInfo(template = null) {
+    const key = String(template?.key || '').trim();
+    const chatOverrides = getChatSidePromptLorebookOverrides();
+    const hasChatOverride = key && Object.hasOwn(chatOverrides, key);
+    const chatOverride = hasChatOverride ? String(chatOverrides[key] || '').trim() : '';
+    const templateOverride = String(template?.settings?.lorebook?.targetLorebookName || '').trim();
+    const memoryLorebook = getSidePromptMemoryLorebookName();
+
+    if (hasChatOverride && chatOverride === '__memory__') {
+        return { value: memoryLorebook, sourceLabel: 'Chat override' };
+    }
+    if (hasChatOverride && chatOverride && Array.isArray(world_names) && world_names.includes(chatOverride)) {
+        return { value: chatOverride, sourceLabel: 'Chat override' };
+    }
+    if (hasChatOverride) {
+        return { value: memoryLorebook, sourceLabel: 'Chat override' };
+    }
+    if (templateOverride && Array.isArray(world_names) && world_names.includes(templateOverride)) {
+        return { value: templateOverride, sourceLabel: 'Side prompt setting' };
+    }
+
+    return { value: memoryLorebook, sourceLabel: 'Memory book default' };
+}
+
+function getSidePromptLorebookSelectValue(template = null) {
+    const key = String(template?.key || '').trim();
+    const chatOverrides = getChatSidePromptLorebookOverrides();
+    const hasChatOverride = key && Object.hasOwn(chatOverrides, key);
+    const chatOverride = hasChatOverride ? String(chatOverrides[key] || '').trim() : '';
+    if (hasChatOverride && chatOverride === '__memory__') {
+        return '__memory__';
+    }
+    if (hasChatOverride && chatOverride && Array.isArray(world_names) && world_names.includes(chatOverride)) {
+        return chatOverride;
+    }
+    if (hasChatOverride) {
+        return '__memory__';
+    }
+
+    const templateOverride = String(template?.settings?.lorebook?.targetLorebookName || '').trim();
+    if (templateOverride && Array.isArray(world_names) && world_names.includes(templateOverride)) {
+        return templateOverride;
+    }
+
+    return '__memory__';
+}
+
+function buildSidePromptLorebookTargetHtml(template = null) {
+    const targetInfo = getSidePromptLorebookTargetInfo(template);
+    const selectedValue = getSidePromptLorebookSelectValue(template);
+    const memoryLorebook = getSidePromptMemoryLorebookName();
+    const memoryLabel = memoryLorebook
+        ? `Same as memory lorebook (${memoryLorebook})`
+        : 'Same as memory lorebook (none selected)';
+    const options = [
+        `<option value="__memory__" ${selectedValue === '__memory__' ? 'selected' : ''}>${escapeHtml(memoryLabel)}</option>`,
+        ...((Array.isArray(world_names) ? world_names : []).map(name => (
+            `<option value="${escapeHtml(name)}" ${selectedValue === name ? 'selected' : ''}>${escapeHtml(name)}</option>`
+        ))),
+    ].join('');
+
+    return `
+        <div class="world_entry_form_control">
+            <h4>Lorebook Target</h4>
+            <div class="info-block">
+                <small class="opacity50p">Current Target:</small>
+                <h5>${escapeHtml(targetInfo.value || 'None selected')}</h5>
+                <small class="opacity50p">Source:</small>
+                <h5>${escapeHtml(targetInfo.sourceLabel)}</h5>
+            </div>
+            <label for="stmb-sp-editor-lorebook-target">
+                <h5 style="margin: 8px 0 4px 0;">Save side prompt entry to:</h5>
+                <select id="stmb-sp-editor-lorebook-target" class="text_pole" data-original-value="${escapeHtml(selectedValue)}">
+                    ${options}
+                </select>
+            </label>
+            <small class="opacity70p">Changing this target will ask whether to save it for this chat only or for this side prompt going forward.</small>
+        </div>
+    `;
+}
+
+async function promptSidePromptLorebookTargetScope() {
+    const popup = new Popup(DOMPurify.sanitize(`
+        <h3>Save Lorebook Target</h3>
+        <p>Save this side prompt lorebook target for this chat only, or for this side prompt going forward?</p>
+    `), POPUP_TYPE.TEXT, '', {
+        okButton: false,
+        cancelButton: 'Cancel',
+        customButtons: [
+            { text: 'This chat only', result: POPUP_RESULT.CUSTOM1, appendAtEnd: true },
+            { text: 'This side prompt going forward', result: POPUP_RESULT.CUSTOM2, appendAtEnd: true },
+        ],
+    });
+    const result = await popup.show();
+    if (result === POPUP_RESULT.CUSTOM1) return 'chat';
+    if (result === POPUP_RESULT.CUSTOM2) return 'template';
+    return null;
+}
+
 function buildSidePromptEditorHtml(template = null, options = {}) {
     const mode = String(options.mode || (template ? 'edit' : 'new'));
     const triggers = template?.triggers && typeof template.triggers === 'object' ? template.triggers : {};
@@ -3369,6 +3506,7 @@ function buildSidePromptEditorHtml(template = null, options = {}) {
                     <input id="stmb-sp-editor-keywords" class="text_pole" value="${escapeHtml(String(lorebook.entryKeywords || ''))}" placeholder="Optional comma-separated keywords" title="You can only use ST standard macros or macros already defined in Prompt or Response Format.">
                 </label>
             </div>
+            ${buildSidePromptLorebookTargetHtml(template)}
             <div class="world_entry_form_control">
                 <div class="flex-container" style="gap:12px; flex-wrap: wrap;">
                     <label>
@@ -3482,7 +3620,7 @@ function attachSidePromptEditorHandlers(dialog) {
     orderManual?.addEventListener('change', syncOrderVisibility);
 }
 
-function readSidePromptEditorPayload(dialog, template = null) {
+async function readSidePromptEditorPayload(dialog, template = null) {
     const prompt = String(dialog?.querySelector('#stmb-sp-editor-prompt')?.value || '').trim();
     if (!prompt) {
         throw new Error('Prompt cannot be empty');
@@ -3524,6 +3662,19 @@ function readSidePromptEditorPayload(dialog, template = null) {
     const position = Number(dialog?.querySelector('#stmb-sp-editor-lorebook-position')?.value || 0);
     const manualOrder = Boolean(dialog?.querySelector('#stmb-sp-editor-order-manual')?.checked);
     const orderValue = Number(dialog?.querySelector('#stmb-sp-editor-order-value')?.value || 100);
+    const targetSelect = dialog?.querySelector('#stmb-sp-editor-lorebook-target');
+    const selectedTarget = String(targetSelect?.value || '__memory__').trim() || '__memory__';
+    const originalTarget = String(targetSelect?.dataset?.originalValue || '__memory__').trim() || '__memory__';
+    const targetChanged = selectedTarget !== originalTarget;
+    const targetScope = targetChanged ? await promptSidePromptLorebookTargetScope() : null;
+    if (targetChanged && !targetScope) {
+        throw new Error('__STMB_TARGET_SCOPE_CANCELLED__');
+    }
+    const selectedTargetName = selectedTarget === '__memory__' ? '' : selectedTarget;
+    let targetLorebookName = String(lorebook.targetLorebookName || '').trim();
+    if (targetChanged && targetScope === 'template') {
+        targetLorebookName = selectedTargetName;
+    }
     const lorebook = {
         constVectMode: String(dialog?.querySelector('#stmb-sp-editor-lorebook-mode')?.value || 'link'),
         position: Number.isFinite(position) ? position : 0,
@@ -3546,6 +3697,9 @@ function readSidePromptEditorPayload(dialog, template = null) {
     }
     if (keywords) {
         lorebook.entryKeywords = keywords;
+    }
+    if (targetLorebookName) {
+        lorebook.targetLorebookName = targetLorebookName;
     }
 
     const settings = {
@@ -3571,6 +3725,12 @@ function readSidePromptEditorPayload(dialog, template = null) {
             triggers,
         },
         strippedAutoTriggers: validation.strippedAutoTriggers,
+        targetOverride: targetChanged
+            ? {
+                scope: targetScope,
+                value: selectedTarget,
+            }
+            : null,
     };
 }
 
@@ -3592,8 +3752,13 @@ async function openSidePromptEditorPopup({ templateKey = null } = {}) {
             }
 
             try {
-                const { payload, strippedAutoTriggers } = readSidePromptEditorPayload(popupInstance.dlg, template);
+                const { payload, strippedAutoTriggers, targetOverride } = await readSidePromptEditorPayload(popupInstance.dlg, template);
                 const savedKey = await upsertTemplate(payload);
+                if (targetOverride?.scope === 'chat') {
+                    setChatSidePromptLorebookOverride(savedKey, targetOverride.value);
+                } else if (targetOverride?.scope === 'template') {
+                    setChatSidePromptLorebookOverride(savedKey, '');
+                }
                 popupInstance.stmbSavedKey = savedKey;
                 popupInstance.stmbStrippedAutoTriggers = strippedAutoTriggers;
                 await refreshSidePromptCache();
@@ -3606,6 +3771,9 @@ async function openSidePromptEditorPopup({ templateKey = null } = {}) {
                 }
                 return true;
             } catch (error) {
+                if (error?.message === '__STMB_TARGET_SCOPE_CANCELLED__') {
+                    return false;
+                }
                 toastr.error(error?.message || 'Failed to save side prompt', 'STMB');
                 return false;
             }
@@ -7254,6 +7422,107 @@ async function nextMemoryCommand() {
     return '';
 }
 
+async function stmbCatchupCommand(namedArgs = {}) {
+    try {
+        const sceneContext = buildStmbSceneContext();
+        const chatKey = getStmbChatKey(sceneContext);
+        if (hasActiveStmbTasks() || hasActiveStmbJobs(chatKey)) {
+            toastr.info('Memory creation is already in progress', 'STMB');
+            return '';
+        }
+
+        if (!validateMemoryCreationContext()) {
+            return '';
+        }
+
+        let parsed;
+        try {
+            parsed = parseStmbCatchupCommandArgs(namedArgs);
+        } catch (error) {
+            toastr.error(error?.message || 'Missing or invalid arguments. Use: /stmb-catchup interval:<chunk size> start:<message id> end:<message id>', 'STMB');
+            return '';
+        }
+
+        const rangeInfo = await fetchStmbChatRangeInfo({
+            rangeStart: parsed.start,
+            rangeEnd: parsed.end,
+            sceneContext,
+        });
+        let chunks;
+        try {
+            chunks = buildStmbCatchupChunks({
+                interval: parsed.interval,
+                start: parsed.start,
+                end: parsed.end,
+                lastAvailableMessageId: Number(rangeInfo?.lastAvailableMessageId),
+                missingRanges: rangeInfo?.missingRanges || [],
+            });
+        } catch (error) {
+            toastr.error(error?.message || 'Invalid /stmb-catchup range', 'STMB');
+            return '';
+        }
+
+        const lorebookName = await ensureLorebookName();
+        const profile = getActiveStmbProfile(stmbSettings, stmbSettings.defaultProfile ?? null);
+        if (!validateConnectionProfilePreflight(profile)) {
+            return '';
+        }
+
+        const tokenThreshold = Math.max(1000, Math.trunc(Number(getModuleSettings().tokenWarningThreshold ?? 30000)));
+        const queuedProfile = buildEffectiveMemoryProfile(profile);
+        const compiledChunks = [];
+        for (const chunk of chunks) {
+            const compiledScene = (await captureStmbSceneRange(chunk, {
+                skipSystemMessages: !getModuleSettings().unhideBeforeMemory,
+                sceneContext,
+            }))?.compiledScene;
+            const estimatedTokens = await getTokenCountAsync(compiledSceneToText(compiledScene));
+            if (estimatedTokens > tokenThreshold) {
+                toastr.error(
+                    `/stmb-catchup chunk ${chunk.sceneStart}-${chunk.sceneEnd} is estimated at ${estimatedTokens} tokens, above the token warning threshold (${tokenThreshold}). Use a smaller interval or increase the threshold.`,
+                    'STMB',
+                );
+                return '';
+            }
+            compiledChunks.push({ ...chunk, compiledScene, estimatedTokens });
+        }
+
+        ensureStmbJobExecutorsRegistered();
+        for (let index = 0; index < compiledChunks.length; index++) {
+            const chunk = compiledChunks[index];
+            const range = {
+                sceneStart: chunk.sceneStart,
+                sceneEnd: chunk.sceneEnd,
+            };
+            enqueueStmbJob({
+                type: 'memory',
+                range,
+                lorebookName,
+                sceneContext,
+                characterName: chunk.compiledScene?.metadata?.characterName || '',
+                chatTitle: chunk.compiledScene?.metadata?.chatId || '',
+                title: `Catch-up ${index + 1}/${compiledChunks.length}`,
+                detail: `Messages ${range.sceneStart}-${range.sceneEnd}`,
+                payload: {
+                    compiledScene: chunk.compiledScene,
+                    range,
+                    lorebookName,
+                    profile: queuedProfile,
+                    summaryCount: 0,
+                    keepSceneMarkers: true,
+                    source: 'catchup',
+                },
+            });
+        }
+
+        toastr.info(`STMB catch-up queued: ${compiledChunks.length} chunk${compiledChunks.length === 1 ? '' : 's'}.`, 'STMB');
+    } catch (error) {
+        showSlashCommandError(error?.message || 'Failed to run /stmb-catchup.', error);
+    }
+
+    return '';
+}
+
 async function sidePromptCommand(_, rawInput) {
     const raw = String(rawInput || '').trim();
     if (!raw) {
@@ -7439,6 +7708,32 @@ function registerSlashCommands() {
         name: 'nextmemory',
         callback: nextMemoryCommand,
         helpString: 'Create memory from end of last memory to current message',
+    }));
+
+    SlashCommandParser.addCommandObject(SlashCommand.fromProps({
+        name: 'stmb-catchup',
+        callback: stmbCatchupCommand,
+        namedArgumentList: [
+            SlashCommandNamedArgument.fromProps({
+                name: 'interval',
+                description: 'Chunk size (number of messages per memory)',
+                typeList: [ARGUMENT_TYPE.NUMBER],
+                isRequired: true,
+            }),
+            SlashCommandNamedArgument.fromProps({
+                name: 'start',
+                description: 'Starting message ID',
+                typeList: [ARGUMENT_TYPE.NUMBER],
+                isRequired: true,
+            }),
+            SlashCommandNamedArgument.fromProps({
+                name: 'end',
+                description: 'Ending message ID',
+                typeList: [ARGUMENT_TYPE.NUMBER],
+                isRequired: true,
+            }),
+        ],
+        helpString: 'Create scene memories over a message range in chunks. Usage: /stmb-catchup interval:50 start:0 end:600',
     }));
 
     SlashCommandParser.addCommandObject(SlashCommand.fromProps({
