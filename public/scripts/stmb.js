@@ -6783,7 +6783,9 @@ async function executeMemoryJob(job, context) {
     context.setState('capturing_scene', {
         detail: `Messages ${range.sceneStart}-${range.sceneEnd}`,
     });
-    const skipSystemMessages = payload.skipSystemMessages ?? !requestSettings.moduleSettings?.unhideBeforeMemory;
+    const skipSystemMessages = typeof payload.skipSystemMessages === 'boolean'
+        ? payload.skipSystemMessages
+        : !requestSettings.moduleSettings?.unhideBeforeMemory;
     const sceneCapture = payload.compiledScene
         ? { compiledScene: structuredClone(payload.compiledScene) }
         : await captureStmbSceneRange(range, {
@@ -6793,10 +6795,13 @@ async function executeMemoryJob(job, context) {
     const compiledScene = sceneCapture?.compiledScene;
 
     if (payload.source === 'catchup') {
-        const tokenThreshold = Math.max(
-            1000,
-            Math.trunc(Number(payload.tokenWarningThreshold ?? requestSettings.moduleSettings?.tokenWarningThreshold ?? 30000)),
-        );
+        const rawTokenThreshold = payload.tokenWarningThreshold
+            ?? requestSettings.moduleSettings?.tokenWarningThreshold
+            ?? 30000;
+        const parsedTokenThreshold = Number(rawTokenThreshold);
+        const tokenThreshold = Number.isFinite(parsedTokenThreshold)
+            ? Math.max(1000, Math.trunc(parsedTokenThreshold))
+            : 30000;
         const estimatedTokens = await getTokenCountAsync(compiledSceneToText(compiledScene));
         if (estimatedTokens > tokenThreshold) {
             throw new Error(
