@@ -3303,7 +3303,7 @@ function getSidePromptMemoryLorebookName() {
 }
 
 function getChatSidePromptLorebookOverrides() {
-    const state = getStmbState();
+    const state = getPersistedStmbState();
     return state.sidePromptLorebookOverrides && typeof state.sidePromptLorebookOverrides === 'object'
         ? state.sidePromptLorebookOverrides
         : {};
@@ -3315,7 +3315,7 @@ function setChatSidePromptLorebookOverride(templateKey, lorebookName) {
         return;
     }
 
-    const state = getStmbState();
+    const state = getPersistedStmbState();
     if (!state.sidePromptLorebookOverrides || typeof state.sidePromptLorebookOverrides !== 'object') {
         state.sidePromptLorebookOverrides = {};
     }
@@ -6783,13 +6783,27 @@ async function executeMemoryJob(job, context) {
     context.setState('capturing_scene', {
         detail: `Messages ${range.sceneStart}-${range.sceneEnd}`,
     });
+    const skipSystemMessages = payload.skipSystemMessages ?? !requestSettings.moduleSettings?.unhideBeforeMemory;
     const sceneCapture = payload.compiledScene
         ? { compiledScene: structuredClone(payload.compiledScene) }
         : await captureStmbSceneRange(range, {
-            skipSystemMessages: !requestSettings.moduleSettings?.unhideBeforeMemory,
+            skipSystemMessages,
             sceneContext: job?.sceneContext || buildStmbSceneContext(),
         });
     const compiledScene = sceneCapture?.compiledScene;
+
+    if (payload.source === 'catchup') {
+        const tokenThreshold = Math.max(
+            1000,
+            Math.trunc(Number(payload.tokenWarningThreshold ?? requestSettings.moduleSettings?.tokenWarningThreshold ?? 30000)),
+        );
+        const estimatedTokens = await getTokenCountAsync(compiledSceneToText(compiledScene));
+        if (estimatedTokens > tokenThreshold) {
+            throw new Error(
+                `/stmb-catchup chunk ${range.sceneStart}-${range.sceneEnd} is estimated at ${estimatedTokens} tokens, above the token warning threshold (${tokenThreshold}). Use a smaller interval or increase the threshold.`,
+            );
+        }
+    }
 
     if (!requestSettings.moduleSettings?.allowSceneOverlap) {
         const lorebookData = await loadWorldInfo(lorebookName) || { entries: {} };
@@ -7469,27 +7483,12 @@ async function stmbCatchupCommand(namedArgs = {}) {
         }
 
         const tokenThreshold = Math.max(1000, Math.trunc(Number(getModuleSettings().tokenWarningThreshold ?? 30000)));
+        const skipSystemMessages = !getModuleSettings().unhideBeforeMemory;
         const queuedProfile = buildEffectiveMemoryProfile(profile);
-        const compiledChunks = [];
-        for (const chunk of chunks) {
-            const compiledScene = (await captureStmbSceneRange(chunk, {
-                skipSystemMessages: !getModuleSettings().unhideBeforeMemory,
-                sceneContext,
-            }))?.compiledScene;
-            const estimatedTokens = await getTokenCountAsync(compiledSceneToText(compiledScene));
-            if (estimatedTokens > tokenThreshold) {
-                toastr.error(
-                    `/stmb-catchup chunk ${chunk.sceneStart}-${chunk.sceneEnd} is estimated at ${estimatedTokens} tokens, above the token warning threshold (${tokenThreshold}). Use a smaller interval or increase the threshold.`,
-                    'STMB',
-                );
-                return '';
-            }
-            compiledChunks.push({ ...chunk, compiledScene, estimatedTokens });
-        }
 
         ensureStmbJobExecutorsRegistered();
-        for (let index = 0; index < compiledChunks.length; index++) {
-            const chunk = compiledChunks[index];
+        for (let index = 0; index < chunks.length; index++) {
+            const chunk = chunks[index];
             const range = {
                 sceneStart: chunk.sceneStart,
                 sceneEnd: chunk.sceneEnd,
@@ -7499,23 +7498,24 @@ async function stmbCatchupCommand(namedArgs = {}) {
                 range,
                 lorebookName,
                 sceneContext,
-                characterName: chunk.compiledScene?.metadata?.characterName || '',
-                chatTitle: chunk.compiledScene?.metadata?.chatId || '',
-                title: `Catch-up ${index + 1}/${compiledChunks.length}`,
+                characterName: sceneContext?.characterName || '',
+                chatTitle: sceneContext?.chatId || '',
+                title: `Catch-up ${index + 1}/${chunks.length}`,
                 detail: `Messages ${range.sceneStart}-${range.sceneEnd}`,
                 payload: {
-                    compiledScene: chunk.compiledScene,
                     range,
                     lorebookName,
                     profile: queuedProfile,
                     summaryCount: 0,
                     keepSceneMarkers: true,
                     source: 'catchup',
+                    skipSystemMessages,
+                    tokenWarningThreshold: tokenThreshold,
                 },
             });
         }
 
-        toastr.info(`STMB catch-up queued: ${compiledChunks.length} chunk${compiledChunks.length === 1 ? '' : 's'}.`, 'STMB');
+        toastr.info(`STMB catch-up queued: ${chunks.length} chunk${chunks.length === 1 ? '' : 's'}.`, 'STMB');
     } catch (error) {
         showSlashCommandError(error?.message || 'Failed to run /stmb-catchup.', error);
     }
