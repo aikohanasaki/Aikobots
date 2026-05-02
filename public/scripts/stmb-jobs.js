@@ -63,6 +63,7 @@ function cloneJobForView(job = {}) {
         id: String(job.id || ''),
         chatKey: String(job.chatKey || ''),
         type: String(job.type || 'memory'),
+        dependsOnJobId: String(job.dependsOnJobId || ''),
         range: job.range ? { ...job.range } : null,
         lorebookName: String(job.lorebookName || ''),
         profileIndex: Number.isFinite(Number(job.profileIndex)) ? Number(job.profileIndex) : null,
@@ -398,6 +399,57 @@ function removeFromQueueById(store, jobId) {
     return false;
 }
 
+function findJobInStoreById(store, jobId) {
+    const targetId = String(jobId || '').trim();
+    if (!targetId) {
+        return null;
+    }
+
+    if (String(store?.runningJob?.id || '') === targetId) {
+        return store.runningJob;
+    }
+
+    const queuedJob = Array.isArray(store?.queue)
+        ? store.queue.find(job => String(job?.id || '') === targetId)
+        : null;
+    if (queuedJob) {
+        return queuedJob;
+    }
+
+    return Array.isArray(store?.recentHistory)
+        ? store.recentHistory.find(job => String(job?.id || '') === targetId) || null
+        : null;
+}
+
+function getBlockedDependencyDetail(store, job = {}) {
+    const dependencyId = String(job?.dependsOnJobId || job?.payload?.dependsOnJobId || '').trim();
+    if (!dependencyId) {
+        return '';
+    }
+
+    const dependencyJob = findJobInStoreById(store, dependencyId);
+    const dependencyState = String(dependencyJob?.state || '').trim();
+    if (dependencyState === 'completed') {
+        return '';
+    }
+
+    if (TERMINAL_JOB_STATES.has(dependencyState)) {
+        return `${getJobTypeLabel(dependencyJob?.type || 'memory')} job ${dependencyState}.`;
+    }
+
+    return dependencyJob ? 'Waiting for prerequisite job.' : 'Prerequisite job was not found.';
+}
+
+function cancelQueuedJob(store, job, detail) {
+    job.state = 'canceled';
+    job.detail = String(detail || 'Canceled by dependency.');
+    job.finishedAt = Date.now();
+    markJobUpdated(job, job.finishedAt);
+    store.recentHistory.unshift(cloneJobForView(job));
+    sortRecentHistory(store.recentHistory);
+    touchStore(store);
+}
+
 async function runNextJob(chatKey) {
     const store = ensureChatStore(chatKey);
     if (store.runningJob || store.queue.length === 0) {
@@ -406,6 +458,28 @@ async function runNextJob(chatKey) {
     }
 
     const nextJob = store.queue.shift();
+    const dependencyDetail = getBlockedDependencyDetail(store, nextJob);
+    if (dependencyDetail && dependencyDetail !== 'Waiting for prerequisite job.') {
+        cancelQueuedJob(store, nextJob, dependencyDetail);
+        queueMicrotask(() => {
+            runNextJob(chatKey).catch(error => {
+                console.warn('STMB client job runner failed', error);
+            });
+        });
+        return;
+    }
+    if (dependencyDetail === 'Waiting for prerequisite job.') {
+        store.queue.push(nextJob);
+        touchStore(store);
+        syncRenderTimer();
+        queueMicrotask(() => {
+            runNextJob(chatKey).catch(error => {
+                console.warn('STMB client job runner failed', error);
+            });
+        });
+        return;
+    }
+
     nextJob.startedAt = Date.now();
     nextJob.state = ACTIVE_JOB_STATES.has(nextJob.state) ? nextJob.state : 'queued';
     nextJob.abortController = new AbortController();
@@ -517,6 +591,7 @@ function normalizeJobInput(input = {}) {
         id: String(input.id || nextJobId()),
         chatKey,
         type: String(input.type || 'memory'),
+        dependsOnJobId: String(input.dependsOnJobId || input.payload?.dependsOnJobId || ''),
         range: input.range ? structuredClone(input.range) : null,
         lorebookName: String(input.lorebookName || ''),
         profileIndex: Number.isFinite(Number(input.profileIndex)) ? Number(input.profileIndex) : null,

@@ -1,6 +1,7 @@
 import { substituteParamsExtended } from '../script.js';
 
 const MACRO_TOKEN_REGEX = /{{[^{}]+}}/g;
+const MACRO_TOKEN_EXACT_REGEX = /^\{\{[^{}]+\}\}$/;
 
 function uniqueExact(values = []) {
     const seen = new Set();
@@ -16,7 +17,7 @@ function uniqueExact(values = []) {
 function toRuntimeMacroEnv(runtimeMacros = {}) {
     const environment = {};
     for (const [token, value] of Object.entries(runtimeMacros || {})) {
-        if (typeof token !== 'string' || !token.startsWith('{{') || !token.endsWith('}}')) continue;
+        if (!isValidMacroToken(token)) continue;
         environment[token.slice(2, -2)] = value ?? '';
     }
     return environment;
@@ -49,6 +50,10 @@ function parseQuotedSegment(input, start) {
 
 export function extractMacroTokens(text) {
     return uniqueExact(String(text || '').match(MACRO_TOKEN_REGEX) || []);
+}
+
+export function isValidMacroToken(token) {
+    return typeof token === 'string' && MACRO_TOKEN_EXACT_REGEX.test(token);
 }
 
 export function applySidePromptMacros(text, runtimeMacros = {}) {

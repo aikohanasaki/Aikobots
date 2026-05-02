@@ -3,6 +3,7 @@ import {
     applySidePromptMacros,
     collectTemplateRuntimeMacros,
     hasTemplateRuntimeMacros,
+    isValidMacroToken,
 } from './stmb-sideprompt-macros.js';
 
 const SIDE_PROMPTS_FILE = 'stmb-side-prompts.json';
@@ -31,7 +32,7 @@ function normalizeSetItem(item) {
     const runtimeMacros = {};
     if (item?.runtimeMacros && typeof item.runtimeMacros === 'object' && !Array.isArray(item.runtimeMacros)) {
         for (const [token, value] of Object.entries(item.runtimeMacros)) {
-            if (typeof token === 'string' && token.startsWith('{{') && token.endsWith('}}')) {
+            if (isValidMacroToken(token)) {
                 runtimeMacros[token] = String(value ?? '');
             }
         }
@@ -156,7 +157,7 @@ function validateSidePromptsFileV2(data) {
                 if (item.runtimeMacros != null) {
                     if (typeof item.runtimeMacros !== 'object' || Array.isArray(item.runtimeMacros)) return false;
                     for (const [token, value] of Object.entries(item.runtimeMacros)) {
-                        if (typeof token !== 'string' || !token.startsWith('{{') || !token.endsWith('}}')) return false;
+                        if (!isValidMacroToken(token)) return false;
                         if (typeof value !== 'string') return false;
                     }
                 }

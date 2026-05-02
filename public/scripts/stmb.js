@@ -83,6 +83,7 @@ import {
     resolveSelectedSummarySourceEntries,
 } from './stmb-summary.js';
 import {
+    buildQueuedAfterMemorySidePromptJobs,
     evaluateTrackers,
     firstRunInitSidePrompts,
     enqueueAfterMemorySidePromptJobs,
@@ -122,6 +123,7 @@ import {
     collectTemplateRuntimeMacros,
     extractMacroTokens,
     formatQuotedSidePromptName,
+    isValidMacroToken,
     parseSidePromptCommandInput,
 } from './stmb-sideprompt-macros.js';
 import {
@@ -3558,7 +3560,7 @@ function readSetEditorItemFromPromptControl(promptControl) {
             throw new Error('Runtime macros must be a JSON object.');
         }
         for (const [token, value] of Object.entries(runtimeMacros)) {
-            if (!token.startsWith('{{') || !token.endsWith('}}')) {
+            if (!isValidMacroToken(token)) {
                 throw new Error(`Invalid macro token "${token}". Use {{name}} format.`);
             }
             runtimeMacros[token] = String(value ?? '');
@@ -7335,12 +7337,6 @@ async function executeMemoryJob(job, context) {
 
         throwIfStmbAborted(context.signal);
         context.setState('post_save', { detail: 'Running post-save actions' });
-        await enqueueAfterMemorySidePromptJobs(compiledScene, requestSettings, profile, {
-            lorebookName,
-            range,
-            sceneContext: job?.sceneContext || buildStmbSceneContext(),
-            signal: context.signal,
-        });
         await maybePromptAutoConsolidation(1, {
             sceneContext: job?.sceneContext || null,
             lorebookName,
@@ -7356,6 +7352,10 @@ function ensureStmbJobExecutorsRegistered() {
     registerStmbJobExecutor('memory', executeMemoryJob);
     registerStmbJobExecutor('consolidation', executeConsolidationJob);
     stmbJobExecutorsRegistered = true;
+}
+
+function createMemoryJobId() {
+    return `stmb-memory-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 }
 
 async function executeMemoryCreationFromRange(range, options = {}) {
@@ -7394,7 +7394,18 @@ async function executeMemoryCreationFromRange(range, options = {}) {
         return null;
     }
     ensureStmbJobExecutorsRegistered();
+    const memoryJobId = createMemoryJobId();
+    const requestSettings = buildMemoryRequestSettings(effectiveSettings.summaryCount);
+    const afterMemoryJobs = await buildQueuedAfterMemorySidePromptJobs({
+        lorebookName,
+        compiledScene,
+        range,
+        settings: requestSettings,
+        profile: effectiveSettings.profileSettings,
+        sceneContext,
+    });
     enqueueStmbJob({
+        id: memoryJobId,
         type: 'memory',
         range,
         lorebookName,
@@ -7412,6 +7423,16 @@ async function executeMemoryCreationFromRange(range, options = {}) {
             source: options.source || 'memory',
         },
     });
+    for (const job of afterMemoryJobs) {
+        enqueueStmbJob({
+            ...job,
+            dependsOnJobId: memoryJobId,
+            payload: {
+                ...(job.payload || {}),
+                dependsOnJobId: memoryJobId,
+            },
+        });
+    }
     return {
         queued: true,
         range,
