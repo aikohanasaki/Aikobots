@@ -11583,7 +11583,7 @@ function getManageChatsHtmlDirectCharacterAvatar(rowContext, fallbackAvatar) {
 }
 
 function getManageChatsHtmlOriginalAvatarUrl(originalAvatar) {
-    const avatar = String(originalAvatar || '').trim();
+    const avatar = typeof originalAvatar === 'string' ? originalAvatar.trim() : '';
     if (!avatar) {
         return '';
     }
@@ -11596,7 +11596,7 @@ function getManageChatsHtmlOriginalAvatarUrl(originalAvatar) {
 }
 
 function getManageChatsHtmlMessageAvatarUrl(rowContext, message, fallbackAvatar) {
-    const forceAvatar = String(message.force_avatar || '').trim();
+    const forceAvatar = typeof message?.force_avatar === 'string' ? message.force_avatar.trim() : '';
     const originalAvatar = getManageChatsHtmlOriginalAvatarUrl(message.original_avatar);
 
     if (message.is_user) {
