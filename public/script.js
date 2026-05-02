@@ -11565,10 +11565,68 @@ function getManageChatsHtmlVisibleMessages(messages) {
         : [];
 }
 
+function isManageChatsDirectCharacterRow(rowContext) {
+    return rowContext?.rowType === 'live-character' || rowContext?.rowType === 'orphan-character';
+}
+
+function isManageChatsGroupRow(rowContext) {
+    return rowContext?.rowType === 'live-group' || rowContext?.rowType === 'orphan-group';
+}
+
+function getManageChatsHtmlDirectCharacterAvatar(rowContext, fallbackAvatar) {
+    if (rowContext?.rowType === 'orphan-character' && rowContext.orphanKey) {
+        return getThumbnailUrl('avatar', makeOrphanAvatarUrl(rowContext.orphanKey));
+    }
+
+    const ownerDetails = getManageChatsOwnerDetails(rowContext?.ownerContext);
+    return ownerDetails.ownerContext ? ownerDetails.avatarImgURL || fallbackAvatar : fallbackAvatar;
+}
+
+function getManageChatsHtmlOriginalAvatarUrl(originalAvatar) {
+    const avatar = String(originalAvatar || '').trim();
+    if (!avatar) {
+        return '';
+    }
+
+    if (/^(?:https?:|data:|blob:|file:)/i.test(avatar) || avatar.startsWith('/') || avatar.startsWith('img/')) {
+        return avatar;
+    }
+
+    return getThumbnailUrl('avatar', avatar);
+}
+
 function getManageChatsHtmlMessageAvatarUrl(rowContext, message, fallbackAvatar) {
+    const forceAvatar = String(message.force_avatar || '').trim();
+    const originalAvatar = getManageChatsHtmlOriginalAvatarUrl(message.original_avatar);
+
+    if (message.is_user) {
+        return toManageChatsAbsoluteAssetUrl(forceAvatar || default_user_avatar || fallbackAvatar) || fallbackAvatar;
+    }
+
+    if (message.is_system) {
+        return toManageChatsAbsoluteAssetUrl(forceAvatar || system_avatar || fallbackAvatar) || fallbackAvatar;
+    }
+
+    if (isManageChatsDirectCharacterRow(rowContext)) {
+        return toManageChatsAbsoluteAssetUrl(
+            getManageChatsHtmlDirectCharacterAvatar(rowContext, fallbackAvatar)
+            || originalAvatar
+            || forceAvatar
+            || fallbackAvatar,
+        ) || fallbackAvatar;
+    }
+
+    if (isManageChatsGroupRow(rowContext)) {
+        return toManageChatsAbsoluteAssetUrl(
+            originalAvatar
+            || forceAvatar
+            || fallbackAvatar,
+        ) || fallbackAvatar;
+    }
+
     return toManageChatsAbsoluteAssetUrl(
-        message.force_avatar
-        || (message.original_avatar ? getThumbnailUrl('avatar', message.original_avatar) : '')
+        originalAvatar
+        || forceAvatar
         || (message.is_system ? system_avatar : '')
         || (message.is_user ? default_user_avatar : '')
         || fallbackAvatar,
