@@ -7075,6 +7075,21 @@ body:not(.movingUI) .drawer-content.maximized {
     color: var(--SmartThemeEmColor);
 }
 
+.stmb-sideprompt-set-editor-popup #stmb-sp-set-editor-items tr[data-set-item-id] {
+    display: table-row;
+}
+
+.stmb-sideprompt-set-editor-popup #stmb-sp-set-editor-items td {
+    display: table-cell;
+}
+
+.stmb-sideprompt-set-editor-popup .stmb-sp-set-item-prompt,
+.stmb-sideprompt-set-editor-popup .stmb-sp-set-item-label,
+.stmb-sideprompt-set-editor-popup .stmb-sp-set-item-macros {
+    box-sizing: border-box;
+    width: 100%;
+}
+
 .stmb-jobs-topbar {
     position: relative;
     display: inline-flex;

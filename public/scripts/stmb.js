@@ -3465,6 +3465,19 @@ function buildSetEditorRowHtml(templates = [], item = {}) {
     `;
 }
 
+function appendSetEditorRow(tbody, templates = [], item = {}) {
+    if (!tbody) {
+        return;
+    }
+
+    const template = document.createElement('template');
+    template.innerHTML = DOMPurify.sanitize(`<table><tbody>${buildSetEditorRowHtml(templates, item)}</tbody></table>`);
+    const row = template.content.querySelector('tr[data-set-item-id]');
+    if (row) {
+        tbody.append(row);
+    }
+}
+
 function buildSidePromptSetEditorHtml(set = null, templates = []) {
     const rows = (set?.items?.length ? set.items : [{}])
         .map(item => buildSetEditorRowHtml(templates, item))
@@ -3577,9 +3590,7 @@ async function openSidePromptSetEditorPopup({ setKey = null } = {}) {
         }
         if (target.closest('#stmb-sp-set-add-row')) {
             const tbody = popup.dlg?.querySelector('#stmb-sp-set-editor-items');
-            if (tbody) {
-                tbody.insertAdjacentHTML('beforeend', DOMPurify.sanitize(buildSetEditorRowHtml(templates, {})));
-            }
+            appendSetEditorRow(tbody, templates, {});
             return;
         }
         const removeButton = target.closest('.stmb-sp-set-item-remove');
