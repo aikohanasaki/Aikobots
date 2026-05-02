@@ -3434,9 +3434,16 @@ async function refreshSidePromptSetControls(dialog) {
 
 function buildSetEditorRowHtml(templates = [], item = {}) {
     const rowId = String(item.id || `draft-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`);
+    const currentPromptKey = String(item.promptKey || '');
+    const hasCurrentTemplate = currentPromptKey
+        ? templates.some(template => template.key === currentPromptKey)
+        : false;
     const options = [
         '<option value="">Select side prompt...</option>',
-        ...templates.map(template => `<option value="${escapeHtml(template.key)}" ${String(item.promptKey || '') === template.key ? 'selected' : ''}>${escapeHtml(template.name || template.key)}</option>`),
+        ...(hasCurrentTemplate || !currentPromptKey
+            ? []
+            : [`<option value="${escapeHtml(currentPromptKey)}" selected>[Missing] ${escapeHtml(currentPromptKey)}</option>`]),
+        ...templates.map(template => `<option value="${escapeHtml(template.key)}" ${currentPromptKey === template.key ? 'selected' : ''}>${escapeHtml(template.name || template.key)}</option>`),
     ].join('');
     const macros = JSON.stringify(item.runtimeMacros || {}, null, 2);
 
