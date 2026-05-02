@@ -9867,7 +9867,7 @@ export async function saveChat({ chatName, withMetadata, mesId, force = false, s
         if (syncLoadedMessages) {
             const loadedRange = getContiguousLoadedChatRangeForSave();
             if (!loadedRange) {
-                toastr.warning(t`Loaded chat messages are not contiguous. Reload the chat before syncing.`, t`Chat sync blocked`);
+                toastr.warning(t`Loaded chat messages are not contiguous. Reload the chat and then click Sync Current Chat.`, t`Chat sync blocked`);
                 return CHAT_SAVE_RESULT.FAILED;
             }
 
