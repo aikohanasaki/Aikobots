@@ -3516,32 +3516,69 @@ function buildSidePromptSetEditorHtml(set = null, templates = []) {
     `;
 }
 
-function readSetEditorItems(dialog) {
-    const rows = Array.from(dialog?.querySelectorAll('tr[data-set-item-id]') || []);
-    return rows.map(row => {
-        const promptKey = String(row.querySelector('.stmb-sp-set-item-prompt')?.value || '').trim();
-        const label = String(row.querySelector('.stmb-sp-set-item-label')?.value || '').trim();
-        const rawMacros = String(row.querySelector('.stmb-sp-set-item-macros')?.value || '').trim();
-        let runtimeMacros = {};
-        if (rawMacros) {
-            runtimeMacros = JSON.parse(rawMacros);
-            if (!runtimeMacros || typeof runtimeMacros !== 'object' || Array.isArray(runtimeMacros)) {
-                throw new Error('Runtime macros must be a JSON object.');
-            }
-            for (const [token, value] of Object.entries(runtimeMacros)) {
-                if (!token.startsWith('{{') || !token.endsWith('}}')) {
-                    throw new Error(`Invalid macro token "${token}". Use {{name}} format.`);
-                }
-                runtimeMacros[token] = String(value ?? '');
-            }
+function findLooseSetEditorControl(promptControl, selector) {
+    const start = promptControl.closest('td') && !promptControl.closest('tr[data-set-item-id]')
+        ? promptControl.closest('td')
+        : promptControl;
+    for (let node = start.nextElementSibling; node; node = node.nextElementSibling) {
+        if (node.matches('.stmb-sp-set-item-prompt')) {
+            return null;
         }
-        return {
-            id: String(row.dataset.setItemId || '').trim(),
-            promptKey,
-            label,
-            runtimeMacros,
-        };
-    }).filter(item => item.promptKey);
+        if (node.matches(selector)) {
+            return node;
+        }
+
+        const nestedPrompt = node.querySelector('.stmb-sp-set-item-prompt');
+        if (nestedPrompt) {
+            return null;
+        }
+
+        const nested = node.querySelector(selector);
+        if (nested) {
+            return nested;
+        }
+    }
+
+    return null;
+}
+
+function readSetEditorItemFromPromptControl(promptControl) {
+    const row = promptControl.closest('tr[data-set-item-id]');
+    const labelControl = row?.querySelector('.stmb-sp-set-item-label')
+        || findLooseSetEditorControl(promptControl, '.stmb-sp-set-item-label');
+    const macrosControl = row?.querySelector('.stmb-sp-set-item-macros')
+        || findLooseSetEditorControl(promptControl, '.stmb-sp-set-item-macros');
+    const promptKey = String(promptControl.value || '').trim();
+    const label = String(labelControl?.value || '').trim();
+    const rawMacros = String(macrosControl?.value || '').trim();
+    let runtimeMacros = {};
+    if (rawMacros) {
+        runtimeMacros = JSON.parse(rawMacros);
+        if (!runtimeMacros || typeof runtimeMacros !== 'object' || Array.isArray(runtimeMacros)) {
+            throw new Error('Runtime macros must be a JSON object.');
+        }
+        for (const [token, value] of Object.entries(runtimeMacros)) {
+            if (!token.startsWith('{{') || !token.endsWith('}}')) {
+                throw new Error(`Invalid macro token "${token}". Use {{name}} format.`);
+            }
+            runtimeMacros[token] = String(value ?? '');
+        }
+    }
+
+    return {
+        id: String(row?.dataset.setItemId || '').trim(),
+        promptKey,
+        label,
+        runtimeMacros,
+    };
+}
+
+function readSetEditorItems(dialog) {
+    const tbody = dialog?.querySelector('#stmb-sp-set-editor-items');
+    const promptControls = Array.from(tbody?.querySelectorAll('.stmb-sp-set-item-prompt') || []);
+    return promptControls
+        .map(readSetEditorItemFromPromptControl)
+        .filter(item => item.promptKey);
 }
 
 async function openSidePromptSetEditorPopup({ setKey = null } = {}) {
