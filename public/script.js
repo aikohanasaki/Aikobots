@@ -9882,7 +9882,7 @@ export async function saveChat({ chatName, withMetadata, mesId, force = false, s
                 trimmedChat = getContiguousChatMessagesForSave(absoluteStartId, getTotalChatMessages() - 1);
             }
             if (!trimmedChat) {
-                toastr.warning(t`The loaded chat tail is incomplete. Reload the chat before saving.`, t`Chat save blocked`);
+                toastr.warning(t`The loaded chat tail is incomplete. Reload the chat and then click Sync Current Chat.`, t`Chat save blocked`);
                 return CHAT_SAVE_RESULT.FAILED;
             }
             saveMode = 'tail';
