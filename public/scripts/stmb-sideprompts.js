@@ -29,7 +29,16 @@ import {
     extractMacroTokens,
     parseSidePromptCommandInput,
 } from './stmb-sideprompt-macros.js';
-import { findTemplateByName, firstRunInitSidePrompts, getTemplate, listByTrigger, listTemplates, upsertTemplate } from './stmb-sideprompts-manager.js';
+import {
+    findSetByName,
+    findTemplateByName,
+    firstRunInitSidePrompts,
+    getTemplate,
+    listByTrigger,
+    listTemplates,
+    resolveSetItemsForRun,
+    upsertTemplate,
+} from './stmb-sideprompts-manager.js';
 import { awaitStmbJobApproval, enqueueStmbJob, registerStmbJobExecutor } from './stmb-jobs.js';
 
 let trackerEvaluationPromise = null;
@@ -85,6 +94,71 @@ function getSidePromptChatLorebookOverrides() {
     return state?.sidePromptLorebookOverrides && typeof state.sidePromptLorebookOverrides === 'object'
         ? state.sidePromptLorebookOverrides
         : {};
+}
+
+function getSelectedAfterMemorySetKey() {
+    return String(getStmbChatState()?.sidePromptAfterMemorySetKey || '').trim();
+}
+
+function summarizeTemplateNames(names = [], maxLength = 80) {
+    const cleanNames = names.map(name => String(name || '').trim()).filter(Boolean);
+    if (cleanNames.length === 0) {
+        return 'Side Prompt';
+    }
+
+    let output = '';
+    let included = 0;
+    for (const name of cleanNames) {
+        const next = output ? `${output}, ${name}` : name;
+        if (next.length > maxLength && included > 0) {
+            break;
+        }
+        output = next;
+        included++;
+    }
+
+    const remaining = cleanNames.length - included;
+    return remaining > 0 ? `${output}, +${remaining} more` : output;
+}
+
+function makeSidePromptBatchTitle(runItems = [], set = null) {
+    const names = runItems.map(item => item?.displayName || item?.templateName || item?.template?.name || item?.name);
+    const summary = summarizeTemplateNames(names, 70);
+    if (set?.name) {
+        return `Set: ${set.name} - ${summary}`;
+    }
+    return runItems.length === 1
+        ? String(summary || 'Side Prompt')
+        : `Side Prompt Wave: ${summary}`;
+}
+
+function logSkippedSetItems(skipped = [], context = 'set') {
+    for (const item of skipped || []) {
+        if (item.reason === 'missing-set') {
+            console.warn(`STMB side prompt ${context}: set not found`, item.setKey);
+        } else if (item.reason === 'missing-template') {
+            console.warn(`STMB side prompt ${context}: set item skipped because template is missing`, item.item);
+        } else if (item.reason === 'missing-macros') {
+            console.warn(`STMB side prompt ${context}: set item skipped because macros are unresolved`, {
+                name: item.template?.name || item.item?.promptKey || 'unknown',
+                missingRuntimeMacros: item.missingRuntimeMacros,
+            });
+        }
+    }
+}
+
+function summarizeMissingSetMacros(skipped = []) {
+    const missing = [];
+    const seen = new Set();
+    for (const item of skipped || []) {
+        if (item.reason !== 'missing-macros') continue;
+        for (const token of item.missingRuntimeMacros || []) {
+            if (seen.has(token)) continue;
+            seen.add(token);
+            missing.push(token);
+        }
+    }
+    return missing;
 }
 
 function isExistingLorebookName(name) {
@@ -535,8 +609,44 @@ export async function buildQueuedAfterMemorySidePromptJobs({
     profile = null,
     sceneContext = null,
 }) {
-    const templates = await listByTrigger('onAfterMemory');
-    if (!templates || templates.length === 0) {
+    const selectedSetKey = getSelectedAfterMemorySetKey();
+    let selectedSet = null;
+    let runItems = [];
+    if (selectedSetKey) {
+        const resolvedSet = await resolveSetItemsForRun(selectedSetKey, {}, { allowUnresolved: false });
+        selectedSet = resolvedSet.set;
+        logSkippedSetItems(resolvedSet.skipped, 'onAfterMemory');
+        const missingMacros = summarizeMissingSetMacros(resolvedSet.skipped);
+        if (!selectedSet) {
+            toastr.warning('Selected side prompt set was not found. No after-memory side prompts were queued.', 'STMB');
+            return [];
+        }
+        if (missingMacros.length > 0) {
+            toastr.warning(`Skipped side prompt set items with unresolved macros: ${missingMacros.join(', ')}.`, 'STMB');
+        }
+        runItems = (resolvedSet.runnable || []).map(item => ({
+            template: item.template,
+            runtimeMacros: item.runtimeMacros || {},
+            fallbackKinds: ['plotpoints', 'scoreboard'],
+            displayName: String(item.item?.label || item.baseTemplate?.name || item.template?.name || 'Side Prompt'),
+            setKey: selectedSet.key,
+            setName: selectedSet.name,
+            setItemId: item.item?.id || '',
+        }));
+    } else {
+        const templates = await listByTrigger('onAfterMemory');
+        runItems = (templates || []).map(template => ({
+            template,
+            runtimeMacros: {},
+            fallbackKinds: ['plotpoints', 'scoreboard'],
+            displayName: String(template?.name || 'Side Prompt'),
+            setKey: '',
+            setName: '',
+            setItemId: '',
+        }));
+    }
+
+    if (!runItems || runItems.length === 0) {
         return [];
     }
 
@@ -544,19 +654,19 @@ export async function buildQueuedAfterMemorySidePromptJobs({
     const checkpointTimestamp = new Date().toISOString();
     const jobs = [];
     const resolveContext = { memoryLorebookName: lorebookName };
-    const templatesByLorebook = new Map();
+    const itemsByLorebook = new Map();
 
-    for (const template of templates) {
-        const target = await resolveSidePromptLorebook(template, settings, resolveContext);
-        if (!templatesByLorebook.has(target.name)) {
-            templatesByLorebook.set(target.name, []);
+    for (const runItem of runItems) {
+        const target = await resolveSidePromptLorebook(runItem.template, settings, resolveContext);
+        if (!itemsByLorebook.has(target.name)) {
+            itemsByLorebook.set(target.name, []);
         }
-        templatesByLorebook.get(target.name).push(template);
+        itemsByLorebook.get(target.name).push(runItem);
     }
 
-    for (const [targetLorebookName, targetTemplates] of templatesByLorebook.entries()) {
-        for (let index = 0; index < targetTemplates.length; index += maxConcurrent) {
-            const waveTemplates = targetTemplates.slice(index, index + maxConcurrent);
+    for (const [targetLorebookName, targetItems] of itemsByLorebook.entries()) {
+        for (let index = 0; index < targetItems.length; index += maxConcurrent) {
+            const waveItems = targetItems.slice(index, index + maxConcurrent);
             jobs.push({
                 type: 'sidePromptBatch',
                 range: range ? structuredClone(range) : (compiledScene?.metadata
@@ -567,9 +677,10 @@ export async function buildQueuedAfterMemorySidePromptJobs({
                     : null),
                 lorebookName: targetLorebookName,
                 sceneContext: sceneContext ? structuredClone(sceneContext) : structuredClone(buildStmbSceneContext()),
-                title: waveTemplates.length === 1
-                    ? String(waveTemplates[0]?.name || 'Side Prompt')
-                    : `Side Prompt Wave (${waveTemplates.length})`,
+                title: makeSidePromptBatchTitle(waveItems, selectedSet),
+                detail: range || compiledScene?.metadata
+                    ? `Messages ${range?.sceneStart ?? compiledScene?.metadata?.sceneStart}-${range?.sceneEnd ?? compiledScene?.metadata?.sceneEnd}`
+                    : '',
                 payload: {
                     lorebookName: targetLorebookName,
                     compiledScene: compiledScene ? structuredClone(compiledScene) : null,
@@ -577,19 +688,25 @@ export async function buildQueuedAfterMemorySidePromptJobs({
                     settings: settings ? structuredClone(settings) : null,
                     profile: profile ? structuredClone(profile) : null,
                     trigger: 'onAfterMemory',
-                    templates: waveTemplates.map(template => ({
-                        template: template ? structuredClone(template) : null,
-                        templateKey: String(template?.key || ''),
-                        templateName: String(template?.name || ''),
-                        runtimeMacros: {},
-                        fallbackKinds: ['plotpoints', 'scoreboard'],
-                        metadataUpdates: buildSidePromptCheckpointMetadata(template.key, {
+                    setKey: selectedSet?.key || '',
+                    setName: selectedSet?.name || '',
+                    templates: waveItems.map(runItem => ({
+                        template: runItem.template ? structuredClone(runItem.template) : null,
+                        templateKey: String(runItem.template?.key || ''),
+                        templateName: String(runItem.template?.name || ''),
+                        displayName: String(runItem.displayName || runItem.template?.name || ''),
+                        setItemId: String(runItem.setItemId || ''),
+                        setKey: String(runItem.setKey || ''),
+                        setName: String(runItem.setName || ''),
+                        runtimeMacros: structuredClone(runItem.runtimeMacros || {}),
+                        fallbackKinds: Array.isArray(runItem.fallbackKinds) ? runItem.fallbackKinds.slice() : ['plotpoints', 'scoreboard'],
+                        metadataUpdates: buildSidePromptCheckpointMetadata(runItem.template.key, {
                             lastRunAt: checkpointTimestamp,
                             includeLastMsgId: false,
                             includeTrackerFallback: false,
                         }),
                         commitCheckpoint: {
-                            templateKey: template.key,
+                            templateKey: runItem.template.key,
                             includeLastMsgId: false,
                             includeTrackerFallback: false,
                         },
@@ -600,6 +717,73 @@ export async function buildQueuedAfterMemorySidePromptJobs({
     }
 
     return jobs;
+}
+
+function buildQueuedSidePromptBatchJobFromItems({
+    runItems,
+    set = null,
+    lorebookName,
+    compiledScene,
+    range = null,
+    settings,
+    profile = null,
+    trigger = 'manual',
+    sceneContext = null,
+    includeLastMsgId = true,
+}) {
+    const checkpointTimestamp = new Date().toISOString();
+    const endId = compiledScene?.metadata?.sceneEnd ?? range?.sceneEnd;
+    return {
+        type: 'sidePromptBatch',
+        range: range ? structuredClone(range) : (compiledScene?.metadata
+            ? {
+                sceneStart: compiledScene.metadata.sceneStart,
+                sceneEnd: compiledScene.metadata.sceneEnd,
+            }
+            : null),
+        lorebookName,
+        sceneContext: sceneContext ? structuredClone(sceneContext) : structuredClone(buildStmbSceneContext()),
+        title: makeSidePromptBatchTitle(runItems, set),
+        detail: range || compiledScene?.metadata
+            ? `Messages ${range?.sceneStart ?? compiledScene?.metadata?.sceneStart}-${range?.sceneEnd ?? compiledScene?.metadata?.sceneEnd}`
+            : '',
+        payload: {
+            lorebookName,
+            compiledScene: compiledScene ? structuredClone(compiledScene) : null,
+            range: range ? structuredClone(range) : null,
+            settings: settings ? structuredClone(settings) : null,
+            profile: profile ? structuredClone(profile) : null,
+            trigger,
+            setKey: set?.key || '',
+            setName: set?.name || '',
+            templates: runItems.map(runItem => {
+                const template = runItem.template;
+                return {
+                    template: template ? structuredClone(template) : null,
+                    templateKey: String(template?.key || ''),
+                    templateName: String(template?.name || ''),
+                    displayName: String(runItem.displayName || template?.name || ''),
+                    setItemId: String(runItem.setItemId || ''),
+                    setKey: String(runItem.setKey || set?.key || ''),
+                    setName: String(runItem.setName || set?.name || ''),
+                    runtimeMacros: structuredClone(runItem.runtimeMacros || {}),
+                    fallbackKinds: Array.isArray(runItem.fallbackKinds) ? runItem.fallbackKinds.slice() : ['scoreboard', 'plotpoints', 'tracker'],
+                    metadataUpdates: buildSidePromptCheckpointMetadata(template.key, {
+                        lastMsgId: endId,
+                        lastRunAt: checkpointTimestamp,
+                        includeLastMsgId,
+                        includeTrackerFallback: includeLastMsgId,
+                    }),
+                    commitCheckpoint: {
+                        templateKey: template.key,
+                        lastMsgId: endId,
+                        includeLastMsgId,
+                        includeTrackerFallback: includeLastMsgId,
+                    },
+                };
+            }),
+        },
+    };
 }
 
 export async function buildQueuedSidePromptWorkflowJobs({
@@ -1077,6 +1261,152 @@ export async function runSidePrompt(rawInput, settings, options = {}) {
     }
 }
 
+export async function runSidePromptSet(rawInput, settings, options = {}) {
+    const macroMode = Boolean(options.macroMode);
+    try {
+        const sceneContext = options.sceneContext || buildStmbSceneContext();
+        const parsed = parseSidePromptCommandInput(rawInput);
+        if (parsed.error || !parsed.name) {
+            toastr.error(macroMode
+                ? 'SidePrompt macroset guide: Choose a quoted set name, then fill any prompted macros. Usage: /sideprompt-macroset "Name" {{macro}}="value" [X-Y].'
+                : 'Side prompt set name not provided. Usage: /sideprompt-set "Name" [X-Y]',
+            'STMB');
+            return '';
+        }
+
+        const set = await findSetByName(parsed.name);
+        if (!set) {
+            toastr.error('Side prompt set not found. Check name.', 'STMB');
+            return '';
+        }
+
+        const resolvedSet = await resolveSetItemsForRun(set.key, parsed.runtimeMacros || {}, { allowUnresolved: false });
+        logSkippedSetItems(resolvedSet.skipped, macroMode ? 'macroset' : 'sideprompt-set');
+        const missingRuntimeMacros = summarizeMissingSetMacros(resolvedSet.skipped);
+        if (missingRuntimeMacros.length > 0) {
+            const usage = missingRuntimeMacros.map(token => `${token}="value"`).join(' ');
+            toastr.error(`Side prompt set "${set.name}" requires: ${missingRuntimeMacros.join(', ')}. Usage: /sideprompt-macroset "${set.name}" ${usage} [X-Y]`, 'STMB');
+            return '';
+        }
+
+        const runItems = (resolvedSet.runnable || []).map(item => ({
+            template: item.template,
+            runtimeMacros: item.runtimeMacros || {},
+            fallbackKinds: ['scoreboard', 'plotpoints', 'tracker'],
+            displayName: String(item.item?.label || item.baseTemplate?.name || item.template?.name || 'Side Prompt'),
+            setKey: set.key,
+            setName: set.name,
+            setItemId: item.item?.id || '',
+        }));
+        if (runItems.length === 0) {
+            toastr.warning('No runnable side prompts were found in this set.', 'STMB');
+            return '';
+        }
+
+        const chatRangeInfo = await fetchStmbChatRangeInfo();
+        const currentLast = Number(chatRangeInfo?.lastAvailableMessageId);
+        if (currentLast < 0) {
+            toastr.error('No messages available.', 'STMB');
+            return '';
+        }
+
+        const resolveContext = {};
+        const targetByItemId = new Map();
+        let compiledScene;
+        if (parsed.range) {
+            const match = parsed.range.match(/^(\d+)\s*[-–—]\s*(\d+)$/);
+            if (!match) {
+                toastr.error('Invalid range format. Use X-Y', 'STMB');
+                return '';
+            }
+
+            const sceneStart = Number(match[1]);
+            const sceneEnd = Number(match[2]);
+            if (!(sceneStart >= 0 && sceneEnd >= sceneStart && sceneEnd <= currentLast)) {
+                toastr.error('Invalid message range for /sideprompt-set', 'STMB');
+                return '';
+            }
+
+            try {
+                compiledScene = await compileRange(sceneStart, sceneEnd, settings, { saveFirst: false, sceneContext });
+            } catch (error) {
+                toastr.error(String(error?.message || 'Failed to compile the specified range'), 'STMB');
+                return '';
+            }
+        } else {
+            if (!hasShownSidePromptRangeTip) {
+                toastr.info('Tip: You can run a specific range with /sideprompt-set "Name" X-Y. Running without a range uses messages since the earliest checkpoint in the set.', 'STMB');
+                hasShownSidePromptRangeTip = true;
+            }
+
+            let earliestLastMessageId = null;
+            for (const runItem of runItems) {
+                const target = await resolveSidePromptLorebook(runItem.template, settings, resolveContext);
+                targetByItemId.set(runItem.setItemId, target);
+                const lorebookData = target.data || { entries: {} };
+                const existing = findFirstLorebookEntryByTitle(
+                    lorebookData,
+                    getSidePromptLookupTitles(runItem.template, runItem.runtimeMacros, ['scoreboard', 'plotpoints', 'tracker']),
+                );
+                const checkpoint = resolveSidePromptCheckpoint(runItem.template.key, existing, { includeLegacyScore: true });
+                earliestLastMessageId = earliestLastMessageId === null
+                    ? checkpoint.lastMsgId
+                    : Math.min(earliestLastMessageId, checkpoint.lastMsgId);
+            }
+
+            const sceneStart = Math.max(0, (earliestLastMessageId ?? getHighestProcessedMessageBaseline()) + 1);
+            const boundedStart = Math.max(sceneStart, currentLast - 199);
+            try {
+                compiledScene = await compileRange(boundedStart, currentLast, settings, { saveFirst: false, sceneContext });
+            } catch {
+                toastr.error('Failed to compile messages for /sideprompt-set', 'STMB');
+                return '';
+            }
+        }
+
+        const groups = new Map();
+        for (const runItem of runItems) {
+            const target = targetByItemId.get(runItem.setItemId) || await resolveSidePromptLorebook(runItem.template, settings, resolveContext);
+            if (!groups.has(target.name)) {
+                groups.set(target.name, []);
+            }
+            groups.get(target.name).push(runItem);
+        }
+
+        ensureSidePromptJobExecutorRegistered();
+        const range = {
+            sceneStart: compiledScene?.metadata?.sceneStart,
+            sceneEnd: compiledScene?.metadata?.sceneEnd,
+        };
+        let queued = 0;
+        for (const [targetLorebookName, targetRunItems] of groups.entries()) {
+            enqueueStmbJob(buildQueuedSidePromptBatchJobFromItems({
+                runItems: targetRunItems,
+                set,
+                lorebookName: targetLorebookName,
+                compiledScene,
+                range,
+                settings,
+                profile: null,
+                trigger: macroMode ? 'macroset' : 'sideprompt-set',
+                sceneContext,
+                includeLastMsgId: true,
+            }));
+            queued++;
+        }
+
+        toastr.info(`Side prompt set "${set.name}" queued: ${queued} job${queued === 1 ? '' : 's'}.`, 'STMB');
+        return '';
+    } catch (error) {
+        if (isStmbAbortError(error) || isStmbLorebookHandledError(error)) {
+            return '';
+        }
+        console.error('STMB /sideprompt-set failed', error);
+        toastr.error(error?.message || 'Failed to queue side prompt set.', 'STMB');
+        return '';
+    }
+}
+
 async function executeSidePromptJob(job, context) {
     const payload = job?.payload || {};
     const settings = payload.settings || null;
@@ -1198,6 +1528,7 @@ async function executeSidePromptJob(job, context) {
         },
     );
     context.setResult({
+        type: 'sidePrompt',
         title: prepared.unifiedTitle,
         lorebookName,
         created: Boolean(result?.created),
@@ -1258,7 +1589,7 @@ async function executeSidePromptBatchJob(job, context) {
             return {
                 ok: false,
                 error: new Error(`SidePrompt template "${input?.templateName || input?.templateKey || 'unknown'}" not found.`),
-                templateName: String(input?.templateName || input?.templateKey || 'Unknown'),
+                templateName: String(input?.displayName || input?.templateName || input?.templateKey || 'Unknown'),
                 completedOrder: completionOrder++,
             };
         }
@@ -1303,7 +1634,7 @@ async function executeSidePromptBatchJob(job, context) {
                 error,
                 template,
                 input,
-                templateName: String(template?.name || input?.templateName || input?.templateKey || 'Unknown'),
+                templateName: String(input?.displayName || template?.name || input?.templateName || input?.templateKey || 'Unknown'),
                 completedOrder: completionOrder++,
             };
         }
@@ -1328,7 +1659,7 @@ async function executeSidePromptBatchJob(job, context) {
         let resultText = generationResult.resultText;
         if (!ensureSidePromptTextNotBlank(resultText, template, payload.trigger || 'batch')) {
             failures.push({
-                templateName: String(template?.name || 'Unknown'),
+                templateName: String(input?.displayName || template?.name || 'Unknown'),
                 message: 'SidePrompt returned blank content.',
             });
             continue;
@@ -1362,13 +1693,13 @@ async function executeSidePromptBatchJob(job, context) {
             }
             if (!ensureSidePromptTextNotBlank(resultText, template, `${payload.trigger || 'batch'}-retry`)) {
                 failures.push({
-                    templateName: String(template?.name || 'Unknown'),
+                    templateName: String(input?.displayName || template?.name || 'Unknown'),
                     message: 'SidePrompt returned blank content.',
                 });
                 continue;
             }
             if (!approvalResult || approvalResult.decision === 'cancel' || approvalResult.decision === 'reject') {
-                canceled.push(String(template?.name || 'Unknown'));
+                canceled.push(String(input?.displayName || template?.name || 'Unknown'));
                 continue;
             }
             if (approvalResult.editedData && typeof approvalResult.editedData === 'object') {
@@ -1384,7 +1715,7 @@ async function executeSidePromptBatchJob(job, context) {
             defaults,
             metadataUpdates: input?.metadataUpdates || {},
             entryOverrides,
-            templateName: String(template?.name || 'Unknown'),
+            templateName: String(input?.displayName || template?.name || 'Unknown'),
         });
     }
 
@@ -1426,6 +1757,7 @@ async function executeSidePromptBatchJob(job, context) {
     }
 
     context.setResult({
+        type: 'sidePrompt',
         lorebookName,
         successes,
         failures,

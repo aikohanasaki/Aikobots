@@ -1,5 +1,9 @@
 import { getRequestHeaders } from '../script.js';
-import { hasTemplateRuntimeMacros } from './stmb-sideprompt-macros.js';
+import {
+    applySidePromptMacros,
+    collectTemplateRuntimeMacros,
+    hasTemplateRuntimeMacros,
+} from './stmb-sideprompt-macros.js';
 
 const SIDE_PROMPTS_FILE = 'stmb-side-prompts.json';
 const BUILTIN_CAST_KEY = 'cast';
@@ -16,6 +20,60 @@ function safeSlug(value) {
         .replace(/[^a-z0-9]+/g, '-')
         .replace(/^-+|-+$/g, '')
         .substring(0, 50) || 'sideprompt';
+}
+
+function makeSetItemId() {
+    return `item-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
+function normalizeSetItem(item) {
+    const rawId = String(item?.id || '').trim();
+    const runtimeMacros = {};
+    if (item?.runtimeMacros && typeof item.runtimeMacros === 'object' && !Array.isArray(item.runtimeMacros)) {
+        for (const [token, value] of Object.entries(item.runtimeMacros)) {
+            if (typeof token === 'string' && token.startsWith('{{') && token.endsWith('}}')) {
+                runtimeMacros[token] = String(value ?? '');
+            }
+        }
+    }
+
+    return {
+        id: rawId && !rawId.startsWith('draft-') ? rawId : makeSetItemId(),
+        promptKey: String(item?.promptKey || '').trim(),
+        label: String(item?.label || '').trim(),
+        runtimeMacros,
+    };
+}
+
+function normalizeSet(raw, key, timestamp = nowIso()) {
+    return {
+        key,
+        name: String(raw?.name || '').trim() || 'Untitled Side Prompt Set',
+        items: Array.isArray(raw?.items)
+            ? raw.items.map(normalizeSetItem).filter(item => item.promptKey)
+            : [],
+        createdAt: String(raw?.createdAt || timestamp),
+        updatedAt: String(raw?.updatedAt || timestamp),
+    };
+}
+
+function normalizeSidePromptsDocument(data) {
+    if (!data || typeof data !== 'object') {
+        return data;
+    }
+
+    if (!data.sets || typeof data.sets !== 'object' || Array.isArray(data.sets)) {
+        data.sets = {};
+    }
+
+    const normalizedSets = {};
+    for (const [key, set] of Object.entries(data.sets || {})) {
+        const finalKey = String(set?.key || key || '').trim();
+        if (!finalKey) continue;
+        normalizedSets[finalKey] = normalizeSet(set, finalKey, set?.updatedAt || nowIso());
+    }
+    data.sets = normalizedSets;
+    return data;
 }
 
 function normalizeTemplateTriggers(template) {
@@ -83,6 +141,29 @@ function validateSidePromptsFileV2(data) {
         }
     }
 
+    if (data.sets != null) {
+        if (typeof data.sets !== 'object' || Array.isArray(data.sets)) return false;
+        for (const [key, set] of Object.entries(data.sets)) {
+            if (!set || typeof set !== 'object') return false;
+            if (set.key !== key) return false;
+            if (typeof set.name !== 'string' || !set.name.trim()) return false;
+            if (!Array.isArray(set.items)) return false;
+            for (const item of set.items) {
+                if (!item || typeof item !== 'object') return false;
+                if (typeof item.id !== 'string' || !item.id.trim()) return false;
+                if (typeof item.promptKey !== 'string' || !item.promptKey.trim()) return false;
+                if (item.label != null && typeof item.label !== 'string') return false;
+                if (item.runtimeMacros != null) {
+                    if (typeof item.runtimeMacros !== 'object' || Array.isArray(item.runtimeMacros)) return false;
+                    for (const [token, value] of Object.entries(item.runtimeMacros)) {
+                        if (typeof token !== 'string' || !token.startsWith('{{') || !token.endsWith('}}')) return false;
+                        if (typeof value !== 'string') return false;
+                    }
+                }
+            }
+        }
+    }
+
     return true;
 }
 
@@ -97,6 +178,7 @@ function migrateV1toV2(data) {
     const migrated = {
         version: 2,
         prompts: {},
+        sets: {},
     };
     const createdAt = nowIso();
 
@@ -235,22 +317,37 @@ function migrateBuiltinTemplateKeys(document) {
         return false;
     }
 
+    let changed = false;
     if (!prompts[BUILTIN_CAST_KEY] && prompts[LEGACY_BUILTIN_CAST_KEY]) {
         prompts[BUILTIN_CAST_KEY] = {
             ...prompts[LEGACY_BUILTIN_CAST_KEY],
             key: BUILTIN_CAST_KEY,
         };
         delete prompts[LEGACY_BUILTIN_CAST_KEY];
-        return true;
+        changed = true;
     }
 
-    return false;
+    const sets = document?.sets;
+    if (sets && typeof sets === 'object') {
+        for (const set of Object.values(sets)) {
+            if (!Array.isArray(set?.items)) continue;
+            for (const item of set.items) {
+                if (item?.promptKey === LEGACY_BUILTIN_CAST_KEY) {
+                    item.promptKey = BUILTIN_CAST_KEY;
+                    changed = true;
+                }
+            }
+        }
+    }
+
+    return changed;
 }
 
 function createBaseDoc() {
     return {
         version: 2,
         prompts: getBuiltinTemplates(),
+        sets: {},
     };
 }
 
@@ -299,14 +396,15 @@ export async function loadSidePrompts() {
         }
 
         if (looksLikeV1SidePrompts(parsed)) {
-            data = migrateV1toV2(parsed);
+            data = normalizeSidePromptsDocument(migrateV1toV2(parsed));
             migrateBuiltinTemplateKeys(data);
             await saveDoc(data);
         } else if (!validateSidePromptsFileV2(parsed)) {
             throw new Error('Invalid side prompts file structure');
         } else {
-            data = parsed;
-            if (migrateBuiltinTemplateKeys(data)) {
+            const needsSetNormalization = !parsed.sets || typeof parsed.sets !== 'object' || Array.isArray(parsed.sets);
+            data = normalizeSidePromptsDocument(parsed);
+            if (migrateBuiltinTemplateKeys(data) || needsSetNormalization) {
                 await saveDoc(data);
             }
         }
@@ -347,9 +445,70 @@ export function getCachedTemplateSnapshot() {
     return templates;
 }
 
+export function getCachedSetSnapshot() {
+    const sets = cachedDoc?.sets;
+    if (!sets || typeof sets !== 'object') {
+        return [];
+    }
+
+    const list = Object.values(sets);
+    list.sort((left, right) => {
+        const leftUpdated = left.updatedAt || left.createdAt || '';
+        const rightUpdated = right.updatedAt || right.createdAt || '';
+        return rightUpdated.localeCompare(leftUpdated);
+    });
+    return list;
+}
+
 export async function getTemplate(key) {
     const data = await loadSidePrompts();
     return data.prompts?.[String(key || '')] || null;
+}
+
+export async function listSets() {
+    const data = await loadSidePrompts();
+    const sets = Object.values(data.sets || {});
+    sets.sort((left, right) => {
+        const leftUpdated = left.updatedAt || left.createdAt || '';
+        const rightUpdated = right.updatedAt || right.createdAt || '';
+        return rightUpdated.localeCompare(leftUpdated);
+    });
+    return sets;
+}
+
+export async function getSet(key) {
+    const data = await loadSidePrompts();
+    return data.sets?.[String(key || '')] || null;
+}
+
+export async function findSetByName(name) {
+    const data = await loadSidePrompts();
+    const raw = String(name || '').trim();
+    if (!raw) return null;
+
+    const targetLower = raw.toLowerCase();
+    const targetSlug = safeSlug(raw);
+    const sets = Object.values(data.sets || {});
+
+    for (const set of sets) {
+        const nameLower = String(set.name || '').toLowerCase();
+        const keyLower = String(set.key || '').toLowerCase();
+        const nameSlug = safeSlug(set.name || '');
+        if (nameLower === targetLower || keyLower === targetLower || nameSlug === targetSlug) {
+            return set;
+        }
+    }
+
+    for (const set of sets) {
+        const nameLower = String(set.name || '').toLowerCase();
+        const keyLower = String(set.key || '').toLowerCase();
+        const nameSlug = safeSlug(set.name || '');
+        if (nameLower.startsWith(targetLower) || keyLower.startsWith(targetLower) || nameSlug.startsWith(targetSlug)) {
+            return set;
+        }
+    }
+
+    return null;
 }
 
 export async function findTemplateByName(name) {
@@ -466,6 +625,171 @@ export async function removeTemplate(key) {
     await saveDoc(data);
 }
 
+export async function upsertSet(input) {
+    const data = await loadSidePrompts();
+    if (!data.sets || typeof data.sets !== 'object') {
+        data.sets = {};
+    }
+
+    const isNew = !input.key;
+    const timestamp = nowIso();
+    const previous = isNew ? null : data.sets[input.key];
+    const requestedName = String(input.name ?? '').trim();
+    const finalName = requestedName || (previous?.name || 'Untitled Side Prompt Set');
+
+    let key;
+    if (input.key) {
+        key = String(input.key).trim();
+    } else {
+        const base = safeSlug(finalName || 'sideprompt-set') || 'sideprompt-set';
+        key = base;
+        let suffix = 2;
+        while (data.sets[key]) {
+            key = safeSlug(`${finalName} ${suffix}`);
+            suffix++;
+        }
+    }
+
+    data.sets[key] = normalizeSet({
+        key,
+        name: finalName,
+        items: Array.isArray(input.items) ? input.items : (previous?.items || []),
+        createdAt: previous?.createdAt || timestamp,
+        updatedAt: timestamp,
+    }, key, timestamp);
+    await saveDoc(data);
+    return key;
+}
+
+export async function duplicateSet(sourceKey) {
+    const data = await loadSidePrompts();
+    const source = data.sets?.[String(sourceKey || '')];
+    if (!source) {
+        throw new Error(`Set "${sourceKey}" not found`);
+    }
+
+    const copyName = `${source.name} (Copy)`;
+    let key = safeSlug(copyName) || 'sideprompt-set';
+    let suffix = 2;
+    while (data.sets[key]) {
+        key = safeSlug(`${copyName} ${suffix}`);
+        suffix++;
+    }
+
+    const timestamp = nowIso();
+    data.sets[key] = normalizeSet({
+        ...source,
+        key,
+        name: copyName,
+        items: (source.items || []).map(item => ({ ...item, id: makeSetItemId() })),
+        createdAt: timestamp,
+        updatedAt: timestamp,
+    }, key, timestamp);
+    await saveDoc(data);
+    return key;
+}
+
+export async function removeSet(key) {
+    const data = await loadSidePrompts();
+    const normalizedKey = String(key || '').trim();
+    if (!data.sets?.[normalizedKey]) {
+        throw new Error(`Set "${normalizedKey}" not found`);
+    }
+    delete data.sets[normalizedKey];
+    await saveDoc(data);
+}
+
+function resolveSetItemRuntimeMacros(item, commandRuntimeMacros = {}) {
+    const resolved = {};
+    for (const [token, value] of Object.entries(item?.runtimeMacros || {})) {
+        resolved[token] = applySidePromptMacros(String(value ?? ''), commandRuntimeMacros);
+    }
+    return resolved;
+}
+
+function uniqueTokens(values = []) {
+    const seen = new Set();
+    const output = [];
+    for (const value of values) {
+        if (seen.has(value)) continue;
+        seen.add(value);
+        output.push(value);
+    }
+    return output;
+}
+
+export async function collectSetRuntimeMacros(setKeyOrSet, commandRuntimeMacros = {}) {
+    const data = await loadSidePrompts();
+    const set = typeof setKeyOrSet === 'string'
+        ? data.sets?.[setKeyOrSet]
+        : setKeyOrSet;
+    if (!set) return [];
+
+    const required = [];
+    for (const item of set.items || []) {
+        const template = data.prompts?.[item.promptKey];
+        if (!template) continue;
+        const itemRuntimeMacros = {
+            ...commandRuntimeMacros,
+            ...resolveSetItemRuntimeMacros(item, commandRuntimeMacros),
+        };
+        required.push(...collectTemplateRuntimeMacros(template, itemRuntimeMacros));
+    }
+    return uniqueTokens(required);
+}
+
+export async function resolveSetItemsForRun(setKey, commandRuntimeMacros = {}, options = {}) {
+    const data = await loadSidePrompts();
+    const set = data.sets?.[String(setKey || '')] || null;
+    const allowUnresolved = Boolean(options.allowUnresolved);
+    const runnable = [];
+    const skipped = [];
+
+    if (!set) {
+        return { set: null, runnable, skipped: [{ reason: 'missing-set', setKey }] };
+    }
+
+    for (const item of set.items || []) {
+        const template = data.prompts?.[item.promptKey];
+        if (!template) {
+            skipped.push({ reason: 'missing-template', item });
+            continue;
+        }
+
+        const runtimeMacros = {
+            ...commandRuntimeMacros,
+            ...resolveSetItemRuntimeMacros(item, commandRuntimeMacros),
+        };
+        const missingRuntimeMacros = collectTemplateRuntimeMacros(template, runtimeMacros);
+        if (missingRuntimeMacros.length > 0 && !allowUnresolved) {
+            skipped.push({ reason: 'missing-macros', item, template, missingRuntimeMacros });
+            continue;
+        }
+
+        const effectiveTemplate = structuredClone(template);
+        const label = String(item.label || '').trim();
+        if (label && !String(effectiveTemplate?.settings?.lorebook?.entryTitleOverride || '').trim()) {
+            effectiveTemplate.settings = { ...(effectiveTemplate.settings || {}) };
+            effectiveTemplate.settings.lorebook = {
+                ...(effectiveTemplate.settings.lorebook || {}),
+                entryTitleOverride: label,
+            };
+        }
+
+        runnable.push({
+            set,
+            item,
+            template: effectiveTemplate,
+            baseTemplate: template,
+            runtimeMacros,
+            missingRuntimeMacros,
+            name: label ? `${set.name}: ${label}` : `${set.name}: ${template.name}`,
+        });
+    }
+
+    return { set, runnable, skipped };
+}
+
 export async function exportSidePromptsJson() {
     const data = await loadSidePrompts();
     return JSON.stringify(data, null, 2);
@@ -475,9 +799,9 @@ export async function importSidePromptsJson(text) {
     const parsed = JSON.parse(String(text || '{}'));
     let incoming = null;
     if (validateSidePromptsFileV2(parsed)) {
-        incoming = parsed;
+        incoming = normalizeSidePromptsDocument(parsed);
     } else if (looksLikeV1SidePrompts(parsed)) {
-        incoming = migrateV1toV2(parsed);
+        incoming = normalizeSidePromptsDocument(migrateV1toV2(parsed));
     } else {
         throw new Error('Invalid side prompts file structure');
     }
@@ -487,11 +811,15 @@ export async function importSidePromptsJson(text) {
     const merged = {
         version: Math.max(2, Number(existing.version ?? 2), Number(incoming.version ?? 2)),
         prompts: { ...(existing.prompts || {}) },
+        sets: { ...(existing.sets || {}) },
     };
 
     let added = 0;
     let renamed = 0;
+    let setsAdded = 0;
+    let setsRenamed = 0;
     const strippedDetails = [];
+    const promptKeyMap = new Map();
     for (const [key, prompt] of Object.entries(incoming.prompts || {})) {
         const desiredKey = String(key || '').trim();
         const baseName = String(prompt?.name || desiredKey || 'Untitled Side Prompt');
@@ -503,6 +831,9 @@ export async function importSidePromptsJson(text) {
         }
         if (nextKey !== desiredKey) {
             renamed++;
+        }
+        if (desiredKey) {
+            promptKeyMap.set(desiredKey, nextKey);
         }
 
         const next = {
@@ -527,8 +858,36 @@ export async function importSidePromptsJson(text) {
         added++;
     }
 
+    for (const [key, set] of Object.entries(incoming.sets || {})) {
+        const desiredKey = String(key || '').trim();
+        const baseName = String(set?.name || desiredKey || 'Untitled Side Prompt Set');
+        let nextKey = desiredKey || safeSlug(baseName) || 'sideprompt-set';
+        let suffix = 2;
+        while (merged.sets[nextKey]) {
+            nextKey = safeSlug(`${baseName} ${suffix}`);
+            suffix++;
+        }
+        if (nextKey !== desiredKey) {
+            setsRenamed++;
+        }
+
+        const timestamp = nowIso();
+        merged.sets[nextKey] = normalizeSet({
+            ...set,
+            key: nextKey,
+            items: (set.items || []).map(item => ({
+                ...item,
+                id: makeSetItemId(),
+                promptKey: promptKeyMap.get(item.promptKey) || item.promptKey,
+            })),
+            createdAt: String(set?.createdAt || timestamp),
+            updatedAt: timestamp,
+        }, nextKey, timestamp);
+        setsAdded++;
+    }
+
     await saveDoc(merged);
-    return { added, renamed, strippedDetails };
+    return { added, renamed, setsAdded, setsRenamed, strippedDetails };
 }
 
 export async function recreateBuiltInSidePrompts(mode = 'overwrite') {

@@ -87,6 +87,7 @@ import {
     firstRunInitSidePrompts,
     enqueueAfterMemorySidePromptJobs,
     runSidePrompt,
+    runSidePromptSet,
     toggleSidePromptEnabled,
 } from './stmb-sideprompts.js';
 import {
@@ -125,13 +126,20 @@ import {
 } from './stmb-sideprompt-macros.js';
 import {
     duplicateTemplate,
+    duplicateSet,
     exportSidePromptsJson,
+    collectSetRuntimeMacros,
+    getCachedSetSnapshot,
     getCachedTemplateSnapshot,
+    getSet,
     getTemplate,
     importSidePromptsJson,
+    listSets,
     listTemplates,
     recreateBuiltInSidePrompts,
+    removeSet,
     removeTemplate,
+    upsertSet,
     upsertTemplate,
 } from './stmb-sideprompts-manager.js';
 import { escapeHtml } from './utils.js';
@@ -159,6 +167,7 @@ let lastFailedSummaryError = null;
 let lastFailedSummaryContext = null;
 let stmbUiBound = false;
 let sidePromptNameCache = [];
+let sidePromptSetNameCache = [];
 let activeSettingsPopupDialog = null;
 const pendingPassiveChecksByChat = new Map();
 const deferredPostSaveEffectsByChat = new Map();
@@ -1550,6 +1559,18 @@ async function refreshSidePromptCache() {
             runtimeMacros: collectTemplateRuntimeMacros(template),
             manualEnabled: isManualSidePromptEnabled(template),
         }));
+        const sets = await listSets();
+        const settledSets = await Promise.allSettled((sets || []).map(async set => ({
+            name: set.name,
+            runtimeMacros: await collectSetRuntimeMacros(set),
+        })));
+        sidePromptSetNameCache = settledSets
+            .filter(result => {
+                if (result.status === 'fulfilled') return true;
+                console.warn('STMB side prompt set cache refresh failed', result.reason);
+                return false;
+            })
+            .map(result => result.value);
     } catch (error) {
         console.warn('STMB side prompt cache refresh failed', error);
     }
@@ -1558,6 +1579,11 @@ async function refreshSidePromptCache() {
 window.addEventListener('stmb-sideprompts-updated', refreshSidePromptCache);
 
 function findCachedSidePromptByName(name, entries = sidePromptNameCache) {
+    const target = String(name || '').toLowerCase();
+    return entries.find(entry => entry.name.toLowerCase() === target) || null;
+}
+
+function findCachedSidePromptSetByName(name, entries = sidePromptSetNameCache) {
     const target = String(name || '').toLowerCase();
     return entries.find(entry => entry.name.toLowerCase() === target) || null;
 }
@@ -1571,6 +1597,15 @@ function getCurrentSidePromptAutocompleteEntries(options = {}) {
     }));
     const entries = liveEntries.length > 0 ? liveEntries : sidePromptNameCache;
     return manualOnly ? entries.filter(entry => entry.manualEnabled) : entries;
+}
+
+function getCurrentSidePromptSetAutocompleteEntries() {
+    return sidePromptSetNameCache.length > 0
+        ? sidePromptSetNameCache
+        : getCachedSetSnapshot().map(set => ({
+            name: set.name,
+            runtimeMacros: [],
+        }));
 }
 
 function buildSidePromptNameSuggestions(rawInput, options = {}) {
@@ -1588,6 +1623,24 @@ function buildSidePromptNameSuggestions(rawInput, options = {}) {
             : 'No required runtime macros',
         'name',
         '📝',
+        () => !filter || entry.name.toLowerCase().includes(filter),
+    ));
+}
+
+function buildSidePromptSetNameSuggestions(rawInput) {
+    const input = String(rawInput || '').trimStart();
+    const filter = input.startsWith('"') || input.startsWith('\'')
+        ? input.slice(1).toLowerCase()
+        : input.toLowerCase();
+    const entries = getCurrentSidePromptSetAutocompleteEntries();
+
+    return entries.map(entry => new SlashCommandEnumValue(
+        formatQuotedSidePromptName(entry.name),
+        entry.runtimeMacros.length
+            ? `Required macros: ${entry.runtimeMacros.join(', ')}`
+            : 'No required runtime macros',
+        'name',
+        '📚',
         () => !filter || entry.name.toLowerCase().includes(filter),
     ));
 }
@@ -1627,6 +1680,21 @@ const manualSidePromptTemplateEnumProvider = executor =>
 
 const allSidePromptTemplateEnumProvider = executor =>
     sidePromptTemplateEnumProvider(executor, { manualOnly: false });
+
+const sidePromptSetEnumProvider = (executor, options = {}) => {
+    const { includeMacros = false } = options;
+    const rawInput = String(executor?.unnamedArgumentList?.[0]?.value || '');
+    const draft = parseSidePromptCommandInput(rawInput, { allowIncomplete: true });
+
+    if (includeMacros && draft.nameClosed) {
+        const entry = findCachedSidePromptSetByName(draft.name, getCurrentSidePromptSetAutocompleteEntries());
+        if (entry) {
+            return buildSidePromptMacroSuggestions(rawInput, draft, entry);
+        }
+    }
+
+    return buildSidePromptSetNameSuggestions(rawInput);
+};
 
 function cloneRegexScriptEnabled(script) {
     try {
@@ -3290,6 +3358,237 @@ async function refreshSidePromptManagerList(dialog, selectedTemplateKey = null) 
     }
 }
 
+function buildAfterMemorySetModeHtml(sets = []) {
+    const selectedKey = getChatAfterMemorySetKey();
+    const hasSelected = selectedKey && sets.some(set => set.key === selectedKey);
+    const options = [
+        `<option value="" ${!selectedKey ? 'selected' : ''}>Use individually-enabled side prompts</option>`,
+        ...(hasSelected || !selectedKey ? [] : [`<option value="${escapeHtml(selectedKey)}" selected>Missing set: ${escapeHtml(selectedKey)}</option>`]),
+        ...sets.map(set => `<option value="${escapeHtml(set.key)}" ${selectedKey === set.key ? 'selected' : ''}>${escapeHtml(set.name)}</option>`),
+    ].join('');
+
+    return `
+        <div class="world_entry_form_control">
+            <label for="stmb-sp-after-memory-set-mode">
+                <h4>After-memory side prompt mode for this chat</h4>
+                <select id="stmb-sp-after-memory-set-mode" class="text_pole">${options}</select>
+            </label>
+            <small class="opacity70p">Selecting a set replaces individually-enabled after-memory side prompts for this chat.</small>
+        </div>
+    `;
+}
+
+function buildSidePromptSetsRowsHtml(sets = []) {
+    const rows = sets.map(set => `
+        <tr data-set-key="${escapeHtml(set.key)}" style="border-bottom: 1px solid var(--SmartThemeBorderColor);">
+            <td style="padding: 8px;">${escapeHtml(set.name || 'Untitled Side Prompt Set')}</td>
+            <td style="padding: 8px; width: 80px;">${Number(set.items?.length || 0)}</td>
+            <td style="padding: 8px; text-align:right; width: 140px;">
+                <span class="stmb-sp-inline-actions whitespacenowrap" style="display: inline-flex; gap: 10px;">
+                    <button class="menu_button stmb-sp-set-action stmb-sp-set-action-edit whitespacenowrap" title="Edit" aria-label="Edit" style="display:inline-flex; align-items:center; justify-content:center; width:auto; min-width:0; margin:0;"><i class="fa-solid fa-pen"></i></button>
+                    <button class="menu_button stmb-sp-set-action stmb-sp-set-action-duplicate whitespacenowrap" title="Duplicate" aria-label="Duplicate" style="display:inline-flex; align-items:center; justify-content:center; width:auto; min-width:0; margin:0;"><i class="fa-solid fa-copy"></i></button>
+                    <button class="menu_button stmb-sp-set-action stmb-sp-set-action-delete whitespacenowrap" title="Delete" aria-label="Delete" style="display:inline-flex; align-items:center; justify-content:center; width:auto; min-width:0; margin:0; color:var(--redColor);"><i class="fa-solid fa-trash"></i></button>
+                </span>
+            </td>
+        </tr>
+    `).join('');
+
+    return `
+        <div class="world_entry_form_control">
+            <h4>Side Prompt Sets</h4>
+            <small class="opacity70p">Sets run grouped side prompts manually or as the after-memory mode for this chat.</small>
+            <div style="max-height: 220px; overflow-y: auto; margin-top: 8px;">
+                <table style="width: 100%; border-collapse: collapse;">
+                    <thead>
+                        <tr>
+                            <th style="text-align:left;">Name</th>
+                            <th style="width: 80px; text-align:left;">Items</th>
+                            <th style="width: 140px; text-align:right;">Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        ${rows || '<tr><td colspan="3"><div class="opacity50p">No side prompt sets available</div></td></tr>'}
+                    </tbody>
+                </table>
+            </div>
+            <div class="buttons_block justifyCenter gap10px whitespacenowrap" style="margin-top: 8px;">
+                <button id="stmb-sp-new-set" class="menu_button whitespacenowrap">New Set</button>
+            </div>
+        </div>
+    `;
+}
+
+async function refreshSidePromptSetControls(dialog) {
+    const container = dialog?.querySelector('#stmb-sp-set-controls');
+    if (!container) {
+        return;
+    }
+    const sets = await listSets();
+    container.innerHTML = buildAfterMemorySetModeHtml(sets) + buildSidePromptSetsRowsHtml(sets);
+    try {
+        applyLocale(container);
+    } catch {
+        // noop
+    }
+}
+
+function buildSetEditorRowHtml(templates = [], item = {}) {
+    const rowId = String(item.id || `draft-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`);
+    const options = [
+        '<option value="">Select side prompt...</option>',
+        ...templates.map(template => `<option value="${escapeHtml(template.key)}" ${String(item.promptKey || '') === template.key ? 'selected' : ''}>${escapeHtml(template.name || template.key)}</option>`),
+    ].join('');
+    const macros = JSON.stringify(item.runtimeMacros || {}, null, 2);
+
+    return `
+        <tr data-set-item-id="${escapeHtml(rowId)}">
+            <td style="padding: 6px; vertical-align: top;">
+                <select class="text_pole stmb-sp-set-item-prompt">${options}</select>
+            </td>
+            <td style="padding: 6px; vertical-align: top;">
+                <input class="text_pole stmb-sp-set-item-label" value="${escapeHtml(String(item.label || ''))}" placeholder="Optional entry title label">
+            </td>
+            <td style="padding: 6px; vertical-align: top;">
+                <textarea class="text_pole stmb-sp-set-item-macros" rows="3" placeholder='{"{{topic}}":"value"}'>${escapeHtml(macros)}</textarea>
+            </td>
+            <td style="padding: 6px; vertical-align: top; text-align:right;">
+                <button type="button" class="menu_button stmb-sp-set-item-remove" title="Remove" aria-label="Remove" style="display:inline-flex; align-items:center; justify-content:center; width:auto; min-width:0; margin:0; color:var(--redColor);"><i class="fa-solid fa-trash"></i></button>
+            </td>
+        </tr>
+    `;
+}
+
+function buildSidePromptSetEditorHtml(set = null, templates = []) {
+    const rows = (set?.items?.length ? set.items : [{}])
+        .map(item => buildSetEditorRowHtml(templates, item))
+        .join('');
+    return `
+        <div class="stmb-sideprompt-set-editor-popup" style="max-height: min(72vh, 900px); overflow-y: auto; padding-right: 6px; contain: layout paint;">
+            <h3>${set ? 'Edit Side Prompt Set' : 'New Side Prompt Set'}</h3>
+            ${set?.key ? `<div class="world_entry_form_control"><small class="opacity50p">Key: <code>${escapeHtml(set.key)}</code></small></div>` : ''}
+            <div class="world_entry_form_control">
+                <label for="stmb-sp-set-editor-name">
+                    <h4>Name:</h4>
+                    <input id="stmb-sp-set-editor-name" class="text_pole" value="${escapeHtml(String(set?.name || ''))}" placeholder="My Side Prompt Set">
+                </label>
+            </div>
+            <div class="world_entry_form_control">
+                <h4>Set Items</h4>
+                <small class="opacity70p">Each row runs one side prompt. Runtime macros are JSON maps such as <code>{"{{topic}}":"trust"}</code>; values may reference macroset inputs.</small>
+                <div style="overflow-x:auto; margin-top: 8px;">
+                    <table style="width: 100%; border-collapse: collapse;">
+                        <thead>
+                            <tr>
+                                <th style="text-align:left; min-width: 180px;">Side Prompt</th>
+                                <th style="text-align:left; min-width: 180px;">Label</th>
+                                <th style="text-align:left; min-width: 220px;">Runtime Macros JSON</th>
+                                <th style="width: 60px;"></th>
+                            </tr>
+                        </thead>
+                        <tbody id="stmb-sp-set-editor-items">${rows}</tbody>
+                    </table>
+                </div>
+                <div class="buttons_block justifyCenter gap10px whitespacenowrap" style="margin-top: 8px;">
+                    <button type="button" id="stmb-sp-set-add-row" class="menu_button whitespacenowrap">Add Row</button>
+                </div>
+            </div>
+        </div>
+    `;
+}
+
+function readSetEditorItems(dialog) {
+    const rows = Array.from(dialog?.querySelectorAll('tr[data-set-item-id]') || []);
+    return rows.map(row => {
+        const promptKey = String(row.querySelector('.stmb-sp-set-item-prompt')?.value || '').trim();
+        const label = String(row.querySelector('.stmb-sp-set-item-label')?.value || '').trim();
+        const rawMacros = String(row.querySelector('.stmb-sp-set-item-macros')?.value || '').trim();
+        let runtimeMacros = {};
+        if (rawMacros) {
+            runtimeMacros = JSON.parse(rawMacros);
+            if (!runtimeMacros || typeof runtimeMacros !== 'object' || Array.isArray(runtimeMacros)) {
+                throw new Error('Runtime macros must be a JSON object.');
+            }
+            for (const [token, value] of Object.entries(runtimeMacros)) {
+                if (!token.startsWith('{{') || !token.endsWith('}}')) {
+                    throw new Error(`Invalid macro token "${token}". Use {{name}} format.`);
+                }
+                runtimeMacros[token] = String(value ?? '');
+            }
+        }
+        return {
+            id: String(row.dataset.setItemId || '').trim(),
+            promptKey,
+            label,
+            runtimeMacros,
+        };
+    }).filter(item => item.promptKey);
+}
+
+async function openSidePromptSetEditorPopup({ setKey = null } = {}) {
+    const set = setKey ? await getSet(setKey) : null;
+    if (setKey && !set) {
+        throw new Error(`Set "${setKey}" not found`);
+    }
+
+    const templates = await listTemplates();
+    const popup = new Popup(DOMPurify.sanitize(buildSidePromptSetEditorHtml(set, templates)), POPUP_TYPE.TEXT, '', {
+        okButton: set ? 'Save' : 'Create',
+        cancelButton: 'Cancel',
+        wide: true,
+        large: true,
+        allowVerticalScrolling: false,
+        onClosing: async popupInstance => {
+            if (popupInstance?.result !== POPUP_RESULT.AFFIRMATIVE) {
+                return true;
+            }
+
+            try {
+                const name = String(popupInstance.dlg?.querySelector('#stmb-sp-set-editor-name')?.value || '').trim();
+                const items = readSetEditorItems(popupInstance.dlg);
+                if (items.length === 0) {
+                    throw new Error('Add at least one side prompt to the set.');
+                }
+                popupInstance.stmbSavedSetKey = await upsertSet({
+                    key: set?.key || null,
+                    name,
+                    items,
+                });
+                await refreshSidePromptCache();
+                window.dispatchEvent(new CustomEvent('stmb-sideprompts-updated'));
+                return true;
+            } catch (error) {
+                toastr.error(error?.message || 'Failed to save side prompt set', 'STMB');
+                return false;
+            }
+        },
+    });
+
+    popup.dlg?.addEventListener('click', event => {
+        const target = event.target;
+        if (!(target instanceof HTMLElement)) {
+            return;
+        }
+        if (target.closest('#stmb-sp-set-add-row')) {
+            const tbody = popup.dlg?.querySelector('#stmb-sp-set-editor-items');
+            if (tbody) {
+                tbody.insertAdjacentHTML('beforeend', DOMPurify.sanitize(buildSetEditorRowHtml(templates, {})));
+            }
+            return;
+        }
+        const removeButton = target.closest('.stmb-sp-set-item-remove');
+        if (removeButton) {
+            const row = removeButton.closest('tr[data-set-item-id]');
+            row?.remove();
+        }
+    });
+
+    const result = await popup.show();
+    if (result !== POPUP_RESULT.AFFIRMATIVE) {
+        return null;
+    }
+    return popup.stmbSavedSetKey || null;
+}
+
 function buildSidePromptProfileOptionsHtml(selectedIndex) {
     return (stmbSettings.profiles || []).map((profile, index) => `
         <option value="${index}" ${index === selectedIndex ? 'selected' : ''}>${escapeHtml(getProfileDisplayName(profile))}</option>
@@ -3328,6 +3627,22 @@ function setChatSidePromptLorebookOverride(templateKey, lorebookName) {
         if (Object.keys(state.sidePromptLorebookOverrides).length === 0) {
             delete state.sidePromptLorebookOverrides;
         }
+    }
+    saveMetadataDebounced();
+}
+
+function getChatAfterMemorySetKey() {
+    const state = getPersistedStmbState();
+    return String(state.sidePromptAfterMemorySetKey || '').trim();
+}
+
+function setChatAfterMemorySetKey(setKey) {
+    const state = getPersistedStmbState();
+    const normalized = String(setKey || '').trim();
+    if (normalized) {
+        state.sidePromptAfterMemorySetKey = normalized;
+    } else {
+        delete state.sidePromptAfterMemorySetKey;
     }
     saveMetadataDebounced();
 }
@@ -3801,6 +4116,7 @@ async function showSidePromptManagerPopup({ onChange = null } = {}) {
             <div class="world_entry_form_control">
                 <p>Create and manage side prompts for trackers and other behind-the-scenes functions.</p>
             </div>
+            <div id="stmb-sp-set-controls"></div>
             <div class="world_entry_form_control">
                 <input type="text" id="stmb-sp-search" class="text_pole" placeholder="Search side prompts..." aria-label="Search side prompts">
             </div>
@@ -3851,6 +4167,62 @@ async function showSidePromptManagerPopup({ onChange = null } = {}) {
     popup.dlg?.addEventListener('click', async event => {
         const target = event.target;
         if (!(target instanceof HTMLElement)) {
+            return;
+        }
+
+        const setActionButton = target.closest('.stmb-sp-set-action');
+        if (setActionButton) {
+            const row = setActionButton.closest('tr[data-set-key]');
+            const setKey = String(row?.dataset?.setKey || '');
+            try {
+                if (setActionButton.classList.contains('stmb-sp-set-action-edit')) {
+                    const savedKey = await openSidePromptSetEditorPopup({ setKey });
+                    if (!savedKey) return;
+                    toastr.success('Side prompt set updated successfully', 'STMB');
+                } else if (setActionButton.classList.contains('stmb-sp-set-action-duplicate')) {
+                    await duplicateSet(setKey);
+                    await refreshSidePromptCache();
+                    window.dispatchEvent(new CustomEvent('stmb-sideprompts-updated'));
+                    toastr.success('Side prompt set duplicated successfully', 'STMB');
+                } else if (setActionButton.classList.contains('stmb-sp-set-action-delete')) {
+                    const set = await getSet(setKey);
+                    const confirmPopup = new Popup(
+                        `<h3>Delete Side Prompt Set</h3><p>Delete "${escapeHtml(set?.name || setKey)}"? Chats using this set will run no after-memory side prompts until a new mode is selected.</p>`,
+                        POPUP_TYPE.CONFIRM,
+                        '',
+                        { okButton: 'Delete', cancelButton: 'Cancel' },
+                    );
+                    const confirmed = await confirmPopup.show();
+                    if (confirmed !== POPUP_RESULT.AFFIRMATIVE) {
+                        return;
+                    }
+                    await removeSet(setKey);
+                    if (getChatAfterMemorySetKey() === setKey) {
+                        setChatAfterMemorySetKey('');
+                    }
+                    await refreshSidePromptCache();
+                    window.dispatchEvent(new CustomEvent('stmb-sideprompts-updated'));
+                    toastr.success('Side prompt set deleted successfully', 'STMB');
+                }
+                await refreshSidePromptSetControls(popup.dlg);
+                await notifyChange();
+            } catch (error) {
+                toastr.error(error?.message || 'Side prompt set action failed', 'STMB');
+            }
+            return;
+        }
+
+        if (target.closest('#stmb-sp-new-set')) {
+            try {
+                const savedKey = await openSidePromptSetEditorPopup({});
+                if (savedKey) {
+                    toastr.success('Side prompt set created successfully', 'STMB');
+                    await refreshSidePromptSetControls(popup.dlg);
+                    await notifyChange();
+                }
+            } catch (error) {
+                toastr.error(error?.message || 'Failed to create side prompt set', 'STMB');
+            }
             return;
         }
 
@@ -3978,7 +4350,11 @@ async function showSidePromptManagerPopup({ onChange = null } = {}) {
             window.dispatchEvent(new CustomEvent('stmb-sideprompts-updated'));
             selectedTemplateKey = null;
             await refreshSidePromptManagerList(popup.dlg, selectedTemplateKey);
-            toastr.success(`Imported side prompts: ${result.added} added${result.renamed ? ` (${result.renamed} renamed due to key conflicts)` : ''}`, 'STMB');
+            await refreshSidePromptSetControls(popup.dlg);
+            const setDetail = result.setsAdded
+                ? `; sets: ${result.setsAdded} added${result.setsRenamed ? ` (${result.setsRenamed} renamed due to key conflicts)` : ''}`
+                : '';
+            toastr.success(`Imported side prompts: ${result.added} added${result.renamed ? ` (${result.renamed} renamed due to key conflicts)` : ''}${setDetail}`, 'STMB');
             showSidePromptRuntimeMacroImportNormalizationToast(result.strippedDetails);
             await notifyChange();
         } catch (error) {
@@ -3986,7 +4362,20 @@ async function showSidePromptManagerPopup({ onChange = null } = {}) {
         }
     });
 
+    popup.dlg?.querySelector('#stmb-sp-set-controls')?.addEventListener('change', async event => {
+        const target = event.target;
+        if (!(target instanceof HTMLSelectElement)) {
+            return;
+        }
+        if (target.id === 'stmb-sp-after-memory-set-mode') {
+            setChatAfterMemorySetKey(target.value || '');
+            toastr.success('After-memory side prompt mode saved for this chat.', 'STMB');
+            await notifyChange();
+        }
+    });
+
     await refreshSidePromptManagerList(popup.dlg, selectedTemplateKey);
+    await refreshSidePromptSetControls(popup.dlg);
     try {
         applyLocale(popup.dlg);
     } catch {
@@ -7538,6 +7927,26 @@ async function sidePromptCommand(_, rawInput) {
     return await runSidePrompt(raw, stmbSettings);
 }
 
+async function sidePromptSetCommand(_, rawInput) {
+    const raw = String(rawInput || '').trim();
+    if (!raw) {
+        toastr.info('SidePrompt set guide: Choose a quoted set name. Usage: /sideprompt-set "Name" [X-Y].', 'STMB');
+        return '';
+    }
+
+    return await runSidePromptSet(raw, stmbSettings, { macroMode: false });
+}
+
+async function sidePromptMacroSetCommand(_, rawInput) {
+    const raw = String(rawInput || '').trim();
+    if (!raw) {
+        toastr.info('SidePrompt macroset guide: Choose a quoted set name, then fill any prompted macros. Usage: /sideprompt-macroset "Name" {{macro}}="value" [X-Y].', 'STMB');
+        return '';
+    }
+
+    return await runSidePromptSet(raw, stmbSettings, { macroMode: true });
+}
+
 async function toggleSidePromptCommand(_, rawInput, enabled) {
     const raw = String(rawInput || '').trim();
     if (!raw) {
@@ -7754,6 +8163,36 @@ function registerSlashCommands() {
             }),
         ],
         helpString: 'Run side prompt. Usage: /sideprompt "Name" {{macro}}="value" [X-Y]',
+    }));
+
+    SlashCommandParser.addCommandObject(SlashCommand.fromProps({
+        name: 'sideprompt-set',
+        callback: sidePromptSetCommand,
+        rawQuotes: true,
+        unnamedArgumentList: [
+            SlashCommandArgument.fromProps({
+                description: 'Quoted set name, optionally followed by X-Y range',
+                typeList: [ARGUMENT_TYPE.STRING],
+                isRequired: true,
+                enumProvider: sidePromptSetEnumProvider,
+            }),
+        ],
+        helpString: 'Run side prompt set. Usage: /sideprompt-set "Name" [X-Y]',
+    }));
+
+    SlashCommandParser.addCommandObject(SlashCommand.fromProps({
+        name: 'sideprompt-macroset',
+        callback: sidePromptMacroSetCommand,
+        rawQuotes: true,
+        unnamedArgumentList: [
+            SlashCommandArgument.fromProps({
+                description: 'Quoted set name, then any required {{macro}}="value" assignments, optionally followed by X-Y range',
+                typeList: [ARGUMENT_TYPE.STRING],
+                isRequired: true,
+                enumProvider: executor => sidePromptSetEnumProvider(executor, { includeMacros: true }),
+            }),
+        ],
+        helpString: 'Run side prompt set with runtime macros. Usage: /sideprompt-macroset "Name" {{macro}}="value" [X-Y]',
     }));
 
     SlashCommandParser.addCommandObject(SlashCommand.fromProps({

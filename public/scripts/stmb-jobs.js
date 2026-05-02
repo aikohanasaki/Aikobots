@@ -156,6 +156,22 @@ function getJobTypeLabel(type = '') {
     }
 }
 
+function getJobDisplayLabel(job = {}) {
+    const typeLabel = getJobTypeLabel(job.type);
+    const title = String(job.title || '').trim();
+    if (!title) {
+        return typeLabel;
+    }
+
+    if (job.type === 'sidePrompt' || job.type === 'sidePromptBatch') {
+        return /^side prompt/i.test(title) || /^set:/i.test(title)
+            ? title
+            : `Side Prompt: ${title}`;
+    }
+
+    return title === typeLabel ? typeLabel : `${typeLabel}: ${title}`;
+}
+
 function getRangeLabel(range = null) {
     if (!range || !Number.isFinite(Number(range.sceneStart)) || !Number.isFinite(Number(range.sceneEnd))) {
         return '';
@@ -754,7 +770,7 @@ function renderJobRows(records = []) {
                     <div class="stmb-jobs-row-main">
                         <div class="stmb-jobs-row-header">
                             <span class="stmb-jobs-row-icon"></span>
-                            <strong>${esc(getJobTypeLabel(job.type))}</strong>
+                            <strong>${esc(getJobDisplayLabel(job))}</strong>
                             <span class="stmb-jobs-row-status">${esc(getJobStateLabel(job))}</span>
                         </div>
                         ${rangeLabel ? `<div class="stmb-jobs-row-meta">${esc(rangeLabel)}</div>` : ''}
