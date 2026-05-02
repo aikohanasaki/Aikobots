@@ -3993,7 +3993,10 @@ async function readSidePromptEditorPayload(dialog, template = null) {
         throw new Error('__STMB_TARGET_SCOPE_CANCELLED__');
     }
     const selectedTargetName = selectedTarget === '__memory__' ? '' : selectedTarget;
-    let targetLorebookName = String(lorebook.targetLorebookName || '').trim();
+    const existingLorebook = template?.settings?.lorebook && typeof template.settings.lorebook === 'object'
+        ? template.settings.lorebook
+        : {};
+    let targetLorebookName = String(existingLorebook.targetLorebookName || '').trim();
     if (targetChanged && targetScope === 'template') {
         targetLorebookName = selectedTargetName;
     }
