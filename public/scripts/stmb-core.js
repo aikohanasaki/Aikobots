@@ -250,6 +250,7 @@ export const DEFAULT_LOREBOOK_ENTRY_SETTINGS = Object.freeze({
     reverseStart: 9999,
     preventRecursion: false,
     delayUntilRecursion: false,
+    ignoreBudget: false,
 });
 
 const VALID_LOREBOOK_POSITIONS = new Set([0, 1, 2, 3, 5, 6, 7]);
@@ -510,6 +511,7 @@ export function normalizeLorebookEntrySettings(settings = {}, defaults = DEFAULT
         reverseStart: clampReverseStart(settings?.reverseStart, clampReverseStart(base.reverseStart, 9999)),
         preventRecursion: settings?.preventRecursion !== undefined ? Boolean(settings.preventRecursion) : Boolean(base.preventRecursion),
         delayUntilRecursion: settings?.delayUntilRecursion !== undefined ? Boolean(settings.delayUntilRecursion) : Boolean(base.delayUntilRecursion),
+        ignoreBudget: settings?.ignoreBudget !== undefined ? Boolean(settings.ignoreBudget) : Boolean(base.ignoreBudget),
     };
 }
 
@@ -1700,6 +1702,7 @@ export function applyLorebookSettings(entry, profile, options = {}) {
     });
     target.preventRecursion = config.preventRecursion;
     target.delayUntilRecursion = config.delayUntilRecursion;
+    target.ignoreBudget = config.ignoreBudget;
     target.keysecondary = [];
     target.selective = true;
     target.selectiveLogic = 0;

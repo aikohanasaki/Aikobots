@@ -7355,7 +7355,7 @@ function ensureStmbJobExecutorsRegistered() {
 }
 
 function createMemoryJobId() {
-    return `stmb-memory-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    return `${Date.now().toString(16)}-${Math.random().toString(16).slice(2, 10)}`;
 }
 
 async function executeMemoryCreationFromRange(range, options = {}) {
@@ -7396,14 +7396,19 @@ async function executeMemoryCreationFromRange(range, options = {}) {
     ensureStmbJobExecutorsRegistered();
     const memoryJobId = createMemoryJobId();
     const requestSettings = buildMemoryRequestSettings(effectiveSettings.summaryCount);
-    const afterMemoryJobs = await buildQueuedAfterMemorySidePromptJobs({
-        lorebookName,
-        compiledScene,
-        range,
-        settings: requestSettings,
-        profile: effectiveSettings.profileSettings,
-        sceneContext,
-    });
+    let afterMemoryJobs = [];
+    try {
+        afterMemoryJobs = await buildQueuedAfterMemorySidePromptJobs({
+            lorebookName,
+            compiledScene,
+            range,
+            settings: requestSettings,
+            profile: effectiveSettings.profileSettings,
+            sceneContext,
+        });
+    } catch (error) {
+        console.warn('STMB after-memory side prompt planning failed', error);
+    }
     enqueueStmbJob({
         id: memoryJobId,
         type: 'memory',

@@ -7,6 +7,7 @@ import {
 import { getContext } from './extensions.js';
 import { generateStmbText, upsertStmbEntriesBatch, upsertStmbEntryByTitle } from './stmb-api.js';
 import { saveMetadataDebounced } from './extensions.js';
+import { removeReasoningFromString } from './reasoning.js';
 import { getLorebookStorageForRequest, loadWorldInfo, reloadEditor, world_names, worldInfoCache } from './world-info.js';
 import { buildOpenAIGenerateData, oai_settings } from './openai.js';
 import { showMemoryPreviewPopup } from './stmb-popups.js';
@@ -22,7 +23,7 @@ import {
     STMB_METADATA_KEY,
 } from './stmb-core.js';
 import { buildStmbSceneContext, captureStmbSceneRange, fetchStmbChatRangeInfo } from './stmb-scene.js';
-import { buildSidePromptText, fetchPreviousMemories } from './stmb-prompt-assembly.js';
+import { applyStmbIncomingRegex, buildSidePromptText, fetchPreviousMemories } from './stmb-prompt-assembly.js';
 import {
     applySidePromptMacros,
     collectTemplateRuntimeMacros,
@@ -479,7 +480,8 @@ async function runTextGeneration(prompt, settings, profile = null, signal = null
             settings?.moduleSettings?.maxTokens,
         ),
     }, { signal, onRateLimitWait });
-    return String(result?.text ?? '');
+    const cleanedText = removeReasoningFromString(String(result?.text ?? ''));
+    return applyStmbIncomingRegex(cleanedText);
 }
 
 function getSidePromptTaskKey(template) {

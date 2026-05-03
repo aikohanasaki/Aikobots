@@ -2,8 +2,51 @@ import {
     compiledSceneToText,
     identifyManagedMemoryEntries,
 } from './stmb-core.js';
+import { extension_settings } from './extensions.js';
+import { getRegexScripts, runRegexScript } from './extensions/regex/engine.js';
 import { applySidePromptMacros } from './stmb-sideprompt-macros.js';
 import { getRequiredSummaryPromptText } from './stmb-summary-prompt-manager.js';
+
+function cloneRegexScriptEnabled(script) {
+    try {
+        const clone = { ...script };
+        clone.disabled = false;
+        return clone;
+    } catch {
+        return script;
+    }
+}
+
+export function applyStmbSelectedRegex(text, selectedKeys, logLabel = 'STMB selected regex') {
+    if (typeof text !== 'string') return text;
+    if (!Array.isArray(selectedKeys) || selectedKeys.length === 0) return text;
+
+    try {
+        const allScripts = getRegexScripts({ allowedOnly: false }) || [];
+        const indices = selectedKeys
+            .map(key => Number(String(key).replace(/^idx:/, '')))
+            .filter(index => Number.isInteger(index) && index >= 0 && index < allScripts.length);
+
+        let output = text;
+        for (const index of indices) {
+            output = runRegexScript(cloneRegexScriptEnabled(allScripts[index]), output);
+        }
+        return output;
+    } catch (error) {
+        console.warn(`${logLabel} application failed`, error);
+        return text;
+    }
+}
+
+function applyConfiguredStmbRegex(text, selectedKeysName, logLabel) {
+    const moduleSettings = extension_settings?.STMemoryBooks?.moduleSettings;
+    if (!moduleSettings?.useRegex) return text;
+    return applyStmbSelectedRegex(text, moduleSettings?.[selectedKeysName], logLabel);
+}
+
+export function applyStmbIncomingRegex(text) {
+    return applyConfiguredStmbRegex(text, 'selectedRegexIncoming', 'STMB sideprompt incoming regex');
+}
 
 export function fetchPreviousMemories(worldInfo, count) {
     if (!Number.isFinite(Number(count)) || Number(count) <= 0) {
@@ -93,5 +136,5 @@ export function buildSidePromptText(templatePrompt, priorContent, compiledScene,
         parts.push('\n=== RESPONSE FORMAT ===\n');
         parts.push(applySidePromptMacros(responseFormat, runtimeMacros).trim());
     }
-    return parts.join('');
+    return applyConfiguredStmbRegex(parts.join(''), 'selectedRegexOutgoing', 'STMB sideprompt outgoing regex');
 }
