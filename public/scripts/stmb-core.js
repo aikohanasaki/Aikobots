@@ -281,6 +281,7 @@ export function createDefaultStmbProfile() {
         orderValue: 100,
         preventRecursion: false,
         delayUntilRecursion: false,
+        ignoreBudget: false,
     };
 }
 
@@ -385,6 +386,7 @@ function sanitizeProfile(rawProfile) {
         reverseStart: clampReverseStart(profile.reverseStart, fallback.reverseStart),
         preventRecursion: Boolean(profile.preventRecursion),
         delayUntilRecursion: Boolean(profile.delayUntilRecursion),
+        ignoreBudget: Boolean(profile.ignoreBudget),
     };
 
     if (typeof connection.model === 'string') sanitized.connection.model = connection.model;

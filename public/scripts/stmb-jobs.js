@@ -23,7 +23,6 @@ const RECENT_HISTORY_LIMIT = 20;
 const RENDER_INTERVAL_MS = 1000;
 const pendingApprovals = new Map();
 
-let jobIdCounter = 0;
 let topBarButton = null;
 let topBarBadge = null;
 let jobsPanel = null;
@@ -36,8 +35,11 @@ let jobsPanelOpen = false;
 const OPEN_APPROVAL_EVENT = 'stmb:open-job-approval';
 
 function nextJobId() {
-    jobIdCounter += 1;
-    return `stmb-job-${Date.now()}-${jobIdCounter}`;
+    const ts = Date.now().toString(16);
+    const rand = Math.floor(Math.random() * 0x1_0000_0000)
+        .toString(16)
+        .padStart(8, '0');
+    return `stmb-job-${ts}-${rand}`;
 }
 
 function ensureChatStore(chatKey) {
@@ -472,11 +474,11 @@ async function runNextJob(chatKey) {
         store.queue.push(nextJob);
         touchStore(store);
         syncRenderTimer();
-        queueMicrotask(() => {
+        setTimeout(() => {
             runNextJob(chatKey).catch(error => {
                 console.warn('STMB client job runner failed', error);
             });
-        });
+        }, 100);
         return;
     }
 
