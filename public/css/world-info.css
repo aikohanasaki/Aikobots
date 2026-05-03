@@ -234,6 +234,10 @@
     align-items: center;
 }
 
+.world-editor-mobile-break {
+    display: none;
+}
+
 .world_entry .killSwitch.fa-toggle-on {
     color: var(--SmartThemeQuoteColor);
 }

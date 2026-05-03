@@ -216,6 +216,12 @@
         flex-direction: column;
     }
 
+    .world-editor-mobile-break {
+        display: block;
+        flex-basis: 100%;
+        height: 0;
+    }
+
     #top-settings-holder,
     #top-bar {
         position: fixed;
