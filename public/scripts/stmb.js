@@ -1510,6 +1510,8 @@ async function refreshPlannerEffectsFromJobs(jobs = []) {
             continue;
         }
         if (updatedAt > 0 && updatedAt < terminalNotificationCutoff) {
+            handledPlannerTerminalJobUpdates.set(jobId, updatedAt || now);
+            await acknowledgePlannerJobHandled(job);
             continue;
         }
         if (clientHandledAt >= updatedAt) {
