@@ -666,7 +666,27 @@ async function findExistingApprovedSubmissionRecord({ submissionId, ownerHandle,
     ) || await findExistingGlobalPublicationApproval({ ownerHandle, sharedCharacterKey, submittedFilename });
 }
 
-async function getExistingApprovedDistributionConfiguration(record) {
+function createEmptyDistributionView({
+    requestedDistributionMode = SUBMISSION_DISTRIBUTION_MODES.GLOBAL,
+    publishedFilename = '',
+    publishMode = null,
+} = {}) {
+    return {
+        requestedDistributionMode,
+        requestedTargetHandles: [],
+        requestedBlacklistHandles: [],
+        whitelistHandles: [],
+        adminBlacklistHandles: [],
+        userBlacklistHandles: [],
+        hasWhitelist: false,
+        hasAdminBlacklist: false,
+        hasUserBlacklist: false,
+        publishedFilename,
+        publishMode,
+    };
+}
+
+async function buildDistributionViewFromApprovedRecord(record, { includeUserBlacklist = false } = {}) {
     if (!record || record.status !== SUBMISSION_STATUSES.APPROVED || !record.publishMode) {
         return null;
     }
@@ -677,21 +697,29 @@ async function getExistingApprovedDistributionConfiguration(record) {
         characterKey: record.sharedCharacterKey,
         publishedFilename,
     });
+    const userBlacklistHandles = includeUserBlacklist ? distributionPolicy.userBlacklistHandles : [];
 
     if (record.publishMode === PUBLISH_MODES.SELECTED) {
-        const targetHandles = distributionPolicy.hasWhitelist
+        const whitelistHandles = distributionPolicy.hasWhitelist
             ? distributionPolicy.whitelistHandles
             : normalizeHandleList(record.targetHandles);
 
         return {
+            ...createEmptyDistributionView({
+                requestedDistributionMode: SUBMISSION_DISTRIBUTION_MODES.WHITELIST,
+                publishedFilename,
+                publishMode: PUBLISH_MODES.SELECTED,
+            }),
             requestedDistributionMode: SUBMISSION_DISTRIBUTION_MODES.WHITELIST,
-            requestedTargetHandles: targetHandles,
-            requestedBlacklistHandles: [],
-            userBlacklistHandles: [],
+            requestedTargetHandles: whitelistHandles,
+            whitelistHandles,
+            userBlacklistHandles,
+            hasWhitelist: whitelistHandles.length > 0,
+            hasUserBlacklist: userBlacklistHandles.length > 0,
             distributeParams: {
                 publishedFilename,
                 publishMode: PUBLISH_MODES.SELECTED,
-                targetHandles,
+                targetHandles: whitelistHandles,
                 persistWhitelist: distributionPolicy.hasWhitelist,
                 whitelistHandles: distributionPolicy.hasWhitelist ? distributionPolicy.whitelistHandles : [],
             },
@@ -699,36 +727,79 @@ async function getExistingApprovedDistributionConfiguration(record) {
     }
 
     if (record.publishMode === PUBLISH_MODES.GLOBAL) {
-        if (distributionPolicy.hasAdminBlacklist) {
-            return {
-                requestedDistributionMode: SUBMISSION_DISTRIBUTION_MODES.GLOBAL_BLACKLIST,
-                requestedTargetHandles: [],
-                requestedBlacklistHandles: distributionPolicy.adminBlacklistHandles,
-                userBlacklistHandles: distributionPolicy.userBlacklistHandles,
-                distributeParams: {
-                    publishedFilename,
-                    publishMode: PUBLISH_MODES.GLOBAL,
-                    applyBlacklist: true,
-                    blacklistHandles: distributionPolicy.adminBlacklistHandles,
-                },
-            };
-        }
+        const adminBlacklistHandles = distributionPolicy.adminBlacklistHandles;
+        const requestedDistributionMode = adminBlacklistHandles.length > 0
+            ? SUBMISSION_DISTRIBUTION_MODES.GLOBAL_BLACKLIST
+            : SUBMISSION_DISTRIBUTION_MODES.GLOBAL;
 
         return {
-            requestedDistributionMode: SUBMISSION_DISTRIBUTION_MODES.GLOBAL,
+            ...createEmptyDistributionView({
+                requestedDistributionMode,
+                publishedFilename,
+                publishMode: PUBLISH_MODES.GLOBAL,
+            }),
+            requestedDistributionMode,
             requestedTargetHandles: [],
-            requestedBlacklistHandles: [],
-            userBlacklistHandles: distributionPolicy.userBlacklistHandles,
+            requestedBlacklistHandles: adminBlacklistHandles,
+            adminBlacklistHandles,
+            userBlacklistHandles,
+            hasAdminBlacklist: adminBlacklistHandles.length > 0,
+            hasUserBlacklist: userBlacklistHandles.length > 0,
             distributeParams: {
                 publishedFilename,
                 publishMode: PUBLISH_MODES.GLOBAL,
-                applyBlacklist: false,
-                blacklistHandles: [],
+                applyBlacklist: adminBlacklistHandles.length > 0,
+                blacklistHandles: adminBlacklistHandles,
             },
         };
     }
 
     return null;
+}
+
+/**
+ * Gets the existing approved distribution view for an existing character.
+ * @param {{ sourcePath: string, ownerHandle: string, originalFilename: string }} params
+ * @returns {Promise<object>}
+ */
+export async function getExistingApprovedDistributionViewForSource({
+    sourcePath,
+    ownerHandle,
+    originalFilename,
+    includeUserBlacklist = false,
+}) {
+    const { card } = await readCharacterCardFile(sourcePath);
+    const fallbackName = normalizeCharacterFileName(originalFilename, 'character');
+    const characterName = normalizeCharacterFileName(getCharacterName(card), fallbackName);
+    const submittedFilename = `${characterName}.png`;
+    const submissionId = buildSubmissionId({ ownerHandle, submittedFilename });
+    const existingOwnerHandle = getSubmissionOwnerHandle(card);
+    const existingOwnerHandles = getSubmissionOwnerHandles(card);
+    const existingSharedCharacterKey = getCharacterSharedKey(card) || getSharedCharacterKeyForFilePath(sourcePath);
+
+    if (existingOwnerHandles.length > 0 && !existingOwnerHandles.includes(ownerHandle)) {
+        throw new Error(`This character is owned by ${existingOwnerHandle} and cannot be submitted by ${ownerHandle}.`);
+    }
+
+    const existingApprovedRecord = await findExistingApprovedSubmissionRecord({
+        submissionId,
+        ownerHandle,
+        sharedCharacterKey: existingSharedCharacterKey || '',
+        submittedFilename,
+    });
+    const existingApprovedDistribution = existingApprovedRecord
+        ? await buildDistributionViewFromApprovedRecord(existingApprovedRecord, { includeUserBlacklist })
+        : null;
+
+    if (existingApprovedDistribution) {
+        return existingApprovedDistribution;
+    }
+
+    return createEmptyDistributionView();
+}
+
+async function getExistingApprovedDistributionConfiguration(record) {
+    return await buildDistributionViewFromApprovedRecord(record, { includeUserBlacklist: true });
 }
 
 function isRequestedDistributionUnchanged(requestedDistribution, existingDistribution) {

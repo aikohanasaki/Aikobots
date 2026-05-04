@@ -334,6 +334,60 @@ async function getCharacterDistributionPolicy(ownerHandle, publishedFilename, ch
     }
 }
 
+async function getCharacterSubmissionDistributionDefaults(sourceAvatar) {
+    const avatar = String(sourceAvatar || '').trim();
+    if (!avatar) {
+        return {
+            requestedDistributionMode: SUBMISSION_DISTRIBUTION_MODES.GLOBAL,
+            requestedTargetHandles: [],
+            requestedBlacklistHandles: [],
+            whitelistHandles: [],
+            adminBlacklistHandles: [],
+        };
+    }
+
+    try {
+        const response = await fetch('/api/character-submissions/distribution-defaults', {
+            method: 'POST',
+            headers: getRequestHeaders(),
+            body: JSON.stringify({ sourceAvatar: avatar }),
+        });
+
+        const data = await response.json().catch(() => ({}));
+        if (!response.ok) {
+            throw new Error(data?.error || 'Failed to get character submission distribution defaults');
+        }
+
+        const requestedDistributionMode = normalizeSubmissionDistributionMode(data?.requestedDistributionMode)
+            || SUBMISSION_DISTRIBUTION_MODES.GLOBAL;
+
+        return {
+            requestedDistributionMode,
+            requestedTargetHandles: Array.isArray(data?.requestedTargetHandles)
+                ? data.requestedTargetHandles.map(handle => String(handle || '').trim()).filter(Boolean)
+                : [],
+            requestedBlacklistHandles: Array.isArray(data?.requestedBlacklistHandles)
+                ? data.requestedBlacklistHandles.map(handle => String(handle || '').trim()).filter(Boolean)
+                : [],
+            whitelistHandles: Array.isArray(data?.whitelistHandles)
+                ? data.whitelistHandles.map(handle => String(handle || '').trim()).filter(Boolean)
+                : [],
+            adminBlacklistHandles: Array.isArray(data?.adminBlacklistHandles)
+                ? data.adminBlacklistHandles.map(handle => String(handle || '').trim()).filter(Boolean)
+                : [],
+        };
+    } catch (error) {
+        console.error('Error getting character submission distribution defaults:', error);
+        return {
+            requestedDistributionMode: SUBMISSION_DISTRIBUTION_MODES.GLOBAL,
+            requestedTargetHandles: [],
+            requestedBlacklistHandles: [],
+            whitelistHandles: [],
+            adminBlacklistHandles: [],
+        };
+    }
+}
+
 /**
  * Submits an existing character card with an admin distribution request.
  * @param {string} sourceAvatar
@@ -616,7 +670,8 @@ export async function submitSelectedCharacterForReview(character) {
     }
 
     const displayName = String(character?.name || avatar);
-    let requestedDistributionMode = SUBMISSION_DISTRIBUTION_MODES.GLOBAL;
+    const distributionDefaults = await getCharacterSubmissionDistributionDefaults(avatar);
+    let requestedDistributionMode = distributionDefaults.requestedDistributionMode;
     const container = $('<div class="flex-container flexFlowColumn flexGap10"></div>');
     container.append('<h3 class="margin0">Submit Character</h3>');
     const text = $('<div></div>');
@@ -653,6 +708,14 @@ export async function submitSelectedCharacterForReview(character) {
         requestedDistributionMode = String($(this).val());
         syncSubmissionDistributionBlocks();
     });
+    const defaultWhitelistHandles = distributionDefaults.whitelistHandles.length > 0
+        ? distributionDefaults.whitelistHandles
+        : distributionDefaults.requestedTargetHandles;
+    const defaultAdminBlacklistHandles = distributionDefaults.adminBlacklistHandles.length > 0
+        ? distributionDefaults.adminBlacklistHandles
+        : distributionDefaults.requestedBlacklistHandles;
+    container.find('.submission-whitelist-targets').val(formatDistributionHandles(defaultWhitelistHandles));
+    container.find('.submission-blacklist-targets').val(formatDistributionHandles(defaultAdminBlacklistHandles));
 
     function syncSubmissionDistributionBlocks() {
         container.find('.submission-whitelist-targets-block').toggle(requestedDistributionMode === SUBMISSION_DISTRIBUTION_MODES.WHITELIST);
@@ -728,7 +791,6 @@ async function openSubmissionReviewPopup(submission, callback) {
     let applyBlacklist = hasRequestedDistribution ? requestedDistributionSettings.applyBlacklist : false;
     let persistWhitelist = hasRequestedDistribution ? requestedDistributionSettings.persistWhitelist : false;
     let hasUserBlacklist = false;
-    let currentUserBlacklistHandles = [];
     let policyRequestId = 0;
     let policyRefreshTimer = null;
     const initialTargetHandles = hasRequestedDistribution
@@ -772,6 +834,11 @@ async function openSubmissionReviewPopup(submission, callback) {
                 <small class="opacity50p review-blacklist-help">Type in the usernames separated by a comma.</small>
                 <textarea class="text_pole review-blacklist-targets" rows="3" placeholder="Comma or newline separated usernames"></textarea>
             </div>
+            <div class="review-user-blacklist-targets-block flex-container flexFlowColumn flexGap5">
+                <span>User-Blacklisted Usernames</span>
+                <small class="opacity50p">Self-enrolled opt-outs are always enforced and cannot be edited here.</small>
+                <textarea class="text_pole review-user-blacklist-targets" rows="3" readonly></textarea>
+            </div>
             <div class="review-targets-block flex-container flexFlowColumn flexGap5">
                 <span>Recipient Usernames</span>
                 <small class="opacity50p">Type in the usernames separated by a comma.</small>
@@ -805,37 +872,33 @@ async function openSubmissionReviewPopup(submission, callback) {
         container.find('.review-targets-block').toggle(canApprove && publishMode === 'selected');
         container.find('.review-persist-whitelist-block').toggle(canApprove && publishMode === 'selected');
         container.find('.review-apply-blacklist-block').toggle(canApprove && publishMode === 'global');
-        container.find('.review-blacklist-targets-block').toggle(canApprove && publishMode === 'global' && (applyBlacklist || hasUserBlacklist));
+        container.find('.review-blacklist-targets-block').toggle(canApprove && publishMode === 'global' && applyBlacklist);
+        container.find('.review-user-blacklist-targets-block').toggle(hasUserBlacklist);
     }
 
     async function loadPolicyForCurrentFilename({ overwriteRecipients = false } = {}) {
-        if (!canApprove) {
-            return;
-        }
-
         const requestId = ++policyRequestId;
         const policy = await getCharacterDistributionPolicy(ownerHandle, publishedFilename, characterKey);
         if (requestId !== policyRequestId) {
             return;
         }
         hasUserBlacklist = policy.hasUserBlacklist;
-        currentUserBlacklistHandles = normalizeDistributionHandles(policy.userBlacklistHandles);
+        const userBlacklistHandles = normalizeDistributionHandles(policy.userBlacklistHandles);
+        container.find('.review-user-blacklist-targets').val(formatDistributionHandles(userBlacklistHandles));
 
         if (hasRequestedDistribution) {
             const mergedBlacklistHandles = normalizeDistributionHandles([
                 ...initialBlacklistHandles,
-                ...policy.blacklistHandles,
+                ...policy.adminBlacklistHandles,
             ]);
             applyBlacklist = publishMode === 'global'
                 && (requestedDistributionSettings.applyBlacklist || policy.hasAdminBlacklist);
             persistWhitelist = requestedDistributionSettings.persistWhitelist;
             container.find('.review-apply-blacklist').prop('checked', applyBlacklist);
             container.find('.review-persist-whitelist').prop('checked', persistWhitelist);
-            container.find('.review-blacklist-targets').val(formatDistributionHandles((applyBlacklist || hasUserBlacklist) ? mergedBlacklistHandles : []));
+            container.find('.review-blacklist-targets').val(formatDistributionHandles(applyBlacklist ? mergedBlacklistHandles : []));
             container.find('.review-targets').val(formatDistributionHandles(initialTargetHandles));
-            container.find('.review-blacklist-help').text(hasUserBlacklist
-                ? 'User opt-outs are included and always apply. The checkbox controls admin-managed blacklist entries.'
-                : 'Type in the usernames separated by a comma.');
+            container.find('.review-blacklist-help').text('Type in admin-managed blacklisted usernames separated by a comma.');
             syncPolicyBlocks();
             return;
         }
@@ -844,10 +907,8 @@ async function openSubmissionReviewPopup(submission, callback) {
         persistWhitelist = policy.hasWhitelist;
         container.find('.review-apply-blacklist').prop('checked', applyBlacklist);
         container.find('.review-persist-whitelist').prop('checked', persistWhitelist);
-        container.find('.review-blacklist-targets').val(formatDistributionHandles((applyBlacklist || hasUserBlacklist) ? policy.blacklistHandles : []));
-        container.find('.review-blacklist-help').text(hasUserBlacklist
-            ? 'User opt-outs are included and always apply. The checkbox controls admin-managed blacklist entries.'
-            : 'Type in the usernames separated by a comma.');
+        container.find('.review-blacklist-targets').val(formatDistributionHandles(applyBlacklist ? policy.adminBlacklistHandles : []));
+        container.find('.review-blacklist-help').text('Type in admin-managed blacklisted usernames separated by a comma.');
 
         if (policy.hasWhitelist) {
             container.find('.review-targets').val(formatDistributionHandles(policy.whitelistHandles));
@@ -972,9 +1033,8 @@ async function openSubmissionReviewPopup(submission, callback) {
     }
 
     const targetHandles = parseDistributionHandles(container.find('.review-targets').val());
-    const userBlacklist = new Set(currentUserBlacklistHandles);
     const blacklistHandles = applyBlacklist
-        ? parseDistributionHandles(container.find('.review-blacklist-targets').val()).filter(handle => !userBlacklist.has(handle))
+        ? parseDistributionHandles(container.find('.review-blacklist-targets').val())
         : [];
     if (publishMode === 'selected' && targetHandles.length === 0) {
         toastr.error('Choose at least one recipient.', 'Admin distribution cancelled');

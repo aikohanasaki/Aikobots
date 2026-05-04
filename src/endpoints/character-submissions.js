@@ -16,6 +16,7 @@ import {
     buildSubmissionSummary,
     distributeCharacterFile,
     ensureSubmissionStore,
+    getExistingApprovedDistributionViewForSource,
     getSubmissionPaths,
     getSubmissionRecord,
     listSubmissionRecords,
@@ -165,6 +166,40 @@ router.post('/submit', async (request, response) => {
         if (uploadPath) {
             await fsPromises.rm(uploadPath, { force: true }).catch(() => { });
         }
+    }
+});
+
+router.post('/distribution-defaults', async (request, response) => {
+    try {
+        const sourceAvatar = sanitize(String(request.body?.sourceAvatar || ''));
+        if (!sourceAvatar) {
+            return response.status(400).json({ error: 'Missing source character.' });
+        }
+
+        if (!sourceAvatar.toLowerCase().endsWith('.png')) {
+            return response.status(400).json({ error: 'Only PNG character cards are supported.' });
+        }
+
+        const sourcePath = path.join(request.user.directories.characters, sourceAvatar);
+        if (!fs.existsSync(sourcePath)) {
+            return response.status(404).json({ error: 'Source character was not found.' });
+        }
+
+        if (!(await isPngFile(sourcePath))) {
+            return response.status(400).json({ error: 'Only PNG character cards are supported.' });
+        }
+
+        const defaults = await getExistingApprovedDistributionViewForSource({
+            sourcePath,
+            ownerHandle: request.user.profile.handle,
+            originalFilename: sourceAvatar,
+            includeUserBlacklist: false,
+        });
+
+        return response.json(defaults);
+    } catch (error) {
+        console.error('Character submission distribution default lookup failed:', error);
+        return response.status(400).json({ error: error.message || 'Character submission distribution default lookup failed.' });
     }
 });
 
