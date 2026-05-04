@@ -7182,10 +7182,12 @@ body:not(.movingUI) .drawer-content.maximized {
 }
 
 .stmb-jobs-row {
+    position: relative;
     display: flex;
     gap: 10px;
     justify-content: space-between;
     padding: 10px;
+    padding-right: 34px;
     border-radius: 10px;
     border: 1px solid transparent;
     background: rgba(255, 255, 255, 0.03);
@@ -7230,6 +7232,29 @@ body:not(.movingUI) .drawer-content.maximized {
 
 .stmb-jobs-row-action {
     align-self: center;
+}
+
+.stmb-jobs-row-dismiss {
+    position: absolute;
+    top: 6px;
+    right: 6px;
+    width: 22px;
+    height: 22px;
+    padding: 0;
+    border: 0;
+    border-radius: 50%;
+    background: transparent;
+    color: inherit;
+    font-size: 18px;
+    line-height: 1;
+    cursor: pointer;
+    opacity: 0.75;
+}
+
+.stmb-jobs-row-dismiss:hover,
+.stmb-jobs-row-dismiss:focus-visible {
+    background: color-mix(in srgb, currentColor 14%, transparent);
+    opacity: 1;
 }
 
 .stmb-jobs-row[data-action="open-approval"] {

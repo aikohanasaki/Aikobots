@@ -244,6 +244,11 @@ function getRecentFailureCount(store) {
     return recentJobs.filter(job => job?.state === 'failed').length;
 }
 
+function getDismissibleNotificationCount(store) {
+    const recentJobs = Array.isArray(store?.recentHistory) ? store.recentHistory : [];
+    return recentJobs.filter(job => TERMINAL_JOB_STATES.has(job?.state) && job?.state !== 'completed').length;
+}
+
 function getCompletedCount(store) {
     const recentJobs = Array.isArray(store?.recentHistory) ? store.recentHistory : [];
     return recentJobs.filter(job => job?.state === 'completed').length;
@@ -832,7 +837,11 @@ function renderJobRows(records = []) {
         const runningJob = record.store?.runningJob ? [record.store.runningJob] : [];
         const queuedJobs = Array.isArray(record.store?.queue) ? record.store.queue : [];
         const recentJobs = Array.isArray(record.store?.recentHistory) ? record.store.recentHistory : [];
-        const orderedJobs = [...runningJob, ...queuedJobs, ...recentJobs];
+        const orderedJobs = [
+            ...runningJob.map(job => ({ job, source: 'running' })),
+            ...queuedJobs.map(job => ({ job, source: 'queue' })),
+            ...recentJobs.map(job => ({ job, source: 'history' })),
+        ];
 
         if (orderedJobs.length === 0) {
             continue;
@@ -842,15 +851,19 @@ function renderJobRows(records = []) {
             sections.push(`<div class="stmb-jobs-store-label">${esc(getStoreDisplayLabel(record))}</div>`);
         }
 
-        sections.push(...orderedJobs.map(job => {
+        sections.push(...orderedJobs.map(({ job, source }) => {
             const rangeLabel = getRangeLabel(job.range);
             const elapsedLabel = formatElapsed(job);
             const isAwaitingApproval = isJobAwaitingApproval(job);
+            const canDismissNotification = source === 'history' && TERMINAL_JOB_STATES.has(job.state) && job.state !== 'completed';
             const approvalAttrs = isAwaitingApproval
                 ? ` data-action="open-approval" data-job-id="${esc(job.id)}" role="button" tabindex="0" title="Review approval request"`
                 : '';
             const retryButton = job.state === 'failed'
                 ? `<button type="button" class="menu_button stmb-jobs-row-action" data-action="retry" data-chat-key="${esc(record.chatKey)}" data-job-id="${esc(job.id)}">Retry failed</button>`
+                : '';
+            const dismissButton = canDismissNotification
+                ? `<button type="button" class="stmb-jobs-row-dismiss" data-action="dismiss-job" data-chat-key="${esc(record.chatKey)}" data-job-id="${esc(job.id)}" title="Dismiss notification" aria-label="Dismiss notification">&times;</button>`
                 : '';
             return `
                 <div class="stmb-jobs-row ${getStatusToneClass(job)}"${approvalAttrs}>
@@ -867,6 +880,7 @@ function renderJobRows(records = []) {
                         ${job.error?.message ? `<div class="stmb-jobs-row-error">${esc(job.error.message)}</div>` : ''}
                     </div>
                     ${retryButton}
+                    ${dismissButton}
                 </div>
             `;
         }));
@@ -879,12 +893,12 @@ function renderJobRows(records = []) {
     const hasCurrentRunningJob = Boolean(currentRecord?.store?.runningJob);
     const hasAnyActiveJobs = records.some(record => record.activeCount > 0);
     const completedCount = records.reduce((count, record) => count + getCompletedCount(record.store), 0);
-    const recentFailureCount = records.reduce((count, record) => count + getRecentFailureCount(record.store), 0);
+    const notificationCount = records.reduce((count, record) => count + getDismissibleNotificationCount(record.store), 0);
     jobsActions.innerHTML = `
         <button type="button" class="menu_button" data-action="cancel-active" ${hasCurrentRunningJob ? '' : 'disabled'}>Cancel current active job</button>
         <button type="button" class="menu_button" data-action="cancel-all-active" ${hasAnyActiveJobs ? '' : 'disabled'}>Cancel all jobs</button>
         <button type="button" class="menu_button" data-action="clear-completed" ${completedCount > 0 ? '' : 'disabled'}>Clear completed</button>
-        ${recentFailureCount > 0 ? '<button type="button" class="stmb-jobs-action-link" data-action="dismiss-failures">Dismiss all notifications</button>' : ''}
+        ${notificationCount > 0 ? '<button type="button" class="stmb-jobs-action-link" data-action="dismiss-notifications">Dismiss all notifications</button>' : ''}
     `;
 }
 
@@ -967,9 +981,16 @@ function handlePanelClick(event) {
         }
         return;
     }
-    if (action === 'dismiss-failures') {
+    if (action === 'dismiss-notifications') {
         for (const key of jobStores.keys()) {
-            dismissFailedStmbJobNotifications(key);
+            dismissStmbJobNotifications(key);
+        }
+        return;
+    }
+    if (action === 'dismiss-job') {
+        const dismissChatKey = actionButton.dataset.chatKey || currentChatKey;
+        if (dismissChatKey) {
+            dismissStmbJobNotification(dismissChatKey, actionButton.dataset.jobId);
         }
         return;
     }
@@ -1155,6 +1176,10 @@ export function clearCompletedStmbJobs(chatKey = null) {
 }
 
 export function dismissFailedStmbJobNotifications(chatKey = null) {
+    return dismissStmbJobNotifications(chatKey);
+}
+
+export function dismissStmbJobNotifications(chatKey = null) {
     const targetChatKey = String(chatKey || getCurrentChatKey() || '').trim();
     if (!targetChatKey) {
         return 0;
@@ -1162,9 +1187,32 @@ export function dismissFailedStmbJobNotifications(chatKey = null) {
 
     const store = ensureChatStore(targetChatKey);
     const before = store.recentHistory.length;
-    store.recentHistory = store.recentHistory.filter(job => job.state !== 'failed');
+    store.recentHistory = store.recentHistory.filter(job => !TERMINAL_JOB_STATES.has(job.state) || job.state === 'completed');
     touchStore(store);
     return before - store.recentHistory.length;
+}
+
+export function dismissStmbJobNotification(chatKey = null, jobId = null) {
+    const targetChatKey = String(chatKey || getCurrentChatKey() || '').trim();
+    const targetJobId = String(jobId || '').trim();
+    if (!targetChatKey || !targetJobId) {
+        return false;
+    }
+
+    const store = ensureChatStore(targetChatKey);
+    const before = store.recentHistory.length;
+    store.recentHistory = store.recentHistory.filter(job => {
+        if (String(job?.id || '') !== targetJobId) {
+            return true;
+        }
+        return !TERMINAL_JOB_STATES.has(job.state) || job.state === 'completed';
+    });
+    if (store.recentHistory.length === before) {
+        return false;
+    }
+
+    touchStore(store);
+    return true;
 }
 
 export function retryFailedStmbJob(chatKey = null, jobId = null) {
