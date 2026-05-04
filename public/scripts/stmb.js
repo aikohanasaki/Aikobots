@@ -1494,6 +1494,7 @@ function notifyPlannerTerminalStatus(job) {
 
 async function refreshPlannerEffectsFromJobs(jobs = []) {
     const now = Date.now();
+    const terminalNotificationCutoff = now - PLANNER_RECENT_JOB_WINDOW_MS;
     pruneHandledPlannerTerminalJobs(now);
 
     for (const job of Array.isArray(jobs) ? jobs : []) {
@@ -1506,6 +1507,9 @@ async function refreshPlannerEffectsFromJobs(jobs = []) {
         const updatedAt = Number(job?.updatedAt || 0);
         const clientHandledAt = Number(job?.clientHandledAt || 0);
         if (!jobId) {
+            continue;
+        }
+        if (updatedAt > 0 && updatedAt < terminalNotificationCutoff) {
             continue;
         }
         if (clientHandledAt >= updatedAt) {

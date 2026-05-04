@@ -249,12 +249,17 @@ function getCompletedCount(store) {
     return recentJobs.filter(job => job?.state === 'completed').length;
 }
 
+function getRecentHistoryCount(store) {
+    return Array.isArray(store?.recentHistory) ? store.recentHistory.length : 0;
+}
+
 function summarizeAllStores() {
     const summary = {
         running: 0,
         queued: 0,
         awaitingApproval: 0,
         recentFailures: 0,
+        recentHistory: 0,
     };
 
     for (const store of jobStores.values()) {
@@ -263,6 +268,7 @@ function summarizeAllStores() {
         summary.queued += storeSummary.queued;
         summary.awaitingApproval += storeSummary.awaitingApproval;
         summary.recentFailures += getRecentFailureCount(store);
+        summary.recentHistory += getRecentHistoryCount(store);
     }
 
     return summary;
@@ -279,7 +285,8 @@ function getJobStoreRecordsForView(currentChatKey = '') {
     for (const [chatKey, store] of jobStores.entries()) {
         const activeCount = getActiveJobCount(store);
         const recentFailureCount = getRecentFailureCount(store);
-        if (activeCount === 0 && recentFailureCount === 0) {
+        const recentHistoryCount = getRecentHistoryCount(store);
+        if (activeCount === 0 && recentHistoryCount === 0) {
             continue;
         }
 
@@ -288,6 +295,7 @@ function getJobStoreRecordsForView(currentChatKey = '') {
             store,
             activeCount,
             recentFailureCount,
+            recentHistoryCount,
             isCurrent: Boolean(currentChatKey && chatKey === currentChatKey),
         });
     }
@@ -301,6 +309,9 @@ function getJobStoreRecordsForView(currentChatKey = '') {
         }
         if (left.recentFailureCount !== right.recentFailureCount) {
             return right.recentFailureCount - left.recentFailureCount;
+        }
+        if (left.recentHistoryCount !== right.recentHistoryCount) {
+            return right.recentHistoryCount - left.recentHistoryCount;
         }
         return Number(right.store?.lastUpdated || 0) - Number(left.store?.lastUpdated || 0);
     });
@@ -821,8 +832,7 @@ function renderJobRows(records = []) {
         const runningJob = record.store?.runningJob ? [record.store.runningJob] : [];
         const queuedJobs = Array.isArray(record.store?.queue) ? record.store.queue : [];
         const recentJobs = Array.isArray(record.store?.recentHistory) ? record.store.recentHistory : [];
-        const orderedJobs = [...runningJob, ...queuedJobs, ...recentJobs]
-            .filter(job => record.activeCount > 0 || job?.state === 'failed');
+        const orderedJobs = [...runningJob, ...queuedJobs, ...recentJobs];
 
         if (orderedJobs.length === 0) {
             continue;
@@ -888,27 +898,28 @@ function renderStmbJobsUi() {
     const activeCount = summary.running + summary.queued + summary.awaitingApproval;
     const hasActiveJobs = activeCount > 0;
     const recentFailureCount = summary.recentFailures;
-    const canOpenPanel = hasActiveJobs || recentFailureCount > 0;
-    if (!canOpenPanel) {
-        jobsPanelOpen = false;
-    }
-    const isPanelOpen = Boolean(canOpenPanel && jobsPanelOpen);
+    const recentHistoryCount = summary.recentHistory;
+    const isPanelOpen = Boolean(jobsPanelOpen);
     const tooltip = hasActiveJobs
         ? buildTooltip(summary)
-        : (recentFailureCount > 0 ? (recentFailureCount === 1 ? '1 recent failure' : `${recentFailureCount} recent failures`) : 'No Memory Books jobs');
+        : (recentFailureCount > 0
+            ? (recentFailureCount === 1 ? '1 recent failure' : `${recentFailureCount} recent failures`)
+            : (recentHistoryCount > 0 ? `${recentHistoryCount} recent ${recentHistoryCount === 1 ? 'job' : 'jobs'}` : 'No Memory Books jobs'));
 
-    topBarButton.disabled = !canOpenPanel;
-    topBarButton.classList.toggle('disabled', !canOpenPanel);
+    topBarButton.disabled = false;
+    topBarButton.classList.toggle('disabled', false);
     topBarButton.classList.toggle('active', isPanelOpen);
     topBarButton.title = tooltip;
     topBarButton.setAttribute('aria-label', `Memory Books Jobs. ${tooltip}`);
     topBarButton.setAttribute('aria-expanded', String(isPanelOpen));
     topBarBadge.textContent = hasActiveJobs ? String(activeCount) : (recentFailureCount > 0 ? String(recentFailureCount) : '');
-    topBarBadge.style.display = canOpenPanel ? 'inline-flex' : 'none';
+    topBarBadge.style.display = hasActiveJobs || recentFailureCount > 0 ? 'inline-flex' : 'none';
     topBarBadge.classList.toggle('stmb-jobs-badge-failed', !hasActiveJobs && recentFailureCount > 0);
     jobsSummary.textContent = hasActiveJobs
         ? `${summary.running} running, ${summary.queued} queued${summary.awaitingApproval > 0 ? `, ${summary.awaitingApproval} awaiting approval` : ''}${recentFailureCount > 0 ? `, ${recentFailureCount} recent ${recentFailureCount === 1 ? 'failure' : 'failures'}` : ''}`
-        : (recentFailureCount > 0 ? `${recentFailureCount} recent ${recentFailureCount === 1 ? 'failure' : 'failures'}` : 'No active jobs');
+        : (recentFailureCount > 0
+            ? `${recentFailureCount} recent ${recentFailureCount === 1 ? 'failure' : 'failures'}`
+            : (recentHistoryCount > 0 ? `${recentHistoryCount} recent ${recentHistoryCount === 1 ? 'job' : 'jobs'}` : 'No active jobs'));
     jobsPanel.classList.toggle('visible', isPanelOpen);
     jobsPanel.setAttribute('aria-hidden', String(!isPanelOpen));
 
@@ -917,13 +928,6 @@ function renderStmbJobsUi() {
 }
 
 function handleTopBarButtonClick() {
-    const summary = summarizeAllStores();
-    const activeCount = summary.running + summary.queued + summary.awaitingApproval;
-    const canOpenPanel = activeCount > 0 || summary.recentFailures > 0;
-    if (!canOpenPanel) {
-        return;
-    }
-
     if (getAwaitingApprovalCount() === 1) {
         const approvalJob = findFirstAwaitingApprovalJob();
         if (approvalJob && dispatchOpenApprovalEvent(approvalJob)) {
