@@ -4387,7 +4387,11 @@ async function showSidePromptManagerPopup({ onChange = null } = {}) {
         }
 
         if (target.closest('#stmb-sp-compact-review')) {
-            await showStmbEntryReviewPopup();
+            try {
+                await showStmbEntryReviewPopup();
+            } catch (error) {
+                toastr.error(error?.message || 'Failed to open compaction review', 'STMB');
+            }
             return;
         }
 
