@@ -47,6 +47,20 @@ let previewQueue = Promise.resolve();
 let hasShownSidePromptRangeTip = false;
 let sidePromptJobExecutorRegistered = false;
 
+export const STMB_SIDE_PROMPT_TITLE_SUFFIX = ' (STMB SidePrompt)';
+
+export function getSidePromptTitleSuffix() {
+    return STMB_SIDE_PROMPT_TITLE_SUFFIX;
+}
+
+export function isSidePromptEntryTitle(title) {
+    const value = String(title || '').trimEnd();
+    return value.endsWith(STMB_SIDE_PROMPT_TITLE_SUFFIX)
+        || value.endsWith(' (STMB Plotpoints)')
+        || value.endsWith(' (STMB Scoreboard)')
+        || value.endsWith(' (STMB Tracker)');
+}
+
 function enqueuePreview(task) {
     previewQueue = previewQueue.then(task).catch(error => {
         console.warn('STMB side prompt preview task failed', error);
@@ -328,10 +342,6 @@ function makeUpsertParamsFromLorebook(lorebookSettings, runtimeMacros = {}) {
         entryOverrides.key = keywords;
     }
     return { defaults, entryOverrides };
-}
-
-function getSidePromptTitleSuffix() {
-    return ' (STMB SidePrompt)';
 }
 
 function getResolvedSidePromptTitleBase(template, runtimeMacros = {}) {

@@ -348,6 +348,27 @@ function upsertLorebookEntryByTitleData(lorebookData, {
     return { created, entry };
 }
 
+function initializeLorebookEntryDefaults(entry, defaults = {}) {
+    entry.vectorized = Boolean(defaults.vectorized);
+    entry.selective = Boolean(defaults.selective);
+    if (typeof defaults.order === 'number') entry.order = defaults.order;
+    if (typeof defaults.position === 'number') entry.position = defaults.position;
+    entry.key = Array.isArray(entry.key) ? entry.key : [];
+    entry.keysecondary = Array.isArray(entry.keysecondary) ? entry.keysecondary : [];
+    entry.disable = false;
+}
+
+function findLorebookEntryByUid(lorebookData, uid) {
+    const uidText = String(uid);
+    const directEntry = lorebookData?.entries?.[uidText];
+    if (directEntry && typeof directEntry === 'object') {
+        return directEntry;
+    }
+
+    return Object.values(lorebookData?.entries || {})
+        .find(entry => entry && String(entry.uid) === uidText) || null;
+}
+
 function getLorebookContext(request) {
     const lorebookName = String(request.body?.lorebookName || '').trim();
     if (!lorebookName) {
@@ -596,6 +617,169 @@ router.post('/upsert-entry-by-title', async (request, response) => {
             lorebookName: savedMetadata.name,
             storage: savedMetadata.storage,
             created,
+            entry,
+        });
+    } catch (error) {
+        return sendStmbError(response, error);
+    }
+});
+
+router.post('/create-entry', async (request, response) => {
+    const lorebookContext = getLorebookContext(request);
+    const title = String(request.body?.title || '').trim();
+    const content = request.body?.content != null ? String(request.body.content) : '';
+    const defaults = request.body?.defaults || {};
+    const metadataUpdates = request.body?.metadataUpdates || {};
+    const entryOverrides = request.body?.entryOverrides || {};
+    const invalidUpdate = getInvalidLorebookEntryUpdate({ metadataUpdates, entryOverrides });
+
+    if (!lorebookContext || !title) {
+        return response.status(400).send({
+            error: {
+                type: 'StmbBadRequest',
+                message: 'lorebookName and title are required.',
+            },
+        });
+    }
+
+    if (invalidUpdate) {
+        return response.status(400).send({
+            error: {
+                type: 'StmbBadRequest',
+                message: `${invalidUpdate.groupName}.${invalidUpdate.key} is reserved. Use the title/content request fields and server-assigned uid instead.`,
+            },
+        });
+    }
+
+    try {
+        const { data: lorebookData, metadata } = await getLorebookForManagement(
+            request.user,
+            lorebookContext.lorebookName,
+            true,
+            lorebookContext.storage,
+        );
+        ensureEntriesObject(lorebookData);
+
+        const duplicate = Object.values(lorebookData.entries)
+            .find(entry => String(entry?.comment || '') === title);
+        if (duplicate) {
+            return response.status(409).send({
+                error: {
+                    type: 'StmbDuplicateEntryTitle',
+                    message: 'A lorebook entry with this title already exists.',
+                },
+            });
+        }
+
+        const entry = createLorebookEntry(lorebookData);
+        initializeLorebookEntryDefaults(entry, defaults);
+        entry.comment = title;
+        entry.content = content;
+        for (const [key, value] of Object.entries(metadataUpdates)) {
+            entry[key] = value;
+        }
+        for (const [key, value] of Object.entries(entryOverrides)) {
+            entry[key] = value;
+        }
+
+        const savedMetadata = await saveLorebookForManagement(request.user, metadata.name, lorebookData, metadata.storage);
+        return response.send({
+            ok: true,
+            lorebookName: savedMetadata.name,
+            storage: savedMetadata.storage,
+            created: true,
+            entry,
+        });
+    } catch (error) {
+        return sendStmbError(response, error);
+    }
+});
+
+router.post('/update-entry-by-uid', async (request, response) => {
+    const lorebookContext = getLorebookContext(request);
+    const uid = request.body?.uid;
+    const hasTitle = request.body?.title !== undefined;
+    const hasContent = request.body?.content !== undefined;
+    const title = hasTitle ? String(request.body.title || '').trim() : '';
+    const content = hasContent ? String(request.body.content ?? '') : null;
+    const metadataUpdates = request.body?.metadataUpdates || {};
+    const entryOverrides = request.body?.entryOverrides || {};
+    const invalidUpdate = getInvalidLorebookEntryUpdate({ metadataUpdates, entryOverrides });
+
+    if (!lorebookContext || uid === undefined || uid === null || uid === '') {
+        return response.status(400).send({
+            error: {
+                type: 'StmbBadRequest',
+                message: 'lorebookName and uid are required.',
+            },
+        });
+    }
+
+    if (hasTitle && !title) {
+        return response.status(400).send({
+            error: {
+                type: 'StmbBadRequest',
+                message: 'title cannot be empty when provided.',
+            },
+        });
+    }
+
+    if (invalidUpdate) {
+        return response.status(400).send({
+            error: {
+                type: 'StmbBadRequest',
+                message: `${invalidUpdate.groupName}.${invalidUpdate.key} is reserved. Use the title/content request fields and server-assigned uid instead.`,
+            },
+        });
+    }
+
+    try {
+        const { data: lorebookData, metadata } = await getLorebookForManagement(
+            request.user,
+            lorebookContext.lorebookName,
+            true,
+            lorebookContext.storage,
+        );
+        ensureEntriesObject(lorebookData);
+
+        const entry = findLorebookEntryByUid(lorebookData, uid);
+        if (!entry) {
+            return response.status(404).send({
+                error: {
+                    type: 'StmbEntryNotFound',
+                    message: 'Lorebook entry was not found.',
+                },
+            });
+        }
+
+        if (hasTitle) {
+            const duplicate = Object.values(lorebookData.entries)
+                .find(candidate => candidate !== entry && String(candidate?.comment || '') === title);
+            if (duplicate) {
+                return response.status(409).send({
+                    error: {
+                        type: 'StmbDuplicateEntryTitle',
+                        message: 'A lorebook entry with this title already exists.',
+                    },
+                });
+            }
+            entry.comment = title;
+        }
+        if (hasContent) {
+            entry.content = content;
+        }
+        for (const [key, value] of Object.entries(metadataUpdates)) {
+            entry[key] = value;
+        }
+        for (const [key, value] of Object.entries(entryOverrides)) {
+            entry[key] = value;
+        }
+
+        const savedMetadata = await saveLorebookForManagement(request.user, metadata.name, lorebookData, metadata.storage);
+        return response.send({
+            ok: true,
+            lorebookName: savedMetadata.name,
+            storage: savedMetadata.storage,
             entry,
         });
     } catch (error) {

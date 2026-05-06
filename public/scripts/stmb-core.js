@@ -10,6 +10,27 @@ export const STMB_DEFAULT_PROFILE_NAME = 'Current SillyTavern Settings';
 export const STMB_DEFAULT_TITLE_FORMAT = '[000] - {{title}}';
 export const STMB_DEFAULT_MAX_TOKENS = 4000;
 export const STMB_CONNECTION_PROFILE_API_KEY_ERROR = 'please confirm that your API key is entered in Connection Profiles';
+export const STMB_DEFAULT_COMPACTION_PROMPT_TEMPLATE = `Please aggressively make this lorebook entry more token-efficient while retaining as much useful information as possible.
+
+Rules:
+- Preserve all important facts, preferences, relationships, names, unresolved plot points, promises, secrets, constraints, and character-specific details.
+- Remove redundancy, filler, repeated phrasing, and low-value wording.
+- Merge overlapping bullets where possible.
+- Keep the entry readable as a lorebook entry.
+- Do not add new facts.
+- Do not invent explanations.
+- Do not change names, pronouns, macros, or proper nouns.
+- Preserve wrapper headings and end markers exactly if present.
+- Return only the revised entry content.
+
+Entry type:
+{{ENTRY_KIND}}
+
+Entry title:
+{{ENTRY_TITLE}}
+
+Entry content:
+{{ENTRY_CONTENT}}`;
 
 const STMB_REVERSE_PROXY_PROFILE_APIS = new Set(['openai', 'claude', 'mistralai', 'makersuite', 'vertexai', 'deepseek', 'xai']);
 const STMB_OPENAI_COMPAT_GENERATE_DATA = Symbol('stmbOpenAICompatGenerateData');
@@ -310,6 +331,9 @@ export function createDefaultStmbSettings() {
             autoConsolidationTargetTiers: [1],
             autoCreateLorebook: false,
             lorebookNameTemplate: 'LTM - {{char}} - {{chat}}',
+            showFloatingClipButton: true,
+            compactionPromptTemplate: STMB_DEFAULT_COMPACTION_PROMPT_TEMPLATE,
+            compactionProfileIndex: 0,
             sidePromptsMaxConcurrent: 1,
             useRegex: false,
             selectedRegexOutgoing: [],
@@ -589,6 +613,12 @@ export function normalizeStmbSettings(rawSettings, legacySettings = null) {
     moduleSettings.sidePromptsMaxConcurrent = Number.isFinite(Number(moduleSettings.sidePromptsMaxConcurrent))
         ? Math.max(1, Math.min(5, Math.trunc(Number(moduleSettings.sidePromptsMaxConcurrent))))
         : defaults.moduleSettings.sidePromptsMaxConcurrent;
+    moduleSettings.showFloatingClipButton = moduleSettings.showFloatingClipButton !== false;
+    moduleSettings.compactionPromptTemplate = typeof moduleSettings.compactionPromptTemplate === 'string'
+        && moduleSettings.compactionPromptTemplate.trim()
+        && moduleSettings.compactionPromptTemplate.includes('{{ENTRY_CONTENT}}')
+        ? moduleSettings.compactionPromptTemplate
+        : defaults.moduleSettings.compactionPromptTemplate;
     moduleSettings.autoConsolidationTargetTiers = Array.isArray(moduleSettings.autoConsolidationTargetTiers)
         ? moduleSettings.autoConsolidationTargetTiers.map(value => Number(value)).filter(Number.isFinite)
         : defaults.moduleSettings.autoConsolidationTargetTiers.slice();
@@ -625,6 +655,12 @@ export function normalizeStmbSettings(rawSettings, legacySettings = null) {
         titleFormat,
     });
     defaultProfile = profileValidation.settings.defaultProfile;
+    const parsedCompactionProfileIndex = Number(moduleSettings.compactionProfileIndex);
+    moduleSettings.compactionProfileIndex = Number.isFinite(parsedCompactionProfileIndex)
+        && parsedCompactionProfileIndex >= 0
+        && parsedCompactionProfileIndex < profileValidation.settings.profiles.length
+        ? Math.trunc(parsedCompactionProfileIndex)
+        : defaultProfile;
 
     return {
         parity: { ...STMB_PARITY },

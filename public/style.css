@@ -6964,7 +6964,8 @@ body:not(.movingUI) .drawer-content.maximized {
 }
 
 .mes_stmb_start,
-.mes_stmb_end {
+.mes_stmb_end,
+.mes_stmb_clip {
     color: var(--SmartThemeBodyColor);
     background-color: var(--SmartThemeBlurTintColor);
     border: 1px solid var(--SmartThemeBorderColor);
@@ -6980,7 +6981,8 @@ body:not(.movingUI) .drawer-content.maximized {
 }
 
 .mes_stmb_start:hover,
-.mes_stmb_end:hover {
+.mes_stmb_end:hover,
+.mes .extraMesButtons .mes_stmb_clip:hover {
     filter: grayscale(0) brightness(1.1);
 }
 
@@ -7024,6 +7026,121 @@ body:not(.movingUI) .drawer-content.maximized {
 .mes_stmb_start.in-scene:hover,
 .mes_stmb_end.in-scene:hover {
     filter: grayscale(0) brightness(1.1);
+}
+
+.mes_stmb_clip {
+    color: var(--SmartThemeQuoteColor);
+}
+
+.stmb_floating_clip_button {
+    position: fixed;
+    z-index: 9999;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 32px;
+    min-height: 32px;
+    padding: 6px 8px;
+    border-radius: 999px;
+    border: 1px solid var(--SmartThemeBorderColor);
+    background-color: var(--SmartThemeBlurTintColor);
+    color: var(--SmartThemeBodyColor);
+    box-shadow:
+        0 2px 8px var(--SmartThemeShadowColor),
+        0 0 0 1px var(--SmartThemeBorderColor);
+    cursor: pointer;
+    user-select: none;
+    line-height: 1;
+}
+
+.stmb_floating_clip_button i {
+    color: var(--SmartThemeBodyColor);
+    font-size: 16px;
+    font-weight: 900;
+    pointer-events: none;
+}
+
+.stmb_floating_clip_button:active {
+    transform: translateY(1px);
+}
+
+.popup-button-custom {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex-wrap: nowrap !important;
+    white-space: nowrap !important;
+}
+
+.stmb-nowrap-button {
+    white-space: nowrap !important;
+    flex-wrap: nowrap !important;
+}
+
+.stmb-button-row {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: center;
+    align-items: center;
+    gap: 10px;
+}
+
+.stmb-clip-modal textarea,
+.stmb-compact-review textarea {
+    width: 100%;
+    box-sizing: border-box;
+}
+
+.stmb-clip-textarea {
+    min-height: 90px;
+}
+
+.stmb-clip-preview {
+    min-height: 160px;
+    white-space: pre-wrap;
+    overflow: auto;
+}
+
+.stmb-clip-label-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+}
+
+.stmb-clip-label-row h4 {
+    margin: 0;
+}
+
+.stmb-clip-activation {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 12px;
+    margin: 8px 0;
+}
+
+.stmb-clip-warning {
+    margin-top: 8px;
+}
+
+.stmb-review-entries {
+    width: 100%;
+    border-collapse: collapse;
+}
+
+.stmb-review-entries th,
+.stmb-review-entries td {
+    padding: 6px;
+    border-bottom: 1px solid var(--SmartThemeBorderColor);
+    text-align: left;
+}
+
+.stmb-review-entry-action {
+    display: flex;
+    align-items: center;
+    min-width: 9.5em;
+    gap: 6px;
+    white-space: nowrap;
 }
 
 @keyframes stmb-pulse {

@@ -149,6 +149,14 @@ import { ensureResolvedLorebookName, isStmbLorebookHandledError } from './stmb-l
 import { createStmbTask, getActiveStmbTaskCount, hasActiveStmbTasks, isStmbAbortError, stopAllStmbTasks, throwIfStmbAborted } from './stmb-tasks.js';
 import { getTokenCountAsync } from './tokenizers.js';
 import {
+    configureStmbClipRuntime,
+    handleClipButtonClick,
+    hideFloatingClipButton,
+    initializeFloatingClipButton,
+    refreshFloatingClipButtonSetting,
+    showStmbEntryReviewPopup,
+} from './stmb-clips.js';
+import {
     awaitStmbJobApproval,
     cancelAllStmbJobs,
     enqueueStmbJob,
@@ -1978,6 +1986,7 @@ function buildSettingsPopupHtml(sceneData, currentUiConnection, regexOptions) {
                 <label class="checkbox_label"><input type="checkbox" id="stmb-settings-always-use-default" ${moduleSettings.alwaysUseDefault ? 'checked' : ''}> <span>Always use default profile (no confirmation prompt)</span></label>
                 <label class="checkbox_label"><input type="checkbox" id="stmb-settings-show-memory-previews" ${moduleSettings.showMemoryPreviews ? 'checked' : ''}> <span>Show memory previews</span></label>
                 <label class="checkbox_label"><input type="checkbox" id="stmb-settings-show-notifications" ${moduleSettings.showNotifications ? 'checked' : ''}> <span>Show notifications</span></label>
+                <label class="checkbox_label"><input type="checkbox" id="stmb-settings-show-floating-clip-button" ${moduleSettings.showFloatingClipButton !== false ? 'checked' : ''}> <span>Show floating Clip button</span></label>
                 <label class="checkbox_label" title="Check this box to skip checking for overlapping memories/scenes."><input type="checkbox" id="stmb-settings-allow-scene-overlap" ${moduleSettings.allowSceneOverlap ? 'checked' : ''}> <span title="Check this box to skip checking for overlapping memories/scenes.">Allow scene overlap</span></label>
                 <label class="checkbox_label"><input type="checkbox" id="stmb-settings-refresh-editor" ${moduleSettings.refreshEditor !== false ? 'checked' : ''}> <span>Refresh lorebook editor after adding memories</span></label>
             </div>
@@ -4196,6 +4205,7 @@ async function showSidePromptManagerPopup({ onChange = null } = {}) {
                 <button id="stmb-sp-new" class="menu_button whitespacenowrap">New</button>
                 <button id="stmb-sp-export" class="menu_button whitespacenowrap">Export JSON</button>
                 <button id="stmb-sp-import" class="menu_button whitespacenowrap">Import JSON</button>
+                <button id="stmb-sp-compact-review" class="menu_button whitespacenowrap">Compaction</button>
                 <button id="stmb-sp-recreate-builtins" class="menu_button whitespacenowrap">Recreate Built-in Side Prompts</button>
             </div>
             <input type="file" id="stmb-sp-import-file" accept=".json" style="display:none">
@@ -4373,6 +4383,11 @@ async function showSidePromptManagerPopup({ onChange = null } = {}) {
 
         if (target.closest('#stmb-sp-import')) {
             popup.dlg?.querySelector('#stmb-sp-import-file')?.click();
+            return;
+        }
+
+        if (target.closest('#stmb-sp-compact-review')) {
+            await showStmbEntryReviewPopup();
             return;
         }
 
@@ -5040,6 +5055,14 @@ async function showMainEntryPopup() {
                 },
             },
             {
+                text: 'Compaction',
+                result: null,
+                classes: ['menu_button'],
+                action: async () => {
+                    await showStmbEntryReviewPopup();
+                },
+            },
+            {
                 text: 'Clear Scene',
                 result: null,
                 classes: ['menu_button'],
@@ -5093,6 +5116,12 @@ async function showMainEntryPopup() {
         if (target.matches('#stmb-settings-show-notifications')) {
             moduleSettings.showNotifications = target.checked;
             persistSettings();
+            return;
+        }
+        if (target.matches('#stmb-settings-show-floating-clip-button')) {
+            moduleSettings.showFloatingClipButton = target.checked;
+            persistSettings();
+            refreshFloatingClipButtonSetting();
             return;
         }
         if (target.matches('#stmb-settings-allow-scene-overlap')) {
@@ -5845,11 +5874,42 @@ function getSceneButtonElements(messageElement) {
     };
 }
 
+function ensureClipButtonForMessage(messageElement) {
+    if (!messageElement || messageElement.querySelector('.mes_stmb_clip')) {
+        return;
+    }
+
+    const { startButton, endButton } = getSceneButtonElements(messageElement);
+    if (!startButton && !endButton) {
+        return;
+    }
+
+    const container = endButton?.parentElement || startButton?.parentElement || messageElement.querySelector('.extraMesButtons');
+    if (!container) {
+        return;
+    }
+
+    const button = document.createElement('div');
+    button.classList.add('mes_stmb_clip', 'mes_button', 'fa-solid', 'fa-scissors', 'interactable');
+    button.title = 'Clip highlighted text to Memory Book';
+    button.setAttribute('tabindex', '0');
+
+    if (endButton?.parentElement === container) {
+        endButton.insertAdjacentElement('afterend', button);
+    } else if (startButton?.parentElement === container) {
+        startButton.insertAdjacentElement('afterend', button);
+    } else {
+        container.appendChild(button);
+    }
+}
+
 function renderSceneButtonsForMessage(messageElement) {
     const messageId = Number(messageElement.getAttribute('mesid'));
     if (!Number.isInteger(messageId)) {
         return;
     }
+
+    ensureClipButtonForMessage(messageElement);
 
     const { sceneStart, sceneEnd } = getSceneMarkers();
     const { startButton, endButton } = getSceneButtonElements(messageElement);
@@ -5914,6 +5974,17 @@ function bindSceneButtons() {
         const messageId = Number($(this).closest('.mes').attr('mesid'));
         if (Number.isInteger(messageId)) {
             setSceneMarker('sceneEnd', messageId);
+        }
+    });
+
+    $(document).on('click', '.mes_stmb_clip', function (event) {
+        event.preventDefault();
+        event.stopPropagation();
+        const messageElement = $(this).closest('.mes[mesid]').get(0);
+        if (messageElement) {
+            handleClipButtonClick(messageElement).catch(error => {
+                console.warn('STMB clip button failed', error);
+            });
         }
     });
 
@@ -6238,6 +6309,29 @@ function resolveLorebookName() {
     return chatLorebook;
 }
 
+function getCompactionProfileForRuntime(profileIndex) {
+    const profile = structuredClone(getActiveStmbProfile(stmbSettings, profileIndex));
+    const api = String(profile?.connection?.api || '').trim().toLowerCase();
+    if (api && api !== 'current_st' && profile?.connection && !Number.isFinite(Number(profile.connection.temperature))) {
+        profile.connection.temperature = 0.3;
+    }
+    return profile;
+}
+
+function configureClipRuntime() {
+    configureStmbClipRuntime({
+        getSettings: () => stmbSettings,
+        persistSettings: () => {
+            stmbSettings = normalizeStmbSettings(stmbSettings);
+            saveSettingsDebounced();
+        },
+        ensureLorebookName,
+        getDefaultLorebookName: resolveLorebookName,
+        getProfile: getCompactionProfileForRuntime,
+        buildGenerateData: async (messages, profile) => buildStmbGenerateData(messages, profile),
+    });
+}
+
 function renderLorebookNameFromTemplate() {
     const chatId = getCurrentChatId() || 'Chat';
     return String(getModuleSettings().lorebookNameTemplate || 'LTM - {{char}} - {{chat}}')
@@ -6246,7 +6340,7 @@ function renderLorebookNameFromTemplate() {
         .replace(/\{\{chat\}\}/g, String(chatId));
 }
 
-async function ensureLorebookName() {
+async function ensureLorebookName(createContext = 'chat') {
     return ensureResolvedLorebookName({
         manualMode: getModuleSettings().manualModeEnabled,
         getManualLorebook: () => getStmbState().manualLorebook,
@@ -6256,7 +6350,7 @@ async function ensureLorebookName() {
         },
         autoCreateLorebook: getModuleSettings().autoCreateLorebook,
         lorebookNameTemplate: getModuleSettings().lorebookNameTemplate || 'LTM - {{char}} - {{chat}}',
-        createContext: 'chat',
+        createContext,
     });
 }
 
@@ -8353,6 +8447,7 @@ export function initStmb() {
         return;
     }
 
+    configureClipRuntime();
     createMainEntryUi();
     ensurePlannerStatusUi();
     void pollCurrentChatPlannerState();
@@ -8372,6 +8467,7 @@ export function initStmb() {
         });
     });
     bindSceneButtons();
+    initializeFloatingClipButton();
     registerSlashCommands();
     firstRunInitArcPromptPresets(stmbSettings).catch(error => {
         console.warn('STMB consolidation prompts init failed', error);
@@ -8393,6 +8489,7 @@ export function initStmb() {
     }, 0);
 
     eventSource.on(event_types.CHAT_CHANGED, () => {
+        hideFloatingClipButton();
         void pollCurrentChatPlannerState();
         flushDeferredPostSaveEffects().catch(error => {
             console.warn('STMB deferred post-save flush failed', error);
@@ -8440,6 +8537,7 @@ export function initStmb() {
     });
 
     eventSource.on(event_types.SETTINGS_LOADED, () => {
+        refreshFloatingClipButtonSetting();
         renderAllSceneButtons();
     });
 

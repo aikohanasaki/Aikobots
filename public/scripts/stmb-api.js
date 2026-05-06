@@ -121,6 +121,16 @@ export async function upsertStmbEntryByTitle(payload, options = {}) {
     return signal ? postStmbWithSignal('upsert-entry-by-title', payload, signal) : postStmb('upsert-entry-by-title', payload);
 }
 
+export async function createStmbEntry(payload, options = {}) {
+    const { signal = null } = options;
+    return signal ? postStmbWithSignal('create-entry', payload, signal) : postStmb('create-entry', payload);
+}
+
+export async function updateStmbEntryByUid(payload, options = {}) {
+    const { signal = null } = options;
+    return signal ? postStmbWithSignal('update-entry-by-uid', payload, signal) : postStmb('update-entry-by-uid', payload);
+}
+
 export async function upsertStmbEntriesBatch(payload, options = {}) {
     const { signal = null } = options;
     return signal ? postStmbWithSignal('upsert-entries-batch', payload, signal) : postStmb('upsert-entries-batch', payload);
