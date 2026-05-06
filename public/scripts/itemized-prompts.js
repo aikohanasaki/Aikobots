@@ -305,6 +305,10 @@ function getPromptWorldInfoEntries(itemizedPrompt, incomingMesId, snapshot = nul
 
 function buildWorldInfoPlacementRedactionMap(entries = []) {
     return entries.reduce((result, entry) => {
+        if (entry?.activationOnly || entry?.inserted === false || entry?.notInsertedReason === 'activation_only') {
+            return result;
+        }
+
         const placement = String(entry?.placement || '').trim();
         if (!placement) {
             return result;
@@ -427,13 +431,20 @@ export async function itemizedParams(itemizedPrompts, thisPromptSet, incomingMes
         const previewContent = buildWorldInfoPreview(displayContent);
         const placement = entry?.placement || '';
         const hidden = Boolean(entry?.hidden);
+        const activationOnly = Boolean(entry?.activationOnly || entry?.notInsertedReason === 'activation_only');
+        const notInserted = activationOnly || entry?.inserted === false;
+        const metaParts = [
+            placement,
+            activationOnly ? t`activation-only` : '',
+            notInserted ? t`not inserted` : '',
+        ].filter(Boolean);
         return {
             book: entry?.book || '',
             displayName: hidden ? t`(hidden entry)` : (entry?.displayName || ''),
             placement,
             metaText: hidden
                 ? (placement ? `${placement} | hidden` : 'hidden')
-                : placement,
+                : metaParts.join(' | '),
             tokens: toNumber(entry?.tokens),
             hidden,
             displayContent,

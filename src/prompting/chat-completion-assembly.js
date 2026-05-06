@@ -1296,6 +1296,10 @@ function createTextContentSegment(text) {
 }
 
 function createWorldInfoContentSegment(entry = {}, text = entry?.text ?? '') {
+    if (entry?.activationOnly || entry?.inserted === false || entry?.notInsertedReason === 'activation_only') {
+        return null;
+    }
+
     const normalizedText = String(text ?? '');
     if (!normalizedText) {
         return null;
@@ -1312,6 +1316,8 @@ function createWorldInfoContentSegment(entry = {}, text = entry?.text ?? '') {
         placement: entry?.placement ?? null,
         roundIndex: Number(entry?.roundIndex ?? 0) || 0,
         status: entry?.status ?? null,
+        activationOnly: false,
+        inserted: true,
     };
 }
 

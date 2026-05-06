@@ -217,7 +217,7 @@ async function buildRandomTrimDropSet(newEntries, payload, tokenCountCache, lore
     const byWorld = new Map();
 
     for (const entry of newEntries) {
-        if (!entry?.world || entry.ignoreBudget || !entry.lorebookSettings?.randomTrim) {
+        if (!entry?.world || entry.ignoreBudget || entry.activationOnly || !entry.lorebookSettings?.randomTrim) {
             continue;
         }
 
@@ -357,6 +357,9 @@ async function buildWorldInfoDebugSummary(entryDebugMap, payload, tokenCountCach
     const activatedEntries = await Promise.all(entryDebugList.map(async item => {
         const entry = item.entry || {};
         const content = entry.content ? `${entry.content}\n` : '';
+        const activationOnly = Boolean(entry.activationOnly);
+        const admitted = item.status === 'admitted';
+        const inserted = admitted && !activationOnly;
 
         return {
             key: getWorldInfoEntryKey(entry),
@@ -385,6 +388,9 @@ async function buildWorldInfoDebugSummary(entryDebugMap, payload, tokenCountCach
             dropReason: getWorldInfoDropReason(item.status),
             probability: entry.useProbability ? Number(entry.probability ?? 0) : null,
             ignoreBudget: Boolean(entry.ignoreBudget),
+            activationOnly,
+            inserted,
+            notInsertedReason: admitted && activationOnly ? 'activation_only' : null,
             preventRecursion: Boolean(entry.preventRecursion),
             tokens: content ? await countWorldInfoTokens(content, payload, tokenCountCache) : 0,
             activationIndex: Number(item.activationIndex ?? 0),
@@ -395,6 +401,7 @@ async function buildWorldInfoDebugSummary(entryDebugMap, payload, tokenCountCach
     activatedEntries.sort(compareWorldInfoDebugEntries);
 
     const admittedEntries = activatedEntries.filter(entry => entry.status === 'admitted');
+    const insertedEntries = admittedEntries.filter(entry => entry.inserted !== false);
     const lorebookUsage = await Promise.all(Array.from(lorebookBudgets.entries()).map(async ([book, limit]) => {
         const text = lorebookActivatedText.get(book) || '';
         const used = text ? await countWorldInfoTokens(text, payload, tokenCountCache) : 0;
@@ -402,15 +409,15 @@ async function buildWorldInfoDebugSummary(entryDebugMap, payload, tokenCountCach
     }));
     lorebookUsage.sort((a, b) => String(a.book).localeCompare(String(b.book)));
 
-    const globalUsedText = admittedEntries.map(entry => entry.content).filter(Boolean).join('\n');
+    const globalUsedText = insertedEntries.map(entry => entry.content).filter(Boolean).join('\n');
     const globalUsed = globalUsedText ? await countWorldInfoTokens(globalUsedText, payload, tokenCountCache) : 0;
 
     return {
         activatedEntries,
-        beforeEntries: admittedEntries.filter(entry => entry.placement === 'before'),
-        afterEntries: admittedEntries.filter(entry => entry.placement === 'after'),
-        depthEntries: admittedEntries.filter(entry => entry.placement.startsWith('depth:')),
-        exampleEntries: admittedEntries.filter(entry => entry.placement.startsWith('example_')),
+        beforeEntries: insertedEntries.filter(entry => entry.placement === 'before'),
+        afterEntries: insertedEntries.filter(entry => entry.placement === 'after'),
+        depthEntries: insertedEntries.filter(entry => entry.placement.startsWith('depth:')),
+        exampleEntries: insertedEntries.filter(entry => entry.placement.startsWith('example_')),
         timedState: structuredClone(timedState || {}),
         overflowed: Boolean(overflowed),
         rounds: buildWorldInfoRounds(activatedEntries),
@@ -425,8 +432,9 @@ async function buildWorldInfoDebugSummary(entryDebugMap, payload, tokenCountCach
 }
 
 function buildWorldInfoSegmentEntry(entry = {}, payload = {}, debugItem = null) {
+    const activationOnly = Boolean(entry.activationOnly);
     return {
-        text: String(entry.content ?? ''),
+        text: activationOnly ? '' : String(entry.content ?? ''),
         storage: entry.storage === 'secure' ? 'secure' : 'user',
         ownerHandle: String(entry.ownerHandle || ''),
         ownerHandles: Array.isArray(entry.ownerHandles) ? entry.ownerHandles.map(handle => String(handle || '').trim()).filter(Boolean) : [],
@@ -435,6 +443,9 @@ function buildWorldInfoSegmentEntry(entry = {}, payload = {}, debugItem = null) 
         placement: getWorldInfoPlacement(entry, payload),
         roundIndex: Number(debugItem?.roundIndex ?? 0) || 0,
         status: debugItem?.status ?? 'admitted',
+        activationOnly,
+        inserted: !activationOnly,
+        notInsertedReason: activationOnly ? 'activation_only' : null,
     };
 }
 
@@ -1227,10 +1238,11 @@ export async function scanWorldInfo(payload = {}) {
         const randomTrimDrops = await buildRandomTrimDropSet(newEntries, payload, tokenCountCache, lorebookBudgets, lorebookActivatedText);
 
         let newContent = '';
-        let ignoresBudget = newEntries.filter(entry => entry.ignoreBudget).length;
+        let ignoresBudget = newEntries.filter(entry => entry.ignoreBudget || entry.activationOnly).length;
         for (const entry of newEntries) {
-            ignoresBudget -= entry.ignoreBudget ? 1 : 0;
-            if (tokenBudgetOverflowed && !entry.ignoreBudget) {
+            const ignoresInsertionBudget = Boolean(entry.ignoreBudget || entry.activationOnly);
+            ignoresBudget -= ignoresInsertionBudget ? 1 : 0;
+            if (tokenBudgetOverflowed && !ignoresInsertionBudget) {
                 if (ignoresBudget > 0) {
                     continue;
                 }
@@ -1247,35 +1259,36 @@ export async function scanWorldInfo(payload = {}) {
             }
 
             const entryContent = `${entry.content}\n`;
+            const insertableEntryContent = entry.activationOnly ? '' : entryContent;
             if (randomTrimDrops.has(`${entry.world}.${entry.uid}`)) {
                 recordEntryDebug(entry, { status: 'dropped_trim', roundIndex: count });
                 continue;
             }
 
-            if (!entry.ignoreBudget && lorebookBudgetOverflowed.has(entry.world)) {
+            if (!entry.ignoreBudget && !entry.activationOnly && lorebookBudgetOverflowed.has(entry.world)) {
                 recordEntryDebug(entry, { status: 'dropped_lorebook_budget', roundIndex: count });
                 continue;
             }
 
-            if (!entry.ignoreBudget) {
+            if (!entry.ignoreBudget && !entry.activationOnly) {
                 const lorebookBudget = lorebookBudgets.get(entry.world) || 0;
                 const lorebookText = lorebookActivatedText.get(entry.world) || '';
-                if (lorebookBudget > 0 && (await countWorldInfoTokens(lorebookText + entryContent, payload, tokenCountCache)) >= lorebookBudget) {
+                if (lorebookBudget > 0 && (await countWorldInfoTokens(lorebookText + insertableEntryContent, payload, tokenCountCache)) >= lorebookBudget) {
                     lorebookBudgetOverflowed.add(entry.world);
                     recordEntryDebug(entry, { status: 'dropped_lorebook_budget', roundIndex: count });
                     continue;
                 }
 
-                if ((textToScanTokens + await countWorldInfoTokens(newContent + entryContent, payload, tokenCountCache)) >= budget) {
+                if ((textToScanTokens + await countWorldInfoTokens(newContent + insertableEntryContent, payload, tokenCountCache)) >= budget) {
                     tokenBudgetOverflowed = true;
                     recordEntryDebug(entry, { status: 'dropped_budget', roundIndex: count });
                     continue;
                 }
 
-                lorebookActivatedText.set(entry.world, lorebookText + entryContent);
+                lorebookActivatedText.set(entry.world, lorebookText + insertableEntryContent);
             }
 
-            newContent += entryContent;
+            newContent += insertableEntryContent;
             allActivatedEntries.set(`${entry.world}.${entry.uid}`, entry);
             admittedEntries.push(entry);
             recordEntryDebug(entry, { status: 'admitted', roundIndex: count });
@@ -1309,7 +1322,7 @@ export async function scanWorldInfo(payload = {}) {
         }
 
         const recursionText = successfulNewEntriesForRecursion.map(entry => entry.content).join('\n');
-        const admittedText = admittedEntries.map(entry => entry.content).join('\n');
+        const admittedText = admittedEntries.filter(entry => !entry.activationOnly).map(entry => entry.content).join('\n');
         scanState = nextScanState;
         if (recursionText) {
             buffer.addRecurse(recursionText);
@@ -1340,6 +1353,10 @@ export async function scanWorldInfo(payload = {}) {
     const sortFn = (a, b) => (b.order ?? 0) - (a.order ?? 0);
 
     [...allActivatedEntries.values()].sort(sortFn).forEach((entry) => {
+        if (entry.activationOnly) {
+            return;
+        }
+
         const content = entry.content;
         if (!content) {
             return;

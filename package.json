@@ -1,4 +1,12 @@
 {
+    "name": "aikobots",
+    "version": "2.0.0",
+    "repository": {
+        "type": "git",
+        "url": "https://github.com/aikohanasaki/Aikobots.git"
+    },
+    "type": "module",
+    "license": "AGPL-3.0",
     "dependencies": {
         "@adobe/css-tools": "^4.4.4",
         "@agnai/sentencepiece-js": "^1.1.1",
@@ -106,14 +114,6 @@
             "whatwg-url": "^14.0.0"
         }
     },
-    "name": "sillytavern",
-    "type": "module",
-    "license": "AGPL-3.0",
-    "repository": {
-        "type": "git",
-        "url": "https://github.com/SillyTavern/SillyTavern.git"
-    },
-    "version": "1.0.0",
     "scripts": {
         "start": "node server.js",
         "debug": "node --inspect server.js",

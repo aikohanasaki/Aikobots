@@ -2595,6 +2595,7 @@ function sanitizeWorldInfoDebugDataForResponse(worldInfo, user) {
         ? worldInfo.activatedEntries.map(entry => sanitizeWorldInfoEntryForResponse(entry, user)).filter(Boolean)
         : [];
     const admittedEntries = activatedEntries.filter(entry => entry.status === 'admitted');
+    const insertedEntries = admittedEntries.filter(entry => entry.inserted !== false && !entry.activationOnly);
     const rounds = Array.isArray(worldInfo.rounds)
         ? worldInfo.rounds.map(round => {
             const roundIndex = Number(round?.roundIndex ?? 0) || 0;
@@ -2611,10 +2612,10 @@ function sanitizeWorldInfoDebugDataForResponse(worldInfo, user) {
 
     return {
         activatedEntries,
-        beforeEntries: admittedEntries.filter(entry => entry.placement === 'before'),
-        afterEntries: admittedEntries.filter(entry => entry.placement === 'after'),
-        depthEntries: admittedEntries.filter(entry => String(entry.placement || '').startsWith('depth:')),
-        exampleEntries: admittedEntries.filter(entry => String(entry.placement || '').startsWith('example_')),
+        beforeEntries: insertedEntries.filter(entry => entry.placement === 'before'),
+        afterEntries: insertedEntries.filter(entry => entry.placement === 'after'),
+        depthEntries: insertedEntries.filter(entry => String(entry.placement || '').startsWith('depth:')),
+        exampleEntries: insertedEntries.filter(entry => String(entry.placement || '').startsWith('example_')),
         timedState: structuredClone(worldInfo.timedState || {}),
         overflowed: Boolean(worldInfo.overflowed),
         rounds,
@@ -2627,6 +2628,10 @@ function normalizeContentSegmentsForResponse(segments = []) {
 
     for (const segment of Array.isArray(segments) ? segments : []) {
         if (!segment || typeof segment !== 'object') {
+            continue;
+        }
+
+        if (segment.type === 'worldInfo' && (segment.activationOnly || segment.inserted === false || segment.notInsertedReason === 'activation_only')) {
             continue;
         }
 
@@ -2646,6 +2651,8 @@ function normalizeContentSegmentsForResponse(segments = []) {
                 placement: segment.placement ?? null,
                 roundIndex: Number(segment.roundIndex ?? 0) || 0,
                 status: segment.status ?? null,
+                activationOnly: false,
+                inserted: true,
             }
             : {
                 type: 'text',
@@ -2865,6 +2872,7 @@ function buildWorldInfoSummaryResponseData(worldInfo, user) {
 
     const activatedEntries = sanitizedWorldInfo.activatedEntries;
     const admittedEntries = activatedEntries.filter(entry => entry.status === 'admitted');
+    const insertedEntries = admittedEntries.filter(entry => entry.inserted !== false && !entry.activationOnly);
     const worldInfoReport = structuredClone(sanitizedWorldInfo);
 
     const worldInfoSummary = {
@@ -2881,9 +2889,12 @@ function buildWorldInfoSummaryResponseData(worldInfo, user) {
             placement: entry.placement ?? null,
             roundIndex: Number(entry.roundIndex ?? 0) || 0,
             status: entry.status ?? null,
+            activationOnly: Boolean(entry.activationOnly),
+            inserted: entry.inserted !== false && !entry.activationOnly,
+            notInsertedReason: entry.notInsertedReason ?? null,
         })),
         overflowed: Boolean(sanitizedWorldInfo.overflowed),
-        totalTokens: admittedEntries.reduce((total, entry) => total + (Number(entry.tokens ?? 0) || 0), 0),
+        totalTokens: insertedEntries.reduce((total, entry) => total + (Number(entry.tokens ?? 0) || 0), 0),
         activeEntriesCount: admittedEntries.length,
         budgetUsed: structuredClone(sanitizedWorldInfo.budgetUsed || {}),
     };

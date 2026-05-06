@@ -1254,13 +1254,29 @@ body .panelControlBar {
 
 .stmb-top-chat-actions {
     display: flex;
+    flex-direction: row;
     flex-wrap: wrap;
+    align-items: center;
     gap: 6px;
     padding: 0 4px 8px;
 }
 
 .stmb-top-chat-actions .menu_button {
     margin: 0;
+}
+
+.stmb-top-chat-actions > button,
+.stmb-top-chat-actions > input[type="button"],
+.stmb-top-chat-actions > input[type="submit"],
+.stmb-top-chat-actions > input[type="reset"],
+.stmb-top-chat-actions > .menu_button {
+    flex: 0 0 auto;
+    width: auto;
+    max-width: none;
+    white-space: nowrap;
+    word-break: normal;
+    overflow-wrap: normal;
+    hyphens: manual;
 }
 
 .stmb-top-chat-item {
@@ -1968,6 +1984,17 @@ button {
     font-family: var(--mainFontFamily), sans-serif;
     font-size: var(--mainFontSize);
     color: var(--SmartThemeBodyColor);
+}
+
+button,
+input[type="button"],
+input[type="submit"],
+input[type="reset"],
+.menu_button {
+    white-space: nowrap;
+    word-break: normal;
+    overflow-wrap: normal;
+    hyphens: manual;
 }
 
 #send_textarea {
@@ -7079,10 +7106,25 @@ body:not(.movingUI) .drawer-content.maximized {
 
 .stmb-button-row {
     display: flex;
+    flex-direction: row;
     flex-wrap: wrap;
     justify-content: center;
     align-items: center;
     gap: 10px;
+}
+
+.stmb-button-row > button,
+.stmb-button-row > input[type="button"],
+.stmb-button-row > input[type="submit"],
+.stmb-button-row > input[type="reset"],
+.stmb-button-row > .menu_button {
+    flex: 0 0 auto;
+    width: auto;
+    max-width: none;
+    white-space: nowrap;
+    word-break: normal;
+    overflow-wrap: normal;
+    hyphens: manual;
 }
 
 .stmb-clip-modal textarea,
@@ -7284,10 +7326,25 @@ body:not(.movingUI) .drawer-content.maximized {
 }
 
 .stmb-jobs-actions {
+    flex-direction: row;
     gap: 8px;
     margin: 12px 0;
     flex-wrap: wrap;
     align-items: center;
+}
+
+.stmb-jobs-actions > button,
+.stmb-jobs-actions > input[type="button"],
+.stmb-jobs-actions > input[type="submit"],
+.stmb-jobs-actions > input[type="reset"],
+.stmb-jobs-actions > .menu_button {
+    flex: 0 0 auto;
+    width: auto;
+    max-width: none;
+    white-space: nowrap;
+    word-break: normal;
+    overflow-wrap: normal;
+    hyphens: manual;
 }
 
 .stmb-jobs-rows {

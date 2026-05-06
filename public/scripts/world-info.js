@@ -1966,6 +1966,10 @@ function isFloatingBookDepthPosition(position) {
 }
 
 function getFloatingBookPlacementLabel(entry) {
+    if (entry?.activationOnly || entry?.notInsertedReason === 'activation_only' || entry?.inserted === false) {
+        return 'Activation only (not inserted)';
+    }
+
     const position = getFloatingBookEntryPosition(entry);
     const depth = getFloatingBookEntryDepth(entry);
 
@@ -2821,6 +2825,9 @@ async function showWorldInfoReportPopup(messageId = null) {
         for (const entry of round.entries) {
             const listItem = document.createElement('li');
             listItem.textContent = getWorldInfoReportEntryLabel(entry);
+            if (entry?.activationOnly || entry?.notInsertedReason === 'activation_only' || entry?.inserted === false) {
+                listItem.textContent += ' - activation-only, not inserted';
+            }
 
             if (isWorldInfoReportConstantLike(entry)) {
                 listItem.classList.add('wi-report-keyword-entry--constant');
@@ -4639,6 +4646,7 @@ export const originalWIDataKeyMap = {
     'delay': 'extensions.delay',
     'triggers': 'extensions.triggers',
     'ignoreBudget': 'extensions.ignore_budget',
+    'activationOnly': 'extensions.activation_only',
 };
 
 /** Checks the state of the current search, and adds/removes the search sorting option accordingly */
@@ -5767,6 +5775,18 @@ export async function getWorldEntry(name, data, entry) {
         });
         ignoreBudgetInput.prop('checked', entry.ignoreBudget ?? false).trigger('input', { noSave: true });
 
+        // Activation only
+        const activationOnlyInput = editTemplate.find('input[name="activationOnly"]');
+        activationOnlyInput.data('uid', entry.uid);
+        activationOnlyInput.on('input', async function (_, { noSave = false } = {}) {
+            const uid = $(this).data('uid');
+            const value = $(this).prop('checked');
+            data.entries[uid].activationOnly = value;
+            setWIOriginalDataValue(data, uid, 'extensions.activation_only', data.entries[uid].activationOnly);
+            !noSave && await saveWorldInfo(name, data);
+        });
+        activationOnlyInput.prop('checked', entry.activationOnly ?? false).trigger('input', { noSave: true });
+
         countTokensDebounced(counter, contentInput.val());
 
         editTemplate.find('.inline-drawer-content').css('display', 'none');
@@ -5981,6 +6001,7 @@ export const newWorldInfoEntryDefinition = {
     position: { default: 0, type: 'number' },
     disable: { default: false, type: 'boolean' },
     ignoreBudget: { default: false, type: 'boolean' },
+    activationOnly: { default: false, type: 'boolean' },
     excludeRecursion: { default: false, type: 'boolean' },
     preventRecursion: { default: false, type: 'boolean' },
     matchPersonaDescription: { default: false, type: 'boolean' },
@@ -7044,6 +7065,7 @@ function convertAgnaiMemoryBook(inputObj) {
             delay: null,
             triggers: [],
             ignoreBudget: false,
+            activationOnly: false,
         };
     });
 
@@ -7089,6 +7111,7 @@ function convertRisuLorebook(inputObj) {
             delay: null,
             triggers: [],
             ignoreBudget: false,
+            activationOnly: false,
         };
     });
 
@@ -7139,6 +7162,7 @@ function convertNovelLorebook(inputObj) {
             delay: null,
             triggers: [],
             ignoreBudget: false,
+            activationOnly: false,
         };
     });
 
@@ -7198,6 +7222,7 @@ export function convertCharacterBook(characterBook) {
             extensions: entry.extensions ?? {},
             triggers: entry.extensions?.triggers || [],
             ignoreBudget: entry.extensions?.ignore_budget ?? false,
+            activationOnly: entry.extensions?.activation_only ?? entry.activationOnly ?? false,
         };
     });
 

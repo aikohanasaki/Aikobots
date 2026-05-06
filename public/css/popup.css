@@ -171,6 +171,9 @@ body.no-blur .popup[open]::backdrop {
 .popup-controls {
     margin-top: 10px;
     display: flex;
+    flex-direction: row;
+    flex-wrap: wrap;
+    align-items: center;
     align-self: center;
     gap: 20px;
 }
@@ -187,9 +190,23 @@ body.no-blur .popup[open]::backdrop {
     background-color: var(--crimson-hover);
 }
 
+.popup-controls > button,
+.popup-controls > input[type="button"],
+.popup-controls > input[type="submit"],
+.popup-controls > input[type="reset"],
+.popup-controls > .menu_button {
+    flex: 0 0 auto;
+    width: auto;
+    max-width: none;
+    white-space: nowrap;
+    word-break: normal;
+    overflow-wrap: normal;
+    hyphens: manual;
+}
+
 .popup-controls .menu_button {
     /* Popup buttons should not scale to smallest size, otherwise they will always break to multiline if multiple words */
-    width: unset;
+    width: auto;
 
     /* Fix weird animation issue with fonts on brightness filter */
     backface-visibility: hidden;

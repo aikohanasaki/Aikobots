@@ -883,6 +883,7 @@ function convertWorldInfoToCharacterBook(name, entries) {
                 match_creator_notes: entry.matchCreatorNotes ?? false,
                 triggers: entry.triggers ?? [],
                 ignore_budget: entry.ignoreBudget ?? false,
+                activation_only: entry.activationOnly ?? false,
             },
         };
 
