@@ -7475,3 +7475,38 @@ body:not(.movingUI) .drawer-content.maximized {
     color: var(--SmartThemeRedColor, #ff6b6b);
     border-color: color-mix(in srgb, currentColor 22%, transparent);
 }
+
+#active_session_lock_panel {
+    position: fixed;
+    inset: auto 16px 16px auto;
+    width: min(420px, calc(100vw - 32px));
+    z-index: 50000;
+    color: var(--SmartThemeBodyColor);
+}
+
+.active_session_lock_content {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    padding: 14px;
+    border: 1px solid var(--SmartThemeBorderColor);
+    border-radius: 8px;
+    background-color: var(--SmartThemeBlurTintColor);
+    box-shadow: 0 8px 24px var(--SmartThemeShadowColor);
+}
+
+.active_session_lock_content p {
+    margin: 0;
+    line-height: 1.35;
+}
+
+.active_session_lock_actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 8px;
+}
+
+body.active-session-read-only [data-active-session-disabled="true"] {
+    opacity: 0.55;
+    cursor: not-allowed;
+}

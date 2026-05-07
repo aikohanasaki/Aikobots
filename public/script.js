@@ -2183,6 +2183,14 @@ let topChatSidebarPopulateToken = '';
 let isManageChatsActionPending = false;
 
 export let token;
+const ACTIVE_SESSION_STORAGE_KEY = 'aikobots.browserSessionId';
+const ACTIVE_SESSION_LOCK_MESSAGE = 'Aikobots is open in another browser session. This session is now read-only. Click \'Take Over\' to make this session active, or close the other browser session and reload this page.';
+const ACTIVE_SESSION_POLL_MS = 20_000;
+const ACTIVE_SESSION_WRITE_CONTROL_PATTERN = /(send|generate|regenerate|continue|swipe|save|delete|remove|trash|edit|rename|create|new|import|upload|restore|backup|reset|submit|install|update|switch|move|duplicate|merge|promote|demote|checkout|checkin|consolidate|compact|capture|commit|memory|clip|persona|avatar)/i;
+let activeSessionHeartbeatTimer = null;
+let activeSessionLockModal = null;
+let activeSessionReadOnlyObserver = null;
+export let isActiveSessionLocked = false;
 
 
 /** The tag of the active character. (NOT the id) */
@@ -2192,10 +2200,28 @@ export let active_group = '';
 
 export const entitiesFilter = new FilterHelper(printCharactersDebounced);
 
+function getBrowserSessionId() {
+    try {
+        let id = localStorage.getItem(ACTIVE_SESSION_STORAGE_KEY);
+
+        if (!id) {
+            id = typeof crypto.randomUUID === 'function' ? crypto.randomUUID() : uuidv4();
+            localStorage.setItem(ACTIVE_SESSION_STORAGE_KEY, id);
+        }
+
+        return id;
+    } catch {
+        return typeof crypto.randomUUID === 'function' ? crypto.randomUUID() : uuidv4();
+    }
+}
+
+const browserSessionId = getBrowserSessionId();
+
 export function getRequestHeaders({ omitContentType = false } = {}) {
     const headers = {
         'Content-Type': 'application/json',
         'X-CSRF-Token': token,
+        'X-Browser-Session-Id': browserSessionId,
     };
 
     if (omitContentType) {
@@ -2207,7 +2233,235 @@ export function getRequestHeaders({ omitContentType = false } = {}) {
 
 $.ajaxPrefilter((options, originalOptions, xhr) => {
     xhr.setRequestHeader('X-CSRF-Token', token);
+    xhr.setRequestHeader('X-Browser-Session-Id', browserSessionId);
 });
+
+function ensureActiveSessionLockModal() {
+    if (activeSessionLockModal) {
+        return activeSessionLockModal;
+    }
+
+    activeSessionLockModal = document.createElement('div');
+    activeSessionLockModal.id = 'active_session_lock_panel';
+    activeSessionLockModal.setAttribute('role', 'dialog');
+    activeSessionLockModal.setAttribute('aria-modal', 'false');
+    activeSessionLockModal.hidden = true;
+    activeSessionLockModal.innerHTML = `
+        <div class="active_session_lock_content">
+            <strong>Read-only session</strong>
+            <p>${ACTIVE_SESSION_LOCK_MESSAGE}</p>
+            <div class="active_session_lock_actions">
+                <button id="active_session_takeover" type="button">Take Over</button>
+                <button id="active_session_reload" type="button">Reload</button>
+            </div>
+        </div>`;
+
+    document.body.append(activeSessionLockModal);
+    document.getElementById('active_session_takeover')?.addEventListener('click', takeOverActiveSession);
+    document.getElementById('active_session_reload')?.addEventListener('click', () => location.reload());
+    return activeSessionLockModal;
+}
+
+function isLikelyWriteControl(element) {
+    if (!(element instanceof HTMLElement) || element.closest('#active_session_lock_panel')) {
+        return false;
+    }
+
+    if (element instanceof HTMLInputElement && !['button', 'submit', 'file', 'image'].includes(element.type)) {
+        return false;
+    }
+
+    const text = [
+        element.id,
+        element.getAttribute('name'),
+        element.getAttribute('class'),
+        element.getAttribute('title'),
+        element.getAttribute('aria-label'),
+        element.textContent,
+        element instanceof HTMLInputElement ? element.value : '',
+    ].filter(Boolean).join(' ');
+
+    return ACTIVE_SESSION_WRITE_CONTROL_PATTERN.test(text);
+}
+
+function updateActiveSessionReadOnlyControls() {
+    const controls = document.querySelectorAll('button, input[type="button"], input[type="submit"], input[type="file"], input[type="image"]');
+
+    for (const control of controls) {
+        if (!(control instanceof HTMLButtonElement || control instanceof HTMLInputElement)) {
+            continue;
+        }
+
+        if (isActiveSessionLocked) {
+            if (!control.disabled && isLikelyWriteControl(control)) {
+                control.dataset.activeSessionDisabled = 'true';
+                control.disabled = true;
+            }
+        } else if (control.dataset.activeSessionDisabled === 'true') {
+            delete control.dataset.activeSessionDisabled;
+            control.disabled = false;
+        }
+    }
+}
+
+function setActiveSessionLocked(locked) {
+    isActiveSessionLocked = Boolean(locked);
+    document.body?.classList.toggle('active-session-read-only', isActiveSessionLocked);
+    const modal = ensureActiveSessionLockModal();
+    modal.hidden = !isActiveSessionLocked;
+    updateActiveSessionReadOnlyControls();
+
+    if (isActiveSessionLocked) {
+        toastr.warning('This browser session is read-only until it takes over the active session.', 'Read-only session', { preventDuplicates: true });
+    }
+}
+
+function hasUnsavedActiveSessionEdits() {
+    return Boolean(
+        is_send_press ||
+        (selected_group && is_group_generating) ||
+        hasUnsavedCharacterEdits() ||
+        document.querySelector('[dirty]'),
+    );
+}
+
+async function parseActiveSessionErrorResponse(response) {
+    if (!response || ![409, 423].includes(response.status)) {
+        return null;
+    }
+
+    try {
+        const data = await response.clone().json();
+        return data?.error === 'active_session_required' ? data : null;
+    } catch {
+        return null;
+    }
+}
+
+async function handleActiveSessionResponse(response) {
+    const data = await parseActiveSessionErrorResponse(response);
+    if (data) {
+        setActiveSessionLocked(true);
+    }
+}
+
+const nativeFetch = window.fetch.bind(window);
+window.fetch = async (...args) => {
+    const response = await nativeFetch(...args);
+    await handleActiveSessionResponse(response);
+    return response;
+};
+
+$(document).ajaxError((_event, jqXHR) => {
+    if (![409, 423].includes(jqXHR.status)) {
+        return;
+    }
+
+    let data = jqXHR.responseJSON;
+    if (!data && jqXHR.responseText) {
+        try {
+            data = JSON.parse(jqXHR.responseText);
+        } catch {
+            data = null;
+        }
+    }
+
+    if (data?.error === 'active_session_required') {
+        setActiveSessionLocked(true);
+    }
+});
+
+async function postActiveSession(endpoint) {
+    return await nativeFetch(`/api/active-session/${endpoint}`, {
+        method: 'POST',
+        headers: getRequestHeaders(),
+    });
+}
+
+async function claimActiveSession() {
+    const response = await postActiveSession('claim');
+    await handleActiveSessionResponse(response);
+
+    if (!response.ok) {
+        setActiveSessionLocked(true);
+        return false;
+    }
+
+    const status = await response.json();
+    setActiveSessionLocked(!status.active);
+    return Boolean(status.active);
+}
+
+async function pollActiveSession() {
+    try {
+        if (isActiveSessionLocked) {
+            const becameActive = await claimActiveSession();
+            if (becameActive) {
+                location.reload();
+            }
+            return;
+        }
+
+        const response = await postActiveSession('heartbeat');
+        await handleActiveSessionResponse(response);
+        if (!response.ok) {
+            setActiveSessionLocked(true);
+            return;
+        }
+
+        const status = await response.json();
+        setActiveSessionLocked(!status.active);
+    } catch (error) {
+        console.warn('Active browser session poll failed', error);
+    }
+}
+
+async function takeOverActiveSession() {
+    if (hasUnsavedActiveSessionEdits() && !confirm('This browser has unsaved edits or an in-progress generation. Taking over will reload the page and discard local unsaved state. Continue?')) {
+        return;
+    }
+
+    try {
+        const response = await postActiveSession('take-over');
+        await handleActiveSessionResponse(response);
+
+        if (!response.ok) {
+            setActiveSessionLocked(true);
+            return;
+        }
+
+        const status = await response.json();
+        if (status.active) {
+            location.reload();
+            return;
+        }
+
+        setActiveSessionLocked(true);
+    } catch (error) {
+        console.error('Failed to take over active browser session', error);
+        toastr.error('Could not take over the active session. Please try again.');
+    }
+}
+
+async function initActiveBrowserSession() {
+    ensureActiveSessionLockModal();
+    if (!activeSessionReadOnlyObserver && typeof MutationObserver === 'function') {
+        activeSessionReadOnlyObserver = new MutationObserver(() => {
+            if (isActiveSessionLocked) {
+                updateActiveSessionReadOnlyControls();
+            }
+        });
+        activeSessionReadOnlyObserver.observe(document.body, { childList: true, subtree: true });
+    }
+
+    await claimActiveSession();
+
+    if (activeSessionHeartbeatTimer) {
+        clearInterval(activeSessionHeartbeatTimer);
+    }
+
+    activeSessionHeartbeatTimer = setInterval(pollActiveSession, ACTIVE_SESSION_POLL_MS);
+}
 
 function enforceChatCompletionsOnlyMode({ save = false } = {}) {
     if (!CHAT_COMPLETIONS_ONLY) {
@@ -2269,6 +2523,8 @@ async function firstLoadInit() {
         toastr.error(t`Couldn't get CSRF token. Please refresh the page.`, t`Error`, { timeOut: 0, extendedTimeOut: 0, preventDuplicates: true });
         throw new Error('Initialization failed');
     }
+
+    await initActiveBrowserSession();
 
     showLoader();
     registerPromptManagerMigration();

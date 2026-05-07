@@ -46,6 +46,7 @@ import initRequestProxy from './request-proxy.js';
 import cacheBuster from './middleware/cacheBuster.js';
 import corsProxyMiddleware from './middleware/corsProxy.js';
 import hostWhitelistMiddleware from './middleware/hostWhitelist.js';
+import { activeSessionLockMiddleware, activeSessionRouter } from './middleware/activeSessionLock.js';
 import {
     getVersion,
     color,
@@ -221,6 +222,7 @@ app.post('/api/ping', (request, response) => {
 
     response.sendStatus(204);
 });
+app.use('/api/active-session', activeSessionRouter);
 
 if (cliArgs.enableCorsProxy) {
     app.use('/proxy/:url(*)', corsProxyMiddleware);
@@ -234,6 +236,7 @@ if (cliArgs.enableCorsProxy) {
 
 // File uploads
 const uploadsPath = path.join(cliArgs.dataRoot, UPLOADS_DIRECTORY);
+app.use(activeSessionLockMiddleware);
 app.use(multer({ dest: uploadsPath, limits: { fieldSize: 500 * 1024 * 1024 } }).single('avatar'));
 app.use(multerMonkeyPatch);
 
