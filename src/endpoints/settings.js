@@ -20,6 +20,7 @@ import { getFileNameValidationFunction } from '../middleware/validateFileName.js
 import { listLorebooksForManagement } from '../lorebook-repository.js';
 import { preserveCharacterRepushBlacklistSettings } from '../character-repush-blacklist-settings.js';
 import { withSettingsPersonasLock } from '../settings-lock.js';
+import { isActiveSessionError, sendActiveSessionRequired } from '../active-session-store.js';
 
 const ENABLE_EXTENSIONS = !!getConfigValue('extensions.enabled', true, 'boolean');
 const ENABLE_EXTENSIONS_AUTO_UPDATE = !!getConfigValue('extensions.autoUpdate', true, 'boolean');
@@ -367,12 +368,16 @@ router.post('/save', async function (request, response) {
             const existingSettings = await lock.run(() => readExistingSettingsForPreservedKeys(pathToSettings));
             const settingsToWrite = preserveCharacterRepushBlacklistSettings(strippedSettings, existingSettings);
 
+            await request.activeSessionOperation?.assertAllowed();
             await lock.run(() => writePersonasDocument(request.user.directories, personasDocument));
             await lock.run(() => writeFileAtomicSync(pathToSettings, JSON.stringify(settingsToWrite, null, 4), 'utf8'));
         });
         triggerAutoSave(request.user.profile.handle);
         response.send({ result: 'ok' });
     } catch (err) {
+        if (isActiveSessionError(err)) {
+            return sendActiveSessionRequired(response);
+        }
         console.error(err);
         response.status(err.status || 500).send({ error: err.message || String(err) });
     }
@@ -523,10 +528,11 @@ router.post('/restore-snapshot', getFileNameValidationFunction('name'), async (r
             : buildPersonasDocumentFromLegacySettings(settings);
         const strippedSettings = stripPersonaRegistryFromSettings(settings);
 
-        await withSettingsPersonasTransaction(request.user.directories, ({ pathToSettings, pathToPersonas }) => {
+        await withSettingsPersonasTransaction(request.user.directories, async ({ pathToSettings, pathToPersonas }) => {
             const existingSettings = readExistingSettingsForPreservedKeys(pathToSettings);
             const settingsToWrite = preserveCharacterRepushBlacklistSettings(strippedSettings, existingSettings);
 
+            await request.activeSessionOperation?.assertAllowed();
             writePersonasDocument(request.user.directories, personasDocument);
             writeFileAtomicSync(pathToSettings, JSON.stringify(settingsToWrite, null, 4), 'utf8');
             if (isEmptyPersonasDocument(personasDocument)) {
@@ -536,6 +542,9 @@ router.post('/restore-snapshot', getFileNameValidationFunction('name'), async (r
 
         response.sendStatus(204);
     } catch (error) {
+        if (isActiveSessionError(error)) {
+            return sendActiveSessionRequired(response);
+        }
         console.error(error);
         response.sendStatus(error.status || 500);
     }

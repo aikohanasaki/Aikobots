@@ -2312,6 +2312,13 @@ function setActiveSessionLocked(locked) {
     updateActiveSessionReadOnlyControls();
 
     if (isActiveSessionLocked) {
+        if (activeSessionHeartbeatTimer) {
+            clearInterval(activeSessionHeartbeatTimer);
+            activeSessionHeartbeatTimer = null;
+        }
+        if (is_send_press) {
+            stopGeneration();
+        }
         toastr.warning('This browser session is read-only until it takes over the active session.', 'Read-only session', { preventDuplicates: true });
     }
 }
@@ -2346,8 +2353,37 @@ async function handleActiveSessionResponse(response) {
 }
 
 const nativeFetch = window.fetch.bind(window);
+function shouldAttachBrowserSessionHeader(input) {
+    try {
+        const url = new URL(input instanceof Request ? input.url : String(input), location.href);
+        return url.origin === location.origin && url.pathname.startsWith('/api/');
+    } catch {
+        return false;
+    }
+}
+
+function withBrowserSessionHeader(input, init) {
+    if (!shouldAttachBrowserSessionHeader(input)) {
+        return [input, init];
+    }
+
+    if (input instanceof Request) {
+        const request = new Request(input, init);
+        const headers = new Headers(request.headers);
+        headers.set('X-Browser-Session-Id', browserSessionId);
+        return [new Request(request, { headers }), undefined];
+    }
+
+    const nextInit = { ...(init || {}) };
+    const headers = new Headers(nextInit.headers || {});
+    headers.set('X-Browser-Session-Id', browserSessionId);
+    nextInit.headers = headers;
+    return [input, nextInit];
+}
+
 window.fetch = async (...args) => {
-    const response = await nativeFetch(...args);
+    const [input, init] = withBrowserSessionHeader(args[0], args[1]);
+    const response = await nativeFetch(input, init);
     await handleActiveSessionResponse(response);
     return response;
 };
@@ -2395,10 +2431,6 @@ async function claimActiveSession() {
 async function pollActiveSession() {
     try {
         if (isActiveSessionLocked) {
-            const becameActive = await claimActiveSession();
-            if (becameActive) {
-                location.reload();
-            }
             return;
         }
 
@@ -2455,6 +2487,9 @@ async function initActiveBrowserSession() {
     }
 
     await claimActiveSession();
+    if (isActiveSessionLocked) {
+        return;
+    }
 
     if (activeSessionHeartbeatTimer) {
         clearInterval(activeSessionHeartbeatTimer);

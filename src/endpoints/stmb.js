@@ -19,10 +19,15 @@ import {
     LorebookRepositoryError,
     saveLorebookForManagement,
 } from '../lorebook-repository.js';
+import { isActiveSessionError, sendActiveSessionRequired } from '../active-session-store.js';
 
 export const router = express.Router();
 
 function sendStmbError(response, error) {
+    if (isActiveSessionError(error)) {
+        return sendActiveSessionRequired(response);
+    }
+
     if (error instanceof LorebookRepositoryError) {
         return response.status(error.status).send({
             error: {
@@ -470,6 +475,7 @@ router.post('/save-memory', async (request, response) => {
             onOrderClamped: notification => orderClampNotifications.push(notification),
         });
 
+        await request.activeSessionOperation?.assertAllowed();
         const savedMetadata = await saveLorebookForManagement(request.user, metadata.name, lorebookData, metadata.storage);
         return response.send({
             ok: true,
@@ -545,6 +551,7 @@ router.post('/commit-summaries', async (request, response) => {
         }
 
         if (createdEntries.length > 0 || migrated || schemaMigrated) {
+            await request.activeSessionOperation?.assertAllowed();
             const savedMetadata = await saveLorebookForManagement(request.user, metadata.name, lorebookData, metadata.storage);
             return response.send({
                 ok: true,
@@ -611,6 +618,7 @@ router.post('/upsert-entry-by-title', async (request, response) => {
             entryOverrides,
         });
 
+        await request.activeSessionOperation?.assertAllowed();
         const savedMetadata = await saveLorebookForManagement(request.user, metadata.name, lorebookData, metadata.storage);
         return response.send({
             ok: true,
@@ -682,6 +690,7 @@ router.post('/create-entry', async (request, response) => {
             entry[key] = value;
         }
 
+        await request.activeSessionOperation?.assertAllowed();
         const savedMetadata = await saveLorebookForManagement(request.user, metadata.name, lorebookData, metadata.storage);
         return response.send({
             ok: true,
@@ -775,6 +784,7 @@ router.post('/update-entry-by-uid', async (request, response) => {
             entry[key] = value;
         }
 
+        await request.activeSessionOperation?.assertAllowed();
         const savedMetadata = await saveLorebookForManagement(request.user, metadata.name, lorebookData, metadata.storage);
         return response.send({
             ok: true,
@@ -845,6 +855,7 @@ router.post('/upsert-entries-batch', async (request, response) => {
             results.push(result);
         }
 
+        await request.activeSessionOperation?.assertAllowed();
         const savedMetadata = await saveLorebookForManagement(request.user, metadata.name, lorebookData, metadata.storage);
         return response.send({
             ok: true,

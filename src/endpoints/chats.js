@@ -10,6 +10,7 @@ import _ from 'lodash';
 
 import validateAvatarUrlMiddleware from '../middleware/validateFileName.js';
 import { touchUserActivity } from '../users.js';
+import { isActiveSessionError, sendActiveSessionRequired } from '../active-session-store.js';
 import {
     getConfigValue,
     humanizedISO8601DateTime,
@@ -2097,6 +2098,7 @@ router.post('/save', validateAvatarUrlMiddleware, async function (request, respo
 
             const header = setChatRevision(logicalChatData[0], revisionCheck.nextRevision, getRequestSaveSessionId(request.body));
             const messages = logicalChatData.slice(1);
+            await request.activeSessionOperation?.assertAllowed();
             const writeResult = writeLogicalChat(filePath, header, messages, {
                 displayCount: config.displayCount,
                 bufferMax: config.bufferMax,
@@ -2130,6 +2132,9 @@ router.post('/save', validateAvatarUrlMiddleware, async function (request, respo
             });
         });
     } catch (error) {
+        if (isActiveSessionError(error)) {
+            return sendActiveSessionRequired(response);
+        }
         if (isChatPathValidationError(error)) {
             return sendChatPathValidationError(response, error);
         }
@@ -2684,11 +2689,15 @@ router.post('/group/save', async (request, response) => {
                 revisionCheck.nextRevision,
                 getRequestSaveSessionId(request.body),
             );
+            await request.activeSessionOperation?.assertAllowed();
             const writeResult = writeLogicalChat(pathToFile, header, chat_data);
             getBackupFunction(request.user.profile.handle)(request.user.directories.backups, String(id), writeResult.fullJsonl);
             return response.send({ ok: true, chat_revision: revisionCheck.nextRevision });
         });
     } catch (error) {
+        if (isActiveSessionError(error)) {
+            return sendActiveSessionRequired(response);
+        }
         if (isChatPathValidationError(error)) {
             return sendChatPathValidationError(response, error);
         }

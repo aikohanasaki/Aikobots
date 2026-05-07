@@ -10,7 +10,7 @@ const READ_ONLY_POST_ROUTES = [
     /^\/api\/avatars\/get$/,
     /^\/api\/backgrounds\/all$/,
     /^\/api\/backups\/chat\/(?:list|download)$/,
-    /^\/api\/backends\/chat-completions\/(?:status|bias|assemble|assemble\/compare)$/,
+    /^\/api\/backends\/chat-completions\/(?:status|bias)$/,
     /^\/api\/characters\/(?:all|get|chats|export|repush-blacklist\/list|distribution-policy)$/,
     /^\/api\/chats\/(?:get|group\/get|search|orphaned|recent|export)$/,
     /^\/api\/extra\/classify(?:\/labels)?$/,
@@ -117,11 +117,63 @@ export async function activeSessionLockMiddleware(request, response, next) {
         return next();
     }
 
+    const userHandle = request.user.profile.handle;
+    const browserSessionId = activeSessionStore.getBrowserSessionId(request);
+    let operation = null;
+    let ended = false;
+    let cancellationTimer = null;
+    const operationAbortController = new AbortController();
+
+    const endOperation = () => {
+        if (ended || !operation) {
+            return;
+        }
+
+        ended = true;
+        if (cancellationTimer) {
+            clearInterval(cancellationTimer);
+        }
+
+        activeSessionStore.endOperation(userHandle, browserSessionId, operation.operationId)
+            .catch(error => console.error('Failed to end active-session operation:', error));
+    };
+
     try {
-        const browserSessionId = activeSessionStore.getBrowserSessionId(request);
-        await activeSessionStore.assertActive(request.user.profile.handle, browserSessionId);
+        operation = await activeSessionStore.beginOperation(userHandle, browserSessionId, `${request.method} ${request.path}`);
+        request.activeSessionOperation = {
+            operationId: operation.operationId,
+            browserSessionId,
+            operationType: operation.operationType,
+            signal: operationAbortController.signal,
+            assertAllowed: () => activeSessionStore.assertOperationAllowed(userHandle, browserSessionId, operation.operationId),
+        };
+
+        cancellationTimer = setInterval(async () => {
+            try {
+                await request.activeSessionOperation.assertAllowed();
+            } catch (error) {
+                if (isActiveSessionError(error)) {
+                    operationAbortController.abort(error);
+                    if (!response.headersSent) {
+                        sendActiveSessionRequired(response);
+                    } else if (!response.writableEnded) {
+                        response.end();
+                    }
+
+                    endOperation();
+                    return;
+                }
+
+                console.error('Failed to verify in-flight active-session operation:', error);
+            }
+        }, 1_000);
+        cancellationTimer.unref?.();
+
+        response.once('finish', endOperation);
+        response.once('close', endOperation);
         return next();
     } catch (error) {
+        endOperation();
         if (isActiveSessionError(error)) {
             return sendActiveSessionRequired(response);
         }

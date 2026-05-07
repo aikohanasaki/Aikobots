@@ -55,6 +55,7 @@ import { compareChatCompletionMessages } from '../../prompting/chat-completion-c
 import { runServerGenerationExtensions } from '../../extensions/server-runtime.js';
 import { prepareEntriesForScan, resolveSortedEntriesPayload } from '../worldinfo.js';
 import { resolveSplitCoreChatPayload } from '../chats.js';
+import { isActiveSessionError, sendActiveSessionRequired } from '../../active-session-store.js';
 
 import { readSecret, SECRET_KEYS } from '../secrets.js';
 import {
@@ -129,7 +130,9 @@ function bindAbortControllerToRequestSocket(request, controller) {
     }
 
     const socket = request.socket;
+    const activeSessionSignal = request.activeSessionOperation?.signal;
     const onClose = () => controller.abort();
+    const onActiveSessionCancel = () => controller.abort();
     let cleanedUp = false;
     const cleanup = () => {
         if (cleanedUp) {
@@ -138,10 +141,12 @@ function bindAbortControllerToRequestSocket(request, controller) {
 
         cleanedUp = true;
         removeEmitterListener(socket, 'close', onClose);
+        activeSessionSignal?.removeEventListener?.('abort', onActiveSessionCancel);
         controller.signal.removeEventListener('abort', cleanup);
     };
 
     socket.on('close', onClose);
+    activeSessionSignal?.addEventListener?.('abort', onActiveSessionCancel, { once: true });
     controller.signal.addEventListener('abort', cleanup, { once: true });
 
     if (!Array.isArray(request[REQUEST_SOCKET_ABORT_CLEANUPS])) {
@@ -637,6 +642,12 @@ function createChatCompletionStageError(message, statusCode, options = {}) {
     return error;
 }
 
+async function assertActiveSessionOperation(request) {
+    if (request.activeSessionOperation) {
+        await request.activeSessionOperation.assertAllowed();
+    }
+}
+
 /**
  * @param {string} value
  * @param {number} maxLength
@@ -980,6 +991,7 @@ async function sendProviderDispatchResult(result, request, response, {
     promptSnapshotKey = null,
 } = {}) {
     try {
+        await assertActiveSessionOperation(request);
         if (!result || typeof result !== 'object') {
             return response.status(500).send({ error: true });
         }
@@ -1017,6 +1029,7 @@ async function sendProviderDispatchResult(result, request, response, {
                 retryable: isRetryableStatus(result.status || 500),
             });
 
+        await assertActiveSessionOperation(request);
         return response.status(result.status || 200).send(payload);
     } finally {
         cleanupRequestSocketAbortListeners(request);
@@ -2239,7 +2252,7 @@ async function prepareServerPromptContext(user, directories, promptContext) {
 }
 
 function getPromptAssemblyErrorStatus(error) {
-    const explicitStatus = Number(error?.statusCode);
+    const explicitStatus = Number(error?.statusCode || error?.status);
     if (Number.isInteger(explicitStatus) && explicitStatus > 0) {
         return explicitStatus;
     }
@@ -3036,6 +3049,7 @@ async function forwardFetchResponseWithWorldInfo(from, to, request, timedWorldIn
 
     try {
         for await (const chunk of from.body) {
+            await assertActiveSessionOperation(request);
             buffer += decoder.decode(chunk, { stream: true });
             const events = buffer.split(/\r?\n\r?\n/);
             buffer = events.pop() ?? '';
@@ -3048,6 +3062,7 @@ async function forwardFetchResponseWithWorldInfo(from, to, request, timedWorldIn
         buffer += decoder.decode();
 
         if (buffer) {
+            await assertActiveSessionOperation(request);
             flushEventBlock(buffer);
         }
 
@@ -3497,6 +3512,7 @@ export async function handleChatCompletionsGenerate(request, response) {
     if (!request.body) return response.status(400).send({ error: true });
 
     return (async () => {
+        await assertActiveSessionOperation(request);
     request.requestId = request.requestId || uuidv4();
     response.setHeader('X-Request-Id', request.requestId);
 
@@ -3553,6 +3569,7 @@ export async function handleChatCompletionsGenerate(request, response) {
             }
 
             if (latestPromptInspectionSnapshot?.key) {
+                await assertActiveSessionOperation(request);
                 await setPromptInspectionSnapshot(latestPromptInspectionSnapshot.key, latestPromptInspectionSnapshot.snapshot);
                 dispatchedPromptSnapshotKey = latestPromptInspectionSnapshot.key;
             }
@@ -3992,7 +4009,9 @@ export async function handleChatCompletionsGenerate(request, response) {
 
     console.debug('Chat Completion request:', requestBody);
 
+    await assertActiveSessionOperation(request);
     providerResult = await makeRequest(config, request);
+    await assertActiveSessionOperation(request);
     return await sendProviderDispatchResult(providerResult, request, response, {
         timedWorldInfo: assembledTimedWorldInfo,
         worldInfoOverflowed: assembledWorldInfoOverflowed,
@@ -4112,6 +4131,16 @@ export async function handleChatCompletionsGenerate(request, response) {
     }
     })().catch((error) => {
         cleanupRequestSocketAbortListeners(request);
+        if (isActiveSessionError(error)) {
+            if (!response.headersSent) {
+                return sendActiveSessionRequired(response);
+            }
+
+            if (!response.writableEnded) {
+                response.end();
+            }
+            return;
+        }
         if (request.requestId && !error?.requestId) {
             error.requestId = request.requestId;
         }

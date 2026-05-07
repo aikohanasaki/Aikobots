@@ -12,6 +12,7 @@ const LOCK_HEARTBEAT_MS = 2_000;
 const STORE_DIRECTORY_NAME = '_active-session-leases';
 const STORE_FILE_NAME = 'leases.json';
 const LOCK_DIRECTORY_NAME = 'leases.lock';
+const OPERATION_TTL_MS = 60 * 60_000;
 export const BROWSER_SESSION_HEADER = 'x-browser-session-id';
 export const ACTIVE_SESSION_ERROR = 'active_session_required';
 export const ACTIVE_SESSION_LOCK_MESSAGE = 'Aikobots is open in another browser session. This session is now read-only.';
@@ -60,6 +61,76 @@ function isLeaseActive(lease, now = Date.now()) {
     return Boolean(lease?.browserSessionId) && Number(lease.expiresAt || 0) > now;
 }
 
+function normalizeStore(data) {
+    if (!data || typeof data !== 'object') {
+        return { leases: {}, operations: {} };
+    }
+
+    if (data.leases && typeof data.leases === 'object') {
+        return {
+            leases: data.leases,
+            operations: data.operations && typeof data.operations === 'object' ? data.operations : {},
+        };
+    }
+
+    return {
+        leases: data,
+        operations: {},
+    };
+}
+
+function pruneExpiredOperations(store, now = Date.now()) {
+    let pruned = false;
+    for (const [operationId, operation] of Object.entries(store.operations || {})) {
+        if (!operation || Number(operation.expiresAt || 0) <= now) {
+            delete store.operations[operationId];
+            pruned = true;
+        }
+    }
+    return pruned;
+}
+
+function createOperation(userHandle, browserSessionId, operationType, now = Date.now()) {
+    return {
+        operationId: randomUUID(),
+        userHandle,
+        browserSessionId,
+        operationType: String(operationType || 'write').slice(0, 128),
+        startedAt: now,
+        lastSeenAt: now,
+        expiresAt: now + OPERATION_TTL_MS,
+        cancelledAt: null,
+    };
+}
+
+function assertLeaseAndOperationAllowed(store, userHandle, browserSessionId, operationId, now = Date.now()) {
+    const key = getLeaseKey(userHandle);
+    const lease = store.leases[key];
+
+    if (!isLeaseActive(lease, now)) {
+        delete store.leases[key];
+        throw createActiveSessionError();
+    }
+
+    if (lease.browserSessionId !== browserSessionId) {
+        throw createActiveSessionError();
+    }
+
+    const operation = store.operations[operationId];
+    if (!operation
+        || operation.userHandle !== userHandle
+        || operation.browserSessionId !== browserSessionId
+        || operation.cancelledAt) {
+        throw createActiveSessionError();
+    }
+
+    operation.lastSeenAt = now;
+    operation.expiresAt = now + OPERATION_TTL_MS;
+    lease.lastSeenAt = now;
+    lease.expiresAt = now + LEASE_TTL_MS;
+    return operation;
+}
+
 function toPublicStatus(lease, browserSessionId, now = Date.now()) {
     if (!isLeaseActive(lease, now)) {
         return {
@@ -98,10 +169,10 @@ async function readStore() {
     try {
         const raw = await fsPromises.readFile(getStorePath(), 'utf8');
         const data = JSON.parse(raw);
-        return data && typeof data === 'object' ? data : {};
+        return normalizeStore(data);
     } catch (error) {
         if (error?.code === 'ENOENT') {
-            return {};
+            return normalizeStore(null);
         }
 
         throw error;
@@ -152,17 +223,18 @@ export const activeSessionStore = {
         const normalizedSessionId = normalizeBrowserSessionId(browserSessionId);
         return await withStoreLock(async (store) => {
             const key = getLeaseKey(userHandle);
-            const lease = store[key];
+            const lease = store.leases[key];
             const now = Date.now();
             const expired = lease && !isLeaseActive(lease, now);
 
             if (expired) {
-                delete store[key];
+                delete store.leases[key];
             }
+            const pruned = pruneExpiredOperations(store, now);
 
             return {
-                write: expired,
-                value: toPublicStatus(store[key], normalizedSessionId, now),
+                write: expired || pruned,
+                value: toPublicStatus(store.leases[key], normalizedSessionId, now),
             };
         });
     },
@@ -175,19 +247,20 @@ export const activeSessionStore = {
 
         return await withStoreLock(async (store) => {
             const key = getLeaseKey(userHandle);
-            const existingLease = store[key];
+            const existingLease = store.leases[key];
             const now = Date.now();
+            const pruned = pruneExpiredOperations(store, now);
 
             if (!isLeaseActive(existingLease, now) || existingLease.browserSessionId === normalizedSessionId) {
-                store[key] = createLease(userHandle, normalizedSessionId, metadata, now);
+                store.leases[key] = createLease(userHandle, normalizedSessionId, metadata, now);
                 return {
                     write: true,
-                    value: toPublicStatus(store[key], normalizedSessionId, now),
+                    value: toPublicStatus(store.leases[key], normalizedSessionId, now),
                 };
             }
 
             return {
-                write: false,
+                write: pruned,
                 value: toPublicStatus(existingLease, normalizedSessionId, now),
             };
         });
@@ -202,10 +275,16 @@ export const activeSessionStore = {
         return await withStoreLock(async (store) => {
             const now = Date.now();
             const key = getLeaseKey(userHandle);
-            store[key] = createLease(userHandle, normalizedSessionId, metadata, now);
+            store.leases[key] = createLease(userHandle, normalizedSessionId, metadata, now);
+            for (const operation of Object.values(store.operations || {})) {
+                if (operation?.userHandle === userHandle && operation.browserSessionId !== normalizedSessionId && !operation.cancelledAt) {
+                    operation.cancelledAt = now;
+                    operation.expiresAt = now + OPERATION_TTL_MS;
+                }
+            }
             return {
                 write: true,
-                value: toPublicStatus(store[key], normalizedSessionId, now),
+                value: toPublicStatus(store.leases[key], normalizedSessionId, now),
             };
         });
     },
@@ -218,11 +297,11 @@ export const activeSessionStore = {
 
         return await withStoreLock(async (store) => {
             const key = getLeaseKey(userHandle);
-            const lease = store[key];
+            const lease = store.leases[key];
             const now = Date.now();
 
             if (!isLeaseActive(lease, now)) {
-                delete store[key];
+                delete store.leases[key];
                 throw createActiveSessionError();
             }
 
@@ -247,11 +326,11 @@ export const activeSessionStore = {
 
         return await withStoreLock(async (store) => {
             const key = getLeaseKey(userHandle);
-            const lease = store[key];
+            const lease = store.leases[key];
             const now = Date.now();
 
             if (!isLeaseActive(lease, now)) {
-                delete store[key];
+                delete store.leases[key];
                 throw createActiveSessionError();
             }
 
@@ -276,7 +355,7 @@ export const activeSessionStore = {
 
         return await withStoreLock(async (store) => {
             const key = getLeaseKey(userHandle);
-            const lease = store[key];
+            const lease = store.leases[key];
 
             if (lease?.browserSessionId !== normalizedSessionId) {
                 return {
@@ -285,7 +364,99 @@ export const activeSessionStore = {
                 };
             }
 
-            delete store[key];
+            delete store.leases[key];
+            return {
+                write: true,
+                value: true,
+            };
+        });
+    },
+
+    async beginOperation(userHandle, browserSessionId, operationType) {
+        const normalizedSessionId = normalizeBrowserSessionId(browserSessionId);
+        if (!normalizedSessionId) {
+            throw createActiveSessionError();
+        }
+
+        return await withStoreLock(async (store) => {
+            const now = Date.now();
+            pruneExpiredOperations(store, now);
+            const key = getLeaseKey(userHandle);
+            const lease = store.leases[key];
+
+            if (!isLeaseActive(lease, now)) {
+                delete store.leases[key];
+                throw createActiveSessionError();
+            }
+
+            if (lease.browserSessionId !== normalizedSessionId) {
+                throw createActiveSessionError();
+            }
+
+            const operation = createOperation(userHandle, normalizedSessionId, operationType, now);
+            store.operations[operation.operationId] = operation;
+            lease.lastSeenAt = now;
+            lease.expiresAt = now + LEASE_TTL_MS;
+            return {
+                write: true,
+                value: structuredClone(operation),
+            };
+        });
+    },
+
+    async endOperation(userHandle, browserSessionId, operationId) {
+        const normalizedSessionId = normalizeBrowserSessionId(browserSessionId);
+        if (!normalizedSessionId || !operationId) {
+            return false;
+        }
+
+        return await withStoreLock(async (store) => {
+            const operation = store.operations[operationId];
+            if (!operation || operation.userHandle !== userHandle || operation.browserSessionId !== normalizedSessionId) {
+                return {
+                    write: false,
+                    value: false,
+                };
+            }
+
+            delete store.operations[operationId];
+            return {
+                write: true,
+                value: true,
+            };
+        });
+    },
+
+    async cancelOperationsForUserExcept(userHandle, activeBrowserSessionId) {
+        const normalizedSessionId = normalizeBrowserSessionId(activeBrowserSessionId);
+        const now = Date.now();
+
+        return await withStoreLock(async (store) => {
+            let cancelled = 0;
+            for (const operation of Object.values(store.operations || {})) {
+                if (operation?.userHandle === userHandle && operation.browserSessionId !== normalizedSessionId && !operation.cancelledAt) {
+                    operation.cancelledAt = now;
+                    operation.expiresAt = now + OPERATION_TTL_MS;
+                    cancelled++;
+                }
+            }
+
+            return {
+                write: cancelled > 0,
+                value: cancelled,
+            };
+        });
+    },
+
+    async assertOperationAllowed(userHandle, browserSessionId, operationId) {
+        const normalizedSessionId = normalizeBrowserSessionId(browserSessionId);
+        if (!normalizedSessionId || !operationId) {
+            throw createActiveSessionError();
+        }
+
+        return await withStoreLock(async (store) => {
+            const now = Date.now();
+            assertLeaseAndOperationAllowed(store, userHandle, normalizedSessionId, operationId, now);
             return {
                 write: true,
                 value: true,
