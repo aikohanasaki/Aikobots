@@ -150,7 +150,6 @@ import { createStmbTask, getActiveStmbTaskCount, hasActiveStmbTasks, isStmbAbort
 import { getTokenCountAsync } from './tokenizers.js';
 import {
     configureStmbClipRuntime,
-    handleClipButtonClick,
     hideFloatingClipButton,
     initializeFloatingClipButton,
     refreshFloatingClipButtonSetting,
@@ -5879,42 +5878,13 @@ function getSceneButtonElements(messageElement) {
     };
 }
 
-function ensureClipButtonForMessage(messageElement) {
-    if (!messageElement || messageElement.querySelector('.mes_stmb_clip')) {
-        return;
-    }
-
-    const { startButton, endButton } = getSceneButtonElements(messageElement);
-    if (!startButton && !endButton) {
-        return;
-    }
-
-    const container = endButton?.parentElement || startButton?.parentElement || messageElement.querySelector('.extraMesButtons');
-    if (!container) {
-        return;
-    }
-
-    const button = document.createElement('div');
-    button.classList.add('mes_stmb_clip', 'mes_button', 'fa-solid', 'fa-scissors', 'interactable');
-    button.title = 'Clip highlighted text to Memory Book';
-    button.setAttribute('tabindex', '0');
-
-    if (endButton?.parentElement === container) {
-        endButton.insertAdjacentElement('afterend', button);
-    } else if (startButton?.parentElement === container) {
-        startButton.insertAdjacentElement('afterend', button);
-    } else {
-        container.appendChild(button);
-    }
-}
-
 function renderSceneButtonsForMessage(messageElement) {
     const messageId = Number(messageElement.getAttribute('mesid'));
     if (!Number.isInteger(messageId)) {
         return;
     }
 
-    ensureClipButtonForMessage(messageElement);
+    messageElement.querySelectorAll('.extraMesButtons .mes_stmb_clip').forEach(button => button.remove());
 
     const { sceneStart, sceneEnd } = getSceneMarkers();
     const { startButton, endButton } = getSceneButtonElements(messageElement);
@@ -5979,17 +5949,6 @@ function bindSceneButtons() {
         const messageId = Number($(this).closest('.mes').attr('mesid'));
         if (Number.isInteger(messageId)) {
             setSceneMarker('sceneEnd', messageId);
-        }
-    });
-
-    $(document).on('click', '.mes_stmb_clip', function (event) {
-        event.preventDefault();
-        event.stopPropagation();
-        const messageElement = $(this).closest('.mes[mesid]').get(0);
-        if (messageElement) {
-            handleClipButtonClick(messageElement).catch(error => {
-                console.warn('STMB clip button failed', error);
-            });
         }
     });
 

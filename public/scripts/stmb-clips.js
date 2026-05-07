@@ -780,8 +780,9 @@ function scheduleFloatingClipUpdate() {
 
 function createFloatingClipButton() {
     const button = document.createElement('div');
-    button.classList.add('stmb_floating_clip_button', 'mes_stmb_clip', 'mes_button', 'fa-solid', 'fa-scissors', 'interactable');
+    button.classList.add('stmb_floating_clip_button', 'fa-solid', 'fa-scissors', 'interactable');
     button.title = tr('Clip highlighted text to Memory Book');
+    button.setAttribute('role', 'button');
     button.setAttribute('tabindex', '0');
     button.addEventListener('mousedown', event => {
         event.preventDefault();
