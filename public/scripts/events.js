@@ -38,6 +38,7 @@ export const event_types = {
     OAI_PRESET_IMPORT_READY: 'oai_preset_import_ready',
     WORLDINFO_SETTINGS_UPDATED: 'worldinfo_settings_updated',
     WORLDINFO_UPDATED: 'worldinfo_updated',
+    LOREBOOK_REFERENCES_UPDATED: 'lorebook_references_updated',
     CHARACTER_EDITOR_OPENED: 'character_editor_opened',
     CHARACTER_EDITED: 'character_edited',
     CHARACTER_PAGE_LOADED: 'character_page_loaded',

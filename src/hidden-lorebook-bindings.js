@@ -137,6 +137,62 @@ export function writeHiddenLorebookBindings(data = {}, { rootDir = globalThis.DA
     return normalized;
 }
 
+function migrateLorebookNameArray(values, oldName, newName = '') {
+    const target = normalizeName(oldName);
+    const replacement = normalizeName(newName);
+    const next = [];
+    let changed = false;
+
+    for (const value of normalizeLorebookNames(values)) {
+        if (value !== target) {
+            if (!next.includes(value)) {
+                next.push(value);
+            }
+            continue;
+        }
+
+        changed = true;
+        if (replacement && !next.includes(replacement)) {
+            next.push(replacement);
+        }
+    }
+
+    return { values: next, changed };
+}
+
+export function migrateHiddenLorebookBindingReferences({ oldName, newName = '', rootDir = globalThis.DATA_ROOT || process.cwd() } = {}) {
+    const target = normalizeName(oldName);
+    if (!target) {
+        return { changed: false, data: readHiddenLorebookBindings({ rootDir }) };
+    }
+
+    const registry = readHiddenLorebookBindings({ rootDir });
+    let changed = false;
+
+    const migratedGlobal = migrateLorebookNameArray(registry.global, target, newName);
+    if (migratedGlobal.changed) {
+        registry.global = migratedGlobal.values;
+        changed = true;
+    }
+
+    for (const [characterKey, values] of Object.entries(registry.characters || {})) {
+        const migrated = migrateLorebookNameArray(values, target, newName);
+        if (migrated.changed) {
+            if (migrated.values.length > 0) {
+                registry.characters[characterKey] = migrated.values;
+            } else {
+                delete registry.characters[characterKey];
+            }
+            changed = true;
+        }
+    }
+
+    return {
+        changed,
+        data: changed ? writeHiddenLorebookBindings(registry, { rootDir }) : registry,
+    };
+}
+
 export function getHiddenLorebooksForCharacter(characterKey, { rootDir = globalThis.DATA_ROOT || process.cwd() } = {}) {
     const normalizedKey = normalizeCharacterKey(characterKey);
     const registry = readHiddenLorebookBindings({ rootDir });

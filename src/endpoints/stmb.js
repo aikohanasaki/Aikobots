@@ -451,7 +451,7 @@ router.post('/save-memory', async (request, response) => {
         const { data: lorebookData, metadata } = await getLorebookForManagement(
             request.user,
             lorebookContext.lorebookName,
-            true,
+            false,
             lorebookContext.storage,
         );
         ensureEntriesObject(lorebookData);
@@ -506,7 +506,7 @@ router.post('/commit-summaries', async (request, response) => {
         const { data: lorebookData, metadata } = await getLorebookForManagement(
             request.user,
             lorebookContext.lorebookName,
-            true,
+            false,
             lorebookContext.storage,
         );
         ensureEntriesObject(lorebookData);
@@ -598,7 +598,7 @@ router.post('/upsert-entry-by-title', async (request, response) => {
         const { data: lorebookData, metadata } = await getLorebookForManagement(
             request.user,
             lorebookContext.lorebookName,
-            true,
+            false,
             lorebookContext.storage,
         );
         ensureEntriesObject(lorebookData);
@@ -655,7 +655,7 @@ router.post('/create-entry', async (request, response) => {
         const { data: lorebookData, metadata } = await getLorebookForManagement(
             request.user,
             lorebookContext.lorebookName,
-            true,
+            false,
             lorebookContext.storage,
         );
         ensureEntriesObject(lorebookData);
@@ -737,7 +737,7 @@ router.post('/update-entry-by-uid', async (request, response) => {
         const { data: lorebookData, metadata } = await getLorebookForManagement(
             request.user,
             lorebookContext.lorebookName,
-            true,
+            false,
             lorebookContext.storage,
         );
         ensureEntriesObject(lorebookData);
@@ -828,7 +828,7 @@ router.post('/upsert-entries-batch', async (request, response) => {
         const { data: lorebookData, metadata } = await getLorebookForManagement(
             request.user,
             lorebookContext.lorebookName,
-            true,
+            false,
             lorebookContext.storage,
         );
         ensureEntriesObject(lorebookData);

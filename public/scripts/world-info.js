@@ -21,7 +21,7 @@ import { renderTemplateAsync } from './templates.js';
 import { t } from './i18n.js';
 import { accountStorage } from './util/AccountStorage.js';
 import { fetchPromptInspectionSnapshot } from './openai.js';
-import { getOrCreatePersonaDescriptor, setPersonaDescription, user_avatar } from './personas.js';
+import { getOrCreatePersonaDescriptor, setPersonaDescription } from './personas.js';
 import { getCurrentUserHandle } from './user.js';
 
 export const world_info_logic = {
@@ -6142,40 +6142,129 @@ async function renameWorldInfo(name, data) {
         warnTrailingJsonLorebookName(t`Rename World Info`);
         return;
     }
-
-    const entryPreviouslySelected = selected_world_info.findIndex((e) => e === oldName);
-
-    await saveWorldInfo(newName, data, true);
-    await deleteWorldInfo(oldName);
-
-    const existingCharLores = world_info.charLore?.filter((e) => e.extraBooks.includes(oldName));
-    if (existingCharLores && existingCharLores.length > 0) {
-        existingCharLores.forEach((charLore) => {
-            const tempCharLore = charLore.extraBooks.filter((e) => e !== oldName);
-            tempCharLore.push(newName);
-            charLore.extraBooks = tempCharLore;
-        });
-        saveSettingsDebounced();
+    if (world_names.includes(newName)) {
+        toastr.warning(t`A lorebook with this name already exists.`, t`Rename World Info`);
+        return;
     }
 
-    await updateAllCharacterExtraBooks(currentBooks => {
-        if (!currentBooks.includes(oldName)) {
-            return currentBooks;
-        }
-
-        return [...currentBooks.filter((book) => book !== oldName), newName];
+    const response = await fetch('/api/worldinfo/rename', {
+        method: 'POST',
+        headers: getRequestHeaders(),
+        body: JSON.stringify({ oldName, newName, storage: getLorebookStorageForRequest(oldName) }),
     });
 
-    if (entryPreviouslySelected !== -1) {
-        const wiElement = getWIElement(newName);
-        wiElement.prop('selected', true);
-        $('#world_info').trigger('change');
+    if (!response.ok) {
+        const error = await response.json().catch(() => null);
+        toastr.error(error?.error?.message || t`Could not rename lorebook.`, t`World Info`);
+        return;
     }
+
+    worldInfoCache.delete(oldName);
+    clearPersistedWorldInfoSnapshot(oldName);
+    worldInfoCache.set(newName, data);
+    await applyLorebookReferenceRuntimeUpdate({ operation: 'rename', oldName, newName });
+    await updateWorldInfoList(newName);
 
     const selectedIndex = world_names.indexOf(newName);
     if (selectedIndex !== -1) {
         $('#world_editor_select').val(selectedIndex).trigger('change');
     }
+}
+
+function migrateRuntimeLorebookReferenceArray(values, oldName, newName = '') {
+    const source = Array.isArray(values) ? values : [];
+    const next = [];
+    let changed = false;
+
+    for (const value of source) {
+        if (value !== oldName) {
+            if (!next.includes(value)) {
+                next.push(value);
+            }
+            continue;
+        }
+
+        changed = true;
+        if (newName && !next.includes(newName)) {
+            next.push(newName);
+        }
+    }
+
+    return { values: next, changed };
+}
+
+async function applyLorebookReferenceRuntimeUpdate({ operation, oldName, newName = '' }) {
+    const replacement = operation === 'rename' ? newName : '';
+    let settingsChanged = false;
+    let metadataChanged = false;
+
+    const selected = migrateRuntimeLorebookReferenceArray(selected_world_info, oldName, replacement);
+    if (selected.changed) {
+        selected_world_info = selected.values;
+        Object.assign(world_info, { globalSelect: selected_world_info });
+        settingsChanged = true;
+    }
+
+    if (Array.isArray(world_info.charLore)) {
+        const nextCharLore = [];
+        for (const charLore of world_info.charLore) {
+            const currentBooks = Array.isArray(charLore?.extraBooks) ? charLore.extraBooks : [];
+            const migrated = migrateRuntimeLorebookReferenceArray(currentBooks, oldName, replacement);
+            if (migrated.changed) {
+                charLore.extraBooks = migrated.values;
+                settingsChanged = true;
+            }
+
+            if (charLore.extraBooks?.length > 0 || currentBooks.length === 0) {
+                nextCharLore.push(charLore);
+            } else {
+                settingsChanged = true;
+            }
+        }
+        world_info.charLore = nextCharLore;
+    }
+
+    if (power_user.persona_description_lorebook === oldName) {
+        power_user.persona_description_lorebook = replacement;
+        const object = getOrCreatePersonaDescriptor();
+        object.lorebook = replacement;
+        $('#persona_lore_button').toggleClass('world_set', !!replacement);
+        settingsChanged = true;
+    }
+
+    if (chat_metadata[METADATA_KEY] === oldName) {
+        if (replacement) {
+            chat_metadata[METADATA_KEY] = replacement;
+            $('.chat_lorebook_button').addClass('world_set');
+        } else {
+            delete chat_metadata[METADATA_KEY];
+            $('.chat_lorebook_button').removeClass('world_set');
+        }
+        metadataChanged = true;
+    }
+
+    const currentCharacter = Number.isInteger(Number(this_chid)) ? characters[this_chid] : null;
+    if (currentCharacter?.data?.extensions?.world === oldName) {
+        currentCharacter.data.extensions.world = replacement;
+        await charUpdatePrimaryWorld(replacement);
+    } else if ($('#character_world').val() === oldName) {
+        await charUpdatePrimaryWorld(replacement);
+    }
+
+    await updateAllCharacterExtraBooks(currentBooks => {
+        const migrated = migrateRuntimeLorebookReferenceArray(currentBooks, oldName, replacement);
+        return migrated.changed ? migrated.values : currentBooks;
+    });
+
+    if (settingsChanged) {
+        saveSettingsDebounced();
+    }
+    if (metadataChanged) {
+        saveMetadata();
+    }
+
+    await eventSource.emit(event_types.LOREBOOK_REFERENCES_UPDATED, { operation, oldName, newName: replacement });
+    refreshWorldInfoSelectors(replacement || '');
 }
 
 /**
@@ -6206,32 +6295,10 @@ export async function deleteWorldInfo(worldInfoName) {
     }
     clearPersistedWorldInfoSnapshot(worldInfoName);
 
-    const existingWorldIndex = selected_world_info.findIndex((e) => e === worldInfoName);
-    if (existingWorldIndex !== -1) {
-        selected_world_info.splice(existingWorldIndex, 1);
-        saveSettingsDebounced();
-    }
+    await applyLorebookReferenceRuntimeUpdate({ operation: 'delete', oldName: worldInfoName });
 
     await updateWorldInfoList();
     $('#world_editor_select').trigger('change');
-
-    if ($('#character_world').val() === worldInfoName) {
-        $('#character_world').val('').trigger('change');
-        setWorldInfoButtonClass(undefined, false);
-        if (menu_type != 'create') {
-            markCharacterEditorDirty();
-        }
-    }
-
-    if (power_user.persona_description_lorebook === worldInfoName) {
-        power_user.persona_description_lorebook = '';
-        if (power_user.personas[user_avatar]) {
-            const object = getOrCreatePersonaDescriptor();
-            object.lorebook = '';
-        }
-        $('#persona_lore_button').toggleClass('world_set', false);
-        saveSettingsDebounced();
-    }
 
     return true;
 }

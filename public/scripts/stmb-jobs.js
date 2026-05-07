@@ -1163,6 +1163,63 @@ export function cancelAllStmbJobs(chatKey = null) {
     return canceled;
 }
 
+export function updateStmbJobsForLorebookReference({ operation, oldName, newName = '' } = {}) {
+    const target = String(oldName || '').trim();
+    const replacement = String(newName || '').trim();
+    if (!target || (operation !== 'rename' && operation !== 'delete')) {
+        return { updated: 0, canceled: 0 };
+    }
+
+    let updated = 0;
+    let canceled = 0;
+
+    for (const store of jobStores.values()) {
+        let storeChanged = false;
+        const nextQueue = [];
+
+        for (const job of Array.isArray(store.queue) ? store.queue : []) {
+            const jobLorebookName = String(job?.lorebookName || '').trim();
+            const payloadLorebookName = String(job?.payload?.lorebookName || '').trim();
+            const matches = jobLorebookName === target || payloadLorebookName === target;
+
+            if (!matches) {
+                nextQueue.push(job);
+                continue;
+            }
+
+            if (operation === 'rename') {
+                if (jobLorebookName === target) {
+                    job.lorebookName = replacement;
+                }
+                if (payloadLorebookName === target && job.payload && typeof job.payload === 'object') {
+                    job.payload.lorebookName = replacement;
+                }
+                markJobUpdated(job);
+                updated++;
+                storeChanged = true;
+                nextQueue.push(job);
+                continue;
+            }
+
+            job.state = 'canceled';
+            job.detail = job.detail || 'Canceled because its lorebook was deleted';
+            job.finishedAt = Date.now();
+            markJobUpdated(job);
+            store.recentHistory.unshift(cloneJobForView(job));
+            canceled++;
+            storeChanged = true;
+        }
+
+        if (storeChanged) {
+            store.queue = nextQueue;
+            sortRecentHistory(store.recentHistory);
+            touchStore(store);
+        }
+    }
+
+    return { updated, canceled };
+}
+
 export function clearCompletedStmbJobs(chatKey = null) {
     const targetChatKey = String(chatKey || getCurrentChatKey() || '').trim();
     if (!targetChatKey) {

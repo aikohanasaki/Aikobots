@@ -165,6 +165,7 @@ import {
     initStmbJobsUi,
     registerStmbJobExecutor,
     respondToStmbJobApproval,
+    updateStmbJobsForLorebookReference,
 } from './stmb-jobs.js';
 
 const $ = window.jQuery;
@@ -6336,6 +6337,53 @@ function configureClipRuntime() {
     });
 }
 
+function migrateStmbLorebookReferenceValue(value, oldName, newName = '') {
+    return String(value || '').trim() === String(oldName || '').trim() ? String(newName || '').trim() : value;
+}
+
+function handleLorebookReferencesUpdated({ operation, oldName, newName = '' } = {}) {
+    const target = String(oldName || '').trim();
+    const replacement = operation === 'rename' ? String(newName || '').trim() : '';
+    if (!target || (operation !== 'rename' && operation !== 'delete')) {
+        return;
+    }
+
+    let metadataChanged = false;
+    const state = getPersistedStmbState();
+    const migratedManualLorebook = migrateStmbLorebookReferenceValue(state.manualLorebook, target, replacement);
+    if (migratedManualLorebook !== state.manualLorebook) {
+        if (migratedManualLorebook) {
+            state.manualLorebook = migratedManualLorebook;
+        } else {
+            delete state.manualLorebook;
+        }
+        metadataChanged = true;
+    }
+
+    if (state.sidePromptLorebookOverrides && typeof state.sidePromptLorebookOverrides === 'object') {
+        for (const [key, value] of Object.entries(state.sidePromptLorebookOverrides)) {
+            const migrated = migrateStmbLorebookReferenceValue(value, target, replacement);
+            if (migrated !== value) {
+                if (migrated) {
+                    state.sidePromptLorebookOverrides[key] = migrated;
+                } else {
+                    delete state.sidePromptLorebookOverrides[key];
+                }
+                metadataChanged = true;
+            }
+        }
+
+        if (Object.keys(state.sidePromptLorebookOverrides).length === 0) {
+            delete state.sidePromptLorebookOverrides;
+        }
+    }
+
+    updateStmbJobsForLorebookReference({ operation, oldName: target, newName: replacement });
+    if (metadataChanged) {
+        saveMetadataDebounced();
+    }
+}
+
 function renderLorebookNameFromTemplate() {
     const chatId = getCurrentChatId() || 'Chat';
     return String(getModuleSettings().lorebookNameTemplate || 'LTM - {{char}} - {{chat}}')
@@ -8504,6 +8552,8 @@ export function initStmb() {
         }, 0);
         initStmbJobsUi();
     });
+
+    eventSource.on(event_types.LOREBOOK_REFERENCES_UPDATED, handleLorebookReferencesUpdated);
 
     eventSource.on(event_types.MESSAGE_RECEIVED, (messageId) => {
         const messageElement = chatElement.find(`.mes[mesid="${messageId}"]`).get(0);

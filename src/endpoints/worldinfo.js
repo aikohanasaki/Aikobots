@@ -25,6 +25,7 @@ import {
     promoteLorebookToShared,
     readLorebookForGenerationWithMetadata,
     readWorldInfoFile as readUserWorldInfoFile,
+    renameLorebookForManagement,
     saveLorebookForManagement,
     unshareLorebook,
     updateSharedLorebookOwners,
@@ -733,6 +734,7 @@ router.post('/delete', async (request, response) => {
         const result = await deleteLorebookForManagement(request.user, request.body.name, {
             storage: request.body.storage || null,
             allUserHandles,
+            referenceUserHandles: [request.user.profile.handle].filter(Boolean),
         });
         return response.send({ ok: true, ...result });
     } catch (error) {
@@ -817,6 +819,22 @@ router.post('/edit', async (request, response) => {
             shadowingSecure: Boolean(metadata.shadowingSecure),
             metadata,
         });
+    } catch (error) {
+        return sendLorebookError(response, error);
+    }
+});
+
+router.post('/rename', async (request, response) => {
+    if (!request.body?.oldName || !request.body?.newName) {
+        return response.sendStatus(400);
+    }
+
+    try {
+        const result = await renameLorebookForManagement(request.user, request.body.oldName, request.body.newName, {
+            storage: request.body.storage || null,
+            referenceUserHandles: [request.user.profile.handle].filter(Boolean),
+        });
+        return response.send({ ok: true, ...result });
     } catch (error) {
         return sendLorebookError(response, error);
     }

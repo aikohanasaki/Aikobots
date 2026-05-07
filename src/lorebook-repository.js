@@ -6,6 +6,8 @@ import { sync as writeFileAtomicSync } from 'write-file-atomic';
 
 import { write as writeCharacterCard, read as readCharacterCard } from './character-card-parser.js';
 import { SETTINGS_FILE } from './constants.js';
+import { migrateHiddenLorebookBindingReferences } from './hidden-lorebook-bindings.js';
+import { compileAndWriteHiddenLorebookTemplates, migrateHiddenLorebookTemplateReferences } from './hidden-lorebook-templates.js';
 import { getUserDirectories } from './users.js';
 import { assertPathUnderParent, hasUnsafePathSegment } from './path-security.js';
 
@@ -1197,15 +1199,18 @@ function removeAllLorebookArtifacts(name, userHandles = [], options = {}) {
     const canonicalName = assertCanonicalName(name);
     const removeSecureBacking = options?.removeSecureBacking !== false;
     const referenceState = options?.referenceState && typeof options.referenceState === 'object' ? options.referenceState : null;
+    const referenceUserHandles = Array.isArray(options?.referenceUserHandles) ? options.referenceUserHandles : userHandles;
     const copyState = inspectLorebookCopyState(canonicalName, userHandles);
 
     for (const handle of copyState.userHandlesWithCopies) {
         removeUserLorebookCopy(handle, canonicalName);
     }
 
-    const cleanupResult = cleanupLorebookReferences(canonicalName, userHandles, referenceState);
+    const cleanupResult = cleanupLorebookReferences(canonicalName, referenceUserHandles, referenceState, options?.user || null);
     if ((Array.isArray(cleanupResult?.settingsCleanupErrors) && cleanupResult.settingsCleanupErrors.length > 0)
-        || (Array.isArray(cleanupResult?.characterCleanupErrors) && cleanupResult.characterCleanupErrors.length > 0)) {
+        || (Array.isArray(cleanupResult?.characterCleanupErrors) && cleanupResult.characterCleanupErrors.length > 0)
+        || (Array.isArray(cleanupResult?.chatCleanupErrors) && cleanupResult.chatCleanupErrors.length > 0)
+        || (Array.isArray(cleanupResult?.hiddenCleanupErrors) && cleanupResult.hiddenCleanupErrors.length > 0)) {
         throw new LorebookRepositoryError(
             'LorebookDeleteFailed',
             `Failed to remove known references for lorebook "${canonicalName}".`,
@@ -1215,7 +1220,7 @@ function removeAllLorebookArtifacts(name, userHandles = [], options = {}) {
     }
 
     const postCleanupCopyState = inspectLorebookCopyState(canonicalName, userHandles);
-    const postCleanupReferenceState = inspectLorebookReferenceState(canonicalName, userHandles);
+    const postCleanupReferenceState = inspectLorebookReferenceState(canonicalName, referenceUserHandles);
     if ((Array.isArray(postCleanupCopyState.userHandlesWithCopies) && postCleanupCopyState.userHandlesWithCopies.length > 0)
         || hasAnyLorebookReferences(postCleanupReferenceState)) {
         throw new LorebookRepositoryError(
@@ -1267,9 +1272,10 @@ function deleteResidualSecureLorebookArtifacts(user, name, userHandles = []) {
     }
 
     try {
-        const { deletedUserHandles } = removeAllLorebookArtifacts(canonicalName, userHandles, {
+        const { deletedUserHandles, cleanupResult } = removeAllLorebookArtifacts(canonicalName, userHandles, {
             removeSecureBacking: true,
             referenceState: beforeReferenceState,
+            user,
         });
         const finalState = inspectLorebookCopyState(canonicalName, userHandles);
         const finalReferenceState = inspectLorebookReferenceState(canonicalName, userHandles);
@@ -1288,7 +1294,10 @@ function deleteResidualSecureLorebookArtifacts(user, name, userHandles = []) {
         }
 
         removeSecureDeleteMarker(canonicalName);
-        return buildDeletedSecureLorebookResponse(canonicalName, user, deletedUserHandles);
+        return {
+            ...buildDeletedSecureLorebookResponse(canonicalName, user, deletedUserHandles),
+            referenceCleanup: cleanupResult,
+        };
     } catch (error) {
         const afterFailureState = inspectLorebookCopyState(canonicalName, userHandles);
         const afterFailureReferenceState = inspectLorebookReferenceState(canonicalName, userHandles);
@@ -1315,9 +1324,106 @@ function deleteResidualSecureLorebookArtifacts(user, name, userHandles = []) {
     }
 }
 
-function cleanupLorebookSettingsReferences(name, userHandles = [], referenceState = null) {
-    const canonicalName = assertCanonicalName(name);
-    const normalizedUserHandles = [...new Set((Array.isArray(userHandles) ? userHandles : []).map(handle => String(handle || '').trim()).filter(Boolean))];
+function normalizeReferenceUserHandles(userHandles = []) {
+    return [...new Set((Array.isArray(userHandles) ? userHandles : [])
+        .map(handle => String(handle || '').trim())
+        .filter(Boolean))];
+}
+
+function migrateLorebookReferenceScalar(value, oldCanonicalName, newCanonicalName = '') {
+    if (!doesLorebookReferenceMatch(value, oldCanonicalName)) {
+        return { value, changed: false };
+    }
+
+    return { value: newCanonicalName || '', changed: true };
+}
+
+function migrateLorebookReferenceArray(values, oldCanonicalName, newCanonicalName = '') {
+    const source = Array.isArray(values) ? values : [];
+    const next = [];
+    let changed = false;
+
+    for (const value of source) {
+        if (!doesLorebookReferenceMatch(value, oldCanonicalName)) {
+            if (!next.some(item => doesLorebookReferenceMatch(item, getCanonicalLorebookName(value)))) {
+                next.push(value);
+            }
+            continue;
+        }
+
+        changed = true;
+        if (newCanonicalName && !next.some(item => doesLorebookReferenceMatch(item, newCanonicalName))) {
+            next.push(newCanonicalName);
+        }
+    }
+
+    return { values: next, changed };
+}
+
+function migrateStmbStateReferences(state, oldCanonicalName, newCanonicalName = '') {
+    if (!state || typeof state !== 'object' || Array.isArray(state)) {
+        return false;
+    }
+
+    let changed = false;
+    const manualLorebook = migrateLorebookReferenceScalar(state.manualLorebook, oldCanonicalName, newCanonicalName);
+    if (manualLorebook.changed) {
+        if (manualLorebook.value) {
+            state.manualLorebook = manualLorebook.value;
+        } else {
+            delete state.manualLorebook;
+        }
+        changed = true;
+    }
+
+    if (state.sidePromptLorebookOverrides && typeof state.sidePromptLorebookOverrides === 'object' && !Array.isArray(state.sidePromptLorebookOverrides)) {
+        for (const [key, value] of Object.entries(state.sidePromptLorebookOverrides)) {
+            const migrated = migrateLorebookReferenceScalar(value, oldCanonicalName, newCanonicalName);
+            if (migrated.changed) {
+                if (migrated.value) {
+                    state.sidePromptLorebookOverrides[key] = migrated.value;
+                } else {
+                    delete state.sidePromptLorebookOverrides[key];
+                }
+                changed = true;
+            }
+        }
+
+        if (Object.keys(state.sidePromptLorebookOverrides).length === 0) {
+            delete state.sidePromptLorebookOverrides;
+        }
+    }
+
+    return changed;
+}
+
+function migrateChatMetadataReferences(chatMetadata, oldCanonicalName, newCanonicalName = '') {
+    if (!chatMetadata || typeof chatMetadata !== 'object' || Array.isArray(chatMetadata)) {
+        return false;
+    }
+
+    let changed = false;
+    const chatWorld = migrateLorebookReferenceScalar(chatMetadata.world_info, oldCanonicalName, newCanonicalName);
+    if (chatWorld.changed) {
+        if (chatWorld.value) {
+            chatMetadata.world_info = chatWorld.value;
+        } else {
+            delete chatMetadata.world_info;
+        }
+        changed = true;
+    }
+
+    if (migrateStmbStateReferences(chatMetadata.STMemoryBooks, oldCanonicalName, newCanonicalName)) {
+        changed = true;
+    }
+
+    return changed;
+}
+
+function migrateLorebookSettingsReferences(name, newName, userHandles = [], referenceState = null) {
+    const oldCanonicalName = assertCanonicalName(name);
+    const newCanonicalName = newName ? assertCanonicalName(newName) : '';
+    const normalizedUserHandles = normalizeReferenceUserHandles(userHandles);
     const cleanedSettingsHandles = [];
     const errors = [];
     const referencedSettingsPaths = referenceState && typeof referenceState === 'object'
@@ -1340,9 +1446,9 @@ function cleanupLorebookSettingsReferences(name, userHandles = [], referenceStat
             let modified = false;
 
             if (Array.isArray(settings?.world_info?.globalSelect)) {
-                const filtered = settings.world_info.globalSelect.filter(value => !doesLorebookReferenceMatch(value, canonicalName));
-                if (filtered.length !== settings.world_info.globalSelect.length) {
-                    settings.world_info.globalSelect = filtered;
+                const migrated = migrateLorebookReferenceArray(settings.world_info.globalSelect, oldCanonicalName, newCanonicalName);
+                if (migrated.changed) {
+                    settings.world_info.globalSelect = migrated.values;
                     modified = true;
                 }
             }
@@ -1351,15 +1457,13 @@ function cleanupLorebookSettingsReferences(name, userHandles = [], referenceStat
                 const nextCharLore = [];
                 for (const entry of settings.world_info.charLore) {
                     const currentExtraBooks = Array.isArray(entry?.extraBooks) ? entry.extraBooks : [];
-                    const filteredExtraBooks = currentExtraBooks.filter(value => !doesLorebookReferenceMatch(value, canonicalName));
-                    if (filteredExtraBooks.length !== currentExtraBooks.length) {
-                        entry.extraBooks = filteredExtraBooks;
+                    const migrated = migrateLorebookReferenceArray(currentExtraBooks, oldCanonicalName, newCanonicalName);
+                    if (migrated.changed) {
+                        entry.extraBooks = migrated.values;
                         modified = true;
                     }
 
-                    if (filteredExtraBooks.length > 0) {
-                        nextCharLore.push(entry);
-                    } else if (currentExtraBooks.length === 0) {
+                    if (entry.extraBooks?.length > 0 || currentExtraBooks.length === 0) {
                         nextCharLore.push(entry);
                     } else {
                         modified = true;
@@ -1371,10 +1475,26 @@ function cleanupLorebookSettingsReferences(name, userHandles = [], referenceStat
                 }
             }
 
-            if (doesLorebookReferenceMatch(settings?.power_user?.persona_description_lorebook, canonicalName)) {
+            const personaLorebook = migrateLorebookReferenceScalar(settings?.power_user?.persona_description_lorebook, oldCanonicalName, newCanonicalName);
+            if (personaLorebook.changed) {
                 settings.power_user = settings.power_user && typeof settings.power_user === 'object' ? settings.power_user : {};
-                settings.power_user.persona_description_lorebook = '';
+                settings.power_user.persona_description_lorebook = personaLorebook.value;
                 modified = true;
+            }
+
+            const personaDescriptions = settings?.power_user?.persona_descriptions;
+            if (personaDescriptions && typeof personaDescriptions === 'object' && !Array.isArray(personaDescriptions)) {
+                for (const descriptor of Object.values(personaDescriptions)) {
+                    if (!descriptor || typeof descriptor !== 'object' || Array.isArray(descriptor)) {
+                        continue;
+                    }
+
+                    const migrated = migrateLorebookReferenceScalar(descriptor.lorebook, oldCanonicalName, newCanonicalName);
+                    if (migrated.changed) {
+                        descriptor.lorebook = migrated.value;
+                        modified = true;
+                    }
+                }
             }
 
             if (modified) {
@@ -1393,9 +1513,10 @@ function cleanupLorebookSettingsReferences(name, userHandles = [], referenceStat
     return { cleanedSettingsHandles, settingsCleanupErrors: errors };
 }
 
-function cleanupLorebookCharacterReferences(name, userHandles = [], referenceState = null) {
-    const canonicalName = assertCanonicalName(name);
-    const normalizedUserHandles = [...new Set((Array.isArray(userHandles) ? userHandles : []).map(handle => String(handle || '').trim()).filter(Boolean))];
+function migrateLorebookCharacterReferences(name, newName, userHandles = [], referenceState = null) {
+    const oldCanonicalName = assertCanonicalName(name);
+    const newCanonicalName = newName ? assertCanonicalName(newName) : '';
+    const normalizedUserHandles = normalizeReferenceUserHandles(userHandles);
     const cleanedCharacterFiles = [];
     const errors = [];
     const referencedCharacterPaths = referenceState && typeof referenceState === 'object'
@@ -1423,21 +1544,20 @@ function cleanupLorebookCharacterReferences(name, userHandles = [], referenceSta
                 const character = JSON.parse(readCharacterCard(rawBuffer));
                 let modified = false;
 
-                if (doesLorebookReferenceMatch(character?.data?.extensions?.world, canonicalName)) {
-                    if (character?.data?.extensions && typeof character.data.extensions === 'object') {
-                        character.data.extensions.world = '';
-                        modified = true;
-                    }
+                const primary = migrateLorebookReferenceScalar(character?.data?.extensions?.world, oldCanonicalName, newCanonicalName);
+                if (primary.changed && character?.data?.extensions && typeof character.data.extensions === 'object') {
+                    character.data.extensions.world = primary.value;
+                    modified = true;
                 }
 
-                const currentLinkedLorebooks = Array.isArray(character?.data?.extensions?.aikobots?.secure_lorebooks)
+                const linkedLorebooks = Array.isArray(character?.data?.extensions?.aikobots?.secure_lorebooks)
                     ? character.data.extensions.aikobots.secure_lorebooks
                     : null;
-                if (currentLinkedLorebooks) {
-                    const filteredLinkedLorebooks = currentLinkedLorebooks.filter(value => !doesLorebookReferenceMatch(value, canonicalName));
-                    if (filteredLinkedLorebooks.length !== currentLinkedLorebooks.length) {
-                        if (filteredLinkedLorebooks.length > 0) {
-                            character.data.extensions.aikobots.secure_lorebooks = filteredLinkedLorebooks;
+                if (linkedLorebooks) {
+                    const migrated = migrateLorebookReferenceArray(linkedLorebooks, oldCanonicalName, newCanonicalName);
+                    if (migrated.changed) {
+                        if (migrated.values.length > 0) {
+                            character.data.extensions.aikobots.secure_lorebooks = migrated.values;
                         } else {
                             delete character.data.extensions.aikobots.secure_lorebooks;
                             if (Object.keys(character.data.extensions.aikobots).length === 0) {
@@ -1465,11 +1585,163 @@ function cleanupLorebookCharacterReferences(name, userHandles = [], referenceSta
     return { cleanedCharacterFiles, characterCleanupErrors: errors };
 }
 
-function cleanupLorebookReferences(name, userHandles = [], referenceState = null) {
+function listJsonlFiles(directory, { recursive = false } = {}) {
+    const files = [];
+    if (!directory || !fs.existsSync(directory)) {
+        return files;
+    }
+
+    for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
+        const entryPath = path.join(directory, entry.name);
+        if (entry.isDirectory() && recursive) {
+            files.push(...listJsonlFiles(entryPath, { recursive }));
+        } else if (entry.isFile() && path.extname(entry.name).toLowerCase() === '.jsonl') {
+            files.push(entryPath);
+        }
+    }
+
+    return files;
+}
+
+function migrateChatJsonlHeaderReferences(filePath, handle, oldCanonicalName, newCanonicalName = '') {
+    const raw = fs.readFileSync(filePath, 'utf8');
+    const lines = raw.split(/\r?\n/);
+    if (!lines[0]) {
+        return { changed: false };
+    }
+
+    const header = JSON.parse(lines[0]);
+    if (!header || typeof header !== 'object' || Array.isArray(header)) {
+        return { changed: false };
+    }
+
+    if (!migrateChatMetadataReferences(header.chat_metadata, oldCanonicalName, newCanonicalName)) {
+        return { changed: false };
+    }
+
+    lines[0] = JSON.stringify(header);
+    writeFileAtomicSync(filePath, lines.join('\n'), 'utf8');
+    return { changed: true, handle, path: filePath };
+}
+
+function migrateLorebookChatReferences(name, newName, userHandles = []) {
+    const oldCanonicalName = assertCanonicalName(name);
+    const newCanonicalName = newName ? assertCanonicalName(newName) : '';
+    const normalizedUserHandles = normalizeReferenceUserHandles(userHandles);
+    const cleanedChatFiles = [];
+    const chatCleanupErrors = [];
+
+    for (const handle of normalizedUserHandles) {
+        const directories = getUserDirectories(handle);
+        const chatFiles = [
+            ...listJsonlFiles(directories.chats, { recursive: true }),
+            ...listJsonlFiles(directories.groupChats, { recursive: false }),
+        ];
+
+        for (const filePath of chatFiles) {
+            try {
+                const result = migrateChatJsonlHeaderReferences(filePath, handle, oldCanonicalName, newCanonicalName);
+                if (result.changed) {
+                    cleanedChatFiles.push({ handle, path: filePath });
+                }
+            } catch (error) {
+                chatCleanupErrors.push({
+                    handle,
+                    path: filePath,
+                    message: String(error?.message || error),
+                });
+            }
+        }
+
+        if (fs.existsSync(directories.groups)) {
+            for (const entry of fs.readdirSync(directories.groups, { withFileTypes: true })) {
+                if (!entry.isFile() || path.extname(entry.name).toLowerCase() !== '.json') {
+                    continue;
+                }
+
+                const filePath = path.join(directories.groups, entry.name);
+                try {
+                    const group = readJsonFileSync(filePath);
+                    let modified = false;
+                    if (migrateChatMetadataReferences(group?.chat_metadata, oldCanonicalName, newCanonicalName)) {
+                        modified = true;
+                    }
+                    if (group?.past_metadata && typeof group.past_metadata === 'object' && !Array.isArray(group.past_metadata)) {
+                        for (const metadata of Object.values(group.past_metadata)) {
+                            if (migrateChatMetadataReferences(metadata, oldCanonicalName, newCanonicalName)) {
+                                modified = true;
+                            }
+                        }
+                    }
+                    if (modified) {
+                        writeFileAtomicSync(filePath, JSON.stringify(group, null, 4), 'utf8');
+                        cleanedChatFiles.push({ handle, path: filePath });
+                    }
+                } catch (error) {
+                    chatCleanupErrors.push({
+                        handle,
+                        path: filePath,
+                        message: String(error?.message || error),
+                    });
+                }
+            }
+        }
+    }
+
+    return { cleanedChatFiles, chatCleanupErrors };
+}
+
+function migrateLorebookHiddenReferences(name, newName) {
+    const hiddenCleanupErrors = [];
+    let cleanedHiddenBindings = false;
+    let cleanedHiddenTemplates = false;
+
+    try {
+        cleanedHiddenBindings = migrateHiddenLorebookBindingReferences({ oldName: name, newName }).changed;
+    } catch (error) {
+        hiddenCleanupErrors.push({ field: 'hidden-lorebook-bindings', message: String(error?.message || error) });
+    }
+
+    try {
+        const result = migrateHiddenLorebookTemplateReferences({ oldName: name, newName });
+        cleanedHiddenTemplates = result.changed;
+        if (result.changed) {
+            compileAndWriteHiddenLorebookTemplates();
+        }
+    } catch (error) {
+        hiddenCleanupErrors.push({ field: 'hidden-lorebook-templates', message: String(error?.message || error) });
+    }
+
+    return { cleanedHiddenBindings, cleanedHiddenTemplates, hiddenCleanupErrors };
+}
+
+export function migrateLorebookGenerationReferences({ operation, oldName, newName = '', userHandles = [], user = null, referenceState = null } = {}) {
+    if (operation !== 'rename' && operation !== 'delete') {
+        throw new LorebookRepositoryError('LorebookInvalidReferenceMigration', 'Lorebook reference migration operation must be "rename" or "delete".', 400);
+    }
+
+    const oldCanonicalName = assertCanonicalName(oldName);
+    const newCanonicalName = operation === 'rename' ? assertCanonicalName(newName) : '';
+
     return {
-        ...cleanupLorebookSettingsReferences(name, userHandles, referenceState),
-        ...cleanupLorebookCharacterReferences(name, userHandles, referenceState),
+        operation,
+        oldName: oldCanonicalName,
+        newName: newCanonicalName,
+        ...migrateLorebookSettingsReferences(oldCanonicalName, newCanonicalName, userHandles, referenceState),
+        ...migrateLorebookCharacterReferences(oldCanonicalName, newCanonicalName, userHandles, referenceState),
+        ...migrateLorebookChatReferences(oldCanonicalName, newCanonicalName, userHandles),
+        ...migrateLorebookHiddenReferences(oldCanonicalName, newCanonicalName),
     };
+}
+
+function cleanupLorebookReferences(name, userHandles = [], referenceState = null, user = null) {
+    return migrateLorebookGenerationReferences({
+        operation: 'delete',
+        oldName: name,
+        userHandles,
+        referenceState,
+        user,
+    });
 }
 
 function areOwnerHandleSetsEqual(left = [], right = []) {
@@ -1782,29 +2054,33 @@ export function resolveLorebookWithMetadata(user, name, {
     throw new LorebookRepositoryError('LorebookNotFound', `Lorebook "${canonicalName}" not found.`, 404);
 }
 
-function deleteAllSecureLorebookCopies(user, record, userHandles = []) {
+function deleteAllSecureLorebookCopies(user, record, userHandles = [], options = {}) {
     const canonicalName = assertCanonicalName(record?.name);
     const isShared = record?.sharingMode === 'shared';
+    const referenceUserHandles = Array.isArray(options?.referenceUserHandles) ? options.referenceUserHandles : userHandles;
     const beforeState = inspectLorebookCopyState(canonicalName, userHandles);
-    const beforeReferenceState = inspectLorebookReferenceState(canonicalName, userHandles);
+    const beforeReferenceState = inspectLorebookReferenceState(canonicalName, referenceUserHandles);
 
     if (!canManageSecureLorebook(user, record)) {
         throw new LorebookRepositoryError('LorebookAccessDenied', `Lorebook "${canonicalName}" is not deletable.`, 403);
     }
 
+    let cleanupArtifactResult = null;
     try {
         if (isShared) {
             assertSharedLorebookCheckedOutForEdit(user, record);
         }
 
         writeSecureDeleteMarker(record);
-        removeAllLorebookArtifacts(canonicalName, userHandles, {
+        cleanupArtifactResult = removeAllLorebookArtifacts(canonicalName, userHandles, {
             removeSecureBacking: true,
             referenceState: beforeReferenceState,
+            referenceUserHandles,
+            user,
         });
     } catch (error) {
         const afterFailureState = inspectLorebookCopyState(canonicalName, userHandles);
-        const afterFailureReferenceState = inspectLorebookReferenceState(canonicalName, userHandles);
+        const afterFailureReferenceState = inspectLorebookReferenceState(canonicalName, referenceUserHandles);
         if (!hasAnyLorebookCopies(afterFailureState) && !hasAnyLorebookReferences(afterFailureReferenceState)) {
             removeSecureDeleteMarker(canonicalName);
             return buildDeletedSecureLorebookResponse(record, user, beforeState.userHandlesWithCopies);
@@ -1828,7 +2104,7 @@ function deleteAllSecureLorebookCopies(user, record, userHandles = []) {
     }
 
     const finalState = inspectLorebookCopyState(canonicalName, userHandles);
-    const finalReferenceState = inspectLorebookReferenceState(canonicalName, userHandles);
+    const finalReferenceState = inspectLorebookReferenceState(canonicalName, referenceUserHandles);
     if (hasAnyLorebookCopies(finalState) || hasAnyLorebookReferences(finalReferenceState)) {
         throw new LorebookRepositoryError(
             'LorebookStateRepairFailed',
@@ -1846,6 +2122,7 @@ function deleteAllSecureLorebookCopies(user, record, userHandles = []) {
     removeSecureDeleteMarker(canonicalName);
     return {
         ...buildDeletedSecureLorebookResponse(record, user, beforeState.userHandlesWithCopies),
+        referenceCleanup: cleanupArtifactResult?.cleanupResult,
     };
 }
 
@@ -1998,6 +2275,85 @@ export async function saveLorebookForManagement(user, name, data, storage = 'use
 
 /**
  * @param {import('./users.js').User} user
+ * @param {string} oldName
+ * @param {string} newName
+ * @param {{storage?: 'user'|'secure'|null, referenceUserHandles?: string[]}} [options]
+ */
+export async function renameLorebookForManagement(user, oldName, newName, options = {}) {
+    return runWithSecureLorebookMutationLock(() => {
+        assertLorebookSaveNameAllowed(oldName);
+        assertLorebookSaveNameAllowed(newName);
+        const oldCanonicalName = assertCanonicalName(oldName);
+        const newCanonicalName = assertCanonicalName(newName);
+
+        if (oldCanonicalName === newCanonicalName) {
+            throw new LorebookRepositoryError('LorebookAlreadyExists', `Lorebook "${newCanonicalName}" already exists.`, 409);
+        }
+
+        const preferredStorage = options?.storage === 'secure' ? 'secure' : (options?.storage === 'user' ? 'user' : null);
+        if (preferredStorage === 'secure') {
+            throw new LorebookRepositoryError('LorebookRenameNotAllowed', 'Secure lorebooks cannot be renamed here.', 403);
+        }
+
+        const secureRecord = getSecureIndexEntry(oldCanonicalName);
+        const sharedSecureRecord = getSharedSecureIndexEntry(oldCanonicalName);
+        const userRecord = getUserLorebookRecord(user.profile.handle, oldCanonicalName);
+        const isSecureBackingLorebook = Boolean(userRecord && secureRecord && secureRecord.ownerHandle === user.profile.handle);
+
+        if ((secureRecord || sharedSecureRecord) && (!userRecord || isSecureBackingLorebook)) {
+            throw new LorebookRepositoryError('LorebookRenameNotAllowed', 'Secure lorebooks cannot be renamed here.', 403);
+        }
+
+        if (!userRecord || isSecureBackingLorebook) {
+            throw new LorebookRepositoryError('LorebookNotFound', `Lorebook "${oldCanonicalName}" not found.`, 404);
+        }
+
+        if (getUserLorebookRecord(user.profile.handle, newCanonicalName) || getSecureIndexEntry(newCanonicalName) || getSharedSecureIndexEntry(newCanonicalName)) {
+            throw new LorebookRepositoryError('LorebookAlreadyExists', `Lorebook "${newCanonicalName}" already exists.`, 409);
+        }
+
+        const data = readLorebookFromRecord(userRecord, false);
+        assertLorebookData(data, oldCanonicalName);
+        const targetPath = getUserLorebookPath(user.profile.handle, newCanonicalName);
+        ensureDirectory(path.dirname(targetPath));
+
+        try {
+            fs.renameSync(userRecord.path, targetPath);
+        } catch (error) {
+            throw new LorebookRepositoryError('LorebookRenameFailed', `Failed to rename lorebook "${oldCanonicalName}".`, 500, {
+                message: String(error?.message || error),
+            });
+        }
+
+        const referenceMigration = migrateLorebookGenerationReferences({
+            operation: 'rename',
+            oldName: oldCanonicalName,
+            newName: newCanonicalName,
+            userHandles: options?.referenceUserHandles || [user.profile.handle],
+            user,
+        });
+
+        return {
+            name: newCanonicalName,
+            storage: 'user',
+            ownerHandle: user.profile.handle,
+            ownerHandles: [user.profile.handle].filter(Boolean),
+            sharingMode: 'single',
+            checkedOutBy: null,
+            checkedOutAt: null,
+            checkoutState: 'available',
+            canCheckOut: false,
+            canCheckIn: false,
+            canForceCheckout: false,
+            canManageOwners: false,
+            shadowingSecure: false,
+            referenceMigration,
+        };
+    });
+}
+
+/**
+ * @param {import('./users.js').User} user
  * @param {string} name
  */
 export async function deleteLorebookForManagement(user, name, options = {}) {
@@ -2008,6 +2364,8 @@ export async function deleteLorebookForManagement(user, name, options = {}) {
         const userRecord = getUserLorebookRecord(user.profile.handle, canonicalName);
         const preferredStorage = options?.storage === 'secure' ? 'secure' : (options?.storage === 'user' ? 'user' : null);
         const allUserHandles = Array.isArray(options?.allUserHandles) ? options.allUserHandles : [];
+        const referenceUserHandles = Array.isArray(options?.referenceUserHandles) ? options.referenceUserHandles : [user.profile.handle];
+        const secureReferenceUserHandles = allUserHandles.length > 0 ? allUserHandles : referenceUserHandles;
         const isSecureBackingLorebook = Boolean(userRecord && secureRecord && secureRecord.ownerHandle === user.profile.handle);
 
         if (preferredStorage === 'secure') {
@@ -2022,7 +2380,7 @@ export async function deleteLorebookForManagement(user, name, options = {}) {
                 throw new LorebookRepositoryError('LorebookNotFound', `Lorebook "${canonicalName}" not found.`, 404);
             }
 
-            return deleteAllSecureLorebookCopies(user, secureTarget, allUserHandles);
+            return deleteAllSecureLorebookCopies(user, secureTarget, allUserHandles, { referenceUserHandles: secureReferenceUserHandles });
         }
 
         if (preferredStorage === 'user') {
@@ -2040,19 +2398,27 @@ export async function deleteLorebookForManagement(user, name, options = {}) {
                 throw new LorebookRepositoryError('LorebookDeleteFailed', `Failed to delete lorebook "${canonicalName}".`, 500);
             }
 
+            const referenceCleanup = migrateLorebookGenerationReferences({
+                operation: 'delete',
+                oldName: canonicalName,
+                userHandles: referenceUserHandles,
+                user,
+            });
+
             return {
                 name: canonicalName,
                 storage: 'user',
                 ownerHandle: user.profile.handle,
+                referenceCleanup,
             };
         }
 
         if (sharedSecureRecord) {
-            return deleteAllSecureLorebookCopies(user, sharedSecureRecord, allUserHandles);
+            return deleteAllSecureLorebookCopies(user, sharedSecureRecord, allUserHandles, { referenceUserHandles: secureReferenceUserHandles });
         }
 
         if (secureRecord) {
-            return deleteAllSecureLorebookCopies(user, secureRecord, allUserHandles);
+            return deleteAllSecureLorebookCopies(user, secureRecord, allUserHandles, { referenceUserHandles: secureReferenceUserHandles });
         }
 
         if (userRecord && !isSecureBackingLorebook) {
@@ -2066,10 +2432,18 @@ export async function deleteLorebookForManagement(user, name, options = {}) {
                 throw new LorebookRepositoryError('LorebookDeleteFailed', `Failed to delete lorebook "${canonicalName}".`, 500);
             }
 
+            const referenceCleanup = migrateLorebookGenerationReferences({
+                operation: 'delete',
+                oldName: canonicalName,
+                userHandles: referenceUserHandles,
+                user,
+            });
+
             return {
                 name: canonicalName,
                 storage: 'user',
                 ownerHandle: user.profile.handle,
+                referenceCleanup,
             };
         }
 

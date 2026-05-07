@@ -264,6 +264,71 @@ export function writeHiddenLorebookTemplates(data = {}, { rootDir = globalThis.D
     return normalized;
 }
 
+function migrateTemplateLorebookArray(values, oldName, newName = '') {
+    const target = normalizeName(oldName);
+    const replacement = normalizeName(newName);
+    const next = [];
+    let changed = false;
+
+    for (const value of normalizeStringArray(values)) {
+        if (value !== target) {
+            if (!next.includes(value)) {
+                next.push(value);
+            }
+            continue;
+        }
+
+        changed = true;
+        if (replacement && !next.includes(replacement)) {
+            next.push(replacement);
+        }
+    }
+
+    return { values: next.sort(compareStrings), changed };
+}
+
+function migrateTemplateAssignmentEntry(entry, oldName, newName = '') {
+    const migratedAdd = migrateTemplateLorebookArray(entry.add, oldName, newName);
+    const migratedRemove = migrateTemplateLorebookArray(entry.remove, oldName, newName);
+    if (migratedAdd.changed) {
+        entry.add = migratedAdd.values;
+    }
+    if (migratedRemove.changed) {
+        entry.remove = migratedRemove.values;
+    }
+    return migratedAdd.changed || migratedRemove.changed;
+}
+
+export function migrateHiddenLorebookTemplateReferences({ oldName, newName = '', rootDir = globalThis.DATA_ROOT || process.cwd() } = {}) {
+    const target = normalizeName(oldName);
+    if (!target) {
+        return { changed: false, data: readHiddenLorebookTemplates({ rootDir }) };
+    }
+
+    const registry = readHiddenLorebookTemplates({ rootDir });
+    let changed = false;
+
+    for (const entry of Object.values(registry.templates || {})) {
+        changed = migrateTemplateAssignmentEntry(entry, target, newName) || changed;
+    }
+
+    changed = migrateTemplateAssignmentEntry(registry.global, target, newName) || changed;
+
+    for (const [characterKey, entry] of Object.entries(registry.characters || {})) {
+        if (migrateTemplateAssignmentEntry(entry, target, newName)) {
+            changed = true;
+            if (!hasAssignmentData(entry)) {
+                delete registry.characters[characterKey];
+            }
+        }
+    }
+
+    return {
+        changed,
+        data: changed ? writeHiddenLorebookTemplates(registry, { rootDir }) : registry,
+    };
+}
+
 export function compileHiddenLorebookTemplateRegistry(data = {}) {
     const normalized = normalizeHiddenLorebookTemplates(data);
     const compiledCharacters = {};
