@@ -1310,8 +1310,8 @@ export function getChatSaveSessionId() {
 export function warnStaleChatSave(errorData) {
     const lastSaveSessionId = String(errorData?.last_save_session_id || '');
     const conflictMessage = lastSaveSessionId && lastSaveSessionId !== getChatSaveSessionId()
-        ? t`Another browser session has a newer save. Close all other browser sessions before trying again.`
-        : t`This chat has a newer save. Close other browser sessions before trying again.`;
+        ? t`Another tab or browser session has a newer save. Close all other tabs/sessions before trying again.`
+        : t`This chat has a newer save. Close other tabs/sessions before trying again.`;
 
     toastr.warning(conflictMessage, t`Chat save conflict`);
 }
@@ -2183,13 +2183,19 @@ let topChatSidebarPopulateToken = '';
 let isManageChatsActionPending = false;
 
 export let token;
-const ACTIVE_SESSION_STORAGE_KEY = 'aikobots.browserSessionId';
-const ACTIVE_SESSION_LOCK_MESSAGE = 'Aikobots is open in another browser session. This session is now read-only. Click \'Take Over\' to make this session active, or close the other browser session and reload this page.';
+const ACTIVE_SESSION_STORAGE_KEY = 'aikobots.tabSessionId';
+const ACTIVE_SESSION_CLIENT_INSTALL_KEY = 'aikobots.clientInstallId';
+const ACTIVE_SESSION_DUPLICATE_CHANNEL = 'aikobots.active-session.tabs';
+const ACTIVE_SESSION_DUPLICATE_STORAGE_KEY = 'aikobots.activeSession.tabProbe';
+const ACTIVE_SESSION_LOCK_MESSAGE = 'Aikobots is open in another tab or browser session. This session is now read-only. Click \'Take Over\' to make this session active, or close the other tab/session and reload this page.';
 const ACTIVE_SESSION_POLL_MS = 20_000;
+const ACTIVE_SESSION_DUPLICATE_PROBE_MS = 250;
 const ACTIVE_SESSION_WRITE_CONTROL_PATTERN = /(send|generate|regenerate|continue|swipe|save|delete|remove|trash|edit|rename|create|new|import|upload|restore|backup|reset|submit|install|update|switch|move|duplicate|merge|promote|demote|checkout|checkin|consolidate|compact|capture|commit|memory|clip|persona|avatar)/i;
 let activeSessionHeartbeatTimer = null;
 let activeSessionLockModal = null;
 let activeSessionReadOnlyObserver = null;
+let activeSessionDuplicateChannel = null;
+let activeSessionDuplicateStorageResponderBound = false;
 export let isActiveSessionLocked = false;
 
 
@@ -2200,28 +2206,173 @@ export let active_group = '';
 
 export const entitiesFilter = new FilterHelper(printCharactersDebounced);
 
-function getBrowserSessionId() {
+function createActiveSessionUuid() {
+    return typeof crypto.randomUUID === 'function' ? crypto.randomUUID() : uuidv4();
+}
+
+function getClientInstallId() {
     try {
-        let id = localStorage.getItem(ACTIVE_SESSION_STORAGE_KEY);
+        let id = localStorage.getItem(ACTIVE_SESSION_CLIENT_INSTALL_KEY);
 
         if (!id) {
-            id = typeof crypto.randomUUID === 'function' ? crypto.randomUUID() : uuidv4();
-            localStorage.setItem(ACTIVE_SESSION_STORAGE_KEY, id);
+            id = createActiveSessionUuid();
+            localStorage.setItem(ACTIVE_SESSION_CLIENT_INSTALL_KEY, id);
         }
 
         return id;
     } catch {
-        return typeof crypto.randomUUID === 'function' ? crypto.randomUUID() : uuidv4();
+        return createActiveSessionUuid();
     }
 }
 
-const browserSessionId = getBrowserSessionId();
+function getTabSessionId() {
+    try {
+        let id = sessionStorage.getItem(ACTIVE_SESSION_STORAGE_KEY);
+
+        if (!id) {
+            id = createActiveSessionUuid();
+            sessionStorage.setItem(ACTIVE_SESSION_STORAGE_KEY, id);
+        }
+
+        return id;
+    } catch {
+        return createActiveSessionUuid();
+    }
+}
+
+function setTabSessionId(id = createActiveSessionUuid()) {
+    try {
+        sessionStorage.setItem(ACTIVE_SESSION_STORAGE_KEY, id);
+    } catch {
+        // Ignore storage failures. The in-memory value still scopes this page.
+    }
+
+    tabSessionId = id;
+    return tabSessionId;
+}
+
+function createDuplicateTabMessage(type) {
+    return {
+        type,
+        tabSessionId,
+        runtimeId: activeSessionRuntimeId,
+        startedAt: activeSessionStartedAt,
+        sentAt: Date.now(),
+    };
+}
+
+function isSameActiveTabSessionMessage(data) {
+    return data && data.runtimeId !== activeSessionRuntimeId && data.tabSessionId === tabSessionId;
+}
+
+function isPeerNewerActiveSessionRuntime(data) {
+    const peerStartedAt = Number(data?.startedAt || 0);
+    if (peerStartedAt !== activeSessionStartedAt) {
+        return peerStartedAt > activeSessionStartedAt;
+    }
+
+    return String(data?.runtimeId || '') > activeSessionRuntimeId;
+}
+
+function postDuplicateTabMessage(channel, message) {
+    channel?.postMessage?.(message);
+    try {
+        localStorage.setItem(ACTIVE_SESSION_DUPLICATE_STORAGE_KEY, JSON.stringify(message));
+        localStorage.removeItem(ACTIVE_SESSION_DUPLICATE_STORAGE_KEY);
+    } catch {
+        // Cross-tab duplicate detection is best-effort when storage events are unavailable.
+    }
+}
+
+function setupActiveSessionDuplicateResponder() {
+    if (!activeSessionDuplicateStorageResponderBound) {
+        activeSessionDuplicateStorageResponderBound = true;
+        window.addEventListener('storage', (event) => {
+            if (event.key !== ACTIVE_SESSION_DUPLICATE_STORAGE_KEY || !event.newValue) {
+                return;
+            }
+
+            try {
+                const data = JSON.parse(event.newValue);
+                if (data?.type === 'probe' && isSameActiveTabSessionMessage(data) && isPeerNewerActiveSessionRuntime(data)) {
+                    postDuplicateTabMessage(activeSessionDuplicateChannel, createDuplicateTabMessage('ack'));
+                }
+            } catch {
+                // Ignore malformed cross-tab probes.
+            }
+        });
+    }
+
+    if (activeSessionDuplicateChannel || typeof BroadcastChannel !== 'function') {
+        return activeSessionDuplicateChannel;
+    }
+
+    activeSessionDuplicateChannel = new BroadcastChannel(ACTIVE_SESSION_DUPLICATE_CHANNEL);
+    activeSessionDuplicateChannel.addEventListener('message', (message) => {
+        const data = message?.data;
+        if (!data || data.type !== 'probe' || !isSameActiveTabSessionMessage(data) || !isPeerNewerActiveSessionRuntime(data)) {
+            return;
+        }
+
+        postDuplicateTabMessage(activeSessionDuplicateChannel, createDuplicateTabMessage('ack'));
+    });
+    return activeSessionDuplicateChannel;
+}
+
+async function regenerateCopiedTabSessionIdIfNeeded() {
+    let duplicateDetected = false;
+    const channel = setupActiveSessionDuplicateResponder();
+    const onMessage = (message) => {
+        const data = message?.data || message;
+        if (!isSameActiveTabSessionMessage(data)) {
+            return;
+        }
+
+        if (data.type === 'probe') {
+            if (isPeerNewerActiveSessionRuntime(data)) {
+                postDuplicateTabMessage(channel, createDuplicateTabMessage('ack'));
+            } else {
+                duplicateDetected = true;
+            }
+        } else if (data.type === 'ack') {
+            duplicateDetected = true;
+        }
+    };
+    const onStorage = (event) => {
+        if (event.key !== ACTIVE_SESSION_DUPLICATE_STORAGE_KEY || !event.newValue) {
+            return;
+        }
+
+        try {
+            onMessage(JSON.parse(event.newValue));
+        } catch {
+            // Ignore malformed cross-tab probes.
+        }
+    };
+
+    channel?.addEventListener?.('message', onMessage);
+    window.addEventListener('storage', onStorage);
+    postDuplicateTabMessage(channel, createDuplicateTabMessage('probe'));
+    await delay(ACTIVE_SESSION_DUPLICATE_PROBE_MS);
+    channel?.removeEventListener?.('message', onMessage);
+    window.removeEventListener('storage', onStorage);
+
+    if (duplicateDetected) {
+        setTabSessionId();
+    }
+}
+
+const clientInstallId = getClientInstallId();
+const activeSessionStartedAt = Date.now();
+const activeSessionRuntimeId = createActiveSessionUuid();
+let tabSessionId = getTabSessionId();
 
 export function getRequestHeaders({ omitContentType = false } = {}) {
     const headers = {
         'Content-Type': 'application/json',
         'X-CSRF-Token': token,
-        'X-Browser-Session-Id': browserSessionId,
+        'X-Tab-Session-Id': tabSessionId,
+        'X-Client-Install-Id': clientInstallId,
     };
 
     if (omitContentType) {
@@ -2233,7 +2384,8 @@ export function getRequestHeaders({ omitContentType = false } = {}) {
 
 $.ajaxPrefilter((options, originalOptions, xhr) => {
     xhr.setRequestHeader('X-CSRF-Token', token);
-    xhr.setRequestHeader('X-Browser-Session-Id', browserSessionId);
+    xhr.setRequestHeader('X-Tab-Session-Id', tabSessionId);
+    xhr.setRequestHeader('X-Client-Install-Id', clientInstallId);
 });
 
 function ensureActiveSessionLockModal() {
@@ -2319,7 +2471,7 @@ function setActiveSessionLocked(locked) {
         if (is_send_press) {
             stopGeneration();
         }
-        toastr.warning('This browser session is read-only until it takes over the active session.', 'Read-only session', { preventDuplicates: true });
+        toastr.warning('This tab is read-only until it takes over the active session.', 'Read-only session', { preventDuplicates: true });
     }
 }
 
@@ -2353,7 +2505,7 @@ async function handleActiveSessionResponse(response) {
 }
 
 const nativeFetch = window.fetch.bind(window);
-function shouldAttachBrowserSessionHeader(input) {
+function shouldAttachTabSessionHeader(input) {
     try {
         const url = new URL(input instanceof Request ? input.url : String(input), location.href);
         return url.origin === location.origin && url.pathname.startsWith('/api/');
@@ -2362,27 +2514,29 @@ function shouldAttachBrowserSessionHeader(input) {
     }
 }
 
-function withBrowserSessionHeader(input, init) {
-    if (!shouldAttachBrowserSessionHeader(input)) {
+function withTabSessionHeader(input, init) {
+    if (!shouldAttachTabSessionHeader(input)) {
         return [input, init];
     }
 
     if (input instanceof Request) {
         const request = new Request(input, init);
         const headers = new Headers(request.headers);
-        headers.set('X-Browser-Session-Id', browserSessionId);
+        headers.set('X-Tab-Session-Id', tabSessionId);
+        headers.set('X-Client-Install-Id', clientInstallId);
         return [new Request(request, { headers }), undefined];
     }
 
     const nextInit = { ...(init || {}) };
     const headers = new Headers(nextInit.headers || {});
-    headers.set('X-Browser-Session-Id', browserSessionId);
+    headers.set('X-Tab-Session-Id', tabSessionId);
+    headers.set('X-Client-Install-Id', clientInstallId);
     nextInit.headers = headers;
     return [input, nextInit];
 }
 
 window.fetch = async (...args) => {
-    const [input, init] = withBrowserSessionHeader(args[0], args[1]);
+    const [input, init] = withTabSessionHeader(args[0], args[1]);
     const response = await nativeFetch(input, init);
     await handleActiveSessionResponse(response);
     return response;
@@ -2444,7 +2598,7 @@ async function pollActiveSession() {
         const status = await response.json();
         setActiveSessionLocked(!status.active);
     } catch (error) {
-        console.warn('Active browser session poll failed', error);
+        console.warn('Active tab session poll failed', error);
     }
 }
 
@@ -2470,13 +2624,14 @@ async function takeOverActiveSession() {
 
         setActiveSessionLocked(true);
     } catch (error) {
-        console.error('Failed to take over active browser session', error);
+        console.error('Failed to take over active tab session', error);
         toastr.error('Could not take over the active session. Please try again.');
     }
 }
 
-async function initActiveBrowserSession() {
+async function initActiveTabSession() {
     ensureActiveSessionLockModal();
+    await regenerateCopiedTabSessionIdIfNeeded();
     if (!activeSessionReadOnlyObserver && typeof MutationObserver === 'function') {
         activeSessionReadOnlyObserver = new MutationObserver(() => {
             if (isActiveSessionLocked) {
@@ -2559,7 +2714,7 @@ async function firstLoadInit() {
         throw new Error('Initialization failed');
     }
 
-    await initActiveBrowserSession();
+    await initActiveTabSession();
 
     showLoader();
     registerPromptManagerMigration();

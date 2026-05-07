@@ -45,69 +45,69 @@ export const activeSessionRouter = express.Router();
 
 activeSessionRouter.post('/status', async (request, response) => {
     try {
-        const browserSessionId = activeSessionStore.getBrowserSessionId(request);
-        const status = await activeSessionStore.getStatus(request.user.profile.handle, browserSessionId);
+        const tabSessionId = activeSessionStore.getTabSessionId(request);
+        const status = await activeSessionStore.getStatus(request.user.profile.handle, tabSessionId);
         return response.json(status);
     } catch (error) {
-        console.error('Failed to get active browser session status:', error);
+        console.error('Failed to get active tab session status:', error);
         return response.sendStatus(error.status || 500);
     }
 });
 
 activeSessionRouter.post('/claim', async (request, response) => {
     try {
-        const browserSessionId = activeSessionStore.getBrowserSessionId(request);
+        const tabSessionId = activeSessionStore.getTabSessionId(request);
         const metadata = activeSessionStore.getMetadata(request);
-        const status = await activeSessionStore.claim(request.user.profile.handle, browserSessionId, metadata);
+        const status = await activeSessionStore.claim(request.user.profile.handle, tabSessionId, metadata);
         return response.json(status);
     } catch (error) {
         if (isActiveSessionError(error)) {
             return sendActiveSessionRequired(response);
         }
 
-        console.error('Failed to claim active browser session:', error);
+        console.error('Failed to claim active tab session:', error);
         return response.sendStatus(error.status || 500);
     }
 });
 
 activeSessionRouter.post('/take-over', async (request, response) => {
     try {
-        const browserSessionId = activeSessionStore.getBrowserSessionId(request);
+        const tabSessionId = activeSessionStore.getTabSessionId(request);
         const metadata = activeSessionStore.getMetadata(request);
-        const status = await activeSessionStore.takeOver(request.user.profile.handle, browserSessionId, metadata);
+        const status = await activeSessionStore.takeOver(request.user.profile.handle, tabSessionId, metadata);
         return response.json(status);
     } catch (error) {
         if (isActiveSessionError(error)) {
             return sendActiveSessionRequired(response);
         }
 
-        console.error('Failed to take over active browser session:', error);
+        console.error('Failed to take over active tab session:', error);
         return response.sendStatus(error.status || 500);
     }
 });
 
 activeSessionRouter.post('/heartbeat', async (request, response) => {
     try {
-        const browserSessionId = activeSessionStore.getBrowserSessionId(request);
-        const status = await activeSessionStore.heartbeat(request.user.profile.handle, browserSessionId);
+        const tabSessionId = activeSessionStore.getTabSessionId(request);
+        const status = await activeSessionStore.heartbeat(request.user.profile.handle, tabSessionId);
         return response.json(status);
     } catch (error) {
         if (isActiveSessionError(error)) {
             return sendActiveSessionRequired(response);
         }
 
-        console.error('Failed to heartbeat active browser session:', error);
+        console.error('Failed to heartbeat active tab session:', error);
         return response.sendStatus(error.status || 500);
     }
 });
 
 activeSessionRouter.post('/release', async (request, response) => {
     try {
-        const browserSessionId = activeSessionStore.getBrowserSessionId(request);
-        const released = await activeSessionStore.release(request.user.profile.handle, browserSessionId);
+        const tabSessionId = activeSessionStore.getTabSessionId(request);
+        const released = await activeSessionStore.release(request.user.profile.handle, tabSessionId);
         return response.json({ released });
     } catch (error) {
-        console.error('Failed to release active browser session:', error);
+        console.error('Failed to release active tab session:', error);
         return response.sendStatus(error.status || 500);
     }
 });
@@ -118,7 +118,7 @@ export async function activeSessionLockMiddleware(request, response, next) {
     }
 
     const userHandle = request.user.profile.handle;
-    const browserSessionId = activeSessionStore.getBrowserSessionId(request);
+    const tabSessionId = activeSessionStore.getTabSessionId(request);
     let operation = null;
     let ended = false;
     let cancellationTimer = null;
@@ -134,18 +134,18 @@ export async function activeSessionLockMiddleware(request, response, next) {
             clearInterval(cancellationTimer);
         }
 
-        activeSessionStore.endOperation(userHandle, browserSessionId, operation.operationId)
+        activeSessionStore.endOperation(userHandle, tabSessionId, operation.operationId)
             .catch(error => console.error('Failed to end active-session operation:', error));
     };
 
     try {
-        operation = await activeSessionStore.beginOperation(userHandle, browserSessionId, `${request.method} ${request.path}`);
+        operation = await activeSessionStore.beginOperation(userHandle, tabSessionId, `${request.method} ${request.path}`);
         request.activeSessionOperation = {
             operationId: operation.operationId,
-            browserSessionId,
+            tabSessionId,
             operationType: operation.operationType,
             signal: operationAbortController.signal,
-            assertAllowed: () => activeSessionStore.assertOperationAllowed(userHandle, browserSessionId, operation.operationId),
+            assertAllowed: () => activeSessionStore.assertOperationAllowed(userHandle, tabSessionId, operation.operationId),
         };
 
         cancellationTimer = setInterval(async () => {
@@ -178,7 +178,7 @@ export async function activeSessionLockMiddleware(request, response, next) {
             return sendActiveSessionRequired(response);
         }
 
-        console.error('Failed to verify active browser session:', error);
+        console.error('Failed to verify active tab session:', error);
         return response.sendStatus(error.status || 500);
     }
 }

@@ -13,9 +13,10 @@ const STORE_DIRECTORY_NAME = '_active-session-leases';
 const STORE_FILE_NAME = 'leases.json';
 const LOCK_DIRECTORY_NAME = 'leases.lock';
 const OPERATION_TTL_MS = 60 * 60_000;
-export const BROWSER_SESSION_HEADER = 'x-browser-session-id';
+export const TAB_SESSION_HEADER = 'x-tab-session-id';
+export const LEGACY_BROWSER_SESSION_HEADER = 'x-browser-session-id';
 export const ACTIVE_SESSION_ERROR = 'active_session_required';
-export const ACTIVE_SESSION_LOCK_MESSAGE = 'Aikobots is open in another browser session. This session is now read-only.';
+export const ACTIVE_SESSION_LOCK_MESSAGE = 'Aikobots is open in another tab or browser session. This session is now read-only.';
 
 function getStoreDirectory() {
     return path.join(globalThis.DATA_ROOT, STORE_DIRECTORY_NAME);
@@ -33,8 +34,8 @@ function getLeaseKey(userHandle) {
     return createHash('sha256').update(String(userHandle || '')).digest('hex');
 }
 
-function normalizeBrowserSessionId(browserSessionId) {
-    const normalized = String(browserSessionId || '').trim();
+function normalizeTabSessionId(tabSessionId) {
+    const normalized = String(tabSessionId || '').trim();
     return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(normalized)
         ? normalized
         : '';
@@ -43,13 +44,18 @@ function normalizeBrowserSessionId(browserSessionId) {
 function sanitizeMetadata(metadata) {
     return {
         userAgent: String(metadata?.userAgent || '').slice(0, 512),
+        clientInstallId: normalizeTabSessionId(metadata?.clientInstallId),
     };
 }
 
-function createLease(userHandle, browserSessionId, metadata, now = Date.now()) {
+function getStoredTabSessionId(record) {
+    return record?.tabSessionId || record?.browserSessionId || '';
+}
+
+function createLease(userHandle, tabSessionId, metadata, now = Date.now()) {
     return {
         userHandle,
-        browserSessionId,
+        tabSessionId,
         claimedAt: now,
         lastSeenAt: now,
         expiresAt: now + LEASE_TTL_MS,
@@ -58,7 +64,7 @@ function createLease(userHandle, browserSessionId, metadata, now = Date.now()) {
 }
 
 function isLeaseActive(lease, now = Date.now()) {
-    return Boolean(lease?.browserSessionId) && Number(lease.expiresAt || 0) > now;
+    return Boolean(getStoredTabSessionId(lease)) && Number(lease.expiresAt || 0) > now;
 }
 
 function normalizeStore(data) {
@@ -90,11 +96,11 @@ function pruneExpiredOperations(store, now = Date.now()) {
     return pruned;
 }
 
-function createOperation(userHandle, browserSessionId, operationType, now = Date.now()) {
+function createOperation(userHandle, tabSessionId, operationType, now = Date.now()) {
     return {
         operationId: randomUUID(),
         userHandle,
-        browserSessionId,
+        tabSessionId,
         operationType: String(operationType || 'write').slice(0, 128),
         startedAt: now,
         lastSeenAt: now,
@@ -103,7 +109,7 @@ function createOperation(userHandle, browserSessionId, operationType, now = Date
     };
 }
 
-function assertLeaseAndOperationAllowed(store, userHandle, browserSessionId, operationId, now = Date.now()) {
+function assertLeaseAndOperationAllowed(store, userHandle, tabSessionId, operationId, now = Date.now()) {
     const key = getLeaseKey(userHandle);
     const lease = store.leases[key];
 
@@ -112,14 +118,14 @@ function assertLeaseAndOperationAllowed(store, userHandle, browserSessionId, ope
         throw createActiveSessionError();
     }
 
-    if (lease.browserSessionId !== browserSessionId) {
+    if (getStoredTabSessionId(lease) !== tabSessionId) {
         throw createActiveSessionError();
     }
 
     const operation = store.operations[operationId];
     if (!operation
         || operation.userHandle !== userHandle
-        || operation.browserSessionId !== browserSessionId
+        || getStoredTabSessionId(operation) !== tabSessionId
         || operation.cancelledAt) {
         throw createActiveSessionError();
     }
@@ -131,7 +137,7 @@ function assertLeaseAndOperationAllowed(store, userHandle, browserSessionId, ope
     return operation;
 }
 
-function toPublicStatus(lease, browserSessionId, now = Date.now()) {
+function toPublicStatus(lease, tabSessionId, now = Date.now()) {
     if (!isLeaseActive(lease, now)) {
         return {
             active: false,
@@ -142,7 +148,7 @@ function toPublicStatus(lease, browserSessionId, now = Date.now()) {
         };
     }
 
-    const active = lease.browserSessionId === browserSessionId;
+    const active = getStoredTabSessionId(lease) === tabSessionId;
     return {
         active,
         hasActiveSession: true,
@@ -209,18 +215,19 @@ async function withStoreLock(operation) {
 export const activeSessionStore = {
     ttlMs: LEASE_TTL_MS,
 
-    getBrowserSessionId(request) {
-        return normalizeBrowserSessionId(request.headers[BROWSER_SESSION_HEADER]);
+    getTabSessionId(request) {
+        return normalizeTabSessionId(request.headers[TAB_SESSION_HEADER] || request.headers[LEGACY_BROWSER_SESSION_HEADER]);
     },
 
     getMetadata(request) {
         return {
             userAgent: request.headers['user-agent'],
+            clientInstallId: request.headers['x-client-install-id'],
         };
     },
 
-    async getStatus(userHandle, browserSessionId) {
-        const normalizedSessionId = normalizeBrowserSessionId(browserSessionId);
+    async getStatus(userHandle, tabSessionId) {
+        const normalizedSessionId = normalizeTabSessionId(tabSessionId);
         return await withStoreLock(async (store) => {
             const key = getLeaseKey(userHandle);
             const lease = store.leases[key];
@@ -239,8 +246,8 @@ export const activeSessionStore = {
         });
     },
 
-    async claim(userHandle, browserSessionId, metadata) {
-        const normalizedSessionId = normalizeBrowserSessionId(browserSessionId);
+    async claim(userHandle, tabSessionId, metadata) {
+        const normalizedSessionId = normalizeTabSessionId(tabSessionId);
         if (!normalizedSessionId) {
             throw createActiveSessionError();
         }
@@ -251,7 +258,7 @@ export const activeSessionStore = {
             const now = Date.now();
             const pruned = pruneExpiredOperations(store, now);
 
-            if (!isLeaseActive(existingLease, now) || existingLease.browserSessionId === normalizedSessionId) {
+            if (!isLeaseActive(existingLease, now) || getStoredTabSessionId(existingLease) === normalizedSessionId) {
                 store.leases[key] = createLease(userHandle, normalizedSessionId, metadata, now);
                 return {
                     write: true,
@@ -266,8 +273,8 @@ export const activeSessionStore = {
         });
     },
 
-    async takeOver(userHandle, browserSessionId, metadata) {
-        const normalizedSessionId = normalizeBrowserSessionId(browserSessionId);
+    async takeOver(userHandle, tabSessionId, metadata) {
+        const normalizedSessionId = normalizeTabSessionId(tabSessionId);
         if (!normalizedSessionId) {
             throw createActiveSessionError();
         }
@@ -277,7 +284,7 @@ export const activeSessionStore = {
             const key = getLeaseKey(userHandle);
             store.leases[key] = createLease(userHandle, normalizedSessionId, metadata, now);
             for (const operation of Object.values(store.operations || {})) {
-                if (operation?.userHandle === userHandle && operation.browserSessionId !== normalizedSessionId && !operation.cancelledAt) {
+                if (operation?.userHandle === userHandle && getStoredTabSessionId(operation) !== normalizedSessionId && !operation.cancelledAt) {
                     operation.cancelledAt = now;
                     operation.expiresAt = now + OPERATION_TTL_MS;
                 }
@@ -289,8 +296,8 @@ export const activeSessionStore = {
         });
     },
 
-    async heartbeat(userHandle, browserSessionId) {
-        const normalizedSessionId = normalizeBrowserSessionId(browserSessionId);
+    async heartbeat(userHandle, tabSessionId) {
+        const normalizedSessionId = normalizeTabSessionId(tabSessionId);
         if (!normalizedSessionId) {
             throw createActiveSessionError();
         }
@@ -305,7 +312,7 @@ export const activeSessionStore = {
                 throw createActiveSessionError();
             }
 
-            if (lease.browserSessionId !== normalizedSessionId) {
+            if (getStoredTabSessionId(lease) !== normalizedSessionId) {
                 throw createActiveSessionError();
             }
 
@@ -318,8 +325,8 @@ export const activeSessionStore = {
         });
     },
 
-    async assertActive(userHandle, browserSessionId) {
-        const normalizedSessionId = normalizeBrowserSessionId(browserSessionId);
+    async assertActive(userHandle, tabSessionId) {
+        const normalizedSessionId = normalizeTabSessionId(tabSessionId);
         if (!normalizedSessionId) {
             throw createActiveSessionError();
         }
@@ -334,7 +341,7 @@ export const activeSessionStore = {
                 throw createActiveSessionError();
             }
 
-            if (lease.browserSessionId !== normalizedSessionId) {
+            if (getStoredTabSessionId(lease) !== normalizedSessionId) {
                 throw createActiveSessionError();
             }
 
@@ -347,8 +354,8 @@ export const activeSessionStore = {
         });
     },
 
-    async release(userHandle, browserSessionId) {
-        const normalizedSessionId = normalizeBrowserSessionId(browserSessionId);
+    async release(userHandle, tabSessionId) {
+        const normalizedSessionId = normalizeTabSessionId(tabSessionId);
         if (!normalizedSessionId) {
             return false;
         }
@@ -357,7 +364,7 @@ export const activeSessionStore = {
             const key = getLeaseKey(userHandle);
             const lease = store.leases[key];
 
-            if (lease?.browserSessionId !== normalizedSessionId) {
+            if (getStoredTabSessionId(lease) !== normalizedSessionId) {
                 return {
                     write: false,
                     value: false,
@@ -372,8 +379,8 @@ export const activeSessionStore = {
         });
     },
 
-    async beginOperation(userHandle, browserSessionId, operationType) {
-        const normalizedSessionId = normalizeBrowserSessionId(browserSessionId);
+    async beginOperation(userHandle, tabSessionId, operationType) {
+        const normalizedSessionId = normalizeTabSessionId(tabSessionId);
         if (!normalizedSessionId) {
             throw createActiveSessionError();
         }
@@ -389,7 +396,7 @@ export const activeSessionStore = {
                 throw createActiveSessionError();
             }
 
-            if (lease.browserSessionId !== normalizedSessionId) {
+            if (getStoredTabSessionId(lease) !== normalizedSessionId) {
                 throw createActiveSessionError();
             }
 
@@ -404,15 +411,15 @@ export const activeSessionStore = {
         });
     },
 
-    async endOperation(userHandle, browserSessionId, operationId) {
-        const normalizedSessionId = normalizeBrowserSessionId(browserSessionId);
+    async endOperation(userHandle, tabSessionId, operationId) {
+        const normalizedSessionId = normalizeTabSessionId(tabSessionId);
         if (!normalizedSessionId || !operationId) {
             return false;
         }
 
         return await withStoreLock(async (store) => {
             const operation = store.operations[operationId];
-            if (!operation || operation.userHandle !== userHandle || operation.browserSessionId !== normalizedSessionId) {
+            if (!operation || operation.userHandle !== userHandle || getStoredTabSessionId(operation) !== normalizedSessionId) {
                 return {
                     write: false,
                     value: false,
@@ -427,14 +434,14 @@ export const activeSessionStore = {
         });
     },
 
-    async cancelOperationsForUserExcept(userHandle, activeBrowserSessionId) {
-        const normalizedSessionId = normalizeBrowserSessionId(activeBrowserSessionId);
+    async cancelOperationsForUserExcept(userHandle, activeTabSessionId) {
+        const normalizedSessionId = normalizeTabSessionId(activeTabSessionId);
         const now = Date.now();
 
         return await withStoreLock(async (store) => {
             let cancelled = 0;
             for (const operation of Object.values(store.operations || {})) {
-                if (operation?.userHandle === userHandle && operation.browserSessionId !== normalizedSessionId && !operation.cancelledAt) {
+                if (operation?.userHandle === userHandle && getStoredTabSessionId(operation) !== normalizedSessionId && !operation.cancelledAt) {
                     operation.cancelledAt = now;
                     operation.expiresAt = now + OPERATION_TTL_MS;
                     cancelled++;
@@ -448,8 +455,8 @@ export const activeSessionStore = {
         });
     },
 
-    async assertOperationAllowed(userHandle, browserSessionId, operationId) {
-        const normalizedSessionId = normalizeBrowserSessionId(browserSessionId);
+    async assertOperationAllowed(userHandle, tabSessionId, operationId) {
+        const normalizedSessionId = normalizeTabSessionId(tabSessionId);
         if (!normalizedSessionId || !operationId) {
             throw createActiveSessionError();
         }
