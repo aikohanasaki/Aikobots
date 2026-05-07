@@ -1175,6 +1175,36 @@ export function updateStmbJobsForLorebookReference({ operation, oldName, newName
 
     for (const store of jobStores.values()) {
         let storeChanged = false;
+        const runningJob = store.runningJob;
+        const runningJobLorebookName = String(runningJob?.lorebookName || '').trim();
+        const runningPayloadLorebookName = String(runningJob?.payload?.lorebookName || '').trim();
+        const runningMatches = runningJobLorebookName === target || runningPayloadLorebookName === target;
+
+        if (runningMatches) {
+            if (operation === 'rename') {
+                if (runningJobLorebookName === target) {
+                    runningJob.lorebookName = replacement;
+                }
+                if (runningPayloadLorebookName === target && runningJob.payload && typeof runningJob.payload === 'object') {
+                    runningJob.payload.lorebookName = replacement;
+                }
+                runningJob.detail = runningJob.detail || 'Lorebook renamed while job was running';
+                markJobUpdated(runningJob);
+                updated++;
+            } else {
+                runningJob.detail = 'Canceled because its lorebook was deleted';
+                if (runningJob.abortController) {
+                    runningJob.abortController.abort('stmb-lorebook-deleted');
+                } else {
+                    runningJob.state = 'canceled';
+                    runningJob.finishedAt = Date.now();
+                }
+                markJobUpdated(runningJob);
+                canceled++;
+            }
+            storeChanged = true;
+        }
+
         const nextQueue = [];
 
         for (const job of Array.isArray(store.queue) ? store.queue : []) {

@@ -6341,7 +6341,11 @@ function migrateStmbLorebookReferenceValue(value, oldName, newName = '') {
     return String(value || '').trim() === String(oldName || '').trim() ? String(newName || '').trim() : value;
 }
 
-function handleLorebookReferencesUpdated({ operation, oldName, newName = '' } = {}) {
+function handleLorebookReferencesUpdated(payloadOrOperation = {}, oldNameArg = '', newNameArg = '') {
+    const isObjectPayload = payloadOrOperation && typeof payloadOrOperation === 'object';
+    const operation = String(isObjectPayload ? payloadOrOperation.operation : payloadOrOperation || '').trim();
+    const oldName = isObjectPayload ? payloadOrOperation.oldName : oldNameArg;
+    const newName = isObjectPayload ? payloadOrOperation.newName : newNameArg;
     const target = String(oldName || '').trim();
     const replacement = operation === 'rename' ? String(newName || '').trim() : '';
     if (!target || (operation !== 'rename' && operation !== 'delete')) {

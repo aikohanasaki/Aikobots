@@ -1734,6 +1734,15 @@ export function migrateLorebookGenerationReferences({ operation, oldName, newNam
     };
 }
 
+function getLorebookReferenceMigrationErrors(result) {
+    return [
+        ...(Array.isArray(result?.settingsCleanupErrors) ? result.settingsCleanupErrors : []),
+        ...(Array.isArray(result?.characterCleanupErrors) ? result.characterCleanupErrors : []),
+        ...(Array.isArray(result?.chatCleanupErrors) ? result.chatCleanupErrors : []),
+        ...(Array.isArray(result?.hiddenCleanupErrors) ? result.hiddenCleanupErrors : []),
+    ];
+}
+
 function cleanupLorebookReferences(name, userHandles = [], referenceState = null, user = null) {
     return migrateLorebookGenerationReferences({
         operation: 'delete',
@@ -2332,6 +2341,18 @@ export async function renameLorebookForManagement(user, oldName, newName, option
             userHandles: options?.referenceUserHandles || [user.profile.handle],
             user,
         });
+        const referenceMigrationErrors = getLorebookReferenceMigrationErrors(referenceMigration);
+        if (referenceMigrationErrors.length > 0) {
+            throw new LorebookRepositoryError(
+                'LorebookRenameReferenceMigrationFailed',
+                `Failed to update known references for lorebook "${oldCanonicalName}".`,
+                500,
+                {
+                    referenceMigration,
+                    referenceMigrationErrors,
+                },
+            );
+        }
 
         return {
             name: newCanonicalName,

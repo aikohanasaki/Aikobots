@@ -4217,23 +4217,6 @@ async function displayWorldEntries(name, data, navigation = navigation_option.no
             return;
         }
 
-        if (world_info.charLore) {
-            world_info.charLore.forEach((charLore, index) => {
-                if (charLore.extraBooks?.includes(name)) {
-                    const tempCharLore = charLore.extraBooks.filter((e) => e !== name);
-                    if (tempCharLore.length === 0) {
-                        world_info.charLore.splice(index, 1);
-                    } else {
-                        charLore.extraBooks = tempCharLore;
-                    }
-                }
-            });
-
-            saveSettingsDebounced();
-        }
-
-        await updateAllCharacterExtraBooks(currentBooks => currentBooks.filter((book) => book !== name));
-
         // Selected world_info automatically refreshes
         await deleteWorldInfo(name);
     });
@@ -6147,6 +6130,9 @@ async function renameWorldInfo(name, data) {
         return;
     }
 
+    cancelDebounce(getSaveWorldDebounced(oldName));
+    await _save(oldName, data);
+
     const response = await fetch('/api/worldinfo/rename', {
         method: 'POST',
         headers: getRequestHeaders(),
@@ -6159,8 +6145,10 @@ async function renameWorldInfo(name, data) {
         return;
     }
 
+    saveWorldDebouncedByName.delete(oldName);
     worldInfoCache.delete(oldName);
     clearPersistedWorldInfoSnapshot(oldName);
+    setPersistedWorldInfoSnapshot(newName, stripTransientWorldInfoMetadata(data));
     worldInfoCache.set(newName, data);
     await applyLorebookReferenceRuntimeUpdate({ operation: 'rename', oldName, newName });
     await updateWorldInfoList(newName);
