@@ -1,0 +1,48 @@
+diff --git a/public/script.js b/public/script.js
+index a9af92f30..a6dc693a5 100644
+--- a/public/script.js
++++ b/public/script.js
+@@ -2189,7 +2189,8 @@ const ACTIVE_SESSION_DUPLICATE_CHANNEL = 'aikobots.active-session.tabs';
+ const ACTIVE_SESSION_DUPLICATE_STORAGE_KEY = 'aikobots.activeSession.tabProbe';
+ const ACTIVE_SESSION_LOCK_MESSAGE = 'Aikobots is open in another tab or browser session. This session is now read-only. Click \'Take Over\' to make this session active, or close the other tab/session and reload this page.';
+ const ACTIVE_SESSION_POLL_MS = 20_000;
+-const ACTIVE_SESSION_DUPLICATE_PROBE_MS = 250;
++const ACTIVE_SESSION_DUPLICATE_PROBE_MS = 500;
++const ACTIVE_SESSION_DUPLICATE_PROBE_ATTEMPTS = 2;
+ const ACTIVE_SESSION_WRITE_CONTROL_PATTERN = /(send|generate|regenerate|continue|swipe|save|delete|remove|trash|edit|rename|create|new|import|upload|restore|backup|reset|submit|install|update|switch|move|duplicate|merge|promote|demote|checkout|checkin|consolidate|compact|capture|commit|memory|clip|persona|avatar)/i;
+ let activeSessionHeartbeatTimer = null;
+ let activeSessionLockModal = null;
+@@ -2352,8 +2353,10 @@ async function regenerateCopiedTabSessionIdIfNeeded() {
+ 
+     channel?.addEventListener?.('message', onMessage);
+     window.addEventListener('storage', onStorage);
+-    postDuplicateTabMessage(channel, createDuplicateTabMessage('probe'));
+-    await delay(ACTIVE_SESSION_DUPLICATE_PROBE_MS);
++    for (let attempt = 0; attempt < ACTIVE_SESSION_DUPLICATE_PROBE_ATTEMPTS && !duplicateDetected; attempt++) {
++        postDuplicateTabMessage(channel, createDuplicateTabMessage('probe'));
++        await delay(ACTIVE_SESSION_DUPLICATE_PROBE_MS);
++    }
+     channel?.removeEventListener?.('message', onMessage);
+     window.removeEventListener('storage', onStorage);
+ 
+diff --git a/src/active-session-store.js b/src/active-session-store.js
+index c169f49b3..3787513e2 100644
+--- a/src/active-session-store.js
++++ b/src/active-session-store.js
+@@ -14,7 +14,6 @@ const STORE_FILE_NAME = 'leases.json';
+ const LOCK_DIRECTORY_NAME = 'leases.lock';
+ const OPERATION_TTL_MS = 60 * 60_000;
+ export const TAB_SESSION_HEADER = 'x-tab-session-id';
+-export const LEGACY_BROWSER_SESSION_HEADER = 'x-browser-session-id';
+ export const ACTIVE_SESSION_ERROR = 'active_session_required';
+ export const ACTIVE_SESSION_LOCK_MESSAGE = 'Aikobots is open in another tab or browser session. This session is now read-only.';
+ 
+@@ -216,7 +215,7 @@ export const activeSessionStore = {
+     ttlMs: LEASE_TTL_MS,
+ 
+     getTabSessionId(request) {
+-        return normalizeTabSessionId(request.headers[TAB_SESSION_HEADER] || request.headers[LEGACY_BROWSER_SESSION_HEADER]);
++        return normalizeTabSessionId(request.headers[TAB_SESSION_HEADER]);
+     },
+ 
+     getMetadata(request) {

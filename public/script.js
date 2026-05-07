@@ -2189,7 +2189,8 @@ const ACTIVE_SESSION_DUPLICATE_CHANNEL = 'aikobots.active-session.tabs';
 const ACTIVE_SESSION_DUPLICATE_STORAGE_KEY = 'aikobots.activeSession.tabProbe';
 const ACTIVE_SESSION_LOCK_MESSAGE = 'Aikobots is open in another tab or browser session. This session is now read-only. Click \'Take Over\' to make this session active, or close the other tab/session and reload this page.';
 const ACTIVE_SESSION_POLL_MS = 20_000;
-const ACTIVE_SESSION_DUPLICATE_PROBE_MS = 250;
+const ACTIVE_SESSION_DUPLICATE_PROBE_MS = 500;
+const ACTIVE_SESSION_DUPLICATE_PROBE_ATTEMPTS = 2;
 const ACTIVE_SESSION_WRITE_CONTROL_PATTERN = /(send|generate|regenerate|continue|swipe|save|delete|remove|trash|edit|rename|create|new|import|upload|restore|backup|reset|submit|install|update|switch|move|duplicate|merge|promote|demote|checkout|checkin|consolidate|compact|capture|commit|memory|clip|persona|avatar)/i;
 let activeSessionHeartbeatTimer = null;
 let activeSessionLockModal = null;
@@ -2352,8 +2353,10 @@ async function regenerateCopiedTabSessionIdIfNeeded() {
 
     channel?.addEventListener?.('message', onMessage);
     window.addEventListener('storage', onStorage);
-    postDuplicateTabMessage(channel, createDuplicateTabMessage('probe'));
-    await delay(ACTIVE_SESSION_DUPLICATE_PROBE_MS);
+    for (let attempt = 0; attempt < ACTIVE_SESSION_DUPLICATE_PROBE_ATTEMPTS && !duplicateDetected; attempt++) {
+        postDuplicateTabMessage(channel, createDuplicateTabMessage('probe'));
+        await delay(ACTIVE_SESSION_DUPLICATE_PROBE_MS);
+    }
     channel?.removeEventListener?.('message', onMessage);
     window.removeEventListener('storage', onStorage);
 

@@ -14,7 +14,6 @@ const STORE_FILE_NAME = 'leases.json';
 const LOCK_DIRECTORY_NAME = 'leases.lock';
 const OPERATION_TTL_MS = 60 * 60_000;
 export const TAB_SESSION_HEADER = 'x-tab-session-id';
-export const LEGACY_BROWSER_SESSION_HEADER = 'x-browser-session-id';
 export const ACTIVE_SESSION_ERROR = 'active_session_required';
 export const ACTIVE_SESSION_LOCK_MESSAGE = 'Aikobots is open in another tab or browser session. This session is now read-only.';
 
@@ -216,7 +215,7 @@ export const activeSessionStore = {
     ttlMs: LEASE_TTL_MS,
 
     getTabSessionId(request) {
-        return normalizeTabSessionId(request.headers[TAB_SESSION_HEADER] || request.headers[LEGACY_BROWSER_SESSION_HEADER]);
+        return normalizeTabSessionId(request.headers[TAB_SESSION_HEADER]);
     },
 
     getMetadata(request) {
