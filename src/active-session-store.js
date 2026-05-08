@@ -15,7 +15,7 @@ const LOCK_DIRECTORY_NAME = 'leases.lock';
 const OPERATION_TTL_MS = 60 * 60_000;
 export const TAB_SESSION_HEADER = 'x-tab-session-id';
 export const ACTIVE_SESSION_ERROR = 'active_session_required';
-export const ACTIVE_SESSION_LOCK_MESSAGE = 'Aikobots is open in another tab or browser session. This session is now read-only.';
+export const ACTIVE_SESSION_LOCK_MESSAGE = 'Aikobots is open in another browser session. This session is now read-only. Click \'Take Over\' to make this session active, or close the other browser session and reload this page.';
 
 function getStoreDirectory() {
     return path.join(globalThis.DATA_ROOT, STORE_DIRECTORY_NAME);

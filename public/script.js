@@ -2187,7 +2187,7 @@ const ACTIVE_SESSION_STORAGE_KEY = 'aikobots.tabSessionId';
 const ACTIVE_SESSION_CLIENT_INSTALL_KEY = 'aikobots.clientInstallId';
 const ACTIVE_SESSION_DUPLICATE_CHANNEL = 'aikobots.active-session.tabs';
 const ACTIVE_SESSION_DUPLICATE_STORAGE_KEY = 'aikobots.activeSession.tabProbe';
-const ACTIVE_SESSION_LOCK_MESSAGE = 'Aikobots is open in another tab or browser session. This session is now read-only. Click \'Take Over\' to make this session active, or close the other tab/session and reload this page.';
+const ACTIVE_SESSION_LOCK_MESSAGE = 'Aikobots is open in another browser session. This session is now read-only. Click \'Take Over\' to make this session active, or close the other browser session and reload this page.';
 const ACTIVE_SESSION_POLL_MS = 20_000;
 const ACTIVE_SESSION_DUPLICATE_PROBE_MS = 500;
 const ACTIVE_SESSION_DUPLICATE_PROBE_ATTEMPTS = 2;
@@ -2571,8 +2571,8 @@ async function postActiveSession(endpoint) {
     });
 }
 
-async function claimActiveSession() {
-    const response = await postActiveSession('claim');
+async function activateActiveSessionOnBoot() {
+    const response = await postActiveSession('take-over');
     await handleActiveSessionResponse(response);
 
     if (!response.ok) {
@@ -2644,7 +2644,7 @@ async function initActiveTabSession() {
         activeSessionReadOnlyObserver.observe(document.body, { childList: true, subtree: true });
     }
 
-    await claimActiveSession();
+    await activateActiveSessionOnBoot();
     if (isActiveSessionLocked) {
         return;
     }
