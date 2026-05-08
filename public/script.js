@@ -2406,8 +2406,8 @@ function ensureActiveSessionLockModal() {
             <strong>Read-only session</strong>
             <p>${ACTIVE_SESSION_LOCK_MESSAGE}</p>
             <div class="active_session_lock_actions">
-                <button id="active_session_takeover" type="button">Take Over</button>
-                <button id="active_session_reload" type="button">Reload</button>
+                <button id="active_session_takeover" class="menu_button" type="button">Take Over</button>
+                <button id="active_session_reload" class="menu_button" type="button">Reload</button>
             </div>
         </div>`;
 
