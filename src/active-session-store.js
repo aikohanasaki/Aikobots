@@ -15,7 +15,7 @@ const LOCK_DIRECTORY_NAME = 'leases.lock';
 const OPERATION_TTL_MS = 60 * 60_000;
 export const TAB_SESSION_HEADER = 'x-tab-session-id';
 export const ACTIVE_SESSION_ERROR = 'active_session_required';
-export const ACTIVE_SESSION_LOCK_MESSAGE = 'Aikobots is open in another browser session. This session is now read-only. Click \'Take Over\' to make this session active, or close the other browser session and reload this page.';
+export const ACTIVE_SESSION_LOCK_MESSAGE = 'Aikobots is open in another tab or browser session. This session is now read-only. Reload this page to make this tab active.';
 
 function getStoreDirectory() {
     return path.join(globalThis.DATA_ROOT, STORE_DIRECTORY_NAME);
@@ -44,6 +44,7 @@ function sanitizeMetadata(metadata) {
     return {
         userAgent: String(metadata?.userAgent || '').slice(0, 512),
         clientInstallId: normalizeTabSessionId(metadata?.clientInstallId),
+        runtimeId: normalizeTabSessionId(metadata?.runtimeId),
     };
 }
 
@@ -56,14 +57,15 @@ function createLease(userHandle, tabSessionId, metadata, now = Date.now()) {
         userHandle,
         tabSessionId,
         claimedAt: now,
+        lastTakeoverAt: now,
         lastSeenAt: now,
         expiresAt: now + LEASE_TTL_MS,
         metadata: sanitizeMetadata(metadata),
     };
 }
 
-function isLeaseActive(lease, now = Date.now()) {
-    return Boolean(getStoredTabSessionId(lease)) && Number(lease.expiresAt || 0) > now;
+function isLeaseActive(lease) {
+    return Boolean(getStoredTabSessionId(lease));
 }
 
 function normalizeStore(data) {
@@ -112,8 +114,7 @@ function assertLeaseAndOperationAllowed(store, userHandle, tabSessionId, operati
     const key = getLeaseKey(userHandle);
     const lease = store.leases[key];
 
-    if (!isLeaseActive(lease, now)) {
-        delete store.leases[key];
+    if (!isLeaseActive(lease)) {
         throw createActiveSessionError();
     }
 
@@ -132,12 +133,11 @@ function assertLeaseAndOperationAllowed(store, userHandle, tabSessionId, operati
     operation.lastSeenAt = now;
     operation.expiresAt = now + OPERATION_TTL_MS;
     lease.lastSeenAt = now;
-    lease.expiresAt = now + LEASE_TTL_MS;
     return operation;
 }
 
-function toPublicStatus(lease, tabSessionId, now = Date.now()) {
-    if (!isLeaseActive(lease, now)) {
+function toPublicStatus(lease, tabSessionId) {
+    if (!isLeaseActive(lease)) {
         return {
             active: false,
             hasActiveSession: false,
@@ -154,6 +154,7 @@ function toPublicStatus(lease, tabSessionId, now = Date.now()) {
         canTakeOver: !active,
         lease: {
             claimedAt: lease.claimedAt,
+            lastTakeoverAt: lease.lastTakeoverAt,
             lastSeenAt: lease.lastSeenAt,
             expiresAt: lease.expiresAt,
             metadata: lease.metadata || {},
@@ -222,6 +223,7 @@ export const activeSessionStore = {
         return {
             userAgent: request.headers['user-agent'],
             clientInstallId: request.headers['x-client-install-id'],
+            runtimeId: request.headers['x-tab-runtime-id'],
         };
     },
 
@@ -229,18 +231,27 @@ export const activeSessionStore = {
         const normalizedSessionId = normalizeTabSessionId(tabSessionId);
         return await withStoreLock(async (store) => {
             const key = getLeaseKey(userHandle);
-            const lease = store.leases[key];
             const now = Date.now();
-            const expired = lease && !isLeaseActive(lease, now);
-
-            if (expired) {
-                delete store.leases[key];
-            }
             const pruned = pruneExpiredOperations(store, now);
 
             return {
-                write: expired || pruned,
-                value: toPublicStatus(store.leases[key], normalizedSessionId, now),
+                write: pruned,
+                value: toPublicStatus(store.leases[key], normalizedSessionId),
+            };
+        });
+    },
+
+    async verify(userHandle, tabSessionId) {
+        const normalizedSessionId = normalizeTabSessionId(tabSessionId);
+        return await withStoreLock(async (store) => {
+            const key = getLeaseKey(userHandle);
+            const lease = store.leases[key];
+            return {
+                write: false,
+                value: {
+                    active: Boolean(normalizedSessionId) && getStoredTabSessionId(lease) === normalizedSessionId,
+                    hasActiveSession: isLeaseActive(lease),
+                },
             };
         });
     },
@@ -257,17 +268,17 @@ export const activeSessionStore = {
             const now = Date.now();
             const pruned = pruneExpiredOperations(store, now);
 
-            if (!isLeaseActive(existingLease, now) || getStoredTabSessionId(existingLease) === normalizedSessionId) {
+            if (!isLeaseActive(existingLease) || getStoredTabSessionId(existingLease) === normalizedSessionId) {
                 store.leases[key] = createLease(userHandle, normalizedSessionId, metadata, now);
                 return {
                     write: true,
-                    value: toPublicStatus(store.leases[key], normalizedSessionId, now),
+                    value: toPublicStatus(store.leases[key], normalizedSessionId),
                 };
             }
 
             return {
                 write: pruned,
-                value: toPublicStatus(existingLease, normalizedSessionId, now),
+                value: toPublicStatus(existingLease, normalizedSessionId),
             };
         });
     },
@@ -290,7 +301,7 @@ export const activeSessionStore = {
             }
             return {
                 write: true,
-                value: toPublicStatus(store.leases[key], normalizedSessionId, now),
+                value: toPublicStatus(store.leases[key], normalizedSessionId),
             };
         });
     },
@@ -304,10 +315,7 @@ export const activeSessionStore = {
         return await withStoreLock(async (store) => {
             const key = getLeaseKey(userHandle);
             const lease = store.leases[key];
-            const now = Date.now();
-
-            if (!isLeaseActive(lease, now)) {
-                delete store.leases[key];
+            if (!isLeaseActive(lease)) {
                 throw createActiveSessionError();
             }
 
@@ -315,11 +323,9 @@ export const activeSessionStore = {
                 throw createActiveSessionError();
             }
 
-            lease.lastSeenAt = now;
-            lease.expiresAt = now + LEASE_TTL_MS;
             return {
-                write: true,
-                value: toPublicStatus(lease, normalizedSessionId, now),
+                write: false,
+                value: toPublicStatus(lease, normalizedSessionId),
             };
         });
     },
@@ -333,10 +339,7 @@ export const activeSessionStore = {
         return await withStoreLock(async (store) => {
             const key = getLeaseKey(userHandle);
             const lease = store.leases[key];
-            const now = Date.now();
-
-            if (!isLeaseActive(lease, now)) {
-                delete store.leases[key];
+            if (!isLeaseActive(lease)) {
                 throw createActiveSessionError();
             }
 
@@ -344,10 +347,8 @@ export const activeSessionStore = {
                 throw createActiveSessionError();
             }
 
-            lease.lastSeenAt = now;
-            lease.expiresAt = now + LEASE_TTL_MS;
             return {
-                write: true,
+                write: false,
                 value: true,
             };
         });
@@ -390,8 +391,7 @@ export const activeSessionStore = {
             const key = getLeaseKey(userHandle);
             const lease = store.leases[key];
 
-            if (!isLeaseActive(lease, now)) {
-                delete store.leases[key];
+            if (!isLeaseActive(lease)) {
                 throw createActiveSessionError();
             }
 
@@ -402,7 +402,6 @@ export const activeSessionStore = {
             const operation = createOperation(userHandle, normalizedSessionId, operationType, now);
             store.operations[operation.operationId] = operation;
             lease.lastSeenAt = now;
-            lease.expiresAt = now + LEASE_TTL_MS;
             return {
                 write: true,
                 value: structuredClone(operation),

@@ -2187,16 +2187,19 @@ const ACTIVE_SESSION_STORAGE_KEY = 'aikobots.tabSessionId';
 const ACTIVE_SESSION_CLIENT_INSTALL_KEY = 'aikobots.clientInstallId';
 const ACTIVE_SESSION_DUPLICATE_CHANNEL = 'aikobots.active-session.tabs';
 const ACTIVE_SESSION_DUPLICATE_STORAGE_KEY = 'aikobots.activeSession.tabProbe';
-const ACTIVE_SESSION_LOCK_MESSAGE = 'Aikobots is open in another browser session. This session is now read-only. Click \'Take Over\' to make this session active, or close the other browser session and reload this page.';
-const ACTIVE_SESSION_POLL_MS = 20_000;
+const ACTIVE_SESSION_TAKEOVER_STORAGE_KEY = 'aikobots.activeSession.takeover';
+const ACTIVE_SESSION_LOCK_MESSAGE = 'Aikobots is open in another tab or browser session. This session is now read-only. Reload this page to make this tab active.';
+const ACTIVE_SESSION_VERIFY_DEBOUNCE_MS = 750;
 const ACTIVE_SESSION_DUPLICATE_PROBE_MS = 500;
 const ACTIVE_SESSION_DUPLICATE_PROBE_ATTEMPTS = 2;
 const ACTIVE_SESSION_WRITE_CONTROL_PATTERN = /(send|generate|regenerate|continue|swipe|save|delete|remove|trash|edit|rename|create|new|import|upload|restore|backup|reset|submit|install|update|switch|move|duplicate|merge|promote|demote|checkout|checkin|consolidate|compact|capture|commit|memory|clip|persona|avatar)/i;
-let activeSessionHeartbeatTimer = null;
+let activeSessionVerifyTimer = null;
+let activeSessionVerifyInFlight = false;
 let activeSessionLockModal = null;
 let activeSessionReadOnlyObserver = null;
 let activeSessionDuplicateChannel = null;
 let activeSessionDuplicateStorageResponderBound = false;
+let activeSessionFocusHandlersBound = false;
 export let isActiveSessionLocked = false;
 
 
@@ -2285,16 +2288,52 @@ function postDuplicateTabMessage(channel, message) {
     }
 }
 
+function createActiveSessionTakeoverMessage() {
+    return {
+        type: 'takeover',
+        tabSessionId,
+        runtimeId: activeSessionRuntimeId,
+        startedAt: activeSessionStartedAt,
+        sentAt: Date.now(),
+    };
+}
+
+function handleActiveSessionTakeoverMessage(data) {
+    if (data?.type !== 'takeover' || data.runtimeId === activeSessionRuntimeId || !data.tabSessionId) {
+        return;
+    }
+
+    if (data.tabSessionId !== tabSessionId) {
+        setActiveSessionLocked(true);
+    }
+}
+
+function broadcastActiveSessionTakeover() {
+    const message = createActiveSessionTakeoverMessage();
+    activeSessionDuplicateChannel?.postMessage?.(message);
+    try {
+        localStorage.setItem(ACTIVE_SESSION_TAKEOVER_STORAGE_KEY, JSON.stringify(message));
+        localStorage.removeItem(ACTIVE_SESSION_TAKEOVER_STORAGE_KEY);
+    } catch {
+        // Same-browser takeover notification is best-effort. Server write checks remain authoritative.
+    }
+}
+
 function setupActiveSessionDuplicateResponder() {
     if (!activeSessionDuplicateStorageResponderBound) {
         activeSessionDuplicateStorageResponderBound = true;
         window.addEventListener('storage', (event) => {
-            if (event.key !== ACTIVE_SESSION_DUPLICATE_STORAGE_KEY || !event.newValue) {
+            if (![ACTIVE_SESSION_DUPLICATE_STORAGE_KEY, ACTIVE_SESSION_TAKEOVER_STORAGE_KEY].includes(event.key) || !event.newValue) {
                 return;
             }
 
             try {
                 const data = JSON.parse(event.newValue);
+                if (event.key === ACTIVE_SESSION_TAKEOVER_STORAGE_KEY) {
+                    handleActiveSessionTakeoverMessage(data);
+                    return;
+                }
+
                 if (data?.type === 'probe' && isSameActiveTabSessionMessage(data) && isPeerNewerActiveSessionRuntime(data)) {
                     postDuplicateTabMessage(activeSessionDuplicateChannel, createDuplicateTabMessage('ack'));
                 }
@@ -2311,6 +2350,11 @@ function setupActiveSessionDuplicateResponder() {
     activeSessionDuplicateChannel = new BroadcastChannel(ACTIVE_SESSION_DUPLICATE_CHANNEL);
     activeSessionDuplicateChannel.addEventListener('message', (message) => {
         const data = message?.data;
+        if (data?.type === 'takeover') {
+            handleActiveSessionTakeoverMessage(data);
+            return;
+        }
+
         if (!data || data.type !== 'probe' || !isSameActiveTabSessionMessage(data) || !isPeerNewerActiveSessionRuntime(data)) {
             return;
         }
@@ -2376,6 +2420,7 @@ export function getRequestHeaders({ omitContentType = false } = {}) {
         'X-CSRF-Token': token,
         'X-Tab-Session-Id': tabSessionId,
         'X-Client-Install-Id': clientInstallId,
+        'X-Tab-Runtime-Id': activeSessionRuntimeId,
     };
 
     if (omitContentType) {
@@ -2389,6 +2434,7 @@ $.ajaxPrefilter((options, originalOptions, xhr) => {
     xhr.setRequestHeader('X-CSRF-Token', token);
     xhr.setRequestHeader('X-Tab-Session-Id', tabSessionId);
     xhr.setRequestHeader('X-Client-Install-Id', clientInstallId);
+    xhr.setRequestHeader('X-Tab-Runtime-Id', activeSessionRuntimeId);
 });
 
 function ensureActiveSessionLockModal() {
@@ -2406,13 +2452,11 @@ function ensureActiveSessionLockModal() {
             <strong>Read-only session</strong>
             <p>${ACTIVE_SESSION_LOCK_MESSAGE}</p>
             <div class="active_session_lock_actions">
-                <button id="active_session_takeover" class="menu_button" type="button">Take Over</button>
-                <button id="active_session_reload" class="menu_button" type="button">Reload</button>
+                <button id="active_session_reload" class="menu_button" type="button">Reload and Make Active</button>
             </div>
         </div>`;
 
     document.body.append(activeSessionLockModal);
-    document.getElementById('active_session_takeover')?.addEventListener('click', takeOverActiveSession);
     document.getElementById('active_session_reload')?.addEventListener('click', () => location.reload());
     return activeSessionLockModal;
 }
@@ -2467,24 +2511,15 @@ function setActiveSessionLocked(locked) {
     updateActiveSessionReadOnlyControls();
 
     if (isActiveSessionLocked) {
-        if (activeSessionHeartbeatTimer) {
-            clearInterval(activeSessionHeartbeatTimer);
-            activeSessionHeartbeatTimer = null;
+        if (activeSessionVerifyTimer) {
+            clearTimeout(activeSessionVerifyTimer);
+            activeSessionVerifyTimer = null;
         }
         if (is_send_press) {
             stopGeneration();
         }
-        toastr.warning('This tab is read-only until it takes over the active session.', 'Read-only session', { preventDuplicates: true });
+        toastr.warning(ACTIVE_SESSION_LOCK_MESSAGE, 'Read-only session', { preventDuplicates: true });
     }
-}
-
-function hasUnsavedActiveSessionEdits() {
-    return Boolean(
-        is_send_press ||
-        (selected_group && is_group_generating) ||
-        hasUnsavedCharacterEdits() ||
-        document.querySelector('[dirty]'),
-    );
 }
 
 async function parseActiveSessionErrorResponse(response) {
@@ -2527,6 +2562,7 @@ function withTabSessionHeader(input, init) {
         const headers = new Headers(request.headers);
         headers.set('X-Tab-Session-Id', tabSessionId);
         headers.set('X-Client-Install-Id', clientInstallId);
+        headers.set('X-Tab-Runtime-Id', activeSessionRuntimeId);
         return [new Request(request, { headers }), undefined];
     }
 
@@ -2534,6 +2570,7 @@ function withTabSessionHeader(input, init) {
     const headers = new Headers(nextInit.headers || {});
     headers.set('X-Tab-Session-Id', tabSessionId);
     headers.set('X-Client-Install-Id', clientInstallId);
+    headers.set('X-Tab-Runtime-Id', activeSessionRuntimeId);
     nextInit.headers = headers;
     return [input, nextInit];
 }
@@ -2582,16 +2619,20 @@ async function activateActiveSessionOnBoot() {
 
     const status = await response.json();
     setActiveSessionLocked(!status.active);
+    if (status.active) {
+        broadcastActiveSessionTakeover();
+    }
     return Boolean(status.active);
 }
 
-async function pollActiveSession() {
+async function verifyActiveSession() {
     try {
-        if (isActiveSessionLocked) {
+        if (isActiveSessionLocked || activeSessionVerifyInFlight) {
             return;
         }
 
-        const response = await postActiveSession('heartbeat');
+        activeSessionVerifyInFlight = true;
+        const response = await postActiveSession('verify');
         await handleActiveSessionResponse(response);
         if (!response.ok) {
             setActiveSessionLocked(true);
@@ -2601,40 +2642,46 @@ async function pollActiveSession() {
         const status = await response.json();
         setActiveSessionLocked(!status.active);
     } catch (error) {
-        console.warn('Active tab session poll failed', error);
+        console.warn('Active tab session verification failed', error);
+    } finally {
+        activeSessionVerifyInFlight = false;
     }
 }
 
-async function takeOverActiveSession() {
-    if (hasUnsavedActiveSessionEdits() && !confirm('This browser has unsaved edits or an in-progress generation. Taking over will reload the page and discard local unsaved state. Continue?')) {
+function scheduleActiveSessionVerification() {
+    if (isActiveSessionLocked) {
         return;
     }
 
-    try {
-        const response = await postActiveSession('take-over');
-        await handleActiveSessionResponse(response);
-
-        if (!response.ok) {
-            setActiveSessionLocked(true);
-            return;
-        }
-
-        const status = await response.json();
-        if (status.active) {
-            location.reload();
-            return;
-        }
-
-        setActiveSessionLocked(true);
-    } catch (error) {
-        console.error('Failed to take over active tab session', error);
-        toastr.error('Could not take over the active session. Please try again.');
+    if (activeSessionVerifyTimer) {
+        clearTimeout(activeSessionVerifyTimer);
     }
+
+    activeSessionVerifyTimer = setTimeout(() => {
+        activeSessionVerifyTimer = null;
+        verifyActiveSession();
+    }, ACTIVE_SESSION_VERIFY_DEBOUNCE_MS);
+}
+
+function bindActiveSessionFocusVerification() {
+    if (activeSessionFocusHandlersBound) {
+        return;
+    }
+
+    activeSessionFocusHandlersBound = true;
+    window.addEventListener('focus', scheduleActiveSessionVerification);
+    window.addEventListener('pageshow', scheduleActiveSessionVerification);
+    document.addEventListener('visibilitychange', () => {
+        if (document.visibilityState === 'visible') {
+            scheduleActiveSessionVerification();
+        }
+    });
 }
 
 async function initActiveTabSession() {
     ensureActiveSessionLockModal();
     await regenerateCopiedTabSessionIdIfNeeded();
+    bindActiveSessionFocusVerification();
     if (!activeSessionReadOnlyObserver && typeof MutationObserver === 'function') {
         activeSessionReadOnlyObserver = new MutationObserver(() => {
             if (isActiveSessionLocked) {
@@ -2644,16 +2691,14 @@ async function initActiveTabSession() {
         activeSessionReadOnlyObserver.observe(document.body, { childList: true, subtree: true });
     }
 
-    await activateActiveSessionOnBoot();
     if (isActiveSessionLocked) {
         return;
     }
 
-    if (activeSessionHeartbeatTimer) {
-        clearInterval(activeSessionHeartbeatTimer);
+    await activateActiveSessionOnBoot();
+    if (isActiveSessionLocked) {
+        return;
     }
-
-    activeSessionHeartbeatTimer = setInterval(pollActiveSession, ACTIVE_SESSION_POLL_MS);
 }
 
 function enforceChatCompletionsOnlyMode({ save = false } = {}) {

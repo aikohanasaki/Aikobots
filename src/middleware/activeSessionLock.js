@@ -3,7 +3,7 @@ import express from 'express';
 import { activeSessionStore, isActiveSessionError, sendActiveSessionRequired } from '../active-session-store.js';
 
 const READ_ONLY_POST_ROUTES = [
-    /^\/api\/active-session\/(?:status|claim|take-over|heartbeat|release)$/,
+    /^\/api\/active-session\/(?:status|verify|claim|take-over|heartbeat|release)$/,
     /^\/api\/ping$/,
     /^\/api\/users\/(?:logout|get|slugify)$/,
     /^\/api\/assets\/(?:get|character)$/,
@@ -50,6 +50,21 @@ activeSessionRouter.post('/status', async (request, response) => {
         return response.json(status);
     } catch (error) {
         console.error('Failed to get active tab session status:', error);
+        return response.sendStatus(error.status || 500);
+    }
+});
+
+activeSessionRouter.post('/verify', async (request, response) => {
+    try {
+        const tabSessionId = activeSessionStore.getTabSessionId(request);
+        const status = await activeSessionStore.verify(request.user.profile.handle, tabSessionId);
+        if (!status.active) {
+            return sendActiveSessionRequired(response);
+        }
+
+        return response.json(status);
+    } catch (error) {
+        console.error('Failed to verify active tab session status:', error);
         return response.sendStatus(error.status || 500);
     }
 });
