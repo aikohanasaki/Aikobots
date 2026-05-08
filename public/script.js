@@ -2303,9 +2303,7 @@ function handleActiveSessionTakeoverMessage(data) {
         return;
     }
 
-    if (data.tabSessionId !== tabSessionId) {
-        setActiveSessionLocked(true);
-    }
+    setActiveSessionLocked(true);
 }
 
 function broadcastActiveSessionTakeover() {
@@ -2695,7 +2693,12 @@ async function initActiveTabSession() {
         return;
     }
 
-    await activateActiveSessionOnBoot();
+    try {
+        await activateActiveSessionOnBoot();
+    } catch (error) {
+        console.warn('Active session takeover on boot failed', error);
+    }
+
     if (isActiveSessionLocked) {
         return;
     }
