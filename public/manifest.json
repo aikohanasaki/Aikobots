@@ -7,32 +7,32 @@
     "background_color": "#202124",
     "icons": [
         {
-            "src": "img/apple-icon-57x57.png",
+            "src": "img/aikobots-57x57.png",
             "sizes": "57x57",
             "type": "image/png"
         },
         {
-            "src": "img/apple-icon-72x72.png",
+            "src": "img/aikobots-72x72.png",
             "sizes": "72x72",
             "type": "image/png"
         },
         {
-            "src": "img/apple-icon-114x114.png",
+            "src": "img/aikobots-114x114.png",
             "sizes": "114x114",
             "type": "image/png"
         },
         {
-            "src": "img/apple-icon-144x144.png",
+            "src": "img/aikobots-144x144.png",
             "sizes": "144x144",
             "type": "image/png"
         },
         {
-            "src": "img/apple-icon-192x192.png",
+            "src": "img/aikobots-192x192.png",
             "sizes": "192x192",
             "type": "image/png"
         },
         {
-            "src": "img/apple-icon-512x512.png",
+            "src": "img/aikobots-512x512.png",
             "sizes": "512x512",
             "type": "image/png"
         }
