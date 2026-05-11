@@ -6657,18 +6657,18 @@ export async function openLorebookOrderingDialog(name, data, options = {}) {
     }
 
     const onSave = typeof options.onSave === 'function' ? options.onSave : null;
-    const popupTitle = options.popupTitle || t`Lorebook Ordering: ${name}`;
-    const heading = options.heading || t`ST Lorebook Ordering`;
-    const introText = options.introText || t`Configure priority, order, budget, and group chat behavior for this lorebook.`;
-    const successMessage = options.successMessage || t`Lorebook ordering updated.`;
-    const successTitle = options.successTitle || t`World Info`;
+    const popupTitle = options.popupTitle ?? t`Lorebook Ordering: ${name}`;
+    const heading = options.heading ?? t`ST Lorebook Ordering`;
+    const introText = options.introText ?? t`Configure priority, order, budget, and group chat behavior for this lorebook.`;
+    const successMessage = options.successMessage ?? t`Lorebook ordering updated.`;
+    const successTitle = options.successTitle ?? t`World Info`;
     const settings = getStloSettingsFromLorebook(data);
     const container = document.createElement('div');
     container.className = 'stlo_popup flex-container flexFlowColumn gap1';
     container.innerHTML = `
         <div class="stlo_popup_intro">
-            <h3 class="margin0">${heading}</h3>
-            <small>${introText}</small>
+            <h3 class="margin0 stlo_popup_heading"></h3>
+            <small class="stlo_popup_intro_text"></small>
         </div>
         <section class="stlo_section">
             <h4 class="margin0">${t`Lorebook Priority`}</h4>
@@ -6742,6 +6742,8 @@ export async function openLorebookOrderingDialog(name, data, options = {}) {
             </div>
         </section>
     `;
+    container.querySelector('.stlo_popup_heading').textContent = heading;
+    container.querySelector('.stlo_popup_intro_text').textContent = introText;
 
     const prioritySelect = container.querySelector('#stlo_priority');
     const orderAdjustmentEnabledInput = container.querySelector('#stlo_order_adjustment_enabled');

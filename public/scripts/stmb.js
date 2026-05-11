@@ -5393,23 +5393,30 @@ async function showMainEntryPopup() {
         }
         if (target.closest('#stmb-settings-configure-lorebook-order-defaults')) {
             const moduleSettings = getModuleSettings();
-            await openLorebookOrderingDialog('Memory Book Defaults', {
-                entries: {},
-                ...(moduleSettings.lorebookOrderDefaults ? { stlo: moduleSettings.lorebookOrderDefaults } : {}),
-            }, {
-                popupTitle: 'Lorebook Order Defaults',
-                heading: 'ST Lorebook Ordering Defaults',
-                introText: 'Configure priority, order, budget, and group chat behavior for memory books that STMB auto-creates later.',
-                successMessage: 'Lorebook order defaults updated.',
-                successTitle: 'STMB',
-                onSave: async nextData => {
-                    moduleSettings.lorebookOrderDefaults = cloneStloSettings(nextData?.stlo, { omitDefault: true });
-                    stmbSettings = normalizeStmbSettings(stmbSettings);
-                    saveSettingsDebounced();
-                    updateSettingsPopupDynamicState(popup.dlg, currentUiConnection);
-                },
-            });
-            updateSettingsPopupDynamicState(popup.dlg, currentUiConnection);
+            try {
+                await openLorebookOrderingDialog('Memory Book Defaults', {
+                    entries: {},
+                    ...(moduleSettings.lorebookOrderDefaults
+                        ? { stlo: cloneStloSettings(moduleSettings.lorebookOrderDefaults) }
+                        : {}),
+                }, {
+                    popupTitle: 'Lorebook Order Defaults',
+                    heading: 'ST Lorebook Ordering Defaults',
+                    introText: 'Configure priority, order, budget, and group chat behavior for memory books that STMB auto-creates later.',
+                    successMessage: 'Lorebook order defaults updated.',
+                    successTitle: 'STMB',
+                    onSave: async nextData => {
+                        moduleSettings.lorebookOrderDefaults = cloneStloSettings(nextData?.stlo, { omitDefault: true });
+                        stmbSettings = normalizeStmbSettings(stmbSettings);
+                        saveSettingsDebounced();
+                        updateSettingsPopupDynamicState(popup.dlg, currentUiConnection);
+                    },
+                });
+                updateSettingsPopupDynamicState(popup.dlg, currentUiConnection);
+            } catch (error) {
+                console.warn('STMB lorebook order defaults popup failed', error);
+                toastr.error(error?.message || 'Failed to configure lorebook order defaults', 'STMB');
+            }
             return;
         }
         if (target.closest('#stmb-settings-open-prompt-manager')) {
