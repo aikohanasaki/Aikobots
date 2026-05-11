@@ -572,6 +572,74 @@ export function getTiktokenTokenizer(model) {
 }
 
 /**
+ * Gets a tiktoken tokenizer by encoding name.
+ * This is intentionally separate from getTiktokenTokenizer, which maps model names.
+ * @param {string} encoding Encoding name
+ * @returns {import('tiktoken').Tiktoken}
+ */
+function getTiktokenEncoding(encoding) {
+    const cacheKey = `encoding:${encoding}`;
+    if (tokenizersCache[cacheKey]) {
+        return tokenizersCache[cacheKey];
+    }
+
+    const tokenizer = tiktoken.get_encoding(encoding);
+    console.info('Instantiated the tokenizer encoding for', encoding);
+    tokenizersCache[cacheKey] = tokenizer;
+    return tokenizer;
+}
+
+/**
+ * Counts chat-completion style messages with the standardized local o200k_base tokenizer.
+ * This is scoped to the botmaker dry-run estimate and must not be used to select provider tokenizers.
+ * @param {object[]|object} messages Messages to count
+ * @returns {number} Token count
+ */
+export function countBotDryRunTokens(messages) {
+    const tokenizer = getTiktokenEncoding('o200k_base');
+    const messageArray = Array.isArray(messages) ? messages : [messages];
+    let tokenCount = 0;
+
+    for (const message of messageArray) {
+        if (!message || typeof message !== 'object') {
+            continue;
+        }
+
+        tokenCount += 3;
+        for (const [key, value] of Object.entries(message)) {
+            if (value === undefined || value === null) {
+                continue;
+            }
+
+            if (key === 'content' && Array.isArray(value)) {
+                for (const part of value) {
+                    if (part?.type === 'text') {
+                        tokenCount += tokenizer.encode(String(part.text ?? '')).length;
+                    } else if (part?.type === 'image_url') {
+                        tokenCount += 85;
+                    } else if (part?.type === 'video_url') {
+                        tokenCount += 263 * 40;
+                    } else if (part?.type === 'input_audio' || part?.type === 'audio_url') {
+                        tokenCount += 32 * 300;
+                    } else {
+                        tokenCount += tokenizer.encode(JSON.stringify(part) ?? '').length;
+                    }
+                }
+                continue;
+            }
+
+            const stringValue = typeof value === 'string' ? value : (JSON.stringify(value) ?? '');
+            tokenCount += tokenizer.encode(stringValue).length;
+            if (key === 'name') {
+                tokenCount += 1;
+            }
+        }
+    }
+
+    return tokenCount + 3;
+}
+
+/**
  * Counts the tokens for the given messages using the WebTokenizer and Claude prompt conversion.
  * @param {Tokenizer} tokenizer Web tokenizer
  * @param {object[]} messages Array of messages

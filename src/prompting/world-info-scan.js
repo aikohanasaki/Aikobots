@@ -1,4 +1,5 @@
 import {
+    countBotDryRunTokens,
     countWebTokenizerTokens,
     getSentencepieceTokenizer,
     getTiktokenTokenizer,
@@ -83,6 +84,11 @@ async function countSentencepieceArrayTokens(tokenizer, array) {
 }
 
 async function countTokensOpenAIAsync(messages, model, full = false) {
+    if (String(model || '') === 'o200k_base') {
+        const count = countBotDryRunTokens(messages);
+        return full ? count : Math.max(0, count - 3);
+    }
+
     const tokenizerModel = getTokenizerModel(String(model || ''));
     const messageArray = Array.isArray(messages) ? messages : [messages];
 

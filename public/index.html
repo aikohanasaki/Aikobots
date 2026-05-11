@@ -3418,16 +3418,10 @@
                             <h2 class="interactable"></h2>
                         </div>
                         <div id="result_info" class="flex-container" style="display: none;">
-                            <div id="result_info_text" title="Token counts may be inaccurate and provided just for reference." data-i18n="[title]Token counts may be inaccurate and provided just for reference.">
-                                <div>
-                                    <strong id="result_info_total_tokens" title="Total tokens" data-i18n="[title]Total tokens"><span data-i18n="Calculating...">Calculating...</span></strong>&nbsp;<span data-i18n="Tokens">Tokens</span>
-                                </div>
-                                <div>
-                                    <small title="Permanent tokens" data-i18n="[title]Permanent tokens">
-                                        (<span id="result_info_permanent_tokens"></span>&nbsp;<span data-i18n="Permanent">Permanent</span>)
-                                    </small>
-                                </div>
-                            </div>
+                            <button id="result_info_text" type="button" class="menu_button" title="Run a standardized token dry run" data-i18n="[title]Run a standardized token dry run">
+                                <strong id="result_info_total_tokens" title="Dry-run tokens" data-i18n="[title]Dry-run tokens"><span data-i18n="Not calculated">Not calculated</span></strong>
+                                <small id="result_info_calculated_at"></small>
+                            </button>
                             <a id="chartokenwarning" class="right_menu_button fa-solid fa-triangle-exclamation" href="https://docs.sillytavern.app/usage/core-concepts/characterdesign/#character-tokens" target="_blank" title="About Token 'Limits'" data-i18n="[title]About Token 'Limits'"></a>
                             <i title="Toggle character info panel" data-i18n="[title]Toggle character info panel" id="hideCharPanelAvatarButton" class="fa-solid fa-eye right_menu_button"></i>
                         </div>

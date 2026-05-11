@@ -53,6 +53,9 @@ import {
     moveAvatarFavorite,
     setCharacterFavorite,
 } from '../favorites-repository.js';
+import { countBotDryRunTokens } from './tokenizers.js';
+import { assembleChatCompletionPrompt } from '../prompting/chat-completion-assembly.js';
+import { prepareServerPromptContext } from './backends/chat-completions.js';
 
 // With 100 MB limit it would take roughly 3000 characters to reach this limit
 const memoryCacheCapacity = getConfigValue('performance.memoryCacheCapacity', '100mb');
@@ -65,6 +68,11 @@ const useDiskCache = !!getConfigValue('performance.useDiskCache', true, 'boolean
 const characterEndpointInstanceId = `${process.pid}-${Date.now().toString(36)}`;
 let characterListRequestCounter = 0;
 const ALLOWED_CHARACTER_IMAGE_EXTENSIONS = new Set(['.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp']);
+const TOKEN_DRY_RUN_TOKENIZER = 'o200k_base';
+const TOKEN_DRY_RUN_TOKENIZER_MODE = 'standardized_local_estimate';
+const TOKEN_DRY_RUN_MODE = 'zero_history_zero_persona';
+const TOKEN_DRY_RUN_VERSION = 1;
+const TOKEN_DRY_RUN_ASSEMBLY_MODEL = 'gpt-4o';
 
 function resolveUploadedFilePath(file) {
     return assertPathUnderParent(file.destination, path.join(file.destination, file.filename), 'upload');
@@ -915,6 +923,124 @@ function canManageCharacterOwnership(characterCard, request) {
     return ownerHandles.length === 0 || Boolean(request.user?.profile?.admin) || ownerHandles.includes(request.user?.profile?.handle);
 }
 
+function getCharacterCardTextField(characterCard, dataField, legacyField = dataField) {
+    return String(_.get(characterCard, `data.${dataField}`, characterCard?.[legacyField] || '') || '');
+}
+
+function getCharacterDryRunSavedFields(characterCard) {
+    return {
+        name: getCharacterCardTextField(characterCard, 'name', 'name'),
+        description: getCharacterCardTextField(characterCard, 'description', 'description'),
+        personality: getCharacterCardTextField(characterCard, 'personality', 'personality'),
+        scenario: getCharacterCardTextField(characterCard, 'scenario', 'scenario'),
+        mesExamples: getCharacterCardTextField(characterCard, 'mes_example', 'mes_example'),
+        charDepthPrompt: String(_.get(characterCard, 'data.extensions.depth_prompt.prompt', '') || ''),
+        creatorNotes: getCharacterCardTextField(characterCard, 'creator_notes', 'creatorcomment'),
+        systemPrompt: getCharacterCardTextField(characterCard, 'system_prompt', ''),
+        jailbreakPrompt: getCharacterCardTextField(characterCard, 'post_history_instructions', ''),
+    };
+}
+
+function sanitizeDryRunPromptContext(rawPromptContext, characterCard, avatarUrl) {
+    if (!rawPromptContext || typeof rawPromptContext !== 'object' || Array.isArray(rawPromptContext)) {
+        const error = new Error('prompt_context is required.');
+        error.status = 400;
+        throw error;
+    }
+
+    const promptContext = structuredClone(rawPromptContext);
+    const savedFields = getCharacterDryRunSavedFields(characterCard);
+    const avatar = String(avatarUrl || '');
+    const filename = path.parse(avatar).name;
+    const existingWorldInfoRequest = promptContext.worldInfoRequest && typeof promptContext.worldInfoRequest === 'object'
+        ? promptContext.worldInfoRequest
+        : {};
+    const existingGlobalScanData = existingWorldInfoRequest.globalScanData && typeof existingWorldInfoRequest.globalScanData === 'object'
+        ? existingWorldInfoRequest.globalScanData
+        : {};
+
+    promptContext.model = TOKEN_DRY_RUN_ASSEMBLY_MODEL;
+    promptContext.charName = savedFields.name;
+    promptContext.name2 = savedFields.name;
+    promptContext.charDescription = savedFields.description;
+    promptContext.charPersonality = savedFields.personality;
+    promptContext.scenario = savedFields.scenario;
+    promptContext.mesExamples = savedFields.mesExamples;
+    promptContext.charDepthPrompt = savedFields.charDepthPrompt;
+    promptContext.creatorNotes = savedFields.creatorNotes;
+    promptContext.systemPromptOverride = promptContext.systemPromptOverride ? savedFields.systemPrompt : '';
+    promptContext.jailbreakPromptOverride = promptContext.jailbreakPromptOverride ? savedFields.jailbreakPrompt : '';
+    promptContext.persona = '';
+    promptContext.coreChat = [];
+    promptContext.messages = [];
+    promptContext.groupId = null;
+    promptContext.groupName = '';
+    promptContext.groupMembers = [];
+    promptContext.selectedGroup = false;
+    const existingActiveCharacter = promptContext.activeCharacter && typeof promptContext.activeCharacter === 'object'
+        ? promptContext.activeCharacter
+        : {};
+    promptContext.activeCharacter = {
+        ...existingActiveCharacter,
+        id: existingActiveCharacter.id || filename,
+    };
+    promptContext.powerUser = {
+        ...(promptContext.powerUser && typeof promptContext.powerUser === 'object' ? promptContext.powerUser : {}),
+        persona_description: '',
+    };
+
+    promptContext.worldInfoRequest = {
+        ...existingWorldInfoRequest,
+        chat: [],
+        isDryRun: true,
+        selectedGroup: false,
+        personaWorld: '',
+        characterWorld: String(_.get(characterCard, 'data.extensions.world', '') || ''),
+        currentCharacterFilename: filename,
+        activeSpeaker: {
+            name: savedFields.name,
+            avatar,
+            filename,
+        },
+        timedWorldInfo: {},
+        globalScanData: {
+            ...existingGlobalScanData,
+            personaDescription: '',
+            characterDescription: savedFields.description,
+            characterPersonality: savedFields.personality,
+            characterDepthPrompt: savedFields.charDepthPrompt,
+            scenario: savedFields.scenario,
+            creatorNotes: savedFields.creatorNotes,
+            trigger: 'normal',
+        },
+        tokenizerModel: TOKEN_DRY_RUN_TOKENIZER,
+    };
+
+    return promptContext;
+}
+
+function buildTokenDryRunMetadata(tokenCount) {
+    return {
+        token_count: Number(tokenCount) || 0,
+        calculated_at: new Date().toISOString(),
+        tokenizer: TOKEN_DRY_RUN_TOKENIZER,
+        tokenizer_mode: TOKEN_DRY_RUN_TOKENIZER_MODE,
+        mode: TOKEN_DRY_RUN_MODE,
+        version: TOKEN_DRY_RUN_VERSION,
+    };
+}
+
+function normalizeTokenDryRunMetadata(metadata) {
+    return {
+        token_count: Number(metadata.token_count) || 0,
+        calculated_at: String(metadata.calculated_at || ''),
+        tokenizer: TOKEN_DRY_RUN_TOKENIZER,
+        tokenizer_mode: TOKEN_DRY_RUN_TOKENIZER_MODE,
+        mode: TOKEN_DRY_RUN_MODE,
+        version: TOKEN_DRY_RUN_VERSION,
+    };
+}
+
 /**
  * Removes shared-character identity metadata from a copied card.
  * @param {object|null|undefined} characterCard Character card to mutate
@@ -1449,6 +1575,62 @@ router.post('/rename', validateAvatarUrlMiddleware, async function (request, res
             return response.status(400).json({ error: err.message });
         }
         console.error(err);
+        return response.sendStatus(500);
+    }
+});
+
+router.post('/token-dry-run', validateAvatarUrlMiddleware, async function (request, response) {
+    const avatarUrl = String(request.body?.avatar_url || '').trim();
+    if (!avatarUrl) {
+        return response.status(400).json({ error: 'avatar_url is required.' });
+    }
+
+    try {
+        const avatarPath = resolveCharacterFilePath(request.user.directories, avatarUrl);
+        if (!fs.existsSync(avatarPath)) {
+            return response.status(404).json({ error: 'Character not found.' });
+        }
+
+        const rawCharacterData = await readCharacterData(avatarPath);
+        if (!rawCharacterData) {
+            return response.status(404).json({ error: 'Character not found.' });
+        }
+
+        const rawCharacterCard = JSON.parse(rawCharacterData);
+        const characterCard = getCharaCardV2(structuredClone(rawCharacterCard), request.user.directories, false);
+        if (!canManageCharacterOwnership(characterCard, request)) {
+            const ownerLabel = getCharacterOwnerLabel(characterCard);
+            return response.status(403).json({ error: `Only ${ownerLabel} and admins can run a token dry run for this character.` });
+        }
+
+        await assertSharedCharacterCheckoutForMutation(request, avatarUrl);
+
+        const promptContext = sanitizeDryRunPromptContext(request.body.prompt_context, characterCard, avatarUrl);
+        await prepareServerPromptContext(request.user, request.user.directories, promptContext);
+        const assembly = await assembleChatCompletionPrompt(promptContext);
+        const metadata = buildTokenDryRunMetadata(countBotDryRunTokens(assembly.chat || []));
+
+        _.set(rawCharacterCard, 'data.extensions.aikobots.token_dry_run', metadata);
+        const wasWritten = await writeCharacterData(avatarPath, JSON.stringify(rawCharacterCard), path.parse(avatarUrl).name, request);
+        if (!wasWritten) {
+            return response.sendStatus(500);
+        }
+
+        return response.json(normalizeTokenDryRunMetadata(metadata));
+    } catch (err) {
+        if (err instanceof PathSecurityError) {
+            return response.status(400).json({ error: err.message });
+        }
+
+        if (err instanceof CharacterSharingRepositoryError) {
+            return sendSharedCharacterError(response, err);
+        }
+
+        if (err?.status === 400) {
+            return response.status(400).json({ error: err.message });
+        }
+
+        console.error('Character token dry run failed.', err);
         return response.sendStatus(500);
     }
 });

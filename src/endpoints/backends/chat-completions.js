@@ -2210,7 +2210,7 @@ async function sendAzureOpenAIRequest(request) {
 
 export const router = express.Router();
 
-async function prepareServerPromptContext(user, directories, promptContext) {
+export async function prepareServerPromptContext(user, directories, promptContext) {
     if (!promptContext || typeof promptContext !== 'object') {
         return { aborted: false, executedExtensions: [] };
     }

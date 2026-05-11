@@ -4099,6 +4099,19 @@ grammarly-extension {
     flex-direction: column;
     line-height: 0.9;
     text-align: right;
+    align-items: flex-end;
+    min-width: 0;
+}
+
+#result_info_text:disabled {
+    cursor: default;
+    opacity: 0.6;
+}
+
+#result_info_calculated_at {
+    font-size: calc(var(--mainFontSize) * 0.75);
+    opacity: 0.8;
+    white-space: nowrap;
 }
 
 #result_info .right_menu_button {

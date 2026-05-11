@@ -212,7 +212,6 @@ export async function RA_CountCharTokens() {
     counterNonce = Date.now();
     const counterNonceLocal = counterNonce;
     let total_tokens = 0;
-    let permanent_tokens = 0;
 
     const tokenCounters = document.querySelectorAll('[data-token-counter]');
     for (const tokenCounter of tokenCounters) {
@@ -222,7 +221,6 @@ export async function RA_CountCharTokens() {
 
         const counter = $(tokenCounter);
         const input = $(document.getElementById(counter.data('token-counter')));
-        const isPermanent = counter.data('token-permanent') === true;
         const value = String(input.val());
 
         if (input.length === 0) {
@@ -240,7 +238,6 @@ export async function RA_CountCharTokens() {
 
         if (input.data('last-value-hash') === valueHash) {
             total_tokens += Number(counter.text());
-            permanent_tokens += isPermanent ? Number(counter.text()) : 0;
         } else {
             // We substitute macro for existing characters, but not for the character being created
             const valueToCount = menu_type === 'create' ? value : substituteParams(value);
@@ -252,7 +249,6 @@ export async function RA_CountCharTokens() {
 
             counter.text(tokens);
             total_tokens += tokens;
-            permanent_tokens += isPermanent ? tokens : 0;
             input.data('last-value-hash', valueHash);
         }
     }
@@ -260,8 +256,7 @@ export async function RA_CountCharTokens() {
     // Warn if total tokens exceeds the limit of half the max context
     const tokenLimit = Math.max(((main_api !== 'openai' ? max_context : oai_settings.openai_max_context) / 2), 1024);
     const showWarning = (total_tokens > tokenLimit);
-    $('#result_info_total_tokens').text(total_tokens);
-    $('#result_info_permanent_tokens').text(permanent_tokens);
+    $('#result_info_text').attr('data-current-editor-token-count', total_tokens);
     $('#result_info_text').toggleClass('neutral_warning', showWarning);
     $('#chartokenwarning').toggle(showWarning);
 }

@@ -1038,11 +1038,13 @@ export function markCharacterEditorDirty() {
 
     isCharacterEditorDirty = true;
     updateCharacterSaveButtonState();
+    updateCharacterTokenDryRunButton(this_chid);
 }
 
 function clearCharacterEditorDirtyState() {
     isCharacterEditorDirty = false;
     updateCharacterSaveButtonState();
+    updateCharacterTokenDryRunButton(this_chid);
 }
 
 function hasUnsavedCharacterEdits() {
@@ -13149,6 +13151,7 @@ export function select_selected_character(chid, { switchMenu = true, forceRefres
     // Update some stuff about the char management dropdown
     $('#character_source').attr('disabled', !getCharacterSource(chid) ? '' : null);
     updateCharacterSharedControls(chid);
+    updateCharacterTokenDryRunButton(chid);
 
     eventSource.emit(event_types.CHARACTER_EDITOR_OPENED, chid);
 
@@ -13228,6 +13231,7 @@ function select_rm_create({ switchMenu = true, hydrateForm = true } = {}) {
     $('#character_open_media_overrides').hide();
     hydrateForm && clearCharacterEditorDirtyState();
     updateCharacterSaveButtonState();
+    updateCharacterTokenDryRunButton(undefined);
 }
 
 function select_rm_characters() {
@@ -13364,6 +13368,205 @@ function isSharedCharacter(chid) {
 export function canEditCharacterMetadata(chid) {
     const ownerHandles = getCharacterOwnerHandles(chid);
     return ownerHandles.length === 0 || isAdmin() || ownerHandles.includes(currentUser?.handle);
+}
+
+function getCharacterTokenDryRunMetadata(chid) {
+    if (chid === undefined || chid === null || !characters[chid]) {
+        return null;
+    }
+
+    const metadata = characters[chid]?.data?.extensions?.aikobots?.token_dry_run;
+    return metadata && typeof metadata === 'object' && !Array.isArray(metadata) ? metadata : null;
+}
+
+function formatTokenDryRunDate(value) {
+    const date = value ? moment(value) : null;
+    return date?.isValid?.() ? date.format('lll') : '';
+}
+
+function updateCharacterTokenDryRunButton(chid = this_chid) {
+    const button = $('#result_info_text');
+    if (!button.length) {
+        return;
+    }
+
+    const hasCharacter = chid !== undefined && chid !== null && !!characters[chid] && !selected_group;
+    const metadata = hasCharacter ? getCharacterTokenDryRunMetadata(chid) : null;
+    const tokenCount = Number(metadata?.token_count);
+    const calculatedAt = formatTokenDryRunDate(metadata?.calculated_at);
+    const isCreateMode = $('#form_create').attr('actiontype') === 'createcharacter';
+    const isDirty = hasUnsavedCharacterEdits();
+    const isAuthorized = hasCharacter && canEditCharacterMetadata(chid);
+    const canClick = isCreateMode || isAuthorized;
+
+    $('#result_info_total_tokens').text(Number.isFinite(tokenCount) && tokenCount > 0 ? `${tokenCount} Tokens` : t`Not calculated`);
+    $('#result_info_calculated_at').text(calculatedAt || '');
+    button
+        .prop('disabled', !canClick)
+        .attr('aria-disabled', !canClick ? 'true' : 'false')
+        .attr('title',
+            isCreateMode
+                ? 'Save the character before running a token dry run'
+                : isDirty
+                    ? 'Save character edits before running a token dry run'
+                    : isAuthorized
+                        ? 'Run standardized zero-history token dry run'
+                        : 'Only botmakers and admins can run token dry runs',
+        );
+}
+
+async function buildCharacterTokenDryRunPromptContext(chid) {
+    const character = characters[chid];
+    if (!character) {
+        throw new Error('No saved character selected.');
+    }
+
+    const {
+        description,
+        personality,
+        scenario,
+        mesExamples,
+        system,
+        jailbreak,
+        charDepthPrompt,
+        creatorNotes,
+    } = getCharacterCardFields({ chid });
+    const mesExamplesArray = parseMesExamples(mesExamples);
+    const tagKey = getTagKeyForEntity(chid);
+    const characterFilename = getCharaFilename(chid);
+    const activeCharacter = globalThis.promptManager?.activeCharacter ?? character;
+    const promptContext = await buildServerAssemblyPayload({
+        coreChat: [],
+        name2: character.name || name2,
+        charDescription: description,
+        charPersonality: personality,
+        persona: '',
+        scenario,
+        mesExamples,
+        charDepthPrompt,
+        creatorNotes,
+        bias: '',
+        type: 'normal',
+        quietPrompt: '',
+        quietImage: null,
+        cyclePrompt: '',
+        systemPromptOverride: system,
+        jailbreakPromptOverride: jailbreak,
+        messages: [],
+        messageExamples: setOpenAIMessageExamples(mesExamplesArray),
+        worldInfoRequest: {
+            chat: [],
+            includeNames: world_info_include_names,
+            maxContext: getMaxContextSize(),
+            isDryRun: true,
+            globalScanData: {
+                personaDescription: '',
+                characterDescription: description,
+                characterPersonality: personality,
+                characterDepthPrompt: charDepthPrompt,
+                scenario,
+                creatorNotes,
+                trigger: 'normal',
+            },
+            regexScripts: getWorldInfoRegexScripts(),
+            selectedWorldInfo: selected_world_info,
+            chatWorld: '',
+            personaWorld: '',
+            characterWorld: character.data?.extensions?.world || '',
+            characterExtraBooks: getCharacterExtraBooks(characterFilename),
+            selectedGroup: false,
+            activeSpeaker: {
+                name: activeCharacter?.name || character.name || name2 || '',
+                avatar: activeCharacter?.avatar || character.avatar || '',
+                filename: String(activeCharacter?.avatar || character.avatar || '').replace(/\.[^/.]+$/, '') || characterFilename,
+            },
+            currentCharacterFilename: characterFilename,
+            currentCharacterTags: Array.isArray(tag_map?.[tagKey]) ? tag_map[tagKey] : [],
+            forcedActivations: getForcedActivationEntriesSnapshot(),
+            timedWorldInfo: {},
+            settings: {
+                world_info_depth,
+                world_info_min_activations,
+                world_info_min_activations_depth_max,
+                world_info_budget,
+                world_info_recursive,
+                world_info_case_sensitive,
+                world_info_match_whole_words,
+                world_info_budget_cap,
+                world_info_use_group_scoring,
+                world_info_max_recursion_steps,
+            },
+            worldInfoPosition: world_info_position,
+            wiAnchorPosition: wi_anchor_position,
+            tokenizerModel: 'o200k_base',
+        },
+    });
+
+    promptContext.persona = '';
+    if (promptContext.powerUser && typeof promptContext.powerUser === 'object') {
+        promptContext.powerUser.persona_description = '';
+    }
+
+    return promptContext;
+}
+
+async function runCharacterTokenDryRun() {
+    if ($('#form_create').attr('actiontype') === 'createcharacter') {
+        toastr.info('Save the character before running a token dry run.', 'Token dry run');
+        return;
+    }
+
+    if (this_chid === undefined || !characters[this_chid] || selected_group) {
+        toastr.warning('Choose a saved character first.', 'Token dry run');
+        return;
+    }
+
+    if (hasUnsavedCharacterEdits()) {
+        toastr.info('Save your character edits before running a token dry run.', 'Token dry run');
+        return;
+    }
+
+    if (!canEditCharacterMetadata(this_chid)) {
+        toastr.error(`Only ${getCharacterOwnerLabel(this_chid)} and admins can run a token dry run for this character.`, 'Token dry run');
+        return;
+    }
+
+    const button = $('#result_info_text');
+    const previousDisabled = button.prop('disabled');
+    button.prop('disabled', true);
+    $('#result_info_total_tokens').text(t`Calculating...`);
+    $('#result_info_calculated_at').text('');
+
+    try {
+        const promptContext = await buildCharacterTokenDryRunPromptContext(this_chid);
+        const response = await fetch('/api/characters/token-dry-run', {
+            method: 'POST',
+            headers: getRequestHeaders(),
+            body: JSON.stringify({
+                avatar_url: characters[this_chid].avatar,
+                prompt_context: promptContext,
+            }),
+        });
+        const data = await response.json().catch(() => ({}));
+        if (!response.ok) {
+            throw new Error(data?.error?.message || data?.error || 'Token dry run failed.');
+        }
+
+        characters[this_chid].data ??= {};
+        characters[this_chid].data.extensions ??= {};
+        characters[this_chid].data.extensions.aikobots ??= {};
+        characters[this_chid].data.extensions.aikobots.token_dry_run = data;
+        updateCharacterTokenDryRunButton(this_chid);
+        toastr.success('Token dry run updated.', 'Token dry run');
+    } catch (error) {
+        console.error('Token dry run failed', error);
+        toastr.error(error?.message || 'Token dry run failed.', 'Token dry run');
+        updateCharacterTokenDryRunButton(this_chid);
+    } finally {
+        if (previousDisabled) {
+            button.prop('disabled', true);
+        }
+    }
 }
 
 function canDuplicateCharacter(chid) {
@@ -15993,6 +16196,10 @@ jQuery(async function () {
         e.preventDefault();
         e.stopPropagation();
         await createOrEditCharacter(e.originalEvent ?? e);
+    });
+
+    $('#result_info_text').on('click', async function () {
+        await runCharacterTokenDryRun();
     });
 
     $('#delete_button').on('click', async function () {
