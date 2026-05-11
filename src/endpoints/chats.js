@@ -2148,9 +2148,7 @@ router.post('/get', validateAvatarUrlMiddleware, async function (request, respon
         const directoryPath = resolveCharacterChatDirectory(request.user.directories.chats, request.body.avatar_url);
         const chatDirExists = fs.existsSync(directoryPath);
 
-        //if no chat dir for the character is found, make one with the character name
         if (!chatDirExists) {
-            fs.mkdirSync(directoryPath);
             return response.send({});
         }
 

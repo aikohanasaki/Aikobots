@@ -10332,7 +10332,9 @@ export async function saveChat({ chatName, withMetadata, mesId, force = false, s
     const normalizedMesId = Number.isInteger(Number(mesId)) ? Number(mesId) : undefined;
 
     const metadata = sanitizeChatMetadataForSave({ ...chat_metadata, ...(withMetadata || {}) });
-    const fileName = chatName ?? characters[this_chid]?.chat;
+    const existingFileName = chatName ?? characters[this_chid]?.chat;
+    const isPendingSoloCharacterSave = !existingFileName && this_chid !== undefined && name2 !== neutralCharacterName;
+    const fileName = existingFileName || (isPendingSoloCharacterSave ? `${name2} - ${humanizedDateTime()}` : existingFileName);
 
     if (!fileName && name2 === neutralCharacterName) {
         // TODO: Do something for a temporary chat with no character.
@@ -10344,7 +10346,9 @@ export async function saveChat({ chatName, withMetadata, mesId, force = false, s
         return;
     }
 
-    characters[this_chid]['date_last_chat'] = Date.now();
+    if (!isPendingSoloCharacterSave) {
+        characters[this_chid]['date_last_chat'] = Date.now();
+    }
     chat.forEach(function (item, i) {
         if (item['is_group']) {
             toastr.error(t`Trying to save group chat with regular saveChat function. Aborting to prevent corruption.`);
@@ -10430,6 +10434,13 @@ export async function saveChat({ chatName, withMetadata, mesId, force = false, s
             const responseData = await result.json();
             if (shouldTrackRevision) {
                 setChatSaveRevision(responseData?.chat_revision);
+            }
+
+            if (isPendingSoloCharacterSave) {
+                characters[this_chid]['date_last_chat'] = Date.now();
+                await updateRemoteChatName(this_chid, fileName);
+                $('#selected_chat_pole').val(fileName);
+                await eventSource.emit(event_types.CHAT_CREATED);
             }
 
             if (refreshTailAfterSave && responseData?.payload) {
@@ -10766,7 +10777,6 @@ export function renderDetachedMessage(mes, messageId) {
 
 async function getChatResult() {
     name2 = characters[this_chid].name;
-    let freshChat = false;
     if (getTotalChatMessages() === 0) {
         const message = getFirstMessage();
         if (message.mes) {
@@ -10777,10 +10787,7 @@ async function getChatResult() {
             chatLoadState.tailStartId = 0;
             chatLoadState.tailEndId = 0;
             chatLoadState.tailCount = 1;
-            freshChat = true;
         }
-        // Make sure the chat appears on the server
-        await saveChatConditional();
     }
     await loadItemizedPrompts(getCurrentChatId());
     await printMessages();
@@ -10788,7 +10795,6 @@ async function getChatResult() {
     select_selected_character(this_chid);
 
     await eventSource.emit(event_types.CHAT_CHANGED, (getCurrentChatId()));
-    if (freshChat) await eventSource.emit(event_types.CHAT_CREATED);
 
     if (getTotalChatMessages() === 1 && chat[0]) {
         const chat_id = 0;
