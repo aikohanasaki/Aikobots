@@ -1,3 +1,5 @@
+import { cloneStloSettings } from './stlo-utils.js';
+
 export const STMB_PARITY = Object.freeze({
     sourceRepo: 'aikohanasaki/SillyTavern-MemoryBooks',
     sourceCommit: 'c712a9b7aa9d178e6849bbe7da389389da6509d7',
@@ -331,6 +333,7 @@ export function createDefaultStmbSettings() {
             autoConsolidationTargetTiers: [1],
             autoCreateLorebook: false,
             lorebookNameTemplate: 'LTM - {{char}} - {{chat}}',
+            lorebookOrderDefaults: null,
             showFloatingClipButton: true,
             compactionPromptTemplate: STMB_DEFAULT_COMPACTION_PROMPT_TEMPLATE,
             compactionProfileIndex: 0,
@@ -622,6 +625,7 @@ export function normalizeStmbSettings(rawSettings, legacySettings = null) {
     moduleSettings.autoConsolidationTargetTiers = Array.isArray(moduleSettings.autoConsolidationTargetTiers)
         ? moduleSettings.autoConsolidationTargetTiers.map(value => Number(value)).filter(Number.isFinite)
         : defaults.moduleSettings.autoConsolidationTargetTiers.slice();
+    moduleSettings.lorebookOrderDefaults = cloneStloSettings(moduleSettings.lorebookOrderDefaults, { omitDefault: true });
     moduleSettings.selectedRegexOutgoing = Array.isArray(moduleSettings.selectedRegexOutgoing) ? moduleSettings.selectedRegexOutgoing.map(String) : [];
     moduleSettings.selectedRegexIncoming = Array.isArray(moduleSettings.selectedRegexIncoming) ? moduleSettings.selectedRegexIncoming.map(String) : [];
     const legacySummaryOrderMode = moduleSettings.summaryOrderMode ?? moduleSettings.arcOrderMode ?? defaults.moduleSettings.summaryOrderMode;

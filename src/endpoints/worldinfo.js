@@ -31,6 +31,13 @@ import {
     updateSharedLorebookOwners,
 } from '../lorebook-repository.js';
 import { getAllEnabledUsers, getAllUserHandles, requireAdminMiddleware } from '../users.js';
+import {
+    DEFAULT_STLO_SETTINGS,
+    getStloSettingsFromLorebook,
+    normalizeStloBudgetMode,
+    normalizeStloBudgetValue,
+    normalizeStloSettings,
+} from '../../public/scripts/stlo-utils.js';
 
 export const readWorldInfoFile = readUserWorldInfoFile;
 
@@ -70,16 +77,6 @@ function cleanupUploadedWorldInfoFile(file, validatedPath) {
 const KNOWN_DECORATORS = ['@@activate', '@@dont_activate'];
 const DEFAULT_LOREBOOK_PRIORITY = 3;
 const PRIORITY_BAND_SIZE = 10000;
-const DEFAULT_LOREBOOK_SETTINGS = Object.freeze({
-    priority: null,
-    budget: null,
-    budgetMode: 'default',
-    orderAdjustment: 0,
-    orderAdjustmentGroupOnly: false,
-    characterOverrides: {},
-    onlyWhenSpeaking: false,
-    randomTrim: false,
-});
 const promptStateModuleMap = {
     summary: '1_memory',
     authorsNote: '2_floating_prompt',
@@ -240,73 +237,8 @@ function normalizePriority(value) {
     return Math.max(1, Math.min(5, Math.trunc(number)));
 }
 
-function normalizeBudgetMode(value) {
-    const mode = String(value || 'default').trim().toLowerCase();
-    return ['default', 'percentage_context', 'percentage_budget', 'fixed'].includes(mode)
-        ? mode
-        : 'default';
-}
-
-function normalizeOptionalNumber(value) {
-    if (value === null || value === undefined || value === '') {
-        return null;
-    }
-
-    const number = Number(value);
-    return Number.isFinite(number) ? number : null;
-}
-
-function normalizeCharacterOverrides(value) {
-    if (!value || typeof value !== 'object' || Array.isArray(value)) {
-        return {};
-    }
-
-    return Object.entries(value).reduce((result, [key, override]) => {
-        const normalizedKey = normalizeSpeakerIdentifier(key);
-        if (!normalizedKey || !override || typeof override !== 'object' || Array.isArray(override)) {
-            return result;
-        }
-
-        const normalizedOverride = {};
-        if (override.priority !== undefined && override.priority !== null && override.priority !== '') {
-            normalizedOverride.priority = normalizePriority(override.priority);
-        }
-        if (override.orderAdjustment !== undefined && override.orderAdjustment !== null && override.orderAdjustment !== '') {
-            normalizedOverride.orderAdjustment = Number(override.orderAdjustment) || 0;
-        }
-        if (override.budget !== undefined) {
-            normalizedOverride.budget = normalizeOptionalNumber(override.budget);
-        }
-        if (override.budgetMode !== undefined) {
-            normalizedOverride.budgetMode = normalizeBudgetMode(override.budgetMode);
-        }
-
-        result[normalizedKey] = normalizedOverride;
-        return result;
-    }, {});
-}
-
-function normalizeLorebookSettings(value) {
-    const settings = value && typeof value === 'object' && !Array.isArray(value) ? value : {};
-    return {
-        priority: settings.priority === null ? null : normalizeOptionalNumber(settings.priority),
-        budget: normalizeOptionalNumber(settings.budget),
-        budgetMode: normalizeBudgetMode(settings.budgetMode),
-        orderAdjustment: Number(settings.orderAdjustment) || 0,
-        orderAdjustmentGroupOnly: Boolean(settings.orderAdjustmentGroupOnly),
-        characterOverrides: normalizeCharacterOverrides(settings.characterOverrides),
-        onlyWhenSpeaking: Boolean(settings.onlyWhenSpeaking),
-        randomTrim: Boolean(settings.randomTrim),
-    };
-}
-
 function extractLorebookSettings(worldInfo) {
-    const topLevel = worldInfo && typeof worldInfo === 'object' ? worldInfo.stlo : null;
-    const extensionLevel = worldInfo?.extensions && typeof worldInfo.extensions === 'object' ? worldInfo.extensions.stlo : null;
-    return {
-        ...DEFAULT_LOREBOOK_SETTINGS,
-        ...normalizeLorebookSettings(topLevel ?? extensionLevel ?? {}),
-    };
+    return getStloSettingsFromLorebook(worldInfo, { normalizeCharacterKeys: true });
 }
 
 function getActiveSpeakerKeys(activeSpeaker = {}) {
@@ -330,8 +262,8 @@ function getActiveSpeakerKeys(activeSpeaker = {}) {
 
 function resolveLorebookSettings(entry, activeSpeaker = {}, isGroupChat = false) {
     const base = {
-        ...DEFAULT_LOREBOOK_SETTINGS,
-        ...normalizeLorebookSettings(entry?.lorebookSettings),
+        ...DEFAULT_STLO_SETTINGS,
+        ...normalizeStloSettings(entry?.lorebookSettings, { normalizeCharacterKeys: true }),
     };
     const activeSpeakerKeys = isGroupChat ? getActiveSpeakerKeys(activeSpeaker) : new Set();
     let matchedOverride = null;
@@ -360,10 +292,10 @@ function resolveLorebookSettings(entry, activeSpeaker = {}, isGroupChat = false)
             resolved.orderAdjustment = Number(matchedOverride.orderAdjustment) || 0;
         }
         if (matchedOverride.budget !== undefined) {
-            resolved.budget = normalizeOptionalNumber(matchedOverride.budget);
+            resolved.budget = normalizeStloBudgetValue(matchedOverride.budget);
         }
         if (matchedOverride.budgetMode !== undefined) {
-            resolved.budgetMode = normalizeBudgetMode(matchedOverride.budgetMode);
+            resolved.budgetMode = normalizeStloBudgetMode(matchedOverride.budgetMode);
         }
     }
 

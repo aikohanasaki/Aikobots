@@ -36,7 +36,7 @@ import { SlashCommandEnumValue } from './slash-commands/SlashCommandEnumValue.js
 import { hideChatMessageRange } from './chats.js';
 import { groups, selected_group } from './group-chats.js';
 import { getRegexScripts, runRegexScript, substitute_find_regex } from './extensions/regex/engine.js';
-import { getLorebookStorageForRequest, loadWorldInfo, METADATA_KEY, reloadEditor, world_names, worldInfoCache } from './world-info.js';
+import { getLorebookStorageForRequest, loadWorldInfo, METADATA_KEY, openLorebookOrderingDialog, reloadEditor, world_names, worldInfoCache } from './world-info.js';
 import { buildOpenAIGenerateData, oai_settings } from './openai.js';
 import { SECRET_KEYS, secret_state } from './secrets.js';
 import { buildMemoryPromptText } from './stmb-prompt-assembly.js';
@@ -148,6 +148,7 @@ import { escapeHtml } from './utils.js';
 import { ensureResolvedLorebookName, isStmbLorebookHandledError } from './stmb-lorebook.js';
 import { createStmbTask, getActiveStmbTaskCount, hasActiveStmbTasks, isStmbAbortError, stopAllStmbTasks, throwIfStmbAborted } from './stmb-tasks.js';
 import { getTokenCountAsync } from './tokenizers.js';
+import { cloneStloSettings } from './stlo-utils.js';
 import {
     configureStmbClipRuntime,
     hideFloatingClipButton,
@@ -1973,6 +1974,7 @@ function buildSettingsPopupHtml(sceneData, currentUiConnection, regexOptions) {
     const summaryReverseStart = Number.isFinite(Number(moduleSettings.summaryReverseStart))
         ? Math.trunc(Number(moduleSettings.summaryReverseStart))
         : Number(moduleSettings.summaryEntrySettings?.reverseStart ?? 9999);
+    const hasLorebookOrderDefaults = Boolean(moduleSettings.lorebookOrderDefaults);
 
     return `
         <div class="stmb-settings-popup">
@@ -2055,6 +2057,13 @@ function buildSettingsPopupHtml(sceneData, currentUiConnection, regexOptions) {
             <div class="world_entry_form_control">
                 <label for="stmb-settings-lorebook-name-template" title="Template for auto-created lorebook names. Supports {{char}}, {{user}}, {{chat}} placeholders.">Lorebook Name Template</label>
                 <input type="text" id="stmb-settings-lorebook-name-template" class="text_pole" value="${escapeHtml(String(moduleSettings.lorebookNameTemplate || 'LTM - {{char}} - {{chat}}'))}" ${moduleSettings.autoCreateLorebook ? '' : 'disabled'} title="Template for auto-created lorebook names. Supports {{char}}, {{user}}, {{chat}} placeholders.">
+            </div>
+            <div class="world_entry_form_control">
+                <h4 class="stmb-section-title margin0">Lorebook Order Defaults</h4>
+                <div class="buttons_block marginTop5 justifyCenter gap10px whitespacenowrap">
+                    <div id="stmb-settings-configure-lorebook-order-defaults" class="menu_button interactable">Configure Lorebook Order Defaults</div>
+                </div>
+                <small id="stmb-settings-lorebook-order-defaults-summary" class="opacity50p">${hasLorebookOrderDefaults ? 'Defaults configured for newly auto-created memory books.' : 'No order defaults configured.'}</small>
             </div>
 
             <h3 class="stmb-section-title">Automatic Memories</h3>
@@ -2267,6 +2276,7 @@ function updateSettingsPopupDynamicState(dialog, currentUiConnection) {
     const manualModeCheckbox = dialog.querySelector('#stmb-settings-manual-mode-enabled');
     const autoCreateCheckbox = dialog.querySelector('#stmb-settings-auto-create-lorebook');
     const lorebookTemplateInput = dialog.querySelector('#stmb-settings-lorebook-name-template');
+    const lorebookOrderDefaultsSummary = dialog.querySelector('#stmb-settings-lorebook-order-defaults-summary');
     if (manualModeCheckbox) {
         manualModeCheckbox.disabled = Boolean(moduleSettings.autoCreateLorebook);
     }
@@ -2275,6 +2285,11 @@ function updateSettingsPopupDynamicState(dialog, currentUiConnection) {
     }
     if (lorebookTemplateInput) {
         lorebookTemplateInput.disabled = !moduleSettings.autoCreateLorebook;
+    }
+    if (lorebookOrderDefaultsSummary) {
+        lorebookOrderDefaultsSummary.textContent = moduleSettings.lorebookOrderDefaults
+            ? 'Defaults configured for newly auto-created memory books.'
+            : 'No order defaults configured.';
     }
 
     if (regexSection) {
@@ -5376,6 +5391,27 @@ async function showMainEntryPopup() {
             }
             return;
         }
+        if (target.closest('#stmb-settings-configure-lorebook-order-defaults')) {
+            const moduleSettings = getModuleSettings();
+            await openLorebookOrderingDialog('Memory Book Defaults', {
+                entries: {},
+                ...(moduleSettings.lorebookOrderDefaults ? { stlo: moduleSettings.lorebookOrderDefaults } : {}),
+            }, {
+                popupTitle: 'Lorebook Order Defaults',
+                heading: 'ST Lorebook Ordering Defaults',
+                introText: 'Configure priority, order, budget, and group chat behavior for memory books that STMB auto-creates later.',
+                successMessage: 'Lorebook order defaults updated.',
+                successTitle: 'STMB',
+                onSave: async nextData => {
+                    moduleSettings.lorebookOrderDefaults = cloneStloSettings(nextData?.stlo, { omitDefault: true });
+                    stmbSettings = normalizeStmbSettings(stmbSettings);
+                    saveSettingsDebounced();
+                    updateSettingsPopupDynamicState(popup.dlg, currentUiConnection);
+                },
+            });
+            updateSettingsPopupDynamicState(popup.dlg, currentUiConnection);
+            return;
+        }
         if (target.closest('#stmb-settings-open-prompt-manager')) {
             const selectedProfileIndex = Number(popup.dlg?.querySelector('#stmb-settings-profile-select')?.value ?? stmbSettings.defaultProfile ?? 0);
             await showSummaryPromptManagerPopup({
@@ -6365,6 +6401,7 @@ async function ensureLorebookName(createContext = 'chat') {
         },
         autoCreateLorebook: getModuleSettings().autoCreateLorebook,
         lorebookNameTemplate: getModuleSettings().lorebookNameTemplate || 'LTM - {{char}} - {{chat}}',
+        lorebookOrderDefaults: getModuleSettings().lorebookOrderDefaults || null,
         createContext,
     });
 }

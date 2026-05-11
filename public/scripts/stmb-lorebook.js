@@ -15,6 +15,7 @@ import {
 } from './world-info.js';
 import { showLorebookPickerPopup, showLorebookRecoveryPopup } from './stmb-popups.js';
 import { calculateLorebookStats as calculateLorebookStatsCore } from './stmb-core.js';
+import { applyStloDefaultsToLorebook } from './stlo-utils.js';
 import { getSanitizedFilename } from './utils.js';
 
 export class StmbLorebookHandledError extends Error {
@@ -58,9 +59,11 @@ async function generateAutoLorebookName(template) {
     return `${baseName} ${Date.now()}`;
 }
 
-async function autoCreateAndBindLorebook(lorebookNameTemplate) {
+async function autoCreateAndBindLorebook(lorebookNameTemplate, lorebookOrderDefaults = null) {
     const generatedName = await generateAutoLorebookName(lorebookNameTemplate);
-    const created = await createNewWorldInfo(generatedName);
+    const created = lorebookOrderDefaults
+        ? await createNewWorldInfo(generatedName, { initialData: applyStloDefaultsToLorebook({ entries: {} }, lorebookOrderDefaults) })
+        : await createNewWorldInfo(generatedName);
     if (!created) {
         throw new Error(`Failed to create lorebook "${generatedName}"`);
     }
@@ -97,6 +100,7 @@ export async function ensureResolvedLorebookName({
     setManualLorebook = async () => {},
     autoCreateLorebook = false,
     lorebookNameTemplate = 'LTM - {{char}} - {{chat}}',
+    lorebookOrderDefaults = null,
     createContext = 'chat',
 } = {}) {
     const retryText = manualMode
@@ -128,7 +132,7 @@ export async function ensureResolvedLorebookName({
             });
 
             if (recovery.action === 'create' && allowCreate) {
-                lorebookName = await autoCreateAndBindLorebook(lorebookNameTemplate);
+                lorebookName = await autoCreateAndBindLorebook(lorebookNameTemplate, lorebookOrderDefaults);
                 continue;
             }
 
@@ -164,7 +168,7 @@ export async function ensureResolvedLorebookName({
         });
 
         if (recovery.action === 'create' && allowCreate) {
-            lorebookName = await autoCreateAndBindLorebook(lorebookNameTemplate);
+            lorebookName = await autoCreateAndBindLorebook(lorebookNameTemplate, lorebookOrderDefaults);
             continue;
         }
 
