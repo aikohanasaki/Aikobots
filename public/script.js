@@ -13397,7 +13397,7 @@ function updateCharacterTokenDryRunButton(chid = this_chid) {
     const isCreateMode = $('#form_create').attr('actiontype') === 'createcharacter';
     const isDirty = hasUnsavedCharacterEdits();
     const isAuthorized = hasCharacter && canEditCharacterMetadata(chid);
-    const canClick = isCreateMode || isAuthorized;
+    const canClick = hasCharacter && !isCreateMode && !isDirty && isAuthorized;
 
     $('#result_info_total_tokens').text(Number.isFinite(tokenCount) && tokenCount > 0 ? `${tokenCount} Tokens` : t`Not calculated`);
     $('#result_info_calculated_at').text(calculatedAt || '');

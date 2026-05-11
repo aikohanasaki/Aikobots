@@ -53,7 +53,7 @@ import {
     moveAvatarFavorite,
     setCharacterFavorite,
 } from '../favorites-repository.js';
-import { countBotDryRunTokens } from './tokenizers.js';
+import { countBotDryRunMessageTokens, countBotDryRunTextTokens, countBotDryRunTokens } from './tokenizers.js';
 import { assembleChatCompletionPrompt } from '../prompting/chat-completion-assembly.js';
 import { prepareServerPromptContext } from './backends/chat-completions.js';
 
@@ -1041,6 +1041,142 @@ function normalizeTokenDryRunMetadata(metadata) {
     };
 }
 
+function getSerializedDryRunMessagePayload(node) {
+    if (!node || typeof node !== 'object') {
+        return null;
+    }
+
+    const payload = {
+        role: node.role || 'system',
+        ...(node.content !== undefined ? { content: node.content } : {}),
+        ...(node.name ? { name: node.name } : {}),
+        ...(node.tool_calls ? { tool_calls: node.tool_calls } : {}),
+        ...(node.signature ? { signature: node.signature } : {}),
+    };
+
+    return payload.content || payload.tool_calls ? payload : null;
+}
+
+function collectTokenDryRunContributions(node, parentIdentifier = '') {
+    if (!node || typeof node !== 'object') {
+        return [];
+    }
+
+    if (node.type === 'collection') {
+        const identifier = String(node.identifier || parentIdentifier || 'collection');
+        return (Array.isArray(node.collection) ? node.collection : [])
+            .flatMap(child => collectTokenDryRunContributions(child, identifier));
+    }
+
+    if (node.type !== 'message') {
+        return [];
+    }
+
+    const payload = getSerializedDryRunMessagePayload(node);
+    if (!payload) {
+        return [];
+    }
+
+    return [{
+        identifier: String(node.identifier || parentIdentifier || 'message'),
+        group: String(parentIdentifier || ''),
+        role: String(payload.role || 'system'),
+        token_count: countBotDryRunMessageTokens(payload),
+    }];
+}
+
+function getWorldInfoEntryKeyFromParts(book, uid) {
+    return `${String(book ?? '')}.${String(uid ?? '')}`;
+}
+
+function getWorldInfoDebugEntryMap(assembly) {
+    const entries = Array.isArray(assembly?.worldInfo?.activatedEntries)
+        ? assembly.worldInfo.activatedEntries
+        : [];
+    return new Map(entries.map(entry => [getWorldInfoEntryKeyFromParts(entry.book, entry.uid), entry]));
+}
+
+function getWorldInfoEntryDisplayName(entry = {}) {
+    return String(entry.displayName ?? entry.comment ?? entry.name ?? entry.uid ?? '').trim();
+}
+
+function collectWorldInfoSegments(node, debugEntryMap, parentIdentifier = '') {
+    if (!node || typeof node !== 'object') {
+        return [];
+    }
+
+    if (node.type === 'collection') {
+        const identifier = String(node.identifier || parentIdentifier || 'collection');
+        return (Array.isArray(node.collection) ? node.collection : [])
+            .flatMap(child => collectWorldInfoSegments(child, debugEntryMap, identifier));
+    }
+
+    if (node.type !== 'message') {
+        return [];
+    }
+
+    return (Array.isArray(node.contentSegments) ? node.contentSegments : [])
+        .filter(segment => segment?.type === 'worldInfo')
+        .map(segment => {
+            const debugEntry = debugEntryMap.get(getWorldInfoEntryKeyFromParts(segment.book, segment.uid)) || {};
+            return {
+                messageIdentifier: String(node.identifier || 'message'),
+                group: String(parentIdentifier || ''),
+                role: String(node.role || 'system'),
+                book: String(segment.book ?? debugEntry.book ?? ''),
+                uid: segment.uid ?? debugEntry.uid ?? null,
+                storage: String(segment.storage || debugEntry.storage || 'user'),
+                name: getWorldInfoEntryDisplayName(debugEntry),
+                placement: String(segment.placement ?? debugEntry.placement ?? ''),
+                status: String(segment.status ?? debugEntry.status ?? ''),
+                activationReason: String(debugEntry.activationReason || ''),
+                activationSource: String(debugEntry.activationSource || ''),
+                roundIndex: Number(segment.roundIndex ?? debugEntry.roundIndex ?? 0) || 0,
+                contentTokens: countBotDryRunTextTokens(segment.text),
+            };
+        });
+}
+
+function logTokenDryRunWorldInfoEntries(assembly) {
+    const debugEntryMap = getWorldInfoDebugEntryMap(assembly);
+    const entries = collectWorldInfoSegments(assembly?.messagesState, debugEntryMap);
+
+    if (!entries.length) {
+        console.log('[Token dry run] World-info entries: none inserted');
+        return;
+    }
+
+    console.log('[Token dry run] World-info entries inserted:');
+    for (const entry of entries) {
+        const name = entry.name ? ` | name=${entry.name}` : '';
+        const activation = [entry.activationSource, entry.activationReason].filter(Boolean).join(':');
+        const activationText = activation ? ` | activation=${activation}` : '';
+        const group = entry.group ? ` | group=${entry.group}` : '';
+        console.log(`[Token dry run]   ${String(entry.contentTokens).padStart(6)} text tokens | ${entry.storage} | book=${entry.book} | uid=${entry.uid}${name} | placement=${entry.placement} | message=${entry.messageIdentifier}${group} | role=${entry.role} | round=${entry.roundIndex}${activationText}`);
+    }
+}
+
+function logTokenDryRunContributions(characterCard, avatarUrl, metadata, assembly) {
+    const contributions = collectTokenDryRunContributions(assembly?.messagesState);
+    const characterName = getCharacterCardTextField(characterCard, 'name', 'name') || path.parse(String(avatarUrl || '')).name;
+
+    console.log(`[Token dry run] ${characterName} (${avatarUrl})`);
+    console.log(`[Token dry run] Total: ${metadata.token_count} tokens | tokenizer=${metadata.tokenizer} | mode=${metadata.mode}`);
+
+    if (!contributions.length) {
+        console.log('[Token dry run] No assembled prompt entries contributed to the count.');
+        return;
+    }
+
+    console.log('[Token dry run] Contributions:');
+    for (const entry of contributions) {
+        const group = entry.group ? ` | group=${entry.group}` : '';
+        console.log(`[Token dry run]   ${String(entry.token_count).padStart(6)} tokens | role=${entry.role} | entry=${entry.identifier}${group}`);
+    }
+    console.log('[Token dry run]        3 tokens | chat-completion priming overhead');
+    logTokenDryRunWorldInfoEntries(assembly);
+}
+
 /**
  * Removes shared-character identity metadata from a copied card.
  * @param {object|null|undefined} characterCard Character card to mutate
@@ -1086,6 +1222,21 @@ function preserveProtectedLorebookFields(targetCharacter, sourceCharacter) {
         _.set(targetCharacter, 'data.extensions.aikobots.secure_lorebooks', _.cloneDeep(_.get(sourceCharacter, 'data.extensions.aikobots.secure_lorebooks')));
     } else {
         _.unset(targetCharacter, 'data.extensions.aikobots.secure_lorebooks');
+    }
+}
+
+/**
+ * Preserves dry-run token metadata across normal character saves.
+ * This field is owned by the token dry-run route and must not be changed by
+ * form saves or generic attribute merges.
+ * @param {object} targetCharacter Character card to mutate
+ * @param {object|null|undefined} sourceCharacter Existing saved character card
+ */
+function preserveTokenDryRunMetadata(targetCharacter, sourceCharacter) {
+    if (_.has(sourceCharacter, 'data.extensions.aikobots.token_dry_run')) {
+        _.set(targetCharacter, 'data.extensions.aikobots.token_dry_run', _.cloneDeep(_.get(sourceCharacter, 'data.extensions.aikobots.token_dry_run')));
+    } else {
+        _.unset(targetCharacter, 'data.extensions.aikobots.token_dry_run');
     }
 }
 
@@ -1616,6 +1767,7 @@ router.post('/token-dry-run', validateAvatarUrlMiddleware, async function (reque
             return response.sendStatus(500);
         }
 
+        logTokenDryRunContributions(characterCard, avatarUrl, metadata, assembly);
         return response.json(normalizeTokenDryRunMetadata(metadata));
     } catch (err) {
         if (err instanceof PathSecurityError) {
@@ -1682,6 +1834,7 @@ router.post('/edit', validateAvatarUrlMiddleware, async function (request, respo
         }
 
         let char = charaFormatData(request.body, request.user.directories);
+        preserveTokenDryRunMetadata(char, existingCharacter);
         if (existingCharacter && !canEditLorebooks) {
             preserveProtectedLorebookFields(char, existingCharacter);
         }
@@ -1828,6 +1981,7 @@ router.post('/edit-attribute', validateAvatarUrlMiddleware, async function (requ
         if (typeof charJSON !== 'string') throw new Error('Failed to read character file');
 
         const char = JSON.parse(charJSON);
+        const existingCharacter = _.cloneDeep(char);
         //check if the field exists
         if (char[request.body.field] === undefined && char.data[request.body.field] === undefined) {
             console.warn('Error: invalid field.');
@@ -1836,6 +1990,7 @@ router.post('/edit-attribute', validateAvatarUrlMiddleware, async function (requ
         }
         char[request.body.field] = request.body.value;
         char.data[request.body.field] = request.body.value;
+        preserveTokenDryRunMetadata(char, existingCharacter);
         let newCharJSON = JSON.stringify(char);
         const targetFile = (request.body.avatar_url).replace('.png', '');
         await writeCharacterData(avatarPath, newCharJSON, targetFile, request);
@@ -1902,6 +2057,8 @@ router.post('/merge-attributes', getFileNameValidationFunction('avatar'), async 
         if (!canEditLorebooks) {
             preserveProtectedLorebookFields(character, existingCharacter);
         }
+
+        preserveTokenDryRunMetadata(character, existingCharacter);
 
         if (updatesProtectedLorebookFields && canEditLorebooks) {
             validateOwnedCharacterLinkedLorebooks(request.user, character);

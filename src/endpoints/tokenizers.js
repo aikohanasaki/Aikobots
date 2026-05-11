@@ -590,52 +590,69 @@ function getTiktokenEncoding(encoding) {
 }
 
 /**
+ * Counts plain text with the standardized local o200k_base tokenizer.
+ * @param {string} text Text to count
+ * @returns {number} Token count
+ */
+export function countBotDryRunTextTokens(text) {
+    const tokenizer = getTiktokenEncoding('o200k_base');
+    return tokenizer.encode(String(text ?? '')).length;
+}
+
+/**
+ * Counts one chat-completion style message with the standardized local o200k_base tokenizer.
+ * This excludes the final assistant priming overhead that is added once per prompt.
+ * @param {object} message Message to count
+ * @returns {number} Token count
+ */
+export function countBotDryRunMessageTokens(message) {
+    if (!message || typeof message !== 'object') {
+        return 0;
+    }
+
+    let tokenCount = 3;
+
+    for (const [key, value] of Object.entries(message)) {
+        if (value === undefined || value === null) {
+            continue;
+        }
+
+        if (key === 'content' && Array.isArray(value)) {
+            for (const part of value) {
+                if (part?.type === 'text') {
+                    tokenCount += countBotDryRunTextTokens(part.text);
+                } else if (part?.type === 'image_url') {
+                    tokenCount += 85;
+                } else if (part?.type === 'video_url') {
+                    tokenCount += 263 * 40;
+                } else if (part?.type === 'input_audio' || part?.type === 'audio_url') {
+                    tokenCount += 32 * 300;
+                } else {
+                    tokenCount += countBotDryRunTextTokens(JSON.stringify(part) ?? '');
+                }
+            }
+            continue;
+        }
+
+        const stringValue = typeof value === 'string' ? value : (JSON.stringify(value) ?? '');
+        tokenCount += countBotDryRunTextTokens(stringValue);
+        if (key === 'name') {
+            tokenCount += 1;
+        }
+    }
+
+    return tokenCount;
+}
+
+/**
  * Counts chat-completion style messages with the standardized local o200k_base tokenizer.
  * This is scoped to the botmaker dry-run estimate and must not be used to select provider tokenizers.
  * @param {object[]|object} messages Messages to count
  * @returns {number} Token count
  */
 export function countBotDryRunTokens(messages) {
-    const tokenizer = getTiktokenEncoding('o200k_base');
     const messageArray = Array.isArray(messages) ? messages : [messages];
-    let tokenCount = 0;
-
-    for (const message of messageArray) {
-        if (!message || typeof message !== 'object') {
-            continue;
-        }
-
-        tokenCount += 3;
-        for (const [key, value] of Object.entries(message)) {
-            if (value === undefined || value === null) {
-                continue;
-            }
-
-            if (key === 'content' && Array.isArray(value)) {
-                for (const part of value) {
-                    if (part?.type === 'text') {
-                        tokenCount += tokenizer.encode(String(part.text ?? '')).length;
-                    } else if (part?.type === 'image_url') {
-                        tokenCount += 85;
-                    } else if (part?.type === 'video_url') {
-                        tokenCount += 263 * 40;
-                    } else if (part?.type === 'input_audio' || part?.type === 'audio_url') {
-                        tokenCount += 32 * 300;
-                    } else {
-                        tokenCount += tokenizer.encode(JSON.stringify(part) ?? '').length;
-                    }
-                }
-                continue;
-            }
-
-            const stringValue = typeof value === 'string' ? value : (JSON.stringify(value) ?? '');
-            tokenCount += tokenizer.encode(stringValue).length;
-            if (key === 'name') {
-                tokenCount += 1;
-            }
-        }
-    }
-
+    const tokenCount = messageArray.reduce((sum, message) => sum + countBotDryRunMessageTokens(message), 0);
     return tokenCount + 3;
 }
 
