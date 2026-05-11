@@ -13555,7 +13555,13 @@ async function runCharacterTokenDryRun() {
         characters[this_chid].data ??= {};
         characters[this_chid].data.extensions ??= {};
         characters[this_chid].data.extensions.aikobots ??= {};
-        characters[this_chid].data.extensions.aikobots.token_dry_run = data;
+        const { console_log, ...metadata } = data;
+        characters[this_chid].data.extensions.aikobots.token_dry_run = metadata;
+        if (Array.isArray(console_log)) {
+            for (const line of console_log) {
+                console.log(String(line ?? ''));
+            }
+        }
         updateCharacterTokenDryRunButton(this_chid);
         toastr.success('Token dry run updated.', 'Token dry run');
     } catch (error) {

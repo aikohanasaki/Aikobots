@@ -1137,44 +1137,52 @@ function collectWorldInfoSegments(node, debugEntryMap, parentIdentifier = '') {
         });
 }
 
-function logTokenDryRunWorldInfoEntries(assembly) {
+function logTokenDryRunLine(lines, line) {
+    const text = String(line ?? '');
+    console.info(text);
+    lines.push(text);
+}
+
+function logTokenDryRunWorldInfoEntries(assembly, lines) {
     const debugEntryMap = getWorldInfoDebugEntryMap(assembly);
     const entries = collectWorldInfoSegments(assembly?.messagesState, debugEntryMap);
 
     if (!entries.length) {
-        console.log('[Token dry run] World-info entries: none inserted');
+        logTokenDryRunLine(lines, '[Token dry run] World-info entries: none inserted');
         return;
     }
 
-    console.log('[Token dry run] World-info entries inserted:');
+    logTokenDryRunLine(lines, '[Token dry run] World-info entries inserted:');
     for (const entry of entries) {
         const name = entry.name ? ` | name=${entry.name}` : '';
         const activation = [entry.activationSource, entry.activationReason].filter(Boolean).join(':');
         const activationText = activation ? ` | activation=${activation}` : '';
         const group = entry.group ? ` | group=${entry.group}` : '';
-        console.log(`[Token dry run]   ${String(entry.contentTokens).padStart(6)} text tokens | ${entry.storage} | book=${entry.book} | uid=${entry.uid}${name} | placement=${entry.placement} | message=${entry.messageIdentifier}${group} | role=${entry.role} | round=${entry.roundIndex}${activationText}`);
+        logTokenDryRunLine(lines, `[Token dry run]   ${String(entry.contentTokens).padStart(6)} text tokens | ${entry.storage} | book=${entry.book} | uid=${entry.uid}${name} | placement=${entry.placement} | message=${entry.messageIdentifier}${group} | role=${entry.role} | round=${entry.roundIndex}${activationText}`);
     }
 }
 
 function logTokenDryRunContributions(characterCard, avatarUrl, metadata, assembly) {
+    const lines = [];
     const contributions = collectTokenDryRunContributions(assembly?.messagesState);
     const characterName = getCharacterCardTextField(characterCard, 'name', 'name') || path.parse(String(avatarUrl || '')).name;
 
-    console.log(`[Token dry run] ${characterName} (${avatarUrl})`);
-    console.log(`[Token dry run] Total: ${metadata.token_count} tokens | tokenizer=${metadata.tokenizer} | mode=${metadata.mode}`);
+    logTokenDryRunLine(lines, `[Token dry run] ${characterName} (${avatarUrl})`);
+    logTokenDryRunLine(lines, `[Token dry run] Total: ${metadata.token_count} tokens | tokenizer=${metadata.tokenizer} | mode=${metadata.mode}`);
 
     if (!contributions.length) {
-        console.log('[Token dry run] No assembled prompt entries contributed to the count.');
-        return;
+        logTokenDryRunLine(lines, '[Token dry run] No assembled prompt entries contributed to the count.');
+        return lines;
     }
 
-    console.log('[Token dry run] Contributions:');
+    logTokenDryRunLine(lines, '[Token dry run] Contributions:');
     for (const entry of contributions) {
         const group = entry.group ? ` | group=${entry.group}` : '';
-        console.log(`[Token dry run]   ${String(entry.token_count).padStart(6)} tokens | role=${entry.role} | entry=${entry.identifier}${group}`);
+        logTokenDryRunLine(lines, `[Token dry run]   ${String(entry.token_count).padStart(6)} tokens | role=${entry.role} | entry=${entry.identifier}${group}`);
     }
-    console.log('[Token dry run]        3 tokens | chat-completion priming overhead');
-    logTokenDryRunWorldInfoEntries(assembly);
+    logTokenDryRunLine(lines, '[Token dry run]        3 tokens | chat-completion priming overhead');
+    logTokenDryRunWorldInfoEntries(assembly, lines);
+    return lines;
 }
 
 /**
@@ -1767,8 +1775,11 @@ router.post('/token-dry-run', validateAvatarUrlMiddleware, async function (reque
             return response.sendStatus(500);
         }
 
-        logTokenDryRunContributions(characterCard, avatarUrl, metadata, assembly);
-        return response.json(normalizeTokenDryRunMetadata(metadata));
+        const consoleLog = logTokenDryRunContributions(characterCard, avatarUrl, metadata, assembly);
+        return response.json({
+            ...normalizeTokenDryRunMetadata(metadata),
+            console_log: consoleLog,
+        });
     } catch (err) {
         if (err instanceof PathSecurityError) {
             return response.status(400).json({ error: err.message });
