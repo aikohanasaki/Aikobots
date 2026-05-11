@@ -2221,7 +2221,7 @@ export async function prepareServerPromptContext(user, directories, promptContex
         promptContext.coreChat = resolveSplitCoreChatPayload(directories.chats, promptContext.coreChat);
     }
 
-    const runtimeResult = await runServerGenerationExtensions(directories, promptContext);
+    const runtimeResult = await runServerGenerationExtensions(directories, promptContext, user);
     if (runtimeResult.aborted) {
         throw createChatCompletionStageError('Generation aborted by server extension runtime.', 503, {
             stage: 'server_extension',

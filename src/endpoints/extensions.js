@@ -6,11 +6,44 @@ import sanitize from 'sanitize-filename';
 import { CheckRepoActions, default as simpleGit } from 'simple-git';
 
 import { PUBLIC_DIRECTORIES } from '../constants.js';
+import { canManageUserThirdPartyExtensions, canLoadUserThirdPartyExtension } from '../extension-policy.js';
 
 /**
  * @type {Partial<import('simple-git').SimpleGitOptions>}
  */
 const OPTIONS = Object.freeze({ timeout: { block: 5 * 60 * 1000 } });
+
+class ExtensionRequestError extends Error {
+    constructor(message, status = 400) {
+        super(message);
+        this.status = status;
+    }
+}
+
+function getSafeExtensionPath(basePath, extensionName) {
+    const sanitizedName = sanitize(String(extensionName || ''));
+    if (!sanitizedName) {
+        throw new ExtensionRequestError('Bad Request: extensionName is invalid.');
+    }
+
+    const resolvedBasePath = path.resolve(basePath);
+    const resolvedExtensionPath = path.resolve(resolvedBasePath, sanitizedName);
+    const relativePath = path.relative(resolvedBasePath, resolvedExtensionPath);
+
+    if (relativePath.startsWith('..') || path.isAbsolute(relativePath)) {
+        throw new ExtensionRequestError('Forbidden: Extension path is invalid.', 403);
+    }
+
+    return resolvedExtensionPath;
+}
+
+function sendRequestError(response, error) {
+    if (error instanceof ExtensionRequestError) {
+        return response.status(error.status).send(error.message);
+    }
+
+    return null;
+}
 
 /**
  * This function extracts the extension information from the manifest file.
@@ -71,16 +104,23 @@ export const router = express.Router();
  * @returns {void}
  */
 router.post('/install', async (request, response) => {
-    if (!request.user.profile.admin) {
-        console.error(`User ${request.user.profile.handle} does not have permission to install extensions.`);
-        return response.status(403).json({ error: 'Extension installation is restricted to administrators' });
-    }
-
     if (!request.body.url) {
         return response.status(400).send('Bad Request: URL is required in the request body.');
     }
 
     try {
+        const { url, global, branch } = request.body;
+
+        if (global && !request.user.profile.admin) {
+            console.error(`User ${request.user.profile.handle} does not have permission to install global extensions.`);
+            return response.status(403).json({ error: 'Global extension installation is restricted to administrators' });
+        }
+
+        if (!global && !canManageUserThirdPartyExtensions(request.user)) {
+            console.error(`User ${request.user.profile.handle} does not have permission to install extensions.`);
+            return response.status(403).json({ error: 'Extension installation is restricted to administrators' });
+        }
+
         // No timeout for cloning, as it may take a while depending on the repo size
         const git = simpleGit();
 
@@ -93,10 +133,8 @@ router.post('/install', async (request, response) => {
             fs.mkdirSync(PUBLIC_DIRECTORIES.globalExtensions, { recursive: true });
         }
 
-        const { url, global, branch } = request.body;
-
         const basePath = global ? PUBLIC_DIRECTORIES.globalExtensions : request.user.directories.extensions;
-        const extensionPath = path.join(basePath, sanitize(path.basename(url, '.git')));
+        const extensionPath = getSafeExtensionPath(basePath, path.basename(url, '.git'));
 
         if (fs.existsSync(extensionPath)) {
             return response.status(409).send(`Directory already exists at ${extensionPath}`);
@@ -113,6 +151,11 @@ router.post('/install', async (request, response) => {
 
         return response.send({ version, author, display_name, extensionPath });
     } catch (error) {
+        const requestError = sendRequestError(response, error);
+        if (requestError) {
+            return requestError;
+        }
+
         console.error('Importing custom content failed', error);
         return response.status(500).send(`Server Error: ${error.message}`);
     }
@@ -142,8 +185,13 @@ router.post('/update', async (request, response) => {
             return response.status(403).send('Forbidden: No permission to update global extensions.');
         }
 
+        if (!global && !canManageUserThirdPartyExtensions(request.user)) {
+            console.error(`User ${request.user.profile.handle} does not have permission to update extensions.`);
+            return response.status(403).send('Forbidden: No permission to update extensions.');
+        }
+
         const basePath = global ? PUBLIC_DIRECTORIES.globalExtensions : request.user.directories.extensions;
-        const extensionPath = path.join(basePath, sanitize(extensionName));
+        const extensionPath = getSafeExtensionPath(basePath, extensionName);
 
         if (!fs.existsSync(extensionPath)) {
             return response.status(404).send(`Directory does not exist at ${extensionPath}`);
@@ -168,6 +216,11 @@ router.post('/update', async (request, response) => {
 
         return response.send({ shortCommitHash, extensionPath, isUpToDate, remoteUrl });
     } catch (error) {
+        const requestError = sendRequestError(response, error);
+        if (requestError) {
+            return requestError;
+        }
+
         console.error('Updating extension failed', error);
         return response.status(500).send('Internal Server Error. Check the server logs for more details.');
     }
@@ -186,8 +239,13 @@ router.post('/branches', async (request, response) => {
             return response.status(403).send('Forbidden: No permission to list branches of global extensions.');
         }
 
+        if (!global && !canManageUserThirdPartyExtensions(request.user)) {
+            console.error(`User ${request.user.profile.handle} does not have permission to list branches of extensions.`);
+            return response.status(403).send('Forbidden: No permission to list branches of extensions.');
+        }
+
         const basePath = global ? PUBLIC_DIRECTORIES.globalExtensions : request.user.directories.extensions;
-        const extensionPath = path.join(basePath, sanitize(extensionName));
+        const extensionPath = getSafeExtensionPath(basePath, extensionName);
 
         if (!fs.existsSync(extensionPath)) {
             return response.status(404).send(`Directory does not exist at ${extensionPath}`);
@@ -213,6 +271,11 @@ router.post('/branches', async (request, response) => {
 
         return response.send(result);
     } catch (error) {
+        const requestError = sendRequestError(response, error);
+        if (requestError) {
+            return requestError;
+        }
+
         console.error('Getting branches failed', error);
         return response.status(500).send('Internal Server Error. Check the server logs for more details.');
     }
@@ -231,8 +294,13 @@ router.post('/switch', async (request, response) => {
             return response.status(403).send('Forbidden: No permission to switch branches of global extensions.');
         }
 
+        if (!global && !canManageUserThirdPartyExtensions(request.user)) {
+            console.error(`User ${request.user.profile.handle} does not have permission to switch branches of extensions.`);
+            return response.status(403).send('Forbidden: No permission to switch branches of extensions.');
+        }
+
         const basePath = global ? PUBLIC_DIRECTORIES.globalExtensions : request.user.directories.extensions;
-        const extensionPath = path.join(basePath, sanitize(extensionName));
+        const extensionPath = getSafeExtensionPath(basePath, extensionName);
 
         if (!fs.existsSync(extensionPath)) {
             return response.status(404).send(`Directory does not exist at ${extensionPath}`);
@@ -272,6 +340,11 @@ router.post('/switch', async (request, response) => {
 
         return response.sendStatus(204);
     } catch (error) {
+        const requestError = sendRequestError(response, error);
+        if (requestError) {
+            return requestError;
+        }
+
         console.error('Switching branches failed', error);
         return response.status(500).send('Internal Server Error. Check the server logs for more details.');
     }
@@ -292,8 +365,8 @@ router.post('/move', async (request, response) => {
 
         const sourceDirectory = source === 'global' ? PUBLIC_DIRECTORIES.globalExtensions : request.user.directories.extensions;
         const destinationDirectory = destination === 'global' ? PUBLIC_DIRECTORIES.globalExtensions : request.user.directories.extensions;
-        const sourcePath = path.join(sourceDirectory, sanitize(extensionName));
-        const destinationPath = path.join(destinationDirectory, sanitize(extensionName));
+        const sourcePath = getSafeExtensionPath(sourceDirectory, extensionName);
+        const destinationPath = getSafeExtensionPath(destinationDirectory, extensionName);
 
         if (!fs.existsSync(sourcePath) || !fs.statSync(sourcePath).isDirectory()) {
             console.error(`Source directory does not exist at ${sourcePath}`);
@@ -316,6 +389,11 @@ router.post('/move', async (request, response) => {
 
         return response.sendStatus(204);
     } catch (error) {
+        const requestError = sendRequestError(response, error);
+        if (requestError) {
+            return requestError;
+        }
+
         console.error('Moving extension failed', error);
         return response.status(500).send('Internal Server Error. Check the server logs for more details.');
     }
@@ -338,8 +416,14 @@ router.post('/version', async (request, response) => {
 
     try {
         const { extensionName, global } = request.body;
+
+        if (!global && !canLoadUserThirdPartyExtension(request.user, extensionName)) {
+            console.error(`User ${request.user.profile.handle} does not have permission to inspect extensions.`);
+            return response.status(403).send('Forbidden: No permission to inspect extensions.');
+        }
+
         const basePath = global ? PUBLIC_DIRECTORIES.globalExtensions : request.user.directories.extensions;
-        const extensionPath = path.join(basePath, sanitize(extensionName));
+        const extensionPath = getSafeExtensionPath(basePath, extensionName);
 
         if (!fs.existsSync(extensionPath)) {
             return response.status(404).send(`Directory does not exist at ${extensionPath}`);
@@ -369,6 +453,11 @@ router.post('/version', async (request, response) => {
         return response.send({ currentBranchName, currentCommitHash, isUpToDate, remoteUrl });
 
     } catch (error) {
+        const requestError = sendRequestError(response, error);
+        if (requestError) {
+            return requestError;
+        }
+
         console.error('Getting extension version failed', error);
         return response.status(500).send(`Server Error: ${error.message}`);
     }
@@ -396,7 +485,7 @@ router.post('/delete', async (request, response) => {
         }
 
         const basePath = global ? PUBLIC_DIRECTORIES.globalExtensions : request.user.directories.extensions;
-        const extensionPath = path.join(basePath, sanitize(extensionName));
+        const extensionPath = getSafeExtensionPath(basePath, extensionName);
 
         if (!fs.existsSync(extensionPath)) {
             return response.status(404).send(`Directory does not exist at ${extensionPath}`);
@@ -408,6 +497,11 @@ router.post('/delete', async (request, response) => {
         return response.send(`Extension has been deleted at ${extensionPath}`);
 
     } catch (error) {
+        const requestError = sendRequestError(response, error);
+        if (requestError) {
+            return requestError;
+        }
+
         console.error('Deleting custom content failed', error);
         return response.status(500).send(`Server Error: ${error.message}`);
     }
@@ -437,6 +531,7 @@ router.get('/discover', function (request, response) {
     const userExtensions = fs
         .readdirSync(request.user.directories.extensions)
         .filter(f => fs.statSync(path.join(request.user.directories.extensions, f)).isDirectory())
+        .filter(f => canLoadUserThirdPartyExtension(request.user, f))
         .map(f => ({ type: 'local', name: `third-party/${f}` }));
 
     // Get all folders in global extensions folder

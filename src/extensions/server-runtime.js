@@ -3,6 +3,7 @@ import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 
 import { PUBLIC_DIRECTORIES } from '../constants.js';
+import { canLoadUserThirdPartyExtension } from '../extension-policy.js';
 import { createMacroState, evaluatePromptMacros, refreshMacroOutletValues } from '../prompting/macro-evaluator.js';
 
 const extension_prompt_roles = {
@@ -106,7 +107,7 @@ function getManifestEntry(entryRoot, directoryEntry) {
     };
 }
 
-function discoverServerExtensions(directories, extensionSettings = {}) {
+function discoverServerExtensions(directories, extensionSettings = {}, user = null) {
     const discovered = new Map();
 
     for (const entryRoot of getExtensionRoots(directories)) {
@@ -119,6 +120,10 @@ function discoverServerExtensions(directories, extensionSettings = {}) {
             .filter(dirent => !(entryRoot.scope === 'system' && dirent.name === 'third-party'));
 
         for (const dirent of dirEntries) {
+            if (entryRoot.scope === 'local' && !canLoadUserThirdPartyExtension(user, dirent.name)) {
+                continue;
+            }
+
             const manifestEntry = getManifestEntry(entryRoot, dirent);
             if (!manifestEntry) {
                 continue;
@@ -433,13 +438,13 @@ function applyMacroProviderResult(macroState, result) {
     }
 }
 
-export async function runServerGenerationExtensions(directories, promptContext) {
+export async function runServerGenerationExtensions(directories, promptContext, user = null) {
     if (!promptContext || typeof promptContext !== 'object') {
         return { aborted: false, executedExtensions: [] };
     }
 
     const extensionSettings = promptContext.extensionSettings || {};
-    const manifestEntries = discoverServerExtensions(directories, extensionSettings);
+    const manifestEntries = discoverServerExtensions(directories, extensionSettings, user);
     if (!manifestEntries.length) {
         return { aborted: false, executedExtensions: [] };
     }

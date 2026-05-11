@@ -84,6 +84,11 @@ requestProxy:
     - 127.0.0.1
 # Enable multi-user mode
 enableUserAccounts: true
+# Allow non-admin users to install, update, switch, and load their own third-party local extensions.
+# Leave this false on hosted or multi-user instances unless all users are trusted to run code.
+allowUserThirdPartyExtensions: false
+# Local third-party extension folder names that non-admin users may load when allowUserThirdPartyExtensions is false.
+allowedUserThirdPartyExtensions: []
 # Enable discreet login mode: hides user list on the login screen
 enableDiscreetLogin: true
 # If `basicAuthMode` and this are enabled then

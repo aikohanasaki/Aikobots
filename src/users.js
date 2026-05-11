@@ -15,6 +15,7 @@ import { sync as writeFileAtomicSync } from 'write-file-atomic';
 import sanitize from 'sanitize-filename';
 
 import { USER_DIRECTORY_TEMPLATE, DEFAULT_USER, PUBLIC_DIRECTORIES, SETTINGS_FILE, UPLOADS_DIRECTORY } from './constants.js';
+import { canLoadUserThirdPartyExtension, getRequestedExtensionFolderName } from './extension-policy.js';
 import { getConfigValue, color, delay, generateTimestamp, invalidateFirefoxCache } from './util.js';
 import { allowKeysExposure, readSecret, SECRETS_FILE, writeSecret } from './endpoints/secrets.js';
 import { buildPersonasDocumentFromLegacySettings, getPersonasPath, readPersonasDocument } from './persona-repository.js';
@@ -1013,7 +1014,10 @@ function createExtensionsRouteHandler(directoryFn) {
 
             const existsLocal = fs.existsSync(path.join(directory, filePath));
             if (existsLocal) {
-                return res.sendFile(filePath, { root: directory });
+                const extensionName = getRequestedExtensionFolderName(filePath);
+                if (canLoadUserThirdPartyExtension(req.user, extensionName)) {
+                    return res.sendFile(filePath, { root: directory });
+                }
             }
 
             const resolvedGlobalDirectory = path.resolve(PUBLIC_DIRECTORIES.globalExtensions);
