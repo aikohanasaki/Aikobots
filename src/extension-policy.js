@@ -14,7 +14,12 @@ function normalizeExtensionName(extensionName) {
         ? normalized.slice(THIRD_PARTY_PREFIX.length)
         : normalized;
 
-    return withoutPrefix.split('/')[0] || '';
+    const segments = withoutPrefix.split('/').filter(Boolean);
+    if (segments.some(segment => segment === '.' || segment === '..')) {
+        return '';
+    }
+
+    return segments[0] || '';
 }
 
 function getAllowlistedUserThirdPartyExtensions() {
