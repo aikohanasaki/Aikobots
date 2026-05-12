@@ -219,6 +219,7 @@ export const power_user = {
     auto_swipe_blacklist: [],
     auto_swipe_blacklist_threshold: 2,
     auto_scroll_chat_to_bottom: true,
+    auto_scroll_chat_on_input_resize: true,
     auto_fix_generated_markdown: true,
     send_on_enter: send_on_enter_options.AUTO,
     console_log_prompts: false,
@@ -1708,6 +1709,14 @@ function toggleStripAiThinkingCleanupMode() {
     $('#strip_ai_thinking_cleanup_mode').prop('disabled', !enabled);
 }
 
+function updateInputResizeAutoScrollControl() {
+    const enabled = !!power_user.auto_scroll_chat_to_bottom;
+    $('#auto_scroll_chat_on_input_resize')
+        .prop('checked', !!power_user.auto_scroll_chat_on_input_resize)
+        .prop('disabled', !enabled);
+    $('#auto_scroll_chat_on_input_resize_block').toggleClass('disabled', !enabled);
+}
+
 //MARK: loadPowerUser
 export async function loadPowerUserSettings(settings, data) {
     const defaultStscript = JSON.parse(JSON.stringify(power_user.stscript));
@@ -1846,6 +1855,7 @@ export async function loadPowerUserSettings(settings, data) {
     $('#show_group_chat_queue').prop('checked', power_user.show_group_chat_queue);
     $('#auto_fix_generated_markdown').prop('checked', power_user.auto_fix_generated_markdown);
     $('#auto_scroll_chat_to_bottom').prop('checked', power_user.auto_scroll_chat_to_bottom);
+    updateInputResizeAutoScrollControl();
     $('#bogus_folders').prop('checked', power_user.bogus_folders);
     $('#zoomed_avatar_magnification').prop('checked', power_user.zoomed_avatar_magnification);
     $(`#tokenizer option[value="${power_user.tokenizer}"]`).prop('selected', true);
@@ -3622,6 +3632,12 @@ jQuery(() => {
 
     $('#auto_scroll_chat_to_bottom').on('input', function () {
         power_user.auto_scroll_chat_to_bottom = !!$(this).prop('checked');
+        updateInputResizeAutoScrollControl();
+        saveSettingsDebounced();
+    });
+
+    $('#auto_scroll_chat_on_input_resize').on('input', function () {
+        power_user.auto_scroll_chat_on_input_resize = !!$(this).prop('checked');
         saveSettingsDebounced();
     });
 

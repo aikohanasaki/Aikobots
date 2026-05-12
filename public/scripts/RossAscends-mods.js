@@ -845,21 +845,71 @@ export async function initMovingUI() {
 /**@type {HTMLTextAreaElement} */
 const sendTextArea = document.querySelector('#send_textarea');
 const chatBlock = document.getElementById('chat');
-const isFirefox = navigator.userAgent.toLowerCase().indexOf('firefox') > -1;
+const sendForm = document.getElementById('send_form');
+const formSheld = document.getElementById('form_sheld');
+const inputResizeBottomThreshold = 40;
+let inputResizeBottomOffset = null;
+let inputResizeBottomOffsetCapturedAt = 0;
+let inputResizeRestoreFrame = null;
+let inputResizeCompensationActive = false;
+
+function isInputResizeScrollCompensationEnabled() {
+    return !!power_user.auto_scroll_chat_to_bottom && !!power_user.auto_scroll_chat_on_input_resize;
+}
+
+function getChatBottomOffset() {
+    return chatBlock.scrollHeight - chatBlock.clientHeight - chatBlock.scrollTop;
+}
+
+function normalizeChatBottomOffset(bottomOffset) {
+    return bottomOffset <= inputResizeBottomThreshold ? 0 : bottomOffset;
+}
+
+function captureInputResizeBottomOffset({ preserveRecent = false } = {}) {
+    if (!isInputResizeScrollCompensationEnabled()) {
+        inputResizeBottomOffset = null;
+        inputResizeBottomOffsetCapturedAt = 0;
+        return;
+    }
+
+    if (preserveRecent && inputResizeBottomOffset !== null && performance.now() - inputResizeBottomOffsetCapturedAt < 100) {
+        return;
+    }
+
+    inputResizeBottomOffset = normalizeChatBottomOffset(getChatBottomOffset());
+    inputResizeBottomOffsetCapturedAt = performance.now();
+}
+
+function restoreInputResizeBottomOffset() {
+    if (inputResizeRestoreFrame !== null) {
+        cancelAnimationFrame(inputResizeRestoreFrame);
+    }
+
+    inputResizeRestoreFrame = requestAnimationFrame(() => {
+        inputResizeRestoreFrame = null;
+
+        if (!isInputResizeScrollCompensationEnabled() || inputResizeBottomOffset === null) {
+            inputResizeCompensationActive = false;
+            return;
+        }
+
+        inputResizeCompensationActive = true;
+        chatBlock.scrollTop = chatBlock.scrollHeight - chatBlock.clientHeight - inputResizeBottomOffset;
+        inputResizeCompensationActive = false;
+        inputResizeBottomOffset = normalizeChatBottomOffset(getChatBottomOffset());
+        inputResizeBottomOffsetCapturedAt = performance.now();
+    });
+}
 
 /**
  * this makes the chat input text area resize vertically to match the text size (limited by CSS at 50% window height)
  */
 function autoFitSendTextArea() {
-    const originalScrollBottom = chatBlock.scrollHeight - (chatBlock.scrollTop + chatBlock.offsetHeight);
+    captureInputResizeBottomOffset();
 
     sendTextArea.style.height = '1px'; // Reset height to 1px to force recalculation of scrollHeight
     const newHeight = sendTextArea.scrollHeight;
     sendTextArea.style.height = `${newHeight}px`;
-
-    if (!isFirefox) {
-        chatBlock.scrollTop = chatBlock.scrollHeight - (chatBlock.offsetHeight + originalScrollBottom);
-    }
 }
 export const autoFitSendTextAreaDebounced = debounce(autoFitSendTextArea, debounce_timeout.short);
 
@@ -1035,32 +1085,50 @@ export function initRossMods() {
     });
 
     const cssAutofit = CSS.supports('field-sizing', 'content');
+    const inputResizeObservedHeights = new WeakMap();
+    const inputResizeObservedElements = [sendTextArea, sendForm, formSheld].filter(Boolean);
 
-    if (cssAutofit) {
-        let lastHeight = chatBlock.offsetHeight;
-        const chatBlockResizeObserver = new ResizeObserver((entries) => {
+    if (typeof ResizeObserver !== 'undefined') {
+        const inputResizeObserver = new ResizeObserver((entries) => {
+            let inputAreaHeightChanged = false;
+
             for (const entry of entries) {
-                if (entry.target !== chatBlock) {
+                if (!(entry.target instanceof HTMLElement)) {
                     continue;
                 }
 
-                const threshold = 1;
-                const newHeight = chatBlock.offsetHeight;
-                const deltaHeight = newHeight - lastHeight;
-                const isScrollAtBottom = Math.abs(chatBlock.scrollHeight - chatBlock.scrollTop - newHeight) <= threshold;
+                const borderBoxSize = Array.isArray(entry.borderBoxSize) ? entry.borderBoxSize[0] : entry.borderBoxSize;
+                const newHeight = borderBoxSize?.blockSize ?? entry.target.offsetHeight;
+                const lastHeight = inputResizeObservedHeights.get(entry.target);
+                inputResizeObservedHeights.set(entry.target, newHeight);
 
-                if (!isScrollAtBottom && Math.abs(deltaHeight) > threshold) {
-                    chatBlock.scrollTop -= deltaHeight;
+                if (lastHeight !== undefined && Math.abs(newHeight - lastHeight) > 0.5) {
+                    inputAreaHeightChanged = true;
                 }
-                lastHeight = newHeight;
+            }
+
+            if (inputAreaHeightChanged && !inputResizeCompensationActive) {
+                restoreInputResizeBottomOffset();
             }
         });
 
-        chatBlockResizeObserver.observe(chatBlock);
+        for (const element of inputResizeObservedElements) {
+            inputResizeObservedHeights.set(element, element.offsetHeight);
+            inputResizeObserver.observe(element);
+        }
     }
+
+    sendTextArea.addEventListener('focus', captureInputResizeBottomOffset);
+    sendTextArea.addEventListener('beforeinput', captureInputResizeBottomOffset);
+    sendTextArea.addEventListener('paste', captureInputResizeBottomOffset);
+    sendTextArea.addEventListener('cut', captureInputResizeBottomOffset);
+    sendTextArea.addEventListener('pointerdown', captureInputResizeBottomOffset, { passive: true });
+    sendTextArea.addEventListener('mousedown', captureInputResizeBottomOffset, { passive: true });
+    sendTextArea.addEventListener('touchstart', captureInputResizeBottomOffset, { passive: true });
 
     sendTextArea.addEventListener('input', () => {
         saveUserInputDebounced();
+        captureInputResizeBottomOffset({ preserveRecent: true });
 
         if (cssAutofit) {
             // Unset modifications made with a manual resize

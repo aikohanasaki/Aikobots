@@ -1084,7 +1084,7 @@ body .panelControlBar {
     max-height: calc(100vh - calc(var(--topBarBlockSize) + var(--bottomFormBlockSize)));
     overflow-x: hidden;
     padding-bottom: 0;
-    overflow-y: scroll;
+    overflow-y: auto;
     display: flex;
     bottom: 10px;
     /*     border-bottom: 1px solid var(--SmartThemeBorderColor);
@@ -1096,7 +1096,7 @@ body .panelControlBar {
     text-shadow: 0px 0px calc(var(--shadowWidth) * 1px) var(--SmartThemeShadowColor);
     flex-direction: column;
     z-index: 30;
-    flex-grow: 1;
+    flex: 1 1 auto;
     min-height: 0;
 }
 
@@ -5179,6 +5179,14 @@ body[data-generating="true"] #chat .last_mes .mes_reasoning_actions {
     flex-direction: row;
     column-gap: 5px;
     align-items: baseline;
+}
+
+#power-user-option-checkboxes .nested-checkbox {
+    margin-left: 1.25em;
+}
+
+#power-user-option-checkboxes .checkbox_label.disabled {
+    opacity: 0.6;
 }
 
 .auto_continue_settings_block {
