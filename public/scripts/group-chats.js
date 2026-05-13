@@ -33,6 +33,7 @@ import {
     default_avatar,
     addOneMessage,
     clearChat,
+    discardTemporaryCharacterChat,
     Generate,
     select_rm_info,
     setCharacterId,
@@ -1966,6 +1967,7 @@ export async function openGroupById(groupId) {
         if (selected_group !== groupId) {
             groupChatQueueOrder = new Map();
             await clearChat();
+            discardTemporaryCharacterChat();
             cancelTtsPlay();
             selected_group = groupId;
             setCharacterId(undefined);
@@ -2124,6 +2126,7 @@ export async function openGroupChat(groupId, chatId) {
     try {
         await persistActiveGroupChat(groupId);
         await clearChat();
+        discardTemporaryCharacterChat();
         chat.length = 0;
         group.chat_id = chatId;
         group['date_last_chat'] = Date.now();

@@ -879,6 +879,7 @@ let chatSaveSessionId = '';
 let chatSaveDirty = false;
 let chatSaveQueuePromise = null;
 let chatSaveRequestOptions = {};
+let temporaryCharacterChat = null;
 const CHAT_SAVE_RESULT = {
     SAVED: 'saved',
     FAILED: 'failed',
@@ -1280,6 +1281,61 @@ export function getCurrentChatId() {
     else if (this_chid !== undefined) {
         return characters[this_chid]?.chat;
     }
+}
+
+function setTemporaryCharacterChat(fileName = '', previousFileName = null) {
+    if (selected_group || this_chid === undefined || !characters[this_chid]) {
+        temporaryCharacterChat = null;
+        return;
+    }
+
+    temporaryCharacterChat = {
+        chid: String(this_chid),
+        avatar: String(characters[this_chid].avatar || ''),
+        fileName: String(fileName || ''),
+        previousFileName: previousFileName === null ? String(fileName || '') : String(previousFileName || ''),
+    };
+}
+
+function clearTemporaryCharacterChat() {
+    temporaryCharacterChat = null;
+}
+
+function isCurrentCharacterChatTemporary() {
+    return Boolean(
+        temporaryCharacterChat
+        && !selected_group
+        && this_chid !== undefined
+        && String(temporaryCharacterChat.chid) === String(this_chid)
+        && String(temporaryCharacterChat.avatar || '') === String(characters[this_chid]?.avatar || '')
+        && String(temporaryCharacterChat.fileName || '') === String(characters[this_chid]?.chat || ''),
+    );
+}
+
+function hasUserMessageInCurrentChat() {
+    return chat.some(message => message?.is_user === true);
+}
+
+function shouldSkipTemporaryCharacterChatSave() {
+    return isCurrentCharacterChatTemporary() && !hasUserMessageInCurrentChat();
+}
+
+function setTemporaryCharacterChatPreviousFileName(previousFileName = '') {
+    if (isCurrentCharacterChatTemporary()) {
+        temporaryCharacterChat.previousFileName = String(previousFileName || '');
+    }
+}
+
+export function discardTemporaryCharacterChat() {
+    if (!isCurrentCharacterChatTemporary()) {
+        clearTemporaryCharacterChat();
+        return;
+    }
+
+    const previousFileName = String(temporaryCharacterChat.previousFileName || '');
+    characters[this_chid].chat = previousFileName;
+    $('#selected_chat_pole').val(previousFileName);
+    clearTemporaryCharacterChat();
 }
 
 export function getChatSaveRevision() {
@@ -2934,6 +2990,7 @@ export async function selectCharacterById(id, { switchMenu = true } = {}) {
             const deferredLoader = deferLoader();
             try {
                 await clearChat();
+                discardTemporaryCharacterChat();
                 cancelTtsPlay();
                 resetSelectedGroup();
                 this_edit_mes_id = undefined;
@@ -10017,6 +10074,7 @@ export function resetChatState() {
     chat.splice(0, chat.length, ...SAFETY_CHAT);
     // resets chat metadata
     chat_metadata = {};
+    clearTemporaryCharacterChat();
     setChatSaveRevision(0);
     // resets the characters array, forcing getcharacters to reset
     characters.length = 0;
@@ -10335,6 +10393,11 @@ export async function saveChat({ chatName, withMetadata, mesId, force = false, s
     const existingFileName = chatName ?? characters[this_chid]?.chat;
     const isPendingSoloCharacterSave = !existingFileName && this_chid !== undefined && name2 !== neutralCharacterName;
     const fileName = existingFileName || (isPendingSoloCharacterSave ? `${name2} - ${humanizedDateTime()}` : existingFileName);
+    const isTemporaryCharacterSave = isCurrentCharacterChatTemporary();
+
+    if (shouldSkipTemporaryCharacterChatSave()) {
+        return CHAT_SAVE_RESULT.SAVED;
+    }
 
     if (!fileName && name2 === neutralCharacterName) {
         // TODO: Do something for a temporary chat with no character.
@@ -10346,7 +10409,7 @@ export async function saveChat({ chatName, withMetadata, mesId, force = false, s
         return;
     }
 
-    if (!isPendingSoloCharacterSave) {
+    if (!isPendingSoloCharacterSave && !isTemporaryCharacterSave) {
         characters[this_chid]['date_last_chat'] = Date.now();
     }
     chat.forEach(function (item, i) {
@@ -10436,7 +10499,8 @@ export async function saveChat({ chatName, withMetadata, mesId, force = false, s
                 setChatSaveRevision(responseData?.chat_revision);
             }
 
-            if (isPendingSoloCharacterSave) {
+            if (isPendingSoloCharacterSave || isTemporaryCharacterSave) {
+                clearTemporaryCharacterChat();
                 characters[this_chid]['date_last_chat'] = Date.now();
                 await updateRemoteChatName(this_chid, fileName);
                 $('#selected_chat_pole').val(fileName);
@@ -10663,6 +10727,11 @@ export async function getChat() {
         const response = await fetchChunkedChat({ includeParentPromptCache: true });
         // A brand-new chat may not have a file on disk yet. Treat that as a valid empty chat.
         const header = applyChunkedChatPayload(response, { replace: true, currentView: 'tail' });
+        if (header) {
+            clearTemporaryCharacterChat();
+        } else {
+            setTemporaryCharacterChat(characters[this_chid]?.chat);
+        }
         chat_create_date = header?.create_date ?? humanizedDateTime();
         chat_metadata = header?.chat_metadata ?? {};
         if (!chat_metadata['integrity']) {
@@ -10871,12 +10940,17 @@ export async function openCharacterChat(file_name) {
 
     try {
         await clearChat();
+        discardTemporaryCharacterChat();
+        const previousChatFileName = String(characters[this_chid]?.chat || '');
         characters[this_chid]['chat'] = file_name;
         chat.length = 0;
         chat_metadata = {};
         await getChat();
+        setTemporaryCharacterChatPreviousFileName(previousChatFileName);
         $('#selected_chat_pole').val(file_name);
-        await createOrEditCharacter(new CustomEvent('newChat'));
+        if (!isCurrentCharacterChatTemporary()) {
+            await createOrEditCharacter(new CustomEvent('newChat'));
+        }
     } finally {
         await deferredLoader.clear();
     }
@@ -14117,6 +14191,10 @@ async function saveChatOnce(options = {}) {
     try {
         cancelDebouncedChatSave();
 
+        if (!selected_group && shouldSkipTemporaryCharacterChatSave()) {
+            return CHAT_SAVE_RESULT.SAVED;
+        }
+
         savedChatId = String(getCurrentChatId() || '');
         savedIsGroup = Boolean(selected_group);
         savedGroupId = savedIsGroup ? selected_group : null;
@@ -15358,6 +15436,7 @@ export async function doNewChat({ deleteCurrentChat = false } = {}) {
     //Fix it; New chat doesn't create while open create character menu
     await waitUntilCondition(() => !isChatSaving, debounce_timeout.extended, 10);
     await clearChat();
+    discardTemporaryCharacterChat();
     chat.length = 0;
 
     chat_file_for_del = getCurrentChatDetails()?.sessionName;
@@ -15373,16 +15452,16 @@ export async function doNewChat({ deleteCurrentChat = false } = {}) {
     }
     else {
         //RossAscends: added character name to new chat filenames and replaced Date.now() with humanizedDateTime;
+        const previousChatFileName = String(characters[this_chid].chat || '');
         chat_metadata = {};
         characters[this_chid].chat = `${name2} - ${humanizedDateTime()}`;
         $('#selected_chat_pole').val(characters[this_chid].chat);
         await getChat();
-        const saveResult = await saveChatConditional();
-        if (saveResult !== CHAT_SAVE_RESULT.SAVED) {
-            return;
+        setTemporaryCharacterChatPreviousFileName(previousChatFileName);
+        if (deleteCurrentChat) {
+            await delChat(chat_file_for_del + '.jsonl');
+            setTemporaryCharacterChatPreviousFileName('');
         }
-        await createOrEditCharacter(new CustomEvent('newChat'));
-        if (deleteCurrentChat) await delChat(chat_file_for_del + '.jsonl');
     }
 
 }
@@ -15487,6 +15566,7 @@ export async function closeCurrentChat() {
     if (is_send_press == false) {
         await waitUntilCondition(() => !isChatSaving, debounce_timeout.extended, 10);
         await clearChat();
+        discardTemporaryCharacterChat();
         chat.length = 0;
         resetSelectedGroup();
         setCharacterId(undefined);
