@@ -15377,6 +15377,10 @@ export async function doNewChat({ deleteCurrentChat = false } = {}) {
         characters[this_chid].chat = `${name2} - ${humanizedDateTime()}`;
         $('#selected_chat_pole').val(characters[this_chid].chat);
         await getChat();
+        const saveResult = await saveChatConditional();
+        if (saveResult !== CHAT_SAVE_RESULT.SAVED) {
+            return;
+        }
         await createOrEditCharacter(new CustomEvent('newChat'));
         if (deleteCurrentChat) await delChat(chat_file_for_del + '.jsonl');
     }
