@@ -1314,6 +1314,11 @@ export function retryFailedStmbJob(chatKey = null, jobId = null) {
         return null;
     }
 
+    const payload = sourceJob.payload ? structuredClone(sourceJob.payload) : {};
+    if (sourceJob.type === 'sidePrompt' || sourceJob.type === 'sidePromptBatch') {
+        delete payload.dependsOnJobId;
+    }
+
     return enqueueStmbJob({
         chatKey: sourceJob.chatKey,
         type: sourceJob.type,
@@ -1324,6 +1329,6 @@ export function retryFailedStmbJob(chatKey = null, jobId = null) {
         characterName: sourceJob.characterName,
         chatTitle: sourceJob.chatTitle,
         sceneContext: sourceJob.sceneContext,
-        payload: sourceJob.payload,
+        payload,
     });
 }
