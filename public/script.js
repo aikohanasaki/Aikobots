@@ -15465,6 +15465,11 @@ export async function swipe(event, direction, { source, repeated, message = chat
         }
     } catch (error) {
         console.error('Swipe failed', error);
+        if (chat[mesId] && Number.isInteger(originalSwipeId)) {
+            chat[mesId].swipe_id = originalSwipeId;
+            syncSwipeToMes(mesId, originalSwipeId, chat[mesId]);
+            await refreshRenderedMessage(mesId);
+        }
         swipeState = SWIPE_STATE.NONE;
         delete document.body.dataset.swiping;
         showSwipeButtons();
