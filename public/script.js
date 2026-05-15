@@ -43,7 +43,7 @@ import {
     charSetAuxWorlds,
     getCharacterExtraBooks,
     getEditableCharacterExtraBooks,
-    getLegacyCharacterExtraBooks,
+    getEffectiveHiddenCharacterLorebooks,
     getForcedActivationEntriesSnapshot,
 } from './scripts/world-info.js';
 
@@ -14687,7 +14687,12 @@ async function openCharacterWorldPopup() {
     // Append to extras dropdown.
     const extrasSelect = template.find('.character_extra_world_info_selector');
     const selectedExtraBooks = menu_type == 'create' ? create_save.extra_books : getEditableCharacterExtraBooks(fileName);
-    const legacyExtraBooks = menu_type == 'create' ? [] : getLegacyCharacterExtraBooks(fileName);
+    const effectiveHiddenLorebooks = menu_type == 'create' ? [] : await getEffectiveHiddenCharacterLorebooks({
+        character: characters[chid],
+        characterWorld: worldId,
+        characterExtraBooks: selectedExtraBooks,
+        currentCharacterFilename: fileName,
+    });
     const filteredSelectedExtraBooks = canEditLoreLinks
         ? selectedExtraBooks.filter(item => selectableExtraBookSet.has(item))
         : selectedExtraBooks.filter(Boolean).filter(onlyUnique);
@@ -14699,12 +14704,12 @@ async function openCharacterWorldPopup() {
     });
     extrasSelect.prop('disabled', !canEditLoreLinks);
 
-    if (legacyExtraBooks.length > 0) {
+    if (effectiveHiddenLorebooks.length > 0) {
         template.find('.range-block-range').first().after($(`
             <div class="range-block-counter justifyLeft flex-container flexFlowColumn margin-bot-10px opacity50p">
-                <span>Legacy compatibility lorebooks from settings.json are also active for this character at runtime.</span>
+                <span>Effective hidden/system lorebooks are also active for this character at runtime.</span>
                 <span>These links are read-only here and are not changed when you edit metadata-linked lorebooks.</span>
-                <span><strong>${escapeHtml(legacyExtraBooks.join(', '))}</strong></span>
+                <span><strong>${escapeHtml(effectiveHiddenLorebooks.join(', '))}</strong></span>
             </div>
         `));
     }

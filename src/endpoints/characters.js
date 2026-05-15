@@ -2636,6 +2636,7 @@ router.post('/distribute', requireAdminMiddleware, async function (request, resp
 
         /** @type {string} */
         let sourcePath = '';
+        let sourceOwnerHandle = '';
 
         if (sourceType === DISTRIBUTION_SOURCE_TYPES.CHARACTER) {
             const sourceAvatar = String(request.body?.sourceAvatar || '').trim();
@@ -2643,7 +2644,22 @@ router.post('/distribute', requireAdminMiddleware, async function (request, resp
                 return response.status(400).json({ error: 'Missing source character.' });
             }
 
-            sourcePath = resolveCharacterFilePath(request.user.directories, sourceAvatar);
+            const requestedSourceOwnerHandle = String(request.body?.sourceOwnerHandle || '').trim();
+            let sourceDirectories = request.user.directories;
+            sourceOwnerHandle = request.user.profile.handle;
+
+            if (requestedSourceOwnerHandle) {
+                const enabledUsers = await getAllEnabledUsers();
+                const sourceUser = enabledUsers.find(user => String(user.handle || '').trim() === requestedSourceOwnerHandle);
+                if (!sourceUser) {
+                    return response.status(400).json({ error: 'Invalid or disabled source owner.' });
+                }
+
+                sourceDirectories = getUserDirectories(sourceUser.handle);
+                sourceOwnerHandle = sourceUser.handle;
+            }
+
+            sourcePath = resolveCharacterFilePath(sourceDirectories, sourceAvatar);
         } else if (sourceType === DISTRIBUTION_SOURCE_TYPES.SUBMISSION) {
             const submissionId = String(request.body?.submissionId || '').trim();
             if (!submissionId) {
@@ -2682,9 +2698,7 @@ router.post('/distribute', requireAdminMiddleware, async function (request, resp
             blacklistHandles: request.body?.blacklistHandles,
             persistWhitelist,
             whitelistHandles: request.body?.whitelistHandles,
-            sourceOwnerHandle: sourceType === DISTRIBUTION_SOURCE_TYPES.CHARACTER
-                ? request.user.profile.handle
-                : '',
+            sourceOwnerHandle,
         });
 
         return response.json(distribution);

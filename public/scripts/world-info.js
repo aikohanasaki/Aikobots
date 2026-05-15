@@ -6304,6 +6304,51 @@ async function getSortedEntriesOnServer() {
     return structuredClone(entries);
 }
 
+export async function getEffectiveHiddenCharacterLorebooks({
+    character = characters[this_chid],
+    characterWorld = character?.data?.extensions?.world || '',
+    characterExtraBooks = [],
+    currentCharacterFilename = getCharaFilename(this_chid),
+} = {}) {
+    try {
+        const context = getContext();
+        const visibleCharacterBooks = new Set([characterWorld, ...characterExtraBooks].filter(Boolean));
+        const response = await fetch('/api/worldinfo/sorted-entries', {
+            method: 'POST',
+            headers: getRequestHeaders(),
+            body: JSON.stringify({
+                selectedWorldInfo: selected_world_info,
+                chatWorld: chat_metadata[METADATA_KEY] || '',
+                personaWorld: power_user.persona_description_lorebook || '',
+                characterWorld,
+                characterExtraBooks,
+                selectedGroup: Boolean(context?.groupId),
+                activeSpeaker: {
+                    name: character?.name || '',
+                    avatar: character?.avatar || '',
+                    filename: currentCharacterFilename,
+                },
+                currentCharacterFilename,
+            }),
+            cache: 'no-cache',
+        });
+
+        if (!response.ok) {
+            throw new Error(`Failed to resolve effective hidden lorebooks on server: ${response.status}`);
+        }
+
+        const data = await response.json();
+        const hiddenCharacterLorebooks = (Array.isArray(data?.characterLore) ? data.characterLore : [])
+            .map(entry => String(entry?.world || '').trim())
+            .filter(worldName => worldName && !visibleCharacterBooks.has(worldName));
+
+        return normalizeArray(hiddenCharacterLorebooks);
+    } catch (error) {
+        console.warn('[WI] Failed to resolve effective hidden character lorebooks.', error);
+        return [];
+    }
+}
+
 export async function getSortedEntries() {
     try {
         return await getSortedEntriesOnServer();
