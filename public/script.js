@@ -16707,6 +16707,23 @@ jQuery(async function () {
         }
     });
 
+    $(document).on('pointerup', '.timestamp, .timestamp-icon', function (event) {
+        if (!isMobile()) {
+            return;
+        }
+
+        const title = this.getAttribute('title')?.trim();
+        if (!title) {
+            return;
+        }
+
+        event.preventDefault();
+        event.stopPropagation();
+
+        const timestamp = $(this).closest('.ch_name').find('.timestamp').text().trim();
+        toastr.info(title, timestamp, { timeOut: 4000, extendedTimeOut: 1000, preventDuplicates: true });
+    });
+
     //********************
     //***Message Editor***
     $(document).on('click', '.mes_edit', async function () {
