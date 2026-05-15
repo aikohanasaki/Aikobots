@@ -1650,6 +1650,13 @@ body .panelControlBar {
     font-size: 20px;
     cursor: pointer;
     align-self: center;
+    pointer-events: auto;
+}
+
+.slide {
+    animation: slide calc(var(--slide-mes-x-duration, var(--animation-duration, 125ms))) ease-in-out forwards;
+    -webkit-animation: slide calc(var(--slide-mes-x-duration, var(--animation-duration, 125ms))) ease-in-out forwards;
+    will-change: transform;
 }
 
 .swipe_left {
@@ -1662,6 +1669,7 @@ body .panelControlBar {
     position: absolute;
     right: 0;
     bottom: 0;
+    pointer-events: none;
 }
 
 .swipes-counter {
@@ -1676,16 +1684,85 @@ body .panelControlBar {
     justify-content: center;
     margin-bottom: var(--swipeCounterMargin);
     height: var(--swipeCounterHeight);
+    opacity: 0.3;
+    pointer-events: auto;
 }
 
-body:not(.swipeAllMessages) .mes:not(.last_mes) .swipes-counter {
-    visibility: hidden;
+.swipes-counter.swipe-picker-enabled {
+    cursor: pointer;
+}
+
+.swipes-counter.swipe-picker-enabled:hover,
+.swipes-counter.swipe-picker-enabled:focus-visible {
+    opacity: 0.7;
+}
+
+.swipe_picker_popup_body {
+    gap: 8px;
+    min-height: 0;
+}
+
+.swipe_picker_div {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    max-height: min(65vh, 720px);
+    overflow-y: auto;
+}
+
+.swipe_picker_block {
+    display: grid;
+    grid-template-columns: 1fr auto;
+    gap: 4px 10px;
+    width: 100%;
+    padding: 8px;
+    border: 1px solid var(--SmartThemeBorderColor);
+    border-radius: 6px;
+    background: var(--SmartThemeBlurTintColor);
+    color: var(--SmartThemeBodyColor);
+    text-align: left;
+    cursor: pointer;
+}
+
+.swipe_picker_block[highlight] {
+    outline: 1px solid var(--SmartThemeQuoteColor);
+}
+
+.swipe_picker_block_header {
+    font-weight: 600;
+}
+
+.swipe_picker_block_details {
+    font-size: 0.85em;
+    opacity: 0.7;
+}
+
+.swipe_picker_block_preview {
+    grid-column: 1 / -1;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+}
+
+.swipe_picker_actions {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+}
+
+.swipe_picker_copy,
+.swipe_picker_delete {
+    cursor: pointer;
+}
+
+.swipe_picker_delete.disabled {
+    cursor: default;
+    opacity: 0.35;
 }
 
 body.swipeAllMessages .mes:not(.last_mes) .swipes-counter {
     /* Avoid expensive DOM queries */
-    opacity: 0.3 !important;
-    display: flex !important;
+    opacity: 0.3;
+    display: flex;
 }
 
 .swipe_left {
@@ -1696,6 +1773,28 @@ body.swipeAllMessages .mes:not(.last_mes) .swipes-counter {
 .swipe_right {
     right: 5px;
     align-self: center;
+    display: flex;
+}
+
+.last_swipe :is(.swipes-counter, .swipe_right) {
+    opacity: 0.7;
+    transition-duration: calc(var(--animation-duration-2x) * 0.7/0.3);
+}
+
+.fade :is(.swipes-counter, .swipe_left, .swipe_right) {
+    transition: opacity calc(var(--animation-duration) * 2) ease-in;
+}
+
+body:not(.swipeAllMessages) .mes:not(.last_mes) :is(.swipe_left, .swipe_right, .swipes-counter),
+.mes:not(.swipes_visible) .swipe_left,
+.mes:not(.swipes_visible, .last_swipe) .swipe_right,
+body.hideAllSwipeButtons :is(.swipe_left, .swipe_right),
+.swipes-counter[hidden],
+.swipe_right[hidden],
+.swipe_left[hidden] {
+    opacity: 0 !important;
+    visibility: hidden;
+    pointer-events: none;
 }
 
 .ui-settings {

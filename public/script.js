@@ -166,8 +166,10 @@ import {
     trimSpaces,
     clamp,
     urlContentToDataUri,
+    shakeElement,
+    createTimeout,
 } from './scripts/utils.js';
-import { debounce_timeout, GENERATION_TYPE_TRIGGERS, IGNORE_SYMBOL, inject_ids, MEDIA_DISPLAY, MEDIA_SOURCE, MEDIA_TYPE, SCROLL_BEHAVIOR, SWIPE_DIRECTION } from './scripts/constants.js';
+import { debounce_timeout, GENERATION_TYPE_TRIGGERS, IGNORE_SYMBOL, inject_ids, MEDIA_DISPLAY, MEDIA_SOURCE, MEDIA_TYPE, OVERSWIPE_BEHAVIOR, SCROLL_BEHAVIOR, SWIPE_DIRECTION, SWIPE_SOURCE, SWIPE_STATE } from './scripts/constants.js';
 
 import { cancelDebouncedMetadataSave, doDailyExtensionUpdatesCheck, extension_settings, initExtensions, loadExtensionSettings, runGenerationInterceptors } from './scripts/extensions.js';
 import { COMMENT_NAME_DEFAULT, CONNECT_API_MAP, executeSlashCommandsOnChatInput, initDefaultSlashCommands, isExecutingCommandsFromChatInput, pauseScriptExecution, stopScriptExecution, UNIQUE_APIS } from './scripts/slash-commands.js';
@@ -255,6 +257,7 @@ import { SimpleMutex } from './scripts/util/SimpleMutex.js';
 import { AudioPlayer } from './scripts/audio-player.js';
 import { getStmbSettings, initStmb, loadStmbSettings } from './scripts/stmb.js';
 import { syncManageChatsBackupsBrowser } from './scripts/chat-backups.js';
+import { canJumpToSwipeForMessage, canOpenSwipePickerForMessage, initSwipePicker } from './scripts/swipe-picker.js';
 
 export { sanitizeMessageHtml } from './scripts/chats.js';
 
@@ -870,7 +873,10 @@ export let name1 = default_user_name;
 export let name2 = systemUserName;
 /** @type {ChatMessage[]} */
 export let chat = [];
-export let isSwipingAllowed = true; //false when a swipe is in progress, or swiping is blocked.
+export let swipeState = SWIPE_STATE.NONE;
+export let swipesHidden = false;
+export let lastSwipeInfo = { now: performance.now(), direction: SWIPE_DIRECTION.RIGHT };
+export let recentSwipes = 0;
 let chatSaveTimeout;
 let importFlashTimeout;
 export let isChatSaving = false;
@@ -2874,6 +2880,7 @@ async function firstLoadInit() {
     initDataMaid();
     initItemizedPrompts();
     initAccessibility();
+    initSwipePicker();
     initStmb();
     addDebugFunctions();
     doDailyExtensionUpdatesCheck();
@@ -6966,7 +6973,11 @@ class StreamingProcessor {
 
         const isAborted = this.abortController.signal.aborted;
         if (!isAborted && power_user.auto_swipe && generatedTextFiltered(text)) {
-            return swipe_right();
+            return swipe(null, SWIPE_DIRECTION.RIGHT, {
+                source: SWIPE_SOURCE.AUTO_SWIPE,
+                repeated: true,
+                forceMesId: chat.length - 1,
+            });
         }
 
         playMessageSound();
@@ -8677,7 +8688,11 @@ export async function Generate(type, { automatic_trigger, force_name2, quiet_pro
         const isAborted = abortController && abortController.signal.aborted;
         if (!isAborted && power_user.auto_swipe && generatedTextFiltered(getMessage)) {
             is_send_press = false;
-            return swipe_right();
+            return swipe(null, SWIPE_DIRECTION.RIGHT, {
+                source: SWIPE_SOURCE.AUTO_SWIPE,
+                repeated: true,
+                forceMesId: chat.length - 1,
+            });
         }
 
         console.debug('/api/chats/save called by /Generate');
@@ -9874,6 +9889,67 @@ async function recomputeTimedWorldInfo() {
 }
 
 /**
+ * Creates a message's `swipes`, `swipe_id` and `swipe_info` if necessary.
+ * Missing swipe metadata is backfilled without cloning one active prompt snapshot
+ * across every swipe.
+ * @param {ChatMessage} message
+ * @returns {boolean} true if the message was updated.
+ */
+export function ensureSwipes(message) {
+    let updated = false;
+
+    if (!message || typeof message !== 'object') {
+        console.trace(`[ensureSwipes] failed. '${message}' is not an object.`);
+        return updated;
+    }
+
+    if (message?.is_user || message?.extra?.isSmallSys) {
+        return updated;
+    }
+
+    if (!Array.isArray(message.swipes)) {
+        message.swipes = [message.mes ?? ''];
+        updated = true;
+    }
+
+    if (typeof message.swipe_id !== 'number') {
+        message.swipe_id = 0;
+        updated = true;
+    }
+
+    const activeSwipeId = clamp(Number(message.swipe_id ?? 0), 0, Math.max(0, message.swipes.length - 1));
+    const createSwipeInfo = (index) => ({
+        send_date: message.send_date,
+        gen_started: message.gen_started,
+        gen_finished: message.gen_finished,
+        extra: index === activeSwipeId ? createSwipeInfoExtra(message.extra) : {},
+    });
+
+    if (!Array.isArray(message.swipe_info)) {
+        message.swipe_info = message.swipes.map((_, index) => createSwipeInfo(index));
+        updated = true;
+    }
+
+    for (let i = 0; i < message.swipes.length; i++) {
+        if (typeof message.swipes[i] !== 'string') {
+            updated = true;
+            console.warn('The message had a swipe that is not a string. It has been set to an empty string.', message);
+            message.swipes[i] = '';
+        }
+        if (!message.swipe_info[i] || typeof message.swipe_info[i] !== 'object') {
+            updated = true;
+            console.warn('The message had missing or invalid swipe_info for a swipe. It has been backfilled.', message);
+            message.swipe_info[i] = createSwipeInfo(i);
+        } else if (!message.swipe_info[i].extra || typeof message.swipe_info[i].extra !== 'object') {
+            updated = true;
+            message.swipe_info[i].extra = {};
+        }
+    }
+
+    return updated;
+}
+
+/**
  * Syncs the current message and all its data into the swipe data at the given message ID (or the last message if no ID is given).
  *
  * If the swipe data is invalid in some way, this function will exit out without doing anything.
@@ -9915,7 +9991,10 @@ export function syncMesToSwipe(messageId = null) {
         return false;
     }
 
-    targetMessage.swipes[targetMessage.swipe_id] = targetMessage.mes;
+    // Only sync swipes if the chat is not pristine, so macros in the greeting can resolve again on swipe.
+    if (chat_metadata.tainted || chat.length > 1) {
+        targetMessage.swipes[targetMessage.swipe_id] = targetMessage.mes;
+    }
 
     targetSwipeInfo.send_date = targetMessage.send_date;
     targetSwipeInfo.gen_started = targetMessage.gen_started;
@@ -9932,9 +10011,10 @@ export function syncMesToSwipe(messageId = null) {
  * If the swipe data is invalid in some way, this function will exit out without doing anything.
  * @param {number?} [messageId=null] - The ID of the message to sync with the swipe data. If no ID is given, the last message is used.
  * @param {number?} [swipeId=null] - The ID of the swipe to sync. If no ID is given, the current swipe ID in the message object is used.
+ * @param {ChatMessage?} [targetMessage=null] - Optional target message object.
  * @returns {boolean} Whether the swipe data was successfully synced to the message
  */
-export function syncSwipeToMes(messageId = null, swipeId = null) {
+export function syncSwipeToMes(messageId = null, swipeId = null, targetMessage = null) {
     if (!chat.length) {
         return false;
     }
@@ -9945,7 +10025,7 @@ export function syncSwipeToMes(messageId = null, swipeId = null) {
         return false;
     }
 
-    const targetMessage = chat[targetMessageId];
+    targetMessage ??= chat[targetMessageId];
     if (!targetMessage) {
         return false;
     }
@@ -13992,97 +14072,153 @@ export function callPopup(text, type, inputValue = '', { okButton, rows, wide, w
 }
 
 /**
- * Update the swipe counter for mesId.
- * @param {Number} mesId
+ * Updates the swipe counter for a rendered message.
+ * @param {Number} mesId Message ID.
+ * @param {object} [options] Options.
+ * @param {ChatMessage} [options.message=undefined] Message to read swipe numbers from.
+ * @param {JQuery<HTMLElement>} [options.messageElement=undefined] Rendered message element.
  */
-export async function updateSwipeCounter(mesId) {
-    const swipeCounterText = formatSwipeCounter((chat[mesId]?.['swipe_id'] + 1), chat[mesId]?.['swipes']?.length);
-    const currentMessage = chatElement.children().filter(`[mesid="${mesId}"]`);
-    const swipeCounter = currentMessage.find('.swipes-counter');
-    swipeCounter.text(swipeCounterText).show();
+export async function updateSwipeCounter(mesId, { message = undefined, messageElement = undefined } = {}) {
+    message ??= chat[mesId];
+    messageElement ??= chatElement.children('.mes').filter(`[mesid="${mesId}"]`);
+
+    if (!message || !messageElement.length || message.is_user || message.is_system || message.extra?.isSmallSys) {
+        return;
+    }
+
+    if (ensureSwipes(message)) {
+        syncMesToSwipe(mesId);
+    }
+
+    const swipeCounterText = formatSwipeCounter((message?.swipe_id + 1), message?.swipes?.length);
+    const swipeCounter = messageElement.find('.swipes-counter');
+    const swipePickerButton = messageElement.find('.mes_swipe_picker');
+    const canOpenSwipePicker = canOpenSwipePickerForMessage(mesId);
+    const canJumpToSwipe = canJumpToSwipeForMessage(mesId);
+
+    swipeCounter
+        .text(swipeCounterText)
+        .prop('hidden', false)
+        .toggleClass('swipe-picker-enabled', canOpenSwipePicker)
+        .toggleClass(INTERACTABLE_CONTROL_CLASS, canOpenSwipePicker)
+        .attr('role', canOpenSwipePicker ? 'button' : null)
+        .attr('title', canJumpToSwipe ? t`Click to jump to a swipe` : canOpenSwipePicker ? t`Click to view swipe history` : null)
+        .attr('tabindex', canOpenSwipePicker ? '0' : null);
+    swipePickerButton.toggle(canOpenSwipePicker);
+}
+
+export function isGenerating() {
+    return is_send_press || is_group_generating;
+}
+
+export function isSwipingAllowed() {
+    return chat.length !== 0 && swipes && !swipesHidden && !isGenerating() && swipeState === SWIPE_STATE.NONE;
 }
 
 /**
- * Swipe buttons are often toggled to update their position.
- * This should be replaced with a more efficient function.
+ * Returns true if the message can be actively navigated by swipe controls.
+ * SWIPE_STATE.EDITING is retained for base compatibility, but Aikobots does not
+ * currently wire a setter for that state.
+ * @param {number} messageId Message ID.
+ * @param {ChatMessage} [message=undefined] Optional message object.
+ * @returns {boolean}
  */
-export function refreshSwipeButtons() {
-    hideSwipeButtons();
-    showSwipeButtons();
+export function isMessageSwipeable(messageId, message = undefined) {
+    message ??= chat[messageId];
+
+    if (ensureSwipes(message)) {
+        syncMesToSwipe(messageId);
+    }
+
+    return Boolean(
+        ((messageId > (this_edit_mes_id ?? -1)) && (swipeState !== SWIPE_STATE.EDITING)) &&
+        messageId === chat.length - 1 &&
+        message &&
+        !message?.extra?.isSmallSys &&
+        !(message?.extra?.swipeable === false) &&
+        !message.is_user
+    );
 }
 
-export function showSwipeButtons(mesId = chat.length - 1) {
-    isSwipingAllowed = true;
+/**
+ * Returns the behavior when swiping past the last swipe.
+ * EDIT_GENERATE is only honored when explicitly set on message.extra.
+ * @param {number} messageId Message ID.
+ * @param {ChatMessage} [message=undefined] Optional message object.
+ * @returns {string}
+ */
+export function getOverswipeBehavior(messageId, message = undefined) {
+    message ??= chat[messageId];
 
-    if (chat.length === 0) {
-        return;
+    const isPristine = !chat_metadata?.tainted;
+    const isGreeting = messageId === 0;
+
+    if (typeof message?.extra?.overswipe_behavior === 'string') {
+        return message.extra.overswipe_behavior;
+    } else if (message?.extra?.swipeable === false) {
+        return OVERSWIPE_BEHAVIOR.NONE;
+    } else if (message?.extra?.isSmallSys) {
+        return OVERSWIPE_BEHAVIOR.NONE;
+    } else if (isGreeting && isPristine) {
+        return OVERSWIPE_BEHAVIOR.PRISTINE_GREETING;
+    } else if (!message?.is_user && !message?.is_system) {
+        return OVERSWIPE_BEHAVIOR.REGENERATE;
     }
 
-    const message = chat[mesId];
-    if (!message) {
-        return;
+    return OVERSWIPE_BEHAVIOR.LOOP;
+}
+
+export function refreshSwipeButtons(updateCounters = false, fade = true) {
+    if (chat?.length === 0) {
+        return false;
     }
 
-    if (
-        message.is_system ||
-        !swipes ||
-        Number($('.mes:last').attr('mesid')) < 0 ||
-        message.is_user ||
-        (selected_group && is_group_generating)
-    ) {
-        return;
+    if (!isSwipingAllowed()) {
+        $('body').addClass('hideAllSwipeButtons');
+        return false;
     }
 
-    // swipe_id should be set if alternate greetings are added
-    if (chat.length == 1 && message.swipe_id === undefined) {
-        return;
-    }
+    $('body').removeClass('hideAllSwipeButtons');
 
-    //had to add this to make the swipe counter work
-    //(copied from the onclick functions for swipe buttons..
-    //don't know why the array isn't set for non-swipe messages in Generate or addOneMessage..)
-    if (message['swipe_id'] === undefined) {              // if there is no swipe-message in the last spot of the chat array
-        message['swipe_id'] = 0;                        // set it to id 0
-        message['swipes'] = [];                         // empty the array
-        message['swipes'][0] = message['mes'];  //assign swipe array with last message from chat
-        message['swipe_info'] = [];
-        message['swipe_info'][0] = {
-            'send_date': message['send_date'],
-            'gen_started': message['gen_started'],
-            'gen_finished': message['gen_finished'],
-            'extra': createSwipeInfoExtra(message['extra']),
-        };
-    }
+    chatElement.children('.mes[mesid]').each((_, div) => {
+        const messageId = Number(div.getAttribute('mesid'));
+        const message = chat[messageId];
 
-    const currentMessage = chatElement.children().filter(`[mesid="${mesId}"]`);
-    if (currentMessage.length === 0) {
-        return;
-    }
+        div.classList.toggle('fade', fade);
 
-    const swipeId = message.swipe_id;
-    const swipeCounterText = formatSwipeCounter((swipeId + 1), message['swipes'].length);
-    const swipeRight = currentMessage.find('.swipe_right');
-    const swipeLeft = currentMessage.find('.swipe_left');
-    const swipeCounter = currentMessage.find('.swipes-counter');
+        if (isMessageSwipeable(messageId, message)) {
+            const isLastSwipe = (message?.swipes?.length ?? 1) - 1 <= (message?.swipe_id ?? 0);
+            const hasSwipes = (message?.swipes?.length ?? 0) > 1;
+            const overswipe = getOverswipeBehavior(messageId, message);
+            const pristineGreeting = overswipe === OVERSWIPE_BEHAVIOR.PRISTINE_GREETING;
+            const isOverswipeable = isLastSwipe && (
+                overswipe === OVERSWIPE_BEHAVIOR.REGENERATE ||
+                overswipe === OVERSWIPE_BEHAVIOR.EDIT_GENERATE
+            );
 
-    if (swipeId !== undefined && (message.swipes.length > 1 || swipeId > 0)) {
-        swipeLeft.css('display', 'flex');
-    }
-    //only show right when generate is off, or when next right swipe would not make a generate happen
-    if (is_send_press === false || message.swipes.length >= swipeId) {
-        swipeRight.css('display', 'flex').css('opacity', '0.3');
-        swipeCounter.css('opacity', '0.3');
-    }
-    if ((message.swipes.length - swipeId) === 1) {
-        //chevron was moved out of hardcode in HTML to class toggle dependent on last_mes or not
-        //necessary for 'swipe_right' div in past messages to have no chevron if 'show swipes for all messages' is turned on
-        swipeRight.css('opacity', '0.7');
-        swipeCounter.css('opacity', '0.7');
-    }
+            div.classList.toggle('last_swipe', isOverswipeable);
+            div.classList.toggle('swipes_visible', hasSwipes || pristineGreeting);
+            $(div).find('.mes_swipe_picker').toggle(canOpenSwipePickerForMessage(messageId));
 
-    //allows for writing individual swipe counters for past messages
-    const lastSwipeCounter = $('.last_mes .swipes-counter');
-    lastSwipeCounter.text(swipeCounterText).show();
+            if (updateCounters) {
+                updateSwipeCounter(messageId, { message, messageElement: $(div) });
+            }
+        } else {
+            div.classList.remove('swipes_visible', 'last_swipe');
+            $(div).find('.mes_swipe_picker').toggle(canOpenSwipePickerForMessage(messageId));
+            if (updateCounters) {
+                updateSwipeCounter(messageId, { message, messageElement: $(div) });
+            }
+        }
+    });
+
+    return true;
+}
+
+export function showSwipeButtons(mesId = null) {
+    void mesId;
+    swipesHidden = false;
+    refreshSwipeButtons(true);
 }
 
 /**
@@ -14090,11 +14226,11 @@ export function showSwipeButtons(mesId = chat.length - 1) {
  * @param {boolean} [options.hideCounters=false] Also hide the swipes counter.
  */
 export function hideSwipeButtons({ hideCounters = false } = {}) {
-    isSwipingAllowed = false;
-    chatElement.find('.swipe_right').hide();
-    chatElement.find('.swipe_left').hide();
+    swipesHidden = true;
+    refreshSwipeButtons();
+
     if (hideCounters === true) {
-        chatElement.find('.last_mes .swipes-counter').hide();
+        chatElement.find('.last_mes .swipes-counter').prop('hidden', true);
     }
 }
 
@@ -14106,9 +14242,14 @@ export function hideSwipeButtons({ hideCounters = false } = {}) {
  * @returns {Promise<number>|undefined} - The ID of the new swipe after deletion.
  */
 export async function deleteSwipe(swipeId = null, messageId = chat.length - 1) {
-    if (swipeId && (isNaN(swipeId) || swipeId < 0)) {
-        toastr.warning(t`Invalid swipe ID: ${swipeId + 1}`);
-        return;
+    messageId = Number(messageId);
+
+    if (swipeId !== null) {
+        swipeId = Number(swipeId);
+        if (!Number.isInteger(swipeId) || swipeId < 0) {
+            toastr.warning(t`Invalid swipe ID.`);
+            return;
+        }
     }
 
     const message = chat[messageId];
@@ -14122,9 +14263,10 @@ export async function deleteSwipe(swipeId = null, messageId = chat.length - 1) {
         return;
     }
 
-    swipeId = swipeId ?? message.swipe_id;
+    swipeId = Number(swipeId ?? message.swipe_id ?? 0);
+    const currentSwipeId = clamp(Number(message.swipe_id ?? 0), 0, message.swipes.length - 1);
 
-    if (swipeId < 0 || swipeId >= message.swipes.length) {
+    if (!Number.isInteger(swipeId) || swipeId < 0 || swipeId >= message.swipes.length) {
         toastr.warning(t`Invalid swipe ID: ${swipeId + 1}`);
         return;
     }
@@ -14136,9 +14278,19 @@ export async function deleteSwipe(swipeId = null, messageId = chat.length - 1) {
         message.swipe_info.splice(swipeId, 1);
     }
 
-    // Select the next swipe, or the one before if it was the last one
-    const newSwipeId = Math.min(swipeId, message.swipes.length - 1);
-    syncSwipeToMes(messageId, newSwipeId);
+    let newSwipeId;
+    if (swipeId < currentSwipeId) {
+        newSwipeId = currentSwipeId - 1;
+    } else if (swipeId > currentSwipeId) {
+        newSwipeId = currentSwipeId;
+    } else {
+        // Select the next swipe, or the one before if it was the last one.
+        newSwipeId = Math.min(swipeId, message.swipes.length - 1);
+    }
+
+    const wasEditingTargetMessage = Number(this_edit_mes_id) === Number(messageId);
+    message.swipe_id = newSwipeId;
+    syncSwipeToMes(messageId, newSwipeId, message);
     const rekeys = [];
     if (Array.isArray(message.swipe_info)) {
         for (let index = swipeId; index < message.swipe_info.length; index++) {
@@ -14169,8 +14321,28 @@ export async function deleteSwipe(swipeId = null, messageId = chat.length - 1) {
     await recomputeTimedWorldInfo();
     await eventSource.emit(event_types.MESSAGE_SWIPE_DELETED, { messageId, swipeId, newSwipeId });
 
+    if (wasEditingTargetMessage) {
+        await messageEditCancel(messageId);
+    }
+
+    if (swipeId === currentSwipeId) {
+        const direction = swipeId <= newSwipeId ? SWIPE_DIRECTION.RIGHT : SWIPE_DIRECTION.LEFT;
+        await swipe(null, direction, {
+            source: SWIPE_SOURCE.DELETE,
+            repeated: false,
+            forceMesId: messageId,
+            forceSwipeId: newSwipeId,
+        });
+    } else {
+        await updateSwipeCounter(messageId);
+        if (messageId !== chat.length - 1) {
+            await updateSwipeCounter(chat.length - 1);
+        }
+        refreshSwipeButtons();
+        saveChatDebounced();
+    }
+
     await saveChatConditional();
-    await reloadCurrentChat();
 
     return newSwipeId;
 }
@@ -14893,347 +15065,409 @@ function formatSwipeCounter(current, total) {
 
 /**
  * Handles the swipe event.
- * @param {JQuery.Event} _event Event.
+ * @param {JQuery.Event|Event|null} event Event.
  * @param {'left'|'right'} direction The direction to swipe.
  * @param {object} params Additional parameters.
  * @param {string} [params.source] The source of the swipe event.
  * @param {boolean} [params.repeated] Is the swipe event repeated.
  * @param {object} [params.message=chat[chat.length - 1]] The chat message to swipe.
+ * @param {number} [params.forceMesId] The message id to swipe.
+ * @param {number} [params.forceSwipeId] The target swipe id.
+ * @param {number} [params.forceDuration] Overwrites the default swipe duration.
  */
-export async function swipe(_event, direction, { source, repeated, message = chat[chat.length - 1] } = {}) {
+export async function swipe(event, direction, { source, repeated, message = chat[chat.length - 1], forceMesId, forceSwipeId, forceDuration } = {}) {
     if (chat.length === 0) {
         console.warn('Swipe was called on an empty chat.');
         return;
     }
 
-    //Only allow one concurrent swipe.
-    if (!isSwipingAllowed) {
-        console.info('The swipe has been ignored because another is in progress.');
-        return;
-    }
-    isSwipingAllowed = false;
+    const trustedSources = [
+        SWIPE_SOURCE.DELETE,
+        SWIPE_SOURCE.BACK,
+        SWIPE_SOURCE.AUTO_SWIPE,
+        SWIPE_SOURCE.KEYBOARD,
+        SWIPE_SOURCE.SLASH_COMMAND,
+        SWIPE_SOURCE.SWIPE_PICKER,
+    ];
 
-    let generation;
     let messageIndex;
-
-    //Only set messageIndex if message exists because -1 is truthy.
     if (message) {
         messageIndex = chat.indexOf(message);
-        if (messageIndex === -1) {
+        if (messageIndex === -1 && typeof forceMesId !== 'number') {
             console.error(`The message must exist in chat. ${message};`);
             return;
         }
     }
 
-    const mesId = Number($(this).closest('.mes').attr('mesid') ?? messageIndex ?? chat.length - 1);
+    const eventMessageId = event?.currentTarget?.closest?.('.mes')?.getAttribute('mesid');
+    const mesId = Number(forceMesId ?? eventMessageId ?? messageIndex ?? chat.length - 1);
+    message = chat[mesId];
 
-    const thisMesDiv = chatElement.children().filter(`.mes[mesid="${mesId}"]`);
+    if (!Number.isInteger(mesId) || mesId < 0 || mesId >= chat.length || !message) {
+        console.warn(`Swipe was called for an invalid message ID: ${mesId}`);
+        return;
+    }
+
+    const thisMesDiv = chatElement.children('.mes').filter(`[mesid="${mesId}"]`);
     const thisMesText = thisMesDiv.find('.mes_block .mes_text');
     const thisMesDivHeight = thisMesDiv[0]?.scrollHeight;
     const thisMesTextHeight = thisMesText[0]?.scrollHeight;
     if (![thisMesDiv.length, thisMesText.length].every(num => num > 0)) {
-        console.error(`Message #${mesId}'s DOM element is not valid.`);
+        console.warn(`Message #${mesId}'s DOM element is not rendered. Swipe source: ${source ?? 'unknown'}.`);
         return;
     }
-    const originalSwipeId = Number(chat[mesId]?.['swipe_id'] ?? 0);
-    let newSwipeId = Number(originalSwipeId);
 
-    const isPristine = !chat_metadata?.tainted;
-    const swipeDuration = Math.round(animation_duration * 1.25);
-    const swipeRange = direction === SWIPE_DIRECTION.RIGHT ? -700 : 700;
-
-    async function endSwipe() {
-        //Wait for the generation to end.
-        try {
-            await generation;
+    if (!trustedSources.includes(source)) {
+        if (isGenerating() && (swipes && !swipesHidden && swipeState === SWIPE_STATE.NONE)) {
+            toastr.warning(t`Cannot swipe while generating. Stop the request and try again.`, t`Swipe aborted`);
+            return;
         }
-        catch (error) {
-            console.warn(`Swipe failed, Swiping back. ${error}`);
+        if (!isSwipingAllowed()) {
+            console.info('The swipe has been ignored because messages cannot currently be swiped.');
+            return;
         }
-        //Allow for another swipe.
-        showSwipeButtons();
-
-        //Clamp Id between swipes.
-        let clampedId = clamp(chat[mesId]['swipe_id'], 0, Math.max(0, chat[mesId]['swipes'].length - 1));
-
-        //If the id is not within bounds, Swipe back.
-        if (chat[mesId]['swipe_id'] !== clampedId) {
-            chat[mesId]['swipe_id'] = clampedId;
-            syncSwipeToMes(mesId);
-            addOneMessage(chat[mesId], { type: 'swipe', forceId: mesId, scroll: false });
-        }
-
-        await updateSwipeCounter(mesId);
-        //Fallback.
-        if (mesId != chat.length - 1) {
-            await updateSwipeCounter(chat.length - 1);
+        if (!isMessageSwipeable(mesId, message)) {
+            console.info(`Message #${mesId} cannot be swiped.`, message);
+            return;
         }
     }
 
-    async function standardSwipe() {
-        //If swipe_id has changed, or the source is being deleted.
-        if (newSwipeId !== originalSwipeId || source == 'delete') {
-            //Update the chat.
-            await loadFromSwipeId(mesId, newSwipeId);
-            //Transition to the new chat.
+    cancelDebouncedChatSave();
+    swipeState = SWIPE_STATE.SWIPING;
+
+    let generation;
+    const originalSwipeId = Number(message?.swipe_id ?? 0);
+    let newSwipeId = Number(forceSwipeId ?? originalSwipeId);
+
+    function getSwipeDuration(baseDuration) {
+        const now = performance.now();
+        const resetTime = baseDuration * 2 + 300;
+
+        if (now - lastSwipeInfo.now >= resetTime || direction !== lastSwipeInfo.direction) {
+            recentSwipes = 0;
+        }
+        recentSwipes++;
+        lastSwipeInfo = { now, direction };
+
+        const sigmoid = 1 / (1 + Math.exp(recentSwipes - 4));
+        return baseDuration * sigmoid;
+    }
+
+    const swipeDuration = forceDuration ?? getSwipeDuration(animation_duration);
+    const thisMesDivWidth = thisMesDiv.width() + 30;
+    const swipeRange = direction === SWIPE_DIRECTION.RIGHT ? -thisMesDivWidth : thisMesDivWidth;
+
+    async function refreshRenderedMessage(messageId) {
+        const messageElement = chatElement.children('.mes').filter(`[mesid="${messageId}"]`);
+        if (!messageElement.length) {
+            return false;
+        }
+
+        addOneMessage(chat[messageId], { type: 'swipe', forceId: messageId, scroll: false, showSwipes: false });
+        await updateSwipeCounter(messageId);
+        refreshSwipeButtons();
+        return true;
+    }
+
+    async function endSwipe(revert = false) {
+        try {
+            if (generation) {
+                document.body.dataset.swiping = 'true';
+                await generation;
+            }
+        } catch (error) {
+            console.warn(`Swipe failed, swiping back. ${error}`);
+        }
+
+        const clampedId = clamp(chat[mesId].swipe_id, 0, Math.max(0, chat[mesId].swipes.length - 1));
+
+        await updateSwipeCounter(mesId);
+        if (mesId !== chat.length - 1) {
+            await updateSwipeCounter(chat.length - 1);
+        }
+
+        if (clampedId === originalSwipeId && source !== SWIPE_SOURCE.DELETE) {
+            try {
+                shakeElement(thisMesDiv, -swipeRange / 140, animation_duration, 'ease-in');
+                const flashTime = Math.max(animation_duration * 2, 100);
+                await Promise.race([
+                    thisMesDiv.find('.swipes-counter').animate({ color: 'red' }, flashTime).animate({ color: '' }).promise(),
+                    createTimeout(flashTime * 4, `The shake animation did not end within ${flashTime * 4}ms`),
+                ]);
+            } catch (error) {
+                console.warn(error);
+            }
+        }
+
+        if (chat[mesId]?.swipe_id !== clampedId || revert) {
+            if (source !== SWIPE_SOURCE.BACK) {
+                source = SWIPE_SOURCE.BACK;
+                chat[mesId].swipe_id = clampedId;
+                await loadFromSwipeId(mesId, chat[mesId].swipe_id);
+                await refreshRenderedMessage(mesId);
+            } else {
+                await Popup.show.confirm(
+                    t`ERROR: <code>syncSwipeToMes</code> has failed to revert the failed ${direction} swipe on message #${mesId}.`,
+                    t`<p>After you click OK, the chat will be reloaded to prevent data corruption.</p>`,
+                    { okButton: 'OK', cancelButton: false },
+                );
+                console.trace(`Error! Recursion detected when reverting failed ${direction} swipe on message #${mesId}. Something has broken.`);
+                await reloadCurrentChat();
+            }
+        } else if (source !== SWIPE_SOURCE.BACK) {
+            saveChatDebounced();
+        }
+
+        swipeState = SWIPE_STATE.NONE;
+        delete document.body.dataset.swiping;
+        showSwipeButtons();
+    }
+
+    async function standardSwipe(targetSwipeId) {
+        if (targetSwipeId !== originalSwipeId || source === SWIPE_SOURCE.DELETE || source === SWIPE_SOURCE.BACK) {
+            const loaded = await loadFromSwipeId(mesId, targetSwipeId);
+            if (loaded === false) {
+                return;
+            }
             await animateSwipe();
         }
         await endSwipe();
     }
 
-    /**
-     * Sets the message to the newSwipeId and loads it.
-     * @param {number} mesId
-     * @param {number} newSwipeId
-     */
-    async function loadFromSwipeId(mesId, newSwipeId) {
-        //Update the swipe_id.
-        chat[mesId]['swipe_id'] = newSwipeId;
-
-        if (chat[mesId].extra && typeof chat[mesId].extra === 'object') {
-            delete chat[mesId].extra.memory;
-            delete chat[mesId].extra.display_text;
-            delete chat[mesId].extra.media;
-            delete chat[mesId].extra.inline_image;
-            delete chat[mesId].extra.files;
-            delete chat[mesId].extra.fileLength;
-            delete chat[mesId].extra.generationType;
-            delete chat[mesId].extra.negative;
-            delete chat[mesId].extra.title;
-            delete chat[mesId].extra.append_title;
+    function clearMessageData(targetMessage) {
+        if (targetMessage.extra && typeof targetMessage.extra === 'object') {
+            delete targetMessage.extra.memory;
+            delete targetMessage.extra.display_text;
+            delete targetMessage.extra.media;
+            delete targetMessage.extra.inline_image;
+            delete targetMessage.extra.files;
+            delete targetMessage.extra.fileLength;
+            delete targetMessage.extra.generationType;
+            delete targetMessage.extra.negative;
+            delete targetMessage.extra.title;
+            delete targetMessage.extra.append_title;
         }
-        delete chat[mesId].gen_started;
-        delete chat[mesId].gen_finished;
-        //load from swipes.
-        syncSwipeToMes(mesId, chat[mesId]['swipe_id']);
+        delete targetMessage.gen_started;
+        delete targetMessage.gen_finished;
     }
 
-    // Helper function to convert transition to promise
-    const transitionPromise = (element, properties) => {
-        return new Promise((resolve) => {
-            element.transition({
-                ...properties,
-                complete: resolve,
-            });
-        });
-    };
+    async function loadFromSwipeId(messageId, targetSwipeId) {
+        chat[messageId].swipe_id = targetSwipeId;
+        clearMessageData(chat[messageId]);
 
-    /**
-     * Animates a swipe for all messages >= mesId.
-     * @param {number} mesId
-     * @param {number} x
-     * @param {number} duration
-     */
-    async function animateSwipeTransition(mesId, x, duration) {
-        //Selects the swiped message.
-        const swipedMessagesDiv = chatElement.children().filter((index, div) => {
-            const $div = $(div);
-            return mesId === Number($div.attr('mesid'));
-        });
-        const swipedElementsDiv = swipedMessagesDiv.children('.mes_block, .mesAvatarWrapper');
+        if (syncSwipeToMes(messageId, targetSwipeId, chat[messageId]) === false) {
+            toastr.error(t`When swiping ${direction} on message ${messageId}, syncSwipeToMes has returned false. Attempting to swipe back!`);
+            chat[messageId].swipe_id = originalSwipeId;
+            await endSwipe(true);
+            return false;
+        }
 
-        //Swipe.
-        await transitionPromise(swipedElementsDiv, {
-            x: x,
-            duration: duration,
-            easing: animation_easing,
-            queue: false,
-        });
+        return true;
     }
 
-    function getMessageBottomHeight(thisMesDiv) {
-        const thisMesRect = thisMesDiv[0].getBoundingClientRect();
-        //Scroll position + Chat height = Bottom of chat height.
+    async function animateSwipeTransition(messageId, { xStart = '0px', xEnd = '0px', duration = animation_duration, classes = '', freeze = false } = {}) {
+        if (duration <= 50) {
+            return;
+        }
+
+        const maximumAnimated = 100;
+        const swipedMessagesDiv = chatElement.children('.mes[mesid]').filter((_, div) => {
+            const divMessageId = Number(div.getAttribute('mesid'));
+            return divMessageId >= messageId && divMessageId < messageId + maximumAnimated;
+        });
+
+        if (swipedMessagesDiv.length > 0) {
+            let swipeClasses = '.mes_block, .mesAvatarWrapper';
+            swipeClasses += classes;
+
+            const swipedElementsDiv = swipedMessagesDiv.children(swipeClasses);
+            if (swipedElementsDiv.length > 0) {
+                document.documentElement.style.setProperty('--slide-mes-x-start', xStart);
+                document.documentElement.style.setProperty('--slide-mes-x-end', xEnd);
+                document.documentElement.style.setProperty('--slide-mes-x-duration', `${duration}ms`);
+
+                swipedElementsDiv.removeClass('slide');
+                void swipedElementsDiv[0].offsetWidth;
+                swipedElementsDiv.addClass('slide');
+
+                const endSlide = () => {
+                    swipedElementsDiv.removeClass('slide');
+                    document.documentElement.style.setProperty('--slide-mes-x-start', '');
+                    document.documentElement.style.setProperty('--slide-mes-x-end', '');
+                    document.documentElement.style.setProperty('--slide-mes-x-duration', '');
+                    return true;
+                };
+
+                const animations = swipedElementsDiv[0]?.getAnimations() ?? [];
+                const animation = animations.filter((a) => a instanceof globalThis.CSSAnimation && a.animationName === 'slide')[0];
+                try {
+                    await Promise.race([
+                        animation?.finished,
+                        createTimeout(duration * 2, `The ${duration}ms swipe animation has not ended after ${duration * 2}ms. It has been skipped.`),
+                    ].filter(Boolean));
+                } catch (error) {
+                    console.warn(error);
+                }
+
+                return freeze ? endSlide : endSlide();
+            }
+        }
+
+        console.warn(`No animatable messages were found after message #${messageId}.`);
+        return false;
+    }
+
+    function getMessageBottomHeight(targetMesDiv) {
+        const thisMesRect = targetMesDiv[0].getBoundingClientRect();
         const chatBottom = chatElement.scrollTop() - chatElement.height();
-        //Message offset from viewport top + height = Bottom of message offset.
-        const messageBottom = thisMesRect.top + thisMesDiv.height();
-        // Bottom of chat + Bottom of message offset = target scroll position.
-        const scrollHeight = (chatBottom + messageBottom);
-        return scrollHeight;
+        const messageBottom = thisMesRect.top + targetMesDiv.height();
+        return chatBottom + messageBottom;
     }
 
-    function expandNewMessage(thisMesDiv) {
-        //Only scroll if the view is not near the bottom.
-        const is_animation_scroll = (chatElement.scrollTop() >= (chatElement.prop('scrollHeight') - chatElement.outerHeight()) - 10);
+    function expandNewMessage(targetMesDiv) {
+        const isAnimationScroll = chatElement.scrollTop() >= (chatElement.prop('scrollHeight') - chatElement.outerHeight()) - 10;
+        let newHeight = thisMesDivHeight - (thisMesTextHeight - thisMesText[0].scrollHeight);
+        if (newHeight < 103) {
+            newHeight = 103;
+        }
 
-        let new_height = thisMesDivHeight - (thisMesTextHeight - thisMesText[0].scrollHeight);
-        if (new_height < 103) new_height = 103;
-
-        //Keep the swipe buttons at the same height when scrolling is finished.
-
-        //Expand new message.
-        thisMesDiv.animate({ height: new_height + 'px' }, {
-            duration: 0, //used to be 100 //Disabled on Cohee's request. https://github.com/SillyTavern/SillyTavern/pull/4610/files#r2408731744
+        targetMesDiv.animate({ height: `${newHeight}px` }, {
+            duration: 0,
             queue: false,
-            progress: function (animation, progress, remainingMs) {
-
-                if (is_animation_scroll) chatElement.scrollTop(getMessageBottomHeight(thisMesDiv));
+            progress: function () {
+                if (isAnimationScroll) {
+                    chatElement.scrollTop(getMessageBottomHeight(targetMesDiv));
+                }
             },
             complete: function () {
-                thisMesDiv.css('height', 'auto');
-                //Correct height auto offset.
-                if (is_animation_scroll) chatElement.scrollTop(getMessageBottomHeight(thisMesDiv));
+                targetMesDiv.css('height', 'auto');
+                if (isAnimationScroll) {
+                    chatElement.scrollTop(getMessageBottomHeight(targetMesDiv));
+                }
             },
         });
     }
 
-    /**
-     * Anime a swipe, optionally running a generation.
-     * @param {boolean} run_generate
-     */
-    async function animateSwipe(run_generate = false) {
+    async function animateSwipe(runGenerate = false, skipSwipeOut = false) {
+        if (!skipSwipeOut) {
+            await animateSwipeTransition(mesId, { xEnd: `${swipeRange}px`, duration: swipeDuration });
+        }
 
-        //Swipe out.
-        await animateSwipeTransition(mesId, swipeRange, swipeDuration);
-
-        if (run_generate) {
+        if (runGenerate) {
             await updateSwipeCounter(mesId);
-            //shows "..." while generating
             thisMesDiv.find('.mes_text').html('...');
-            // resets the timer
             thisMesDiv.find('.mes_timer').html('');
             thisMesDiv.find('.tokenCounterDisplay').text('');
             updateReasoningUI(thisMesDiv, { reset: true });
         } else {
-            //console.log('showing previously generated swipe candidate, or "..."');
-            //console.log('onclick right swipe calling addOneMessage');
-
-            //Only scroll when swiping the last message.
-            const scroll = (mesId == chat.length - 1);
-            addOneMessage(chat[mesId], { type: 'swipe', forceId: mesId, scroll: scroll });
+            const scroll = mesId === chat.length - 1;
+            addOneMessage(chat[mesId], { type: 'swipe', forceId: mesId, scroll, showSwipes: false });
 
             if (power_user.message_token_count_enabled) {
-                if (!chat[mesId].extra) {
-                    chat[mesId].extra = {};
-                }
-
+                chat[mesId].extra ??= {};
                 const tokenCountText = (chat[mesId]?.extra?.reasoning || '') + chat[mesId].mes;
                 const tokenCount = await getTokenCountAsync(tokenCountText, 0);
-                chat[mesId]['extra']['token_count'] = tokenCount;
+                chat[mesId].extra.token_count = tokenCount;
                 thisMesDiv.find('.tokenCounterDisplay').text(`${tokenCount}t`);
             }
         }
 
-        //Animate expanding to the new message height.
         thisMesDiv.css('height', thisMesDivHeight);
         expandNewMessage(thisMesDiv);
 
+        if (runGenerate) {
+            appendMediaToMessage(chat[mesId], thisMesDiv);
+        }
 
-        //Jump to the opposite side.
-        await animateSwipeTransition(mesId, -swipeRange, 0);
+        await eventSource.emit(event_types.MESSAGE_SWIPED, mesId);
 
-        appendMediaToMessage(chat[mesId], thisMesDiv);
-
-        await eventSource.emit(event_types.MESSAGE_SWIPED, (mesId));
-
-        if (run_generate && !is_send_press) {
+        if (runGenerate && !is_send_press) {
             is_send_press = true;
             generation = Generate('swipe');
-        } else if (Number(chat[mesId]['swipe_id']) !== chat[mesId]['swipes'].length) {
-            await saveChatConditional();
         }
 
-        //Swipe in.
-        await animateSwipeTransition(mesId, 0, swipeDuration);
+        await animateSwipeTransition(mesId, { xStart: `${-swipeRange}px`, xEnd: '0px', duration: swipeDuration });
     }
 
-    if (mesId === Number(this_edit_mes_id)) {
-        closeMessageEditor();
-    }
-    if (isStreamingEnabled() && streamingProcessor) {
-        streamingProcessor.onStopStreaming();
-    }
-
-    //If the swipe is not being deleted.
-    if (source != 'delete') {
-
-        // Make sure ad-hoc changes to extras are saved before swiping away
-        syncMesToSwipe(mesId);
-
-        if (chat[mesId]['swipe_id'] === undefined) {              // if there is no swipe-message in the last spot of the chat array
-            chat[mesId]['swipe_id'] = 0;                        // set it to id 0
-            chat[mesId]['swipes'] = [];                         // empty the array
-            chat[mesId]['swipe_info'] = [];
-            chat[mesId]['swipes'][0] = chat[mesId]['mes'];  //assign swipe array with last chat[mesId] from chat
-            chat[mesId]['swipe_info'][0] = {
-                'send_date': chat[mesId]['send_date'],
-                'gen_started': chat[mesId]['gen_started'],
-                'gen_finished': chat[mesId]['gen_finished'],
-                'extra': createSwipeInfoExtra(chat[mesId]['extra']),
-            };
+    try {
+        if (mesId === Number(this_edit_mes_id)) {
+            closeMessageEditor();
         }
-        // If the user is holding down the key and we're at the last or first swipe, don't do anything.
-        let isLastSwipe = (direction === SWIPE_DIRECTION.RIGHT) ? (chat[mesId].swipe_id === Math.max(0, chat[mesId]['swipes'].length - 1)) : chat[mesId].swipe_id === 0;
-        if (source === 'keyboard' && repeated && isLastSwipe) {
-            await endSwipe();
-            return;
-        }
-    } else if (source == 'delete') {
-        //If the swipe is being deleted.
-        await standardSwipe();
-        return;
-    }
-
-    //If swiping left.
-    if (direction === SWIPE_DIRECTION.LEFT) {
-        newSwipeId--;
-        //Loop to last swipe if negative.
-        if (newSwipeId < 0) {
-            newSwipeId = Math.max(0, chat[mesId]['swipes'].length - 1);
-        }
-        //Limit swipe_id to swipes.
-        if (newSwipeId > chat[mesId]['swipes'].length - 1) {
-            toastr.warning(`The swipe_id for message #${mesId} was ${newSwipeId}. It has been reset to ${chat[mesId]['swipes'].length - 1}.`);
-            chat[mesId]['swipe_id'] = chat[mesId]['swipes'].length - 1;
-            await endSwipe();
-            return;
-        }
-        await standardSwipe();
-        return;
-    }
-    //If swiping right.
-    else if (direction === SWIPE_DIRECTION.RIGHT) {
-        // make new slot in array
-        newSwipeId++;
-
-        //Minimum of zero.
-        if (newSwipeId < 0) {
-            toastr.warning(`The swipe_id for message #${mesId} was ${newSwipeId}. It has been reset to zero.`);
-            chat[mesId]['swipe_id'] = 0;
-            await endSwipe();
-            return;
+        if (isStreamingEnabled() && streamingProcessor) {
+            streamingProcessor.onStopStreaming();
         }
 
-        //if swipe id of last message is the same as the length of the 'swipes' array and not the greeting.
-        if (newSwipeId >= chat[mesId]['swipes'].length && ((chat.length !== 1 || !isPristine))) {
-            newSwipeId = chat[mesId]['swipes'].length;
+        if (source !== SWIPE_SOURCE.DELETE && source !== SWIPE_SOURCE.BACK) {
+            syncMesToSwipe(mesId);
+            ensureSwipes(chat[mesId]);
 
-            //Update the swipe_id.
-            chat[mesId]['swipe_id'] = newSwipeId;
+            const isLastSwipe = direction === SWIPE_DIRECTION.RIGHT
+                ? chat[mesId].swipe_id === Math.max(0, chat[mesId].swipes.length - 1)
+                : chat[mesId].swipe_id === 0;
 
-            //Cancel the generation if it's a user message or the first message in a pristine chat.
-            if (chat[mesId].is_user || (mesId === 0 && isPristine)) {
-                //Cancel swipe.
-                chat[mesId]['swipe_id'] = originalSwipeId;
-                await endSwipe();
-                return;
-            } else {
-                //Generate.
-                await loadFromSwipeId(mesId, newSwipeId);
-                let run_generate = true;
-                await animateSwipe(run_generate);
+            if (source === SWIPE_SOURCE.KEYBOARD && repeated && isLastSwipe) {
                 await endSwipe();
                 return;
             }
+        } else {
+            await standardSwipe(newSwipeId);
+            return;
         }
-        else {
-            // if swipe_right is called on the last alternate greeting in pristine chats, loop back around
-            if (chat.length === 1 && newSwipeId !== undefined && newSwipeId === chat[0]['swipes'].length && isPristine) {
-                newSwipeId = 0;
+
+        if (direction === SWIPE_DIRECTION.LEFT) {
+            if (forceSwipeId == null) {
+                newSwipeId--;
             }
+            if (newSwipeId < 0) {
+                newSwipeId = Math.max(0, chat[mesId].swipes.length - 1);
+            }
+            if (newSwipeId > chat[mesId].swipes.length - 1) {
+                toastr.warning(`The swipe_id for message #${mesId} was ${newSwipeId}. It has been reset to ${chat[mesId].swipes.length - 1}.`);
+                chat[mesId].swipe_id = chat[mesId].swipes.length - 1;
+                await endSwipe();
+                return;
+            }
+            await standardSwipe(newSwipeId);
+            return;
+        } else if (direction === SWIPE_DIRECTION.RIGHT) {
+            if (forceSwipeId == null) {
+                newSwipeId++;
+            }
+
+            if (newSwipeId < 0) {
+                toastr.warning(`The swipe_id for message #${mesId} was ${newSwipeId}. It has been reset to zero.`);
+                chat[mesId].swipe_id = 0;
+                await endSwipe();
+                return;
+            }
+
+            if (newSwipeId >= chat[mesId].swipes.length) {
+                newSwipeId = chat[mesId].swipes.length;
+                chat[mesId].swipe_id = newSwipeId;
+
+                const overswipe = getOverswipeBehavior(mesId);
+
+                if (overswipe === OVERSWIPE_BEHAVIOR.NONE) {
+                    chat[mesId].swipe_id = originalSwipeId;
+                    await endSwipe();
+                    return;
+                } else if (overswipe === OVERSWIPE_BEHAVIOR.REGENERATE) {
+                    clearMessageData(chat[mesId]);
+                    await animateSwipe(true);
+                    await endSwipe();
+                    return;
+                } else if (overswipe === OVERSWIPE_BEHAVIOR.LOOP || overswipe === OVERSWIPE_BEHAVIOR.PRISTINE_GREETING) {
+                    newSwipeId = 0;
+                }
+            }
+
+            await standardSwipe(newSwipeId);
         }
-        await standardSwipe();
-        return;
+    } catch (error) {
+        console.error('Swipe failed', error);
+        swipeState = SWIPE_STATE.NONE;
+        delete document.body.dataset.swiping;
+        showSwipeButtons();
     }
 }
 

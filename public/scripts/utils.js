@@ -3012,3 +3012,87 @@ export async function importFromExternalUrl(url, { preserveFileName = null } = {
     }
 }
 export const clamp = (value, min, max) => Math.min(Math.max(value, min), max);
+
+/**
+ * Shakes the target element with a short horizontal Web Animation.
+ * @param {HTMLElement|JQuery<HTMLElement>} targetElement
+ * @param {number} distance Distance in pixels.
+ * @param {number} duration Duration in milliseconds.
+ * @param {string} easing CSS easing function.
+ */
+export function shakeElement(targetElement, distance = 10, duration = 100, easing = 'ease-in-out') {
+    if (targetElement instanceof jQuery) {
+        targetElement = targetElement[0];
+    }
+
+    return targetElement?.animate([
+        { transform: 'translateX(0)' },
+        { transform: `translateX(${distance}px)` },
+        { transform: 'translateX(0)' },
+    ], { duration, easing });
+}
+
+/**
+ * Creates a promise that rejects after a specified delay.
+ * @param {number} ms The delay in milliseconds.
+ * @param {string?} [errorMessage='']
+ * @returns {Promise<never>}
+ */
+export function createTimeout(ms, errorMessage = '') {
+    errorMessage ||= `Operation timed out after ${ms}ms.`;
+    return new Promise((_, reject) => {
+        setTimeout(() => reject(new Error(errorMessage)), ms);
+    });
+}
+
+/**
+ * Registers a delegated long-press event for touch devices.
+ * @param {string} selector CSS selector for target elements.
+ * @param {(e: TouchEvent) => void} callback Callback to invoke on long-press.
+ * @param {number} [delay=500] Long-press duration in ms.
+ */
+export function addLongPressEvent(selector, callback, delay = 500) {
+    let timer = null;
+    let fired = false;
+    let target = null;
+
+    document.addEventListener('touchstart', function (event) {
+        if (!(event.target instanceof Element)) {
+            return;
+        }
+
+        const element = event.target.closest(selector);
+        if (!element) {
+            return;
+        }
+
+        fired = false;
+        target = element;
+        timer = setTimeout(() => {
+            fired = true;
+            callback.call(target, event);
+        }, delay);
+    }, { passive: true });
+
+    document.addEventListener('touchend', function (event) {
+        if (timer) {
+            clearTimeout(timer);
+            timer = null;
+        }
+
+        if (fired) {
+            event.preventDefault();
+            event.stopPropagation();
+        }
+
+        target = null;
+        fired = false;
+    }, { passive: false });
+
+    document.addEventListener('touchmove', function () {
+        if (timer) {
+            clearTimeout(timer);
+            timer = null;
+        }
+    }, { passive: true });
+}

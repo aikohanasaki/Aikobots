@@ -135,3 +135,38 @@ export const SWIPE_DIRECTION = {
     LEFT: 'left',
     RIGHT: 'right',
 };
+
+/**
+ * @readonly
+ * @enum {string}
+ */
+export const OVERSWIPE_BEHAVIOR = {
+    NONE: 'none',
+    LOOP: 'loop',
+    PRISTINE_GREETING: 'pristine_greeting',
+    EDIT_GENERATE: 'edit_generate',
+    REGENERATE: 'regenerate',
+};
+
+/**
+ * @readonly
+ * @enum {string}
+ */
+export const SWIPE_SOURCE = {
+    DELETE: 'delete',
+    KEYBOARD: 'keyboard',
+    BACK: 'back',
+    AUTO_SWIPE: 'auto_swipe',
+    SLASH_COMMAND: 'slash_command',
+    SWIPE_PICKER: 'swipe_picker',
+};
+
+/**
+ * @readonly
+ * @enum {string}
+ */
+export const SWIPE_STATE = {
+    NONE: 'none',
+    SWIPING: 'swiping',
+    EDITING: 'editing',
+};
