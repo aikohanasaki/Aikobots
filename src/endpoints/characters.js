@@ -250,7 +250,7 @@ class DiskCache {
             }
             for (const key of this.hashedKeys) {
                 if (!validKeys.has(key)) {
-                    await cache.removeItem(key);
+                    await fsPromises.rm(resolvePathUnderParent(this.cachePath, key, 'disk cache entry'), { force: true });
                 }
             }
         } catch (error) {
@@ -608,6 +608,45 @@ const processCharacter = async (item, directories, { shallow, user = null, share
             date_last_chat: 0,
             chat_size: 0,
         };
+    }
+};
+
+/**
+ * Builds the minimal admin-facing source list entry for a character.
+ * @param {string} item Character filename
+ * @param {import('../users.js').UserDirectoryList} directories Source user directories
+ * @param {object} options Options
+ * @param {import('../users.js').User} options.user Acting user
+ * @param {object} [options.sharedIndex] Shared character index snapshot
+ * @returns {Promise<object|null>}
+ */
+const processAdminSourceCharacter = async (item, directories, { user, sharedIndex = null }) => {
+    try {
+        const imgFile = path.join(directories.characters, item);
+        const imgData = await readCharacterData(imgFile);
+        if (imgData === undefined) {
+            throw new Error('Failed to read character file');
+        }
+
+        const character = getCharaCardV2(JSON.parse(imgData), directories, false);
+        character.avatar = item;
+        applyCharacterManagementMetadata(character, await getCharacterMetadata({
+            characterCard: character,
+            filenameStem: path.parse(item).name,
+            user,
+            sharedIndex,
+        }));
+
+        return {
+            name: character.name,
+            avatar: item,
+            ownerHandle: character.ownerHandle || '',
+            ownerHandles: Array.isArray(character.ownerHandles) ? character.ownerHandles : [],
+            sharedCharacterKey: character.sharedCharacterKey || '',
+        };
+    } catch (err) {
+        console.error(`Could not process admin source character: ${item}`, err);
+        return null;
     }
 };
 
@@ -2357,6 +2396,43 @@ router.post('/get', validateAvatarUrlMiddleware, async function (request, respon
         response.sendStatus(500);
     } finally {
         flushFavoritesState(favoritesState);
+    }
+});
+
+router.post('/admin/source-list', requireAdminMiddleware, async function (request, response) {
+    try {
+        const sourceOwnerHandle = String(request.body?.sourceOwnerHandle || '').trim();
+        if (!sourceOwnerHandle) {
+            return response.status(400).json({ error: 'Missing source owner.' });
+        }
+
+        const enabledUsers = await getAllEnabledUsers();
+        const sourceUser = enabledUsers.find(user => String(user.handle || '').trim() === sourceOwnerHandle);
+        if (!sourceUser) {
+            return response.status(400).json({ error: 'Invalid or disabled source owner.' });
+        }
+
+        const sourceDirectories = getUserDirectories(sourceUser.handle);
+        const files = fs.existsSync(sourceDirectories.characters)
+            ? fs.readdirSync(sourceDirectories.characters)
+            : [];
+        const pngFiles = files.filter(file => file.endsWith('.png'));
+        const sharedIndex = await readSharedCharacterIndexSnapshot();
+        const processed = await Promise.all(pngFiles.map(file => processAdminSourceCharacter(file, sourceDirectories, {
+            user: request.user,
+            sharedIndex,
+        })));
+        const characters = processed
+            .filter(character => character?.name)
+            .sort((left, right) => String(left.name || '').localeCompare(String(right.name || '')));
+
+        return response.json({
+            sourceOwnerHandle: sourceUser.handle,
+            characters,
+        });
+    } catch (error) {
+        console.error('Admin source character list failed:', error);
+        return response.status(500).json({ error: 'Failed to list source characters.' });
     }
 });
 

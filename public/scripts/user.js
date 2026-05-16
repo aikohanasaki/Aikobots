@@ -456,6 +456,46 @@ async function reviewCharacterSubmission(payload) {
 }
 
 /**
+ * Gets the admin-visible source character list for a user.
+ * @param {string} sourceOwnerHandle
+ * @returns {Promise<object[]>}
+ */
+async function getAdminPushSourceCharacters(sourceOwnerHandle) {
+    const response = await fetch('/api/characters/admin/source-list', {
+        method: 'POST',
+        headers: getRequestHeaders(),
+        body: JSON.stringify({ sourceOwnerHandle }),
+    });
+
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) {
+        throw new Error(data?.error || 'Failed to load source characters');
+    }
+
+    return Array.isArray(data?.characters) ? data.characters : [];
+}
+
+/**
+ * Pushes a source user's character through the admin direct distribution API.
+ * @param {object} payload Distribution payload
+ * @returns {Promise<object>}
+ */
+async function pushAdminSourceCharacter(payload) {
+    const response = await fetch('/api/characters/distribute', {
+        method: 'POST',
+        headers: getRequestHeaders(),
+        body: JSON.stringify(payload),
+    });
+
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) {
+        throw new Error(data?.error || 'Failed to push bot');
+    }
+
+    return data;
+}
+
+/**
  * Sends a cleanup action for a submission.
  * @param {object} payload
  * @returns {Promise<object | null>}
@@ -1813,6 +1853,9 @@ async function openAdminPanel(initialTab = 'usersList') {
     let selectedMessageHandle = '';
     let threadSummaries = [];
     let isSendingAdminMessage = false;
+    let adminPanelUsers = [];
+    let pushBotSourceCharacters = [];
+    let pushBotPolicyRequestId = 0;
 
     function showAdminTab(target) {
         template.find('.adminNav > button').each(function () {
@@ -1823,8 +1866,13 @@ async function openAdminPanel(initialTab = 'usersList') {
         });
     }
 
+    async function loadAdminPanelUsers() {
+        adminPanelUsers = await getUsers() || [];
+        return adminPanelUsers;
+    }
+
     async function renderUsers() {
-        const users = await getUsers();
+        const users = await loadAdminPanelUsers();
         template.find('.usersList').empty();
         for (const user of users) {
             const userBlock = template.find('.userAccountTemplate .userAccount').clone();
@@ -1867,6 +1915,184 @@ async function openAdminPanel(initialTab = 'usersList') {
                 renderUsers();
             });
             template.find('.usersList').append(userBlock);
+        }
+    }
+
+    function getSelectedPushBotCharacter() {
+        const avatar = String(template.find('.pushBotSourceCharacter').val() || '').trim();
+        return pushBotSourceCharacters.find(character => character.avatar === avatar) || null;
+    }
+
+    function getPushBotPublishedFilenameFallback(character) {
+        return String(character?.name || character?.avatar || '').replace(/\.png$/i, '').trim();
+    }
+
+    function syncPushBotBlocks() {
+        const publishMode = String(template.find('.pushBotPublishMode').val() || 'global');
+        const applyBlacklist = Boolean(template.find('.pushBotApplyBlacklist').prop('checked'));
+        const hasUserBlacklist = String(template.find('.pushBotUserBlacklistHandles').val() || '').trim().length > 0;
+
+        template.find('.pushBotTargetsBlock').toggle(publishMode === 'selected');
+        template.find('.pushBotApplyBlacklistBlock').toggle(publishMode === 'global');
+        template.find('.pushBotBlacklistBlock').toggle(publishMode === 'global' && applyBlacklist);
+        template.find('.pushBotUserBlacklistBlock').toggle(hasUserBlacklist);
+    }
+
+    async function loadPushBotPolicy({ overwriteRecipients = false } = {}) {
+        const sourceOwnerHandle = String(template.find('.pushBotSourceUser').val() || '').trim();
+        const character = getSelectedPushBotCharacter();
+        const publishedFilename = String(template.find('.pushBotPublishedFilename').val() || '').trim();
+        const requestId = ++pushBotPolicyRequestId;
+
+        if (!sourceOwnerHandle || !character || !publishedFilename) {
+            template.find('.pushBotUserBlacklistHandles').val('');
+            syncPushBotBlocks();
+            return;
+        }
+
+        const ownerHandle = String(character.ownerHandle || sourceOwnerHandle).trim();
+        const characterKey = String(character.sharedCharacterKey || '').trim();
+        const policy = await getCharacterDistributionPolicy(ownerHandle, publishedFilename, characterKey);
+        if (requestId !== pushBotPolicyRequestId) {
+            return;
+        }
+
+        template.find('.pushBotApplyBlacklist').prop('checked', policy.hasAdminBlacklist);
+        template.find('.pushBotBlacklistHandles').val(formatDistributionHandles(policy.adminBlacklistHandles));
+        template.find('.pushBotUserBlacklistHandles').val(formatDistributionHandles(policy.userBlacklistHandles));
+
+        if (overwriteRecipients && policy.hasWhitelist) {
+            template.find('.pushBotTargetHandles').val(formatDistributionHandles(policy.whitelistHandles));
+        }
+
+        syncPushBotBlocks();
+    }
+
+    function populatePushBotCharacters() {
+        const select = template.find('.pushBotSourceCharacter');
+        select.empty();
+
+        if (!pushBotSourceCharacters.length) {
+            select.append($('<option></option>').val('').text('No bots available'));
+            select.prop('disabled', true);
+            template.find('.pushBotPublishedFilename').val('');
+            syncPushBotBlocks();
+            return;
+        }
+
+        select.prop('disabled', false);
+        for (const character of pushBotSourceCharacters) {
+            const label = character.name && character.name !== character.avatar
+                ? `${character.name} (${character.avatar})`
+                : character.avatar;
+            select.append($('<option></option>').val(character.avatar).text(label));
+        }
+
+        const selectedCharacter = getSelectedPushBotCharacter();
+        template.find('.pushBotPublishedFilename').val(getPushBotPublishedFilenameFallback(selectedCharacter));
+        void loadPushBotPolicy({ overwriteRecipients: true });
+    }
+
+    async function loadPushBotCharacters() {
+        const sourceOwnerHandle = String(template.find('.pushBotSourceUser').val() || '').trim();
+        pushBotSourceCharacters = [];
+        populatePushBotCharacters();
+
+        if (!sourceOwnerHandle) {
+            return;
+        }
+
+        try {
+            pushBotSourceCharacters = await getAdminPushSourceCharacters(sourceOwnerHandle);
+            populatePushBotCharacters();
+        } catch (error) {
+            console.error('Error loading source bots:', error);
+            toastr.error(error.message || 'Unknown error', 'Failed to load source bots');
+        }
+    }
+
+    async function renderPushBots() {
+        const users = adminPanelUsers.length ? adminPanelUsers : await loadAdminPanelUsers();
+        const sourceSelect = template.find('.pushBotSourceUser');
+        const currentSource = String(sourceSelect.val() || '').trim();
+        const enabledUsers = users.filter(user => user.enabled);
+        sourceSelect.empty();
+
+        for (const user of enabledUsers) {
+            sourceSelect.append($('<option></option>').val(user.handle).text(`${user.name} (${user.handle})`));
+        }
+
+        if (currentSource && enabledUsers.some(user => user.handle === currentSource)) {
+            sourceSelect.val(currentSource);
+        }
+
+        if (!String(sourceSelect.val() || '').trim() && enabledUsers.length > 0) {
+            sourceSelect.val(enabledUsers[0].handle);
+        }
+
+        await loadPushBotCharacters();
+    }
+
+    async function submitPushBot() {
+        const sourceOwnerHandle = String(template.find('.pushBotSourceUser').val() || '').trim();
+        const character = getSelectedPushBotCharacter();
+        const publishMode = String(template.find('.pushBotPublishMode').val() || 'global');
+        const publishedFilename = String(template.find('.pushBotPublishedFilename').val() || '').trim();
+        const targetHandles = parseDistributionHandles(template.find('.pushBotTargetHandles').val());
+        const applyBlacklist = Boolean(template.find('.pushBotApplyBlacklist').prop('checked'));
+        const blacklistHandles = applyBlacklist
+            ? parseDistributionHandles(template.find('.pushBotBlacklistHandles').val())
+            : [];
+
+        if (!sourceOwnerHandle || !character?.avatar) {
+            toastr.error('Choose a source user and bot.', 'Admin push unavailable');
+            return;
+        }
+
+        if (publishMode === 'selected' && targetHandles.length === 0) {
+            toastr.error('Choose at least one recipient.', 'Admin push cancelled');
+            return;
+        }
+
+        const destinationLabel = publishMode === 'global'
+            ? 'all enabled users'
+            : targetHandles.join(', ');
+        const confirm = await Popup.show.confirm(
+            'Push Bot',
+            `Push "${character.name || character.avatar}" from ${sourceOwnerHandle} to ${destinationLabel}? Existing bots with the same published filename will be overwritten.`,
+            {
+                okButton: 'Push Bot',
+                cancelButton: 'Cancel',
+            },
+        );
+        if (confirm !== POPUP_RESULT.AFFIRMATIVE) {
+            return;
+        }
+
+        const submitButton = template.find('.pushBotSubmitButton');
+        submitButton.prop('disabled', true).addClass('disabled');
+
+        try {
+            const result = await pushAdminSourceCharacter({
+                sourceType: 'character',
+                sourceOwnerHandle,
+                sourceAvatar: character.avatar,
+                publishedFilename,
+                publishMode,
+                targetHandles,
+                applyBlacklist: publishMode === 'global' ? applyBlacklist : undefined,
+                blacklistHandles,
+            });
+            const skippedNotice = Array.isArray(result.skippedHandles) && result.skippedHandles.length > 0
+                ? ` Skipped: ${result.skippedHandles.join(', ')}`
+                : '';
+            toastr.success(`Published ${result.publishedFilename || publishedFilename || character.avatar}${skippedNotice}`, 'Admin push complete');
+            await loadPushBotPolicy({ overwriteRecipients: false });
+        } catch (error) {
+            console.error('Error pushing bot:', error);
+            toastr.error(error.message || 'Unknown error', 'Admin push failed');
+        } finally {
+            submitButton.prop('disabled', false).removeClass('disabled');
         }
     }
 
@@ -2021,6 +2247,20 @@ async function openAdminPanel(initialTab = 'usersList') {
     });
     template.find('.manageSubmissionsButton').on('click', () => renderSubmissions());
     template.find('.refreshSubmissionQueueButton').on('click', () => renderSubmissions());
+    template.find('.pushBotsButton').on('click', () => renderPushBots());
+    template.find('.pushBotSourceUser').on('change', () => loadPushBotCharacters());
+    template.find('.pushBotSourceCharacter').on('change', function () {
+        const character = getSelectedPushBotCharacter();
+        template.find('.pushBotPublishedFilename').val(getPushBotPublishedFilenameFallback(character));
+        void loadPushBotPolicy({ overwriteRecipients: true });
+    });
+    template.find('.pushBotPublishedFilename').on('input', () => loadPushBotPolicy());
+    template.find('.pushBotPublishMode').on('change', function () {
+        syncPushBotBlocks();
+        void loadPushBotPolicy({ overwriteRecipients: true });
+    });
+    template.find('.pushBotApplyBlacklist').on('change', () => syncPushBotBlocks());
+    template.find('.pushBotSubmitButton').on('click', () => submitPushBot());
     template.find('.manageMessagesButton').on('click', async () => {
         await loadMessageSummaries();
         await renderSelectedAdminThread(selectedMessageHandle, false);
@@ -2040,11 +2280,14 @@ async function openAdminPanel(initialTab = 'usersList') {
     callGenericPopup(template, POPUP_TYPE.TEXT, '', { okButton: 'Close', wide: true, large: false, allowVerticalScrolling: true, allowHorizontalScrolling: false });
     renderUsers();
     renderSubmissions();
+    syncPushBotBlocks();
     await loadMessageSummaries();
     showAdminTab(initialTab);
 
     if (initialTab === 'messagesTab') {
         await renderSelectedAdminThread(selectedMessageHandle, false);
+    } else if (initialTab === 'pushBotsTab') {
+        await renderPushBots();
     }
 }
 

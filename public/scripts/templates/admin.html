@@ -6,6 +6,9 @@
         <button type="button" class="manageSubmissionsButton menu_button menu_button_icon" data-target-tab="submissionQueue">
             <h4 data-i18n="Submission Queue">Submission Queue</h4>
         </button>
+        <button type="button" class="pushBotsButton menu_button menu_button_icon" data-target-tab="pushBotsTab">
+            <h4>Push Bots</h4>
+        </button>
         <button type="button" class="manageMessagesButton menu_button menu_button_icon" data-target-tab="messagesTab">
             <h4 data-i18n="Messages">Messages</h4>
         </button>
@@ -108,6 +111,54 @@
             </div>
         </div>
         <div class="submissionsList flex-container flexFlowColumn"></div>
+    </div>
+    <div class="navTab pushBotsTab flex-container flexFlowColumn flexGap10" style="display: none;">
+        <div class="flex-container flexFlowColumn flexGap10">
+            <label class="flex-container flexFlowColumn flexNoGap">
+                <span>Source User</span>
+                <select class="text_pole pushBotSourceUser"></select>
+            </label>
+            <label class="flex-container flexFlowColumn flexNoGap">
+                <span>Source Bot</span>
+                <select class="text_pole pushBotSourceCharacter"></select>
+            </label>
+            <label class="flex-container flexFlowColumn flexNoGap">
+                <span>Published Filename</span>
+                <input class="text_pole pushBotPublishedFilename" type="text">
+            </label>
+            <label class="flex-container flexFlowColumn flexNoGap">
+                <span>Publish Mode</span>
+                <select class="text_pole pushBotPublishMode">
+                    <option value="global">Global</option>
+                    <option value="selected">Selected Users</option>
+                </select>
+            </label>
+            <div class="pushBotTargetsBlock flex-container flexFlowColumn flexGap5">
+                <span>Recipient Usernames</span>
+                <small class="opacity50p">Type usernames separated by commas or new lines.</small>
+                <textarea class="text_pole pushBotTargetHandles" rows="3" placeholder="Comma or newline separated usernames"></textarea>
+            </div>
+            <label class="pushBotApplyBlacklistBlock flex-container alignItemsCenter flexGap10">
+                <input type="checkbox" class="pushBotApplyBlacklist">
+                <span>Apply admin blacklist</span>
+            </label>
+            <div class="pushBotBlacklistBlock flex-container flexFlowColumn flexGap5">
+                <span>Blacklisted Usernames</span>
+                <small class="opacity50p">Type admin-managed blacklisted usernames separated by commas or new lines.</small>
+                <textarea class="text_pole pushBotBlacklistHandles" rows="3" placeholder="Comma or newline separated usernames"></textarea>
+            </div>
+            <div class="pushBotUserBlacklistBlock flex-container flexFlowColumn flexGap5">
+                <span>User-Blacklisted Usernames</span>
+                <small class="opacity50p">Self-enrolled opt-outs are always enforced and cannot be edited here.</small>
+                <textarea class="text_pole pushBotUserBlacklistHandles" rows="3" readonly></textarea>
+            </div>
+            <div class="flex-container justifyCenter">
+                <button type="button" class="menu_button menu_button_icon pushBotSubmitButton">
+                    <i class="fa-fw fa-solid fa-share"></i>
+                    <span>Push Bot</span>
+                </button>
+            </div>
+        </div>
     </div>
     <div class="navTab messagesTab" style="display: none;">
         <div class="adminMessagesLayout">
