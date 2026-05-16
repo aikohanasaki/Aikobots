@@ -4686,6 +4686,7 @@ export async function printMessages() {
     }
 
     await renderMessageWindow(startIndex, count);
+    showSwipeButtons();
     scrollChatToBottom({ waitForFrame: true });
     delay(debounce_timeout.short).then(() => scrollOnMediaLoad());
 }
