@@ -1856,6 +1856,7 @@ async function openAdminPanel(initialTab = 'usersList') {
     let adminPanelUsers = [];
     let pushBotSourceCharacters = [];
     let pushBotPolicyRequestId = 0;
+    let pushBotsInitialized = false;
 
     function showAdminTab(target) {
         template.find('.adminNav > button').each(function () {
@@ -1915,6 +1916,10 @@ async function openAdminPanel(initialTab = 'usersList') {
                 renderUsers();
             });
             template.find('.usersList').append(userBlock);
+        }
+
+        if (pushBotsInitialized) {
+            void renderPushBots();
         }
     }
 
@@ -2012,15 +2017,29 @@ async function openAdminPanel(initialTab = 'usersList') {
     }
 
     async function renderPushBots() {
-        const users = adminPanelUsers.length ? adminPanelUsers : await loadAdminPanelUsers();
+        pushBotsInitialized = true;
         const sourceSelect = template.find('.pushBotSourceUser');
         const currentSource = String(sourceSelect.val() || '').trim();
+        sourceSelect.empty()
+            .append($('<option></option>').val('').text('Loading users...'))
+            .prop('disabled', true);
+        pushBotSourceCharacters = [];
+        populatePushBotCharacters();
+
+        const users = adminPanelUsers.length ? adminPanelUsers : await loadAdminPanelUsers();
         const enabledUsers = users.filter(user => user.enabled);
         sourceSelect.empty();
+
+        if (!enabledUsers.length) {
+            sourceSelect.append($('<option></option>').val('').text('No enabled users available'));
+            sourceSelect.prop('disabled', true);
+            return;
+        }
 
         for (const user of enabledUsers) {
             sourceSelect.append($('<option></option>').val(user.handle).text(`${user.name} (${user.handle})`));
         }
+        sourceSelect.prop('disabled', false);
 
         if (currentSource && enabledUsers.some(user => user.handle === currentSource)) {
             sourceSelect.val(currentSource);
@@ -2280,6 +2299,7 @@ async function openAdminPanel(initialTab = 'usersList') {
     callGenericPopup(template, POPUP_TYPE.TEXT, '', { okButton: 'Close', wide: true, large: false, allowVerticalScrolling: true, allowHorizontalScrolling: false });
     renderUsers();
     renderSubmissions();
+    void renderPushBots();
     syncPushBotBlocks();
     await loadMessageSummaries();
     showAdminTab(initialTab);
