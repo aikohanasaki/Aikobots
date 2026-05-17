@@ -16,6 +16,7 @@
     top: 0;
     margin: 0;
     right: unset;
+    width: var(--aiko-layout-floating-panel-width-fallback);
     width: var(--aiko-layout-floating-panel-width);
 }
 

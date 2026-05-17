@@ -39,6 +39,7 @@
 }
 
 #chat {
+    max-height: var(--aiko-layout-chat-scroll-max-height-fallback);
     max-height: var(--aiko-layout-chat-scroll-max-height);
     overflow-x: hidden;
     padding-bottom: 0;
@@ -311,6 +312,7 @@ body:not(.movingUI) .drawer-content.maximized {
     top: 0;
     margin: 0;
     right: unset;
+    width: var(--aiko-layout-floating-panel-width-fallback);
     width: var(--aiko-layout-floating-panel-width);
     height: unset;
 }

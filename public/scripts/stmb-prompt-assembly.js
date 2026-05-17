@@ -128,7 +128,7 @@ export function buildSidePromptText(templatePrompt, priorContent, compiledScene,
             }
             parts.push('\n');
         });
-        parts.push('=== END PREVIOUS SCENE CONTEXT ===\n');
+        parts.push('=== END PREVIOUS SCENE CONTEXT - PROCESS ONLY THE SCENE BELOW ===\n');
     }
     parts.push('\n=== SCENE TEXT ===\n');
     parts.push(compiledSceneToText(compiledScene));

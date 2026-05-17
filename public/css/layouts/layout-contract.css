@@ -5,7 +5,8 @@
     --aiko-layout-chat-height: calc(100dvh - var(--topBarBlockSize) - 1px);
     --aiko-layout-chat-height-fallback: calc(100vh - var(--topBarBlockSize) - 1px);
     --aiko-layout-chat-max-height: calc(100dvh - var(--topBarBlockSize) - 1px);
-    --aiko-layout-chat-scroll-max-height: calc(100vh - calc(var(--topBarBlockSize) + var(--bottomFormBlockSize)));
+    --aiko-layout-chat-scroll-max-height: calc(100dvh - calc(var(--topBarBlockSize) + var(--bottomFormBlockSize)));
+    --aiko-layout-chat-scroll-max-height-fallback: calc(100vh - calc(var(--topBarBlockSize) + var(--bottomFormBlockSize)));
     --aiko-layout-chat-left: 0;
     --aiko-layout-chat-right: 0;
     --aiko-layout-chat-margin-inline: auto;
@@ -31,6 +32,7 @@
     --aiko-layout-panel-max-height: calc(100dvh - var(--topBarBlockSize));
     --aiko-layout-panel-max-height-fallback: calc(100vh - var(--topBarBlockSize));
     --aiko-layout-floating-panel-width: calc(((100dvw - var(--aiko-layout-chat-width)) / 2) - 1px);
+    --aiko-layout-floating-panel-width-fallback: calc(((100vw - var(--aiko-layout-chat-width)) / 2) - 1px);
 
     --aiko-layout-message-max-width: none;
     --aiko-layout-message-margin-inline: 0;
