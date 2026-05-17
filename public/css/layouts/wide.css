@@ -1,5 +1,9 @@
 body[data-aiko-layout="wide"] {
-    --aiko-layout-chat-width: min(1100px, 94dvw);
+    --aiko-layout-chat-width: min(var(--sheldWidth, 50vw), 100dvw);
     --aiko-layout-topbar-width: var(--aiko-layout-chat-width);
+    --aiko-layout-left-panel-width: max(30dvw, calc((100dvw - var(--aiko-layout-chat-width) - 2px) / 2));
+    --aiko-layout-left-panel-width-fallback: max(30vw, calc((100vw - var(--aiko-layout-chat-width) - 2px) / 2));
+    --aiko-layout-right-panel-width: max(30dvw, calc((100dvw - var(--aiko-layout-chat-width) - 2px) / 2));
+    --aiko-layout-right-panel-width-fallback: max(30vw, calc((100vw - var(--aiko-layout-chat-width) - 2px) / 2));
     --aiko-layout-drawer-width: var(--aiko-layout-chat-width);
 }
