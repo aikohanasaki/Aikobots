@@ -5965,7 +5965,8 @@ body:not(.caption) .mes_img_caption {
 
 #top-settings-holder {
     display: flex;
-    margin: 0 auto;
+    width: var(--aiko-layout-topbar-width);
+    margin-inline: var(--aiko-layout-topbar-margin-inline);
     column-gap: var(--topBarIconSpacing);
     height: var(--topBarBlockSize);
     justify-content: center;

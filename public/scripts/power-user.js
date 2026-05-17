@@ -78,6 +78,40 @@ const unlockedMaxContextStep = 512;
 const maxContextMin = 512;
 const maxContextStep = 64;
 const defaultToastPosition = 'toast-top-center';
+const defaultAikoLayoutModule = 'classic';
+export const layoutModules = Object.freeze({
+    classic: {
+        id: 'classic',
+        name: 'Classic',
+        css: 'css/layouts/classic.css',
+        bodyClass: 'layout-classic',
+    },
+    wide: {
+        id: 'wide',
+        name: 'Wide',
+        css: 'css/layouts/wide.css',
+        bodyClass: 'layout-wide',
+    },
+    compact: {
+        id: 'compact',
+        name: 'Compact',
+        css: 'css/layouts/compact.css',
+        bodyClass: 'layout-compact',
+    },
+    document: {
+        id: 'document',
+        name: 'Document / Writer',
+        css: 'css/layouts/document.css',
+        bodyClass: 'layout-document',
+    },
+    leftDock: {
+        id: 'leftDock',
+        name: 'Left Dock',
+        css: 'css/layouts/left-dock.css',
+        bodyClass: 'layout-left-dock',
+    },
+});
+const layoutModuleClasses = Object.freeze(Object.values(layoutModules).map(module => module.bodyClass));
 const topBarIconDefaults = [
     { drawerId: 'ai-config-button', controlId: 'top_bar_icon_ai_config', icon: 'fa-sliders' },
     { drawerId: 'sys-settings-button', controlId: 'top_bar_icon_api', icon: 'fa-plug-circle-exclamation', runtimeIcons: ['fa-plug'] },
@@ -171,6 +205,7 @@ export const power_user = {
     chat_display: chat_styles.DEFAULT,
     toastr_position: defaultToastPosition,
     chat_width: 50,
+    aiko_layout: defaultAikoLayoutModule,
     never_resize_avatars: false,
     show_card_avatar_urls: false,
     play_message_sound: false,
@@ -976,6 +1011,98 @@ function applyToastrPosition() {
     $(`#toastr_position option[value="${power_user.toastr_position}"]`).prop('selected', true);
 }
 
+function getAikoLayoutModule(layoutId) {
+    return layoutModules[layoutId] ?? layoutModules[defaultAikoLayoutModule];
+}
+
+function getAikoLayoutUserCssLink() {
+    return [...document.querySelectorAll('link[rel="stylesheet"]')]
+        .find(link => link.getAttribute('href')?.endsWith('css/user.css'));
+}
+
+function getAikoLayoutStructureCssLink() {
+    return [...document.querySelectorAll('link[rel="stylesheet"]')]
+        .find(link => link.getAttribute('href')?.endsWith('css/layouts/layout-structure.css'));
+}
+
+function applyAikoLayoutBodyState(layoutModule) {
+    document.body.dataset.aikoLayout = layoutModule.id;
+    document.body.classList.remove(...layoutModuleClasses);
+    document.body.classList.add(layoutModule.bodyClass);
+    $('#aiko_layout_module').val(layoutModule.id);
+}
+
+function loadAikoLayoutStylesheet(layoutModule) {
+    const currentLink = document.getElementById('aiko-layout-css');
+    const nextHref = new URL(layoutModule.css, document.baseURI).href;
+
+    if (currentLink?.href === nextHref) {
+        return Promise.resolve(currentLink);
+    }
+
+    return new Promise((resolve, reject) => {
+        const newLayoutLink = document.createElement('link');
+        newLayoutLink.rel = 'stylesheet';
+        newLayoutLink.type = 'text/css';
+        newLayoutLink.href = layoutModule.css;
+        newLayoutLink.dataset.aikoLayoutPending = layoutModule.id;
+
+        newLayoutLink.addEventListener('load', () => resolve(newLayoutLink), { once: true });
+        newLayoutLink.addEventListener('error', () => {
+            newLayoutLink.remove();
+            reject(new Error(`Failed to load layout stylesheet: ${layoutModule.css}`));
+        }, { once: true });
+
+        const userCssLink = getAikoLayoutUserCssLink();
+        if (userCssLink) {
+            document.head.insertBefore(newLayoutLink, userCssLink);
+            return;
+        }
+
+        if (currentLink?.nextSibling) {
+            document.head.insertBefore(newLayoutLink, currentLink.nextSibling);
+            return;
+        }
+
+        const structureCssLink = getAikoLayoutStructureCssLink();
+        if (structureCssLink) {
+            document.head.insertBefore(newLayoutLink, structureCssLink.nextSibling);
+            return;
+        }
+
+        document.head.appendChild(newLayoutLink);
+    });
+}
+
+async function applyAikoLayoutModule(layoutId, { persist = false } = {}) {
+    const layoutModule = getAikoLayoutModule(layoutId);
+    const previousLayout = getAikoLayoutModule(power_user.aiko_layout);
+    const previousLink = document.getElementById('aiko-layout-css');
+
+    try {
+        const loadedLink = await loadAikoLayoutStylesheet(layoutModule);
+        applyAikoLayoutBodyState(layoutModule);
+
+        if (loadedLink !== previousLink) {
+            loadedLink.id = 'aiko-layout-css';
+            loadedLink.removeAttribute('data-aiko-layout-pending');
+            previousLink?.remove();
+        }
+
+        power_user.aiko_layout = layoutModule.id;
+        if (persist) {
+            saveSettingsDebounced();
+        }
+
+        return true;
+    } catch (error) {
+        console.warn(error);
+        toastr.warning(t`Layout stylesheet failed to load. Keeping the previous layout.`);
+        applyAikoLayoutBodyState(previousLayout);
+        return false;
+    }
+}
+
 function applyChatWidth(type) {
     if (type === 'forced') {
         let r = document.documentElement;
@@ -1720,6 +1847,7 @@ function updateInputResizeAutoScrollControl() {
 //MARK: loadPowerUser
 export async function loadPowerUserSettings(settings, data) {
     const defaultStscript = JSON.parse(JSON.stringify(power_user.stscript));
+    const savedAikoLayout = settings.power_user?.aiko_layout;
     // Load from settings.json
     if (settings.power_user !== undefined) {
         delete settings.power_user.context;
@@ -1798,6 +1926,11 @@ export async function loadPowerUserSettings(settings, data) {
 
     if (typeof power_user.chat_width !== 'number') {
         power_user.chat_width = 50;
+    }
+
+    if (!Object.hasOwn(layoutModules, String(power_user.aiko_layout))) {
+        console.warn(`Invalid layout module "${String(savedAikoLayout)}"; falling back to ${defaultAikoLayoutModule}.`);
+        power_user.aiko_layout = defaultAikoLayoutModule;
     }
 
     if (!power_user.top_bar_icon_overrides || typeof power_user.top_bar_icon_overrides !== 'object') {
@@ -1901,6 +2034,7 @@ export async function loadPowerUserSettings(settings, data) {
     $(`#chat_display option[value=${power_user.chat_display}]`).prop('selected', true).trigger('change');
     $(`#toastr_position option[value=${power_user.toastr_position}]`).prop('selected', true).trigger('change');
     $('#chat_width_slider').val(power_user.chat_width);
+    $('#aiko_layout_module').val(power_user.aiko_layout);
     $('#token_padding').val(power_user.token_padding);
     $('#aux_field').val(power_user.aux_field);
     $('#tag_import_setting').val(power_user.tag_import_setting);
@@ -2008,6 +2142,7 @@ export async function loadPowerUserSettings(settings, data) {
     loadMaxContextUnlocked();
     switchWaifuMode();
     switchSpoilerMode();
+    await applyAikoLayoutModule(power_user.aiko_layout);
     loadMovingUIState();
     loadCharListState();
     toggleMDHotkeyIconDisplay();
@@ -3345,6 +3480,14 @@ jQuery(() => {
         applyChatWidth(applyMode);
         saveSettingsDebounced();
         setHotswapsDebounced();
+    });
+
+    $('#aiko_layout_module').on('change', async function () {
+        const selectedLayout = String($(this).find(':selected').val());
+        const applied = await applyAikoLayoutModule(selectedLayout, { persist: true });
+        if (!applied) {
+            $('#aiko_layout_module').val(power_user.aiko_layout);
+        }
     });
 
     $('#chat_truncation').on('input', function () {

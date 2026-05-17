@@ -18,6 +18,9 @@
         }
     </style>
     <link rel="preload" as="style" href="style.css">
+    <link rel="preload" as="style" href="css/layouts/layout-contract.css">
+    <link rel="preload" as="style" href="css/layouts/layout-structure.css">
+    <link rel="preload" as="style" href="css/layouts/classic.css">
     <link rel="manifest" crossorigin="use-credentials" href="manifest.json">
     <link href="webfonts/NotoSans/stylesheet.css" rel="stylesheet">
     <link href="webfonts/NotoSansMono/stylesheet.css" rel="stylesheet">
@@ -43,6 +46,7 @@
     <link rel="stylesheet" type="text/css" href="css/select2-overrides.css">
     <link rel="stylesheet" type="text/css" href="css/mobile-styles.css">
     <link rel="stylesheet" type="text/css" href="css/layouts/layout-contract.css">
+    <link rel="stylesheet" type="text/css" href="css/layouts/layout-structure.css">
     <link id="aiko-layout-css" rel="stylesheet" type="text/css" href="css/layouts/classic.css">
     <link rel="stylesheet" type="text/css" href="css/user.css">
     <link rel="icon" type="image/x-icon" href="favicon.ico">
@@ -2888,6 +2892,18 @@
                                         <div class="fa-solid fa-circle-chevron-down inline-drawer-icon down"></div>
                                     </div>
                                     <div class="inline-drawer-content">
+                                        <div class="flex-container alignitemscenter">
+                                            <label for="aiko_layout_module">
+                                                <small>Layout Module</small>
+                                            </label>
+                                            <select id="aiko_layout_module" class="widthNatural flex1 margin0">
+                                                <option value="classic">Classic</option>
+                                                <option value="wide">Wide</option>
+                                                <option value="compact">Compact</option>
+                                                <option value="document">Document / Writer</option>
+                                                <option value="leftDock">Left Dock</option>
+                                            </select>
+                                        </div>
                                         <div name="FontBlurChatWidthBlock" class="flex-container">
                                     <div class="alignitemscenter flex-container flexFlowColumn flexBasis48p flexGrow flexShrink gap0">
                                         <small>

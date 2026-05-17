@@ -1,0 +1,5 @@
+body[data-aiko-layout="wide"] {
+    --aiko-layout-chat-width: min(1100px, 94dvw);
+    --aiko-layout-topbar-width: var(--aiko-layout-chat-width);
+    --aiko-layout-drawer-width: var(--aiko-layout-chat-width);
+}

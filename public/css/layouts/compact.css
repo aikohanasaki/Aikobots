@@ -1,0 +1,11 @@
+body[data-aiko-layout="compact"] {
+    --fontScale: 0.9;
+    --topBarIconScale: 0.8;
+    --bottomFormBlockPadding: 3px;
+    --avatar-base-width: 36px;
+    --avatar-base-height: 36px;
+    --mes-right-spacing: 18px;
+
+    --aiko-layout-message-padding-block-start: 4px;
+    --aiko-layout-message-padding-inline: 6px;
+}
