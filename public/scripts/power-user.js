@@ -98,12 +98,6 @@ export const layoutModules = Object.freeze({
         css: 'css/layouts/compact.css',
         bodyClass: 'layout-compact',
     },
-    document: {
-        id: 'document',
-        name: 'Document / Writer',
-        css: 'css/layouts/document.css',
-        bodyClass: 'layout-document',
-    },
     leftDock: {
         id: 'leftDock',
         name: 'Left Dock',
@@ -115,12 +109,6 @@ export const layoutModules = Object.freeze({
         name: 'Workspace Right',
         css: 'css/layouts/workspace-right.css',
         bodyClass: 'layout-workspace-right',
-    },
-    writerPlus: {
-        id: 'writerPlus',
-        name: 'Writer Plus',
-        css: 'css/layouts/writer-plus.css',
-        bodyClass: 'layout-writer-plus',
     },
     compactOps: {
         id: 'compactOps',
