@@ -1,0 +1,13 @@
+body[data-aiko-layout="topComposer"] {
+    --aiko-layout-composer-order: 1;
+    --aiko-layout-chat-order: 2;
+}
+
+body[data-aiko-layout="topComposer"] #form_sheld {
+    margin-top: 0;
+    margin-bottom: 1px;
+}
+
+body[data-aiko-layout="topComposer"] #send_form {
+    border-radius: 0;
+}

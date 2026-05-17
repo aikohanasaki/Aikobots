@@ -1,0 +1,71 @@
+body[data-aiko-layout="workspaceRight"] {
+    --aiko-layout-workspace-gap: clamp(12px, 2dvw, 28px);
+
+    --aiko-layout-chat-width: clamp(560px, 46dvw, 760px);
+    --aiko-layout-chat-left: var(--aiko-layout-workspace-gap);
+    --aiko-layout-chat-right: auto;
+    --aiko-layout-chat-margin-inline: 0;
+
+    --aiko-layout-topbar-width: var(--aiko-layout-chat-width);
+    --aiko-layout-topbar-left: var(--aiko-layout-workspace-gap);
+    --aiko-layout-topbar-right: auto;
+    --aiko-layout-topbar-margin-inline: 0;
+
+    --aiko-layout-left-panel-width: var(--aiko-layout-chat-width);
+    --aiko-layout-left-panel-width-fallback: var(--aiko-layout-chat-width);
+    --aiko-layout-right-panel-width: calc(100dvw - var(--aiko-layout-chat-width) - (var(--aiko-layout-workspace-gap) * 2) - 2px);
+    --aiko-layout-right-panel-width-fallback: calc(100vw - var(--aiko-layout-chat-width) - (var(--aiko-layout-workspace-gap) * 2) - 2px);
+
+    --aiko-layout-drawer-width: var(--aiko-layout-chat-width);
+    --aiko-layout-drawer-left: var(--aiko-layout-workspace-gap);
+    --aiko-layout-drawer-right: auto;
+    --aiko-layout-drawer-margin-inline: 0;
+    --aiko-layout-floating-panel-width: var(--aiko-layout-right-panel-width);
+    --aiko-layout-floating-panel-width-fallback: var(--aiko-layout-right-panel-width-fallback);
+}
+
+body[data-aiko-layout="workspaceRight"] .fillLeft {
+    left: var(--aiko-layout-workspace-gap);
+}
+
+body[data-aiko-layout="workspaceRight"] .fillRight {
+    right: var(--aiko-layout-workspace-gap);
+}
+
+body[data-aiko-layout="workspaceRight"] #floatingPrompt,
+body[data-aiko-layout="workspaceRight"] #cfgConfig {
+    left: auto;
+    right: var(--aiko-layout-workspace-gap);
+}
+
+@media screen and (max-width: 1000px) {
+    body[data-aiko-layout="workspaceRight"] {
+        --aiko-layout-chat-width: 100dvw;
+        --aiko-layout-chat-left: 0;
+        --aiko-layout-chat-right: 0;
+        --aiko-layout-chat-margin-inline: auto;
+
+        --aiko-layout-topbar-width: 100dvw;
+        --aiko-layout-topbar-left: 0;
+        --aiko-layout-topbar-right: 0;
+        --aiko-layout-topbar-margin-inline: auto;
+
+        --aiko-layout-left-panel-width: 100dvw;
+        --aiko-layout-left-panel-width-fallback: 100vw;
+        --aiko-layout-right-panel-width: 100dvw;
+        --aiko-layout-right-panel-width-fallback: 100vw;
+
+        --aiko-layout-drawer-width: 100dvw;
+        --aiko-layout-drawer-left: 0;
+        --aiko-layout-drawer-right: 0;
+        --aiko-layout-drawer-margin-inline: auto;
+    }
+
+    body[data-aiko-layout="workspaceRight"] .fillLeft,
+    body[data-aiko-layout="workspaceRight"] .fillRight,
+    body[data-aiko-layout="workspaceRight"] #floatingPrompt,
+    body[data-aiko-layout="workspaceRight"] #cfgConfig {
+        left: 0;
+        right: auto;
+    }
+}

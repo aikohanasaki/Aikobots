@@ -1,0 +1,37 @@
+body[data-aiko-layout="compactOps"] {
+    --fontScale: 0.88;
+    --topBarIconScale: 0.78;
+    --topBarIconSpacing: 0px;
+    --bottomFormBlockPadding: 2px;
+    --avatar-base-width: 32px;
+    --avatar-base-height: 32px;
+    --mes-right-spacing: 16px;
+
+    --aiko-layout-chat-width: min(1180px, 96dvw);
+    --aiko-layout-topbar-width: var(--aiko-layout-chat-width);
+    --aiko-layout-drawer-width: var(--aiko-layout-chat-width);
+    --aiko-layout-message-padding-block-start: 3px;
+    --aiko-layout-message-padding-inline: 5px;
+}
+
+body[data-aiko-layout="compactOps"] #top_chat_bar,
+body[data-aiko-layout="compactOps"] #top_chat_connection_profiles {
+    gap: 6px;
+    padding-inline: 6px;
+}
+
+body[data-aiko-layout="compactOps"] #send_textarea {
+    padding: 3px 5px;
+}
+
+body[data-aiko-layout="compactOps"] .mes_block {
+    padding-left: 6px;
+}
+
+body[data-aiko-layout="compactOps"] .drawer-content {
+    padding: 4px;
+}
+
+body[data-aiko-layout="compactOps"] .inline-drawer-header {
+    padding: 3px 0;
+}

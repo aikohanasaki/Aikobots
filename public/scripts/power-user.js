@@ -110,6 +110,30 @@ export const layoutModules = Object.freeze({
         css: 'css/layouts/left-dock.css',
         bodyClass: 'layout-left-dock',
     },
+    workspaceRight: {
+        id: 'workspaceRight',
+        name: 'Workspace Right',
+        css: 'css/layouts/workspace-right.css',
+        bodyClass: 'layout-workspace-right',
+    },
+    writerPlus: {
+        id: 'writerPlus',
+        name: 'Writer Plus',
+        css: 'css/layouts/writer-plus.css',
+        bodyClass: 'layout-writer-plus',
+    },
+    compactOps: {
+        id: 'compactOps',
+        name: 'Compact Ops',
+        css: 'css/layouts/compact-ops.css',
+        bodyClass: 'layout-compact-ops',
+    },
+    topComposer: {
+        id: 'topComposer',
+        name: 'Top Composer (Experimental)',
+        css: 'css/layouts/top-composer.css',
+        bodyClass: 'layout-top-composer',
+    },
 });
 const layoutModuleClasses = Object.freeze(Object.values(layoutModules).map(module => module.bodyClass));
 const topBarIconDefaults = [

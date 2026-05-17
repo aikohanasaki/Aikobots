@@ -18,6 +18,8 @@
 #top-settings-holder {
     width: var(--aiko-layout-topbar-width);
     margin-inline: var(--aiko-layout-topbar-margin-inline);
+    left: var(--aiko-layout-topbar-left);
+    right: var(--aiko-layout-topbar-right);
 }
 
 #sheld {
@@ -327,10 +329,14 @@ body:not(.movingUI) .drawer-content.maximized {
 
 /* Layout CSS loads after mobile-styles.css, so this repeats shared mobile structural overrides to preserve the current cascade. */
 @media screen and (max-width: 1000px) {
+    #top-settings-holder,
     #top-bar {
         position: fixed;
         width: 100vw;
         width: 100dvw;
+        left: 0;
+        right: 0;
+        margin-inline: auto;
     }
 
     .drawer-content {
