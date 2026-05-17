@@ -87,9 +87,6 @@
             var(--SmartThemeCheckboxTickColorValue),
             var(--SmartThemeCheckboxTickColorValue));
 
-
-    --sheldWidth: 50vw;
-    /* 800px; */
     /*base variable calculated in rems*/
     --fontScale: 1;
     --mainFontSize: calc(var(--fontScale) * 15px);
@@ -822,41 +819,11 @@ hr {
 /*TOPPER margin*/
 
 #top-bar {
-    width: var(--sheldWidth);
-    margin: 0 auto;
-    left: 0;
-    right: 0;
-    display: inline-block;
-    height: var(--topBarBlockSize);
-    position: absolute;
     /* border-bottom: 1px solid var(--SmartThemeBorderColor); */
     box-shadow: 0 2px 20px 0 var(--black70a);
     backdrop-filter: blur(var(--SmartThemeBlurStrength));
     background-color: var(--SmartThemeBlurTintColor);
     -webkit-backdrop-filter: blur(var(--SmartThemeBlurStrength));
-    z-index: 3005;
-}
-
-#sheld {
-    display: flex;
-    flex-direction: column;
-    /* -1px to give sheld some wiggle room to bounce off tobar when moving*/
-    height: calc(100vh - var(--topBarBlockSize) - 1px);
-    height: calc(100dvh - var(--topBarBlockSize) - 1px);
-    max-height: calc(100dvh - var(--topBarBlockSize) - 1px);
-    overflow-x: hidden;
-    /* max-width: 50vw; */
-    position: absolute;
-    left: calc((100vw - var(--sheldWidth))/2);
-    left: calc((100dvw - var(--sheldWidth))/2);
-    top: var(--topBarBlockSize);
-    margin: 0 auto;
-    left: 0;
-    right: 0;
-    z-index: 30;
-    min-height: 100px;
-    min-width: 100px;
-    width: var(--sheldWidth);
 }
 
 #top_chat_bar,
@@ -1014,26 +981,10 @@ body.movingUI #top_chat_bar {
 }
 
 .drag-grabber {
-    position: absolute;
-    /*     width: 20px !important;
-    height: 20px !important; */
-    margin: 0px 5px;
     color: var(--SmartThemeBodyColor);
-    z-index: 2000;
-    text-align: center;
-    /* border-radius: 5px; */
-    vertical-align: middle;
-    right: 0px;
-    top: 0px;
     opacity: 0.5;
-    cursor: grab;
-    /* border: 1px solid var(--SmartThemeBorderColor); */
-    cursor: -moz-grab;
-    cursor: -webkit-grab;
-    display: none;
     filter: drop-shadow(0px 0px 0px black);
     transition: all var(--animation-duration-2x);
-    font-size: calc(var(--mainFontSize)*1.3);
 }
 
 .drag-grabber:hover {
@@ -1041,13 +992,6 @@ body.movingUI #top_chat_bar {
 }
 
 body .panelControlBar {
-    position: absolute;
-    right: 5px;
-    top: 5px;
-    z-index: 2000;
-    min-width: 55px;
-    justify-content: flex-end;
-    gap: 0px;
     transition: all var(--animation-duration-2x);
 }
 
@@ -1059,34 +1003,11 @@ body .panelControlBar {
     opacity: 1;
 }
 
-.panelControlBar .drag-grabber {
-    position: unset;
-}
-
-#sheldheader:active {
-    cursor: grabbing;
-    cursor: -moz-grabbing;
-    cursor: -webkit-grabbing;
-}
-
 .pull-tab {
-    height: 10px;
-    width: 10px;
     background-color: var(--SmartThemeEmColor);
-    position: absolute;
-    bottom: 0px;
-    right: 0px;
-    pointer-events: none;
-    z-index: 2001;
 }
 
 #chat {
-    max-height: calc(100vh - calc(var(--topBarBlockSize) + var(--bottomFormBlockSize)));
-    overflow-x: hidden;
-    padding-bottom: 0;
-    overflow-y: auto;
-    display: flex;
-    bottom: 10px;
     /*     border-bottom: 1px solid var(--SmartThemeBorderColor);
     border-left: 1px solid var(--SmartThemeBorderColor);
     border-right: 1px solid var(--SmartThemeBorderColor); */
@@ -1094,32 +1015,9 @@ body .panelControlBar {
     background-color: var(--SmartThemeChatTintColor);
     -webkit-backdrop-filter: blur(var(--SmartThemeBlurStrength));
     text-shadow: 0px 0px calc(var(--shadowWidth) * 1px) var(--SmartThemeShadowColor);
-    flex-direction: column;
-    z-index: 30;
-    flex: 1 1 auto;
-    min-height: 0;
-}
-
-#form_sheld {
-    white-space: nowrap;
-    width: 100%;
-    margin: 1px auto 0 auto;
-    z-index: 30;
-}
-
-/* special case for desktop Safari to allow #sheld resizing */
-@media only screen and (min-width: 1024px) and (-webkit-min-device-pixel-ratio: 2) and (pointer: fine) {
-    #form_sheld {
-        margin-bottom: 4px;
-    }
 }
 
 #send_form {
-    display: flex;
-    flex-wrap: wrap;
-    align-items: center;
-    width: 100%;
-    margin: 0 auto 0 auto;
     border: 1px solid var(--SmartThemeBorderColor);
     border-radius: 0 0 10px 10px;
     background-color: var(--SmartThemeBlurTintColor);
@@ -1591,13 +1489,7 @@ body .panelControlBar {
 }
 
 .mes {
-    display: flex;
-    align-items: flex-start;
-    padding: 10px 10px 0 10px;
-    margin-top: 0;
-    width: 100%;
     color: var(--SmartThemeBodyColor);
-    position: relative;
 }
 
 #chat .mes.selected {
@@ -1620,11 +1512,6 @@ body .panelControlBar {
 .mes q:after {
     content: '';
 
-}
-
-.last_mes {
-    margin-bottom: 0 !important;
-    /*only affects bubblechat to make it sit nicely at the bottom*/
 }
 
 .last_mes:has(.mes_text:empty):has(.mes_reasoning_details) .mes_reasoning:not(:empty) {
@@ -2012,21 +1899,11 @@ body.hideAllSwipeButtons :is(.swipe_left, .swipe_right),
     height: inherit;
 }
 
-.mes_block {
-    padding-top: 0;
-    padding-left: 10px;
-    width: 100%;
-    overflow-x: hidden;
-    overflow-y: clip;
-}
-
 .mes_text,
 .mes_reasoning {
     font-weight: 500;
     line-height: calc((var(--mainFontSize) + .5rem) * var(--chatTextLineHeightScale));
     letter-spacing: var(--chatTextLetterSpacing);
-    max-width: 100%;
-    overflow-wrap: anywhere;
 }
 
 .mes_text pre,
@@ -2038,13 +1915,6 @@ body.hideAllSwipeButtons :is(.swipe_left, .swipe_right),
 .mes_reasoning kbd,
 .mes_reasoning samp {
     letter-spacing: normal;
-}
-
-.mes_text {
-    padding-left: 0;
-    padding-top: 5px;
-    padding-bottom: 5px;
-    padding-right: var(--mes-right-spacing);
 }
 
 .mes_text hr {
@@ -3450,35 +3320,9 @@ input[type="file"] {
 
 #floatingPrompt,
 #cfgConfig {
-    overflow-y: auto;
-    max-width: 90dvw;
-    max-height: 90dvh;
-    min-width: 100px;
-    min-height: 100px;
     border-radius: 10px;
     border: 1px solid var(--SmartThemeBorderColor);
-    position: fixed;
-    padding: 10px;
-    padding-top: 25px;
-    display: none;
-    flex-direction: column;
     box-shadow: 0 0 10px var(--black70a);
-    z-index: 4000;
-    left: 0;
-    top: 0;
-    margin: 0;
-    right: unset;
-    width: calc(((100dvw - var(--sheldWidth)) / 2) - 1px);
-    height: unset;
-
-}
-
-#movingDivs>div {
-    z-index: 4000;
-}
-
-#left-nav-panel {
-    z-index: 3000;
 }
 
 .floating_prompt_radio_group,
@@ -3931,7 +3775,7 @@ input[type=search]:focus::-webkit-search-cancel-button {
 .bg_list {
     display: flex;
     flex-wrap: wrap;
-    width: calc(var(--sheldWidth) - 15px);
+    width: calc(var(--aiko-layout-drawer-width) - 15px);
     max-width: 100vw;
     max-width: 100dvw;
     justify-content: space-evenly;
@@ -4263,7 +4107,7 @@ grammarly-extension {
     /* FIXME: Chrome 129 broke max-height for aspect-ratio sized elements */
     /* aspect-ratio: 1 / 1; */
     /* width: unset !important; */
-    min-width: var(--sheldWidth);
+    min-width: var(--aiko-layout-chat-width);
 }
 
 .wider_dialogue_popup {
@@ -5319,7 +5163,7 @@ body[data-generating="true"] #chat .last_mes .mes_reasoning_actions {
     -webkit-backdrop-filter: blur(calc(var(--SmartThemeBlurStrength)*2));
 
     min-width: 100px;
-    max-width: var(--sheldWidth);
+    max-width: var(--aiko-layout-chat-width);
     height: calc(100vh - 84px);
     height: calc(100dvh - 84px);
     min-height: calc(100vh - 84px);
@@ -5415,7 +5259,7 @@ h5 {
 #select_chat_popup {
     display: flex;
     flex-direction: column;
-    max-width: var(--sheldWidth);
+    max-width: var(--aiko-layout-chat-width);
     height: min-content;
     max-height: calc(100vh - var(--topBarBlockSize));
     max-height: calc(100dvh - var(--topBarBlockSize));
@@ -6127,7 +5971,6 @@ body:not(.caption) .mes_img_caption {
     justify-content: center;
     z-index: 3005;
     position: relative;
-    width: var(--sheldWidth);
 
 }
 
@@ -6210,117 +6053,18 @@ body:has(#character_popup.open) #top-settings-holder:has(.drawer-content.openDra
     display: none;
 }
 
-.drawer25pWidth {
-    flex-basis: calc((var(--sheldWidth) / 4) - 16px);
-}
-
-.drawer33pWidth {
-    flex-basis: calc((var(--sheldWidth) / 3) - 16px);
-}
-
 .drawer-content {
     background-color: var(--SmartThemeBlurTintColor);
     color: var(--SmartThemeBodyColor);
     border-radius: 10px;
     padding: 5px;
     border: 1px solid var(--SmartThemeBorderColor);
-    min-width: 450px;
-    width: var(--sheldWidth);
-    overflow-y: hidden;
-    max-height: calc(100vh - calc(var(--topBarBlockSize) + var(--bottomFormBlockSize)));
-    max-height: calc(100dvh - calc(var(--topBarBlockSize) + var(--bottomFormBlockSize)));
-    display: none;
-    position: absolute;
-    top: var(--topBarBlockSize);
-    left: 0;
-    right: 0;
-    margin: 0 auto;
-    height: 0;
     backdrop-filter: blur(calc(var(--SmartThemeBlurStrength)));
     -webkit-backdrop-filter: blur(calc(var(--SmartThemeBlurStrength)));
     /* z-index: 1000 !important; */
-    transition-property: height, display;
     transition-duration: var(--animation-duration-2x);
     transition-timing-function: ease-in-out;
     transition-behavior: allow-discrete;
-}
-
-#movingDivs>.drawer-content {
-    height: unset;
-}
-
-.drawer-content.openDrawer {
-    display: block;
-    height: auto;
-    height: calc-size(auto, size);
-    overflow-y: auto;
-
-    @supports selector(::-webkit-scrollbar-thumb) {
-        animation: hide-scroll var(--animation-duration-2x) backwards;
-    }
-
-    @starting-style {
-        height: 0;
-    }
-}
-
-body.movingUI .inline-drawer-maximize {
-    display: none;
-}
-
-body:not(.movingUI) .drawer-content.maximized {
-    width: var(--sheldWidth) !important;
-    top: var(--topBarBlockSize) !important;
-    margin: 0 auto !important;
-    right: 0 !important;
-}
-
-/*to prevent draggables from being made too small to see*/
-.fillRight,
-.fillLeft,
-#WorldInfo,
-#floatingPrompt {
-    min-width: 100px !important;
-    min-height: 100px !important;
-    position: fixed;
-}
-
-.fillLeft,
-.fillRight {
-    width: calc((100vw - var(--sheldWidth) - 2px) /2);
-    width: calc((100dvw - var(--sheldWidth) - 2px) /2);
-    max-height: calc(100vh - var(--topBarBlockSize));
-    max-height: calc(100dvh - var(--topBarBlockSize));
-    height: 0;
-    position: fixed;
-    top: 0;
-    margin: 0;
-    box-shadow: none;
-    overflow: hidden;
-    flex-flow: column;
-    min-width: 100px;
-}
-
-.fillLeft {
-    left: 0;
-    right: auto;
-}
-
-.fillRight {
-    right: 0;
-    left: calc(100% - var(--sheldWidth) /2 + var(--sheldWidth) +1px);
-    z-index: 3000;
-}
-
-.fillLeft.openDrawer,
-.fillRight.openDrawer {
-    display: flex;
-    height: 100%;
-    overflow-y: hidden;
-
-    @starting-style {
-        height: 0;
-    }
 }
 
 /*
@@ -6334,31 +6078,7 @@ body:not(.movingUI) .drawer-content.maximized {
 }
 */
 
-.scrollableInner {
-    overflow-x: hidden;
-    height: 100%;
-}
-
-.fillLeft.openDrawer > .scrollableInner,
-.fillRight.openDrawer > .scrollableInner {
-    flex: 1 1 auto;
-    min-height: 0;
-    overflow-y: auto;
-    scrollbar-gutter: stable;
-}
-
-.scrollableInnerFull {
-    height: 100%;
-    overflow-Y: auto;
-    overflow-X: hidden;
-}
-
-.fillLeft .scrollableInner {
-    padding: 0.5em 0.75em 0.5em 0.5em
-}
-
 .drawer-content select {
-    width: 100%;
     font-size: calc(var(--mainFontSize) * 0.95);
 }
 
@@ -6537,7 +6257,7 @@ body:not(.movingUI) .drawer-content.maximized {
     min-height: 100px;
     max-height: 90vh;
     max-width: 90vw;
-    width: calc((100vw - var(--sheldWidth)) /2);
+    width: calc((100vw - var(--aiko-layout-chat-width)) /2);
     position: absolute;
     padding: 0;
     filter: drop-shadow(1px 1px 2px var(--black50a));
@@ -6557,7 +6277,7 @@ body:not(.movingUI) .drawer-content.maximized {
     /* Max height with 2/3 aspect ratio */
     --maxWidth: calc(90vh * 0.666);
     /* Left gap between the left corner and chat */
-    --leftGapWidth: calc((100vw - var(--sheldWidth)) / 2);
+    --leftGapWidth: calc((100vw - var(--aiko-layout-chat-width)) / 2);
     /* Left position of the avatar (half of the gap minus half of the avatar width) */
     --leftPosition: max(0px, calc((var(--leftGapWidth) - var(--maxWidth)) / 2));
     padding: 0;
