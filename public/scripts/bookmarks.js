@@ -19,6 +19,7 @@ import {
     isChatFullyHydrated,
     hydrateCurrentChatForEditing,
     isHistoricalChatMessage,
+    syncSwipeToMes,
 } from '../script.js';
 import { saveMetadataDebounced } from './extensions.js';
 import { humanizedDateTime } from './RossAscends-mods.js';
@@ -612,7 +613,7 @@ async function saveBookmarkMenu() {
 }
 
 // Export is used by Timelines extension. Do not remove.
-export async function createBranch(mesId) {
+export async function createBranch(mesId, { swipeId = null } = {}) {
     if (!chat.length) {
         toastr.warning('The chat is empty.', 'Branch creation failed');
         return;
@@ -623,7 +624,13 @@ export async function createBranch(mesId) {
         return;
     }
 
-    if (isHistoricalChatMessage(mesId)) {
+    const selectedSwipeId = swipeId === null ? null : Number(swipeId);
+    if (selectedSwipeId !== null && !Number.isInteger(selectedSwipeId)) {
+        toastr.warning('Invalid swipe ID.', 'Branch creation failed');
+        return;
+    }
+
+    if (isHistoricalChatMessage(mesId) || (selectedSwipeId !== null && isSplitTailChat() && !isChatFullyHydrated())) {
         const hydrated = await hydrateCurrentChatForEditing();
         if (!hydrated) {
             return null;
@@ -631,37 +638,68 @@ export async function createBranch(mesId) {
     }
 
     const lastMes = chat[mesId];
+    if (selectedSwipeId !== null && (!Array.isArray(lastMes?.swipes) || selectedSwipeId < 0 || selectedSwipeId >= lastMes.swipes.length)) {
+        toastr.warning('Invalid swipe ID.', 'Branch creation failed');
+        return;
+    }
+
     const mainChat = selected_group ? groups?.find(x => x.id == selected_group)?.chat_id : characters[this_chid].chat;
     const newMetadata = { main_chat: mainChat };
     const targetChatMetadata = { ...chat_metadata, ...newMetadata };
     let name = `Branch #${mesId} - ${humanizedDateTime()}`;
 
-    if (selected_group) {
-        await saveGroupBookmarkChat(selected_group, name, newMetadata, mesId);
-    } else {
-        if (isSplitTailChat() && !isChatFullyHydrated()) {
-            const response = await fetch('/api/chats/save-prefix', {
-                method: 'POST',
-                headers: getRequestHeaders(),
-                body: JSON.stringify({
-                    avatar_url: characters[this_chid].avatar,
-                    source_file: characters[this_chid].chat,
-                    target_file: name,
-                    prefix_end_id: mesId,
-                    header_overrides: {
-                        chat_metadata: targetChatMetadata,
-                    },
-                }),
-            });
+    const originalSwipeState = selectedSwipeId === null ? null : {
+        swipe_id: lastMes.swipe_id,
+        mes: lastMes.mes,
+        send_date: lastMes.send_date,
+        gen_started: lastMes.gen_started,
+        gen_finished: lastMes.gen_finished,
+        extra: structuredClone(lastMes.extra),
+    };
 
-            if (!response.ok) {
-                toastr.error('Checkpoint could not be created.', 'Branch creation failed');
-                return null;
-            }
+    try {
+        if (selectedSwipeId !== null && !syncSwipeToMes(mesId, selectedSwipeId, lastMes)) {
+            toastr.warning('Could not prepare the selected swipe for branching.', 'Branch creation failed');
+            return;
+        }
+
+        if (selected_group) {
+            await saveGroupBookmarkChat(selected_group, name, newMetadata, mesId);
         } else {
-            await saveChat({ chatName: name, withMetadata: newMetadata, mesId });
+            if (isSplitTailChat() && !isChatFullyHydrated()) {
+                const response = await fetch('/api/chats/save-prefix', {
+                    method: 'POST',
+                    headers: getRequestHeaders(),
+                    body: JSON.stringify({
+                        avatar_url: characters[this_chid].avatar,
+                        source_file: characters[this_chid].chat,
+                        target_file: name,
+                        prefix_end_id: mesId,
+                        header_overrides: {
+                            chat_metadata: targetChatMetadata,
+                        },
+                    }),
+                });
+
+                if (!response.ok) {
+                    toastr.error('Checkpoint could not be created.', 'Branch creation failed');
+                    return null;
+                }
+            } else {
+                await saveChat({ chatName: name, withMetadata: newMetadata, mesId });
+            }
+        }
+    } finally {
+        if (originalSwipeState) {
+            lastMes.swipe_id = originalSwipeState.swipe_id;
+            lastMes.mes = originalSwipeState.mes;
+            lastMes.send_date = originalSwipeState.send_date;
+            lastMes.gen_started = originalSwipeState.gen_started;
+            lastMes.gen_finished = originalSwipeState.gen_finished;
+            lastMes.extra = originalSwipeState.extra;
         }
     }
+
     // append to branches list if it exists
     // otherwise create it
     if (typeof lastMes.extra !== 'object') {
@@ -897,15 +935,16 @@ export async function convertSoloToGroupChat() {
 /**
  * Creates a new branch from the message with the given ID
  * @param {number} mesId Message ID
+ * @param {{swipeId?: number|null}} [options={}] Branch options
  * @returns {Promise<string?>} Branch file name
  */
-export async function branchChat(mesId) {
+export async function branchChat(mesId, { swipeId = null } = {}) {
     if (this_chid === undefined && !selected_group) {
         toastr.info('No character selected.', 'Create Branch');
         return null;
     }
 
-    const fileName = await createBranch(mesId);
+    const fileName = await createBranch(mesId, { swipeId });
     if (!fileName) {
         return null;
     }
