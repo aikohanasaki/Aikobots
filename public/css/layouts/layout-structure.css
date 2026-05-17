@@ -252,7 +252,7 @@ body:not(.movingUI) .drawer-content.maximized {
     width: var(--aiko-layout-right-panel-width-fallback);
     width: var(--aiko-layout-right-panel-width);
     right: 0;
-    left: calc(100% - var(--aiko-layout-chat-width) / 2 + var(--aiko-layout-chat-width) + 1px);
+    left: auto;
     z-index: 3000;
 }
 
