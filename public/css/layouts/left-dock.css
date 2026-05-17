@@ -1,0 +1,37 @@
+body[data-aiko-layout="leftDock"] {
+    --aiko-layout-dock-gap: 24px;
+
+    --aiko-layout-chat-width: min(720px, 48dvw);
+    --aiko-layout-chat-left: var(--aiko-layout-dock-gap);
+    --aiko-layout-chat-right: auto;
+    --aiko-layout-chat-margin-inline: 0;
+
+    --aiko-layout-topbar-width: var(--aiko-layout-chat-width);
+    --aiko-layout-topbar-left: var(--aiko-layout-dock-gap);
+    --aiko-layout-topbar-right: auto;
+    --aiko-layout-topbar-margin-inline: 0;
+
+    --aiko-layout-drawer-width: var(--aiko-layout-chat-width);
+    --aiko-layout-drawer-left: var(--aiko-layout-dock-gap);
+    --aiko-layout-drawer-right: auto;
+    --aiko-layout-drawer-margin-inline: 0;
+}
+
+@media screen and (max-width: 1000px) {
+    body[data-aiko-layout="leftDock"] {
+        --aiko-layout-chat-width: 100dvw;
+        --aiko-layout-chat-left: 0;
+        --aiko-layout-chat-right: 0;
+        --aiko-layout-chat-margin-inline: auto;
+
+        --aiko-layout-topbar-width: 100dvw;
+        --aiko-layout-topbar-left: 0;
+        --aiko-layout-topbar-right: 0;
+        --aiko-layout-topbar-margin-inline: auto;
+
+        --aiko-layout-drawer-width: 100dvw;
+        --aiko-layout-drawer-left: 0;
+        --aiko-layout-drawer-right: 0;
+        --aiko-layout-drawer-margin-inline: auto;
+    }
+}

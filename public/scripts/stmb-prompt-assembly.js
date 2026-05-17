@@ -87,7 +87,7 @@ export function buildMemoryPromptText(compiledScene, profile, worldInfo, stmbSet
     const sceneLines = [];
 
     if (previousMemories.length > 0) {
-        sceneLines.push('=== PREVIOUS SCENE CONTEXT (DO NOT SUMMARIZE) ===');
+        sceneLines.push('=== PREVIOUS SCENE CONTEXT (DO NOT PROCESS) ===');
         sceneLines.push('These are previous memories for context only. Do NOT include them in your new memory:');
         sceneLines.push('');
         previousMemories.forEach((memory, index) => {
@@ -98,7 +98,7 @@ export function buildMemoryPromptText(compiledScene, profile, worldInfo, stmbSet
             }
             sceneLines.push('');
         });
-        sceneLines.push('=== END PREVIOUS SCENE CONTEXT - SUMMARIZE ONLY THE SCENE BELOW ===');
+        sceneLines.push('=== END PREVIOUS SCENE CONTEXT - PROCESS ONLY THE SCENE BELOW ===');
         sceneLines.push('');
     }
 
@@ -118,7 +118,7 @@ export function buildSidePromptText(templatePrompt, priorContent, compiledScene,
         parts.push(String(priorContent));
     }
     if (previousMemories.length > 0) {
-        parts.push('\n=== PREVIOUS SCENE CONTEXT (DO NOT SUMMARIZE) ===\n');
+        parts.push('\n=== PREVIOUS SCENE CONTEXT (DO NOT PROCESS) ===\n');
         parts.push('These are previous memories for context only. Do NOT include them in your new output.\n\n');
         previousMemories.forEach((memory, index) => {
             parts.push(`Context ${index + 1} - ${memory.title || 'Memory'}:\n`);
@@ -128,7 +128,7 @@ export function buildSidePromptText(templatePrompt, priorContent, compiledScene,
             }
             parts.push('\n');
         });
-        parts.push('=== END PREVIOUS SCENE CONTEXT ===\n');
+        parts.push('=== END PREVIOUS SCENE CONTEXT - PROCESS ONLY THE SCENE BELOW ===\n');
     }
     parts.push('\n=== SCENE TEXT ===\n');
     parts.push(compiledSceneToText(compiledScene));

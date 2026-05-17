@@ -1,0 +1,44 @@
+:root {
+    --sheldWidth: 50vw;
+    --aiko-layout-chat-width: var(--sheldWidth, 50vw);
+    --aiko-layout-chat-top: var(--topBarBlockSize);
+    --aiko-layout-chat-height: calc(100dvh - var(--topBarBlockSize) - 1px);
+    --aiko-layout-chat-height-fallback: calc(100vh - var(--topBarBlockSize) - 1px);
+    --aiko-layout-chat-max-height: calc(100dvh - var(--topBarBlockSize) - 1px);
+    --aiko-layout-chat-scroll-max-height: calc(100dvh - calc(var(--topBarBlockSize) + var(--bottomFormBlockSize)));
+    --aiko-layout-chat-scroll-max-height-fallback: calc(100vh - calc(var(--topBarBlockSize) + var(--bottomFormBlockSize)));
+    --aiko-layout-chat-left: 0;
+    --aiko-layout-chat-right: 0;
+    --aiko-layout-chat-margin-inline: auto;
+
+    --aiko-layout-topbar-width: var(--aiko-layout-chat-width);
+    --aiko-layout-topbar-left: 0;
+    --aiko-layout-topbar-right: 0;
+    --aiko-layout-topbar-margin-inline: auto;
+
+    --aiko-layout-left-panel-width: calc((100dvw - var(--aiko-layout-chat-width) - 2px) / 2);
+    --aiko-layout-left-panel-width-fallback: calc((100vw - var(--aiko-layout-chat-width) - 2px) / 2);
+    --aiko-layout-right-panel-width: calc((100dvw - var(--aiko-layout-chat-width) - 2px) / 2);
+    --aiko-layout-right-panel-width-fallback: calc((100vw - var(--aiko-layout-chat-width) - 2px) / 2);
+
+    --aiko-layout-drawer-width: var(--aiko-layout-chat-width);
+    --aiko-layout-drawer-min-width: 450px;
+    --aiko-layout-drawer-top: var(--topBarBlockSize);
+    --aiko-layout-drawer-left: 0;
+    --aiko-layout-drawer-right: 0;
+    --aiko-layout-drawer-margin-inline: auto;
+    --aiko-layout-drawer-max-height: calc(100dvh - calc(var(--topBarBlockSize) + var(--bottomFormBlockSize)));
+    --aiko-layout-drawer-max-height-fallback: calc(100vh - calc(var(--topBarBlockSize) + var(--bottomFormBlockSize)));
+    --aiko-layout-panel-max-height: calc(100dvh - var(--topBarBlockSize));
+    --aiko-layout-panel-max-height-fallback: calc(100vh - var(--topBarBlockSize));
+    --aiko-layout-floating-panel-width: calc(((100dvw - var(--aiko-layout-chat-width)) / 2) - 1px);
+    --aiko-layout-floating-panel-width-fallback: calc(((100vw - var(--aiko-layout-chat-width)) / 2) - 1px);
+
+    --aiko-layout-message-max-width: none;
+    --aiko-layout-message-margin-inline: 0;
+    --aiko-layout-message-padding-block-start: 10px;
+    --aiko-layout-message-padding-inline: 10px;
+
+    --aiko-layout-composer-order: initial;
+    --aiko-layout-chat-order: initial;
+}
