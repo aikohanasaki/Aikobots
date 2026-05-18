@@ -9,6 +9,7 @@ import { router as usersPrivateRouter } from './endpoints/users-private.js';
 import { router as usersAdminRouter } from './endpoints/users-admin.js';
 import { router as userMessagesRouter } from './endpoints/users-messages.js';
 import { router as movingUIRouter } from './endpoints/moving-ui.js';
+import { router as layoutsRouter } from './endpoints/layouts.js';
 import { router as imagesRouter } from './endpoints/images.js';
 import { router as mediaRouter } from './endpoints/media.js';
 import { router as quickRepliesRouter } from './endpoints/quick-replies.js';
@@ -141,6 +142,7 @@ export function setupPrivateEndpoints(app) {
     app.use('/api/users', usersAdminRouter);
     app.use('/api/users/messages', userMessagesRouter);
     app.use('/api/moving-ui', movingUIRouter);
+    app.use('/api/layouts', layoutsRouter);
     app.use('/api/images', imagesRouter);
     app.use('/api/media', mediaRouter);
     app.use('/api/quick-replies', quickRepliesRouter);

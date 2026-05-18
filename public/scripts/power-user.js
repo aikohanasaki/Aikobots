@@ -79,7 +79,9 @@ const maxContextMin = 512;
 const maxContextStep = 64;
 const defaultToastPosition = 'toast-top-center';
 const defaultAikoLayoutModule = 'classic';
-export const layoutModules = Object.freeze({
+const customLayoutIdPrefix = 'custom:';
+const layoutCustomBodyClass = 'layout-custom';
+const builtInLayoutModules = Object.freeze({
     classic: {
         id: 'classic',
         name: 'Classic',
@@ -123,7 +125,10 @@ export const layoutModules = Object.freeze({
         bodyClass: 'layout-top-composer',
     },
 });
-const layoutModuleClasses = Object.freeze(Object.values(layoutModules).map(module => module.bodyClass));
+export let layoutModules = Object.freeze({ ...builtInLayoutModules });
+let customLayoutModules = Object.freeze({});
+let customLayoutModulesLoaded = false;
+const builtInLayoutModuleClasses = Object.freeze(Object.values(builtInLayoutModules).map(module => module.bodyClass));
 const topBarIconDefaults = [
     { drawerId: 'ai-config-button', controlId: 'top_bar_icon_ai_config', icon: 'fa-sliders' },
     { drawerId: 'sys-settings-button', controlId: 'top_bar_icon_api', icon: 'fa-plug-circle-exclamation', runtimeIcons: ['fa-plug'] },
@@ -1023,8 +1028,155 @@ function applyToastrPosition() {
     $(`#toastr_position option[value="${power_user.toastr_position}"]`).prop('selected', true);
 }
 
+function rebuildLayoutModules() {
+    layoutModules = Object.freeze({ ...builtInLayoutModules, ...customLayoutModules });
+}
+
+function hasAikoLayoutModule(layoutId) {
+    return Object.hasOwn(layoutModules, String(layoutId));
+}
+
 function getAikoLayoutModule(layoutId) {
     return layoutModules[layoutId] ?? layoutModules[defaultAikoLayoutModule];
+}
+
+function getAikoLayoutModuleClasses() {
+    return [...builtInLayoutModuleClasses, layoutCustomBodyClass];
+}
+
+function renderAikoLayoutModuleOptions(selectedLayout = power_user.aiko_layout) {
+    const selector = $('#aiko_layout_module');
+    if (!selector.length) {
+        return;
+    }
+
+    selector.empty();
+    for (const layoutModule of Object.values(builtInLayoutModules)) {
+        selector.append(new Option(layoutModule.name, layoutModule.id, false, layoutModule.id === selectedLayout));
+    }
+
+    const customLayouts = Object.values(customLayoutModules);
+    if (customLayouts.length) {
+        const group = document.createElement('optgroup');
+        group.label = 'Custom';
+        for (const layoutModule of customLayouts) {
+            group.append(new Option(layoutModule.name, layoutModule.id, false, layoutModule.id === selectedLayout));
+        }
+        selector.append(group);
+    }
+
+    selector.val(hasAikoLayoutModule(selectedLayout) ? selectedLayout : defaultAikoLayoutModule);
+}
+
+function getCustomLayoutModuleFromRecord(layout) {
+    if (!layout?.custom || typeof layout.id !== 'string' || !layout.id.startsWith(customLayoutIdPrefix)) {
+        return null;
+    }
+    if (Object.hasOwn(builtInLayoutModules, layout.id)) {
+        return null;
+    }
+    return {
+        id: layout.id,
+        name: String(layout.name || layout.filename || layout.id),
+        css: String(layout.css || ''),
+        bodyClass: layoutCustomBodyClass,
+        custom: true,
+        filename: String(layout.filename || ''),
+    };
+}
+
+async function loadCustomLayoutModules() {
+    try {
+        const response = await fetch('/api/layouts/list', {
+            method: 'POST',
+            headers: getRequestHeaders(),
+            body: JSON.stringify({}),
+        });
+        if (!response.ok) {
+            throw new Error(await response.text());
+        }
+        const data = await response.json();
+        const modules = {};
+        for (const layout of Array.isArray(data?.layouts) ? data.layouts : []) {
+            const module = getCustomLayoutModuleFromRecord(layout);
+            if (module) {
+                modules[module.id] = module;
+            }
+        }
+        customLayoutModules = Object.freeze(modules);
+        customLayoutModulesLoaded = true;
+        rebuildLayoutModules();
+        renderAikoLayoutModuleOptions();
+        return true;
+    } catch (error) {
+        console.warn('Failed to load custom layout modules:', error);
+        customLayoutModulesLoaded = false;
+        rebuildLayoutModules();
+        renderAikoLayoutModuleOptions();
+        return false;
+    }
+}
+
+async function readLayoutUploadError(response, fallbackMessage) {
+    try {
+        const data = await response.clone().json();
+        return data?.error || fallbackMessage;
+    } catch {
+        try {
+            return await response.text() || fallbackMessage;
+        } catch {
+            return fallbackMessage;
+        }
+    }
+}
+
+async function uploadCustomLayoutCss(file) {
+    const formData = new FormData();
+    formData.append('avatar', file, file.name);
+    const response = await fetch('/api/layouts/upload', {
+        method: 'POST',
+        headers: getRequestHeaders({ omitContentType: true }),
+        body: formData,
+        cache: 'no-cache',
+    });
+    if (!response.ok) {
+        throw new Error(await readLayoutUploadError(response, t`Failed to upload layout CSS.`));
+    }
+    const data = await response.json();
+    if (!data?.layout?.id) {
+        throw new Error(t`Invalid layout upload response.`);
+    }
+    const listLoaded = await loadCustomLayoutModules();
+    if (!listLoaded) {
+        const module = getCustomLayoutModuleFromRecord(data.layout);
+        if (!module) {
+            throw new Error(t`Invalid layout upload response.`);
+        }
+        customLayoutModules = Object.freeze({ ...customLayoutModules, [module.id]: module });
+        rebuildLayoutModules();
+    }
+    renderAikoLayoutModuleOptions(data.layout.id);
+    await applyAikoLayoutModule(data.layout.id, { persist: true });
+}
+
+async function uploadLayoutImageAsset(file) {
+    const formData = new FormData();
+    formData.append('avatar', file, file.name);
+    const response = await fetch('/api/layouts/assets/upload', {
+        method: 'POST',
+        headers: getRequestHeaders({ omitContentType: true }),
+        body: formData,
+        cache: 'no-cache',
+    });
+    if (!response.ok) {
+        throw new Error(await readLayoutUploadError(response, t`Failed to upload layout image asset.`));
+    }
+    const data = await response.json();
+    if (!data?.asset?.url) {
+        throw new Error(t`Invalid layout image upload response.`);
+    }
+    toastr.success(t`Layout image asset uploaded.`);
+    console.info(`Layout image asset URL: ${data.asset.url}`);
 }
 
 function getAikoLayoutUserCssLink() {
@@ -1039,7 +1191,7 @@ function getAikoLayoutStructureCssLink() {
 
 function applyAikoLayoutBodyState(layoutModule) {
     document.body.dataset.aikoLayout = layoutModule.id;
-    document.body.classList.remove(...layoutModuleClasses);
+    document.body.classList.remove(...getAikoLayoutModuleClasses());
     document.body.classList.add(layoutModule.bodyClass);
     $('#aiko_layout_module').val(layoutModule.id);
 }
@@ -1086,8 +1238,10 @@ function loadAikoLayoutStylesheet(layoutModule) {
     });
 }
 
-async function applyAikoLayoutModule(layoutId, { persist = false } = {}) {
-    const layoutModule = getAikoLayoutModule(layoutId);
+async function applyAikoLayoutModule(layoutId, { persist = false, preserveMissing = false } = {}) {
+    const requestedLayoutId = String(layoutId);
+    const missingRequestedLayout = !hasAikoLayoutModule(requestedLayoutId);
+    const layoutModule = missingRequestedLayout ? layoutModules[defaultAikoLayoutModule] : getAikoLayoutModule(requestedLayoutId);
     const previousLayout = getAikoLayoutModule(power_user.aiko_layout);
     const previousLink = document.getElementById('aiko-layout-css');
 
@@ -1101,12 +1255,14 @@ async function applyAikoLayoutModule(layoutId, { persist = false } = {}) {
             previousLink?.remove();
         }
 
-        power_user.aiko_layout = layoutModule.id;
+        if (!missingRequestedLayout || !preserveMissing) {
+            power_user.aiko_layout = layoutModule.id;
+        }
         if (persist) {
             saveSettingsDebounced();
         }
 
-        return true;
+        return !missingRequestedLayout;
     } catch (error) {
         console.warn(error);
         toastr.warning(t`Layout stylesheet failed to load. Keeping the previous layout.`);
@@ -1882,6 +2038,8 @@ export async function loadPowerUserSettings(settings, data) {
         Object.assign(power_user, settings.power_user);
     }
 
+    const customLayoutsAvailable = await loadCustomLayoutModules();
+
     normalizeLongChatHandlingSettings();
 
     if (!['future_only', 'ask_clean_chat_on_open'].includes(String(power_user.strip_ai_thinking_cleanup_mode))) {
@@ -1940,7 +2098,7 @@ export async function loadPowerUserSettings(settings, data) {
         power_user.chat_width = 50;
     }
 
-    if (!Object.hasOwn(layoutModules, String(power_user.aiko_layout))) {
+    if (!hasAikoLayoutModule(power_user.aiko_layout) && customLayoutsAvailable) {
         console.warn(`Invalid layout module "${String(savedAikoLayout)}"; falling back to ${defaultAikoLayoutModule}.`);
         power_user.aiko_layout = defaultAikoLayoutModule;
     }
@@ -2046,7 +2204,7 @@ export async function loadPowerUserSettings(settings, data) {
     $(`#chat_display option[value=${power_user.chat_display}]`).prop('selected', true).trigger('change');
     $(`#toastr_position option[value=${power_user.toastr_position}]`).prop('selected', true).trigger('change');
     $('#chat_width_slider').val(power_user.chat_width);
-    $('#aiko_layout_module').val(power_user.aiko_layout);
+    renderAikoLayoutModuleOptions(power_user.aiko_layout);
     $('#token_padding').val(power_user.token_padding);
     $('#aux_field').val(power_user.aux_field);
     $('#tag_import_setting').val(power_user.tag_import_setting);
@@ -2154,7 +2312,7 @@ export async function loadPowerUserSettings(settings, data) {
     loadMaxContextUnlocked();
     switchWaifuMode();
     switchSpoilerMode();
-    await applyAikoLayoutModule(power_user.aiko_layout);
+    await applyAikoLayoutModule(power_user.aiko_layout, { preserveMissing: !customLayoutModulesLoaded });
     loadMovingUIState();
     loadCharListState();
     toggleMDHotkeyIconDisplay();
@@ -3500,6 +3658,42 @@ jQuery(() => {
         if (!applied) {
             $('#aiko_layout_module').val(power_user.aiko_layout);
         }
+    });
+
+    $('#aiko_layout_css_upload').on('change', async function () {
+        const file = this.files?.[0];
+        this.value = '';
+        if (!file) {
+            return;
+        }
+        try {
+            await uploadCustomLayoutCss(file);
+        } catch (error) {
+            console.error('Error uploading layout CSS:', error);
+            toastr.error(error.message || t`Failed to upload layout CSS.`);
+        }
+    });
+
+    $('#aiko_layout_css_upload_button').on('click', function () {
+        $('#aiko_layout_css_upload').trigger('click');
+    });
+
+    $('#aiko_layout_asset_upload').on('change', async function () {
+        const file = this.files?.[0];
+        this.value = '';
+        if (!file) {
+            return;
+        }
+        try {
+            await uploadLayoutImageAsset(file);
+        } catch (error) {
+            console.error('Error uploading layout image asset:', error);
+            toastr.error(error.message || t`Failed to upload layout image asset.`);
+        }
+    });
+
+    $('#aiko_layout_asset_upload_button').on('click', function () {
+        $('#aiko_layout_asset_upload').trigger('click');
     });
 
     $('#chat_truncation').on('input', function () {

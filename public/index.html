@@ -2892,9 +2892,9 @@
                                         <div class="fa-solid fa-circle-chevron-down inline-drawer-icon down"></div>
                                     </div>
                                     <div class="inline-drawer-content">
-                                        <div class="flex-container alignitemscenter">
+                                        <div class="flex-container alignitemscenter marginBot5">
                                             <label for="aiko_layout_module">
-                                                <small>Layout Module</small>
+                                                <small>Layout</small>
                                             </label>
                                             <select id="aiko_layout_module" class="widthNatural flex1 margin0">
                                                 <option value="classic">Classic</option>
@@ -2905,6 +2905,12 @@
                                                 <option value="compactOps">Compact Ops</option>
                                                 <option value="topComposer">Top Composer (Experimental)</option>
                                             </select>
+                                            <div class="flex-container flexnowrap flexNoGap">
+                                                <input id="aiko_layout_css_upload" type="file" accept=".css,text/css" hidden>
+                                                <div id="aiko_layout_css_upload_button" class="menu_button fa-solid fa-file-arrow-up" title="Upload layout CSS (max 5MB)"></div>
+                                                <input id="aiko_layout_asset_upload" type="file" accept="image/png,image/jpeg,image/webp" hidden>
+                                                <div id="aiko_layout_asset_upload_button" class="menu_button fa-solid fa-image" title="Upload image files for use in layout (total storage less than 20MB)."></div>
+                                            </div>
                                         </div>
                                         <div name="FontBlurChatWidthBlock" class="flex-container">
                                     <div class="alignitemscenter flex-container flexFlowColumn flexBasis48p flexGrow flexShrink gap0">
@@ -2975,8 +2981,8 @@
                                         <input class="neo-range-input" type="number" min="0" max="5" step="1" data-for="shadow_width" id="shadow_width_counter">
                                     </div>
                                 </div>
-                                <div class="flex-container alignItemsCenter">
-                                    <label id="movingUIModeCheckBlock" for="movingUImode" class="checkbox_label" title="Allow repositioning certain UI elements by dragging them. PC only, no effect on mobile." data-i18n="[title]Allow repositioning certain UI elements by dragging them. PC only, no effect on mobile">
+                                <div class="flex-container alignItemsCenter marginBot5 wide100p">
+                                    <label id="movingUIModeCheckBlock" for="movingUImode" class="checkbox_label flex1" title="Allow repositioning certain UI elements by dragging them. PC only, no effect on mobile." data-i18n="[title]Allow repositioning certain UI elements by dragging them. PC only, no effect on mobile">
                                         <input id="movingUImode" type="checkbox" />
                                         <small>
                                             <span data-i18n="Movable UI Panels">MovingUI</span>
@@ -2988,17 +2994,13 @@
                                         <span data-i18n="mui_reset">Reset</span>
                                     </div>
                                 </div>
-                                <div id="MovingUI-presets-block" class="flex-container alignitemscenter">
-                                    <div class="flex-container alignItemsFlexEnd">
-                                        <label for="movingUIPresets" title="MovingUI preset. Predefined/saved draggable positions." data-i18n="[title]MovingUI preset. Predefined/saved draggable positions">
-                                            <small data-i18n="MUI Preset">MovingUI Preset:</small>
-                                            <div class="flex-container flexnowrap">
-                                                <select id="movingUIPresets" class="widthNatural flex1 margin0">
-                                                </select>
-                                            </div>
-                                        </label>
-                                        <div id="movingui-preset-save-button" title="Save changes to a new MovingUI preset file." data-i18n="[title]Save movingUI changes to a new file" class="menu_button margin0 fa-solid fa-save"></div>
-                                    </div>
+                                <div id="MovingUI-presets-block" class="flex-container alignitemscenter marginBot5 wide100p">
+                                    <label for="movingUIPresets" title="MovingUI preset. Predefined/saved draggable positions." data-i18n="[title]MovingUI preset. Predefined/saved draggable positions">
+                                        <small data-i18n="MUI Preset">MovingUI Preset:</small>
+                                    </label>
+                                    <select id="movingUIPresets" class="widthNatural flex1 margin0">
+                                    </select>
+                                    <div id="movingui-preset-save-button" title="Save changes to a new MovingUI preset file." data-i18n="[title]Save movingUI changes to a new file" class="menu_button margin0 fa-solid fa-save"></div>
                                 </div>
                                 <div class="inline-drawer wide100p flexFlowColumn">
                                     <div class="inline-drawer-toggle inline-drawer-header" title="Swap top bar Font Awesome icons. Use icon class names such as fa-wand-magic-sparkles.">

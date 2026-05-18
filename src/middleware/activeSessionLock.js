@@ -18,6 +18,7 @@ const READ_ONLY_POST_ROUTES = [
     /^\/api\/groups\/all$/,
     /^\/api\/horde\/(?:sd-samplers|sd-models|user-info)$/,
     /^\/api\/images\/(?:list(?:\/.*)?|folders)$/,
+    /^\/api\/layouts\/(?:list|assets\/list)$/,
     /^\/api\/openrouter\/models\/(?:providers|multimodal|embedding)$/,
     /^\/api\/settings\/(?:get|get-snapshots|load-snapshot)$/,
     /^\/api\/secrets\/(?:read|view|find)$/,

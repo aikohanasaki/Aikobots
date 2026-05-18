@@ -32,6 +32,8 @@ export const USER_DIRECTORY_TEMPLATE = Object.freeze({
     openAI_Settings: 'OpenAI Settings',
     themes: 'themes',
     movingUI: 'movingUI',
+    layouts: 'layouts',
+    layoutAssets: 'layout-assets',
     extensions: 'extensions',
     quickreplies: 'QuickReplies',
     assets: 'assets',

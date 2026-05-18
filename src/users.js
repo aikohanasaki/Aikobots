@@ -163,6 +163,8 @@ async function quarantineInvalidStorageFiles(storageDir) {
  * @property {string} openAI_Settings - The directory where the OpenAI settings are stored
  * @property {string} themes - The directory where the themes are stored
  * @property {string} movingUI - The directory where the moving UI data is stored
+ * @property {string} layouts - The directory where the user's custom layout CSS files are stored
+ * @property {string} layoutAssets - The directory where the user's custom layout image assets are stored
  * @property {string} extensions - The directory where the extensions are stored
  * @property {string} quickreplies - The directory where the quick replies are stored
  * @property {string} assets - The directory where the assets are stored
