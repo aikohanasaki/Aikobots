@@ -81,6 +81,8 @@ const defaultToastPosition = 'toast-top-center';
 const defaultAikoLayoutModule = 'classic';
 const customLayoutIdPrefix = 'custom:';
 const layoutCustomBodyClass = 'layout-custom';
+const layoutThemeColorLockClass = 'aiko-layout-theme-color-locked';
+const layoutThemeColorLockTitle = 'Disabled because this color is declared in the active layout CSS.';
 const builtInLayoutModules = Object.freeze({
     classic: {
         id: 'classic',
@@ -129,6 +131,20 @@ export let layoutModules = Object.freeze({ ...builtInLayoutModules });
 let customLayoutModules = Object.freeze({});
 let customLayoutModulesLoaded = false;
 const builtInLayoutModuleClasses = Object.freeze(Object.values(builtInLayoutModules).map(module => module.bodyClass));
+const smartThemeColorControls = Object.freeze([
+    { key: 'main_text_color', selector: '#main-text-color-picker', type: 'main', variable: '--SmartThemeBodyColor' },
+    { key: 'italics_text_color', selector: '#italics-color-picker', type: 'italics', variable: '--SmartThemeEmColor' },
+    { key: 'underline_text_color', selector: '#underline-color-picker', type: 'underline', variable: '--SmartThemeUnderlineColor' },
+    { key: 'quote_text_color', selector: '#quote-color-picker', type: 'quote', variable: '--SmartThemeQuoteColor' },
+    { key: 'blur_tint_color', selector: '#blur-tint-color-picker', type: 'blurTint', variable: '--SmartThemeBlurTintColor' },
+    { key: 'chat_tint_color', selector: '#chat-tint-color-picker', type: 'chatTint', variable: '--SmartThemeChatTintColor' },
+    { key: 'user_mes_blur_tint_color', selector: '#user-mes-blur-tint-color-picker', type: 'userMesBlurTint', variable: '--SmartThemeUserMesBlurTintColor' },
+    { key: 'bot_mes_blur_tint_color', selector: '#bot-mes-blur-tint-color-picker', type: 'botMesBlurTint', variable: '--SmartThemeBotMesBlurTintColor' },
+    { key: 'shadow_color', selector: '#shadow-color-picker', type: 'shadow', variable: '--SmartThemeShadowColor' },
+    { key: 'border_color', selector: '#border-color-picker', type: 'border', variable: '--SmartThemeBorderColor' },
+]);
+const layoutLockedSmartThemeVariables = new Set();
+let syncingSmartThemeColorPickerState = false;
 const topBarIconDefaults = [
     { drawerId: 'ai-config-button', controlId: 'top_bar_icon_ai_config', icon: 'fa-sliders' },
     { drawerId: 'sys-settings-button', controlId: 'top_bar_icon_api', icon: 'fa-plug-circle-exclamation', runtimeIcons: ['fa-plug'] },
@@ -1238,6 +1254,94 @@ function loadAikoLayoutStylesheet(layoutModule) {
     });
 }
 
+function smartThemeDeclarationTargetsActiveTheme(rule) {
+    if (!rule?.selectorText) {
+        return false;
+    }
+
+    try {
+        return document.documentElement.matches(rule.selectorText) || document.body.matches(rule.selectorText);
+    } catch {
+        return false;
+    }
+}
+
+function collectLayoutSmartThemeDeclarations(cssRules, declaredVariables = new Set()) {
+    for (const rule of cssRules) {
+        if (rule?.style && smartThemeDeclarationTargetsActiveTheme(rule)) {
+            for (const { variable } of smartThemeColorControls) {
+                if (rule.style.getPropertyValue(variable)) {
+                    declaredVariables.add(variable);
+                }
+            }
+        }
+
+        try {
+            if (rule?.cssRules) {
+                collectLayoutSmartThemeDeclarations(rule.cssRules, declaredVariables);
+            }
+        } catch (error) {
+            console.warn('Failed to inspect nested layout CSS rule:', error);
+        }
+    }
+
+    return declaredVariables;
+}
+
+function getLayoutDeclaredSmartThemeVariables(layoutLink) {
+    try {
+        return collectLayoutSmartThemeDeclarations(layoutLink?.sheet?.cssRules ?? []);
+    } catch (error) {
+        console.warn('Failed to inspect layout stylesheet for SmartTheme declarations:', error);
+        return new Set();
+    }
+}
+
+function getSmartThemeVariableDisplayValue(variable) {
+    return getComputedStyle(document.body).getPropertyValue(variable).trim()
+        || getComputedStyle(document.documentElement).getPropertyValue(variable).trim();
+}
+
+function syncLayoutLockedSmartThemePickers(layoutLink) {
+    layoutLockedSmartThemeVariables.clear();
+    for (const variable of getLayoutDeclaredSmartThemeVariables(layoutLink)) {
+        layoutLockedSmartThemeVariables.add(variable);
+    }
+
+    syncingSmartThemeColorPickerState = true;
+    try {
+        for (const control of smartThemeColorControls) {
+            const picker = $(control.selector);
+            const row = picker.closest('.flex-container');
+            const locked = layoutLockedSmartThemeVariables.has(control.variable);
+
+            row.toggleClass(layoutThemeColorLockClass, locked);
+            row.attr('aria-disabled', locked ? 'true' : null);
+            row.attr('title', locked ? `${layoutThemeColorLockTitle} (${control.variable})` : null);
+            picker.attr('aria-disabled', locked ? 'true' : null);
+            picker.prop('inert', locked);
+            picker.attr('color', locked ? getSmartThemeVariableDisplayValue(control.variable) : power_user[control.key]);
+        }
+    } finally {
+        syncingSmartThemeColorPickerState = false;
+    }
+}
+
+function isSmartThemeColorControlLocked(type) {
+    const control = smartThemeColorControls.find(x => x.type === type);
+    return !!control && layoutLockedSmartThemeVariables.has(control.variable);
+}
+
+function handleSmartThemeColorPickerChange(key, type, /** @type {ColorPickerEvent} */ evt) {
+    if (syncingSmartThemeColorPickerState || isSmartThemeColorControlLocked(type)) {
+        return;
+    }
+
+    power_user[key] = evt.detail.rgba;
+    applyThemeColor(type);
+    saveSettingsDebounced();
+}
+
 async function applyAikoLayoutModule(layoutId, { persist = false, preserveMissing = false } = {}) {
     const requestedLayoutId = String(layoutId);
     const missingRequestedLayout = !hasAikoLayoutModule(requestedLayoutId);
@@ -1254,6 +1358,7 @@ async function applyAikoLayoutModule(layoutId, { persist = false, preserveMissin
             loadedLink.removeAttribute('data-aiko-layout-pending');
             previousLink?.remove();
         }
+        syncLayoutLockedSmartThemePickers(loadedLink);
 
         if (!missingRequestedLayout || !preserveMissing) {
             power_user.aiko_layout = layoutModule.id;
@@ -1267,6 +1372,7 @@ async function applyAikoLayoutModule(layoutId, { persist = false, preserveMissin
         console.warn(error);
         toastr.warning(t`Layout stylesheet failed to load. Keeping the previous layout.`);
         applyAikoLayoutBodyState(previousLayout);
+        syncLayoutLockedSmartThemePickers(previousLink);
         return false;
     }
 }
@@ -1534,16 +1640,7 @@ function applyTheme(name) {
     }
 
     const themeProperties = [
-        { key: 'main_text_color', selector: '#main-text-color-picker', type: 'main' },
-        { key: 'italics_text_color', selector: '#italics-color-picker', type: 'italics' },
-        { key: 'underline_text_color', selector: '#underline-color-picker', type: 'underline' },
-        { key: 'quote_text_color', selector: '#quote-color-picker', type: 'quote' },
-        { key: 'blur_tint_color', selector: '#blur-tint-color-picker', type: 'blurTint' },
-        { key: 'chat_tint_color', selector: '#chat-tint-color-picker', type: 'chatTint' },
-        { key: 'user_mes_blur_tint_color', selector: '#user-mes-blur-tint-color-picker', type: 'userMesBlurTint' },
-        { key: 'bot_mes_blur_tint_color', selector: '#bot-mes-blur-tint-color-picker', type: 'botMesBlurTint' },
-        { key: 'shadow_color', selector: '#shadow-color-picker', type: 'shadow' },
-        { key: 'border_color', selector: '#border-color-picker', type: 'border' },
+        ...smartThemeColorControls,
         {
             key: 'blur_strength',
             action: () => {
@@ -3805,63 +3902,43 @@ jQuery(() => {
     });
 
     $('#main-text-color-picker').on('change', (/** @type {ColorPickerEvent} */ evt) => {
-        power_user.main_text_color = evt.detail.rgba;
-        applyThemeColor('main');
-        saveSettingsDebounced();
+        handleSmartThemeColorPickerChange('main_text_color', 'main', evt);
     });
 
     $('#italics-color-picker').on('change', (/** @type {ColorPickerEvent} */ evt) => {
-        power_user.italics_text_color = evt.detail.rgba;
-        applyThemeColor('italics');
-        saveSettingsDebounced();
+        handleSmartThemeColorPickerChange('italics_text_color', 'italics', evt);
     });
 
     $('#underline-color-picker').on('change', (/** @type {ColorPickerEvent} */ evt) => {
-        power_user.underline_text_color = evt.detail.rgba;
-        applyThemeColor('underline');
-        saveSettingsDebounced();
+        handleSmartThemeColorPickerChange('underline_text_color', 'underline', evt);
     });
 
     $('#quote-color-picker').on('change', (/** @type {ColorPickerEvent} */ evt) => {
-        power_user.quote_text_color = evt.detail.rgba;
-        applyThemeColor('quote');
-        saveSettingsDebounced();
+        handleSmartThemeColorPickerChange('quote_text_color', 'quote', evt);
     });
 
     $('#blur-tint-color-picker').on('change', (/** @type {ColorPickerEvent} */ evt) => {
-        power_user.blur_tint_color = evt.detail.rgba;
-        applyThemeColor('blurTint');
-        saveSettingsDebounced();
+        handleSmartThemeColorPickerChange('blur_tint_color', 'blurTint', evt);
     });
 
     $('#chat-tint-color-picker').on('change', (/** @type {ColorPickerEvent} */ evt) => {
-        power_user.chat_tint_color = evt.detail.rgba;
-        applyThemeColor('chatTint');
-        saveSettingsDebounced();
+        handleSmartThemeColorPickerChange('chat_tint_color', 'chatTint', evt);
     });
 
     $('#user-mes-blur-tint-color-picker').on('change', (/** @type {ColorPickerEvent} */ evt) => {
-        power_user.user_mes_blur_tint_color = evt.detail.rgba;
-        applyThemeColor('userMesBlurTint');
-        saveSettingsDebounced();
+        handleSmartThemeColorPickerChange('user_mes_blur_tint_color', 'userMesBlurTint', evt);
     });
 
     $('#bot-mes-blur-tint-color-picker').on('change', (/** @type {ColorPickerEvent} */ evt) => {
-        power_user.bot_mes_blur_tint_color = evt.detail.rgba;
-        applyThemeColor('botMesBlurTint');
-        saveSettingsDebounced();
+        handleSmartThemeColorPickerChange('bot_mes_blur_tint_color', 'botMesBlurTint', evt);
     });
 
     $('#shadow-color-picker').on('change', (/** @type {ColorPickerEvent} */ evt) => {
-        power_user.shadow_color = evt.detail.rgba;
-        applyThemeColor('shadow');
-        saveSettingsDebounced();
+        handleSmartThemeColorPickerChange('shadow_color', 'shadow', evt);
     });
 
     $('#border-color-picker').on('change', (/** @type {ColorPickerEvent} */ evt) => {
-        power_user.border_color = evt.detail.rgba;
-        applyThemeColor('border');
-        saveSettingsDebounced();
+        handleSmartThemeColorPickerChange('border_color', 'border', evt);
     });
 
     $('#themes').on('change', function () {

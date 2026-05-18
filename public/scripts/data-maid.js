@@ -49,6 +49,14 @@ class DataMaidDialog {
                 name: t`Persona Thumbnails`,
                 description: t`Thumbnails for missing or deleted personas.`,
             },
+            layouts: {
+                name: t`Layouts`,
+                description: t`Custom layout CSS files uploaded from User Settings. Deleting them removes those layout options.`,
+            },
+            layoutAssets: {
+                name: t`Layout Images`,
+                description: t`Uploaded layout images that are not referenced by any custom layout CSS.`,
+            },
             chatBackups: {
                 name: t`Chat Backups`,
                 description: t`Automatically generated chat backups.`,
@@ -315,7 +323,7 @@ class DataMaidDialog {
      */
     async view(prop, hash, name) {
         const url = this.getViewUrl(hash);
-        const isImage = ['images', 'avatarThumbnails', 'backgroundThumbnails'].includes(prop);
+        const isImage = ['images', 'avatarThumbnails', 'backgroundThumbnails', 'layoutAssets'].includes(prop);
         const element = isImage
             ? await this.getViewElement(url, name)
             : await this.getTextViewElement(url);

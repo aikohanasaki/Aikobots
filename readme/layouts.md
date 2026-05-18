@@ -236,6 +236,57 @@ Prefer changing variables over hardcoding rules.
 
 These control whether the composer appears above or below the chat.
 
+### SmartTheme Variables
+
+Layouts can also use the SmartTheme CSS variables from the Theme UI. These are defined on `:root`, then updated when the user changes or loads a theme.
+
+Theme color variables:
+
+| UI Control | CSS Variable | Typical Use |
+|---|---|---|
+| Main Text | `--SmartThemeBodyColor` | Primary text, icons, checkbox base color |
+| Italics Text | `--SmartThemeEmColor` | Secondary/emphasis text |
+| Underlined Text | `--SmartThemeUnderlineColor` | Underlined/generated text accents |
+| Quote Text | `--SmartThemeQuoteColor` | Accent color, quotes, selected states |
+| Text Shadow | `--SmartThemeShadowColor` | Text shadows and panel shadows |
+| Chat Background | `--SmartThemeChatTintColor` | Main chat surface tint |
+| UI Background | `--SmartThemeBlurTintColor` | Drawers, popups, menus, general UI panels |
+| UI Border | `--SmartThemeBorderColor` | Borders, outlines, dividers |
+| User Message | `--SmartThemeUserMesBlurTintColor` | User message background tint |
+| AI Message | `--SmartThemeBotMesBlurTintColor` | AI message background tint |
+
+Related derived variables:
+
+```css
+--SmartThemeBlurStrength
+--SmartThemeCheckboxBgColorR
+--SmartThemeCheckboxBgColorG
+--SmartThemeCheckboxBgColorB
+--SmartThemeCheckboxBgColorA
+--SmartThemeCheckboxTickColorValue
+--SmartThemeCheckboxTickColor
+```
+
+`--SmartThemeBlurStrength` is derived from the Blur Strength UI slider. The checkbox variables are derived from `--SmartThemeBodyColor` and are used by checkbox styling.
+
+If a layout declares one of the theme color variables on `:root` or the active `<body>` selector, the matching Theme color picker is disabled while that layout is active. Hovering the disabled picker row shows that the color is controlled by the active layout CSS.
+
+Use SmartTheme variables when a layout needs to match the active theme:
+
+```css
+body.layout-custom #sheld {
+    background-color: color-mix(in srgb, var(--SmartThemeChatTintColor) 92%, transparent);
+    border: 1px solid var(--SmartThemeBorderColor);
+    box-shadow: 0 8px 24px color-mix(in srgb, var(--SmartThemeShadowColor) 45%, transparent);
+}
+
+body.layout-custom .mes {
+    color: var(--SmartThemeBodyColor);
+}
+```
+
+Avoid hardcoding colors in reusable layouts unless the color is intentionally independent of the user's active theme.
+
 ## 7. Minimal Custom Layout Template
 
 Create a file like:

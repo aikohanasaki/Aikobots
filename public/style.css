@@ -5085,6 +5085,16 @@ body[data-generating="true"] #chat .last_mes .mes_reasoning_actions {
     opacity: 0.6;
 }
 
+#color-picker-block .aiko-layout-theme-color-locked {
+    opacity: 0.55;
+    cursor: help;
+}
+
+#color-picker-block .aiko-layout-theme-color-locked toolcool-color-picker {
+    filter: brightness(75%) grayscale(1);
+    pointer-events: none;
+}
+
 .auto_continue_settings_block {
     margin-top: 10px;
 }

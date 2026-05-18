@@ -9,6 +9,8 @@ import { tryParse } from '../util.js';
 import { SETTINGS_FILE } from '../constants.js';
 
 const sha256 = str => crypto.createHash('sha256').update(str).digest('hex');
+const LAYOUT_ASSET_ROUTE_PREFIX = '/api/layouts/assets/file/';
+const LAYOUT_ASSET_REFERENCE_PATTERN = new RegExp(`${LAYOUT_ASSET_ROUTE_PREFIX.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}([^?#)'"]+)`, 'g');
 const isHeadChatFile = (fileName) => String(fileName).endsWith('.head.jsonl');
 const getSplitHeadPath = (filePath) => {
     const parsedPath = path.parse(filePath);
@@ -65,6 +67,8 @@ const getAuthorizedPathsForUser = async (user, token) => {
  * @property {string[]} avatarThumbnails - List of loose avatar thumbnails
  * @property {string[]} backgroundThumbnails - List of loose background thumbnails
  * @property {string[]} personaThumbnails - List of loose persona thumbnails
+ * @property {string[]} layouts - List of custom layout CSS files
+ * @property {string[]} layoutAssets - List of loose custom layout image assets
  * @property {string[]} chatBackups - List of chat backups
  * @property {string[]} settingsBackups - List of settings backups
  */
@@ -87,6 +91,8 @@ const getAuthorizedPathsForUser = async (user, token) => {
  * @property {DataMaidSanitizedRecord[]} avatarThumbnails - List of sanitized loose avatar thumbnails
  * @property {DataMaidSanitizedRecord[]} backgroundThumbnails - List of sanitized loose background thumbnails
  * @property {DataMaidSanitizedRecord[]} personaThumbnails - List of sanitized loose persona thumbnails
+ * @property {DataMaidSanitizedRecord[]} layouts - List of sanitized custom layout CSS files
+ * @property {DataMaidSanitizedRecord[]} layoutAssets - List of sanitized loose custom layout image assets
  * @property {DataMaidSanitizedRecord[]} chatBackups - List of sanitized chat backups
  * @property {DataMaidSanitizedRecord[]} settingsBackups - List of sanitized settings backups
  */
@@ -163,6 +169,8 @@ export class DataMaidService {
             avatarThumbnails: await this.#collectAvatarThumbnails(),
             backgroundThumbnails: await this.#collectBackgroundThumbnails(),
             personaThumbnails: await this.#collectPersonaThumbnails(),
+            layouts: await this.#collectLayouts(),
+            layoutAssets: await this.#collectLayoutAssets(),
             chatBackups: await this.#collectChatBackups(),
             settingsBackups: await this.#collectSettingsBackups(),
         };
@@ -206,6 +214,8 @@ export class DataMaidService {
             avatarThumbnails: await Promise.all(report.avatarThumbnails.map(i => this.#sanitizeRecord(i, false))),
             backgroundThumbnails: await Promise.all(report.backgroundThumbnails.map(i => this.#sanitizeRecord(i, false))),
             personaThumbnails: await Promise.all(report.personaThumbnails.map(i => this.#sanitizeRecord(i, false))),
+            layouts: await Promise.all(report.layouts.map(i => this.#sanitizeRecord(i, false))),
+            layoutAssets: await Promise.all(report.layoutAssets.map(i => this.#sanitizeRecord(i, false))),
             chatBackups: await Promise.all(report.chatBackups.map(i => this.#sanitizeRecord(i, false))),
             settingsBackups: await Promise.all(report.settingsBackups.map(i => this.#sanitizeRecord(i, false))),
         };
@@ -523,6 +533,91 @@ export class DataMaidService {
             }
         } catch (error) {
             console.error('[Data Maid] Error collecting persona thumbnails:', error);
+        }
+
+        return result;
+    }
+
+    /**
+     * Collects flat files from a directory by extension.
+     * @param {string} directory Directory to scan.
+     * @param {Set<string>} allowedExtensions Allowed lowercase file extensions.
+     * @param {string} label Log label for collection errors.
+     * @returns {Promise<string[]>} List of collected file paths.
+     */
+    async #collectFlatFiles(directory, allowedExtensions, label) {
+        const result = [];
+
+        try {
+            const files = await fs.promises.readdir(directory, { withFileTypes: true });
+            for (const file of files) {
+                const filePath = path.join(directory, file.name);
+                if (file.isFile() && allowedExtensions.has(path.extname(file.name).toLowerCase())) {
+                    result.push(filePath);
+                }
+            }
+        } catch (error) {
+            console.error(`[Data Maid] Error collecting ${label}:`, error);
+        }
+
+        return result;
+    }
+
+    /**
+     * Collects custom layout CSS files from the user's layouts directory.
+     * @returns {Promise<string[]>} List of custom layout CSS file paths.
+     */
+    async #collectLayouts() {
+        return this.#collectFlatFiles(this.directories.layouts, new Set(['.css']), 'custom layouts');
+    }
+
+    /**
+     * Reads uploaded layout CSS files and extracts referenced layout image asset names.
+     * @returns {Promise<Set<string>>} Layout image asset file names referenced by layout CSS.
+     */
+    async #collectReferencedLayoutAssets() {
+        const referencedAssets = new Set();
+
+        try {
+            const layoutFiles = await this.#collectLayouts();
+            for (const filePath of layoutFiles) {
+                const cssText = await fs.promises.readFile(filePath, 'utf-8');
+                for (const match of cssText.matchAll(LAYOUT_ASSET_REFERENCE_PATTERN)) {
+                    try {
+                        const filename = decodeURIComponent(match[1]);
+                        if (filename && !filename.includes('/') && !filename.includes('\\')) {
+                            referencedAssets.add(filename);
+                        }
+                    } catch {
+                        // Ignore malformed percent-encoding; the upload validator rejects it for new layouts.
+                    }
+                }
+            }
+        } catch (error) {
+            console.error('[Data Maid] Error reading custom layouts:', error);
+        }
+
+        return referencedAssets;
+    }
+
+    /**
+     * Collects custom layout image assets that are not referenced by any custom layout CSS.
+     * @returns {Promise<string[]>} List of loose custom layout image asset paths.
+     */
+    async #collectLayoutAssets() {
+        const result = [];
+
+        try {
+            const referencedAssets = await this.#collectReferencedLayoutAssets();
+            const files = await fs.promises.readdir(this.directories.layoutAssets, { withFileTypes: true });
+            for (const file of files) {
+                const filePath = path.join(this.directories.layoutAssets, file.name);
+                if (file.isFile() && path.extname(file.name).toLowerCase() === '.png' && !referencedAssets.has(file.name)) {
+                    result.push(filePath);
+                }
+            }
+        } catch (error) {
+            console.error('[Data Maid] Error collecting loose custom layout image assets:', error);
         }
 
         return result;
