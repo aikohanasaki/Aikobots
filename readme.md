@@ -28,3 +28,7 @@ Additional Aikobots Credits
 * [@Cohee1207](https://github.com/Cohee1207) for Top Info Bar aka Chat Top Bar (AGPL-3.0 License)
 * Later UI integration for existing character push functionality drew some inspiration from [@selinawynters-ops](https://github.com/selinawynters-ops/).
 * [Favorites Carousel](https://github.com/subzero5544/favorites-carousel) by [@subzero5544](https://github.com/subzero5544) (AGPL-3.0 License) is so intuitive everyone loves it.
+
+## Documentation Links
+
+[Modular Layout](/readme/layouts.md) for instructions on styling Aikobots with modular CSS.
