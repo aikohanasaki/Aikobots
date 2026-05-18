@@ -1634,14 +1634,17 @@ class PromptManager {
      * Applies server-side assembly debug data to the prompt manager.
      *
      * @param {object | null} assembly Server assembly payload
+     * @returns {boolean} Whether the payload was applied
      */
     setAssemblyDebugData(assembly) {
         const hydrated = this.hydrateMessageNode(assembly?.messagesState);
+        if (!(hydrated instanceof MessageCollection) && !(hydrated instanceof Message)) {
+            return false;
+        }
+
         const messages = hydrated instanceof MessageCollection
             ? hydrated
-            : hydrated instanceof Message
-                ? new MessageCollection('assembly', hydrated)
-                : new MessageCollection('assembly');
+            : new MessageCollection('assembly', hydrated);
 
         this.setMessages(messages);
         this.populateTokenCounts(messages);
@@ -1649,6 +1652,8 @@ class PromptManager {
         this.overriddenPrompts = Array.isArray(assembly?.overriddenPrompts)
             ? assembly.overriddenPrompts
             : [];
+
+        return true;
     }
 
     /**

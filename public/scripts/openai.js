@@ -94,6 +94,8 @@ let nextOpenAIResponseMetadataId = 0;
 const pendingOpenAIResponseMetadata = new Map();
 let lastServerAssemblyPromptContext = null;
 let lastServerAssemblyDebugDump = null;
+let lastPromptInspectionSnapshotKey = null;
+let lastPromptInspectionSnapshotChatScope = null;
 
 function createOpenAIResponseMetadataId() {
     nextOpenAIResponseMetadataId += 1;
@@ -110,6 +112,7 @@ function getOpenAIResponseMetadataEntry(requestId, { create = false } = {}) {
         entry = {
             timedWorldInfo: null,
             promptSnapshotKey: null,
+            chatScope: null,
         };
         pendingOpenAIResponseMetadata.set(requestId, entry);
     }
@@ -128,6 +131,39 @@ function cleanupOpenAIResponseMetadataEntry(requestId) {
     if (!hasTimedWorldInfo && !hasPromptSnapshotKey) {
         pendingOpenAIResponseMetadata.delete(requestId);
     }
+}
+
+function getCurrentPromptInspectionChatScope() {
+    const currentChatId = getCurrentChatId() || '';
+    if (selected_group) {
+        return `group:${selected_group}:${currentChatId || 'chat'}`;
+    }
+
+    return `chat:${currentChatId || name2 || 'chat'}`;
+}
+
+function storeLastPromptInspectionSnapshotKey(promptSnapshotKey, chatScope = getCurrentPromptInspectionChatScope()) {
+    const scope = typeof chatScope === 'string' && chatScope
+        ? chatScope
+        : getCurrentPromptInspectionChatScope();
+    if (scope !== getCurrentPromptInspectionChatScope()) {
+        return;
+    }
+
+    lastPromptInspectionSnapshotKey = typeof promptSnapshotKey === 'string' && promptSnapshotKey
+        ? promptSnapshotKey
+        : null;
+    lastPromptInspectionSnapshotChatScope = lastPromptInspectionSnapshotKey
+        ? scope
+        : null;
+}
+
+function getLastPromptInspectionSnapshotKeyForCurrentChat() {
+    if (!lastPromptInspectionSnapshotKey || lastPromptInspectionSnapshotChatScope !== getCurrentPromptInspectionChatScope()) {
+        return null;
+    }
+
+    return lastPromptInspectionSnapshotKey;
 }
 
 function attachOpenAIResponseMetadataOwner(target, requestId) {
@@ -1187,15 +1223,22 @@ function setupChatCompletionPromptManager(openAiSettings) {
         return new Promise((resolve) => eventSource.once(event_types.SETTINGS_UPDATED, resolve));
     };
 
+    let appliedPromptSnapshotKey = null;
+
     promptManager.tryGenerate = async () => {
+        const promptSnapshotKey = getLastPromptInspectionSnapshotKeyForCurrentChat();
+        if (!promptSnapshotKey || promptSnapshotKey === appliedPromptSnapshotKey) {
+            return;
+        }
+
         try {
-            const dump = await debugServerAssemblyDump();
-            promptManager.setAssemblyDebugData(dump?.assembly ?? null);
-        } catch (error) {
-            const message = error instanceof Error ? error.message : String(error);
-            if (message !== 'No promptContext is available for server assembly debug.') {
-                console.debug('Prompt manager token breakdown refresh failed.', error);
+            const snapshot = await fetchPromptInspectionSnapshot(promptSnapshotKey);
+            const didApply = promptManager.setAssemblyDebugData(snapshot?.assembly ?? null);
+            if (didApply === true) {
+                appliedPromptSnapshotKey = promptSnapshotKey;
             }
+        } catch (error) {
+            console.debug('Prompt manager snapshot refresh failed.', error);
         }
     };
 
@@ -1292,18 +1335,23 @@ function applyAssemblyResponseMetadata(response, type) {
 function applyTimedWorldInfoResponseData(data, requestId) {
     const promptSnapshotKey = data?.x_sillytavern?.promptSnapshotKey;
     const timedWorldInfo = data?.x_sillytavern?.timedWorldInfo;
+    const entry = getOpenAIResponseMetadataEntry(requestId, { create: true });
+    const chatScope = entry?.chatScope ?? getCurrentPromptInspectionChatScope();
     const hasMetadata =
         (typeof promptSnapshotKey === 'string' && promptSnapshotKey) ||
         (timedWorldInfo && typeof timedWorldInfo === 'object');
 
     if (!hasMetadata) {
+        storeLastPromptInspectionSnapshotKey(null, chatScope);
         maybeNotifyWorldInfoOverflow(data);
         return;
     }
 
-    const entry = getOpenAIResponseMetadataEntry(requestId, { create: true });
     if (entry && typeof promptSnapshotKey === 'string' && promptSnapshotKey) {
         entry.promptSnapshotKey = promptSnapshotKey;
+        storeLastPromptInspectionSnapshotKey(promptSnapshotKey, chatScope);
+    } else {
+        storeLastPromptInspectionSnapshotKey(null, chatScope);
     }
     if (entry && timedWorldInfo && typeof timedWorldInfo === 'object') {
         entry.timedWorldInfo = structuredClone(timedWorldInfo);
@@ -2509,6 +2557,10 @@ function getVerbosity() {
 async function buildOpenAIGenerateData(type, messages, { jsonSchema = null } = {}) {
     const promptContext = !Array.isArray(messages) && messages && typeof messages === 'object' ? messages.promptContext : null;
     const requestId = createOpenAIResponseMetadataId();
+    const metadataEntry = getOpenAIResponseMetadataEntry(requestId, { create: true });
+    if (metadataEntry) {
+        metadataEntry.chatScope = getCurrentPromptInspectionChatScope();
+    }
     storeServerAssemblyPromptContext(promptContext);
 
     if (!promptContext && !Array.isArray(messages)) {
