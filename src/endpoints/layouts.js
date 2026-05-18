@@ -100,10 +100,6 @@ function getDisplayName(filename) {
         .trim() || filename;
 }
 
-function encodeRouteFilename(filename) {
-    return encodeURIComponent(filename).replaceAll('%20', '%20');
-}
-
 function getLayoutRecord(directory, filename) {
     const filePath = resolveLayoutFilePath(directory, filename, ALLOWED_CSS_EXTENSIONS, 'layout');
     const stats = fs.statSync(filePath);
@@ -111,7 +107,7 @@ function getLayoutRecord(directory, filename) {
         id: `custom:${filename}`,
         name: getDisplayName(filename),
         filename,
-        css: `/api/layouts/file/${encodeRouteFilename(filename)}?v=${Math.trunc(stats.mtimeMs)}`,
+        css: `/api/layouts/file/${encodeURIComponent(filename)}?v=${Math.trunc(stats.mtimeMs)}`,
         custom: true,
     };
 }
@@ -256,7 +252,7 @@ async function getLayoutAssetRecord(directory, filename) {
     return {
         filename,
         name: getDisplayName(filename),
-        url: `/api/layouts/assets/file/${encodeRouteFilename(filename)}?v=${Math.trunc(stats.mtimeMs)}`,
+        url: `/api/layouts/assets/file/${encodeURIComponent(filename)}?v=${Math.trunc(stats.mtimeMs)}`,
         size: stats.size,
         width: image.bitmap.width,
         height: image.bitmap.height,
