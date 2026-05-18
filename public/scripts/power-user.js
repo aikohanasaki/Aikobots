@@ -81,8 +81,10 @@ const defaultToastPosition = 'toast-top-center';
 const defaultAikoLayoutModule = 'classic';
 const customLayoutIdPrefix = 'custom:';
 const layoutCustomBodyClass = 'layout-custom';
-const layoutThemeColorLockClass = 'aiko-layout-theme-color-locked';
+const layoutThemeControlLockClass = 'aiko-layout-theme-control-locked';
 const layoutThemeColorLockTitle = 'Disabled because this color is declared in the active layout CSS.';
+const layoutThemeFontLockTitle = 'Disabled because this font is declared in the active layout CSS.';
+const layoutUiThemeLockTitle = 'Disabled because theme values are declared in the active layout CSS.';
 const builtInLayoutModules = Object.freeze({
     classic: {
         id: 'classic',
@@ -143,7 +145,60 @@ const smartThemeColorControls = Object.freeze([
     { key: 'shadow_color', selector: '#shadow-color-picker', type: 'shadow', variable: '--SmartThemeShadowColor' },
     { key: 'border_color', selector: '#border-color-picker', type: 'border', variable: '--SmartThemeBorderColor' },
 ]);
-const layoutLockedSmartThemeVariables = new Set();
+const themeFontControls = Object.freeze([
+    { key: 'main_font', selector: '#main-font-input', variable: '--mainFontFamily' },
+    { key: 'mono_font', selector: '#mono-font-input', variable: '--monoFontFamily' },
+]);
+const uiThemeCssControls = Object.freeze([
+    { key: 'blur_strength', selectors: ['#blur_strength', '#blur_strength_counter'], variables: ['--blurStrength', '--SmartThemeBlurStrength'], label: 'Blur Strength' },
+    { key: 'shadow_width', selectors: ['#shadow_width', '#shadow_width_counter'], variables: ['--shadowWidth'], propertyNames: ['text-shadow'], label: 'Shadow Width' },
+    { key: 'font_scale', selectors: ['#font_scale', '#font_scale_counter'], variables: ['--fontScale', '--mainFontSize'], label: 'Font Scale' },
+    { key: 'chat_text_line_height', selectors: ['#chat_text_line_height', '#chat_text_line_height_counter'], variables: ['--chatTextLineHeightScale'], label: 'Message Line Height' },
+    { key: 'chat_text_letter_spacing', selectors: ['#chat_text_letter_spacing', '#chat_text_letter_spacing_counter'], variables: ['--chatTextLetterSpacing'], label: 'Message Text Spacing' },
+    { key: 'top_bar_icon_scale', selectors: ['#top_bar_icon_scale', '#top_bar_icon_scale_counter'], variables: ['--topBarIconScale', '--topBarIconSize'], label: 'Top Bar Icon Size' },
+    { key: 'top_bar_icon_spacing', selectors: ['#top_bar_icon_spacing', '#top_bar_icon_spacing_counter'], variables: ['--topBarIconSpacing'], label: 'Top Bar Spacing' },
+    { key: 'chat_width', selectors: ['#chat_width_slider', '#chat_width_slider_counter'], variables: ['--sheldWidth'], label: 'Chat Width' },
+    { key: 'avatar_style', selectors: ['#avatar_style'], variables: ['--avatar-base-height', '--avatar-base-width', '--avatar-base-border-radius', '--avatar-base-border-radius-round', '--avatar-base-border-radius-rounded', '--inline-avatar-small-factor'], selectorPatterns: [/(^|[^\w-])\.avatar($|[^\w-])/, /(^|[^\w-])\.mesAvatarWrapper($|[^\w-])/, /#user_avatar_block($|[^\w-])/, /body\.(big-avatars|square-avatars|rounded-avatars)($|[^\w-])/], label: 'Avatar Style' },
+    { key: 'chat_display', selectors: ['#chat_display'], variables: ['--aiko-layout-message-max-width', '--aiko-layout-message-margin-inline', '--aiko-layout-message-padding-block-start', '--aiko-layout-message-padding-inline'], selectorPatterns: [/(^|[^\w-])\.mes($|[^\w-])/, /(^|[^\w-])\.mes_block($|[^\w-])/, /(^|[^\w-])\.mes_text($|[^\w-])/, /(^|[^\w-])\.ch_name($|[^\w-])/, /body\.(bubblechat|documentstyle)($|[^\w-])/], label: 'Chat Style' },
+    { key: 'media_display', selectors: ['#media_display'], selectorPatterns: [/(^|[^\w-])\.mes_media_wrapper($|[^\w-])/, /(^|[^\w-])\.mes_file_wrapper($|[^\w-])/], label: 'Media Style' },
+    { key: 'toastr_position', selectors: ['#toastr_position'], selectorPatterns: [/(^|[^\w-])\.toast($|[^\w-])/, /(^|[^\w-])#toast-container($|[^\w-])/, /(^|[^\w-])\.toast-(top|bottom)-(left|center|right)($|[^\w-])/], label: 'Notifications' },
+    { key: 'fast_ui_mode', selectors: ['#fast_ui_mode'], variables: ['--blurStrength', '--SmartThemeBlurStrength'], selectorPatterns: [/body\.no-blur($|[^\w-])/], propertyNames: ['backdrop-filter', '-webkit-backdrop-filter'], label: 'No Blur Effect' },
+    { key: 'noShadows', selectors: ['#noShadowsmode'], variables: ['--shadowWidth'], selectorPatterns: [/body\.noShadows($|[^\w-])/], propertyNames: ['text-shadow'], label: 'No Text Shadows' },
+    { key: 'waifuMode', selectors: ['#waifuMode'], selectorPatterns: [/body\.waifuMode($|[^\w-])/, /#expression-wrapper($|[^\w-])/, /(^|[^\w-])\.expression-holder($|[^\w-])/, /(^|[^\w-])\.zoomed_avatar($|[^\w-])/], label: 'Visual Novel Mode' },
+    { key: 'timer_enabled', selectors: ['#messageTimerEnabled'], selectorPatterns: [/(^|[^\w-])\.mes_timer($|[^\w-])/, /body\.no-timer($|[^\w-])/], label: 'Message Timer' },
+    { key: 'timestamps_enabled', selectors: ['#messageTimestampsEnabled'], selectorPatterns: [/(^|[^\w-])\.timestamp($|[^\w-])/, /body\.no-timestamps($|[^\w-])/], label: 'Chat Timestamps' },
+    { key: 'timestamp_model_icon', selectors: ['#messageModelIconEnabled'], selectorPatterns: [/(^|[^\w-])\.timestamp-icon($|[^\w-])/, /(^|[^\w-])\.icon-svg($|[^\w-])/, /body\.no-modelIcons($|[^\w-])/], label: 'Model Icons' },
+    { key: 'mesIDDisplay_enabled', selectors: ['#mesIDDisplayEnabled'], selectorPatterns: [/(^|[^\w-])\.mesIDDisplay($|[^\w-])/, /body\.no-mesIDDisplay($|[^\w-])/], label: 'Message IDs' },
+    { key: 'hideChatAvatars_enabled', selectors: ['#hideChatAvatarsEnabled'], selectorPatterns: [/body\.hideChatAvatars($|[^\w-])/, /(^|[^\w-])\.mesAvatarWrapper($|[^\w-])/], label: 'Hide Chat Avatars' },
+    { key: 'message_token_count_enabled', selectors: ['#messageTokensEnabled'], selectorPatterns: [/(^|[^\w-])\.tokenCounterDisplay($|[^\w-])/, /body\.no-tokenCount($|[^\w-])/], label: 'Message Token Count' },
+    { key: 'expand_message_actions', selectors: ['#expandMessageActions'], selectorPatterns: [/(^|[^\w-])\.mes_buttons($|[^\w-])/, /(^|[^\w-])\.extraMesButtons($|[^\w-])/, /body\.expandMessageActions($|[^\w-])/], label: 'Expand Message Actions' },
+    { key: 'compact_input_area', selectors: ['#compact_input_area'], selectorPatterns: [/#send_form($|[^\w-])/, /#send_form\.compact($|[^\w-])/], label: 'Compact Input Area' },
+    { key: 'show_swipe_num_all_messages', selectors: ['#show_swipe_num_all_messages'], selectorPatterns: [/(^|[^\w-])\.swipes-counter($|[^\w-])/, /body\.swipeAllMessages($|[^\w-])/], label: 'Swipe # for All Messages' },
+    { key: 'top_bar_icon_overrides', selectors: ['#top_bar_icon_ai_config', '#top_bar_icon_api', '#top_bar_icon_prompting', '#top_bar_icon_world_info', '#top_bar_icon_user_settings', '#top_bar_icon_backgrounds', '#top_bar_icon_extensions', '#top_bar_icon_persona', '#top_bar_icon_characters'], selectorPatterns: [/(^|[^\w-])\.drawer-icon($|[^\w-])/, /#(ai-config-button|sys-settings-button|advanced-prompting-button|WI-SP-button|user-settings-button|backgrounds-button|extensions-settings-button|persona-management-button|rightNavHolder)($|[^\w-])/], label: 'Top Bar Icons' },
+    { key: 'hotswap_enabled', selectors: ['#hotswapEnabled'], selectorPatterns: [/(^|[^\w-])\.hotswap($|[^\w-])/, /#favorites_carousel_wrapper($|[^\w-])/, /body\.no-hotswap($|[^\w-])/], label: 'Hotswap' },
+    { key: 'click_to_edit', selectors: ['#click_to_edit'], selectorPatterns: [/(^|[^\w-])\.mes_text($|[^\w-])/], label: 'Click to Edit' },
+    { key: 'enableZenSliders', selectors: ['#enableZenSliders'], selectorPatterns: [/body\.enableZenSliders($|[^\w-])/, /(^|[^\w-])\.neo-range-slider($|[^\w-])/, /(^|[^\w-])\.neo-range-input($|[^\w-])/, /_zenslider($|[^\w-])/], label: 'Zen Sliders' },
+    { key: 'enableLabMode', selectors: ['#enableLabMode'], selectorPatterns: [/body\.enableLabMode($|[^\w-])/, /#labModeWarning($|[^\w-])/], label: 'Mad Lab Mode' },
+    { key: 'bogus_folders', selectors: ['#bogus_folders'], selectorPatterns: [/(^|[^\w-])\.bogus_folder_select($|[^\w-])/, /(^|[^\w-])\.bogus_folder_counter($|[^\w-])/, /(^|[^\w-])\.bogus_folder_back_placeholder($|[^\w-])/], label: 'Bogus Folders' },
+    { key: 'zoomed_avatar_magnification', selectors: ['#zoomed_avatar_magnification'], selectorPatterns: [/(^|[^\w-])\.zoomed_avatar($|[^\w-])/, /(^|[^\w-])\.zoomed_avatar_container($|[^\w-])/], label: 'Avatar Hover Magnification' },
+    { key: 'reduced_motion', selectors: ['#reduced_motion'], selectorPatterns: [/body\.reduced-motion($|[^\w-])/], propertyNames: ['animation', 'animation-duration', 'transition', 'transition-duration'], label: 'Reduced Motion' },
+]);
+const layoutThemeVariableControls = Object.freeze([
+    ...smartThemeColorControls,
+    ...themeFontControls,
+    ...uiThemeCssControls,
+]);
+const layoutUiThemeControlSelectors = Object.freeze([
+    '#themes',
+    '#ui_preset_import_button',
+    '#ui_preset_export_button',
+    '#ui-preset-delete-button',
+    '#ui-preset-update-button',
+    '#ui-preset-save-button',
+    '#ui-preset-generate-from-bg-button',
+]);
+const layoutLockedThemeVariables = new Set();
+const layoutLockedThemeControlKeys = new Set();
 let syncingSmartThemeColorPickerState = false;
 const topBarIconDefaults = [
     { drawerId: 'ai-config-button', controlId: 'top_bar_icon_ai_config', icon: 'fa-sliders' },
@@ -1266,46 +1321,125 @@ function smartThemeDeclarationTargetsActiveTheme(rule) {
     }
 }
 
-function collectLayoutSmartThemeDeclarations(cssRules, declaredVariables = new Set()) {
+function getLayoutThemeControlVariables(control) {
+    return [
+        control.variable,
+        ...(Array.isArray(control.variables) ? control.variables : []),
+    ].filter(Boolean);
+}
+
+function selectorMatchesAnyPattern(selectorText, patterns = []) {
+    return patterns.some(pattern => pattern.test(selectorText));
+}
+
+function ruleDeclaresAnyProperty(rule, propertyNames = []) {
+    return propertyNames.some(propertyName => rule?.style?.getPropertyValue(propertyName));
+}
+
+function collectLayoutThemeDeclarations(cssRules, declarations = { variables: new Set(), controlKeys: new Set() }) {
     for (const rule of cssRules) {
         if (rule?.style && smartThemeDeclarationTargetsActiveTheme(rule)) {
-            for (const { variable } of smartThemeColorControls) {
-                if (rule.style.getPropertyValue(variable)) {
-                    declaredVariables.add(variable);
+            for (const control of layoutThemeVariableControls) {
+                for (const variable of getLayoutThemeControlVariables(control)) {
+                    if (rule.style.getPropertyValue(variable)) {
+                        declarations.variables.add(variable);
+                        declarations.controlKeys.add(control.key);
+                    }
+                }
+            }
+        }
+
+        if (rule?.style && rule?.selectorText) {
+            for (const control of uiThemeCssControls) {
+                if (selectorMatchesAnyPattern(rule.selectorText, control.selectorPatterns) || ruleDeclaresAnyProperty(rule, control.propertyNames)) {
+                    declarations.controlKeys.add(control.key);
                 }
             }
         }
 
         try {
             if (rule?.cssRules) {
-                collectLayoutSmartThemeDeclarations(rule.cssRules, declaredVariables);
+                collectLayoutThemeDeclarations(rule.cssRules, declarations);
             }
         } catch (error) {
             console.warn('Failed to inspect nested layout CSS rule:', error);
         }
     }
 
-    return declaredVariables;
+    return declarations;
 }
 
-function getLayoutDeclaredSmartThemeVariables(layoutLink) {
+function getLayoutDeclaredThemeVariables(layoutLink) {
     try {
-        return collectLayoutSmartThemeDeclarations(layoutLink?.sheet?.cssRules ?? []);
+        return collectLayoutThemeDeclarations(layoutLink?.sheet?.cssRules ?? []);
     } catch (error) {
-        console.warn('Failed to inspect layout stylesheet for SmartTheme declarations:', error);
-        return new Set();
+        console.warn('Failed to inspect layout stylesheet for theme declarations:', error);
+        return { variables: new Set(), controlKeys: new Set() };
     }
 }
 
-function getSmartThemeVariableDisplayValue(variable) {
+function getThemeVariableDisplayValue(variable) {
     return getComputedStyle(document.body).getPropertyValue(variable).trim()
         || getComputedStyle(document.documentElement).getPropertyValue(variable).trim();
 }
 
-function syncLayoutLockedSmartThemePickers(layoutLink) {
-    layoutLockedSmartThemeVariables.clear();
-    for (const variable of getLayoutDeclaredSmartThemeVariables(layoutLink)) {
-        layoutLockedSmartThemeVariables.add(variable);
+function setLayoutLockedTitle(element, locked, title) {
+    const target = $(element);
+    if (!target.length) {
+        return;
+    }
+
+    const originalTitleAttribute = 'data-aiko-layout-original-title';
+    if (locked) {
+        if (!target.is(`[${originalTitleAttribute}]`)) {
+            target.attr(originalTitleAttribute, target.attr('title') ?? '');
+        }
+        target.attr('title', title);
+        return;
+    }
+
+    if (target.is(`[${originalTitleAttribute}]`)) {
+        const originalTitle = target.attr(originalTitleAttribute);
+        if (originalTitle) {
+            target.attr('title', originalTitle);
+        } else {
+            target.removeAttr('title');
+        }
+        target.removeAttr(originalTitleAttribute);
+    }
+}
+
+function isLayoutThemeControlLocked(control) {
+    return layoutLockedThemeControlKeys.has(control.key)
+        || getLayoutThemeControlVariables(control).some(variable => layoutLockedThemeVariables.has(variable));
+}
+
+function syncLayoutLockedStandardControls(control) {
+    const locked = isLayoutThemeControlLocked(control);
+    const title = `Disabled because ${control.label} is controlled by the active layout CSS.`;
+
+    for (const selector of control.selectors ?? []) {
+        const target = $(selector);
+        const row = target.closest('label').length ? target.closest('label') : target.closest('.flex-container');
+
+        row.toggleClass(layoutThemeControlLockClass, locked);
+        row.attr('aria-disabled', locked ? 'true' : null);
+        setLayoutLockedTitle(row, locked, title);
+        target.attr('aria-disabled', locked ? 'true' : null);
+        target.prop('disabled', locked);
+        target.prop('inert', locked);
+    }
+}
+
+function syncLayoutLockedThemeControls(layoutLink) {
+    layoutLockedThemeVariables.clear();
+    layoutLockedThemeControlKeys.clear();
+    const declarations = getLayoutDeclaredThemeVariables(layoutLink);
+    for (const variable of declarations.variables) {
+        layoutLockedThemeVariables.add(variable);
+    }
+    for (const key of declarations.controlKeys) {
+        layoutLockedThemeControlKeys.add(key);
     }
 
     syncingSmartThemeColorPickerState = true;
@@ -1313,14 +1447,41 @@ function syncLayoutLockedSmartThemePickers(layoutLink) {
         for (const control of smartThemeColorControls) {
             const picker = $(control.selector);
             const row = picker.closest('.flex-container');
-            const locked = layoutLockedSmartThemeVariables.has(control.variable);
+            const locked = layoutLockedThemeVariables.has(control.variable);
 
-            row.toggleClass(layoutThemeColorLockClass, locked);
+            row.toggleClass(layoutThemeControlLockClass, locked);
             row.attr('aria-disabled', locked ? 'true' : null);
-            row.attr('title', locked ? `${layoutThemeColorLockTitle} (${control.variable})` : null);
+            setLayoutLockedTitle(row, locked, `${layoutThemeColorLockTitle} (${control.variable})`);
             picker.attr('aria-disabled', locked ? 'true' : null);
             picker.prop('inert', locked);
-            picker.attr('color', locked ? getSmartThemeVariableDisplayValue(control.variable) : power_user[control.key]);
+            picker.attr('color', locked ? getThemeVariableDisplayValue(control.variable) : power_user[control.key]);
+        }
+
+        for (const control of themeFontControls) {
+            const input = $(control.selector);
+            const row = input.closest('.flex-container');
+            const locked = isLayoutThemeControlLocked(control);
+
+            row.toggleClass(layoutThemeControlLockClass, locked);
+            row.attr('aria-disabled', locked ? 'true' : null);
+            setLayoutLockedTitle(row, locked, `${layoutThemeFontLockTitle} (${control.variable})`);
+            input.attr('aria-disabled', locked ? 'true' : null);
+            input.prop('disabled', locked);
+            input.val(locked ? getThemeVariableDisplayValue(control.variable) : power_user[control.key]);
+        }
+
+        for (const control of uiThemeCssControls) {
+            syncLayoutLockedStandardControls(control);
+        }
+
+        const uiThemeLocked = layoutLockedThemeControlKeys.size > 0;
+        for (const selector of layoutUiThemeControlSelectors) {
+            const control = $(selector);
+            control.toggleClass(layoutThemeControlLockClass, uiThemeLocked);
+            control.attr('aria-disabled', uiThemeLocked ? 'true' : null);
+            setLayoutLockedTitle(control, uiThemeLocked, layoutUiThemeLockTitle);
+            control.prop('disabled', uiThemeLocked);
+            control.prop('inert', uiThemeLocked);
         }
     } finally {
         syncingSmartThemeColorPickerState = false;
@@ -1329,7 +1490,7 @@ function syncLayoutLockedSmartThemePickers(layoutLink) {
 
 function isSmartThemeColorControlLocked(type) {
     const control = smartThemeColorControls.find(x => x.type === type);
-    return !!control && layoutLockedSmartThemeVariables.has(control.variable);
+    return !!control && layoutLockedThemeVariables.has(control.variable);
 }
 
 function handleSmartThemeColorPickerChange(key, type, /** @type {ColorPickerEvent} */ evt) {
@@ -1358,7 +1519,7 @@ async function applyAikoLayoutModule(layoutId, { persist = false, preserveMissin
             loadedLink.removeAttribute('data-aiko-layout-pending');
             previousLink?.remove();
         }
-        syncLayoutLockedSmartThemePickers(loadedLink);
+        syncLayoutLockedThemeControls(loadedLink);
 
         if (!missingRequestedLayout || !preserveMissing) {
             power_user.aiko_layout = layoutModule.id;
@@ -1372,7 +1533,7 @@ async function applyAikoLayoutModule(layoutId, { persist = false, preserveMissin
         console.warn(error);
         toastr.warning(t`Layout stylesheet failed to load. Keeping the previous layout.`);
         applyAikoLayoutBodyState(previousLayout);
-        syncLayoutLockedSmartThemePickers(previousLink);
+        syncLayoutLockedThemeControls(previousLink);
         return false;
     }
 }

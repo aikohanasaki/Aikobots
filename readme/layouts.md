@@ -236,9 +236,11 @@ Prefer changing variables over hardcoding rules.
 
 These control whether the composer appears above or below the chat.
 
-### SmartTheme Variables
+### UI Theme and SmartTheme Variables
 
 Layouts can also use the SmartTheme CSS variables from the Theme UI. These are defined on `:root`, then updated when the user changes or loads a theme.
+
+The UI Theme preset selector imports and exports saved theme values for colors, display controls, message presentation, and several look-and-feel toggles. If a layout declares a lockable theme variable on `:root` or the active `<body>` selector, or contains rules for one of the lockable UI surfaces listed below, the matching UI control is disabled while that layout is active. The UI Theme preset controls are also disabled so importing or selecting a preset cannot overwrite values the active layout CSS is intentionally controlling.
 
 Theme color variables:
 
@@ -269,7 +271,58 @@ Related derived variables:
 
 `--SmartThemeBlurStrength` is derived from the Blur Strength UI slider. The checkbox variables are derived from `--SmartThemeBodyColor` and are used by checkbox styling.
 
-If a layout declares one of the theme color variables on `:root` or the active `<body>` selector, the matching Theme color picker is disabled while that layout is active. Hovering the disabled picker row shows that the color is controlled by the active layout CSS.
+Theme font variables:
+
+| UI Control | CSS Variable | Typical Use |
+|---|---|---|
+| Main Font | `--mainFontFamily` | Main app text, menus, inputs, chat text |
+| Mono Font | `--monoFontFamily` | Code, monospace fields, token-style text |
+
+If a layout declares one of the theme color variables on `:root` or the active `<body>` selector, the matching Theme color picker is disabled while that layout is active. If a layout declares one of the theme font variables on `:root` or the active `<body>` selector, the matching Theme Fonts input is disabled while that layout is active. Hovering a disabled control shows that it is controlled by the active layout CSS.
+
+UI Theme imported settings with direct CSS variable locks:
+
+| UI Theme Key | UI Control | CSS Lock Signal |
+|---|---|---|
+| `blur_strength` | Blur Strength | `--blurStrength`, `--SmartThemeBlurStrength` |
+| `shadow_width` | Shadow Width | `--shadowWidth`, `text-shadow` declarations |
+| `font_scale` | Font Scale | `--fontScale`, `--mainFontSize` |
+| `chat_text_line_height` | Message Line Height | `--chatTextLineHeightScale` |
+| `chat_text_letter_spacing` | Message Text Spacing | `--chatTextLetterSpacing` |
+| `top_bar_icon_scale` | Top Bar Icon Size | `--topBarIconScale`, `--topBarIconSize` |
+| `top_bar_icon_spacing` | Top Bar Spacing | `--topBarIconSpacing` |
+| `chat_width` | Chat Width | `--sheldWidth` |
+
+UI Theme imported settings with selector/property locks:
+
+| UI Theme Key | UI Control | CSS Lock Signal |
+|---|---|---|
+| `avatar_style` | Avatars | `.avatar`, `.mesAvatarWrapper`, `#user_avatar_block`, `body.big-avatars`, `body.square-avatars`, `body.rounded-avatars`, avatar size/radius variables |
+| `chat_display` | Chat Style | `.mes`, `.mes_block`, `.mes_text`, `.ch_name`, `body.bubblechat`, `body.documentstyle`, message layout variables |
+| `media_display` | Media Style | `.mes_media_wrapper`, `.mes_file_wrapper` |
+| `toastr_position` | Notifications | `.toast`, `#toast-container`, `.toast-top-*`, `.toast-bottom-*` |
+| `fast_ui_mode` | No Blur Effect | `body.no-blur`, `backdrop-filter`, `-webkit-backdrop-filter`, blur variables |
+| `noShadows` | No Text Shadows | `body.noShadows`, `text-shadow`, `--shadowWidth` |
+| `waifuMode` | Visual Novel Mode | `body.waifuMode`, `#expression-wrapper`, `.expression-holder`, `.zoomed_avatar` |
+| `timer_enabled` | Message Timer | `.mes_timer`, `body.no-timer` |
+| `timestamps_enabled` | Chat Timestamps | `.timestamp`, `body.no-timestamps` |
+| `timestamp_model_icon` | Model Icons | `.timestamp-icon`, `.icon-svg`, `body.no-modelIcons` |
+| `mesIDDisplay_enabled` | Message IDs | `.mesIDDisplay`, `body.no-mesIDDisplay` |
+| `hideChatAvatars_enabled` | Hide Chat Avatars | `body.hideChatAvatars`, `.mesAvatarWrapper` |
+| `message_token_count_enabled` | Message Token Count | `.tokenCounterDisplay`, `body.no-tokenCount` |
+| `expand_message_actions` | Expand Message Actions | `.mes_buttons`, `.extraMesButtons`, `body.expandMessageActions` |
+| `compact_input_area` | Compact Input Area | `#send_form`, `#send_form.compact` |
+| `show_swipe_num_all_messages` | Swipe # for All Messages | `.swipes-counter`, `body.swipeAllMessages` |
+| `top_bar_icon_overrides` | Top Bar Icons | `.drawer-icon`, top-bar drawer IDs such as `#ai-config-button` and `#user-settings-button` |
+| `hotswap_enabled` | Hotswap | `.hotswap`, `#favorites_carousel_wrapper`, `body.no-hotswap` |
+| `click_to_edit` | Click to Edit | `.mes_text` |
+| `enableZenSliders` | Zen Sliders | `body.enableZenSliders`, `.neo-range-slider`, `.neo-range-input`, generated `*_zenslider` controls |
+| `enableLabMode` | Mad Lab Mode | `body.enableLabMode`, `#labModeWarning` |
+| `bogus_folders` | Bogus Folders | `.bogus_folder_select`, `.bogus_folder_counter`, `.bogus_folder_back_placeholder` |
+| `zoomed_avatar_magnification` | Avatar Hover Magnification | `.zoomed_avatar`, `.zoomed_avatar_container` |
+| `reduced_motion` | Reduced Motion | `body.reduced-motion`, `animation`, `animation-duration`, `transition`, `transition-duration` |
+
+UI Theme also imports and exports `custom_css`. Layout CSS does not lock the Custom CSS editor directly; instead, any lock signal above disables the UI Theme preset controls so a theme import cannot replace layout-owned values while the layout is active.
 
 Use SmartTheme variables when a layout needs to match the active theme:
 

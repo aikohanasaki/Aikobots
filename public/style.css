@@ -5085,12 +5085,17 @@ body[data-generating="true"] #chat .last_mes .mes_reasoning_actions {
     opacity: 0.6;
 }
 
-#color-picker-block .aiko-layout-theme-color-locked {
+.aiko-layout-theme-control-locked {
     opacity: 0.55;
     cursor: help;
 }
 
-#color-picker-block .aiko-layout-theme-color-locked toolcool-color-picker {
+.menu_button.aiko-layout-theme-control-locked {
+    filter: brightness(75%) grayscale(1);
+    pointer-events: none;
+}
+
+#color-picker-block .aiko-layout-theme-control-locked toolcool-color-picker {
     filter: brightness(75%) grayscale(1);
     pointer-events: none;
 }
