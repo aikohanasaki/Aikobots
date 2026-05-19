@@ -1067,24 +1067,24 @@ export async function scanWorldInfo(payload = {}) {
         let nextScanState = scan_state.NONE;
         let activatedNow = new Set();
 
-        for (const entry of sortedEntries) {
+        const getEligibleScanEntry = (entry) => {
             if (failedProbabilityChecks.has(entry) || allActivatedEntries.has(`${entry.world}.${entry.uid}`)) {
-                continue;
+                return null;
             }
 
             if (entry.disable === true) {
-                continue;
+                return null;
             }
 
             if (Array.isArray(entry.triggers) && entry.triggers.length > 0 && !entry.triggers.includes(globalScanData.trigger)) {
-                continue;
+                return null;
             }
 
             if (entry.characterFilter?.names?.length > 0) {
                 const nameIncluded = currentCharacterFilename && entry.characterFilter.names.includes(currentCharacterFilename);
                 const filtered = entry.characterFilter.isExclude ? nameIncluded : !nameIncluded;
                 if (filtered) {
-                    continue;
+                    return null;
                 }
             }
 
@@ -1092,7 +1092,7 @@ export async function scanWorldInfo(payload = {}) {
                 const includesTag = currentCharacterTags.some(tag => entry.characterFilter.tags.includes(tag));
                 const filtered = entry.characterFilter.isExclude ? includesTag : !includesTag;
                 if (filtered) {
-                    continue;
+                    return null;
                 }
             }
 
@@ -1101,19 +1101,56 @@ export async function scanWorldInfo(payload = {}) {
             const isDelay = timedEffects.isEffectActive('delay', entry);
 
             if (isDelay || (isCooldown && !isSticky)) {
-                continue;
+                return null;
             }
 
             if (scanState !== scan_state.RECURSION && entry.delayUntilRecursion && !isSticky) {
-                continue;
+                return null;
             }
 
             if (scanState === scan_state.RECURSION && entry.delayUntilRecursion && entry.delayUntilRecursion > currentRecursionDelayLevel && !isSticky) {
-                continue;
+                return null;
             }
 
             if (scanState === scan_state.RECURSION && settings.world_info_recursive && entry.excludeRecursion && !isSticky) {
-                continue;
+                return null;
+            }
+
+            return {
+                entry,
+                isSticky,
+                isConstantLike: Boolean(entry.constant || isSticky),
+            };
+        };
+
+        const activateConstantEntry = ({ entry, isSticky }) => {
+            if (Array.isArray(entry.decorators) && entry.decorators.includes('@@activate')) {
+                recordEntryDebug(entry, {
+                    activationSource: 'decorator',
+                    activationReason: '@@activate',
+                    scanState: getScanStateLabel(scanState),
+                    roundIndex: count,
+                });
+                activatedNow.add(entry);
+                return;
+            }
+
+            if (Array.isArray(entry.decorators) && entry.decorators.includes('@@dont_activate')) {
+                return;
+            }
+
+            recordEntryDebug(entry, {
+                activationSource: isSticky ? 'sticky' : 'constant',
+                activationReason: isSticky ? 'timed_sticky' : 'constant',
+                scanState: getScanStateLabel(scanState),
+                roundIndex: count,
+            });
+            activatedNow.add(entry);
+        };
+
+        const activateOtherEntry = ({ entry }) => {
+            if (entry.constant) {
+                return;
             }
 
             if (Array.isArray(entry.decorators) && entry.decorators.includes('@@activate')) {
@@ -1124,11 +1161,11 @@ export async function scanWorldInfo(payload = {}) {
                     roundIndex: count,
                 });
                 activatedNow.add(entry);
-                continue;
+                return;
             }
 
             if (Array.isArray(entry.decorators) && entry.decorators.includes('@@dont_activate')) {
-                continue;
+                return;
             }
 
             const externallyActivated = buffer.getExternallyActivated(entry);
@@ -1140,28 +1177,17 @@ export async function scanWorldInfo(payload = {}) {
                     roundIndex: count,
                 });
                 activatedNow.add(externallyActivated);
-                continue;
-            }
-
-            if (entry.constant || isSticky) {
-                recordEntryDebug(entry, {
-                    activationSource: isSticky ? 'sticky' : 'constant',
-                    activationReason: isSticky ? 'timed_sticky' : 'constant',
-                    scanState: getScanStateLabel(scanState),
-                    roundIndex: count,
-                });
-                activatedNow.add(entry);
-                continue;
+                return;
             }
 
             if (!Array.isArray(entry.key) || !entry.key.length) {
-                continue;
+                return;
             }
 
             const textToScan = buffer.get(entry, scanState);
             const primaryKeyMatch = entry.key.find(key => key && buffer.matchKeys(textToScan, String(key).trim(), entry));
             if (!primaryKeyMatch) {
-                continue;
+                return;
             }
 
             const hasSecondaryKeywords = entry.selective && Array.isArray(entry.keysecondary) && entry.keysecondary.length;
@@ -1174,7 +1200,7 @@ export async function scanWorldInfo(payload = {}) {
                     roundIndex: count,
                 });
                 activatedNow.add(entry);
-                continue;
+                return;
             }
 
             const selectiveLogic = entry.selectiveLogic ?? 0;
@@ -1218,12 +1244,30 @@ export async function scanWorldInfo(payload = {}) {
                 });
                 activatedNow.add(entry);
             }
+        };
+
+        const eligibleEntries = sortedEntries
+            .map(getEligibleScanEntry)
+            .filter(Boolean);
+
+        for (const eligibleEntry of eligibleEntries) {
+            if (eligibleEntry.isConstantLike) {
+                activateConstantEntry(eligibleEntry);
+            }
+        }
+
+        for (const eligibleEntry of eligibleEntries) {
+            if (!eligibleEntry.isConstantLike) {
+                activateOtherEntry(eligibleEntry);
+            }
         }
 
         const sortFn = (a, b) => {
+            const aConstantBucket = a.constant || timedEffects.isEffectActive('sticky', a) ? 0 : 1;
+            const bConstantBucket = b.constant || timedEffects.isEffectActive('sticky', b) ? 0 : 1;
             const isASticky = timedEffects.isEffectActive('sticky', a) ? 1 : 0;
             const isBSticky = timedEffects.isEffectActive('sticky', b) ? 1 : 0;
-            return isBSticky - isASticky || sortedEntries.indexOf(a) - sortedEntries.indexOf(b);
+            return aConstantBucket - bConstantBucket || isBSticky - isASticky || sortedEntries.indexOf(a) - sortedEntries.indexOf(b);
         };
         const newEntries = [...activatedNow].sort(sortFn);
         const textToScanTokens = await countWorldInfoTokens(allActivatedText, payload, tokenCountCache);
