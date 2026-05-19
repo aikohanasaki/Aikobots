@@ -154,6 +154,20 @@ export function escapeHtml(str) {
         .replace(/'/g, '&#39;');
 }
 
+export function withGoBackButton(options = {}) {
+    return {
+        ...options,
+        customButtons: [
+            ...(Array.isArray(options.customButtons) ? options.customButtons : []),
+            {
+                text: t`Go back`,
+                result: POPUP_RESULT.CANCELLED,
+                classes: ['menu_button'],
+            },
+        ],
+    };
+}
+
 function formatErrorCodeValue(value) {
     if (value === null || value === undefined) {
         return '';

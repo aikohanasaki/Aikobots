@@ -144,7 +144,7 @@ import {
     upsertSet,
     upsertTemplate,
 } from './stmb-sideprompts-manager.js';
-import { escapeHtml } from './utils.js';
+import { escapeHtml, withGoBackButton } from './utils.js';
 import { ensureResolvedLorebookName, isStmbLorebookHandledError } from './stmb-lorebook.js';
 import { createStmbTask, getActiveStmbTaskCount, hasActiveStmbTasks, isStmbAbortError, stopAllStmbTasks, throwIfStmbAborted } from './stmb-tasks.js';
 import { getTokenCountAsync } from './tokenizers.js';
@@ -2720,10 +2720,10 @@ async function openSummaryPromptEditPopup({ presetKey = null, duplicate = false 
                 </label>
             </div>
         </div>
-    `), POPUP_TYPE.TEXT, '', {
+    `), POPUP_TYPE.TEXT, '', withGoBackButton({
         okButton: sourceKey && !duplicate ? translate('Save', 'STMemoryBooks_Save') : translate('Create', 'STMemoryBooks_Create'),
         cancelButton: translate('Cancel', 'STMemoryBooks_Cancel'),
-    });
+    }));
     try {
         applyLocale(popup.dlg);
     } catch {
@@ -2764,13 +2764,13 @@ async function openArcPromptEditPopup({ presetKey = null, duplicate = false } = 
                 <textarea id="stmb-apm-edit-prompt" class="text_pole textarea_compact" rows="12">${escapeHtml(sourcePrompt)}</textarea>
             </div>
         </div>
-    `), POPUP_TYPE.TEXT, '', {
+    `), POPUP_TYPE.TEXT, '', withGoBackButton({
         okButton: sourceKey && !duplicate ? 'Save' : 'Create',
         cancelButton: 'Cancel',
         wide: true,
         large: true,
         allowVerticalScrolling: true,
-    });
+    }));
 
     const result = await popup.show();
     if (result !== POPUP_RESULT.AFFIRMATIVE) {
@@ -2829,13 +2829,13 @@ async function showSummaryPromptManagerPopup({ onChange = null, targetProfileInd
             <small>${escapeHtml(translate('💡 When creating a new prompt, copy one of the other built-in prompts and then amend it. Don\'t change the "respond with JSON" instructions, 📕Memory Books uses that to process the returned result from the AI.', 'STMemoryBooks_PromptManager_Hint'))}</small>
             <input type="file" id="stmb-pm-import-file" accept=".json" style="display:none">
         </div>
-        `), POPUP_TYPE.TEXT, '', {
+        `), POPUP_TYPE.TEXT, '', withGoBackButton({
             wide: true,
             large: true,
             allowVerticalScrolling: true,
             okButton: false,
             cancelButton: translate('Close', 'STMemoryBooks_Close'),
-        });
+        }));
         try {
             applyLocale(popup.dlg);
         } catch {
@@ -3058,13 +3058,13 @@ async function showArcPromptManagerPopup({ onChange = null } = {}) {
             <small>These presets are used by Consolidate Memories and auto-consolidation.</small>
             <input type="file" id="stmb-apm-import-file" accept=".json" style="display:none">
         </div>
-    `), POPUP_TYPE.TEXT, '', {
+    `), POPUP_TYPE.TEXT, '', withGoBackButton({
         wide: true,
         large: true,
         allowVerticalScrolling: true,
         okButton: false,
         cancelButton: 'Close',
-    });
+    }));
 
     const notifyChange = async () => {
         try {
@@ -3620,7 +3620,7 @@ async function openSidePromptSetEditorPopup({ setKey = null } = {}) {
     }
 
     const templates = await listTemplates();
-    const popup = new Popup(DOMPurify.sanitize(buildSidePromptSetEditorHtml(set, templates)), POPUP_TYPE.TEXT, '', {
+    const popup = new Popup(DOMPurify.sanitize(buildSidePromptSetEditorHtml(set, templates)), POPUP_TYPE.TEXT, '', withGoBackButton({
         okButton: set ? 'Save' : 'Create',
         cancelButton: 'Cancel',
         wide: true,
@@ -3650,7 +3650,7 @@ async function openSidePromptSetEditorPopup({ setKey = null } = {}) {
                 return false;
             }
         },
-    });
+    }));
 
     popup.dlg?.addEventListener('click', event => {
         const target = event.target;
@@ -4145,7 +4145,7 @@ async function openSidePromptEditorPopup({ templateKey = null } = {}) {
         throw new Error(`Template "${templateKey}" not found`);
     }
 
-    const popup = new Popup(DOMPurify.sanitize(buildSidePromptEditorHtml(template, { mode: template ? 'edit' : 'new' })), POPUP_TYPE.TEXT, '', {
+    const popup = new Popup(DOMPurify.sanitize(buildSidePromptEditorHtml(template, { mode: template ? 'edit' : 'new' })), POPUP_TYPE.TEXT, '', withGoBackButton({
         okButton: template ? 'Save' : 'Create',
         cancelButton: 'Cancel',
         wide: true,
@@ -4183,7 +4183,7 @@ async function openSidePromptEditorPopup({ templateKey = null } = {}) {
                 return false;
             }
         },
-    });
+    }));
 
     attachSidePromptEditorHandlers(popup.dlg);
     const result = await popup.show();
@@ -4225,13 +4225,13 @@ async function showSidePromptManagerPopup({ onChange = null } = {}) {
             </div>
             <input type="file" id="stmb-sp-import-file" accept=".json" style="display:none">
         </div>
-    `), POPUP_TYPE.TEXT, '', {
+    `), POPUP_TYPE.TEXT, '', withGoBackButton({
         okButton: false,
         cancelButton: 'Close',
         wide: true,
         large: true,
         allowVerticalScrolling: true,
-    });
+    }));
 
     const notifyChange = async () => {
         if (typeof onChange === 'function') {
@@ -4403,7 +4403,7 @@ async function showSidePromptManagerPopup({ onChange = null } = {}) {
 
         if (target.closest('#stmb-sp-compact-review')) {
             try {
-                await showStmbEntryReviewPopup();
+                await showStmbEntryReviewPopup({ showGoBack: true });
             } catch (error) {
                 toastr.error(error?.message || 'Failed to open compaction review', 'STMB');
             }
@@ -5066,19 +5066,17 @@ async function showMainEntryPopup() {
             },
             {
                 text: 'Consolidate Memories',
-                result: null,
                 classes: ['menu_button'],
                 action: async () => {
                     const initialTargetTier = Number(readSelectedValues(popup.dlg?.querySelector('#stmb-settings-auto-consolidation-target-tier')).at(0) || 1);
-                    await showSummaryConsolidationPopup({ initialTargetTier });
+                    await showSummaryConsolidationPopup({ initialTargetTier, showGoBack: true });
                 },
             },
             {
                 text: 'Compaction',
-                result: null,
                 classes: ['menu_button'],
                 action: async () => {
-                    await showStmbEntryReviewPopup();
+                    await showStmbEntryReviewPopup({ showGoBack: true });
                 },
             },
             {
@@ -7115,7 +7113,7 @@ function persistSummaryConsolidationPopupSettings({ targetTier, requiredMin, sum
     };
 }
 
-async function showSummaryConsolidationPopup({ initialTargetTier = 1 } = {}) {
+async function showSummaryConsolidationPopup({ initialTargetTier = 1, showGoBack = false } = {}) {
     await firstRunInitArcPromptPresets(stmbSettings);
     const lorebookName = resolveLorebookName();
     if (!lorebookName) {
@@ -7167,6 +7165,7 @@ async function showSummaryConsolidationPopup({ initialTargetTier = 1 } = {}) {
         summaryEntrySettings,
         hasLorebook: Boolean(lorebookName),
         allowPresetRebuild: true,
+        showGoBack,
         onPresetRebuild: async () => {
             const result = await recreateBuiltInArcPromptOverridesFile();
             toastr.success(`Recreated ${result.replaced} built-in consolidation prompt overrides`, 'STMB');

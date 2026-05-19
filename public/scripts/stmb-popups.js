@@ -4,7 +4,7 @@ import {
 import { playMessageSound } from './power-user.js';
 import { Popup, POPUP_RESULT, POPUP_TYPE } from './popup.js';
 import { parseSummaryJsonResponse } from './stmb-summary.js';
-import { escapeHtml } from './utils.js';
+import { escapeHtml, withGoBackButton } from './utils.js';
 
 const STMB_POPUP_RESULTS = Object.freeze({
     ADVANCED: POPUP_RESULT.CUSTOM1,
@@ -390,7 +390,7 @@ export async function showSummaryConsolidationOptionsPopup(data = {}) {
     `;
 
     safePlayMessageSound();
-    const popup = new Popup(DOMPurify.sanitize(html), POPUP_TYPE.TEXT, '', {
+    const popupOptions = {
         okButton: 'Run',
         cancelButton: 'Cancel',
         wide: true,
@@ -435,7 +435,13 @@ export async function showSummaryConsolidationOptionsPopup(data = {}) {
                 console.warn('STMB consolidation popup persistence failed', error);
             }
         },
-    });
+    };
+    const popup = new Popup(
+        DOMPurify.sanitize(html),
+        POPUP_TYPE.TEXT,
+        '',
+        data?.showGoBack ? withGoBackButton(popupOptions) : popupOptions,
+    );
 
     const dialog = popup.dlg;
     const getCurrentTier = () => Number(dialog?.querySelector('#stmb-summary-tier')?.value ?? targetTier);
