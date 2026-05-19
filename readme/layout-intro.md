@@ -188,14 +188,16 @@ Use the Aikobots layout image uploader instead:
 
 1. Go to `User Settings -> Layout`.
 2. Upload a static PNG, JPEG, or WebP image.
-3. Aikobots stores the processed image.
-4. Use the generated Aikobots asset URL in your CSS.
+3. Aikobots converts the processed image to WebP.
+4. Use the generated Aikobots `.webp` asset URL in your CSS.
+
+Important: uploaded `.png`, `.jpg`, `.jpeg`, and `.webp` images are all stored as WebP layout assets. When writing layout CSS, link the returned `.webp` URL.
 
 Example:
 
 ```css
 body.layout-custom #sheld {
-    background-image: url("/api/layouts/assets/file/example.png");
+    background-image: url("/api/layouts/assets/file/example.webp");
 }
 ```
 
@@ -212,7 +214,7 @@ Layout images:
 
 ```text
 Accepted uploads: static PNG, JPEG, or WebP
-Stored format: PNG
+Stored format: WebP
 Total image asset storage: 20 MB
 ```
 

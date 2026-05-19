@@ -20,10 +20,11 @@ const IMAGE_OUTPUT_MAX_BYTES = 2 * 1024 * 1024;
 const IMAGE_TOTAL_MAX_BYTES = 20 * 1024 * 1024;
 const IMAGE_MAX_COUNT = 50;
 const IMAGE_MAX_DIMENSION = 4096;
+const IMAGE_WEBP_QUALITY = 85;
 const LAYOUT_FILE_NAME_MAX_LENGTH = 120;
 const LAYOUT_ASSET_ROUTE_PREFIX = '/api/layouts/assets/file/';
 const ALLOWED_CSS_EXTENSIONS = new Set(['.css']);
-const ALLOWED_STORED_IMAGE_EXTENSIONS = new Set(['.png']);
+const ALLOWED_STORED_IMAGE_EXTENSIONS = new Set(['.webp', '.png']);
 const ALLOWED_SOURCE_IMAGE_MIME_TYPES = new Set(['image/png', 'image/jpeg', 'image/webp']);
 const SAFE_LAYOUT_FILE_NAME = /^[A-Za-z0-9 _.-]+$/;
 const CONTROL_CHARACTER_PATTERN = /[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/;
@@ -248,7 +249,7 @@ async function getLayoutAssetRecord(directory, filename) {
     const filePath = resolveLayoutFilePath(directory, filename, ALLOWED_STORED_IMAGE_EXTENSIONS, 'layout image asset');
     const stats = fs.statSync(filePath);
     const image = await Jimp.read(filePath);
-    const mimeType = mime.lookup(filePath) || 'image/png';
+    const mimeType = mime.lookup(filePath) || 'image/webp';
     return {
         filename,
         name: getDisplayName(filename),
@@ -299,8 +300,21 @@ function assertStaticRasterImage(buffer) {
     return mimeType;
 }
 
+async function getLayoutWebpBuffer(image, maxBytes) {
+    const encodeOptions = {
+        quality: IMAGE_WEBP_QUALITY,
+        alphaQuality: IMAGE_WEBP_QUALITY,
+        method: 6,
+    };
+    const outputBuffer = await image.getBuffer(JimpMime.webp, encodeOptions);
+    if (outputBuffer.length <= maxBytes) {
+        return outputBuffer;
+    }
+    return image.getBuffer(JimpMime.webp, { ...encodeOptions, targetSize: maxBytes });
+}
+
 function makeUniqueAssetFilename(directory, originalFilename) {
-    // Layout image uploads intentionally generate a new server-side PNG filename.
+    // Layout image uploads intentionally generate a new server-side WebP filename.
     // This avoids trusting browser-provided names and avoids cross-upload overwrite ambiguity.
     const safeOriginal = assertSafeLayoutFileName(originalFilename, new Set(['.png', '.jpg', '.jpeg', '.webp']), 'layout image filename');
     const safeBase = path.parse(safeOriginal).name
@@ -310,7 +324,7 @@ function makeUniqueAssetFilename(directory, originalFilename) {
         .slice(0, 80) || 'layout-asset';
     for (let index = 0; index < 1000; index++) {
         const suffix = index === 0 ? '' : `-${index}`;
-        const filename = `${safeBase}-${randomUUID()}${suffix}.png`;
+        const filename = `${safeBase}-${randomUUID()}${suffix}.webp`;
         const filePath = resolveLayoutFilePath(directory, filename, ALLOWED_STORED_IMAGE_EXTENSIONS, 'layout image asset');
         if (!fs.existsSync(filePath)) {
             return filename;
@@ -349,7 +363,7 @@ router.get('/file/:filename', (request, response) => {
 
 router.get('/assets/file/:filename', (request, response) => {
     try {
-        return sendPrivateFlatFile(response, request.user.directories.layoutAssets, request.params.filename, ALLOWED_STORED_IMAGE_EXTENSIONS, 'image/png');
+        return sendPrivateFlatFile(response, request.user.directories.layoutAssets, request.params.filename, ALLOWED_STORED_IMAGE_EXTENSIONS);
     } catch (error) {
         return sendError(response, error, 'Failed to serve layout image asset.');
     }
@@ -428,7 +442,7 @@ router.post('/assets/upload', async (request, response) => {
             throw new LayoutValidationError(`Layout images must be ${IMAGE_MAX_DIMENSION}x${IMAGE_MAX_DIMENSION} or smaller.`);
         }
 
-        const outputBuffer = await image.getBuffer(JimpMime.png);
+        const outputBuffer = await getLayoutWebpBuffer(image, IMAGE_OUTPUT_MAX_BYTES);
         if (outputBuffer.length > IMAGE_OUTPUT_MAX_BYTES) {
             throw new LayoutValidationError('Processed layout image is too large.');
         }

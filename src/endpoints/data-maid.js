@@ -10,6 +10,7 @@ import { SETTINGS_FILE } from '../constants.js';
 
 const sha256 = str => crypto.createHash('sha256').update(str).digest('hex');
 const LAYOUT_ASSET_ROUTE_PREFIX = '/api/layouts/assets/file/';
+const LAYOUT_ASSET_EXTENSIONS = new Set(['.png', '.webp']);
 const LAYOUT_ASSET_REFERENCE_PATTERN = new RegExp(`${LAYOUT_ASSET_ROUTE_PREFIX.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}([^?#)'"]+)`, 'g');
 const isHeadChatFile = (fileName) => String(fileName).endsWith('.head.jsonl');
 const getSplitHeadPath = (filePath) => {
@@ -612,7 +613,7 @@ export class DataMaidService {
             const files = await fs.promises.readdir(this.directories.layoutAssets, { withFileTypes: true });
             for (const file of files) {
                 const filePath = path.join(this.directories.layoutAssets, file.name);
-                if (file.isFile() && path.extname(file.name).toLowerCase() === '.png' && !referencedAssets.has(file.name)) {
+                if (file.isFile() && LAYOUT_ASSET_EXTENSIONS.has(path.extname(file.name).toLowerCase()) && !referencedAssets.has(file.name)) {
                     result.push(filePath);
                 }
             }

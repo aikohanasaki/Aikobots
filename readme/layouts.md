@@ -483,14 +483,16 @@ Allowed image workflow:
 1. Go to `User Settings -> Layout`.
 2. Click the image upload button.
 3. Upload a static PNG, JPEG, or WebP.
-4. The server converts it to PNG.
-5. Use the generated URL in your CSS.
+4. The server converts it to WebP.
+5. Use the generated `.webp` URL in your CSS.
+
+Important: even if you upload a `.png`, `.jpg`, or `.jpeg`, Aikobots stores the processed layout image as `.webp`. Link the generated WebP URL, not the original filename or extension.
 
 Allowed URL shape:
 
 ```css
 body.layout-custom #sheld {
-    background-image: url("/api/layouts/assets/file/example.png");
+    background-image: url("/api/layouts/assets/file/example.webp");
 }
 ```
 
@@ -520,7 +522,7 @@ Layout images:
 
 ```text
 Accepted uploads: static PNG, JPEG, WebP
-Stored format: PNG
+Stored format: WebP
 Max source image size: 10 MB
 Max processed image size: 2 MB
 Max image dimension: 4096 x 4096

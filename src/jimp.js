@@ -55,6 +55,7 @@ const JimpMime = {
     gif: gif().mime,
     jpeg: jpeg().mime,
     png: png().mime,
+    webp: webp().mime,
     tiff: tiff().mime,
 };
 

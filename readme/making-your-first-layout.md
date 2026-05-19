@@ -157,11 +157,13 @@ You can't use remote URLs for images — they're blocked for security. Instead, 
 
 ```css
 body.layout-custom #sheld {
-    background-image: url("/api/layouts/assets/file/your-image.png");
+    background-image: url("/api/layouts/assets/file/your-image.webp");
 }
 ```
 
-Accepted formats: PNG, JPEG, WebP. Max size 10 MB source, stored as PNG. Max 50 images total.
+Important: every uploaded layout image is converted to WebP. If you upload `your-image.png` or `your-image.jpg`, use the generated `.webp` URL in your layout CSS.
+
+Accepted formats: PNG, JPEG, WebP. Max size 10 MB source, stored as WebP. Max 50 images total.
 
 ---
 
