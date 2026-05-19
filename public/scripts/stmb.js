@@ -193,6 +193,7 @@ const PLANNER_ACTIVE_JOB_STATUSES = new Set(['pending', 'running', 'awaiting_app
 const PLANNER_TERMINAL_JOB_STATUSES = new Set(['completed', 'failed', 'canceled', 'rejected', 'skipped']);
 const PLANNER_RECENT_JOB_WINDOW_MS = 15 * 60 * 1000;
 const PLANNER_UI_MAX_ROWS = 12;
+const DEFAULT_ARC_PROMPT_KEY = 'arc_default';
 let latestPlannerJobs = [];
 let plannerStatusUiInitialized = false;
 let plannerStatusButton = null;
@@ -2583,6 +2584,40 @@ function getArcPromptText(key) {
     return getCachedArcPromptText(key, stmbSettings);
 }
 
+function getDefaultArcPromptKey() {
+    const configuredKey = String(getModuleSettings().defaultArcPromptKey || '').trim();
+    if (configuredKey && listArcPromptPresets().some(preset => preset.key === configuredKey)) {
+        return configuredKey;
+    }
+    return DEFAULT_ARC_PROMPT_KEY;
+}
+
+function setDefaultArcPromptKey(key) {
+    const normalizedKey = String(key || '').trim();
+    if (!normalizedKey || !listArcPromptPresets().some(preset => preset.key === normalizedKey)) {
+        throw new Error('Select a consolidation preset first');
+    }
+    stmbSettings.moduleSettings.defaultArcPromptKey = normalizedKey;
+    stmbSettings = normalizeStmbSettings(stmbSettings);
+    saveSettingsDebounced();
+    return normalizedKey;
+}
+
+function buildArcPromptDefaultOptionsHtml(selectedKey = null) {
+    const resolvedKey = String(selectedKey || getDefaultArcPromptKey());
+    return listArcPromptPresets()
+        .map(preset => `<option value="${escapeHtml(preset.key)}" ${preset.key === resolvedKey ? 'selected' : ''}>${escapeHtml(preset.displayName)}</option>`)
+        .join('');
+}
+
+function refreshArcPromptDefaultSelect(dialog) {
+    const select = dialog?.querySelector('#stmb-apm-default-preset');
+    if (!select) {
+        return;
+    }
+    select.innerHTML = buildArcPromptDefaultOptionsHtml();
+}
+
 async function upsertArcPromptPreset(key, prompt, displayName = null) {
     return await upsertArcPromptPresetFile(key, prompt, displayName);
 }
@@ -3048,6 +3083,13 @@ async function showArcPromptManagerPopup({ onChange = null } = {}) {
             <div class="world_entry_form_control">
                 <input type="text" id="stmb-apm-search" class="text_pole" placeholder="Search consolidation presets..." aria-label="Search consolidation presets">
             </div>
+            <div class="world_entry_form_control">
+                <label for="stmb-apm-default-preset">Set Default</label>
+                <select id="stmb-apm-default-preset" class="text_pole" style="width:100%">
+                    ${buildArcPromptDefaultOptionsHtml()}
+                </select>
+                <small>Used as the default preset for Consolidate Memories and auto-consolidation.</small>
+            </div>
             <div id="stmb-apm-list" class="padding10 marginBot10" style="max-height: 400px; overflow-y: auto;"></div>
             <div class="buttons_block justifyCenter gap10px whitespacenowrap">
                 <button id="stmb-apm-new" class="menu_button whitespacenowrap">New Consolidation Preset</button>
@@ -3097,11 +3139,16 @@ async function showArcPromptManagerPopup({ onChange = null } = {}) {
                     if (!confirm) {
                         return;
                     }
+                    const wasDefault = selectedPresetKey === getDefaultArcPromptKey();
                     await removeArcPromptPreset(selectedPresetKey);
+                    if (wasDefault && !listArcPromptPresets().some(preset => preset.key === selectedPresetKey)) {
+                        setDefaultArcPromptKey(DEFAULT_ARC_PROMPT_KEY);
+                    }
                     toastr.success('Consolidation preset deleted successfully', 'STMB');
                     selectedPresetKey = null;
                 }
                 refreshArcPromptManagerList(popup.dlg, selectedPresetKey);
+                refreshArcPromptDefaultSelect(popup.dlg);
                 await notifyChange();
             } catch (error) {
                 toastr.error(error?.message || 'Consolidation prompt manager action failed', 'STMB');
@@ -3122,6 +3169,7 @@ async function showArcPromptManagerPopup({ onChange = null } = {}) {
                 if (selectedPresetKey) {
                     toastr.success('Consolidation preset created successfully', 'STMB');
                     refreshArcPromptManagerList(popup.dlg, selectedPresetKey);
+                    refreshArcPromptDefaultSelect(popup.dlg);
                     await notifyChange();
                 }
             } catch (error) {
@@ -3162,8 +3210,21 @@ async function showArcPromptManagerPopup({ onChange = null } = {}) {
             const result = await recreateBuiltInArcPromptOverridesFile();
             selectedPresetKey = null;
             refreshArcPromptManagerList(popup.dlg, selectedPresetKey);
+            refreshArcPromptDefaultSelect(popup.dlg);
             toastr.success(`Recreated ${result.replaced} built-in consolidation prompt overrides`, 'STMB');
             await notifyChange();
+        }
+    });
+
+    popup.dlg?.querySelector('#stmb-apm-default-preset')?.addEventListener('change', async event => {
+        try {
+            const selectedKey = setDefaultArcPromptKey(event.target?.value);
+            refreshArcPromptDefaultSelect(popup.dlg);
+            toastr.success(`Default consolidation preset set to "${getArcPromptDisplayName(selectedKey)}"`, 'STMB');
+            await notifyChange();
+        } catch (error) {
+            refreshArcPromptDefaultSelect(popup.dlg);
+            toastr.error(error?.message || 'Failed to set default consolidation preset', 'STMB');
         }
     });
 
@@ -3181,6 +3242,7 @@ async function showArcPromptManagerPopup({ onChange = null } = {}) {
             await importArcPromptPresetsJson(await file.text());
             selectedPresetKey = null;
             refreshArcPromptManagerList(popup.dlg, selectedPresetKey);
+            refreshArcPromptDefaultSelect(popup.dlg);
             toastr.success('Consolidation prompts imported successfully', 'STMB');
             await notifyChange();
         } catch (error) {
@@ -6715,7 +6777,7 @@ async function estimateSummaryPromptTokens(prompt, estimatedOutput = 500) {
 
 async function runSequentialSummaryAnalysis(sourceEntries, options = {}, profile, signal, onRateLimitWait = null) {
     const {
-        presetKey = 'arc_default',
+        presetKey: requestedPresetKey = null,
         maxItemsPerPass = 15,
         maxPasses = 10,
         requiredMin = 1,
@@ -6725,6 +6787,9 @@ async function runSequentialSummaryAnalysis(sourceEntries, options = {}, profile
         previousOrder = null,
         promptText: promptTextOverride = null,
     } = options;
+    const presetKey = typeof requestedPresetKey === 'string' && requestedPresetKey.trim()
+        ? requestedPresetKey.trim()
+        : getDefaultArcPromptKey();
 
     const briefs = buildBriefsFromEntries(sourceEntries);
     const remainingMap = new Map(briefs.map(brief => [String(brief.id), brief]));
@@ -7153,7 +7218,7 @@ async function showSummaryConsolidationPopup({ initialTargetTier = 1, showGoBack
             };
         }),
         presets: listSummaryConsolidationPresets(),
-        defaultPresetKey: 'arc_default',
+        defaultPresetKey: getDefaultArcPromptKey(),
         requiredMin: normalizeSummaryMinChildren(
             getModuleSettings().summaryTierMinimums?.[normalizedTargetTier],
             getDefaultSummaryMinChildren(normalizedTargetTier),
@@ -7670,7 +7735,7 @@ export async function createSummaryForTier(targetTier, options = {}) {
     const profile = getActiveStmbProfile(stmbSettings, options.profileIndex ?? null);
     const presetKey = typeof options.presetKey === 'string' && options.presetKey.trim()
         ? options.presetKey.trim()
-        : 'arc_default';
+        : getDefaultArcPromptKey();
     const promptText = typeof options.promptText === 'string' && options.promptText.trim()
         ? options.promptText
         : getRequiredArcPromptText(presetKey);
@@ -7799,7 +7864,7 @@ async function runSummaryConsolidationNow(payload = {}, signal = null, onRateLim
 
     try {
         const analysisResult = await runSequentialSummaryAnalysis(sourceEntries, {
-            presetKey: typeof payload.presetKey === 'string' && payload.presetKey.trim() ? payload.presetKey.trim() : 'arc_default',
+            presetKey: typeof payload.presetKey === 'string' && payload.presetKey.trim() ? payload.presetKey.trim() : getDefaultArcPromptKey(),
             promptText: typeof payload.promptText === 'string' && payload.promptText.trim() ? payload.promptText : null,
             maxItemsPerPass: Math.max(1, Math.trunc(Number(payload.maxItemsPerPass) || 15)),
             maxPasses: Math.max(1, Math.trunc(Number(payload.maxPasses) || 10)),

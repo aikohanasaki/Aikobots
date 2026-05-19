@@ -341,6 +341,7 @@ export function createDefaultStmbSettings() {
             useRegex: false,
             selectedRegexOutgoing: [],
             selectedRegexIncoming: [],
+            defaultArcPromptKey: 'arc_default',
             arcOrderMode: 'auto',
             arcOrderValue: 100,
             arcReverseStart: 9999,
@@ -628,6 +629,9 @@ export function normalizeStmbSettings(rawSettings, legacySettings = null) {
     moduleSettings.lorebookOrderDefaults = cloneStloSettings(moduleSettings.lorebookOrderDefaults, { omitDefault: true });
     moduleSettings.selectedRegexOutgoing = Array.isArray(moduleSettings.selectedRegexOutgoing) ? moduleSettings.selectedRegexOutgoing.map(String) : [];
     moduleSettings.selectedRegexIncoming = Array.isArray(moduleSettings.selectedRegexIncoming) ? moduleSettings.selectedRegexIncoming.map(String) : [];
+    moduleSettings.defaultArcPromptKey = typeof moduleSettings.defaultArcPromptKey === 'string' && moduleSettings.defaultArcPromptKey.trim()
+        ? moduleSettings.defaultArcPromptKey.trim()
+        : defaults.moduleSettings.defaultArcPromptKey;
     const legacySummaryOrderMode = moduleSettings.summaryOrderMode ?? moduleSettings.arcOrderMode ?? defaults.moduleSettings.summaryOrderMode;
     const legacySummaryOrderValue = moduleSettings.summaryOrderValue ?? moduleSettings.arcOrderValue ?? defaults.moduleSettings.summaryOrderValue;
     const legacySummaryReverseStart = moduleSettings.summaryReverseStart ?? moduleSettings.arcReverseStart ?? defaults.moduleSettings.summaryReverseStart;
