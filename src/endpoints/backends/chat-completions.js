@@ -1765,11 +1765,11 @@ router.post('/status', async function (request, statusResponse) {
             apiUrl = API_COHERE_V1;
             apiKey = readSecret(request.user.directories, SECRET_KEYS.COHERE, request.body.secret_id);
             headers = {};
+            queryParams = { endpoint: 'chat', page_size: 1000 };
         } else if (request.body.chat_completion_source === CHAT_COMPLETION_SOURCES.CHUTES) {
             apiUrl = API_CHUTES;
             apiKey = readSecret(request.user.directories, SECRET_KEYS.CHUTES, request.body.secret_id);
             headers = {};
-            queryParams = { endpoint: 'chat', page_size: 1000 };
     } else if (request.body.chat_completion_source === CHAT_COMPLETION_SOURCES.ELECTRONHUB) {
             apiUrl = API_ELECTRONHUB;
             apiKey = readSecret(request.user.directories, SECRET_KEYS.ELECTRONHUB, request.body.secret_id);
@@ -2025,8 +2025,6 @@ router.post('/status', async function (request, statusResponse) {
                         return model;
                     });
             }
-            
-            statusResponse.send(data);
 
             if (request.body.chat_completion_source === CHAT_COMPLETION_SOURCES.COHERE && Array.isArray(data?.models)) {
                 data = {
@@ -2066,6 +2064,7 @@ router.post('/status', async function (request, statusResponse) {
             }
 
             return statusResponse.send(data);
+
         } else {
             console.error('Chat Completion status check failed. Either Access Token is incorrect or API endpoint is down.');
             statusResponse.send({ error: true, data: { data: [] } });
