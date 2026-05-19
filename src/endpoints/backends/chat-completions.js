@@ -1769,7 +1769,8 @@ router.post('/status', async function (request, statusResponse) {
             apiUrl = API_CHUTES;
             apiKey = readSecret(request.user.directories, SECRET_KEYS.CHUTES, request.body.secret_id);
             headers = {};
-        } else if (request.body.chat_completion_source === CHAT_COMPLETION_SOURCES.ELECTRONHUB) {
+            queryParams = { endpoint: 'chat', page_size: 1000 };
+    } else if (request.body.chat_completion_source === CHAT_COMPLETION_SOURCES.ELECTRONHUB) {
             apiUrl = API_ELECTRONHUB;
             apiKey = readSecret(request.user.directories, SECRET_KEYS.ELECTRONHUB, request.body.secret_id);
             headers = {};
@@ -2007,28 +2008,20 @@ router.post('/status', async function (request, statusResponse) {
                 data = { data: data.map(model => ({ id: model.name, ...model })) };
             }
 
-            if (request.body.chat_completion_source === CHAT_COMPLETION_SOURCES.CHUTES && Array.isArray(data?.data)) {
-                data.data = data.data
-                    .filter(model => model?.id)
-                    .map(model => {
-                        if (model.pricing?.prompt !== undefined && model.pricing?.completion !== undefined) {
-                            return {
-                                ...model,
-                                pricing: {
-                                    ...model.pricing,
-                                    input: model.pricing.prompt,
-                                    output: model.pricing.completion,
-                                },
-                            };
-                        }
-                        return model;
-                    });
+            if (request.body.chat_completion_source === CHAT_COMPLETION_SOURCES.NAVY && Array.isArray(data?.data)) {
+                data = {
+                    ...data,
+                    data: data.data.filter(isNavyChatModel),
+                };
             }
 
-            statusResponse.send(data);
-
             if (request.body.chat_completion_source === CHAT_COMPLETION_SOURCES.COHERE && Array.isArray(data?.models)) {
-                data.data = data.models.map(model => ({ id: model.name, ...model }));
+                data = {
+                    ...data,
+                    data: data.models
+                        .filter(model => model?.name && (!Array.isArray(model?.endpoints) || model.endpoints.includes('chat')))
+                        .map(model => ({ ...model, id: model.name })),
+                };
             }
 
             if (request.body.chat_completion_source === CHAT_COMPLETION_SOURCES.OPENROUTER && Array.isArray(data?.data)) {
@@ -2058,6 +2051,8 @@ router.post('/status', async function (request, statusResponse) {
                     console.warn('Chat Completion endpoint did not return a list of models.');
                 }
             }
+
+            return statusResponse.send(data);
         } else {
             console.error('Chat Completion status check failed. Either Access Token is incorrect or API endpoint is down.');
             statusResponse.send({ error: true, data: { data: [] } });
