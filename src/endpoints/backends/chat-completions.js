@@ -2012,7 +2012,7 @@ router.post('/status', async function (request, statusResponse) {
                 data = {
                     ...data,
                     data: data.models
-                        .filter(model => model?.name && (!Array.isArray(model?.endpoints) || model.endpoints.includes('chat')))
+                        .filter(model => model?.name && Array.isArray(model?.endpoints) && model.endpoints.includes('chat'))
                         .map(model => ({ ...model, id: model.name })),
                 };
             }
