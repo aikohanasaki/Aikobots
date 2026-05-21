@@ -1767,7 +1767,7 @@ function getFloatingBookStrategyType(entry) {
         return 'constant';
     }
 
-    if (entry?.vectorized === true) {
+    if (entry?.vectorized === true || entry?.strategyType === 'vectored') {
         return 'vectorized';
     }
 
@@ -2366,9 +2366,10 @@ function createWorldInfoFloatingBookController() {
             strategy.className = 'wi-floating-book-entry-strategy';
             if (!row.hidden) {
                 strategy.classList.add(`wi-floating-book-entry-strategy-${row.strategyType || 'normal'}`);
+                const isVectorized = row.strategyType === 'vectorized' || row.strategyType === 'vectored';
                 strategy.textContent = row.strategyType === 'constant'
                     ? '🔵'
-                    : row.strategyType === 'vectorized'
+                    : isVectorized
                         ? '🔗'
                         : '🟢';
             }

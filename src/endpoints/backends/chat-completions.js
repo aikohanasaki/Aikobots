@@ -2582,6 +2582,7 @@ function sanitizeWorldInfoEntryForResponse(entry, user) {
     sanitizedEntry.ownerHandle = canView ? getWorldInfoEntryOwnerHandle(entry) : '';
     sanitizedEntry.ownerHandles = canView ? getWorldInfoEntryOwnerHandles(entry) : [];
     sanitizedEntry.hidden = !canView;
+    sanitizedEntry.vectorized = canView ? Boolean(entry.vectorized) : false;
     sanitizedEntry.displayContent = canView
         ? String(entry.displayContent ?? entry.content ?? '')
         : '(hidden entry)';
@@ -2899,6 +2900,7 @@ function buildWorldInfoSummaryResponseData(worldInfo, user) {
             displayContent: entry.displayContent,
             hidden: entry.hidden,
             tokens: Number(entry.tokens ?? 0) || 0,
+            vectorized: Boolean(entry.vectorized),
             placement: entry.placement ?? null,
             roundIndex: Number(entry.roundIndex ?? 0) || 0,
             status: entry.status ?? null,

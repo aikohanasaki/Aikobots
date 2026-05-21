@@ -394,6 +394,7 @@ async function buildWorldInfoDebugSummary(entryDebugMap, payload, tokenCountCach
             dropReason: getWorldInfoDropReason(item.status),
             probability: entry.useProbability ? Number(entry.probability ?? 0) : null,
             ignoreBudget: Boolean(entry.ignoreBudget),
+            vectorized: Boolean(entry.vectorized),
             activationOnly,
             inserted,
             notInsertedReason: admitted && activationOnly ? 'activation_only' : null,
