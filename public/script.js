@@ -258,6 +258,7 @@ import { AudioPlayer } from './scripts/audio-player.js';
 import { getStmbSettings, initStmb, loadStmbSettings } from './scripts/stmb.js';
 import { syncManageChatsBackupsBrowser } from './scripts/chat-backups.js';
 import { canJumpToSwipeForMessage, canOpenSwipePickerForMessage, initSwipePicker } from './scripts/swipe-picker.js';
+import { MessageFormatter } from './scripts/message-formatter.js';
 
 export { sanitizeMessageHtml } from './scripts/chats.js';
 
@@ -5035,11 +5036,29 @@ export function messageFormatting(mes, ch_name, isSystem, isUser, messageId, san
         const indexOf = usableMessages.findIndex(x => x.index === Number(messageId));
         const depth = messageId >= 0 && indexOf !== -1 ? (usableMessages.length - indexOf - 1) : undefined;
 
+        mes = MessageFormatter.runStage(MessageFormatter.stage.BEFORE_REGEX, mes, {
+            characterName: ch_name,
+            ch_name,
+            isSystem,
+            isUser,
+            messageId,
+            isReasoning,
+        });
+
         // Always override the character name
         mes = getRegexedString(mes, regexPlacement, {
             characterOverride: ch_name,
             isMarkdown: true,
             depth: depth,
+        });
+
+        mes = MessageFormatter.runStage(MessageFormatter.stage.AFTER_REGEX, mes, {
+            characterName: ch_name,
+            ch_name,
+            isSystem,
+            isUser,
+            messageId,
+            isReasoning,
         });
     }
 
@@ -5118,6 +5137,15 @@ export function messageFormatting(mes, ch_name, isSystem, isUser, messageId, san
 
         mes = mes.replace(/<code(.*)>[\s\S]*?<\/code>/g, function (match) {
             return match.replace(/&amp;/g, '&');
+        });
+
+        mes = MessageFormatter.runStage(MessageFormatter.stage.AFTER_MARKDOWN, mes, {
+            characterName: ch_name,
+            ch_name,
+            isSystem,
+            isUser,
+            messageId,
+            isReasoning,
         });
     }
 
