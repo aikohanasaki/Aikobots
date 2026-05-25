@@ -547,12 +547,12 @@ function getPromptSnapshotChatScope() {
     return `chat:${currentChatId || name2 || 'chat'}`;
 }
 
-function getPromptSnapshotTarget(type) {
+function getPromptSnapshotTarget(type, swipeTarget = null) {
     if (type === 'swipe') {
         const message = chat[chat.length - 1];
         return {
-            mesId: Math.max(0, chat.length - 1),
-            swipeId: Array.isArray(message?.swipes) ? message.swipes.length : 0,
+            mesId: Number.isInteger(swipeTarget?.messageId) ? swipeTarget.messageId : Math.max(0, chat.length - 1),
+            swipeId: Number.isInteger(swipeTarget?.swipeId) ? swipeTarget.swipeId : Array.isArray(message?.swipes) ? message.swipes.length : 0,
         };
     }
 
@@ -6727,6 +6727,90 @@ function hideStopButton() {
     }
 }
 
+function validateSwipeTarget(swipeTarget) {
+    if (!swipeTarget || typeof swipeTarget !== 'object') {
+        return { ok: false, reason: 'missing swipe target' };
+    }
+
+    const messageId = Number(swipeTarget.messageId);
+    const swipeId = Number(swipeTarget.swipeId);
+    if (!Number.isInteger(messageId) || messageId < 0 || messageId >= chat.length) {
+        return { ok: false, reason: 'message id out of bounds' };
+    }
+    if (!Number.isInteger(swipeId) || swipeId < 0) {
+        return { ok: false, reason: 'invalid swipe id' };
+    }
+    if (messageId !== chat.length - 1) {
+        return { ok: false, reason: 'target is no longer the last message' };
+    }
+
+    const message = chat[messageId];
+    if (swipeTarget.messageRef && message !== swipeTarget.messageRef) {
+        return { ok: false, reason: 'target message changed' };
+    }
+
+    ensureSwipes(message);
+    if (!message || !Array.isArray(message.swipes)) {
+        return { ok: false, reason: 'target message has no swipes' };
+    }
+    if (swipeId > message.swipes.length) {
+        return { ok: false, reason: 'swipe id is not the next slot' };
+    }
+
+    return { ok: true, message, messageId, swipeId };
+}
+
+function ensureSwipeTargetSlot(message, swipeTarget) {
+    const swipeId = Number(swipeTarget?.swipeId);
+    if (!Number.isInteger(swipeId) || swipeId < 0) {
+        return false;
+    }
+
+    ensureSwipes(message);
+    if (!Array.isArray(message?.swipes)) {
+        return false;
+    }
+    if (!Array.isArray(message.swipe_info)) {
+        message.swipe_info = [];
+    }
+
+    while (message.swipes.length <= swipeId) {
+        message.swipes.push('');
+    }
+    while (message.swipe_info.length <= swipeId) {
+        message.swipe_info.push({});
+    }
+
+    message.swipe_id = swipeId;
+    return true;
+}
+
+async function resetStaleSwipeTarget(swipeTarget) {
+    const messageId = Number(swipeTarget?.messageId);
+    if (!Number.isInteger(messageId) || messageId < 0 || messageId >= chat.length) {
+        return;
+    }
+
+    const message = chat[messageId];
+    if (!message || (swipeTarget?.messageRef && message !== swipeTarget.messageRef) || !Array.isArray(message.swipes) || message.swipes.length === 0) {
+        return;
+    }
+
+    const fallbackSwipeId = clamp(Number(swipeTarget?.previousSwipeId ?? message.swipe_id ?? 0), 0, message.swipes.length - 1);
+    message.swipe_id = fallbackSwipeId;
+    syncSwipeToMes(messageId, fallbackSwipeId, message);
+    if (chatElement.children('.mes').filter(`[mesid="${messageId}"]`).length) {
+        addOneMessage(message, { type: 'swipe', forceId: messageId, scroll: false, showSwipes: false });
+    }
+    await updateSwipeCounter(messageId);
+    refreshSwipeButtons();
+}
+
+async function rejectStaleSwipeTarget(swipeTarget, reason) {
+    await resetStaleSwipeTarget(swipeTarget);
+    throw new Error(`Stale swipe generation target: ${reason}`);
+}
+
 class StreamingProcessor {
     /**
      * Creates a new streaming processor.
@@ -6735,8 +6819,9 @@ class StreamingProcessor {
      * @param {Date} timeStarted Date when generation was started
      * @param {string} continueMessage Previous message if the type is 'continue'
      * @param {PromptReasoning} promptReasoning Prompt reasoning instance
+     * @param {object?} swipeTarget Captured swipe generation target
      */
-    constructor(type, forceName2, timeStarted, continueMessage, promptReasoning) {
+    constructor(type, forceName2, timeStarted, continueMessage, promptReasoning, swipeTarget = null) {
         this.result = '';
         this.messageId = -1;
         /** @type {HTMLElement} */
@@ -6761,6 +6846,7 @@ class StreamingProcessor {
         this.timeToFirstToken = null;
         this.createdAt = new Date();
         this.continueMessage = type === 'continue' ? continueMessage : '';
+        this.swipeTarget = swipeTarget;
         this.swipes = [];
         this.swipeReasoning = [];
         /** @type {import('./scripts/logprobs.js').TokenLogprobs[]} */
@@ -6821,7 +6907,7 @@ class StreamingProcessor {
             this.sendTextarea.value = '';
             this.sendTextarea.dispatchEvent(new Event('input', { bubbles: true }));
         } else {
-            await saveReply({ type: this.type, getMessage: text, fromStreaming: true });
+            await saveReply({ type: this.type, getMessage: text, fromStreaming: true, swipeTarget: this.swipeTarget });
             messageId = chat.length - 1;
             await this.#checkDomElements(messageId, continueOnReasoning);
             this.markUIGenStarted();
@@ -6867,33 +6953,47 @@ class StreamingProcessor {
             this.sendTextarea.value = processedText;
             this.sendTextarea.dispatchEvent(new Event('input', { bubbles: true }));
         } else {
-            const mesChanged = chat[messageId]['mes'] !== processedText;
+            const swipeValidation = this.type === 'swipe' ? validateSwipeTarget(this.swipeTarget) : null;
+            if (swipeValidation && !swipeValidation.ok) {
+                await rejectStaleSwipeTarget(this.swipeTarget, swipeValidation.reason);
+            }
+            const targetMessage = swipeValidation?.message ?? chat[messageId];
+            const mesChanged = targetMessage['mes'] !== processedText;
             await this.#checkDomElements(messageId);
             this.#updateMessageBlockVisibility();
             const currentTime = new Date();
-            chat[messageId]['mes'] = processedText;
-            chat[messageId]['gen_started'] = this.timeStarted;
-            chat[messageId]['gen_finished'] = currentTime;
-            if (!chat[messageId]['extra']) {
-                chat[messageId]['extra'] = {};
+            targetMessage['mes'] = processedText;
+            targetMessage['gen_started'] = this.timeStarted;
+            targetMessage['gen_finished'] = currentTime;
+            if (!targetMessage['extra']) {
+                targetMessage['extra'] = {};
             }
-            chat[messageId]['extra']['time_to_first_token'] = this.timeToFirstToken;
+            targetMessage['extra']['time_to_first_token'] = this.timeToFirstToken;
 
             // Update reasoning
             await this.reasoningHandler.process(messageId, mesChanged, this.promptReasoning);
-            processedText = chat[messageId]['mes'];
+            processedText = targetMessage['mes'];
 
             // Token count update.
             const tokenCountText = this.reasoningHandler.reasoning + processedText;
             const currentTokenCount = isFinal && power_user.message_token_count_enabled ? await getTokenCountAsync(tokenCountText, 0) : 0;
             if (currentTokenCount) {
-                chat[messageId]['extra']['token_count'] = currentTokenCount;
+                targetMessage['extra']['token_count'] = currentTokenCount;
                 if (this.messageTokenCounterDom instanceof HTMLElement) {
                     this.messageTokenCounterDom.textContent = `${currentTokenCount}t`;
                 }
             }
 
-            if ((this.type == 'swipe' || this.type === 'continue') && Array.isArray(chat[messageId]['swipes'])) {
+            if (this.type === 'swipe') {
+                ensureSwipeTargetSlot(swipeValidation.message, this.swipeTarget);
+                swipeValidation.message.swipes[swipeValidation.swipeId] = processedText;
+                swipeValidation.message.swipe_info[swipeValidation.swipeId] = {
+                    'send_date': swipeValidation.message['send_date'],
+                    'gen_started': swipeValidation.message['gen_started'],
+                    'gen_finished': swipeValidation.message['gen_finished'],
+                    'extra': createSwipeInfoExtra(swipeValidation.message['extra']),
+                };
+            } else if (this.type === 'continue' && Array.isArray(chat[messageId]['swipes'])) {
                 chat[messageId]['swipes'][chat[messageId]['swipe_id']] = processedText;
                 chat[messageId]['swipe_info'][chat[messageId]['swipe_id']] = {
                     'send_date': chat[messageId]['send_date'],
@@ -6905,9 +7005,9 @@ class StreamingProcessor {
 
             const formattedText = messageFormatting(
                 processedText,
-                chat[messageId].name,
-                chat[messageId].is_system,
-                chat[messageId].is_user,
+                targetMessage.name,
+                targetMessage.is_system,
+                targetMessage.is_user,
                 messageId,
                 {},
                 false,
@@ -6937,6 +7037,11 @@ class StreamingProcessor {
     async onFinishStreaming(messageId, text) {
         this.markUIGenStopped();
         await this.onProgressStreaming(messageId, text, true);
+        const finishSwipeValidation = this.type === 'swipe' ? validateSwipeTarget(this.swipeTarget) : null;
+        if (finishSwipeValidation && !finishSwipeValidation.ok) {
+            await rejectStaleSwipeTarget(this.swipeTarget, finishSwipeValidation.reason);
+        }
+        const targetMessage = finishSwipeValidation?.message ?? chat[messageId];
         addCopyToCodeBlocks(chatElement.find(`.mes[mesid="${messageId}"]`));
 
         await this.reasoningHandler.finish(messageId);
@@ -6951,15 +7056,14 @@ class StreamingProcessor {
         applyWorldInfoResponseDataToMessage(messageId, worldInfoResponseData);
 
         if (Array.isArray(this.swipes) && this.swipes.length > 0) {
-            const message = chat[messageId];
             const swipeInfo = {
-                send_date: message.send_date,
-                gen_started: message.gen_started,
-                gen_finished: message.gen_finished,
-                extra: createSwipeInfoExtra(message.extra, { includeReasoning: false }),
+                send_date: targetMessage.send_date,
+                gen_started: targetMessage.gen_started,
+                gen_finished: targetMessage.gen_finished,
+                extra: createSwipeInfoExtra(targetMessage.extra, { includeReasoning: false }),
             };
-            const startingSwipeIndex = Array.isArray(message.swipes) ? message.swipes.length : 0;
-            const basePromptSnapshotKey = typeof message.extra?.promptSnapshotKey === 'string' ? message.extra.promptSnapshotKey : null;
+            const startingSwipeIndex = Array.isArray(targetMessage.swipes) ? targetMessage.swipes.length : 0;
+            const basePromptSnapshotKey = typeof targetMessage.extra?.promptSnapshotKey === 'string' ? targetMessage.extra.promptSnapshotKey : null;
             const swipeInfoArray = Array(this.swipes.length).fill().map((_, index) => {
                 const swipeInfoClone = structuredClone(swipeInfo);
                 const swipePromptSnapshotKey = basePromptSnapshotKey
@@ -6970,22 +7074,22 @@ class StreamingProcessor {
                 }
                 return swipeInfoClone;
             });
-            parseReasoningInSwipes(this.swipes, swipeInfoArray, message.extra?.reasoning_duration);
-            applyReasoningToSwipeInfoArray(this.swipeReasoning, swipeInfoArray, message.extra?.reasoning_duration);
-            chat[messageId].swipes.push(...this.swipes);
-            chat[messageId].swipe_info.push(...swipeInfoArray);
+            parseReasoningInSwipes(this.swipes, swipeInfoArray, targetMessage.extra?.reasoning_duration);
+            applyReasoningToSwipeInfoArray(this.swipeReasoning, swipeInfoArray, targetMessage.extra?.reasoning_duration);
+            targetMessage.swipes.push(...this.swipes);
+            targetMessage.swipe_info.push(...swipeInfoArray);
         }
 
         await commitLatestPromptInspectorRecord(messageId);
 
         if (Array.isArray(this.images) && this.images.length > 0) {
-            await processImageAttachment(chat[messageId], { imageUrls: this.images });
-            appendMediaToMessage(chat[messageId], $(this.messageDom));
+            await processImageAttachment(targetMessage, { imageUrls: this.images });
+            appendMediaToMessage(targetMessage, $(this.messageDom));
         }
 
         if (this.reasoningSignature) {
-            chat[messageId].extra = chat[messageId].extra || {};
-            chat[messageId].extra.reasoning_signature = this.reasoningSignature;
+            targetMessage.extra = targetMessage.extra || {};
+            targetMessage.extra.reasoning_signature = this.reasoningSignature;
         }
 
         if (this.type !== 'impersonate') {
@@ -6993,6 +7097,10 @@ class StreamingProcessor {
             await eventSource.emit(event_types.CHARACTER_MESSAGE_RENDERED, this.messageId, this.type);
         } else {
             await eventSource.emit(event_types.IMPERSONATE_READY, text);
+        }
+
+        if (this.type === 'swipe') {
+            ensureSwipeTargetSlot(finishSwipeValidation.message, this.swipeTarget);
         }
 
         syncMesToSwipe(messageId);
@@ -7536,11 +7644,20 @@ async function restoreUnsavedDeletedLastMessage(messageId, message) {
  * @param {boolean} dryRun Whether to actually generate a message or just assemble the prompt
  * @returns {Promise<any>} Returns a promise that resolves when the text is done generating.
  */
-export async function Generate(type, { automatic_trigger, force_name2, quiet_prompt, quietToLoud, skipWIAN, force_chid, signal, quietImage, quietName, jsonSchema = null, depth = 0 } = {}, dryRun = false) {
+export async function Generate(type, { automatic_trigger, force_name2, quiet_prompt, quietToLoud, skipWIAN, force_chid, signal, quietImage, quietName, jsonSchema = null, depth = 0, swipeTarget = null } = {}, dryRun = false) {
     enforceChatCompletionsOnlyMode();
     console.log('Generate entered');
     setGenerationProgress(0);
     generation_started = new Date();
+
+    if (type === 'swipe') {
+        const validation = validateSwipeTarget(swipeTarget);
+        if (!validation.ok) {
+            await resetStaleSwipeTarget(swipeTarget);
+            is_send_press = false;
+            throw new Error(`Invalid swipe generation target: ${validation.reason}`);
+        }
+    }
 
     // OpenAI prompt preview/dry-run is disabled so WI and prompt assembly stay server-side.
     if (main_api === 'openai' && dryRun) {
@@ -7551,6 +7668,14 @@ export async function Generate(type, { automatic_trigger, force_name2, quiet_pro
     if (pendingSaveResult !== CHAT_SAVE_RESULT.SAVED) {
         is_send_press = false;
         return Promise.resolve();
+    }
+    if (type === 'swipe') {
+        const validation = validateSwipeTarget(swipeTarget);
+        if (!validation.ok) {
+            await resetStaleSwipeTarget(swipeTarget);
+            is_send_press = false;
+            throw new Error(`Invalid swipe generation target after pending save: ${validation.reason}`);
+        }
     }
 
     // Prevent generation from shallow characters
@@ -8390,7 +8515,7 @@ export async function Generate(type, { automatic_trigger, force_name2, quiet_pro
         case 'openai': {
             const tagKey = getTagKeyForEntity(this_chid);
             const activeCharacter = globalThis.promptManager?.activeCharacter ?? characters[this_chid];
-            const promptSnapshotTarget = getPromptSnapshotTarget(type);
+            const promptSnapshotTarget = getPromptSnapshotTarget(type, swipeTarget);
             const promptContext = await buildServerAssemblyPayload({
                 coreChat: getCoreChatPayloadForAssembly(coreChat),
                 name2: name2,
@@ -8484,7 +8609,7 @@ export async function Generate(type, { automatic_trigger, force_name2, quiet_pro
         const isServerAssembledOpenAI = main_api === 'openai' && !generate_data.prompt && !generate_data.input;
         const canPersistPromptInspectorContent = isAdmin();
         const canPersistPromptInspectorText = canPersistPromptInspectorContent || !isServerAssembledOpenAI;
-        const promptSnapshotTarget = getPromptSnapshotTarget(type);
+        const promptSnapshotTarget = getPromptSnapshotTarget(type, swipeTarget);
         let additionalPromptStuff = {
             ...thisPromptBits[currentArrayEntry],
             rawPrompt: canPersistPromptInspectorText ? (generate_data.prompt || generate_data.input) : '',
@@ -8528,7 +8653,7 @@ export async function Generate(type, { automatic_trigger, force_name2, quiet_pro
 
         if (isStreamingEnabled() && type !== 'quiet') {
             continue_mag = promptReasoning.removePrefix(continue_mag);
-            streamingProcessor = new StreamingProcessor(type, force_name2, generation_started, continue_mag, promptReasoning);
+            streamingProcessor = new StreamingProcessor(type, force_name2, generation_started, continue_mag, promptReasoning, swipeTarget);
             if (isContinue) {
                 // Save reply does add cycle text to the prompt, so it's not needed here
                 streamingProcessor.firstMessageText = '';
@@ -8679,7 +8804,7 @@ export async function Generate(type, { automatic_trigger, force_name2, quiet_pro
         else {
             // Without streaming we'll be having a full message on continuation. Treat it as a last chunk.
             if (originalType !== 'continue') {
-                ({ type, getMessage } = await saveReply({ type, getMessage, title, swipes, swipeReasoning, reasoning, reasoningSignature, imageUrls, openAIRequestId }));
+                ({ type, getMessage } = await saveReply({ type, getMessage, title, swipes, swipeReasoning, reasoning, reasoningSignature, imageUrls, openAIRequestId, swipeTarget }));
             }
             else {
                 ({ type, getMessage } = await saveReply({ type: 'appendFinal', getMessage, title, swipes, swipeReasoning, reasoning, reasoningSignature, imageUrls, openAIRequestId }));
@@ -9621,21 +9746,32 @@ async function processImageAttachment(message, { imageUrls }) {
  * @property {string} [reasoning] Message reasoning
  * @property {string?} [reasoningSignature] Encrypted signature of the reasoning text
  * @property {string[]} [imageUrls] Links to images
+ * @property {object?} [swipeTarget] Captured target for swipe generation
  *
  * @typedef {object} SaveReplyResult
  * @property {string} type Type of generation
  * @property {string} getMessage Generated message
  */
-export async function saveReply({ type, getMessage, fromStreaming = false, title = '', swipes = [], swipeReasoning = [], reasoning = '', reasoningSignature = null, imageUrls = [], openAIRequestId = null }) {
+export async function saveReply({ type, getMessage, fromStreaming = false, title = '', swipes = [], swipeReasoning = [], reasoning = '', reasoningSignature = null, imageUrls = [], openAIRequestId = null, swipeTarget = null }) {
     // Backward compatibility
     if (arguments.length > 1 && typeof arguments[0] !== 'object') {
         console.trace('saveReply called with positional arguments. Please use an object instead.');
         [type, getMessage, fromStreaming, title, swipes, reasoning, imageUrls, reasoningSignature] = arguments;
     }
 
-    if (type != 'append' && type != 'continue' && type != 'appendFinal' && chat.length && (chat[chat.length - 1]['swipe_id'] === undefined ||
+    if (type !== 'swipe' && type != 'append' && type != 'continue' && type != 'appendFinal' && chat.length && (chat[chat.length - 1]['swipe_id'] === undefined ||
         chat[chat.length - 1]['is_user'])) {
         type = 'normal';
+    }
+
+    const swipeTargetValidation = type === 'swipe' ? validateSwipeTarget(swipeTarget) : null;
+    if (swipeTargetValidation && !swipeTargetValidation.ok) {
+        await resetStaleSwipeTarget(swipeTarget);
+        if (!fromStreaming) {
+            consumeOpenAIResponseData(openAIRequestId);
+        }
+        unblockGeneration(type);
+        throw new Error(`Invalid swipe generation target: ${swipeTargetValidation.reason}`);
     }
 
     if (chat.length && (!chat[chat.length - 1]['extra'] || typeof chat[chat.length - 1]['extra'] !== 'object')) {
@@ -9666,31 +9802,28 @@ export async function saveReply({ type, getMessage, fromStreaming = false, title
     let oldMessage = '';
     const generationFinished = new Date();
     if (type === 'swipe') {
-        oldMessage = chat[chat.length - 1]['mes'];
-        chat[chat.length - 1]['swipes'].length++;
-        if (chat[chat.length - 1]['swipe_id'] === chat[chat.length - 1]['swipes'].length - 1) {
-            chat[chat.length - 1]['title'] = title;
-            chat[chat.length - 1]['mes'] = getMessage;
-            chat[chat.length - 1]['gen_started'] = generation_started;
-            chat[chat.length - 1]['gen_finished'] = generationFinished;
-            chat[chat.length - 1]['send_date'] = getMessageTimeStamp();
-            chat[chat.length - 1]['extra']['api'] = getGeneratingApi();
-            chat[chat.length - 1]['extra']['model'] = getGeneratingModel();
-            chat[chat.length - 1]['extra']['reasoning'] = reasoning;
-            chat[chat.length - 1]['extra']['reasoning_duration'] = null;
-            chat[chat.length - 1]['extra']['reasoning_signature'] = reasoningSignature;
-            await processImageAttachment(chat[chat.length - 1], { imageUrls });
-            if (power_user.message_token_count_enabled) {
-                const tokenCountText = (reasoning || '') + chat[chat.length - 1]['mes'];
-                chat[chat.length - 1]['extra']['token_count'] = await getTokenCountAsync(tokenCountText, 0);
-            }
-            const chat_id = (chat.length - 1);
-            !fromStreaming && await eventSource.emit(event_types.MESSAGE_RECEIVED, chat_id, type);
-            addOneMessage(chat[chat_id], { type: 'swipe' });
-            !fromStreaming && await eventSource.emit(event_types.CHARACTER_MESSAGE_RENDERED, chat_id, type);
-        } else {
-            chat[chat.length - 1]['mes'] = getMessage;
+        const targetMessage = swipeTargetValidation.message;
+        ensureSwipeTargetSlot(targetMessage, swipeTarget);
+        oldMessage = targetMessage['mes'];
+        targetMessage['title'] = title;
+        targetMessage['mes'] = getMessage;
+        targetMessage['gen_started'] = generation_started;
+        targetMessage['gen_finished'] = generationFinished;
+        targetMessage['send_date'] = getMessageTimeStamp();
+        targetMessage['extra']['api'] = getGeneratingApi();
+        targetMessage['extra']['model'] = getGeneratingModel();
+        targetMessage['extra']['reasoning'] = reasoning;
+        targetMessage['extra']['reasoning_duration'] = null;
+        targetMessage['extra']['reasoning_signature'] = reasoningSignature;
+        await processImageAttachment(targetMessage, { imageUrls });
+        if (power_user.message_token_count_enabled) {
+            const tokenCountText = (reasoning || '') + targetMessage['mes'];
+            targetMessage['extra']['token_count'] = await getTokenCountAsync(tokenCountText, 0);
         }
+        const chat_id = swipeTargetValidation.messageId;
+        !fromStreaming && await eventSource.emit(event_types.MESSAGE_RECEIVED, chat_id, type);
+        addOneMessage(chat[chat_id], { type: 'swipe' });
+        !fromStreaming && await eventSource.emit(event_types.CHARACTER_MESSAGE_RENDERED, chat_id, type);
     } else if (type === 'append' || type === 'continue') {
         console.debug('Trying to append.');
         oldMessage = chat[chat.length - 1]['mes'];
@@ -15170,6 +15303,7 @@ export async function swipe(event, direction, { source, repeated, message = chat
     swipeState = SWIPE_STATE.SWIPING;
 
     let generation;
+    let swipeTarget = null;
     const originalSwipeId = Number(message?.swipe_id ?? 0);
     let newSwipeId = Number(forceSwipeId ?? originalSwipeId);
 
@@ -15417,7 +15551,7 @@ export async function swipe(event, direction, { source, repeated, message = chat
 
         if (runGenerate && !is_send_press) {
             is_send_press = true;
-            generation = Generate('swipe');
+            generation = Generate('swipe', { swipeTarget });
         }
 
         await animateSwipeTransition(mesId, { xStart: `${-swipeRange}px`, xEnd: '0px', duration: swipeDuration });
@@ -15478,6 +15612,12 @@ export async function swipe(event, direction, { source, repeated, message = chat
             if (newSwipeId >= chat[mesId].swipes.length) {
                 newSwipeId = chat[mesId].swipes.length;
                 chat[mesId].swipe_id = newSwipeId;
+                swipeTarget = {
+                    messageId: mesId,
+                    messageRef: chat[mesId],
+                    swipeId: newSwipeId,
+                    previousSwipeId: originalSwipeId,
+                };
 
                 const overswipe = getOverswipeBehavior(mesId);
 
