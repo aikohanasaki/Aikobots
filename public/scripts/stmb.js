@@ -1290,6 +1290,13 @@ async function openPlannerApprovalPopup(job = {}, { force = false } = {}) {
                 });
                 return true;
             }
+            if (previewResult?.action !== 'apply') {
+                await respondStmbPlannerApproval({
+                    jobId,
+                    decision: 'reject',
+                });
+                return true;
+            }
 
             await respondStmbPlannerApproval({
                 jobId,

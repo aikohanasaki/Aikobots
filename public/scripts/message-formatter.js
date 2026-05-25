@@ -148,7 +148,7 @@ class MessageFormatterImpl {
             ch_name,
             isSystem: Boolean(baseContext.isSystem),
             isUser: Boolean(baseContext.isUser),
-            messageId: baseContext.messageId,
+            messageId: baseContext.messageId ?? -1,
             isReasoning: Boolean(baseContext.isReasoning),
             stage,
         });

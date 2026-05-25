@@ -153,6 +153,37 @@ export async function showConsolidationPreviewPopup({
         allowVerticalScrolling: true,
         wide: true,
         large: true,
+        onClosing: popupInstance => {
+            if (popupInstance.result !== POPUP_RESULT.AFFIRMATIVE) {
+                return true;
+            }
+
+            const popupDialog = popupInstance?.dlg;
+            if (!popupDialog) {
+                return true;
+            }
+
+            for (const card of Array.from(popupDialog.querySelectorAll('.stmb-consolidation-preview-card') || [])) {
+                const index = Number(card.dataset.summaryIndex);
+                const original = candidates[index];
+                if (!original) {
+                    continue;
+                }
+
+                const title = card.querySelector('.stmb-consolidation-preview-title')?.value?.trim() || '';
+                const summary = card.querySelector('.stmb-consolidation-preview-content')?.value?.trim() || '';
+                if (!title) {
+                    toastr.error('Summary title cannot be empty', 'STMB');
+                    return false;
+                }
+                if (!summary) {
+                    toastr.error('Summary content cannot be empty', 'STMB');
+                    return false;
+                }
+            }
+
+            return true;
+        },
         customButtons: [{
             text: 'Regenerate Batch',
             result: STMB_POPUP_RESULTS.RETRY,
@@ -183,14 +214,6 @@ export async function showConsolidationPreviewPopup({
             const title = card.querySelector('.stmb-consolidation-preview-title')?.value?.trim() || '';
             const summary = card.querySelector('.stmb-consolidation-preview-content')?.value?.trim() || '';
             const keywordsText = card.querySelector('.stmb-consolidation-preview-keywords')?.value?.trim() || '';
-            if (!title) {
-                toastr.error('Summary title cannot be empty', 'STMB');
-                return { action: 'cancel' };
-            }
-            if (!summary) {
-                toastr.error('Summary content cannot be empty', 'STMB');
-                return { action: 'cancel' };
-            }
 
             const editedCandidate = {
                 ...original,
