@@ -325,6 +325,7 @@ export function createDefaultStmbSettings() {
             allowSceneOverlap: false,
             autoHideMode: 'all',
             unhiddenEntriesCount: 2,
+            showConsolidationPreviews: false,
             autoSummaryEnabled: false,
             autoSummaryInterval: 50,
             autoSummaryBuffer: 2,
@@ -606,6 +607,7 @@ export function normalizeStmbSettings(rawSettings, legacySettings = null) {
     moduleSettings.defaultMemoryCount = Number.isFinite(Number(moduleSettings.defaultMemoryCount))
         ? Math.max(0, Math.min(7, Math.trunc(Number(moduleSettings.defaultMemoryCount))))
         : defaults.moduleSettings.defaultMemoryCount;
+    moduleSettings.showConsolidationPreviews = Boolean(moduleSettings.showConsolidationPreviews);
     moduleSettings.unhiddenEntriesCount = moduleSettings.unhiddenEntriesCount === undefined || moduleSettings.unhiddenEntriesCount === null
         ? defaults.moduleSettings.unhiddenEntriesCount
         : moduleSettings.unhiddenEntriesCount;

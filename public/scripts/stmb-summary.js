@@ -742,6 +742,7 @@ export function buildBriefsFromEntries(entries) {
 
 export function buildSummaryAnalysisPrompt({
     briefs,
+    lockedSummaries = [],
     previousSummary = null,
     previousOrder = null,
     promptText = null,
@@ -761,9 +762,26 @@ export function buildSummaryAnalysisPrompt({
     const childPluralLabel = childPlural.toUpperCase();
     const lines = [];
     const numberedSourceExample = `${childTierLabel} 001`;
+    const locked = Array.isArray(lockedSummaries) ? lockedSummaries : [];
 
     lines.push(`Important: member_ids must refer to the numbered source entries below, such as "001" or "${numberedSourceExample}", not character names, groups, or participants.`);
     lines.push('');
+
+    if (locked.length > 0) {
+        lines.push(`=== ACCEPTED ${targetLabel} SUMMARIES (CANON - DO NOT REWRITE, DO NOT DUPLICATE) ===`);
+        locked.forEach((item, index) => {
+            const title = String(item?.title || `${getSummaryTierLabel(targetTier)} ${index + 1}`).trim();
+            const summary = String(item?.summary || item?.content || '').trim();
+            if (!summary) {
+                return;
+            }
+            lines.push(`--- ${title} ---`);
+            lines.push(summary);
+            lines.push('');
+        });
+        lines.push(`=== END ACCEPTED ${targetLabel} SUMMARIES ===`);
+        lines.push('');
+    }
 
     if (previousSummary) {
         lines.push(`=== PREVIOUS ${targetLabel} (CANON — DO NOT REWRITE, DO NOT INCLUDE IN YOUR NEW SUMMARY) ===`);
@@ -832,12 +850,13 @@ export function parseSummaryJsonResponse(response) {
     };
 }
 
-export function createSummaryCandidatesFromResponse(parsedResponse, sourceEntries) {
+export function createSummaryCandidatesFromResponse(parsedResponse, sourceEntries, options = {}) {
     const briefs = buildBriefsFromEntries(sourceEntries);
     const idResolver = new Map();
     const summaries = Array.isArray(parsedResponse?.summaries) ? parsedResponse.summaries : [];
+    const allowAmbiguousAssignments = Boolean(options?.allowAmbiguousAssignments);
 
-    if (summaries.length > 1) {
+    if (!allowAmbiguousAssignments && summaries.length > 1) {
         const hasMissingMemberIds = summaries.some(item => !Array.isArray(item?.member_ids) || item.member_ids.length === 0);
         if (hasMissingMemberIds) {
             throw makeSummaryParseError(
@@ -880,20 +899,24 @@ export function createSummaryCandidatesFromResponse(parsedResponse, sourceEntrie
     for (let index = 0; index < summaries.length; index++) {
         const item = summaries[index];
         const hasExplicitMemberIds = Array.isArray(item.member_ids) && item.member_ids.length > 0;
+        const resolvedMemberIds = hasExplicitMemberIds ? item.member_ids.map(resolveId) : [];
+        const memberIdsClear = hasExplicitMemberIds
+            && resolvedMemberIds.length > 0
+            && resolvedMemberIds.every(id => id !== null);
         let memberIds = hasExplicitMemberIds
-            ? item.member_ids.map(resolveId).filter(Boolean)
+            ? resolvedMemberIds.filter(Boolean)
             : [];
-        if (memberIds.length === 0 && summaries.length > 1 && hasExplicitMemberIds) {
+        if (memberIds.length === 0 && summaries.length > 1 && (allowAmbiguousAssignments || hasExplicitMemberIds)) {
             memberIds = inferredMemberIds[index] || [];
         }
-        if (memberIds.length === 0 && summaries.length > 1) {
+        if (!allowAmbiguousAssignments && memberIds.length === 0 && summaries.length > 1) {
             throw makeSummaryParseError(
                 'AMBIGUOUS_MEMBER_IDS',
                 'A multi-summary response contained missing or unresolvable member_ids.',
                 JSON.stringify(parsedResponse ?? {}),
             );
         }
-        if (memberIds.length === 0 && !hasExplicitMemberIds) {
+        if (memberIds.length === 0 && (allowAmbiguousAssignments || !hasExplicitMemberIds)) {
             memberIds = allBriefIds;
         }
         if (memberIds.length === 0) {
@@ -911,6 +934,7 @@ export function createSummaryCandidatesFromResponse(parsedResponse, sourceEntrie
             summary: item.summary,
             keywords: normalizeKeywords(item.keywords),
             memberIds,
+            memberIdsClear,
         });
     }
 
@@ -918,6 +942,49 @@ export function createSummaryCandidatesFromResponse(parsedResponse, sourceEntrie
         summaryCandidates,
         leftovers: briefs.map(brief => String(brief.id)).filter(id => !summaryCandidates.some(candidate => candidate.memberIds.includes(id))),
     };
+}
+
+export function fingerprintLorebookEntry(entry) {
+    if (!entry || typeof entry !== 'object') {
+        return '';
+    }
+
+    return JSON.stringify({
+        uid: entry.uid,
+        comment: entry.comment || '',
+        content: entry.content || '',
+        disable: Boolean(entry.disable),
+        stmemorybooks: Boolean(entry.stmemorybooks),
+        stmbSummary: Boolean(entry.stmbSummary),
+        stmbSummaryTier: entry.stmbSummaryTier ?? null,
+        type: entry.type ?? null,
+    });
+}
+
+export function verifySummarySourceFingerprints(lorebookData, expected, sourceIds = null) {
+    const expectedEntries = expected && typeof expected === 'object' ? expected : {};
+    const idsToCheck = sourceIds
+        ? Array.from(new Set(Array.from(sourceIds).map(String)))
+        : Object.keys(expectedEntries);
+    if (idsToCheck.length === 0) {
+        return;
+    }
+
+    const entries = Object.values(lorebookData?.entries || {});
+    for (const uid of idsToCheck) {
+        const fingerprint = expectedEntries[String(uid)];
+        if (!fingerprint) {
+            continue;
+        }
+        const freshEntry = entries.find(entry => String(entry?.uid) === String(uid));
+        if (!freshEntry || fingerprintLorebookEntry(freshEntry) !== fingerprint) {
+            const error = new Error('A consolidation source entry changed before commit. Review the job before overwriting.');
+            error.name = 'StmbJobNeedsReview';
+            error.status = 409;
+            error.type = 'StmbSourceChanged';
+            throw error;
+        }
+    }
 }
 
 export function getNextSummaryNumber(lorebookData, targetTier = 1) {

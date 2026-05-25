@@ -13,6 +13,7 @@ import {
     getNextSummaryNumber,
     migrateLorebookSummarySchema,
     getSummaryTierLabel,
+    verifySummarySourceFingerprints,
 } from '../../public/scripts/stmb-summary.js';
 import {
     getLorebookForManagement,
@@ -498,6 +499,12 @@ router.post('/commit-summaries', async (request, response) => {
     const migrated = Boolean(request.body?.migrated);
     const disableOriginals = Boolean(request.body?.disableOriginals);
     const summaryEntrySettings = request.body?.summaryEntrySettings || {};
+    const sourceFingerprints = request.body?.sourceFingerprints
+        && typeof request.body.sourceFingerprints === 'object'
+        && !Array.isArray(request.body.sourceFingerprints)
+        ? request.body.sourceFingerprints
+        : null;
+    const sourceIds = Array.isArray(request.body?.sourceIds) ? request.body.sourceIds.map(String) : null;
 
     if (!lorebookContext || !summaryCandidates || !Number.isFinite(targetTier)) {
         return response.status(400).send({
@@ -517,6 +524,7 @@ router.post('/commit-summaries', async (request, response) => {
         );
         ensureEntriesObject(lorebookData);
         const schemaMigrated = migrateLorebookSummarySchema(lorebookData);
+        verifySummarySourceFingerprints(lorebookData, sourceFingerprints, sourceIds);
 
         let nextSummaryNumber = getNextSummaryNumber(lorebookData, targetTier);
         const createdEntries = [];

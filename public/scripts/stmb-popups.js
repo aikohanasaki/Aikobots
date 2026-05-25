@@ -40,6 +40,187 @@ function parseKeywords(keywordText) {
         .filter(Boolean);
 }
 
+function truncatePreviewText(text, maxLength = 180) {
+    const value = String(text || '').replace(/\s+/g, ' ').trim();
+    if (value.length <= maxLength) {
+        return value;
+    }
+    return `${value.slice(0, Math.max(0, maxLength - 3))}...`;
+}
+
+function renderConsolidationPreviewSourceList(sources = []) {
+    if (!sources.length) {
+        return '<div class="opacity70p">No assigned source memories found.</div>';
+    }
+
+    return sources.map(source => `
+        <div class="marginBot10">
+            <strong>${escapeHtml(source.title)}</strong>
+            <div class="opacity70p fontsize90p">${escapeHtml(source.excerpt)}</div>
+        </div>
+    `).join('');
+}
+
+export async function showConsolidationPreviewPopup({
+    summaryCandidates,
+    selectedEntries,
+    targetLabel = 'Summary',
+    sourceLabel = 'Memory',
+    ambiguousAssignments = false,
+    lockedCount = 0,
+    pendingCount = 0,
+} = {}) {
+    const candidates = Array.isArray(summaryCandidates) ? summaryCandidates : [];
+    const sources = Array.isArray(selectedEntries) ? selectedEntries : [];
+    if (candidates.length === 0) {
+        return { action: 'cancel' };
+    }
+
+    const sourceMap = new Map(
+        sources
+            .filter(entry => entry && entry.uid !== undefined && entry.uid !== null)
+            .map(entry => [String(entry.uid), entry]),
+    );
+    const allowIndividualActions = !ambiguousAssignments;
+    const cardsHtml = candidates.map((candidate, index) => {
+        const memberIds = Array.isArray(candidate?.memberIds)
+            ? candidate.memberIds.map(id => String(id))
+            : [];
+        const sourceItems = memberIds.map(id => {
+            const entry = sourceMap.get(String(id));
+            return {
+                title: String(entry?.comment || entry?.title || `${sourceLabel} ${id}`).trim(),
+                excerpt: truncatePreviewText(entry?.content || ''),
+            };
+        });
+        return `
+            <div class="world_entry_form_control stmb-consolidation-preview-card" data-summary-index="${index}">
+                <h4>${escapeHtml(targetLabel)} ${index + 1}</h4>
+                ${allowIndividualActions ? `
+                    <div class="flex flexFlowRow gap10px marginBot10">
+                        <label class="checkbox_label">
+                            <input type="radio" name="stmb-consolidation-action-${index}" value="accept" checked>
+                            <span>Accept this summary</span>
+                        </label>
+                        <label class="checkbox_label">
+                            <input type="radio" name="stmb-consolidation-action-${index}" value="reject">
+                            <span>Reject this summary and leave its memories unsaved</span>
+                        </label>
+                    </div>
+                ` : ''}
+                <label>
+                    <h4>Summary Title:</h4>
+                    <input type="text" class="text_pole stmb-consolidation-preview-title" value="${escapeHtml(String(candidate?.title || '').trim())}" placeholder="Summary title">
+                </label>
+                <label>
+                    <h4>Summary Content:</h4>
+                    <textarea class="text_pole textarea_compact stmb-consolidation-preview-content" rows="8" placeholder="Summary content">${escapeHtml(String(candidate?.summary || '').trim())}</textarea>
+                </label>
+                <label>
+                    <h4>Keywords:</h4>
+                    <small class="opacity50p">Separate keywords with commas</small>
+                    <input type="text" class="text_pole stmb-consolidation-preview-keywords" value="${escapeHtml(keywordsToString(candidate?.keywords))}" placeholder="keyword1, keyword2, keyword3">
+                </label>
+                <details class="marginTop10">
+                    <summary>Assigned source memories</summary>
+                    <div class="padding10 marginTop5 stmb-box">${renderConsolidationPreviewSourceList(sourceItems)}</div>
+                </details>
+            </div>
+        `;
+    }).join('');
+
+    const html = `
+        <div class="stmb-consolidation-preview-popup">
+            <h3>Consolidation Preview</h3>
+            <div class="world_entry_form_control">
+                <small class="marginBot10">Review generated summaries before saving. You can edit title, summary, and keywords.</small>
+            </div>
+            ${ambiguousAssignments ? `
+                <div class="info-block warning marginBot10">
+                    Multiple consolidations returned more than one summary, but memory assignments were not clearly stated. Individual accept/reject is unavailable; approve or regenerate the whole batch.
+                </div>
+            ` : ''}
+            ${lockedCount ? `<div class="info-block marginBot10">Already accepted summaries: ${Number(lockedCount) || 0}</div>` : ''}
+            <div class="stmb-consolidation-preview-list">${cardsHtml}</div>
+            ${pendingCount ? `<div class="info-block marginTop10">Pending source memories after this round: ${Number(pendingCount) || 0}</div>` : ''}
+        </div>
+    `;
+
+    safePlayMessageSound();
+    const popup = new Popup(DOMPurify.sanitize(html), POPUP_TYPE.TEXT, '', {
+        okButton: ambiguousAssignments ? 'Save Entire Batch' : 'Finish Review and Save',
+        cancelButton: 'Cancel',
+        allowVerticalScrolling: true,
+        wide: true,
+        large: true,
+        customButtons: [{
+            text: 'Regenerate Batch',
+            result: STMB_POPUP_RESULTS.RETRY,
+            classes: ['menu_button', 'whitespacenowrap'],
+            action: null,
+        }],
+    });
+
+    activePreviewPopups.add(popup);
+    try {
+        const result = await popup.show();
+        if (result === STMB_POPUP_RESULTS.RETRY) {
+            return { action: 'retryAll' };
+        }
+        if (result !== POPUP_RESULT.AFFIRMATIVE) {
+            return { action: 'cancel' };
+        }
+
+        const acceptedCandidates = [];
+        const rejectedCandidates = [];
+        for (const card of Array.from(popup.dlg?.querySelectorAll('.stmb-consolidation-preview-card') || [])) {
+            const index = Number(card.dataset.summaryIndex);
+            const original = candidates[index];
+            if (!original) {
+                continue;
+            }
+
+            const title = card.querySelector('.stmb-consolidation-preview-title')?.value?.trim() || '';
+            const summary = card.querySelector('.stmb-consolidation-preview-content')?.value?.trim() || '';
+            const keywordsText = card.querySelector('.stmb-consolidation-preview-keywords')?.value?.trim() || '';
+            if (!title) {
+                toastr.error('Summary title cannot be empty', 'STMB');
+                return { action: 'cancel' };
+            }
+            if (!summary) {
+                toastr.error('Summary content cannot be empty', 'STMB');
+                return { action: 'cancel' };
+            }
+
+            const editedCandidate = {
+                ...original,
+                title,
+                summary,
+                keywords: parseKeywords(keywordsText),
+                memberIds: Array.isArray(original.memberIds)
+                    ? original.memberIds.map(id => String(id))
+                    : [],
+            };
+            const action = ambiguousAssignments
+                ? 'accept'
+                : card.querySelector(`input[name="stmb-consolidation-action-${index}"]:checked`)?.value || 'accept';
+            if (action === 'reject') {
+                rejectedCandidates.push(editedCandidate);
+            } else {
+                acceptedCandidates.push(editedCandidate);
+            }
+        }
+
+        return {
+            action: 'apply',
+            acceptedCandidates,
+            rejectedCandidates,
+        };
+    } finally {
+        activePreviewPopups.delete(popup);
+    }
+}
+
 function renderProfileOptions(profiles = [], selectedIndex = 0) {
     return profiles.map((profile, index) => `<option value="${index}" ${index === selectedIndex ? 'selected' : ''}>${escapeHtml(String(profile?.name || `Profile ${index + 1}`))}</option>`).join('');
 }

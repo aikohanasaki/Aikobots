@@ -255,7 +255,7 @@ function resolveSidePromptMaxConcurrent(settings) {
     if (!Number.isFinite(parsed)) {
         return 1;
     }
-    return Math.max(1, Math.min(2, Math.trunc(parsed)));
+    return Math.max(1, Math.min(5, Math.trunc(parsed)));
 }
 
 function renderLorebookNameFromTemplate(settings) {
@@ -583,6 +583,10 @@ export async function buildQueuedSidePromptJob({
     commitCheckpoint = null,
     trigger = 'manual',
     sceneContext = null,
+    displayName = '',
+    setKey = '',
+    setName = '',
+    setItemId = '',
 }) {
     return {
         type: 'sidePrompt',
@@ -594,11 +598,15 @@ export async function buildQueuedSidePromptJob({
             : null),
         lorebookName,
         sceneContext: sceneContext ? structuredClone(sceneContext) : structuredClone(buildStmbSceneContext()),
-        title: String(template?.name || 'Side Prompt'),
+        title: String(displayName || template?.name || 'Side Prompt'),
         payload: {
             template: template ? structuredClone(template) : null,
             templateKey: String(template?.key || ''),
             templateName: String(template?.name || ''),
+            displayName: String(displayName || template?.name || ''),
+            setItemId: String(setItemId || ''),
+            setKey: String(setKey || ''),
+            setName: String(setName || ''),
             lorebookName,
             compiledScene: compiledScene ? structuredClone(compiledScene) : null,
             range: range ? structuredClone(range) : null,
@@ -662,7 +670,6 @@ export async function buildQueuedAfterMemorySidePromptJobs({
         return [];
     }
 
-    const maxConcurrent = resolveSidePromptMaxConcurrent(settings);
     const checkpointTimestamp = new Date().toISOString();
     const jobs = [];
     const resolveContext = { memoryLorebookName: lorebookName };
@@ -677,54 +684,33 @@ export async function buildQueuedAfterMemorySidePromptJobs({
     }
 
     for (const [targetLorebookName, targetItems] of itemsByLorebook.entries()) {
-        for (let index = 0; index < targetItems.length; index += maxConcurrent) {
-            const waveItems = targetItems.slice(index, index + maxConcurrent);
-            jobs.push({
-                type: 'sidePromptBatch',
-                range: range ? structuredClone(range) : (compiledScene?.metadata
-                    ? {
-                        sceneStart: compiledScene.metadata.sceneStart,
-                        sceneEnd: compiledScene.metadata.sceneEnd,
-                    }
-                    : null),
+        for (const runItem of targetItems) {
+            jobs.push(await buildQueuedSidePromptJob({
+                template: runItem.template,
                 lorebookName: targetLorebookName,
-                sceneContext: sceneContext ? structuredClone(sceneContext) : structuredClone(buildStmbSceneContext()),
-                title: makeSidePromptBatchTitle(waveItems, selectedSet),
-                detail: range || compiledScene?.metadata
-                    ? `Messages ${range?.sceneStart ?? compiledScene?.metadata?.sceneStart}-${range?.sceneEnd ?? compiledScene?.metadata?.sceneEnd}`
-                    : '',
-                payload: {
-                    lorebookName: targetLorebookName,
-                    compiledScene: compiledScene ? structuredClone(compiledScene) : null,
-                    range: range ? structuredClone(range) : null,
-                    settings: settings ? structuredClone(settings) : null,
-                    profile: profile ? structuredClone(profile) : null,
-                    trigger: 'onAfterMemory',
-                    setKey: selectedSet?.key || '',
-                    setName: selectedSet?.name || '',
-                    templates: waveItems.map(runItem => ({
-                        template: runItem.template ? structuredClone(runItem.template) : null,
-                        templateKey: String(runItem.template?.key || ''),
-                        templateName: String(runItem.template?.name || ''),
-                        displayName: String(runItem.displayName || runItem.template?.name || ''),
-                        setItemId: String(runItem.setItemId || ''),
-                        setKey: String(runItem.setKey || ''),
-                        setName: String(runItem.setName || ''),
-                        runtimeMacros: structuredClone(runItem.runtimeMacros || {}),
-                        fallbackKinds: Array.isArray(runItem.fallbackKinds) ? runItem.fallbackKinds.slice() : ['plotpoints', 'scoreboard'],
-                        metadataUpdates: buildSidePromptCheckpointMetadata(runItem.template.key, {
-                            lastRunAt: checkpointTimestamp,
-                            includeLastMsgId: false,
-                            includeTrackerFallback: false,
-                        }),
-                        commitCheckpoint: {
-                            templateKey: runItem.template.key,
-                            includeLastMsgId: false,
-                            includeTrackerFallback: false,
-                        },
-                    })),
+                compiledScene,
+                range,
+                settings,
+                profile,
+                runtimeMacros: runItem.runtimeMacros || {},
+                fallbackKinds: Array.isArray(runItem.fallbackKinds) ? runItem.fallbackKinds : ['plotpoints', 'scoreboard'],
+                metadataUpdates: buildSidePromptCheckpointMetadata(runItem.template.key, {
+                    lastRunAt: checkpointTimestamp,
+                    includeLastMsgId: false,
+                    includeTrackerFallback: false,
+                }),
+                commitCheckpoint: {
+                    templateKey: runItem.template.key,
+                    includeLastMsgId: false,
+                    includeTrackerFallback: false,
                 },
-            });
+                trigger: 'onAfterMemory',
+                sceneContext,
+                displayName: runItem.displayName,
+                setKey: runItem.setKey || selectedSet?.key || '',
+                setName: runItem.setName || selectedSet?.name || '',
+                setItemId: runItem.setItemId || '',
+            }));
         }
     }
 

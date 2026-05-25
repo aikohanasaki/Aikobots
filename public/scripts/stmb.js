@@ -26,7 +26,7 @@ import {
     generateStmbText,
     saveStmbMemoryEntry,
 } from './stmb-api.js';
-import { closeActiveMemoryPreviewPopups, showAdvancedOptionsPopup, showAutoConsolidationPromptPopup, showAutoSummaryDecisionPopup, showConfirmationPopup, showFailedAIResponsePopup, showFailedSummaryResponsePopup, showLorebookPickerPopup, showMemoryPreviewPopup, showSummaryConsolidationOptionsPopup } from './stmb-popups.js';
+import { closeActiveMemoryPreviewPopups, showAdvancedOptionsPopup, showAutoConsolidationPromptPopup, showAutoSummaryDecisionPopup, showConfirmationPopup, showConsolidationPreviewPopup, showFailedAIResponsePopup, showFailedSummaryResponsePopup, showLorebookPickerPopup, showMemoryPreviewPopup, showSummaryConsolidationOptionsPopup } from './stmb-popups.js';
 import { Popup, POPUP_RESULT, POPUP_TYPE } from './popup.js';
 import { applyLocale, translate } from './i18n.js';
 import { SlashCommandParser } from './slash-commands/SlashCommandParser.js';
@@ -70,6 +70,7 @@ import {
     buildBriefsFromEntries,
     buildSummaryAnalysisPrompt,
     createSummaryCandidatesFromResponse,
+    fingerprintLorebookEntry,
     getDefaultSummaryMinChildren,
     getDefaultSummaryTitleFormat,
     getSummaryTierLabel,
@@ -236,7 +237,7 @@ function getClientPlannerJobKind(job = {}) {
     const approvalKind = String(job?.approvalRequest?.kind || '');
     const state = String(job?.state || '');
 
-    if (approvalKind === 'memoryApproval' || approvalKind === 'sidePromptApproval') {
+    if (approvalKind === 'memoryApproval' || approvalKind === 'sidePromptApproval' || approvalKind === 'consolidationApproval') {
         return approvalKind;
     }
 
@@ -247,6 +248,9 @@ function getClientPlannerJobKind(job = {}) {
         if (type === 'memory') {
             return 'memoryApproval';
         }
+        if (type === 'consolidation') {
+            return 'consolidationApproval';
+        }
     }
 
     switch (type) {
@@ -254,6 +258,8 @@ function getClientPlannerJobKind(job = {}) {
             return 'memoryApproval';
         case 'sidePromptApproval':
             return 'sidePromptApproval';
+        case 'consolidationApproval':
+            return 'consolidationApproval';
         case 'sidePrompt':
         case 'sidePromptBatch':
             return 'sidePrompt';
@@ -288,7 +294,9 @@ async function listStmbPlannerJobs() {
     const jobs = [];
 
     for (const store of Object.values(snapshot || {})) {
-        if (store?.runningJob) {
+        if (Array.isArray(store?.runningJobs) && store.runningJobs.length > 0) {
+            jobs.push(...store.runningJobs.map(mapClientJobToPlannerJob));
+        } else if (store?.runningJob) {
             jobs.push(mapClientJobToPlannerJob(store.runningJob));
         }
         if (Array.isArray(store?.queue)) {
@@ -1232,7 +1240,7 @@ function buildMemoryApprovalRequest(memoryObject, compiledScene, range, profile)
 
 function isPlannerApprovalJob(job = {}) {
     return String(job?.status || '') === 'awaiting_approval'
-        && ['memoryApproval', 'sidePromptApproval'].includes(String(job?.kind || ''))
+        && ['memoryApproval', 'sidePromptApproval', 'consolidationApproval'].includes(String(job?.kind || ''))
         && job?.approvalRequest
         && typeof job.approvalRequest === 'object';
 }
@@ -1256,6 +1264,45 @@ async function openPlannerApprovalPopup(job = {}, { force = false } = {}) {
     const approvalRequest = job.approvalRequest;
 
     try {
+        if (String(job?.kind || '') === 'consolidationApproval') {
+            const previewResult = await showConsolidationPreviewPopup({
+                summaryCandidates: approvalRequest.summaryCandidates,
+                selectedEntries: approvalRequest.selectedEntries,
+                targetLabel: approvalRequest.targetLabel || 'Summary',
+                sourceLabel: approvalRequest.sourceLabel || 'Memory',
+                ambiguousAssignments: Boolean(approvalRequest.ambiguousAssignments),
+                lockedCount: Number(approvalRequest.lockedCount || 0),
+                pendingCount: Number(approvalRequest.pendingCount || 0),
+            });
+
+            if (previewResult?.action === 'retryAll') {
+                await respondStmbPlannerApproval({
+                    jobId,
+                    decision: 'retry',
+                    editedData: { action: 'retryAll' },
+                });
+                return true;
+            }
+            if (previewResult?.action === 'cancel') {
+                await respondStmbPlannerApproval({
+                    jobId,
+                    decision: 'reject',
+                });
+                return true;
+            }
+
+            await respondStmbPlannerApproval({
+                jobId,
+                decision: 'approve',
+                editedData: {
+                    action: 'apply',
+                    acceptedCandidates: Array.isArray(previewResult?.acceptedCandidates) ? previewResult.acceptedCandidates : [],
+                    rejectedCandidates: Array.isArray(previewResult?.rejectedCandidates) ? previewResult.rejectedCandidates : [],
+                },
+            });
+            return true;
+        }
+
         const isSidePrompt = String(job?.kind || '') === 'sidePromptApproval';
         const previewResult = await showMemoryPreviewPopup(
             isSidePrompt
@@ -1453,6 +1500,8 @@ function getPlannerJobLabel(job) {
         case 'sidePromptCommit':
         case 'sidePrompt':
             return 'SidePrompt workflow';
+        case 'consolidationApproval':
+            return 'Consolidation review';
         case 'consolidationCheck':
             return 'Consolidation check';
         case 'chatAutoHide':
@@ -1988,6 +2037,7 @@ function buildSettingsPopupHtml(sceneData, currentUiConnection, regexOptions) {
             <div class="world_entry_form_control">
                 <label class="checkbox_label"><input type="checkbox" id="stmb-settings-always-use-default" ${moduleSettings.alwaysUseDefault ? 'checked' : ''}> <span>Always use default profile (no confirmation prompt)</span></label>
                 <label class="checkbox_label"><input type="checkbox" id="stmb-settings-show-memory-previews" ${moduleSettings.showMemoryPreviews ? 'checked' : ''}> <span>Show memory previews</span></label>
+                <label class="checkbox_label"><input type="checkbox" id="stmb-settings-show-consolidation-previews" ${moduleSettings.showConsolidationPreviews ? 'checked' : ''}> <span>Show consolidation previews</span></label>
                 <label class="checkbox_label"><input type="checkbox" id="stmb-settings-show-notifications" ${moduleSettings.showNotifications ? 'checked' : ''}> <span>Show notifications</span></label>
                 <label class="checkbox_label"><input type="checkbox" id="stmb-settings-show-floating-clip-button" ${moduleSettings.showFloatingClipButton !== false ? 'checked' : ''}> <span>Show floating Clip button</span></label>
                 <label class="checkbox_label" title="Check this box to skip checking for overlapping memories/scenes."><input type="checkbox" id="stmb-settings-allow-scene-overlap" ${moduleSettings.allowSceneOverlap ? 'checked' : ''}> <span title="Check this box to skip checking for overlapping memories/scenes.">Allow scene overlap</span></label>
@@ -5192,6 +5242,11 @@ async function showMainEntryPopup() {
             persistSettings();
             return;
         }
+        if (target.matches('#stmb-settings-show-consolidation-previews')) {
+            moduleSettings.showConsolidationPreviews = target.checked;
+            persistSettings();
+            return;
+        }
         if (target.matches('#stmb-settings-show-notifications')) {
             moduleSettings.showNotifications = target.checked;
             persistSettings();
@@ -6783,6 +6838,8 @@ async function runSequentialSummaryAnalysis(sourceEntries, options = {}, profile
         requiredMin = 1,
         tokenTarget = getModuleSettings().tokenWarningThreshold ?? 30000,
         targetTier = 1,
+        lockedSummaries = [],
+        allowAmbiguousAssignments = false,
         previousSummary = null,
         previousOrder = null,
         promptText: promptTextOverride = null,
@@ -6838,6 +6895,7 @@ async function runSequentialSummaryAnalysis(sourceEntries, options = {}, profile
 
         let prompt = buildSummaryAnalysisPrompt({
             briefs: batch,
+            lockedSummaries,
             previousSummary: previousSummaryText,
             previousOrder: previousOrderValue,
             promptText,
@@ -6848,6 +6906,7 @@ async function runSequentialSummaryAnalysis(sourceEntries, options = {}, profile
             batch.pop();
             prompt = buildSummaryAnalysisPrompt({
                 briefs: batch,
+                lockedSummaries,
                 previousSummary: previousSummaryText,
                 previousOrder: previousOrderValue,
                 promptText,
@@ -6868,7 +6927,7 @@ async function runSequentialSummaryAnalysis(sourceEntries, options = {}, profile
         lastRawResponse = String(response.rawResponse || '').trim();
         lastRetryRawResponse = String(response.retryRawResponse || '').trim();
 
-        const { summaryCandidates, leftovers } = createSummaryCandidatesFromResponse(response.parsed, batchEntries);
+        const { summaryCandidates, leftovers } = createSummaryCandidatesFromResponse(response.parsed, batchEntries, { allowAmbiguousAssignments });
         const consumedIds = new Set(
             batchEntries
                 .map(entry => String(entry.uid))
@@ -7079,6 +7138,204 @@ async function maybePreviewMemory(memoryObject, compiledScene, range, profile) {
     return memoryObject;
 }
 
+function getSummarySourceUid(entry) {
+    const uid = entry?.uid;
+    return uid === undefined || uid === null ? null : String(uid);
+}
+
+function collectSummaryMemberIds(candidates) {
+    const ids = new Set();
+    for (const candidate of candidates || []) {
+        for (const id of candidate?.memberIds || []) {
+            ids.add(String(id));
+        }
+    }
+    return ids;
+}
+
+function getSummaryEntriesById(selectedEntries, ids) {
+    const wanted = new Set(Array.from(ids || []).map(String));
+    return (selectedEntries || []).filter(entry => {
+        const uid = getSummarySourceUid(entry);
+        return uid !== null && wanted.has(uid);
+    });
+}
+
+function hasAmbiguousMultiSummaryAssignments(summaryCandidates, selectedEntries) {
+    const candidates = Array.isArray(summaryCandidates) ? summaryCandidates : [];
+    if (candidates.length <= 1) {
+        return false;
+    }
+
+    const sourceIds = new Set(
+        (selectedEntries || [])
+            .map(getSummarySourceUid)
+            .filter(uid => uid !== null),
+    );
+    const seen = new Set();
+    for (const candidate of candidates) {
+        const memberIds = Array.isArray(candidate?.memberIds)
+            ? candidate.memberIds.map(String)
+            : [];
+        if (!candidate?.memberIdsClear || memberIds.length === 0) {
+            return true;
+        }
+        for (const id of memberIds) {
+            if (!sourceIds.has(id) || seen.has(id)) {
+                return true;
+            }
+            seen.add(id);
+        }
+    }
+    return false;
+}
+
+function buildSummarySourceFingerprints(entries) {
+    return Object.fromEntries(
+        (entries || [])
+            .filter(entry => getSummarySourceUid(entry) !== null)
+            .map(entry => [String(entry.uid), fingerprintLorebookEntry(entry)]),
+    );
+}
+
+function buildConsolidationApprovalRequest({
+    summaryCandidates,
+    selectedEntries,
+    targetLabel,
+    sourceLabel,
+    ambiguousAssignments,
+    lockedCount,
+    pendingCount,
+}) {
+    return {
+        kind: 'consolidationApproval',
+        summaryCandidates: structuredClone(summaryCandidates || []),
+        selectedEntries: structuredClone(selectedEntries || []),
+        targetLabel,
+        sourceLabel,
+        ambiguousAssignments: Boolean(ambiguousAssignments),
+        lockedCount: Number(lockedCount || 0),
+        pendingCount: Number(pendingCount || 0),
+    };
+}
+
+async function runConsolidationPreviewWorkflow({
+    context,
+    initialAnalysis,
+    selectedEntries,
+    sourceLabel,
+    targetLabel,
+    generateAnalysis,
+    commitCandidates,
+}) {
+    const originalEntries = Array.isArray(selectedEntries) ? selectedEntries : [];
+    const pendingIds = new Set(
+        originalEntries
+            .map(getSummarySourceUid)
+            .filter(uid => uid !== null),
+    );
+    const committedCandidates = [];
+    const committedEntries = [];
+    const rejectedIds = new Set();
+    let analysis = initialAnalysis || {};
+    const getWorkflowLeftovers = () => Array.from(new Set([
+        ...rejectedIds,
+        ...pendingIds,
+    ]));
+
+    while (pendingIds.size > 0) {
+        throwIfStmbAborted(context?.signal);
+        const summaryCandidates = Array.isArray(analysis?.summaryCandidates)
+            ? analysis.summaryCandidates
+            : [];
+        if (summaryCandidates.length === 0) {
+            return {
+                canceled: false,
+                created: committedEntries.length,
+                leftovers: getWorkflowLeftovers(),
+                entries: committedEntries,
+                summaryCandidates: committedCandidates,
+            };
+        }
+
+        const pendingEntries = getSummaryEntriesById(originalEntries, pendingIds);
+        const ambiguousAssignments = hasAmbiguousMultiSummaryAssignments(summaryCandidates, pendingEntries);
+        const acceptedByDefaultIds = collectSummaryMemberIds(summaryCandidates);
+        const pendingAfterAcceptAll = new Set(pendingIds);
+        for (const id of acceptedByDefaultIds) {
+            pendingAfterAcceptAll.delete(String(id));
+        }
+
+        const approvalResult = await awaitStmbJobApproval(
+            context,
+            buildConsolidationApprovalRequest({
+                summaryCandidates,
+                selectedEntries: pendingEntries,
+                targetLabel,
+                sourceLabel,
+                ambiguousAssignments,
+                lockedCount: committedCandidates.length,
+                pendingCount: pendingAfterAcceptAll.size,
+            }),
+            { detail: targetLabel },
+        );
+        throwIfStmbAborted(context?.signal);
+
+        if (!approvalResult || approvalResult.decision === 'cancel' || approvalResult.decision === 'reject') {
+            return {
+                canceled: true,
+                created: committedEntries.length,
+                leftovers: getWorkflowLeftovers(),
+                entries: committedEntries,
+                summaryCandidates: committedCandidates,
+            };
+        }
+
+        if (approvalResult.decision === 'retry' || approvalResult.editedData?.action === 'retryAll') {
+            analysis = await generateAnalysis(pendingEntries, committedCandidates);
+            continue;
+        }
+
+        const acceptedCandidates = Array.isArray(approvalResult.editedData?.acceptedCandidates)
+            ? approvalResult.editedData.acceptedCandidates
+            : summaryCandidates;
+        const rejectedCandidates = Array.isArray(approvalResult.editedData?.rejectedCandidates)
+            ? approvalResult.editedData.rejectedCandidates
+            : [];
+        if (acceptedCandidates.length > 0) {
+            const createdEntries = await commitCandidates(acceptedCandidates);
+            committedEntries.push(...(Array.isArray(createdEntries) ? createdEntries : []));
+            committedCandidates.push(...acceptedCandidates);
+            for (const id of collectSummaryMemberIds(acceptedCandidates)) {
+                pendingIds.delete(String(id));
+                rejectedIds.delete(String(id));
+            }
+        }
+        for (const id of collectSummaryMemberIds(rejectedCandidates)) {
+            pendingIds.delete(String(id));
+            rejectedIds.add(String(id));
+        }
+
+        if (pendingIds.size === 0) {
+            break;
+        }
+
+        const nextPendingEntries = getSummaryEntriesById(originalEntries, pendingIds);
+        if (nextPendingEntries.length === 0) {
+            break;
+        }
+        analysis = await generateAnalysis(nextPendingEntries, committedCandidates);
+    }
+
+    return {
+        canceled: false,
+        created: committedEntries.length,
+        leftovers: getWorkflowLeftovers(),
+        entries: committedEntries,
+        summaryCandidates: committedCandidates,
+    };
+}
+
 async function saveMemoryObjectToLorebook(memoryObject, { lorebookName, range, compiledScene, profile, keepSceneMarkers = false, sceneContext = null, signal = null, showSuccessToast = true }) {
     throwIfStmbAborted(signal);
     const result = await saveStmbMemoryEntry({
@@ -7128,8 +7385,8 @@ function normalizeAutoConsolidationTargetTiers(value) {
     ));
 }
 
-function clearAutoConsolidationPromptState(targetTier) {
-    const state = getStmbState();
+function clearAutoConsolidationPromptState(targetTier, sceneContext = null) {
+    const state = getStmbState(sceneContext);
     const prefix = `${Math.min(6, Math.max(1, Math.trunc(Number(targetTier) || 1)))}:`;
     if (typeof state.autoConsolidationLastPromptKey === 'string' && state.autoConsolidationLastPromptKey.startsWith(prefix)) {
         delete state.autoConsolidationLastPromptKey;
@@ -7395,6 +7652,8 @@ async function commitSummaryCandidates(summaryCandidates, {
     migrated = false,
     disableOriginals = false,
     summaryEntrySettings = null,
+    sourceFingerprints = null,
+    sourceIds = null,
     showSuccessToast = true,
     signal = null,
 }) {
@@ -7408,6 +7667,8 @@ async function commitSummaryCandidates(summaryCandidates, {
         migrated,
         disableOriginals,
         summaryEntrySettings: summaryEntrySettings || getModuleSettings().summaryEntrySettings || {},
+        sourceFingerprints,
+        sourceIds: sourceIds ? Array.from(sourceIds).map(String) : null,
     }, { signal });
     throwIfStmbAborted(signal);
     worldInfoCache.delete(lorebookName);
@@ -7426,6 +7687,26 @@ async function commitSummaryCandidates(summaryCandidates, {
     lastFailedSummaryContext = null;
 
     return createdEntries;
+}
+
+async function runPostConsolidationCommitFlow({
+    created,
+    normalizedTargetTier,
+    lorebookName,
+    sceneContext = null,
+} = {}) {
+    if (Number(created || 0) <= 0) {
+        return;
+    }
+
+    const targetTier = Math.min(6, Math.max(1, Math.trunc(Number(normalizedTargetTier) || 1)));
+    clearAutoConsolidationPromptState(targetTier, sceneContext);
+    if (targetTier < 6) {
+        await maybePromptAutoConsolidation(targetTier + 1, {
+            sceneContext,
+            lorebookName,
+        });
+    }
 }
 
 function buildMemoryRequestSettings(summaryCount = 0) {
@@ -7719,6 +8000,7 @@ export async function createSummaryForTier(targetTier, options = {}) {
         normalizedTargetTier,
         selectedEntryIds,
     );
+    const sourceFingerprints = buildSummarySourceFingerprints(sourceEntries);
     const configuredMinimum = getModuleSettings().summaryTierMinimums?.[normalizedTargetTier];
     const requiredMinimum = normalizeSummaryMinChildren(
         options.requiredMin,
@@ -7765,6 +8047,7 @@ export async function createSummaryForTier(targetTier, options = {}) {
             tokenTarget: Math.max(1000, Math.trunc(Number(options.tokenTarget) || (getModuleSettings().tokenWarningThreshold ?? 30000))),
             disableOriginals: Boolean(options.disableOriginals),
             summaryEntrySettings: chosenSummaryEntrySettings,
+            sourceFingerprints,
             titleFormat: typeof options.titleFormat === 'string' && options.titleFormat.trim()
                 ? options.titleFormat
                 : getDefaultSummaryTitleFormat(normalizedTargetTier),
@@ -7810,12 +8093,15 @@ function buildSummaryRepairHandler(contextBase = {}) {
                     context.summaryEntrySettings || getModuleSettings().summaryEntrySettings || {},
                     getModuleSettings().summaryEntrySettings || {},
                 ),
+                sourceFingerprints: buildSummarySourceFingerprints(freshSourceEntries),
                 signal: repairTask.signal,
             });
-            clearAutoConsolidationPromptState(context.normalizedTargetTier);
-            if (context.normalizedTargetTier < 6) {
-                await maybePromptAutoConsolidation(context.normalizedTargetTier + 1);
-            }
+            await runPostConsolidationCommitFlow({
+                created: summaryCandidates.length,
+                normalizedTargetTier: context.normalizedTargetTier,
+                lorebookName: context.lorebookName,
+                sceneContext: context.sceneContext || null,
+            });
             return true;
         } finally {
             repairTask.cleanup();
@@ -7823,7 +8109,7 @@ function buildSummaryRepairHandler(contextBase = {}) {
     };
 }
 
-async function runSummaryConsolidationNow(payload = {}, signal = null, onRateLimitWait = null) {
+async function runSummaryConsolidationNow(payload = {}, signal = null, onRateLimitWait = null, context = null) {
     const normalizedTargetTier = Math.min(6, Math.max(1, Math.trunc(Number(payload.normalizedTargetTier || payload.targetTier) || 1)));
     const lorebookName = String(payload.lorebookName || '').trim() || await ensureLorebookName();
     const lorebookData = await loadWorldInfo(lorebookName) || { entries: {} };
@@ -7861,9 +8147,16 @@ async function runSummaryConsolidationNow(payload = {}, signal = null, onRateLim
     const titleFormat = typeof payload.titleFormat === 'string' && payload.titleFormat.trim()
         ? payload.titleFormat
         : getDefaultSummaryTitleFormat(normalizedTargetTier);
+    const sourceFingerprints = payload.sourceFingerprints
+        && typeof payload.sourceFingerprints === 'object'
+        && !Array.isArray(payload.sourceFingerprints)
+        ? payload.sourceFingerprints
+        : buildSummarySourceFingerprints(sourceEntries);
+    const sourceLabel = getSummaryTierLabel(getSourceTierForTarget(normalizedTargetTier));
+    const targetLabel = getSummaryTierLabel(normalizedTargetTier);
 
     try {
-        const analysisResult = await runSequentialSummaryAnalysis(sourceEntries, {
+        const buildAnalysisOptions = (lockedSummaries = []) => ({
             presetKey: typeof payload.presetKey === 'string' && payload.presetKey.trim() ? payload.presetKey.trim() : getDefaultArcPromptKey(),
             promptText: typeof payload.promptText === 'string' && payload.promptText.trim() ? payload.promptText : null,
             maxItemsPerPass: Math.max(1, Math.trunc(Number(payload.maxItemsPerPass) || 15)),
@@ -7871,9 +8164,17 @@ async function runSummaryConsolidationNow(payload = {}, signal = null, onRateLim
             requiredMin: requiredMinimum,
             tokenTarget: Math.max(1000, Math.trunc(Number(payload.tokenTarget) || (getModuleSettings().tokenWarningThreshold ?? 30000))),
             targetTier: normalizedTargetTier,
+            lockedSummaries,
+            allowAmbiguousAssignments: Boolean(getModuleSettings().showConsolidationPreviews && context),
             previousSummary: previousSummary?.content || null,
             previousOrder: previousSummary ? (parseSequenceFromTitle(previousSummary.comment || '') ?? null) : null,
-        }, profile, signal, onRateLimitWait);
+        });
+        const runAnalysis = async (entries, lockedSummaries = []) => {
+            context?.setState?.('generating', { detail: targetLabel });
+            return await runSequentialSummaryAnalysis(entries, buildAnalysisOptions(lockedSummaries), profile, signal, onRateLimitWait);
+        };
+
+        const analysisResult = await runAnalysis(sourceEntries, []);
         const { summaryCandidates, leftovers, rawResponse, retryRawResponse } = analysisResult;
         if (summaryCandidates.length === 0) {
             const emptyError = new Error(`Model did not return a usable ${getSummaryTierLabel(normalizedTargetTier).toLowerCase()} summary`);
@@ -7884,6 +8185,46 @@ async function runSummaryConsolidationNow(payload = {}, signal = null, onRateLim
             throw emptyError;
         }
 
+        if (getModuleSettings().showConsolidationPreviews && context) {
+            const previewResult = await runConsolidationPreviewWorkflow({
+                context,
+                initialAnalysis: analysisResult,
+                selectedEntries: sourceEntries,
+                sourceLabel,
+                targetLabel,
+                generateAnalysis: runAnalysis,
+                commitCandidates: async candidates => {
+                    context.setState('saving', { detail: lorebookName });
+                    return await commitSummaryCandidates(candidates, {
+                        normalizedTargetTier,
+                        lorebookName,
+                        titleFormat,
+                        migrated,
+                        disableOriginals: Boolean(payload.disableOriginals),
+                        summaryEntrySettings: chosenSummaryEntrySettings,
+                        sourceFingerprints,
+                        sourceIds: collectSummaryMemberIds(candidates),
+                        showSuccessToast: false,
+                        signal,
+                    });
+                },
+            });
+            await runPostConsolidationCommitFlow({
+                created: previewResult.created,
+                normalizedTargetTier,
+                lorebookName,
+                sceneContext: payload.sceneContext || null,
+            });
+            return {
+                lorebookName,
+                targetTier: normalizedTargetTier,
+                summaryCandidates: previewResult.summaryCandidates,
+                leftovers: previewResult.leftovers,
+                entries: previewResult.entries,
+                canceled: previewResult.canceled,
+            };
+        }
+
         const createdEntries = await commitSummaryCandidates(summaryCandidates, {
             normalizedTargetTier,
             lorebookName,
@@ -7891,14 +8232,17 @@ async function runSummaryConsolidationNow(payload = {}, signal = null, onRateLim
             migrated,
             disableOriginals: Boolean(payload.disableOriginals),
             summaryEntrySettings: chosenSummaryEntrySettings,
+            sourceFingerprints,
             showSuccessToast: false,
             signal,
         });
 
-        clearAutoConsolidationPromptState(normalizedTargetTier);
-        if (normalizedTargetTier < 6) {
-            await maybePromptAutoConsolidation(normalizedTargetTier + 1);
-        }
+        await runPostConsolidationCommitFlow({
+            created: createdEntries.length,
+            normalizedTargetTier,
+            lorebookName,
+            sceneContext: payload.sceneContext || null,
+        });
 
         return {
             lorebookName,
@@ -7920,6 +8264,7 @@ async function runSummaryConsolidationNow(payload = {}, signal = null, onRateLim
                 maxItemsPerPass: Math.max(1, Math.trunc(Number(payload.maxItemsPerPass) || 15)),
                 maxPasses: Math.max(1, Math.trunc(Number(payload.maxPasses) || 10)),
                 tokenTarget: Math.max(1000, Math.trunc(Number(payload.tokenTarget) || (getModuleSettings().tokenWarningThreshold ?? 30000))),
+                sceneContext: payload.sceneContext || null,
             };
             showFailedSummaryResponsePopup(error, {
                 onApply: buildSummaryRepairHandler(lastFailedSummaryContext),
@@ -7931,15 +8276,23 @@ async function runSummaryConsolidationNow(payload = {}, signal = null, onRateLim
 
 async function executeConsolidationJob(job, context) {
     const payload = job?.payload || {};
-    const normalizedTargetTier = Math.min(6, Math.max(1, Math.trunc(Number(payload.normalizedTargetTier || payload.targetTier) || 1)));
+    const runPayload = {
+        ...payload,
+        sceneContext: payload.sceneContext || job?.sceneContext || null,
+    };
+    const normalizedTargetTier = Math.min(6, Math.max(1, Math.trunc(Number(runPayload.normalizedTargetTier || runPayload.targetTier) || 1)));
     context.setState('assembling_prompt', {
         detail: `${getSummaryTierLabel(getSourceTierForTarget(normalizedTargetTier))} -> ${getSummaryTierLabel(normalizedTargetTier)}`,
     });
     context.setState('generating', { detail: getSummaryTierLabel(normalizedTargetTier) });
-    const result = await runSummaryConsolidationNow(payload, context.signal, wait => context.setState('generating', {
+    const result = await runSummaryConsolidationNow(runPayload, context.signal, wait => context.setState('generating', {
         detail: `Rate limited, retrying in ${Math.max(1, Math.ceil(Math.max(0, Number(wait?.delayMs) || 0) / 1000))}s`,
-    }));
-    context.setState('saving', { detail: payload.lorebookName || job?.lorebookName || '' });
+    }), context);
+    if (result?.canceled && !(Array.isArray(result?.entries) && result.entries.length > 0)) {
+        context.patch({ state: 'canceled', detail: 'Canceled in approval' });
+    } else {
+        context.setState('saving', { detail: runPayload.lorebookName || job?.lorebookName || '' });
+    }
     context.setResult(result);
 }
 

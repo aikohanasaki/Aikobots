@@ -21,6 +21,7 @@ const ACTIVE_JOB_STATES = new Set([
 const TERMINAL_JOB_STATES = new Set(['completed', 'failed', 'canceled']);
 const RECENT_HISTORY_LIMIT = 20;
 const RENDER_INTERVAL_MS = 1000;
+const CONCURRENT_JOB_TYPES = new Set(['sidePrompt']);
 const pendingApprovals = new Map();
 
 let topBarButton = null;
@@ -51,13 +52,65 @@ function ensureChatStore(chatKey) {
     if (!jobStores.has(normalizedKey)) {
         jobStores.set(normalizedKey, {
             queue: [],
-            runningJob: null,
+            runningJobs: [],
             recentHistory: [],
             lastUpdated: Date.now(),
+            runnerActive: false,
         });
     }
 
     return jobStores.get(normalizedKey);
+}
+
+function getRunningJobs(store) {
+    if (!store) {
+        return [];
+    }
+
+    if (Array.isArray(store.runningJobs)) {
+        return store.runningJobs;
+    }
+
+    store.runningJobs = store.runningJob ? [store.runningJob] : [];
+    delete store.runningJob;
+    return store.runningJobs;
+}
+
+function getLegacyRunningJob(store) {
+    return getRunningJobs(store)[0] || null;
+}
+
+function clampInt(value, min, max, fallback = min) {
+    const number = Number(value);
+    if (!Number.isFinite(number)) {
+        return fallback;
+    }
+    return Math.max(min, Math.min(max, Math.trunc(number)));
+}
+
+function getSidePromptJobLimit(job = {}) {
+    return clampInt(job?.payload?.settings?.moduleSettings?.sidePromptsMaxConcurrent ?? 1, 1, 5, 1);
+}
+
+function canStartQueuedJob(store, job) {
+    if (!job) {
+        return false;
+    }
+
+    const runningJobs = getRunningJobs(store);
+    const jobType = String(job.type || '');
+    const isConcurrentType = CONCURRENT_JOB_TYPES.has(jobType);
+
+    if (!isConcurrentType) {
+        return runningJobs.length === 0;
+    }
+
+    if (runningJobs.some(running => !CONCURRENT_JOB_TYPES.has(String(running.type || '')))) {
+        return false;
+    }
+
+    const runningSameType = runningJobs.filter(running => String(running.type || '') === jobType).length;
+    return runningSameType < getSidePromptJobLimit(job);
 }
 
 function cloneJobForView(job = {}) {
@@ -228,7 +281,7 @@ function buildTooltip(summary = {}) {
 
 function summarizeStore(store) {
     const jobs = [
-        ...(store?.runningJob ? [store.runningJob] : []),
+        ...getRunningJobs(store),
         ...(Array.isArray(store?.queue) ? store.queue : []),
     ];
     return jobs.reduce((summary, job) => {
@@ -334,7 +387,7 @@ function findFirstAwaitingApprovalJob() {
     const records = getJobStoreRecordsForView(getCurrentChatKey());
 
     for (const record of records) {
-        const runningJob = record.store?.runningJob ? [record.store.runningJob] : [];
+        const runningJob = getRunningJobs(record.store);
         const queuedJobs = Array.isArray(record.store?.queue) ? record.store.queue : [];
         const job = [...runningJob, ...queuedJobs].find(isJobAwaitingApproval);
         if (job) {
@@ -349,7 +402,7 @@ function getAwaitingApprovalCount() {
     let count = 0;
 
     for (const store of jobStores.values()) {
-        const runningJob = store?.runningJob ? [store.runningJob] : [];
+        const runningJob = getRunningJobs(store);
         const queuedJobs = Array.isArray(store?.queue) ? store.queue : [];
         count += [...runningJob, ...queuedJobs].filter(isJobAwaitingApproval).length;
     }
@@ -375,7 +428,7 @@ function getStoreDisplayLabel(record = {}) {
     }
 
     const jobs = [
-        ...(record.store?.runningJob ? [record.store.runningJob] : []),
+        ...getRunningJobs(record.store),
         ...(Array.isArray(record.store?.queue) ? record.store.queue : []),
         ...(Array.isArray(record.store?.recentHistory) ? record.store.recentHistory : []),
     ];
@@ -387,7 +440,7 @@ function getStoreDisplayLabel(record = {}) {
 
 function shouldKeepRenderTimer() {
     for (const store of jobStores.values()) {
-        if (store.runningJob || (Array.isArray(store.queue) && store.queue.length > 0)) {
+        if (getRunningJobs(store).length > 0 || (Array.isArray(store.queue) && store.queue.length > 0)) {
             return true;
         }
     }
@@ -423,8 +476,9 @@ function findJobInStoreById(store, jobId) {
         return null;
     }
 
-    if (String(store?.runningJob?.id || '') === targetId) {
-        return store.runningJob;
+    const runningJob = getRunningJobs(store).find(job => String(job?.id || '') === targetId);
+    if (runningJob) {
+        return runningJob;
     }
 
     const queuedJob = Array.isArray(store?.queue)
@@ -468,49 +522,27 @@ function cancelQueuedJob(store, job, detail) {
     touchStore(store);
 }
 
-async function runNextJob(chatKey) {
-    const store = ensureChatStore(chatKey);
-    if (store.runningJob || store.queue.length === 0) {
-        syncRenderTimer();
-        return;
-    }
-
-    const nextJob = store.queue.shift();
-    const dependencyDetail = getBlockedDependencyDetail(store, nextJob);
-    if (dependencyDetail && dependencyDetail !== 'Waiting for prerequisite job.') {
-        cancelQueuedJob(store, nextJob, dependencyDetail);
-        queueMicrotask(() => {
-            runNextJob(chatKey).catch(error => {
-                console.warn('STMB client job runner failed', error);
-            });
-        });
-        return;
-    }
-    if (dependencyDetail === 'Waiting for prerequisite job.') {
-        store.queue.push(nextJob);
-        touchStore(store);
-        syncRenderTimer();
-        setTimeout(() => {
-            runNextJob(chatKey).catch(error => {
-                console.warn('STMB client job runner failed', error);
-            });
-        }, 100);
-        return;
-    }
-
-    nextJob.startedAt = Date.now();
-    nextJob.state = ACTIVE_JOB_STATES.has(nextJob.state) ? nextJob.state : 'queued';
-    nextJob.abortController = new AbortController();
-    markJobUpdated(nextJob, nextJob.startedAt);
-    store.runningJob = nextJob;
-    touchStore(store);
-
+function startQueuedJob(chatKey, store, nextJob) {
     try {
         const executor = jobExecutors.get(String(nextJob.type || ''));
         if (typeof executor !== 'function') {
             throw new Error(`No STMB job executor registered for "${nextJob.type}".`);
         }
 
+        executeRunningJob(chatKey, store, nextJob, executor).catch(error => {
+            console.warn('STMB queued job failed outside executor wrapper', error);
+        });
+    } catch (error) {
+        nextJob.state = 'failed';
+        nextJob.error = {
+            message: String(error?.message || 'Unknown STMB job failure'),
+        };
+        finishRunningJob(chatKey, store, nextJob);
+    }
+}
+
+async function executeRunningJob(chatKey, store, nextJob, executor) {
+    try {
         await executor(nextJob, createJobContext(store, nextJob));
         if (!TERMINAL_JOB_STATES.has(nextJob.state)) {
             nextJob.state = 'completed';
@@ -529,38 +561,84 @@ async function runNextJob(chatKey) {
             }
         }
     } finally {
-        const pendingApproval = pendingApprovals.get(String(nextJob.id || ''));
-        if (pendingApproval) {
-            pendingApprovals.delete(String(nextJob.id || ''));
-            pendingApproval.cleanup?.();
-            try {
-                pendingApproval.resolve({
-                    decision: 'cancel',
-                    aborted: true,
-                });
-            } catch (error) {
-                console.warn('STMB approval cleanup failed', error);
-            }
-        }
+        finishRunningJob(chatKey, store, nextJob);
+    }
+}
 
-        nextJob.finishedAt = Date.now();
-        delete nextJob.approvalRequest;
-        markJobUpdated(nextJob, nextJob.finishedAt);
-        delete nextJob.abortController;
-        if (store.runningJob && String(store.runningJob.id) === String(nextJob.id)) {
-            store.runningJob = null;
-        } else {
-            removeFromQueueById(store, nextJob.id);
-        }
-        store.recentHistory.unshift(cloneJobForView(nextJob));
-        sortRecentHistory(store.recentHistory);
-        touchStore(store);
-        syncRenderTimer();
-        queueMicrotask(() => {
-            runNextJob(chatKey).catch(error => {
-                console.warn('STMB client job runner failed', error);
+function finishRunningJob(chatKey, store, nextJob) {
+    const pendingApproval = pendingApprovals.get(String(nextJob.id || ''));
+    if (pendingApproval) {
+        pendingApprovals.delete(String(nextJob.id || ''));
+        pendingApproval.cleanup?.();
+        try {
+            pendingApproval.resolve({
+                decision: 'cancel',
+                aborted: true,
             });
+        } catch (error) {
+            console.warn('STMB approval cleanup failed', error);
+        }
+    }
+
+    nextJob.finishedAt = Date.now();
+    delete nextJob.approvalRequest;
+    markJobUpdated(nextJob, nextJob.finishedAt);
+    delete nextJob.abortController;
+    store.runningJobs = getRunningJobs(store).filter(job => String(job?.id || '') !== String(nextJob.id));
+    removeFromQueueById(store, nextJob.id);
+    store.recentHistory.unshift(cloneJobForView(nextJob));
+    sortRecentHistory(store.recentHistory);
+    touchStore(store);
+    syncRenderTimer();
+    queueMicrotask(() => {
+        runNextJob(chatKey).catch(error => {
+            console.warn('STMB client job runner failed', error);
         });
+    });
+}
+
+async function runNextJob(chatKey) {
+    const store = ensureChatStore(chatKey);
+    if (store.runnerActive || store.queue.length === 0) {
+        syncRenderTimer();
+        return;
+    }
+
+    store.runnerActive = true;
+    try {
+        while (store.queue.length > 0) {
+            const nextJob = store.queue[0];
+            const dependencyDetail = getBlockedDependencyDetail(store, nextJob);
+            if (dependencyDetail && dependencyDetail !== 'Waiting for prerequisite job.') {
+                store.queue.shift();
+                cancelQueuedJob(store, nextJob, dependencyDetail);
+                continue;
+            }
+            if (dependencyDetail === 'Waiting for prerequisite job.') {
+                syncRenderTimer();
+                setTimeout(() => {
+                    runNextJob(chatKey).catch(error => {
+                        console.warn('STMB client job runner failed', error);
+                    });
+                }, 100);
+                break;
+            }
+            if (!canStartQueuedJob(store, nextJob)) {
+                break;
+            }
+
+            store.queue.shift();
+            nextJob.startedAt = Date.now();
+            nextJob.state = ACTIVE_JOB_STATES.has(nextJob.state) ? nextJob.state : 'queued';
+            nextJob.abortController = new AbortController();
+            markJobUpdated(nextJob, nextJob.startedAt);
+            getRunningJobs(store).push(nextJob);
+            touchStore(store);
+            startQueuedJob(chatKey, store, nextJob);
+        }
+    } finally {
+        store.runnerActive = false;
+        syncRenderTimer();
     }
 }
 
@@ -673,7 +751,7 @@ function areJobsEquivalentForDedupe(left = {}, right = {}) {
         return Boolean(leftIdentity.templates) && leftIdentity.templates === rightIdentity.templates;
     }
 
-    if (leftIdentity.type === 'sidePrompt' && leftIdentity.trigger === 'onInterval') {
+    if (leftIdentity.type === 'sidePrompt' && (leftIdentity.trigger === 'onInterval' || leftIdentity.trigger === 'onAfterMemory')) {
         return Boolean(leftIdentity.templateKey) && leftIdentity.templateKey === rightIdentity.templateKey;
     }
 
@@ -682,7 +760,7 @@ function areJobsEquivalentForDedupe(left = {}, right = {}) {
 
 function findDuplicateActiveOrQueuedJob(store, job) {
     const activeJobs = [
-        ...(store?.runningJob ? [store.runningJob] : []),
+        ...getRunningJobs(store),
         ...(Array.isArray(store?.queue) ? store.queue : []),
     ];
 
@@ -696,8 +774,9 @@ function findMutableJobRecordById(jobId) {
     }
 
     for (const [chatKey, store] of jobStores.entries()) {
-        if (String(store?.runningJob?.id || '') === targetId) {
-            return { chatKey, store, job: store.runningJob, source: 'runningJob' };
+        const runningJob = getRunningJobs(store).find(job => String(job?.id || '') === targetId);
+        if (runningJob) {
+            return { chatKey, store, job: runningJob, source: 'runningJob' };
         }
 
         const queuedJob = Array.isArray(store?.queue)
@@ -834,7 +913,7 @@ function renderJobRows(records = []) {
     const sections = [];
 
     for (const record of records) {
-        const runningJob = record.store?.runningJob ? [record.store.runningJob] : [];
+        const runningJob = getRunningJobs(record.store);
         const queuedJobs = Array.isArray(record.store?.queue) ? record.store.queue : [];
         const recentJobs = Array.isArray(record.store?.recentHistory) ? record.store.recentHistory : [];
         const orderedJobs = [
@@ -890,7 +969,7 @@ function renderJobRows(records = []) {
 
     const currentChatKey = getCurrentChatKey();
     const currentRecord = records.find(record => record.chatKey === currentChatKey);
-    const hasCurrentRunningJob = Boolean(currentRecord?.store?.runningJob);
+    const hasCurrentRunningJob = getRunningJobs(currentRecord?.store).length > 0;
     const hasAnyActiveJobs = records.some(record => record.activeCount > 0);
     const completedCount = records.reduce((count, record) => count + getCompletedCount(record.store), 0);
     const notificationCount = records.reduce((count, record) => count + getDismissibleNotificationCount(record.store), 0);
@@ -1086,7 +1165,8 @@ export function enqueueStmbJob(input = {}) {
 export function getStmbJobStoreSnapshot(chatKey = null) {
     const cloneStore = (store) => ({
         queue: Array.isArray(store?.queue) ? store.queue.map(job => cloneJobForView(job)) : [],
-        runningJob: store?.runningJob ? cloneJobForView(store.runningJob) : null,
+        runningJob: getLegacyRunningJob(store) ? cloneJobForView(getLegacyRunningJob(store)) : null,
+        runningJobs: getRunningJobs(store).map(job => cloneJobForView(job)),
         recentHistory: Array.isArray(store?.recentHistory) ? store.recentHistory.map(job => cloneJobForView(job)) : [],
         lastUpdated: Number(store?.lastUpdated || 0),
     });
@@ -1104,24 +1184,27 @@ export function getStmbJobStoreSnapshot(chatKey = null) {
 export function hasActiveStmbJobs(chatKey = null) {
     if (chatKey) {
         const store = ensureChatStore(chatKey);
-        return Boolean(store.runningJob || store.queue.length > 0);
+        return Boolean(getRunningJobs(store).length > 0 || store.queue.length > 0);
     }
     for (const store of jobStores.values()) {
-        if (store.runningJob || store.queue.length > 0) {
+        if (getRunningJobs(store).length > 0 || store.queue.length > 0) {
             return true;
         }
     }
     return false;
 }
 
-export function cancelActiveStmbJob(chatKey = null) {
+export function cancelActiveStmbJob(chatKey = null, jobId = null) {
     const targetChatKey = String(chatKey || getCurrentChatKey() || '').trim();
     if (!targetChatKey) {
         return false;
     }
 
     const store = ensureChatStore(targetChatKey);
-    const runningJob = store.runningJob;
+    const targetJobId = String(jobId || '').trim();
+    const runningJob = targetJobId
+        ? getRunningJobs(store).find(job => String(job?.id || '') === targetJobId)
+        : getLegacyRunningJob(store);
     if (!runningJob?.abortController) {
         return false;
     }
@@ -1152,11 +1235,14 @@ export function cancelAllStmbJobs(chatKey = null) {
 
     sortRecentHistory(store.recentHistory);
 
-    if (store.runningJob?.abortController) {
+    const runningJobs = getRunningJobs(store).filter(job => job?.abortController);
+    if (runningJobs.length > 0) {
         closeActiveMemoryPreviewPopups();
-        store.runningJob.detail = 'Canceled by user';
-        store.runningJob.abortController.abort('stmb-job-cancel');
-        canceled += 1;
+        for (const runningJob of runningJobs) {
+            runningJob.detail = 'Canceled by user';
+            runningJob.abortController.abort('stmb-job-cancel');
+            canceled += 1;
+        }
     }
 
     touchStore(store);
@@ -1175,34 +1261,36 @@ export function updateStmbJobsForLorebookReference({ operation, oldName, newName
 
     for (const store of jobStores.values()) {
         let storeChanged = false;
-        const runningJob = store.runningJob;
-        const runningJobLorebookName = String(runningJob?.lorebookName || '').trim();
-        const runningPayloadLorebookName = String(runningJob?.payload?.lorebookName || '').trim();
-        const runningMatches = runningJobLorebookName === target || runningPayloadLorebookName === target;
 
-        if (runningMatches) {
-            if (operation === 'rename') {
-                if (runningJobLorebookName === target) {
-                    runningJob.lorebookName = replacement;
-                }
-                if (runningPayloadLorebookName === target && runningJob.payload && typeof runningJob.payload === 'object') {
-                    runningJob.payload.lorebookName = replacement;
-                }
-                runningJob.detail = runningJob.detail || 'Lorebook renamed while job was running';
-                markJobUpdated(runningJob);
-                updated++;
-            } else {
-                runningJob.detail = 'Canceled because its lorebook was deleted';
-                if (runningJob.abortController) {
-                    runningJob.abortController.abort('stmb-lorebook-deleted');
+        for (const runningJob of getRunningJobs(store)) {
+            const runningJobLorebookName = String(runningJob?.lorebookName || '').trim();
+            const runningPayloadLorebookName = String(runningJob?.payload?.lorebookName || '').trim();
+            const runningMatches = runningJobLorebookName === target || runningPayloadLorebookName === target;
+
+            if (runningMatches) {
+                if (operation === 'rename') {
+                    if (runningJobLorebookName === target) {
+                        runningJob.lorebookName = replacement;
+                    }
+                    if (runningPayloadLorebookName === target && runningJob.payload && typeof runningJob.payload === 'object') {
+                        runningJob.payload.lorebookName = replacement;
+                    }
+                    runningJob.detail = runningJob.detail || 'Lorebook renamed while job was running';
+                    markJobUpdated(runningJob);
+                    updated++;
                 } else {
-                    runningJob.state = 'canceled';
-                    runningJob.finishedAt = Date.now();
+                    runningJob.detail = 'Canceled because its lorebook was deleted';
+                    if (runningJob.abortController) {
+                        runningJob.abortController.abort('stmb-lorebook-deleted');
+                    } else {
+                        runningJob.state = 'canceled';
+                        runningJob.finishedAt = Date.now();
+                    }
+                    markJobUpdated(runningJob);
+                    canceled++;
                 }
-                markJobUpdated(runningJob);
-                canceled++;
+                storeChanged = true;
             }
-            storeChanged = true;
         }
 
         const nextQueue = [];
