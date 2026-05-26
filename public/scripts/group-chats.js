@@ -17,7 +17,9 @@ import {
     renderPaginationDropdown,
     paginationDropdownChangeHandler,
     waitUntilCondition,
+    uuidv4,
 } from './utils.js';
+import { ensureMessageIdentity, ensureSwipeIdentities, normalizeChatIdentities } from './chat-identities.js';
 import { RA_CountCharTokens, humanizedDateTime, dragElement, favsToHotswap, getMessageTimeStamp } from './RossAscends-mods.js';
 import { LONG_CHAT_DISPLAY_MIN, power_user, loadMovingUIState, sortEntitiesList } from './power-user.js';
 import { debounce_timeout } from './constants.js';
@@ -89,6 +91,7 @@ import {
     unshallowCharacter,
     chatElement,
     ensureMessageMediaIsArray,
+    hasActiveMessageEditSession,
 } from '../script.js';
 import { printTagList, createTagMapFromList, applyTagsOnCharacterSelect, tag_map, applyTagsOnGroupSelect } from './tags.js';
 import { FILTER_TYPES, FilterHelper } from './filters.js';
@@ -325,6 +328,8 @@ export async function getGroupChat(groupId, reload = false) {
             }
 
             chat.push(mes);
+            ensureMessageIdentity(mes, { generateUuid: uuidv4 });
+            ensureSwipeIdentities(mes, { generateUuid: uuidv4 });
             await eventSource.emit(event_types.MESSAGE_RECEIVED, (chat.length - 1), 'first_message');
             addOneMessage(mes);
             await eventSource.emit(event_types.CHARACTER_MESSAGE_RENDERED, (chat.length - 1), 'first_message');
@@ -334,6 +339,7 @@ export async function getGroupChat(groupId, reload = false) {
         data[0].is_group = true;
         chat.splice(0, chat.length, ...data);
         chat.forEach(ensureMessageMediaIsArray);
+        normalizeChatIdentities(chat, { generateUuid: uuidv4 });
         chatElement.find('.mes').remove();
         await printMessages();
     }
@@ -683,6 +689,7 @@ async function saveGroupChat(groupId, shouldSaveGroup) {
     const chat_id = group.chat_id;
     group['date_last_chat'] = Date.now();
     const shouldTrackRevision = String(selected_group) === String(groupId) && String(getCurrentChatId() || '') === String(chat_id || '');
+    normalizeChatIdentities(chat, { generateUuid: uuidv4 });
     const response = await fetch('/api/chats/group/save', {
         method: 'POST',
         headers: getRequestHeaders(),
@@ -2276,6 +2283,11 @@ function prepareNextGroupChat(group) {
  * @returns {Promise<string[]>} List of imported file names
  */
 export async function importGroupChat(formData, { refresh = true, groupId = selected_group } = {}) {
+    if (hasActiveMessageEditSession()) {
+        toastr.warning(t`Finish or cancel the current edit before importing chats.`);
+        return [];
+    }
+
     const fetchResult = await fetch('/api/chats/group/import', {
         method: 'POST',
         headers: getRequestHeaders({ omitContentType: true }),
@@ -2331,6 +2343,8 @@ export async function saveGroupBookmarkChat(groupId, name, metadata, mesId) {
     const trimmed_chat = (mesId !== undefined && mesId >= 0 && mesId < chat.length)
         ? chat.slice(0, parseInt(mesId) + 1)
         : chat;
+    const branchChat = structuredClone(trimmed_chat);
+    normalizeChatIdentities(branchChat, { generateUuid: uuidv4, regenerateAll: true });
 
     await editGroup(groupId, true, false);
 
@@ -2339,8 +2353,9 @@ export async function saveGroupBookmarkChat(groupId, name, metadata, mesId) {
         headers: getRequestHeaders(),
         body: JSON.stringify({
             id: name,
-            chat: [...trimmed_chat],
+            chat: branchChat,
             chat_metadata: bookmarkMetadata,
+            regenerate_identities: true,
         }),
     });
 

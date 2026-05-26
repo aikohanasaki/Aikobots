@@ -170,6 +170,15 @@ import {
     createTimeout,
 } from './scripts/utils.js';
 import { debounce_timeout, GENERATION_TYPE_TRIGGERS, IGNORE_SYMBOL, inject_ids, MEDIA_DISPLAY, MEDIA_SOURCE, MEDIA_TYPE, OVERSWIPE_BEHAVIOR, SCROLL_BEHAVIOR, SWIPE_DIRECTION, SWIPE_SOURCE, SWIPE_STATE } from './scripts/constants.js';
+import {
+    AIKOBOTS_SWIPE_UUID_KEY,
+    ensureMessageIdentity,
+    ensureSwipeIdentities,
+    findMessageByAikobotsUuid,
+    findSwipeByAikobotsUuid,
+    normalizeChatIdentities,
+    validateChatIdentities,
+} from './scripts/chat-identities.js';
 
 import { cancelDebouncedMetadataSave, doDailyExtensionUpdatesCheck, extension_settings, initExtensions, loadExtensionSettings, runGenerationInterceptors } from './scripts/extensions.js';
 import { COMMENT_NAME_DEFAULT, CONNECT_API_MAP, executeSlashCommandsOnChatInput, initDefaultSlashCommands, isExecutingCommandsFromChatInput, pauseScriptExecution, stopScriptExecution, UNIQUE_APIS } from './scripts/slash-commands.js';
@@ -2125,6 +2134,10 @@ function initTopChatUi() {
     }, debounce_timeout.short);
 
     eventSource.on(event_types.CHAT_CHANGED, refreshTopChatUiDebounced);
+    eventSource.on(event_types.CHAT_CHANGED, () => {
+        clearActiveMessageEditSession();
+        this_edit_mes_id = undefined;
+    });
     eventSource.on(event_types.CHAT_DELETED, refreshTopChatUiDebounced);
     eventSource.on(event_types.GROUP_CHAT_DELETED, refreshTopChatUiDebounced);
     eventSource.on(event_types.GENERATION_STARTED, refreshTopChatUiDebounced);
@@ -2207,6 +2220,131 @@ let this_del_mes = -1;
 let this_edit_mes_chname = '';
 /** @type {number|undefined} */
 let this_edit_mes_id = undefined;
+let activeMessageEditSession = null;
+const MESSAGE_EDIT_STALE_WARNING = 'This message changed while it was being edited. Cancel and reopen the edit before saving.';
+
+function normalizeActiveChatIdentities({ repairDuplicates = true, regenerateAll = false } = {}) {
+    return normalizeChatIdentities(chat, {
+        generateUuid: uuidv4,
+        repairDuplicates,
+        regenerateAll,
+    });
+}
+
+function getActiveChatIdentity() {
+    return {
+        groupId: selected_group ? String(selected_group) : '',
+        characterId: this_chid === undefined ? '' : String(this_chid),
+        chatId: String(getCurrentChatId() || ''),
+    };
+}
+
+function isSameChatIdentity(left, right) {
+    return Boolean(left && right)
+        && left.groupId === right.groupId
+        && left.characterId === right.characterId
+        && left.chatId === right.chatId;
+}
+
+function getMessageEditFieldType(message) {
+    return Array.isArray(message?.swipes) && typeof message?.swipe_id === 'number'
+        ? 'swipe_text'
+        : 'message_text';
+}
+
+function getActiveSwipeUuid(message) {
+    if (!Array.isArray(message?.swipe_info) || typeof message?.swipe_id !== 'number') {
+        return null;
+    }
+
+    return message.swipe_info[message.swipe_id]?.[AIKOBOTS_SWIPE_UUID_KEY] ?? null;
+}
+
+function createMessageEditSession(messageId, fieldType = null) {
+    const message = chat[messageId];
+    ensureMessageIdentity(message, { generateUuid: uuidv4 });
+    ensureSwipeIdentities(message, { generateUuid: uuidv4 });
+
+    activeMessageEditSession = {
+        chatIdentity: getActiveChatIdentity(),
+        messageUuid: message?.aikobots_message_uuid ?? null,
+        swipeUuid: getActiveSwipeUuid(message),
+        fieldType: fieldType ?? getMessageEditFieldType(message),
+        originalMessageId: Number(messageId),
+        originalSwipeId: typeof message?.swipe_id === 'number' ? message.swipe_id : null,
+        originalSwipesLength: Array.isArray(message?.swipes) ? message.swipes.length : null,
+    };
+
+    return activeMessageEditSession;
+}
+
+export function hasActiveMessageEditSession() {
+    return activeMessageEditSession !== null || this_edit_mes_id >= 0;
+}
+
+export function clearActiveMessageEditSession() {
+    activeMessageEditSession = null;
+}
+
+function warnStaleMessageEdit() {
+    toastr.warning(MESSAGE_EDIT_STALE_WARNING);
+}
+
+function resolveActiveMessageEditSession({ fieldType = null, allowMessageTextSession = false } = {}) {
+    const session = activeMessageEditSession;
+    if (!session) {
+        return { ok: false, reason: 'missing_edit_session' };
+    }
+
+    if (!isSameChatIdentity(session.chatIdentity, getActiveChatIdentity())) {
+        return { ok: false, reason: 'chat_changed' };
+    }
+
+    if (fieldType && session.fieldType !== fieldType && !(allowMessageTextSession && ['message_text', 'swipe_text'].includes(session.fieldType))) {
+        return { ok: false, reason: 'field_changed' };
+    }
+
+    const validation = validateChatIdentities(chat);
+    if (!validation.ok) {
+        return { ok: false, reason: 'invalid_chat_identities', validation };
+    }
+
+    const messageLookup = findMessageByAikobotsUuid(chat, session.messageUuid);
+    if (!messageLookup.ok) {
+        return { ok: false, reason: messageLookup.reason };
+    }
+
+    if (session.swipeUuid && (fieldType === 'swipe_text' || session.fieldType === 'swipe_text' || fieldType === 'reasoning')) {
+        const swipeLookup = findSwipeByAikobotsUuid(messageLookup.message, session.swipeUuid);
+        if (!swipeLookup.ok) {
+            return { ok: false, reason: swipeLookup.reason };
+        }
+        return { ok: true, session, ...messageLookup, swipeIndex: swipeLookup.index, swipeInfo: swipeLookup.swipeInfo };
+    }
+
+    return { ok: true, session, ...messageLookup, swipeIndex: null, swipeInfo: null };
+}
+
+export function beginReasoningEditSession(messageId) {
+    if (!activeMessageEditSession) {
+        return createMessageEditSession(messageId, 'reasoning');
+    }
+
+    return activeMessageEditSession;
+}
+
+export function resolveReasoningEditSession() {
+    return resolveActiveMessageEditSession({ fieldType: 'reasoning', allowMessageTextSession: true });
+}
+
+function blockIfEditing(action) {
+    if (!hasActiveMessageEditSession()) {
+        return false;
+    }
+
+    toastr.warning(t`Finish or cancel the current edit before ${action}.`);
+    return true;
+}
 
 //settings
 export let settings;
@@ -4203,6 +4341,8 @@ export function applyChunkedChatPayload(response, { replace = false, currentView
         ensureMessageMediaIsArray(chat[absoluteId]);
     }
 
+    normalizeActiveChatIdentities();
+
     if (messages.length > 0 && Number.isFinite(loadedRangeEnd)) {
         mergeLoadedRange(loadedRangeStart, loadedRangeEnd);
     }
@@ -4791,6 +4931,10 @@ export async function clearChat({ flushPendingSave = true } = {}) {
 }
 
 export async function deleteLastMessage() {
+    if (blockIfEditing('deleting messages')) {
+        return;
+    }
+
     const deletedId = chat.length - 1;
     const deletedSnapshotKeys = deletedId >= 0 ? getPromptSnapshotKeysFromMessage(chat[deletedId]) : [];
     chat.length = chat.length - 1;
@@ -4811,6 +4955,18 @@ export async function deleteLastMessage() {
  * @param {boolean} [askConfirmation=false] Whether to ask for confirmation before deleting.
  */
 export async function deleteMessage(id, swipeDeletionIndex = undefined, askConfirmation = false) {
+    const editTarget = activeMessageEditSession ? resolveActiveMessageEditSession() : null;
+    if (editTarget && !editTarget.ok) {
+        warnStaleMessageEdit();
+        return;
+    }
+    if (editTarget?.ok) {
+        id = editTarget.index;
+        if (swipeDeletionIndex !== undefined && swipeDeletionIndex !== null && editTarget.swipeIndex !== null) {
+            swipeDeletionIndex = editTarget.swipeIndex;
+        }
+    }
+
     if (!await ensureMessageEditable(id, 'delete this message')) {
         return;
     }
@@ -4852,6 +5008,10 @@ export async function deleteMessage(id, swipeDeletionIndex = undefined, askConfi
         return;
     }
 
+    if (editTarget?.ok) {
+        await messageEditCancel(id);
+    }
+
     const deletedSnapshotKeys = getPromptSnapshotKeysFromMessage(chat[id]);
     chat.splice(id, 1);
     syncSplitTailStateAfterMutation();
@@ -4877,6 +5037,7 @@ export async function deleteMessage(id, swipeDeletionIndex = undefined, askConfi
 
     if (this_edit_mes_id === id) {
         this_edit_mes_id = undefined;
+        clearActiveMessageEditSession();
     }
 
     refreshSwipeButtons();
@@ -7647,6 +7808,12 @@ async function restoreUnsavedDeletedLastMessage(messageId, message) {
 export async function Generate(type, { automatic_trigger, force_name2, quiet_prompt, quietToLoud, skipWIAN, force_chid, signal, quietImage, quietName, jsonSchema = null, depth = 0, swipeTarget = null } = {}, dryRun = false) {
     enforceChatCompletionsOnlyMode();
     console.log('Generate entered');
+
+    if (!dryRun && type !== 'quiet' && blockIfEditing('generating')) {
+        is_send_press = false;
+        return Promise.resolve();
+    }
+
     setGenerationProgress(0);
     generation_started = new Date();
 
@@ -9170,6 +9337,7 @@ export async function sendMessageAsUser(messageText, messageBias, insertAt = nul
     }
 
     await populateFileAttachment(message);
+    ensureMessageIdentity(message, { generateUuid: uuidv4 });
     statMesProcess(message, 'user', characters, this_chid, '');
 
     chat_metadata['tainted'] = true;
@@ -9773,6 +9941,10 @@ export async function saveReply({ type, getMessage, fromStreaming = false, title
         unblockGeneration(type);
         throw new Error(`Invalid swipe generation target: ${swipeTargetValidation.reason}`);
     }
+    if (swipeTargetValidation?.message) {
+        ensureMessageIdentity(swipeTargetValidation.message, { generateUuid: uuidv4 });
+        ensureSwipeIdentities(swipeTargetValidation.message, { generateUuid: uuidv4 });
+    }
 
     if (chat.length && (!chat[chat.length - 1]['extra'] || typeof chat[chat.length - 1]['extra'] !== 'object')) {
         chat[chat.length - 1]['extra'] = {};
@@ -9804,6 +9976,8 @@ export async function saveReply({ type, getMessage, fromStreaming = false, title
     if (type === 'swipe') {
         const targetMessage = swipeTargetValidation.message;
         ensureSwipeTargetSlot(targetMessage, swipeTarget);
+        ensureMessageIdentity(targetMessage, { generateUuid: uuidv4 });
+        ensureSwipeIdentities(targetMessage, { generateUuid: uuidv4 });
         oldMessage = targetMessage['mes'];
         targetMessage['title'] = title;
         targetMessage['mes'] = getMessage;
@@ -9873,6 +10047,7 @@ export async function saveReply({ type, getMessage, fromStreaming = false, title
         console.debug('entering chat update routine for non-swipe post');
         chat[chat.length] = {};
         chat[chat.length - 1]['extra'] = {};
+        ensureMessageIdentity(chat[chat.length - 1], { generateUuid: uuidv4 });
         chat[chat.length - 1]['name'] = name2;
         chat[chat.length - 1]['is_user'] = false;
         chat[chat.length - 1]['send_date'] = getMessageTimeStamp();
@@ -9914,6 +10089,7 @@ export async function saveReply({ type, getMessage, fromStreaming = false, title
     }
 
     const item = chat[chat.length - 1];
+    ensureMessageIdentity(item, { generateUuid: uuidv4 });
     if (!item.extra || typeof item.extra !== 'object') {
         item.extra = {};
     }
@@ -9927,8 +10103,10 @@ export async function saveReply({ type, getMessage, fromStreaming = false, title
     }
     if (item['swipe_id'] !== undefined) {
         const swipeId = item['swipe_id'];
+        const existingSwipeUuid = item['swipe_info']?.[swipeId]?.[AIKOBOTS_SWIPE_UUID_KEY] ?? uuidv4();
         item['swipes'][swipeId] = item['mes'];
         item['swipe_info'][swipeId] = {
+            [AIKOBOTS_SWIPE_UUID_KEY]: existingSwipeUuid,
             send_date: item['send_date'],
             gen_started: item['gen_started'],
             gen_finished: item['gen_finished'],
@@ -9939,6 +10117,7 @@ export async function saveReply({ type, getMessage, fromStreaming = false, title
         item['swipes'] = [];
         item['swipes'][0] = chat[chat.length - 1]['mes'];
         item['swipe_info'][0] = {
+            [AIKOBOTS_SWIPE_UUID_KEY]: uuidv4(),
             send_date: chat[chat.length - 1]['send_date'],
             gen_started: chat[chat.length - 1]['gen_started'],
             gen_finished: chat[chat.length - 1]['gen_finished'],
@@ -9948,6 +10127,7 @@ export async function saveReply({ type, getMessage, fromStreaming = false, title
 
     if (Array.isArray(swipes) && swipes.length > 0) {
         const swipeInfo = {
+            [AIKOBOTS_SWIPE_UUID_KEY]: uuidv4(),
             send_date: item.send_date,
             gen_started: item.gen_started,
             gen_finished: item.gen_finished,
@@ -9957,6 +10137,7 @@ export async function saveReply({ type, getMessage, fromStreaming = false, title
         const basePromptSnapshotKey = typeof item.extra?.promptSnapshotKey === 'string' ? item.extra.promptSnapshotKey : null;
         const swipeInfoArray = Array(swipes.length).fill().map((_, index) => {
             const swipeInfoClone = structuredClone(swipeInfo);
+            swipeInfoClone[AIKOBOTS_SWIPE_UUID_KEY] = uuidv4();
             const swipePromptSnapshotKey = basePromptSnapshotKey
                 ? rekeyPromptSnapshotKey(basePromptSnapshotKey, { mesId: chat.length - 1, swipeId: startingSwipeIndex + index })
                 : null;
@@ -9970,6 +10151,8 @@ export async function saveReply({ type, getMessage, fromStreaming = false, title
         item.swipes.push(...swipes);
         item.swipe_info.push(...swipeInfoArray);
     }
+
+    normalizeActiveChatIdentities();
 
     if (!fromStreaming) {
         await commitLatestPromptInspectorRecord(chat.length - 1);
@@ -10081,6 +10264,7 @@ export function ensureSwipes(message) {
 
     const activeSwipeId = clamp(Number(message.swipe_id ?? 0), 0, Math.max(0, message.swipes.length - 1));
     const createSwipeInfo = (index) => ({
+        [AIKOBOTS_SWIPE_UUID_KEY]: uuidv4(),
         send_date: message.send_date,
         gen_started: message.gen_started,
         gen_finished: message.gen_finished,
@@ -10107,6 +10291,9 @@ export function ensureSwipes(message) {
             message.swipe_info[i].extra = {};
         }
     }
+
+    const identityResult = ensureSwipeIdentities(message, { generateUuid: uuidv4 });
+    updated = identityResult.changed || updated;
 
     return updated;
 }
@@ -10152,6 +10339,7 @@ export function syncMesToSwipe(messageId = null) {
     if (typeof targetSwipeInfo !== 'object') {
         return false;
     }
+    ensureSwipeIdentities(targetMessage, { generateUuid: uuidv4 });
 
     // Only sync swipes if the chat is not pristine, so macros in the greeting can resolve again on swipe.
     if (chat_metadata.tainted || chat.length > 1) {
@@ -10212,12 +10400,15 @@ export function syncSwipeToMes(messageId = null, swipeId = null, targetMessage =
     // Backfill swipe_info if missing.
     if (!Array.isArray(targetMessage.swipe_info)) {
         targetMessage.swipe_info = targetMessage.swipes.map(_ => ({
+            [AIKOBOTS_SWIPE_UUID_KEY]: uuidv4(),
             send_date: targetMessage.send_date,
             gen_started: void 0,
             gen_finished: void 0,
             extra: {},
         }));
     }
+
+    ensureSwipeIdentities(targetMessage, { generateUuid: uuidv4 });
 
     const targetSwipeId = targetMessage.swipe_id;
     if (typeof targetMessage.swipes[targetSwipeId] !== 'string') {
@@ -10665,6 +10856,8 @@ export async function saveChat({ chatName, withMetadata, mesId, force = false, s
         await hydrateCurrentChatForEditing();
     }
 
+    normalizeActiveChatIdentities();
+
     let trimmedChat = [];
     let saveMode = undefined;
     let absoluteStartId = undefined;
@@ -10732,6 +10925,7 @@ export async function saveChat({ chatName, withMetadata, mesId, force = false, s
                 } : {}),
                 display_count: getConfiguredLongChatDisplayCount(),
                 buffer_max: getConfiguredLongChatBufferMax(),
+                regenerate_identities: Boolean(chatName),
             }),
         });
 
@@ -11469,8 +11663,12 @@ function updateMessage(div) {
     const mesBlock = div.closest('.mes_block');
     let text = mesBlock.find('.edit_textarea').val()
         ?? mesBlock.find('.mes_text').text();
-    const mesElement = div.closest('.mes');
-    const mes = chat[mesElement.attr('mesid')];
+    const target = resolveActiveMessageEditSession();
+    if (!target.ok) {
+        warnStaleMessageEdit();
+        throw new Error(`Message edit target validation failed: ${target.reason}`);
+    }
+    const mes = target.message;
 
     let regexPlacement;
     if (mes.is_user) {
@@ -11501,9 +11699,13 @@ function updateMessage(div) {
     if (bias) {
         text = removeMacros(text);
     }
-    mes['mes'] = text;
-    if (mes['swipe_id'] !== undefined) {
-        mes['swipes'][mes['swipe_id']] = text;
+    if (target.session.fieldType === 'swipe_text' && target.swipeIndex !== null) {
+        mes.swipes[target.swipeIndex] = text;
+        if (Number(mes.swipe_id) === Number(target.swipeIndex)) {
+            mes.mes = text;
+        }
+    } else {
+        mes['mes'] = text;
     }
 
     // editing old messages
@@ -11519,7 +11721,7 @@ function updateMessage(div) {
 
     chat_metadata['tainted'] = true;
 
-    return { mesBlock, text, mes, bias };
+    return { mesBlock, text, mes, bias, messageId: target.index };
 }
 
 function openMessageDelete(fromSlashCommand) {
@@ -11545,7 +11747,16 @@ function openMessageDelete(fromSlashCommand) {
 }
 
 function messageEditAuto(div) {
-    const { mesBlock, text, mes, bias } = updateMessage(div);
+    let updateResult;
+    try {
+        updateResult = updateMessage(div);
+    } catch (error) {
+        console.warn(error);
+        clearActiveMessageEditSession();
+        return;
+    }
+
+    const { mesBlock, text, mes, bias, messageId } = updateResult;
 
     mesBlock.find('.mes_text').val('');
     mesBlock.find('.mes_text').val(messageFormatting(
@@ -11553,7 +11764,7 @@ function messageEditAuto(div) {
         this_edit_mes_chname,
         mes.is_system,
         mes.is_user,
-        this_edit_mes_id,
+        messageId,
         {},
         false,
     ));
@@ -11567,9 +11778,16 @@ function messageEditAuto(div) {
  * @param {number} editMessageId The ID of the message to edit
  */
 export async function messageEdit(editMessageId) {
+    if (isGenerating()) {
+        toastr.warning(t`Wait for generation to finish before editing messages.`);
+        return;
+    }
+
     if (!await ensureMessageEditable(editMessageId, 'edit this message')) {
         return;
     }
+
+    normalizeActiveChatIdentities();
 
     const editMessage = chat[editMessageId];
     if (!editMessage) {
@@ -11585,6 +11803,7 @@ export async function messageEdit(editMessageId) {
 
     this_edit_mes_id = editMessageId;
     this_edit_mes_chname = editMessage.name || (editMessage.is_user ? name1 : name2);
+    createMessageEditSession(editMessageId);
 
     const hideCounters = editMessageId < chat.length - 1;
     hideSwipeButtons({ hideCounters });
@@ -11636,6 +11855,15 @@ export async function messageEdit(editMessageId) {
  * @param {number} [messageId=this_edit_mes_id]
  */
 async function messageEditCancel(messageId = this_edit_mes_id) {
+    const target = activeMessageEditSession ? resolveActiveMessageEditSession() : { ok: false };
+    messageId = target.ok ? target.index : Number(messageId);
+    if (!chat[messageId]) {
+        this_edit_mes_id = undefined;
+        clearActiveMessageEditSession();
+        showSwipeButtons();
+        return;
+    }
+
     let text = chat[messageId]['mes'];
     let thisMesDiv;
     // If this is the button then select it's parent. Otherwise, select by messageId.
@@ -11670,9 +11898,12 @@ async function messageEditCancel(messageId = this_edit_mes_id) {
     await eventSource.emit(event_types.MESSAGE_UPDATED, messageId);
     if (messageId == this_edit_mes_id) {
         this_edit_mes_id = undefined;
+        clearActiveMessageEditSession();
     }
     else {
         console.warn(`The message editor was closed on message #${messageId} while #${this_edit_mes_id} is being edited.`);
+        this_edit_mes_id = undefined;
+        clearActiveMessageEditSession();
     }
 
     showSwipeButtons();
@@ -11685,6 +11916,16 @@ async function messageEditCancel(messageId = this_edit_mes_id) {
  * @returns {Promise<boolean>} True if the messages were moved, false otherwise
  */
 async function messageEditMove(sourceId, targetId) {
+    const resolved = resolveActiveMessageEditSession();
+    if (!resolved.ok) {
+        warnStaleMessageEdit();
+        return false;
+    }
+
+    const direction = Number(targetId) > Number(sourceId) ? 1 : -1;
+    sourceId = resolved.index;
+    targetId = sourceId + direction;
+
     if (!await ensureMessageEditable(sourceId, 'reorder this message') || !await ensureMessageEditable(targetId, 'reorder this message')) {
         return false;
     }
@@ -11739,13 +11980,24 @@ async function messageEditMove(sourceId, targetId) {
 }
 
 async function messageEditDone(div) {
-    let { mesBlock, text, mes, bias } = updateMessage(div);
-    if (this_edit_mes_id == 0) {
+    let updateResult;
+    try {
+        updateResult = updateMessage(div);
+    } catch (error) {
+        console.warn(error);
+        clearActiveMessageEditSession();
+        this_edit_mes_id = undefined;
+        showSwipeButtons();
+        return;
+    }
+
+    let { mesBlock, text, mes, bias, messageId } = updateResult;
+    if (messageId == 0) {
         text = substituteParams(text);
     }
 
-    await eventSource.emit(event_types.MESSAGE_EDITED, this_edit_mes_id);
-    text = chat[this_edit_mes_id]?.mes ?? text;
+    await eventSource.emit(event_types.MESSAGE_EDITED, messageId);
+    text = chat[messageId]?.mes ?? text;
     mesBlock.find('.mes_text').empty();
     mesBlock.find('.mes_edit_buttons').css('display', 'none');
     mesBlock.find('.mes_buttons').css('display', '');
@@ -11755,7 +12007,7 @@ async function messageEditDone(div) {
             this_edit_mes_chname,
             mes.is_system,
             mes.is_user,
-            this_edit_mes_id,
+            messageId,
             {},
             false,
         ),
@@ -11770,8 +12022,9 @@ async function messageEditDone(div) {
         reasoningEditDone.trigger('click');
     }
 
-    await eventSource.emit(event_types.MESSAGE_UPDATED, this_edit_mes_id);
+    await eventSource.emit(event_types.MESSAGE_UPDATED, messageId);
     this_edit_mes_id = undefined;
+    clearActiveMessageEditSession();
     await saveChatConditional();
     showSwipeButtons();
 }
@@ -14405,6 +14658,15 @@ export function hideSwipeButtons({ hideCounters = false } = {}) {
  */
 export async function deleteSwipe(swipeId = null, messageId = chat.length - 1) {
     messageId = Number(messageId);
+    const editTarget = activeMessageEditSession ? resolveActiveMessageEditSession() : null;
+    if (editTarget && !editTarget.ok) {
+        warnStaleMessageEdit();
+        return;
+    }
+    if (editTarget?.ok && Number(messageId) === Number(editTarget.index) && editTarget.swipeIndex !== null) {
+        messageId = editTarget.index;
+        swipeId = editTarget.swipeIndex;
+    }
 
     if (swipeId !== null) {
         swipeId = Number(swipeId);
@@ -14450,7 +14712,10 @@ export async function deleteSwipe(swipeId = null, messageId = chat.length - 1) {
         newSwipeId = Math.min(swipeId, message.swipes.length - 1);
     }
 
-    const wasEditingTargetMessage = Number(this_edit_mes_id) === Number(messageId);
+    const wasEditingTargetMessage = Number(this_edit_mes_id) === Number(messageId) || editTarget?.ok;
+    if (wasEditingTargetMessage) {
+        await messageEditCancel(messageId);
+    }
     message.swipe_id = newSwipeId;
     syncSwipeToMes(messageId, newSwipeId, message);
     const rekeys = [];
@@ -14482,10 +14747,6 @@ export async function deleteSwipe(swipeId = null, messageId = chat.length - 1) {
 
     await recomputeTimedWorldInfo();
     await eventSource.emit(event_types.MESSAGE_SWIPE_DELETED, { messageId, swipeId, newSwipeId });
-
-    if (wasEditingTargetMessage) {
-        await messageEditCancel(messageId);
-    }
 
     if (swipeId === currentSwipeId) {
         const direction = swipeId <= newSwipeId ? SWIPE_DIRECTION.RIGHT : SWIPE_DIRECTION.LEFT;
@@ -14642,6 +14903,10 @@ export async function saveChatConditional(options = {}) {
  * @returns {Promise<string[]>} List of imported file names.
  */
 export async function importCharacterChat(formData, { refresh = true } = {}) {
+    if (blockIfEditing('importing chats')) {
+        return [];
+    }
+
     const fetchResult = await fetch('/api/chats/import', {
         method: 'POST',
         body: formData,
@@ -14713,12 +14978,10 @@ export function updateEditArrowClasses() {
 
     const downButton = message.find('.mes_edit_down');
     const upButton = message.find('.mes_edit_up');
-    const copyButton = message.find('.mes_edit_copy');
     const deleteButton = message.find('.mes_edit_delete');
     const lastId = Number(chatElement.find('.mes').last().attr('mesid'));
     const firstId = Number(chatElement.find('.mes').first().attr('mesid'));
 
-    copyButton.removeClass('disabled');
     deleteButton.removeClass('disabled');
 
     // The last message cannot be moved down.
@@ -15558,8 +15821,10 @@ export async function swipe(event, direction, { source, repeated, message = chat
     }
 
     try {
-        if (mesId === Number(this_edit_mes_id)) {
-            closeMessageEditor();
+        if (hasActiveMessageEditSession() && source !== SWIPE_SOURCE.DELETE && source !== SWIPE_SOURCE.BACK) {
+            toastr.warning(t`Finish or cancel the current edit before switching swipes.`);
+            await endSwipe();
+            return;
         }
         if (isStreamingEnabled() && streamingProcessor) {
             streamingProcessor.onStopStreaming();
@@ -17268,53 +17533,26 @@ jQuery(async function () {
     });
 
     $(document).on('click', '.mes_edit_copy', async function () {
-        if (!await ensureMessageEditable(this_edit_mes_id, 'copy this message')) {
-            return;
-        }
-
-        const confirmation = await callGenericPopup(t`Create a copy of this message?`, POPUP_TYPE.CONFIRM);
-        if (!confirmation) {
-            return;
-        }
-
-        hideSwipeButtons();
-        const oldScroll = chatElement[0].scrollTop;
-        const clone = structuredClone(chat[this_edit_mes_id]);
-        clone.send_date = Date.now();
-        clone.mes = $(this).closest('.mes').find('.edit_textarea').val().toString();
-
-        if (power_user.trim_spaces) {
-            clone.mes = clone.mes.trim();
-        }
-        clearPromptSnapshotKeysFromMessage(clone);
-
-        const insertIndex = Number(this_edit_mes_id) + 1;
-        chat.splice(insertIndex, 0, clone);
-        syncSplitTailStateAfterMutation();
-        addOneMessage(clone, { insertAfter: this_edit_mes_id });
-
-        updateViewMessageIds();
-        const rekeys = [];
-        const remapTimedWorldInfoIndex = createInsertMessageIndexMapper(insertIndex);
-        for (let messageIndex = chat.length - 1; messageIndex >= insertIndex; messageIndex--) {
-            rekeyMessagePromptSnapshotKeys(chat[messageIndex], messageIndex, rekeys, { remapTimedWorldInfoIndex });
-        }
-        syncMesToSwipe(insertIndex);
-        await syncLatestPromptInspectorAfterMessageInsertion(insertIndex);
-        await maintainPromptSnapshotKeys({ rekeys });
-        await recomputeTimedWorldInfo();
-        await saveChatConditional();
-        chatElement[0].scrollTop = oldScroll;
-        showSwipeButtons();
+        toastr.warning(t`Copying message objects is disabled while message identity hardening is active.`);
     });
 
     $(document).on('click', '.mes_edit_delete', async function (event, customData) {
         const fromSlashCommand = customData?.fromSlashCommand || false;
-        const message = chat[this_edit_mes_id];
+        const target = activeMessageEditSession ? resolveActiveMessageEditSession() : { ok: false };
+        if (activeMessageEditSession && !target.ok) {
+            warnStaleMessageEdit();
+            return;
+        }
+        const messageId = target.ok ? target.index : Number(this_edit_mes_id);
+        const message = chat[messageId];
+        if (!message) {
+            warnStaleMessageEdit();
+            return;
+        }
         const selectedSwipe = message['swipe_id'] ?? undefined;
         const swipesArray = Array.isArray(message['swipes']) ? message['swipes'] : [];
-        const canDeleteSwipe = power_user.confirm_message_delete && !fromSlashCommand && !message.is_user && swipesArray.length > 1 && this_edit_mes_id === chat.length - 1 && selectedSwipe !== undefined;
-        await deleteMessage(Number(this_edit_mes_id), canDeleteSwipe ? selectedSwipe : undefined, power_user.confirm_message_delete && fromSlashCommand !== true);
+        const canDeleteSwipe = power_user.confirm_message_delete && !fromSlashCommand && !message.is_user && swipesArray.length > 1 && messageId === chat.length - 1 && selectedSwipe !== undefined;
+        await deleteMessage(messageId, canDeleteSwipe ? selectedSwipe : undefined, power_user.confirm_message_delete && fromSlashCommand !== true);
     });
 
     $(document).on('click', '.mes_edit_done', async function () {

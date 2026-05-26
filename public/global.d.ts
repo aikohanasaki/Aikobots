@@ -24,8 +24,9 @@ declare global {
         is_system?: boolean;
         force_avatar?: string;
         original_avatar?: string;
+        aikobots_message_uuid?: string;
         swipes?: string[];
-        swipe_info?: Record<string, any>;
+        swipe_info?: Array<Record<string, any> & { aikobots_swipe_uuid?: string }>;
         swipe_id?: number;
         extra?: ChatMessageExtra & Partial<ReasoningMessageExtra> & Record<string, any>;
     };

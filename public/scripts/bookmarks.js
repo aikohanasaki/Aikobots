@@ -18,6 +18,7 @@ import {
     isSplitTailChat,
     isChatFullyHydrated,
     hydrateCurrentChatForEditing,
+    hasActiveMessageEditSession,
     isHistoricalChatMessage,
     syncSwipeToMes,
 } from '../script.js';
@@ -614,6 +615,11 @@ async function saveBookmarkMenu() {
 
 // Export is used by Timelines extension. Do not remove.
 export async function createBranch(mesId, { swipeId = null } = {}) {
+    if (hasActiveMessageEditSession()) {
+        toastr.warning(t`Finish or cancel the current edit before creating a branch.`);
+        return;
+    }
+
     if (!chat.length) {
         toastr.warning('The chat is empty.', 'Branch creation failed');
         return;

@@ -1,7 +1,7 @@
 import {
     moment,
 } from '../lib.js';
-import { chat, closeMessageEditor, event_types, eventSource, main_api, messageFormatting, saveChatConditional, saveChatDebounced, saveSettingsDebounced, substituteParams, syncMesToSwipe, updateMessageBlock } from '../script.js';
+import { beginReasoningEditSession, chat, clearActiveMessageEditSession, closeMessageEditor, event_types, eventSource, hasActiveMessageEditSession, isGenerating, main_api, messageFormatting, resolveReasoningEditSession, saveChatConditional, saveChatDebounced, saveSettingsDebounced, substituteParams, syncMesToSwipe, updateMessageBlock } from '../script.js';
 import { getRegexedString, regex_placement } from './extensions/regex/engine.js';
 import { getCurrentLocale, t, translate } from './i18n.js';
 import { MacrosParser } from './macros.js';
@@ -78,6 +78,60 @@ function getMessageFromJquery(element) {
     const messageId = Number(messageBlock.attr('mesid'));
     const message = chat[messageId];
     return { messageId: messageId, message, messageBlock };
+}
+
+function getReasoningEditTarget(element) {
+    const resolved = resolveReasoningEditSession();
+    if (resolved.ok) {
+        return {
+            messageId: resolved.index,
+            message: resolved.message,
+            messageBlock: $(`.mes[mesid="${resolved.index}"]`),
+            swipeInfo: resolved.swipeInfo,
+            swipeIndex: resolved.swipeIndex,
+        };
+    }
+
+    if (hasActiveMessageEditSession()) {
+        toastr.warning('This message changed while it was being edited. Cancel and reopen the edit before saving.');
+        return null;
+    }
+
+    return getMessageFromJquery(element);
+}
+
+function getReasoningExtraForTarget(target) {
+    return target?.swipeInfo?.extra && typeof target.swipeInfo.extra === 'object'
+        ? target.swipeInfo.extra
+        : target?.message?.extra;
+}
+
+function updateReasoningTargetFromValue(target, value) {
+    const extra = getReasoningExtraForTarget(target);
+    if (!extra) {
+        return;
+    }
+
+    updateReasoningFromValue({ extra }, value);
+    if (target.swipeIndex === target.message?.swipe_id && target.message?.extra) {
+        updateReasoningFromValue(target.message, value);
+    }
+}
+
+/**
+ * Updates the reasoning block of a message from a value.
+ * @param {object} message Message object (must have .extra)
+ * @param {string} value Reasoning value
+ */
+function updateReasoningFromValue(message, value) {
+    if (shouldStripAiThinkingFromResponses()) {
+        stripThinkingFromMessage(message, { includeSwipes: false });
+        return;
+    }
+
+    const reasoning = getRegexedString(value, regex_placement.REASONING, { isEdit: true });
+    message.extra.reasoning = reasoning;
+    message.extra.reasoning_type = message.extra.reasoning_type ? ReasoningType.Edited : ReasoningType.Manual;
 }
 
 function shouldStripAiThinkingFromResponses() {
@@ -1237,22 +1291,6 @@ function registerReasoningMacros() {
 }
 
 function setReasoningEventHandlers() {
-    /**
-     * Updates the reasoning block of a message from a value.
-     * @param {object} message Message object
-     * @param {string} value Reasoning value
-     */
-    function updateReasoningFromValue(message, value) {
-        if (shouldStripAiThinkingFromResponses()) {
-            stripThinkingFromMessage(message, { includeSwipes: false });
-            return;
-        }
-
-        const reasoning = getRegexedString(value, regex_placement.REASONING, { isEdit: true });
-        message.extra.reasoning = reasoning;
-        message.extra.reasoning_type = message.extra.reasoning_type ? ReasoningType.Edited : ReasoningType.Manual;
-    }
-
     $(document).on('click', '.mes_reasoning_details', function (e) {
         if (!e.target.closest('.mes_reasoning_actions') && !e.target.closest('.mes_reasoning_header')) {
             e.preventDefault();
@@ -1286,12 +1324,21 @@ function setReasoningEventHandlers() {
     $(document).on('click', '.mes_reasoning_edit', function (e) {
         e.stopPropagation();
         e.preventDefault();
-        const { message, messageBlock } = getMessageFromJquery(this);
+        if (isGenerating()) {
+            toastr.warning(t`Wait for generation to finish before editing messages.`);
+            return;
+        }
+        const { messageId, message, messageBlock } = getMessageFromJquery(this);
         if (!message?.extra) {
             return;
         }
+        beginReasoningEditSession(messageId);
 
-        const reasoning = String(message?.extra?.reasoning ?? '');
+        const target = getReasoningEditTarget(this);
+        if (!target) {
+            return;
+        }
+        const reasoning = String(getReasoningExtraForTarget(target)?.reasoning ?? '');
         const chatElement = document.getElementById('chat');
         const textarea = document.createElement('textarea');
         const reasoningBlock = messageBlock.find('.mes_reasoning');
@@ -1334,7 +1381,11 @@ function setReasoningEventHandlers() {
     $(document).on('click', '.mes_reasoning_edit_done', async function (e) {
         e.stopPropagation();
         e.preventDefault();
-        const { message, messageId, messageBlock } = getMessageFromJquery(this);
+        const target = getReasoningEditTarget(this);
+        if (!target) {
+            return;
+        }
+        const { message, messageId, messageBlock, swipeInfo, swipeIndex } = target;
         if (!message?.extra) {
             return;
         }
@@ -1342,14 +1393,21 @@ function setReasoningEventHandlers() {
         const textarea = messageBlock.find('.reasoning_edit_textarea');
         const newReasoning = String(textarea.val());
         textarea.remove();
-        if (newReasoning === message.extra.reasoning) {
+        const reasoningExtra = swipeInfo?.extra ?? message.extra;
+        if (newReasoning === reasoningExtra.reasoning) {
+            if (!messageBlock.find('#curEditTextarea').length) {
+                clearActiveMessageEditSession();
+            }
             return;
         }
-        updateReasoningFromValue(message, newReasoning);
+        updateReasoningTargetFromValue({ message, messageId, messageBlock, swipeInfo, swipeIndex }, newReasoning);
         await saveChatConditional();
         updateMessageBlock(messageId, message);
 
         messageBlock.find('.mes_edit_done:visible').trigger('click');
+        if (!messageBlock.find('.mes_edit_done:visible').length) {
+            clearActiveMessageEditSession();
+        }
         await eventSource.emit(event_types.MESSAGE_REASONING_EDITED, messageId);
     });
 
@@ -1360,6 +1418,9 @@ function setReasoningEventHandlers() {
         const { messageBlock } = getMessageFromJquery(this);
         const textarea = messageBlock.find('.reasoning_edit_textarea');
         textarea.remove();
+        if (!messageBlock.find('#curEditTextarea').length) {
+            clearActiveMessageEditSession();
+        }
 
         messageBlock.find('.mes_reasoning_edit_cancel:visible').trigger('click');
 
@@ -1367,7 +1428,7 @@ function setReasoningEventHandlers() {
     });
 
     $(document).on('click', '.mes_edit_add_reasoning', async function () {
-        const { message, messageBlock } = getMessageFromJquery(this);
+        const { message, messageId, messageBlock } = getMessageFromJquery(this);
         if (!message?.extra) {
             return;
         }
@@ -1387,6 +1448,7 @@ function setReasoningEventHandlers() {
 
         // Open the reasoning area so we can actually edit it
         messageBlock.find('.mes_reasoning_details').attr('open', '');
+        beginReasoningEditSession(messageId);
         messageBlock.find('.mes_reasoning_edit').trigger('click');
         await saveChatConditional();
     });
@@ -1401,11 +1463,14 @@ function setReasoningEventHandlers() {
             return;
         }
 
-        const { message, messageId, messageBlock } = getMessageFromJquery(this);
+        const { message, messageId, messageBlock, swipeInfo, swipeIndex } = getReasoningEditTarget(this) ?? {};
         if (!message?.extra) {
             return;
         }
-        clearStoredReasoningFields(message.extra);
+        clearStoredReasoningFields(swipeInfo?.extra ?? message.extra);
+        if (swipeInfo && Number(message.swipe_id) === Number(swipeIndex)) {
+            clearStoredReasoningFields(message.extra);
+        }
         await saveChatConditional();
         updateMessageBlock(messageId, message);
         const textarea = messageBlock.find('.reasoning_edit_textarea');
@@ -1430,12 +1495,12 @@ function setReasoningEventHandlers() {
             return;
         }
 
-        const { message, messageBlock } = getMessageFromJquery(this);
+        const { message, messageBlock, swipeInfo, swipeIndex } = getReasoningEditTarget(this) ?? {};
         if (!message?.extra) {
             return;
         }
 
-        updateReasoningFromValue(message, String($(this).val()));
+        updateReasoningTargetFromValue({ message, messageBlock, swipeInfo, swipeIndex }, String($(this).val()));
         updateReasoningUI(messageBlock);
         saveChatDebounced();
     });

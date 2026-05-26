@@ -21,7 +21,13 @@ import {
     getUniqueName,
     sanitizeSafeCharacterReplacements,
     delay,
+    uuidv4,
 } from '../util.js';
+import {
+    normalizeChatIdentities,
+    regenerateChatIdentities,
+    stripAikobotsIdentityMetadata,
+} from '../../public/scripts/chat-identities.js';
 
 const isBackupEnabled = !!getConfigValue('backups.chat.enabled', true, 'boolean');
 const maxTotalChatBackups = Number(getConfigValue('backups.chat.maxTotalBackups', -1, 'number'));
@@ -944,12 +950,18 @@ function getPreservedSplitTailWriteConfig(segments) {
     };
 }
 
-export function writeLogicalChat(filePath, header, messages, { displayCount = LONG_CHAT_DISPLAY_DEFAULT, bufferMax = LONG_CHAT_BUFFER_DEFAULT, tailStartId = null } = {}) {
+export function writeLogicalChat(filePath, header, messages, { displayCount = LONG_CHAT_DISPLAY_DEFAULT, bufferMax = LONG_CHAT_BUFFER_DEFAULT, tailStartId = null, regenerateIdentities = false } = {}) {
     const { displayCount: normalizedDisplayCount, bufferMax: normalizedBufferMax } = normalizeLongChatConfig({ displayCount, bufferMax });
     const baseHeader = sanitizeChatHeaderForPersistence(header);
-    const sanitizedMessages = Array.isArray(messages)
-        ? messages.map(message => sanitizeChatMessageForPersistence(message))
+    const identityMessages = Array.isArray(messages)
+        ? _.cloneDeep(messages)
         : [];
+    if (regenerateIdentities) {
+        regenerateChatIdentities(identityMessages, { generateUuid: uuidv4 });
+    } else {
+        normalizeChatIdentities(identityMessages, { generateUuid: uuidv4 });
+    }
+    const sanitizedMessages = identityMessages.map(message => sanitizeChatMessageForPersistence(message));
     const fullJsonl = serializeJsonl([baseHeader, ...sanitizedMessages]);
     const headPath = getSplitHeadPath(filePath);
     const totalMessages = sanitizedMessages.length;
@@ -2103,6 +2115,7 @@ router.post('/save', validateAvatarUrlMiddleware, async function (request, respo
                 displayCount: config.displayCount,
                 bufferMax: config.bufferMax,
                 tailStartId: requestedTailStartId,
+                regenerateIdentities: request.body.regenerate_identities === true,
             });
             getBackupFunction(request.user.profile.handle)(request.user.directories.backups, directoryName, writeResult.fullJsonl);
 
@@ -2225,7 +2238,7 @@ router.post('/save-prefix', validateAvatarUrlMiddleware, function (request, resp
         }
 
         const targetHeader = { ...sourceHeader, ...headerOverrides };
-        const writeResult = writeLogicalChat(targetPath, targetHeader, messages.slice(0, prefixEndId + 1));
+        const writeResult = writeLogicalChat(targetPath, targetHeader, messages.slice(0, prefixEndId + 1), { regenerateIdentities: true });
         getBackupFunction(request.user.profile.handle)(request.user.directories.backups, dirName, writeResult.fullJsonl);
         return response.send({ ok: true });
     } catch (error) {
@@ -2347,7 +2360,11 @@ router.post('/export', validateAvatarUrlMiddleware, async function (request, res
         // Short path for JSONL files
         if (request.body.format === 'jsonl') {
             try {
-                const rawFile = serializeJsonl(getLogicalChatData(filename));
+                const logicalChatData = getLogicalChatData(filename);
+                const exportChatData = request.body.preserve_aikobots_metadata === false
+                    ? stripAikobotsIdentityMetadata(logicalChatData)
+                    : logicalChatData;
+                const rawFile = serializeJsonl(exportChatData);
                 const successMessage = {
                     message: `Chat saved to ${exportfilename}`,
                     result: rawFile,
@@ -2402,7 +2419,8 @@ router.post('/group/import', function (request, response) {
 
         const chatname = humanizedISO8601DateTime();
         const pathToUpload = assertPathInside(filedata.destination, path.join(filedata.destination, filedata.filename), 'upload_file');
-        const header = tryParse(String(fs.readFileSync(pathToUpload, 'utf8') || '').split('\n').find(line => line.trim()) || '');
+        const serializedChat = String(fs.readFileSync(pathToUpload, 'utf8') || '');
+        const header = tryParse(serializedChat.split('\n').find(line => line.trim()) || '');
         const unsupportedImportMessage = getUnsupportedImportedJsonlMessage(header);
         if (unsupportedImportMessage) {
             fs.unlinkSync(pathToUpload);
@@ -2410,8 +2428,14 @@ router.post('/group/import', function (request, response) {
             return response.status(400).send({ error: true, message: unsupportedImportMessage });
         }
 
+        const normalizedImportedChat = normalizeImportedSerializedChat(serializedChat, `${chatname}.jsonl`);
+        if (!normalizedImportedChat?.header) {
+            fs.unlinkSync(pathToUpload);
+            return response.status(400).send({ error: true, message: 'Imported chat could not be normalized.' });
+        }
+
         const pathToNewFile = getGroupChatFilePath(request.user.directories.groupChats, chatname);
-        fs.copyFileSync(pathToUpload, pathToNewFile);
+        writeGroupChat(pathToNewFile, normalizedImportedChat.messages, normalizedImportedChat.header.chat_metadata || {}, normalizedImportedChat.header);
         fs.unlinkSync(pathToUpload);
         return response.send({ res: chatname });
     } catch (error) {
@@ -2688,7 +2712,9 @@ router.post('/group/save', async (request, response) => {
                 getRequestSaveSessionId(request.body),
             );
             await request.activeSessionOperation?.assertAllowed();
-            const writeResult = writeLogicalChat(pathToFile, header, chat_data);
+            const writeResult = writeLogicalChat(pathToFile, header, chat_data, {
+                regenerateIdentities: request.body.regenerate_identities === true,
+            });
             getBackupFunction(request.user.profile.handle)(request.user.directories.backups, String(id), writeResult.fullJsonl);
             return response.send({ ok: true, chat_revision: revisionCheck.nextRevision });
         });

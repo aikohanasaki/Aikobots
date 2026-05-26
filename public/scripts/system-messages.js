@@ -1,9 +1,11 @@
 import { addOneMessage, chat, displayVersion, setSendButtonState, system_avatar, systemUserName } from '../script.js';
 import { t } from './i18n.js';
 import { getMessageTimeStamp } from './RossAscends-mods.js';
+import { ensureMessageIdentity } from './chat-identities.js';
 import { getSlashCommandsHelp } from './slash-commands.js';
 import { SlashCommandBrowser } from './slash-commands/SlashCommandBrowser.js';
 import { renderTemplateAsync } from './templates.js';
+import { uuidv4 } from './utils.js';
 
 /** @type {Record<string, ChatMessage>} */
 export const system_messages = {};
@@ -126,6 +128,7 @@ export async function initSystemMessages() {
         send_date: getMessageTimeStamp(),
         mes: t`You deleted a character/chat and arrived back here for safety reasons! Pick another character!`,
     };
+    ensureMessageIdentity(safetyMessage, { generateUuid: uuidv4 });
     SAFETY_CHAT.splice(0, SAFETY_CHAT.length, safetyMessage);
 }
 
@@ -160,6 +163,7 @@ export function getSystemMessageByType(type, text, extra = {}) {
 
     newMessage.extra = Object.assign(newMessage.extra, extra);
     newMessage.extra.type = type;
+    ensureMessageIdentity(newMessage, { generateUuid: uuidv4 });
     return newMessage;
 }
 
