@@ -989,6 +989,7 @@ async function sendProviderDispatchResult(result, request, response, {
     worldInfoOverflowed = false,
     worldInfo = null,
     promptSnapshotKey = null,
+    messagesCount = null,
 } = {}) {
     try {
         await assertActiveSessionOperation(request);
@@ -1014,6 +1015,7 @@ async function sendProviderDispatchResult(result, request, response, {
                 worldInfoOverflowed,
                 worldInfo,
                 promptSnapshotKey,
+                messagesCount,
             );
         }
 
@@ -1022,7 +1024,7 @@ async function sendProviderDispatchResult(result, request, response, {
         }
 
         const payload = result.ok
-            ? attachWorldInfoResponseData(result.body, request, timedWorldInfo, worldInfoOverflowed, worldInfo, promptSnapshotKey)
+            ? attachWorldInfoResponseData(result.body, request, timedWorldInfo, worldInfoOverflowed, worldInfo, promptSnapshotKey, messagesCount)
             : annotateErrorPayload(result.body, {
                 request,
                 stage: 'provider_response',
@@ -2917,7 +2919,7 @@ function buildWorldInfoSummaryResponseData(worldInfo, user) {
     return { sanitizedWorldInfo, worldInfoSummary, worldInfoReport };
 }
 
-function buildXSillyTavernPayload(request, timedWorldInfo, worldInfoOverflowed = false, worldInfo = null, promptSnapshotKey = null) {
+function buildXSillyTavernPayload(request, timedWorldInfo, worldInfoOverflowed = false, worldInfo = null, promptSnapshotKey = null, messagesCount = null) {
     void request;
     void worldInfo;
     const xSillyTavern = {};
@@ -2931,11 +2933,14 @@ function buildXSillyTavernPayload(request, timedWorldInfo, worldInfoOverflowed =
     if (worldInfoOverflowed) {
         xSillyTavern.worldInfoOverflowed = true;
     }
+    if (messagesCount !== null) {
+        xSillyTavern.messagesCount = Number(messagesCount);
+    }
 
     return xSillyTavern;
 }
 
-function attachWorldInfoResponseData(payload, request, timedWorldInfo, worldInfoOverflowed = false, worldInfo = null, promptSnapshotKey = null) {
+function attachWorldInfoResponseData(payload, request, timedWorldInfo, worldInfoOverflowed = false, worldInfo = null, promptSnapshotKey = null, messagesCount = null) {
     void request;
     void worldInfo;
     if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
@@ -2944,7 +2949,7 @@ function attachWorldInfoResponseData(payload, request, timedWorldInfo, worldInfo
 
     const xSillyTavern = {
         ...(payload.x_sillytavern && typeof payload.x_sillytavern === 'object' ? payload.x_sillytavern : {}),
-        ...buildXSillyTavernPayload(request, timedWorldInfo, worldInfoOverflowed, worldInfo, promptSnapshotKey),
+        ...buildXSillyTavernPayload(request, timedWorldInfo, worldInfoOverflowed, worldInfo, promptSnapshotKey, messagesCount),
     };
 
     if (!Object.keys(xSillyTavern).length) {
@@ -2957,12 +2962,12 @@ function attachWorldInfoResponseData(payload, request, timedWorldInfo, worldInfo
     return payload;
 }
 
-function writeWorldInfoSseEvent(response, request, timedWorldInfo, worldInfoOverflowed = false, worldInfo = null, promptSnapshotKey = null) {
+function writeWorldInfoSseEvent(response, request, timedWorldInfo, worldInfoOverflowed = false, worldInfo = null, promptSnapshotKey = null, messagesCount = null) {
     if (response.writableEnded) {
         return;
     }
 
-    const xSillyTavern = buildXSillyTavernPayload(request, timedWorldInfo, worldInfoOverflowed, worldInfo, promptSnapshotKey);
+    const xSillyTavern = buildXSillyTavernPayload(request, timedWorldInfo, worldInfoOverflowed, worldInfo, promptSnapshotKey, messagesCount);
     if (!Object.keys(xSillyTavern).length) {
         return;
     }
@@ -2997,7 +3002,7 @@ function stopStreamHeartbeat(heartbeat) {
     }
 }
 
-async function forwardFetchResponseWithWorldInfo(from, to, request, timedWorldInfo, worldInfoOverflowed = false, worldInfo = null, promptSnapshotKey = null) {
+async function forwardFetchResponseWithWorldInfo(from, to, request, timedWorldInfo, worldInfoOverflowed = false, worldInfo = null, promptSnapshotKey = null, messagesCount = null) {
     let statusCode = from.status;
     let statusText = from.statusText;
 
@@ -3009,21 +3014,23 @@ async function forwardFetchResponseWithWorldInfo(from, to, request, timedWorldIn
         statusCode = 400;
     }
 
-    to.statusCode = statusCode;
-    to.statusMessage = statusText;
-    to.setHeader('Content-Type', from.headers.get('content-type') || 'text/event-stream; charset=utf-8');
-    to.setHeader('Cache-Control', from.headers.get('cache-control') || 'no-cache');
-    to.setHeader('Connection', 'keep-alive');
-    to.setHeader('X-Accel-Buffering', 'no');
-    to.flushHeaders?.();
+    if (!to.headersSent) {
+        to.statusCode = statusCode;
+        to.statusMessage = statusText;
+        to.setHeader('Content-Type', from.headers.get('content-type') || 'text/event-stream; charset=utf-8');
+        to.setHeader('Cache-Control', from.headers.get('cache-control') || 'no-cache');
+        to.setHeader('Connection', 'keep-alive');
+        to.setHeader('X-Accel-Buffering', 'no');
+        to.flushHeaders?.();
+    }
 
     if (!from.body || !to.socket) {
-        writeWorldInfoSseEvent(to, request, timedWorldInfo, worldInfoOverflowed, worldInfo, promptSnapshotKey);
+        writeWorldInfoSseEvent(to, request, timedWorldInfo, worldInfoOverflowed, worldInfo, promptSnapshotKey, messagesCount);
         to.end();
         return;
     }
 
-    writeWorldInfoSseEvent(to, request, timedWorldInfo, worldInfoOverflowed, worldInfo, promptSnapshotKey);
+    writeWorldInfoSseEvent(to, request, timedWorldInfo, worldInfoOverflowed, worldInfo, promptSnapshotKey, messagesCount);
     const heartbeat = startStreamHeartbeat(to);
     const responseSocket = to.socket;
 
@@ -3543,6 +3550,7 @@ export async function handleChatCompletionsGenerate(request, response) {
     let assembledPromptContext = false;
     let assembledTimedWorldInfo = null;
     let assembledWorldInfoOverflowed = false;
+    let assembledMessagesCount = null;
     let assembledPromptSnapshot = null;
     let promptInspectionInfo = null;
     let dispatchedPromptSnapshotKey = null;
@@ -3584,7 +3592,8 @@ export async function handleChatCompletionsGenerate(request, response) {
         }
         rewriteSystemMessagesForO1Model(request.body.prompt_context.model, request.body.prompt_context.chatCompletionSource, assembled.chat);
         request.body.messages = assembled.chat;
-        response.setHeader('X-ST-Messages-Count', String(Number(assembled.messagesCount) || 0));
+        assembledMessagesCount = Number(assembled.messagesCount) || 0;
+        response.setHeader('X-ST-Messages-Count', String(assembledMessagesCount));
         assembledTimedWorldInfo = assembled.timedWorldInfo;
         assembledWorldInfoOverflowed = Boolean(assembled.worldInfoOverflowed);
         assembledPromptContext = true;
@@ -3645,6 +3654,7 @@ export async function handleChatCompletionsGenerate(request, response) {
             worldInfoOverflowed: assembledWorldInfoOverflowed,
             worldInfo: assembledPromptSnapshot?.worldInfo || null,
             promptSnapshotKey: dispatchedPromptSnapshotKey || promptInspectionInfo?.key || null,
+            messagesCount: assembledMessagesCount,
         });
     }
 
