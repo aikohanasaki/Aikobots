@@ -1335,11 +1335,13 @@ function applyAssemblyResponseMetadata(response, type) {
 function applyTimedWorldInfoResponseData(data, requestId) {
     const promptSnapshotKey = data?.x_sillytavern?.promptSnapshotKey;
     const timedWorldInfo = data?.x_sillytavern?.timedWorldInfo;
+    const messagesCount = data?.x_sillytavern?.messagesCount;
     const entry = getOpenAIResponseMetadataEntry(requestId, { create: true });
     const chatScope = entry?.chatScope ?? getCurrentPromptInspectionChatScope();
     const hasMetadata =
         (typeof promptSnapshotKey === 'string' && promptSnapshotKey) ||
-        (timedWorldInfo && typeof timedWorldInfo === 'object');
+        (timedWorldInfo && typeof timedWorldInfo === 'object') ||
+        (typeof messagesCount === 'number' && messagesCount >= 0);
 
     if (!hasMetadata) {
         storeLastPromptInspectionSnapshotKey(null, chatScope);
@@ -1355,6 +1357,9 @@ function applyTimedWorldInfoResponseData(data, requestId) {
     }
     if (entry && timedWorldInfo && typeof timedWorldInfo === 'object') {
         entry.timedWorldInfo = structuredClone(timedWorldInfo);
+    }
+    if (typeof messagesCount === 'number' && messagesCount >= 0) {
+        setInContextMessages(messagesCount, entry?.type || 'normal');
     }
     maybeNotifyWorldInfoOverflow(data);
 }
@@ -2577,6 +2582,7 @@ async function buildOpenAIGenerateData(type, messages, { jsonSchema = null } = {
     const metadataEntry = getOpenAIResponseMetadataEntry(requestId, { create: true });
     if (metadataEntry) {
         metadataEntry.chatScope = getCurrentPromptInspectionChatScope();
+        metadataEntry.type = type;
     }
     storeServerAssemblyPromptContext(promptContext);
 

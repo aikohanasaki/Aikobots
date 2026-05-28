@@ -3526,10 +3526,25 @@ router.post('/bias', async function (request, response) {
 export async function handleChatCompletionsGenerate(request, response) {
     if (!request.body) return response.status(400).send({ error: true });
 
+    let heartbeat = null;
+    const cleanup = () => {
+        stopStreamHeartbeat(heartbeat);
+        heartbeat = null;
+    };
+
     return (async () => {
         await assertActiveSessionOperation(request);
     request.requestId = request.requestId || uuidv4();
     response.setHeader('X-Request-Id', request.requestId);
+
+    if (request.body.stream) {
+        response.setHeader('Content-Type', 'text/event-stream; charset=utf-8');
+        response.setHeader('Cache-Control', 'no-cache');
+        response.setHeader('Connection', 'keep-alive');
+        response.setHeader('X-Accel-Buffering', 'no');
+        response.flushHeaders?.();
+        heartbeat = startStreamHeartbeat(response);
+    }
 
     if (request.body.reverse_proxy && isVoidaiAppUrl(request.body.reverse_proxy)) {
         console.warn('Blocked reverse proxy endpoint (voidai.app).');
@@ -3593,11 +3608,10 @@ export async function handleChatCompletionsGenerate(request, response) {
         rewriteSystemMessagesForO1Model(request.body.prompt_context.model, request.body.prompt_context.chatCompletionSource, assembled.chat);
         request.body.messages = assembled.chat;
         assembledMessagesCount = Number(assembled.messagesCount) || 0;
-        response.setHeader('X-ST-Messages-Count', String(assembledMessagesCount));
         assembledTimedWorldInfo = assembled.timedWorldInfo;
         assembledWorldInfoOverflowed = Boolean(assembled.worldInfoOverflowed);
         assembledPromptContext = true;
-    }
+        }
 
     if (!Array.isArray(request.body.messages) && typeof request.body.messages !== 'string') {
         return response.status(400).send({ error: { message: 'messages array or prompt_context is required' } });
@@ -3649,13 +3663,15 @@ export async function handleChatCompletionsGenerate(request, response) {
     }
 
     if (providerResult) {
-        return await sendProviderDispatchResult(providerResult, request, response, {
+        const result = await sendProviderDispatchResult(providerResult, request, response, {
             timedWorldInfo: assembledTimedWorldInfo,
             worldInfoOverflowed: assembledWorldInfoOverflowed,
             worldInfo: assembledPromptSnapshot?.worldInfo || null,
             promptSnapshotKey: dispatchedPromptSnapshotKey || promptInspectionInfo?.key || null,
             messagesCount: assembledMessagesCount,
         });
+        cleanup();
+        return result;
     }
 
     const requestedTextCompletion = Boolean(request.body.model && TEXT_COMPLETION_MODELS.includes(request.body.model)) || typeof request.body.messages === 'string';
@@ -4030,12 +4046,15 @@ export async function handleChatCompletionsGenerate(request, response) {
     await assertActiveSessionOperation(request);
     providerResult = await makeRequest(config, request);
     await assertActiveSessionOperation(request);
-    return await sendProviderDispatchResult(providerResult, request, response, {
+    const result = await sendProviderDispatchResult(providerResult, request, response, {
         timedWorldInfo: assembledTimedWorldInfo,
         worldInfoOverflowed: assembledWorldInfoOverflowed,
         worldInfo: assembledPromptSnapshot?.worldInfo || null,
         promptSnapshotKey: dispatchedPromptSnapshotKey || promptInspectionInfo?.key || null,
+        messagesCount: assembledMessagesCount,
     });
+    cleanup();
+    return result;
 
     /**
      * Makes a fetch request to the OpenAI API endpoint.
@@ -4148,6 +4167,7 @@ export async function handleChatCompletionsGenerate(request, response) {
         return await createSanitizedProviderErrorResult(errorResponse, request);
     }
     })().catch((error) => {
+        cleanup();
         cleanupRequestSocketAbortListeners(request);
         if (isActiveSessionError(error)) {
             if (!response.headersSent) {
