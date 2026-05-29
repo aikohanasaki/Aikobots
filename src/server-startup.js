@@ -250,6 +250,9 @@ export class ServerStartup {
                 passphrase: String(this.cliArgs.keyPassphrase ?? ''),
             };
             const server = https.createServer(sslOptions, this.app);
+            server.timeout = 600000;
+            server.keepAliveTimeout = 610000;
+            server.headersTimeout = 620000;
             server.on('error', reject);
             server.on('listening', resolve);
 
@@ -273,6 +276,9 @@ export class ServerStartup {
     #createHttpServer(url, ipVersion) {
         return new Promise((resolve, reject) => {
             const server = http.createServer(this.app);
+            server.timeout = 600000;
+            server.keepAliveTimeout = 610000;
+            server.headersTimeout = 620000;
             server.on('error', reject);
             server.on('listening', resolve);
 
