@@ -91,6 +91,7 @@ export {
 };
 
 let nextOpenAIResponseMetadataId = 0;
+let openai_messages_count = 0;
 const pendingOpenAIResponseMetadata = new Map();
 let lastServerAssemblyPromptContext = null;
 let lastServerAssemblyDebugDump = null;
@@ -1329,7 +1330,8 @@ function applyAssemblyResponseMetadata(response, type) {
         return;
     }
 
-    setInContextMessages(messagesCount, type);
+    openai_messages_count = messagesCount;
+    setInContextMessages(openai_messages_count, type);
 }
 
 function applyTimedWorldInfoResponseData(data, requestId) {
@@ -1359,7 +1361,8 @@ function applyTimedWorldInfoResponseData(data, requestId) {
         entry.timedWorldInfo = structuredClone(timedWorldInfo);
     }
     if (typeof messagesCount === 'number' && messagesCount >= 0) {
-        setInContextMessages(messagesCount, entry?.type || 'normal');
+        openai_messages_count = messagesCount;
+        setInContextMessages(openai_messages_count, entry?.type || 'normal');
     }
     maybeNotifyWorldInfoOverflow(data);
 }

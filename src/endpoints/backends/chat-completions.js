@@ -3540,15 +3540,6 @@ export async function handleChatCompletionsGenerate(request, response) {
     request.requestId = request.requestId || uuidv4();
     response.setHeader('X-Request-Id', request.requestId);
 
-    if (request.body.stream) {
-        response.setHeader('Content-Type', 'text/event-stream; charset=utf-8');
-        response.setHeader('Cache-Control', 'no-cache');
-        response.setHeader('Connection', 'keep-alive');
-        response.setHeader('X-Accel-Buffering', 'no');
-        response.flushHeaders?.();
-        heartbeat = startStreamHeartbeat(response);
-    }
-
     if (request.body.reverse_proxy && isVoidaiAppUrl(request.body.reverse_proxy)) {
         console.warn('Blocked reverse proxy endpoint (voidai.app).');
         return response.status(403).send({ error: { message: 'The domain voidai.app is blocked as a custom API endpoint.' } });
@@ -3557,6 +3548,15 @@ export async function handleChatCompletionsGenerate(request, response) {
     if (request.body.chat_completion_source === CHAT_COMPLETION_SOURCES.CUSTOM && isVoidaiAppUrl(request.body.custom_url)) {
         console.warn('Blocked custom endpoint (voidai.app).');
         return response.status(403).send({ error: { message: 'The domain voidai.app is blocked as a custom API endpoint.' } });
+    }
+
+    if (request.body.stream) {
+        response.setHeader('Content-Type', 'text/event-stream; charset=utf-8');
+        response.setHeader('Cache-Control', 'no-cache');
+        response.setHeader('Connection', 'keep-alive');
+        response.setHeader('X-Accel-Buffering', 'no');
+        response.flushHeaders?.();
+        heartbeat = startStreamHeartbeat(response);
     }
 
     const postProcessingType = request.body.custom_prompt_post_processing;
@@ -3611,6 +3611,7 @@ export async function handleChatCompletionsGenerate(request, response) {
         rewriteSystemMessagesForO1Model(request.body.prompt_context.model, request.body.prompt_context.chatCompletionSource, assembled.chat);
         request.body.messages = assembled.chat;
         assembledMessagesCount = Number(assembled.messagesCount) || 0;
+        response.setHeader('X-ST-Messages-Count', String(assembledMessagesCount));
         assembledTimedWorldInfo = assembled.timedWorldInfo;
         assembledWorldInfoOverflowed = Boolean(assembled.worldInfoOverflowed);
         assembledPromptContext = true;
