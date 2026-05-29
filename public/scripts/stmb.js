@@ -156,6 +156,7 @@ import {
     initializeFloatingClipButton,
     refreshFloatingClipButtonSetting,
     showStmbEntryReviewPopup,
+    showTopicalClipPopup,
 } from './stmb-clips.js';
 import {
     awaitStmbJobApproval,
@@ -5199,6 +5200,13 @@ async function showMainEntryPopup() {
                 },
             },
             {
+                text: 'Topical Clip',
+                classes: ['menu_button'],
+                action: async () => {
+                    await showTopicalClipPopup({ showGoBack: true });
+                },
+            },
+            {
                 text: 'Clear Scene',
                 result: null,
                 classes: ['menu_button'],
@@ -6152,7 +6160,10 @@ function assertRangeWithinCurrentChat(range) {
     if (sceneStart > sceneEnd) {
         throw new Error('Start message cannot be greater than end message');
     }
-    if (sceneStart < 0) {
+    if (sceneStart < 0 || sceneEnd < 0) {
+        throw new Error(`Message IDs out of range. Valid range: 0-${Math.max(chat.length - 1, 0)}`);
+    }
+    if (sceneStart >= chat.length || sceneEnd >= chat.length) {
         throw new Error(`Message IDs out of range. Valid range: 0-${Math.max(chat.length - 1, 0)}`);
     }
 }
