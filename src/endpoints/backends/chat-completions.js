@@ -1004,6 +1004,11 @@ async function sendProviderDispatchResult(result, request, response, {
 
             if (!result.ok) {
                 const sanitizedError = await buildSanitizedErrorResponse(result.response, { request });
+                if (response.headersSent) {
+                    response.write(`data: ${JSON.stringify(sanitizedError.body)}\n\n`);
+                    response.flush?.();
+                    return response.end();
+                }
                 return response.status(sanitizedError.status).send(sanitizedError.body);
             }
 
@@ -1020,6 +1025,9 @@ async function sendProviderDispatchResult(result, request, response, {
         }
 
         if (result.kind !== 'json') {
+            if (response.headersSent) {
+                return response.end();
+            }
             return response.status(500).send({ error: true });
         }
 
@@ -1032,6 +1040,15 @@ async function sendProviderDispatchResult(result, request, response, {
             });
 
         await assertActiveSessionOperation(request);
+
+        if (response.headersSent) {
+            if (!result.ok) {
+                response.write(`data: ${JSON.stringify(payload)}\n\n`);
+                response.flush?.();
+            }
+            return response.end();
+        }
+
         return response.status(result.status || 200).send(payload);
     } finally {
         cleanupRequestSocketAbortListeners(request);
@@ -3537,153 +3554,158 @@ export async function handleChatCompletionsGenerate(request, response) {
 
     return (async () => {
         await assertActiveSessionOperation(request);
-    request.requestId = request.requestId || uuidv4();
-    response.setHeader('X-Request-Id', request.requestId);
+        request.requestId = request.requestId || uuidv4();
+        response.setHeader('X-Request-Id', request.requestId);
 
-    if (request.body.reverse_proxy && isVoidaiAppUrl(request.body.reverse_proxy)) {
-        console.warn('Blocked reverse proxy endpoint (voidai.app).');
-        return response.status(403).send({ error: { message: 'The domain voidai.app is blocked as a custom API endpoint.' } });
-    }
+        if (request.body.reverse_proxy && isVoidaiAppUrl(request.body.reverse_proxy)) {
+            console.warn('Blocked reverse proxy endpoint (voidai.app).');
+            return response.status(403).send({ error: { message: 'The domain voidai.app is blocked as a custom API endpoint.' } });
+        }
 
-    if (request.body.chat_completion_source === CHAT_COMPLETION_SOURCES.CUSTOM && isVoidaiAppUrl(request.body.custom_url)) {
-        console.warn('Blocked custom endpoint (voidai.app).');
-        return response.status(403).send({ error: { message: 'The domain voidai.app is blocked as a custom API endpoint.' } });
-    }
+        if (request.body.chat_completion_source === CHAT_COMPLETION_SOURCES.CUSTOM && isVoidaiAppUrl(request.body.custom_url)) {
+            console.warn('Blocked custom endpoint (voidai.app).');
+            return response.status(403).send({ error: { message: 'The domain voidai.app is blocked as a custom API endpoint.' } });
+        }
 
-    if (request.body.stream) {
-        response.setHeader('Content-Type', 'text/event-stream; charset=utf-8');
-        response.setHeader('Cache-Control', 'no-cache');
-        response.setHeader('Connection', 'keep-alive');
-        response.setHeader('X-Accel-Buffering', 'no');
-        response.flushHeaders?.();
-        heartbeat = startStreamHeartbeat(response);
-    }
+        if (request.body.json_schema?.value) {
+            request.body.json_schema.value = flattenSchema(request.body.json_schema.value, request.body.chat_completion_source);
+        }
 
-    const postProcessingType = request.body.custom_prompt_post_processing;
+        const postProcessingType = request.body.custom_prompt_post_processing;
 
-    if (request.body.json_schema?.value) {
-        request.body.json_schema.value = flattenSchema(request.body.json_schema.value, request.body.chat_completion_source);
-    }
+        let assembledPromptContext = false;
+        let assembledTimedWorldInfo = null;
+        let assembledWorldInfoOverflowed = false;
+        let assembledMessagesCount = null;
+        let assembledPromptSnapshot = null;
+        let promptInspectionInfo = null;
+        let dispatchedPromptSnapshotKey = null;
+        if (!Array.isArray(request.body.messages) && request.body.prompt_context && typeof request.body.prompt_context === 'object') {
+            request.body.prompt_context.includeItemization = true;
+            await prepareServerPromptContext(request.user, request.user.directories, request.body.prompt_context);
+            const assembled = await assembleChatCompletionPrompt(request.body.prompt_context);
+            promptInspectionInfo = getPromptInspectionInfo(request);
+            if (promptInspectionInfo) {
+                assembledPromptSnapshot = assembled;
+                const promptSnapshotCount = Math.max(1, Number(request.body.n) || 1);
+                let latestPromptInspectionSnapshot = null;
+                for (let index = 0; index < promptSnapshotCount; index++) {
+                    const snapshotInfo = index === 0
+                        ? promptInspectionInfo
+                        : {
+                            ...promptInspectionInfo,
+                            swipeId: promptInspectionInfo.swipeId + index,
+                            key: buildPromptSnapshotKey(
+                                promptInspectionInfo.username,
+                                promptInspectionInfo.chatScope,
+                                promptInspectionInfo.mesId,
+                                promptInspectionInfo.swipeId + index,
+                            ),
+                        };
+                    if (snapshotInfo?.key) {
+                        latestPromptInspectionSnapshot = {
+                            key: snapshotInfo.key,
+                            snapshot: createPromptInspectionSnapshot(request, assembled, snapshotInfo),
+                        };
+                    }
+                }
 
-    let assembledPromptContext = false;
-    let assembledTimedWorldInfo = null;
-    let assembledWorldInfoOverflowed = false;
-    let assembledMessagesCount = null;
-    let assembledPromptSnapshot = null;
-    let promptInspectionInfo = null;
-    let dispatchedPromptSnapshotKey = null;
-    if (!Array.isArray(request.body.messages) && request.body.prompt_context && typeof request.body.prompt_context === 'object') {
-        request.body.prompt_context.includeItemization = true;
-        await prepareServerPromptContext(request.user, request.user.directories, request.body.prompt_context);
-        const assembled = await assembleChatCompletionPrompt(request.body.prompt_context);
-        promptInspectionInfo = getPromptInspectionInfo(request);
-        if (promptInspectionInfo) {
-            assembledPromptSnapshot = assembled;
-            const promptSnapshotCount = Math.max(1, Number(request.body.n) || 1);
-            let latestPromptInspectionSnapshot = null;
-            for (let index = 0; index < promptSnapshotCount; index++) {
-                const snapshotInfo = index === 0
-                    ? promptInspectionInfo
-                    : {
-                        ...promptInspectionInfo,
-                        swipeId: promptInspectionInfo.swipeId + index,
-                        key: buildPromptSnapshotKey(
-                            promptInspectionInfo.username,
-                            promptInspectionInfo.chatScope,
-                            promptInspectionInfo.mesId,
-                            promptInspectionInfo.swipeId + index,
-                        ),
-                    };
-                if (snapshotInfo?.key) {
-                    latestPromptInspectionSnapshot = {
-                        key: snapshotInfo.key,
-                        snapshot: createPromptInspectionSnapshot(request, assembled, snapshotInfo),
-                    };
+                if (latestPromptInspectionSnapshot?.key) {
+                    await assertActiveSessionOperation(request);
+                    await setPromptInspectionSnapshot(latestPromptInspectionSnapshot.key, latestPromptInspectionSnapshot.snapshot);
+                    dispatchedPromptSnapshotKey = latestPromptInspectionSnapshot.key;
                 }
             }
-
-            if (latestPromptInspectionSnapshot?.key) {
-                await assertActiveSessionOperation(request);
-                await setPromptInspectionSnapshot(latestPromptInspectionSnapshot.key, latestPromptInspectionSnapshot.snapshot);
-                dispatchedPromptSnapshotKey = latestPromptInspectionSnapshot.key;
-            }
-        }
-        rewriteSystemMessagesForO1Model(request.body.prompt_context.model, request.body.prompt_context.chatCompletionSource, assembled.chat);
-        request.body.messages = assembled.chat;
-        assembledMessagesCount = Number(assembled.messagesCount) || 0;
-        response.setHeader('X-ST-Messages-Count', String(assembledMessagesCount));
-        assembledTimedWorldInfo = assembled.timedWorldInfo;
-        assembledWorldInfoOverflowed = Boolean(assembled.worldInfoOverflowed);
-        assembledPromptContext = true;
+            rewriteSystemMessagesForO1Model(request.body.prompt_context.model, request.body.prompt_context.chatCompletionSource, assembled.chat);
+            request.body.messages = assembled.chat;
+            assembledMessagesCount = Number(assembled.messagesCount) || 0;
+            response.setHeader('X-ST-Messages-Count', String(assembledMessagesCount));
+            assembledTimedWorldInfo = assembled.timedWorldInfo;
+            assembledWorldInfoOverflowed = Boolean(assembled.worldInfoOverflowed);
+            assembledPromptContext = true;
         }
 
-    if (!Array.isArray(request.body.messages) && typeof request.body.messages !== 'string') {
-        return response.status(400).send({ error: { message: 'messages array or prompt_context is required' } });
-    }
+        if (!Array.isArray(request.body.messages) && typeof request.body.messages !== 'string') {
+            return response.status(400).send({ error: { message: 'messages array or prompt_context is required' } });
+        }
 
-    if (Array.isArray(request.body.messages) && postProcessingType && (!request.body.prompt_context || assembledPromptContext)) {
-        console.info('Applying custom prompt post-processing of type', postProcessingType);
-        request.body.messages = postProcessPrompt(
-            request.body.messages,
-            postProcessingType,
-            getPromptNames(request));
-    }
+        const requestedTextCompletion = Boolean(request.body.model && TEXT_COMPLETION_MODELS.includes(request.body.model)) || typeof request.body.messages === 'string';
+        if (requestedTextCompletion) {
+            return response.status(410).send({ error: { message: 'Text completion is disabled in chat-completions-only mode.' } });
+        }
 
-    rewriteSystemMessagesForO1Model(request.body.model, request.body.chat_completion_source, request.body.messages);
+        if (Array.isArray(request.body.messages) && postProcessingType && (!request.body.prompt_context || assembledPromptContext)) {
+            console.info('Applying custom prompt post-processing of type', postProcessingType);
+            request.body.messages = postProcessPrompt(
+                request.body.messages,
+                postProcessingType,
+                getPromptNames(request));
+        }
 
-    let providerResult = null;
-    switch (request.body.chat_completion_source) {
-        case CHAT_COMPLETION_SOURCES.CLAUDE:
-            providerResult = await sendClaudeRequest(request);
-            break;
-        case CHAT_COMPLETION_SOURCES.AI21:
-            providerResult = await sendAI21Request(request);
-            break;
-        case CHAT_COMPLETION_SOURCES.MAKERSUITE:
-        case CHAT_COMPLETION_SOURCES.VERTEXAI:
-            providerResult = await sendMakerSuiteRequest(request);
-            break;
-        case CHAT_COMPLETION_SOURCES.MISTRALAI:
-            providerResult = await sendMistralAIRequest(request);
-            break;
-        case CHAT_COMPLETION_SOURCES.COHERE:
-            providerResult = await sendCohereRequest(request);
-            break;
-        case CHAT_COMPLETION_SOURCES.DEEPSEEK:
-            providerResult = await sendDeepSeekRequest(request);
-            break;
-        case CHAT_COMPLETION_SOURCES.AIMLAPI:
-            providerResult = await sendAimlapiRequest(request);
-            break;
-        case CHAT_COMPLETION_SOURCES.XAI:
-            providerResult = await sendXaiRequest(request);
-            break;
-        case CHAT_COMPLETION_SOURCES.ELECTRONHUB:
-            providerResult = await sendElectronHubRequest(request);
-            break;
-        case CHAT_COMPLETION_SOURCES.AZURE_OPENAI:
-            providerResult = await sendAzureOpenAIRequest(request);
-            break;
-    }
+        rewriteSystemMessagesForO1Model(request.body.model, request.body.chat_completion_source, request.body.messages);
 
-    if (providerResult) {
-        const result = await sendProviderDispatchResult(providerResult, request, response, {
-            timedWorldInfo: assembledTimedWorldInfo,
-            worldInfoOverflowed: assembledWorldInfoOverflowed,
-            worldInfo: assembledPromptSnapshot?.worldInfo || null,
-            promptSnapshotKey: dispatchedPromptSnapshotKey || promptInspectionInfo?.key || null,
-            messagesCount: assembledMessagesCount,
-        });
-        cleanup();
-        return result;
-    }
+        if (assembledMessagesCount === null && Array.isArray(request.body.messages) && !response.headersSent) {
+            assembledMessagesCount = request.body.messages.filter(message => !message?.tool_calls && ['user', 'assistant', 'tool'].includes(message?.role)).length || 0;
+            response.setHeader('X-ST-Messages-Count', String(assembledMessagesCount));
+        }
 
-    const requestedTextCompletion = Boolean(request.body.model && TEXT_COMPLETION_MODELS.includes(request.body.model)) || typeof request.body.messages === 'string';
-    if (requestedTextCompletion) {
-        return response.status(410).send({ error: { message: 'Text completion is disabled in chat-completions-only mode.' } });
-    }
+        if (request.body.stream && !response.headersSent) {
+            response.setHeader('Content-Type', 'text/event-stream; charset=utf-8');
+            response.setHeader('Cache-Control', 'no-cache');
+            response.setHeader('Connection', 'keep-alive');
+            response.setHeader('X-Accel-Buffering', 'no');
+            response.flushHeaders?.();
+            heartbeat = startStreamHeartbeat(response);
+        }
 
-    let apiUrl;
+        let providerResult = null;
+        switch (request.body.chat_completion_source) {
+            case CHAT_COMPLETION_SOURCES.CLAUDE:
+                providerResult = await sendClaudeRequest(request);
+                break;
+            case CHAT_COMPLETION_SOURCES.AI21:
+                providerResult = await sendAI21Request(request);
+                break;
+            case CHAT_COMPLETION_SOURCES.MAKERSUITE:
+            case CHAT_COMPLETION_SOURCES.VERTEXAI:
+                providerResult = await sendMakerSuiteRequest(request);
+                break;
+            case CHAT_COMPLETION_SOURCES.MISTRALAI:
+                providerResult = await sendMistralAIRequest(request);
+                break;
+            case CHAT_COMPLETION_SOURCES.COHERE:
+                providerResult = await sendCohereRequest(request);
+                break;
+            case CHAT_COMPLETION_SOURCES.DEEPSEEK:
+                providerResult = await sendDeepSeekRequest(request);
+                break;
+            case CHAT_COMPLETION_SOURCES.AIMLAPI:
+                providerResult = await sendAimlapiRequest(request);
+                break;
+            case CHAT_COMPLETION_SOURCES.XAI:
+                providerResult = await sendXaiRequest(request);
+                break;
+            case CHAT_COMPLETION_SOURCES.ELECTRONHUB:
+                providerResult = await sendElectronHubRequest(request);
+                break;
+            case CHAT_COMPLETION_SOURCES.AZURE_OPENAI:
+                providerResult = await sendAzureOpenAIRequest(request);
+                break;
+        }
+
+        if (providerResult) {
+            const result = await sendProviderDispatchResult(providerResult, request, response, {
+                timedWorldInfo: assembledTimedWorldInfo,
+                worldInfoOverflowed: assembledWorldInfoOverflowed,
+                worldInfo: assembledPromptSnapshot?.worldInfo || null,
+                promptSnapshotKey: dispatchedPromptSnapshotKey || promptInspectionInfo?.key || null,
+                messagesCount: assembledMessagesCount,
+            });
+            cleanup();
+            return result;
+        }
+
+        let apiUrl;
     let apiKey;
     let headers;
     let bodyParams;

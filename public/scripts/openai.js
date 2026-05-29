@@ -78,6 +78,7 @@ import { consumeChatCompletionStream } from './chat-completion-stream.js';
 
 export {
     oai_settings,
+    openai_messages_count,
     buildOpenAIGenerateData,
     loadOpenAISettings,
     setOpenAIMessages,
