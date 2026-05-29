@@ -2973,7 +2973,8 @@ function writeWorldInfoSseEvent(response, request, timedWorldInfo, worldInfoOver
     }
 
     response.write(`data: ${JSON.stringify({ x_sillytavern: xSillyTavern })}\n\n`);
-}
+    response.flush?.();
+    }
 
 /**
  * @param {import('express').Response} response
@@ -2990,7 +2991,8 @@ function startStreamHeartbeat(response) {
         }
 
         response.write(': heartbeat\n\n');
-    }, STREAM_HEARTBEAT_INTERVAL_MS);
+        response.flush?.();
+        }, STREAM_HEARTBEAT_INTERVAL_MS);
 }
 
 /**
@@ -3043,6 +3045,7 @@ async function forwardFetchResponseWithWorldInfo(from, to, request, timedWorldIn
         }
 
         to.write(`${eventBlock}\n\n`);
+        to.flush?.();
     };
 
     const onSocketClose = function () {

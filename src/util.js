@@ -549,18 +549,30 @@ export function forwardFetchResponse(from, to) {
     to.statusMessage = statusText;
 
     if (from.body && to.socket) {
-        from.body.pipe(to);
-
-        to.socket.on('close', function () {
+        const onSocketClose = function () {
             if (from.body instanceof Readable) from.body.destroy(); // Close the remote stream
+            if (!to.writableEnded) to.end(); // End the Express response
+        };
 
-            to.end(); // End the Express response
-        });
+        to.socket.on('close', onSocketClose);
 
-        from.body.on('end', function () {
-            console.info('Streaming request finished');
-            to.end();
-        });
+        (async () => {
+            try {
+                for await (const chunk of from.body) {
+                    if (to.writableEnded) break;
+                    to.write(chunk);
+                    to.flush?.();
+                }
+                console.info('Streaming request finished');
+            } catch (error) {
+                console.warn('Streaming request failed', error);
+            } finally {
+                to.socket.removeListener('close', onSocketClose);
+                if (!to.writableEnded) {
+                    to.end();
+                }
+            }
+        })();
     } else {
         to.end();
     }
