@@ -152,11 +152,11 @@ function normalizeChatJsonlFileName(fileName, { fieldName = 'chat_file', allowHe
     return normalizedFileName;
 }
 
-function isHeadChatFile(fileName) {
+export function isHeadChatFile(fileName) {
     return String(fileName).endsWith(CHAT_HEAD_FILE_SUFFIX);
 }
 
-function getSplitHeadPath(filePath) {
+export function getSplitHeadPath(filePath) {
     const parsedPath = path.parse(filePath);
     return resolveSplitHeadCompanionPath(filePath, `${parsedPath.name}${CHAT_HEAD_FILE_SUFFIX}`);
 }
@@ -931,129 +931,53 @@ function ensureGroupChatHeader(user, chatId, filePath) {
     };
 }
 
-function getPreservedSplitTailWriteConfig(segments) {
-    const layout = getSegmentLayout(segments);
-    const preservedTailCount = Math.max(0, layout.tailCount || 0);
-    const tailStartId = segments?.storage
-        ? layout.tailStartId
-        : layout.totalMessages;
-    const config = normalizeLongChatConfig({
-        displayCount: preservedTailCount > 0
-            ? Math.min(LONG_CHAT_DISPLAY_MAX, Math.max(LONG_CHAT_DISPLAY_MIN, preservedTailCount))
-            : LONG_CHAT_DISPLAY_DEFAULT,
-        bufferMax: Math.max(LONG_CHAT_BUFFER_DEFAULT, preservedTailCount),
-    });
-
-    return {
-        ...config,
-        tailStartId,
-    };
-}
-
-export function writeLogicalChat(filePath, header, messages, { displayCount = LONG_CHAT_DISPLAY_DEFAULT, bufferMax = LONG_CHAT_BUFFER_DEFAULT, tailStartId = null, regenerateIdentities = false } = {}) {
-    const { displayCount: normalizedDisplayCount, bufferMax: normalizedBufferMax } = normalizeLongChatConfig({ displayCount, bufferMax });
+export function writeLogicalChat(filePath, header, messages, { regenerateIdentities = false } = {}) {
     const baseHeader = sanitizeChatHeaderForPersistence(header);
     const identityMessages = Array.isArray(messages)
         ? _.cloneDeep(messages)
         : [];
+
     if (regenerateIdentities) {
         regenerateChatIdentities(identityMessages, { generateUuid: uuidv4 });
     } else {
         normalizeChatIdentities(identityMessages, { generateUuid: uuidv4 });
     }
+
     const sanitizedMessages = identityMessages.map(message => sanitizeChatMessageForPersistence(message));
     const fullJsonl = serializeJsonl([baseHeader, ...sanitizedMessages]);
     const headPath = getSplitHeadPath(filePath);
     const totalMessages = sanitizedMessages.length;
-    let nextTailStartId = Number.isInteger(tailStartId) ? tailStartId : null;
 
-    if (nextTailStartId !== null) {
-        nextTailStartId = Math.min(Math.max(0, nextTailStartId), totalMessages);
-        const tailCount = Math.max(0, totalMessages - nextTailStartId);
-        if (tailCount > normalizedBufferMax) {
-            nextTailStartId = Math.max(0, totalMessages - normalizedDisplayCount);
+    if (fs.existsSync(headPath)) {
+        console.info(`Consolidating split chat: ${filePath}`);
+        if (fs.existsSync(filePath)) {
+            fs.renameSync(filePath, filePath + '.bak');
         }
-    } else if (totalMessages > normalizedBufferMax) {
-        nextTailStartId = Math.max(0, totalMessages - normalizedDisplayCount);
+        fs.renameSync(headPath, headPath + '.bak');
+        console.info(`Created backups for split chat: ${filePath}`);
     }
 
-    if (nextTailStartId !== null && nextTailStartId > 0 && nextTailStartId < totalMessages) {
-        const headMessages = sanitizedMessages.slice(0, nextTailStartId);
-        const tailMessages = sanitizedMessages.slice(nextTailStartId);
-        const storage = {
-            mode: CHAT_STORAGE_MODE_SPLIT_TAIL,
-            head_file: path.basename(headPath),
-            head_count: headMessages.length,
-            tail_count: tailMessages.length,
-        };
-        const headerWithStorage = { ...baseHeader, [CHAT_STORAGE_KEY]: storage };
-        const headHeader = {
-            split_part: 'head',
-            parent_file: path.basename(filePath),
-            message_count: headMessages.length,
-        };
+    writeFileAtomicSync(filePath, fullJsonl, 'utf8');
 
-        writeFileAtomicSync(headPath, serializeJsonl([headHeader, ...headMessages]), 'utf8');
-        writeFileAtomicSync(filePath, serializeJsonl([headerWithStorage, ...tailMessages]), 'utf8');
-
-        return {
-            fullJsonl,
-            storageMode: CHAT_STORAGE_MODE_SPLIT_TAIL,
-            headCount: headMessages.length,
-            tailCount: tailMessages.length,
-            tailStartId: headMessages.length,
-            tailEndId: totalMessages > 0 ? totalMessages - 1 : -1,
-            compacted: tailStartId !== null && nextTailStartId !== tailStartId,
-        };
-    } else {
-        writeFileAtomicSync(filePath, fullJsonl, 'utf8');
-
-        if (fs.existsSync(headPath)) {
-            fs.unlinkSync(headPath);
-        }
-
-        return {
-            fullJsonl,
-            storageMode: 'full',
-            headCount: 0,
-            tailCount: totalMessages,
-            tailStartId: 0,
-            tailEndId: totalMessages > 0 ? totalMessages - 1 : -1,
-            compacted: false,
-        };
-    }
+    return {
+        fullJsonl,
+        storageMode: 'full',
+        headCount: 0,
+        tailCount: totalMessages,
+        tailStartId: 0,
+        tailEndId: totalMessages > 0 ? totalMessages - 1 : -1,
+        compacted: false,
+    };
 }
 
-export function ensureSplitTailStorage(filePath, { displayCount = LONG_CHAT_DISPLAY_DEFAULT, bufferMax = LONG_CHAT_BUFFER_DEFAULT } = {}) {
+export function ensureSplitTailStorage(filePath) {
     const segments = getChatSegments(filePath);
-    const config = normalizeLongChatConfig({ displayCount, bufferMax });
-    if (!segments.header) {
+    if (!segments.header || !segments.storage) {
         return false;
     }
 
-    if (segments.storage) {
-        const layout = getSegmentLayout(segments);
-        if (layout.headMessagesMissing || layout.tailCount <= config.bufferMax) {
-            return false;
-        }
-
-        writeLogicalChat(filePath, segments.header, segments.messages, {
-            displayCount: config.displayCount,
-            bufferMax: config.bufferMax,
-            tailStartId: layout.tailStartId,
-        });
-        return true;
-    }
-
-    if (segments.messages.length <= config.bufferMax) {
-        return false;
-    }
-
-    writeLogicalChat(filePath, segments.header, segments.messages, {
-        displayCount: config.displayCount,
-        bufferMax: config.bufferMax,
-        tailStartId: Math.max(0, segments.messages.length - config.displayCount),
-    });
+    console.info(`Triggering lazy consolidation for split chat: ${filePath}`);
+    writeLogicalChat(filePath, segments.header, segments.messages);
     return true;
 }
 
@@ -1958,11 +1882,7 @@ router.post('/message-visibility', validateAvatarUrlMiddleware, async function (
 
             const nextRevision = revisionCheck.nextRevision;
             const header = setChatRevision(stripChatStorage(segments.header), nextRevision, getRequestSaveSessionId(request.body));
-            const writeResult = writeLogicalChat(filePath, header, messages, {
-                displayCount: config.displayCount,
-                bufferMax: config.bufferMax,
-                tailStartId: segments.storage ? layout.tailStartId : null,
-            });
+            const writeResult = writeLogicalChat(filePath, header, messages);
             getBackupFunction(request.user.profile.handle)(request.user.directories.backups, directoryName, writeResult.fullJsonl);
 
             return response.send({
@@ -2112,9 +2032,6 @@ router.post('/save', validateAvatarUrlMiddleware, async function (request, respo
             const messages = logicalChatData.slice(1);
             await request.activeSessionOperation?.assertAllowed();
             const writeResult = writeLogicalChat(filePath, header, messages, {
-                displayCount: config.displayCount,
-                bufferMax: config.bufferMax,
-                tailStartId: requestedTailStartId,
                 regenerateIdentities: request.body.regenerate_identities === true,
             });
             getBackupFunction(request.user.profile.handle)(request.user.directories.backups, directoryName, writeResult.fullJsonl);
@@ -2190,7 +2107,7 @@ router.post('/get', validateAvatarUrlMiddleware, async function (request, respon
                 console.error('Failed to update user last activity for direct chat read:', error);
             }
             return await withChatSaveLock(filePath, async () => {
-                ensureSplitTailStorage(filePath, config);
+                ensureSplitTailStorage(filePath);
                 return response.send(buildChunkedChatPayload(filePath, {
                     rangeStart,
                     count,
@@ -2285,12 +2202,11 @@ router.post('/rename', validateAvatarUrlMiddleware, async function (request, res
         }
 
         if (segments.header) {
-            const writeConfig = getPreservedSplitTailWriteConfig(segments);
             const targetHeader = request.body.is_group
                 ? buildGroupChatHeader(segments.header?.chat_metadata || {}, segments.header)
                 : stripChatStorage(segments.header);
 
-            writeLogicalChat(pathToRenamedFile, targetHeader, segments.messages, writeConfig);
+            writeLogicalChat(pathToRenamedFile, targetHeader, segments.messages);
         } else if (request.body.is_group) {
             const groupRecords = readJsonlObjects(pathToOriginalFile);
             writeFileAtomicSync(pathToRenamedFile, serializeJsonl(groupRecords), 'utf8');

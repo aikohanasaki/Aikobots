@@ -68,6 +68,7 @@ import { init as settingsInit } from './endpoints/settings.js';
 import { redirectDeprecatedEndpoints, ServerStartup, setupPrivateEndpoints } from './server-startup.js';
 import { diskCache } from './endpoints/characters.js';
 import { migrateFlatSecrets } from './endpoints/secrets.js';
+import { DataMaidService } from './endpoints/data-maid.js';
 
 // Work around a node v20.0.0, v20.1.0, and v20.2.0 bug. The issue was fixed in v20.3.0.
 // https://github.com/nodejs/node/issues/47822#issuecomment-1564708870
@@ -274,6 +275,7 @@ async function preSetupTasks() {
     await ensureThumbnailCache(directories);
     await diskCache.verify(directories);
     migrateFlatSecrets(directories);
+    await DataMaidService.recombineAllUsersSplitChats();
     cleanUploads();
     migrateAccessLog();
 
