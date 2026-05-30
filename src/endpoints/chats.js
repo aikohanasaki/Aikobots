@@ -922,9 +922,9 @@ export function writeLogicalChat(filePath, header, messages, { regenerateIdentit
     if (fs.existsSync(headPath)) {
         console.info(`Consolidating split chat: ${filePath}`);
         if (fs.existsSync(filePath)) {
-            fs.renameSync(filePath, filePath + '.bak');
+            fs.renameSync(filePath, filePath + '.split-tail.bak');
         }
-        fs.renameSync(headPath, headPath + '.bak');
+        fs.renameSync(headPath, headPath + '.split-head.bak');
         console.info(`Created backups for split chat: ${filePath}`);
     }
 
