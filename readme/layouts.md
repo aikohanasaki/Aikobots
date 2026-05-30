@@ -340,6 +340,8 @@ body.layout-custom .mes {
 
 Avoid hardcoding colors in reusable layouts unless the color is intentionally independent of the user's active theme.
 
+STMB popup surfaces in `public/style.css` also use SmartTheme variables for borders and text-adjacent UI. The Topical Clip source memory selector uses `.stmb-topical-source-selector` for the scrollable bordered list and `.stmb-topical-source-select-label` for checkbox rows.
+
 ## 7. Minimal Custom Layout Template
 
 Create a file like:

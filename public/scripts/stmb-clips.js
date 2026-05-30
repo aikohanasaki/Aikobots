@@ -1379,6 +1379,11 @@ function getEntryKeys(entry) {
     return Array.isArray(entry?.key) ? entry.key.map(key => String(key || '').trim()).filter(Boolean) : [];
 }
 
+function getTopicalSourceSelectionKey(entry) {
+    const stableId = getEntryStableId(entry);
+    return stableId || stableHashTopicalSourceEntry(entry);
+}
+
 function stableHashTopicalSourceEntry(entry) {
     return stableHashString(JSON.stringify({
         uid: entry?.uid ?? null,
@@ -1406,6 +1411,30 @@ function buildTopicalSnapshotMap(snapshot) {
         map.set(key, String(item?.hash || ''));
     }
     return map;
+}
+
+function buildTopicalProcessedSourceSnapshot(allEligibleEntries, targetEntry, processedEntries) {
+    const processedKeys = new Set((processedEntries || []).map(getTopicalSourceSelectionKey));
+    if (processedKeys.size === 0) return [];
+
+    const previousMetadata = getTopicalClipMetadata(targetEntry);
+    const previous = buildTopicalSnapshotMap(previousMetadata?.last_source_snapshot);
+
+    return (allEligibleEntries || [])
+        .map(entry => {
+            const uid = entry?.uid ?? entry?.id ?? null;
+            const key = uid === null || uid === undefined ? stableHashTopicalSourceEntry(entry) : String(uid);
+            const currentHash = stableHashTopicalSourceEntry(entry);
+            const previousHash = previous.get(key);
+            const processed = processedKeys.has(getTopicalSourceSelectionKey(entry));
+            if (!processed && !previousHash) return null;
+            return {
+                uid,
+                hash: processed ? currentHash : previousHash,
+                title: String(entry?.comment ?? entry?.title ?? ''),
+            };
+        })
+        .filter(Boolean);
 }
 
 function getTopicalClipMetadata(entry) {
@@ -1592,6 +1621,88 @@ async function confirmTopicalClipTokenException({ estimatedTokens: tokenCount, t
         ],
     });
     return await popup.show() === POPUP_RESULT.CUSTOM1;
+}
+
+function buildTopicalSourceMemorySelectionRows(entries, selectedKeys) {
+    return (entries || []).map(entry => {
+        const key = getTopicalSourceSelectionKey(entry);
+        const title = String(entry?.comment || entry?.title || tr('Untitled'));
+        const keywords = getEntryKeys(entry).join(', ');
+        const tokenCount = estimateTokens(entry?.content || '');
+        const checked = !selectedKeys || selectedKeys.has(key) ? ' checked' : '';
+        return `
+            <tr>
+                <td>
+                    <label class="stmb-topical-source-select-label">
+                        <input type="checkbox" class="stmb-topical-source-select-checkbox" value="${escapeHtml(key)}"${checked}>
+                        <span>${escapeHtml(title)}</span>
+                    </label>
+                </td>
+                <td>${escapeHtml(keywords)}</td>
+                <td>${tokenCount}</td>
+            </tr>
+        `;
+    }).join('');
+}
+
+async function showTopicalSourceMemorySelectorPopup(entries, selectedKeys = null) {
+    const entryCount = Array.isArray(entries) ? entries.length : 0;
+    if (entryCount === 0) {
+        toastr.error(tr('No source memories are available to select.'), 'STMB');
+        return null;
+    }
+
+    const content = DOMPurify.sanitize(`
+        <h3>${escapeHtml(tr('Select Memories'))}</h3>
+        <p class="opacity70p">${escapeHtml(tr('Choose which source memories to send for this Topical Clip draft.'))}</p>
+        <div class="buttons_block justifyCenter gap10px whitespacenowrap">
+            <button id="stmb-topical-select-all-sources" type="button" class="menu_button">${escapeHtml(tr('Select All'))}</button>
+            <button id="stmb-topical-clear-all-sources" type="button" class="menu_button">${escapeHtml(tr('Clear'))}</button>
+        </div>
+        <div class="stmb-topical-source-selector">
+            <table class="stmb-review-entries">
+                <thead>
+                    <tr>
+                        <th>${escapeHtml(tr('Memory'))}</th>
+                        <th>${escapeHtml(tr('Keywords'))}</th>
+                        <th>${escapeHtml(tr('Tokens'))}</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    ${buildTopicalSourceMemorySelectionRows(entries, selectedKeys)}
+                </tbody>
+            </table>
+        </div>
+    `);
+    let selected = null;
+    const popup = new Popup(content, POPUP_TYPE.TEXT, '', {
+        wide: true,
+        large: true,
+        allowVerticalScrolling: true,
+        okButton: tr('Use Selected'),
+        cancelButton: tr('Cancel'),
+        onClosing: closingPopup => {
+            if (closingPopup.result !== POPUP_RESULT.AFFIRMATIVE) return true;
+            selected = new Set(checkboxes()
+                .filter(checkbox => checkbox.checked)
+                .map(checkbox => String(checkbox.value || ''))
+                .filter(Boolean));
+            if (selected.size > 0) return true;
+            toastr.error(tr('Select at least one source memory.'), 'STMB');
+            return false;
+        },
+    });
+    const checkboxes = () => Array.from(popup.dlg?.querySelectorAll('.stmb-topical-source-select-checkbox') || []);
+    popup.dlg?.querySelector('#stmb-topical-select-all-sources')?.addEventListener('click', () => {
+        for (const checkbox of checkboxes()) checkbox.checked = true;
+    });
+    popup.dlg?.querySelector('#stmb-topical-clear-all-sources')?.addEventListener('click', () => {
+        for (const checkbox of checkboxes()) checkbox.checked = false;
+    });
+
+    const result = await popup.show();
+    if (result !== POPUP_RESULT.AFFIRMATIVE) return null;
+    return selected;
 }
 
 function formatLocalTopicalClipTimestamp(date = new Date()) {
@@ -1782,6 +1893,7 @@ function buildTopicalClipPopupHtml(defaultLorebookName) {
             </div>
             ${profileControl}
             <div class="buttons_block justifyCenter gap10px whitespacenowrap">
+                <button id="stmb-topical-clip-select-memories" type="button" class="menu_button">${escapeHtml(tr('Select Memories'))}</button>
                 <button id="stmb-topical-clip-edit-prompt" type="button" class="menu_button">${escapeHtml(tr('Edit Topical Clip Prompt'))}</button>
             </div>
             <div id="stmb-topical-clip-diagnostics" class="info_block info-block"></div>
@@ -1823,6 +1935,7 @@ export async function showTopicalClipPopup(options = {}) {
     let currentLorebookName = '';
     let currentLorebookData = null;
     let generationContext = null;
+    let selectedSourceMemoryKeys = null;
 
     const showPromise = popup.show();
     initializeCompactionLorebookSelect(popup, 'stmb-topical-clip-lorebook-select', {
@@ -1862,18 +1975,27 @@ export async function showTopicalClipPopup(options = {}) {
         if (draftTextarea) draftTextarea.value = '';
         if (saveButton) saveButton.disabled = true;
     };
+    const clearSourceSelection = () => {
+        selectedSourceMemoryKeys = null;
+        clearDraft();
+    };
     const renderDiagnostics = (message = '') => {
         if (!diagnostics) return;
         const target = getMode() === 'update' ? getSelectedTargetEntry() : null;
         const allEligible = currentLorebookData ? getTopicalSourceEntries(currentLorebookData, target) : [];
         const rebuildAll = !!rebuildInput?.checked;
-        const used = getMode() === 'update'
+        const baseUsed = getMode() === 'update'
             ? getTopicalChangedSourceEntries(allEligible, target, rebuildAll)
             : allEligible;
+        const used = selectedSourceMemoryKeys
+            ? baseUsed.filter(entry => selectedSourceMemoryKeys.has(getTopicalSourceSelectionKey(entry)))
+            : baseUsed;
         const threshold = Number.parseInt(getModuleSettings().tokenWarningThreshold, 10) || 50000;
-        const prefix = formatTopicalMessage('Eligible source memories: {{eligible}}. Source memories to use: {{used}}. Token warning threshold: {{threshold}}.', {
+        const selectionLabel = selectedSourceMemoryKeys ? tr('manual selection') : tr('all available');
+        const prefix = formatTopicalMessage('Eligible source memories: {{eligible}}. Source memories to use: {{used}} ({{selection}}). Token warning threshold: {{threshold}}.', {
             eligible: allEligible.length,
             used: used.length,
+            selection: selectionLabel,
             threshold,
         });
         diagnostics.textContent = message ? `${prefix} ${message}` : prefix;
@@ -1891,13 +2013,14 @@ export async function showTopicalClipPopup(options = {}) {
     };
     const renderMode = () => {
         const updateMode = getMode() === 'update';
+        clearSourceSelection();
         if (targetRow) targetRow.hidden = !updateMode;
         if (rebuildRow) rebuildRow.hidden = !updateMode;
         renderTargetMetadataMessage();
         renderDiagnostics();
-        clearDraft();
     };
     const renderTargets = () => {
+        selectedSourceMemoryKeys = null;
         const targetEntries = getTopicalClipTargetEntries(currentLorebookData);
         if (targetSelect) {
             targetSelect.innerHTML = [
@@ -1911,7 +2034,7 @@ export async function showTopicalClipPopup(options = {}) {
     const loadSelectedLorebook = async lorebookName => {
         currentLorebookName = lorebookName || '';
         currentLorebookData = null;
-        clearDraft();
+        clearSourceSelection();
         if (!currentLorebookName) {
             renderDiagnostics(tr('Select a Memory Book to see eligible entries.'));
             renderTargets();
@@ -1935,12 +2058,12 @@ export async function showTopicalClipPopup(options = {}) {
     });
     targetSelect?.addEventListener('change', () => {
         renderTargetMetadataMessage();
+        clearSourceSelection();
         renderDiagnostics();
-        clearDraft();
     });
     rebuildInput?.addEventListener('change', () => {
+        clearSourceSelection();
         renderDiagnostics();
-        clearDraft();
     });
     topicInput?.addEventListener('input', clearDraft);
     keywordsInput?.addEventListener('input', clearDraft);
@@ -1953,6 +2076,36 @@ export async function showTopicalClipPopup(options = {}) {
     });
     dlg?.querySelector('#stmb-topical-clip-edit-prompt')?.addEventListener('click', () => {
         void showTopicalClipPromptEditorPopup();
+    });
+    dlg?.querySelector('#stmb-topical-clip-select-memories')?.addEventListener('click', async () => {
+        const selectedLorebookName = getSelectedLorebookName();
+        if (selectedLorebookName && (selectedLorebookName !== currentLorebookName || !currentLorebookData?.entries)) {
+            await loadSelectedLorebook(selectedLorebookName);
+        }
+        if (!currentLorebookName || !currentLorebookData?.entries) {
+            toastr.error(tr('Select a Memory Book to see eligible entries.'), 'STMB');
+            return;
+        }
+        const mode = getMode();
+        const target = mode === 'update' ? getSelectedTargetEntry() : null;
+        if (mode === 'update' && !target) {
+            toastr.error(tr('Choose an entry to update.'), 'STMB');
+            return;
+        }
+        const allEligibleSources = getTopicalSourceEntries(currentLorebookData, target);
+        const rebuildAll = !!rebuildInput?.checked;
+        const selectableSources = mode === 'update'
+            ? getTopicalChangedSourceEntries(allEligibleSources, target, rebuildAll)
+            : allEligibleSources;
+        if (selectableSources.length === 0) {
+            toastr.error(tr('No source memories are available to select.'), 'STMB');
+            return;
+        }
+        const nextSelection = await showTopicalSourceMemorySelectorPopup(selectableSources, selectedSourceMemoryKeys);
+        if (!nextSelection) return;
+        selectedSourceMemoryKeys = nextSelection;
+        clearDraft();
+        renderDiagnostics(tr('Source memory selection updated.'));
     });
     generateButton?.addEventListener('click', async () => {
         const selectedLorebookName = getSelectedLorebookName();
@@ -1992,13 +2145,22 @@ export async function showTopicalClipPopup(options = {}) {
             return;
         }
         const rebuildAll = !!rebuildInput?.checked;
-        const sourceEntries = mode === 'update'
+        const baseSourceEntries = mode === 'update'
             ? getTopicalChangedSourceEntries(allEligibleSources, target, rebuildAll)
             : allEligibleSources;
-        if (mode === 'update' && sourceEntries.length === 0) {
+        if (mode === 'update' && baseSourceEntries.length === 0) {
             const noNewMessage = tr('No new STMB memory entries were found for this Topical Clip.');
             toastr.info(noNewMessage, 'STMB');
             renderDiagnostics(noNewMessage);
+            return;
+        }
+        const sourceEntries = selectedSourceMemoryKeys
+            ? baseSourceEntries.filter(entry => selectedSourceMemoryKeys.has(getTopicalSourceSelectionKey(entry)))
+            : baseSourceEntries;
+        if (sourceEntries.length === 0) {
+            const noSelectionMessage = tr('No selected source memories are available for this Topical Clip.');
+            toastr.error(noSelectionMessage, 'STMB');
+            renderDiagnostics(noSelectionMessage);
             return;
         }
 
@@ -2048,7 +2210,9 @@ export async function showTopicalClipPopup(options = {}) {
                 keywords,
                 targetUid: target ? getEntryStableId(target) : null,
                 targetContentHash: target ? stableHashString(String(target.content || '')) : null,
-                sourceSnapshot: snapshotTopicalSourceEntries(allEligibleSources),
+                sourceSnapshot: selectedSourceMemoryKeys
+                    ? buildTopicalProcessedSourceSnapshot(allEligibleSources, target, sourceEntries)
+                    : snapshotTopicalSourceEntries(allEligibleSources),
             };
             if (draftTextarea) draftTextarea.value = normalizedDraft;
             if (saveButton) saveButton.disabled = false;
