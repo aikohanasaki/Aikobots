@@ -86,9 +86,6 @@ import {
     getCustomStoppingStrings,
     MAX_CONTEXT_DEFAULT,
     MAX_RESPONSE_DEFAULT,
-    LONG_CHAT_BUFFER_GAP,
-    LONG_CHAT_BUFFER_MAX,
-    LONG_CHAT_BUFFER_MIN,
     LONG_CHAT_DISPLAY_MAX,
     LONG_CHAT_DISPLAY_MIN,
     normalizeLongChatHandlingSettings,
@@ -3957,8 +3954,7 @@ function getConfiguredLongChatDisplayCount() {
 }
 
 function getConfiguredLongChatBufferMax() {
-    const { bufferMax } = getNormalizedLongChatHandling();
-    return clamp(bufferMax, LONG_CHAT_BUFFER_MIN, LONG_CHAT_BUFFER_MAX);
+    return 1000;
 }
 
 function mergeLoadedRange(startId, endId) {
@@ -4481,7 +4477,6 @@ async function fetchChunkedChat({ rangeStart = null, count = null, hydrateFull =
             range_start: rangeStart,
             count: requestedCount,
             display_count: getConfiguredLongChatDisplayCount(),
-            buffer_max: getConfiguredLongChatBufferMax(),
             hydrate_full: hydrateFull,
             include_parent_prompt_cache: includeParentPromptCache,
         }),
@@ -10924,7 +10919,6 @@ export async function saveChat({ chatName, withMetadata, mesId, force = false, s
                     save_session_id: getChatSaveSessionId(),
                 } : {}),
                 display_count: getConfiguredLongChatDisplayCount(),
-                buffer_max: getConfiguredLongChatBufferMax(),
                 regenerate_identities: Boolean(chatName),
             }),
         });

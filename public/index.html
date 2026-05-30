@@ -2554,22 +2554,13 @@
 
                                 <h4 data-i18n="Long Chat Handling">Long Chat Handling</h4>
                                 <div class="flex-container">
-                                    <div class="alignitemscenter flex-container flexFlowColumn flexBasis48p flexGrow flexShrink gap0">
+                                    <div class="alignitemscenter flex-container flexFlowColumn flexBasis100p flexGrow flexShrink gap0">
                                         <small>
-                                            <span>Start by showing the last X messages</span>
-                                            <div class="fa-solid fa-circle-info opacity50p" title="When you open a long chat, SillyTavern will only show this many of the newest messages at first. Older messages can still be loaded when needed."></div>
+                                            <span data-i18n="Start by showing the last X messages">Start by showing the last X messages</span>
+                                            <div class="fa-solid fa-circle-info opacity50p" data-i18n="[title]When you open a long chat, Aikobots will only show this many of the newest messages at first. Older messages can still be loaded when needed." title="When you open a long chat, Aikobots will only show this many of the newest messages at first. Older messages can still be loaded when needed."></div>
                                         </small>
-                                        <input class="neo-range-slider" type="range" id="long_chat_display_count" name="long_chat_display_count" min="20" max="200" step="5">
-                                        <input class="neo-range-input" type="number" min="20" max="200" step="5" data-for="long_chat_display_count" id="long_chat_display_count_counter">
-                                    </div>
-
-                                    <div class="alignitemscenter flex-container flexFlowColumn flexBasis48p flexGrow flexShrink gap0">
-                                        <small>
-                                            <span>Messages to keep in buffer</span>
-                                            <div class="fa-solid fa-circle-info opacity50p" title="This is how many recent messages SillyTavern keeps in the writable chat buffer before it moves older buffered messages into long-term chat storage."></div>
-                                        </small>
-                                        <input class="neo-range-slider" type="range" id="long_chat_buffer_max" name="long_chat_buffer_max" min="70" max="500" step="5">
-                                        <input class="neo-range-input" type="number" min="70" max="500" step="5" data-for="long_chat_buffer_max" id="long_chat_buffer_max_counter">
+                                        <input class="neo-range-slider" type="range" id="long_chat_display_count" name="long_chat_display_count" min="20" max="500" step="5">
+                                        <input class="neo-range-input" type="number" min="20" max="500" step="5" data-for="long_chat_display_count" id="long_chat_display_count_counter">
                                     </div>
                                 </div>
 

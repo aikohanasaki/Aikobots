@@ -42,12 +42,8 @@ const GROUP_CHAT_HEADER_VERSION = 1;
 const CHAT_METADATA_STRIP_KEYS = ['timedWorldInfo', 'worldInfoSummary', 'worldInfoReport'];
 const CHAT_EXTRA_STRIP_KEYS = ['timedWorldInfo', 'worldInfoSummary', 'worldInfoReport'];
 const LONG_CHAT_DISPLAY_MIN = 20;
-const LONG_CHAT_DISPLAY_MAX = 200;
-const LONG_CHAT_BUFFER_GAP = 50;
-const LONG_CHAT_BUFFER_MIN = LONG_CHAT_DISPLAY_MIN + LONG_CHAT_BUFFER_GAP;
-const LONG_CHAT_BUFFER_MAX = 500;
+const LONG_CHAT_DISPLAY_MAX = 500;
 const LONG_CHAT_DISPLAY_DEFAULT = 100;
-const LONG_CHAT_BUFFER_DEFAULT = 200;
 const CHAT_SAVE_LOCK_RETRY_MS = 25;
 const CHAT_SAVE_LOCK_TIMEOUT_MS = 10_000;
 const CHAT_SAVE_LOCK_STALE_MS = 10 * 60_000;
@@ -590,41 +586,16 @@ function clampLongChatValue(value, min, max, fallback) {
     return Math.min(max, Math.max(min, Math.round(numeric)));
 }
 
-function normalizeLongChatConfig({ displayCount = LONG_CHAT_DISPLAY_DEFAULT, bufferMax = LONG_CHAT_BUFFER_DEFAULT } = {}) {
-    let normalizedDisplayCount = clampLongChatValue(
+function normalizeLongChatConfig({ displayCount = LONG_CHAT_DISPLAY_DEFAULT } = {}) {
+    const normalizedDisplayCount = clampLongChatValue(
         displayCount,
         LONG_CHAT_DISPLAY_MIN,
         LONG_CHAT_DISPLAY_MAX,
         LONG_CHAT_DISPLAY_DEFAULT,
     );
-    let normalizedBufferMax = clampLongChatValue(
-        bufferMax,
-        LONG_CHAT_BUFFER_MIN,
-        LONG_CHAT_BUFFER_MAX,
-        LONG_CHAT_BUFFER_DEFAULT,
-    );
-
-    if (normalizedBufferMax < normalizedDisplayCount + LONG_CHAT_BUFFER_GAP) {
-        normalizedBufferMax = Math.min(LONG_CHAT_BUFFER_MAX, normalizedDisplayCount + LONG_CHAT_BUFFER_GAP);
-        normalizedDisplayCount = Math.min(normalizedDisplayCount, normalizedBufferMax - LONG_CHAT_BUFFER_GAP);
-    }
-
-    normalizedDisplayCount = clampLongChatValue(
-        normalizedDisplayCount,
-        LONG_CHAT_DISPLAY_MIN,
-        Math.min(LONG_CHAT_DISPLAY_MAX, normalizedBufferMax - LONG_CHAT_BUFFER_GAP),
-        LONG_CHAT_DISPLAY_DEFAULT,
-    );
-    normalizedBufferMax = clampLongChatValue(
-        normalizedBufferMax,
-        Math.max(LONG_CHAT_BUFFER_MIN, normalizedDisplayCount + LONG_CHAT_BUFFER_GAP),
-        LONG_CHAT_BUFFER_MAX,
-        LONG_CHAT_BUFFER_DEFAULT,
-    );
 
     return {
         displayCount: normalizedDisplayCount,
-        bufferMax: normalizedBufferMax,
     };
 }
 
@@ -986,10 +957,9 @@ export function buildChunkedChatPayload(filePath, {
     count = null,
     hydrateFull = false,
     displayCount = LONG_CHAT_DISPLAY_DEFAULT,
-    bufferMax = LONG_CHAT_BUFFER_DEFAULT,
     includeParentPromptCache = false,
 } = {}) {
-    const config = normalizeLongChatConfig({ displayCount, bufferMax });
+    const config = normalizeLongChatConfig({ displayCount });
     const segments = getChatSegments(filePath);
     const header = stripChatStorage(segments.header);
     const layout = getSegmentLayout(segments);
@@ -1091,12 +1061,11 @@ function buildChunkedChatPayloadFromLogicalChatData(chatData, {
     count = null,
     hydrateFull = false,
     displayCount = LONG_CHAT_DISPLAY_DEFAULT,
-    bufferMax = LONG_CHAT_BUFFER_DEFAULT,
     includeParentPromptCache = false,
     storageMode = 'full',
     tailStartId = 0,
 } = {}) {
-    const config = normalizeLongChatConfig({ displayCount, bufferMax });
+    const config = normalizeLongChatConfig({ displayCount });
     const header = sanitizeChatHeaderForPersistence(Array.isArray(chatData) ? chatData[0] : null);
     const logicalMessages = Array.isArray(chatData)
         ? chatData.slice(1).map(message => sanitizeChatMessageForPersistence(message))
@@ -1817,7 +1786,6 @@ router.post('/message-visibility', validateAvatarUrlMiddleware, async function (
         const nameFilter = String(request.body.name_filter || '').trim();
         const config = normalizeLongChatConfig({
             displayCount: request.body.display_count,
-            bufferMax: request.body.buffer_max,
         });
 
         if (!String(request.body.file_name || '').trim() || !Number.isInteger(start) || !Number.isInteger(end) || start < 0 || end < start) {
@@ -1915,7 +1883,6 @@ router.post('/save', validateAvatarUrlMiddleware, async function (request, respo
         const chatData = request.body.chat;
         const config = normalizeLongChatConfig({
             displayCount: request.body.display_count,
-            bufferMax: request.body.buffer_max,
         });
         const directoryPath = resolveCharacterChatDirectory(request.user.directories.chats, request.body.avatar_url);
         const filePath = resolveCharacterChatFilePath(request.user.directories.chats, request.body.avatar_url, request.body.file_name);
@@ -2011,7 +1978,6 @@ router.post('/save', validateAvatarUrlMiddleware, async function (request, respo
                             count: storageMode === CHAT_STORAGE_MODE_SPLIT_TAIL ? layout.tailCount : layout.totalMessages,
                             hydrateFull: storageMode !== CHAT_STORAGE_MODE_SPLIT_TAIL,
                             displayCount: config.displayCount,
-                            bufferMax: config.bufferMax,
                             includeParentPromptCache: storageMode === CHAT_STORAGE_MODE_SPLIT_TAIL,
                             storageMode,
                             tailStartId: layout.tailStartId,
@@ -2053,7 +2019,6 @@ router.post('/save', validateAvatarUrlMiddleware, async function (request, respo
                         count: writeResult.storageMode === CHAT_STORAGE_MODE_SPLIT_TAIL ? writeResult.tailCount : messages.length,
                         hydrateFull: writeResult.storageMode !== CHAT_STORAGE_MODE_SPLIT_TAIL,
                         displayCount: config.displayCount,
-                        bufferMax: config.bufferMax,
                         includeParentPromptCache: writeResult.storageMode === CHAT_STORAGE_MODE_SPLIT_TAIL,
                         storageMode: writeResult.storageMode,
                         tailStartId: writeResult.tailStartId,
@@ -2096,7 +2061,6 @@ router.post('/get', validateAvatarUrlMiddleware, async function (request, respon
         if (request.body.chunked) {
             const config = normalizeLongChatConfig({
                 displayCount: request.body.display_count,
-                bufferMax: request.body.buffer_max,
             });
             const rangeStart = request.body.range_start === undefined ? null : Number(request.body.range_start);
             const count = request.body.count === undefined ? null : Number(request.body.count);
@@ -2113,7 +2077,6 @@ router.post('/get', validateAvatarUrlMiddleware, async function (request, respon
                     count,
                     hydrateFull,
                     displayCount: config.displayCount,
-                    bufferMax: config.bufferMax,
                     includeParentPromptCache: request.body.include_parent_prompt_cache === true,
                 }));
             });
