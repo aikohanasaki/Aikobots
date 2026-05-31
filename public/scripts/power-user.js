@@ -67,11 +67,8 @@ export const toastPositionClasses = [
 
 export const MAX_CONTEXT_DEFAULT = 8192;
 export const MAX_RESPONSE_DEFAULT = 2048;
-export const LONG_CHAT_DISPLAY_MIN = 20;
-export const LONG_CHAT_DISPLAY_MAX = 200;
-export const LONG_CHAT_BUFFER_GAP = 50;
-export const LONG_CHAT_BUFFER_MAX = 500;
-export const LONG_CHAT_BUFFER_MIN = LONG_CHAT_DISPLAY_MIN + LONG_CHAT_BUFFER_GAP;
+export const LONG_CHAT_DISPLAY_MIN = 1;
+export const LONG_CHAT_DISPLAY_MAX = 1048576; // 2^20
 const MAX_CONTEXT_UNLOCKED = 512 * 1024;
 const MAX_RESPONSE_UNLOCKED = 64 * 1024;
 const unlockedMaxContextStep = 512;
@@ -282,7 +279,6 @@ export const power_user = {
     markdown_escape_strings: '',
     chat_truncation: 100,
     long_chat_display_count: 100,
-    long_chat_buffer_max: 200,
     streaming_fps: 30,
     smooth_streaming: false,
     smooth_streaming_speed: 50,
@@ -456,76 +452,43 @@ function clampLongChatValue(value, min, max, fallback) {
     return Math.min(max, Math.max(min, Math.round(numeric)));
 }
 
-export function normalizeLongChatHandlingSettings(settings = power_user, changedKey = null) {
+export function normalizeLongChatHandlingSettings(settings = power_user) {
     if (!settings || typeof settings !== 'object') {
         return {
             displayCount: 100,
-            bufferMax: 200,
         };
     }
 
-    let displayCount = clampLongChatValue(
+    const displayCount = clampLongChatValue(
         settings.long_chat_display_count,
         LONG_CHAT_DISPLAY_MIN,
         LONG_CHAT_DISPLAY_MAX,
         100,
     );
-    let bufferMax = clampLongChatValue(
-        settings.long_chat_buffer_max,
-        LONG_CHAT_BUFFER_MIN,
-        LONG_CHAT_BUFFER_MAX,
-        200,
-    );
-
-    if (changedKey === 'display') {
-        bufferMax = Math.max(bufferMax, displayCount + LONG_CHAT_BUFFER_GAP);
-    } else if (changedKey === 'buffer') {
-        displayCount = Math.min(displayCount, bufferMax - LONG_CHAT_BUFFER_GAP);
-    } else if (bufferMax < displayCount + LONG_CHAT_BUFFER_GAP) {
-        bufferMax = Math.min(LONG_CHAT_BUFFER_MAX, displayCount + LONG_CHAT_BUFFER_GAP);
-        displayCount = Math.min(displayCount, bufferMax - LONG_CHAT_BUFFER_GAP);
-    }
-
-    displayCount = clampLongChatValue(
-        displayCount,
-        LONG_CHAT_DISPLAY_MIN,
-        Math.min(LONG_CHAT_DISPLAY_MAX, bufferMax - LONG_CHAT_BUFFER_GAP),
-        100,
-    );
-    bufferMax = clampLongChatValue(
-        bufferMax,
-        Math.max(LONG_CHAT_BUFFER_MIN, displayCount + LONG_CHAT_BUFFER_GAP),
-        LONG_CHAT_BUFFER_MAX,
-        200,
-    );
 
     settings.long_chat_display_count = displayCount;
-    settings.long_chat_buffer_max = bufferMax;
 
     return {
         displayCount,
-        bufferMax,
     };
 }
 
 function syncLongChatHandlingControls() {
-    const { displayCount, bufferMax } = normalizeLongChatHandlingSettings();
-    const displayMax = Math.min(LONG_CHAT_DISPLAY_MAX, bufferMax - LONG_CHAT_BUFFER_GAP);
-    const bufferMin = Math.max(LONG_CHAT_BUFFER_MIN, displayCount + LONG_CHAT_BUFFER_GAP);
+    const { displayCount } = normalizeLongChatHandlingSettings();
 
-    $('#long_chat_display_count, #long_chat_display_count_counter').attr({
+    $('#long_chat_display_count').attr({
+        min: 0,
+        max: 20,
+        step: 0.01,
+    });
+    $('#long_chat_display_count_counter').attr({
         min: LONG_CHAT_DISPLAY_MIN,
-        max: displayMax,
-    });
-    $('#long_chat_buffer_max, #long_chat_buffer_max_counter').attr({
-        min: bufferMin,
-        max: LONG_CHAT_BUFFER_MAX,
+        max: LONG_CHAT_DISPLAY_MAX,
+        step: 1,
     });
 
-    $('#long_chat_display_count').val(displayCount);
+    $('#long_chat_display_count').val(Math.log2(displayCount));
     $('#long_chat_display_count_counter').val(displayCount);
-    $('#long_chat_buffer_max').val(bufferMax);
-    $('#long_chat_buffer_max_counter').val(bufferMax);
 }
 
 let themes = [];
@@ -3961,16 +3924,17 @@ jQuery(() => {
     });
 
     $('#long_chat_display_count').on('input', function () {
-        power_user.long_chat_display_count = Number($(this).val());
-        normalizeLongChatHandlingSettings(power_user, 'display');
-        syncLongChatHandlingControls();
+        const sliderValue = Number($(this).val());
+        const displayCount = Math.round(Math.pow(2, sliderValue));
+        power_user.long_chat_display_count = displayCount;
+        $('#long_chat_display_count_counter').val(displayCount);
         saveSettingsDebounced();
     });
 
-    $('#long_chat_buffer_max').on('input', function () {
-        power_user.long_chat_buffer_max = Number($(this).val());
-        normalizeLongChatHandlingSettings(power_user, 'buffer');
-        syncLongChatHandlingControls();
+    $('#long_chat_display_count_counter').on('input', function () {
+        const displayCount = Number($(this).val());
+        power_user.long_chat_display_count = displayCount;
+        $('#long_chat_display_count').val(Math.log2(displayCount));
         saveSettingsDebounced();
     });
 

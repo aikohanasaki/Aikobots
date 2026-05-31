@@ -86,9 +86,6 @@ import {
     getCustomStoppingStrings,
     MAX_CONTEXT_DEFAULT,
     MAX_RESPONSE_DEFAULT,
-    LONG_CHAT_BUFFER_GAP,
-    LONG_CHAT_BUFFER_MAX,
-    LONG_CHAT_BUFFER_MIN,
     LONG_CHAT_DISPLAY_MAX,
     LONG_CHAT_DISPLAY_MIN,
     normalizeLongChatHandlingSettings,
@@ -972,6 +969,7 @@ let visibleChatEndId = null;
 export let chatDragDropHandler = null;
 let historyWindowNavigationQueue = Promise.resolve();
 let isRunningHistoryWindowNavigation = false;
+let isHistoryWindowNavigationQueued = false;
 let activeHistoryWindowNavigationToken = null;
 
 function serializeHistoryWindowNavigation(callback, navigationToken = null) {
@@ -979,8 +977,10 @@ function serializeHistoryWindowNavigation(callback, navigationToken = null) {
         return callback(navigationToken);
     }
 
+    isHistoryWindowNavigationQueued = true;
     const run = historyWindowNavigationQueue.then(async () => {
         const token = {};
+        isHistoryWindowNavigationQueued = false;
         isRunningHistoryWindowNavigation = true;
         activeHistoryWindowNavigationToken = token;
         try {
@@ -3862,7 +3862,7 @@ export async function deleteCharacterChatByName(characterId, fileName) {
     }
 
     if (!selected_group && String(this_chid) === String(characterId)) {
-        await delChat(`${fileName}.jsonl`);
+        await delChat(fileName);
         return;
     }
 
@@ -3870,7 +3870,7 @@ export async function deleteCharacterChatByName(characterId, fileName) {
         method: 'POST',
         headers: getRequestHeaders(),
         body: JSON.stringify({
-            chatfile: `${fileName}.jsonl`,
+            chatfile: fileName,
             avatar_url: character.avatar,
         }),
     });
@@ -3953,12 +3953,11 @@ function getNormalizedLongChatHandling() {
 
 function getConfiguredLongChatDisplayCount() {
     const { displayCount } = getNormalizedLongChatHandling();
-    return clamp(displayCount, LONG_CHAT_DISPLAY_MIN, LONG_CHAT_DISPLAY_MAX);
+    return Math.max(1, displayCount);
 }
 
 function getConfiguredLongChatBufferMax() {
-    const { bufferMax } = getNormalizedLongChatHandling();
-    return clamp(bufferMax, LONG_CHAT_BUFFER_MIN, LONG_CHAT_BUFFER_MAX);
+    return Math.max(1000, getConfiguredLongChatDisplayCount());
 }
 
 function mergeLoadedRange(startId, endId) {
@@ -4481,7 +4480,6 @@ async function fetchChunkedChat({ rangeStart = null, count = null, hydrateFull =
             range_start: rangeStart,
             count: requestedCount,
             display_count: getConfiguredLongChatDisplayCount(),
-            buffer_max: getConfiguredLongChatBufferMax(),
             hydrate_full: hydrateFull,
             include_parent_prompt_cache: includeParentPromptCache,
         }),
@@ -4588,16 +4586,7 @@ function getConfiguredChatWindowSize(count = null) {
         return candidate;
     }
 
-    if (isSplitTailChat() && !isChatFullyHydrated()) {
-        return getConfiguredLongChatDisplayCount();
-    }
-
-    const configured = Number(power_user.chat_truncation);
-    if (Number.isFinite(configured) && configured > 0) {
-        return configured;
-    }
-
-    return FALLBACK_CHAT_WINDOW_SIZE;
+    return 100;
 }
 
 function setVisibleChatRange(startId = null, endId = null) {
@@ -4672,7 +4661,9 @@ export async function renderMessageWindow(startId = 0, count = null, navigationT
         }
 
         const normalizedStartId = clamp(Number(startId) || 0, 0, Math.max(0, chat.length - 1));
-        const windowSize = getConfiguredChatWindowSize(count);
+        const requestedWindowSize = getConfiguredChatWindowSize(count);
+        // Cap initial render to 500 messages to prevent browser hang
+        const windowSize = count === null ? Math.min(500, requestedWindowSize) : requestedWindowSize;
         const endId = Math.min(chat.length - 1, normalizedStartId + windowSize - 1);
 
         if (isSplitTailChat() && !isChatFullyHydrated()) {
@@ -4682,9 +4673,7 @@ export async function renderMessageWindow(startId = 0, count = null, navigationT
         }
 
         for (let i = normalizedStartId; i <= endId; i++) {
-            if (!chat[i]) {
-                continue;
-            }
+            if (!chat[i]) continue;
             addOneMessage(chat[i], { scroll: false, forceId: i, showSwipes: false });
         }
 
@@ -4748,15 +4737,25 @@ export async function showMoreMessages(messagesToLoad = null, navigationToken = 
 
         removeHistoryControls();
 
+        const chunkContainer = $('<div></div>');
+        const startCount = count;
         while (messageId > 0 && count > 0) {
             const newMessageId = messageId - 1;
             if (!chat[newMessageId]) {
                 break;
             }
-            addOneMessage(chat[newMessageId], { insertBefore: anchorId, scroll: false, forceId: newMessageId, showSwipes: false });
-            anchorId = newMessageId;
+            addOneMessage(chat[newMessageId], { container: chunkContainer, scroll: false, forceId: newMessageId, showSwipes: false });
             count--;
             messageId--;
+        }
+
+        if (chunkContainer.contents().length > 0) {
+            if (anchorId !== null) {
+                const target = chatElement.find(`.mes[mesid="${anchorId}"]`);
+                chunkContainer.contents().insertBefore(target);
+            } else {
+                chatElement.append(chunkContainer.contents());
+            }
         }
 
         if (chatElement.children('.mes').length > 0) {
@@ -4769,9 +4768,16 @@ export async function showMoreMessages(messagesToLoad = null, navigationToken = 
             chatLoadState.currentView = Number.isFinite(visibleChatStartId) && visibleChatStartId < chatLoadState.tailStartId ? 'history' : 'tail';
         }
 
-        if (isButtonInView) {
-            const newHeight = chatElement.prop('scrollHeight');
-            chatElement.scrollTop(newHeight - prevHeight);
+        const newHeight = chatElement.prop('scrollHeight');
+        chatElement.scrollTop(chatElement.scrollTop() + (newHeight - prevHeight));
+
+        // DOM Pruning: remove messages from bottom if too many
+        const MAX_MESSAGES_IN_DOM = 1000;
+        const currentMessages = chatElement.children('.mes');
+        if (currentMessages.length > MAX_MESSAGES_IN_DOM) {
+            const toRemove = currentMessages.length - MAX_MESSAGES_IN_DOM;
+            currentMessages.slice(-toRemove).remove();
+            syncVisibleChatRangeFromDom();
         }
 
         finalizeRenderedMessageWindow();
@@ -4793,14 +4799,19 @@ export async function showNewerMessages(messagesToLoad = null, navigationToken =
 
         await ensureChatRangeLoaded(messageId + 1, count);
 
+        const chunkContainer = $('<div></div>');
         while (messageId < chat.length - 1 && count > 0) {
             const newMessageId = messageId + 1;
             if (!chat[newMessageId]) {
                 break;
             }
-            addOneMessage(chat[newMessageId], { scroll: false, forceId: newMessageId, showSwipes: false });
+            addOneMessage(chat[newMessageId], { container: chunkContainer, scroll: false, forceId: newMessageId, showSwipes: false });
             count--;
             messageId++;
+        }
+
+        if (chunkContainer.contents().length > 0) {
+            chatElement.append(chunkContainer.contents());
         }
 
         if (chatElement.children('.mes').length > 0) {
@@ -4813,6 +4824,17 @@ export async function showNewerMessages(messagesToLoad = null, navigationToken =
             chatLoadState.currentView = Number.isFinite(visibleChatStartId) && visibleChatStartId < chatLoadState.tailStartId ? 'history' : 'tail';
         }
 
+        // DOM Pruning: remove messages from top if too many
+        const MAX_MESSAGES_IN_DOM = 1000;
+        const currentMessages = chatElement.children('.mes');
+        if (currentMessages.length > MAX_MESSAGES_IN_DOM) {
+            const toRemove = currentMessages.length - MAX_MESSAGES_IN_DOM;
+            const topPrunedHeight = currentMessages.slice(0, toRemove).toArray().reduce((acc, el) => acc + $(el).outerHeight(true), 0);
+            currentMessages.slice(0, toRemove).remove();
+            chatElement.scrollTop(chatElement.scrollTop() - topPrunedHeight);
+            syncVisibleChatRangeFromDom();
+        }
+
         finalizeRenderedMessageWindow();
         await eventSource.emit(event_types.MORE_MESSAGES_LOADED);
     }, navigationToken);
@@ -4820,7 +4842,8 @@ export async function showNewerMessages(messagesToLoad = null, navigationToken =
 
 export async function printMessages() {
     let startIndex = 0;
-    let count = getConfiguredChatWindowSize();
+    const displayCount = getConfiguredLongChatDisplayCount();
+    const count = Math.min(displayCount, 500);
 
     if (chat.length > count) {
         startIndex = chat.length - count;
@@ -5944,7 +5967,7 @@ export function addCopyToCodeBlocks(messageElement) {
  * @param {boolean} [options.showSwipes=true] Whether to show swipe buttons
  * @returns {void}
  */
-export function addOneMessage(mes, { type = 'normal', insertAfter = null, scroll = true, insertBefore = null, forceId = null, showSwipes = true } = {}) {
+export function addOneMessage(mes, { type = 'normal', insertAfter = null, scroll = true, insertBefore = null, forceId = null, showSwipes = true, container = null } = {}) {
     let messageText = mes['mes'];
     const momentDate = timestampToMoment(mes.send_date);
     const timestamp = momentDate.isValid() ? momentDate.format('LL LT') : '';
@@ -6022,16 +6045,18 @@ export function addOneMessage(mes, { type = 'normal', insertAfter = null, scroll
     };
 
     const renderedMessage = getMessageFromTemplate(params);
+    $(renderedMessage).find('.mes_text').html(messageText);
 
     if (type !== 'swipe') {
+        const targetContainer = container || chatElement;
         if (insertAfter == null && insertBefore == null) {
-            chatElement.append(renderedMessage);
+            targetContainer.append(renderedMessage);
         }
         else if (insertAfter != null) {
-            const target = chatElement.find(`.mes[mesid="${insertAfter}"]`);
+            const target = targetContainer.find(`.mes[mesid="${insertAfter}"]`);
             $(renderedMessage).insertAfter(target);
         } else {
-            const target = chatElement.find(`.mes[mesid="${insertBefore}"]`);
+            const target = targetContainer.find(`.mes[mesid="${insertBefore}"]`);
             $(renderedMessage).insertBefore(target);
         }
     }
@@ -6040,7 +6065,8 @@ export function addOneMessage(mes, { type = 'normal', insertAfter = null, scroll
     const newMessageId = typeof forceId == 'number' ? forceId : chat.length - 1;
     mergeLoadedRange(newMessageId, newMessageId);
 
-    const newMessage = chatElement.find(`[mesid="${newMessageId}"]`);
+    const targetLookup = container || chatElement;
+    const newMessage = targetLookup.find(`[mesid="${newMessageId}"]`);
     const isSmallSys = mes?.extra?.isSmallSys;
 
     if (isSmallSys === true) {
@@ -6076,8 +6102,6 @@ export function addOneMessage(mes, { type = 'normal', insertAfter = null, scroll
             swipeMessage.find('.tokenCounterDisplay').empty();
         }
     } else {
-        const messageId = forceId ?? chat.length - 1;
-        chatElement.find(`[mesid="${messageId}"] .mes_text`).append(messageText);
         appendMediaToMessage(mes, newMessage, scroll ? SCROLL_BEHAVIOR.ADJUST : SCROLL_BEHAVIOR.NONE);
         showSwipes && hideSwipeButtons();
     }
@@ -7890,7 +7914,7 @@ export async function Generate(type, { automatic_trigger, force_name2, quiet_pro
     if (selected_group && !is_group_generating) {
         if (!dryRun) {
             // Returns the promise that generateGroupWrapper returns; resolves when generation is done
-            return generateGroupWrapper(false, type, { quiet_prompt, force_chid, signal: abortController.signal, quietImage });
+            return generateGroupWrapper(false, type, { quiet_prompt, force_chid, signal: abortController.signal, quietImage, swipeTarget });
         }
 
         const characterIndexMap = new Map(characters.map((char, index) => [char.avatar, index]));
@@ -10924,7 +10948,6 @@ export async function saveChat({ chatName, withMetadata, mesId, force = false, s
                     save_session_id: getChatSaveSessionId(),
                 } : {}),
                 display_count: getConfiguredLongChatDisplayCount(),
-                buffer_max: getConfiguredLongChatBufferMax(),
                 regenerate_identities: Boolean(chatName),
             }),
         });
@@ -12564,7 +12587,7 @@ async function deleteManageChatsOwnerChat(ownerContext, fileName) {
     }
 
     if (!selected_group && String(this_chid) === String(details.characterId)) {
-        await delChat(`${fileName}.jsonl`);
+        await delChat(fileName);
     } else if (details.characterId !== null) {
         await deleteCharacterChatByName(details.characterId, fileName);
     }
@@ -13100,8 +13123,8 @@ async function exportManageChatsOwnerChat(ownerContext, filename, format) {
     const body = {
         is_group: details.isGroup,
         avatar_url: details.avatarUrl || null,
-        file: `${filename}.jsonl`,
-        exportfilename: `${filename}.${format}`,
+        file: filename,
+        exportfilename: `${filename.replace(/\.(jsonl|sqlite)$/i, '')}.${format}`,
         format: format,
     };
 
@@ -13121,7 +13144,24 @@ async function exportManageChatsOwnerChat(ownerContext, filename, format) {
     const mimeType = format == 'txt' ? 'text/plain' : 'application/octet-stream';
     await delay(250);
     toastr.success(data.message);
-    download(data.result, body.exportfilename, mimeType);
+
+    if (data.is_binary) {
+        const byteCharacters = atob(data.result);
+        const byteNumbers = new Array(byteCharacters.length);
+        for (let i = 0; i < byteCharacters.length; i++) {
+            byteNumbers[i] = byteCharacters.charCodeAt(i);
+        }
+        const byteArray = new Uint8Array(byteNumbers);
+        const blob = new Blob([byteArray], { type: mimeType });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = body.exportfilename;
+        a.click();
+        URL.revokeObjectURL(url);
+    } else {
+        download(data.result, body.exportfilename, mimeType);
+    }
 }
 
 async function renameOrphanCharacterChat(orphanKey, oldFileName, newFileName) {
@@ -13131,8 +13171,8 @@ async function renameOrphanCharacterChat(orphanKey, oldFileName, newFileName) {
         body: JSON.stringify({
             is_group: false,
             avatar_url: makeOrphanAvatarUrl(orphanKey),
-            original_file: `${oldFileName}.jsonl`,
-            renamed_file: `${newFileName.trim()}.jsonl`,
+            original_file: oldFileName,
+            renamed_file: newFileName.trim(),
         }),
     });
 
@@ -13146,7 +13186,7 @@ async function deleteOrphanCharacterChat(orphanKey, fileName) {
         method: 'POST',
         headers: getRequestHeaders(),
         body: JSON.stringify({
-            chatfile: `${fileName}.jsonl`,
+            chatfile: fileName,
             avatar_url: makeOrphanAvatarUrl(orphanKey),
         }),
     });
@@ -13161,8 +13201,8 @@ async function exportOrphanCharacterChat(orphanKey, filename, format) {
     const body = {
         is_group: false,
         avatar_url: makeOrphanAvatarUrl(orphanKey),
-        file: `${filename}.jsonl`,
-        exportfilename: `${filename}.${format}`,
+        file: filename,
+        exportfilename: `${filename.replace(/\.(jsonl|sqlite)$/i, '')}.${format}`,
         format: format,
     };
 
@@ -13180,7 +13220,24 @@ async function exportOrphanCharacterChat(orphanKey, filename, format) {
     const mimeType = format == 'txt' ? 'text/plain' : 'application/octet-stream';
     await delay(250);
     toastr.success(data.message);
-    download(data.result, body.exportfilename, mimeType);
+
+    if (data.is_binary) {
+        const byteCharacters = atob(data.result);
+        const byteNumbers = new Array(byteCharacters.length);
+        for (let i = 0; i < byteCharacters.length; i++) {
+            byteNumbers[i] = byteCharacters.charCodeAt(i);
+        }
+        const byteArray = new Uint8Array(byteNumbers);
+        const blob = new Blob([byteArray], { type: mimeType });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = body.exportfilename;
+        a.click();
+        URL.revokeObjectURL(url);
+    } else {
+        download(data.result, body.exportfilename, mimeType);
+    }
 }
 
 export async function openManageChatsOrphanCharacterChat(orphanKey, fileName) {
@@ -13388,7 +13445,7 @@ async function displayDeletedCharacterChats(orphanKey = manageChatsSelectedOrpha
                         ownerContext: { type: 'group', id: group.id },
                     },
                     highlightNames,
-                    isSelected: String(currentGroupChat).replace(/\.jsonl$/i, '') === String(chat.file_name).replace(/\.jsonl$/i, ''),
+                    isSelected: String(currentGroupChat).replace(/\.(jsonl|sqlite)$/i, '') === String(chat.file_name).replace(/\.(jsonl|sqlite)$/i, ''),
                 }));
             });
         }
@@ -13463,7 +13520,7 @@ async function displayChats(searchQuery, chatDetails, highlightNames) {
             return;
         }
 
-        const trimExtension = (fileName) => String(fileName).replace('.jsonl', '');
+        const trimExtension = (fileName) => String(fileName).replace(/\.(jsonl|sqlite)$/i, '');
         const response = await fetch('/api/chats/search', {
             method: 'POST',
             headers: getRequestHeaders(),
@@ -16160,8 +16217,8 @@ export async function renameGroupOrCharacterChat({ characterId, groupId, oldFile
     const body = {
         is_group: !!groupId,
         avatar_url: characters[characterId]?.avatar,
-        original_file: `${oldFileName}.jsonl`,
-        renamed_file: `${newFileName.trim()}.jsonl`,
+        original_file: oldFileName,
+        renamed_file: newFileName.trim(),
     };
 
     if (body.original_file === body.renamed_file) {
@@ -16732,8 +16789,7 @@ jQuery(async function () {
 
     const chatElementScroll = document.getElementById('chat');
     const chatScrollHandler = function () {
-        if (power_user.waifuMode) {
-            scrollLock = true;
+        if (power_user.waifuMode || isRunningHistoryWindowNavigation || isHistoryWindowNavigationQueued || isChatSaving) {
             return;
         }
 
@@ -16747,6 +16803,23 @@ jQuery(async function () {
         // Cancel autoscroll if the user scrolls up
         if (!scrollLock && !scrollIsAtBottom) {
             scrollLock = true;
+        }
+
+        // Infinite scroll: load more messages when near top
+        if (chatElementScroll.scrollTop < 500) {
+            const showMoreButton = document.getElementById(TOP_HISTORY_CONTROL_ID);
+            if (showMoreButton && !showMoreButton.disabled) {
+                showMoreMessages();
+            }
+        }
+
+        // Infinite scroll: load newer messages when near bottom
+        const scrollFromBottom = chatElementScroll.scrollHeight - chatElementScroll.clientHeight - chatElementScroll.scrollTop;
+        if (scrollFromBottom < 500) {
+            const showNewerButton = document.getElementById(BOTTOM_HISTORY_CONTROL_ID);
+            if (showNewerButton && !showNewerButton.disabled) {
+                showNewerMessages();
+            }
         }
     };
     chatElementScroll.addEventListener('scroll', chatScrollHandler, { passive: true });
@@ -16846,7 +16919,7 @@ jQuery(async function () {
         // Close past chat popup.
         $('#select_chat_cross').trigger('click');
         showLoader();
-        await deleteManageChatsChat(chatContext, String(chatFile).replace(/\.jsonl$/i, ''));
+        await deleteManageChatsChat(chatContext, String(chatFile));
 
         if (fromSlashCommand) {  // When called from `/delchat` command, don't re-open the history view.
             $('#options').hide();  // Hide option popup menu.
@@ -17083,14 +17156,25 @@ jQuery(async function () {
         e.stopPropagation();
         const rowContext = getManageChatsRowContext(this) ?? { ownerContext: getManageChatsOwnerFromElement(this) ?? manageChatsOwnerContext ?? getCurrentManageChatsOwner() };
         const oldFileNameFull = $(this).closest('.select_chat_block_wrapper').find('.select_chat_block_filename').text();
-        const oldFileName = oldFileNameFull.replace('.jsonl', '');
+        const oldFileName = oldFileNameFull;
 
+        const oldFileNameNoExt = oldFileNameFull.replace(/\.(jsonl|sqlite)$/i, '');
         const popupText = await renderTemplateAsync('chatRename');
-        const newName = await callGenericPopup(popupText, POPUP_TYPE.INPUT, oldFileName);
+        let newName = await callGenericPopup(popupText, POPUP_TYPE.INPUT, oldFileNameNoExt);
 
-        if (!newName || typeof newName !== 'string' || newName == oldFileName) {
+        if (!newName || typeof newName !== 'string' || newName == oldFileNameNoExt) {
             console.log('no new name found, aborting');
             return;
+        }
+
+        // If user didn't provide extension, keep the original one
+        if (!newName.endsWith('.jsonl') && !newName.endsWith('.sqlite')) {
+            const ext = oldFileNameFull.match(/\.(jsonl|sqlite)$/i);
+            if (ext) {
+                newName += ext[0];
+            } else {
+                newName += '.sqlite'; // Default for new style
+            }
         }
 
         await renameManageChatsChat(rowContext, oldFileName, newName);
@@ -17100,6 +17184,20 @@ jQuery(async function () {
         $('#options').hide();
     });
 
+    $(document).on('click', '.compareChatButton', function (e) {
+        e.stopPropagation();
+        const rowContext = getManageChatsRowContext(this);
+        const details = getManageChatsOwnerDetails(rowContext?.ownerContext ?? manageChatsOwnerContext ?? getCurrentManageChatsOwner());
+        const filenamefull = $(this).closest('.select_chat_block_wrapper').find('.select_chat_block_filename').text();
+        const filename = filenamefull;
+
+        const avatarUrl = details.isGroup ? null : details.avatarUrl;
+        const isGroup = details.isGroup;
+
+        const url = `/compare.html?avatar_url=${encodeURIComponent(avatarUrl || '')}&file_name=${encodeURIComponent(filenamefull)}&is_group=${isGroup}`;
+        window.open(url, '_blank');
+    });
+
     $(document).on('click', '.exportChatButton, .exportRawChatButton', async function (e) {
         e.stopPropagation();
         const format = $(this).data('format') || 'txt';
@@ -17107,7 +17205,7 @@ jQuery(async function () {
         const filenamefull = $(this).closest('.select_chat_block_wrapper').find('.select_chat_block_filename').text();
         console.log(`exporting ${filenamefull} in ${format} format`);
 
-        const filename = filenamefull.replace('.jsonl', '');
+        const filename = filenamefull;
         try {
             await exportManageChatsChat(rowContext, filename, format);
         } catch (error) {

@@ -508,8 +508,7 @@ async function updateServerChatMessageVisibility(start, end, unhide, nameFilter 
                 base_revision: getChatSaveRevision(),
                 save_session_id: getChatSaveSessionId(),
                 display_count: power_user.long_chat_display_count,
-                buffer_max: power_user.long_chat_buffer_max,
-            }),
+                }),
             cache: 'no-cache',
         });
 

@@ -48,7 +48,7 @@ router.post('/all', (request, response) => {
         }
 
         const files = fs.readdirSync(request.user.directories.groups).filter(x => path.extname(x) === '.json');
-        const chats = fs.readdirSync(request.user.directories.groupChats).filter(x => path.extname(x) === '.jsonl');
+        const chats = fs.readdirSync(request.user.directories.groupChats).filter(x => path.extname(x) === '.jsonl' || path.extname(x) === '.sqlite');
 
         files.forEach(function (file) {
             try {
@@ -68,11 +68,17 @@ router.post('/all', (request, response) => {
                 let date_last_chat = 0;
 
                 if (Array.isArray(group.chats) && Array.isArray(chats)) {
-                    for (const chat of chats) {
-                        if (group.chats.includes(path.parse(chat).name)) {
-                            const chatPath = path.join(request.user.directories.groupChats, chat);
+                    for (const chatId of group.chats) {
+                        const jsonlPath = path.join(request.user.directories.groupChats, `${chatId}.jsonl`);
+                        const sqlitePath = path.join(request.user.directories.groupChats, `${chatId}.sqlite`);
+
+                        let chatPath = null;
+                        if (fs.existsSync(sqlitePath)) chatPath = sqlitePath;
+                        else if (fs.existsSync(jsonlPath)) chatPath = jsonlPath;
+
+                        if (chatPath) {
                             const chatStat = fs.statSync(chatPath);
-                            const headPath = getSplitHeadPath(chatPath);
+                            const headPath = getSplitHeadPath(jsonlPath);
                             const headStat = fs.existsSync(headPath) ? fs.statSync(headPath) : null;
                             chat_size += chatStat.size + (headStat?.size || 0);
                             date_last_chat = Math.max(date_last_chat, chatStat.mtimeMs, headStat?.mtimeMs || 0);
@@ -161,10 +167,15 @@ router.post('/delete', getFileNameValidationFunction('id'), async (request, resp
             for (const chat of group.chats) {
                 console.info('Deleting group chat', chat);
                 const pathToFile = path.join(request.user.directories.groupChats, sanitize(`${chat}.jsonl`));
+                const sqlitePath = pathToFile.replace('.jsonl', '.sqlite');
                 const headPath = getSplitHeadPath(pathToFile);
 
                 if (fs.existsSync(pathToFile)) {
                     fs.unlinkSync(pathToFile);
+                }
+
+                if (fs.existsSync(sqlitePath)) {
+                    fs.unlinkSync(sqlitePath);
                 }
 
                 if (fs.existsSync(headPath)) {

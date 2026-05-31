@@ -2449,7 +2449,7 @@ router.post('/chats', validateAvatarUrlMiddleware, async function (request, resp
 
         const files = fs.readdirSync(chatsDirectory, { withFileTypes: true });
         const jsonFiles = files
-            .filter(file => file.isFile() && path.extname(file.name) === '.jsonl' && !file.name.endsWith('.head.jsonl'))
+            .filter(file => file.isFile() && (path.extname(file.name) === '.jsonl' || path.extname(file.name) === '.sqlite') && !file.name.endsWith('.head.jsonl'))
             .map(file => file.name);
 
         if (jsonFiles.length === 0) {

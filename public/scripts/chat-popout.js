@@ -56,7 +56,6 @@ async function fetchReaderChunk(context, { rangeStart = null, count = READER_BAT
         chunked: true,
         count,
         display_count: count,
-        buffer_max: Math.max(count, READER_BATCH_SIZE),
         ...(Number.isFinite(Number(rangeStart)) ? { range_start: Number(rangeStart) } : {}),
     };
     const response = await fetch('/api/chats/get', {

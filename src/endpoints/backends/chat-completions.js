@@ -989,6 +989,7 @@ async function sendProviderDispatchResult(result, request, response, {
     worldInfoOverflowed = false,
     worldInfo = null,
     promptSnapshotKey = null,
+    messagesCount = null,
 } = {}) {
     try {
         await assertActiveSessionOperation(request);
@@ -1003,6 +1004,11 @@ async function sendProviderDispatchResult(result, request, response, {
 
             if (!result.ok) {
                 const sanitizedError = await buildSanitizedErrorResponse(result.response, { request });
+                if (response.headersSent) {
+                    response.write(`data: ${JSON.stringify(sanitizedError.body)}\n\n`);
+                    response.flush?.();
+                    return response.end();
+                }
                 return response.status(sanitizedError.status).send(sanitizedError.body);
             }
 
@@ -1014,15 +1020,19 @@ async function sendProviderDispatchResult(result, request, response, {
                 worldInfoOverflowed,
                 worldInfo,
                 promptSnapshotKey,
+                messagesCount,
             );
         }
 
         if (result.kind !== 'json') {
+            if (response.headersSent) {
+                return response.end();
+            }
             return response.status(500).send({ error: true });
         }
 
         const payload = result.ok
-            ? attachWorldInfoResponseData(result.body, request, timedWorldInfo, worldInfoOverflowed, worldInfo, promptSnapshotKey)
+            ? attachWorldInfoResponseData(result.body, request, timedWorldInfo, worldInfoOverflowed, worldInfo, promptSnapshotKey, messagesCount)
             : annotateErrorPayload(result.body, {
                 request,
                 stage: 'provider_response',
@@ -1030,6 +1040,15 @@ async function sendProviderDispatchResult(result, request, response, {
             });
 
         await assertActiveSessionOperation(request);
+
+        if (response.headersSent) {
+            if (!result.ok) {
+                response.write(`data: ${JSON.stringify(payload)}\n\n`);
+                response.flush?.();
+            }
+            return response.end();
+        }
+
         return response.status(result.status || 200).send(payload);
     } finally {
         cleanupRequestSocketAbortListeners(request);
@@ -2218,7 +2237,7 @@ export async function prepareServerPromptContext(user, directories, promptContex
     promptContext.userDirectories = directories;
 
     if (!Array.isArray(promptContext.coreChat) && promptContext.coreChat && typeof promptContext.coreChat === 'object') {
-        promptContext.coreChat = resolveSplitCoreChatPayload(directories.chats, promptContext.coreChat);
+        promptContext.coreChat = await resolveSplitCoreChatPayload(directories.chats, promptContext.coreChat);
     }
 
     const runtimeResult = await runServerGenerationExtensions(directories, promptContext, user);
@@ -2917,7 +2936,7 @@ function buildWorldInfoSummaryResponseData(worldInfo, user) {
     return { sanitizedWorldInfo, worldInfoSummary, worldInfoReport };
 }
 
-function buildXSillyTavernPayload(request, timedWorldInfo, worldInfoOverflowed = false, worldInfo = null, promptSnapshotKey = null) {
+function buildXSillyTavernPayload(request, timedWorldInfo, worldInfoOverflowed = false, worldInfo = null, promptSnapshotKey = null, messagesCount = null) {
     void request;
     void worldInfo;
     const xSillyTavern = {};
@@ -2931,11 +2950,14 @@ function buildXSillyTavernPayload(request, timedWorldInfo, worldInfoOverflowed =
     if (worldInfoOverflowed) {
         xSillyTavern.worldInfoOverflowed = true;
     }
+    if (messagesCount !== null) {
+        xSillyTavern.messagesCount = Number(messagesCount);
+    }
 
     return xSillyTavern;
 }
 
-function attachWorldInfoResponseData(payload, request, timedWorldInfo, worldInfoOverflowed = false, worldInfo = null, promptSnapshotKey = null) {
+function attachWorldInfoResponseData(payload, request, timedWorldInfo, worldInfoOverflowed = false, worldInfo = null, promptSnapshotKey = null, messagesCount = null) {
     void request;
     void worldInfo;
     if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
@@ -2944,7 +2966,7 @@ function attachWorldInfoResponseData(payload, request, timedWorldInfo, worldInfo
 
     const xSillyTavern = {
         ...(payload.x_sillytavern && typeof payload.x_sillytavern === 'object' ? payload.x_sillytavern : {}),
-        ...buildXSillyTavernPayload(request, timedWorldInfo, worldInfoOverflowed, worldInfo, promptSnapshotKey),
+        ...buildXSillyTavernPayload(request, timedWorldInfo, worldInfoOverflowed, worldInfo, promptSnapshotKey, messagesCount),
     };
 
     if (!Object.keys(xSillyTavern).length) {
@@ -2957,18 +2979,19 @@ function attachWorldInfoResponseData(payload, request, timedWorldInfo, worldInfo
     return payload;
 }
 
-function writeWorldInfoSseEvent(response, request, timedWorldInfo, worldInfoOverflowed = false, worldInfo = null, promptSnapshotKey = null) {
+function writeWorldInfoSseEvent(response, request, timedWorldInfo, worldInfoOverflowed = false, worldInfo = null, promptSnapshotKey = null, messagesCount = null) {
     if (response.writableEnded) {
         return;
     }
 
-    const xSillyTavern = buildXSillyTavernPayload(request, timedWorldInfo, worldInfoOverflowed, worldInfo, promptSnapshotKey);
+    const xSillyTavern = buildXSillyTavernPayload(request, timedWorldInfo, worldInfoOverflowed, worldInfo, promptSnapshotKey, messagesCount);
     if (!Object.keys(xSillyTavern).length) {
         return;
     }
 
     response.write(`data: ${JSON.stringify({ x_sillytavern: xSillyTavern })}\n\n`);
-}
+    response.flush?.();
+    }
 
 /**
  * @param {import('express').Response} response
@@ -2985,7 +3008,8 @@ function startStreamHeartbeat(response) {
         }
 
         response.write(': heartbeat\n\n');
-    }, STREAM_HEARTBEAT_INTERVAL_MS);
+        response.flush?.();
+        }, STREAM_HEARTBEAT_INTERVAL_MS);
 }
 
 /**
@@ -2997,7 +3021,7 @@ function stopStreamHeartbeat(heartbeat) {
     }
 }
 
-async function forwardFetchResponseWithWorldInfo(from, to, request, timedWorldInfo, worldInfoOverflowed = false, worldInfo = null, promptSnapshotKey = null) {
+async function forwardFetchResponseWithWorldInfo(from, to, request, timedWorldInfo, worldInfoOverflowed = false, worldInfo = null, promptSnapshotKey = null, messagesCount = null) {
     let statusCode = from.status;
     let statusText = from.statusText;
 
@@ -3009,21 +3033,23 @@ async function forwardFetchResponseWithWorldInfo(from, to, request, timedWorldIn
         statusCode = 400;
     }
 
-    to.statusCode = statusCode;
-    to.statusMessage = statusText;
-    to.setHeader('Content-Type', from.headers.get('content-type') || 'text/event-stream; charset=utf-8');
-    to.setHeader('Cache-Control', from.headers.get('cache-control') || 'no-cache');
-    to.setHeader('Connection', 'keep-alive');
-    to.setHeader('X-Accel-Buffering', 'no');
-    to.flushHeaders?.();
+    if (!to.headersSent) {
+        to.statusCode = statusCode;
+        to.statusMessage = statusText;
+        to.setHeader('Content-Type', from.headers.get('content-type') || 'text/event-stream; charset=utf-8');
+        to.setHeader('Cache-Control', from.headers.get('cache-control') || 'no-cache');
+        to.setHeader('Connection', 'keep-alive');
+        to.setHeader('X-Accel-Buffering', 'no');
+        to.flushHeaders?.();
+    }
 
     if (!from.body || !to.socket) {
-        writeWorldInfoSseEvent(to, request, timedWorldInfo, worldInfoOverflowed, worldInfo, promptSnapshotKey);
+        writeWorldInfoSseEvent(to, request, timedWorldInfo, worldInfoOverflowed, worldInfo, promptSnapshotKey, messagesCount);
         to.end();
         return;
     }
 
-    writeWorldInfoSseEvent(to, request, timedWorldInfo, worldInfoOverflowed, worldInfo, promptSnapshotKey);
+    writeWorldInfoSseEvent(to, request, timedWorldInfo, worldInfoOverflowed, worldInfo, promptSnapshotKey, messagesCount);
     const heartbeat = startStreamHeartbeat(to);
     const responseSocket = to.socket;
 
@@ -3036,6 +3062,7 @@ async function forwardFetchResponseWithWorldInfo(from, to, request, timedWorldIn
         }
 
         to.write(`${eventBlock}\n\n`);
+        to.flush?.();
     };
 
     const onSocketClose = function () {
@@ -3519,141 +3546,166 @@ router.post('/bias', async function (request, response) {
 export async function handleChatCompletionsGenerate(request, response) {
     if (!request.body) return response.status(400).send({ error: true });
 
+    let heartbeat = null;
+    const cleanup = () => {
+        stopStreamHeartbeat(heartbeat);
+        heartbeat = null;
+    };
+
     return (async () => {
         await assertActiveSessionOperation(request);
-    request.requestId = request.requestId || uuidv4();
-    response.setHeader('X-Request-Id', request.requestId);
+        request.requestId = request.requestId || uuidv4();
+        response.setHeader('X-Request-Id', request.requestId);
 
-    if (request.body.reverse_proxy && isVoidaiAppUrl(request.body.reverse_proxy)) {
-        console.warn('Blocked reverse proxy endpoint (voidai.app).');
-        return response.status(403).send({ error: { message: 'The domain voidai.app is blocked as a custom API endpoint.' } });
-    }
+        if (request.body.reverse_proxy && isVoidaiAppUrl(request.body.reverse_proxy)) {
+            console.warn('Blocked reverse proxy endpoint (voidai.app).');
+            return response.status(403).send({ error: { message: 'The domain voidai.app is blocked as a custom API endpoint.' } });
+        }
 
-    if (request.body.chat_completion_source === CHAT_COMPLETION_SOURCES.CUSTOM && isVoidaiAppUrl(request.body.custom_url)) {
-        console.warn('Blocked custom endpoint (voidai.app).');
-        return response.status(403).send({ error: { message: 'The domain voidai.app is blocked as a custom API endpoint.' } });
-    }
+        if (request.body.chat_completion_source === CHAT_COMPLETION_SOURCES.CUSTOM && isVoidaiAppUrl(request.body.custom_url)) {
+            console.warn('Blocked custom endpoint (voidai.app).');
+            return response.status(403).send({ error: { message: 'The domain voidai.app is blocked as a custom API endpoint.' } });
+        }
 
-    const postProcessingType = request.body.custom_prompt_post_processing;
+        if (request.body.json_schema?.value) {
+            request.body.json_schema.value = flattenSchema(request.body.json_schema.value, request.body.chat_completion_source);
+        }
 
-    if (request.body.json_schema?.value) {
-        request.body.json_schema.value = flattenSchema(request.body.json_schema.value, request.body.chat_completion_source);
-    }
+        const postProcessingType = request.body.custom_prompt_post_processing;
 
-    let assembledPromptContext = false;
-    let assembledTimedWorldInfo = null;
-    let assembledWorldInfoOverflowed = false;
-    let assembledPromptSnapshot = null;
-    let promptInspectionInfo = null;
-    let dispatchedPromptSnapshotKey = null;
-    if (!Array.isArray(request.body.messages) && request.body.prompt_context && typeof request.body.prompt_context === 'object') {
-        request.body.prompt_context.includeItemization = true;
-        await prepareServerPromptContext(request.user, request.user.directories, request.body.prompt_context);
-        const assembled = await assembleChatCompletionPrompt(request.body.prompt_context);
-        promptInspectionInfo = getPromptInspectionInfo(request);
-        if (promptInspectionInfo) {
-            assembledPromptSnapshot = assembled;
-            const promptSnapshotCount = Math.max(1, Number(request.body.n) || 1);
-            let latestPromptInspectionSnapshot = null;
-            for (let index = 0; index < promptSnapshotCount; index++) {
-                const snapshotInfo = index === 0
-                    ? promptInspectionInfo
-                    : {
-                        ...promptInspectionInfo,
-                        swipeId: promptInspectionInfo.swipeId + index,
-                        key: buildPromptSnapshotKey(
-                            promptInspectionInfo.username,
-                            promptInspectionInfo.chatScope,
-                            promptInspectionInfo.mesId,
-                            promptInspectionInfo.swipeId + index,
-                        ),
-                    };
-                if (snapshotInfo?.key) {
-                    latestPromptInspectionSnapshot = {
-                        key: snapshotInfo.key,
-                        snapshot: createPromptInspectionSnapshot(request, assembled, snapshotInfo),
-                    };
+        let assembledPromptContext = false;
+        let assembledTimedWorldInfo = null;
+        let assembledWorldInfoOverflowed = false;
+        let assembledMessagesCount = null;
+        let assembledPromptSnapshot = null;
+        let promptInspectionInfo = null;
+        let dispatchedPromptSnapshotKey = null;
+        if (!Array.isArray(request.body.messages) && request.body.prompt_context && typeof request.body.prompt_context === 'object') {
+            request.body.prompt_context.includeItemization = true;
+            await prepareServerPromptContext(request.user, request.user.directories, request.body.prompt_context);
+            const assembled = await assembleChatCompletionPrompt(request.body.prompt_context);
+            promptInspectionInfo = getPromptInspectionInfo(request);
+            if (promptInspectionInfo) {
+                assembledPromptSnapshot = assembled;
+                const promptSnapshotCount = Math.max(1, Number(request.body.n) || 1);
+                let latestPromptInspectionSnapshot = null;
+                for (let index = 0; index < promptSnapshotCount; index++) {
+                    const snapshotInfo = index === 0
+                        ? promptInspectionInfo
+                        : {
+                            ...promptInspectionInfo,
+                            swipeId: promptInspectionInfo.swipeId + index,
+                            key: buildPromptSnapshotKey(
+                                promptInspectionInfo.username,
+                                promptInspectionInfo.chatScope,
+                                promptInspectionInfo.mesId,
+                                promptInspectionInfo.swipeId + index,
+                            ),
+                        };
+                    if (snapshotInfo?.key) {
+                        latestPromptInspectionSnapshot = {
+                            key: snapshotInfo.key,
+                            snapshot: createPromptInspectionSnapshot(request, assembled, snapshotInfo),
+                        };
+                    }
+                }
+
+                if (latestPromptInspectionSnapshot?.key) {
+                    await assertActiveSessionOperation(request);
+                    await setPromptInspectionSnapshot(latestPromptInspectionSnapshot.key, latestPromptInspectionSnapshot.snapshot);
+                    dispatchedPromptSnapshotKey = latestPromptInspectionSnapshot.key;
                 }
             }
-
-            if (latestPromptInspectionSnapshot?.key) {
-                await assertActiveSessionOperation(request);
-                await setPromptInspectionSnapshot(latestPromptInspectionSnapshot.key, latestPromptInspectionSnapshot.snapshot);
-                dispatchedPromptSnapshotKey = latestPromptInspectionSnapshot.key;
-            }
+            rewriteSystemMessagesForO1Model(request.body.prompt_context.model, request.body.prompt_context.chatCompletionSource, assembled.chat);
+            request.body.messages = assembled.chat;
+            assembledMessagesCount = Number(assembled.messagesCount) || 0;
+            response.setHeader('X-ST-Messages-Count', String(assembledMessagesCount));
+            assembledTimedWorldInfo = assembled.timedWorldInfo;
+            assembledWorldInfoOverflowed = Boolean(assembled.worldInfoOverflowed);
+            assembledPromptContext = true;
         }
-        rewriteSystemMessagesForO1Model(request.body.prompt_context.model, request.body.prompt_context.chatCompletionSource, assembled.chat);
-        request.body.messages = assembled.chat;
-        response.setHeader('X-ST-Messages-Count', String(Number(assembled.messagesCount) || 0));
-        assembledTimedWorldInfo = assembled.timedWorldInfo;
-        assembledWorldInfoOverflowed = Boolean(assembled.worldInfoOverflowed);
-        assembledPromptContext = true;
-    }
 
-    if (!Array.isArray(request.body.messages) && typeof request.body.messages !== 'string') {
-        return response.status(400).send({ error: { message: 'messages array or prompt_context is required' } });
-    }
+        if (!Array.isArray(request.body.messages) && typeof request.body.messages !== 'string') {
+            return response.status(400).send({ error: { message: 'messages array or prompt_context is required' } });
+        }
 
-    if (Array.isArray(request.body.messages) && postProcessingType && (!request.body.prompt_context || assembledPromptContext)) {
-        console.info('Applying custom prompt post-processing of type', postProcessingType);
-        request.body.messages = postProcessPrompt(
-            request.body.messages,
-            postProcessingType,
-            getPromptNames(request));
-    }
+        const requestedTextCompletion = Boolean(request.body.model && TEXT_COMPLETION_MODELS.includes(request.body.model)) || typeof request.body.messages === 'string';
+        if (requestedTextCompletion) {
+            return response.status(410).send({ error: { message: 'Text completion is disabled in chat-completions-only mode.' } });
+        }
 
-    rewriteSystemMessagesForO1Model(request.body.model, request.body.chat_completion_source, request.body.messages);
+        if (Array.isArray(request.body.messages) && postProcessingType && (!request.body.prompt_context || assembledPromptContext)) {
+            console.info('Applying custom prompt post-processing of type', postProcessingType);
+            request.body.messages = postProcessPrompt(
+                request.body.messages,
+                postProcessingType,
+                getPromptNames(request));
+        }
 
-    let providerResult = null;
-    switch (request.body.chat_completion_source) {
-        case CHAT_COMPLETION_SOURCES.CLAUDE:
-            providerResult = await sendClaudeRequest(request);
-            break;
-        case CHAT_COMPLETION_SOURCES.AI21:
-            providerResult = await sendAI21Request(request);
-            break;
-        case CHAT_COMPLETION_SOURCES.MAKERSUITE:
-        case CHAT_COMPLETION_SOURCES.VERTEXAI:
-            providerResult = await sendMakerSuiteRequest(request);
-            break;
-        case CHAT_COMPLETION_SOURCES.MISTRALAI:
-            providerResult = await sendMistralAIRequest(request);
-            break;
-        case CHAT_COMPLETION_SOURCES.COHERE:
-            providerResult = await sendCohereRequest(request);
-            break;
-        case CHAT_COMPLETION_SOURCES.DEEPSEEK:
-            providerResult = await sendDeepSeekRequest(request);
-            break;
-        case CHAT_COMPLETION_SOURCES.AIMLAPI:
-            providerResult = await sendAimlapiRequest(request);
-            break;
-        case CHAT_COMPLETION_SOURCES.XAI:
-            providerResult = await sendXaiRequest(request);
-            break;
-        case CHAT_COMPLETION_SOURCES.ELECTRONHUB:
-            providerResult = await sendElectronHubRequest(request);
-            break;
-        case CHAT_COMPLETION_SOURCES.AZURE_OPENAI:
-            providerResult = await sendAzureOpenAIRequest(request);
-            break;
-    }
+        rewriteSystemMessagesForO1Model(request.body.model, request.body.chat_completion_source, request.body.messages);
 
-    if (providerResult) {
-        return await sendProviderDispatchResult(providerResult, request, response, {
-            timedWorldInfo: assembledTimedWorldInfo,
-            worldInfoOverflowed: assembledWorldInfoOverflowed,
-            worldInfo: assembledPromptSnapshot?.worldInfo || null,
-            promptSnapshotKey: dispatchedPromptSnapshotKey || promptInspectionInfo?.key || null,
-        });
-    }
+        if (assembledMessagesCount === null && Array.isArray(request.body.messages) && !response.headersSent) {
+            assembledMessagesCount = request.body.messages.filter(message => !message?.tool_calls && ['user', 'assistant', 'tool'].includes(message?.role)).length || 0;
+            response.setHeader('X-ST-Messages-Count', String(assembledMessagesCount));
+        }
 
-    const requestedTextCompletion = Boolean(request.body.model && TEXT_COMPLETION_MODELS.includes(request.body.model)) || typeof request.body.messages === 'string';
-    if (requestedTextCompletion) {
-        return response.status(410).send({ error: { message: 'Text completion is disabled in chat-completions-only mode.' } });
-    }
+        if (request.body.stream && !response.headersSent) {
+            response.setHeader('Content-Type', 'text/event-stream; charset=utf-8');
+            response.setHeader('Cache-Control', 'no-cache');
+            response.setHeader('Connection', 'keep-alive');
+            response.setHeader('X-Accel-Buffering', 'no');
+            response.flushHeaders?.();
+            heartbeat = startStreamHeartbeat(response);
+        }
 
-    let apiUrl;
+        let providerResult = null;
+        switch (request.body.chat_completion_source) {
+            case CHAT_COMPLETION_SOURCES.CLAUDE:
+                providerResult = await sendClaudeRequest(request);
+                break;
+            case CHAT_COMPLETION_SOURCES.AI21:
+                providerResult = await sendAI21Request(request);
+                break;
+            case CHAT_COMPLETION_SOURCES.MAKERSUITE:
+            case CHAT_COMPLETION_SOURCES.VERTEXAI:
+                providerResult = await sendMakerSuiteRequest(request);
+                break;
+            case CHAT_COMPLETION_SOURCES.MISTRALAI:
+                providerResult = await sendMistralAIRequest(request);
+                break;
+            case CHAT_COMPLETION_SOURCES.COHERE:
+                providerResult = await sendCohereRequest(request);
+                break;
+            case CHAT_COMPLETION_SOURCES.DEEPSEEK:
+                providerResult = await sendDeepSeekRequest(request);
+                break;
+            case CHAT_COMPLETION_SOURCES.AIMLAPI:
+                providerResult = await sendAimlapiRequest(request);
+                break;
+            case CHAT_COMPLETION_SOURCES.XAI:
+                providerResult = await sendXaiRequest(request);
+                break;
+            case CHAT_COMPLETION_SOURCES.ELECTRONHUB:
+                providerResult = await sendElectronHubRequest(request);
+                break;
+            case CHAT_COMPLETION_SOURCES.AZURE_OPENAI:
+                providerResult = await sendAzureOpenAIRequest(request);
+                break;
+        }
+
+        if (providerResult) {
+            const result = await sendProviderDispatchResult(providerResult, request, response, {
+                timedWorldInfo: assembledTimedWorldInfo,
+                worldInfoOverflowed: assembledWorldInfoOverflowed,
+                worldInfo: assembledPromptSnapshot?.worldInfo || null,
+                promptSnapshotKey: dispatchedPromptSnapshotKey || promptInspectionInfo?.key || null,
+                messagesCount: assembledMessagesCount,
+            });
+            cleanup();
+            return result;
+        }
+
+        let apiUrl;
     let apiKey;
     let headers;
     let bodyParams;
@@ -4020,12 +4072,15 @@ export async function handleChatCompletionsGenerate(request, response) {
     await assertActiveSessionOperation(request);
     providerResult = await makeRequest(config, request);
     await assertActiveSessionOperation(request);
-    return await sendProviderDispatchResult(providerResult, request, response, {
+    const result = await sendProviderDispatchResult(providerResult, request, response, {
         timedWorldInfo: assembledTimedWorldInfo,
         worldInfoOverflowed: assembledWorldInfoOverflowed,
         worldInfo: assembledPromptSnapshot?.worldInfo || null,
         promptSnapshotKey: dispatchedPromptSnapshotKey || promptInspectionInfo?.key || null,
+        messagesCount: assembledMessagesCount,
     });
+    cleanup();
+    return result;
 
     /**
      * Makes a fetch request to the OpenAI API endpoint.
@@ -4138,6 +4193,7 @@ export async function handleChatCompletionsGenerate(request, response) {
         return await createSanitizedProviderErrorResult(errorResponse, request);
     }
     })().catch((error) => {
+        cleanup();
         cleanupRequestSocketAbortListeners(request);
         if (isActiveSessionError(error)) {
             if (!response.headersSent) {

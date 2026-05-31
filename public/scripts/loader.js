@@ -134,7 +134,9 @@ export function deferLoader({ delayMs = 250 } = {}) {
 }
 
 export async function hideLoader(handle = null) {
-    if (!activeLoaderHandle) {
+    const preloader = getPreloaderElement();
+
+    if (!activeLoaderHandle && (!preloader || preloader.classList.contains('loader-hidden'))) {
         console.warn('There is no loader showing to hide');
         return Promise.resolve();
     }
@@ -145,7 +147,6 @@ export async function hideLoader(handle = null) {
 
     return new Promise((resolve) => {
         const currentHandle = activeLoaderHandle;
-        const preloader = getPreloaderElement();
 
         if (!preloader) {
             console.warn('Preloader element not found, skipping hideLoader');

@@ -4,7 +4,8 @@ import path from 'node:path';
 import express from 'express';
 import mime from 'mime-types';
 import { getSettingsBackupFilePrefix } from './settings.js';
-import { CHAT_BACKUPS_PREFIX, getLogicalChatData, serializeJsonl } from './chats.js';
+import { CHAT_BACKUPS_PREFIX, getLogicalChatData, serializeJsonl, writeLogicalChat, getSplitHeadPath, isHeadChatFile } from './chats.js';
+import { loadDb, migrateFromJsonl } from '../sqlite-manager.js';
 import { tryParse } from '../util.js';
 import { SETTINGS_FILE } from '../constants.js';
 
@@ -12,11 +13,8 @@ const sha256 = str => crypto.createHash('sha256').update(str).digest('hex');
 const LAYOUT_ASSET_ROUTE_PREFIX = '/api/layouts/assets/file/';
 const LAYOUT_ASSET_EXTENSIONS = new Set(['.png', '.webp']);
 const LAYOUT_ASSET_REFERENCE_PATTERN = new RegExp(`${LAYOUT_ASSET_ROUTE_PREFIX.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}([^?#)'"]+)`, 'g');
-const isHeadChatFile = (fileName) => String(fileName).endsWith('.head.jsonl');
-const getSplitHeadPath = (filePath) => {
-    const parsedPath = path.parse(filePath);
-    return path.join(parsedPath.dir, `${parsedPath.name}.head.jsonl`);
-};
+
+
 const normalizeComparablePath = filePath => process.platform === 'win32'
     ? path.normalize(filePath).toLowerCase()
     : path.normalize(filePath);
@@ -179,6 +177,93 @@ export class DataMaidService {
         return report;
     }
 
+
+    static async recombineAllUsersSplitChats() {
+        const { getAllUserHandles, getUserDirectories } = await import('../users.js');
+        const handles = await getAllUserHandles();
+        const allPaths = [];
+        const tasks = [];
+
+        for (const handle of handles) {
+            const directories = getUserDirectories(handle);
+            const dataMaid = new DataMaidService(handle, directories);
+            const paths = await dataMaid.getSplitChatPaths();
+            if (paths.length > 0) {
+                allPaths.push(...paths);
+                tasks.push({ dataMaid, handle, paths });
+            }
+        }
+
+        if (allPaths.length === 0) {
+            return;
+        }
+
+        console.info(`[Data Maid] Found ${allPaths.length} split chats to recombine across ${tasks.length} users:`);
+        for (const path of allPaths) {
+            console.info(`  - ${path}`);
+        }
+
+        let totalConverted = 0;
+
+        for (const { dataMaid, handle, paths } of tasks) {
+            const count = await dataMaid.recombineAllSplitChats(paths);
+            totalConverted += count;
+        }
+
+        if (totalConverted > 0) {
+            console.info(`[Data Maid] Successfully recombined and migrated ${totalConverted} split chats to SQLite.`);
+        }
+        }
+
+        static async migrateAllUsersChatsToSqlite() {
+        const { getAllUserHandles, getUserDirectories } = await import('../users.js');
+        const handles = await getAllUserHandles();
+        let totalMigrated = 0;
+        let totalExisting = 0;
+
+        for (const handle of handles) {
+            const directories = getUserDirectories(handle);
+            const scanDirectory = async (directory) => {
+                if (!fs.existsSync(directory)) return;
+                const entries = await fs.promises.readdir(directory, { withFileTypes: true });
+                for (const entry of entries) {
+                    const entryPath = path.join(directory, entry.name);
+                    if (entry.isDirectory()) {
+                        await scanDirectory(entryPath);
+                    } else if (entry.isFile() && entry.name.endsWith('.jsonl') && !isHeadChatFile(entry.name)) {
+                        const sqlitePath = entryPath.replace('.jsonl', '.sqlite');
+                        if (!fs.existsSync(sqlitePath)) {
+                            try {
+                                await migrateFromJsonl(entryPath, sqlitePath);
+                                // Verify migration by reopening
+                                const db = await loadDb(sqlitePath);
+                                db.close();
+                                // Rename original to .jsonl.bak
+                                fs.renameSync(entryPath, entryPath + '.bak');
+                                totalMigrated++;
+                            } catch (error) {
+                                console.error(`[Data Maid] Failed to migrate ${entryPath} to SQLite:`, error);
+                            }
+                        } else {
+                            // SQLite already exists (e.g. from recombination or previous run)
+                            // If the original jsonl is still here, back it up
+                            if (fs.existsSync(entryPath)) {
+                                fs.renameSync(entryPath, entryPath + '.bak');
+                                totalExisting++;
+                            }
+                        }
+                    }
+                }
+            };
+
+            await scanDirectory(directories.chats);
+            await scanDirectory(directories.groupChats);
+        }
+
+        if (totalMigrated > 0 || totalExisting > 0) {
+            console.info(`[Data Maid] SQLite migration: ${totalMigrated} new migrations, ${totalExisting} previously migrated chats backed up.`);
+        }
+        }
 
     /**
      * Sanitizes a record by hashing the file name and removing sensitive information.
@@ -397,7 +482,7 @@ export class DataMaidService {
                 if (folder.isDirectory() && !knownChatFolders.has(folder.name)) {
                     const chatFiles = await fs.promises.readdir(path.join(this.directories.chats, folder.name), { withFileTypes: true });
                     for (const file of chatFiles) {
-                        if (file.isFile() && path.parse(file.name).ext === '.jsonl' && !isHeadChatFile(file.name)) {
+                        if (file.isFile() && (path.parse(file.name).ext === '.jsonl' || path.parse(file.name).ext === '.sqlite') && !isHeadChatFile(file.name)) {
                             result.push(path.join(this.directories.chats, folder.name, file.name));
                         }
                     }
@@ -442,7 +527,7 @@ export class DataMaidService {
             }
             const groupChats = await fs.promises.readdir(this.directories.groupChats, { withFileTypes: true });
             for (const file of groupChats) {
-                if (file.isFile() && path.parse(file.name).ext === '.jsonl' && !isHeadChatFile(file.name)) {
+                if (file.isFile() && (path.parse(file.name).ext === '.jsonl' || path.parse(file.name).ext === '.sqlite') && !isHeadChatFile(file.name)) {
                     if (!knownGroupChats.has(path.parse(file.name).name)) {
                         result.push(path.join(this.directories.groupChats, file.name));
                     }
@@ -758,7 +843,7 @@ export class DataMaidService {
      */
     async #parseChatFile(filePath) {
         try {
-            const logicalChat = getLogicalChatData(filePath);
+            const logicalChat = await getLogicalChatData(filePath);
             if (logicalChat.length > 0) {
                 return logicalChat;
             }
@@ -770,6 +855,58 @@ export class DataMaidService {
             console.error(`[Data Maid] Error reading chat file ${filePath}:`, error);
             return [];
         }
+    }
+
+    /**
+     * Finds all split chat paths for a user.
+     * @returns {Promise<string[]>} List of split chat paths found.
+     */
+    async getSplitChatPaths() {
+        const paths = [];
+        try {
+            const scanDirectory = async (directory) => {
+                if (!fs.existsSync(directory)) return;
+                const entries = await fs.promises.readdir(directory, { withFileTypes: true });
+                for (const entry of entries) {
+                    const entryPath = path.join(directory, entry.name);
+                    if (entry.isDirectory()) {
+                        await scanDirectory(entryPath);
+                    } else if (entry.isFile() && entry.name.endsWith('.jsonl') && !isHeadChatFile(entry.name)) {
+                        const headPath = getSplitHeadPath(entryPath);
+                        if (fs.existsSync(headPath)) paths.push(entryPath);
+                    }
+                }
+            };
+
+            await scanDirectory(this.directories.chats);
+            await scanDirectory(this.directories.groupChats);
+        } catch (error) {
+            console.error('[Data Maid] Error finding split chats:', error);
+        }
+        return paths;
+    }
+
+    /**
+     * Recombines all split chats for a user.
+     * @param {string[]} paths Optional list of paths to recombine.
+     * @returns {Promise<number>} Number of chats recombined.
+     */
+    async recombineAllSplitChats(paths = null) {
+        let count = 0;
+        try {
+            const chatPaths = paths ?? await this.getSplitChatPaths();
+
+            for (const entryPath of chatPaths) {
+                const logicalChat = await getLogicalChatData(entryPath);
+                if (logicalChat.length > 0) {
+                    await writeLogicalChat(entryPath, logicalChat[0], logicalChat.slice(1));
+                    count++;
+                }
+            }
+        } catch (error) {
+            console.error('[Data Maid] Error recombining split chats:', error);
+        }
+        return count;
     }
 
     /**
@@ -814,6 +951,22 @@ router.post('/report', async (req, res) => {
         return res.json({ report, token });
     } catch (error) {
         console.error('[Data Maid] Error generating data maid report:', error);
+        return res.sendStatus(500);
+    }
+});
+
+router.post('/recombine-chats', async (req, res) => {
+    try {
+        if (!req.user || !req.user.directories) {
+            return res.sendStatus(403);
+        }
+
+        const dataMaid = new DataMaidService(req.user.profile.handle, req.user.directories);
+        const count = await dataMaid.recombineAllSplitChats();
+
+        return res.json({ count });
+    } catch (error) {
+        console.error('[Data Maid] Error recombining split chats:', error);
         return res.sendStatus(500);
     }
 });
@@ -876,13 +1029,13 @@ router.get('/view', async (req, res) => {
         }
 
         const pathToFile = fileEntry.path;
-        const fileExists = fs.existsSync(pathToFile);
+        const fileExists = fs.existsSync(pathToFile) || fs.existsSync(pathToFile.replace('.jsonl', '.sqlite'));
 
         if (!fileExists) {
             return res.sendStatus(404);
         }
 
-        const logicalChat = getLogicalChatData(pathToFile);
+        const logicalChat = await getLogicalChatData(pathToFile);
         const fileBuffer = logicalChat.length > 0
             ? Buffer.from(serializeJsonl(logicalChat), 'utf8')
             : await fs.promises.readFile(pathToFile);
@@ -926,10 +1079,18 @@ router.post('/delete', async (req, res) => {
             const fileExists = fs.existsSync(pathToFile);
 
             if (!fileExists) {
+                const sqlitePath = pathToFile.replace('.jsonl', '.sqlite');
+                if (fs.existsSync(sqlitePath)) {
+                    await fs.promises.unlink(sqlitePath);
+                }
                 continue;
             }
 
             await fs.promises.unlink(pathToFile);
+            const sqlitePath = pathToFile.replace('.jsonl', '.sqlite');
+            if (fs.existsSync(sqlitePath)) {
+                await fs.promises.unlink(sqlitePath);
+            }
             if (path.extname(pathToFile) === '.jsonl' && !isHeadChatFile(pathToFile)) {
                 const headPath = getSplitHeadPath(pathToFile);
                 if (fs.existsSync(headPath)) {
