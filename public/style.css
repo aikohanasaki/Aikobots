@@ -5446,6 +5446,10 @@ h5 {
     grid-template-columns: 340px auto;
 }
 
+#show_more_messages, #show_newer_messages {
+    display: none !important;
+}
+
 body .ui-autocomplete {
     max-height: 300px;
     overflow-y: auto;

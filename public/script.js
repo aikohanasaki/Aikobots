@@ -969,6 +969,7 @@ let visibleChatEndId = null;
 export let chatDragDropHandler = null;
 let historyWindowNavigationQueue = Promise.resolve();
 let isRunningHistoryWindowNavigation = false;
+let isHistoryWindowNavigationQueued = false;
 let activeHistoryWindowNavigationToken = null;
 
 function serializeHistoryWindowNavigation(callback, navigationToken = null) {
@@ -976,8 +977,10 @@ function serializeHistoryWindowNavigation(callback, navigationToken = null) {
         return callback(navigationToken);
     }
 
+    isHistoryWindowNavigationQueued = true;
     const run = historyWindowNavigationQueue.then(async () => {
         const token = {};
+        isHistoryWindowNavigationQueued = false;
         isRunningHistoryWindowNavigation = true;
         activeHistoryWindowNavigationToken = token;
         try {
@@ -3954,7 +3957,7 @@ function getConfiguredLongChatDisplayCount() {
 }
 
 function getConfiguredLongChatBufferMax() {
-    return 1000;
+    return Math.max(1000, getConfiguredLongChatDisplayCount());
 }
 
 function mergeLoadedRange(startId, endId) {
@@ -4583,16 +4586,7 @@ function getConfiguredChatWindowSize(count = null) {
         return candidate;
     }
 
-    if (isSplitTailChat() && !isChatFullyHydrated()) {
-        return getConfiguredLongChatDisplayCount();
-    }
-
-    const configured = Number(power_user.chat_truncation);
-    if (Number.isFinite(configured) && configured > 0) {
-        return configured;
-    }
-
-    return FALLBACK_CHAT_WINDOW_SIZE;
+    return 100;
 }
 
 function setVisibleChatRange(startId = null, endId = null) {
@@ -4667,7 +4661,9 @@ export async function renderMessageWindow(startId = 0, count = null, navigationT
         }
 
         const normalizedStartId = clamp(Number(startId) || 0, 0, Math.max(0, chat.length - 1));
-        const windowSize = getConfiguredChatWindowSize(count);
+        const requestedWindowSize = getConfiguredChatWindowSize(count);
+        // Cap initial render to 500 messages to prevent browser hang
+        const windowSize = count === null ? Math.min(500, requestedWindowSize) : requestedWindowSize;
         const endId = Math.min(chat.length - 1, normalizedStartId + windowSize - 1);
 
         if (isSplitTailChat() && !isChatFullyHydrated()) {
@@ -4677,9 +4673,7 @@ export async function renderMessageWindow(startId = 0, count = null, navigationT
         }
 
         for (let i = normalizedStartId; i <= endId; i++) {
-            if (!chat[i]) {
-                continue;
-            }
+            if (!chat[i]) continue;
             addOneMessage(chat[i], { scroll: false, forceId: i, showSwipes: false });
         }
 
@@ -4743,15 +4737,25 @@ export async function showMoreMessages(messagesToLoad = null, navigationToken = 
 
         removeHistoryControls();
 
+        const chunkContainer = $('<div></div>');
+        const startCount = count;
         while (messageId > 0 && count > 0) {
             const newMessageId = messageId - 1;
             if (!chat[newMessageId]) {
                 break;
             }
-            addOneMessage(chat[newMessageId], { insertBefore: anchorId, scroll: false, forceId: newMessageId, showSwipes: false });
-            anchorId = newMessageId;
+            addOneMessage(chat[newMessageId], { container: chunkContainer, scroll: false, forceId: newMessageId, showSwipes: false });
             count--;
             messageId--;
+        }
+
+        if (chunkContainer.contents().length > 0) {
+            if (anchorId !== null) {
+                const target = chatElement.find(`.mes[mesid="${anchorId}"]`);
+                chunkContainer.contents().insertBefore(target);
+            } else {
+                chatElement.append(chunkContainer.contents());
+            }
         }
 
         if (chatElement.children('.mes').length > 0) {
@@ -4764,9 +4768,16 @@ export async function showMoreMessages(messagesToLoad = null, navigationToken = 
             chatLoadState.currentView = Number.isFinite(visibleChatStartId) && visibleChatStartId < chatLoadState.tailStartId ? 'history' : 'tail';
         }
 
-        if (isButtonInView) {
-            const newHeight = chatElement.prop('scrollHeight');
-            chatElement.scrollTop(newHeight - prevHeight);
+        const newHeight = chatElement.prop('scrollHeight');
+        chatElement.scrollTop(chatElement.scrollTop() + (newHeight - prevHeight));
+
+        // DOM Pruning: remove messages from bottom if too many
+        const MAX_MESSAGES_IN_DOM = 1000;
+        const currentMessages = chatElement.children('.mes');
+        if (currentMessages.length > MAX_MESSAGES_IN_DOM) {
+            const toRemove = currentMessages.length - MAX_MESSAGES_IN_DOM;
+            currentMessages.slice(-toRemove).remove();
+            syncVisibleChatRangeFromDom();
         }
 
         finalizeRenderedMessageWindow();
@@ -4788,14 +4799,19 @@ export async function showNewerMessages(messagesToLoad = null, navigationToken =
 
         await ensureChatRangeLoaded(messageId + 1, count);
 
+        const chunkContainer = $('<div></div>');
         while (messageId < chat.length - 1 && count > 0) {
             const newMessageId = messageId + 1;
             if (!chat[newMessageId]) {
                 break;
             }
-            addOneMessage(chat[newMessageId], { scroll: false, forceId: newMessageId, showSwipes: false });
+            addOneMessage(chat[newMessageId], { container: chunkContainer, scroll: false, forceId: newMessageId, showSwipes: false });
             count--;
             messageId++;
+        }
+
+        if (chunkContainer.contents().length > 0) {
+            chatElement.append(chunkContainer.contents());
         }
 
         if (chatElement.children('.mes').length > 0) {
@@ -4808,6 +4824,17 @@ export async function showNewerMessages(messagesToLoad = null, navigationToken =
             chatLoadState.currentView = Number.isFinite(visibleChatStartId) && visibleChatStartId < chatLoadState.tailStartId ? 'history' : 'tail';
         }
 
+        // DOM Pruning: remove messages from top if too many
+        const MAX_MESSAGES_IN_DOM = 1000;
+        const currentMessages = chatElement.children('.mes');
+        if (currentMessages.length > MAX_MESSAGES_IN_DOM) {
+            const toRemove = currentMessages.length - MAX_MESSAGES_IN_DOM;
+            const topPrunedHeight = currentMessages.slice(0, toRemove).toArray().reduce((acc, el) => acc + $(el).outerHeight(true), 0);
+            currentMessages.slice(0, toRemove).remove();
+            chatElement.scrollTop(chatElement.scrollTop() - topPrunedHeight);
+            syncVisibleChatRangeFromDom();
+        }
+
         finalizeRenderedMessageWindow();
         await eventSource.emit(event_types.MORE_MESSAGES_LOADED);
     }, navigationToken);
@@ -4815,7 +4842,8 @@ export async function showNewerMessages(messagesToLoad = null, navigationToken =
 
 export async function printMessages() {
     let startIndex = 0;
-    let count = getConfiguredChatWindowSize();
+    const displayCount = getConfiguredLongChatDisplayCount();
+    const count = Math.min(displayCount, 500);
 
     if (chat.length > count) {
         startIndex = chat.length - count;
@@ -5939,7 +5967,7 @@ export function addCopyToCodeBlocks(messageElement) {
  * @param {boolean} [options.showSwipes=true] Whether to show swipe buttons
  * @returns {void}
  */
-export function addOneMessage(mes, { type = 'normal', insertAfter = null, scroll = true, insertBefore = null, forceId = null, showSwipes = true } = {}) {
+export function addOneMessage(mes, { type = 'normal', insertAfter = null, scroll = true, insertBefore = null, forceId = null, showSwipes = true, container = null } = {}) {
     let messageText = mes['mes'];
     const momentDate = timestampToMoment(mes.send_date);
     const timestamp = momentDate.isValid() ? momentDate.format('LL LT') : '';
@@ -6017,16 +6045,18 @@ export function addOneMessage(mes, { type = 'normal', insertAfter = null, scroll
     };
 
     const renderedMessage = getMessageFromTemplate(params);
+    $(renderedMessage).find('.mes_text').html(messageText);
 
     if (type !== 'swipe') {
+        const targetContainer = container || chatElement;
         if (insertAfter == null && insertBefore == null) {
-            chatElement.append(renderedMessage);
+            targetContainer.append(renderedMessage);
         }
         else if (insertAfter != null) {
-            const target = chatElement.find(`.mes[mesid="${insertAfter}"]`);
+            const target = targetContainer.find(`.mes[mesid="${insertAfter}"]`);
             $(renderedMessage).insertAfter(target);
         } else {
-            const target = chatElement.find(`.mes[mesid="${insertBefore}"]`);
+            const target = targetContainer.find(`.mes[mesid="${insertBefore}"]`);
             $(renderedMessage).insertBefore(target);
         }
     }
@@ -6035,7 +6065,8 @@ export function addOneMessage(mes, { type = 'normal', insertAfter = null, scroll
     const newMessageId = typeof forceId == 'number' ? forceId : chat.length - 1;
     mergeLoadedRange(newMessageId, newMessageId);
 
-    const newMessage = chatElement.find(`[mesid="${newMessageId}"]`);
+    const targetLookup = container || chatElement;
+    const newMessage = targetLookup.find(`[mesid="${newMessageId}"]`);
     const isSmallSys = mes?.extra?.isSmallSys;
 
     if (isSmallSys === true) {
@@ -16760,8 +16791,7 @@ jQuery(async function () {
 
     const chatElementScroll = document.getElementById('chat');
     const chatScrollHandler = function () {
-        if (power_user.waifuMode) {
-            scrollLock = true;
+        if (power_user.waifuMode || isRunningHistoryWindowNavigation || isHistoryWindowNavigationQueued || isChatSaving) {
             return;
         }
 
@@ -16775,6 +16805,23 @@ jQuery(async function () {
         // Cancel autoscroll if the user scrolls up
         if (!scrollLock && !scrollIsAtBottom) {
             scrollLock = true;
+        }
+
+        // Infinite scroll: load more messages when near top
+        if (chatElementScroll.scrollTop < 500) {
+            const showMoreButton = document.getElementById(TOP_HISTORY_CONTROL_ID);
+            if (showMoreButton && !showMoreButton.disabled) {
+                showMoreMessages();
+            }
+        }
+
+        // Infinite scroll: load newer messages when near bottom
+        const scrollFromBottom = chatElementScroll.scrollHeight - chatElementScroll.clientHeight - chatElementScroll.scrollTop;
+        if (scrollFromBottom < 500) {
+            const showNewerButton = document.getElementById(BOTTOM_HISTORY_CONTROL_ID);
+            if (showNewerButton && !showNewerButton.disabled) {
+                showNewerMessages();
+            }
         }
     };
     chatElementScroll.addEventListener('scroll', chatScrollHandler, { passive: true });
