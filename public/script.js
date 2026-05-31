@@ -6102,8 +6102,6 @@ export function addOneMessage(mes, { type = 'normal', insertAfter = null, scroll
             swipeMessage.find('.tokenCounterDisplay').empty();
         }
     } else {
-        const messageId = forceId ?? chat.length - 1;
-        chatElement.find(`[mesid="${messageId}"] .mes_text`).append(messageText);
         appendMediaToMessage(mes, newMessage, scroll ? SCROLL_BEHAVIOR.ADJUST : SCROLL_BEHAVIOR.NONE);
         showSwipes && hideSwipeButtons();
     }
