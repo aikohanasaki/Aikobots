@@ -2260,20 +2260,22 @@ router.post('/rename', validateAvatarUrlMiddleware, async function (request, res
     }
 });
 
-router.post('/delete', validateAvatarUrlMiddleware, function (request, response) {
+router.post('/delete', validateAvatarUrlMiddleware, async function (request, response) {
     try {
         const filePath = resolveCharacterChatFilePath(request.user.directories.chats, request.body.avatar_url, request.body.chatfile);
-        const sqlitePath = filePath.replace('.jsonl', '.sqlite');
-        const chatFileExists = fs.existsSync(filePath) || fs.existsSync(sqlitePath);
+        const baseFilePath = filePath.replace(/\.(jsonl|sqlite)$/i, '');
+        const sqlitePath = baseFilePath + '.sqlite';
+        const jsonlPath = baseFilePath + '.jsonl';
+        const chatFileExists = fs.existsSync(jsonlPath) || fs.existsSync(sqlitePath);
 
         if (!chatFileExists) {
             console.error(`Chat file not found '${filePath}'`);
             return response.sendStatus(400);
         }
 
-        if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
+        if (fs.existsSync(jsonlPath)) fs.unlinkSync(jsonlPath);
         if (fs.existsSync(sqlitePath)) fs.unlinkSync(sqlitePath);
-        const headPath = getSplitHeadPath(filePath);
+        const headPath = getSplitHeadPath(jsonlPath);
         if (fs.existsSync(headPath)) {
             fs.unlinkSync(headPath);
         }
@@ -2633,12 +2635,14 @@ router.post('/group/delete', async (request, response) => {
 
         const id = request.body.id;
         const pathToFile = getGroupChatFilePath(request.user.directories.groupChats, id);
-        const sqlitePath = pathToFile.replace('.jsonl', '.sqlite');
+        const baseFilePath = pathToFile.replace(/\.(jsonl|sqlite)$/i, '');
+        const sqlitePath = baseFilePath + '.sqlite';
+        const jsonlPath = baseFilePath + '.jsonl';
 
-        if (fs.existsSync(pathToFile) || fs.existsSync(sqlitePath)) {
-            if (fs.existsSync(pathToFile)) fs.unlinkSync(pathToFile);
+        if (fs.existsSync(jsonlPath) || fs.existsSync(sqlitePath)) {
+            if (fs.existsSync(jsonlPath)) fs.unlinkSync(jsonlPath);
             if (fs.existsSync(sqlitePath)) fs.unlinkSync(sqlitePath);
-            const headPath = getSplitHeadPath(pathToFile);
+            const headPath = getSplitHeadPath(jsonlPath);
             if (fs.existsSync(headPath)) {
                 fs.unlinkSync(headPath);
             }

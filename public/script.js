@@ -3859,7 +3859,7 @@ export async function deleteCharacterChatByName(characterId, fileName) {
     }
 
     if (!selected_group && String(this_chid) === String(characterId)) {
-        await delChat(`${fileName}.jsonl`);
+        await delChat(fileName);
         return;
     }
 
@@ -3867,7 +3867,7 @@ export async function deleteCharacterChatByName(characterId, fileName) {
         method: 'POST',
         headers: getRequestHeaders(),
         body: JSON.stringify({
-            chatfile: `${fileName}.jsonl`,
+            chatfile: fileName,
             avatar_url: character.avatar,
         }),
     });
@@ -12558,7 +12558,7 @@ async function deleteManageChatsOwnerChat(ownerContext, fileName) {
     }
 
     if (!selected_group && String(this_chid) === String(details.characterId)) {
-        await delChat(`${fileName}.jsonl`);
+        await delChat(fileName);
     } else if (details.characterId !== null) {
         await deleteCharacterChatByName(details.characterId, fileName);
     }
@@ -13094,8 +13094,8 @@ async function exportManageChatsOwnerChat(ownerContext, filename, format) {
     const body = {
         is_group: details.isGroup,
         avatar_url: details.avatarUrl || null,
-        file: `${filename}.jsonl`,
-        exportfilename: `${filename}.${format}`,
+        file: filename,
+        exportfilename: `${filename.replace(/\.(jsonl|sqlite)$/i, '')}.${format}`,
         format: format,
     };
 
@@ -13142,8 +13142,8 @@ async function renameOrphanCharacterChat(orphanKey, oldFileName, newFileName) {
         body: JSON.stringify({
             is_group: false,
             avatar_url: makeOrphanAvatarUrl(orphanKey),
-            original_file: `${oldFileName}.jsonl`,
-            renamed_file: `${newFileName.trim()}.jsonl`,
+            original_file: oldFileName,
+            renamed_file: newFileName.trim(),
         }),
     });
 
@@ -13157,7 +13157,7 @@ async function deleteOrphanCharacterChat(orphanKey, fileName) {
         method: 'POST',
         headers: getRequestHeaders(),
         body: JSON.stringify({
-            chatfile: `${fileName}.jsonl`,
+            chatfile: fileName,
             avatar_url: makeOrphanAvatarUrl(orphanKey),
         }),
     });
@@ -13172,8 +13172,8 @@ async function exportOrphanCharacterChat(orphanKey, filename, format) {
     const body = {
         is_group: false,
         avatar_url: makeOrphanAvatarUrl(orphanKey),
-        file: `${filename}.jsonl`,
-        exportfilename: `${filename}.${format}`,
+        file: filename,
+        exportfilename: `${filename.replace(/\.(jsonl|sqlite)$/i, '')}.${format}`,
         format: format,
     };
 
@@ -13416,7 +13416,7 @@ async function displayDeletedCharacterChats(orphanKey = manageChatsSelectedOrpha
                         ownerContext: { type: 'group', id: group.id },
                     },
                     highlightNames,
-                    isSelected: String(currentGroupChat).replace(/\.jsonl$/i, '') === String(chat.file_name).replace(/\.jsonl$/i, ''),
+                    isSelected: String(currentGroupChat).replace(/\.(jsonl|sqlite)$/i, '') === String(chat.file_name).replace(/\.(jsonl|sqlite)$/i, ''),
                 }));
             });
         }
@@ -13491,7 +13491,7 @@ async function displayChats(searchQuery, chatDetails, highlightNames) {
             return;
         }
 
-        const trimExtension = (fileName) => String(fileName).replace('.jsonl', '');
+        const trimExtension = (fileName) => String(fileName).replace(/\.(jsonl|sqlite)$/i, '');
         const response = await fetch('/api/chats/search', {
             method: 'POST',
             headers: getRequestHeaders(),
@@ -16188,8 +16188,8 @@ export async function renameGroupOrCharacterChat({ characterId, groupId, oldFile
     const body = {
         is_group: !!groupId,
         avatar_url: characters[characterId]?.avatar,
-        original_file: `${oldFileName}.jsonl`,
-        renamed_file: `${newFileName.trim()}.jsonl`,
+        original_file: oldFileName,
+        renamed_file: newFileName.trim(),
     };
 
     if (body.original_file === body.renamed_file) {
@@ -16874,7 +16874,7 @@ jQuery(async function () {
         // Close past chat popup.
         $('#select_chat_cross').trigger('click');
         showLoader();
-        await deleteManageChatsChat(chatContext, String(chatFile).replace(/\.jsonl$/i, ''));
+        await deleteManageChatsChat(chatContext, String(chatFile));
 
         if (fromSlashCommand) {  // When called from `/delchat` command, don't re-open the history view.
             $('#options').hide();  // Hide option popup menu.
@@ -17111,14 +17111,25 @@ jQuery(async function () {
         e.stopPropagation();
         const rowContext = getManageChatsRowContext(this) ?? { ownerContext: getManageChatsOwnerFromElement(this) ?? manageChatsOwnerContext ?? getCurrentManageChatsOwner() };
         const oldFileNameFull = $(this).closest('.select_chat_block_wrapper').find('.select_chat_block_filename').text();
-        const oldFileName = oldFileNameFull.replace('.jsonl', '');
+        const oldFileName = oldFileNameFull;
 
+        const oldFileNameNoExt = oldFileNameFull.replace(/\.(jsonl|sqlite)$/i, '');
         const popupText = await renderTemplateAsync('chatRename');
-        const newName = await callGenericPopup(popupText, POPUP_TYPE.INPUT, oldFileName);
+        let newName = await callGenericPopup(popupText, POPUP_TYPE.INPUT, oldFileNameNoExt);
 
-        if (!newName || typeof newName !== 'string' || newName == oldFileName) {
+        if (!newName || typeof newName !== 'string' || newName == oldFileNameNoExt) {
             console.log('no new name found, aborting');
             return;
+        }
+
+        // If user didn't provide extension, keep the original one
+        if (!newName.endsWith('.jsonl') && !newName.endsWith('.sqlite')) {
+            const ext = oldFileNameFull.match(/\.(jsonl|sqlite)$/i);
+            if (ext) {
+                newName += ext[0];
+            } else {
+                newName += '.sqlite'; // Default for new style
+            }
         }
 
         await renameManageChatsChat(rowContext, oldFileName, newName);
@@ -17133,7 +17144,7 @@ jQuery(async function () {
         const rowContext = getManageChatsRowContext(this);
         const details = getManageChatsOwnerDetails(rowContext?.ownerContext ?? manageChatsOwnerContext ?? getCurrentManageChatsOwner());
         const filenamefull = $(this).closest('.select_chat_block_wrapper').find('.select_chat_block_filename').text();
-        const filename = filenamefull.replace('.jsonl', '');
+        const filename = filenamefull;
 
         const avatarUrl = details.isGroup ? null : details.avatarUrl;
         const isGroup = details.isGroup;
@@ -17149,7 +17160,7 @@ jQuery(async function () {
         const filenamefull = $(this).closest('.select_chat_block_wrapper').find('.select_chat_block_filename').text();
         console.log(`exporting ${filenamefull} in ${format} format`);
 
-        const filename = filenamefull.replace('.jsonl', '');
+        const filename = filenamefull;
         try {
             await exportManageChatsChat(rowContext, filename, format);
         } catch (error) {
