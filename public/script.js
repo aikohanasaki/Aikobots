@@ -13115,7 +13115,24 @@ async function exportManageChatsOwnerChat(ownerContext, filename, format) {
     const mimeType = format == 'txt' ? 'text/plain' : 'application/octet-stream';
     await delay(250);
     toastr.success(data.message);
-    download(data.result, body.exportfilename, mimeType);
+
+    if (data.is_binary) {
+        const byteCharacters = atob(data.result);
+        const byteNumbers = new Array(byteCharacters.length);
+        for (let i = 0; i < byteCharacters.length; i++) {
+            byteNumbers[i] = byteCharacters.charCodeAt(i);
+        }
+        const byteArray = new Uint8Array(byteNumbers);
+        const blob = new Blob([byteArray], { type: mimeType });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = body.exportfilename;
+        a.click();
+        URL.revokeObjectURL(url);
+    } else {
+        download(data.result, body.exportfilename, mimeType);
+    }
 }
 
 async function renameOrphanCharacterChat(orphanKey, oldFileName, newFileName) {
@@ -13174,7 +13191,24 @@ async function exportOrphanCharacterChat(orphanKey, filename, format) {
     const mimeType = format == 'txt' ? 'text/plain' : 'application/octet-stream';
     await delay(250);
     toastr.success(data.message);
-    download(data.result, body.exportfilename, mimeType);
+
+    if (data.is_binary) {
+        const byteCharacters = atob(data.result);
+        const byteNumbers = new Array(byteCharacters.length);
+        for (let i = 0; i < byteCharacters.length; i++) {
+            byteNumbers[i] = byteCharacters.charCodeAt(i);
+        }
+        const byteArray = new Uint8Array(byteNumbers);
+        const blob = new Blob([byteArray], { type: mimeType });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = body.exportfilename;
+        a.click();
+        URL.revokeObjectURL(url);
+    } else {
+        download(data.result, body.exportfilename, mimeType);
+    }
 }
 
 export async function openManageChatsOrphanCharacterChat(orphanKey, fileName) {
@@ -17092,6 +17126,20 @@ jQuery(async function () {
         await delay(250);
         await refreshManageChatsPopup();
         $('#options').hide();
+    });
+
+    $(document).on('click', '.compareChatButton', function (e) {
+        e.stopPropagation();
+        const rowContext = getManageChatsRowContext(this);
+        const details = getManageChatsOwnerDetails(rowContext?.ownerContext ?? manageChatsOwnerContext ?? getCurrentManageChatsOwner());
+        const filenamefull = $(this).closest('.select_chat_block_wrapper').find('.select_chat_block_filename').text();
+        const filename = filenamefull.replace('.jsonl', '');
+
+        const avatarUrl = details.isGroup ? null : details.avatarUrl;
+        const isGroup = details.isGroup;
+
+        const url = `/compare.html?avatar_url=${encodeURIComponent(avatarUrl || '')}&file_name=${encodeURIComponent(filenamefull)}&is_group=${isGroup}`;
+        window.open(url, '_blank');
     });
 
     $(document).on('click', '.exportChatButton, .exportRawChatButton', async function (e) {

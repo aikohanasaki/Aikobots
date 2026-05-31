@@ -2237,7 +2237,7 @@ export async function prepareServerPromptContext(user, directories, promptContex
     promptContext.userDirectories = directories;
 
     if (!Array.isArray(promptContext.coreChat) && promptContext.coreChat && typeof promptContext.coreChat === 'object') {
-        promptContext.coreChat = resolveSplitCoreChatPayload(directories.chats, promptContext.coreChat);
+        promptContext.coreChat = await resolveSplitCoreChatPayload(directories.chats, promptContext.coreChat);
     }
 
     const runtimeResult = await runServerGenerationExtensions(directories, promptContext, user);

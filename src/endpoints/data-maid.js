@@ -5,6 +5,7 @@ import express from 'express';
 import mime from 'mime-types';
 import { getSettingsBackupFilePrefix } from './settings.js';
 import { CHAT_BACKUPS_PREFIX, getLogicalChatData, serializeJsonl, writeLogicalChat, getSplitHeadPath, isHeadChatFile } from './chats.js';
+import { loadDb, migrateFromJsonl } from '../sqlite-manager.js';
 import { tryParse } from '../util.js';
 import { SETTINGS_FILE } from '../constants.js';
 
@@ -210,9 +211,59 @@ export class DataMaidService {
         }
 
         if (totalConverted > 0) {
-            console.info(`[Data Maid] Successfully recombined ${totalConverted} split chats.`);
+            console.info(`[Data Maid] Successfully recombined and migrated ${totalConverted} split chats to SQLite.`);
         }
-    }
+        }
+
+        static async migrateAllUsersChatsToSqlite() {
+        const { getAllUserHandles, getUserDirectories } = await import('../users.js');
+        const handles = await getAllUserHandles();
+        let totalMigrated = 0;
+        let totalExisting = 0;
+
+        for (const handle of handles) {
+            const directories = getUserDirectories(handle);
+            const scanDirectory = async (directory) => {
+                if (!fs.existsSync(directory)) return;
+                const entries = await fs.promises.readdir(directory, { withFileTypes: true });
+                for (const entry of entries) {
+                    const entryPath = path.join(directory, entry.name);
+                    if (entry.isDirectory()) {
+                        await scanDirectory(entryPath);
+                    } else if (entry.isFile() && entry.name.endsWith('.jsonl') && !isHeadChatFile(entry.name)) {
+                        const sqlitePath = entryPath.replace('.jsonl', '.sqlite');
+                        if (!fs.existsSync(sqlitePath)) {
+                            try {
+                                await migrateFromJsonl(entryPath, sqlitePath);
+                                // Verify migration by reopening
+                                const db = await loadDb(sqlitePath);
+                                db.close();
+                                // Rename original to .jsonl.bak
+                                fs.renameSync(entryPath, entryPath + '.bak');
+                                totalMigrated++;
+                            } catch (error) {
+                                console.error(`[Data Maid] Failed to migrate ${entryPath} to SQLite:`, error);
+                            }
+                        } else {
+                            // SQLite already exists (e.g. from recombination or previous run)
+                            // If the original jsonl is still here, back it up
+                            if (fs.existsSync(entryPath)) {
+                                fs.renameSync(entryPath, entryPath + '.bak');
+                                totalExisting++;
+                            }
+                        }
+                    }
+                }
+            };
+
+            await scanDirectory(directories.chats);
+            await scanDirectory(directories.groupChats);
+        }
+
+        if (totalMigrated > 0 || totalExisting > 0) {
+            console.info(`[Data Maid] SQLite migration: ${totalMigrated} new migrations, ${totalExisting} previously migrated chats backed up.`);
+        }
+        }
 
     /**
      * Sanitizes a record by hashing the file name and removing sensitive information.
@@ -431,7 +482,7 @@ export class DataMaidService {
                 if (folder.isDirectory() && !knownChatFolders.has(folder.name)) {
                     const chatFiles = await fs.promises.readdir(path.join(this.directories.chats, folder.name), { withFileTypes: true });
                     for (const file of chatFiles) {
-                        if (file.isFile() && path.parse(file.name).ext === '.jsonl' && !isHeadChatFile(file.name)) {
+                        if (file.isFile() && (path.parse(file.name).ext === '.jsonl' || path.parse(file.name).ext === '.sqlite') && !isHeadChatFile(file.name)) {
                             result.push(path.join(this.directories.chats, folder.name, file.name));
                         }
                     }
@@ -476,7 +527,7 @@ export class DataMaidService {
             }
             const groupChats = await fs.promises.readdir(this.directories.groupChats, { withFileTypes: true });
             for (const file of groupChats) {
-                if (file.isFile() && path.parse(file.name).ext === '.jsonl' && !isHeadChatFile(file.name)) {
+                if (file.isFile() && (path.parse(file.name).ext === '.jsonl' || path.parse(file.name).ext === '.sqlite') && !isHeadChatFile(file.name)) {
                     if (!knownGroupChats.has(path.parse(file.name).name)) {
                         result.push(path.join(this.directories.groupChats, file.name));
                     }
@@ -792,7 +843,7 @@ export class DataMaidService {
      */
     async #parseChatFile(filePath) {
         try {
-            const logicalChat = getLogicalChatData(filePath);
+            const logicalChat = await getLogicalChatData(filePath);
             if (logicalChat.length > 0) {
                 return logicalChat;
             }
@@ -846,9 +897,9 @@ export class DataMaidService {
             const chatPaths = paths ?? await this.getSplitChatPaths();
 
             for (const entryPath of chatPaths) {
-                const logicalChat = getLogicalChatData(entryPath);
+                const logicalChat = await getLogicalChatData(entryPath);
                 if (logicalChat.length > 0) {
-                    writeLogicalChat(entryPath, logicalChat[0], logicalChat.slice(1));
+                    await writeLogicalChat(entryPath, logicalChat[0], logicalChat.slice(1));
                     count++;
                 }
             }
@@ -978,13 +1029,13 @@ router.get('/view', async (req, res) => {
         }
 
         const pathToFile = fileEntry.path;
-        const fileExists = fs.existsSync(pathToFile);
+        const fileExists = fs.existsSync(pathToFile) || fs.existsSync(pathToFile.replace('.jsonl', '.sqlite'));
 
         if (!fileExists) {
             return res.sendStatus(404);
         }
 
-        const logicalChat = getLogicalChatData(pathToFile);
+        const logicalChat = await getLogicalChatData(pathToFile);
         const fileBuffer = logicalChat.length > 0
             ? Buffer.from(serializeJsonl(logicalChat), 'utf8')
             : await fs.promises.readFile(pathToFile);
@@ -1028,10 +1079,18 @@ router.post('/delete', async (req, res) => {
             const fileExists = fs.existsSync(pathToFile);
 
             if (!fileExists) {
+                const sqlitePath = pathToFile.replace('.jsonl', '.sqlite');
+                if (fs.existsSync(sqlitePath)) {
+                    await fs.promises.unlink(sqlitePath);
+                }
                 continue;
             }
 
             await fs.promises.unlink(pathToFile);
+            const sqlitePath = pathToFile.replace('.jsonl', '.sqlite');
+            if (fs.existsSync(sqlitePath)) {
+                await fs.promises.unlink(sqlitePath);
+            }
             if (path.extname(pathToFile) === '.jsonl' && !isHeadChatFile(pathToFile)) {
                 const headPath = getSplitHeadPath(pathToFile);
                 if (fs.existsSync(headPath)) {

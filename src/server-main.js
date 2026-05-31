@@ -276,6 +276,7 @@ async function preSetupTasks() {
     await diskCache.verify(directories);
     migrateFlatSecrets(directories);
     await DataMaidService.recombineAllUsersSplitChats();
+    await DataMaidService.migrateAllUsersChatsToSqlite();
     cleanUploads();
     migrateAccessLog();
 
