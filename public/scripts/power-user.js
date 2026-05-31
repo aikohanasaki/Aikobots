@@ -67,8 +67,8 @@ export const toastPositionClasses = [
 
 export const MAX_CONTEXT_DEFAULT = 8192;
 export const MAX_RESPONSE_DEFAULT = 2048;
-export const LONG_CHAT_DISPLAY_MIN = 20;
-export const LONG_CHAT_DISPLAY_MAX = 500;
+export const LONG_CHAT_DISPLAY_MIN = 1;
+export const LONG_CHAT_DISPLAY_MAX = 1048576; // 2^20
 const MAX_CONTEXT_UNLOCKED = 512 * 1024;
 const MAX_RESPONSE_UNLOCKED = 64 * 1024;
 const unlockedMaxContextStep = 512;
@@ -476,12 +476,18 @@ export function normalizeLongChatHandlingSettings(settings = power_user) {
 function syncLongChatHandlingControls() {
     const { displayCount } = normalizeLongChatHandlingSettings();
 
-    $('#long_chat_display_count, #long_chat_display_count_counter').attr({
+    $('#long_chat_display_count').attr({
+        min: 0,
+        max: 20,
+        step: 0.01,
+    });
+    $('#long_chat_display_count_counter').attr({
         min: LONG_CHAT_DISPLAY_MIN,
         max: LONG_CHAT_DISPLAY_MAX,
+        step: 1,
     });
 
-    $('#long_chat_display_count').val(displayCount);
+    $('#long_chat_display_count').val(Math.log2(displayCount));
     $('#long_chat_display_count_counter').val(displayCount);
 }
 
@@ -3918,8 +3924,17 @@ jQuery(() => {
     });
 
     $('#long_chat_display_count').on('input', function () {
-        power_user.long_chat_display_count = Number($(this).val());
-        syncLongChatHandlingControls();
+        const sliderValue = Number($(this).val());
+        const displayCount = Math.round(Math.pow(2, sliderValue));
+        power_user.long_chat_display_count = displayCount;
+        $('#long_chat_display_count_counter').val(displayCount);
+        saveSettingsDebounced();
+    });
+
+    $('#long_chat_display_count_counter').on('input', function () {
+        const displayCount = Number($(this).val());
+        power_user.long_chat_display_count = displayCount;
+        $('#long_chat_display_count').val(Math.log2(displayCount));
         saveSettingsDebounced();
     });
 

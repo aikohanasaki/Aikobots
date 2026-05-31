@@ -3950,7 +3950,7 @@ function getNormalizedLongChatHandling() {
 
 function getConfiguredLongChatDisplayCount() {
     const { displayCount } = getNormalizedLongChatHandling();
-    return clamp(displayCount, LONG_CHAT_DISPLAY_MIN, LONG_CHAT_DISPLAY_MAX);
+    return Math.max(1, displayCount);
 }
 
 function getConfiguredLongChatBufferMax() {
