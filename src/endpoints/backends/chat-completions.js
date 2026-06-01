@@ -2331,26 +2331,26 @@ function getPromptInspectionSnapshotDirectory() {
     return path.join(path.resolve(String(globalThis.DATA_ROOT || '.')), ...PROMPT_INSPECTION_DIRECTORY);
 }
 
-function normalizePromptInspectionSnapshotFileHandle(value) {
-    const sanitizedValue = sanitize(sanitizePromptSnapshotKeyPart(value)).trim();
-    if (!sanitizedValue) {
-        throw new Error('Invalid prompt inspection user handle.');
+function getPromptInspectionSnapshotPathForKey(key) {
+    if (!parsePromptSnapshotKey(key)) {
+        throw new Error('Invalid prompt inspection key.');
     }
 
-    return sanitizedValue;
+    const filename = sanitize(String(key || '').replace(/\|/g, '_')).trim();
+    if (!filename) {
+        throw new Error('Invalid prompt inspection key.');
+    }
+
+    return path.join(getPromptInspectionSnapshotDirectory(), `${filename}.json`);
 }
 
-function getPromptInspectionSnapshotPathForHandle(handle) {
-    return path.join(getPromptInspectionSnapshotDirectory(), `${normalizePromptInspectionSnapshotFileHandle(handle)}.json`);
-}
-
-async function readPromptInspectionSnapshotForHandle(handle) {
-    if (!handle) {
+async function readPromptInspectionSnapshotForKey(key) {
+    if (!key) {
         return null;
     }
 
     try {
-        const snapshotText = await fsPromises.readFile(getPromptInspectionSnapshotPathForHandle(handle), 'utf8');
+        const snapshotText = await fsPromises.readFile(getPromptInspectionSnapshotPathForKey(key), 'utf8');
         const parsedSnapshot = JSON.parse(snapshotText);
         return clonePromptInspectionSnapshot(parsedSnapshot);
     } catch (error) {
@@ -2362,12 +2362,12 @@ async function readPromptInspectionSnapshotForHandle(handle) {
     }
 }
 
-async function writePromptInspectionSnapshotForHandle(handle, snapshot) {
-    if (!handle || !snapshot || typeof snapshot !== 'object') {
+async function writePromptInspectionSnapshotForKey(key, snapshot) {
+    if (!key || !snapshot || typeof snapshot !== 'object') {
         return;
     }
 
-    const outputPath = getPromptInspectionSnapshotPathForHandle(handle);
+    const outputPath = getPromptInspectionSnapshotPathForKey(key);
     await fsPromises.mkdir(path.dirname(outputPath), { recursive: true });
     await writeFileAtomic(outputPath, JSON.stringify(clonePromptInspectionSnapshot(snapshot), null, 4));
 }
@@ -2425,37 +2425,20 @@ function getPromptInspectionInfo(request) {
 }
 
 async function setPromptInspectionSnapshot(key, snapshot) {
-    const parsedKey = parsePromptSnapshotKey(key);
-    if (!parsedKey) {
-        return;
-    }
-
-    await writePromptInspectionSnapshotForHandle(parsedKey.username, snapshot);
+    await writePromptInspectionSnapshotForKey(key, snapshot);
 }
 
 async function getPromptInspectionSnapshot(key) {
-    const parsedKey = parsePromptSnapshotKey(key);
-    if (!parsedKey) {
-        return null;
-    }
-
-    const snapshot = await readPromptInspectionSnapshotForHandle(parsedKey.username);
-    return snapshot?.key === key ? snapshot : null;
+    return await readPromptInspectionSnapshotForKey(key);
 }
 
 async function deletePromptInspectionSnapshot(key) {
-    const parsedKey = parsePromptSnapshotKey(key);
-    if (!parsedKey) {
-        return false;
-    }
-
-    const snapshot = await readPromptInspectionSnapshotForHandle(parsedKey.username);
-    if (!snapshot || snapshot.key !== key) {
+    if (!parsePromptSnapshotKey(key)) {
         return false;
     }
 
     try {
-        await fsPromises.unlink(getPromptInspectionSnapshotPathForHandle(parsedKey.username));
+        await fsPromises.unlink(getPromptInspectionSnapshotPathForKey(key));
         return true;
     } catch (error) {
         if (error?.code === 'ENOENT') {
@@ -2474,8 +2457,8 @@ async function rekeyPromptInspectionSnapshot(fromKey, toKey) {
         return false;
     }
 
-    const snapshot = await readPromptInspectionSnapshotForHandle(parsedFromKey.username);
-    if (!snapshot || snapshot.key !== fromKey) {
+    const snapshot = await readPromptInspectionSnapshotForKey(fromKey);
+    if (!snapshot) {
         return false;
     }
 
@@ -2488,7 +2471,8 @@ async function rekeyPromptInspectionSnapshot(fromKey, toKey) {
         rekeyedSnapshot.swipeId = parsedToKey.swipeId;
     }
 
-    await writePromptInspectionSnapshotForHandle(parsedFromKey.username, rekeyedSnapshot);
+    await writePromptInspectionSnapshotForKey(toKey, rekeyedSnapshot);
+    await deletePromptInspectionSnapshot(fromKey);
     return true;
 }
 
@@ -3588,7 +3572,6 @@ export async function handleChatCompletionsGenerate(request, response) {
             if (promptInspectionInfo) {
                 assembledPromptSnapshot = assembled;
                 const promptSnapshotCount = Math.max(1, Number(request.body.n) || 1);
-                let latestPromptInspectionSnapshot = null;
                 for (let index = 0; index < promptSnapshotCount; index++) {
                     const snapshotInfo = index === 0
                         ? promptInspectionInfo
@@ -3603,17 +3586,14 @@ export async function handleChatCompletionsGenerate(request, response) {
                             ),
                         };
                     if (snapshotInfo?.key) {
-                        latestPromptInspectionSnapshot = {
-                            key: snapshotInfo.key,
-                            snapshot: createPromptInspectionSnapshot(request, assembled, snapshotInfo),
-                        };
-                    }
-                }
+                        const snapshot = createPromptInspectionSnapshot(request, assembled, snapshotInfo);
+                        await assertActiveSessionOperation(request);
+                        await setPromptInspectionSnapshot(snapshotInfo.key, snapshot);
 
-                if (latestPromptInspectionSnapshot?.key) {
-                    await assertActiveSessionOperation(request);
-                    await setPromptInspectionSnapshot(latestPromptInspectionSnapshot.key, latestPromptInspectionSnapshot.snapshot);
-                    dispatchedPromptSnapshotKey = latestPromptInspectionSnapshot.key;
+                        if (index === 0) {
+                            dispatchedPromptSnapshotKey = snapshotInfo.key;
+                        }
+                    }
                 }
             }
             rewriteSystemMessagesForO1Model(request.body.prompt_context.model, request.body.prompt_context.chatCompletionSource, assembled.chat);

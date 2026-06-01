@@ -12065,11 +12065,17 @@ async function messageEditDone(div) {
  */
 export async function getPastCharacterChats(characterId = null) {
     characterId = characterId ?? parseInt(this_chid);
-    if (!characters[characterId]) return [];
+    const avatar = characters[characterId]?.avatar;
+    if (!avatar) return [];
+
+    // Skip if avatar has path traversal characters, as the server will reject it anyway
+    if (avatar.includes('/') || avatar.includes('\\')) {
+        return [];
+    }
 
     const response = await fetch('/api/characters/chats', {
         method: 'POST',
-        body: JSON.stringify({ avatar_url: characters[characterId].avatar }),
+        body: JSON.stringify({ avatar_url: avatar }),
         headers: getRequestHeaders(),
     });
 
