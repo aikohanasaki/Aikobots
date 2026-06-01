@@ -7063,6 +7063,24 @@ body:has(#character_popup.open) #top-settings-holder:has(.drawer-content.openDra
     white-space: nowrap;
 }
 
+.stmb-topical-source-selector {
+    max-height: min(60dvh, 520px);
+    overflow: auto;
+    border: 1px solid var(--SmartThemeBorderColor);
+    border-radius: 4px;
+}
+
+.stmb-topical-source-select-label {
+    display: flex;
+    align-items: flex-start;
+    gap: 8px;
+}
+
+.stmb-topical-source-select-label input[type="checkbox"] {
+    flex: 0 0 auto;
+    margin-top: 3px;
+}
+
 @keyframes stmb-pulse {
     0% {
         opacity: 0.7;

@@ -337,6 +337,7 @@ export function createDefaultStmbSettings() {
             lorebookOrderDefaults: null,
             showFloatingClipButton: true,
             compactionPromptTemplate: STMB_DEFAULT_COMPACTION_PROMPT_TEMPLATE,
+            topicalClipPromptTemplate: '',
             compactionProfileIndex: 0,
             sidePromptsMaxConcurrent: 1,
             useRegex: false,
@@ -625,6 +626,11 @@ export function normalizeStmbSettings(rawSettings, legacySettings = null) {
         && moduleSettings.compactionPromptTemplate.includes('{{ENTRY_CONTENT}}')
         ? moduleSettings.compactionPromptTemplate
         : defaults.moduleSettings.compactionPromptTemplate;
+    moduleSettings.topicalClipPromptTemplate = typeof moduleSettings.topicalClipPromptTemplate === 'string'
+        && moduleSettings.topicalClipPromptTemplate.trim()
+        && moduleSettings.topicalClipPromptTemplate.includes('{{SOURCE_MEMORIES}}')
+        ? moduleSettings.topicalClipPromptTemplate
+        : defaults.moduleSettings.topicalClipPromptTemplate;
     moduleSettings.autoConsolidationTargetTiers = Array.isArray(moduleSettings.autoConsolidationTargetTiers)
         ? moduleSettings.autoConsolidationTargetTiers.map(value => Number(value)).filter(Number.isFinite)
         : defaults.moduleSettings.autoConsolidationTargetTiers.slice();

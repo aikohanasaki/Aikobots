@@ -1,5 +1,6 @@
 import express from 'express';
 import { resolveLogicalChatReference } from './chats.js';
+import { stableHashString } from '../../public/scripts/hashing.js';
 
 import {
     applyLorebookSettings,
@@ -719,6 +720,9 @@ router.post('/update-entry-by-uid', async (request, response) => {
     const hasContent = request.body?.content !== undefined;
     const title = hasTitle ? String(request.body.title || '').trim() : '';
     const content = hasContent ? String(request.body.content ?? '') : null;
+    const expectedContentHash = request.body?.expectedContentHash === undefined || request.body?.expectedContentHash === null
+        ? ''
+        : String(request.body.expectedContentHash || '').trim();
     const metadataUpdates = request.body?.metadataUpdates || {};
     const entryOverrides = request.body?.entryOverrides || {};
     const invalidUpdate = getInvalidLorebookEntryUpdate({ metadataUpdates, entryOverrides });
@@ -765,6 +769,16 @@ router.post('/update-entry-by-uid', async (request, response) => {
                 error: {
                     type: 'StmbEntryNotFound',
                     message: 'Lorebook entry was not found.',
+                },
+            });
+        }
+
+        if (expectedContentHash && stableHashString(String(entry.content || '')) !== expectedContentHash) {
+            return response.status(409).send({
+                error: {
+                    type: 'StmbEntryContentChanged',
+                    code: 'TOPICAL_CLIP_TARGET_CHANGED',
+                    message: 'Lorebook entry content changed after draft generation.',
                 },
             });
         }
