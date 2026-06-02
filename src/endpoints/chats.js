@@ -28,7 +28,16 @@ import {
     regenerateChatIdentities,
     stripAikobotsIdentityMetadata,
 } from '../../public/scripts/chat-identities.js';
-import { loadDb, saveDb, getMessages, setMessages } from '../sqlite-manager.js';
+import {
+    loadDb,
+    saveDb,
+    getMessages,
+    setMessages,
+    getChatHeader,
+    getMessageCount,
+    getLastMessage,
+    getMessageRange,
+} from '../sqlite-manager.js';
 
 const isBackupEnabled = !!getConfigValue('backups.chat.enabled', true, 'boolean');
 const maxTotalChatBackups = Number(getConfigValue('backups.chat.maxTotalBackups', -1, 'number'));
@@ -757,10 +766,31 @@ export function readJsonlObjects(filePath) {
         .filter(x => x);
 }
 
-async function getChatSegments(filePath) {
+async function getChatSegments(filePath, { metadataOnly = false } = {}) {
     const sqlitePath = filePath.replace('.jsonl', '.sqlite');
     if (fs.existsSync(sqlitePath)) {
         const db = await loadDb(sqlitePath);
+
+        if (metadataOnly) {
+            const header = getChatHeader(db);
+            const messageCount = getMessageCount(db);
+            const lastMessage = getLastMessage(db);
+            db.close();
+
+            return {
+                header,
+                messageCount,
+                lastMessage,
+                isSqlite: true,
+                metadataOnly: true,
+                storage: null,
+                headPath: null,
+                headMessages: [],
+                tailMessages: [],
+                messages: [],
+            };
+        }
+
         const messages = getMessages(db);
         db.close();
 
@@ -1018,6 +1048,64 @@ export async function buildChunkedChatPayload(filePath, {
     includeParentPromptCache = false,
 } = {}) {
     const config = normalizeLongChatConfig({ displayCount });
+    const sqlitePath = filePath.replace('.jsonl', '.sqlite');
+
+    if (fs.existsSync(sqlitePath)) {
+        const db = await loadDb(sqlitePath);
+        const header = getChatHeader(db);
+        const totalMessages = getMessageCount(db);
+
+        if (!header) {
+            db.close();
+            return {
+                mode: 'full',
+                header: null,
+                messages: [],
+                totalMessages: 0,
+                loadedRangeStart: 0,
+                loadedRangeEnd: -1,
+                tailStartId: 0,
+                tailEndId: -1,
+                headCount: 0,
+                tailCount: 0,
+            };
+        }
+
+        const normalizedCount = hydrateFull
+            ? totalMessages
+            : Math.max(1, Number(count) || config.displayCount);
+
+        let startId = Number.isInteger(rangeStart)
+            ? rangeStart
+            : Math.max(0, totalMessages - normalizedCount);
+
+        startId = Math.max(0, Math.min(startId, Math.max(0, totalMessages - 1)));
+        const endId = totalMessages > 0 ? Math.min(totalMessages - 1, startId + normalizedCount - 1) : -1;
+        const loadedRangeStart = startId;
+        const loadedRangeEnd = endId;
+
+        const messages = totalMessages > 0 && endId >= startId
+            ? getMessageRange(db, startId, endId - startId + 1)
+            : [];
+
+        db.close();
+
+        return {
+            mode: 'full',
+            header: stripChatStorage(header),
+            messages,
+            totalMessages,
+            loadedRangeStart,
+            loadedRangeEnd,
+            tailStartId: 0,
+            tailEndId: totalMessages > 0 ? totalMessages - 1 : -1,
+            headCount: 0,
+            tailCount: totalMessages,
+            displayCount: config.displayCount,
+            isHydrated: hydrateFull,
+        };
+    }
+
     const segments = await getChatSegments(filePath);
     const header = stripChatStorage(segments.header);
     const layout = getSegmentLayout(segments);
@@ -1237,8 +1325,25 @@ function findLastAvailableMessageId(messages) {
     return -1;
 }
 
-async function resolveDirectLogicalChat(filePath) {
-    const segments = await getChatSegments(filePath);
+async function resolveDirectLogicalChat(filePath, options = {}) {
+    const segments = await getChatSegments(filePath, options);
+
+    if (segments.metadataOnly) {
+        return {
+            chatType: 'character',
+            filePath,
+            header: stripChatStorage(segments.header),
+            messages: [],
+            totalMessages: segments.messageCount,
+            lastMessage: segments.lastMessage,
+            metadataOnly: true,
+            storageMode: 'full',
+            storageHealthy: true,
+            tailStartId: 0,
+            tailEndId: segments.messageCount > 0 ? segments.messageCount - 1 : -1,
+        };
+    }
+
     const layout = getSegmentLayout(segments);
     const messages = buildSplitLogicalMessages(segments, layout);
 
@@ -1257,8 +1362,25 @@ async function resolveDirectLogicalChat(filePath) {
     };
 }
 
-async function resolveGroupLogicalChat(filePath) {
-    const segments = await getChatSegments(filePath);
+async function resolveGroupLogicalChat(filePath, options = {}) {
+    const segments = await getChatSegments(filePath, options);
+
+    if (segments.metadataOnly) {
+        return {
+            chatType: 'group',
+            filePath,
+            header: stripChatStorage(segments.header),
+            messages: [],
+            totalMessages: segments.messageCount,
+            lastMessage: segments.lastMessage,
+            metadataOnly: true,
+            storageMode: 'full',
+            storageHealthy: true,
+            tailStartId: 0,
+            tailEndId: segments.messageCount > 0 ? segments.messageCount - 1 : -1,
+        };
+    }
+
     if (isGroupChatHeader(segments.header)) {
         const layout = getSegmentLayout(segments);
         const messages = buildSplitLogicalMessages(segments, layout);
@@ -1302,8 +1424,8 @@ async function buildLogicalChatSummary(pathToFile, {
     const parsedPath = path.parse(pathToFile);
     const fileStats = getChatFileStats(pathToFile);
     const logicalChat = isGroup
-        ? await resolveGroupLogicalChat(pathToFile)
-        : await resolveDirectLogicalChat(pathToFile);
+        ? await resolveGroupLogicalChat(pathToFile, { metadataOnly: true })
+        : await resolveDirectLogicalChat(pathToFile, { metadataOnly: true });
     const fallbackTimestamp = Math.round(fileStats.latestMtimeMs);
     const chatData = {
         file_id: parsedPath.name,
@@ -1324,8 +1446,9 @@ async function buildLogicalChatSummary(pathToFile, {
         chatData.chat_metadata = logicalChat.header.chat_metadata;
     }
 
-    const lastMessageId = logicalChat.lastAvailableMessageId;
-    const lastMessage = lastMessageId >= 0 ? logicalChat.messages[lastMessageId] : null;
+    const lastMessage = logicalChat.metadataOnly
+        ? logicalChat.lastMessage
+        : (logicalChat.lastAvailableMessageId >= 0 ? logicalChat.messages[logicalChat.lastAvailableMessageId] : null);
 
     if (lastMessage || logicalChat.header) {
         chatData.chat_items = logicalChat.totalMessages;
@@ -1517,25 +1640,27 @@ function getSearchFragments(query) {
 }
 
 async function getChatSearchResult(chatFile, fragments = [], { isGroup = false } = {}) {
-    const logicalMessages = isGroup
-        ? (await resolveGroupLogicalChat(chatFile.path)).messages
-        : await getLogicalChatMessages(chatFile.path);
-    const messages = logicalMessages
+    const useMetadataOnly = fragments.length === 0;
+    const logicalChat = isGroup
+        ? await resolveGroupLogicalChat(chatFile.path, { metadataOnly: useMetadataOnly })
+        : await resolveDirectLogicalChat(chatFile.path, { metadataOnly: useMetadataOnly });
+
+    const messages = useMetadataOnly ? [] : (logicalChat.messages || [])
         .filter(message => message && typeof message.mes === 'string');
 
     if (fragments.length && messages.length === 0) {
         return null;
     }
 
-    const lastMessage = messages[messages.length - 1];
+    const lastMessage = useMetadataOnly ? logicalChat.lastMessage : messages[messages.length - 1];
     const fallbackTimestamp = Math.round(getChatFileStats(chatFile.path).latestMtimeMs);
     const lastMesDate = normalizeChatTimestamp(lastMessage?.send_date, fallbackTimestamp);
     const result = {
         file_name: chatFile.file_name,
         file_size: chatFile.file_size,
-        message_count: messages.length,
+        message_count: logicalChat.totalMessages,
         last_mes: lastMesDate,
-        preview_message: getPreviewMessage(messages),
+        preview_message: getPreviewMessage(useMetadataOnly ? (lastMessage ? [lastMessage] : []) : messages),
     };
 
     if (!fragments.length) {
