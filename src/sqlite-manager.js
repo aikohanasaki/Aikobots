@@ -146,7 +146,7 @@ export function getMessageCount(db) {
  * @returns {any|null}
  */
 export function getLastMessage(db) {
-    const res = db.exec('SELECT content FROM messages ORDER BY order_index DESC LIMIT 1');
+    const res = db.exec('SELECT content FROM messages WHERE order_index > 0 ORDER BY order_index DESC LIMIT 1');
     if (res.length === 0 || res[0].values.length === 0) return null;
     return JSON.parse(res[0].values[0][0]);
 }

@@ -777,6 +777,8 @@ async function getChatSegments(filePath, { metadataOnly = false } = {}) {
             const lastMessage = getLastMessage(db);
             db.close();
 
+            console.debug(`[SQLite] Loaded metadata for ${filePath}: ${messageCount} messages.`);
+
             return {
                 header,
                 messageCount,
@@ -1248,12 +1250,13 @@ function buildChunkedChatPayloadFromLogicalChatData(chatData, {
     let messages = totalMessages > 0
         ? logicalMessages.slice(startId, endId + 1)
         : [];
+    let isChunked = false;
 
-    if (!hydrateFull && isSplitTail) {
-        const normalizedCount = Math.max(1, Number(count) || normalizedTailCount || config.displayCount);
+    if (!hydrateFull && (isSplitTail || storageMode === 'full')) {
+        const normalizedCount = Math.max(1, Number(count) || (isSplitTail ? normalizedTailCount : 0) || config.displayCount);
         startId = Number.isInteger(rangeStart)
             ? rangeStart
-            : normalizedTailStartId;
+            : (isSplitTail ? normalizedTailStartId : Math.max(0, totalMessages - normalizedCount));
         startId = Math.max(0, Math.min(startId, Math.max(0, totalMessages - 1)));
         endId = Math.min(totalMessages - 1, startId + normalizedCount - 1);
         loadedRangeStart = startId;
@@ -1261,6 +1264,7 @@ function buildChunkedChatPayloadFromLogicalChatData(chatData, {
         messages = totalMessages > 0
             ? logicalMessages.slice(startId, endId + 1)
             : [];
+        isChunked = (startId > 0 || endId < totalMessages - 1);
     }
 
     const parentPromptMessages = isSplitTail && !hydrateFull && (includeParentPromptCache || rangeStart === null)
@@ -1280,9 +1284,9 @@ function buildChunkedChatPayloadFromLogicalChatData(chatData, {
         headCount: normalizedTailStartId,
         tailCount: normalizedTailCount,
         displayCount: config.displayCount,
-        isHydrated: hydrateFull || !isSplitTail,
+        isHydrated: !isChunked,
     };
-}
+    }
 
 function getGroupChatFilePath(groupChatsDirectory, chatId) {
     return resolveGroupChatFilePath(groupChatsDirectory, chatId);
@@ -1499,8 +1503,39 @@ function isResidentParentPromptMessage(message) {
 }
 
 export async function resolveSplitCoreChatPayload(chatsDirectory, coreChatPayload) {
-    if (!coreChatPayload || typeof coreChatPayload !== 'object' || coreChatPayload.mode !== CHAT_STORAGE_MODE_SPLIT_TAIL) {
+    if (!coreChatPayload || typeof coreChatPayload !== 'object') {
         return Array.isArray(coreChatPayload) ? coreChatPayload : [];
+    }
+
+    const avatarUrl = coreChatPayload.avatarUrl;
+    const chatId = coreChatPayload.currentChatId;
+
+    if (avatarUrl && chatId) {
+        const filePath = resolveCharacterChatFilePath(chatsDirectory, avatarUrl, chatId);
+        const sqlitePath = filePath.replace('.jsonl', '.sqlite');
+
+        if (fs.existsSync(sqlitePath)) {
+            const db = await loadDb(sqlitePath);
+            const totalMessages = getMessageCount(db);
+            const tailStartId = Number.isInteger(coreChatPayload.tailStartId)
+                ? Math.max(0, Math.min(coreChatPayload.tailStartId, totalMessages))
+                : 0;
+
+            const parentMessages = coreChatPayload.useParentUnhiddenMessages
+                ? getMessageRange(db, 0, tailStartId).filter(isResidentParentPromptMessage)
+                : [];
+
+            const tailMessages = coreChatPayload.useTailContents === false
+                ? []
+                : getMessageRange(db, tailStartId, totalMessages - tailStartId);
+
+            db.close();
+            return [...parentMessages, ...tailMessages];
+        }
+    }
+
+    if (coreChatPayload.mode !== CHAT_STORAGE_MODE_SPLIT_TAIL) {
+        return Array.isArray(coreChatPayload.messages) ? coreChatPayload.messages : (Array.isArray(coreChatPayload) ? coreChatPayload : []);
     }
 
     const filePath = resolveCharacterChatFilePath(chatsDirectory, coreChatPayload.avatarUrl, coreChatPayload.currentChatId);
@@ -2156,8 +2191,9 @@ router.post('/save', validateAvatarUrlMiddleware, async function (request, respo
                     tailCount: layout.tailCount,
                     payload: request.body.refresh_tail === true
                         ? buildChunkedChatPayloadFromLogicalChatData(existingChatData, {
-                            count: storageMode === CHAT_STORAGE_MODE_SPLIT_TAIL ? layout.tailCount : layout.totalMessages,
-                            hydrateFull: storageMode !== CHAT_STORAGE_MODE_SPLIT_TAIL,
+                            rangeStart: requestedTailStartId,
+                            count: storageMode === CHAT_STORAGE_MODE_SPLIT_TAIL ? layout.tailCount : config.displayCount,
+                            hydrateFull: false,
                             displayCount: config.displayCount,
                             includeParentPromptCache: storageMode === CHAT_STORAGE_MODE_SPLIT_TAIL,
                             storageMode,
@@ -2197,8 +2233,9 @@ router.post('/save', validateAvatarUrlMiddleware, async function (request, respo
                 tailCount: writeResult.tailCount,
                 payload: refreshRequired
                     ? buildChunkedChatPayloadFromLogicalChatData([header, ...messages], {
-                        count: writeResult.storageMode === CHAT_STORAGE_MODE_SPLIT_TAIL ? writeResult.tailCount : messages.length,
-                        hydrateFull: writeResult.storageMode !== CHAT_STORAGE_MODE_SPLIT_TAIL,
+                        rangeStart: requestedTailStartId,
+                        count: writeResult.storageMode === CHAT_STORAGE_MODE_SPLIT_TAIL ? writeResult.tailCount : config.displayCount,
+                        hydrateFull: false,
                         displayCount: config.displayCount,
                         includeParentPromptCache: writeResult.storageMode === CHAT_STORAGE_MODE_SPLIT_TAIL,
                         storageMode: writeResult.storageMode,
