@@ -2014,7 +2014,8 @@ async function refreshTopChatBarState() {
         if (!entries.length) {
             topChatBarChatNameSelect.innerHTML = `<option selected>${currentChatId}</option>`;
         } else {
-            for (const entry of entries) {
+            const allEntries = entries.includes(currentChatId) ? entries : [...entries, currentChatId].sort((a, b) => a.localeCompare(b));
+            for (const entry of allEntries) {
                 const option = document.createElement('option');
                 option.value = entry;
                 option.textContent = entry;
@@ -2140,6 +2141,8 @@ function initTopChatUi() {
     eventSource.on(event_types.CHAT_DELETED, clearPastCharacterChatsCache);
     eventSource.on(event_types.CHAT_RENAMED, clearPastCharacterChatsCache);
     eventSource.on(event_types.CHAT_CHANGED, clearPastCharacterChatsCache);
+    eventSource.on(event_types.BRANCH_CREATED, clearPastCharacterChatsCache);
+    eventSource.on(event_types.CHECKPOINT_CREATED, clearPastCharacterChatsCache);
 
     const refreshTopChatUiDebounced = debounce(() => {
         void refreshTopChatBarState();
@@ -2150,6 +2153,8 @@ function initTopChatUi() {
 
     eventSource.on(event_types.CHAT_CHANGED, refreshTopChatUiDebounced);
     eventSource.on(event_types.CHAT_RENAMED, refreshTopChatUiDebounced);
+    eventSource.on(event_types.BRANCH_CREATED, refreshTopChatUiDebounced);
+    eventSource.on(event_types.CHECKPOINT_CREATED, refreshTopChatUiDebounced);
     eventSource.on(event_types.CHAT_CHANGED, () => {
         clearActiveMessageEditSession();
         this_edit_mes_id = undefined;

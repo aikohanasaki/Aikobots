@@ -49,6 +49,7 @@ import {
     getUniqueName,
     isTrueBoolean,
 } from './utils.js';
+import { event_types, eventSource } from './events.js';
 
 const bookmarkNameToken = 'Checkpoint #';
 const MAX_NAMED_BOOKMARKS = 75;
@@ -797,6 +798,7 @@ export async function createNewBookmark(mesId, { forceName = null } = {}) {
     updateBookmarkDisplay(mes, name);
 
     await saveChatConditional();
+    await eventSource.emit(event_types.CHECKPOINT_CREATED, { mesId, fileName: name });
     toastr.success('Click the flag icon next to the message to open the checkpoint chat.', 'Create Checkpoint', { timeOut: 10000 });
     return name;
 }
@@ -954,6 +956,7 @@ export async function branchChat(mesId, { swipeId = null } = {}) {
     if (!fileName) {
         return null;
     }
+    await eventSource.emit(event_types.BRANCH_CREATED, { mesId, fileName });
     await saveItemizedPrompts(fileName);
 
     if (selected_group) {
