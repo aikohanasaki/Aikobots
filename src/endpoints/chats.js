@@ -778,7 +778,7 @@ async function getChatSegments(filePath, { metadataOnly = false } = {}) {
             const lastMessage = getLastMessage(db);
             db.close();
 
-            console.debug(`[SQLite] Loaded metadata for ${filePath}: ${messageCount} messages.`);
+            // console.debug(`[SQLite] Loaded metadata for ${filePath}: ${messageCount} messages.`);
 
             return {
                 header,
