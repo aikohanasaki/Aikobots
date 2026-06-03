@@ -103,7 +103,8 @@ export async function migrateFromJsonl(jsonlPath, sqlitePath) {
  */
 export function reindexChat(db) {
     const messages = getMessages(db);
-    setMessages(db, messages);
+    const header = getChatHeader(db);
+    setMessages(db, [header, ...messages]);
 }
 
 /**
@@ -184,8 +185,32 @@ export function setMessages(db, messages) {
         }
         stmt.free();
         db.run('COMMIT');
-        console.debug(`[SQLite] Saved ${messages.length} messages (including header).`);
     } catch (error) {
+        db.run('ROLLBACK');
+        throw error;
+    }
+}
+
+/**
+ * Updates a range of messages in the database.
+ * @param {import('sql.js').Database} db
+ * @param {any[]} messages
+ * @param {number} startIndex
+ */
+export function updateMessages(db, messages, startIndex) {
+    db.run('BEGIN TRANSACTION');
+    try {
+        const delStmt = db.prepare('DELETE FROM messages WHERE order_index >= ?');
+        delStmt.run([startIndex]);
+        delStmt.free();
+
+        const insStmt = db.prepare('INSERT INTO messages (order_index, content) VALUES (?, ?)');
+        for (let i = 0; i < messages.length; i++) {
+            insStmt.run([startIndex + i, JSON.stringify(messages[i])]);
+        }
+        insStmt.free();
+        db.run('COMMIT');
+        } catch (error) {
         db.run('ROLLBACK');
         throw error;
     }

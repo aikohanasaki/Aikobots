@@ -37,6 +37,7 @@ import {
     getMessageCount,
     getLastMessage,
     getMessageRange,
+    updateMessages,
 } from '../sqlite-manager.js';
 
 const isBackupEnabled = !!getConfigValue('backups.chat.enabled', true, 'boolean');
@@ -986,7 +987,7 @@ async function ensureGroupChatHeader(user, chatId, filePath) {
     };
 }
 
-export async function writeLogicalChat(filePath, header, messages, { regenerateIdentities = false } = {}) {
+export async function writeLogicalChat(filePath, header, messages, { regenerateIdentities = false, startIndex = null } = {}) {
     const baseHeader = sanitizeChatHeaderForPersistence(header);
     const identityMessages = Array.isArray(messages)
         ? _.cloneDeep(messages)
@@ -999,26 +1000,38 @@ export async function writeLogicalChat(filePath, header, messages, { regenerateI
     }
 
     const sanitizedMessages = identityMessages.map(message => sanitizeChatMessageForPersistence(message));
-    const logicalChat = [baseHeader, ...sanitizedMessages];
-    const fullJsonl = serializeJsonl(logicalChat);
 
     const sqlitePath = filePath.replace('.jsonl', '.sqlite');
     const db = await loadDb(sqlitePath);
-    setMessages(db, logicalChat);
+
+    if (startIndex === null) {
+        setMessages(db, [baseHeader, ...sanitizedMessages]);
+    } else {
+        // startIndex 0 is the header
+        if (startIndex === 0) {
+            updateMessages(db, [baseHeader, ...sanitizedMessages], 0);
+        } else {
+            // Update metadata/header first if provided
+            if (baseHeader) {
+                const headerStmt = db.prepare('UPDATE messages SET content = ? WHERE order_index = 0');
+                headerStmt.run([JSON.stringify(baseHeader)]);
+                headerStmt.free();
+            }
+            updateMessages(db, sanitizedMessages, startIndex);
+        }
+    }
+
+    const totalMessages = getMessageCount(db);
     saveDb(db, sqlitePath);
     db.close();
 
-    const headPath = getSplitHeadPath(filePath);
-    const totalMessages = sanitizedMessages.length;
+    console.debug(`[SQLite] Updated database for ${filePath}: ${sanitizedMessages.length} messages starting at index ${startIndex ?? 0}. Total messages: ${totalMessages}.`);
 
-    if (fs.existsSync(headPath)) {
-        console.info(`Consolidating split chat: ${filePath}`);
-        if (fs.existsSync(filePath)) {
-            fs.renameSync(filePath, filePath + '.split-tail.bak');
-        }
-        fs.renameSync(headPath, headPath + '.split-head.bak');
-        console.info(`Created backups for split chat: ${filePath}`);
-    }
+    const headPath = getSplitHeadPath(filePath);
+
+    // For incremental writes, we don't return the full JSONL to avoid loading everything.
+    // This means backups will be skipped for incremental saves.
+    const fullJsonl = startIndex === null ? serializeJsonl([baseHeader, ...sanitizedMessages]) : null;
 
     return {
         fullJsonl,
@@ -1099,14 +1112,14 @@ export async function buildChunkedChatPayload(filePath, {
             totalMessages,
             loadedRangeStart,
             loadedRangeEnd,
-            tailStartId: 0,
+            tailStartId: startId,
             tailEndId: totalMessages > 0 ? totalMessages - 1 : -1,
-            headCount: 0,
-            tailCount: totalMessages,
+            headCount: startId,
+            tailCount: totalMessages - startId,
             displayCount: config.displayCount,
-            isHydrated: hydrateFull,
+            isHydrated: hydrateFull || (startId === 0 && messages.length >= totalMessages),
         };
-    }
+        }
 
     const segments = await getChatSegments(filePath);
     const header = stripChatStorage(segments.header);
@@ -1271,6 +1284,8 @@ function buildChunkedChatPayloadFromLogicalChatData(chatData, {
         ? logicalMessages.slice(0, normalizedTailStartId)
         : undefined;
 
+    const finalTailStartId = isSplitTail ? normalizedTailStartId : startId;
+
     return {
         mode: isSplitTail ? CHAT_STORAGE_MODE_SPLIT_TAIL : 'full',
         header,
@@ -1279,14 +1294,15 @@ function buildChunkedChatPayloadFromLogicalChatData(chatData, {
         totalMessages,
         loadedRangeStart,
         loadedRangeEnd,
-        tailStartId: normalizedTailStartId,
+        tailStartId: finalTailStartId,
         tailEndId: normalizedTailEndId,
-        headCount: normalizedTailStartId,
-        tailCount: normalizedTailCount,
+        headCount: finalTailStartId,
+        tailCount: totalMessages - finalTailStartId,
         displayCount: config.displayCount,
         isHydrated: !isChunked,
     };
     }
+
 
 function getGroupChatFilePath(groupChatsDirectory, chatId) {
     return resolveGroupChatFilePath(groupChatsDirectory, chatId);
@@ -2123,15 +2139,18 @@ router.post('/save', validateAvatarUrlMiddleware, async function (request, respo
             const existingTailStartId = existingSegments?.storage?.head_count;
 
             if (request.body.save_mode === 'tail') {
-                const existingChat = await getLogicalChatData(filePath);
                 const absoluteStartId = Number(request.body.absolute_start_id);
+                const db = await loadDb(filePath.replace('.jsonl', '.sqlite'));
+                const existingHeader = getChatHeader(db);
+                const existingMessageCount = getMessageCount(db);
+                db.close();
 
-                if (!Number.isInteger(absoluteStartId) || absoluteStartId < 0 || existingChat.length === 0 || absoluteStartId > (existingChat.length - 1)) {
+                if (!Number.isInteger(absoluteStartId) || absoluteStartId < 0 || existingMessageCount === 0 || absoluteStartId > existingMessageCount) {
                     return response.status(400).send({ error: 'invalid_tail_save' });
                 }
 
                 const tailSaveValidation = validateTailSavePayload({
-                    existingMessageCount: Math.max(0, existingChat.length - 1),
+                    existingMessageCount: existingMessageCount,
                     absoluteStartId,
                     rangeMessages: chatData.slice(1),
                     savedMessageCount: request.body.saved_message_count,
@@ -2140,11 +2159,7 @@ router.post('/save', validateAvatarUrlMiddleware, async function (request, respo
                     return response.status(400).send({ error: tailSaveValidation.error });
                 }
 
-                logicalChatData = [
-                    chatData[0] ?? existingChat[0],
-                    ...existingChat.slice(1, absoluteStartId + 1),
-                    ...chatData.slice(1),
-                ];
+                logicalChatData = chatData; // We only send the new messages part to writeLogicalChat
                 requestedTailStartId = absoluteStartId;
             } else if (request.body.save_mode === 'loaded_range') {
                 const existingChat = await getLogicalChatData(filePath);
@@ -2214,10 +2229,18 @@ router.post('/save', validateAvatarUrlMiddleware, async function (request, respo
             const header = setChatRevision(logicalChatData[0], revisionCheck.nextRevision, getRequestSaveSessionId(request.body));
             const messages = logicalChatData.slice(1);
             await request.activeSessionOperation?.assertAllowed();
-            const writeResult = await writeLogicalChat(filePath, header, messages, {
+
+            const writeOptions = {
                 regenerateIdentities: request.body.regenerate_identities === true,
-            });
-            getBackupFunction(request.user.profile.handle)(request.user.directories.backups, directoryName, writeResult.fullJsonl);
+            };
+            if (request.body.save_mode === 'tail') {
+                writeOptions.startIndex = requestedTailStartId + 1;
+            }
+
+            const writeResult = await writeLogicalChat(filePath, header, messages, writeOptions);
+            if (writeResult.fullJsonl) {
+                getBackupFunction(request.user.profile.handle)(request.user.directories.backups, directoryName, writeResult.fullJsonl);
+            }
 
             const refreshRequired = writeResult.compacted
                 || (existingSegments?.storage?.mode ?? 'full') !== writeResult.storageMode

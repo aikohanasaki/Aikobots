@@ -6050,7 +6050,40 @@ export function addOneMessage(mes, { type = 'normal', insertAfter = null, scroll
     if (type !== 'swipe') {
         const targetContainer = container || chatElement;
         if (insertAfter == null && insertBefore == null) {
-            targetContainer.append(renderedMessage);
+            const currentMesId = params.mesId;
+            const existingMessages = targetContainer.children('.mes').toArray();
+            let inserted = false;
+
+            // Sort existing messages by mesid to be sure we iterate in order
+            existingMessages.sort((a, b) => parseInt($(a).attr('mesid')) - parseInt($(b).attr('mesid')));
+
+            for (let i = existingMessages.length - 1; i >= 0; i--) {
+                const el = existingMessages[i];
+                const elMesId = parseInt($(el).attr('mesid'));
+                if (elMesId === currentMesId) {
+                    $(el).replaceWith(renderedMessage);
+                    inserted = true;
+                    break;
+                } else if (elMesId < currentMesId) {
+                    $(renderedMessage).insertAfter(el);
+                    inserted = true;
+                    break;
+                }
+            }
+
+            if (!inserted) {
+                if (existingMessages.length > 0) {
+                    const firstId = parseInt($(existingMessages[0]).attr('mesid'));
+                    if (currentMesId < firstId) {
+                        targetContainer.prepend(renderedMessage);
+                        inserted = true;
+                    }
+                }
+            }
+
+            if (!inserted) {
+                targetContainer.append(renderedMessage);
+            }
         }
         else if (insertAfter != null) {
             const target = targetContainer.find(`.mes[mesid="${insertAfter}"]`);
