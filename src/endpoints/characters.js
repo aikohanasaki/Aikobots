@@ -98,7 +98,8 @@ function resolveCharacterChatDirectory(directories, internalName) {
 
 function resolveCharacterChatFilePath(directories, internalName, chatFileName) {
     const fileName = assertSafeFileName(chatFileName, 'chat file');
-    if (path.extname(fileName).toLowerCase() !== '.jsonl') {
+    const extension = path.extname(fileName).toLowerCase();
+    if (extension !== '.jsonl' && extension !== '.sqlite') {
         throw new PathSecurityError('Invalid chat file extension.');
     }
     return resolvePathUnderParent(resolveCharacterChatDirectory(directories, internalName), fileName, 'chat file');

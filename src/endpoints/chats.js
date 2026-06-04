@@ -28,7 +28,17 @@ import {
     regenerateChatIdentities,
     stripAikobotsIdentityMetadata,
 } from '../../public/scripts/chat-identities.js';
-import { loadDb, saveDb, getMessages, setMessages } from '../sqlite-manager.js';
+import {
+    loadDb,
+    saveDb,
+    getMessages,
+    setMessages,
+    getChatHeader,
+    getMessageCount,
+    getLastMessage,
+    getMessageRange,
+    updateMessages,
+} from '../sqlite-manager.js';
 
 const isBackupEnabled = !!getConfigValue('backups.chat.enabled', true, 'boolean');
 const maxTotalChatBackups = Number(getConfigValue('backups.chat.maxTotalBackups', -1, 'number'));
@@ -757,10 +767,33 @@ export function readJsonlObjects(filePath) {
         .filter(x => x);
 }
 
-async function getChatSegments(filePath) {
+async function getChatSegments(filePath, { metadataOnly = false } = {}) {
     const sqlitePath = filePath.replace('.jsonl', '.sqlite');
     if (fs.existsSync(sqlitePath)) {
         const db = await loadDb(sqlitePath);
+
+        if (metadataOnly) {
+            const header = getChatHeader(db);
+            const messageCount = getMessageCount(db);
+            const lastMessage = getLastMessage(db);
+            db.close();
+
+            console.debug(`[SQLite] Loaded metadata for ${filePath}: ${messageCount} messages.`);
+
+            return {
+                header,
+                messageCount,
+                lastMessage,
+                isSqlite: true,
+                metadataOnly: true,
+                storage: null,
+                headPath: null,
+                headMessages: [],
+                tailMessages: [],
+                messages: [],
+            };
+        }
+
         const messages = getMessages(db);
         db.close();
 
@@ -954,7 +987,7 @@ async function ensureGroupChatHeader(user, chatId, filePath) {
     };
 }
 
-export async function writeLogicalChat(filePath, header, messages, { regenerateIdentities = false } = {}) {
+export async function writeLogicalChat(filePath, header, messages, { regenerateIdentities = false, startIndex = null } = {}) {
     const baseHeader = sanitizeChatHeaderForPersistence(header);
     const identityMessages = Array.isArray(messages)
         ? _.cloneDeep(messages)
@@ -967,26 +1000,38 @@ export async function writeLogicalChat(filePath, header, messages, { regenerateI
     }
 
     const sanitizedMessages = identityMessages.map(message => sanitizeChatMessageForPersistence(message));
-    const logicalChat = [baseHeader, ...sanitizedMessages];
-    const fullJsonl = serializeJsonl(logicalChat);
 
     const sqlitePath = filePath.replace('.jsonl', '.sqlite');
     const db = await loadDb(sqlitePath);
-    setMessages(db, logicalChat);
+
+    if (startIndex === null) {
+        setMessages(db, [baseHeader, ...sanitizedMessages]);
+    } else {
+        // startIndex 0 is the header
+        if (startIndex === 0) {
+            updateMessages(db, [baseHeader, ...sanitizedMessages], 0);
+        } else {
+            // Update metadata/header first if provided
+            if (baseHeader) {
+                const headerStmt = db.prepare('UPDATE messages SET content = ? WHERE order_index = 0');
+                headerStmt.run([JSON.stringify(baseHeader)]);
+                headerStmt.free();
+            }
+            updateMessages(db, sanitizedMessages, startIndex);
+        }
+    }
+
+    const totalMessages = getMessageCount(db);
     saveDb(db, sqlitePath);
     db.close();
 
-    const headPath = getSplitHeadPath(filePath);
-    const totalMessages = sanitizedMessages.length;
+    console.debug(`[SQLite] Updated database for ${filePath}: ${sanitizedMessages.length} messages starting at index ${startIndex ?? 0}. Total messages: ${totalMessages}.`);
 
-    if (fs.existsSync(headPath)) {
-        console.info(`Consolidating split chat: ${filePath}`);
-        if (fs.existsSync(filePath)) {
-            fs.renameSync(filePath, filePath + '.split-tail.bak');
-        }
-        fs.renameSync(headPath, headPath + '.split-head.bak');
-        console.info(`Created backups for split chat: ${filePath}`);
-    }
+    const headPath = getSplitHeadPath(filePath);
+
+    // For incremental writes, we don't return the full JSONL to avoid loading everything.
+    // This means backups will be skipped for incremental saves.
+    const fullJsonl = startIndex === null ? serializeJsonl([baseHeader, ...sanitizedMessages]) : null;
 
     return {
         fullJsonl,
@@ -1018,6 +1063,64 @@ export async function buildChunkedChatPayload(filePath, {
     includeParentPromptCache = false,
 } = {}) {
     const config = normalizeLongChatConfig({ displayCount });
+    const sqlitePath = filePath.replace('.jsonl', '.sqlite');
+
+    if (fs.existsSync(sqlitePath)) {
+        const db = await loadDb(sqlitePath);
+        const header = getChatHeader(db);
+        const totalMessages = getMessageCount(db);
+
+        if (!header) {
+            db.close();
+            return {
+                mode: 'full',
+                header: null,
+                messages: [],
+                totalMessages: 0,
+                loadedRangeStart: 0,
+                loadedRangeEnd: -1,
+                tailStartId: 0,
+                tailEndId: -1,
+                headCount: 0,
+                tailCount: 0,
+            };
+        }
+
+        const normalizedCount = hydrateFull
+            ? totalMessages
+            : Math.max(1, Number(count) || config.displayCount);
+
+        let startId = Number.isInteger(rangeStart)
+            ? rangeStart
+            : Math.max(0, totalMessages - normalizedCount);
+
+        startId = Math.max(0, Math.min(startId, Math.max(0, totalMessages - 1)));
+        const endId = totalMessages > 0 ? Math.min(totalMessages - 1, startId + normalizedCount - 1) : -1;
+        const loadedRangeStart = startId;
+        const loadedRangeEnd = endId;
+
+        const messages = totalMessages > 0 && endId >= startId
+            ? getMessageRange(db, startId, endId - startId + 1)
+            : [];
+
+        db.close();
+
+        return {
+            mode: 'full',
+            header: stripChatStorage(header),
+            messages,
+            totalMessages,
+            loadedRangeStart,
+            loadedRangeEnd,
+            tailStartId: startId,
+            tailEndId: totalMessages > 0 ? totalMessages - 1 : -1,
+            headCount: startId,
+            tailCount: totalMessages - startId,
+            displayCount: config.displayCount,
+            isHydrated: hydrateFull || (startId === 0 && messages.length >= totalMessages),
+        };
+        }
+
     const segments = await getChatSegments(filePath);
     const header = stripChatStorage(segments.header);
     const layout = getSegmentLayout(segments);
@@ -1160,12 +1263,13 @@ function buildChunkedChatPayloadFromLogicalChatData(chatData, {
     let messages = totalMessages > 0
         ? logicalMessages.slice(startId, endId + 1)
         : [];
+    let isChunked = false;
 
-    if (!hydrateFull && isSplitTail) {
-        const normalizedCount = Math.max(1, Number(count) || normalizedTailCount || config.displayCount);
+    if (!hydrateFull && (isSplitTail || storageMode === 'full')) {
+        const normalizedCount = Math.max(1, Number(count) || (isSplitTail ? normalizedTailCount : 0) || config.displayCount);
         startId = Number.isInteger(rangeStart)
             ? rangeStart
-            : normalizedTailStartId;
+            : (isSplitTail ? normalizedTailStartId : Math.max(0, totalMessages - normalizedCount));
         startId = Math.max(0, Math.min(startId, Math.max(0, totalMessages - 1)));
         endId = Math.min(totalMessages - 1, startId + normalizedCount - 1);
         loadedRangeStart = startId;
@@ -1173,11 +1277,14 @@ function buildChunkedChatPayloadFromLogicalChatData(chatData, {
         messages = totalMessages > 0
             ? logicalMessages.slice(startId, endId + 1)
             : [];
+        isChunked = (startId > 0 || endId < totalMessages - 1);
     }
 
     const parentPromptMessages = isSplitTail && !hydrateFull && (includeParentPromptCache || rangeStart === null)
         ? logicalMessages.slice(0, normalizedTailStartId)
         : undefined;
+
+    const finalTailStartId = isSplitTail ? normalizedTailStartId : startId;
 
     return {
         mode: isSplitTail ? CHAT_STORAGE_MODE_SPLIT_TAIL : 'full',
@@ -1187,14 +1294,15 @@ function buildChunkedChatPayloadFromLogicalChatData(chatData, {
         totalMessages,
         loadedRangeStart,
         loadedRangeEnd,
-        tailStartId: normalizedTailStartId,
+        tailStartId: finalTailStartId,
         tailEndId: normalizedTailEndId,
-        headCount: normalizedTailStartId,
-        tailCount: normalizedTailCount,
+        headCount: finalTailStartId,
+        tailCount: totalMessages - finalTailStartId,
         displayCount: config.displayCount,
-        isHydrated: hydrateFull || !isSplitTail,
+        isHydrated: !isChunked,
     };
-}
+    }
+
 
 function getGroupChatFilePath(groupChatsDirectory, chatId) {
     return resolveGroupChatFilePath(groupChatsDirectory, chatId);
@@ -1237,8 +1345,25 @@ function findLastAvailableMessageId(messages) {
     return -1;
 }
 
-async function resolveDirectLogicalChat(filePath) {
-    const segments = await getChatSegments(filePath);
+async function resolveDirectLogicalChat(filePath, options = {}) {
+    const segments = await getChatSegments(filePath, options);
+
+    if (segments.metadataOnly) {
+        return {
+            chatType: 'character',
+            filePath,
+            header: stripChatStorage(segments.header),
+            messages: [],
+            totalMessages: segments.messageCount,
+            lastMessage: segments.lastMessage,
+            metadataOnly: true,
+            storageMode: 'full',
+            storageHealthy: true,
+            tailStartId: 0,
+            tailEndId: segments.messageCount > 0 ? segments.messageCount - 1 : -1,
+        };
+    }
+
     const layout = getSegmentLayout(segments);
     const messages = buildSplitLogicalMessages(segments, layout);
 
@@ -1257,8 +1382,25 @@ async function resolveDirectLogicalChat(filePath) {
     };
 }
 
-async function resolveGroupLogicalChat(filePath) {
-    const segments = await getChatSegments(filePath);
+async function resolveGroupLogicalChat(filePath, options = {}) {
+    const segments = await getChatSegments(filePath, options);
+
+    if (segments.metadataOnly) {
+        return {
+            chatType: 'group',
+            filePath,
+            header: stripChatStorage(segments.header),
+            messages: [],
+            totalMessages: segments.messageCount,
+            lastMessage: segments.lastMessage,
+            metadataOnly: true,
+            storageMode: 'full',
+            storageHealthy: true,
+            tailStartId: 0,
+            tailEndId: segments.messageCount > 0 ? segments.messageCount - 1 : -1,
+        };
+    }
+
     if (isGroupChatHeader(segments.header)) {
         const layout = getSegmentLayout(segments);
         const messages = buildSplitLogicalMessages(segments, layout);
@@ -1302,8 +1444,8 @@ async function buildLogicalChatSummary(pathToFile, {
     const parsedPath = path.parse(pathToFile);
     const fileStats = getChatFileStats(pathToFile);
     const logicalChat = isGroup
-        ? await resolveGroupLogicalChat(pathToFile)
-        : await resolveDirectLogicalChat(pathToFile);
+        ? await resolveGroupLogicalChat(pathToFile, { metadataOnly: true })
+        : await resolveDirectLogicalChat(pathToFile, { metadataOnly: true });
     const fallbackTimestamp = Math.round(fileStats.latestMtimeMs);
     const chatData = {
         file_id: parsedPath.name,
@@ -1324,8 +1466,9 @@ async function buildLogicalChatSummary(pathToFile, {
         chatData.chat_metadata = logicalChat.header.chat_metadata;
     }
 
-    const lastMessageId = logicalChat.lastAvailableMessageId;
-    const lastMessage = lastMessageId >= 0 ? logicalChat.messages[lastMessageId] : null;
+    const lastMessage = logicalChat.metadataOnly
+        ? logicalChat.lastMessage
+        : (logicalChat.lastAvailableMessageId >= 0 ? logicalChat.messages[logicalChat.lastAvailableMessageId] : null);
 
     if (lastMessage || logicalChat.header) {
         chatData.chat_items = logicalChat.totalMessages;
@@ -1376,8 +1519,39 @@ function isResidentParentPromptMessage(message) {
 }
 
 export async function resolveSplitCoreChatPayload(chatsDirectory, coreChatPayload) {
-    if (!coreChatPayload || typeof coreChatPayload !== 'object' || coreChatPayload.mode !== CHAT_STORAGE_MODE_SPLIT_TAIL) {
+    if (!coreChatPayload || typeof coreChatPayload !== 'object') {
         return Array.isArray(coreChatPayload) ? coreChatPayload : [];
+    }
+
+    const avatarUrl = coreChatPayload.avatarUrl;
+    const chatId = coreChatPayload.currentChatId;
+
+    if (avatarUrl && chatId) {
+        const filePath = resolveCharacterChatFilePath(chatsDirectory, avatarUrl, chatId);
+        const sqlitePath = filePath.replace('.jsonl', '.sqlite');
+
+        if (fs.existsSync(sqlitePath)) {
+            const db = await loadDb(sqlitePath);
+            const totalMessages = getMessageCount(db);
+            const tailStartId = Number.isInteger(coreChatPayload.tailStartId)
+                ? Math.max(0, Math.min(coreChatPayload.tailStartId, totalMessages))
+                : 0;
+
+            const parentMessages = coreChatPayload.useParentUnhiddenMessages
+                ? getMessageRange(db, 0, tailStartId).filter(isResidentParentPromptMessage)
+                : [];
+
+            const tailMessages = coreChatPayload.useTailContents === false
+                ? []
+                : getMessageRange(db, tailStartId, totalMessages - tailStartId);
+
+            db.close();
+            return [...parentMessages, ...tailMessages];
+        }
+    }
+
+    if (coreChatPayload.mode !== CHAT_STORAGE_MODE_SPLIT_TAIL) {
+        return Array.isArray(coreChatPayload.messages) ? coreChatPayload.messages : (Array.isArray(coreChatPayload) ? coreChatPayload : []);
     }
 
     const filePath = resolveCharacterChatFilePath(chatsDirectory, coreChatPayload.avatarUrl, coreChatPayload.currentChatId);
@@ -1517,25 +1691,27 @@ function getSearchFragments(query) {
 }
 
 async function getChatSearchResult(chatFile, fragments = [], { isGroup = false } = {}) {
-    const logicalMessages = isGroup
-        ? (await resolveGroupLogicalChat(chatFile.path)).messages
-        : await getLogicalChatMessages(chatFile.path);
-    const messages = logicalMessages
+    const useMetadataOnly = fragments.length === 0;
+    const logicalChat = isGroup
+        ? await resolveGroupLogicalChat(chatFile.path, { metadataOnly: useMetadataOnly })
+        : await resolveDirectLogicalChat(chatFile.path, { metadataOnly: useMetadataOnly });
+
+    const messages = useMetadataOnly ? [] : (logicalChat.messages || [])
         .filter(message => message && typeof message.mes === 'string');
 
     if (fragments.length && messages.length === 0) {
         return null;
     }
 
-    const lastMessage = messages[messages.length - 1];
+    const lastMessage = useMetadataOnly ? logicalChat.lastMessage : messages[messages.length - 1];
     const fallbackTimestamp = Math.round(getChatFileStats(chatFile.path).latestMtimeMs);
     const lastMesDate = normalizeChatTimestamp(lastMessage?.send_date, fallbackTimestamp);
     const result = {
         file_name: chatFile.file_name,
         file_size: chatFile.file_size,
-        message_count: messages.length,
+        message_count: logicalChat.totalMessages,
         last_mes: lastMesDate,
-        preview_message: getPreviewMessage(messages),
+        preview_message: getPreviewMessage(useMetadataOnly ? (lastMessage ? [lastMessage] : []) : messages),
     };
 
     if (!fragments.length) {
@@ -1963,15 +2139,18 @@ router.post('/save', validateAvatarUrlMiddleware, async function (request, respo
             const existingTailStartId = existingSegments?.storage?.head_count;
 
             if (request.body.save_mode === 'tail') {
-                const existingChat = await getLogicalChatData(filePath);
                 const absoluteStartId = Number(request.body.absolute_start_id);
+                const db = await loadDb(filePath.replace('.jsonl', '.sqlite'));
+                const existingHeader = getChatHeader(db);
+                const existingMessageCount = getMessageCount(db);
+                db.close();
 
-                if (!Number.isInteger(absoluteStartId) || absoluteStartId < 0 || existingChat.length === 0 || absoluteStartId > (existingChat.length - 1)) {
+                if (!Number.isInteger(absoluteStartId) || absoluteStartId < 0 || existingMessageCount === 0 || absoluteStartId > existingMessageCount) {
                     return response.status(400).send({ error: 'invalid_tail_save' });
                 }
 
                 const tailSaveValidation = validateTailSavePayload({
-                    existingMessageCount: Math.max(0, existingChat.length - 1),
+                    existingMessageCount: existingMessageCount,
                     absoluteStartId,
                     rangeMessages: chatData.slice(1),
                     savedMessageCount: request.body.saved_message_count,
@@ -1980,11 +2159,7 @@ router.post('/save', validateAvatarUrlMiddleware, async function (request, respo
                     return response.status(400).send({ error: tailSaveValidation.error });
                 }
 
-                logicalChatData = [
-                    chatData[0] ?? existingChat[0],
-                    ...existingChat.slice(1, absoluteStartId + 1),
-                    ...chatData.slice(1),
-                ];
+                logicalChatData = chatData; // We only send the new messages part to writeLogicalChat
                 requestedTailStartId = absoluteStartId;
             } else if (request.body.save_mode === 'loaded_range') {
                 const existingChat = await getLogicalChatData(filePath);
@@ -2031,8 +2206,9 @@ router.post('/save', validateAvatarUrlMiddleware, async function (request, respo
                     tailCount: layout.tailCount,
                     payload: request.body.refresh_tail === true
                         ? buildChunkedChatPayloadFromLogicalChatData(existingChatData, {
-                            count: storageMode === CHAT_STORAGE_MODE_SPLIT_TAIL ? layout.tailCount : layout.totalMessages,
-                            hydrateFull: storageMode !== CHAT_STORAGE_MODE_SPLIT_TAIL,
+                            rangeStart: requestedTailStartId,
+                            count: storageMode === CHAT_STORAGE_MODE_SPLIT_TAIL ? layout.tailCount : config.displayCount,
+                            hydrateFull: false,
                             displayCount: config.displayCount,
                             includeParentPromptCache: storageMode === CHAT_STORAGE_MODE_SPLIT_TAIL,
                             storageMode,
@@ -2053,10 +2229,18 @@ router.post('/save', validateAvatarUrlMiddleware, async function (request, respo
             const header = setChatRevision(logicalChatData[0], revisionCheck.nextRevision, getRequestSaveSessionId(request.body));
             const messages = logicalChatData.slice(1);
             await request.activeSessionOperation?.assertAllowed();
-            const writeResult = await writeLogicalChat(filePath, header, messages, {
+
+            const writeOptions = {
                 regenerateIdentities: request.body.regenerate_identities === true,
-            });
-            getBackupFunction(request.user.profile.handle)(request.user.directories.backups, directoryName, writeResult.fullJsonl);
+            };
+            if (request.body.save_mode === 'tail') {
+                writeOptions.startIndex = requestedTailStartId + 1;
+            }
+
+            const writeResult = await writeLogicalChat(filePath, header, messages, writeOptions);
+            if (writeResult.fullJsonl) {
+                getBackupFunction(request.user.profile.handle)(request.user.directories.backups, directoryName, writeResult.fullJsonl);
+            }
 
             const refreshRequired = writeResult.compacted
                 || (existingSegments?.storage?.mode ?? 'full') !== writeResult.storageMode
@@ -2072,8 +2256,9 @@ router.post('/save', validateAvatarUrlMiddleware, async function (request, respo
                 tailCount: writeResult.tailCount,
                 payload: refreshRequired
                     ? buildChunkedChatPayloadFromLogicalChatData([header, ...messages], {
-                        count: writeResult.storageMode === CHAT_STORAGE_MODE_SPLIT_TAIL ? writeResult.tailCount : messages.length,
-                        hydrateFull: writeResult.storageMode !== CHAT_STORAGE_MODE_SPLIT_TAIL,
+                        rangeStart: requestedTailStartId,
+                        count: writeResult.storageMode === CHAT_STORAGE_MODE_SPLIT_TAIL ? writeResult.tailCount : config.displayCount,
+                        hydrateFull: false,
                         displayCount: config.displayCount,
                         includeParentPromptCache: writeResult.storageMode === CHAT_STORAGE_MODE_SPLIT_TAIL,
                         storageMode: writeResult.storageMode,

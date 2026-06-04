@@ -1986,6 +1986,7 @@ async function toggleTopChatConnectionProfiles(forceVisible = undefined, { save 
     }
 }
 
+let lastTopChatSelectorEntries = null;
 async function refreshTopChatBarState() {
     const currentChatId = normalizeTopChatFileName(getCurrentChatId());
     const hasChat = Boolean(currentChatId);
@@ -1996,29 +1997,38 @@ async function refreshTopChatBarState() {
         return;
     }
 
-    topChatBarChatNameSelect.innerHTML = '';
     if (!hasChat) {
         topChatBarChatNameSelect.innerHTML = '<option selected>No chat selected</option>';
         topChatBarChatNameSelect.disabled = true;
+        lastTopChatSelectorEntries = null;
         await populateTopChatSidebar();
         return;
     }
 
     const entries = await getTopChatSelectorEntries();
-    if (!entries.length) {
-        topChatBarChatNameSelect.innerHTML = `<option selected>${currentChatId}</option>`;
-        topChatBarChatNameSelect.disabled = true;
-    } else {
-        for (const entry of entries) {
-            const option = document.createElement('option');
-            option.value = entry;
-            option.textContent = entry;
-            option.selected = entry === currentChatId;
-            topChatBarChatNameSelect.append(option);
-        }
+    const entriesState = JSON.stringify(entries.length === 0 ? [currentChatId] : entries);
+    const hasChanged = entriesState !== lastTopChatSelectorEntries;
 
-        topChatBarChatNameSelect.disabled = isChatBusy;
+    if (hasChanged) {
+        topChatBarChatNameSelect.innerHTML = '';
+        if (!entries.length) {
+            topChatBarChatNameSelect.innerHTML = `<option selected>${currentChatId}</option>`;
+        } else {
+            const allEntries = entries.includes(currentChatId) ? entries : [...entries, currentChatId].sort((a, b) => a.localeCompare(b));
+            for (const entry of allEntries) {
+                const option = document.createElement('option');
+                option.value = entry;
+                option.textContent = entry;
+                option.selected = entry === currentChatId;
+                topChatBarChatNameSelect.append(option);
+            }
+        }
+        lastTopChatSelectorEntries = entriesState;
     }
+
+    // Always update disabled state and selection
+    topChatBarChatNameSelect.value = currentChatId || '';
+    topChatBarChatNameSelect.disabled = isChatBusy || (!entries.length && hasChat);
 
     await populateTopChatSidebar();
 }
@@ -2126,6 +2136,14 @@ function initTopChatUi() {
         await openTopChatById(topChatBarChatNameSelect.value);
     });
 
+    const clearPastCharacterChatsCache = () => pastCharacterChatsCache.clear();
+    eventSource.on(event_types.CHAT_CREATED, clearPastCharacterChatsCache);
+    eventSource.on(event_types.CHAT_DELETED, clearPastCharacterChatsCache);
+    eventSource.on(event_types.CHAT_RENAMED, clearPastCharacterChatsCache);
+    eventSource.on(event_types.CHAT_CHANGED, clearPastCharacterChatsCache);
+    eventSource.on(event_types.BRANCH_CREATED, clearPastCharacterChatsCache);
+    eventSource.on(event_types.CHECKPOINT_CREATED, clearPastCharacterChatsCache);
+
     const refreshTopChatUiDebounced = debounce(() => {
         void refreshTopChatBarState();
     }, debounce_timeout.short);
@@ -2134,6 +2152,9 @@ function initTopChatUi() {
     }, debounce_timeout.short);
 
     eventSource.on(event_types.CHAT_CHANGED, refreshTopChatUiDebounced);
+    eventSource.on(event_types.CHAT_RENAMED, refreshTopChatUiDebounced);
+    eventSource.on(event_types.BRANCH_CREATED, refreshTopChatUiDebounced);
+    eventSource.on(event_types.CHECKPOINT_CREATED, refreshTopChatUiDebounced);
     eventSource.on(event_types.CHAT_CHANGED, () => {
         clearActiveMessageEditSession();
         this_edit_mes_id = undefined;
@@ -6050,7 +6071,40 @@ export function addOneMessage(mes, { type = 'normal', insertAfter = null, scroll
     if (type !== 'swipe') {
         const targetContainer = container || chatElement;
         if (insertAfter == null && insertBefore == null) {
-            targetContainer.append(renderedMessage);
+            const currentMesId = params.mesId;
+            const existingMessages = targetContainer.children('.mes').toArray();
+            let inserted = false;
+
+            // Sort existing messages by mesid to be sure we iterate in order
+            existingMessages.sort((a, b) => parseInt($(a).attr('mesid')) - parseInt($(b).attr('mesid')));
+
+            for (let i = existingMessages.length - 1; i >= 0; i--) {
+                const el = existingMessages[i];
+                const elMesId = parseInt($(el).attr('mesid'));
+                if (elMesId === currentMesId) {
+                    $(el).replaceWith(renderedMessage);
+                    inserted = true;
+                    break;
+                } else if (elMesId < currentMesId) {
+                    $(renderedMessage).insertAfter(el);
+                    inserted = true;
+                    break;
+                }
+            }
+
+            if (!inserted) {
+                if (existingMessages.length > 0) {
+                    const firstId = parseInt($(existingMessages[0]).attr('mesid'));
+                    if (currentMesId < firstId) {
+                        targetContainer.prepend(renderedMessage);
+                        inserted = true;
+                    }
+                }
+            }
+
+            if (!inserted) {
+                targetContainer.append(renderedMessage);
+            }
         }
         else if (insertAfter != null) {
             const target = targetContainer.find(`.mes[mesid="${insertAfter}"]`);
@@ -12052,6 +12106,7 @@ async function messageEditDone(div) {
     showSwipeButtons();
 }
 
+const pastCharacterChatsCache = new Map();
 /**
  * Fetches the metadata of all past chats related to a specific character based on its avatar URL.
  * The function sends a POST request to the server to retrieve all chats for the character. It then
@@ -12065,11 +12120,21 @@ async function messageEditDone(div) {
  */
 export async function getPastCharacterChats(characterId = null) {
     characterId = characterId ?? parseInt(this_chid);
-    if (!characters[characterId]) return [];
+    const avatar = characters[characterId]?.avatar;
+    if (!avatar) return [];
+
+    if (pastCharacterChatsCache.has(avatar)) {
+        return pastCharacterChatsCache.get(avatar);
+    }
+
+    // Skip if avatar has path traversal characters, as the server will reject it anyway
+    if (avatar.includes('/') || avatar.includes('\\')) {
+        return [];
+    }
 
     const response = await fetch('/api/characters/chats', {
         method: 'POST',
-        body: JSON.stringify({ avatar_url: characters[characterId].avatar }),
+        body: JSON.stringify({ avatar_url: avatar }),
         headers: getRequestHeaders(),
     });
 
@@ -12083,8 +12148,10 @@ export async function getPastCharacterChats(characterId = null) {
     }
 
     const chats = Object.values(data);
-    return chats.sort((a, b) => a['file_name'].localeCompare(b['file_name'])).reverse();
-}
+    const sortedChats = chats.sort((a, b) => a['file_name'].localeCompare(b['file_name'])).reverse();
+    pastCharacterChatsCache.set(avatar, sortedChats);
+    return sortedChats;
+    }
 
 /**
  * @typedef {{ type: 'character' | 'group', id: string|number }} ManageChatsOwnerContext
@@ -16252,6 +16319,8 @@ export async function renameGroupOrCharacterChat({ characterId, groupId, oldFile
         if (data.sanitizedFileName) {
             newFileName = data.sanitizedFileName;
         }
+
+        await eventSource.emit(event_types.CHAT_RENAMED, { characterId, groupId, oldFileName, newFileName });
 
         if (groupId) {
             await renameGroupChat(groupId, oldFileName, newFileName);

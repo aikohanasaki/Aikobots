@@ -103,7 +103,8 @@ export async function migrateFromJsonl(jsonlPath, sqlitePath) {
  */
 export function reindexChat(db) {
     const messages = getMessages(db);
-    setMessages(db, messages);
+    const header = getChatHeader(db);
+    setMessages(db, [header, ...messages]);
 }
 
 /**
@@ -115,7 +116,57 @@ export function getMessages(db) {
     const res = db.exec('SELECT content FROM messages ORDER BY order_index ASC');
     if (res.length === 0) return [];
     const messages = res[0].values.map(row => JSON.parse(row[0]));
-    console.debug(`[SQLite] Loaded ${messages.length} messages (including header).`);
+    return messages;
+}
+
+/**
+ * Gets the chat header (first message) from the database.
+ * @param {import('sql.js').Database} db
+ * @returns {any|null}
+ */
+export function getChatHeader(db) {
+    const res = db.exec('SELECT content FROM messages WHERE order_index = 0');
+    if (res.length === 0 || res[0].values.length === 0) return null;
+    return JSON.parse(res[0].values[0][0]);
+}
+
+/**
+ * Gets the total number of messages (excluding header) from the database.
+ * @param {import('sql.js').Database} db
+ * @returns {number}
+ */
+export function getMessageCount(db) {
+    const res = db.exec('SELECT COUNT(*) FROM messages WHERE order_index > 0');
+    if (res.length === 0) return 0;
+    return res[0].values[0][0];
+}
+
+/**
+ * Gets the last message from the database.
+ * @param {import('sql.js').Database} db
+ * @returns {any|null}
+ */
+export function getLastMessage(db) {
+    const res = db.exec('SELECT content FROM messages WHERE order_index > 0 ORDER BY order_index DESC LIMIT 1');
+    if (res.length === 0 || res[0].values.length === 0) return null;
+    return JSON.parse(res[0].values[0][0]);
+}
+
+/**
+ * Gets a range of messages (excluding header) from the database.
+ * @param {import('sql.js').Database} db
+ * @param {number} offset
+ * @param {number} limit
+ * @returns {any[]}
+ */
+export function getMessageRange(db, offset, limit) {
+    const stmt = db.prepare('SELECT content FROM messages WHERE order_index > 0 ORDER BY order_index ASC LIMIT ? OFFSET ?');
+    stmt.bind([limit, offset]);
+    const messages = [];
+    while (stmt.step()) {
+        messages.push(JSON.parse(stmt.get()[0]));
+    }
+    stmt.free();
     return messages;
 }
 
@@ -134,8 +185,32 @@ export function setMessages(db, messages) {
         }
         stmt.free();
         db.run('COMMIT');
-        console.debug(`[SQLite] Saved ${messages.length} messages (including header).`);
     } catch (error) {
+        db.run('ROLLBACK');
+        throw error;
+    }
+}
+
+/**
+ * Updates a range of messages in the database.
+ * @param {import('sql.js').Database} db
+ * @param {any[]} messages
+ * @param {number} startIndex
+ */
+export function updateMessages(db, messages, startIndex) {
+    db.run('BEGIN TRANSACTION');
+    try {
+        const delStmt = db.prepare('DELETE FROM messages WHERE order_index >= ?');
+        delStmt.run([startIndex]);
+        delStmt.free();
+
+        const insStmt = db.prepare('INSERT INTO messages (order_index, content) VALUES (?, ?)');
+        for (let i = 0; i < messages.length; i++) {
+            insStmt.run([startIndex + i, JSON.stringify(messages[i])]);
+        }
+        insStmt.free();
+        db.run('COMMIT');
+        } catch (error) {
         db.run('ROLLBACK');
         throw error;
     }
