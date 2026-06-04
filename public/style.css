@@ -5336,6 +5336,36 @@ h5 {
     background-color: var(--cobalt30a);
 }
 
+#manage_chats_bulk_actions {
+    flex-wrap: wrap;
+    min-width: 16em;
+}
+
+#manage_chats_bulk_selected_count {
+    margin-right: 5px;
+    white-space: nowrap;
+}
+
+#select_chat_popup.manage_chats_bulk_select_mode .select_chat_block_wrapper {
+    cursor: pointer;
+}
+
+#select_chat_popup.manage_chats_bulk_select_mode .manageChatsBackupsButton {
+    display: none;
+}
+
+#select_chat_popup.manage_chats_bulk_select_mode .renameChatButton,
+#select_chat_popup.manage_chats_bulk_select_mode .exportRawChatButton,
+#select_chat_popup.manage_chats_bulk_select_mode .exportChatButton,
+#select_chat_popup.manage_chats_bulk_select_mode .PastChat_cross {
+    display: none;
+}
+
+.select_chat_block.manage_chats_bulk_selected {
+    background-color: var(--cobalt30a);
+    border-color: var(--SmartThemeQuoteColor);
+}
+
 .swipe_picker_block {
     cursor: pointer;
     -webkit-user-select: none;
