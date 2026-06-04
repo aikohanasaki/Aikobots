@@ -4085,6 +4085,10 @@
                         <i class="fa-solid fa-file-import"></i>
                         <span data-i18n="Import Chat">Import Chat</span>
                     </div>
+                    <button id="manage_chats_bulk_select_button" type="button" class="menu_button menu_button_icon">
+                        <i class="fa-solid fa-list-check"></i>
+                        <span data-i18n="Select Multiple">Select Multiple</span>
+                    </button>
                     <div id="manage_chats_mode_toggle" class="flex-container gap5px">
                         <button id="manage_chats_mode_switch" type="button" class="menu_button">
                             <span id="manage_chats_mode_switch_label">Switch to Deleted Characters</span>
@@ -4098,6 +4102,29 @@
                     <select id="manage_chats_orphan_select" style="display: none;">
                         <option value="" data-i18n="--- Pick Deleted Character ---">--- Pick Deleted Character ---</option>
                     </select>
+                    <div id="manage_chats_bulk_actions" class="flex-container alignitemscenter gap5px flex1" style="display: none;">
+                        <span id="manage_chats_bulk_selected_count" class="text_muted">0 selected</span>
+                        <button type="button" class="menu_button menu_button_icon manage_chats_bulk_export" data-format="jsonl" title="Export selected chats as JSONL" data-i18n="[title]Export selected chats as JSONL">
+                            <i class="fa-solid fa-file-export"></i>
+                            <span>JSONL</span>
+                        </button>
+                        <button type="button" class="menu_button menu_button_icon manage_chats_bulk_export" data-format="txt" title="Export selected chats as plain text" data-i18n="[title]Export selected chats as plain text">
+                            <i class="fa-solid fa-file-lines"></i>
+                            <span>TXT</span>
+                        </button>
+                        <button type="button" class="menu_button menu_button_icon manage_chats_bulk_export" data-format="html" title="Export selected chats as HTML" data-i18n="[title]Export selected chats as HTML">
+                            <i class="fa-solid fa-download"></i>
+                            <span>HTML</span>
+                        </button>
+                        <button id="manage_chats_bulk_delete" type="button" class="menu_button menu_button_icon" title="Delete selected chats" data-i18n="[title]Delete selected chats">
+                            <i class="fa-solid fa-skull"></i>
+                            <span data-i18n="Delete">Delete</span>
+                        </button>
+                        <button id="manage_chats_bulk_cancel" type="button" class="menu_button menu_button_icon" title="Cancel multiple selection" data-i18n="[title]Cancel multiple selection">
+                            <i class="fa-solid fa-xmark"></i>
+                            <span data-i18n="Cancel">Cancel</span>
+                        </button>
+                    </div>
                     <input type="search" id="select_chat_search" class="text_pole flex1" data-i18n="[placeholder]Search..." placeholder="Search..." autocomplete="off">
                     <div id="select_chat_cross" class="opacity50p hoverglow fa-solid fa-circle-xmark fontsize120p" alt="Close Past Chat Popup"></div>
                 </div>

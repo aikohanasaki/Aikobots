@@ -21,6 +21,7 @@ import {
     hasActiveMessageEditSession,
     isHistoricalChatMessage,
     syncSwipeToMes,
+    handleManageChatsBulkRowClick,
 } from '../script.js';
 import { saveMetadataDebounced } from './extensions.js';
 import { humanizedDateTime } from './RossAscends-mods.js';
@@ -1373,6 +1374,10 @@ export function initBookmarks() {
         if (e.shiftKey && mes.length) {
             const selectedMesId = mes.attr('mesid');
             await createNewBookmark(Number(selectedMesId));
+            return;
+        }
+
+        if (handleManageChatsBulkRowClick(this, e)) {
             return;
         }
 
