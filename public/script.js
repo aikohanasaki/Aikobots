@@ -899,6 +899,8 @@ const CHAT_SAVE_RESULT = {
 };
 export { CHAT_SAVE_RESULT };
 const CHAT_SAVE_SESSION_ID_KEY = 'aikobots_chat_save_session_id';
+const TEMPORARY_CHAT_DISPLAY_NAME = '(Temporary Chat)';
+const TEMPORARY_CHAT_PENDING_NAME_STORAGE_KEY_PREFIX = 'aikobots_temporary_chat_pending_name:';
 const SYNC_CURRENT_CHAT_COOLDOWN_MS = 60_000;
 const SYNC_CURRENT_CHAT_TITLE = 'update server with current browser chat state';
 let syncCurrentChatCooldownUntil = 0;
@@ -1302,21 +1304,82 @@ export function getCurrentChatId() {
     }
 }
 
+function getTemporaryCharacterChatStorageKey(state = temporaryCharacterChat) {
+    if (!state?.chid || !state?.avatar || !state?.fileName) {
+        return '';
+    }
+
+    return `${TEMPORARY_CHAT_PENDING_NAME_STORAGE_KEY_PREFIX}${encodeURIComponent(state.chid)}:${encodeURIComponent(state.avatar)}:${encodeURIComponent(state.fileName)}`;
+}
+
+function isUnsafeTemporaryChatFileName(fileName) {
+    const normalized = String(fileName ?? '').trim();
+    return !normalized
+        || normalized === '.'
+        || normalized === '..'
+        || normalized.includes('\0')
+        || normalized.includes('/')
+        || normalized.includes('\\')
+        || /^[a-zA-Z]:/.test(normalized);
+}
+
+function normalizeTemporaryChatFileName(fileName) {
+    return normalizeTopChatFileName(String(fileName ?? '').trim());
+}
+
+function getStoredTemporaryCharacterChatPendingFileName(state) {
+    const storageKey = getTemporaryCharacterChatStorageKey(state);
+    if (!storageKey) {
+        return '';
+    }
+
+    try {
+        const storedName = normalizeTemporaryChatFileName(sessionStorage.getItem(storageKey));
+        if (isUnsafeTemporaryChatFileName(storedName)) {
+            sessionStorage.removeItem(storageKey);
+            return '';
+        }
+
+        return storedName;
+    } catch {
+        return '';
+    }
+}
+
 function setTemporaryCharacterChat(fileName = '', previousFileName = null) {
     if (selected_group || this_chid === undefined || !characters[this_chid]) {
-        temporaryCharacterChat = null;
+        clearTemporaryCharacterChat();
         return;
     }
 
-    temporaryCharacterChat = {
+    const nextTemporaryCharacterChat = {
         chid: String(this_chid),
         avatar: String(characters[this_chid].avatar || ''),
         fileName: String(fileName || ''),
         previousFileName: previousFileName === null ? String(fileName || '') : String(previousFileName || ''),
+        pendingFileName: '',
     };
+    nextTemporaryCharacterChat.pendingFileName = getStoredTemporaryCharacterChatPendingFileName(nextTemporaryCharacterChat);
+    temporaryCharacterChat = nextTemporaryCharacterChat;
+}
+
+function clearTemporaryCharacterChatPendingFileName() {
+    const storageKey = getTemporaryCharacterChatStorageKey();
+    if (storageKey) {
+        try {
+            sessionStorage.removeItem(storageKey);
+        } catch {
+            // Ignore unavailable session storage.
+        }
+    }
+
+    if (temporaryCharacterChat) {
+        temporaryCharacterChat.pendingFileName = '';
+    }
 }
 
 function clearTemporaryCharacterChat() {
+    clearTemporaryCharacterChatPendingFileName();
     temporaryCharacterChat = null;
 }
 
@@ -1337,6 +1400,46 @@ function hasUserMessageInCurrentChat() {
 
 function shouldSkipTemporaryCharacterChatSave() {
     return isCurrentCharacterChatTemporary() && !hasUserMessageInCurrentChat();
+}
+
+function getTemporaryCharacterChatPendingFileName() {
+    if (!isCurrentCharacterChatTemporary()) {
+        return '';
+    }
+
+    return normalizeTemporaryChatFileName(temporaryCharacterChat.pendingFileName);
+}
+
+function getTemporaryCharacterChatSaveFileName() {
+    return getTemporaryCharacterChatPendingFileName();
+}
+
+function getTemporaryChatDisplayName() {
+    return getTemporaryCharacterChatPendingFileName() || TEMPORARY_CHAT_DISPLAY_NAME;
+}
+
+function setTemporaryCharacterChatPendingFileName(fileName) {
+    if (!isCurrentCharacterChatTemporary()) {
+        return false;
+    }
+
+    const pendingFileName = normalizeTemporaryChatFileName(fileName);
+    if (isUnsafeTemporaryChatFileName(pendingFileName)) {
+        return false;
+    }
+
+    temporaryCharacterChat.pendingFileName = pendingFileName;
+
+    const storageKey = getTemporaryCharacterChatStorageKey();
+    if (storageKey) {
+        try {
+            sessionStorage.setItem(storageKey, pendingFileName);
+        } catch {
+            // Keep the in-memory pending name even if session storage is unavailable.
+        }
+    }
+
+    return true;
 }
 
 function setTemporaryCharacterChatPreviousFileName(previousFileName = '') {
@@ -2021,6 +2124,8 @@ async function refreshTopChatBarState() {
     const currentChatId = normalizeTopChatFileName(getCurrentChatId());
     const hasChat = Boolean(currentChatId);
     const isChatBusy = isTopChatInteractionBusy();
+    const isTemporaryChat = isCurrentCharacterChatTemporary();
+    const currentChatDisplayName = isTemporaryChat ? getTemporaryChatDisplayName() : currentChatId;
     setTopChatAvailabilityState(hasChat);
 
     if (!topChatBarChatNameSelect) {
@@ -2041,7 +2146,30 @@ async function refreshTopChatBarState() {
     const entries = await getTopChatSelectorEntries();
     const entriesState = JSON.stringify(entries.length === 0 ? [currentChatId] : entries);
     const hasChanged = entriesState !== lastTopChatSelectorEntries;
+    if (!entries.length) {
+        const option = document.createElement('option');
+        option.value = currentChatId;
+        option.textContent = currentChatDisplayName;
+        option.selected = true;
+        topChatBarChatNameSelect.append(option);
+        topChatBarChatNameSelect.disabled = true;
+    } else {
+        if (isTemporaryChat) {
+            const option = document.createElement('option');
+            option.value = currentChatId;
+            option.textContent = currentChatDisplayName;
+            option.selected = true;
+            topChatBarChatNameSelect.append(option);
+        }
 
+        for (const entry of entries) {
+            const option = document.createElement('option');
+            option.value = entry;
+            option.textContent = entry;
+            option.selected = !isTemporaryChat && entry === currentChatId;
+            topChatBarChatNameSelect.append(option);
+        }
+    }
     if (hasChanged) {
         topChatBarChatNameSelect.innerHTML = '';
         if (!entries.length) {
@@ -2119,8 +2247,9 @@ async function renameCurrentTopChat() {
             return;
         }
 
-        const existingChatNames = await getSimplePastCharacterChatNames();
-        const nameAlreadyExists = existingChatNames
+        const existingChats = await getPastCharacterChats();
+        const nameAlreadyExists = existingChats
+            .map(chat => normalizeTopChatFileName(chat.file_name))
             .some(chatName => equalsIgnoreCaseAndAccents(chatName, normalizedNewChatName));
 
         if (nameAlreadyExists) {
@@ -10985,9 +11114,12 @@ export async function saveChat({ chatName, withMetadata, mesId, force = false, s
 
     const metadata = sanitizeChatMetadataForSave({ ...chat_metadata, ...(withMetadata || {}) });
     const existingFileName = chatName ?? characters[this_chid]?.chat;
-    const isPendingSoloCharacterSave = !existingFileName && this_chid !== undefined && name2 !== neutralCharacterName;
-    const fileName = existingFileName || (isPendingSoloCharacterSave ? `${name2} - ${humanizedDateTime()}` : existingFileName);
     const isTemporaryCharacterSave = isCurrentCharacterChatTemporary();
+    const pendingTemporaryFileName = getTemporaryCharacterChatSaveFileName();
+    const isPendingSoloCharacterSave = !existingFileName && this_chid !== undefined && name2 !== neutralCharacterName;
+    const fileName = (isTemporaryCharacterSave && pendingTemporaryFileName)
+        ? pendingTemporaryFileName
+        : existingFileName || (isPendingSoloCharacterSave ? `${name2} - ${humanizedDateTime()}` : existingFileName);
 
     if (shouldSkipTemporaryCharacterChatSave()) {
         return CHAT_SAVE_RESULT.SAVED;
