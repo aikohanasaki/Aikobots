@@ -1466,6 +1466,32 @@ function normalizeTopChatFileName(name) {
     return String(name ?? '').replace(/\.(jsonl|sqlite)$/i, '');
 }
 
+async function getSimplePastCharacterChatNames(characterId = null) {
+    characterId = characterId ?? parseInt(this_chid);
+    if (!characters[characterId]) return [];
+
+    const response = await fetch('/api/characters/chats', {
+        method: 'POST',
+        body: JSON.stringify({ avatar_url: characters[characterId].avatar, simple: true }),
+        headers: getRequestHeaders(),
+    });
+
+    if (!response.ok) {
+        return [];
+    }
+
+    const data = await response.json();
+    if (typeof data === 'object' && data.error === true) {
+        return [];
+    }
+
+    return Object.values(data)
+        .map(chat => normalizeTopChatFileName(chat?.file_name ?? chat?.file_id))
+        .filter(Boolean)
+        .filter(onlyUnique)
+        .sort((a, b) => a.localeCompare(b));
+}
+
 function setTopChatActionDisabled(element, disabled) {
     if (!element) {
         return;
@@ -1483,6 +1509,11 @@ function saveTopChatPanelsState() {
         sidebarVisible: document.getElementById(TOP_CHAT_SIDEBAR_ID)?.classList.contains('visible') ?? false,
         connectionProfilesVisible: topChatConnectionProfiles?.classList.contains('visible') ?? false,
     }));
+}
+
+function isTopChatSidebarVisible() {
+    const sidebar = getTopChatSidebarElement();
+    return Boolean(sidebar?.classList.contains('visible') && (!sidebar.dataset.sidebarMode || sidebar.dataset.sidebarMode === 'chat'));
 }
 
 function setTopChatAvailabilityState(hasChat) {
@@ -1521,11 +1552,7 @@ async function getTopChatSelectorEntries() {
         return [];
     }
 
-    const chats = await getPastCharacterChats();
-    return chats
-        .map(chat => normalizeTopChatFileName(chat.file_name))
-        .filter(onlyUnique)
-        .sort((a, b) => a.localeCompare(b));
+    return await getSimplePastCharacterChatNames();
 }
 
 async function openTopChatById(chatId) {
@@ -2005,6 +2032,9 @@ async function refreshTopChatBarState() {
         topChatBarChatNameSelect.disabled = true;
         lastTopChatSelectorEntries = null;
         await populateTopChatSidebar();
+        //if (isTopChatSidebarVisible()) {
+        //    await populateTopChatSidebar();
+        //}
         return;
     }
 
@@ -2029,11 +2059,17 @@ async function refreshTopChatBarState() {
         lastTopChatSelectorEntries = entriesState;
     }
 
+
     // Always update disabled state and selection
     topChatBarChatNameSelect.value = currentChatId || '';
     topChatBarChatNameSelect.disabled = isChatBusy || (!entries.length && hasChat);
 
     await populateTopChatSidebar();
+
+    //if (isTopChatSidebarVisible()) {
+    //    await populateTopChatSidebar();
+   // }
+
 }
 
 function bindTopChatButton(element, handler) {
@@ -2061,8 +2097,47 @@ async function renameCurrentTopChat() {
     }
 
     const popupText = await renderTemplateAsync('chatRename');
-    const newChatName = await callGenericPopup(popupText, POPUP_TYPE.INPUT, currentChatId);
-    if (!newChatName || typeof newChatName !== 'string' || newChatName === currentChatId) {
+    const isTemporaryChat = isCurrentCharacterChatTemporary();
+    const currentDisplayName = isTemporaryChat ? getTemporaryChatDisplayName() : currentChatId;
+    const newChatName = await callGenericPopup(popupText, POPUP_TYPE.INPUT, currentDisplayName);
+    if (!newChatName || typeof newChatName !== 'string') {
+        return;
+    }
+
+    if (isTemporaryChat) {
+        const normalizedNewChatName = normalizeTemporaryChatFileName(newChatName);
+        if (
+            !normalizedNewChatName
+            || equalsIgnoreCaseAndAccents(normalizedNewChatName, currentDisplayName)
+            || equalsIgnoreCaseAndAccents(normalizedNewChatName, currentChatId)
+        ) {
+            return;
+        }
+
+        if (isUnsafeTemporaryChatFileName(normalizedNewChatName)) {
+            toastr.warning(t`Invalid chat name.`, t`Rename Chat`);
+            return;
+        }
+
+        const existingChatNames = await getSimplePastCharacterChatNames();
+        const nameAlreadyExists = existingChatNames
+            .some(chatName => equalsIgnoreCaseAndAccents(chatName, normalizedNewChatName));
+
+        if (nameAlreadyExists) {
+            toastr.warning(t`A chat with that name already exists.`, t`Rename Chat`);
+            return;
+        }
+
+        if (!setTemporaryCharacterChatPendingFileName(normalizedNewChatName)) {
+            toastr.warning(t`Invalid chat name.`, t`Rename Chat`);
+            return;
+        }
+
+        await refreshTopChatBarState();
+        return;
+    }
+
+    if (newChatName === currentChatId) {
         return;
     }
 
@@ -2150,6 +2225,9 @@ function initTopChatUi() {
     const refreshTopChatUiDebounced = debounce(() => {
         void refreshTopChatBarState();
     }, debounce_timeout.short);
+    const refreshTopChatAvailabilityDebounced = debounce(() => {
+        setTopChatAvailabilityState(Boolean(normalizeTopChatFileName(getCurrentChatId())));
+    }, debounce_timeout.short);
     const refreshTopChatConnectionProfilesDebounced = debounce(() => {
         void refreshTopChatConnectionProfiles();
     }, debounce_timeout.short);
@@ -2162,11 +2240,13 @@ function initTopChatUi() {
         clearActiveMessageEditSession();
         this_edit_mes_id = undefined;
     });
+    eventSource.on(event_types.CHAT_CREATED, refreshTopChatUiDebounced);
     eventSource.on(event_types.CHAT_DELETED, refreshTopChatUiDebounced);
+    eventSource.on(event_types.GROUP_CHAT_CREATED, refreshTopChatUiDebounced);
     eventSource.on(event_types.GROUP_CHAT_DELETED, refreshTopChatUiDebounced);
-    eventSource.on(event_types.GENERATION_STARTED, refreshTopChatUiDebounced);
-    eventSource.on(event_types.GENERATION_STOPPED, refreshTopChatUiDebounced);
-    eventSource.on(event_types.GENERATION_ENDED, refreshTopChatUiDebounced);
+    eventSource.on(event_types.GENERATION_STARTED, refreshTopChatAvailabilityDebounced);
+    eventSource.on(event_types.GENERATION_STOPPED, refreshTopChatAvailabilityDebounced);
+    eventSource.on(event_types.GENERATION_ENDED, refreshTopChatAvailabilityDebounced);
     eventSource.on(event_types.ONLINE_STATUS_CHANGED, refreshTopChatConnectionProfilesDebounced);
     eventSource.on(event_types.CONNECTION_PROFILE_LOADED, refreshTopChatConnectionProfilesDebounced);
     eventSource.on(event_types.CHATCOMPLETION_SOURCE_CHANGED, refreshTopChatConnectionProfilesDebounced);
