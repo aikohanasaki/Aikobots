@@ -1460,7 +1460,7 @@ function isTopChatInteractionBusy() {
 }
 
 function normalizeTopChatFileName(name) {
-    return String(name ?? '').replace(/\.jsonl$/i, '');
+    return String(name ?? '').replace(/\.(jsonl|sqlite)$/i, '');
 }
 
 function setTopChatActionDisabled(element, disabled) {
