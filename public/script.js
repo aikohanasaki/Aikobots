@@ -17294,6 +17294,7 @@ jQuery(async function () {
         }
 
         if (deletedCount > 0) {
+            await eventSource.emit(event_types.CHAT_DELETED, name);
             toastr.success(`Deleted ${deletedCount} selected chat(s).`);
         }
         if (failedCount > 0) {
