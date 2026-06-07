@@ -17708,20 +17708,6 @@ jQuery(async function () {
         $('#options').hide();
     });
 
-    $(document).on('click', '.compareChatButton', function (e) {
-        e.stopPropagation();
-        const rowContext = getManageChatsRowContext(this);
-        const details = getManageChatsOwnerDetails(rowContext?.ownerContext ?? manageChatsOwnerContext ?? getCurrentManageChatsOwner());
-        const filenamefull = $(this).closest('.select_chat_block_wrapper').find('.select_chat_block_filename').text();
-        const filename = filenamefull;
-
-        const avatarUrl = details.isGroup ? null : details.avatarUrl;
-        const isGroup = details.isGroup;
-
-        const url = `/compare.html?avatar_url=${encodeURIComponent(avatarUrl || '')}&file_name=${encodeURIComponent(filenamefull)}&is_group=${isGroup}`;
-        window.open(url, '_blank');
-    });
-
     $(document).on('click', '.exportChatButton, .exportRawChatButton', async function (e) {
         e.stopPropagation();
         if (manageChatsBulkSelectMode) {
