@@ -899,6 +899,8 @@ const CHAT_SAVE_RESULT = {
 };
 export { CHAT_SAVE_RESULT };
 const CHAT_SAVE_SESSION_ID_KEY = 'aikobots_chat_save_session_id';
+const TEMPORARY_CHAT_DISPLAY_NAME = '(Temporary Chat)';
+const TEMPORARY_CHAT_PENDING_NAME_STORAGE_KEY_PREFIX = 'aikobots_temporary_chat_pending_name:';
 const SYNC_CURRENT_CHAT_COOLDOWN_MS = 60_000;
 const SYNC_CURRENT_CHAT_TITLE = 'update server with current browser chat state';
 let syncCurrentChatCooldownUntil = 0;
@@ -935,6 +937,9 @@ let manageChatsOrphanSelectorInitialized = false;
 let manageChatsOrphanSelectorSyncing = false;
 let manageChatsDeletedSearchRequestId = 0;
 let manageChatsUiInitialized = false;
+let manageChatsBulkSelectMode = false;
+let manageChatsBulkActionPending = false;
+const manageChatsBulkSelectedChats = new Map();
 let optionsPopper = Popper.createPopper(document.getElementById('options_button'), document.getElementById('options'), {
     placement: 'top-start',
 });
@@ -1299,21 +1304,82 @@ export function getCurrentChatId() {
     }
 }
 
+function getTemporaryCharacterChatStorageKey(state = temporaryCharacterChat) {
+    if (!state?.chid || !state?.avatar || !state?.fileName) {
+        return '';
+    }
+
+    return `${TEMPORARY_CHAT_PENDING_NAME_STORAGE_KEY_PREFIX}${encodeURIComponent(state.chid)}:${encodeURIComponent(state.avatar)}:${encodeURIComponent(state.fileName)}`;
+}
+
+function isUnsafeTemporaryChatFileName(fileName) {
+    const normalized = String(fileName ?? '').trim();
+    return !normalized
+        || normalized === '.'
+        || normalized === '..'
+        || normalized.includes('\0')
+        || normalized.includes('/')
+        || normalized.includes('\\')
+        || /^[a-zA-Z]:/.test(normalized);
+}
+
+function normalizeTemporaryChatFileName(fileName) {
+    return normalizeTopChatFileName(String(fileName ?? '').trim());
+}
+
+function getStoredTemporaryCharacterChatPendingFileName(state) {
+    const storageKey = getTemporaryCharacterChatStorageKey(state);
+    if (!storageKey) {
+        return '';
+    }
+
+    try {
+        const storedName = normalizeTemporaryChatFileName(sessionStorage.getItem(storageKey));
+        if (isUnsafeTemporaryChatFileName(storedName)) {
+            sessionStorage.removeItem(storageKey);
+            return '';
+        }
+
+        return storedName;
+    } catch {
+        return '';
+    }
+}
+
 function setTemporaryCharacterChat(fileName = '', previousFileName = null) {
     if (selected_group || this_chid === undefined || !characters[this_chid]) {
-        temporaryCharacterChat = null;
+        clearTemporaryCharacterChat();
         return;
     }
 
-    temporaryCharacterChat = {
+    const nextTemporaryCharacterChat = {
         chid: String(this_chid),
         avatar: String(characters[this_chid].avatar || ''),
         fileName: String(fileName || ''),
         previousFileName: previousFileName === null ? String(fileName || '') : String(previousFileName || ''),
+        pendingFileName: '',
     };
+    nextTemporaryCharacterChat.pendingFileName = getStoredTemporaryCharacterChatPendingFileName(nextTemporaryCharacterChat);
+    temporaryCharacterChat = nextTemporaryCharacterChat;
+}
+
+function clearTemporaryCharacterChatPendingFileName() {
+    const storageKey = getTemporaryCharacterChatStorageKey();
+    if (storageKey) {
+        try {
+            sessionStorage.removeItem(storageKey);
+        } catch {
+            // Ignore unavailable session storage.
+        }
+    }
+
+    if (temporaryCharacterChat) {
+        temporaryCharacterChat.pendingFileName = '';
+    }
 }
 
 function clearTemporaryCharacterChat() {
+    clearTemporaryCharacterChatPendingFileName();
     temporaryCharacterChat = null;
 }
 
@@ -1334,6 +1400,46 @@ function hasUserMessageInCurrentChat() {
 
 function shouldSkipTemporaryCharacterChatSave() {
     return isCurrentCharacterChatTemporary() && !hasUserMessageInCurrentChat();
+}
+
+function getTemporaryCharacterChatPendingFileName() {
+    if (!isCurrentCharacterChatTemporary()) {
+        return '';
+    }
+
+    return normalizeTemporaryChatFileName(temporaryCharacterChat.pendingFileName);
+}
+
+function getTemporaryCharacterChatSaveFileName() {
+    return getTemporaryCharacterChatPendingFileName();
+}
+
+function getTemporaryChatDisplayName() {
+    return getTemporaryCharacterChatPendingFileName() || TEMPORARY_CHAT_DISPLAY_NAME;
+}
+
+function setTemporaryCharacterChatPendingFileName(fileName) {
+    if (!isCurrentCharacterChatTemporary()) {
+        return false;
+    }
+
+    const pendingFileName = normalizeTemporaryChatFileName(fileName);
+    if (isUnsafeTemporaryChatFileName(pendingFileName)) {
+        return false;
+    }
+
+    temporaryCharacterChat.pendingFileName = pendingFileName;
+
+    const storageKey = getTemporaryCharacterChatStorageKey();
+    if (storageKey) {
+        try {
+            sessionStorage.setItem(storageKey, pendingFileName);
+        } catch {
+            // Keep the in-memory pending name even if session storage is unavailable.
+        }
+    }
+
+    return true;
 }
 
 function setTemporaryCharacterChatPreviousFileName(previousFileName = '') {
@@ -1460,7 +1566,33 @@ function isTopChatInteractionBusy() {
 }
 
 function normalizeTopChatFileName(name) {
-    return String(name ?? '').replace(/\.jsonl$/i, '');
+    return String(name ?? '').replace(/\.(jsonl|sqlite)$/i, '');
+}
+
+async function getSimplePastCharacterChatNames(characterId = null) {
+    characterId = characterId ?? parseInt(this_chid);
+    if (!characters[characterId]) return [];
+
+    const response = await fetch('/api/characters/chats', {
+        method: 'POST',
+        body: JSON.stringify({ avatar_url: characters[characterId].avatar, simple: true }),
+        headers: getRequestHeaders(),
+    });
+
+    if (!response.ok) {
+        return [];
+    }
+
+    const data = await response.json();
+    if (typeof data === 'object' && data.error === true) {
+        return [];
+    }
+
+    return Object.values(data)
+        .map(chat => normalizeTopChatFileName(chat?.file_name ?? chat?.file_id))
+        .filter(Boolean)
+        .filter(onlyUnique)
+        .sort((a, b) => a.localeCompare(b));
 }
 
 function setTopChatActionDisabled(element, disabled) {
@@ -1480,6 +1612,11 @@ function saveTopChatPanelsState() {
         sidebarVisible: document.getElementById(TOP_CHAT_SIDEBAR_ID)?.classList.contains('visible') ?? false,
         connectionProfilesVisible: topChatConnectionProfiles?.classList.contains('visible') ?? false,
     }));
+}
+
+function isTopChatSidebarVisible() {
+    const sidebar = getTopChatSidebarElement();
+    return Boolean(sidebar?.classList.contains('visible') && (!sidebar.dataset.sidebarMode || sidebar.dataset.sidebarMode === 'chat'));
 }
 
 function setTopChatAvailabilityState(hasChat) {
@@ -1518,11 +1655,7 @@ async function getTopChatSelectorEntries() {
         return [];
     }
 
-    const chats = await getPastCharacterChats();
-    return chats
-        .map(chat => normalizeTopChatFileName(chat.file_name))
-        .filter(onlyUnique)
-        .sort((a, b) => a.localeCompare(b));
+    return await getSimplePastCharacterChatNames();
 }
 
 async function openTopChatById(chatId) {
@@ -1991,6 +2124,8 @@ async function refreshTopChatBarState() {
     const currentChatId = normalizeTopChatFileName(getCurrentChatId());
     const hasChat = Boolean(currentChatId);
     const isChatBusy = isTopChatInteractionBusy();
+    const isTemporaryChat = isCurrentCharacterChatTemporary();
+    const currentChatDisplayName = isTemporaryChat ? getTemporaryChatDisplayName() : currentChatId;
     setTopChatAvailabilityState(hasChat);
 
     if (!topChatBarChatNameSelect) {
@@ -2002,13 +2137,39 @@ async function refreshTopChatBarState() {
         topChatBarChatNameSelect.disabled = true;
         lastTopChatSelectorEntries = null;
         await populateTopChatSidebar();
+        //if (isTopChatSidebarVisible()) {
+        //    await populateTopChatSidebar();
+        //}
         return;
     }
 
     const entries = await getTopChatSelectorEntries();
     const entriesState = JSON.stringify(entries.length === 0 ? [currentChatId] : entries);
     const hasChanged = entriesState !== lastTopChatSelectorEntries;
+    if (!entries.length) {
+        const option = document.createElement('option');
+        option.value = currentChatId;
+        option.textContent = currentChatDisplayName;
+        option.selected = true;
+        topChatBarChatNameSelect.append(option);
+        topChatBarChatNameSelect.disabled = true;
+    } else {
+        if (isTemporaryChat) {
+            const option = document.createElement('option');
+            option.value = currentChatId;
+            option.textContent = currentChatDisplayName;
+            option.selected = true;
+            topChatBarChatNameSelect.append(option);
+        }
 
+        for (const entry of entries) {
+            const option = document.createElement('option');
+            option.value = entry;
+            option.textContent = entry;
+            option.selected = !isTemporaryChat && entry === currentChatId;
+            topChatBarChatNameSelect.append(option);
+        }
+    }
     if (hasChanged) {
         topChatBarChatNameSelect.innerHTML = '';
         if (!entries.length) {
@@ -2026,11 +2187,17 @@ async function refreshTopChatBarState() {
         lastTopChatSelectorEntries = entriesState;
     }
 
+
     // Always update disabled state and selection
     topChatBarChatNameSelect.value = currentChatId || '';
     topChatBarChatNameSelect.disabled = isChatBusy || (!entries.length && hasChat);
 
     await populateTopChatSidebar();
+
+    //if (isTopChatSidebarVisible()) {
+    //    await populateTopChatSidebar();
+   // }
+
 }
 
 function bindTopChatButton(element, handler) {
@@ -2058,8 +2225,48 @@ async function renameCurrentTopChat() {
     }
 
     const popupText = await renderTemplateAsync('chatRename');
-    const newChatName = await callGenericPopup(popupText, POPUP_TYPE.INPUT, currentChatId);
-    if (!newChatName || typeof newChatName !== 'string' || newChatName === currentChatId) {
+    const isTemporaryChat = isCurrentCharacterChatTemporary();
+    const currentDisplayName = isTemporaryChat ? getTemporaryChatDisplayName() : currentChatId;
+    const newChatName = await callGenericPopup(popupText, POPUP_TYPE.INPUT, currentDisplayName);
+    if (!newChatName || typeof newChatName !== 'string') {
+        return;
+    }
+
+    if (isTemporaryChat) {
+        const normalizedNewChatName = normalizeTemporaryChatFileName(newChatName);
+        if (
+            !normalizedNewChatName
+            || equalsIgnoreCaseAndAccents(normalizedNewChatName, currentDisplayName)
+            || equalsIgnoreCaseAndAccents(normalizedNewChatName, currentChatId)
+        ) {
+            return;
+        }
+
+        if (isUnsafeTemporaryChatFileName(normalizedNewChatName)) {
+            toastr.warning(t`Invalid chat name.`, t`Rename Chat`);
+            return;
+        }
+
+        const existingChats = await getPastCharacterChats();
+        const nameAlreadyExists = existingChats
+            .map(chat => normalizeTopChatFileName(chat.file_name))
+            .some(chatName => equalsIgnoreCaseAndAccents(chatName, normalizedNewChatName));
+
+        if (nameAlreadyExists) {
+            toastr.warning(t`A chat with that name already exists.`, t`Rename Chat`);
+            return;
+        }
+
+        if (!setTemporaryCharacterChatPendingFileName(normalizedNewChatName)) {
+            toastr.warning(t`Invalid chat name.`, t`Rename Chat`);
+            return;
+        }
+
+        await refreshTopChatBarState();
+        return;
+    }
+
+    if (newChatName === currentChatId) {
         return;
     }
 
@@ -2147,6 +2354,9 @@ function initTopChatUi() {
     const refreshTopChatUiDebounced = debounce(() => {
         void refreshTopChatBarState();
     }, debounce_timeout.short);
+    const refreshTopChatAvailabilityDebounced = debounce(() => {
+        setTopChatAvailabilityState(Boolean(normalizeTopChatFileName(getCurrentChatId())));
+    }, debounce_timeout.short);
     const refreshTopChatConnectionProfilesDebounced = debounce(() => {
         void refreshTopChatConnectionProfiles();
     }, debounce_timeout.short);
@@ -2159,11 +2369,13 @@ function initTopChatUi() {
         clearActiveMessageEditSession();
         this_edit_mes_id = undefined;
     });
+    eventSource.on(event_types.CHAT_CREATED, refreshTopChatUiDebounced);
     eventSource.on(event_types.CHAT_DELETED, refreshTopChatUiDebounced);
+    eventSource.on(event_types.GROUP_CHAT_CREATED, refreshTopChatUiDebounced);
     eventSource.on(event_types.GROUP_CHAT_DELETED, refreshTopChatUiDebounced);
-    eventSource.on(event_types.GENERATION_STARTED, refreshTopChatUiDebounced);
-    eventSource.on(event_types.GENERATION_STOPPED, refreshTopChatUiDebounced);
-    eventSource.on(event_types.GENERATION_ENDED, refreshTopChatUiDebounced);
+    eventSource.on(event_types.GENERATION_STARTED, refreshTopChatAvailabilityDebounced);
+    eventSource.on(event_types.GENERATION_STOPPED, refreshTopChatAvailabilityDebounced);
+    eventSource.on(event_types.GENERATION_ENDED, refreshTopChatAvailabilityDebounced);
     eventSource.on(event_types.ONLINE_STATUS_CHANGED, refreshTopChatConnectionProfilesDebounced);
     eventSource.on(event_types.CONNECTION_PROFILE_LOADED, refreshTopChatConnectionProfilesDebounced);
     eventSource.on(event_types.CHATCOMPLETION_SOURCE_CHANGED, refreshTopChatConnectionProfilesDebounced);
@@ -10902,9 +11114,12 @@ export async function saveChat({ chatName, withMetadata, mesId, force = false, s
 
     const metadata = sanitizeChatMetadataForSave({ ...chat_metadata, ...(withMetadata || {}) });
     const existingFileName = chatName ?? characters[this_chid]?.chat;
-    const isPendingSoloCharacterSave = !existingFileName && this_chid !== undefined && name2 !== neutralCharacterName;
-    const fileName = existingFileName || (isPendingSoloCharacterSave ? `${name2} - ${humanizedDateTime()}` : existingFileName);
     const isTemporaryCharacterSave = isCurrentCharacterChatTemporary();
+    const pendingTemporaryFileName = getTemporaryCharacterChatSaveFileName();
+    const isPendingSoloCharacterSave = !existingFileName && this_chid !== undefined && name2 !== neutralCharacterName;
+    const fileName = (isTemporaryCharacterSave && pendingTemporaryFileName)
+        ? pendingTemporaryFileName
+        : existingFileName || (isPendingSoloCharacterSave ? `${name2} - ${humanizedDateTime()}` : existingFileName);
 
     if (shouldSkipTemporaryCharacterChatSave()) {
         return CHAT_SAVE_RESULT.SAVED;
@@ -12355,6 +12570,137 @@ function getManageChatsRowContext(element) {
     };
 }
 
+function normalizeManageChatsBulkFileName(fileName) {
+    return String(fileName || '').trim().replace(/\.jsonl$/i, '');
+}
+
+function cloneManageChatsRowContext(rowContext) {
+    if (!rowContext) {
+        return null;
+    }
+
+    return {
+        rowType: rowContext.rowType || '',
+        orphanKey: rowContext.orphanKey || null,
+        groupId: rowContext.groupId || null,
+        ownerContext: normalizeManageChatsOwner(rowContext.ownerContext),
+    };
+}
+
+function getManageChatsBulkSelectionKey(rowContext, fileName) {
+    const normalizedContext = cloneManageChatsRowContext(rowContext);
+    return [
+        normalizeManageChatsBulkFileName(fileName),
+        normalizedContext?.rowType || '',
+        normalizedContext?.orphanKey || '',
+        normalizedContext?.groupId || '',
+        serializeManageChatsOwnerValue(normalizedContext?.ownerContext),
+    ].join('\u0000');
+}
+
+function getManageChatsBulkRowData(element) {
+    const chatBlock = $(element).closest('.select_chat_block');
+    if (!chatBlock.length) {
+        return null;
+    }
+
+    const fileName = normalizeManageChatsBulkFileName(
+        chatBlock.attr('file_name') || chatBlock.find('.select_chat_block_filename').text(),
+    );
+    if (!fileName) {
+        return null;
+    }
+
+    const rowContext = getManageChatsRowContext(chatBlock) ?? {
+        ownerContext: getManageChatsOwnerFromElement(chatBlock) ?? manageChatsOwnerContext ?? getCurrentManageChatsOwner(),
+    };
+    const normalizedContext = cloneManageChatsRowContext(rowContext);
+    const key = getManageChatsBulkSelectionKey(normalizedContext, fileName);
+
+    return {
+        key,
+        fileName,
+        rowContext: normalizedContext,
+    };
+}
+
+function updateManageChatsBulkActionsUi() {
+    const selectedCount = manageChatsBulkSelectedChats.size;
+    $('#select_chat_popup').toggleClass('manage_chats_bulk_select_mode', manageChatsBulkSelectMode);
+    $('#manage_chats_bulk_select_button')
+        .toggleClass('active', manageChatsBulkSelectMode)
+        .attr('aria-pressed', String(manageChatsBulkSelectMode))
+        .prop('disabled', manageChatsBulkActionPending);
+    $('#select_chat_search').toggle(!manageChatsBulkSelectMode);
+    $('#manage_chats_bulk_actions').css('display', manageChatsBulkSelectMode ? 'flex' : 'none');
+    $('#manage_chats_bulk_selected_count').text(`${selectedCount} selected`);
+    $('#manage_chats_bulk_actions button').prop('disabled', manageChatsBulkActionPending || selectedCount === 0);
+    $('#manage_chats_bulk_cancel').prop('disabled', manageChatsBulkActionPending);
+}
+
+function syncManageChatsBulkRowSelection(element) {
+    const chatBlock = $(element).closest('.select_chat_block');
+    if (!chatBlock.length) {
+        return;
+    }
+
+    const rowData = getManageChatsBulkRowData(chatBlock);
+    const isSelected = manageChatsBulkSelectMode && rowData && manageChatsBulkSelectedChats.has(rowData.key);
+    chatBlock
+        .toggleClass('manage_chats_bulk_selected', !!isSelected)
+        .attr('aria-selected', String(!!isSelected));
+}
+
+function syncManageChatsBulkRowsSelection() {
+    $('#select_chat_div .select_chat_block').each((_, element) => syncManageChatsBulkRowSelection(element));
+}
+
+function setManageChatsBulkSelectMode(enabled) {
+    manageChatsBulkSelectMode = !!enabled;
+    manageChatsBulkSelectedChats.clear();
+    syncManageChatsBulkRowsSelection();
+    updateManageChatsBulkActionsUi();
+}
+
+function resetManageChatsBulkSelectMode() {
+    manageChatsBulkActionPending = false;
+    setManageChatsBulkSelectMode(false);
+}
+
+function toggleManageChatsBulkRowSelection(element) {
+    const rowData = getManageChatsBulkRowData(element);
+    if (!rowData) {
+        return;
+    }
+
+    if (manageChatsBulkSelectedChats.has(rowData.key)) {
+        manageChatsBulkSelectedChats.delete(rowData.key);
+    } else {
+        manageChatsBulkSelectedChats.set(rowData.key, rowData);
+    }
+
+    syncManageChatsBulkRowSelection(element);
+    updateManageChatsBulkActionsUi();
+}
+
+function getManageChatsBulkSelectedItems() {
+    return Array.from(manageChatsBulkSelectedChats.values()).map(item => ({
+        fileName: item.fileName,
+        rowContext: cloneManageChatsRowContext(item.rowContext),
+    }));
+}
+
+export function handleManageChatsBulkRowClick(element, event) {
+    if (!manageChatsBulkSelectMode || !$(element).hasClass('select_chat_block')) {
+        return false;
+    }
+
+    event?.preventDefault();
+    event?.stopPropagation();
+    toggleManageChatsBulkRowSelection(element);
+    return true;
+}
+
 function makeOrphanAvatarUrl(orphanKey) {
     return orphanKey ? `${String(orphanKey)}.png` : '';
 }
@@ -13389,6 +13735,7 @@ function appendManageChatsRow(target, chat, options = {}) {
     }
 
     target.append(template);
+    syncManageChatsBulkRowSelection(chatBlock);
 
     if (Array.isArray(options.highlightNames) && options.highlightNames.includes(chat.file_name)) {
         const templateOffset = template.offset().top - template.parent().offset().top;
@@ -13417,6 +13764,7 @@ function filterManageChatsChats(chats, searchQuery, extraTexts = []) {
 async function displayDeletedCharacterChats(orphanKey = manageChatsSelectedOrphanKey, highlightNames = []) {
     manageChatsMode = 'deleted';
     initManageChatsUi();
+    resetManageChatsBulkSelectMode();
     refreshManageChatsModeUi();
     syncManageChatsBackupsBrowser({ enabled: false });
     try {
@@ -13544,6 +13892,7 @@ async function displayDeletedCharacterChats(orphanKey = manageChatsSelectedOrpha
 export async function displayPastChats(hightlightNames = [], ownerContext = getCurrentManageChatsOwner()) {
     manageChatsMode = 'owners';
     initManageChatsUi();
+    resetManageChatsBulkSelectMode();
     refreshManageChatsModeUi();
     const details = getManageChatsOwnerDetails(ownerContext);
     populateManageChatsOwnerSelect(details.ownerContext);
@@ -17002,8 +17351,110 @@ jQuery(async function () {
         }
     }
 
+    function setManageChatsBulkActionPending(pending) {
+        manageChatsBulkActionPending = !!pending;
+        updateManageChatsBulkActionsUi();
+    }
+
+    async function handleManageChatsBulkExport(format) {
+        const selectedItems = getManageChatsBulkSelectedItems();
+        if (!selectedItems.length) {
+            toastr.warning(t`Select one or more chats first.`);
+            return;
+        }
+
+        setManageChatsBulkActionPending(true);
+        let failedCount = 0;
+
+        try {
+            for (const item of selectedItems) {
+                try {
+                    await exportManageChatsChat(item.rowContext, item.fileName, format);
+                } catch (error) {
+                    failedCount++;
+                    console.error('Failed to export selected chat:', item.fileName, error);
+                }
+            }
+        } finally {
+            setManageChatsBulkActionPending(false);
+        }
+
+        if (failedCount > 0) {
+            toastr.error(`Failed to export ${failedCount} selected chat(s).`);
+            return;
+        }
+
+        toastr.success(`Exported ${selectedItems.length} selected chat(s).`);
+    }
+
+    async function handleManageChatsBulkDelete() {
+        const selectedItems = getManageChatsBulkSelectedItems();
+        if (!selectedItems.length) {
+            toastr.warning(t`Select one or more chats first.`);
+            return;
+        }
+
+        const result = await callGenericPopup(
+            `<h3>${t`Delete selected chat files?`}</h3><p>${selectedItems.length} selected chat(s) will be deleted.</p>`,
+            POPUP_TYPE.CONFIRM,
+        );
+        if (result !== POPUP_RESULT.AFFIRMATIVE) {
+            return;
+        }
+
+        setManageChatsBulkActionPending(true);
+        showLoader();
+        let deletedCount = 0;
+        let failedCount = 0;
+
+        try {
+            for (const item of selectedItems) {
+                try {
+                    await deleteManageChatsChat(item.rowContext, item.fileName);
+                    deletedCount++;
+                } catch (error) {
+                    failedCount++;
+                    console.error('Failed to delete selected chat:', item.fileName, error);
+                }
+            }
+
+            setManageChatsBulkSelectMode(false);
+            await refreshManageChatsPopup();
+        } finally {
+            setManageChatsBulkActionPending(false);
+            hideLoader();
+        }
+
+        if (deletedCount > 0) {
+            await eventSource.emit(event_types.CHAT_DELETED, name);
+            toastr.success(`Deleted ${deletedCount} selected chat(s).`);
+        }
+        if (failedCount > 0) {
+            toastr.error(`Failed to delete ${failedCount} selected chat(s).`);
+        }
+    }
+
+    $('#manage_chats_bulk_select_button').on('click', function () {
+        setManageChatsBulkSelectMode(!manageChatsBulkSelectMode);
+    });
+
+    $('#manage_chats_bulk_cancel').on('click', function () {
+        setManageChatsBulkSelectMode(false);
+    });
+
+    $('.manage_chats_bulk_export').on('click', async function () {
+        const format = $(this).data('format') || 'txt';
+        await handleManageChatsBulkExport(format);
+    });
+
+    $('#manage_chats_bulk_delete').on('click', handleManageChatsBulkDelete);
+
     $(document).on('click', '.PastChat_cross', async function (e, { fromSlashCommand = false } = {}) {
         e.stopPropagation();
+        if (manageChatsBulkSelectMode && !fromSlashCommand) {
+            return;
+        }
+
         chat_file_for_del = $(this).attr('file_name');
         const rowContext = getManageChatsRowContext(this) ?? { ownerContext: getManageChatsOwnerFromElement(this) ?? manageChatsOwnerContext ?? getCurrentManageChatsOwner() };
         console.debug('detected cross click for' + chat_file_for_del);
@@ -17223,6 +17674,10 @@ jQuery(async function () {
 
     $(document).on('click', '.renameChatButton', async function (e) {
         e.stopPropagation();
+        if (manageChatsBulkSelectMode) {
+            return;
+        }
+
         const rowContext = getManageChatsRowContext(this) ?? { ownerContext: getManageChatsOwnerFromElement(this) ?? manageChatsOwnerContext ?? getCurrentManageChatsOwner() };
         const oldFileNameFull = $(this).closest('.select_chat_block_wrapper').find('.select_chat_block_filename').text();
         const oldFileName = oldFileNameFull;
@@ -17269,6 +17724,10 @@ jQuery(async function () {
 
     $(document).on('click', '.exportChatButton, .exportRawChatButton', async function (e) {
         e.stopPropagation();
+        if (manageChatsBulkSelectMode) {
+            return;
+        }
+
         const format = $(this).data('format') || 'txt';
         const rowContext = getManageChatsRowContext(this) ?? { ownerContext: getManageChatsOwnerFromElement(this) ?? manageChatsOwnerContext ?? getCurrentManageChatsOwner() };
         const filenamefull = $(this).closest('.select_chat_block_wrapper').find('.select_chat_block_filename').text();
@@ -17531,6 +17990,7 @@ jQuery(async function () {
     //////////////////////////////////////////////////////////////
 
     $('#select_chat_cross').on('click', function () {
+        resetManageChatsBulkSelectMode();
         $('#shadow_select_chat_popup').transition({
             opacity: 0,
             duration: animation_duration,
