@@ -406,22 +406,26 @@ export async function resolveSortedEntriesPayload(user, body = {}, options = {})
     const visibleCharacterLore = (await Promise.all(visibleCharacterWorldNames
         .map(worldName => readEntries(user, worldName)))).flat();
 
-    const hiddenCharacterLore = (await Promise.all(hiddenCharacterWorldNames
+    const hiddenCharacterLoreResults = await Promise.all(hiddenCharacterWorldNames
         .map(async worldName => {
             if (!hasLorebook(user, worldName)) {
                 console.warn(`[WI] Hidden lorebook "${worldName}" not found for character "${currentCharacterFilename}". Skipping.`);
-                return [];
+                return { worldName, entries: [], included: false };
             }
 
             try {
-                return await readEntries(user, worldName);
+                return { worldName, entries: await readEntries(user, worldName), included: true };
             } catch (error) {
                 if (error instanceof LorebookRepositoryError && error.type === 'LorebookNotFound') {
-                    return [];
+                    return { worldName, entries: [], included: false };
                 }
                 throw error;
             }
-        }))).flat();
+        }));
+    const hiddenCharacterLorebookNames = hiddenCharacterLoreResults
+        .filter(result => result.included)
+        .map(result => result.worldName);
+    const hiddenCharacterLore = hiddenCharacterLoreResults.flatMap(result => result.entries);
 
     const characterLore = [...visibleCharacterLore, ...hiddenCharacterLore];
 
@@ -477,6 +481,7 @@ export async function resolveSortedEntriesPayload(user, body = {}, options = {})
     return {
         globalLore,
         characterLore,
+        hiddenCharacterLorebookNames,
         chatLore,
         personaLore,
         entries,
