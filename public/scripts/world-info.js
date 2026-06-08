@@ -6339,9 +6339,16 @@ export async function getEffectiveHiddenCharacterLorebooks({
         }
 
         const data = await response.json();
-        const hiddenCharacterLorebooks = (Array.isArray(data?.characterLore) ? data.characterLore : [])
-            .map(entry => String(entry?.world || '').trim())
-            .filter(worldName => worldName && !visibleCharacterBooks.has(worldName));
+        const namesOnlyHiddenLorebooks = Array.isArray(data?.hiddenCharacterLorebookNames)
+            ? data.hiddenCharacterLorebookNames
+                .map(worldName => String(worldName || '').trim())
+                .filter(worldName => worldName && !visibleCharacterBooks.has(worldName))
+            : [];
+        const hiddenCharacterLorebooks = namesOnlyHiddenLorebooks.length > 0
+            ? namesOnlyHiddenLorebooks
+            : (Array.isArray(data?.characterLore) ? data.characterLore : [])
+                .map(entry => String(entry?.world || '').trim())
+                .filter(worldName => worldName && !visibleCharacterBooks.has(worldName));
 
         return normalizeArray(hiddenCharacterLorebooks);
     } catch (error) {
