@@ -476,19 +476,7 @@ export function normalizeLongChatHandlingSettings(settings = power_user) {
 function syncLongChatHandlingControls() {
     const { displayCount } = normalizeLongChatHandlingSettings();
 
-    $('#long_chat_display_count').attr({
-        min: 0,
-        max: 20,
-        step: 0.01,
-    });
-    $('#long_chat_display_count_counter').attr({
-        min: LONG_CHAT_DISPLAY_MIN,
-        max: LONG_CHAT_DISPLAY_MAX,
-        step: 1,
-    });
-
-    $('#long_chat_display_count').val(Math.log2(displayCount));
-    $('#long_chat_display_count_counter').val(displayCount);
+  
 }
 
 let themes = [];
@@ -3923,20 +3911,7 @@ jQuery(() => {
         saveSettingsDebounced();
     });
 
-    $('#long_chat_display_count').on('input', function () {
-        const sliderValue = Number($(this).val());
-        const displayCount = Math.round(Math.pow(2, sliderValue));
-        power_user.long_chat_display_count = displayCount;
-        $('#long_chat_display_count_counter').val(displayCount);
-        saveSettingsDebounced();
-    });
 
-    $('#long_chat_display_count_counter').on('input', function () {
-        const displayCount = Number($(this).val());
-        power_user.long_chat_display_count = displayCount;
-        $('#long_chat_display_count').val(Math.log2(displayCount));
-        saveSettingsDebounced();
-    });
 
     $('#streaming_fps').on('input', function () {
         power_user.streaming_fps = Number($('#streaming_fps').val());
