@@ -6238,12 +6238,13 @@ export function addOneMessage(mes, { type = 'normal', insertAfter = null, scroll
     // if mes.extra.uses_system_ui is true, set an override on the sanitizer options
     const sanitizerOverrides = mes.extra?.uses_system_ui ? { MESSAGE_ALLOW_SYSTEM_UI: true } : {};
 
+    const mesId = forceId ?? (chat.indexOf(mes) !== -1 ? chat.indexOf(mes) : chat.length - 1);
     messageText = messageFormatting(
         messageText,
         mes.name,
         isSystem,
         mes.is_user,
-        chat.indexOf(mes),
+        mesId,
         sanitizerOverrides,
         false,
     );
@@ -6251,7 +6252,7 @@ export function addOneMessage(mes, { type = 'normal', insertAfter = null, scroll
     let bookmarkLink = mes?.extra?.bookmark_link ?? '';
 
     let params = {
-        mesId: forceId ?? chat.length - 1,
+        mesId: mesId,
         swipeId: mes.swipe_id ?? 0,
         characterName: mes.name,
         isUser: mes.is_user,
@@ -6276,38 +6277,59 @@ export function addOneMessage(mes, { type = 'normal', insertAfter = null, scroll
         const targetContainer = container || chatElement;
         if (insertAfter == null && insertBefore == null) {
             const currentMesId = params.mesId;
-            const existingMessages = targetContainer.children('.mes').toArray();
-            let inserted = false;
+            const existing = targetContainer.children(`.mes[mesid="${currentMesId}"]`);
+            const existingInChat = (container && container !== chatElement) ? chatElement.children(`.mes[mesid="${currentMesId}"]`) : $();
 
-            // Sort existing messages by mesid to be sure we iterate in order
-            existingMessages.sort((a, b) => parseInt($(a).attr('mesid')) - parseInt($(b).attr('mesid')));
-
-            for (let i = existingMessages.length - 1; i >= 0; i--) {
-                const el = existingMessages[i];
-                const elMesId = parseInt($(el).attr('mesid'));
-                if (elMesId === currentMesId) {
-                    $(el).replaceWith(renderedMessage);
-                    inserted = true;
-                    break;
-                } else if (elMesId < currentMesId) {
-                    $(renderedMessage).insertAfter(el);
-                    inserted = true;
-                    break;
+            if (existing.length > 0 || existingInChat.length > 0) {
+                // If message already exists in target container, replace it
+                if (existing.length > 0) {
+                    existing.not(existing.last()).remove();
+                    existing.last().replaceWith(renderedMessage);
                 }
-            }
 
-            if (!inserted) {
-                if (existingMessages.length > 0) {
-                    const firstId = parseInt($(existingMessages[0]).attr('mesid'));
-                    if (currentMesId < firstId) {
-                        targetContainer.prepend(renderedMessage);
-                        inserted = true;
+                // If message already exists in the main chat but we are targeting a different container
+                if (existingInChat.length > 0) {
+                    existingInChat.remove();
+
+                    // If we didn't already replace it in the target container, append it now
+                    if (existing.length === 0) {
+                        targetContainer.append(renderedMessage);
                     }
                 }
-            }
+            } else {
+                const existingMessages = targetContainer.children('.mes').toArray();
+                let inserted = false;
 
-            if (!inserted) {
-                targetContainer.append(renderedMessage);
+                // Sort existing messages by mesid to be sure we iterate in order
+                existingMessages.sort((a, b) => {
+                    const idA = parseInt(String($(a).attr('mesid')));
+                    const idB = parseInt(String($(b).attr('mesid')));
+                    return (isNaN(idA) ? -1 : idA) - (isNaN(idB) ? -1 : idB);
+                });
+
+                for (let i = existingMessages.length - 1; i >= 0; i--) {
+                    const el = existingMessages[i];
+                    const elMesId = parseInt(String($(el).attr('mesid')));
+                    if (!isNaN(elMesId) && elMesId < currentMesId) {
+                        $(renderedMessage).insertAfter(el);
+                        inserted = true;
+                        break;
+                    }
+                }
+
+                if (!inserted) {
+                    if (existingMessages.length > 0) {
+                        const firstId = parseInt(String($(existingMessages[0]).attr('mesid')));
+                        if (currentMesId < firstId) {
+                            targetContainer.prepend(renderedMessage);
+                            inserted = true;
+                        }
+                    }
+                }
+
+                if (!inserted) {
+                    targetContainer.append(renderedMessage);
+                }
             }
         }
         else if (insertAfter != null) {
@@ -6320,11 +6342,10 @@ export function addOneMessage(mes, { type = 'normal', insertAfter = null, scroll
     }
 
     // Callers push the new message to chat before calling addOneMessage
-    const newMessageId = typeof forceId == 'number' ? forceId : chat.length - 1;
-    mergeLoadedRange(newMessageId, newMessageId);
+    mergeLoadedRange(mesId, mesId);
 
     const targetLookup = container || chatElement;
-    const newMessage = targetLookup.find(`[mesid="${newMessageId}"]`);
+    const newMessage = targetLookup.find(`[mesid="${mesId}"]`);
     const isSmallSys = mes?.extra?.isSmallSys;
 
     if (isSmallSys === true) {
@@ -6341,8 +6362,7 @@ export function addOneMessage(mes, { type = 'normal', insertAfter = null, scroll
     });
 
     if (type === 'swipe') {
-        const messageId = forceId ?? chat.length - 1;
-        const swipeMessage = chatElement.find(`[mesid="${messageId}"]`);
+        const swipeMessage = chatElement.find(`[mesid="${mesId}"]`);
         swipeMessage.attr('swipeid', params.swipeId);
         swipeMessage.find('.mes_text').html(messageText).attr('title', title);
         swipeMessage.find('.timestamp').text(timestamp).attr('title', `${params.extra.api} - ${params.extra.model}`);
@@ -6367,9 +6387,9 @@ export function addOneMessage(mes, { type = 'normal', insertAfter = null, scroll
     addCopyToCodeBlocks(newMessage);
 
     // Set the swipes counter for past messages, only visible if 'Show Swipes on All Message' is enabled
-    if (!params.isUser && newMessageId !== 0 && newMessageId !== chat.length - 1) {
-        const swipesNum = chat[newMessageId].swipes?.length;
-        const swipeId = chat[newMessageId].swipe_id + 1;
+    if (!params.isUser && mesId !== 0 && mesId !== chat.length - 1) {
+        const swipesNum = chat[mesId].swipes?.length;
+        const swipeId = chat[mesId].swipe_id + 1;
         newMessage.find('.swipes-counter').text(formatSwipeCounter(swipeId, swipesNum));
     }
 
@@ -6386,9 +6406,13 @@ export function addOneMessage(mes, { type = 'normal', insertAfter = null, scroll
         scrollChatToBottom({ waitForFrame: true });
     }
 
-    applyCharacterTagsToMessageDivs({ mesIds: newMessageId });
+    applyCharacterTagsToMessageDivs({ mesIds: mesId });
     updateEditArrowClasses();
-}
+
+    if (!container) {
+        syncVisibleChatRangeFromDom();
+    }
+    }
 
 /**
  * Returns the URL of the avatar for the given character Id.
@@ -7993,12 +8017,20 @@ class TempResponseLength {
  */
 function removeLastMessage() {
     return new Promise((resolve) => {
-        const lastMes = chatElement.children('.mes').last();
+        const expectedId = chat.length;
+        let lastMes = chatElement.children(`.mes[mesid="${expectedId}"]`);
+
+        if (lastMes.length === 0) {
+            lastMes = chatElement.children('.mes').last();
+        }
+
         if (lastMes.length === 0) {
             return resolve();
         }
+
         lastMes.hide(animation_duration, function () {
             $(this).remove();
+            syncVisibleChatRangeFromDom();
             resolve();
         });
     });
@@ -9592,7 +9624,7 @@ export function removeMacros(str) {
  */
 export async function sendMessageAsUser(messageText, messageBias, insertAt = null, compact = false, name = name1, avatar = user_avatar) {
     messageText = getRegexedString(messageText, regex_placement.USER_INPUT);
-
+    console.log("sendMessageAsUser: "+insertAt);
     const message = {
         name: name,
         is_user: true,
