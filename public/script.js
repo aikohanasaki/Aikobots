@@ -4863,15 +4863,7 @@ function updateHistoryControls() {
         chatElement.prepend(`<button id="${HYDRATE_CHAT_CONTROL_ID}" type="button" class="chat_history_button">Load full chat for editing</button>`);
         chatElement.prepend(`<button id="${RETURN_TO_TAIL_CONTROL_ID}" type="button" class="chat_history_button">Return to live tail</button>`);
     }
-
-    if (visibleChatStartId > 0) {
-        chatElement.prepend(`<button id="${TOP_HISTORY_CONTROL_ID}" type="button" class="chat_history_button">Show more messages</button>`);
     }
-
-    if (visibleChatEndId < chat.length - 1) {
-        chatElement.append(`<button id="${BOTTOM_HISTORY_CONTROL_ID}" type="button" class="chat_history_button">Show newer messages</button>`);
-    }
-}
 
 function finalizeRenderedMessageWindow() {
     chatElement.find('.mes').removeClass('last_mes');
@@ -17206,7 +17198,7 @@ jQuery(async function () {
     }
 
     const chatElementScroll = document.getElementById('chat');
-    const chatScrollHandler = function () {
+    const chatScrollHandler = async function () {
         if (power_user.waifuMode || isRunningHistoryWindowNavigation || isHistoryWindowNavigationQueued || isChatSaving) {
             return;
         }
@@ -17225,18 +17217,16 @@ jQuery(async function () {
 
         // Infinite scroll: load more messages when near top
         if (chatElementScroll.scrollTop < 500) {
-            const showMoreButton = document.getElementById(TOP_HISTORY_CONTROL_ID);
-            if (showMoreButton && !showMoreButton.disabled) {
-                showMoreMessages();
+            if (getFirstDisplayedMessageId() > 0) {
+                await showMoreMessages();
             }
         }
 
         // Infinite scroll: load newer messages when near bottom
         const scrollFromBottom = chatElementScroll.scrollHeight - chatElementScroll.clientHeight - chatElementScroll.scrollTop;
         if (scrollFromBottom < 500) {
-            const showNewerButton = document.getElementById(BOTTOM_HISTORY_CONTROL_ID);
-            if (showNewerButton && !showNewerButton.disabled) {
-                showNewerMessages();
+            if (getLastDisplayedMessageId() < getTotalChatMessages() - 1) {
+                await showNewerMessages();
             }
         }
     };
