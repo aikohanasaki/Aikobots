@@ -181,45 +181,51 @@ export class DataMaidService {
     static async recombineAllUsersSplitChats() {
         const { getAllUserHandles, getUserDirectories } = await import('../users.js');
         const handles = await getAllUserHandles();
-        const allPaths = [];
-        const tasks = [];
+        const allEntries = [];
 
         for (const handle of handles) {
             const directories = getUserDirectories(handle);
             const dataMaid = new DataMaidService(handle, directories);
             const paths = await dataMaid.getSplitChatPaths();
-            if (paths.length > 0) {
-                allPaths.push(...paths);
-                tasks.push({ dataMaid, handle, paths });
+            for (const entryPath of paths) {
+                const stat = await fs.promises.stat(entryPath);
+                allEntries.push({
+                    path: entryPath,
+                    dataMaid,
+                    time: stat.birthtimeMs || stat.mtimeMs,
+                });
             }
         }
 
-        if (allPaths.length === 0) {
+        if (allEntries.length === 0) {
             return;
         }
 
-        console.info(`[Data Maid] Found ${allPaths.length} split chats to recombine across ${tasks.length} users:`);
-        for (const path of allPaths) {
-            console.info(`  - ${path}`);
+        allEntries.sort((a, b) => a.time - b.time);
+
+        console.info(`[Data Maid] Found ${allEntries.length} split chats to recombine:`);
+        for (const entry of allEntries) {
+            console.info(`  - ${entry.path}`);
         }
 
         let totalConverted = 0;
 
-        for (const { dataMaid, handle, paths } of tasks) {
-            const count = await dataMaid.recombineAllSplitChats(paths);
+        for (const { dataMaid, path: entryPath } of allEntries) {
+            const count = await dataMaid.recombineAllSplitChats([entryPath]);
             totalConverted += count;
         }
 
         if (totalConverted > 0) {
             console.info(`[Data Maid] Successfully recombined and migrated ${totalConverted} split chats to SQLite.`);
         }
-        }
+    }
 
-        static async migrateAllUsersChatsToSqlite() {
+    static async migrateAllUsersChatsToSqlite() {
         const { getAllUserHandles, getUserDirectories } = await import('../users.js');
         const handles = await getAllUserHandles();
         let totalMigrated = 0;
         let totalExisting = 0;
+        const allEntries = [];
 
         for (const handle of handles) {
             const directories = getUserDirectories(handle);
@@ -232,26 +238,12 @@ export class DataMaidService {
                         await scanDirectory(entryPath);
                     } else if (entry.isFile() && entry.name.endsWith('.jsonl') && !isHeadChatFile(entry.name)) {
                         const sqlitePath = entryPath.replace('.jsonl', '.sqlite');
-                        if (!fs.existsSync(sqlitePath)) {
-                            try {
-                                await migrateFromJsonl(entryPath, sqlitePath);
-                                // Verify migration by reopening
-                                const db = await loadDb(sqlitePath);
-                                db.close();
-                                // Rename original to .jsonl.bak
-                                fs.renameSync(entryPath, entryPath + '.bak');
-                                totalMigrated++;
-                            } catch (error) {
-                                console.error(`[Data Maid] Failed to migrate ${entryPath} to SQLite:`, error);
-                            }
-                        } else {
-                            // SQLite already exists (e.g. from recombination or previous run)
-                            // If the original jsonl is still here, back it up
-                            if (fs.existsSync(entryPath)) {
-                                fs.renameSync(entryPath, entryPath + '.bak');
-                                totalExisting++;
-                            }
-                        }
+                        const stat = await fs.promises.stat(entryPath);
+                        allEntries.push({
+                            entryPath,
+                            sqlitePath,
+                            time: stat.birthtimeMs || stat.mtimeMs,
+                        });
                     }
                 }
             };
@@ -260,10 +252,37 @@ export class DataMaidService {
             await scanDirectory(directories.groupChats);
         }
 
+        allEntries.sort((a, b) => a.time - b.time);
+
+        for (const { entryPath, sqlitePath } of allEntries) {
+            if (!fs.existsSync(sqlitePath)) {
+                try {
+                    console.info(`[Data Maid] Migrating ${entryPath} to SQLite...`);
+                    await migrateFromJsonl(entryPath, sqlitePath);
+                    // Verify migration by reopening
+                    const db = await loadDb(sqlitePath);
+                    db.close();
+                    // Rename original to .jsonl.bak
+                    fs.renameSync(entryPath, entryPath + '.bak');
+                    totalMigrated++;
+                } catch (error) {
+                    console.error(`[Data Maid] Failed to migrate ${entryPath} to SQLite:`, error);
+                }
+            } else {
+                // SQLite already exists (e.g. from recombination or previous run)
+                // If the original jsonl is still here, back it up
+                if (fs.existsSync(entryPath)) {
+                    console.info(`[Data Maid] ${sqlitePath} already exists, backing up ${entryPath}...`);
+                    fs.renameSync(entryPath, entryPath + '.bak');
+                    totalExisting++;
+                }
+            }
+        }
+
         if (totalMigrated > 0 || totalExisting > 0) {
             console.info(`[Data Maid] SQLite migration: ${totalMigrated} new migrations, ${totalExisting} previously migrated chats backed up.`);
         }
-        }
+    }
 
     /**
      * Sanitizes a record by hashing the file name and removing sensitive information.
