@@ -9,17 +9,21 @@ body {
 }
 
 body.chat-popout {
+    height: 100vh;
+    height: 100dvh;
     overflow: hidden;
 }
 
 .chat-popout-shell {
-    min-height: 100vh;
+    height: 100vh;
+    height: 100dvh;
     display: flex;
     flex-direction: column;
 }
 
 .chat-popout-log {
     flex: 1 1 auto;
+    min-height: 0;
     overflow: auto;
     padding: 16px;
 }
