@@ -149,6 +149,134 @@ let autoModeWorker = null;
 const saveGroupDebounced = debounce(async (group, reload) => await _save(group, reload), debounce_timeout.relaxed);
 /** @type {Map<string, number>} */
 let groupChatQueueOrder = new Map();
+/** @type {string[]} */
+let manualSpeakerQueue = [];
+let manualSpeakerQueueGroupId = null;
+let manualSpeakerQueueDraining = false;
+let manualSpeakerCurrentAvatar = null;
+
+function hasManualSpeakerQueueState() {
+    return Boolean(manualSpeakerCurrentAvatar || manualSpeakerQueue.length || manualSpeakerQueueGroupId !== null);
+}
+
+/** Clears pending explicit speaker clicks and optionally refreshes the queue display. */
+function clearManualSpeakerQueue({ resetDisplay = true, forceDisplayReset = false } = {}) {
+    const hadQueueState = hasManualSpeakerQueueState();
+
+    manualSpeakerQueue = [];
+    manualSpeakerQueueGroupId = null;
+    manualSpeakerCurrentAvatar = null;
+
+    if (resetDisplay && (hadQueueState || forceDisplayReset)) {
+        groupChatQueueOrder = new Map();
+        printGroupMembers();
+    }
+}
+
+function getCurrentDraftSpeakerAvatar() {
+    if (!is_group_generating || this_chid === undefined) {
+        return null;
+    }
+
+    return characters[Number(this_chid)]?.avatar ?? null;
+}
+
+function updateManualSpeakerQueueOrder() {
+    groupChatQueueOrder = new Map();
+
+    if (power_user.show_group_chat_queue) {
+        const orderedSpeakers = [
+            manualSpeakerCurrentAvatar,
+            ...manualSpeakerQueue,
+        ].filter(Boolean);
+
+        orderedSpeakers.forEach((avatar, index) => groupChatQueueOrder.set(avatar, index + 1));
+    }
+
+    printGroupMembers();
+}
+
+/** Drains explicit speaker clicks through the existing forced-speaker generation path. */
+async function drainManualSpeakerQueue() {
+    if (manualSpeakerQueueDraining || is_group_generating || !manualSpeakerQueue.length) {
+        return;
+    }
+
+    manualSpeakerQueueDraining = true;
+
+    try {
+        while (manualSpeakerQueue.length) {
+            if (!selected_group || String(selected_group) !== String(manualSpeakerQueueGroupId)) {
+                clearManualSpeakerQueue();
+                return;
+            }
+
+            const avatar = manualSpeakerQueue.shift();
+            const group = groups.find(x => x.id === selected_group);
+
+            if (!group?.members?.includes(avatar)) {
+                toastr.warning(t`Deleted group member swiped. To get a reply, add them back to the group.`);
+                continue;
+            }
+
+            const chid = characters.findIndex(character => character.avatar === avatar);
+
+            if (chid === -1) {
+                toastr.warning(t`Deleted group member swiped. To get a reply, add them back to the group.`);
+                continue;
+            }
+
+            manualSpeakerCurrentAvatar = avatar;
+            updateManualSpeakerQueueOrder();
+            await Generate('normal', { force_chid: chid });
+            manualSpeakerCurrentAvatar = null;
+            updateManualSpeakerQueueOrder();
+        }
+    } catch (error) {
+        console.error('Manual group speaker queue stopped', error);
+        clearManualSpeakerQueue();
+        return;
+    } finally {
+        manualSpeakerQueueDraining = false;
+
+        if (!manualSpeakerQueue.length) {
+            clearManualSpeakerQueue();
+        }
+    }
+}
+
+/** Queues a clicked group member to speak without changing normal activation strategies. */
+function queueManualSpeaker(member) {
+    const avatar = member.data('id');
+    const group = groups.find(x => x.id === selected_group);
+
+    if (!group || !Array.isArray(group.members) || !group.members.includes(avatar)) {
+        toastr.warning(t`Deleted group member swiped. To get a reply, add them back to the group.`);
+        return;
+    }
+
+    if (!characters.some(character => character.avatar === avatar)) {
+        toastr.warning(t`Deleted group member swiped. To get a reply, add them back to the group.`);
+        return;
+    }
+
+    if (manualSpeakerQueueGroupId !== null && String(manualSpeakerQueueGroupId) !== String(selected_group)) {
+        clearManualSpeakerQueue();
+    }
+
+    manualSpeakerQueueGroupId = selected_group;
+
+    if (manualSpeakerCurrentAvatar === avatar || getCurrentDraftSpeakerAvatar() === avatar || manualSpeakerQueue.includes(avatar)) {
+        return;
+    }
+
+    manualSpeakerQueue.push(avatar);
+    updateManualSpeakerQueueOrder();
+
+    if (!is_group_generating) {
+        void drainManualSpeakerQueue();
+    }
+}
 
 function cloneGroupChatMetadata(metadata = {}) {
     if (!metadata || typeof metadata !== 'object') {
@@ -680,6 +808,7 @@ async function getFirstCharacterMessage(character) {
 }
 
 function resetSelectedGroup() {
+    clearManualSpeakerQueue({ forceDisplayReset: true });
     selected_group = null;
     is_group_generating = false;
 }
@@ -1100,9 +1229,13 @@ async function generateGroupWrapper(by_auto_mode, type = null, params = {}) {
             await saveChatConditional();
             $('#send_textarea').val('')[0].dispatchEvent(new Event('input', { bubbles: true }));
         }
-        groupChatQueueOrder = new Map();
+        if (manualSpeakerQueueDraining) {
+            updateManualSpeakerQueueOrder();
+        } else {
+            groupChatQueueOrder = new Map();
+        }
 
-        if (power_user.show_group_chat_queue) {
+        if (!manualSpeakerQueueDraining && power_user.show_group_chat_queue) {
             for (let i = 0; i < activatedMembers.length; ++i) {
                 groupChatQueueOrder.set(characters[activatedMembers[i]].avatar, i + 1);
             }
@@ -1128,7 +1261,7 @@ async function generateGroupWrapper(by_auto_mode, type = null, params = {}) {
                     messageChunk = textResult?.messageChunk;
                 }
             }
-            if (power_user.show_group_chat_queue) {
+            if (!manualSpeakerQueueDraining && power_user.show_group_chat_queue) {
                 groupChatQueueOrder.delete(characters[chId].avatar);
                 groupChatQueueOrder.forEach((value, key, map) => map.set(key, value - 1));
             }
@@ -1137,8 +1270,12 @@ async function generateGroupWrapper(by_auto_mode, type = null, params = {}) {
         is_group_generating = false;
         setSendButtonState(false);
         setCharacterId(undefined);
-        groupChatQueueOrder = new Map();
-        printGroupMembers();
+        if (manualSpeakerQueueDraining) {
+            updateManualSpeakerQueueOrder();
+        } else {
+            groupChatQueueOrder = new Map();
+            printGroupMembers();
+        }
         setCharacterName('');
         activateSendButtons();
         showSwipeButtons();
@@ -1941,10 +2078,7 @@ async function onGroupActionClick(event) {
     }
 
     if (action === 'speak') {
-        const chid = Number(member.attr('data-chid'));
-        if (Number.isInteger(chid)) {
-            await Generate('normal', { force_chid: chid });
-        }
+        queueManualSpeaker(member);
     }
 
     await eventSource.emit(event_types.GROUP_UPDATED);
@@ -1972,7 +2106,7 @@ export async function openGroupById(groupId) {
         select_group_chats(groupId);
 
         if (selected_group !== groupId) {
-            groupChatQueueOrder = new Map();
+            clearManualSpeakerQueue({ forceDisplayReset: true });
             await clearChat();
             discardTemporaryCharacterChat();
             cancelTtsPlay();
@@ -2459,4 +2593,10 @@ jQuery(() => {
     $('#group_avatar_button').on('input', uploadGroupAvatar);
     $('#rm_group_restore_avatar').on('click', restoreGroupAvatar);
     $(document).on('click', '.group_member .right_menu_button', onGroupActionClick);
+    eventSource.on(event_types.GENERATION_STOPPED, () => clearManualSpeakerQueue());
+    eventSource.on(event_types.GROUP_WRAPPER_FINISHED, () => {
+        if (manualSpeakerQueue.length && !manualSpeakerQueueDraining && !is_group_generating) {
+            void drainManualSpeakerQueue();
+        }
+    });
 });
