@@ -270,7 +270,7 @@ async function visualNovelSetCharacterSprites(vnContainer, spriteFolderName, exp
  */
 async function getLastMessageSprite(avatar) {
     const context = getContext();
-    const lastMessage = context.chat.slice().reverse().find(x => x.original_avatar == avatar || (x.force_avatar && x.force_avatar.includes(encodeURIComponent(avatar))));
+    const lastMessage = context.chat.slice().reverse().find(x => x && (x.original_avatar == avatar || (x.force_avatar && x.force_avatar.includes(encodeURIComponent(avatar)))));
 
     if (lastMessage) {
         const text = lastMessage.mes || '';
@@ -283,7 +283,7 @@ async function getLastMessageSprite(avatar) {
 export async function visualNovelUpdateLayers(container) {
     const context = getContext();
     const group = context.groups.find(x => x.id == context.groupId);
-    const recentMessages = context.chat.map(x => x.original_avatar).filter(x => x).reverse().filter(onlyUnique);
+    const recentMessages = context.chat.map(x => x?.original_avatar).filter(x => x).reverse().filter(onlyUnique);
     const filteredMembers = group.members.filter(x => !group.disabled_members.includes(x));
     const layerIndices = filteredMembers.slice().sort((a, b) => {
         const aRecentIndex = recentMessages.indexOf(a);
@@ -1086,7 +1086,7 @@ function getLastCharacterMessage() {
     const reversedChat = context.chat.slice().reverse();
 
     for (let mes of reversedChat) {
-        if (mes.is_user || mes.is_system || mes.extra?.type === system_message_types.NARRATOR) {
+        if (!mes || mes.is_user || mes.is_system || mes.extra?.type === system_message_types.NARRATOR) {
             continue;
         }
 
