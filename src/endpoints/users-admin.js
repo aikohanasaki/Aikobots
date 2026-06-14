@@ -1,4 +1,5 @@
-import { promises as fsPromises } from 'node:fs';
+import fs, { promises as fsPromises } from 'node:fs';
+import path from 'node:path';
 
 import storage from 'node-persist';
 import express from 'express';
@@ -15,9 +16,12 @@ import {
     getUserDirectories,
     ensurePublicDirectoriesExist,
 } from '../users.js';
-import { DEFAULT_USER } from '../constants.js';
+import { DEFAULT_USER, SETTINGS_FILE } from '../constants.js';
+import { parse as parseCharacterCard } from '../character-card-parser.js';
+import { assertSafeFileName, resolvePathUnderParent } from '../path-security.js';
 
 export const router = express.Router();
+const UNKNOWN_LAST_OPENED = 'Unknown';
 
 /**
  * Slugifies a given text string into a user handle.
@@ -33,6 +37,78 @@ function slugify(text) {
     return lodash.deburr(String(text ?? '').toLowerCase().trim()).replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
 }
 
+/**
+ * Reads the display name for a saved active character key.
+ * @param {import('../users.js').UserDirectoryList} directories User directories
+ * @param {string} activeCharacter Saved active character avatar filename
+ * @returns {Promise<string>} Resolved character display name
+ */
+async function resolveActiveCharacterName(directories, activeCharacter) {
+    const avatarFileName = assertSafeFileName(activeCharacter, 'active_character');
+    if (path.extname(avatarFileName).toLowerCase() !== '.png') {
+        return '';
+    }
+
+    const characterPath = resolvePathUnderParent(directories.characters, avatarFileName, 'active_character');
+    if (!fs.existsSync(characterPath)) {
+        return '';
+    }
+
+    const rawCharacter = await parseCharacterCard(characterPath, 'png');
+    const characterCard = JSON.parse(rawCharacter);
+    return String(lodash.get(characterCard, 'data.name', characterCard?.name || '') || '').trim();
+}
+
+/**
+ * Reads the display name for a saved active group key.
+ * @param {import('../users.js').UserDirectoryList} directories User directories
+ * @param {string} activeGroup Saved active group id
+ * @returns {string} Resolved group display name
+ */
+function resolveActiveGroupName(directories, activeGroup) {
+    const groupId = assertSafeFileName(activeGroup, 'active_group');
+    const groupPath = resolvePathUnderParent(directories.groups, `${groupId}.json`, 'active_group');
+    if (!fs.existsSync(groupPath)) {
+        return '';
+    }
+
+    const group = JSON.parse(fs.readFileSync(groupPath, 'utf8'));
+    return String(group?.name || '').trim();
+}
+
+/**
+ * Resolves the admin-facing last opened target from a user's saved settings.
+ * @param {string} handle User handle
+ * @returns {Promise<{ type: 'character' | 'group' | null, name: string }>} Last opened target
+ */
+async function getLastOpenedTarget(handle) {
+    try {
+        const directories = getUserDirectories(handle);
+        const settingsPath = path.join(directories.root, SETTINGS_FILE);
+        const settings = JSON.parse(fs.readFileSync(settingsPath, 'utf8'));
+        const activeCharacter = String(settings?.active_character || '').trim();
+        const activeGroup = String(settings?.active_group || '').trim();
+
+        if (activeCharacter) {
+            const name = await resolveActiveCharacterName(directories, activeCharacter);
+            return name
+                ? { type: 'character', name }
+                : { type: null, name: UNKNOWN_LAST_OPENED };
+        }
+
+        if (activeGroup) {
+            const name = resolveActiveGroupName(directories, activeGroup);
+            return name
+                ? { type: 'group', name }
+                : { type: null, name: UNKNOWN_LAST_OPENED };
+        }
+    } catch {
+        // Last opened is admin metadata only. Do not fail the user list for stale or malformed user data.
+    }
+
+    return { type: null, name: UNKNOWN_LAST_OPENED };
+}
+
 router.post('/get', requireAdminMiddleware, async (_request, response) => {
     try {
         /** @type {import('../users.js').User[]} */
@@ -41,20 +117,24 @@ router.post('/get', requireAdminMiddleware, async (_request, response) => {
 
         /** @type {Promise<import('../users.js').UserViewModel>[]} */
         const viewModelPromises = users
-            .map(user => new Promise(resolve => {
-                getUserAvatar(user.handle).then(avatar =>
-                    resolve({
-                        handle: user.handle,
-                        name: user.name,
-                        avatar: avatar,
-                        admin: user.admin,
-                        enabled: user.enabled,
-                        created: user.created,
-                        lastActivityAt: user.lastActivityAt,
-                        password: !!user.password,
-                    }),
-                );
-            }));
+            .map(async user => {
+                const [avatar, lastOpened] = await Promise.all([
+                    getUserAvatar(user.handle),
+                    getLastOpenedTarget(user.handle),
+                ]);
+
+                return {
+                    handle: user.handle,
+                    name: user.name,
+                    avatar: avatar,
+                    admin: user.admin,
+                    enabled: user.enabled,
+                    created: user.created,
+                    lastActivityAt: user.lastActivityAt,
+                    lastOpened,
+                    password: !!user.password,
+                };
+            });
 
         const viewModels = await Promise.all(viewModelPromises);
         viewModels.sort((x, y) => (x.created ?? 0) - (y.created ?? 0));

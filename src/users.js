@@ -141,6 +141,7 @@ async function quarantineInvalidStorageFiles(storageDir) {
  * @property {boolean} [enabled] - Whether the user is enabled
  * @property {number} [created] - The timestamp when the user was created
  * @property {number} [lastActivityAt] - The timestamp when the user last opened a chat in the app
+ * @property {{ type: 'character' | 'group' | null, name: string }} [lastOpened] - The last saved active character or group shown in admin UI
  */
 
 /**
