@@ -2179,8 +2179,6 @@ router.post('/save', validateAvatarUrlMiddleware, async function (request, respo
                 requestedTailStartId = Number.isInteger(existingTailStartId) ? existingTailStartId : null;
             } else if (Number.isInteger(existingTailStartId)) {
                 requestedTailStartId = existingTailStartId;
-            } else if (chatData.length > (config.bufferMax + 1)) {
-                requestedTailStartId = Math.max(0, chatData.length - 1 - config.displayCount);
             }
 
             if (request.body.refresh_tail === true && (['tail', 'loaded_range'].includes(request.body.save_mode) || existingSegments?.storage)) {

@@ -4211,6 +4211,32 @@ function mergeLoadedRange(startId, endId) {
     chatLoadState.loadedRanges = merged;
 }
 
+function getContiguousLoadedTailStartId() {
+    const totalMessages = getTotalChatMessages();
+    if (totalMessages <= 0) {
+        return 0;
+    }
+
+    const tailEndId = totalMessages - 1;
+    const tailRange = chatLoadState.loadedRanges.find(range => Number(range?.start) <= tailEndId && Number(range?.end) >= tailEndId);
+    if (!tailRange) {
+        return totalMessages;
+    }
+
+    return clamp(Number(tailRange.start), 0, totalMessages);
+}
+
+function markChatRangeLoaded(startId, endId = startId) {
+    const start = Number(startId);
+    const end = Number(endId);
+    if (!Number.isInteger(start) || !Number.isInteger(end) || start < 0 || end < start) {
+        return;
+    }
+
+    mergeLoadedRange(start, Math.min(end, Math.max(0, getTotalChatMessages() - 1)));
+    syncPartialChatStateAfterMutation();
+}
+
 export function getTotalChatMessages() {
     return chat.length;
 }
@@ -4220,7 +4246,7 @@ export function isSplitTailChat() {
 }
 
 export function isChatFullyHydrated() {
-    return !isSplitTailChat() || chatLoadState.isHydrated;
+    return chatLoadState.isHydrated === true;
 }
 
 export function isChatMessageLoaded(messageId) {
@@ -4229,7 +4255,7 @@ export function isChatMessageLoaded(messageId) {
         return false;
     }
 
-    if (!isSplitTailChat() || isChatFullyHydrated()) {
+    if (isChatFullyHydrated()) {
         return true;
     }
 
@@ -4237,20 +4263,26 @@ export function isChatMessageLoaded(messageId) {
 }
 
 export function isHistoricalChatMessage(messageId) {
-    return isSplitTailChat() && !isChatFullyHydrated() && Number(messageId) < chatLoadState.tailStartId;
+    return !isChatFullyHydrated() && Number(messageId) < chatLoadState.tailStartId;
 }
 
-function syncSplitTailStateAfterMutation() {
-    if (!isSplitTailChat() || isChatFullyHydrated()) {
+function syncPartialChatStateAfterMutation() {
+    if (isChatFullyHydrated()) {
         return;
     }
 
     const previousTailStartId = chatLoadState.tailStartId;
     chatLoadState.tailEndId = Math.max(-1, getTotalChatMessages() - 1);
-    chatLoadState.tailStartId = Math.min(chatLoadState.tailStartId, Math.max(0, getTotalChatMessages()));
+    chatLoadState.tailStartId = getContiguousLoadedTailStartId();
     chatLoadState.headCount = chatLoadState.tailStartId;
     chatLoadState.tailCount = Math.max(0, getTotalChatMessages() - chatLoadState.tailStartId);
-    syncParentPromptCacheForTailStartChange(chatLoadState.tailStartId, previousTailStartId);
+    if (isSplitTailChat()) {
+        syncParentPromptCacheForTailStartChange(chatLoadState.tailStartId, previousTailStartId);
+    }
+}
+
+function syncSplitTailStateAfterMutation() {
+    syncPartialChatStateAfterMutation();
 }
 
 function getDenseChatMessages(startId, endId) {
@@ -4442,7 +4474,7 @@ function getContiguousChatMessagesForSave(startId, endId) {
 }
 
 function getContiguousLoadedChatRangeForSave() {
-    if (!isSplitTailChat() || isChatFullyHydrated()) {
+    if (isChatFullyHydrated()) {
         return null;
     }
 
@@ -4515,11 +4547,11 @@ function syncParentPromptCacheForTailStartChange(nextTailStartId, previousTailSt
 }
 
 function getLogicalChatForPromptAssembly() {
-    if (!isSplitTailChat() || isChatFullyHydrated() || selected_group) {
+    if (isChatFullyHydrated() || selected_group) {
         return chat;
     }
 
-    if (chatLoadState.parentPromptCacheTailStartId !== chatLoadState.tailStartId) {
+    if (isSplitTailChat() && chatLoadState.parentPromptCacheTailStartId !== chatLoadState.tailStartId) {
         console.warn('Resident parent prompt cache is out of sync with tailStartId.', {
             cachedTailStartId: chatLoadState.parentPromptCacheTailStartId,
             tailStartId: chatLoadState.tailStartId,
@@ -4527,7 +4559,7 @@ function getLogicalChatForPromptAssembly() {
     }
 
     return [
-        ...chatLoadState.parentPromptCache,
+        ...(isSplitTailChat() ? chatLoadState.parentPromptCache : []),
         ...getDenseChatMessages(chatLoadState.tailStartId, getTotalChatMessages() - 1),
     ];
 }
@@ -4580,13 +4612,15 @@ export function applyChunkedChatPayload(response, { replace = false, currentView
     }
 
     chatLoadState.storageMode = response?.mode === CHAT_STORAGE_MODE_SPLIT_TAIL ? CHAT_STORAGE_MODE_SPLIT_TAIL : 'full';
-    chatLoadState.tailStartId = Number.isInteger(response?.tailStartId)
-        ? response.tailStartId
-        : Math.max(0, getTotalChatMessages() - Math.min(getConfiguredLongChatDisplayCount(), getTotalChatMessages()));
-    chatLoadState.tailEndId = Number.isInteger(response?.tailEndId) ? response.tailEndId : Math.max(-1, getTotalChatMessages() - 1);
-    chatLoadState.headCount = Number.isInteger(response?.headCount) ? response.headCount : Math.max(0, chatLoadState.tailStartId);
-    chatLoadState.tailCount = Number.isInteger(response?.tailCount) ? response.tailCount : Math.max(0, getTotalChatMessages() - chatLoadState.tailStartId);
     chatLoadState.isHydrated = response?.isHydrated !== false;
+    if (isChatFullyHydrated()) {
+        chatLoadState.tailStartId = 0;
+    } else {
+        chatLoadState.tailStartId = getContiguousLoadedTailStartId();
+    }
+    chatLoadState.tailEndId = Number.isInteger(response?.tailEndId) ? response.tailEndId : Math.max(-1, getTotalChatMessages() - 1);
+    chatLoadState.headCount = chatLoadState.tailStartId;
+    chatLoadState.tailCount = Math.max(0, getTotalChatMessages() - chatLoadState.tailStartId);
     chatLoadState.currentView = currentView ?? (loadedRangeStart < chatLoadState.tailStartId ? 'history' : 'tail');
 
     if (Array.isArray(response?.parentPromptMessages) && isSplitTailChat() && !isChatFullyHydrated()) {
@@ -4686,7 +4720,7 @@ async function replaceChunkedChatPayloadWithLatestTail(response) {
     }
 
     const count = getConfiguredLongChatDisplayCount();
-    const startId = isSplitTailChat() && !isChatFullyHydrated()
+    const startId = !isChatFullyHydrated()
         ? Math.max(chatLoadState.tailStartId, chatLoadState.tailEndId - count + 1)
         : Math.max(0, chat.length - getConfiguredChatWindowSize(count));
 
@@ -4726,7 +4760,7 @@ async function fetchChunkedChat({ rangeStart = null, count = null, hydrateFull =
 }
 
 async function ensureChatRangeLoaded(startId, count = null) {
-    if (!isSplitTailChat() || isChatFullyHydrated()) {
+    if (isChatFullyHydrated()) {
         return true;
     }
 
@@ -4752,7 +4786,7 @@ async function ensureChatRangeLoaded(startId, count = null) {
 }
 
 async function ensureChatSuffixLoaded(startId) {
-    if (!isSplitTailChat() || isChatFullyHydrated()) {
+    if (isChatFullyHydrated()) {
         return true;
     }
 
@@ -4763,7 +4797,7 @@ async function ensureChatSuffixLoaded(startId) {
 
 export async function returnToLiveTailView(navigationToken = null) {
     return serializeHistoryWindowNavigation(async (activeNavigationToken) => {
-        if (!isSplitTailChat() || isChatFullyHydrated()) {
+        if (isChatFullyHydrated()) {
             return;
         }
 
@@ -4778,7 +4812,7 @@ export async function returnToLiveTailView(navigationToken = null) {
 
 export async function hydrateCurrentChatForEditing(navigationToken = null) {
     return serializeHistoryWindowNavigation(async (activeNavigationToken) => {
-        if (!isSplitTailChat() || isChatFullyHydrated()) {
+        if (isChatFullyHydrated()) {
             return true;
         }
 
@@ -4859,7 +4893,7 @@ function updateHistoryControls() {
         return;
     }
 
-    if (isSplitTailChat() && !isChatFullyHydrated() && chatLoadState.currentView === 'history') {
+    if (!isChatFullyHydrated() && chatLoadState.currentView === 'history') {
         chatElement.prepend(`<button id="${HYDRATE_CHAT_CONTROL_ID}" type="button" class="chat_history_button">Load full chat for editing</button>`);
         chatElement.prepend(`<button id="${RETURN_TO_TAIL_CONTROL_ID}" type="button" class="chat_history_button">Return to live tail</button>`);
     }
@@ -4891,18 +4925,14 @@ export async function renderMessageWindow(startId = 0, count = null, navigationT
         const windowSize = count === null ? Math.min(500, requestedWindowSize) : requestedWindowSize;
         const endId = Math.min(chat.length - 1, normalizedStartId + windowSize - 1);
 
-        if (isSplitTailChat() && !isChatFullyHydrated()) {
-            await ensureChatSuffixLoaded(normalizedStartId);
-        } else {
-            await ensureChatRangeLoaded(normalizedStartId, windowSize);
-        }
+        await ensureChatRangeLoaded(normalizedStartId, windowSize);
 
         for (let i = normalizedStartId; i <= endId; i++) {
             if (!chat[i]) continue;
             addOneMessage(chat[i], { scroll: false, forceId: i, showSwipes: false });
         }
 
-        if (isSplitTailChat() && !isChatFullyHydrated()) {
+        if (!isChatFullyHydrated()) {
             chatLoadState.currentView = normalizedStartId < chatLoadState.tailStartId ? 'history' : 'tail';
         }
 
@@ -4989,7 +5019,7 @@ export async function showMoreMessages(messagesToLoad = null, navigationToken = 
             syncVisibleChatRangeFromDom();
         }
 
-        if (isSplitTailChat() && !isChatFullyHydrated()) {
+        if (!isChatFullyHydrated()) {
             chatLoadState.currentView = Number.isFinite(visibleChatStartId) && visibleChatStartId < chatLoadState.tailStartId ? 'history' : 'tail';
         }
 
@@ -5045,7 +5075,7 @@ export async function showNewerMessages(messagesToLoad = null, navigationToken =
             syncVisibleChatRangeFromDom();
         }
 
-        if (isSplitTailChat() && !isChatFullyHydrated()) {
+        if (!isChatFullyHydrated()) {
             chatLoadState.currentView = Number.isFinite(visibleChatStartId) && visibleChatStartId < chatLoadState.tailStartId ? 'history' : 'tail';
         }
 
@@ -8080,6 +8110,7 @@ async function restoreUnsavedDeletedLastMessage(messageId, message) {
     } else {
         chat[normalizedMessageId] = message;
     }
+    markChatRangeLoaded(normalizedMessageId);
 
     if (chatElement.children(`.mes[mesid="${normalizedMessageId}"]`).length === 0) {
         addOneMessage(message, { forceId: normalizedMessageId, scroll: false });
@@ -9673,6 +9704,7 @@ export async function sendMessageAsUser(messageText, messageBias, insertAt = nul
     } else {
         chat.push(message);
         const chat_id = (chat.length - 1);
+        markChatRangeLoaded(chat_id);
         await eventSource.emit(event_types.MESSAGE_SENT, chat_id);
         addOneMessage(message);
         await eventSource.emit(event_types.USER_MESSAGE_RENDERED, chat_id);
@@ -10396,6 +10428,7 @@ export async function saveReply({ type, getMessage, fromStreaming = false, title
 
         await processImageAttachment(chat[chat.length - 1], { imageUrls });
         const chat_id = (chat.length - 1);
+        markChatRangeLoaded(chat_id);
 
         !fromStreaming && await eventSource.emit(event_types.MESSAGE_RECEIVED, chat_id, type);
         addOneMessage(chat[chat_id]);
@@ -11169,7 +11202,7 @@ export async function saveChat({ chatName, withMetadata, mesId, force = false, s
         }
     });
 
-    if (normalizedMesId !== undefined && isSplitTailChat() && !isChatFullyHydrated()) {
+    if (normalizedMesId !== undefined && !isChatFullyHydrated()) {
         await hydrateCurrentChatForEditing();
     }
 
@@ -11181,7 +11214,7 @@ export async function saveChat({ chatName, withMetadata, mesId, force = false, s
     let loadedRangeStart = undefined;
     const shouldTrackRevision = chatName === undefined && normalizedMesId === undefined;
 
-    if (isSplitTailChat() && !isChatFullyHydrated() && chatName === undefined && normalizedMesId === undefined) {
+    if (!isChatFullyHydrated() && chatName === undefined && normalizedMesId === undefined) {
         if (syncLoadedMessages) {
             const loadedRange = getContiguousLoadedChatRangeForSave();
             if (!loadedRange) {
@@ -11235,7 +11268,7 @@ export async function saveChat({ chatName, withMetadata, mesId, force = false, s
                 loaded_range_start: loadedRangeStart,
                 loaded_range_end: loadedRangeStart === undefined ? undefined : loadedRangeStart + trimmedChat.length - 1,
                 saved_message_count: getTotalChatMessages(),
-                refresh_tail: Boolean(refreshTailAfterSave && isSplitTailChat()),
+                refresh_tail: Boolean(refreshTailAfterSave && isSplitTailChat() && !isChatFullyHydrated()),
                 ...(shouldTrackRevision ? {
                     base_revision: getChatSaveRevision(),
                     save_session_id: getChatSaveSessionId(),
@@ -11261,29 +11294,36 @@ export async function saveChat({ chatName, withMetadata, mesId, force = false, s
 
             if (refreshTailAfterSave && responseData?.payload) {
                 await replaceChunkedChatPayloadWithLatestTail(responseData.payload);
-            } else if (isSplitTailChat() && !isChatFullyHydrated() && saveMode === 'tail') {
-                syncSplitTailStateAfterMutation();
+            } else if (!isChatFullyHydrated() && saveMode === 'tail') {
+                syncPartialChatStateAfterMutation();
 
                 if (responseData?.payload) {
                     await replaceChunkedChatPayloadPreservingWindow(responseData.payload, { scrollToTail: true });
                 } else {
                     const previousTailStartId = chatLoadState.tailStartId;
-                    chatLoadState.storageMode = responseData?.storage_mode === CHAT_STORAGE_MODE_SPLIT_TAIL
-                        ? CHAT_STORAGE_MODE_SPLIT_TAIL
-                        : chatLoadState.storageMode;
-                    if (Number.isInteger(responseData?.tailStartId)) {
+                    const responseStorageMode = responseData?.storage_mode === CHAT_STORAGE_MODE_SPLIT_TAIL ? CHAT_STORAGE_MODE_SPLIT_TAIL : 'full';
+                    chatLoadState.storageMode = responseStorageMode;
+                    if (responseStorageMode === CHAT_STORAGE_MODE_SPLIT_TAIL && Number.isInteger(responseData?.tailStartId)) {
                         chatLoadState.tailStartId = responseData.tailStartId;
+                    } else {
+                        chatLoadState.tailStartId = getContiguousLoadedTailStartId();
                     }
                     if (Number.isInteger(responseData?.tailEndId)) {
                         chatLoadState.tailEndId = responseData.tailEndId;
                     }
-                    if (Number.isInteger(responseData?.headCount)) {
+                    if (responseStorageMode === CHAT_STORAGE_MODE_SPLIT_TAIL && Number.isInteger(responseData?.headCount)) {
                         chatLoadState.headCount = responseData.headCount;
+                    } else {
+                        chatLoadState.headCount = chatLoadState.tailStartId;
                     }
-                    if (Number.isInteger(responseData?.tailCount)) {
+                    if (responseStorageMode === CHAT_STORAGE_MODE_SPLIT_TAIL && Number.isInteger(responseData?.tailCount)) {
                         chatLoadState.tailCount = responseData.tailCount;
+                    } else {
+                        chatLoadState.tailCount = Math.max(0, getTotalChatMessages() - chatLoadState.tailStartId);
                     }
-                    syncParentPromptCacheForTailStartChange(chatLoadState.tailStartId, previousTailStartId);
+                    if (isSplitTailChat()) {
+                        syncParentPromptCacheForTailStartChange(chatLoadState.tailStartId, previousTailStartId);
+                    }
                 }
             }
             return CHAT_SAVE_RESULT.SAVED;
