@@ -4189,7 +4189,7 @@ function getConfiguredLongChatDisplayCount() {
     return Math.max(1, displayCount);
 }
 
-function getConfiguredLongChatBufferMax() {
+export function getConfiguredLongChatBufferMax() {
     return Math.max(1000, getConfiguredLongChatDisplayCount());
 }
 
@@ -4507,6 +4507,74 @@ function getContiguousLoadedChatRangeForSave() {
     return { start, messages };
 }
 
+/**
+ * Prepares the active chat array for a safe full or partial save.
+ * @param {object} [options] Save payload options.
+ * @param {object|null} [options.header] Optional direct-chat header to prepend.
+ * @param {number|undefined} [options.endId] Optional final message id for full/hydrated saves.
+ * @param {boolean} [options.allowPartialSave] Allow partial tail/range saves when the active chat is not hydrated.
+ * @param {boolean} [options.syncLoadedMessages] Save the current loaded range instead of only the tail.
+ * @param {boolean} [options.hydrateMissingTail] Load missing tail messages before failing a tail save.
+ * @returns {Promise<object>} Save payload metadata and messages, or a failure descriptor.
+ */
+export async function prepareCurrentChatSavePayload({ header = null, endId = undefined, allowPartialSave = true, syncLoadedMessages = false, hydrateMissingTail = true } = {}) {
+    let trimmedChat = [];
+    let saveMode = undefined;
+    let absoluteStartId = undefined;
+    let loadedRangeStart = undefined;
+
+    if (allowPartialSave && !isChatFullyHydrated() && endId === undefined) {
+        if (syncLoadedMessages) {
+            const loadedRange = getContiguousLoadedChatRangeForSave();
+            if (!loadedRange) {
+                return {
+                    ok: false,
+                    reason: 'loaded_range_not_contiguous',
+                    message: t`Loaded chat messages are not contiguous. Reload the chat and then click Sync Current Chat.`,
+                    title: t`Chat sync blocked`,
+                };
+            }
+
+            loadedRangeStart = loadedRange.start;
+            trimmedChat = loadedRange.messages;
+            saveMode = 'loaded_range';
+        } else {
+            absoluteStartId = chatLoadState.tailStartId;
+            trimmedChat = getContiguousChatMessagesForSave(absoluteStartId, getTotalChatMessages() - 1);
+            if (!trimmedChat && hydrateMissingTail) {
+                await ensureChatSuffixLoaded(absoluteStartId);
+                trimmedChat = getContiguousChatMessagesForSave(absoluteStartId, getTotalChatMessages() - 1);
+            }
+            if (!trimmedChat) {
+                return {
+                    ok: false,
+                    reason: 'tail_not_contiguous',
+                    message: t`The loaded chat tail is incomplete. Reload the chat and then click Sync Current Chat.`,
+                    title: t`Chat save blocked`,
+                };
+            }
+            saveMode = 'tail';
+        }
+    } else {
+        const normalizedEndId = endId === undefined
+            ? getTotalChatMessages() - 1
+            : Math.min(endId, getTotalChatMessages() - 1);
+        trimmedChat = getDenseChatMessages(0, normalizedEndId);
+    }
+
+    const sanitizedMessages = trimmedChat.map(sanitizeChatMessageForSave);
+    return {
+        ok: true,
+        chat: header ? [header, ...sanitizedMessages] : sanitizedMessages,
+        messages: sanitizedMessages,
+        saveMode,
+        absoluteStartId,
+        loadedRangeStart,
+        loadedRangeEnd: loadedRangeStart === undefined ? undefined : loadedRangeStart + trimmedChat.length - 1,
+        savedMessageCount: getTotalChatMessages(),
+    };
+}
+
 function setParentPromptCache(messages, tailStartId) {
     const normalizedTailStartId = Math.max(0, Number(tailStartId) || 0);
     chatLoadState.parentPromptCache = Array.isArray(messages)
@@ -4547,7 +4615,7 @@ function syncParentPromptCacheForTailStartChange(nextTailStartId, previousTailSt
 }
 
 function getLogicalChatForPromptAssembly() {
-    if (isChatFullyHydrated() || selected_group) {
+    if (isChatFullyHydrated()) {
         return chat;
     }
 
@@ -4729,11 +4797,34 @@ async function replaceChunkedChatPayloadWithLatestTail(response) {
 }
 
 async function fetchChunkedChat({ rangeStart = null, count = null, hydrateFull = false, includeParentPromptCache = false } = {}) {
-    await unshallowCharacter(this_chid);
-
     const requestedCount = Number.isFinite(Number(count))
         ? Number(count)
         : getConfiguredLongChatBufferMax();
+
+    if (selected_group) {
+        const response = await fetch('/api/chats/group/get', {
+            method: 'POST',
+            headers: getRequestHeaders(),
+            cache: 'no-cache',
+            body: JSON.stringify({
+                id: getCurrentChatId(),
+                with_metadata: true,
+                chunked: true,
+                range_start: rangeStart,
+                count: requestedCount,
+                display_count: getConfiguredLongChatDisplayCount(),
+                hydrate_full: hydrateFull,
+            }),
+        });
+
+        if (!response.ok) {
+            throw new Error('Chunked group chat could not be loaded');
+        }
+
+        return await response.json();
+    }
+
+    await unshallowCharacter(this_chid);
 
     const response = await fetch('/api/chats/get', {
         method: 'POST',
@@ -11202,55 +11293,32 @@ export async function saveChat({ chatName, withMetadata, mesId, force = false, s
         }
     });
 
+    const shouldTrackRevision = chatName === undefined && normalizedMesId === undefined;
+    if (!shouldTrackRevision && !isChatFullyHydrated()) {
+        await hydrateCurrentChatForEditing();
+    }
     if (normalizedMesId !== undefined && !isChatFullyHydrated()) {
         await hydrateCurrentChatForEditing();
     }
 
     normalizeActiveChatIdentities();
 
-    let trimmedChat = [];
-    let saveMode = undefined;
-    let absoluteStartId = undefined;
-    let loadedRangeStart = undefined;
-    const shouldTrackRevision = chatName === undefined && normalizedMesId === undefined;
-
-    if (!isChatFullyHydrated() && chatName === undefined && normalizedMesId === undefined) {
-        if (syncLoadedMessages) {
-            const loadedRange = getContiguousLoadedChatRangeForSave();
-            if (!loadedRange) {
-                toastr.warning(t`Loaded chat messages are not contiguous. Reload the chat and then click Sync Current Chat.`, t`Chat sync blocked`);
-                return CHAT_SAVE_RESULT.FAILED;
-            }
-
-            loadedRangeStart = loadedRange.start;
-            trimmedChat = loadedRange.messages;
-            saveMode = 'loaded_range';
-        } else {
-            absoluteStartId = chatLoadState.tailStartId;
-            trimmedChat = getContiguousChatMessagesForSave(absoluteStartId, getTotalChatMessages() - 1);
-            if (!trimmedChat) {
-                await ensureChatSuffixLoaded(absoluteStartId);
-                trimmedChat = getContiguousChatMessagesForSave(absoluteStartId, getTotalChatMessages() - 1);
-            }
-            if (!trimmedChat) {
-                toastr.warning(t`The loaded chat tail is incomplete. Reload the chat and then click Sync Current Chat.`, t`Chat save blocked`);
-                return CHAT_SAVE_RESULT.FAILED;
-            }
-            saveMode = 'tail';
-        }
-    } else {
-        const endId = normalizedMesId !== undefined
-            ? Math.min(normalizedMesId, getTotalChatMessages() - 1)
-            : getTotalChatMessages() - 1;
-        trimmedChat = getDenseChatMessages(0, endId);
-    }
-
-    const chatToSave = [{
+    const header = {
         user_name: name1,
         character_name: name2,
         create_date: chat_create_date,
         chat_metadata: metadata,
-    }, ...trimmedChat.map(sanitizeChatMessageForSave)];
+    };
+    const savePayload = await prepareCurrentChatSavePayload({
+        header,
+        endId: normalizedMesId,
+        allowPartialSave: shouldTrackRevision,
+        syncLoadedMessages: shouldTrackRevision && syncLoadedMessages,
+    });
+    if (!savePayload.ok) {
+        toastr.warning(savePayload.message, savePayload.title);
+        return CHAT_SAVE_RESULT.FAILED;
+    }
 
     try {
         const result = await fetch('/api/chats/save', {
@@ -11260,14 +11328,14 @@ export async function saveChat({ chatName, withMetadata, mesId, force = false, s
             body: JSON.stringify({
                 ch_name: characters[this_chid].name,
                 file_name: fileName,
-                chat: chatToSave,
+                chat: savePayload.chat,
                 avatar_url: characters[this_chid].avatar,
                 force: force,
-                save_mode: saveMode,
-                absolute_start_id: absoluteStartId,
-                loaded_range_start: loadedRangeStart,
-                loaded_range_end: loadedRangeStart === undefined ? undefined : loadedRangeStart + trimmedChat.length - 1,
-                saved_message_count: getTotalChatMessages(),
+                save_mode: savePayload.saveMode,
+                absolute_start_id: savePayload.absoluteStartId,
+                loaded_range_start: savePayload.loadedRangeStart,
+                loaded_range_end: savePayload.loadedRangeEnd,
+                saved_message_count: savePayload.savedMessageCount,
                 refresh_tail: Boolean(refreshTailAfterSave && isSplitTailChat() && !isChatFullyHydrated()),
                 ...(shouldTrackRevision ? {
                     base_revision: getChatSaveRevision(),
@@ -11294,7 +11362,7 @@ export async function saveChat({ chatName, withMetadata, mesId, force = false, s
 
             if (refreshTailAfterSave && responseData?.payload) {
                 await replaceChunkedChatPayloadWithLatestTail(responseData.payload);
-            } else if (!isChatFullyHydrated() && saveMode === 'tail') {
+            } else if (!isChatFullyHydrated() && savePayload.saveMode === 'tail') {
                 syncPartialChatStateAfterMutation();
 
                 if (responseData?.payload) {
@@ -15350,7 +15418,7 @@ async function saveChatOnce(options = {}) {
         // Non-urgent for now; defer until temp-chat/STMB save-flow cleanup.
 
         if (savedIsGroup) {
-            const groupSaved = await saveGroupChat(savedGroupId, true);
+            const groupSaved = await saveGroupChat(savedGroupId, true, options);
             if (groupSaved === CHAT_SAVE_RESULT.FAILED || groupSaved === false) {
                 return CHAT_SAVE_RESULT.FAILED;
             }

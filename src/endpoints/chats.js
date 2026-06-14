@@ -987,6 +987,53 @@ async function ensureGroupChatHeader(user, chatId, filePath) {
     };
 }
 
+async function buildChunkedGroupChatPayload(user, chatId, filePath, {
+    rangeStart = null,
+    count = null,
+    hydrateFull = false,
+    displayCount = LONG_CHAT_DISPLAY_DEFAULT,
+} = {}) {
+    const sqlitePath = filePath.replace('.jsonl', '.sqlite');
+
+    if (fs.existsSync(sqlitePath)) {
+        const db = await loadDb(sqlitePath);
+        const header = getChatHeader(db);
+        db.close();
+
+        if (isGroupChatHeader(header)) {
+            const payload = await buildChunkedChatPayload(filePath, {
+                rangeStart,
+                count,
+                hydrateFull,
+                displayCount,
+            });
+            const chatMetadata = _.cloneDeep(payload.header?.chat_metadata || {});
+            return {
+                ...payload,
+                chat_metadata: chatMetadata,
+                chat_revision: getChatRevision(payload.header),
+            };
+        }
+    }
+
+    const payload = await ensureGroupChatHeader(user, chatId, filePath);
+    const chatData = payload.header ? [payload.header, ...payload.messages] : [];
+    const chunk = buildChunkedChatPayloadFromLogicalChatData(chatData, {
+        rangeStart,
+        count,
+        hydrateFull,
+        displayCount,
+        storageMode: 'full',
+    });
+    const chatMetadata = _.cloneDeep(chunk.header?.chat_metadata || payload.header?.chat_metadata || {});
+
+    return {
+        ...chunk,
+        chat_metadata: chatMetadata,
+        chat_revision: getChatRevision(chunk.header || payload.header),
+    };
+}
+
 export async function writeLogicalChat(filePath, header, messages, { regenerateIdentities = false, startIndex = null } = {}) {
     const baseHeader = sanitizeChatHeaderForPersistence(header);
     const identityMessages = Array.isArray(messages)
@@ -2754,6 +2801,42 @@ router.post('/group/get', async (request, response) => {
 
         if (fs.existsSync(pathToFile) || fs.existsSync(pathToFile.replace('.jsonl', '.sqlite'))) {
             return await withChatSaveLock(pathToFile, async () => {
+                if (request.body.chunked) {
+                    const requestedStart = request.body.range_start === undefined ? null : Number(request.body.range_start);
+                    const requestedCount = request.body.count === undefined ? null : Number(request.body.count);
+                    const config = normalizeLongChatConfig({
+                        displayCount: request.body.display_count,
+                    });
+                    const payload = await buildChunkedGroupChatPayload(request.user, id, pathToFile, {
+                        rangeStart: Number.isInteger(requestedStart) ? requestedStart : null,
+                        count: Number.isInteger(requestedCount) && requestedCount > 0 ? requestedCount : config.displayCount,
+                        hydrateFull: request.body.hydrate_full === true,
+                        displayCount: config.displayCount,
+                    });
+
+                    try {
+                        await touchUserActivity(request.user.profile.handle);
+                    } catch (error) {
+                        console.error('Failed to update user last activity for group chat read:', error);
+                    }
+
+                    return response.send({
+                        mode: payload.mode,
+                        isHydrated: payload.isHydrated === true,
+                        totalMessages: payload.totalMessages,
+                        loadedRangeStart: payload.loadedRangeStart,
+                        loadedRangeEnd: payload.loadedRangeEnd,
+                        tailStartId: payload.tailStartId,
+                        tailEndId: payload.tailEndId,
+                        headCount: payload.headCount,
+                        tailCount: payload.tailCount,
+                        chat_revision: payload.chat_revision,
+                        ...(withMetadata ? { chat_metadata: payload.chat_metadata } : {}),
+                        header: payload.header,
+                        messages: payload.messages,
+                    });
+                }
+
                 const payload = await ensureGroupChatHeader(request.user, id, pathToFile);
                 const jsonData = payload.messages;
                 const chatMetadata = _.cloneDeep(payload.header?.chat_metadata || {});
@@ -2761,30 +2844,6 @@ router.post('/group/get', async (request, response) => {
                     await touchUserActivity(request.user.profile.handle);
                 } catch (error) {
                     console.error('Failed to update user last activity for group chat read:', error);
-                }
-
-                if (request.body.chunked) {
-                    const totalMessages = jsonData.length;
-                    const requestedStart = request.body.range_start === undefined ? Math.max(0, totalMessages - 50) : Number(request.body.range_start);
-                    const requestedCount = request.body.count === undefined ? 50 : Number(request.body.count);
-                    const loadedRangeStart = Number.isInteger(requestedStart) ? Math.max(0, Math.min(requestedStart, Math.max(0, totalMessages - 1))) : 0;
-                    const count = Number.isInteger(requestedCount) && requestedCount > 0 ? requestedCount : 50;
-                    const loadedRangeEnd = totalMessages > 0
-                        ? Math.min(totalMessages - 1, loadedRangeStart + count - 1)
-                        : -1;
-
-                    return response.send({
-                        mode: 'full',
-                        isHydrated: true,
-                        chat_revision: getChatRevision(payload.header),
-                        totalMessages,
-                        loadedRangeStart,
-                        loadedRangeEnd,
-                        ...(withMetadata ? { chat_metadata: chatMetadata } : {}),
-                        messages: loadedRangeEnd >= loadedRangeStart
-                            ? jsonData.slice(loadedRangeStart, loadedRangeEnd + 1)
-                            : [],
-                    });
                 }
 
                 if (withMetadata) {
@@ -2882,11 +2941,55 @@ router.post('/group/save', async (request, response) => {
                 revisionCheck.nextRevision,
                 getRequestSaveSessionId(request.body),
             );
-            await request.activeSessionOperation?.assertAllowed();
-            const writeResult = await writeLogicalChat(pathToFile, header, chat_data, {
+            let messages = chat_data;
+            const writeOptions = {
                 regenerateIdentities: request.body.regenerate_identities === true,
-            });
-            getBackupFunction(request.user.profile.handle)(request.user.directories.backups, String(id), writeResult.fullJsonl);
+            };
+
+            if (request.body.save_mode === 'tail') {
+                const absoluteStartId = Number(request.body.absolute_start_id);
+                const existingMessageCount = existingPayload.messages.length;
+
+                if (!Number.isInteger(absoluteStartId) || absoluteStartId < 0 || absoluteStartId > existingMessageCount) {
+                    return response.status(400).send({ error: 'invalid_tail_save' });
+                }
+
+                const tailSaveValidation = validateTailSavePayload({
+                    existingMessageCount,
+                    absoluteStartId,
+                    rangeMessages: chat_data,
+                    savedMessageCount: request.body.saved_message_count,
+                });
+                if (!tailSaveValidation.ok) {
+                    return response.status(400).send({ error: tailSaveValidation.error });
+                }
+
+                writeOptions.startIndex = absoluteStartId + 1;
+            } else if (request.body.save_mode === 'loaded_range') {
+                if (!existingPayload.header) {
+                    return response.status(400).send({ error: 'invalid_loaded_range' });
+                }
+
+                const loadedRangeResult = applyLoadedMessageRange(
+                    [existingPayload.header, ...existingPayload.messages],
+                    request.body.loaded_range_start,
+                    chat_data,
+                    request.body.loaded_range_end,
+                );
+                if (!loadedRangeResult.ok) {
+                    return response.status(400).send({ error: loadedRangeResult.error });
+                }
+
+                messages = loadedRangeResult.chatData.slice(1);
+            } else if (request.body.save_mode !== undefined) {
+                return response.status(400).send({ error: 'invalid_save_mode' });
+            }
+
+            await request.activeSessionOperation?.assertAllowed();
+            const writeResult = await writeLogicalChat(pathToFile, header, messages, writeOptions);
+            if (writeResult.fullJsonl) {
+                getBackupFunction(request.user.profile.handle)(request.user.directories.backups, String(id), writeResult.fullJsonl);
+            }
             return response.send({ ok: true, chat_revision: revisionCheck.nextRevision });
         });
     } catch (error) {

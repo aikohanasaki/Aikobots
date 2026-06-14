@@ -92,6 +92,9 @@ import {
     chatElement,
     ensureMessageMediaIsArray,
     hasActiveMessageEditSession,
+    applyChunkedChatPayload,
+    getConfiguredLongChatBufferMax,
+    prepareCurrentChatSavePayload,
 } from '../script.js';
 import { printTagList, createTagMapFromList, applyTagsOnCharacterSelect, tag_map, applyTagsOnGroupSelect } from './tags.js';
 import { FILTER_TYPES, FilterHelper } from './filters.js';
@@ -343,18 +346,28 @@ async function regenerateGroup() {
     generateGroupWrapper(false, 'normal', { signal: abortController.signal });
 }
 
-async function loadGroupChat(chatId, { withMetadata = false } = {}) {
+async function loadGroupChat(chatId, { withMetadata = false, chunked = false } = {}) {
     const response = await fetch('/api/chats/group/get', {
         method: 'POST',
         headers: getRequestHeaders(),
         body: JSON.stringify({
             id: chatId,
             ...(withMetadata ? { with_metadata: true } : {}),
+            ...(chunked ? { chunked: true, count: getConfiguredLongChatBufferMax() } : {}),
         }),
     });
 
     if (response.ok) {
         const data = await response.json();
+
+        if (chunked) {
+            return {
+                ...data,
+                messages: Array.isArray(data?.messages) ? data.messages : [],
+                chat_metadata: cloneGroupChatMetadata(data?.chat_metadata),
+                chat_revision: Number.isInteger(Number(data?.chat_revision)) ? Number(data.chat_revision) : 0,
+            };
+        }
 
         if (withMetadata) {
             return {
@@ -421,7 +434,7 @@ export async function getGroupChat(groupId, reload = false) {
     const chat_id = group.chat_id;
     let payload;
     try {
-        payload = await loadGroupChat(chat_id, { withMetadata: true });
+        payload = await loadGroupChat(chat_id, { withMetadata: true, chunked: true });
     } catch (error) {
         toastr.error(t`Check the server connection and reload the page to prevent data loss.`, t`Group chat could not be loaded`);
         console.error('Group chat could not be loaded', error);
@@ -430,11 +443,12 @@ export async function getGroupChat(groupId, reload = false) {
 
     const data = payload.messages;
     const metadata = payload.chat_metadata;
-    const freshChat = !metadata.tainted && (!Array.isArray(data) || !data.length);
+    const totalMessages = Number.isInteger(Number(payload.totalMessages)) ? Number(payload.totalMessages) : (Array.isArray(data) ? data.length : 0);
+    const freshChat = !metadata.tainted && totalMessages === 0;
 
     setChatSaveRevision(payload.chat_revision);
     updateChatMetadata(metadata, true);
-    await ensureDeferredLoaderShown({ force: (Array.isArray(data) ? data.length : 0) >= LONG_CHAT_DISPLAY_MIN || freshChat });
+    await ensureDeferredLoaderShown({ force: totalMessages >= LONG_CHAT_DISPLAY_MIN || freshChat });
     await waitForLoaderPaint();
 
     await loadItemizedPrompts(getCurrentChatId());
@@ -464,8 +478,11 @@ export async function getGroupChat(groupId, reload = false) {
         }
         await saveGroupChat(groupId, false);
     } else if (Array.isArray(data) && data.length) {
-        data[0].is_group = true;
-        chat.splice(0, chat.length, ...data);
+        applyChunkedChatPayload(payload, { replace: true, currentView: 'tail' });
+        const firstLoadedMessage = chat.find(message => message);
+        if (firstLoadedMessage) {
+            firstLoadedMessage.is_group = true;
+        }
         chat.forEach(ensureMessageMediaIsArray);
         normalizeChatIdentities(chat, { generateUuid: uuidv4 });
         chatElement.find('.mes').remove();
@@ -813,19 +830,33 @@ function resetSelectedGroup() {
     is_group_generating = false;
 }
 
-async function saveGroupChat(groupId, shouldSaveGroup) {
+async function saveGroupChat(groupId, shouldSaveGroup, { syncLoadedMessages = false } = {}) {
     const group = groups.find(x => x.id == groupId);
     const chat_id = group.chat_id;
     group['date_last_chat'] = Date.now();
     const shouldTrackRevision = String(selected_group) === String(groupId) && String(getCurrentChatId() || '') === String(chat_id || '');
     normalizeChatIdentities(chat, { generateUuid: uuidv4 });
+    const savePayload = await prepareCurrentChatSavePayload({
+        allowPartialSave: shouldTrackRevision,
+        syncLoadedMessages: shouldTrackRevision && syncLoadedMessages,
+    });
+    if (!savePayload.ok) {
+        toastr.warning(savePayload.message, savePayload.title);
+        return CHAT_SAVE_RESULT.FAILED;
+    }
+
     const response = await fetch('/api/chats/group/save', {
         method: 'POST',
         headers: getRequestHeaders(),
         body: JSON.stringify({
             id: chat_id,
-            chat: [...chat],
+            chat: savePayload.chat,
             chat_metadata: JSON.parse(JSON.stringify(chat_metadata)),
+            save_mode: savePayload.saveMode,
+            absolute_start_id: savePayload.absoluteStartId,
+            loaded_range_start: savePayload.loadedRangeStart,
+            loaded_range_end: savePayload.loadedRangeEnd,
+            saved_message_count: savePayload.savedMessageCount,
             ...(shouldTrackRevision ? {
                 base_revision: getChatSaveRevision(),
                 save_session_id: getChatSaveSessionId(),
