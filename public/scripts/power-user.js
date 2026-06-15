@@ -475,8 +475,6 @@ export function normalizeLongChatHandlingSettings(settings = power_user) {
 
 function syncLongChatHandlingControls() {
     const { displayCount } = normalizeLongChatHandlingSettings();
-
-  
 }
 
 let themes = [];

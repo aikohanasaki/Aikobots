@@ -210,12 +210,11 @@ export function updateMessages(db, messages, startIndex) {
         }
         insStmt.free();
         db.run('COMMIT');
-        } catch (error) {
+    } catch (error) {
         db.run('ROLLBACK');
         throw error;
     }
 }
-
 /**
  * Updates metadata in the database.
  * @param {import('sql.js').Database} db
