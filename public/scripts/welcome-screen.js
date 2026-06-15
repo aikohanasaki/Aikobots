@@ -212,32 +212,43 @@ async function sendAssistantMessage() {
     const character = characters.find(x => x.avatar === currentAssistantAvatar);
     const name = character ? character.name : neutralCharacterName;
     const avatar = character ? getThumbnailUrl('avatar', character.avatar) : system_avatar;
-    const welcomePrompt = await renderTemplateAsync('welcomePrompt');
 
     const message = {
         name: name,
         force_avatar: avatar,
-        mes: t`# 🎉 __**Welcome to Aikobots!**__ 🎉` + '\n\n' + t`We're glad you're here. If you ever need help, head to the #help-911 channel in our Discord server.`  + '\n\n' + t`**Now that you're here:**` + '\n' + t`3️⃣ Connect to an API (click :fa-plug: in the top menu bar)` + '\n' + t`4️⃣ Create a persona for yourself (click :fa-face-smile: in the top menu bar)` + '\n' + t`5️⃣ Choose a character to play with! (click :fa-address-card: in the top menu bar)`  + '\n\n' + '\n\n' + t`**If you can't decide who to play with:**` + '\n' + '\n' + t`💬 Talk to Okia if you want recommendations or to do some analysis!` + '\n' +  t`📇 Check out the [Character Roll Call](https://www.aikobots.com/rollcall.html) for bots and blurbs` + '\n\n' + '\n\n' + t`**For commands, be sure to take a look at:** 📜 [List of all Aikobots Commands](https://www.aikobots.com/commands.html)` + '\n***\n' + t`💡 **PS:** Set any character as your welcome page assistant from their "More..." menu.` + '\n\n' + welcomePrompt,
+        mes: t`# 🎉 __**Welcome to Aikobots!**__ 🎉` + '\n\n' + t`We're glad you're here. If you ever need help, head to the #help-911 channel in our Discord server.`  + '\n\n' + t`**Now that you're here:**` + '\n' + t`3️⃣ Connect to an API (click :fa-plug: in the top menu bar)` + '\n' + t`4️⃣ Create a persona for yourself (click :fa-face-smile: in the top menu bar)` + '\n' + t`5️⃣ Choose a character to play with! (click :fa-address-card: in the top menu bar)`  + '\n\n' + '\n\n' + t`**If you can't decide who to play with:**` + '\n' + '\n' + t`💬 Talk to Okia if you want recommendations or to do some analysis!` + '\n' +  t`📇 Check out the [Character Roll Call](https://www.aikobots.com/rollcall.html) for bots and blurbs` + '\n\n' + '\n\n' + t`**For commands, be sure to take a look at:** 📜 [List of all Aikobots Commands](https://www.aikobots.com/commands.html)` + '\n***\n' + t`💡 **PS:** Set any character as your welcome page assistant from their "More..." menu.`,
         is_system: false,
         is_user: false,
         send_date: getMessageTimeStamp(),
         extra: {
             type: system_message_types.ASSISTANT_MESSAGE,
-            uses_system_ui: true,
         },
     };
 
     chat.push(message);
     addOneMessage(message, { scroll: false });
-    postProcessAssistantIcons();
+    const chatElement = document.getElementById('chat');
+    const assistantMessageElement = chatElement?.lastElementChild;
+    await appendWelcomePromptButtons(assistantMessageElement);
+    postProcessAssistantIcons(assistantMessageElement);
 }
 
-function postProcessAssistantIcons() {
+async function appendWelcomePromptButtons(messageElement) {
     try {
-        const chatElement = document.getElementById('chat');
-        if (!chatElement || !chatElement.lastElementChild) return;
-        // Only process the most recently inserted message (this assistant message)
-        replaceIconTokensInElement(chatElement.lastElementChild);
+        const messageText = messageElement?.querySelector('.mes_text');
+        if (!messageText) return;
+        const template = await renderTemplateAsync('welcomePrompt');
+        const fragment = document.createRange().createContextualFragment(template);
+        messageText.appendChild(fragment);
+    } catch (e) {
+        console.warn('Welcome prompt button insert failed:', e);
+    }
+}
+
+function postProcessAssistantIcons(messageElement) {
+    try {
+        if (!messageElement) return;
+        replaceIconTokensInElement(messageElement);
     } catch (e) {
         console.warn('Icon token post-process failed:', e);
     }
