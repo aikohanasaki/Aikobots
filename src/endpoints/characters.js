@@ -34,7 +34,7 @@ import { readWorldInfoFile } from './worldinfo.js';
 import { invalidateThumbnail } from './thumbnails.js';
 import { importRisuSprites } from './sprites.js';
 import { getAllEnabledUsers, getUserDirectories, requireAdminMiddleware } from '../users.js';
-import { getChatInfo } from './chats.js';
+import { getChatInfo, getDeduplicatedChatHistoryFileNames } from './chats.js';
 import { ByafParser } from '../byaf.js';
 import cacheBuster from '../middleware/cacheBuster.js';
 import { assertPathUnderParent, assertSafeFileName, PathSecurityError, resolvePathUnderParent } from '../path-security.js';
@@ -2449,9 +2449,7 @@ router.post('/chats', validateAvatarUrlMiddleware, async function (request, resp
         }
 
         const files = fs.readdirSync(chatsDirectory, { withFileTypes: true });
-        const jsonFiles = files
-            .filter(file => file.isFile() && (path.extname(file.name) === '.jsonl' || path.extname(file.name) === '.sqlite') && !file.name.endsWith('.head.jsonl'))
-            .map(file => file.name);
+        const jsonFiles = getDeduplicatedChatHistoryFileNames(files);
 
         if (jsonFiles.length === 0) {
             return response.send([]);

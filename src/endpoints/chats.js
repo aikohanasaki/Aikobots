@@ -172,6 +172,39 @@ export function isHeadChatFile(fileName) {
     return String(fileName).endsWith(CHAT_HEAD_FILE_SUFFIX);
 }
 
+function isChatHistoryFileName(fileName) {
+    const extension = path.extname(fileName).toLowerCase();
+    return (extension === '.jsonl' || extension === '.sqlite') && !isHeadChatFile(fileName);
+}
+
+/**
+ * Returns one storage file per logical chat history, preferring SQLite over legacy JSONL.
+ * @param {(string|fs.Dirent)[]} files Directory entries or file names to inspect.
+ * @returns {string[]} Deduplicated chat file names.
+ */
+export function getDeduplicatedChatHistoryFileNames(files) {
+    const chatFiles = new Map();
+
+    for (const file of files) {
+        if (file && typeof file === 'object' && typeof file.isFile === 'function' && !file.isFile()) {
+            continue;
+        }
+
+        const fileName = typeof file === 'string' ? file : file?.name;
+        if (!fileName || !isChatHistoryFileName(fileName)) {
+            continue;
+        }
+
+        const logicalName = path.parse(fileName).name;
+        const existingFileName = chatFiles.get(logicalName);
+        if (!existingFileName || path.extname(fileName).toLowerCase() === '.sqlite') {
+            chatFiles.set(logicalName, fileName);
+        }
+    }
+
+    return Array.from(chatFiles.values());
+}
+
 export function getSplitHeadPath(filePath) {
     const parsedPath = path.parse(filePath);
     return resolveSplitHeadCompanionPath(filePath, `${parsedPath.name}${CHAT_HEAD_FILE_SUFFIX}`);
@@ -3056,8 +3089,7 @@ router.post('/search', validateAvatarUrlMiddleware, async function (request, res
                 return response.send([]);
             }
 
-            chatFiles = fs.readdirSync(directoryPath)
-                .filter(file => (file.endsWith('.jsonl') || file.endsWith('.sqlite')) && !isHeadChatFile(file))
+            chatFiles = getDeduplicatedChatHistoryFileNames(fs.readdirSync(directoryPath))
                 .map(fileName => {
                     const filePath = path.join(directoryPath, fileName);
                     const stats = fs.statSync(filePath);
@@ -3143,9 +3175,7 @@ router.post('/orphaned', async function (request, response) {
             const avatarUrl = `${orphanKey}.png`;
             const orphanChatDir = path.join(request.user.directories.chats, orphanKey);
             const orphanChatFiles = await fs.promises.readdir(orphanChatDir, { withFileTypes: true }).catch(() => []);
-            const directChatFiles = orphanChatFiles
-                .filter(file => file.isFile() && (path.extname(file.name) === '.jsonl' || path.extname(file.name) === '.sqlite') && !isHeadChatFile(file.name))
-                .map(file => file.name);
+            const directChatFiles = getDeduplicatedChatHistoryFileNames(orphanChatFiles);
 
             const directChats = fragments.length
                 ? (await Promise.all(directChatFiles
@@ -3255,7 +3285,7 @@ router.post('/recent', async function (request, response) {
                 const pathStats = await fs.promises.stat(pathToChats);
                 if (pathStats.isDirectory()) {
                     const chatFiles = await fs.promises.readdir(pathToChats);
-                    const jsonlFiles = chatFiles.filter(file => (path.extname(file) === '.jsonl' || path.extname(file) === '.sqlite') && !isHeadChatFile(file));
+                    const jsonlFiles = getDeduplicatedChatHistoryFileNames(chatFiles);
 
                     for (const file of jsonlFiles) {
                         const filePath = path.join(pathToChats, file);
@@ -3295,7 +3325,7 @@ router.post('/recent', async function (request, response) {
 
                             const getRootChatFiles = async () => {
                             const dirents = await fs.promises.readdir(request.user.directories.chats, { withFileTypes: true });
-                            const chatFiles = dirents.filter(e => e.isFile() && (path.extname(e.name) === '.jsonl' || path.extname(e.name) === '.sqlite') && !isHeadChatFile(e.name)).map(e => e.name);
+                            const chatFiles = getDeduplicatedChatHistoryFileNames(dirents);
 
                             for (const file of chatFiles) {
                             const filePath = path.join(request.user.directories.chats, file);
@@ -3307,7 +3337,7 @@ router.post('/recent', async function (request, response) {
                             await Promise.allSettled([getCharacterChatFiles(), getGroupChatFiles(), getRootChatFiles()]);
 
                             const max = parseInt(request.body.max ?? Number.MAX_SAFE_INTEGER) + pinnedChats.length;
-                            const isPinned = (/** @type {ChatFile} */ chatFile) => pinnedChats.some(p => p.file_name === path.basename(chatFile.filePath) && (p.avatar === chatFile.pngFile || p.group === chatFile.groupId));
+                            const isPinned = (/** @type {ChatFile} */ chatFile) => pinnedChats.some(p => path.parse(String(p.file_name || '')).name === path.parse(path.basename(chatFile.filePath)).name && (p.avatar === chatFile.pngFile || p.group === chatFile.groupId));
                             const recentChats = allChatFiles.sort((a, b) => {
                             const isAPinned = isPinned(a);
                             const isBPinned = isPinned(b);
