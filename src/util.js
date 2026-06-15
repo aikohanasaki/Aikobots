@@ -2,6 +2,7 @@ import path from 'node:path';
 import fs from 'node:fs';
 import http2 from 'node:http2';
 import process from 'node:process';
+import { once } from 'node:events';
 import { Readable } from 'node:stream';
 import { createRequire } from 'node:module';
 import { Buffer } from 'node:buffer';
@@ -524,6 +525,25 @@ export function getImages(directoryPath, sortBy = 'name') {
 }
 
 /**
+ * Waits until a writable stream can accept more data or closes.
+ * @param {import('node:stream').Writable} writable Writable stream to wait on.
+ * @returns {Promise<void>}
+ */
+async function waitForWritableDrain(writable) {
+    const controller = new AbortController();
+
+    try {
+        await Promise.race([
+            once(writable, 'drain', { signal: controller.signal }),
+            once(writable, 'close', { signal: controller.signal }),
+            once(writable, 'finish', { signal: controller.signal }),
+        ]);
+    } finally {
+        controller.abort();
+    }
+}
+
+/**
  * Pipe a fetch() response to an Express.js Response, including status code.
  * @param {import('node-fetch').Response} from The Fetch API response to pipe from.
  * @param {import('express').Response} to The Express response to pipe to.
@@ -560,7 +580,10 @@ export function forwardFetchResponse(from, to) {
             try {
                 for await (const chunk of from.body) {
                     if (to.writableEnded) break;
-                    to.write(chunk);
+                    if (!to.write(chunk)) {
+                        await waitForWritableDrain(to);
+                        if (to.writableEnded || to.destroyed) break;
+                    }
                     to.flush?.();
                 }
                 console.info('Streaming request finished');
