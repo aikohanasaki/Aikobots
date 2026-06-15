@@ -99,9 +99,6 @@ function createEmptyDocument() {
     return {
         version: 1,
         settings: {},
-        migration: {
-            additionalContextByProfileKey: {},
-        },
     };
 }
 
@@ -150,15 +147,6 @@ export function normalizeStmbContextSettingsDocument(document = {}) {
             normalized.settings[normalizedSetting.key] = normalizedSetting;
         }
     }
-
-    const migration = document?.migration && typeof document.migration === 'object' && !Array.isArray(document.migration)
-        ? document.migration
-        : {};
-    normalized.migration.additionalContextByProfileKey = migration.additionalContextByProfileKey
-        && typeof migration.additionalContextByProfileKey === 'object'
-        && !Array.isArray(migration.additionalContextByProfileKey)
-        ? { ...migration.additionalContextByProfileKey }
-        : {};
 
     return normalized;
 }

@@ -27,7 +27,6 @@ import {
     listStmbContextSettings,
     migrateStmbContextSettingsLorebookReference,
     saveStmbMemoryEntry,
-    upsertStmbContextSetting,
 } from './stmb-api.js';
 import { closeActiveMemoryPreviewPopups, showAdvancedOptionsPopup, showAutoConsolidationPromptPopup, showAutoSummaryDecisionPopup, showConfirmationPopup, showConsolidationPreviewPopup, showFailedAIResponsePopup, showFailedSummaryResponsePopup, showLorebookPickerPopup, showMemoryPreviewPopup, showSummaryConsolidationOptionsPopup } from './stmb-popups.js';
 import { Popup, POPUP_RESULT, POPUP_TYPE } from './popup.js';
@@ -5744,13 +5743,22 @@ function saveAdvancedProfile(baseProfile, popupResult, currentUiConnection) {
     return nextProfile;
 }
 
+/**
+ * Estimates the full memory generation prompt used by warning and threshold gates.
+ */
 async function estimateAdvancedMemoryTokens(compiledScene, lorebookName, options = {}) {
-    const profileIndex = Number.isInteger(options?.profileIndex) ? options.profileIndex : null;
+    const rawProfileIndex = options?.profileIndex;
+    const profileIndex = rawProfileIndex !== null && rawProfileIndex !== undefined && Number.isInteger(Number(rawProfileIndex))
+        ? Number(rawProfileIndex)
+        : null;
     const promptText = String(options?.promptText || '').trim();
     const memoryCount = Number.isFinite(Number(options?.memoryCount))
         ? Math.max(0, Math.min(7, Math.trunc(Number(options.memoryCount))))
         : 0;
-    const effectiveProfile = structuredClone(getActiveStmbProfile(stmbSettings, profileIndex));
+    const sourceProfile = options?.profile && typeof options.profile === 'object'
+        ? options.profile
+        : getActiveStmbProfile(stmbSettings, profileIndex);
+    const effectiveProfile = structuredClone(sourceProfile);
 
     if (promptText) {
         effectiveProfile.promptText = promptText;
@@ -5764,7 +5772,14 @@ async function estimateAdvancedMemoryTokens(compiledScene, lorebookName, options
         },
     };
     const worldInfo = await loadWorldInfo(lorebookName) || { entries: {} };
-    const additionalContextEntries = await resolveCurrentChatAdditionalContextEntries({ notify: false });
+    let additionalContextEntries;
+    if (Array.isArray(options?.additionalContextEntries)) {
+        additionalContextEntries = options.additionalContextEntries;
+    } else if (Object.hasOwn(options || {}, 'contextSettingKey')) {
+        additionalContextEntries = await resolveAdditionalContextEntriesForKey(options.contextSettingKey, { notify: false });
+    } else {
+        additionalContextEntries = await resolveCurrentChatAdditionalContextEntries({ notify: false });
+    }
     const finalPromptText = buildMemoryPromptText(compiledScene, effectiveProfile, worldInfo, requestSettings, additionalContextEntries);
     return await getTokenCountAsync(String(finalPromptText || ''));
 }
@@ -5772,7 +5787,15 @@ async function estimateAdvancedMemoryTokens(compiledScene, lorebookName, options
 async function showAndGetMemorySettings(compiledScene, range, lorebookName, selectedProfileIndex = null) {
     await firstRunInitSummaryPromptPresets(stmbSettings);
     const tokenThreshold = getModuleSettings().tokenWarningThreshold ?? 30000;
-    const estimatedTokens = await getTokenCountAsync(compiledSceneToText(compiledScene));
+    const rawDefaultMemoryCount = Number(getModuleSettings().defaultMemoryCount);
+    const defaultMemoryCount = Number.isFinite(rawDefaultMemoryCount)
+        ? Math.max(0, Math.min(7, Math.trunc(rawDefaultMemoryCount)))
+        : 0;
+    const defaultProfileIndex = selectedProfileIndex ?? stmbSettings.defaultProfile ?? 0;
+    const estimatedTokens = await estimateAdvancedMemoryTokens(compiledScene, lorebookName, {
+        profileIndex: defaultProfileIndex,
+        memoryCount: defaultMemoryCount,
+    });
     const sceneData = buildScenePopupData(compiledScene, range, estimatedTokens);
     const shouldShowConfirmation = !getModuleSettings().alwaysUseDefault || estimatedTokens > tokenThreshold;
     const currentUiConnection = await getCurrentUiConnectionInfo();
@@ -5784,7 +5807,7 @@ async function showAndGetMemorySettings(compiledScene, range, lorebookName, sele
         }
         return {
             profileSettings: buildEffectiveMemoryProfile(profile),
-            summaryCount: Math.max(0, Math.min(7, Number(getModuleSettings().defaultMemoryCount ?? 0))),
+            summaryCount: defaultMemoryCount,
             tokenThreshold,
         };
     }
@@ -5795,7 +5818,6 @@ async function showAndGetMemorySettings(compiledScene, range, lorebookName, sele
         profileModel: getProfileModelDisplay(profile),
         profileTemperature: getProfileTemperatureDisplay(profile),
     }));
-    const defaultProfileIndex = selectedProfileIndex ?? stmbSettings.defaultProfile ?? 0;
     const confirmation = await showConfirmationPopup({
         ...sceneData,
         profiles: popupProfiles,
@@ -5823,7 +5845,7 @@ async function showAndGetMemorySettings(compiledScene, range, lorebookName, sele
         }
         return {
             profileSettings: buildEffectiveMemoryProfile(profile),
-            summaryCount: Math.max(0, Math.min(7, Number(getModuleSettings().defaultMemoryCount ?? 0))),
+            summaryCount: defaultMemoryCount,
             tokenThreshold,
         };
     }
@@ -5837,7 +5859,7 @@ async function showAndGetMemorySettings(compiledScene, range, lorebookName, sele
         currentModel: currentUiConnection.model,
         currentTemperature: currentUiConnection.temperature,
         availableMemories: await getAvailableMemoryCount(lorebookName),
-        defaultMemoryCount: Math.max(0, Math.min(7, Number(getModuleSettings().defaultMemoryCount ?? 0))),
+        defaultMemoryCount,
         overrideSettings: false,
         suggestedProfileName: `${getProfileDisplayName(selectedProfile)} - Modified`,
         tokenThreshold,
@@ -6025,53 +6047,6 @@ async function resolveCurrentChatAdditionalContextEntries(options = {}) {
 
 export function loadStmbSettings(settings) {
     stmbSettings = normalizeStmbSettings(settings?.stmb_settings, settings?.extension_settings?.STMemoryBooks);
-}
-
-function normalizeLegacyAdditionalContextEntry(entry = {}) {
-    const lorebookName = String(entry?.lorebookName || entry?.worldName || entry?.world || entry?.book || entry?.name || '').trim();
-    const uid = String(entry?.uid ?? entry?.id ?? '').trim();
-    if (!lorebookName || !uid) {
-        return null;
-    }
-
-    return {
-        lorebookName,
-        storage: entry?.storage === 'secure' ? 'secure' : getLorebookStorageForRequest(lorebookName),
-        uid,
-    };
-}
-
-async function migrateLegacyAdditionalContextEntries() {
-    const profiles = Array.isArray(stmbSettings.profiles) ? stmbSettings.profiles : [];
-    let changed = false;
-
-    for (const [index, profile] of profiles.entries()) {
-        if (!Object.hasOwn(profile || {}, 'additionalContextEntries')) {
-            continue;
-        }
-
-        const entries = (Array.isArray(profile.additionalContextEntries) ? profile.additionalContextEntries : [])
-            .map(normalizeLegacyAdditionalContextEntry)
-            .filter(Boolean);
-        if (entries.length > 0) {
-            try {
-                await upsertStmbContextSetting({
-                    name: `${getProfileDisplayName(profile) || `Profile ${index + 1}`} Additional Context`,
-                    entries,
-                });
-            } catch (error) {
-                console.warn('STMB legacy Additional Context migration skipped invalid profile entries', error);
-            }
-        }
-
-        delete profile.additionalContextEntries;
-        changed = true;
-    }
-
-    if (changed) {
-        stmbSettings = normalizeStmbSettings(stmbSettings);
-        saveSettingsDebounced();
-    }
 }
 
 export function getStmbSettings() {
@@ -6783,7 +6758,7 @@ async function requestPlainTextSummaryDetailed(prompt, profile, signal, onRateLi
     };
 }
 
-async function requestStructuredMemory(compiledScene, profile, lorebookName, summaryCount, signal, onRateLimitWait = null) {
+async function requestStructuredMemory(compiledScene, profile, lorebookName, summaryCount, signal, onRateLimitWait = null, options = {}) {
     await firstRunInitSummaryPromptPresets(stmbSettings);
     const requestSettings = {
         ...stmbSettings,
@@ -6793,7 +6768,9 @@ async function requestStructuredMemory(compiledScene, profile, lorebookName, sum
         },
     };
     const worldInfo = await loadWorldInfo(lorebookName) || { entries: {} };
-    const additionalContextEntries = await resolveCurrentChatAdditionalContextEntries();
+    const additionalContextEntries = Array.isArray(options.additionalContextEntries)
+        ? options.additionalContextEntries
+        : await resolveAdditionalContextEntriesForKey(options.contextSettingKey || getChatContextSettingKey());
     let promptText = buildMemoryPromptText(compiledScene, profile, worldInfo, requestSettings, additionalContextEntries);
     if (getModuleSettings().useRegex) {
         promptText = applySelectedRegex(promptText, getModuleSettings().selectedRegexOutgoing);
@@ -7739,6 +7716,10 @@ async function applyManualFixedMemoryJson(correctedRaw, context) {
                     context.summaryCount,
                     task.signal,
                     null,
+                    {
+                        additionalContextEntries: context.additionalContextEntries,
+                        contextSettingKey: context.contextSettingKey,
+                    },
                 );
                 continue;
             }
@@ -7888,7 +7869,16 @@ async function executeMemoryJob(job, context) {
         const tokenThreshold = Number.isFinite(parsedTokenThreshold)
             ? Math.max(1000, Math.trunc(parsedTokenThreshold))
             : 30000;
-        const estimatedTokens = await getTokenCountAsync(compiledSceneToText(compiledScene));
+        const tokenEstimateOptions = {
+            profile,
+            memoryCount: payload.summaryCount,
+        };
+        if (Array.isArray(payload.additionalContextEntries)) {
+            tokenEstimateOptions.additionalContextEntries = payload.additionalContextEntries;
+        } else if (Object.hasOwn(payload, 'contextSettingKey')) {
+            tokenEstimateOptions.contextSettingKey = payload.contextSettingKey;
+        }
+        const estimatedTokens = await estimateAdvancedMemoryTokens(compiledScene, lorebookName, tokenEstimateOptions);
         if (estimatedTokens > tokenThreshold) {
             throw new Error(
                 `/stmb-catchup chunk ${range.sceneStart}-${range.sceneEnd} is estimated at ${estimatedTokens} tokens, above the token warning threshold (${tokenThreshold}). Use a smaller interval or increase the threshold.`,
@@ -7926,6 +7916,10 @@ async function executeMemoryJob(job, context) {
             wait => context.setState('generating', {
                 detail: `Rate limited, retrying in ${Math.max(1, Math.ceil(Math.max(0, Number(wait?.delayMs) || 0) / 1000))}s`,
             }),
+            {
+                additionalContextEntries: payload.additionalContextEntries,
+                contextSettingKey: payload.contextSettingKey,
+            },
         );
 
         if (requestSettings.moduleSettings?.showMemoryPreviews) {
@@ -8032,6 +8026,7 @@ async function executeMemoryCreationFromRange(range, options = {}) {
     }
     ensureStmbJobExecutorsRegistered();
     const memoryJobId = createMemoryJobId();
+    const contextSettingKey = getChatContextSettingKey();
     const requestSettings = buildMemoryRequestSettings(effectiveSettings.summaryCount);
     let afterMemoryJobs = [];
     try {
@@ -8061,6 +8056,7 @@ async function executeMemoryCreationFromRange(range, options = {}) {
             lorebookName,
             profile: effectiveSettings.profileSettings,
             summaryCount: effectiveSettings.summaryCount,
+            contextSettingKey,
             keepSceneMarkers: Boolean(options.keepSceneMarkers),
             source: options.source || 'memory',
         },
@@ -8672,6 +8668,7 @@ async function stmbCatchupCommand(namedArgs = {}) {
         const tokenThreshold = Math.max(1000, Math.trunc(Number(getModuleSettings().tokenWarningThreshold ?? 30000)));
         const skipSystemMessages = !getModuleSettings().unhideBeforeMemory;
         const queuedProfile = buildEffectiveMemoryProfile(profile);
+        const contextSettingKey = getChatContextSettingKey();
 
         ensureStmbJobExecutorsRegistered();
         for (let index = 0; index < chunks.length; index++) {
@@ -8694,6 +8691,7 @@ async function stmbCatchupCommand(namedArgs = {}) {
                     lorebookName,
                     profile: queuedProfile,
                     summaryCount: 0,
+                    contextSettingKey,
                     keepSceneMarkers: true,
                     source: 'catchup',
                     skipSystemMessages,
@@ -9086,9 +9084,6 @@ export function initStmb() {
     });
     firstRunInitSidePrompts().catch(error => {
         console.warn('STMB side prompts init failed', error);
-    });
-    migrateLegacyAdditionalContextEntries().catch(error => {
-        console.warn('STMB legacy Additional Context migration failed', error);
     });
     refreshSidePromptCache().catch(error => {
         console.warn('STMB side prompt cache refresh failed during init', error);

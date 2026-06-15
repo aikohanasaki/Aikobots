@@ -184,7 +184,7 @@ export async function resolveAdditionalContextEntriesForKey(key, options = {}) {
 
 export function buildAdditionalContextSourceOptionsHtml(contextSettings = [], selectedConfig = {}) {
     const config = selectedConfig && typeof selectedConfig === 'object' ? selectedConfig : {};
-    const mode = Object.values(STMB_CONTEXT_SOURCE_MODES).includes(config.mode) ? config.mode : STMB_CONTEXT_SOURCE_MODES.FOLLOW_CHAT;
+    const mode = Object.values(STMB_CONTEXT_SOURCE_MODES).includes(config.mode) ? config.mode : STMB_CONTEXT_SOURCE_MODES.NONE;
     const fixedKey = mode === STMB_CONTEXT_SOURCE_MODES.FIXED ? String(config.contextSettingKey || '').trim() : '';
     return [
         `<option value="${STMB_CONTEXT_FOLLOW_CHAT_VALUE}" ${mode === STMB_CONTEXT_SOURCE_MODES.FOLLOW_CHAT ? 'selected' : ''}>Follow chat</option>`,
@@ -196,11 +196,11 @@ export function buildAdditionalContextSourceOptionsHtml(contextSettings = [], se
 }
 
 export function readAdditionalContextSourceSetting(select) {
-    const value = String(select?.value || STMB_CONTEXT_FOLLOW_CHAT_VALUE).trim();
+    const value = String(select?.value || STMB_CONTEXT_NONE_KEY).trim();
     if (value === STMB_CONTEXT_NONE_KEY) {
         return { mode: STMB_CONTEXT_SOURCE_MODES.NONE };
     }
-    if (!value || value === STMB_CONTEXT_FOLLOW_CHAT_VALUE) {
+    if (value === STMB_CONTEXT_FOLLOW_CHAT_VALUE) {
         return { mode: STMB_CONTEXT_SOURCE_MODES.FOLLOW_CHAT };
     }
     return {

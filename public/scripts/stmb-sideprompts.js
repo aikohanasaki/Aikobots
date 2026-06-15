@@ -131,7 +131,7 @@ async function resolveSidePromptAdditionalContextEntries(template) {
         : {};
     const mode = Object.values(STMB_CONTEXT_SOURCE_MODES).includes(config.mode)
         ? config.mode
-        : STMB_CONTEXT_SOURCE_MODES.FOLLOW_CHAT;
+        : STMB_CONTEXT_SOURCE_MODES.NONE;
     if (mode === STMB_CONTEXT_SOURCE_MODES.NONE) {
         return [];
     }
