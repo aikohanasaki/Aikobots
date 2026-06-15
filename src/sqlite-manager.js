@@ -80,17 +80,24 @@ export async function migrateFromJsonl(jsonlPath, sqlitePath) {
     const lines = content.split('\n').filter(line => line.trim());
     
     db.run('BEGIN TRANSACTION');
+    let stmt;
     try {
-        const stmt = db.prepare('INSERT INTO messages (order_index, content) VALUES (?, ?)');
+        stmt = db.prepare('INSERT INTO messages (order_index, content) VALUES (?, ?)');
         for (let i = 0; i < lines.length; i++) {
             // Use index as order_index for initial migration
+            try {
+                JSON.parse(lines[i]);
+            } catch (error) {
+                throw new Error(`Invalid JSONL at line ${i + 1}: ${error.message}`);
+            }
             stmt.run([i, lines[i]]);
         }
-        stmt.free();
         db.run('COMMIT');
     } catch (error) {
         db.run('ROLLBACK');
         throw error;
+    } finally {
+        stmt?.free();
     }
 
     saveDb(db, sqlitePath);
