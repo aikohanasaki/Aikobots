@@ -956,6 +956,7 @@ const BOTTOM_HISTORY_CONTROL_ID = 'show_newer_messages';
 const RETURN_TO_TAIL_CONTROL_ID = 'return_to_live_tail';
 const HYDRATE_CHAT_CONTROL_ID = 'load_full_chat_for_editing';
 const FALLBACK_CHAT_WINDOW_SIZE = 200;
+const INITIAL_CHAT_RENDER_MAX = 500;
 const CHAT_STORAGE_MODE_SPLIT_TAIL = 'split-tail';
 
 let dialogueResolve = null;
@@ -4735,6 +4736,31 @@ function shouldApplyLatestTailPayload(response, localTotalMessages = getTotalCha
     return true;
 }
 
+function chunkedPayloadIncludesLatestTail(response) {
+    const totalMessages = Number(response?.totalMessages);
+    const loadedRangeEnd = Number(response?.loadedRangeEnd);
+
+    if (!Number.isInteger(totalMessages) || totalMessages <= 0) {
+        return true;
+    }
+
+    return loadedRangeEnd === totalMessages - 1;
+}
+
+async function fetchLatestTailForPayload(response, options = {}) {
+    const totalMessages = Number(response?.totalMessages);
+    const count = getConfiguredLongChatBufferMax();
+    const rangeStart = Number.isInteger(totalMessages)
+        ? Math.max(0, totalMessages - count)
+        : null;
+
+    return fetchChunkedChat({
+        rangeStart,
+        count,
+        ...options,
+    });
+}
+
 async function replaceChunkedChatPayloadPreservingWindow(response, { scrollToTail = false } = {}) {
     const previousChatLength = chat.length;
     const previousStartId = getFirstDisplayedMessageId();
@@ -5186,14 +5212,23 @@ export async function showNewerMessages(messagesToLoad = null, navigationToken =
     }, navigationToken);
 }
 
-export async function printMessages() {
-    let startIndex = 0;
-    const displayCount = getConfiguredLongChatDisplayCount();
-    const count = Math.min(displayCount, 500);
+function getInitialChatRenderCount() {
+    const fallbackCount = Math.min(getConfiguredLongChatDisplayCount(), INITIAL_CHAT_RENDER_MAX);
 
-    if (chat.length > count) {
-        startIndex = chat.length - count;
+    if (!chat.length) {
+        return fallbackCount;
     }
+
+    const loadedTailStartId = isChatFullyHydrated() ? 0 : getContiguousLoadedTailStartId();
+    const loadedTailCount = Math.max(0, chat.length - loadedTailStartId);
+    const candidateCount = isChatFullyHydrated() ? chat.length : loadedTailCount;
+
+    return Math.max(1, Math.min(candidateCount || fallbackCount, INITIAL_CHAT_RENDER_MAX));
+}
+
+export async function printMessages() {
+    const count = getInitialChatRenderCount();
+    const startIndex = Math.max(0, chat.length - count);
 
     await renderMessageWindow(startIndex, count);
     showSwipeButtons();
@@ -11584,7 +11619,18 @@ export async function unshallowCharacter(characterId) {
 export async function getChat() {
     //console.log('/api/chats/get -- entered for -- ' + characters[this_chid].name);
     try {
-        const response = await fetchChunkedChat({ includeParentPromptCache: true });
+        let response = await fetchChunkedChat({ includeParentPromptCache: true });
+        if (!chunkedPayloadIncludesLatestTail(response)) {
+            console.warn('Initial chat payload did not include the latest tail. Refetching latest tail before render.', {
+                totalMessages: response?.totalMessages,
+                loadedRangeStart: response?.loadedRangeStart,
+                loadedRangeEnd: response?.loadedRangeEnd,
+            });
+            response = await fetchLatestTailForPayload(response, { includeParentPromptCache: true });
+            if (!chunkedPayloadIncludesLatestTail(response)) {
+                throw new Error('Latest chat tail could not be loaded');
+            }
+        }
         // A brand-new chat may not have a file on disk yet. Treat that as a valid empty chat.
         const header = applyChunkedChatPayload(response, { replace: true, currentView: 'tail' });
         if (header) {
