@@ -103,8 +103,7 @@ export async function migrateFromJsonl(jsonlPath, sqlitePath) {
  */
 export function reindexChat(db) {
     const messages = getMessages(db);
-    const header = getChatHeader(db);
-    setMessages(db, [header, ...messages]);
+    setMessages(db, messages);
 }
 
 /**
