@@ -41,6 +41,11 @@ import {
     upsertTemplate,
 } from './stmb-sideprompts-manager.js';
 import { awaitStmbJobApproval, enqueueStmbJob, registerStmbJobExecutor } from './stmb-jobs.js';
+import {
+    resolveAdditionalContextEntriesForKey,
+    STMB_CONTEXT_NONE_KEY,
+    STMB_CONTEXT_SOURCE_MODES,
+} from './stmb-context-settings.js';
 
 let trackerEvaluationPromise = null;
 let previewQueue = Promise.resolve();
@@ -113,6 +118,28 @@ function getSidePromptChatLorebookOverrides() {
 
 function getSelectedAfterMemorySetKey() {
     return String(getStmbChatState()?.sidePromptAfterMemorySetKey || '').trim();
+}
+
+function getChatContextSettingKey() {
+    const key = String(getStmbChatState()?.contextSettingKey || '').trim();
+    return key && key !== STMB_CONTEXT_NONE_KEY ? key : STMB_CONTEXT_NONE_KEY;
+}
+
+async function resolveSidePromptAdditionalContextEntries(template) {
+    const config = template?.settings?.additionalContext && typeof template.settings.additionalContext === 'object'
+        ? template.settings.additionalContext
+        : {};
+    const mode = Object.values(STMB_CONTEXT_SOURCE_MODES).includes(config.mode)
+        ? config.mode
+        : STMB_CONTEXT_SOURCE_MODES.FOLLOW_CHAT;
+    if (mode === STMB_CONTEXT_SOURCE_MODES.NONE) {
+        return [];
+    }
+
+    const key = mode === STMB_CONTEXT_SOURCE_MODES.FIXED
+        ? String(config.contextSettingKey || '').trim()
+        : getChatContextSettingKey();
+    return await resolveAdditionalContextEntriesForKey(key);
 }
 
 function summarizeTemplateNames(names = [], maxLength = 80) {
@@ -536,6 +563,7 @@ async function prepareSidePromptRun({ template, lorebookName, lorebookData, comp
     const unifiedTitle = getUnifiedSidePromptTitle(template, runtimeMacros);
     const existing = findFirstLorebookEntryByTitle(lorebookData, getSidePromptLookupTitles(template, runtimeMacros, fallbackKinds));
     const previousMemories = fetchPreviousMemories(lorebookData, Number(template?.settings?.previousMemoriesCount ?? 0));
+    const additionalContextEntries = await resolveSidePromptAdditionalContextEntries(template);
     const finalPrompt = buildSidePromptText(
         template.prompt,
         existing?.content || '',
@@ -543,6 +571,7 @@ async function prepareSidePromptRun({ template, lorebookName, lorebookData, comp
         template.responseFormat,
         previousMemories,
         runtimeMacros,
+        additionalContextEntries,
     );
     const overrideIndex = template?.settings?.overrideProfileEnabled
         ? Number(template?.settings?.overrideProfileIndex)

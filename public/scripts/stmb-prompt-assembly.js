@@ -62,11 +62,43 @@ export function fetchPreviousMemories(worldInfo, count) {
         }));
 }
 
-export function buildMemoryPromptMessages(compiledScene, profile, worldInfo, stmbSettings = {}) {
-    return [{ role: 'user', content: buildMemoryPromptText(compiledScene, profile, worldInfo, stmbSettings) }];
+function normalizeAdditionalContextEntries(entries = []) {
+    return (Array.isArray(entries) ? entries : [])
+        .map(entry => ({
+            title: String(entry?.title || entry?.comment || 'Context').trim() || 'Context',
+            content: String(entry?.content || '').trim(),
+            lorebookName: String(entry?.lorebookName || '').trim(),
+            uid: String(entry?.uid ?? '').trim(),
+        }))
+        .filter(entry => entry.content);
 }
 
-export function buildMemoryPromptText(compiledScene, profile, worldInfo, stmbSettings = {}) {
+export function appendAdditionalContextSection(parts, entries = []) {
+    const contextEntries = normalizeAdditionalContextEntries(entries);
+    if (!Array.isArray(parts) || contextEntries.length === 0) {
+        return;
+    }
+
+    parts.push('=== ADDITIONAL CONTEXT FOR REFERENCE ===');
+    parts.push('These lorebook entries are reference material only. Do NOT rewrite or summarize them unless directly relevant to the requested output.');
+    parts.push('');
+    contextEntries.forEach((entry, index) => {
+        const source = entry.lorebookName
+            ? ` (${entry.lorebookName}${entry.uid ? ` #${entry.uid}` : ''})`
+            : '';
+        parts.push(`Reference ${index + 1} - ${entry.title}${source}:`);
+        parts.push(entry.content);
+        parts.push('');
+    });
+    parts.push('=== END ADDITIONAL CONTEXT ===');
+    parts.push('');
+}
+
+export function buildMemoryPromptMessages(compiledScene, profile, worldInfo, stmbSettings = {}, additionalContextEntries = []) {
+    return [{ role: 'user', content: buildMemoryPromptText(compiledScene, profile, worldInfo, stmbSettings, additionalContextEntries) }];
+}
+
+export function buildMemoryPromptText(compiledScene, profile, worldInfo, stmbSettings = {}, additionalContextEntries = []) {
     const basePrompt = typeof profile?.promptText === 'string' && profile.promptText.trim()
         ? profile.promptText
         : getRequiredSummaryPromptText(profile?.preset, stmbSettings);
@@ -85,6 +117,9 @@ export function buildMemoryPromptText(compiledScene, profile, worldInfo, stmbSet
             .filter(Boolean)
         : [];
     const sceneLines = [];
+    const contextEntries = normalizeAdditionalContextEntries(additionalContextEntries?.length ? additionalContextEntries : compiledScene?.additionalContextEntries);
+
+    appendAdditionalContextSection(sceneLines, contextEntries);
 
     if (previousMemories.length > 0) {
         sceneLines.push('=== PREVIOUS SCENE CONTEXT (DO NOT PROCESS) ===');
@@ -110,12 +145,18 @@ export function buildMemoryPromptText(compiledScene, profile, worldInfo, stmbSet
     return `${presetPrompt}\n\n${sceneLines.join('\n')}`;
 }
 
-export function buildSidePromptText(templatePrompt, priorContent, compiledScene, responseFormat, previousMemories = [], runtimeMacros = {}) {
+export function buildSidePromptText(templatePrompt, priorContent, compiledScene, responseFormat, previousMemories = [], runtimeMacros = {}, additionalContextEntries = []) {
     const parts = [];
     parts.push(applySidePromptMacros(templatePrompt, runtimeMacros));
     if (priorContent && String(priorContent).trim()) {
         parts.push('\n=== PRIOR ENTRY ===\n');
         parts.push(String(priorContent));
+    }
+    const contextLines = [];
+    appendAdditionalContextSection(contextLines, additionalContextEntries?.length ? additionalContextEntries : compiledScene?.additionalContextEntries);
+    if (contextLines.length > 0) {
+        parts.push('\n');
+        parts.push(contextLines.join('\n'));
     }
     if (previousMemories.length > 0) {
         parts.push('\n=== PREVIOUS SCENE CONTEXT (DO NOT PROCESS) ===\n');

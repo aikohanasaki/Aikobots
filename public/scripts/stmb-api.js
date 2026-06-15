@@ -136,6 +136,38 @@ export async function upsertStmbEntriesBatch(payload, options = {}) {
     return signal ? postStmbWithSignal('upsert-entries-batch', payload, signal) : postStmb('upsert-entries-batch', payload);
 }
 
+export async function listStmbContextSettings() {
+    return postStmb('context-settings/list', {});
+}
+
+export async function listStmbContextSourceEntries() {
+    return postStmb('context-settings/owned-entries', {});
+}
+
+export async function getStmbContextSetting(key) {
+    return postStmb('context-settings/get', { key });
+}
+
+export async function upsertStmbContextSetting(setting) {
+    return postStmb('context-settings/upsert', { setting });
+}
+
+export async function duplicateStmbContextSetting(key) {
+    return postStmb('context-settings/duplicate', { key });
+}
+
+export async function deleteStmbContextSetting(key) {
+    return postStmb('context-settings/delete', { key });
+}
+
+export async function resolveStmbContextSetting(key) {
+    return postStmb('context-settings/resolve', { key });
+}
+
+export async function migrateStmbContextSettingsLorebookReference(payload) {
+    return postStmb('context-settings/migrate-lorebook-reference', payload);
+}
+
 async function postStmbWithSignal(path, payload, signal) {
     const response = await fetch(`/api/stmb/${path}`, {
         method: 'POST',

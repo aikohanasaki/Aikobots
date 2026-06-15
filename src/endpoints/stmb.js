@@ -21,6 +21,17 @@ import {
     LorebookRepositoryError,
     saveLorebookForManagement,
 } from '../lorebook-repository.js';
+import {
+    deleteStmbContextSetting,
+    duplicateStmbContextSetting,
+    getStmbContextSetting,
+    listOwnedStmbContextSourceEntries,
+    listStmbContextSettings,
+    migrateStmbContextSettingsLorebookReference,
+    resolveStmbContextSettingEntries,
+    STMB_CONTEXT_NONE_KEY,
+    upsertStmbContextSetting,
+} from '../stmb-context-settings.js';
 import { isActiveSessionError, sendActiveSessionRequired } from '../active-session-store.js';
 
 export const router = express.Router();
@@ -387,6 +398,115 @@ function getLorebookContext(request) {
         storage: normalizeStorage(request.body?.storage),
     };
 }
+
+router.post('/context-settings/list', (request, response) => {
+    try {
+        return response.send({
+            ok: true,
+            settings: listStmbContextSettings(request.user),
+        });
+    } catch (error) {
+        return sendStmbError(response, error);
+    }
+});
+
+router.post('/context-settings/owned-entries', (request, response) => {
+    try {
+        return response.send({
+            ok: true,
+            entries: listOwnedStmbContextSourceEntries(request.user),
+        });
+    } catch (error) {
+        return sendStmbError(response, error);
+    }
+});
+
+router.post('/context-settings/get', (request, response) => {
+    try {
+        const setting = getStmbContextSetting(request.user, request.body?.key);
+        if (!setting) {
+            return response.status(404).send({
+                error: {
+                    type: 'StmbContextSettingNotFound',
+                    message: 'Context setting was not found.',
+                },
+            });
+        }
+
+        return response.send({ ok: true, setting });
+    } catch (error) {
+        return sendStmbError(response, error);
+    }
+});
+
+router.post('/context-settings/upsert', async (request, response) => {
+    try {
+        const setting = await upsertStmbContextSetting(request.user, request.body?.setting);
+        return response.send({ ok: true, key: setting.key, setting });
+    } catch (error) {
+        return sendStmbError(response, error);
+    }
+});
+
+router.post('/context-settings/duplicate', async (request, response) => {
+    try {
+        const setting = await duplicateStmbContextSetting(request.user, request.body?.key);
+        return response.send({ ok: true, key: setting.key, setting });
+    } catch (error) {
+        return sendStmbError(response, error);
+    }
+});
+
+router.post('/context-settings/delete', async (request, response) => {
+    try {
+        return response.send({
+            ok: true,
+            ...(await deleteStmbContextSetting(request.user, request.body?.key)),
+        });
+    } catch (error) {
+        return sendStmbError(response, error);
+    }
+});
+
+router.post('/context-settings/resolve', (request, response) => {
+    try {
+        const key = String(request.body?.key || '').trim();
+        if (!key || key === STMB_CONTEXT_NONE_KEY) {
+            return response.send({ ok: true, entries: [], warnings: [] });
+        }
+
+        const setting = getStmbContextSetting(request.user, key);
+        if (!setting) {
+            return response.send({
+                ok: true,
+                entries: [],
+                warnings: [{
+                    reason: 'StmbContextSettingNotFound',
+                    message: 'Context setting was not found.',
+                }],
+            });
+        }
+
+        return response.send({
+            ok: true,
+            key: setting.key,
+            ...resolveStmbContextSettingEntries(request.user, setting),
+        });
+    } catch (error) {
+        return sendStmbError(response, error);
+    }
+});
+
+router.post('/context-settings/migrate-lorebook-reference', async (request, response) => {
+    try {
+        return response.send({
+            ok: true,
+            ...(await migrateStmbContextSettingsLorebookReference(request.user, request.body)),
+        });
+    } catch (error) {
+        return sendStmbError(response, error);
+    }
+});
 
 router.post('/chat-range-info', async (request, response) => {
     try {

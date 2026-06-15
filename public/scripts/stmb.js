@@ -24,7 +24,10 @@ import {
     generateStmbMemory,
     generateStmbSummary,
     generateStmbText,
+    listStmbContextSettings,
+    migrateStmbContextSettingsLorebookReference,
     saveStmbMemoryEntry,
+    upsertStmbContextSetting,
 } from './stmb-api.js';
 import { closeActiveMemoryPreviewPopups, showAdvancedOptionsPopup, showAutoConsolidationPromptPopup, showAutoSummaryDecisionPopup, showConfirmationPopup, showConsolidationPreviewPopup, showFailedAIResponsePopup, showFailedSummaryResponsePopup, showLorebookPickerPopup, showMemoryPreviewPopup, showSummaryConsolidationOptionsPopup } from './stmb-popups.js';
 import { Popup, POPUP_RESULT, POPUP_TYPE } from './popup.js';
@@ -169,6 +172,13 @@ import {
     respondToStmbJobApproval,
     updateStmbJobsForLorebookReference,
 } from './stmb-jobs.js';
+import {
+    buildAdditionalContextSourceOptionsHtml,
+    readAdditionalContextSourceSetting,
+    resolveAdditionalContextEntriesForKey,
+    showStmbContextSettingsPopup,
+    STMB_CONTEXT_NONE_KEY,
+} from './stmb-context-settings.js';
 
 const $ = window.jQuery;
 let stmbSettings = normalizeStmbSettings();
@@ -209,6 +219,7 @@ const DURABLE_SYNC_STATE_KEYS = [
     'highestMemoryProcessedManuallySet',
     'autoSummaryNextPromptAt',
     'manualLorebook',
+    'contextSettingKey',
     'autoConsolidationLastPromptKey',
 ];
 
@@ -3955,6 +3966,7 @@ async function promptSidePromptLorebookTargetScope() {
 
 function buildSidePromptEditorHtml(template = null, options = {}) {
     const mode = String(options.mode || (template ? 'edit' : 'new'));
+    const contextSettings = Array.isArray(options.contextSettings) ? options.contextSettings : [];
     const triggers = template?.triggers && typeof template.triggers === 'object' ? template.triggers : {};
     const settings = template?.settings && typeof template.settings === 'object' ? template.settings : {};
     const lorebook = settings?.lorebook && typeof settings.lorebook === 'object' ? settings.lorebook : {};
@@ -4081,6 +4093,14 @@ function buildSidePromptEditorHtml(template = null, options = {}) {
                     <input id="stmb-sp-editor-previous-memories" type="number" min="0" max="7" step="1" class="text_pole" value="${escapeHtml(String(previousMemoriesCount))}">
                 </label>
                 <small class="opacity70p">Number of previous memory entries to include before scene text (0 = none).</small>
+            </div>
+            <div class="world_entry_form_control">
+                <label for="stmb-sp-editor-additional-context">
+                    <h5>Additional Context Source:</h5>
+                    <select id="stmb-sp-editor-additional-context" class="text_pole">
+                        ${buildAdditionalContextSourceOptionsHtml(contextSettings, settings.additionalContext)}
+                    </select>
+                </label>
             </div>
             <div class="world_entry_form_control">
                 <h5>Overrides:</h5>
@@ -4230,6 +4250,7 @@ async function readSidePromptEditorPayload(dialog, template = null) {
     const settings = {
         ...(template?.settings || {}),
         previousMemoriesCount,
+        additionalContext: readAdditionalContextSourceSetting(dialog?.querySelector('#stmb-sp-editor-additional-context')),
         overrideProfileEnabled: Boolean(dialog?.querySelector('#stmb-sp-editor-override-profile-enabled')?.checked),
         lorebook,
     };
@@ -4265,7 +4286,17 @@ async function openSidePromptEditorPopup({ templateKey = null } = {}) {
         throw new Error(`Template "${templateKey}" not found`);
     }
 
-    const popup = new Popup(DOMPurify.sanitize(buildSidePromptEditorHtml(template, { mode: template ? 'edit' : 'new' })), POPUP_TYPE.TEXT, '', withGoBackButton({
+    let contextSettings = [];
+    try {
+        contextSettings = (await listStmbContextSettings()).settings || [];
+    } catch (error) {
+        console.warn('STMB context settings list failed for side prompt editor', error);
+    }
+
+    const popup = new Popup(DOMPurify.sanitize(buildSidePromptEditorHtml(template, {
+        mode: template ? 'edit' : 'new',
+        contextSettings,
+    })), POPUP_TYPE.TEXT, '', withGoBackButton({
         okButton: template ? 'Save' : 'Create',
         cancelButton: 'Cancel',
         wide: true,
@@ -5207,6 +5238,18 @@ async function showMainEntryPopup() {
                 },
             },
             {
+                text: 'Additional Context',
+                classes: ['menu_button'],
+                action: async () => {
+                    await showStmbContextSettingsPopup({
+                        selectedKey: getChatContextSettingKey(),
+                        onSelectedKeyChange: key => {
+                            setChatContextSettingKey(key);
+                        },
+                    });
+                },
+            },
+            {
                 text: 'Clear Scene',
                 result: null,
                 classes: ['menu_button'],
@@ -5721,7 +5764,8 @@ async function estimateAdvancedMemoryTokens(compiledScene, lorebookName, options
         },
     };
     const worldInfo = await loadWorldInfo(lorebookName) || { entries: {} };
-    const finalPromptText = buildMemoryPromptText(compiledScene, effectiveProfile, worldInfo, requestSettings);
+    const additionalContextEntries = await resolveCurrentChatAdditionalContextEntries({ notify: false });
+    const finalPromptText = buildMemoryPromptText(compiledScene, effectiveProfile, worldInfo, requestSettings, additionalContextEntries);
     return await getTokenCountAsync(String(finalPromptText || ''));
 }
 
@@ -5959,8 +6003,75 @@ function getStmbState(chatScope = null) {
     });
 }
 
+function getChatContextSettingKey(chatScope = null) {
+    const key = String(getStmbState(chatScope).contextSettingKey || '').trim();
+    return key && key !== STMB_CONTEXT_NONE_KEY ? key : STMB_CONTEXT_NONE_KEY;
+}
+
+function setChatContextSettingKey(key) {
+    const normalized = String(key || '').trim();
+    const state = getStmbState();
+    if (!normalized || normalized === STMB_CONTEXT_NONE_KEY) {
+        delete state.contextSettingKey;
+    } else {
+        state.contextSettingKey = normalized;
+    }
+    saveMetadataDebounced();
+}
+
+async function resolveCurrentChatAdditionalContextEntries(options = {}) {
+    return await resolveAdditionalContextEntriesForKey(getChatContextSettingKey(), options);
+}
+
 export function loadStmbSettings(settings) {
     stmbSettings = normalizeStmbSettings(settings?.stmb_settings, settings?.extension_settings?.STMemoryBooks);
+}
+
+function normalizeLegacyAdditionalContextEntry(entry = {}) {
+    const lorebookName = String(entry?.lorebookName || entry?.worldName || entry?.world || entry?.book || entry?.name || '').trim();
+    const uid = String(entry?.uid ?? entry?.id ?? '').trim();
+    if (!lorebookName || !uid) {
+        return null;
+    }
+
+    return {
+        lorebookName,
+        storage: entry?.storage === 'secure' ? 'secure' : getLorebookStorageForRequest(lorebookName),
+        uid,
+    };
+}
+
+async function migrateLegacyAdditionalContextEntries() {
+    const profiles = Array.isArray(stmbSettings.profiles) ? stmbSettings.profiles : [];
+    let changed = false;
+
+    for (const [index, profile] of profiles.entries()) {
+        if (!Object.hasOwn(profile || {}, 'additionalContextEntries')) {
+            continue;
+        }
+
+        const entries = (Array.isArray(profile.additionalContextEntries) ? profile.additionalContextEntries : [])
+            .map(normalizeLegacyAdditionalContextEntry)
+            .filter(Boolean);
+        if (entries.length > 0) {
+            try {
+                await upsertStmbContextSetting({
+                    name: `${getProfileDisplayName(profile) || `Profile ${index + 1}`} Additional Context`,
+                    entries,
+                });
+            } catch (error) {
+                console.warn('STMB legacy Additional Context migration skipped invalid profile entries', error);
+            }
+        }
+
+        delete profile.additionalContextEntries;
+        changed = true;
+    }
+
+    if (changed) {
+        stmbSettings = normalizeStmbSettings(stmbSettings);
+        saveSettingsDebounced();
+    }
 }
 
 export function getStmbSettings() {
@@ -6518,6 +6629,9 @@ function handleLorebookReferencesUpdated(payloadOrOperation = {}, oldNameArg = '
     }
 
     updateStmbJobsForLorebookReference({ operation, oldName: target, newName: replacement });
+    migrateStmbContextSettingsLorebookReference({ operation, oldName: target, newName: replacement }).catch(error => {
+        console.warn('STMB context settings lorebook reference migration failed', error);
+    });
     if (metadataChanged) {
         saveMetadataDebounced();
     }
@@ -6679,7 +6793,8 @@ async function requestStructuredMemory(compiledScene, profile, lorebookName, sum
         },
     };
     const worldInfo = await loadWorldInfo(lorebookName) || { entries: {} };
-    let promptText = buildMemoryPromptText(compiledScene, profile, worldInfo, requestSettings);
+    const additionalContextEntries = await resolveCurrentChatAdditionalContextEntries();
+    let promptText = buildMemoryPromptText(compiledScene, profile, worldInfo, requestSettings, additionalContextEntries);
     if (getModuleSettings().useRegex) {
         promptText = applySelectedRegex(promptText, getModuleSettings().selectedRegexOutgoing);
     }
@@ -8971,6 +9086,9 @@ export function initStmb() {
     });
     firstRunInitSidePrompts().catch(error => {
         console.warn('STMB side prompts init failed', error);
+    });
+    migrateLegacyAdditionalContextEntries().catch(error => {
+        console.warn('STMB legacy Additional Context migration failed', error);
     });
     refreshSidePromptCache().catch(error => {
         console.warn('STMB side prompt cache refresh failed during init', error);
