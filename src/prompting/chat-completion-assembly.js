@@ -834,6 +834,7 @@ function normalizeMimeType(contentType, fallbackMimeType) {
 }
 
 const MAX_FETCHED_MEDIA_BYTES = 10 * 1024 * 1024;
+const MEDIA_FETCH_TIMEOUT_MS = 60 * 1000;
 
 async function readResponseBodyWithLimit(response, controller, maxBytes) {
     const contentLength = Number(response.headers.get('content-length'));
@@ -955,7 +956,7 @@ async function validateRemoteMediaUrl(url, clientOrigin = '') {
 async function fetchMediaAsDataUrl(url, fallbackMimeType, clientOrigin = '') {
     const mediaUrl = await validateRemoteMediaUrl(url, clientOrigin);
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 300000);
+    const timeoutId = setTimeout(() => controller.abort(), MEDIA_FETCH_TIMEOUT_MS);
 
     try {
         const response = await fetch(mediaUrl, { method: 'GET', redirect: 'error', signal: controller.signal });
