@@ -1909,6 +1909,15 @@ export async function getChatInfo(pathToFile, additionalData = {}, isGroup = fal
 
 export const router = express.Router();
 
+
+function assertSafeLogicalName(value, fieldName) {
+    const logicalName = String(value ?? '').trim();
+    if (hasUnsafeLogicalPathToken(logicalName)) {
+        throw new ChatPathValidationError(`Invalid ${fieldName}.`, `invalid_${fieldName}`);
+    }
+    return logicalName;
+}
+
 router.post('/message-visibility', validateAvatarUrlMiddleware, async function (request, response) {
     try {
         const directoryName = assertSafeLogicalName(String(request.body.avatar_url || '').replace(/\.png$/i, ''), 'avatar_url');
