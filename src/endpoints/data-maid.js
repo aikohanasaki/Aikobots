@@ -811,6 +811,13 @@ export class DataMaidService {
                 const logicalChat = await getLogicalChatData(entryPath);
                 if (logicalChat.length > 0) {
                     await writeLogicalChat(entryPath, logicalChat[0], logicalChat.slice(1));
+                    const headPath = getSplitHeadPath(entryPath);
+                    if (fs.existsSync(entryPath)) {
+                        await fs.promises.unlink(entryPath);
+                    }
+                    if (fs.existsSync(headPath)) {
+                        await fs.promises.unlink(headPath);
+                    }
                     count++;
                 }
             }

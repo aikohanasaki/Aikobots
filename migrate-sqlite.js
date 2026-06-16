@@ -69,7 +69,7 @@ async function migrateAllUsersChatsToSqlite() {
     const { loadDb, migrateFromJsonl } = await import('./src/sqlite-manager.js');
     const handles = await getAllUserHandles();
     let totalMigrated = 0;
-    let totalExisting = 0;
+    let totalRemovedExisting = 0;
     const allEntries = [];
 
     for (const handle of handles) {
@@ -107,25 +107,25 @@ async function migrateAllUsersChatsToSqlite() {
                 // Verify migration by reopening
                 const db = await loadDb(sqlitePath);
                 db.close();
-                // Rename original to .jsonl.bak
-                fs.renameSync(entryPath, entryPath + '.bak');
+                // Remove the verified legacy JSONL source after successful migration.
+                fs.unlinkSync(entryPath);
                 totalMigrated++;
             } catch (error) {
                 console.error(`[Data Maid] Failed to migrate ${entryPath} to SQLite:`, error);
             }
         } else {
             // SQLite already exists (e.g. from recombination or previous run)
-            // If the original jsonl is still here, back it up
+            // If the original JSONL is still here, remove the legacy storage duplicate.
             if (fs.existsSync(entryPath)) {
-                console.info(`[Data Maid] ${sqlitePath} already exists, backing up ${entryPath}...`);
-                fs.renameSync(entryPath, entryPath + '.bak');
-                totalExisting++;
+                console.info(`[Data Maid] ${sqlitePath} already exists, removing legacy JSONL ${entryPath}...`);
+                fs.unlinkSync(entryPath);
+                totalRemovedExisting++;
             }
         }
     }
 
-    if (totalMigrated > 0 || totalExisting > 0) {
-        console.info(`[Data Maid] SQLite migration: ${totalMigrated} new migrations, ${totalExisting} previously migrated chats backed up.`);
+    if (totalMigrated > 0 || totalRemovedExisting > 0) {
+        console.info(`[Data Maid] SQLite migration: ${totalMigrated} new migrations, ${totalRemovedExisting} previously migrated legacy JSONL files removed.`);
     }
 }
 

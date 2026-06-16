@@ -2563,7 +2563,6 @@ router.post('/export', validateAvatarUrlMiddleware, async function (request, res
             : resolveCharacterChatFilePath(request.user.directories.chats, request.body.avatar_url, request.body.file);
         const baseFilePath = filename.replace(/\.(jsonl|sqlite)$/i, '');
         const sqlitePath = baseFilePath + '.sqlite';
-        const bakPath = baseFilePath + '.jsonl.bak';
         const exportfilename = request.body.exportfilename;
 
         if (!fs.existsSync(filename) && !fs.existsSync(sqlitePath)) {
@@ -2584,18 +2583,6 @@ router.post('/export', validateAvatarUrlMiddleware, async function (request, res
                 message: `Chat saved to ${exportfilename}`,
                 result: buffer.toString('base64'),
                 is_binary: true,
-            });
-        }
-
-        // Export original JSONL bak
-        if (request.body.format === 'jsonl_bak') {
-            if (!fs.existsSync(bakPath)) {
-                return response.status(404).json({ message: 'Original JSONL backup not found.' });
-            }
-            const result = fs.readFileSync(bakPath, 'utf-8');
-            return response.status(200).json({
-                message: `Chat saved to ${exportfilename}`,
-                result,
             });
         }
 
