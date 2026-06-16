@@ -99,14 +99,25 @@ async function migrateAllUsersChatsToSqlite() {
 
     allEntries.sort((a, b) => a.time - b.time);
 
+    const verifySqliteIntegrity = async (sqlitePath) => {
+        const db = await loadDb(sqlitePath);
+        try {
+            const check = db.exec('PRAGMA integrity_check');
+            const result = check?.[0]?.values?.[0]?.[0];
+            if (result !== 'ok') {
+                throw new Error(`SQLite integrity check failed: ${result || 'no result'}`);
+            }
+        } finally {
+            db.close();
+        }
+    };
+
     for (const { entryPath, sqlitePath } of allEntries) {
         if (!fs.existsSync(sqlitePath)) {
             try {
                 console.info(`[Data Maid] Migrating ${entryPath} to SQLite...`);
                 await migrateFromJsonl(entryPath, sqlitePath);
-                // Verify migration by reopening
-                const db = await loadDb(sqlitePath);
-                db.close();
+                await verifySqliteIntegrity(sqlitePath);
                 // Remove the verified legacy JSONL source after successful migration.
                 fs.unlinkSync(entryPath);
                 totalMigrated++;
@@ -117,9 +128,14 @@ async function migrateAllUsersChatsToSqlite() {
             // SQLite already exists (e.g. from recombination or previous run)
             // If the original JSONL is still here, remove the legacy storage duplicate.
             if (fs.existsSync(entryPath)) {
-                console.info(`[Data Maid] ${sqlitePath} already exists, removing legacy JSONL ${entryPath}...`);
-                fs.unlinkSync(entryPath);
-                totalRemovedExisting++;
+                try {
+                    await verifySqliteIntegrity(sqlitePath);
+                    console.info(`[Data Maid] ${sqlitePath} already exists and passed integrity check, removing legacy JSONL ${entryPath}...`);
+                    fs.unlinkSync(entryPath);
+                    totalRemovedExisting++;
+                } catch (error) {
+                    console.error(`[Data Maid] Refusing to remove legacy JSONL ${entryPath}; existing SQLite failed integrity verification:`, error);
+                }
             }
         }
     }

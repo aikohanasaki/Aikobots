@@ -53,10 +53,6 @@ import { router as backupsRouter } from './endpoints/backups.js';
 import { router as characterSubmissionsRouter } from './endpoints/character-submissions.js';
 import { router as stmbRouter } from './endpoints/stmb.js';
 
-const SERVER_REQUEST_TIMEOUT_MS = 600000;
-const SERVER_KEEP_ALIVE_TIMEOUT_MS = 610000;
-const SERVER_HEADERS_TIMEOUT_MS = 65000;
-
 /**
  * @typedef {object} ServerStartupResult
  * @property {boolean} v6Failed If the server failed to start on IPv6
@@ -64,16 +60,6 @@ const SERVER_HEADERS_TIMEOUT_MS = 65000;
  * @property {boolean} useIPv6 If use IPv6
  * @property {boolean} useIPv4 If use IPv4
  */
-
-/**
- * Applies HTTP server timeouts while keeping the header receive window short.
- * @param {import('node:http').Server | import('node:https').Server} server The server to configure.
- */
-function configureServerTimeouts(server) {
-    server.requestTimeout = SERVER_REQUEST_TIMEOUT_MS;
-    server.keepAliveTimeout = SERVER_KEEP_ALIVE_TIMEOUT_MS;
-    server.headersTimeout = SERVER_HEADERS_TIMEOUT_MS;
-}
 
 /**
  * Redirect deprecated API endpoints to their replacements.
@@ -264,7 +250,6 @@ export class ServerStartup {
                 passphrase: String(this.cliArgs.keyPassphrase ?? ''),
             };
             const server = https.createServer(sslOptions, this.app);
-            configureServerTimeouts(server);
             server.on('error', reject);
             server.on('listening', resolve);
 
@@ -288,7 +273,6 @@ export class ServerStartup {
     #createHttpServer(url, ipVersion) {
         return new Promise((resolve, reject) => {
             const server = http.createServer(this.app);
-            configureServerTimeouts(server);
             server.on('error', reject);
             server.on('listening', resolve);
 
