@@ -8,12 +8,9 @@ import { sync as writeFileAtomicSync } from 'write-file-atomic';
 import { humanizedISO8601DateTime } from '../util.js';
 import { getFileNameValidationFunction } from '../middleware/validateFileName.js';
 import { createFavoritesState, flushFavoritesState, getGroupFavorite, setGroupFavorite } from '../favorites-repository.js';
+import { isChatPathValidationError, resolveGroupChatStoragePaths } from '../chat-paths.js';
 
 export const router = express.Router();
-const getSplitHeadPath = (filePath) => {
-    const parsedPath = path.parse(filePath);
-    return path.join(parsedPath.dir, `${parsedPath.name}.head.jsonl`);
-};
 
 const sanitizeGroupPayload = (group, { stripFavorite = true } = {}) => {
     if (!group || typeof group !== 'object') {
@@ -69,17 +66,23 @@ router.post('/all', (request, response) => {
 
                 if (Array.isArray(group.chats) && Array.isArray(chats)) {
                     for (const chatId of group.chats) {
-                        const jsonlPath = path.join(request.user.directories.groupChats, `${chatId}.jsonl`);
-                        const sqlitePath = path.join(request.user.directories.groupChats, `${chatId}.sqlite`);
+                        let chatPaths;
+                        try {
+                            chatPaths = resolveGroupChatStoragePaths(request.user.directories.groupChats, chatId);
+                        } catch (error) {
+                            if (isChatPathValidationError(error)) {
+                                continue;
+                            }
+                            throw error;
+                        }
 
                         let chatPath = null;
-                        if (fs.existsSync(sqlitePath)) chatPath = sqlitePath;
-                        else if (fs.existsSync(jsonlPath)) chatPath = jsonlPath;
+                        if (fs.existsSync(chatPaths.sqlitePath)) chatPath = chatPaths.sqlitePath;
+                        else if (fs.existsSync(chatPaths.jsonlPath)) chatPath = chatPaths.jsonlPath;
 
                         if (chatPath) {
                             const chatStat = fs.statSync(chatPath);
-                            const headPath = getSplitHeadPath(jsonlPath);
-                            const headStat = fs.existsSync(headPath) ? fs.statSync(headPath) : null;
+                            const headStat = fs.existsSync(chatPaths.headPath) ? fs.statSync(chatPaths.headPath) : null;
                             chat_size += chatStat.size + (headStat?.size || 0);
                             date_last_chat = Math.max(date_last_chat, chatStat.mtimeMs, headStat?.mtimeMs || 0);
                         }
@@ -166,20 +169,26 @@ router.post('/delete', getFileNameValidationFunction('id'), async (request, resp
         if (group && Array.isArray(group.chats)) {
             for (const chat of group.chats) {
                 console.info('Deleting group chat', chat);
-                const pathToFile = path.join(request.user.directories.groupChats, sanitize(`${chat}.jsonl`));
-                const sqlitePath = pathToFile.replace('.jsonl', '.sqlite');
-                const headPath = getSplitHeadPath(pathToFile);
-
-                if (fs.existsSync(pathToFile)) {
-                    fs.unlinkSync(pathToFile);
+                let chatPaths;
+                try {
+                    chatPaths = resolveGroupChatStoragePaths(request.user.directories.groupChats, chat);
+                } catch (error) {
+                    if (isChatPathValidationError(error)) {
+                        continue;
+                    }
+                    throw error;
                 }
 
-                if (fs.existsSync(sqlitePath)) {
-                    fs.unlinkSync(sqlitePath);
+                if (fs.existsSync(chatPaths.jsonlPath)) {
+                    fs.unlinkSync(chatPaths.jsonlPath);
                 }
 
-                if (fs.existsSync(headPath)) {
-                    fs.unlinkSync(headPath);
+                if (fs.existsSync(chatPaths.sqlitePath)) {
+                    fs.unlinkSync(chatPaths.sqlitePath);
+                }
+
+                if (fs.existsSync(chatPaths.headPath)) {
+                    fs.unlinkSync(chatPaths.headPath);
                 }
             }
         }
