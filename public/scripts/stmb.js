@@ -6768,9 +6768,13 @@ async function requestStructuredMemory(compiledScene, profile, lorebookName, sum
         },
     };
     const worldInfo = await loadWorldInfo(lorebookName) || { entries: {} };
+    const hasContextSettingKey = Object.hasOwn(options || {}, 'contextSettingKey');
+    const contextSettingKey = hasContextSettingKey
+        ? (options.contextSettingKey || STMB_CONTEXT_NONE_KEY)
+        : getChatContextSettingKey();
     const additionalContextEntries = Array.isArray(options.additionalContextEntries)
         ? options.additionalContextEntries
-        : await resolveAdditionalContextEntriesForKey(options.contextSettingKey || getChatContextSettingKey());
+        : await resolveAdditionalContextEntriesForKey(contextSettingKey);
     let promptText = buildMemoryPromptText(compiledScene, profile, worldInfo, requestSettings, additionalContextEntries);
     if (getModuleSettings().useRegex) {
         promptText = applySelectedRegex(promptText, getModuleSettings().selectedRegexOutgoing);
@@ -7839,6 +7843,9 @@ async function executeMemoryJob(job, context) {
     const lorebookName = String(job?.lorebookName || payload.lorebookName || '').trim();
     const requestSettings = buildMemoryRequestSettings(payload.summaryCount);
     const profile = buildEffectiveMemoryProfile(payload.profile || getActiveStmbProfile(stmbSettings, job?.profileIndex ?? null));
+    const jobContextSettingKey = Object.hasOwn(payload, 'contextSettingKey')
+        ? payload.contextSettingKey
+        : STMB_CONTEXT_NONE_KEY;
 
     if (!Number.isInteger(Number(range?.sceneStart)) || !Number.isInteger(Number(range?.sceneEnd))) {
         throw new Error('Memory job is missing a valid scene range.');
@@ -7875,8 +7882,8 @@ async function executeMemoryJob(job, context) {
         };
         if (Array.isArray(payload.additionalContextEntries)) {
             tokenEstimateOptions.additionalContextEntries = payload.additionalContextEntries;
-        } else if (Object.hasOwn(payload, 'contextSettingKey')) {
-            tokenEstimateOptions.contextSettingKey = payload.contextSettingKey;
+        } else {
+            tokenEstimateOptions.contextSettingKey = jobContextSettingKey;
         }
         const estimatedTokens = await estimateAdvancedMemoryTokens(compiledScene, lorebookName, tokenEstimateOptions);
         if (estimatedTokens > tokenThreshold) {
@@ -7918,7 +7925,7 @@ async function executeMemoryJob(job, context) {
             }),
             {
                 additionalContextEntries: payload.additionalContextEntries,
-                contextSettingKey: payload.contextSettingKey,
+                contextSettingKey: jobContextSettingKey,
             },
         );
 
