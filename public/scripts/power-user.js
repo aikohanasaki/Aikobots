@@ -277,7 +277,6 @@ export const power_user = {
         target_length: 400,
     },
     markdown_escape_strings: '',
-    chat_truncation: 100,
     long_chat_display_count: 100,
     streaming_fps: 30,
     smooth_streaming: false,
@@ -475,6 +474,8 @@ export function normalizeLongChatHandlingSettings(settings = power_user) {
 
 function syncLongChatHandlingControls() {
     const { displayCount } = normalizeLongChatHandlingSettings();
+    $('#long_chat_display_count').val(displayCount);
+    $('#long_chat_display_count_counter').val(displayCount);
 }
 
 let themes = [];
@@ -2434,9 +2435,6 @@ export async function loadPowerUserSettings(settings, data) {
 
     $('#restore_user_input').prop('checked', power_user.restore_user_input);
 
-    $('#chat_truncation').val(power_user.chat_truncation);
-    $('#chat_truncation_counter').val(power_user.chat_truncation);
-
     syncLongChatHandlingControls();
 
     $('#streaming_fps').val(power_user.streaming_fps);
@@ -3903,13 +3901,13 @@ jQuery(() => {
         $('#aiko_layout_asset_upload').trigger('click');
     });
 
-    $('#chat_truncation').on('input', function () {
-        power_user.chat_truncation = Number($('#chat_truncation').val());
-        $('#chat_truncation_counter').val(power_user.chat_truncation);
+    $('#long_chat_display_count, #long_chat_display_count_counter').on('input', function () {
+        power_user.long_chat_display_count = $(this).val();
+        const { displayCount } = normalizeLongChatHandlingSettings();
+        $('#long_chat_display_count').val(displayCount);
+        $('#long_chat_display_count_counter').val(displayCount);
         saveSettingsDebounced();
     });
-
-
 
     $('#streaming_fps').on('input', function () {
         power_user.streaming_fps = Number($('#streaming_fps').val());

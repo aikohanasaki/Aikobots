@@ -3,7 +3,6 @@ import {
     chat,
     getCurrentChatId,
     isChatFullyHydrated,
-    isSplitTailChat,
     name1,
     name2,
     saveChatConditional,
@@ -119,7 +118,7 @@ function canUseLocalSceneShortcut(sceneContext = null) {
         return false;
     }
 
-    return !isSplitTailChat() || isChatFullyHydrated();
+    return isChatFullyHydrated();
 }
 
 function canUseLocalRangeShortcut(rangeStart = null, rangeEnd = null, sceneContext = null) {
@@ -127,7 +126,7 @@ function canUseLocalRangeShortcut(rangeStart = null, rangeEnd = null, sceneConte
         return false;
     }
 
-    if (!isSplitTailChat() || isChatFullyHydrated()) {
+    if (isChatFullyHydrated()) {
         return true;
     }
 

@@ -206,9 +206,19 @@ export function setMessages(db, messages) {
 export function updateMessages(db, messages, startIndex) {
     db.run('BEGIN TRANSACTION');
     try {
-        const delStmt = db.prepare('DELETE FROM messages WHERE order_index >= ?');
-        delStmt.run([startIndex]);
-        delStmt.free();
+        if (!Number.isInteger(startIndex) || startIndex < 0) {
+            throw new Error('Invalid message update start index.');
+        }
+
+        const countResult = db.exec('SELECT COUNT(*) AS count FROM messages');
+        const messageRowCount = countResult[0]?.values?.[0]?.[0] ?? 0;
+        if (startIndex > messageRowCount) {
+            throw new Error('Message update would create a gap.');
+        }
+
+        const deleteStmt = db.prepare('DELETE FROM messages WHERE order_index >= ? AND order_index < ?');
+        deleteStmt.run([startIndex, startIndex + messages.length]);
+        deleteStmt.free();
 
         const insStmt = db.prepare('INSERT INTO messages (order_index, content) VALUES (?, ?)');
         for (let i = 0; i < messages.length; i++) {

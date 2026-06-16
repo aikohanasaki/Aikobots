@@ -2533,13 +2533,12 @@
                                 <div class="flex-container">
                                     <div class="alignitemscenter flex-container flexFlowColumn flexBasis48p flexGrow flexShrink gap0">
                                         <small>
-                                            <span data-i18n="# Messages to Load"># Msg. to Load</span>
+                                            <span data-i18n="Initial messages to show">Initial messages to show</span>
 
-                                            <div class="fa-solid fa-circle-info opacity50p" data-i18n="[title]The number of chat history messages to load before pagination." title="The number of chat history messages to load before pagination."></div>
+                                            <div class="fa-solid fa-circle-info opacity50p" data-i18n="[title]Preferred number of latest chat messages to show first when opening a larger chat." title="Preferred number of latest chat messages to show first when opening a larger chat."></div>
                                         </small>
-                                        <input class="neo-range-slider" type="range" id="chat_truncation" name="chat_truncation" min="0" max="1000" step="5">
-                                        <input class="neo-range-input" type="number" min="0" max="1000" step="5" data-for="chat_truncation" id="chat_truncation_counter">
-                                        <small data-i18n="(0 = All)">(0 = All)</small>
+                                        <input class="neo-range-slider" type="range" id="long_chat_display_count" name="long_chat_display_count" min="1" max="1048576" step="1">
+                                        <input class="neo-range-input" type="number" min="1" max="1048576" step="1" data-for="long_chat_display_count" id="long_chat_display_count_counter">
                                     </div>
 
                                     <div class="alignitemscenter flex-container flexFlowColumn flexBasis48p flexGrow flexShrink gap0">

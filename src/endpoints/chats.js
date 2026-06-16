@@ -13,12 +13,10 @@ import { touchUserActivity } from '../users.js';
 import { isActiveSessionError, sendActiveSessionRequired } from '../active-session-store.js';
 import {
     getDeduplicatedChatHistoryFileNames,
-    getSplitHeadPath,
     isChatPathValidationError,
     resolveCharacterChatDirectory,
     resolveCharacterChatFilePath,
     resolveGroupChatFilePath,
-    resolveSplitHeadCompanionPath,
     validateStmbChatRef,
 } from '../chat-paths.js';
 import {
@@ -57,8 +55,6 @@ const checkIntegrity = !!getConfigValue('backups.chat.checkIntegrity', true, 'bo
 const CHAT_STORAGE_KEY = 'chat_storage';
 const CHAT_REVISION_KEY = 'chat_revision';
 const CHAT_LAST_SAVE_SESSION_KEY = 'last_save_session_id';
-const CHAT_STORAGE_MODE_SPLIT_TAIL = 'split-tail';
-const CHAT_HEAD_FILE_SUFFIX = '.head.jsonl';
 const GROUP_CHAT_HEADER_VERSION = 1;
 const CHAT_METADATA_STRIP_KEYS = ['timedWorldInfo', 'worldInfoSummary', 'worldInfoReport'];
 const CHAT_EXTRA_STRIP_KEYS = ['timedWorldInfo', 'worldInfoSummary', 'worldInfoReport'];
@@ -73,13 +69,23 @@ export const CHAT_BACKUPS_PREFIX = 'chat_';
 
 export {
     getDeduplicatedChatHistoryFileNames,
-    getSplitHeadPath,
     isHeadChatFile,
 } from '../chat-paths.js';
 
 function sendChatPathValidationError(response, error) {
     return response.status(error.status || 400).send({
         error: error.code || 'invalid_chat_path',
+        message: error.message,
+    });
+}
+
+function isUnsupportedSplitTailChatError(error) {
+    return error instanceof UnsupportedSplitTailChatError || error?.code === 'unsupported_split_tail';
+}
+
+function sendUnsupportedSplitTailChatError(response, error) {
+    return response.status(error.status || 409).send({
+        error: error.code || 'unsupported_split_tail',
         message: error.message,
     });
 }
@@ -96,7 +102,22 @@ function stripChatStorage(header) {
 
 function getChatStorage(header) {
     const storage = header?.[CHAT_STORAGE_KEY];
-    return storage?.mode === CHAT_STORAGE_MODE_SPLIT_TAIL ? storage : null;
+    return storage?.mode === 'split-tail' ? storage : null;
+}
+
+class UnsupportedSplitTailChatError extends Error {
+    constructor(message = 'Split-tail chat storage is no longer supported. Convert this chat to SQLite before opening it.') {
+        super(message);
+        this.name = 'UnsupportedSplitTailChatError';
+        this.code = 'unsupported_split_tail';
+        this.status = 409;
+    }
+}
+
+function assertSupportedChatStorage(header) {
+    if (getChatStorage(header)) {
+        throw new UnsupportedSplitTailChatError();
+    }
 }
 
 function getChatRevision(header) {
@@ -322,8 +343,6 @@ function getChatFileStats(filePath) {
         const stats = fs.statSync(sqlitePath);
         return {
             tailStats: stats,
-            headPath: null,
-            headStats: null,
             totalSize: stats.size,
             latestMtimeMs: stats.mtimeMs,
             isSqlite: true,
@@ -331,15 +350,11 @@ function getChatFileStats(filePath) {
     }
 
     const tailStats = fs.statSync(filePath);
-    const headPath = getSplitHeadPath(filePath);
-    const headStats = fs.existsSync(headPath) ? fs.statSync(headPath) : null;
 
     return {
         tailStats,
-        headPath,
-        headStats,
-        totalSize: tailStats.size + (headStats?.size || 0),
-        latestMtimeMs: Math.max(tailStats.mtimeMs, headStats?.mtimeMs || 0),
+        totalSize: tailStats.size,
+        latestMtimeMs: tailStats.mtimeMs,
         isSqlite: false,
     };
 }
@@ -553,32 +568,6 @@ export function applyLoadedMessageRange(logicalChatData, rangeStart, rangeMessag
     };
 }
 
-export function validateTailSavePayload({ existingMessageCount, absoluteStartId, rangeMessages, savedMessageCount }) {
-    const existingCount = Number(existingMessageCount);
-    const startId = Number(absoluteStartId);
-    const declaredSavedCount = Number(savedMessageCount);
-
-    if (!Number.isInteger(existingCount) || existingCount < 0 || !Number.isInteger(startId) || startId < 0 || !Array.isArray(rangeMessages)) {
-        return { ok: false, error: 'invalid_tail_save' };
-    }
-
-    const submittedEndExclusive = startId + rangeMessages.length;
-
-    if (Number.isInteger(declaredSavedCount)) {
-        if (declaredSavedCount < 0 || submittedEndExclusive !== declaredSavedCount) {
-            return { ok: false, error: 'incomplete_tail_save' };
-        }
-
-        return { ok: true };
-    }
-
-    if (submittedEndExclusive < existingCount) {
-        return { ok: false, error: 'incomplete_tail_save' };
-    }
-
-    return { ok: true };
-}
-
 function normalizeLogicalChatDataForNoopCompare(chatData) {
     if (!Array.isArray(chatData) || !_.isPlainObject(chatData[0])) {
         return [];
@@ -641,8 +630,6 @@ async function getChatSegments(filePath, { metadataOnly = false } = {}) {
                 isSqlite: true,
                 metadataOnly: true,
                 storage: null,
-                headPath: null,
-                headMessages: [],
                 tailMessages: [],
                 messages: [],
             };
@@ -655,8 +642,6 @@ async function getChatSegments(filePath, { metadataOnly = false } = {}) {
             return {
                 header: null,
                 storage: null,
-                headPath: null,
-                headMessages: [],
                 tailMessages: [],
                 messages: [],
             };
@@ -665,8 +650,6 @@ async function getChatSegments(filePath, { metadataOnly = false } = {}) {
         return {
             header: messages[0],
             storage: null,
-            headPath: null,
-            headMessages: [],
             tailMessages: messages.slice(1),
             messages: messages.slice(1),
         };
@@ -678,78 +661,39 @@ async function getChatSegments(filePath, { metadataOnly = false } = {}) {
         return {
             header: null,
             storage: null,
-            headPath: getSplitHeadPath(filePath),
-            headMessages: [],
             tailMessages: [],
             messages: [],
         };
     }
 
     const header = tailObjects[0];
-    const storage = getChatStorage(header);
-    let headPath = getSplitHeadPath(filePath);
-    if (storage?.head_file) {
-        try {
-            headPath = resolveSplitHeadCompanionPath(filePath, storage.head_file);
-        } catch (error) {
-            console.warn('Rejected invalid split-tail head file reference:', storage.head_file, error.message);
-            throw error;
-        }
-    }
-    const headObjects = storage ? readJsonlObjects(headPath) : [];
-    const headMessages = headObjects.slice(1);
+    assertSupportedChatStorage(header);
     const tailMessages = tailObjects.slice(1);
 
     return {
         header,
-        storage,
-        headPath,
-        headMessages,
+        storage: null,
         tailMessages,
-        messages: [...headMessages, ...tailMessages],
+        messages: tailMessages,
     };
 }
 
 function getSegmentLayout(segments) {
-    const hasStorage = Boolean(segments?.storage);
-    const actualHeadCount = Array.isArray(segments?.headMessages) ? segments.headMessages.length : 0;
     const actualTailCount = Array.isArray(segments?.tailMessages) ? segments.tailMessages.length : 0;
     const actualTotalMessages = Array.isArray(segments?.messages) ? segments.messages.length : 0;
-    const declaredHeadCount = Number.isInteger(segments?.storage?.head_count)
-        ? Math.max(0, segments.storage.head_count)
-        : actualHeadCount;
-    const declaredTailCount = Number.isInteger(segments?.storage?.tail_count)
-        ? Math.max(0, segments.storage.tail_count)
-        : actualTailCount;
-    const declaredTotalMessages = hasStorage
-        ? declaredHeadCount + declaredTailCount
-        : actualTotalMessages;
-    const headMessagesMissing = hasStorage && actualHeadCount < declaredHeadCount;
-    const headCount = headMessagesMissing ? declaredHeadCount : actualHeadCount;
-    const tailCount = actualTailCount;
-    const totalMessages = headMessagesMissing
-        ? (declaredHeadCount + actualTailCount)
-        : actualTotalMessages;
-    const tailStartId = hasStorage
-        ? Math.min(headCount, totalMessages)
-        : Math.max(0, totalMessages - (tailCount || totalMessages));
+    const totalMessages = actualTotalMessages;
     const tailEndId = totalMessages > 0 ? totalMessages - 1 : -1;
-    const availableTailEndId = actualTailCount > 0 ? tailStartId + actualTailCount - 1 : tailStartId - 1;
 
     return {
-        actualHeadCount,
         actualTailCount,
         actualTotalMessages,
-        declaredHeadCount,
-        declaredTailCount,
-        declaredTotalMessages,
-        headCount,
-        tailCount,
+        declaredTotalMessages: actualTotalMessages,
+        headCount: 0,
+        tailCount: actualTailCount,
         totalMessages,
-        tailStartId,
+        tailStartId: 0,
         tailEndId,
-        availableTailEndId,
-        headMessagesMissing,
+        availableTailEndId: tailEndId,
     };
 }
 
@@ -928,8 +872,6 @@ export async function writeLogicalChat(filePath, header, messages, { regenerateI
 
     console.debug(`[SQLite] Updated database for ${filePath}: ${sanitizedMessages.length} messages starting at index ${startIndex ?? 0}. Total messages: ${totalMessages}.`);
 
-    const headPath = getSplitHeadPath(filePath);
-
     // For incremental writes, we don't return the full JSONL to avoid loading everything.
     // This means backups will be skipped for incremental saves.
     const fullJsonl = startIndex === null ? serializeJsonl([baseHeader, ...sanitizedMessages]) : null;
@@ -945,23 +887,11 @@ export async function writeLogicalChat(filePath, header, messages, { regenerateI
     };
 }
 
-export async function ensureSplitTailStorage(filePath) {
-    const segments = await getChatSegments(filePath);
-    if (!segments.header || !segments.storage) {
-        return false;
-    }
-
-    console.info(`Triggering lazy consolidation for split chat: ${filePath}`);
-    await writeLogicalChat(filePath, segments.header, segments.messages);
-    return true;
-}
-
 export async function buildChunkedChatPayload(filePath, {
     rangeStart = null,
     count = null,
     hydrateFull = false,
     displayCount = LONG_CHAT_DISPLAY_DEFAULT,
-    includeParentPromptCache = false,
 } = {}) {
     const config = normalizeLongChatConfig({ displayCount });
     const sqlitePath = filePath.replace('.jsonl', '.sqlite');
@@ -1024,11 +954,7 @@ export async function buildChunkedChatPayload(filePath, {
 
     const segments = await getChatSegments(filePath);
     const header = stripChatStorage(segments.header);
-    const layout = getSegmentLayout(segments);
-    const totalMessages = layout.totalMessages;
-    const tailCount = Number.isInteger(layout.tailCount) ? layout.tailCount : totalMessages;
-    const tailStartId = layout.tailStartId;
-    const tailEndId = layout.tailEndId;
+    const totalMessages = Array.isArray(segments.messages) ? segments.messages.length : 0;
 
     if (!header) {
         return {
@@ -1045,76 +971,30 @@ export async function buildChunkedChatPayload(filePath, {
         };
     }
 
-    let startId = 0;
-    let endId = totalMessages - 1;
-    let loadedRangeStart = totalMessages > 0 ? 0 : 0;
-    let loadedRangeEnd = totalMessages > 0 ? endId : -1;
-    let messages = totalMessages > 0
+    const normalizedCount = hydrateFull
+        ? totalMessages
+        : Math.max(1, Number(count) || config.displayCount);
+    const startId = Number.isInteger(rangeStart)
+        ? Math.max(0, Math.min(rangeStart, Math.max(0, totalMessages - 1)))
+        : Math.max(0, totalMessages - normalizedCount);
+    const endId = totalMessages > 0 ? Math.min(totalMessages - 1, startId + normalizedCount - 1) : -1;
+    const messages = totalMessages > 0 && endId >= startId
         ? segments.messages.slice(startId, endId + 1)
         : [];
-    const shouldServeTailUsingDeclaredIds = Boolean(segments.storage) && layout.headMessagesMissing;
-
-    if (shouldServeTailUsingDeclaredIds) {
-        const normalizedCount = hydrateFull
-            ? Math.max(1, layout.actualTailCount)
-            : Math.max(1, Number(count) || tailCount || config.displayCount);
-        startId = Number.isInteger(rangeStart)
-            ? rangeStart
-            : tailStartId;
-        startId = Math.max(tailStartId, Math.min(startId, Math.max(tailStartId, layout.availableTailEndId)));
-        endId = Math.min(layout.availableTailEndId, startId + normalizedCount - 1);
-        loadedRangeStart = startId;
-        loadedRangeEnd = endId;
-        messages = endId >= startId
-            ? segments.tailMessages.slice(startId - tailStartId, endId - tailStartId + 1)
-            : [];
-
-        console.warn(`Long chat head segment is incomplete for ${filePath}; serving tail using declared absolute IDs.`, {
-            declaredHeadCount: layout.declaredHeadCount,
-            actualHeadCount: layout.actualHeadCount,
-            declaredTailCount: layout.declaredTailCount,
-            actualTailCount: layout.actualTailCount,
-            totalMessages,
-        });
-    } else if (!hydrateFull && segments.storage) {
-        const normalizedCount = Math.max(1, Number(count) || tailCount || config.displayCount);
-        startId = Number.isInteger(rangeStart)
-            ? rangeStart
-            : tailStartId;
-        startId = Math.max(0, Math.min(startId, Math.max(0, totalMessages - 1)));
-        endId = Math.min(totalMessages - 1, startId + normalizedCount - 1);
-        loadedRangeStart = startId;
-        loadedRangeEnd = endId;
-        messages = totalMessages > 0
-            ? segments.messages.slice(startId, endId + 1)
-            : [];
-    } else {
-        loadedRangeStart = totalMessages > 0 ? startId : 0;
-        loadedRangeEnd = totalMessages > 0 ? endId : -1;
-        messages = totalMessages > 0
-            ? segments.messages.slice(startId, endId + 1)
-            : [];
-    }
-
-    // Keep this as a logical parent slice. Prompt filtering happens after it is merged with the loaded tail.
-    const parentPromptMessages = segments.storage && !hydrateFull && !shouldServeTailUsingDeclaredIds && (includeParentPromptCache || rangeStart === null)
-        ? segments.messages.slice(0, tailStartId)
-        : undefined;
 
     return {
-        mode: segments.storage ? CHAT_STORAGE_MODE_SPLIT_TAIL : 'full',
+        mode: 'full',
         header,
         messages,
-        parentPromptMessages,
         totalMessages,
-        loadedRangeStart,
-        loadedRangeEnd,
-        tailStartId,
-        tailEndId,
-        headCount: layout.headCount,
-        tailCount,
+        loadedRangeStart: totalMessages > 0 ? startId : 0,
+        loadedRangeEnd: totalMessages > 0 ? endId : -1,
+        tailStartId: startId,
+        tailEndId: totalMessages > 0 ? totalMessages - 1 : -1,
+        headCount: startId,
+        tailCount: totalMessages - startId,
         displayCount: config.displayCount,
-        isHydrated: (hydrateFull || !segments.storage) && !shouldServeTailUsingDeclaredIds,
+        isHydrated: hydrateFull || (startId === 0 && messages.length >= totalMessages),
     };
 }
 
@@ -1123,9 +1003,6 @@ function buildChunkedChatPayloadFromLogicalChatData(chatData, {
     count = null,
     hydrateFull = false,
     displayCount = LONG_CHAT_DISPLAY_DEFAULT,
-    includeParentPromptCache = false,
-    storageMode = 'full',
-    tailStartId = 0,
 } = {}) {
     const config = normalizeLongChatConfig({ displayCount });
     const header = sanitizeChatHeaderForPersistence(Array.isArray(chatData) ? chatData[0] : null);
@@ -1133,14 +1010,7 @@ function buildChunkedChatPayloadFromLogicalChatData(chatData, {
         ? chatData.slice(1).map(message => sanitizeChatMessageForPersistence(message))
         : [];
     const totalMessages = logicalMessages.length;
-    const isSplitTail = storageMode === CHAT_STORAGE_MODE_SPLIT_TAIL;
-    const normalizedTailStartId = isSplitTail
-        ? Math.max(0, Math.min(Number.isInteger(tailStartId) ? tailStartId : 0, totalMessages))
-        : 0;
     const normalizedTailEndId = totalMessages > 0 ? totalMessages - 1 : -1;
-    const normalizedTailCount = isSplitTail
-        ? Math.max(0, totalMessages - normalizedTailStartId)
-        : totalMessages;
 
     if (!header) {
         return {
@@ -1166,11 +1036,11 @@ function buildChunkedChatPayloadFromLogicalChatData(chatData, {
         : [];
     let isChunked = false;
 
-    if (!hydrateFull && (isSplitTail || storageMode === 'full')) {
-        const normalizedCount = Math.max(1, Number(count) || (isSplitTail ? normalizedTailCount : 0) || config.displayCount);
+    if (!hydrateFull) {
+        const normalizedCount = Math.max(1, Number(count) || config.displayCount);
         startId = Number.isInteger(rangeStart)
             ? rangeStart
-            : (isSplitTail ? normalizedTailStartId : Math.max(0, totalMessages - normalizedCount));
+            : Math.max(0, totalMessages - normalizedCount);
         startId = Math.max(0, Math.min(startId, Math.max(0, totalMessages - 1)));
         endId = Math.min(totalMessages - 1, startId + normalizedCount - 1);
         loadedRangeStart = startId;
@@ -1181,24 +1051,17 @@ function buildChunkedChatPayloadFromLogicalChatData(chatData, {
         isChunked = (startId > 0 || endId < totalMessages - 1);
     }
 
-    const parentPromptMessages = isSplitTail && !hydrateFull && (includeParentPromptCache || rangeStart === null)
-        ? logicalMessages.slice(0, normalizedTailStartId)
-        : undefined;
-
-    const finalTailStartId = isSplitTail ? normalizedTailStartId : startId;
-
     return {
-        mode: isSplitTail ? CHAT_STORAGE_MODE_SPLIT_TAIL : 'full',
+        mode: 'full',
         header,
         messages,
-        parentPromptMessages,
         totalMessages,
         loadedRangeStart,
         loadedRangeEnd,
-        tailStartId: finalTailStartId,
+        tailStartId: startId,
         tailEndId: normalizedTailEndId,
-        headCount: finalTailStartId,
-        tailCount: totalMessages - finalTailStartId,
+        headCount: startId,
+        tailCount: totalMessages - startId,
         displayCount: config.displayCount,
         isHydrated: !isChunked,
     };
@@ -1210,30 +1073,11 @@ function getGroupChatFilePath(groupChatsDirectory, chatId) {
 }
 
 function buildSplitLogicalMessages(segments, layout) {
-    if (!segments?.storage || !layout?.headMessagesMissing) {
-        return Array.isArray(segments?.messages) ? segments.messages.slice() : [];
-    }
-
-    const sparseMessages = new Array(Math.max(0, layout.totalMessages));
-    for (let index = 0; index < layout.actualHeadCount; index++) {
-        sparseMessages[index] = segments.headMessages[index];
-    }
-    for (let index = 0; index < layout.actualTailCount; index++) {
-        sparseMessages[layout.tailStartId + index] = segments.tailMessages[index];
-    }
-    return sparseMessages;
+    return Array.isArray(segments?.messages) ? segments.messages.slice() : [];
 }
 
 function getMissingRangesForSegments(layout) {
-    if (!layout?.headMessagesMissing) {
-        return [];
-    }
-
-    const missingStart = layout.actualHeadCount;
-    const missingEnd = layout.declaredHeadCount - 1;
-    return missingStart <= missingEnd
-        ? [{ start: missingStart, end: missingEnd }]
-        : [];
+    return [];
 }
 
 function findLastAvailableMessageId(messages) {
@@ -1276,8 +1120,8 @@ async function resolveDirectLogicalChat(filePath, options = {}) {
         totalMessages: layout.totalMessages,
         lastAvailableMessageId: findLastAvailableMessageId(messages),
         missingRanges: getMissingRangesForSegments(layout),
-        storageMode: segments.storage ? CHAT_STORAGE_MODE_SPLIT_TAIL : 'full',
-        storageHealthy: !layout.headMessagesMissing,
+        storageMode: 'full',
+        storageHealthy: true,
         tailStartId: layout.tailStartId,
         tailEndId: layout.tailEndId,
     };
@@ -1314,8 +1158,8 @@ async function resolveGroupLogicalChat(filePath, options = {}) {
             totalMessages: layout.totalMessages,
             lastAvailableMessageId: findLastAvailableMessageId(messages),
             missingRanges: getMissingRangesForSegments(layout),
-            storageMode: segments.storage ? CHAT_STORAGE_MODE_SPLIT_TAIL : 'full',
-            storageHealthy: !layout.headMessagesMissing,
+            storageMode: 'full',
+            storageHealthy: true,
             tailStartId: layout.tailStartId,
             tailEndId: layout.tailEndId,
         };
@@ -1419,7 +1263,7 @@ function isResidentParentPromptMessage(message) {
     return !isPromptExcludedMessage(message) && (!message?.is_system || Array.isArray(message?.extra?.tool_invocations));
 }
 
-export async function resolveSplitCoreChatPayload(chatsDirectory, coreChatPayload) {
+export async function resolveCoreChatPayload(chatsDirectory, coreChatPayload) {
     if (!coreChatPayload || typeof coreChatPayload !== 'object') {
         return Array.isArray(coreChatPayload) ? coreChatPayload : [];
     }
@@ -1451,34 +1295,7 @@ export async function resolveSplitCoreChatPayload(chatsDirectory, coreChatPayloa
         }
     }
 
-    if (coreChatPayload.mode !== CHAT_STORAGE_MODE_SPLIT_TAIL) {
-        return Array.isArray(coreChatPayload.messages) ? coreChatPayload.messages : (Array.isArray(coreChatPayload) ? coreChatPayload : []);
-    }
-
-    const filePath = resolveCharacterChatFilePath(chatsDirectory, coreChatPayload.avatarUrl, coreChatPayload.currentChatId);
-    const sqlitePath = filePath.replace('.jsonl', '.sqlite');
-    if (!fs.existsSync(filePath) && !fs.existsSync(sqlitePath)) {
-        return [];
-    }
-
-    const segments = await getChatSegments(filePath);
-    const layout = getSegmentLayout(segments);
-    const totalMessages = layout.totalMessages;
-    const normalizedTailStartId = Number.isInteger(coreChatPayload.tailStartId)
-        ? Math.max(0, Math.min(coreChatPayload.tailStartId, totalMessages))
-        : layout.tailStartId;
-    const parentMessages = coreChatPayload.useParentUnhiddenMessages
-        ? (!layout.headMessagesMissing
-            ? segments.messages.slice(0, normalizedTailStartId).filter(isResidentParentPromptMessage)
-            : [])
-        : [];
-    const tailMessages = coreChatPayload.useTailContents === false
-        ? []
-        : (layout.headMessagesMissing
-            ? segments.tailMessages.slice(Math.max(0, Math.max(normalizedTailStartId, layout.tailStartId) - layout.tailStartId))
-            : segments.messages.slice(normalizedTailStartId));
-
-    return [...parentMessages, ...tailMessages];
+    return Array.isArray(coreChatPayload.messages) ? coreChatPayload.messages : (Array.isArray(coreChatPayload) ? coreChatPayload : []);
 }
 
 function getLatestChatBackupFile(directory, prefix) {
@@ -1926,9 +1743,6 @@ router.post('/message-visibility', validateAvatarUrlMiddleware, async function (
         const end = request.body.end === undefined ? start : Number(request.body.end);
         const hide = request.body.unhide !== true;
         const nameFilter = String(request.body.name_filter || '').trim();
-        const config = normalizeLongChatConfig({
-            displayCount: request.body.display_count,
-        });
 
         if (!String(request.body.file_name || '').trim() || !Number.isInteger(start) || !Number.isInteger(end) || start < 0 || end < start) {
             return response.status(400).send({ error: 'invalid_visibility_range' });
@@ -1955,10 +1769,6 @@ router.post('/message-visibility', validateAvatarUrlMiddleware, async function (
                 });
             }
 
-            if (layout.headMessagesMissing) {
-                return response.status(409).send({ error: 'incomplete_split_chat' });
-            }
-
             if (end >= layout.totalMessages) {
                 return response.status(400).send({ error: 'invalid_visibility_range' });
             }
@@ -1982,7 +1792,7 @@ router.post('/message-visibility', validateAvatarUrlMiddleware, async function (
                     result: 'ok',
                     changed: 0,
                     chat_revision: getChatRevision(segments.header),
-                    storage_mode: segments.storage ? CHAT_STORAGE_MODE_SPLIT_TAIL : 'full',
+                    storage_mode: 'full',
                     tailStartId: layout.tailStartId,
                     tailEndId: layout.tailEndId,
                     headCount: layout.headCount,
@@ -2007,6 +1817,9 @@ router.post('/message-visibility', validateAvatarUrlMiddleware, async function (
             });
         });
     } catch (error) {
+        if (isUnsupportedSplitTailChatError(error)) {
+            return sendUnsupportedSplitTailChatError(response, error);
+        }
         if (isChatPathValidationError(error)) {
             return sendChatPathValidationError(response, error);
         }
@@ -2023,9 +1836,6 @@ router.post('/save', validateAvatarUrlMiddleware, async function (request, respo
         }
 
         const chatData = request.body.chat;
-        const config = normalizeLongChatConfig({
-            displayCount: request.body.display_count,
-        });
         const directoryPath = resolveCharacterChatDirectory(request.user.directories.chats, request.body.avatar_url);
         const filePath = resolveCharacterChatFilePath(request.user.directories.chats, request.body.avatar_url, request.body.file_name);
 
@@ -2044,33 +1854,10 @@ router.post('/save', validateAvatarUrlMiddleware, async function (request, respo
             }
 
             let logicalChatData = chatData;
-            let requestedTailStartId = null;
             const existingSegments = fs.existsSync(filePath) || fs.existsSync(filePath.replace('.jsonl', '.sqlite')) ? await getChatSegments(filePath) : null;
-            const existingTailStartId = existingSegments?.storage?.head_count;
 
             if (request.body.save_mode === 'tail') {
-                const absoluteStartId = Number(request.body.absolute_start_id);
-                const db = await loadDb(filePath.replace('.jsonl', '.sqlite'));
-                const existingHeader = getChatHeader(db);
-                const existingMessageCount = getMessageCount(db);
-                db.close();
-
-                if (!Number.isInteger(absoluteStartId) || absoluteStartId < 0 || existingMessageCount === 0 || absoluteStartId > existingMessageCount) {
-                    return response.status(400).send({ error: 'invalid_tail_save' });
-                }
-
-                const tailSaveValidation = validateTailSavePayload({
-                    existingMessageCount: existingMessageCount,
-                    absoluteStartId,
-                    rangeMessages: chatData.slice(1),
-                    savedMessageCount: request.body.saved_message_count,
-                });
-                if (!tailSaveValidation.ok) {
-                    return response.status(400).send({ error: tailSaveValidation.error });
-                }
-
-                logicalChatData = chatData; // We only send the new messages part to writeLogicalChat
-                requestedTailStartId = absoluteStartId;
+                return response.status(400).send({ error: 'invalid_save_mode' });
             } else if (request.body.save_mode === 'loaded_range') {
                 const existingChat = await getLogicalChatData(filePath);
                 if (existingChat.length === 0) {
@@ -2086,13 +1873,10 @@ router.post('/save', validateAvatarUrlMiddleware, async function (request, respo
                     chatData[0] ?? existingChat[0],
                     ...loadedRangeResult.chatData.slice(1),
                 ];
-                requestedTailStartId = Number.isInteger(existingTailStartId) ? existingTailStartId : null;
-            } else if (Number.isInteger(existingTailStartId)) {
-                requestedTailStartId = existingTailStartId;
-            }
-
-            if (request.body.refresh_tail === true && (['tail', 'loaded_range'].includes(request.body.save_mode) || existingSegments?.storage)) {
-                requestedTailStartId = Math.max(0, logicalChatData.length - 1 - config.displayCount);
+            } else if (request.body.save_mode !== undefined) {
+                return response.status(400).send({ error: 'invalid_save_mode' });
+            } else if (request.body.full_chat !== true) {
+                return response.status(400).send({ error: 'full_save_requires_hydration' });
             }
 
             const revisionCheck = validateSaveRevision(request.body, existingSegments?.header);
@@ -2102,27 +1886,16 @@ router.post('/save', validateAvatarUrlMiddleware, async function (request, respo
 
             if (saveIsNoop) {
                 const layout = getSegmentLayout(existingSegments);
-                const storageMode = existingSegments.storage ? CHAT_STORAGE_MODE_SPLIT_TAIL : 'full';
 
                 return response.send({
                     result: 'ok',
                     chat_revision: revisionCheck.currentRevision,
-                    storage_mode: storageMode,
+                    storage_mode: 'full',
                     tailStartId: layout.tailStartId,
                     tailEndId: layout.tailEndId,
                     headCount: layout.headCount,
                     tailCount: layout.tailCount,
-                    payload: request.body.refresh_tail === true
-                        ? buildChunkedChatPayloadFromLogicalChatData(existingChatData, {
-                            rangeStart: requestedTailStartId,
-                            count: storageMode === CHAT_STORAGE_MODE_SPLIT_TAIL ? layout.tailCount : config.displayCount,
-                            hydrateFull: false,
-                            displayCount: config.displayCount,
-                            includeParentPromptCache: storageMode === CHAT_STORAGE_MODE_SPLIT_TAIL,
-                            storageMode,
-                            tailStartId: layout.tailStartId,
-                        })
-                        : null,
+                    payload: null,
                 });
             }
 
@@ -2141,18 +1914,11 @@ router.post('/save', validateAvatarUrlMiddleware, async function (request, respo
             const writeOptions = {
                 regenerateIdentities: request.body.regenerate_identities === true,
             };
-            if (request.body.save_mode === 'tail') {
-                writeOptions.startIndex = requestedTailStartId + 1;
-            }
 
             const writeResult = await writeLogicalChat(filePath, header, messages, writeOptions);
             if (writeResult.fullJsonl) {
                 getBackupFunction(request.user.profile.handle)(request.user.directories.backups, directoryName, writeResult.fullJsonl);
             }
-
-            const refreshRequired = writeResult.compacted
-                || (existingSegments?.storage?.mode ?? 'full') !== writeResult.storageMode
-                || request.body.refresh_tail === true;
 
             return response.send({
                 result: 'ok',
@@ -2162,22 +1928,15 @@ router.post('/save', validateAvatarUrlMiddleware, async function (request, respo
                 tailEndId: writeResult.tailEndId,
                 headCount: writeResult.headCount,
                 tailCount: writeResult.tailCount,
-                payload: refreshRequired
-                    ? buildChunkedChatPayloadFromLogicalChatData([header, ...messages], {
-                        rangeStart: requestedTailStartId,
-                        count: writeResult.storageMode === CHAT_STORAGE_MODE_SPLIT_TAIL ? writeResult.tailCount : config.displayCount,
-                        hydrateFull: false,
-                        displayCount: config.displayCount,
-                        includeParentPromptCache: writeResult.storageMode === CHAT_STORAGE_MODE_SPLIT_TAIL,
-                        storageMode: writeResult.storageMode,
-                        tailStartId: writeResult.tailStartId,
-                    })
-                    : null,
+                payload: null,
             });
         });
     } catch (error) {
         if (isActiveSessionError(error)) {
             return sendActiveSessionRequired(response);
+        }
+        if (isUnsupportedSplitTailChatError(error)) {
+            return sendUnsupportedSplitTailChatError(response, error);
         }
         if (isChatPathValidationError(error)) {
             return sendChatPathValidationError(response, error);
@@ -2221,13 +1980,11 @@ router.post('/get', validateAvatarUrlMiddleware, async function (request, respon
                 console.error('Failed to update user last activity for direct chat read:', error);
             }
             return await withChatSaveLock(filePath, async () => {
-                await ensureSplitTailStorage(filePath);
                 return response.send(await buildChunkedChatPayload(filePath, {
                     rangeStart,
                     count,
                     hydrateFull,
                     displayCount: config.displayCount,
-                    includeParentPromptCache: request.body.include_parent_prompt_cache === true,
                 }));
             });
             }
@@ -2239,6 +1996,9 @@ router.post('/get', validateAvatarUrlMiddleware, async function (request, respon
             }
             return response.send(await getLogicalChatData(filePath));
     } catch (error) {
+        if (isUnsupportedSplitTailChatError(error)) {
+            return sendUnsupportedSplitTailChatError(response, error);
+        }
         if (isChatPathValidationError(error)) {
             return sendChatPathValidationError(response, error);
         }
@@ -2272,6 +2032,9 @@ router.post('/save-prefix', validateAvatarUrlMiddleware, async function (request
         getBackupFunction(request.user.profile.handle)(request.user.directories.backups, dirName, writeResult.fullJsonl);
         return response.send({ ok: true });
     } catch (error) {
+        if (isUnsupportedSplitTailChatError(error)) {
+            return sendUnsupportedSplitTailChatError(response, error);
+        }
         if (isChatPathValidationError(error)) {
             return sendChatPathValidationError(response, error);
         }
@@ -2304,18 +2067,7 @@ router.post('/rename', validateAvatarUrlMiddleware, async function (request, res
             return response.status(400).send({ error: true });
         }
 
-        const originalHeadPath = getSplitHeadPath(pathToOriginalFile);
         const segments = await getChatSegments(pathToOriginalFile);
-        const segmentLayout = getSegmentLayout(segments);
-
-        if (segments.storage && segmentLayout.headMessagesMissing) {
-            console.error('Cannot rename split-tail chat with incomplete head segment.', {
-                pathToOriginalFile,
-                declaredHeadCount: segmentLayout.declaredHeadCount,
-                actualHeadCount: segmentLayout.actualHeadCount,
-            });
-            return response.status(409).send({ error: 'incomplete_split_chat' });
-        }
 
         if (segments.header) {
             const targetHeader = request.body.is_group
@@ -2338,13 +2090,13 @@ router.post('/rename', validateAvatarUrlMiddleware, async function (request, res
 
         if (fs.existsSync(pathToOriginalFile)) fs.unlinkSync(pathToOriginalFile);
         if (fs.existsSync(sqliteOriginal)) fs.unlinkSync(sqliteOriginal);
-        if (fs.existsSync(originalHeadPath)) {
-            fs.unlinkSync(originalHeadPath);
-        }
 
         console.info('Successfully renamed chat file.');
         return response.send({ ok: true, sanitizedFileName });
     } catch (error) {
+        if (isUnsupportedSplitTailChatError(error)) {
+            return sendUnsupportedSplitTailChatError(response, error);
+        }
         if (isChatPathValidationError(error)) {
             return sendChatPathValidationError(response, error);
         }
@@ -2368,13 +2120,12 @@ router.post('/delete', validateAvatarUrlMiddleware, async function (request, res
 
         if (fs.existsSync(jsonlPath)) fs.unlinkSync(jsonlPath);
         if (fs.existsSync(sqlitePath)) fs.unlinkSync(sqlitePath);
-        const headPath = getSplitHeadPath(jsonlPath);
-        if (fs.existsSync(headPath)) {
-            fs.unlinkSync(headPath);
-        }
         console.info(`Deleted chat file: ${filePath}`);
         return response.send('ok');
     } catch (error) {
+        if (isUnsupportedSplitTailChatError(error)) {
+            return sendUnsupportedSplitTailChatError(response, error);
+        }
         if (isChatPathValidationError(error)) {
             return sendChatPathValidationError(response, error);
         }
@@ -2499,6 +2250,9 @@ router.post('/group/import', async function (request, response) {
         fs.unlinkSync(pathToUpload);
         return response.send({ res: chatname });
     } catch (error) {
+        if (isUnsupportedSplitTailChatError(error)) {
+            return sendUnsupportedSplitTailChatError(response, error);
+        }
         if (isChatPathValidationError(error)) {
             return sendChatPathValidationError(response, error);
         }
@@ -2631,6 +2385,9 @@ router.post('/import', validateAvatarUrlMiddleware, async function (request, res
             response.send({ res: true, fileNames });
             }
     } catch (error) {
+        if (isUnsupportedSplitTailChatError(error)) {
+            return sendUnsupportedSplitTailChatError(response, error);
+        }
         if (isChatPathValidationError(error)) {
             return sendChatPathValidationError(response, error);
         }
@@ -2711,6 +2468,9 @@ router.post('/group/get', async (request, response) => {
             ? { messages: [], chat_metadata: {}, chat_revision: 0 }
             : []);
     } catch (error) {
+        if (isUnsupportedSplitTailChatError(error)) {
+            return sendUnsupportedSplitTailChatError(response, error);
+        }
         if (isChatPathValidationError(error)) {
             return sendChatPathValidationError(response, error);
         }
@@ -2734,15 +2494,14 @@ router.post('/group/delete', async (request, response) => {
         if (fs.existsSync(jsonlPath) || fs.existsSync(sqlitePath)) {
             if (fs.existsSync(jsonlPath)) fs.unlinkSync(jsonlPath);
             if (fs.existsSync(sqlitePath)) fs.unlinkSync(sqlitePath);
-            const headPath = getSplitHeadPath(jsonlPath);
-            if (fs.existsSync(headPath)) {
-                fs.unlinkSync(headPath);
-            }
             return response.send({ ok: true });
         }
 
         return response.send({ error: true });
     } catch (error) {
+        if (isUnsupportedSplitTailChatError(error)) {
+            return sendUnsupportedSplitTailChatError(response, error);
+        }
         if (isChatPathValidationError(error)) {
             return sendChatPathValidationError(response, error);
         }
@@ -2797,24 +2556,7 @@ router.post('/group/save', async (request, response) => {
             };
 
             if (request.body.save_mode === 'tail') {
-                const absoluteStartId = Number(request.body.absolute_start_id);
-                const existingMessageCount = existingPayload.messages.length;
-
-                if (!Number.isInteger(absoluteStartId) || absoluteStartId < 0 || absoluteStartId > existingMessageCount) {
-                    return response.status(400).send({ error: 'invalid_tail_save' });
-                }
-
-                const tailSaveValidation = validateTailSavePayload({
-                    existingMessageCount,
-                    absoluteStartId,
-                    rangeMessages: chat_data,
-                    savedMessageCount: request.body.saved_message_count,
-                });
-                if (!tailSaveValidation.ok) {
-                    return response.status(400).send({ error: tailSaveValidation.error });
-                }
-
-                writeOptions.startIndex = absoluteStartId + 1;
+                return response.status(400).send({ error: 'invalid_save_mode' });
             } else if (request.body.save_mode === 'loaded_range') {
                 if (!existingPayload.header) {
                     return response.status(400).send({ error: 'invalid_loaded_range' });
@@ -2833,6 +2575,8 @@ router.post('/group/save', async (request, response) => {
                 messages = loadedRangeResult.chatData.slice(1);
             } else if (request.body.save_mode !== undefined) {
                 return response.status(400).send({ error: 'invalid_save_mode' });
+            } else if (request.body.full_chat !== true) {
+                return response.status(400).send({ error: 'full_save_requires_hydration' });
             }
 
             await request.activeSessionOperation?.assertAllowed();
@@ -2845,6 +2589,9 @@ router.post('/group/save', async (request, response) => {
     } catch (error) {
         if (isActiveSessionError(error)) {
             return sendActiveSessionRequired(response);
+        }
+        if (isUnsupportedSplitTailChatError(error)) {
+            return sendUnsupportedSplitTailChatError(response, error);
         }
         if (isChatPathValidationError(error)) {
             return sendChatPathValidationError(response, error);
@@ -2909,12 +2656,10 @@ router.post('/search', validateAvatarUrlMiddleware, async function (request, res
             chatFiles = getDeduplicatedChatHistoryFileNames(fs.readdirSync(directoryPath))
                 .map(fileName => {
                     const filePath = path.join(directoryPath, fileName);
-                    const stats = fs.statSync(filePath);
-                    const headPath = getSplitHeadPath(filePath);
-                    const headStats = fs.existsSync(headPath) ? fs.statSync(headPath) : null;
+                    const stats = getChatFileStats(filePath);
                     return {
                         file_name: fileName,
-                        file_size: formatBytes(stats.size + (headStats?.size || 0)),
+                        file_size: formatBytes(stats.totalSize),
                         path: filePath,
                     };
                 });
@@ -2934,6 +2679,9 @@ router.post('/search', validateAvatarUrlMiddleware, async function (request, res
         return response.send(results);
 
     } catch (error) {
+        if (isUnsupportedSplitTailChatError(error)) {
+            return sendUnsupportedSplitTailChatError(response, error);
+        }
         if (isChatPathValidationError(error)) {
             return sendChatPathValidationError(response, error);
         }

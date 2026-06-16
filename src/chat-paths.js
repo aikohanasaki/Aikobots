@@ -74,8 +74,12 @@ function resolveContainedChildPath(baseDirectory, childName, fieldName) {
     return assertPathInside(baseDirectory, path.join(baseDirectory, logicalName), fieldName);
 }
 
-function normalizeChatJsonlFileName(fileName, { fieldName = 'chat_file', allowHead = false, requireHead = false } = {}) {
+function normalizeChatJsonlFileName(fileName, { fieldName = 'chat_file' } = {}) {
     const logicalName = assertSafeLogicalName(fileName, fieldName);
+
+    if (isHeadChatFile(logicalName)) {
+        throw new ChatPathValidationError(`Invalid ${fieldName}.`, `invalid_${fieldName}`);
+    }
 
     if (logicalName.endsWith('.sqlite')) {
         return logicalName;
@@ -91,12 +95,8 @@ function normalizeChatJsonlFileName(fileName, { fieldName = 'chat_file', allowHe
         throw new ChatPathValidationError(`Invalid ${fieldName} extension.`, `invalid_${fieldName}`);
     }
 
-    if (!allowHead && isHeadChatFile(normalizedFileName)) {
+    if (isHeadChatFile(normalizedFileName)) {
         throw new ChatPathValidationError(`Invalid ${fieldName}.`, `invalid_${fieldName}`);
-    }
-
-    if (requireHead && !isHeadChatFile(normalizedFileName)) {
-        throw new ChatPathValidationError(`Invalid split head file.`, `invalid_${fieldName}`);
     }
 
     return normalizedFileName;
@@ -104,6 +104,9 @@ function normalizeChatJsonlFileName(fileName, { fieldName = 'chat_file', allowHe
 
 function normalizeGroupChatId(chatId) {
     const logicalName = assertSafeLogicalName(chatId, 'group_chat_id');
+    if (isHeadChatFile(logicalName)) {
+        throw new ChatPathValidationError('Invalid group_chat_id.', 'invalid_group_chat_id');
+    }
     if (logicalName.endsWith('.sqlite') || logicalName.endsWith('.jsonl')) {
         return path.parse(logicalName).name;
     }
@@ -147,21 +150,6 @@ export function getDeduplicatedChatHistoryFileNames(files) {
     return Array.from(chatFiles.values());
 }
 
-export function getSplitHeadPath(filePath) {
-    const parsedPath = path.parse(filePath);
-    return resolveSplitHeadCompanionPath(filePath, `${parsedPath.name}${CHAT_HEAD_FILE_SUFFIX}`);
-}
-
-export function resolveSplitHeadCompanionPath(filePath, headFileName = null) {
-    const fileDirectory = path.dirname(path.resolve(filePath));
-    const companionFileName = normalizeChatJsonlFileName(headFileName || `${path.parse(filePath).name}${CHAT_HEAD_FILE_SUFFIX}`, {
-        fieldName: 'split_head_file',
-        allowHead: true,
-        requireHead: true,
-    });
-    return resolveContainedChildPath(fileDirectory, companionFileName, 'split_head_file');
-}
-
 export function resolveCharacterChatDirectory(chatsDirectory, avatarUrl) {
     const directoryName = assertSafeLogicalName(String(avatarUrl ?? '').replace(/\.png$/i, ''), 'avatar_url');
     return resolveContainedChildPath(chatsDirectory, directoryName, 'chat_directory');
@@ -186,14 +174,13 @@ export function resolveGroupChatFilePath(groupChatsDirectory, chatId) {
  * Resolves every storage companion for a group chat ID inside the group chat directory.
  * @param {string} groupChatsDirectory Base group chat directory.
  * @param {string} chatId Logical group chat ID or existing group chat file name.
- * @returns {{chatId: string, jsonlPath: string, sqlitePath: string, headPath: string}}
+ * @returns {{chatId: string, jsonlPath: string, sqlitePath: string}}
  */
 export function resolveGroupChatStoragePaths(groupChatsDirectory, chatId) {
     const safeChatId = normalizeGroupChatId(chatId);
     const jsonlPath = resolveContainedChildPath(groupChatsDirectory, `${safeChatId}.jsonl`, 'group_chat_file');
     const sqlitePath = resolveContainedChildPath(groupChatsDirectory, `${safeChatId}.sqlite`, 'group_chat_file');
-    const headPath = getSplitHeadPath(jsonlPath);
-    return { chatId: safeChatId, jsonlPath, sqlitePath, headPath };
+    return { chatId: safeChatId, jsonlPath, sqlitePath };
 }
 
 export function validateStmbChatRef(chatRef) {

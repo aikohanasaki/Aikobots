@@ -830,7 +830,7 @@ function resetSelectedGroup() {
     is_group_generating = false;
 }
 
-async function saveGroupChat(groupId, shouldSaveGroup, { syncLoadedMessages = false } = {}) {
+async function saveGroupChat(groupId, shouldSaveGroup) {
     const group = groups.find(x => x.id == groupId);
     const chat_id = group.chat_id;
     group['date_last_chat'] = Date.now();
@@ -838,7 +838,6 @@ async function saveGroupChat(groupId, shouldSaveGroup, { syncLoadedMessages = fa
     normalizeChatIdentities(chat, { generateUuid: uuidv4 });
     const savePayload = await prepareCurrentChatSavePayload({
         allowPartialSave: shouldTrackRevision,
-        syncLoadedMessages: shouldTrackRevision && syncLoadedMessages,
     });
     if (!savePayload.ok) {
         toastr.warning(savePayload.message, savePayload.title);
@@ -853,7 +852,7 @@ async function saveGroupChat(groupId, shouldSaveGroup, { syncLoadedMessages = fa
             chat: savePayload.chat,
             chat_metadata: JSON.parse(JSON.stringify(chat_metadata)),
             save_mode: savePayload.saveMode,
-            absolute_start_id: savePayload.absoluteStartId,
+            full_chat: savePayload.fullChat,
             loaded_range_start: savePayload.loadedRangeStart,
             loaded_range_end: savePayload.loadedRangeEnd,
             saved_message_count: savePayload.savedMessageCount,

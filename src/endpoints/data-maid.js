@@ -4,7 +4,7 @@ import path from 'node:path';
 import express from 'express';
 import mime from 'mime-types';
 import { getSettingsBackupFilePrefix } from './settings.js';
-import { CHAT_BACKUPS_PREFIX, getLogicalChatData, serializeJsonl, writeLogicalChat, getSplitHeadPath, isHeadChatFile } from './chats.js';
+import { CHAT_BACKUPS_PREFIX, getLogicalChatData, serializeJsonl, isHeadChatFile } from './chats.js';
 import { tryParse } from '../util.js';
 import { SETTINGS_FILE } from '../constants.js';
 
@@ -185,15 +185,12 @@ export class DataMaidService {
      */
     async #sanitizeRecord(name, withParent) {
         const stat = fs.existsSync(name) ? await fs.promises.stat(name) : null;
-        const includeHeadStat = stat && path.extname(name) === '.jsonl' && !isHeadChatFile(name);
-        const headPath = includeHeadStat ? getSplitHeadPath(name) : null;
-        const headStat = headPath && fs.existsSync(headPath) ? await fs.promises.stat(headPath) : null;
         return {
             name: path.basename(name),
             hash: sha256(name),
             parent: withParent ? path.basename(path.dirname(name)) : void 0,
-            size: (stat?.size || 0) + (headStat?.size || 0),
-            mtime: Math.max(stat?.mtimeMs || 0, headStat?.mtimeMs || 0),
+            size: stat?.size || 0,
+            mtime: stat?.mtimeMs || 0,
         };
     }
 
@@ -769,65 +766,6 @@ export class DataMaidService {
     }
 
     /**
-     * Finds all split chat paths for a user.
-     * @returns {Promise<string[]>} List of split chat paths found.
-     */
-    async getSplitChatPaths() {
-        const paths = [];
-        try {
-            const scanDirectory = async (directory) => {
-                if (!fs.existsSync(directory)) return;
-                const entries = await fs.promises.readdir(directory, { withFileTypes: true });
-                for (const entry of entries) {
-                    const entryPath = path.join(directory, entry.name);
-                    if (entry.isDirectory()) {
-                        await scanDirectory(entryPath);
-                    } else if (entry.isFile() && entry.name.endsWith('.jsonl') && !isHeadChatFile(entry.name)) {
-                        const headPath = getSplitHeadPath(entryPath);
-                        if (fs.existsSync(headPath)) paths.push(entryPath);
-                    }
-                }
-            };
-
-            await scanDirectory(this.directories.chats);
-            await scanDirectory(this.directories.groupChats);
-        } catch (error) {
-            console.error('[Data Maid] Error finding split chats:', error);
-        }
-        return paths;
-    }
-
-    /**
-     * Recombines all split chats for a user.
-     * @param {string[]} paths Optional list of paths to recombine.
-     * @returns {Promise<number>} Number of chats recombined.
-     */
-    async recombineAllSplitChats(paths = null) {
-        let count = 0;
-        try {
-            const chatPaths = paths ?? await this.getSplitChatPaths();
-
-            for (const entryPath of chatPaths) {
-                const logicalChat = await getLogicalChatData(entryPath);
-                if (logicalChat.length > 0) {
-                    await writeLogicalChat(entryPath, logicalChat[0], logicalChat.slice(1));
-                    const headPath = getSplitHeadPath(entryPath);
-                    if (fs.existsSync(entryPath)) {
-                        await fs.promises.unlink(entryPath);
-                    }
-                    if (fs.existsSync(headPath)) {
-                        await fs.promises.unlink(headPath);
-                    }
-                    count++;
-                }
-            }
-        } catch (error) {
-            console.error('[Data Maid] Error recombining split chats:', error);
-        }
-        return count;
-    }
-
-    /**
      * Generates a unique token for the user to clean up their data.
      * Replaces any existing token for the same user.
      * @param {string} handle - The user's handle or identifier.
@@ -869,22 +807,6 @@ router.post('/report', async (req, res) => {
         return res.json({ report, token });
     } catch (error) {
         console.error('[Data Maid] Error generating data maid report:', error);
-        return res.sendStatus(500);
-    }
-});
-
-router.post('/recombine-chats', async (req, res) => {
-    try {
-        if (!req.user || !req.user.directories) {
-            return res.sendStatus(403);
-        }
-
-        const dataMaid = new DataMaidService(req.user.profile.handle, req.user.directories);
-        const count = await dataMaid.recombineAllSplitChats();
-
-        return res.json({ count });
-    } catch (error) {
-        console.error('[Data Maid] Error recombining split chats:', error);
         return res.sendStatus(500);
     }
 });
@@ -1008,12 +930,6 @@ router.post('/delete', async (req, res) => {
             const sqlitePath = pathToFile.replace('.jsonl', '.sqlite');
             if (fs.existsSync(sqlitePath)) {
                 await fs.promises.unlink(sqlitePath);
-            }
-            if (path.extname(pathToFile) === '.jsonl' && !isHeadChatFile(pathToFile)) {
-                const headPath = getSplitHeadPath(pathToFile);
-                if (fs.existsSync(headPath)) {
-                    await fs.promises.unlink(headPath);
-                }
             }
         }
 

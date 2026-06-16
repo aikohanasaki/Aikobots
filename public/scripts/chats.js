@@ -507,7 +507,6 @@ async function updateServerChatMessageVisibility(start, end, unhide, nameFilter 
                 name_filter: String(nameFilter || '').trim(),
                 base_revision: getChatSaveRevision(),
                 save_session_id: getChatSaveSessionId(),
-                display_count: 1000000, // Long chats now are normalized through db
                 }),
             cache: 'no-cache',
         });

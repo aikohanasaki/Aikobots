@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import fs from 'node:fs';
 import path from 'node:path';
+import readline from 'node:readline';
 import { CommandLineParser } from './src/command-line.js';
 import { serverDirectory } from './src/server-directory.js';
 
@@ -13,49 +14,37 @@ globalThis.COMMAND_LINE_ARGS = cliArgs;
 process.chdir(serverDirectory);
 
 /**
- * Recombines split chats across all users before converting legacy chats to SQLite.
+ * Reads the first non-empty JSONL record without loading long chats into memory.
+ * @param {string} filePath JSONL file path.
+ * @returns {Promise<object|null>} Parsed first record, or null for an empty file.
+ */
+async function readJsonlHeader(filePath) {
+    const stream = fs.createReadStream(filePath, { encoding: 'utf8' });
+    const lines = readline.createInterface({ input: stream, crlfDelay: Infinity });
+
+    try {
+        for await (const line of lines) {
+            if (line.trim()) {
+                return JSON.parse(line);
+            }
+        }
+    } finally {
+        lines.close();
+        stream.destroy();
+    }
+
+    return null;
+}
+
+/**
+ * Rejects legacy split-chat fragments before SQLite migration can treat them as complete chats.
+ * @param {string} filePath JSONL file path.
  * @returns {Promise<void>}
  */
-async function recombineAllUsersSplitChats() {
-    const { getAllUserHandles, getUserDirectories } = await import('./src/users.js');
-    const { DataMaidService } = await import('./src/endpoints/data-maid.js');
-    const handles = await getAllUserHandles();
-    const allEntries = [];
-
-    for (const handle of handles) {
-        const directories = getUserDirectories(handle);
-        const dataMaid = new DataMaidService(handle, directories);
-        const paths = await dataMaid.getSplitChatPaths();
-        for (const entryPath of paths) {
-            const stat = await fs.promises.stat(entryPath);
-            allEntries.push({
-                path: entryPath,
-                dataMaid,
-                time: stat.birthtimeMs || stat.mtimeMs,
-            });
-        }
-    }
-
-    if (allEntries.length === 0) {
-        return;
-    }
-
-    allEntries.sort((a, b) => a.time - b.time);
-
-    console.info(`[Data Maid] Found ${allEntries.length} split chats to recombine:`);
-    for (const entry of allEntries) {
-        console.info(`  - ${entry.path}`);
-    }
-
-    let totalConverted = 0;
-
-    for (const { dataMaid, path: entryPath } of allEntries) {
-        const count = await dataMaid.recombineAllSplitChats([entryPath]);
-        totalConverted += count;
-    }
-
-    if (totalConverted > 0) {
-        console.info(`[Data Maid] Successfully recombined and migrated ${totalConverted} split chats to SQLite.`);
+async function assertMigratableJsonlChat(filePath) {
+    const header = await readJsonlHeader(filePath);
+    if (header?.chat_storage?.mode === 'split-tail' || header?.split_part) {
+        throw new Error(`Legacy split chat storage is no longer supported; refusing to migrate partial JSONL: ${filePath}`);
     }
 }
 
@@ -65,7 +54,7 @@ async function recombineAllUsersSplitChats() {
  */
 async function migrateAllUsersChatsToSqlite() {
     const { getAllUserHandles, getUserDirectories } = await import('./src/users.js');
-    const { getSplitHeadPath, isHeadChatFile } = await import('./src/endpoints/chats.js');
+    const { isHeadChatFile } = await import('./src/chat-paths.js');
     const { loadDb, migrateFromJsonl } = await import('./src/sqlite-manager.js');
     const handles = await getAllUserHandles();
     let totalMigrated = 0;
@@ -83,10 +72,6 @@ async function migrateAllUsersChatsToSqlite() {
                 if (entry.isDirectory()) {
                     await scanDirectory(entryPath);
                 } else if (entry.isFile() && entry.name.endsWith('.jsonl') && !isHeadChatFile(entry.name)) {
-                    const headPath = getSplitHeadPath(entryPath);
-                    if (fs.existsSync(headPath)) {
-                        throw new Error(`Split chat was not recombined; refusing to migrate tail only: ${entryPath}`);
-                    }
                     const sqlitePath = entryPath.replace(/\.jsonl$/, '.sqlite');
                     const stat = await fs.promises.stat(entryPath);
                     allEntries.push({
@@ -120,6 +105,7 @@ async function migrateAllUsersChatsToSqlite() {
     for (const { entryPath, sqlitePath } of allEntries) {
         if (!fs.existsSync(sqlitePath)) {
             try {
+                await assertMigratableJsonlChat(entryPath);
                 console.info(`[Data Maid] Migrating ${entryPath} to SQLite...`);
                 await migrateFromJsonl(entryPath, sqlitePath);
                 await verifySqliteIntegrity(sqlitePath);
@@ -175,7 +161,6 @@ async function runMigration() {
 
         await withDirectoryLock(lockOptions, async () => {
             console.log('Starting SQLite migration...');
-            await recombineAllUsersSplitChats();
             await migrateAllUsersChatsToSqlite();
             console.log('SQLite migration completed.');
         });

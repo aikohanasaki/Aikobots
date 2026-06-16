@@ -82,9 +82,8 @@ router.post('/all', (request, response) => {
 
                         if (chatPath) {
                             const chatStat = fs.statSync(chatPath);
-                            const headStat = fs.existsSync(chatPaths.headPath) ? fs.statSync(chatPaths.headPath) : null;
-                            chat_size += chatStat.size + (headStat?.size || 0);
-                            date_last_chat = Math.max(date_last_chat, chatStat.mtimeMs, headStat?.mtimeMs || 0);
+                            chat_size += chatStat.size;
+                            date_last_chat = Math.max(date_last_chat, chatStat.mtimeMs);
                         }
                     }
                 }
@@ -185,10 +184,6 @@ router.post('/delete', getFileNameValidationFunction('id'), async (request, resp
 
                 if (fs.existsSync(chatPaths.sqlitePath)) {
                     fs.unlinkSync(chatPaths.sqlitePath);
-                }
-
-                if (fs.existsSync(chatPaths.headPath)) {
-                    fs.unlinkSync(chatPaths.headPath);
                 }
             }
         }

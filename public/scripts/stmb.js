@@ -1019,7 +1019,7 @@ async function applyPlannerReloadPayload(payload = null) {
             : true;
         const nextView = wasShowingLatest
             ? 'tail'
-            : (Number.isInteger(payload?.tailStartId) && Number(previousStartId) < payload.tailStartId ? 'history' : 'tail');
+            : (Number.isInteger(payload?.loadedRangeStart) && Number(previousStartId) < payload.loadedRangeStart ? 'history' : 'tail');
 
         applyChunkedChatPayload(payload, { replace: true, currentView: nextView });
 

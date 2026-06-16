@@ -15,7 +15,6 @@ import {
     saveItemizedPrompts,
     getTotalChatMessages,
     isChatMessageLoaded,
-    isSplitTailChat,
     isChatFullyHydrated,
     hydrateCurrentChatForEditing,
     hasActiveMessageEditSession,
@@ -638,7 +637,7 @@ export async function createBranch(mesId, { swipeId = null } = {}) {
         return;
     }
 
-    if (isHistoricalChatMessage(mesId) || (selectedSwipeId !== null && isSplitTailChat() && !isChatFullyHydrated())) {
+    if (isHistoricalChatMessage(mesId) || (selectedSwipeId !== null && !isChatFullyHydrated())) {
         const hydrated = await hydrateCurrentChatForEditing();
         if (!hydrated) {
             return null;
@@ -674,28 +673,7 @@ export async function createBranch(mesId, { swipeId = null } = {}) {
         if (selected_group) {
             await saveGroupBookmarkChat(selected_group, name, newMetadata, mesId);
         } else {
-            if (isSplitTailChat() && !isChatFullyHydrated()) {
-                const response = await fetch('/api/chats/save-prefix', {
-                    method: 'POST',
-                    headers: getRequestHeaders(),
-                    body: JSON.stringify({
-                        avatar_url: characters[this_chid].avatar,
-                        source_file: characters[this_chid].chat,
-                        target_file: name,
-                        prefix_end_id: mesId,
-                        header_overrides: {
-                            chat_metadata: targetChatMetadata,
-                        },
-                    }),
-                });
-
-                if (!response.ok) {
-                    toastr.error('Checkpoint could not be created.', 'Branch creation failed');
-                    return null;
-                }
-            } else {
-                await saveChat({ chatName: name, withMetadata: newMetadata, mesId });
-            }
+            await saveChat({ chatName: name, withMetadata: newMetadata, mesId });
         }
     } finally {
         if (originalSwipeState) {
@@ -769,28 +747,7 @@ export async function createNewBookmark(mesId, { forceName = null } = {}) {
     if (selected_group) {
         await saveGroupBookmarkChat(selected_group, name, newMetadata, mesId);
     } else {
-        if (isSplitTailChat() && !isChatFullyHydrated()) {
-            const response = await fetch('/api/chats/save-prefix', {
-                method: 'POST',
-                headers: getRequestHeaders(),
-                body: JSON.stringify({
-                    avatar_url: characters[this_chid].avatar,
-                    source_file: characters[this_chid].chat,
-                    target_file: name,
-                    prefix_end_id: mesId,
-                    header_overrides: {
-                        chat_metadata: targetChatMetadata,
-                    },
-                }),
-            });
-
-            if (!response.ok) {
-                toastr.error('Checkpoint could not be created.', 'Create Checkpoint');
-                return null;
-            }
-        } else {
-            await saveChat({ chatName: name, withMetadata: newMetadata, mesId });
-        }
+        await saveChat({ chatName: name, withMetadata: newMetadata, mesId });
     }
 
     lastMes.extra['bookmark_link'] = name;

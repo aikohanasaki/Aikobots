@@ -54,7 +54,7 @@ import { assembleChatCompletionPrompt } from '../../prompting/chat-completion-as
 import { compareChatCompletionMessages } from '../../prompting/chat-completion-compare.js';
 import { runServerGenerationExtensions } from '../../extensions/server-runtime.js';
 import { prepareEntriesForScan, resolveSortedEntriesPayload } from '../worldinfo.js';
-import { resolveSplitCoreChatPayload } from '../chats.js';
+import { resolveCoreChatPayload } from '../chats.js';
 import { isActiveSessionError, sendActiveSessionRequired } from '../../active-session-store.js';
 
 import { readSecret, SECRET_KEYS } from '../secrets.js';
@@ -2237,7 +2237,7 @@ export async function prepareServerPromptContext(user, directories, promptContex
     promptContext.userDirectories = directories;
 
     if (!Array.isArray(promptContext.coreChat) && promptContext.coreChat && typeof promptContext.coreChat === 'object') {
-        promptContext.coreChat = await resolveSplitCoreChatPayload(directories.chats, promptContext.coreChat);
+        promptContext.coreChat = await resolveCoreChatPayload(directories.chats, promptContext.coreChat);
     }
 
     const runtimeResult = await runServerGenerationExtensions(directories, promptContext, user);
