@@ -65,11 +65,12 @@ async function recombineAllUsersSplitChats() {
  */
 async function migrateAllUsersChatsToSqlite() {
     const { getAllUserHandles, getUserDirectories } = await import('./src/users.js');
-    const { isHeadChatFile } = await import('./src/endpoints/chats.js');
+    const { getSplitHeadPath, isHeadChatFile } = await import('./src/endpoints/chats.js');
     const { loadDb, migrateFromJsonl } = await import('./src/sqlite-manager.js');
     const handles = await getAllUserHandles();
     let totalMigrated = 0;
     let totalRemovedExisting = 0;
+    let totalFailed = 0;
     const allEntries = [];
 
     for (const handle of handles) {
@@ -82,7 +83,11 @@ async function migrateAllUsersChatsToSqlite() {
                 if (entry.isDirectory()) {
                     await scanDirectory(entryPath);
                 } else if (entry.isFile() && entry.name.endsWith('.jsonl') && !isHeadChatFile(entry.name)) {
-                    const sqlitePath = entryPath.replace('.jsonl', '.sqlite');
+                    const headPath = getSplitHeadPath(entryPath);
+                    if (fs.existsSync(headPath)) {
+                        throw new Error(`Split chat was not recombined; refusing to migrate tail only: ${entryPath}`);
+                    }
+                    const sqlitePath = entryPath.replace(/\.jsonl$/, '.sqlite');
                     const stat = await fs.promises.stat(entryPath);
                     allEntries.push({
                         entryPath,
@@ -122,6 +127,7 @@ async function migrateAllUsersChatsToSqlite() {
                 fs.unlinkSync(entryPath);
                 totalMigrated++;
             } catch (error) {
+                totalFailed++;
                 console.error(`[Data Maid] Failed to migrate ${entryPath} to SQLite:`, error);
             }
         } else {
@@ -134,10 +140,15 @@ async function migrateAllUsersChatsToSqlite() {
                     fs.unlinkSync(entryPath);
                     totalRemovedExisting++;
                 } catch (error) {
+                    totalFailed++;
                     console.error(`[Data Maid] Refusing to remove legacy JSONL ${entryPath}; existing SQLite failed integrity verification:`, error);
                 }
             }
         }
+    }
+
+    if (totalFailed > 0) {
+        throw new Error(`SQLite migration failed for ${totalFailed} chat file(s).`);
     }
 
     if (totalMigrated > 0 || totalRemovedExisting > 0) {
