@@ -1589,6 +1589,8 @@ async function getSimplePastCharacterChatNames(characterId = null) {
         return [];
     }
 
+    console.log("chats count = " + Object.values(data).length + "");
+
     return Object.values(data)
         .map(chat => normalizeTopChatFileName(chat?.file_name ?? chat?.file_id))
         .filter(Boolean)
@@ -2162,24 +2164,29 @@ async function refreshTopChatBarState() {
             option.selected = true;
             topChatBarChatNameSelect.append(option);
         }
-
+        while (topChatBarChatNameSelect.length){topChatBarChatNameSelect.remove(0)}
         for (const entry of entries) {
             const option = document.createElement('option');
             option.value = entry;
             option.textContent = entry;
             option.selected = !isTemporaryChat && entry === currentChatId;
+            console.log("entry added: "+entry+"");
             topChatBarChatNameSelect.append(option);
         }
     }
     if (hasChanged) {
+        console.log("entries have changed, so updating top bar");
         topChatBarChatNameSelect.innerHTML = '';
         if (!entries.length) {
             topChatBarChatNameSelect.innerHTML = `<option selected>${currentChatId}</option>`;
         } else {
+            console.log("bar length=" + topChatBarChatNameSelect.length + " lastTopChatSelectorEntries:"+ lastTopChatSelectorEntries + "");
+            while(topChatBarChatNameSelect.length) {topChatBarChatNameSelect.remove(0);}
             const allEntries = entries.includes(currentChatId) ? entries : [...entries, currentChatId].sort((a, b) => a.localeCompare(b));
             for (const entry of allEntries) {
                 const option = document.createElement('option');
                 option.value = entry;
+                console.log("Adding value: " + entry +"")
                 option.textContent = entry;
                 option.selected = entry === currentChatId;
                 topChatBarChatNameSelect.append(option);
