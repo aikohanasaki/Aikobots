@@ -17,6 +17,15 @@ const LAYOUT_ASSET_REFERENCE_PATTERN = new RegExp(`${LAYOUT_ASSET_ROUTE_PREFIX.r
 const normalizeComparablePath = filePath => process.platform === 'win32'
     ? path.normalize(filePath).toLowerCase()
     : path.normalize(filePath);
+const getChatStoragePathsForCleanup = filePath => {
+    const extension = path.extname(filePath).toLowerCase();
+    if (extension !== '.jsonl' && extension !== '.sqlite') {
+        return [filePath];
+    }
+
+    const basePath = filePath.slice(0, -extension.length);
+    return [`${basePath}.jsonl`, `${basePath}.sqlite`];
+};
 const resolveComparablePath = async filePath => {
     try {
         return normalizeComparablePath(await fs.promises.realpath(filePath));
@@ -868,10 +877,12 @@ router.get('/view', async (req, res) => {
             return res.sendStatus(403);
         }
 
-        const pathToFile = fileEntry.path;
-        const fileExists = fs.existsSync(pathToFile) || fs.existsSync(pathToFile.replace('.jsonl', '.sqlite'));
+        const storagePaths = getChatStoragePathsForCleanup(fileEntry.path);
+        const pathToFile = fs.existsSync(fileEntry.path)
+            ? fileEntry.path
+            : storagePaths.find(filePath => fs.existsSync(filePath));
 
-        if (!fileExists) {
+        if (!pathToFile) {
             return res.sendStatus(404);
         }
 
@@ -915,21 +926,10 @@ router.post('/delete', async (req, res) => {
                 continue;
             }
 
-            const pathToFile = fileEntry.path;
-            const fileExists = fs.existsSync(pathToFile);
-
-            if (!fileExists) {
-                const sqlitePath = pathToFile.replace('.jsonl', '.sqlite');
-                if (fs.existsSync(sqlitePath)) {
-                    await fs.promises.unlink(sqlitePath);
+            for (const cleanupPath of new Set(getChatStoragePathsForCleanup(fileEntry.path))) {
+                if (fs.existsSync(cleanupPath)) {
+                    await fs.promises.unlink(cleanupPath);
                 }
-                continue;
-            }
-
-            await fs.promises.unlink(pathToFile);
-            const sqlitePath = pathToFile.replace('.jsonl', '.sqlite');
-            if (fs.existsSync(sqlitePath)) {
-                await fs.promises.unlink(sqlitePath);
             }
         }
 
