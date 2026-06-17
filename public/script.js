@@ -2146,46 +2146,33 @@ async function refreshTopChatBarState() {
     }
 
     const entries = await getTopChatSelectorEntries();
-    const entriesState = JSON.stringify(entries.length === 0 ? [currentChatId] : entries);
+    const selectorEntries = entries.length === 0
+        ? [currentChatId]
+        : (entries.includes(currentChatId) ? entries : [...entries, currentChatId].sort((a, b) => a.localeCompare(b)));
+    const entriesState = JSON.stringify({
+        entries: selectorEntries,
+        currentChatId,
+        currentChatDisplayName,
+    });
     const hasChanged = entriesState !== lastTopChatSelectorEntries;
-    if (!entries.length) {
-        const option = document.createElement('option');
-        option.value = currentChatId;
-        option.textContent = currentChatDisplayName;
-        option.selected = true;
-        topChatBarChatNameSelect.append(option);
-        topChatBarChatNameSelect.disabled = true;
-    } else {
-        if (isTemporaryChat) {
+    if (hasChanged) {
+        topChatBarChatNameSelect.innerHTML = '';
+        for (const entry of selectorEntries) {
             const option = document.createElement('option');
-            option.value = currentChatId;
-            option.textContent = currentChatDisplayName;
-            option.selected = true;
+            option.value = entry;
+            option.textContent = entry === currentChatId ? currentChatDisplayName : entry;
+            option.selected = entry === currentChatId;
             topChatBarChatNameSelect.append(option);
         }
-        if (hasChanged) {
-            topChatBarChatNameSelect.innerHTML = '';
-            if (!entries.length) {
-                topChatBarChatNameSelect.innerHTML = `<option selected>${currentChatId}</option>`;
-            } else {
-                const allEntries = entries.includes(currentChatId) ? entries : [...entries, currentChatId].sort((a, b) => a.localeCompare(b));
-                for (const entry of allEntries) {
-                    const option = document.createElement('option');
-                    option.value = entry;
-                    option.textContent = entry;
-                    option.selected = entry === currentChatId;
-                    topChatBarChatNameSelect.append(option);
-                }
-            }
-            lastTopChatSelectorEntries = entriesState;
-        }
+        lastTopChatSelectorEntries = entriesState;
+    }
 
-        // Always update disabled state and selection
-        topChatBarChatNameSelect.value = currentChatId || '';
-        topChatBarChatNameSelect.disabled = isChatBusy || (!entries.length && hasChat);
+    // Always update disabled state and selection
+    topChatBarChatNameSelect.value = currentChatId || '';
+    topChatBarChatNameSelect.disabled = isChatBusy || (!entries.length && hasChat);
 
-        await populateTopChatSidebar();
-    }}
+    await populateTopChatSidebar();
+}
 
 function bindTopChatButton(element, handler) {
     if (!element) {
