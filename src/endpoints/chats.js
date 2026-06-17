@@ -12,6 +12,7 @@ import validateAvatarUrlMiddleware from '../middleware/validateFileName.js';
 import { touchUserActivity } from '../users.js';
 import { isActiveSessionError, sendActiveSessionRequired } from '../active-session-store.js';
 import {
+    assertPathInside,
     getDeduplicatedChatHistoryFileNames,
     isChatPathValidationError,
     normalizeCharacterChatDirectoryName,

@@ -1,6 +1,8 @@
 import path from 'node:path';
 
 const CHAT_HEAD_FILE_SUFFIX = '.head.jsonl';
+const CHAT_STORAGE_EXTENSIONS = new Set(['.jsonl', '.sqlite']);
+const UNSUPPORTED_CHAT_FILE_EXTENSIONS = new Set(['.json', '.txt', '.db', '.sqlite3', '.sqlite-shm', '.sqlite-wal', '.bak', '.tmp', '.log']);
 
 export class ChatPathValidationError extends Error {
     constructor(message, code = 'invalid_chat_path') {
@@ -56,7 +58,7 @@ function assertSafeLogicalName(value, fieldName) {
     return logicalName;
 }
 
-function assertPathInside(baseDirectory, targetPath, fieldName = 'path') {
+export function assertPathInside(baseDirectory, targetPath, fieldName = 'path') {
     const resolvedBase = path.resolve(baseDirectory);
     const resolvedTarget = path.resolve(targetPath);
     const relativePath = path.relative(resolvedBase, resolvedTarget);
@@ -74,6 +76,11 @@ function resolveContainedChildPath(baseDirectory, childName, fieldName) {
     return assertPathInside(baseDirectory, path.join(baseDirectory, logicalName), fieldName);
 }
 
+function hasUnsupportedChatFileExtension(fileName) {
+    const extension = path.extname(fileName);
+    return UNSUPPORTED_CHAT_FILE_EXTENSIONS.has(extension.toLowerCase());
+}
+
 function normalizeChatJsonlFileName(fileName, { fieldName = 'chat_file' } = {}) {
     const logicalName = assertSafeLogicalName(fileName, fieldName);
 
@@ -81,19 +88,21 @@ function normalizeChatJsonlFileName(fileName, { fieldName = 'chat_file' } = {}) 
         throw new ChatPathValidationError(`Invalid ${fieldName}.`, `invalid_${fieldName}`);
     }
 
-    if (logicalName.endsWith('.sqlite')) {
-        return logicalName;
+    const extension = path.extname(logicalName);
+    const normalizedExtension = extension.toLowerCase();
+    if (CHAT_STORAGE_EXTENSIONS.has(normalizedExtension)) {
+        const baseName = logicalName.slice(0, -extension.length);
+        if (!baseName) {
+            throw new ChatPathValidationError(`Invalid ${fieldName}.`, `invalid_${fieldName}`);
+        }
+        return `${baseName}${normalizedExtension}`;
     }
 
-    if (logicalName.endsWith('.jsonl')) {
-        return logicalName;
+    if (hasUnsupportedChatFileExtension(logicalName)) {
+        throw new ChatPathValidationError(`Invalid ${fieldName} extension.`, `invalid_${fieldName}`);
     }
 
     const normalizedFileName = `${logicalName}.sqlite`;
-
-    if (path.extname(normalizedFileName).toLowerCase() !== '.sqlite' && path.extname(normalizedFileName).toLowerCase() !== '.jsonl') {
-        throw new ChatPathValidationError(`Invalid ${fieldName} extension.`, `invalid_${fieldName}`);
-    }
 
     if (isHeadChatFile(normalizedFileName)) {
         throw new ChatPathValidationError(`Invalid ${fieldName}.`, `invalid_${fieldName}`);
@@ -107,14 +116,18 @@ function normalizeGroupChatId(chatId) {
     if (isHeadChatFile(logicalName)) {
         throw new ChatPathValidationError('Invalid group_chat_id.', 'invalid_group_chat_id');
     }
-    if (logicalName.endsWith('.sqlite') || logicalName.endsWith('.jsonl')) {
-        return path.parse(logicalName).name;
+    const extension = path.extname(logicalName);
+    if (CHAT_STORAGE_EXTENSIONS.has(extension.toLowerCase())) {
+        return logicalName.slice(0, -extension.length);
+    }
+    if (hasUnsupportedChatFileExtension(logicalName)) {
+        throw new ChatPathValidationError('Invalid group_chat_id extension.', 'invalid_group_chat_id');
     }
     return logicalName;
 }
 
 export function isHeadChatFile(fileName) {
-    return String(fileName).endsWith(CHAT_HEAD_FILE_SUFFIX);
+    return String(fileName).toLowerCase().endsWith(CHAT_HEAD_FILE_SUFFIX);
 }
 
 function isChatHistoryFileName(fileName) {
@@ -197,20 +210,22 @@ export function validateStmbChatRef(chatRef) {
 
     if (reference.type === 'group') {
         const chatId = String(reference.chatId || '').trim();
+        let normalizedChatId = chatId;
         if (chatId) {
-            normalizeChatJsonlFileName(chatId, { fieldName: 'chatRef_chatId' });
+            normalizedChatId = normalizeGroupChatId(chatId);
         }
-        return { type: 'group', chatId };
+        return { type: 'group', chatId: normalizedChatId };
     }
 
     const avatarUrl = String(reference.avatarUrl || '').trim();
     const fileName = String(reference.fileName || '').trim();
+    let normalizedFileName = fileName;
     if (avatarUrl) {
         assertSafeLogicalName(avatarUrl.replace(/\.png$/i, ''), 'chatRef_avatarUrl');
     }
     if (fileName) {
-        normalizeChatJsonlFileName(fileName, { fieldName: 'chatRef_fileName' });
+        normalizedFileName = normalizeChatJsonlFileName(fileName, { fieldName: 'chatRef_fileName' });
     }
 
-    return { type: 'character', avatarUrl, fileName };
+    return { type: 'character', avatarUrl, fileName: normalizedFileName };
 }

@@ -7,6 +7,7 @@ import {
     resolveDirectChatFilePath,
     resolveGroupChatFilePath,
     resolveGroupChatStoragePaths,
+    validateStmbChatRef,
 } from '../chat-paths.js';
 
 describe('chat path helpers', () => {
@@ -41,8 +42,39 @@ describe('chat path helpers', () => {
             .toBe(path.join(groupChatsDirectory, 'chat-123.sqlite'));
     });
 
+    it('canonicalizes supported chat storage extensions case-insensitively', () => {
+        const chatsDirectory = path.resolve('data', 'chats');
+        const groupChatsDirectory = path.resolve('data', 'group chats');
+
+        expect(resolveDirectChatFilePath(chatsDirectory, 'avatar.png', 'chat-123.JSONL'))
+            .toBe(path.join(chatsDirectory, 'avatar', 'chat-123.jsonl'));
+        expect(resolveGroupChatFilePath(groupChatsDirectory, 'chat-123.SQLITE'))
+            .toBe(path.join(groupChatsDirectory, 'chat-123.sqlite'));
+        expect(resolveGroupChatStoragePaths(groupChatsDirectory, 'chat-123.SQLITE'))
+            .toEqual({
+                chatId: 'chat-123',
+                jsonlPath: path.join(groupChatsDirectory, 'chat-123.jsonl'),
+                sqlitePath: path.join(groupChatsDirectory, 'chat-123.sqlite'),
+            });
+    });
+
+    it('rejects known unsupported chat file extensions without rejecting dotted titles', () => {
+        const chatsDirectory = path.resolve('data', 'chats');
+
+        expect(() => resolveDirectChatFilePath(chatsDirectory, 'avatar.png', 'chat-123.json'))
+            .toThrow(ChatPathValidationError);
+        expect(() => resolveDirectChatFilePath(chatsDirectory, 'avatar.png', 'chat-123.txt'))
+            .toThrow(ChatPathValidationError);
+        expect(resolveDirectChatFilePath(chatsDirectory, 'avatar.png', 'Mr. Darcy'))
+            .toBe(path.join(chatsDirectory, 'avatar', 'Mr. Darcy.sqlite'));
+        expect(resolveDirectChatFilePath(chatsDirectory, 'avatar.png', 'Dr.Smith'))
+            .toBe(path.join(chatsDirectory, 'avatar', 'Dr.Smith.sqlite'));
+    });
+
     it('rejects split-head chat files for direct and group chat paths', () => {
         expect(() => resolveDirectChatFilePath(path.resolve('data', 'chats'), 'avatar.png', 'foo.head.jsonl'))
+            .toThrow(ChatPathValidationError);
+        expect(() => resolveDirectChatFilePath(path.resolve('data', 'chats'), 'avatar.png', 'foo.head.JSONL'))
             .toThrow(ChatPathValidationError);
         expect(() => resolveGroupChatFilePath(path.resolve('data', 'group chats'), 'foo.head.jsonl'))
             .toThrow(ChatPathValidationError);
@@ -68,5 +100,12 @@ describe('chat path helpers', () => {
     ])('rejects unsafe group chat IDs before path resolution: %s', (chatId) => {
         expect(() => resolveGroupChatStoragePaths(path.resolve('data', 'group chats'), chatId))
             .toThrow(ChatPathValidationError);
+    });
+
+    it('returns canonical chat references after validation', () => {
+        expect(validateStmbChatRef({ type: 'group', chatId: 'chat-123.SQLITE' }))
+            .toEqual({ type: 'group', chatId: 'chat-123' });
+        expect(validateStmbChatRef({ type: 'character', avatarUrl: 'avatar.png', fileName: 'chat-123.JSONL' }))
+            .toEqual({ type: 'character', avatarUrl: 'avatar.png', fileName: 'chat-123.jsonl' });
     });
 });
