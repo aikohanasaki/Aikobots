@@ -130,7 +130,9 @@ describe('SQLite chat length handling', () => {
                 ...message,
                 mes: `patched ${100 + index}`,
             }));
-            await writeLogicalChat(chatPath, header, patchMessages, { startIndex: 101 });
+            await expect(writeLogicalChat(chatPath, header, patchMessages, { startIndex: 101 }))
+                .rejects.toThrow('messageStartId');
+            await writeLogicalChat(chatPath, header, patchMessages, { messageStartId: 100 });
 
             const logicalChat = await getLogicalChatData(chatPath);
 

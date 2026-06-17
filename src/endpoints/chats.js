@@ -833,7 +833,19 @@ async function buildChunkedGroupChatPayload(user, chatId, filePath, {
     };
 }
 
-export async function writeLogicalChat(filePath, header, messages, { regenerateIdentities = false, startIndex = null } = {}) {
+/**
+ * Writes a complete logical chat, or patches messages starting at a logical message id.
+ * The header is stored separately at SQLite order_index 0; messageStartId excludes it.
+ */
+export async function writeLogicalChat(filePath, header, messages, { regenerateIdentities = false, messageStartId = null, startIndex = undefined } = {}) {
+    if (startIndex !== undefined) {
+        throw new Error('writeLogicalChat startIndex is no longer supported. Use messageStartId with zero-based logical message IDs.');
+    }
+
+    if (messageStartId !== null && (!Number.isInteger(messageStartId) || messageStartId < 0)) {
+        throw new Error('Invalid logical message update start id.');
+    }
+
     const baseHeader = sanitizeChatHeaderForPersistence(header);
     const identityMessages = Array.isArray(messages)
         ? _.cloneDeep(messages)
@@ -850,32 +862,27 @@ export async function writeLogicalChat(filePath, header, messages, { regenerateI
     const sqlitePath = filePath.replace('.jsonl', '.sqlite');
     const db = await loadDb(sqlitePath);
 
-    if (startIndex === null) {
+    if (messageStartId === null) {
         setMessages(db, [baseHeader, ...sanitizedMessages]);
     } else {
-        // startIndex 0 is the header
-        if (startIndex === 0) {
-            updateMessages(db, [baseHeader, ...sanitizedMessages], 0);
-        } else {
-            // Update metadata/header first if provided
-            if (baseHeader) {
-                const headerStmt = db.prepare('UPDATE messages SET content = ? WHERE order_index = 0');
-                headerStmt.run([JSON.stringify(baseHeader)]);
-                headerStmt.free();
-            }
-            updateMessages(db, sanitizedMessages, startIndex);
+        // Header is always order_index 0; logical message ids start after it.
+        if (baseHeader) {
+            const headerStmt = db.prepare('UPDATE messages SET content = ? WHERE order_index = 0');
+            headerStmt.run([JSON.stringify(baseHeader)]);
+            headerStmt.free();
         }
+        updateMessages(db, sanitizedMessages, messageStartId + 1);
     }
 
     const totalMessages = getMessageCount(db);
     saveDb(db, sqlitePath);
     db.close();
 
-    console.debug(`[SQLite] Updated database for ${filePath}: ${sanitizedMessages.length} messages starting at index ${startIndex ?? 0}. Total messages: ${totalMessages}.`);
+    console.debug(`[SQLite] Updated database for ${filePath}: ${sanitizedMessages.length} messages starting at message id ${messageStartId ?? 0}. Total messages: ${totalMessages}.`);
 
     // For incremental writes, we don't return the full JSONL to avoid loading everything.
     // This means backups will be skipped for incremental saves.
-    const fullJsonl = startIndex === null ? serializeJsonl([baseHeader, ...sanitizedMessages]) : null;
+    const fullJsonl = messageStartId === null ? serializeJsonl([baseHeader, ...sanitizedMessages]) : null;
 
     return {
         fullJsonl,
