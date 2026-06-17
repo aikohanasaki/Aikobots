@@ -6,8 +6,10 @@ Aikobots is a multi-user fork of SillyTavern built around chat completion APIs. 
 
 1. Support roleplay communities by making it easier for bot creators to share their work and collaborate in a multi-user environment.
 2. Provide stronger protection against scraping and client-side exposure through a server-side architecture.
-3. Preserve compatibility with SillyTavern workflows while integrating the Aikoverse suite directly into core functionality.
-4. Develop Aikobots as an open-source passion project supported by patronage.
+3. Improve speed and stability of the RP experience, especially with long chats (1000+ messages). 
+4. Better support for mobile clients and access-anywhere architecture with high error resilience. 
+5. Preserve compatibility with SillyTavern workflows while integrating the Aikoverse suite directly into core functionality.
+6. Develop Aikobots as an open-source passion project supported by patronage.
 
 ## License and credits
 
@@ -26,9 +28,8 @@ Additional Aikobots Credits
 * [SillyTavern](https://github.com/SillyTavern/SillyTavern) 1.14.0: AGPL-3.0 License including inherited upstream credits
 * WorldInfo-Info and WorldInfo-Presets from the incomparable [@LenAnderson](https://github.com/LenAnderson/)
 * [@Cohee1207](https://github.com/Cohee1207) for Top Info Bar aka Chat Top Bar (AGPL-3.0 License)
-* Later UI integration for existing character push functionality drew some inspiration from [@selinawynters-ops](https://github.com/selinawynters-ops/).
 * [Favorites Carousel](https://github.com/subzero5544/favorites-carousel) by [@subzero5544](https://github.com/subzero5544) (AGPL-3.0 License) is so intuitive everyone loves it.
 
 ## Documentation Links
 
-[Modular Layout](/readme/layouts.md) for instructions on styling Aikobots with modular CSS.
+See [Modular Layout](/readme/layouts.md) for instructions on styling Aikobots with modular CSS.

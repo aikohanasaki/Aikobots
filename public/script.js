@@ -98,6 +98,10 @@ import {
     generatedTextFiltered,
     applyStylePins,
 } from './scripts/power-user.js';
+import {
+    assignChunkMessagesByAbsoluteId,
+    validateChunkedChatPayload,
+} from './scripts/chat-chunking.js';
 
 import {
     setOpenAIMessageExamples,
@@ -4566,11 +4570,10 @@ function getCoreChatPayloadForAssembly(coreChat) {
 }
 
 export function applyChunkedChatPayload(response, { replace = false, currentView = null } = {}) {
-    const header = response?.header ?? null;
-    const messages = Array.isArray(response?.messages) ? response.messages : [];
-    const totalMessages = Number(response?.totalMessages) || 0;
-    const loadedRangeStart = Number(response?.loadedRangeStart) || 0;
-    const loadedRangeEnd = Number(response?.loadedRangeEnd);
+    const payload = validateChunkedChatPayload(response, {
+        requireLatestTail: replace && currentView === 'tail',
+    });
+    const { header, messages, totalMessages, loadedRangeStart, loadedRangeEnd } = payload;
 
     if (replace) {
         chat.length = 0;
@@ -4580,11 +4583,7 @@ export function applyChunkedChatPayload(response, { replace = false, currentView
         chat.length = totalMessages;
     }
 
-    for (let i = 0; i < messages.length; i++) {
-        const absoluteId = loadedRangeStart + i;
-        chat[absoluteId] = messages[i];
-        ensureMessageMediaIsArray(chat[absoluteId]);
-    }
+    assignChunkMessagesByAbsoluteId(chat, payload, ensureMessageMediaIsArray);
 
     normalizeActiveChatIdentities();
 

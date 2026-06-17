@@ -101,6 +101,29 @@ describe('SQLite chat length handling', () => {
         }
     });
 
+    it('uses the latest absolute tail window for large SQLite chats', async () => {
+        const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'sqlite-chat-large-tail-'));
+        const chatPath = path.join(tempDir, 'chat.jsonl');
+
+        try {
+            await writeLogicalChat(chatPath, makeHeader(), makeMessages(7353));
+
+            const payload = await buildChunkedChatPayload(chatPath, {
+                count: 1000,
+                displayCount: 100,
+            });
+
+            expect(payload.totalMessages).toBe(7353);
+            expect(payload.loadedRangeStart).toBe(6353);
+            expect(payload.loadedRangeEnd).toBe(7352);
+            expect(payload.messages).toHaveLength(1000);
+            expect(payload.messages[0].mes).toBe('message 6353');
+            expect(payload.messages.at(-1).mes).toBe('message 7352');
+        } finally {
+            fs.rmSync(tempDir, { recursive: true, force: true });
+        }
+    });
+
     it('preserves existing suffix data when applying a loaded range', () => {
         const existing = [makeHeader(), ...makeMessages(1000)];
         const rangeMessages = makeMessages(50).map((message, index) => ({
