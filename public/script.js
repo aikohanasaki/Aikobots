@@ -959,6 +959,7 @@ const TOP_HISTORY_CONTROL_ID = 'show_more_messages';
 const BOTTOM_HISTORY_CONTROL_ID = 'show_newer_messages';
 const RETURN_TO_TAIL_CONTROL_ID = 'return_to_live_tail';
 const HYDRATE_CHAT_CONTROL_ID = 'load_full_chat_for_editing';
+const CHAT_GAP_INDICATOR_CLASS = 'chat_gap_indicator';
 const FALLBACK_CHAT_WINDOW_SIZE = 200;
 const INITIAL_CHAT_RENDER_MAX = 500;
 
@@ -4900,6 +4901,60 @@ function syncVisibleChatRangeFromDom() {
     setVisibleChatRange(firstMessageId, lastMessageId);
 }
 
+/**
+ * Checks whether the currently rendered DOM ends at the latest chat message.
+ * @returns {boolean} True when the last rendered message is the live tail.
+ */
+function isViewingLiveTail() {
+    const lastRenderedMessageId = Number(chatElement.children('.mes').last().attr('mesid'));
+    return Number.isInteger(lastRenderedMessageId) && lastRenderedMessageId === chat.length - 1;
+}
+
+/**
+ * Renders the latest chat window after sending from a historical view.
+ * @returns {Promise<void>}
+ */
+async function renderLiveTailWindowAfterSend() {
+    if (!chat.length) {
+        setVisibleChatRange(null, null);
+        return;
+    }
+
+    const count = getConfiguredLongChatDisplayCount();
+    const startId = Math.max(0, chat.length - getConfiguredChatWindowSize(count));
+    await renderMessageWindow(startId, count);
+    scrollChatToBottom({ waitForFrame: true });
+}
+
+/**
+ * Inserts aggregate separators wherever rendered message IDs have gaps.
+ */
+function refreshChatGapIndicators() {
+    chatElement.children(`.${CHAT_GAP_INDICATOR_CLASS}`).remove();
+
+    const messages = chatElement.children('.mes[mesid]').toArray();
+    for (let i = 1; i < messages.length; i++) {
+        const previousId = Number(messages[i - 1].getAttribute('mesid'));
+        const currentId = Number(messages[i].getAttribute('mesid'));
+
+        if (!Number.isInteger(previousId) || !Number.isInteger(currentId) || currentId <= previousId + 1) {
+            continue;
+        }
+
+        const missingStart = previousId + 1;
+        const missingEnd = currentId - 1;
+        const gapText = missingStart === missingEnd
+            ? `Message #${missingStart} exists but is not currently displayed.`
+            : `Messages #${missingStart}-#${missingEnd} exist but are not currently displayed.`;
+        const indicator = $('<div></div>')
+            .addClass(CHAT_GAP_INDICATOR_CLASS)
+            .attr('role', 'note')
+            .text(gapText);
+
+        indicator.insertAfter(messages[i - 1]);
+    }
+}
+
 function removeHistoryControls() {
     chatElement.children(`#${TOP_HISTORY_CONTROL_ID}, #${BOTTOM_HISTORY_CONTROL_ID}, #${RETURN_TO_TAIL_CONTROL_ID}, #${HYDRATE_CHAT_CONTROL_ID}`).remove();
 }
@@ -4923,6 +4978,7 @@ function finalizeRenderedMessageWindow() {
     refreshSwipeButtons();
     refreshPromptInspectorButton();
     applyStylePins();
+    refreshChatGapIndicators();
     updateHistoryControls();
 }
 
@@ -4930,7 +4986,7 @@ export async function renderMessageWindow(startId = 0, count = null, navigationT
     return serializeHistoryWindowNavigation(async () => {
         closeMessageEditor();
         removeHistoryControls();
-        chatElement.children('.mes').remove();
+        chatElement.children(`.mes, .${CHAT_GAP_INDICATOR_CLASS}`).remove();
 
         if (!chat.length) {
             setVisibleChatRange(null, null);
@@ -4947,7 +5003,7 @@ export async function renderMessageWindow(startId = 0, count = null, navigationT
 
         for (let i = normalizedStartId; i <= endId; i++) {
             if (!chat[i]) continue;
-            addOneMessage(chat[i], { scroll: false, forceId: i, showSwipes: false });
+            addOneMessage(chat[i], { scroll: false, forceId: i, showSwipes: false, refreshGaps: false });
         }
 
         if (!isChatFullyHydrated()) {
@@ -6247,9 +6303,11 @@ export function addCopyToCodeBlocks(messageElement) {
  * @param {number} [options.insertBefore=null] Message ID to insert the new message before
  * @param {number} [options.forceId=null] Force the message ID
  * @param {boolean} [options.showSwipes=true] Whether to show swipe buttons
+ * @param {JQuery<HTMLElement>|null} [options.container=null] Optional container for detached insertion
+ * @param {boolean} [options.refreshGaps=true] Whether to refresh rendered gap indicators after insertion
  * @returns {void}
  */
-export function addOneMessage(mes, { type = 'normal', insertAfter = null, scroll = true, insertBefore = null, forceId = null, showSwipes = true, container = null } = {}) {
+export function addOneMessage(mes, { type = 'normal', insertAfter = null, scroll = true, insertBefore = null, forceId = null, showSwipes = true, container = null, refreshGaps = true } = {}) {
     let messageText = mes['mes'];
     const momentDate = timestampToMoment(mes.send_date);
     const timestamp = momentDate.isValid() ? momentDate.format('LL LT') : '';
@@ -6469,6 +6527,9 @@ export function addOneMessage(mes, { type = 'normal', insertAfter = null, scroll
 
     if (!container) {
         syncVisibleChatRangeFromDom();
+        if (refreshGaps) {
+            refreshChatGapIndicators();
+        }
     }
 }
 
@@ -9729,11 +9790,16 @@ export async function sendMessageAsUser(messageText, messageBias, insertAt = nul
         await reloadCurrentChat();
         await eventSource.emit(event_types.USER_MESSAGE_RENDERED, insertAt);
     } else {
+        const wasViewingLiveTail = isViewingLiveTail();
         chat.push(message);
         const chat_id = (chat.length - 1);
         markChatRangeLoaded(chat_id);
         await eventSource.emit(event_types.MESSAGE_SENT, chat_id);
-        addOneMessage(message);
+        if (wasViewingLiveTail) {
+            addOneMessage(message);
+        } else {
+            await renderLiveTailWindowAfterSend();
+        }
         await eventSource.emit(event_types.USER_MESSAGE_RENDERED, chat_id);
         await saveChatConditional();
     }

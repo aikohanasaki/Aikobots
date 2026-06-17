@@ -6544,6 +6544,20 @@ body:has(#character_popup.open) #top-settings-holder:has(.drawer-content.openDra
     order: -1;
 }
 
+.chat_gap_indicator {
+    align-self: center;
+    width: fit-content;
+    max-width: min(80%, 720px);
+    margin: 10px auto;
+    padding: 0.45em 0.9em;
+    color: var(--SmartThemeEmColor);
+    background-color: color-mix(in srgb, var(--SmartThemeBlurTintColor) 84%, transparent);
+    border: 1px solid var(--SmartThemeBorderColor);
+    border-radius: 10px;
+    font-size: calc(var(--mainFontSize) * 0.9);
+    text-align: center;
+}
+
 .draggable img {
     width: 100%;
     height: 100%;
