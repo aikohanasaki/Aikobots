@@ -1585,9 +1585,7 @@ async function getSimplePastCharacterChatNames(characterId = null) {
         return [];
     }
 
-    console.log("chats count = " + Object.values(data).length + "");
-
-    return Object.values(data)
+    return Object.values(data)    return Object.values(data)
         .map(chat => normalizeTopChatFileName(chat?.file_name ?? chat?.file_id))
         .filter(Boolean)
         .filter(onlyUnique)
@@ -2160,49 +2158,29 @@ async function refreshTopChatBarState() {
             option.selected = true;
             topChatBarChatNameSelect.append(option);
         }
-        while (topChatBarChatNameSelect.length){topChatBarChatNameSelect.remove(0)}
-        for (const entry of entries) {
-            const option = document.createElement('option');
-            option.value = entry;
-            option.textContent = entry;
-            option.selected = !isTemporaryChat && entry === currentChatId;
-            console.log("entry added: "+entry+"");
-            topChatBarChatNameSelect.append(option);
-        }
-    }
-    if (hasChanged) {
-        console.log("entries have changed, so updating top bar");
-        topChatBarChatNameSelect.innerHTML = '';
-        if (!entries.length) {
-            topChatBarChatNameSelect.innerHTML = `<option selected>${currentChatId}</option>`;
-        } else {
-            console.log("bar length=" + topChatBarChatNameSelect.length + " lastTopChatSelectorEntries:"+ lastTopChatSelectorEntries + "");
-            while(topChatBarChatNameSelect.length) {topChatBarChatNameSelect.remove(0);}
-            const allEntries = entries.includes(currentChatId) ? entries : [...entries, currentChatId].sort((a, b) => a.localeCompare(b));
-            for (const entry of allEntries) {
-                const option = document.createElement('option');
-                option.value = entry;
-                console.log("Adding value: " + entry +"")
-                option.textContent = entry;
-                option.selected = entry === currentChatId;
-                topChatBarChatNameSelect.append(option);
+        if (hasChanged) {
+            topChatBarChatNameSelect.innerHTML = '';
+            if (!entries.length) {
+                topChatBarChatNameSelect.innerHTML = `<option selected>${currentChatId}</option>`;
+            } else {
+                const allEntries = entries.includes(currentChatId) ? entries : [...entries, currentChatId].sort((a, b) => a.localeCompare(b));
+                for (const entry of allEntries) {
+                    const option = document.createElement('option');
+                    option.value = entry;
+                    option.textContent = entry;
+                    option.selected = entry === currentChatId;
+                    topChatBarChatNameSelect.append(option);
+                }
             }
+            lastTopChatSelectorEntries = entriesState;
         }
-        lastTopChatSelectorEntries = entriesState;
-    }
 
+        // Always update disabled state and selection
+        topChatBarChatNameSelect.value = currentChatId || '';
+        topChatBarChatNameSelect.disabled = isChatBusy || (!entries.length && hasChat);
 
-    // Always update disabled state and selection
-    topChatBarChatNameSelect.value = currentChatId || '';
-    topChatBarChatNameSelect.disabled = isChatBusy || (!entries.length && hasChat);
-
-    await populateTopChatSidebar();
-
-    //if (isTopChatSidebarVisible()) {
-    //    await populateTopChatSidebar();
-   // }
-
-}
+        await populateTopChatSidebar();
+    }}
 
 function bindTopChatButton(element, handler) {
     if (!element) {
@@ -4938,8 +4916,6 @@ function updateHistoryControls() {
         chatElement.prepend(`<button id="${HYDRATE_CHAT_CONTROL_ID}" type="button" class="chat_history_button">Load full chat for editing</button>`);
         chatElement.prepend(`<button id="${RETURN_TO_TAIL_CONTROL_ID}" type="button" class="chat_history_button">Return to live tail</button>`);
     }
-    }
-
 function finalizeRenderedMessageWindow() {
     chatElement.find('.mes').removeClass('last_mes');
     chatElement.find('.mes').last().addClass('last_mes');
@@ -6467,9 +6443,10 @@ export function addOneMessage(mes, { type = 'normal', insertAfter = null, scroll
     addCopyToCodeBlocks(newMessage);
 
     // Set the swipes counter for past messages, only visible if 'Show Swipes on All Message' is enabled
-    if (!params.isUser && mesId !== 0 && mesId !== chat.length - 1) {
-        const swipesNum = chat[mesId].swipes?.length;
-        const swipeId = chat[mesId].swipe_id + 1;
+    const chatMessage = chat[mesId];
+    if (!params.isUser && mesId !== 0 && mesId !== chat.length - 1 && chatMessage) {
+        const swipesNum = chatMessage.swipes?.length;
+        const swipeId = chatMessage.swipe_id + 1;
         newMessage.find('.swipes-counter').text(formatSwipeCounter(swipeId, swipesNum));
     }
 
@@ -9704,7 +9681,6 @@ export function removeMacros(str) {
  */
 export async function sendMessageAsUser(messageText, messageBias, insertAt = null, compact = false, name = name1, avatar = user_avatar) {
     messageText = getRegexedString(messageText, regex_placement.USER_INPUT);
-    console.log("sendMessageAsUser: "+insertAt);
     const message = {
         name: name,
         is_user: true,
@@ -12428,8 +12404,7 @@ export async function getPastCharacterChats(characterId = null) {
     const sortedChats = chats.sort((a, b) => a['file_name'].localeCompare(b['file_name'])).reverse();
     pastCharacterChatsCache.set(avatar, sortedChats);
     return sortedChats;
-    }
-
+    
 /**
  * @typedef {{ type: 'character' | 'group', id: string|number }} ManageChatsOwnerContext
  */

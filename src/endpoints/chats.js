@@ -14,6 +14,7 @@ import { isActiveSessionError, sendActiveSessionRequired } from '../active-sessi
 import {
     getDeduplicatedChatHistoryFileNames,
     isChatPathValidationError,
+    normalizeCharacterChatDirectoryName,
     resolveCharacterChatDirectory,
     resolveCharacterChatFilePath,
     resolveGroupChatFilePath,
@@ -1727,17 +1728,9 @@ export async function getChatInfo(pathToFile, additionalData = {}, isGroup = fal
 export const router = express.Router();
 
 
-function assertSafeLogicalName(value, fieldName) {
-    const logicalName = String(value ?? '').trim();
-    if (hasUnsafeLogicalPathToken(logicalName)) {
-        throw new ChatPathValidationError(`Invalid ${fieldName}.`, `invalid_${fieldName}`);
-    }
-    return logicalName;
-}
-
 router.post('/message-visibility', validateAvatarUrlMiddleware, async function (request, response) {
     try {
-        const directoryName = assertSafeLogicalName(String(request.body.avatar_url || '').replace(/\.png$/i, ''), 'avatar_url');
+        const directoryName = normalizeCharacterChatDirectoryName(request.body.avatar_url);
         const filePath = resolveCharacterChatFilePath(request.user.directories.chats, request.body.avatar_url, request.body.file_name);
         const start = Number(request.body.start);
         const end = request.body.end === undefined ? start : Number(request.body.end);
@@ -1830,7 +1823,7 @@ router.post('/message-visibility', validateAvatarUrlMiddleware, async function (
 
 router.post('/save', validateAvatarUrlMiddleware, async function (request, response) {
     try {
-        const directoryName = assertSafeLogicalName(String(request.body.avatar_url || '').replace(/\.png$/i, ''), 'avatar_url');
+        const directoryName = normalizeCharacterChatDirectoryName(request.body.avatar_url);
         if (!hasValidChatPayload(request.body.chat)) {
             return response.status(400).send({ error: 'invalid_chat_payload' });
         }
@@ -2009,7 +2002,7 @@ router.post('/get', validateAvatarUrlMiddleware, async function (request, respon
 
 router.post('/save-prefix', validateAvatarUrlMiddleware, async function (request, response) {
     try {
-        const dirName = assertSafeLogicalName(String(request.body.avatar_url || '').replace(/\.png$/i, ''), 'avatar_url');
+        const dirName = normalizeCharacterChatDirectoryName(request.body.avatar_url);
         const sourcePath = resolveCharacterChatFilePath(request.user.directories.chats, request.body.avatar_url, request.body.source_file);
         const targetPath = resolveCharacterChatFilePath(request.user.directories.chats, request.body.avatar_url, request.body.target_file);
         const prefixEndId = Number(request.body.prefix_end_id);

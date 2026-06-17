@@ -150,8 +150,17 @@ export function getDeduplicatedChatHistoryFileNames(files) {
     return Array.from(chatFiles.values());
 }
 
+/**
+ * Normalizes and validates a character avatar URL into its chat directory name.
+ * @param {string} avatarUrl Avatar URL or avatar file name.
+ * @returns {string}
+ */
+export function normalizeCharacterChatDirectoryName(avatarUrl) {
+    return assertSafeLogicalName(String(avatarUrl ?? '').replace(/\.png$/i, ''), 'avatar_url');
+}
+
 export function resolveCharacterChatDirectory(chatsDirectory, avatarUrl) {
-    const directoryName = assertSafeLogicalName(String(avatarUrl ?? '').replace(/\.png$/i, ''), 'avatar_url');
+    const directoryName = normalizeCharacterChatDirectoryName(avatarUrl);
     return resolveContainedChildPath(chatsDirectory, directoryName, 'chat_directory');
 }
 
