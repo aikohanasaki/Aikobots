@@ -430,33 +430,8 @@ function normalizeImportedHeader(header) {
     return normalizedHeader;
 }
 
-/**
- * Clears legacy/imported hidden-message flags from ordinary transcript records.
- * Explicit small/system typed messages keep their system visibility behavior.
- * @param {object} message Imported message record.
- * @returns {object} Normalized message record.
- */
-function normalizeImportedMessageVisibility(message) {
-    if (!_.isPlainObject(message) || message.is_system !== true) {
-        return message;
-    }
-
-    const extra = _.isPlainObject(message.extra) ? message.extra : {};
-    const isExplicitSystemMessage = extra.isSmallSys === true
-        || typeof extra.type === 'string'
-        || Array.isArray(extra.tool_invocations);
-
-    if (isExplicitSystemMessage) {
-        return message;
-    }
-
-    const normalizedMessage = _.cloneDeep(message);
-    delete normalizedMessage.is_system;
-    return normalizedMessage;
-}
-
 function normalizeImportedMessage(message, { chatScope, mesId }) {
-    const normalizedMessage = normalizeImportedMessageVisibility(sanitizeChatMessageForPersistence(message));
+    const normalizedMessage = sanitizeChatMessageForPersistence(message);
 
     if (_.isPlainObject(normalizedMessage?.extra) && typeof normalizedMessage.extra.promptSnapshotKey === 'string') {
         normalizedMessage.extra.promptSnapshotKey = rekeyImportedPromptSnapshotKey(normalizedMessage.extra.promptSnapshotKey, {
@@ -2339,7 +2314,7 @@ router.post('/import', validateAvatarUrlMiddleware, async function (request, res
                 importFunc = importRisuChat;
             } else { // Unknown format
                 console.error('Incorrect chat format .json');
-                return response.send({ error: true });
+                return response.status(400).send({ error: true, message: 'Incorrect chat format .json' });
             }
 
             const handleChat = async (chat) => {
@@ -2370,13 +2345,13 @@ router.post('/import', validateAvatarUrlMiddleware, async function (request, res
 
             if (format === 'jsonl') {
             let lines = data.split('\n');
-            const header = lines[0];
+            const header = lines.find(line => line.trim()) || '';
 
             const jsonData = JSON.parse(header);
 
             if (!(jsonData.user_name !== undefined || jsonData.name !== undefined)) {
                 console.error('Incorrect chat format .jsonl');
-                return response.send({ error: true });
+                return response.status(400).send({ error: true, message: 'Incorrect chat format .jsonl' });
             }
 
             const unsupportedImportMessage = getUnsupportedImportedJsonlMessage(jsonData);
@@ -2407,8 +2382,10 @@ router.post('/import', validateAvatarUrlMiddleware, async function (request, res
             fileNames.push(fileName);
             await writeLogicalChat(filePath, normalizedImportedChat.header, normalizedImportedChat.messages);
             fs.unlinkSync(pathToUpload);
-            response.send({ res: true, fileNames });
+            return response.send({ res: true, fileNames });
             }
+
+            return response.status(400).send({ error: true, message: 'Unsupported chat import file type.' });
     } catch (error) {
         if (isUnsupportedSplitTailChatError(error)) {
             return sendUnsupportedSplitTailChatError(response, error);
@@ -2416,8 +2393,13 @@ router.post('/import', validateAvatarUrlMiddleware, async function (request, res
         if (isChatPathValidationError(error)) {
             return sendChatPathValidationError(response, error);
         }
-        console.error(error);
-        return response.send({ error: true });
+        console.error('Failed to import chat:', {
+            format,
+            avatarUrl,
+            originalName: request.file?.originalname,
+            error,
+        });
+        return response.status(500).send({ error: true, message: 'Chat import failed. Check the server log for details.' });
     }
 });
 

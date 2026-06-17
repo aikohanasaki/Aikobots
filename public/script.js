@@ -15493,21 +15493,27 @@ export async function importCharacterChat(formData, { refresh = true } = {}) {
         cache: 'no-cache',
     });
 
+    let data = null;
+    try {
+        data = await fetchResult.json();
+    } catch {
+        data = null;
+    }
+
     if (fetchResult.ok) {
-        const data = await fetchResult.json();
+        if (data?.error) {
+            toastr.error(data.message || t`Chat import failed.`, t`Failed to import chat`);
+            return [];
+        }
+
         if (data.res && refresh) {
             await displayPastChats();
         }
         return data?.fileNames || [];
     }
 
-    try {
-        const errorData = await fetchResult.json();
-        if (errorData?.message) {
-            toastr.error(errorData.message, t`Failed to import chat`);
-        }
-    } catch {
-        // Ignore non-JSON error responses and fall through to the empty result.
+    if (data?.message) {
+        toastr.error(data.message, t`Failed to import chat`);
     }
 
     return [];
