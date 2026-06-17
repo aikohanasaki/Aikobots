@@ -55,7 +55,12 @@ import { compareChatCompletionMessages } from '../../prompting/chat-completion-c
 import { runServerGenerationExtensions } from '../../extensions/server-runtime.js';
 import { prepareEntriesForScan, resolveSortedEntriesPayload } from '../worldinfo.js';
 import { resolveCoreChatPayload } from '../chats.js';
-import { isActiveSessionError, sendActiveSessionRequired } from '../../active-session-store.js';
+import {
+    ACTIVE_SESSION_ERROR,
+    ACTIVE_SESSION_LOCK_MESSAGE,
+    isActiveSessionError,
+    sendActiveSessionRequired,
+} from '../../active-session-store.js';
 
 import { readSecret, SECRET_KEYS } from '../secrets.js';
 import {
@@ -4197,10 +4202,11 @@ export async function handleChatCompletionsGenerate(request, response) {
                 return sendActiveSessionRequired(response);
             }
 
-            if (!response.writableEnded) {
-                response.end();
-            }
-            return;
+            return sendGenerateError(423, {
+                error: ACTIVE_SESSION_ERROR,
+                message: ACTIVE_SESSION_LOCK_MESSAGE,
+                canTakeOver: true,
+            });
         }
         if (request.requestId && !error?.requestId) {
             error.requestId = request.requestId;
