@@ -1320,7 +1320,7 @@ export function parseExampleIntoIndividual(messageExampleString, appendNamesForG
 
 // Runtime chat-completion assembly is server-owned. The legacy client builder
 // stays out of the live request path and has been removed from this module.
-function applyAssemblyResponseMetadata(response, type) {
+function applyAssemblyResponseMetadata(response, requestId, type) {
     const messagesCountHeader = response.headers.get('X-ST-Messages-Count');
     if (messagesCountHeader === null) {
         return;
@@ -1328,6 +1328,12 @@ function applyAssemblyResponseMetadata(response, type) {
 
     const messagesCount = Number(messagesCountHeader);
     if (!Number.isFinite(messagesCount) || messagesCount < 0) {
+        return;
+    }
+
+    const entry = getOpenAIResponseMetadataEntry(requestId);
+    const chatScope = entry?.chatScope ?? getCurrentPromptInspectionChatScope();
+    if (chatScope !== getCurrentPromptInspectionChatScope()) {
         return;
     }
 
@@ -1339,12 +1345,13 @@ function applyTimedWorldInfoResponseData(data, requestId) {
     const promptSnapshotKey = data?.x_sillytavern?.promptSnapshotKey;
     const timedWorldInfo = data?.x_sillytavern?.timedWorldInfo;
     const messagesCount = data?.x_sillytavern?.messagesCount;
+    const hasMessagesCount = Number.isFinite(messagesCount) && messagesCount >= 0;
     const entry = getOpenAIResponseMetadataEntry(requestId, { create: true });
     const chatScope = entry?.chatScope ?? getCurrentPromptInspectionChatScope();
     const hasMetadata =
         (typeof promptSnapshotKey === 'string' && promptSnapshotKey) ||
         (timedWorldInfo && typeof timedWorldInfo === 'object') ||
-        (typeof messagesCount === 'number' && messagesCount >= 0);
+        hasMessagesCount;
 
     if (!hasMetadata) {
         storeLastPromptInspectionSnapshotKey(null, chatScope);
@@ -1361,7 +1368,7 @@ function applyTimedWorldInfoResponseData(data, requestId) {
     if (entry && timedWorldInfo && typeof timedWorldInfo === 'object') {
         entry.timedWorldInfo = structuredClone(timedWorldInfo);
     }
-    if (typeof messagesCount === 'number' && messagesCount >= 0) {
+    if (hasMessagesCount && chatScope === getCurrentPromptInspectionChatScope()) {
         openai_messages_count = messagesCount;
         setInContextMessages(openai_messages_count, entry?.type || 'normal');
     }
@@ -2979,7 +2986,7 @@ async function sendOpenAIRequest(type, messages, signal, { jsonSchema = null } =
         }
     }
 
-    applyAssemblyResponseMetadata(response, type);
+    applyAssemblyResponseMetadata(response, requestId, type);
 
     if (stream) {
         const streamData = async function* streamData() {
