@@ -6471,7 +6471,8 @@ export function addOneMessage(mes, { type = 'normal', insertAfter = null, scroll
     if (!container) {
         syncVisibleChatRangeFromDom();
     }
-    
+}
+
 /**
  * Returns the URL of the avatar for the given character Id.
  * @param {number|string} characterId Character Id
@@ -12406,7 +12407,8 @@ export async function getPastCharacterChats(characterId = null) {
     const sortedChats = chats.sort((a, b) => a['file_name'].localeCompare(b['file_name'])).reverse();
     pastCharacterChatsCache.set(avatar, sortedChats);
     return sortedChats;
-    
+}
+
 /**
  * @typedef {{ type: 'character' | 'group', id: string|number }} ManageChatsOwnerContext
  */
