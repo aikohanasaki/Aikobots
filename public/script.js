@@ -1585,7 +1585,7 @@ async function getSimplePastCharacterChatNames(characterId = null) {
         return [];
     }
 
-    return Object.values(data)    return Object.values(data)
+    return Object.values(data)
         .map(chat => normalizeTopChatFileName(chat?.file_name ?? chat?.file_id))
         .filter(Boolean)
         .filter(onlyUnique)
