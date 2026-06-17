@@ -4916,6 +4916,8 @@ function updateHistoryControls() {
         chatElement.prepend(`<button id="${HYDRATE_CHAT_CONTROL_ID}" type="button" class="chat_history_button">Load full chat for editing</button>`);
         chatElement.prepend(`<button id="${RETURN_TO_TAIL_CONTROL_ID}" type="button" class="chat_history_button">Return to live tail</button>`);
     }
+}
+
 function finalizeRenderedMessageWindow() {
     chatElement.find('.mes').removeClass('last_mes');
     chatElement.find('.mes').last().addClass('last_mes');
