@@ -430,8 +430,33 @@ function normalizeImportedHeader(header) {
     return normalizedHeader;
 }
 
+/**
+ * Clears legacy/imported hidden-message flags from ordinary transcript records.
+ * Explicit small/system typed messages keep their system visibility behavior.
+ * @param {object} message Imported message record.
+ * @returns {object} Normalized message record.
+ */
+function normalizeImportedMessageVisibility(message) {
+    if (!_.isPlainObject(message) || message.is_system !== true) {
+        return message;
+    }
+
+    const extra = _.isPlainObject(message.extra) ? message.extra : {};
+    const isExplicitSystemMessage = extra.isSmallSys === true
+        || typeof extra.type === 'string'
+        || Array.isArray(extra.tool_invocations);
+
+    if (isExplicitSystemMessage) {
+        return message;
+    }
+
+    const normalizedMessage = _.cloneDeep(message);
+    delete normalizedMessage.is_system;
+    return normalizedMessage;
+}
+
 function normalizeImportedMessage(message, { chatScope, mesId }) {
-    const normalizedMessage = sanitizeChatMessageForPersistence(message);
+    const normalizedMessage = normalizeImportedMessageVisibility(sanitizeChatMessageForPersistence(message));
 
     if (_.isPlainObject(normalizedMessage?.extra) && typeof normalizedMessage.extra.promptSnapshotKey === 'string') {
         normalizedMessage.extra.promptSnapshotKey = rekeyImportedPromptSnapshotKey(normalizedMessage.extra.promptSnapshotKey, {
