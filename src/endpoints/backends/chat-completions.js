@@ -3535,6 +3535,23 @@ export async function handleChatCompletionsGenerate(request, response) {
         stopStreamHeartbeat(heartbeat);
         heartbeat = null;
     };
+    const sendGenerateError = (status, payload) => {
+        cleanup();
+
+        if (request.body?.stream && response.headersSent && !response.writableEnded) {
+            response.write(`data: ${JSON.stringify(payload)}\n\n`);
+            response.flush?.();
+            return response.end();
+        }
+
+        if (!response.headersSent) {
+            return response.status(status).send(payload);
+        }
+
+        if (!response.writableEnded) {
+            return response.end();
+        }
+    };
 
     return (async () => {
         await assertActiveSessionOperation(request);
@@ -3954,7 +3971,7 @@ export async function handleChatCompletionsGenerate(request, response) {
         }
     } else {
         console.warn('This chat completion source is not supported yet.');
-        return response.status(400).send({ error: true });
+        return sendGenerateError(400, { error: true });
     }
 
     // A few of OpenAIs reasoning models support reasoning effort
@@ -3973,7 +3990,7 @@ export async function handleChatCompletionsGenerate(request, response) {
     if (!apiKey && !request.body.reverse_proxy && request.body.chat_completion_source !== CHAT_COMPLETION_SOURCES.CUSTOM) {
         const providerName = request.body.chat_completion_source === CHAT_COMPLETION_SOURCES.NAVY ? 'Navy' : 'OpenAI';
         console.warn(`${providerName} API key is missing.`);
-        return response.status(400).send({ error: { message: `${providerName} API key is missing.` } });
+        return sendGenerateError(400, { error: { message: `${providerName} API key is missing.` } });
     }
 
     // Add custom stop sequences
@@ -3985,7 +4002,7 @@ export async function handleChatCompletionsGenerate(request, response) {
     try {
         endpointUrl = buildChatCompletionsEndpointUrl(apiUrl);
     } catch {
-        return response.status(400).send({
+        return sendGenerateError(400, {
             error: {
                 message: 'Invalid chat completion endpoint URL. Use a full absolute URL such as https://api.openai.com/v1 or http://127.0.0.1:1/v1.',
             },
@@ -4193,11 +4210,7 @@ export async function handleChatCompletionsGenerate(request, response) {
             provider: error?.provider || getRequestProvider(request),
             upstreamStatus: error?.upstreamStatus || null,
         }, error);
-        if (!response.headersSent) {
-            response.status(getPromptAssemblyErrorStatus(error)).send(toPromptAssemblyErrorBody(error));
-        } else if (!response.writableEnded) {
-            response.end();
-        }
+        return sendGenerateError(getPromptAssemblyErrorStatus(error), toPromptAssemblyErrorBody(error));
     });
 }
 
