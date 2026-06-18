@@ -1461,9 +1461,68 @@ function expandMessageMedia(messageId, mediaIndex) {
 }
 
 /**
- * Deletes an image from a message.
+ * Removes all image attachments from a message.
+ * @param {ChatMessage} message Message object
+ * @returns {MediaAttachment[]} Removed image attachments
+ */
+function removeImageAttachmentsFromMessage(message) {
+    if (!message?.extra || !Array.isArray(message.extra.media)) {
+        return [];
+    }
+
+    const oldMediaIndex = Number(message.extra.media_index);
+    const oldSelectedMedia = Number.isInteger(oldMediaIndex) ? message.extra.media[oldMediaIndex] : null;
+    const removedImages = [];
+    const retainedMedia = [];
+
+    for (const media of message.extra.media) {
+        if (isImageAttachment(media)) {
+            removedImages.push(media);
+        } else {
+            retainedMedia.push(media);
+        }
+    }
+
+    if (removedImages.length === 0) {
+        return [];
+    }
+
+    if (retainedMedia.length === 0) {
+        delete message.extra.media;
+        delete message.extra.media_index;
+        delete message.extra.inline_image;
+        delete message.extra.title;
+        delete message.extra.append_title;
+        return removedImages;
+    }
+
+    message.extra.media = retainedMedia;
+    const retainedSelectedIndex = oldSelectedMedia ? retainedMedia.indexOf(oldSelectedMedia) : -1;
+    message.extra.media_index = retainedSelectedIndex >= 0
+        ? retainedSelectedIndex
+        : clamp(Number.isInteger(oldMediaIndex) ? oldMediaIndex : 0, 0, retainedMedia.length - 1);
+
+    return removedImages;
+}
+
+/**
+ * Appends media to every currently rendered message after a bulk media change.
+ */
+function refreshRenderedMessageMedia() {
+    chatElement.find('.mes').each((_, element) => {
+        const messageBlock = $(element);
+        const renderedMessageId = Number(messageBlock.attr('mesid'));
+        const renderedMessage = chat[renderedMessageId];
+        if (renderedMessage) {
+            appendMediaToMessage(renderedMessage, messageBlock, SCROLL_BEHAVIOR.KEEP);
+        }
+    });
+}
+
+/**
+ * Deletes an attachment from a message.
  * @param {number} messageId Message ID
- * @param {number} mediaIndex Image index
+ * @param {number} mediaIndex Media index
  * @param {JQuery<HTMLElement>} messageBlock Message block element
  */
 async function deleteMessageMedia(messageId, mediaIndex, messageBlock) {
@@ -1483,14 +1542,16 @@ async function deleteMessageMedia(messageId, mediaIndex, messageBlock) {
     }
 
     const deleteFromServerId = 'delete_media_files_checkbox';
+    const deleteAllImagesInChatId = 'delete_all_images_in_chat_checkbox';
     let deleteFromServer = true;
+    let deleteAllImagesInChat = false;
 
     const value = await Popup.show.confirm(t`Delete media from message?`, t`This action can't be undone.`, {
         okButton: t`Delete one`,
         cancelButton: false,
         customButtons: [
             {
-                text: t`Delete all`,
+                text: t`Delete all images in this message`,
                 appendAtEnd: true,
                 result: POPUP_RESULT.CUSTOM1,
             },
@@ -1503,12 +1564,19 @@ async function deleteMessageMedia(messageId, mediaIndex, messageBlock) {
         customInputs: [
             {
                 type: 'checkbox',
+                label: t`Delete all images in this chat`,
+                id: deleteAllImagesInChatId,
+                defaultState: false,
+            },
+            {
+                type: 'checkbox',
                 label: t`Also delete files from server`,
                 id: deleteFromServerId,
                 defaultState: true,
             },
         ],
         onClose: (popup) => {
+            deleteAllImagesInChat = Boolean(popup.inputResults.get(deleteAllImagesInChatId) ?? false);
             deleteFromServer = Boolean(popup.inputResults.get(deleteFromServerId) ?? false);
         },
     });
@@ -1531,33 +1599,54 @@ async function deleteMessageMedia(messageId, mediaIndex, messageBlock) {
     }
 
     const deleteMedia = [];
-    deleteMedia.push(message.extra.media[mediaIndex]);
-    message.extra.media.splice(mediaIndex, 1);
+    const deleteAllImages = value === POPUP_RESULT.CUSTOM1;
+    const deleteImagesFromChat = deleteAllImages && deleteAllImagesInChat;
 
-    if (message.extra.media_index === mediaIndex) {
-        const newIndex = mediaIndex > 0 ? mediaIndex - 1 : 0;
-        message.extra.media_index = clamp(newIndex, 0, message.extra.media.length - 1);
+    if (deleteImagesFromChat) {
+        if (!await hydrateCurrentChatForEditing()) {
+            return;
+        }
+
+        for (const chatMessage of chat) {
+            deleteMedia.push(...removeImageAttachmentsFromMessage(chatMessage));
+        }
+    } else if (deleteAllImages) {
+        deleteMedia.push(...removeImageAttachmentsFromMessage(message));
+    } else {
+        deleteMedia.push(message.extra.media[mediaIndex]);
+        message.extra.media.splice(mediaIndex, 1);
+
+        if (message.extra.media_index === mediaIndex) {
+            const newIndex = mediaIndex > 0 ? mediaIndex - 1 : 0;
+            message.extra.media_index = clamp(newIndex, 0, message.extra.media.length - 1);
+        }
     }
 
-    if (value === POPUP_RESULT.CUSTOM1) {
-        for (const media of message.extra.media) {
-            deleteMedia.push(media);
-        }
-        delete message.extra.media;
-        delete message.extra.inline_image;
-        delete message.extra.title;
-        delete message.extra.append_title;
+    if (deleteMedia.length === 0) {
+        console.debug('No images to delete');
+        return;
     }
 
     if (deleteFromServer) {
+        let failedServerDeletes = 0;
         for (const attachment of deleteMedia) {
             if (!attachment) continue;
-            await deleteMediaFromServer(attachment, true);
+            const deleted = await deleteMediaFromServer(attachment, true);
+            if (!deleted) {
+                failedServerDeletes++;
+            }
+        }
+        if (failedServerDeletes > 0) {
+            toastr.warning(t`Some files could not be deleted from server.`);
         }
     }
 
     await saveChatConditional();
-    appendMediaToMessage(message, messageBlock, SCROLL_BEHAVIOR.KEEP);
+    if (deleteImagesFromChat) {
+        refreshRenderedMessageMedia();
+    } else {
+        appendMediaToMessage(message, messageBlock, SCROLL_BEHAVIOR.KEEP);
+    }
 }
 
 /**
