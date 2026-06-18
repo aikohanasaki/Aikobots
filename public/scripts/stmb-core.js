@@ -12,6 +12,13 @@ export const STMB_DEFAULT_PROFILE_NAME = 'Current SillyTavern Settings';
 export const STMB_DEFAULT_TITLE_FORMAT = '[000] - {{title}}';
 export const STMB_DEFAULT_MAX_TOKENS = 4000;
 export const STMB_CONNECTION_PROFILE_API_KEY_ERROR = 'please confirm that your API key is entered in Connection Profiles';
+export const STMB_MEMORY_BOUNDARY_MODES = Object.freeze({
+    OFF: '',
+    DIVIDER: 'divider',
+    BUTTON: 'button',
+    BOTH: 'both',
+});
+const STMB_MEMORY_BOUNDARY_MODE_VALUES = new Set(Object.values(STMB_MEMORY_BOUNDARY_MODES));
 export const STMB_DEFAULT_COMPACTION_PROMPT_TEMPLATE = `Please aggressively make this lorebook entry more token-efficient while retaining as much useful information as possible.
 
 Rules:
@@ -48,6 +55,28 @@ export const STMB_DEFAULT_TITLE_FORMATS = Object.freeze([
     '[000] - {{title}} ({{scene}})',
     '[000] - {{title}}',
 ]);
+
+export function normalizeStmbMemoryBoundaryMode(mode) {
+    const value = String(mode ?? STMB_MEMORY_BOUNDARY_MODES.BOTH);
+    return STMB_MEMORY_BOUNDARY_MODE_VALUES.has(value) ? value : STMB_MEMORY_BOUNDARY_MODES.BOTH;
+}
+
+function normalizeStmbMemoryBoundaryButtonPosition(position) {
+    if (!position || typeof position !== 'object') {
+        return null;
+    }
+
+    const left = Number(position.left);
+    const top = Number(position.top);
+    if (!Number.isFinite(left) || !Number.isFinite(top)) {
+        return null;
+    }
+
+    return {
+        left: Math.round(left),
+        top: Math.round(top),
+    };
+}
 
 export const STMB_DEFAULT_PROMPTS = Object.freeze({
     summary: `You are a talented summarist skilled at capturing scenes from stories comprehensively. Analyze the following roleplay scene and return a detailed memory as JSON.
@@ -336,6 +365,8 @@ export function createDefaultStmbSettings() {
             lorebookNameTemplate: 'LTM - {{char}} - {{chat}}',
             lorebookOrderDefaults: null,
             showFloatingClipButton: true,
+            memoryBoundaryMode: STMB_MEMORY_BOUNDARY_MODES.BOTH,
+            memoryBoundaryButtonPosition: null,
             compactionPromptTemplate: STMB_DEFAULT_COMPACTION_PROMPT_TEMPLATE,
             topicalClipPromptTemplate: '',
             compactionProfileIndex: 0,
@@ -621,6 +652,8 @@ export function normalizeStmbSettings(rawSettings, legacySettings = null) {
         ? Math.max(1, Math.min(5, Math.trunc(Number(moduleSettings.sidePromptsMaxConcurrent))))
         : defaults.moduleSettings.sidePromptsMaxConcurrent;
     moduleSettings.showFloatingClipButton = moduleSettings.showFloatingClipButton !== false;
+    moduleSettings.memoryBoundaryMode = normalizeStmbMemoryBoundaryMode(moduleSettings.memoryBoundaryMode);
+    moduleSettings.memoryBoundaryButtonPosition = normalizeStmbMemoryBoundaryButtonPosition(moduleSettings.memoryBoundaryButtonPosition);
     moduleSettings.compactionPromptTemplate = typeof moduleSettings.compactionPromptTemplate === 'string'
         && moduleSettings.compactionPromptTemplate.trim()
         && moduleSettings.compactionPromptTemplate.includes('{{ENTRY_CONTENT}}')

@@ -7,6 +7,7 @@ import {
     event_types,
     getCurrentChatId,
     getFirstDisplayedMessageId,
+    jumpToMessageWindow,
     name1,
     name2,
     reloadCurrentChat,
@@ -49,10 +50,12 @@ import {
     createDefaultStmbProfile,
     findOverlappingManagedMemoryEntry,
     normalizeLorebookEntrySettings,
+    normalizeStmbMemoryBoundaryMode,
     STMB_DEFAULT_MAX_TOKENS,
     STMB_DEFAULT_MEMORY_SCHEMA,
     STMB_DEFAULT_TITLE_FORMAT,
     STMB_DEFAULT_TITLE_FORMATS,
+    STMB_MEMORY_BOUNDARY_MODES,
     STMB_METADATA_KEY,
     compileScene,
     getActiveStmbProfile,
@@ -145,7 +148,7 @@ import {
     upsertSet,
     upsertTemplate,
 } from './stmb-sideprompts-manager.js';
-import { escapeHtml, withGoBackButton } from './utils.js';
+import { escapeHtml, flashHighlight, withGoBackButton } from './utils.js';
 import { ensureResolvedLorebookName, isStmbLorebookHandledError } from './stmb-lorebook.js';
 import { createStmbTask, getActiveStmbTaskCount, hasActiveStmbTasks, isStmbAbortError, stopAllStmbTasks, throwIfStmbAborted } from './stmb-tasks.js';
 import { getTokenCountAsync } from './tokenizers.js';
@@ -201,6 +204,13 @@ let plannerStatusUiInitialized = false;
 let plannerStatusButton = null;
 let plannerStatusBadge = null;
 const dismissedPlannerNotificationIds = new Set();
+let memoryBoundaryButton = null;
+let memoryBoundaryButtonDragState = null;
+
+const MEMORY_BOUNDARY_BUTTON_SIZE = 36;
+const MEMORY_BOUNDARY_BUTTON_MARGIN = 12;
+const MEMORY_BOUNDARY_BUTTON_DEFAULT_BOTTOM = 112;
+const MEMORY_BOUNDARY_BUTTON_DEFAULT_RIGHT = 18;
 
 const DURABLE_SYNC_STATE_KEYS = [
     'sceneStart',
@@ -1969,6 +1979,17 @@ function renderSummaryTierOptions(selectedValues = []) {
     }).join('');
 }
 
+function renderMemoryBoundaryModeOptions(selectedMode) {
+    const selected = normalizeStmbMemoryBoundaryMode(selectedMode);
+    const options = [
+        { value: STMB_MEMORY_BOUNDARY_MODES.OFF, label: 'Off' },
+        { value: STMB_MEMORY_BOUNDARY_MODES.DIVIDER, label: 'Memory boundary' },
+        { value: STMB_MEMORY_BOUNDARY_MODES.BUTTON, label: 'Jump button' },
+        { value: STMB_MEMORY_BOUNDARY_MODES.BOTH, label: 'Memory boundary + jump button' },
+    ];
+    return options.map(option => `<option value="${escapeHtml(option.value)}" ${selected === option.value ? 'selected' : ''}>${escapeHtml(option.label)}</option>`).join('');
+}
+
 async function getSettingsPopupSceneData() {
     const markers = getSceneMarkers();
     const hasScene = Number.isInteger(markers.sceneStart) && Number.isInteger(markers.sceneEnd);
@@ -2048,6 +2069,13 @@ function buildSettingsPopupHtml(sceneData, currentUiConnection, regexOptions) {
                 <label class="checkbox_label"><input type="checkbox" id="stmb-settings-show-consolidation-previews" ${moduleSettings.showConsolidationPreviews ? 'checked' : ''}> <span>Show consolidation previews</span></label>
                 <label class="checkbox_label"><input type="checkbox" id="stmb-settings-show-notifications" ${moduleSettings.showNotifications ? 'checked' : ''}> <span>Show notifications</span></label>
                 <label class="checkbox_label"><input type="checkbox" id="stmb-settings-show-floating-clip-button" ${moduleSettings.showFloatingClipButton !== false ? 'checked' : ''}> <span>Show floating Clip button</span></label>
+                <label for="stmb-settings-memory-boundary-mode">
+                    <span>Memory boundary indicator</span>
+                    <small class="opacity50p">Show a chat divider, a jump button, or both at the Memory Books processed boundary.</small>
+                    <select id="stmb-settings-memory-boundary-mode" class="text_pole">
+                        ${renderMemoryBoundaryModeOptions(moduleSettings.memoryBoundaryMode)}
+                    </select>
+                </label>
                 <label class="checkbox_label" title="Check this box to skip checking for overlapping memories/scenes."><input type="checkbox" id="stmb-settings-allow-scene-overlap" ${moduleSettings.allowSceneOverlap ? 'checked' : ''}> <span title="Check this box to skip checking for overlapping memories/scenes.">Allow scene overlap</span></label>
                 <label class="checkbox_label"><input type="checkbox" id="stmb-settings-refresh-editor" ${moduleSettings.refreshEditor !== false ? 'checked' : ''}> <span>Refresh lorebook editor after adding memories</span></label>
             </div>
@@ -5273,6 +5301,12 @@ async function showMainEntryPopup() {
             refreshFloatingClipButtonSetting();
             return;
         }
+        if (target.matches('#stmb-settings-memory-boundary-mode')) {
+            moduleSettings.memoryBoundaryMode = normalizeStmbMemoryBoundaryMode(target.value);
+            persistSettings();
+            refreshMemoryBoundaryUi();
+            return;
+        }
         if (target.matches('#stmb-settings-allow-scene-overlap')) {
             moduleSettings.allowSceneOverlap = target.checked;
             persistSettings();
@@ -6034,11 +6068,251 @@ function getHighestProcessedMessageId() {
     return Number.isInteger(state.highestMemoryProcessed) ? state.highestMemoryProcessed : null;
 }
 
+function isMemoryBoundaryDividerEnabled(mode = getModuleSettings().memoryBoundaryMode) {
+    const normalized = normalizeStmbMemoryBoundaryMode(mode);
+    return normalized === STMB_MEMORY_BOUNDARY_MODES.DIVIDER || normalized === STMB_MEMORY_BOUNDARY_MODES.BOTH;
+}
+
+function isMemoryBoundaryButtonEnabled(mode = getModuleSettings().memoryBoundaryMode) {
+    const normalized = normalizeStmbMemoryBoundaryMode(mode);
+    return normalized === STMB_MEMORY_BOUNDARY_MODES.BUTTON || normalized === STMB_MEMORY_BOUNDARY_MODES.BOTH;
+}
+
+function getMemoryBoundaryTargetId() {
+    const highestProcessed = getHighestProcessedMessageId();
+    if (!Number.isInteger(highestProcessed)) {
+        return null;
+    }
+
+    const nextId = highestProcessed + 1;
+    if (nextId >= 0 && nextId < chat.length) {
+        return nextId;
+    }
+
+    if (highestProcessed >= 0 && highestProcessed < chat.length) {
+        return highestProcessed;
+    }
+
+    return null;
+}
+
+function getRenderedMessageElement(messageId) {
+    if (!Number.isInteger(messageId)) {
+        return null;
+    }
+    return chatElement.find(`.mes[mesid="${messageId}"]`).get(0) || null;
+}
+
+function clearMemoryBoundaryDivider() {
+    document.querySelectorAll('.stmb_memory_boundary_divider').forEach(element => element.remove());
+    document.querySelectorAll('.stmb_memory_boundary_target').forEach(element => {
+        element.classList.remove('stmb_memory_boundary_target');
+    });
+}
+
+function refreshMemoryBoundaryDivider() {
+    clearMemoryBoundaryDivider();
+
+    if (!isMemoryBoundaryDividerEnabled()) {
+        return;
+    }
+
+    const targetId = getMemoryBoundaryTargetId();
+    const targetElement = getRenderedMessageElement(targetId);
+    if (!targetElement) {
+        return;
+    }
+
+    const divider = document.createElement('div');
+    divider.classList.add('stmb_memory_boundary_divider');
+    divider.textContent = 'Memory Books boundary';
+    targetElement.classList.add('stmb_memory_boundary_target');
+    targetElement.prepend(divider);
+}
+
+function clampMemoryBoundaryButtonPosition(position = {}) {
+    const maxLeft = Math.max(MEMORY_BOUNDARY_BUTTON_MARGIN, window.innerWidth - MEMORY_BOUNDARY_BUTTON_SIZE - MEMORY_BOUNDARY_BUTTON_MARGIN);
+    const maxTop = Math.max(MEMORY_BOUNDARY_BUTTON_MARGIN, window.innerHeight - MEMORY_BOUNDARY_BUTTON_SIZE - MEMORY_BOUNDARY_BUTTON_MARGIN);
+    const fallbackLeft = window.innerWidth - MEMORY_BOUNDARY_BUTTON_SIZE - MEMORY_BOUNDARY_BUTTON_DEFAULT_RIGHT;
+    const fallbackTop = window.innerHeight - MEMORY_BOUNDARY_BUTTON_SIZE - MEMORY_BOUNDARY_BUTTON_DEFAULT_BOTTOM;
+    const rawLeft = Number.isFinite(Number(position.left)) ? Number(position.left) : fallbackLeft;
+    const rawTop = Number.isFinite(Number(position.top)) ? Number(position.top) : fallbackTop;
+
+    return {
+        left: Math.round(Math.min(Math.max(rawLeft, MEMORY_BOUNDARY_BUTTON_MARGIN), maxLeft)),
+        top: Math.round(Math.min(Math.max(rawTop, MEMORY_BOUNDARY_BUTTON_MARGIN), maxTop)),
+    };
+}
+
+function applyMemoryBoundaryButtonPosition() {
+    if (!memoryBoundaryButton) {
+        return;
+    }
+
+    const position = clampMemoryBoundaryButtonPosition(getModuleSettings().memoryBoundaryButtonPosition || {});
+    memoryBoundaryButton.style.left = `${position.left}px`;
+    memoryBoundaryButton.style.top = `${position.top}px`;
+}
+
+function saveMemoryBoundaryButtonPosition(position) {
+    stmbSettings.moduleSettings.memoryBoundaryButtonPosition = clampMemoryBoundaryButtonPosition(position);
+    stmbSettings = normalizeStmbSettings(stmbSettings);
+    saveSettingsDebounced();
+}
+
+function showNoMemoryBoundaryToast() {
+    toastr.info('No memories have been processed for this chat yet.', 'STMB');
+}
+
+async function scrollToMemoryBoundaryTarget() {
+    const targetId = getMemoryBoundaryTargetId();
+    if (!Number.isInteger(targetId)) {
+        showNoMemoryBoundaryToast();
+        return;
+    }
+
+    const target = await jumpToMessageWindow(targetId);
+    const messageElement = target?.get?.(0);
+    const chatContainer = document.getElementById('chat');
+    if (target?.length && messageElement instanceof HTMLElement && chatContainer instanceof HTMLElement) {
+        refreshMemoryBoundaryDivider();
+        chatContainer.scrollTo({
+            top: messageElement.offsetTop,
+            behavior: 'smooth',
+        });
+        flashHighlight(target, 2000);
+        return;
+    }
+
+    const highestProcessed = getHighestProcessedMessageId();
+    toastr.info(`Highest memory is #${highestProcessed}. The target message could not be rendered.`, 'STMB');
+}
+
+function handleMemoryBoundaryButtonPointerMove(event) {
+    if (!memoryBoundaryButtonDragState || !memoryBoundaryButton) {
+        return;
+    }
+
+    const position = clampMemoryBoundaryButtonPosition({
+        left: event.clientX - memoryBoundaryButtonDragState.offsetX,
+        top: event.clientY - memoryBoundaryButtonDragState.offsetY,
+    });
+
+    if (
+        Math.abs(position.left - memoryBoundaryButtonDragState.startLeft) > 2 ||
+        Math.abs(position.top - memoryBoundaryButtonDragState.startTop) > 2
+    ) {
+        memoryBoundaryButtonDragState.moved = true;
+    }
+
+    memoryBoundaryButton.style.left = `${position.left}px`;
+    memoryBoundaryButton.style.top = `${position.top}px`;
+}
+
+function handleMemoryBoundaryButtonPointerUp() {
+    if (!memoryBoundaryButtonDragState) {
+        return;
+    }
+
+    const button = memoryBoundaryButton;
+    const moved = memoryBoundaryButtonDragState.moved;
+    const position = button
+        ? {
+            left: Number.parseInt(button.style.left, 10),
+            top: Number.parseInt(button.style.top, 10),
+        }
+        : null;
+
+    document.removeEventListener('pointermove', handleMemoryBoundaryButtonPointerMove);
+    document.removeEventListener('pointerup', handleMemoryBoundaryButtonPointerUp);
+    memoryBoundaryButtonDragState = null;
+    if (!button || !position) {
+        return;
+    }
+
+    saveMemoryBoundaryButtonPosition(position);
+
+    if (moved) {
+        button.dataset.stmbDragged = 'true';
+        setTimeout(() => {
+            if (button.isConnected) {
+                delete button.dataset.stmbDragged;
+            }
+        }, 0);
+    }
+}
+
+function createMemoryBoundaryButton() {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.id = 'stmb-memory-boundary-jump';
+    button.classList.add('stmb_memory_boundary_button', 'interactable');
+    button.title = translate('Jump to first unprocessed message', 'STMemoryBooks_JumpToUnprocessedMemory');
+    button.innerHTML = '<i class="fa-solid fa-angles-up" aria-hidden="true"></i>';
+
+    button.addEventListener('pointerdown', event => {
+        if (event.button !== undefined && event.button !== 0) {
+            return;
+        }
+        event.preventDefault();
+        event.stopPropagation();
+
+        const rect = button.getBoundingClientRect();
+        memoryBoundaryButtonDragState = {
+            offsetX: event.clientX - rect.left,
+            offsetY: event.clientY - rect.top,
+            startLeft: rect.left,
+            startTop: rect.top,
+            moved: false,
+        };
+        document.addEventListener('pointermove', handleMemoryBoundaryButtonPointerMove);
+        document.addEventListener('pointerup', handleMemoryBoundaryButtonPointerUp);
+    });
+
+    button.addEventListener('click', event => {
+        event.preventDefault();
+        event.stopPropagation();
+        if (button.dataset.stmbDragged === 'true') {
+            return;
+        }
+        scrollToMemoryBoundaryTarget().catch(error => {
+            console.warn('STMB memory boundary jump failed', error);
+            toastr.error('Failed to jump to the Memory Books boundary.', 'STMB');
+        });
+    });
+
+    document.body.appendChild(button);
+    applyLocale(button);
+    return button;
+}
+
+function refreshMemoryBoundaryButton() {
+    if (!isMemoryBoundaryButtonEnabled()) {
+        memoryBoundaryButton?.remove();
+        memoryBoundaryButton = null;
+        return;
+    }
+
+    if (!memoryBoundaryButton) {
+        memoryBoundaryButton = createMemoryBoundaryButton();
+    }
+
+    applyMemoryBoundaryButtonPosition();
+    memoryBoundaryButton.style.display = 'inline-flex';
+}
+
+/** Refreshes the visible STMB processed-message boundary without changing chat state. */
+function refreshMemoryBoundaryUi() {
+    refreshMemoryBoundaryDivider();
+    refreshMemoryBoundaryButton();
+}
+
 function setHighestProcessedMessageId(messageId) {
     const state = getStmbState();
     state.highestMemoryProcessed = Number(messageId);
     delete state.highestMemoryProcessedManuallySet;
     saveMetadataDebounced();
+    refreshMemoryBoundaryUi();
     refreshOpenSettingsPopupSceneState().catch(error => {
         console.warn('STMB settings popup scene refresh failed', error);
     });
@@ -6100,6 +6374,7 @@ function renderSceneButtonsForMessage(messageElement) {
 
 function renderAllSceneButtons() {
     chatElement.find('.mes').each((_, element) => renderSceneButtonsForMessage(element));
+    refreshMemoryBoundaryUi();
 }
 
 function bindSceneButtons() {
@@ -8690,6 +8965,7 @@ async function setHighestProcessedCommand(_, value) {
         delete getStmbState().highestMemoryProcessed;
         delete getStmbState().highestMemoryProcessedManuallySet;
         saveMetadataDebounced();
+        refreshMemoryBoundaryUi();
         await refreshOpenSettingsPopupSceneState();
         toastr.success('Last processed message cleared (no memories processed).', 'STMB');
         return '';
@@ -8738,6 +9014,7 @@ async function setHighestProcessedCommand(_, value) {
     state.highestMemoryProcessed = clamped;
     state.highestMemoryProcessedManuallySet = true;
     saveMetadataDebounced();
+    refreshMemoryBoundaryUi();
     await refreshOpenSettingsPopupSceneState();
     toastr.success(`Last processed message manually set to #${clamped}.`, 'STMB');
 
@@ -8981,6 +9258,7 @@ export function initStmb() {
         validateSceneMarkers();
         renderAllSceneButtons();
     }, 0);
+    window.addEventListener('resize', refreshMemoryBoundaryButton);
 
     eventSource.on(event_types.CHAT_CHANGED, () => {
         hideFloatingClipButton();
@@ -9002,6 +9280,7 @@ export function initStmb() {
         if (messageElement) {
             renderSceneButtonsForMessage(messageElement);
         }
+        refreshMemoryBoundaryUi();
         if (hasActiveStmbTasks() || hasActiveStmbJobs(getStmbChatKey(buildStmbSceneContext()))) {
             return;
         }
@@ -9014,6 +9293,7 @@ export function initStmb() {
         if (messageElement) {
             renderSceneButtonsForMessage(messageElement);
         }
+        refreshMemoryBoundaryUi();
         if (hasActiveStmbTasks() || hasActiveStmbJobs(getStmbChatKey(buildStmbSceneContext()))) {
             return;
         }
@@ -9026,6 +9306,7 @@ export function initStmb() {
         if (messageElement) {
             renderSceneButtonsForMessage(messageElement);
         }
+        refreshMemoryBoundaryUi();
     });
 
     eventSource.on(event_types.MORE_MESSAGES_LOADED, () => {
