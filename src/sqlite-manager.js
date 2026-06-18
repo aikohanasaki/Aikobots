@@ -76,32 +76,35 @@ export function saveDb(db, filePath) {
 export async function migrateFromJsonl(jsonlPath, sqlitePath) {
     await initSql();
     const db = createDatabase();
-    const content = fs.readFileSync(jsonlPath, 'utf-8');
-    const lines = content.split('\n').filter(line => line.trim());
-    
-    db.run('BEGIN TRANSACTION');
-    let stmt;
     try {
-        stmt = db.prepare('INSERT INTO messages (order_index, content) VALUES (?, ?)');
-        for (let i = 0; i < lines.length; i++) {
-            // Use index as order_index for initial migration
-            try {
-                JSON.parse(lines[i]);
-            } catch (error) {
-                throw new Error(`Invalid JSONL at line ${i + 1}: ${error.message}`);
-            }
-            stmt.run([i, lines[i]]);
-        }
-        db.run('COMMIT');
-    } catch (error) {
-        db.run('ROLLBACK');
-        throw error;
-    } finally {
-        stmt?.free();
-    }
+        const content = fs.readFileSync(jsonlPath, 'utf-8');
+        const lines = content.split('\n').filter(line => line.trim());
 
-    saveDb(db, sqlitePath);
-    db.close();
+        db.run('BEGIN TRANSACTION');
+        let stmt;
+        try {
+            stmt = db.prepare('INSERT INTO messages (order_index, content) VALUES (?, ?)');
+            for (let i = 0; i < lines.length; i++) {
+                // Use index as order_index for initial migration
+                try {
+                    JSON.parse(lines[i]);
+                } catch (error) {
+                    throw new Error(`Invalid JSONL at line ${i + 1}: ${error.message}`);
+                }
+                stmt.run([i, lines[i]]);
+            }
+            db.run('COMMIT');
+        } catch (error) {
+            db.run('ROLLBACK');
+            throw error;
+        } finally {
+            stmt?.free();
+        }
+
+        saveDb(db, sqlitePath);
+    } finally {
+        db.close();
+    }
 }
 
 /**
@@ -185,11 +188,15 @@ export function setMessages(db, messages) {
     db.run('BEGIN TRANSACTION');
     try {
         db.run('DELETE FROM messages');
-        const stmt = db.prepare('INSERT INTO messages (order_index, content) VALUES (?, ?)');
-        for (let i = 0; i < messages.length; i++) {
-            stmt.run([i, JSON.stringify(messages[i])]);
+        let stmt;
+        try {
+            stmt = db.prepare('INSERT INTO messages (order_index, content) VALUES (?, ?)');
+            for (let i = 0; i < messages.length; i++) {
+                stmt.run([i, JSON.stringify(messages[i])]);
+            }
+        } finally {
+            stmt?.free();
         }
-        stmt.free();
         db.run('COMMIT');
     } catch (error) {
         db.run('ROLLBACK');
@@ -216,15 +223,23 @@ export function updateMessages(db, messages, startIndex) {
             throw new Error('Message update would create a gap.');
         }
 
-        const deleteStmt = db.prepare('DELETE FROM messages WHERE order_index >= ? AND order_index < ?');
-        deleteStmt.run([startIndex, startIndex + messages.length]);
-        deleteStmt.free();
-
-        const insStmt = db.prepare('INSERT INTO messages (order_index, content) VALUES (?, ?)');
-        for (let i = 0; i < messages.length; i++) {
-            insStmt.run([startIndex + i, JSON.stringify(messages[i])]);
+        let deleteStmt;
+        try {
+            deleteStmt = db.prepare('DELETE FROM messages WHERE order_index >= ? AND order_index < ?');
+            deleteStmt.run([startIndex, startIndex + messages.length]);
+        } finally {
+            deleteStmt?.free();
         }
-        insStmt.free();
+
+        let insStmt;
+        try {
+            insStmt = db.prepare('INSERT INTO messages (order_index, content) VALUES (?, ?)');
+            for (let i = 0; i < messages.length; i++) {
+                insStmt.run([startIndex + i, JSON.stringify(messages[i])]);
+            }
+        } finally {
+            insStmt?.free();
+        }
         db.run('COMMIT');
     } catch (error) {
         db.run('ROLLBACK');
