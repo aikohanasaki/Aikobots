@@ -4188,6 +4188,88 @@ function mergeLoadedRange(startId, endId) {
     chatLoadState.loadedRanges = merged;
 }
 
+function replaceLoadedRanges(ranges) {
+    chatLoadState.loadedRanges = [];
+    for (const range of ranges) {
+        mergeLoadedRange(range.start, range.end);
+    }
+}
+
+/** Remaps sparse loaded ranges after deleting one logical message id. */
+function remapLoadedRangesAfterMessageDeletion(deletedId) {
+    if (isChatFullyHydrated()) {
+        return;
+    }
+
+    const deleted = Number(deletedId);
+    if (!Number.isInteger(deleted) || deleted < 0 || !chatLoadState.loadedRanges.length) {
+        return;
+    }
+
+    const maxEnd = getTotalChatMessages() - 1;
+    const remappedRanges = [];
+
+    for (const range of chatLoadState.loadedRanges) {
+        const start = Number(range?.start);
+        const end = Number(range?.end);
+        if (!Number.isInteger(start) || !Number.isInteger(end) || start < 0 || end < start) {
+            continue;
+        }
+
+        let nextStart = start;
+        let nextEnd = end;
+
+        if (start > deleted) {
+            nextStart = start - 1;
+            nextEnd = end - 1;
+        } else if (end >= deleted) {
+            nextEnd = end - 1;
+        }
+
+        if (nextEnd < nextStart) {
+            continue;
+        }
+
+        if (maxEnd < 0) {
+            continue;
+        }
+
+        nextStart = clamp(nextStart, 0, maxEnd);
+        nextEnd = clamp(nextEnd, 0, maxEnd);
+        if (nextStart <= nextEnd) {
+            remappedRanges.push({ start: nextStart, end: nextEnd });
+        }
+    }
+
+    replaceLoadedRanges(remappedRanges);
+}
+
+/** Clips sparse loaded ranges after deleting a suffix of the logical chat. */
+function clipLoadedRangesToCurrentChatLength() {
+    if (isChatFullyHydrated()) {
+        return;
+    }
+
+    const maxEnd = getTotalChatMessages() - 1;
+    if (maxEnd < 0) {
+        chatLoadState.loadedRanges = [];
+        return;
+    }
+
+    const clippedRanges = [];
+    for (const range of chatLoadState.loadedRanges) {
+        const start = Number(range?.start);
+        const end = Number(range?.end);
+        if (!Number.isInteger(start) || !Number.isInteger(end) || start < 0 || end < start || start > maxEnd) {
+            continue;
+        }
+
+        clippedRanges.push({ start, end: Math.min(end, maxEnd) });
+    }
+
+    replaceLoadedRanges(clippedRanges);
+}
+
 function getContiguousLoadedTailStartId() {
     const totalMessages = getTotalChatMessages();
     if (totalMessages <= 0) {
@@ -5339,6 +5421,7 @@ export async function deleteLastMessage() {
     const deletedId = chat.length - 1;
     const deletedSnapshotKeys = deletedId >= 0 ? getPromptSnapshotKeysFromMessage(chat[deletedId]) : [];
     chat.length = chat.length - 1;
+    remapLoadedRangesAfterMessageDeletion(deletedId);
     syncPartialChatRangeStateAfterMutation();
     chatElement.children('.mes').last().remove();
     syncVisibleChatRangeFromDom();
@@ -5415,6 +5498,7 @@ export async function deleteMessage(id, swipeDeletionIndex = undefined, askConfi
 
     const deletedSnapshotKeys = getPromptSnapshotKeysFromMessage(chat[id]);
     chat.splice(id, 1);
+    remapLoadedRangesAfterMessageDeletion(id);
     syncPartialChatRangeStateAfterMutation();
     const rekeys = [];
     const remapTimedWorldInfoIndex = createDeleteMessageIndexMapper(id);
@@ -8211,6 +8295,7 @@ async function rollbackUnsavedInsertedMessage(messageId, message) {
     }
 
     chat.length = chat.length - 1;
+    remapLoadedRangesAfterMessageDeletion(messageId);
     chatElement.children(`.mes[mesid="${messageId}"]`).remove();
     await recomputeTimedWorldInfo();
     refreshChatStateAfterSaveRollback();
@@ -8425,6 +8510,7 @@ export async function Generate(type, { automatic_trigger, force_name2, quiet_pro
             const deletedId = chat.length - 1;
             const deletedMessage = chat[deletedId];
             chat.length = chat.length - 1;
+            remapLoadedRangesAfterMessageDeletion(deletedId);
             syncPartialChatRangeStateAfterMutation();
             await recomputeTimedWorldInfo();
             await removeLastMessage();
@@ -18142,6 +18228,7 @@ jQuery(async function () {
             chatElement.find(`.mes[mesid="${this_del_mes}"]`).nextAll('div').remove();
             chatElement.find(`.mes[mesid="${this_del_mes}"]`).remove();
             chat.length = this_del_mes;
+            clipLoadedRangesToCurrentChatLength();
             syncPartialChatRangeStateAfterMutation();
             syncVisibleChatRangeFromDom();
             await recomputeTimedWorldInfo();
