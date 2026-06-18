@@ -93,7 +93,8 @@ import {
     ensureMessageMediaIsArray,
     hasActiveMessageEditSession,
     applyChunkedChatPayload,
-    getConfiguredLongChatBufferMax,
+    getConfiguredLongChatDisplayCount,
+    prefetchCurrentChatTailBuffer,
     prepareCurrentChatSavePayload,
 } from '../script.js';
 import { printTagList, createTagMapFromList, applyTagsOnCharacterSelect, tag_map, applyTagsOnGroupSelect } from './tags.js';
@@ -353,7 +354,7 @@ async function loadGroupChat(chatId, { withMetadata = false, chunked = false } =
         body: JSON.stringify({
             id: chatId,
             ...(withMetadata ? { with_metadata: true } : {}),
-            ...(chunked ? { chunked: true, count: getConfiguredLongChatBufferMax() } : {}),
+            ...(chunked ? { chunked: true, count: getConfiguredLongChatDisplayCount() } : {}),
         }),
     });
 
@@ -487,6 +488,7 @@ export async function getGroupChat(groupId, reload = false) {
         normalizeChatIdentities(chat, { generateUuid: uuidv4 });
         chatElement.find('.mes').remove();
         await printMessages();
+        void prefetchCurrentChatTailBuffer(getCurrentChatId());
     }
 
     if (reload) {

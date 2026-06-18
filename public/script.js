@@ -962,6 +962,8 @@ const HYDRATE_CHAT_CONTROL_ID = 'load_full_chat_for_editing';
 const CHAT_GAP_INDICATOR_CLASS = 'chat_gap_indicator';
 const FALLBACK_CHAT_WINDOW_SIZE = 200;
 const INITIAL_CHAT_RENDER_MAX = 500;
+const LONG_CHAT_PREFETCH_MULTIPLIER = 2;
+const LONG_CHAT_PREFETCH_MAX = 500;
 
 let dialogueResolve = null;
 let dialogueCloseStop = false;
@@ -4158,13 +4160,14 @@ function getNormalizedLongChatHandling() {
     return normalizeLongChatHandlingSettings(power_user);
 }
 
-function getConfiguredLongChatDisplayCount() {
+export function getConfiguredLongChatDisplayCount() {
     const { displayCount } = getNormalizedLongChatHandling();
     return Math.max(1, displayCount);
 }
 
 export function getConfiguredLongChatBufferMax() {
-    return Math.max(1000, getConfiguredLongChatDisplayCount());
+    const displayCount = getConfiguredLongChatDisplayCount();
+    return Math.max(displayCount, Math.min(LONG_CHAT_PREFETCH_MAX, displayCount * LONG_CHAT_PREFETCH_MULTIPLIER));
 }
 
 function mergeLoadedRange(startId, endId) {
@@ -4579,7 +4582,7 @@ export function applyChunkedChatPayload(response, { replace = false, currentView
         mergeLoadedRange(loadedRangeStart, loadedRangeEnd);
     }
 
-    chatLoadState.isHydrated = response?.isHydrated !== false;
+    chatLoadState.isHydrated = response?.isHydrated !== false || getContiguousLoadedTailStartId() === 0;
     if (isChatFullyHydrated()) {
         chatLoadState.tailStartId = 0;
     } else {
@@ -4641,7 +4644,7 @@ function chunkedPayloadIncludesLatestTail(response) {
 
 async function fetchLatestTailForPayload(response, options = {}) {
     const totalMessages = Number(response?.totalMessages);
-    const count = getConfiguredLongChatBufferMax();
+    const count = getConfiguredLongChatDisplayCount();
     const rangeStart = Number.isInteger(totalMessages)
         ? Math.max(0, totalMessages - count)
         : null;
@@ -4651,6 +4654,56 @@ async function fetchLatestTailForPayload(response, options = {}) {
         count,
         ...options,
     });
+}
+
+function getTailPrefetchRange() {
+    if (isChatFullyHydrated() || getTotalChatMessages() <= 0) {
+        return null;
+    }
+
+    const totalMessages = getTotalChatMessages();
+    const loadedTailStartId = getContiguousLoadedTailStartId();
+    const targetTailStartId = Math.max(0, totalMessages - getConfiguredLongChatBufferMax());
+
+    if (loadedTailStartId <= targetTailStartId) {
+        return null;
+    }
+
+    return {
+        rangeStart: targetTailStartId,
+        count: loadedTailStartId - targetTailStartId,
+    };
+}
+
+/**
+ * Prefetches older tail messages into the sparse chat cache without rendering DOM or media.
+ * @param {string} chatId Chat id that must still be current when the prefetch applies.
+ */
+export async function prefetchCurrentChatTailBuffer(chatId) {
+    const groupId = selected_group;
+    const characterId = this_chid;
+
+    try {
+        await delay(0);
+
+        if (chatId !== getCurrentChatId() || groupId !== selected_group || characterId !== this_chid) {
+            return;
+        }
+
+        const range = getTailPrefetchRange();
+        if (!range) {
+            return;
+        }
+
+        const response = await fetchChunkedChat(range);
+        if (chatId !== getCurrentChatId() || groupId !== selected_group || characterId !== this_chid) {
+            return;
+        }
+
+        applyChunkedChatPayload(response, { replace: false, currentView: chatLoadState.currentView });
+    } catch (error) {
+        console.debug('Failed to prefetch chat tail buffer', error);
+    }
 }
 
 async function replaceChunkedChatPayloadPreservingWindow(response, { scrollToTail = false } = {}) {
@@ -4715,7 +4768,7 @@ async function replaceChunkedChatPayloadWithLatestTail(response) {
 async function fetchChunkedChat({ rangeStart = null, count = null, hydrateFull = false } = {}) {
     const requestedCount = Number.isFinite(Number(count))
         ? Number(count)
-        : getConfiguredLongChatBufferMax();
+        : getConfiguredLongChatDisplayCount();
 
     if (selected_group) {
         const response = await fetch('/api/chats/group/get', {
@@ -11562,6 +11615,7 @@ export async function getChat() {
         await waitForLoaderPaint();
         await getChatResult();
         eventSource.emit('chatLoaded', { detail: { id: this_chid, character: characters[this_chid] } });
+        void prefetchCurrentChatTailBuffer(getCurrentChatId());
 
         // Focus on the textarea if not already focused on a visible text input
         setTimeout(function () {
