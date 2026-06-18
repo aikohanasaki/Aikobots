@@ -110,7 +110,7 @@ async function migrateAllUsersChatsToSqlite() {
                 await migrateFromJsonl(entryPath, sqlitePath);
                 await verifySqliteIntegrity(sqlitePath);
                 // Remove the verified legacy JSONL source after successful migration.
-                fs.unlinkSync(entryPath);
+                await fs.promises.unlink(entryPath);
                 totalMigrated++;
             } catch (error) {
                 totalFailed++;
@@ -123,7 +123,7 @@ async function migrateAllUsersChatsToSqlite() {
                 try {
                     await verifySqliteIntegrity(sqlitePath);
                     console.info(`[Data Maid] ${sqlitePath} already exists and passed integrity check, removing legacy JSONL ${entryPath}...`);
-                    fs.unlinkSync(entryPath);
+                    await fs.promises.unlink(entryPath);
                     totalRemovedExisting++;
                 } catch (error) {
                     totalFailed++;
