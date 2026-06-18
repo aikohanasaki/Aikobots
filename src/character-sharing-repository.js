@@ -252,7 +252,12 @@ async function acquireSharedCharacterWriteLock() {
     }
 }
 
-function normalizeCharacterName(value) {
+/**
+ * Normalizes a character avatar or shared-character key to its canonical filename stem.
+ * @param {string} value Character file name or key.
+ * @returns {string}
+ */
+export function normalizeCharacterName(value) {
     const parsedName = path.parse(String(value || '')).name || String(value || '');
     const sanitizedName = sanitize(parsedName).trim();
 

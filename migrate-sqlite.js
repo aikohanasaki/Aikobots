@@ -2,8 +2,11 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import readline from 'node:readline';
+import { sync as writeFileAtomicSync } from 'write-file-atomic';
 import { CommandLineParser } from './src/command-line.js';
 import { serverDirectory } from './src/server-directory.js';
+
+const INITIAL_LONG_CHAT_DISPLAY_COUNT = 100;
 
 // config.yaml will be set when parsing command line arguments
 const cliArgs = new CommandLineParser().parse(process.argv);
@@ -142,6 +145,248 @@ async function migrateAllUsersChatsToSqlite() {
     }
 }
 
+/**
+ * Reads and validates a user settings JSON document.
+ * @param {string} settingsPath Settings file path.
+ * @returns {object}
+ */
+function readUserSettings(settingsPath) {
+    const settings = JSON.parse(fs.readFileSync(settingsPath, 'utf8'));
+    if (!settings || typeof settings !== 'object' || Array.isArray(settings)) {
+        throw new Error(`Invalid settings file: ${settingsPath}`);
+    }
+
+    return settings;
+}
+
+/**
+ * Sets the initial long-chat display count for all existing user settings files.
+ * @returns {Promise<void>}
+ */
+async function migrateAllUsersInitialMessagesToShow() {
+    const { SETTINGS_FILE } = await import('./src/constants.js');
+    const { withSettingsPersonasLock } = await import('./src/settings-lock.js');
+    const { getAllUserHandles, getUserDirectories } = await import('./src/users.js');
+    const handles = await getAllUserHandles();
+    let totalUpdated = 0;
+    let totalAlreadySet = 0;
+    let totalSkipped = 0;
+
+    for (const handle of handles) {
+        const directories = getUserDirectories(handle);
+        const settingsPath = path.join(directories.root, SETTINGS_FILE);
+
+        if (!fs.existsSync(settingsPath)) {
+            totalSkipped++;
+            console.warn(`[Data Maid] Skipping initial messages migration for ${handle}; settings file does not exist: ${settingsPath}`);
+            continue;
+        }
+
+        await withSettingsPersonasLock(directories, async (lock) => {
+            await lock.run(() => {
+                const settings = readUserSettings(settingsPath);
+
+                if (!settings.power_user || typeof settings.power_user !== 'object' || Array.isArray(settings.power_user)) {
+                    settings.power_user = {};
+                }
+
+                if (settings.power_user.long_chat_display_count === INITIAL_LONG_CHAT_DISPLAY_COUNT) {
+                    totalAlreadySet++;
+                    return;
+                }
+
+                settings.power_user.long_chat_display_count = INITIAL_LONG_CHAT_DISPLAY_COUNT;
+                writeFileAtomicSync(settingsPath, JSON.stringify(settings, null, 4), 'utf8');
+                totalUpdated++;
+            });
+        });
+    }
+
+    if (totalUpdated > 0 || totalSkipped > 0) {
+        console.info(`[Data Maid] Initial messages migration: ${totalUpdated} user setting(s) updated, ${totalAlreadySet} already set, ${totalSkipped} skipped.`);
+    }
+}
+
+/**
+ * Groups pushed shared-character keys by owning user handle.
+ * @param {object} sharedIndex Shared-character index snapshot.
+ * @returns {Map<string, Set<string>>}
+ */
+function getPushedCharacterNamesByHandle(sharedIndex) {
+    const namesByHandle = new Map();
+    const characters = sharedIndex?.characters && typeof sharedIndex.characters === 'object' && !Array.isArray(sharedIndex.characters)
+        ? sharedIndex.characters
+        : {};
+
+    for (const [characterName, record] of Object.entries(characters)) {
+        const ownerHandles = Array.isArray(record?.ownerHandles) ? record.ownerHandles : [];
+        for (const ownerHandle of ownerHandles) {
+            const handle = String(ownerHandle || '').trim();
+            if (!handle) {
+                continue;
+            }
+
+            if (!namesByHandle.has(handle)) {
+                namesByHandle.set(handle, new Set());
+            }
+
+            namesByHandle.get(handle).add(characterName);
+        }
+    }
+
+    return namesByHandle;
+}
+
+/**
+ * Removes legacy per-character lorebook settings for pushed shared characters.
+ * @returns {Promise<void>}
+ */
+async function migratePushedCharacterCharLoreSettings() {
+    const { SETTINGS_FILE } = await import('./src/constants.js');
+    const { withSettingsPersonasLock } = await import('./src/settings-lock.js');
+    const { getAllUserHandles, getUserDirectories } = await import('./src/users.js');
+    const { normalizeCharacterName, readSharedCharacterIndexSnapshot } = await import('./src/character-sharing-repository.js');
+    const sharedIndex = await readSharedCharacterIndexSnapshot();
+    const pushedNamesByHandle = getPushedCharacterNamesByHandle(sharedIndex);
+    const handles = await getAllUserHandles();
+    let totalUpdated = 0;
+    let totalRemoved = 0;
+    let totalSkipped = 0;
+
+    for (const handle of handles) {
+        const pushedNames = pushedNamesByHandle.get(handle);
+        if (!pushedNames?.size) {
+            continue;
+        }
+
+        const directories = getUserDirectories(handle);
+        const settingsPath = path.join(directories.root, SETTINGS_FILE);
+
+        if (!fs.existsSync(settingsPath)) {
+            totalSkipped++;
+            console.warn(`[Data Maid] Skipping pushed character charLore migration for ${handle}; settings file does not exist: ${settingsPath}`);
+            continue;
+        }
+
+        await withSettingsPersonasLock(directories, async (lock) => {
+            await lock.run(() => {
+                const settings = readUserSettings(settingsPath);
+                const worldInfo = settings?.world_info_settings?.world_info;
+                if (!Array.isArray(worldInfo?.charLore)) {
+                    return;
+                }
+
+                const nextCharLore = worldInfo.charLore.filter((entry) => {
+                    try {
+                        return !pushedNames.has(normalizeCharacterName(entry?.name));
+                    } catch {
+                        return true;
+                    }
+                });
+                const removed = worldInfo.charLore.length - nextCharLore.length;
+                if (removed === 0) {
+                    return;
+                }
+
+                worldInfo.charLore = nextCharLore;
+                writeFileAtomicSync(settingsPath, JSON.stringify(settings, null, 4), 'utf8');
+                totalUpdated++;
+                totalRemoved += removed;
+            });
+        });
+    }
+
+    if (totalRemoved > 0 || totalSkipped > 0) {
+        console.info(`[Data Maid] Pushed character charLore migration: ${totalRemoved} entr${totalRemoved === 1 ? 'y' : 'ies'} removed from ${totalUpdated} user setting(s), ${totalSkipped} skipped.`);
+    }
+}
+
+/**
+ * Lists canonical character names from a user's character directory.
+ * @param {string} charactersDirectory User character directory.
+ * @param {(value: string) => string} normalizeCharacterName Character name normalizer.
+ * @returns {Set<string>}
+ */
+function getCharacterNamesFromDirectory(charactersDirectory, normalizeCharacterName) {
+    const characterNames = new Set();
+    const files = fs.existsSync(charactersDirectory)
+        ? fs.readdirSync(charactersDirectory)
+        : [];
+
+    for (const fileName of files) {
+        if (path.extname(fileName).toLowerCase() !== '.png') {
+            continue;
+        }
+
+        try {
+            characterNames.add(normalizeCharacterName(fileName));
+        } catch {
+            // Ignore unusable character file names while pruning stale settings.
+        }
+    }
+
+    return characterNames;
+}
+
+/**
+ * Removes per-character lorebook settings for characters that no longer exist.
+ * @returns {Promise<void>}
+ */
+async function migrateOrphanedCharacterCharLoreSettings() {
+    const { SETTINGS_FILE } = await import('./src/constants.js');
+    const { withSettingsPersonasLock } = await import('./src/settings-lock.js');
+    const { getAllUserHandles, getUserDirectories } = await import('./src/users.js');
+    const { normalizeCharacterName } = await import('./src/character-sharing-repository.js');
+    const handles = await getAllUserHandles();
+    let totalUpdated = 0;
+    let totalRemoved = 0;
+    let totalSkipped = 0;
+
+    for (const handle of handles) {
+        const directories = getUserDirectories(handle);
+        const settingsPath = path.join(directories.root, SETTINGS_FILE);
+
+        if (!fs.existsSync(settingsPath)) {
+            totalSkipped++;
+            console.warn(`[Data Maid] Skipping orphaned charLore migration for ${handle}; settings file does not exist: ${settingsPath}`);
+            continue;
+        }
+
+        const characterNames = getCharacterNamesFromDirectory(directories.characters, normalizeCharacterName);
+
+        await withSettingsPersonasLock(directories, async (lock) => {
+            await lock.run(() => {
+                const settings = readUserSettings(settingsPath);
+                const worldInfo = settings?.world_info_settings?.world_info;
+                if (!Array.isArray(worldInfo?.charLore)) {
+                    return;
+                }
+
+                const nextCharLore = worldInfo.charLore.filter((entry) => {
+                    try {
+                        return characterNames.has(normalizeCharacterName(entry?.name));
+                    } catch {
+                        return false;
+                    }
+                });
+                const removed = worldInfo.charLore.length - nextCharLore.length;
+                if (removed === 0) {
+                    return;
+                }
+
+                worldInfo.charLore = nextCharLore;
+                writeFileAtomicSync(settingsPath, JSON.stringify(settings, null, 4), 'utf8');
+                totalUpdated++;
+                totalRemoved += removed;
+            });
+        });
+    }
+
+    if (totalRemoved > 0 || totalSkipped > 0) {
+        console.info(`[Data Maid] Orphaned charLore migration: ${totalRemoved} entr${totalRemoved === 1 ? 'y' : 'ies'} removed from ${totalUpdated} user setting(s), ${totalSkipped} skipped.`);
+    }
+}
+
 async function runMigration() {
     try {
         const { initUserStorage } = await import('./src/users.js');
@@ -162,6 +407,9 @@ async function runMigration() {
         await withDirectoryLock(lockOptions, async () => {
             console.log('Starting SQLite migration...');
             await migrateAllUsersChatsToSqlite();
+            await migrateAllUsersInitialMessagesToShow();
+            await migratePushedCharacterCharLoreSettings();
+            await migrateOrphanedCharacterCharLoreSettings();
             console.log('SQLite migration completed.');
         });
     } catch (error) {
