@@ -2604,7 +2604,7 @@ const ACTIVE_SESSION_LOCK_MESSAGE = 'Aikobots is open in another tab or browser 
 const ACTIVE_SESSION_VERIFY_DEBOUNCE_MS = 750;
 const ACTIVE_SESSION_DUPLICATE_PROBE_MS = 500;
 const ACTIVE_SESSION_DUPLICATE_PROBE_ATTEMPTS = 2;
-const ACTIVE_SESSION_WRITE_CONTROL_PATTERN = /(send|generate|regenerate|continue|swipe|save|delete|remove|trash|edit|rename|create|new|import|upload|restore|backup|reset|submit|install|update|switch|move|duplicate|merge|promote|demote|checkout|checkin|consolidate|compact|capture|commit|memory|clip|persona|avatar)/i;
+const ACTIVE_SESSION_WRITE_CONTROL_PATTERN = /(send|generate|regenerate|continue|swipe|save|delete|remove|trash|edit|rename|create|new|import|upload|restore|backup|reset|submit|install|update|switch|move|clone|duplicate|merge|promote|demote|checkout|checkin|consolidate|compact|capture|commit|memory|clip|persona|avatar)/i;
 let activeSessionVerifyTimer = null;
 let activeSessionVerifyInFlight = false;
 let activeSessionLockModal = null;
@@ -12097,18 +12097,7 @@ export function setGenerationParamsFromPreset(preset) {
     }
 }
 
-// Common code for message editor done and auto-save
-function updateMessage(div) {
-    const mesBlock = div.closest('.mes_block');
-    let text = mesBlock.find('.edit_textarea').val()
-        ?? mesBlock.find('.mes_text').text();
-    const target = resolveActiveMessageEditSession();
-    if (!target.ok) {
-        warnStaleMessageEdit();
-        throw new Error(`Message edit target validation failed: ${target.reason}`);
-    }
-    const mes = target.message;
-
+function normalizeMessageEditText(mes, text) {
     let regexPlacement;
     if (mes.is_user) {
         regexPlacement = regex_placement.USER_INPUT;
@@ -12138,6 +12127,26 @@ function updateMessage(div) {
     if (bias) {
         text = removeMacros(text);
     }
+
+    return { text, bias };
+}
+
+// Common code for message editor done and auto-save
+function updateMessage(div) {
+    const mesBlock = div.closest('.mes_block');
+    let text = mesBlock.find('.edit_textarea').val()
+        ?? mesBlock.find('.mes_text').text();
+    const target = resolveActiveMessageEditSession();
+    if (!target.ok) {
+        warnStaleMessageEdit();
+        throw new Error(`Message edit target validation failed: ${target.reason}`);
+    }
+    const mes = target.message;
+    const normalized = normalizeMessageEditText(mes, text);
+
+    text = normalized.text;
+    const bias = normalized.bias;
+
     if (target.session.fieldType === 'swipe_text' && target.swipeIndex !== null) {
         mes.swipes[target.swipeIndex] = text;
         if (Number(mes.swipe_id) === Number(target.swipeIndex)) {
@@ -12416,6 +12425,91 @@ async function messageEditMove(sourceId, targetId) {
     await recomputeTimedWorldInfo();
     await saveChatConditional();
     return true;
+}
+
+async function cloneEditedMessage() {
+    if (is_delete_mode || isGenerating()) {
+        toastr.warning(t`Wait for the current operation to finish before cloning messages.`);
+        return;
+    }
+
+    const target = resolveActiveMessageEditSession();
+    if (!target.ok) {
+        warnStaleMessageEdit();
+        return;
+    }
+
+    if (!isChatMessageLoaded(target.index)) {
+        toastr.warning(t`Load this message before cloning it.`);
+        return;
+    }
+
+    const messageElement = chatElement.find(`.mes[mesid="${target.index}"]`);
+    const editText = messageElement.find('.edit_textarea').val() ?? target.message?.mes ?? '';
+    const { text, bias } = normalizeMessageEditText(target.message, editText);
+    const endpoint = selected_group ? '/api/chats/group/message/clone' : '/api/chats/message/clone';
+    const currentChatDetails = selected_group ? null : getCurrentChatDetails();
+    const body = selected_group
+        ? {
+            id: getCurrentChatId(),
+            message_id: target.index,
+            text_override: text,
+            bias_override: bias ?? null,
+            base_revision: getChatSaveRevision(),
+            save_session_id: getChatSaveSessionId(),
+            display_count: getConfiguredLongChatDisplayCount(),
+        }
+        : {
+            ch_name: currentChatDetails?.characterName ?? characters[this_chid]?.name,
+            file_name: currentChatDetails?.fileName ?? characters[this_chid]?.chat,
+            avatar_url: currentChatDetails?.avatarUrl ?? characters[this_chid]?.avatar,
+            message_id: target.index,
+            text_override: text,
+            bias_override: bias ?? null,
+            base_revision: getChatSaveRevision(),
+            save_session_id: getChatSaveSessionId(),
+            display_count: getConfiguredLongChatDisplayCount(),
+        };
+
+    const response = await fetch(endpoint, {
+        method: 'POST',
+        headers: getRequestHeaders(),
+        cache: 'no-cache',
+        body: JSON.stringify(body),
+    });
+
+    if (!response.ok) {
+        let errorData = null;
+        try {
+            errorData = await response.json();
+        } catch {
+            // Fall through to generic message below.
+        }
+
+        if (errorData?.error === 'stale_revision') {
+            warnStaleChatSave(errorData);
+            return;
+        }
+
+        toastr.error(errorData?.message || t`Message clone failed.`);
+        return;
+    }
+
+    const payload = await response.json();
+    setLatestItemizedPrompt(null);
+    await saveItemizedPrompts(getCurrentChatId());
+
+    const nextView = Number(payload?.loadedRangeEnd) === Number(payload?.totalMessages) - 1 ? 'tail' : 'history';
+    applyChunkedChatPayload(payload, { replace: true, currentView: nextView });
+    const renderStart = Number.isInteger(payload?.loadedRangeStart) ? payload.loadedRangeStart : payload.inserted_message_id;
+    const renderCount = Array.isArray(payload?.messages) && payload.messages.length > 0
+        ? payload.messages.length
+        : getConfiguredLongChatDisplayCount();
+    await renderMessageWindow(renderStart, renderCount);
+    const clonedMessage = await jumpToMessageWindow(payload.inserted_message_id, renderCount);
+    if (clonedMessage?.length) {
+        flashHighlight(clonedMessage);
+    }
 }
 
 async function messageEditDone(div) {
@@ -18296,8 +18390,8 @@ jQuery(async function () {
         await messageEditMove(this_edit_mes_id, targetId);
     });
 
-    $(document).on('click', '.mes_edit_copy', async function () {
-        toastr.warning(t`Copying message objects is disabled while message identity hardening is active.`);
+    $(document).on('click', '.mes_edit_clone', async function () {
+        await cloneEditedMessage();
     });
 
     $(document).on('click', '.mes_edit_delete', async function (event, customData) {

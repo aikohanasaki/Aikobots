@@ -6,7 +6,9 @@ import { beforeAll, describe, expect, it } from '@jest/globals';
 
 let applyLoadedMessageRange;
 let buildChunkedChatPayload;
+let cloneSqliteMessageAfter;
 let getLogicalChatData;
+let insertLogicalMessageAfter;
 let writeLogicalChat;
 
 function getConfigPath() {
@@ -43,9 +45,12 @@ describe('SQLite chat length handling', () => {
         utilModule.setConfigFilePath(getConfigPath());
 
         const chatsModule = await import('../endpoints/chats.js');
+        const sqliteModule = await import('../sqlite-manager.js');
         applyLoadedMessageRange = chatsModule.applyLoadedMessageRange;
         buildChunkedChatPayload = chatsModule.buildChunkedChatPayload;
+        cloneSqliteMessageAfter = chatsModule.cloneSqliteMessageAfter;
         getLogicalChatData = chatsModule.getLogicalChatData;
+        insertLogicalMessageAfter = sqliteModule.insertLogicalMessageAfter;
         writeLogicalChat = chatsModule.writeLogicalChat;
     });
 
@@ -165,6 +170,128 @@ describe('SQLite chat length handling', () => {
             expect(logicalChat[105].mes).toBe('patched 104');
             expect(logicalChat[106].mes).toBe('message 105');
             expect(logicalChat.at(-1).mes).toBe('message 999');
+        } finally {
+            fs.rmSync(tempDir, { recursive: true, force: true });
+        }
+    });
+
+    it('keeps loaded-range updates position-based after fractional inserts', async () => {
+        const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'sqlite-chat-fractional-update-'));
+        const chatPath = path.join(tempDir, 'chat.jsonl');
+
+        try {
+            const sqliteModule = await import('../sqlite-manager.js');
+            const header = makeHeader();
+            await writeLogicalChat(chatPath, header, makeMessages(5));
+
+            const db = await sqliteModule.loadDb(chatPath.replace('.jsonl', '.sqlite'));
+            insertLogicalMessageAfter(db, 2, {
+                name: 'Character',
+                is_user: false,
+                mes: 'inserted',
+                send_date: 99,
+            });
+            sqliteModule.saveDb(db, chatPath.replace('.jsonl', '.sqlite'));
+            db.close();
+
+            await writeLogicalChat(chatPath, header, [{ ...makeMessages(1)[0], mes: 'patched inserted' }], { messageStartId: 3 });
+            const logicalChat = await getLogicalChatData(chatPath);
+
+            expect(logicalChat.map(message => message.mes)).toEqual([
+                undefined,
+                'message 0',
+                'message 1',
+                'message 2',
+                'patched inserted',
+                'message 3',
+                'message 4',
+            ]);
+        } finally {
+            fs.rmSync(tempDir, { recursive: true, force: true });
+        }
+    });
+
+    it('clones a SQLite message after the target and invalidates prompt snapshots', async () => {
+        const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'sqlite-chat-clone-'));
+        const chatPath = path.join(tempDir, 'chat.jsonl');
+
+        try {
+            const header = makeHeader({ chat_revision: 2 });
+            const messages = makeMessages(4);
+            messages[1] = {
+                ...messages[1],
+                aikobots_message_uuid: '11111111-1111-4111-8111-111111111111',
+                swipes: ['message 1'],
+                swipe_id: 0,
+                swipe_info: [{
+                    aikobots_swipe_uuid: '22222222-2222-4222-8222-222222222222',
+                    extra: {
+                        promptSnapshotKey: 'user|chat:test|1|0',
+                        timedWorldInfoCheckpoint: {
+                            version: 1,
+                            messageId: 1,
+                            timedWorldInfo: {
+                                sticky: { a: { start: 1, end: 3 } },
+                                cooldown: {},
+                            },
+                        },
+                    },
+                }],
+                extra: {
+                    promptSnapshotKey: 'user|chat:test|1|0',
+                    timedWorldInfoCheckpoint: {
+                        version: 1,
+                        messageId: 1,
+                        timedWorldInfo: {
+                            sticky: { a: { start: 1, end: 3 } },
+                            cooldown: {},
+                        },
+                    },
+                },
+            };
+            messages[2] = {
+                ...messages[2],
+                extra: {
+                    promptSnapshotKey: 'user|chat:test|2|0',
+                    timedWorldInfoCheckpoint: {
+                        version: 1,
+                        messageId: 2,
+                        timedWorldInfo: {
+                            sticky: { b: { start: 2, end: 3 } },
+                            cooldown: {},
+                        },
+                    },
+                },
+            };
+            await writeLogicalChat(chatPath, header, messages);
+
+            const payload = await cloneSqliteMessageAfter({
+                filePath: chatPath,
+                requestBody: {
+                    message_id: 1,
+                    text_override: 'cloned text',
+                    bias_override: null,
+                    base_revision: 2,
+                },
+                saveSessionId: '33333333-3333-4333-8333-333333333333',
+                displayCount: 10,
+            });
+            const logicalChat = await getLogicalChatData(chatPath);
+            const clone = logicalChat[3];
+            const shifted = logicalChat[4];
+
+            expect(payload.inserted_message_id).toBe(2);
+            expect(payload.chat_revision).toBe(3);
+            expect(logicalChat).toHaveLength(6);
+            expect(clone.mes).toBe('cloned text');
+            expect(clone.aikobots_message_uuid).not.toBe(messages[1].aikobots_message_uuid);
+            expect(clone.swipe_info[0].aikobots_swipe_uuid).not.toBe(messages[1].swipe_info[0].aikobots_swipe_uuid);
+            expect(clone.extra.promptSnapshotKey).toBeUndefined();
+            expect(clone.extra.timedWorldInfoCheckpoint).toBeUndefined();
+            expect(shifted.extra.promptSnapshotKey).toBeUndefined();
+            expect(shifted.extra.timedWorldInfoCheckpoint.messageId).toBe(3);
+            expect(shifted.extra.timedWorldInfoCheckpoint.timedWorldInfo.sticky.b.start).toBe(3);
+            expect(shifted.extra.timedWorldInfoCheckpoint.timedWorldInfo.sticky.b.end).toBe(4);
         } finally {
             fs.rmSync(tempDir, { recursive: true, force: true });
         }

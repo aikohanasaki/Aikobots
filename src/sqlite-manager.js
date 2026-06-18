@@ -116,6 +116,19 @@ export function reindexChat(db) {
     setMessages(db, messages);
 }
 
+function setMessagesWithoutTransaction(db, messages) {
+    db.run('DELETE FROM messages');
+    let stmt;
+    try {
+        stmt = db.prepare('INSERT INTO messages (order_index, content) VALUES (?, ?)');
+        for (let i = 0; i < messages.length; i++) {
+            stmt.run([i, JSON.stringify(messages[i])]);
+        }
+    } finally {
+        stmt?.free();
+    }
+}
+
 /**
  * Gets all messages from the database.
  * @param {import('sql.js').Database} db
@@ -180,6 +193,115 @@ export function getMessageRange(db, offset, limit) {
 }
 
 /**
+ * Gets a logical message row by zero-based message id, excluding the header.
+ * @param {import('sql.js').Database} db
+ * @param {number} messageId
+ * @returns {{id: number, orderIndex: number, content: string, message: any}|null}
+ */
+export function getLogicalMessageRow(db, messageId) {
+    const normalizedMessageId = Number(messageId);
+    if (!Number.isInteger(normalizedMessageId) || normalizedMessageId < 0) {
+        return null;
+    }
+
+    const stmt = db.prepare('SELECT id, order_index, content FROM messages WHERE order_index > 0 ORDER BY order_index ASC LIMIT 1 OFFSET ?');
+    stmt.bind([normalizedMessageId]);
+    try {
+        if (!stmt.step()) {
+            return null;
+        }
+
+        const row = stmt.get();
+        return {
+            id: row[0],
+            orderIndex: row[1],
+            content: row[2],
+            message: JSON.parse(row[2]),
+        };
+    } finally {
+        stmt.free();
+    }
+}
+
+function getOrderedRows(db, startIndex, count) {
+    const stmt = db.prepare('SELECT id, order_index, content FROM messages ORDER BY order_index ASC LIMIT ? OFFSET ?');
+    stmt.bind([count, startIndex]);
+    const rows = [];
+    try {
+        while (stmt.step()) {
+            const row = stmt.get();
+            rows.push({
+                id: row[0],
+                orderIndex: row[1],
+                content: row[2],
+            });
+        }
+    } finally {
+        stmt.free();
+    }
+
+    return rows;
+}
+
+function getLastOrderIndex(db) {
+    const res = db.exec('SELECT order_index FROM messages ORDER BY order_index DESC LIMIT 1');
+    if (res.length === 0 || res[0].values.length === 0) {
+        return -1;
+    }
+
+    return Number(res[0].values[0][0]);
+}
+
+/**
+ * Inserts a logical message immediately after the supplied logical message id.
+ * @param {import('sql.js').Database} db
+ * @param {number} messageId
+ * @param {any} message
+ * @returns {number} Inserted logical message id.
+ */
+export function insertLogicalMessageAfter(db, messageId, message) {
+    const normalizedMessageId = Number(messageId);
+    if (!Number.isInteger(normalizedMessageId) || normalizedMessageId < 0) {
+        throw new Error('Invalid logical message insert id.');
+    }
+
+    db.run('BEGIN TRANSACTION');
+    try {
+        const sourceRow = getLogicalMessageRow(db, normalizedMessageId);
+        if (!sourceRow) {
+            throw new Error('Message to clone was not found.');
+        }
+
+        const nextRow = getLogicalMessageRow(db, normalizedMessageId + 1);
+        let orderIndex = nextRow
+            ? (Number(sourceRow.orderIndex) + Number(nextRow.orderIndex)) / 2
+            : Number(sourceRow.orderIndex) + 1;
+
+        if (!Number.isFinite(orderIndex) || orderIndex === Number(sourceRow.orderIndex) || (nextRow && orderIndex === Number(nextRow.orderIndex))) {
+            setMessagesWithoutTransaction(db, getMessages(db));
+            const reindexedSourceRow = getLogicalMessageRow(db, normalizedMessageId);
+            const reindexedNextRow = getLogicalMessageRow(db, normalizedMessageId + 1);
+            orderIndex = reindexedNextRow
+                ? (Number(reindexedSourceRow.orderIndex) + Number(reindexedNextRow.orderIndex)) / 2
+                : Number(reindexedSourceRow.orderIndex) + 1;
+        }
+
+        const stmt = db.prepare('INSERT INTO messages (order_index, content) VALUES (?, ?)');
+        try {
+            stmt.run([orderIndex, JSON.stringify(message)]);
+        } finally {
+            stmt.free();
+        }
+
+        db.run('COMMIT');
+        return normalizedMessageId + 1;
+    } catch (error) {
+        db.run('ROLLBACK');
+        throw error;
+    }
+}
+
+/**
  * Sets all messages in the database.
  * @param {import('sql.js').Database} db
  * @param {any[]} messages
@@ -187,16 +309,7 @@ export function getMessageRange(db, offset, limit) {
 export function setMessages(db, messages) {
     db.run('BEGIN TRANSACTION');
     try {
-        db.run('DELETE FROM messages');
-        let stmt;
-        try {
-            stmt = db.prepare('INSERT INTO messages (order_index, content) VALUES (?, ?)');
-            for (let i = 0; i < messages.length; i++) {
-                stmt.run([i, JSON.stringify(messages[i])]);
-            }
-        } finally {
-            stmt?.free();
-        }
+        setMessagesWithoutTransaction(db, messages);
         db.run('COMMIT');
     } catch (error) {
         db.run('ROLLBACK');
@@ -223,22 +336,32 @@ export function updateMessages(db, messages, startIndex) {
             throw new Error('Message update would create a gap.');
         }
 
-        let deleteStmt;
-        try {
-            deleteStmt = db.prepare('DELETE FROM messages WHERE order_index >= ? AND order_index < ?');
-            deleteStmt.run([startIndex, startIndex + messages.length]);
-        } finally {
-            deleteStmt?.free();
+        if (messages.length === 0) {
+            db.run('COMMIT');
+            return;
         }
 
-        let insStmt;
+        const targetRows = getOrderedRows(db, startIndex, messages.length);
+        if (targetRows.length !== messages.length && startIndex !== messageRowCount) {
+            throw new Error('Message update range exceeds existing messages.');
+        }
+
+        const appendBaseOrderIndex = targetRows.length === messages.length ? null : getLastOrderIndex(db);
+        let stmt;
         try {
-            insStmt = db.prepare('INSERT INTO messages (order_index, content) VALUES (?, ?)');
+            stmt = targetRows.length === messages.length
+                ? db.prepare('UPDATE messages SET content = ? WHERE id = ?')
+                : db.prepare('INSERT INTO messages (order_index, content) VALUES (?, ?)');
+
             for (let i = 0; i < messages.length; i++) {
-                insStmt.run([startIndex + i, JSON.stringify(messages[i])]);
+                if (targetRows.length === messages.length) {
+                    stmt.run([JSON.stringify(messages[i]), targetRows[i].id]);
+                } else {
+                    stmt.run([appendBaseOrderIndex + 1 + i, JSON.stringify(messages[i])]);
+                }
             }
         } finally {
-            insStmt?.free();
+            stmt?.free();
         }
         db.run('COMMIT');
     } catch (error) {

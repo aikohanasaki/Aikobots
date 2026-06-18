@@ -34,6 +34,7 @@ import {
     uuidv4,
 } from '../util.js';
 import {
+    cloneMessageWithNewIdentity,
     normalizeChatIdentities,
     regenerateChatIdentities,
     stripAikobotsIdentityMetadata,
@@ -47,6 +48,8 @@ import {
     getMessageCount,
     getLastMessage,
     getMessageRange,
+    insertLogicalMessageAfter,
+    getLogicalMessageRow,
     updateMessages,
 } from '../sqlite-manager.js';
 
@@ -60,6 +63,8 @@ const CHAT_LAST_SAVE_SESSION_KEY = 'last_save_session_id';
 const GROUP_CHAT_HEADER_VERSION = 1;
 const CHAT_METADATA_STRIP_KEYS = ['timedWorldInfo', 'worldInfoSummary', 'worldInfoReport'];
 const CHAT_EXTRA_STRIP_KEYS = ['timedWorldInfo', 'worldInfoSummary', 'worldInfoReport'];
+const TIMED_WORLD_INFO_CHECKPOINT_KEY = 'timedWorldInfoCheckpoint';
+const TIMED_WORLD_INFO_CHECKPOINT_VERSION = 1;
 const LONG_CHAT_DISPLAY_MIN = 1;
 const LONG_CHAT_DISPLAY_MAX = 1048576; // 2^20
 const LONG_CHAT_DISPLAY_DEFAULT = 100;
@@ -320,6 +325,145 @@ function sanitizeChatHeaderForPersistence(header) {
     }
 
     return sanitizedHeader;
+}
+
+function removePromptSnapshotKeysFromMessage(message) {
+    if (!_.isPlainObject(message)) {
+        return;
+    }
+
+    if (_.isPlainObject(message.extra)) {
+        delete message.extra.promptSnapshotKey;
+    }
+
+    if (!Array.isArray(message.swipe_info)) {
+        return;
+    }
+
+    for (const swipeInfo of message.swipe_info) {
+        if (_.isPlainObject(swipeInfo?.extra)) {
+            delete swipeInfo.extra.promptSnapshotKey;
+        }
+    }
+}
+
+function removeTimedWorldInfoCheckpointsFromMessage(message) {
+    if (!_.isPlainObject(message)) {
+        return;
+    }
+
+    if (_.isPlainObject(message.extra)) {
+        delete message.extra[TIMED_WORLD_INFO_CHECKPOINT_KEY];
+    }
+
+    if (!Array.isArray(message.swipe_info)) {
+        return;
+    }
+
+    for (const swipeInfo of message.swipe_info) {
+        if (_.isPlainObject(swipeInfo?.extra)) {
+            delete swipeInfo.extra[TIMED_WORLD_INFO_CHECKPOINT_KEY];
+        }
+    }
+}
+
+function normalizeTimedWorldInfoState(timedWorldInfo) {
+    if (!_.isPlainObject(timedWorldInfo)) {
+        return null;
+    }
+
+    const state = _.cloneDeep(timedWorldInfo);
+    for (const type of ['sticky', 'cooldown']) {
+        if (!_.isPlainObject(state[type])) {
+            state[type] = {};
+        }
+    }
+
+    return state;
+}
+
+function remapTimedWorldInfoState(timedWorldInfo, remapIndex) {
+    const state = normalizeTimedWorldInfoState(timedWorldInfo);
+    if (!state) {
+        return null;
+    }
+
+    if (typeof remapIndex !== 'function') {
+        return state;
+    }
+
+    for (const type of ['sticky', 'cooldown']) {
+        for (const effect of Object.values(state[type])) {
+            if (!_.isPlainObject(effect)) {
+                continue;
+            }
+
+            if (Number.isFinite(Number(effect.start))) {
+                effect.start = remapIndex(Number(effect.start));
+            }
+
+            if (Number.isFinite(Number(effect.end))) {
+                effect.end = remapIndex(Number(effect.end));
+            }
+        }
+    }
+
+    return state;
+}
+
+function remapTimedWorldInfoCheckpoint(extra, messageId, remapIndex) {
+    if (!_.isPlainObject(extra)) {
+        return;
+    }
+
+    const checkpoint = extra[TIMED_WORLD_INFO_CHECKPOINT_KEY];
+    if (!_.isPlainObject(checkpoint) || Number(checkpoint.version) !== TIMED_WORLD_INFO_CHECKPOINT_VERSION) {
+        delete extra[TIMED_WORLD_INFO_CHECKPOINT_KEY];
+        return;
+    }
+
+    const state = remapTimedWorldInfoState(checkpoint.timedWorldInfo, remapIndex);
+    if (!state) {
+        delete extra[TIMED_WORLD_INFO_CHECKPOINT_KEY];
+        return;
+    }
+
+    extra[TIMED_WORLD_INFO_CHECKPOINT_KEY] = {
+        version: TIMED_WORLD_INFO_CHECKPOINT_VERSION,
+        messageId: Number(messageId),
+        timedWorldInfo: state,
+    };
+}
+
+function remapMessageTimedWorldInfoCheckpoints(message, messageId, remapIndex) {
+    if (!_.isPlainObject(message)) {
+        return;
+    }
+
+    remapTimedWorldInfoCheckpoint(message.extra, messageId, remapIndex);
+
+    if (!Array.isArray(message.swipe_info)) {
+        return;
+    }
+
+    for (const swipeInfo of message.swipe_info) {
+        remapTimedWorldInfoCheckpoint(swipeInfo?.extra, messageId, remapIndex);
+    }
+}
+
+function createInsertMessageIndexMapper(insertAt) {
+    const insertedMessageId = Number(insertAt);
+    return (messageId) => messageId >= insertedMessageId ? messageId + 1 : messageId;
+}
+
+class ChatMutationError extends Error {
+    constructor(status, error, message = error, details = {}) {
+        super(message);
+        this.name = 'ChatMutationError';
+        this.status = status;
+        this.error = error;
+        this.details = details;
+    }
 }
 
 function getUnsupportedImportedJsonlMessage(header) {
@@ -1076,6 +1220,138 @@ function buildChunkedChatPayloadFromLogicalChatData(chatData, {
     };
     }
 
+function getCloneResponseWindow(insertedMessageId, totalMessages, displayCount) {
+    const config = normalizeLongChatConfig({ displayCount });
+    const count = Math.max(1, config.displayCount);
+    const maxStart = Math.max(0, totalMessages - count);
+    const centeredStart = Number(insertedMessageId) - Math.floor(count / 2);
+    return {
+        rangeStart: Math.max(0, Math.min(centeredStart, maxStart)),
+        count,
+        displayCount: config.displayCount,
+    };
+}
+
+function applyCloneTextOverride(clone, requestBody) {
+    if (!Object.prototype.hasOwnProperty.call(requestBody || {}, 'text_override')) {
+        return;
+    }
+
+    if (typeof requestBody.text_override !== 'string') {
+        throw new ChatMutationError(400, 'invalid_text_override');
+    }
+
+    clone.mes = requestBody.text_override;
+
+    const swipeId = Number(clone.swipe_id);
+    if (Array.isArray(clone.swipes) && Number.isInteger(swipeId) && swipeId >= 0 && swipeId < clone.swipes.length) {
+        clone.swipes[swipeId] = requestBody.text_override;
+    }
+
+    if (!Object.prototype.hasOwnProperty.call(requestBody || {}, 'bias_override')) {
+        return;
+    }
+
+    if (requestBody.bias_override !== null && typeof requestBody.bias_override !== 'string') {
+        throw new ChatMutationError(400, 'invalid_bias_override');
+    }
+
+    clone.extra ??= {};
+    clone.extra.bias = requestBody.bias_override;
+
+    if (Array.isArray(clone.swipe_info) && _.isPlainObject(clone.swipe_info[swipeId])) {
+        clone.swipe_info[swipeId].extra ??= {};
+        clone.swipe_info[swipeId].extra.bias = requestBody.bias_override;
+    }
+}
+
+/**
+ * Clones one logical SQLite chat message immediately after the source message.
+ * @param {{filePath: string, requestBody: object, saveSessionId?: string|null, displayCount?: number}} options
+ * @returns {Promise<object>} Chunked chat payload containing the inserted clone.
+ */
+export async function cloneSqliteMessageAfter({ filePath, requestBody, saveSessionId, displayCount }) {
+    const sqlitePath = filePath.replace('.jsonl', '.sqlite');
+    if (!fs.existsSync(sqlitePath)) {
+        throw new ChatMutationError(409, 'clone_requires_sqlite', 'Message clone requires SQLite chat storage.');
+    }
+
+    const messageId = Number(requestBody?.message_id);
+    if (!Number.isInteger(messageId) || messageId < 0) {
+        throw new ChatMutationError(400, 'invalid_message_id');
+    }
+
+    const db = await loadDb(sqlitePath);
+    try {
+        const header = getChatHeader(db);
+        if (!header) {
+            throw new ChatMutationError(404, 'chat_not_found');
+        }
+        assertSupportedChatStorage(header);
+
+        const revisionCheck = validateSaveRevision(requestBody, header);
+        if (!revisionCheck.ok) {
+            throw new ChatMutationError(revisionCheck.status, revisionCheck.error, revisionCheck.error, {
+                current_revision: revisionCheck.currentRevision,
+                last_save_session_id: revisionCheck.lastSaveSessionId,
+            });
+        }
+
+        const sourceRow = getLogicalMessageRow(db, messageId);
+        if (!sourceRow) {
+            throw new ChatMutationError(400, 'invalid_message_id');
+        }
+
+        const clone = cloneMessageWithNewIdentity(sourceRow.message, { generateUuid: uuidv4 });
+        applyCloneTextOverride(clone, requestBody);
+        clone.send_date = Date.now();
+        removePromptSnapshotKeysFromMessage(clone);
+        removeTimedWorldInfoCheckpointsFromMessage(clone);
+
+        const insertedMessageId = insertLogicalMessageAfter(db, messageId, sanitizeChatMessageForPersistence(clone));
+        const totalMessages = getMessageCount(db);
+        const shiftedMessages = getMessageRange(db, insertedMessageId, totalMessages - insertedMessageId);
+        const remapIndex = createInsertMessageIndexMapper(insertedMessageId);
+
+        for (let index = 0; index < shiftedMessages.length; index++) {
+            const logicalMessageId = insertedMessageId + index;
+            removePromptSnapshotKeysFromMessage(shiftedMessages[index]);
+            if (logicalMessageId === insertedMessageId) {
+                removeTimedWorldInfoCheckpointsFromMessage(shiftedMessages[index]);
+            } else {
+                remapMessageTimedWorldInfoCheckpoints(shiftedMessages[index], logicalMessageId, remapIndex);
+            }
+        }
+
+        updateMessages(db, shiftedMessages.map(message => sanitizeChatMessageForPersistence(message)), insertedMessageId + 1);
+
+        const revisedHeader = setChatRevision(stripChatStorage(header), revisionCheck.nextRevision, saveSessionId);
+        updateMessages(db, [sanitizeChatHeaderForPersistence(revisedHeader)], 0);
+        saveDb(db, sqlitePath);
+
+        const window = getCloneResponseWindow(insertedMessageId, totalMessages, displayCount);
+        const messages = getMessageRange(db, window.rangeStart, window.count);
+        return {
+            result: 'ok',
+            chat_revision: revisionCheck.nextRevision,
+            inserted_message_id: insertedMessageId,
+            header: stripChatStorage(revisedHeader),
+            messages,
+            totalMessages,
+            loadedRangeStart: messages.length > 0 ? window.rangeStart : 0,
+            loadedRangeEnd: messages.length > 0 ? window.rangeStart + messages.length - 1 : -1,
+            tailStartId: window.rangeStart,
+            tailEndId: totalMessages > 0 ? totalMessages - 1 : -1,
+            headCount: window.rangeStart,
+            tailCount: totalMessages - window.rangeStart,
+            displayCount: window.displayCount,
+            isHydrated: window.rangeStart === 0 && messages.length >= totalMessages,
+        };
+    } finally {
+        db.close();
+    }
+}
+
 
 function getGroupChatFilePath(groupChatsDirectory, chatId) {
     return resolveGroupChatFilePath(groupChatsDirectory, chatId);
@@ -1735,6 +2011,42 @@ export async function getChatInfo(pathToFile, additionalData = {}, isGroup = fal
 
 export const router = express.Router();
 
+
+router.post('/message/clone', validateAvatarUrlMiddleware, async function (request, response) {
+    try {
+        const filePath = resolveCharacterChatFilePath(request.user.directories.chats, request.body.avatar_url, request.body.file_name);
+        if (!fs.existsSync(filePath) && !fs.existsSync(filePath.replace('.jsonl', '.sqlite'))) {
+            return response.status(404).send({ error: 'chat_not_found' });
+        }
+
+        return await withChatSaveLock(filePath, async () => {
+            await request.activeSessionOperation?.assertAllowed();
+            const payload = await cloneSqliteMessageAfter({
+                filePath,
+                requestBody: request.body,
+                saveSessionId: getRequestSaveSessionId(request.body),
+                displayCount: request.body.display_count,
+            });
+
+            return response.send(payload);
+        });
+    } catch (error) {
+        if (isActiveSessionError(error)) {
+            return sendActiveSessionRequired(response);
+        }
+        if (isUnsupportedSplitTailChatError(error)) {
+            return sendUnsupportedSplitTailChatError(response, error);
+        }
+        if (isChatPathValidationError(error)) {
+            return sendChatPathValidationError(response, error);
+        }
+        if (error instanceof ChatMutationError) {
+            return response.status(error.status || 400).send({ error: error.error, message: error.message, ...error.details });
+        }
+        console.error(error);
+        return response.status(500).send({ error: 'clone_failed' });
+    }
+});
 
 router.post('/message-visibility', validateAvatarUrlMiddleware, async function (request, response) {
     try {
@@ -2515,6 +2827,47 @@ router.post('/group/delete', async (request, response) => {
         }
         console.error(error);
         return response.sendStatus(500);
+    }
+});
+
+router.post('/group/message/clone', async (request, response) => {
+    try {
+        if (!request.body || !request.body.id) {
+            return response.sendStatus(400);
+        }
+
+        const id = request.body.id;
+        const pathToFile = getGroupChatFilePath(request.user.directories.groupChats, id);
+        if (!fs.existsSync(pathToFile) && !fs.existsSync(pathToFile.replace('.jsonl', '.sqlite'))) {
+            return response.status(404).send({ error: 'chat_not_found' });
+        }
+
+        return await withChatSaveLock(pathToFile, async () => {
+            await request.activeSessionOperation?.assertAllowed();
+            const payload = await cloneSqliteMessageAfter({
+                filePath: pathToFile,
+                requestBody: request.body,
+                saveSessionId: getRequestSaveSessionId(request.body),
+                displayCount: request.body.display_count,
+            });
+
+            return response.send(payload);
+        });
+    } catch (error) {
+        if (isActiveSessionError(error)) {
+            return sendActiveSessionRequired(response);
+        }
+        if (isUnsupportedSplitTailChatError(error)) {
+            return sendUnsupportedSplitTailChatError(response, error);
+        }
+        if (isChatPathValidationError(error)) {
+            return sendChatPathValidationError(response, error);
+        }
+        if (error instanceof ChatMutationError) {
+            return response.status(error.status || 400).send({ error: error.error, message: error.message, ...error.details });
+        }
+        console.error(error);
+        return response.status(500).send({ error: 'clone_failed' });
     }
 });
 
