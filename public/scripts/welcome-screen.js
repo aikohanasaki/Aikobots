@@ -189,8 +189,13 @@ export async function openWelcomeScreen({ force = false, expand = false } = {}) 
     }
 
     await sendWelcomePanel(recentChats, expand);
+    if (getCurrentChatId() !== currentChatId) {
+        console.debug('Chat changed while rendering welcome panel.');
+        return;
+    }
+
     await unshallowPermanentAssistant();
-    await sendAssistantMessage();
+    await sendAssistantMessage(currentChatId);
 }
 
 /**
@@ -207,7 +212,12 @@ async function unshallowPermanentAssistant() {
     await unshallowCharacter(String(characterId));
 }
 
-async function sendAssistantMessage() {
+async function sendAssistantMessage(expectedChatId) {
+    if (getCurrentChatId() !== expectedChatId) {
+        console.debug('Skipping welcome assistant message because chat changed.');
+        return;
+    }
+
     const currentAssistantAvatar = getPermanentAssistantAvatar();
     const character = characters.find(x => x.avatar === currentAssistantAvatar);
     const name = character ? character.name : neutralCharacterName;
