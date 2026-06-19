@@ -690,6 +690,67 @@ function hasValidGroupChatPayload(chat) {
     return Array.isArray(chat) && chat.every(message => _.isPlainObject(message));
 }
 
+function getPersonaThumbnailUrl(personaAvatar) {
+    return `/thumbnail?type=persona&file=${encodeURIComponent(personaAvatar)}`;
+}
+
+function validatePersonaAvatarName(userDirectories, personaAvatar) {
+    const avatarName = String(personaAvatar || '').trim();
+    if (!avatarName || sanitize(avatarName) !== avatarName) {
+        return { ok: false, status: 400, error: 'invalid_persona_avatar' };
+    }
+
+    const avatarPath = assertPathInside(userDirectories.avatars, path.join(userDirectories.avatars, avatarName), 'persona_avatar');
+    if (!fs.existsSync(avatarPath)) {
+        return { ok: false, status: 404, error: 'persona_avatar_not_found' };
+    }
+
+    return { ok: true, avatarName };
+}
+
+/**
+ * Updates persisted user messages in place without hydrating the chat in the browser.
+ * @param {import('sql.js').Database} db SQLite chat database
+ * @param {string} userName Target user name
+ * @param {string} forceAvatar Target persona thumbnail URL
+ * @returns {{matched: number, changed: number, updates: {id: number, message: object}[]}}
+ */
+function getUserPersonaMessageUpdates(db, userName, forceAvatar) {
+    const stmt = db.prepare('SELECT id, content FROM messages WHERE order_index > 0 ORDER BY order_index ASC');
+    const updates = [];
+    let matched = 0;
+
+    try {
+        while (stmt.step()) {
+            const row = stmt.get();
+            const id = row[0];
+            const message = JSON.parse(row[1]);
+
+            if (message?.is_user !== true) {
+                continue;
+            }
+
+            matched++;
+            if (message.name === userName && message.force_avatar === forceAvatar) {
+                continue;
+            }
+
+            updates.push({
+                id,
+                message: {
+                    ...message,
+                    name: userName,
+                    force_avatar: forceAvatar,
+                },
+            });
+        }
+    } finally {
+        stmt.free();
+    }
+
+    return { matched, changed: updates.length, updates };
+}
+
 export function applyLoadedMessageRange(logicalChatData, rangeStart, rangeMessages, rangeEnd = undefined) {
     const startId = Number(rangeStart);
     if (!Number.isInteger(startId) || startId < 0 || !Array.isArray(rangeMessages) || rangeMessages.length === 0) {
@@ -2148,6 +2209,109 @@ router.post('/message-visibility', validateAvatarUrlMiddleware, async function (
         }
         console.error(error);
         return response.status(500).send({ error: 'visibility_update_failed' });
+    }
+});
+
+router.post('/sync-user-persona', validateAvatarUrlMiddleware, async function (request, response) {
+    try {
+        const directoryName = normalizeCharacterChatDirectoryName(request.body.avatar_url);
+        const filePath = resolveCharacterChatFilePath(request.user.directories.chats, request.body.avatar_url, request.body.file_name);
+        const sqlitePath = replaceChatStorageExtension(filePath, '.sqlite');
+        const userName = String(request.body.user_name || '').trim();
+        const personaValidation = validatePersonaAvatarName(request.user.directories, request.body.persona_avatar);
+
+        if (!userName) {
+            return response.status(400).send({ error: 'invalid_user_name' });
+        }
+        if (!personaValidation.ok) {
+            return response.status(personaValidation.status).send({ error: personaValidation.error });
+        }
+        if (!fs.existsSync(sqlitePath)) {
+            return response.status(404).send({ error: 'chat_not_found' });
+        }
+
+        if (checkIntegrity && request.body.integrity) {
+            const isIntact = await checkChatIntegrity(sqlitePath, String(request.body.integrity));
+            if (!isIntact) {
+                console.error(`Chat integrity check failed for ${sqlitePath}`);
+                return response.status(400).send({ error: 'integrity' });
+            }
+        }
+
+        return await withChatSaveLock(sqlitePath, async () => {
+            const db = await loadDb(sqlitePath);
+            try {
+                const header = getChatHeader(db);
+                if (!header) {
+                    return response.status(404).send({ error: 'chat_not_found' });
+                }
+
+                const revisionCheck = validateSaveRevision(request.body, header);
+                if (!revisionCheck.ok) {
+                    return response.status(revisionCheck.status).send({
+                        error: revisionCheck.error,
+                        current_revision: revisionCheck.currentRevision,
+                        last_save_session_id: revisionCheck.lastSaveSessionId,
+                    });
+                }
+
+                const forceAvatar = getPersonaThumbnailUrl(personaValidation.avatarName);
+                const { matched, changed, updates } = getUserPersonaMessageUpdates(db, userName, forceAvatar);
+                if (changed === 0) {
+                    return response.send({
+                        result: 'ok',
+                        matched,
+                        changed,
+                        chat_revision: revisionCheck.currentRevision,
+                    });
+                }
+
+                await request.activeSessionOperation?.assertAllowed();
+
+                db.run('BEGIN TRANSACTION');
+                let headerStmt;
+                let updateStmt;
+                try {
+                    const revisedHeader = setChatRevision(stripChatStorage(header), revisionCheck.nextRevision, getRequestSaveSessionId(request.body));
+                    headerStmt = db.prepare('UPDATE messages SET content = ? WHERE order_index = 0');
+                    headerStmt.run([JSON.stringify(revisedHeader)]);
+
+                    updateStmt = db.prepare('UPDATE messages SET content = ? WHERE id = ?');
+                    for (const update of updates) {
+                        updateStmt.run([JSON.stringify(update.message), update.id]);
+                    }
+
+                    db.run('COMMIT');
+                } catch (error) {
+                    db.run('ROLLBACK');
+                    throw error;
+                } finally {
+                    headerStmt?.free();
+                    updateStmt?.free();
+                }
+
+                saveDb(db, sqlitePath);
+                getBackupFunction(request.user.profile.handle)(request.user.directories.backups, directoryName, serializeJsonl(getMessages(db)));
+
+                return response.send({
+                    result: 'ok',
+                    matched,
+                    changed,
+                    chat_revision: revisionCheck.nextRevision,
+                });
+            } finally {
+                db.close();
+            }
+        });
+    } catch (error) {
+        if (isActiveSessionError(error)) {
+            return sendActiveSessionRequired(response);
+        }
+        if (isChatPathValidationError(error)) {
+            return sendChatPathValidationError(response, error);
+        }
+        console.error(error);
+        return response.status(500).send({ error: 'sync_user_persona_failed' });
     }
 });
 

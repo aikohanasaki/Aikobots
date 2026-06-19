@@ -7,7 +7,9 @@ import {
     default_user_avatar,
     eventSource,
     event_types,
+    getChatSaveRevision,
     getCurrentChatId,
+    getChatSaveSessionId,
     refreshPristineFirstMessage,
     getRequestHeaders,
     getThumbnailUrl,
@@ -19,8 +21,10 @@ import {
     saveChatConditional,
     saveMetadata,
     saveSettingsDebounced,
+    setChatSaveRevision,
     setUserName,
     this_chid,
+    warnStaleChatSave,
 } from '../script.js';
 import { persona_description_positions, power_user } from './power-user.js';
 import { getTokenCountAsync } from './tokenizers.js';
@@ -1729,6 +1733,15 @@ async function onPersonasRestoreInput(e) {
     $('#personas_restore_input').val('');
 }
 
+function applyUserPersonaToLoadedMessages() {
+    for (const mes of chat) {
+        if (mes?.is_user) {
+            mes.name = name1;
+            mes.force_avatar = getThumbnailUrl('persona', user_avatar);
+        }
+    }
+}
+
 async function syncUserNameToPersona() {
     const confirmation = await Popup.show.confirm(t`Are you sure?`, t`All user-sent messages in this chat will be attributed to ${name1}.`);
 
@@ -1736,14 +1749,54 @@ async function syncUserNameToPersona() {
         return;
     }
 
-    for (const mes of chat) {
-        if (mes.is_user) {
-            mes.name = name1;
-            mes.force_avatar = getThumbnailUrl('persona', user_avatar);
-        }
+    if (selected_group) {
+        applyUserPersonaToLoadedMessages();
+        await saveChatConditional();
+        await reloadCurrentChat();
+        return;
     }
 
-    await saveChatConditional();
+    const character = characters[this_chid];
+    if (!character?.chat || !character?.avatar) {
+        applyUserPersonaToLoadedMessages();
+        await saveChatConditional();
+        await reloadCurrentChat();
+        return;
+    }
+
+    const response = await fetch('/api/chats/sync-user-persona', {
+        method: 'POST',
+        headers: getRequestHeaders(),
+        cache: 'no-cache',
+        body: JSON.stringify({
+            file_name: character.chat,
+            avatar_url: character.avatar,
+            user_name: name1,
+            persona_avatar: user_avatar,
+            integrity: chat_metadata?.integrity,
+            base_revision: getChatSaveRevision(),
+            save_session_id: getChatSaveSessionId(),
+        }),
+    });
+
+    if (!response.ok) {
+        let errorData = null;
+        try {
+            errorData = await response.json();
+        } catch {
+            errorData = null;
+        }
+
+        if (errorData?.error === 'stale_revision') {
+            warnStaleChatSave(errorData);
+        } else {
+            toastr.error(t`Could not update user messages.`, t`Persona Management`);
+        }
+        return;
+    }
+
+    const data = await response.json();
+    setChatSaveRevision(data?.chat_revision);
     await reloadCurrentChat();
 }
 
