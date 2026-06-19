@@ -67,7 +67,7 @@ export const toastPositionClasses = [
 
 export const MAX_CONTEXT_DEFAULT = 8192;
 export const MAX_RESPONSE_DEFAULT = 2048;
-export const LONG_CHAT_DISPLAY_MIN = 1;
+export const LONG_CHAT_DISPLAY_MIN = 25;
 export const LONG_CHAT_DISPLAY_MAX = 1048576; // 2^20
 const MAX_CONTEXT_UNLOCKED = 512 * 1024;
 const MAX_RESPONSE_UNLOCKED = 64 * 1024;

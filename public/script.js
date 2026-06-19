@@ -4162,7 +4162,7 @@ function getNormalizedLongChatHandling() {
 
 export function getConfiguredLongChatDisplayCount() {
     const { displayCount } = getNormalizedLongChatHandling();
-    return Math.max(1, displayCount);
+    return Math.max(LONG_CHAT_DISPLAY_MIN, displayCount);
 }
 
 export function getConfiguredLongChatBufferMax() {

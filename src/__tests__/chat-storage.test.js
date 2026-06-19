@@ -79,6 +79,26 @@ describe('SQLite chat length handling', () => {
         }
     });
 
+    it('clamps initial display count below the supported minimum', async () => {
+        const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'sqlite-chat-display-min-'));
+        const chatPath = path.join(tempDir, 'chat.jsonl');
+
+        try {
+            await writeLogicalChat(chatPath, makeHeader(), makeMessages(100));
+
+            const payload = await buildChunkedChatPayload(chatPath, {
+                displayCount: 1,
+            });
+
+            expect(payload.totalMessages).toBe(100);
+            expect(payload.loadedRangeStart).toBe(75);
+            expect(payload.loadedRangeEnd).toBe(99);
+            expect(payload.messages).toHaveLength(25);
+        } finally {
+            fs.rmSync(tempDir, { recursive: true, force: true });
+        }
+    });
+
     it('uses explicit range and count for internal chunked reads', async () => {
         const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'sqlite-chat-range-'));
         const chatPath = path.join(tempDir, 'chat.jsonl');
