@@ -7992,10 +7992,12 @@ async function applyManualFixedMemoryJson(correctedRaw, context) {
                     context.summaryCount,
                     task.signal,
                     null,
-                    {
-                        additionalContextEntries: context.additionalContextEntries,
-                        contextSettingKey: context.contextSettingKey,
-                    },
+                    Object.fromEntries(Object.entries({
+                        additionalContextEntries: Array.isArray(context.additionalContextEntries)
+                            ? context.additionalContextEntries
+                            : undefined,
+                        contextSettingKey: context.contextSettingKey ?? undefined,
+                    }).filter(([, value]) => value !== undefined)),
                 );
                 continue;
             }
