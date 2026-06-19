@@ -6261,7 +6261,7 @@ async function scrollToMemoryBoundaryTarget() {
     const target = await jumpToMessageWindow(targetId);
     if (target?.length) {
         refreshMemoryBoundaryDivider();
-        if (await scrollChatElementIntoView(target)) {
+        if (await scrollChatElementIntoView(target, 'auto')) {
             flashHighlight(target, 2000);
             return;
         }

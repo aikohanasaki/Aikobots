@@ -2697,7 +2697,7 @@ export function initDefaultSlashCommands() {
 
             const target = await jumpToMessageWindow(messageIndex);
 
-            if (target?.length && await scrollChatElementIntoView(target)) {
+            if (target?.length && await scrollChatElementIntoView(target, 'auto')) {
                 flashHighlight(target, 2000);
             } else {
                 toastr.warning(t`Could not find element for message ${messageIndex}. It might not be rendered yet or the index is invalid.`);
