@@ -45,7 +45,6 @@ router.post('/all', (request, response) => {
         }
 
         const files = fs.readdirSync(request.user.directories.groups).filter(x => path.extname(x) === '.json');
-        const chats = fs.readdirSync(request.user.directories.groupChats).filter(x => path.extname(x) === '.jsonl' || path.extname(x) === '.sqlite');
 
         files.forEach(function (file) {
             try {
@@ -64,7 +63,7 @@ router.post('/all', (request, response) => {
                 let chat_size = 0;
                 let date_last_chat = 0;
 
-                if (Array.isArray(group.chats) && Array.isArray(chats)) {
+                if (Array.isArray(group.chats)) {
                     for (const chatId of group.chats) {
                         let chatPaths;
                         try {
