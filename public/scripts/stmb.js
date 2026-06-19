@@ -12,6 +12,7 @@ import {
     name2,
     reloadCurrentChat,
     renderMessageWindow,
+    scrollChatElementIntoView,
     scrollChatToBottom,
     saveSettingsDebounced,
     substituteParams,
@@ -6258,16 +6259,12 @@ async function scrollToMemoryBoundaryTarget() {
     }
 
     const target = await jumpToMessageWindow(targetId);
-    const messageElement = target?.get?.(0);
-    const chatContainer = document.getElementById('chat');
-    if (target?.length && messageElement instanceof HTMLElement && chatContainer instanceof HTMLElement) {
+    if (target?.length) {
         refreshMemoryBoundaryDivider();
-        chatContainer.scrollTo({
-            top: messageElement.offsetTop,
-            behavior: 'smooth',
-        });
-        flashHighlight(target, 2000);
-        return;
+        if (await scrollChatElementIntoView(target)) {
+            flashHighlight(target, 2000);
+            return;
+        }
     }
 
     const highestProcessed = getHighestProcessedMessageId();

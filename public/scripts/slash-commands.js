@@ -39,6 +39,7 @@ import {
     saveChatConditional,
     saveSettings,
     saveSettingsDebounced,
+    scrollChatElementIntoView,
     sendMessageAsUser,
     sendSystemMessage,
     setActiveCharacter,
@@ -2694,16 +2695,9 @@ export function initDefaultSlashCommands() {
                 return '';
             }
 
-            const chatContainer = document.getElementById('chat');
             const target = await jumpToMessageWindow(messageIndex);
-            const messageElement = target?.get?.(0);
 
-            if (target?.length && messageElement instanceof HTMLElement && chatContainer instanceof HTMLElement) {
-                chatContainer.scrollTo({
-                    top: messageElement.offsetTop,
-                    behavior: 'smooth',
-                });
-
+            if (target?.length && await scrollChatElementIntoView(target)) {
                 flashHighlight(target, 2000);
             } else {
                 toastr.warning(t`Could not find element for message ${messageIndex}. It might not be rendered yet or the index is invalid.`);

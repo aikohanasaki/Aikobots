@@ -5166,6 +5166,29 @@ export async function jumpToMessageWindow(messageId, count = null, navigationTok
     }, navigationToken);
 }
 
+/**
+ * Scrolls the chat viewport to a rendered element using container-relative coordinates.
+ * @param {HTMLElement|JQuery<HTMLElement>} element Rendered chat child to anchor.
+ * @param {ScrollBehavior} [behavior='smooth'] Scroll behavior to use.
+ * @returns {Promise<boolean>} True if the element was found and scrolled to.
+ */
+export async function scrollChatElementIntoView(element, behavior = 'smooth') {
+    const messageElement = element instanceof HTMLElement ? element : element?.get?.(0);
+    const chatContainer = chatElement.get(0);
+    if (!(messageElement instanceof HTMLElement) || !(chatContainer instanceof HTMLElement)) {
+        return false;
+    }
+
+    await new Promise(resolve => requestAnimationFrame(resolve));
+
+    const messageRect = messageElement.getBoundingClientRect();
+    const containerRect = chatContainer.getBoundingClientRect();
+    const top = chatContainer.scrollTop + messageRect.top - containerRect.top;
+
+    chatContainer.scrollTo({ top, behavior });
+    return true;
+}
+
 export async function showMoreMessages(messagesToLoad = null, navigationToken = null) {
     return serializeHistoryWindowNavigation(async () => {
         const firstDisplayedMessageId = getFirstDisplayedMessageId();
