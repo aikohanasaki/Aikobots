@@ -483,8 +483,18 @@ function getUnsupportedImportedJsonlMessage(header) {
     return null;
 }
 
+/**
+ * Swaps only the terminal chat storage extension, preserving dots in chat names.
+ * @param {string} filePath Chat storage path ending in .jsonl or .sqlite.
+ * @param {'.jsonl'|'.sqlite'} extension Target storage extension.
+ * @returns {string}
+ */
+function replaceChatStorageExtension(filePath, extension) {
+    return String(filePath).replace(/\.(?:jsonl|sqlite)$/i, extension);
+}
+
 function getChatFileStats(filePath) {
-    const sqlitePath = filePath.replace('.jsonl', '.sqlite');
+    const sqlitePath = replaceChatStorageExtension(filePath, '.sqlite');
     if (fs.existsSync(sqlitePath)) {
         const stats = fs.statSync(sqlitePath);
         return {
@@ -757,7 +767,7 @@ export function readJsonlObjects(filePath) {
 }
 
 async function getChatSegments(filePath, { metadataOnly = false } = {}) {
-    const sqlitePath = filePath.replace('.jsonl', '.sqlite');
+    const sqlitePath = replaceChatStorageExtension(filePath, '.sqlite');
     if (fs.existsSync(sqlitePath)) {
         const db = await loadDb(sqlitePath);
 
@@ -886,7 +896,7 @@ function resolveLegacyGroupChatMetadata(user, chatId) {
 }
 
 async function getGroupChatPayload(filePath) {
-    const sqlitePath = filePath.replace('.jsonl', '.sqlite');
+    const sqlitePath = replaceChatStorageExtension(filePath, '.sqlite');
     if (fs.existsSync(sqlitePath) || fs.existsSync(filePath)) {
         const records = await getLogicalChatData(filePath);
         if (!records.length) {
@@ -937,7 +947,7 @@ async function buildChunkedGroupChatPayload(user, chatId, filePath, {
     hydrateFull = false,
     displayCount = LONG_CHAT_DISPLAY_DEFAULT,
 } = {}) {
-    const sqlitePath = filePath.replace('.jsonl', '.sqlite');
+    const sqlitePath = replaceChatStorageExtension(filePath, '.sqlite');
 
     if (fs.existsSync(sqlitePath)) {
         const db = await loadDb(sqlitePath);
@@ -1004,7 +1014,7 @@ export async function writeLogicalChat(filePath, header, messages, { regenerateI
 
     const sanitizedMessages = identityMessages.map(message => sanitizeChatMessageForPersistence(message));
 
-    const sqlitePath = filePath.replace('.jsonl', '.sqlite');
+    const sqlitePath = replaceChatStorageExtension(filePath, '.sqlite');
     const db = await loadDb(sqlitePath);
 
     if (messageStartId === null) {
@@ -1047,7 +1057,7 @@ export async function buildChunkedChatPayload(filePath, {
     displayCount = LONG_CHAT_DISPLAY_DEFAULT,
 } = {}) {
     const config = normalizeLongChatConfig({ displayCount });
-    const sqlitePath = filePath.replace('.jsonl', '.sqlite');
+    const sqlitePath = replaceChatStorageExtension(filePath, '.sqlite');
 
     if (fs.existsSync(sqlitePath)) {
         const db = await loadDb(sqlitePath);
@@ -1271,7 +1281,7 @@ function applyCloneTextOverride(clone, requestBody) {
  * @returns {Promise<object>} Chunked chat payload containing the inserted clone.
  */
 export async function cloneSqliteMessageAfter({ filePath, requestBody, saveSessionId, displayCount }) {
-    const sqlitePath = filePath.replace('.jsonl', '.sqlite');
+    const sqlitePath = replaceChatStorageExtension(filePath, '.sqlite');
     if (!fs.existsSync(sqlitePath)) {
         throw new ChatMutationError(409, 'clone_requires_sqlite', 'Message clone requires SQLite chat storage.');
     }
@@ -1558,7 +1568,7 @@ export async function resolveCoreChatPayload(chatsDirectory, coreChatPayload) {
 
     if (avatarUrl && chatId) {
         const filePath = resolveCharacterChatFilePath(chatsDirectory, avatarUrl, chatId);
-        const sqlitePath = filePath.replace('.jsonl', '.sqlite');
+        const sqlitePath = replaceChatStorageExtension(filePath, '.sqlite');
 
         if (fs.existsSync(sqlitePath)) {
             const db = await loadDb(sqlitePath);
@@ -1970,7 +1980,7 @@ function readFirstLine(filePath) {
  * @returns {Promise<boolean>} Whether the chat is intact
  */
 async function checkChatIntegrity(filePath, integritySlug) {
-    const sqlitePath = filePath.replace('.jsonl', '.sqlite');
+    const sqlitePath = replaceChatStorageExtension(filePath, '.sqlite');
     if (!fs.existsSync(filePath) && !fs.existsSync(sqlitePath)) {
         return true;
     }
@@ -2015,7 +2025,7 @@ export const router = express.Router();
 router.post('/message/clone', validateAvatarUrlMiddleware, async function (request, response) {
     try {
         const filePath = resolveCharacterChatFilePath(request.user.directories.chats, request.body.avatar_url, request.body.file_name);
-        if (!fs.existsSync(filePath) && !fs.existsSync(filePath.replace('.jsonl', '.sqlite'))) {
+        if (!fs.existsSync(filePath) && !fs.existsSync(replaceChatStorageExtension(filePath, '.sqlite'))) {
             return response.status(404).send({ error: 'chat_not_found' });
         }
 
@@ -2061,7 +2071,7 @@ router.post('/message-visibility', validateAvatarUrlMiddleware, async function (
             return response.status(400).send({ error: 'invalid_visibility_range' });
         }
 
-        if (!fs.existsSync(filePath) && !fs.existsSync(filePath.replace('.jsonl', '.sqlite'))) {
+        if (!fs.existsSync(filePath) && !fs.existsSync(replaceChatStorageExtension(filePath, '.sqlite'))) {
             return response.status(404).send({ error: 'chat_not_found' });
         }
 
@@ -2167,7 +2177,7 @@ router.post('/save', validateAvatarUrlMiddleware, async function (request, respo
             }
 
             let logicalChatData = chatData;
-            const existingSegments = fs.existsSync(filePath) || fs.existsSync(filePath.replace('.jsonl', '.sqlite')) ? await getChatSegments(filePath) : null;
+            const existingSegments = fs.existsSync(filePath) || fs.existsSync(replaceChatStorageExtension(filePath, '.sqlite')) ? await getChatSegments(filePath) : null;
 
             if (request.body.save_mode === 'tail') {
                 return response.status(400).send({ error: 'invalid_save_mode' });
@@ -2273,7 +2283,7 @@ router.post('/get', validateAvatarUrlMiddleware, async function (request, respon
         }
 
         const filePath = resolveCharacterChatFilePath(request.user.directories.chats, request.body.avatar_url, request.body.file_name);
-        const sqlitePath = filePath.replace('.jsonl', '.sqlite');
+        const sqlitePath = replaceChatStorageExtension(filePath, '.sqlite');
         const chatFileExists = fs.existsSync(filePath) || fs.existsSync(sqlitePath);
 
         if (!chatFileExists) {
@@ -2328,7 +2338,7 @@ router.post('/save-prefix', validateAvatarUrlMiddleware, async function (request
         const prefixEndId = Number(request.body.prefix_end_id);
         const headerOverrides = _.isObject(request.body.header_overrides) ? request.body.header_overrides : {};
 
-        if ((!fs.existsSync(sourcePath) && !fs.existsSync(sourcePath.replace('.jsonl', '.sqlite'))) || !Number.isInteger(prefixEndId) || prefixEndId < 0) {
+        if ((!fs.existsSync(sourcePath) && !fs.existsSync(replaceChatStorageExtension(sourcePath, '.sqlite'))) || !Number.isInteger(prefixEndId) || prefixEndId < 0) {
             return response.sendStatus(400);
         }
 
@@ -2372,8 +2382,8 @@ router.post('/rename', validateAvatarUrlMiddleware, async function (request, res
         console.debug('Old chat name', pathToOriginalFile);
         console.debug('New chat name', pathToRenamedFile);
 
-        const sqliteOriginal = pathToOriginalFile.replace('.jsonl', '.sqlite');
-        const sqliteRenamed = pathToRenamedFile.replace('.jsonl', '.sqlite');
+        const sqliteOriginal = replaceChatStorageExtension(pathToOriginalFile, '.sqlite');
+        const sqliteRenamed = replaceChatStorageExtension(pathToRenamedFile, '.sqlite');
 
         if ((!fs.existsSync(pathToOriginalFile) && !fs.existsSync(sqliteOriginal)) || (fs.existsSync(pathToRenamedFile) || fs.existsSync(sqliteRenamed))) {
             console.error('Either Source or Destination files are not available');
@@ -2421,9 +2431,8 @@ router.post('/rename', validateAvatarUrlMiddleware, async function (request, res
 router.post('/delete', validateAvatarUrlMiddleware, async function (request, response) {
     try {
         const filePath = resolveCharacterChatFilePath(request.user.directories.chats, request.body.avatar_url, request.body.chatfile);
-        const baseFilePath = filePath.replace(/\.(jsonl|sqlite)$/i, '');
-        const sqlitePath = baseFilePath + '.sqlite';
-        const jsonlPath = baseFilePath + '.jsonl';
+        const sqlitePath = replaceChatStorageExtension(filePath, '.sqlite');
+        const jsonlPath = replaceChatStorageExtension(filePath, '.jsonl');
         const chatFileExists = fs.existsSync(jsonlPath) || fs.existsSync(sqlitePath);
 
         if (!chatFileExists) {
@@ -2455,8 +2464,7 @@ router.post('/export', validateAvatarUrlMiddleware, async function (request, res
         const filename = request.body.is_group
             ? resolveGroupChatFilePath(request.user.directories.groupChats, request.body.file)
             : resolveCharacterChatFilePath(request.user.directories.chats, request.body.avatar_url, request.body.file);
-        const baseFilePath = filename.replace(/\.(jsonl|sqlite)$/i, '');
-        const sqlitePath = baseFilePath + '.sqlite';
+        const sqlitePath = replaceChatStorageExtension(filename, '.sqlite');
         const exportfilename = request.body.exportfilename;
 
         if (!fs.existsSync(filename) && !fs.existsSync(sqlitePath)) {
@@ -2601,7 +2609,7 @@ router.post('/import', validateAvatarUrlMiddleware, async function (request, res
             const uniqueBaseName = getUniqueName(importedChatBaseName, (candidate) => {
                 const fileName = `${candidate}.sqlite`;
                 const filePath = resolveCharacterChatFilePath(request.user.directories.chats, avatarUrl, fileName);
-                const jsonlPath = filePath.replace('.sqlite', '.jsonl');
+                const jsonlPath = replaceChatStorageExtension(filePath, '.jsonl');
                 return usedNames.includes(fileName) || fs.existsSync(filePath) || fs.existsSync(jsonlPath);
             });
 
@@ -2726,7 +2734,7 @@ router.post('/group/get', async (request, response) => {
         const pathToFile = getGroupChatFilePath(request.user.directories.groupChats, id);
         const withMetadata = request.body.with_metadata === true;
 
-        if (fs.existsSync(pathToFile) || fs.existsSync(pathToFile.replace('.jsonl', '.sqlite'))) {
+        if (fs.existsSync(pathToFile) || fs.existsSync(replaceChatStorageExtension(pathToFile, '.sqlite'))) {
             return await withChatSaveLock(pathToFile, async () => {
                 if (request.body.chunked) {
                     const requestedStart = request.body.range_start === undefined ? null : Number(request.body.range_start);
@@ -2807,9 +2815,8 @@ router.post('/group/delete', async (request, response) => {
 
         const id = request.body.id;
         const pathToFile = getGroupChatFilePath(request.user.directories.groupChats, id);
-        const baseFilePath = pathToFile.replace(/\.(jsonl|sqlite)$/i, '');
-        const sqlitePath = baseFilePath + '.sqlite';
-        const jsonlPath = baseFilePath + '.jsonl';
+        const sqlitePath = replaceChatStorageExtension(pathToFile, '.sqlite');
+        const jsonlPath = replaceChatStorageExtension(pathToFile, '.jsonl');
 
         if (fs.existsSync(jsonlPath) || fs.existsSync(sqlitePath)) {
             if (fs.existsSync(jsonlPath)) fs.unlinkSync(jsonlPath);
@@ -2838,7 +2845,7 @@ router.post('/group/message/clone', async (request, response) => {
 
         const id = request.body.id;
         const pathToFile = getGroupChatFilePath(request.user.directories.groupChats, id);
-        if (!fs.existsSync(pathToFile) && !fs.existsSync(pathToFile.replace('.jsonl', '.sqlite'))) {
+        if (!fs.existsSync(pathToFile) && !fs.existsSync(replaceChatStorageExtension(pathToFile, '.sqlite'))) {
             return response.status(404).send({ error: 'chat_not_found' });
         }
 
@@ -2996,7 +3003,7 @@ router.post('/search', validateAvatarUrlMiddleware, async function (request, res
             chatFiles = targetGroup.chats
                 .map(chatId => {
                     const filePath = getGroupChatFilePath(groupChatsDir, chatId);
-                    const sqlitePath = filePath.replace('.jsonl', '.sqlite');
+                    const sqlitePath = replaceChatStorageExtension(filePath, '.sqlite');
                     if (!fs.existsSync(filePath) && !fs.existsSync(sqlitePath)) return null;
                     const fileStats = getChatFileStats(filePath);
                     return {
@@ -3137,7 +3144,7 @@ router.post('/orphaned', async function (request, response) {
                     ? (await Promise.all((Array.isArray(group.chats) ? group.chats : [])
                         .map(async chatId => {
                             const filePath = getGroupChatFilePath(request.user.directories.groupChats, chatId);
-                            if (!fs.existsSync(filePath) && !fs.existsSync(filePath.replace('.jsonl', '.sqlite'))) {
+                            if (!fs.existsSync(filePath) && !fs.existsSync(replaceChatStorageExtension(filePath, '.sqlite'))) {
                                 return null;
                             }
 
@@ -3153,7 +3160,7 @@ router.post('/orphaned', async function (request, response) {
                     : (await Promise.allSettled(
                         (Array.isArray(group.chats) ? group.chats : []).map(chatId => {
                             const filePath = getGroupChatFilePath(request.user.directories.groupChats, chatId);
-                            if (!fs.existsSync(filePath) && !fs.existsSync(filePath.replace('.jsonl', '.sqlite'))) {
+                            if (!fs.existsSync(filePath) && !fs.existsSync(replaceChatStorageExtension(filePath, '.sqlite'))) {
                                 return Promise.resolve(null);
                             }
 
@@ -3235,7 +3242,7 @@ router.post('/recent', async function (request, response) {
                     if (Array.isArray(groupData.chats)) {
                         for (const chat of groupData.chats) {
                             const filePath = getGroupChatFilePath(request.user.directories.groupChats, chat);
-                            if (!fs.existsSync(filePath) && !fs.existsSync(filePath.replace('.jsonl', '.sqlite'))) {
+                            if (!fs.existsSync(filePath) && !fs.existsSync(replaceChatStorageExtension(filePath, '.sqlite'))) {
                                 continue;
                             }
                             const fileStats = getChatFileStats(filePath);

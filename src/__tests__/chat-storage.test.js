@@ -79,6 +79,24 @@ describe('SQLite chat length handling', () => {
         }
     });
 
+    it('preserves dotted chat names when resolving SQLite storage paths', async () => {
+        const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'sqlite-chat-dotted-name-'));
+        const chatPath = path.join(tempDir, 'foo.jsonl.sqlite');
+        const incorrectPath = path.join(tempDir, 'foo.sqlite.sqlite');
+
+        try {
+            await writeLogicalChat(chatPath, makeHeader(), makeMessages(3));
+            const logicalChat = await getLogicalChatData(chatPath);
+
+            expect(fs.existsSync(chatPath)).toBe(true);
+            expect(fs.existsSync(incorrectPath)).toBe(false);
+            expect(logicalChat).toHaveLength(4);
+            expect(logicalChat[1].mes).toBe('message 0');
+        } finally {
+            fs.rmSync(tempDir, { recursive: true, force: true });
+        }
+    });
+
     it('clamps initial display count below the supported minimum', async () => {
         const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'sqlite-chat-display-min-'));
         const chatPath = path.join(tempDir, 'chat.jsonl');
