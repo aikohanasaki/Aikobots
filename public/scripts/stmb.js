@@ -5289,15 +5289,30 @@ async function showMainEntryPopup() {
     });
     activeSettingsPopupDialog = popup.dlg ?? null;
 
+    const persistSettings = () => {
+        stmbSettings = normalizeStmbSettings(stmbSettings);
+        saveSettingsDebounced();
+        updateSettingsPopupDynamicState(popup.dlg, currentUiConnection);
+    };
+    const persistAutoConsolidationTargetTiers = selectElement => {
+        const moduleSettings = stmbSettings.moduleSettings;
+        moduleSettings.autoConsolidationTargetTiers = readSelectedValues(selectElement).map(value => Number(value)).filter(Number.isFinite);
+        persistSettings();
+    };
+
     setTimeout(() => {
         try {
             if (window.jQuery && typeof window.jQuery.fn.select2 === 'function') {
                 const $parent = window.jQuery(popup.dlg);
-                window.jQuery('#stmb-settings-auto-consolidation-target-tier').select2({
+                const $tierSelect = $parent.find('#stmb-settings-auto-consolidation-target-tier');
+                $tierSelect.select2({
                     width: '100%',
                     placeholder: 'Select tiers…',
                     closeOnSelect: false,
                     dropdownParent: $parent,
+                });
+                $tierSelect.on('change.stmbAutoConsolidationTiers', function () {
+                    persistAutoConsolidationTargetTiers(this);
                 });
             }
         } catch (error) {
@@ -5312,11 +5327,6 @@ async function showMainEntryPopup() {
         }
 
         const moduleSettings = stmbSettings.moduleSettings;
-        const persistSettings = () => {
-            stmbSettings = normalizeStmbSettings(stmbSettings);
-            saveSettingsDebounced();
-            updateSettingsPopupDynamicState(popup.dlg, currentUiConnection);
-        };
 
         if (target.matches('#stmb-settings-always-use-default')) {
             moduleSettings.alwaysUseDefault = target.checked;
@@ -5520,8 +5530,7 @@ async function showMainEntryPopup() {
             return;
         }
         if (target.matches('#stmb-settings-auto-consolidation-target-tier')) {
-            moduleSettings.autoConsolidationTargetTiers = readSelectedValues(target).map(value => Number(value)).filter(Number.isFinite);
-            persistSettings();
+            persistAutoConsolidationTargetTiers(target);
             return;
         }
         if (target.matches('#stmb-settings-title-format-select')) {
