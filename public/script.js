@@ -4994,7 +4994,7 @@ function getConfiguredChatWindowSize(count = null) {
         return candidate;
     }
 
-    return 100;
+    return Math.min(getConfiguredLongChatDisplayCount(), INITIAL_CHAT_RENDER_MAX);
 }
 
 function setVisibleChatRange(startId = null, endId = null) {
