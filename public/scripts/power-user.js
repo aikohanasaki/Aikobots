@@ -328,6 +328,9 @@ export const power_user = {
     movingUI: false,
     movingUIState: {},
     movingUIPreset: '',
+    show_floating_wi_book: true,
+    show_floating_memory_boundary_button: true,
+    show_floating_chat_end_button: true,
     noShadows: false,
     theme: 'Default (Dark) 1.7.1',
 
@@ -2314,6 +2317,9 @@ export async function loadPowerUserSettings(settings, data) {
     if (!power_user.top_bar_icon_overrides || typeof power_user.top_bar_icon_overrides !== 'object') {
         power_user.top_bar_icon_overrides = {};
     }
+    power_user.show_floating_wi_book = power_user.show_floating_wi_book !== false;
+    power_user.show_floating_memory_boundary_button = power_user.show_floating_memory_boundary_button !== false;
+    power_user.show_floating_chat_end_button = power_user.show_floating_chat_end_button !== false;
 
     if (power_user.tokenizer === tokenizers.LEGACY) {
         power_user.tokenizer = tokenizers.GPT2;
@@ -2384,6 +2390,9 @@ export async function loadPowerUserSettings(settings, data) {
     $('#fast_ui_mode').prop('checked', power_user.fast_ui_mode);
     $('#waifuMode').prop('checked', power_user.waifuMode);
     $('#movingUImode').prop('checked', power_user.movingUI);
+    $('#show_floating_wi_book').prop('checked', power_user.show_floating_wi_book);
+    $('#show_floating_memory_boundary_button').prop('checked', power_user.show_floating_memory_boundary_button);
+    $('#show_floating_chat_end_button').prop('checked', power_user.show_floating_chat_end_button);
     $('#noShadowsmode').prop('checked', power_user.noShadows);
     $('#start_reply_with').text(power_user.user_prompt_bias);
     $('#chat-show-reply-prefix-checkbox').prop('checked', power_user.show_user_prompt_bias);
@@ -3817,6 +3826,13 @@ jQuery(() => {
     $('#movingUImode').on('change', function () {
         power_user.movingUI = $(this).prop('checked');
         switchMovingUI();
+        saveSettingsDebounced();
+    });
+
+    $('#show_floating_wi_book, #show_floating_memory_boundary_button, #show_floating_chat_end_button').on('change', function () {
+        const key = this.id;
+        power_user[key] = $(this).prop('checked');
+        eventSource.emit(event_types.FLOATING_BUTTONS_UPDATED);
         saveSettingsDebounced();
     });
 

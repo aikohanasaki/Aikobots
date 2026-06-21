@@ -1331,6 +1331,10 @@ const FLOATING_BOOK_MOBILE_MEDIA = '(max-width: 700px)';
 
 let worldInfoFloatingBookController = null;
 
+function isWorldInfoFloatingBookEnabled() {
+    return power_user.show_floating_wi_book !== false;
+}
+
 function readFloatingBookBool(key, fallback) {
     const raw = accountStorage.getItem(key);
     if (raw === null) {
@@ -2207,6 +2211,7 @@ function createWorldInfoFloatingBookController() {
         settings: getFloatingBookSettings(),
         lastBadgeSignature: '',
         refreshToken: 0,
+        enabled: isWorldInfoFloatingBookEnabled(),
         dragging: false,
         movedEnough: false,
         suppressNextClick: false,
@@ -2228,12 +2233,29 @@ function createWorldInfoFloatingBookController() {
             controller.setOpen(panel, false);
             controller.setOpen(configPanel, false);
         },
+        setEnabled(enabled) {
+            controller.enabled = enabled;
+            trigger.hidden = !enabled;
+            if (!enabled) {
+                controller.closePanels();
+                return;
+            }
+
+            controller.applySavedPosition();
+            controller.scheduleRefresh();
+        },
         togglePanel() {
+            if (!controller.enabled) {
+                return;
+            }
             const nextOpen = !controller.isOpen(panel);
             controller.setOpen(configPanel, false);
             controller.setOpen(panel, nextOpen);
         },
         toggleConfigPanel() {
+            if (!controller.enabled) {
+                return;
+            }
             const nextOpen = !controller.isOpen(configPanel);
             controller.setOpen(panel, false);
             controller.setOpen(configPanel, nextOpen);
@@ -2514,6 +2536,13 @@ function createWorldInfoFloatingBookController() {
             configPanel.append(reset);
         },
         async refresh() {
+            if (!isWorldInfoFloatingBookEnabled()) {
+                controller.setEnabled(false);
+                return;
+            }
+
+            controller.enabled = true;
+            trigger.hidden = false;
             const refreshToken = ++controller.refreshToken;
             const snapshot = await getLatestWorldInfoReportSnapshot();
             if (refreshToken !== controller.refreshToken) {
@@ -2615,7 +2644,7 @@ function createWorldInfoFloatingBookController() {
 
     controller.renderConfigPanel();
     controller.applySavedPosition();
-    controller.refresh();
+    controller.setEnabled(isWorldInfoFloatingBookEnabled());
 
     const refreshEvents = [
         event_types.CHAT_CHANGED,
@@ -2633,6 +2662,10 @@ function createWorldInfoFloatingBookController() {
     for (const eventType of refreshEvents) {
         eventSource.on(eventType, () => controller.scheduleRefresh());
     }
+
+    eventSource.on(event_types.FLOATING_BUTTONS_UPDATED, () => {
+        controller.setEnabled(isWorldInfoFloatingBookEnabled());
+    });
 
     return controller;
 }

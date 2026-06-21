@@ -21,6 +21,7 @@ import {
 } from '../script.js';
 import { DOMPurify } from '../lib.js';
 import { getContext, saveMetadataDebounced } from './extensions.js';
+import { power_user } from './power-user.js';
 import {
     commitStmbSummaries,
     generateStmbMemory,
@@ -215,12 +216,16 @@ let plannerStatusButton = null;
 let plannerStatusBadge = null;
 const dismissedPlannerNotificationIds = new Set();
 let memoryBoundaryButton = null;
-let memoryBoundaryButtonDragState = null;
+let chatEndButton = null;
+let floatingJumpButtonDragState = null;
 
-const MEMORY_BOUNDARY_BUTTON_SIZE = 36;
-const MEMORY_BOUNDARY_BUTTON_MARGIN = 12;
+const FLOATING_JUMP_BUTTON_SIZE = 36;
+const FLOATING_JUMP_BUTTON_MARGIN = 12;
+const FLOATING_JUMP_BUTTON_WAND_GAP = 8;
 const MEMORY_BOUNDARY_BUTTON_DEFAULT_BOTTOM = 112;
 const MEMORY_BOUNDARY_BUTTON_DEFAULT_RIGHT = 18;
+const CHAT_END_BUTTON_DEFAULT_BOTTOM = 64;
+const CHAT_END_BUTTON_DEFAULT_RIGHT = 18;
 
 const DURABLE_SYNC_STATE_KEYS = [
     'sceneStart',
@@ -6171,7 +6176,8 @@ function isMemoryBoundaryDividerEnabled(mode = getModuleSettings().memoryBoundar
 
 function isMemoryBoundaryButtonEnabled(mode = getModuleSettings().memoryBoundaryMode) {
     const normalized = normalizeStmbMemoryBoundaryMode(mode);
-    return normalized === STMB_MEMORY_BOUNDARY_MODES.BUTTON || normalized === STMB_MEMORY_BOUNDARY_MODES.BOTH;
+    return power_user.show_floating_memory_boundary_button !== false
+        && (normalized === STMB_MEMORY_BOUNDARY_MODES.BUTTON || normalized === STMB_MEMORY_BOUNDARY_MODES.BOTH);
 }
 
 function getMemoryBoundaryTargetId() {
@@ -6226,32 +6232,74 @@ function refreshMemoryBoundaryDivider() {
     targetElement.prepend(divider);
 }
 
-function clampMemoryBoundaryButtonPosition(position = {}) {
-    const maxLeft = Math.max(MEMORY_BOUNDARY_BUTTON_MARGIN, window.innerWidth - MEMORY_BOUNDARY_BUTTON_SIZE - MEMORY_BOUNDARY_BUTTON_MARGIN);
-    const maxTop = Math.max(MEMORY_BOUNDARY_BUTTON_MARGIN, window.innerHeight - MEMORY_BOUNDARY_BUTTON_SIZE - MEMORY_BOUNDARY_BUTTON_MARGIN);
-    const fallbackLeft = window.innerWidth - MEMORY_BOUNDARY_BUTTON_SIZE - MEMORY_BOUNDARY_BUTTON_DEFAULT_RIGHT;
-    const fallbackTop = window.innerHeight - MEMORY_BOUNDARY_BUTTON_SIZE - MEMORY_BOUNDARY_BUTTON_DEFAULT_BOTTOM;
-    const rawLeft = Number.isFinite(Number(position.left)) ? Number(position.left) : fallbackLeft;
-    const rawTop = Number.isFinite(Number(position.top)) ? Number(position.top) : fallbackTop;
-
+function getFallbackFloatingJumpButtonPosition(defaultRight, defaultBottom) {
     return {
-        left: Math.round(Math.min(Math.max(rawLeft, MEMORY_BOUNDARY_BUTTON_MARGIN), maxLeft)),
-        top: Math.round(Math.min(Math.max(rawTop, MEMORY_BOUNDARY_BUTTON_MARGIN), maxTop)),
+        left: window.innerWidth - FLOATING_JUMP_BUTTON_SIZE - defaultRight,
+        top: window.innerHeight - FLOATING_JUMP_BUTTON_SIZE - defaultBottom,
     };
 }
 
-function applyMemoryBoundaryButtonPosition() {
-    if (!memoryBoundaryButton) {
+function getMemoryBoundaryButtonFallbackPosition() {
+    return getFallbackFloatingJumpButtonPosition(MEMORY_BOUNDARY_BUTTON_DEFAULT_RIGHT, MEMORY_BOUNDARY_BUTTON_DEFAULT_BOTTOM);
+}
+
+function getChatEndButtonFallbackPosition() {
+    const wandButton = document.getElementById('extensionsMenuButton');
+    const wandRect = wandButton?.getBoundingClientRect();
+    const hasVisibleWand = wandButton
+        && !wandButton.hidden
+        && getComputedStyle(wandButton).display !== 'none'
+        && wandRect
+        && wandRect.width > 0
+        && wandRect.height > 0;
+
+    if (!hasVisibleWand) {
+        return getFallbackFloatingJumpButtonPosition(CHAT_END_BUTTON_DEFAULT_RIGHT, CHAT_END_BUTTON_DEFAULT_BOTTOM);
+    }
+
+    const rightSideLeft = wandRect.right + FLOATING_JUMP_BUTTON_WAND_GAP;
+    const leftSideLeft = wandRect.left - FLOATING_JUMP_BUTTON_SIZE - FLOATING_JUMP_BUTTON_WAND_GAP;
+    const left = rightSideLeft + FLOATING_JUMP_BUTTON_SIZE <= window.innerWidth - FLOATING_JUMP_BUTTON_MARGIN
+        ? rightSideLeft
+        : leftSideLeft;
+
+    return {
+        left,
+        top: wandRect.top + ((wandRect.height - FLOATING_JUMP_BUTTON_SIZE) / 2),
+    };
+}
+
+function clampFloatingJumpButtonPosition(position = {}, fallbackPosition = getFallbackFloatingJumpButtonPosition(CHAT_END_BUTTON_DEFAULT_RIGHT, CHAT_END_BUTTON_DEFAULT_BOTTOM)) {
+    const maxLeft = Math.max(FLOATING_JUMP_BUTTON_MARGIN, window.innerWidth - FLOATING_JUMP_BUTTON_SIZE - FLOATING_JUMP_BUTTON_MARGIN);
+    const maxTop = Math.max(FLOATING_JUMP_BUTTON_MARGIN, window.innerHeight - FLOATING_JUMP_BUTTON_SIZE - FLOATING_JUMP_BUTTON_MARGIN);
+    const rawLeft = Number.isFinite(Number(position.left)) ? Number(position.left) : fallbackPosition.left;
+    const rawTop = Number.isFinite(Number(position.top)) ? Number(position.top) : fallbackPosition.top;
+
+    return {
+        left: Math.round(Math.min(Math.max(rawLeft, FLOATING_JUMP_BUTTON_MARGIN), maxLeft)),
+        top: Math.round(Math.min(Math.max(rawTop, FLOATING_JUMP_BUTTON_MARGIN), maxTop)),
+    };
+}
+
+function applyFloatingJumpButtonPosition(button, savedPosition, getFallbackPosition) {
+    if (!button) {
         return;
     }
 
-    const position = clampMemoryBoundaryButtonPosition(getModuleSettings().memoryBoundaryButtonPosition || {});
-    memoryBoundaryButton.style.left = `${position.left}px`;
-    memoryBoundaryButton.style.top = `${position.top}px`;
+    const fallbackPosition = getFallbackPosition();
+    const position = clampFloatingJumpButtonPosition(savedPosition || {}, fallbackPosition);
+    button.style.left = `${position.left}px`;
+    button.style.top = `${position.top}px`;
 }
 
 function saveMemoryBoundaryButtonPosition(position) {
-    stmbSettings.moduleSettings.memoryBoundaryButtonPosition = clampMemoryBoundaryButtonPosition(position);
+    stmbSettings.moduleSettings.memoryBoundaryButtonPosition = clampFloatingJumpButtonPosition(position, getMemoryBoundaryButtonFallbackPosition());
+    stmbSettings = normalizeStmbSettings(stmbSettings);
+    saveSettingsDebounced();
+}
+
+function saveChatEndButtonPosition(position) {
+    stmbSettings.moduleSettings.chatEndButtonPosition = clampFloatingJumpButtonPosition(position, getChatEndButtonFallbackPosition());
     stmbSettings = normalizeStmbSettings(stmbSettings);
     saveSettingsDebounced();
 }
@@ -6280,34 +6328,54 @@ async function scrollToMemoryBoundaryTarget() {
     toastr.info(`Highest memory is #${highestProcessed}. The target message could not be rendered.`, 'STMB');
 }
 
-function handleMemoryBoundaryButtonPointerMove(event) {
-    if (!memoryBoundaryButtonDragState || !memoryBoundaryButton) {
+async function scrollToChatEndTarget() {
+    if (!chat.length) {
+        toastr.info('No chat messages are available yet.', 'STMB');
         return;
     }
 
-    const position = clampMemoryBoundaryButtonPosition({
-        left: event.clientX - memoryBoundaryButtonDragState.offsetX,
-        top: event.clientY - memoryBoundaryButtonDragState.offsetY,
-    });
+    const targetId = chat.length - 1;
+    const target = await jumpToMessageWindow(targetId);
+    const chatContainer = chatElement.get(0);
 
-    if (
-        Math.abs(position.left - memoryBoundaryButtonDragState.startLeft) > 2 ||
-        Math.abs(position.top - memoryBoundaryButtonDragState.startTop) > 2
-    ) {
-        memoryBoundaryButtonDragState.moved = true;
+    if (target?.length && chatContainer instanceof HTMLElement) {
+        await new Promise(resolve => requestAnimationFrame(resolve));
+        chatContainer.scrollTo({ top: chatContainer.scrollHeight, behavior: 'smooth' });
+        flashHighlight(target, 2000);
+        return;
     }
 
-    memoryBoundaryButton.style.left = `${position.left}px`;
-    memoryBoundaryButton.style.top = `${position.top}px`;
+    toastr.info('The end of chat could not be rendered.', 'STMB');
 }
 
-function handleMemoryBoundaryButtonPointerUp() {
-    if (!memoryBoundaryButtonDragState) {
+function handleFloatingJumpButtonPointerMove(event) {
+    if (!floatingJumpButtonDragState) {
         return;
     }
 
-    const button = memoryBoundaryButton;
-    const moved = memoryBoundaryButtonDragState.moved;
+    const { button, getFallbackPosition } = floatingJumpButtonDragState;
+    const position = clampFloatingJumpButtonPosition({
+        left: event.clientX - floatingJumpButtonDragState.offsetX,
+        top: event.clientY - floatingJumpButtonDragState.offsetY,
+    }, getFallbackPosition());
+
+    if (
+        Math.abs(position.left - floatingJumpButtonDragState.startLeft) > 2 ||
+        Math.abs(position.top - floatingJumpButtonDragState.startTop) > 2
+    ) {
+        floatingJumpButtonDragState.moved = true;
+    }
+
+    button.style.left = `${position.left}px`;
+    button.style.top = `${position.top}px`;
+}
+
+function handleFloatingJumpButtonPointerUp() {
+    if (!floatingJumpButtonDragState) {
+        return;
+    }
+
+    const { button, moved, savePosition } = floatingJumpButtonDragState;
     const position = button
         ? {
             left: Number.parseInt(button.style.left, 10),
@@ -6315,14 +6383,14 @@ function handleMemoryBoundaryButtonPointerUp() {
         }
         : null;
 
-    document.removeEventListener('pointermove', handleMemoryBoundaryButtonPointerMove);
-    document.removeEventListener('pointerup', handleMemoryBoundaryButtonPointerUp);
-    memoryBoundaryButtonDragState = null;
+    document.removeEventListener('pointermove', handleFloatingJumpButtonPointerMove);
+    document.removeEventListener('pointerup', handleFloatingJumpButtonPointerUp);
+    floatingJumpButtonDragState = null;
     if (!button || !position) {
         return;
     }
 
-    saveMemoryBoundaryButtonPosition(position);
+    savePosition(position);
 
     if (moved) {
         button.dataset.stmbDragged = 'true';
@@ -6334,14 +6402,7 @@ function handleMemoryBoundaryButtonPointerUp() {
     }
 }
 
-function createMemoryBoundaryButton() {
-    const button = document.createElement('button');
-    button.type = 'button';
-    button.id = 'stmb-memory-boundary-jump';
-    button.classList.add('stmb_memory_boundary_button', 'interactable');
-    button.title = translate('Jump to first unprocessed message', 'STMemoryBooks_JumpToUnprocessedMemory');
-    button.innerHTML = '<i class="fa-solid fa-angles-up" aria-hidden="true"></i>';
-
+function bindFloatingJumpButtonDrag(button, getFallbackPosition, savePosition) {
     button.addEventListener('pointerdown', event => {
         if (event.button !== undefined && event.button !== 0) {
             return;
@@ -6350,16 +6411,29 @@ function createMemoryBoundaryButton() {
         event.stopPropagation();
 
         const rect = button.getBoundingClientRect();
-        memoryBoundaryButtonDragState = {
+        floatingJumpButtonDragState = {
+            button,
+            getFallbackPosition,
+            savePosition,
             offsetX: event.clientX - rect.left,
             offsetY: event.clientY - rect.top,
             startLeft: rect.left,
             startTop: rect.top,
             moved: false,
         };
-        document.addEventListener('pointermove', handleMemoryBoundaryButtonPointerMove);
-        document.addEventListener('pointerup', handleMemoryBoundaryButtonPointerUp);
+        document.addEventListener('pointermove', handleFloatingJumpButtonPointerMove);
+        document.addEventListener('pointerup', handleFloatingJumpButtonPointerUp);
     });
+}
+
+function createFloatingJumpButton({ id, title, icon, onClick, getFallbackPosition, savePosition }) {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.id = id;
+    button.classList.add('stmb_memory_boundary_button', 'interactable');
+    button.title = title;
+    button.innerHTML = `<i class="fa-solid ${icon}" aria-hidden="true"></i>`;
+    bindFloatingJumpButtonDrag(button, getFallbackPosition, savePosition);
 
     button.addEventListener('click', event => {
         event.preventDefault();
@@ -6367,15 +6441,40 @@ function createMemoryBoundaryButton() {
         if (button.dataset.stmbDragged === 'true') {
             return;
         }
-        scrollToMemoryBoundaryTarget().catch(error => {
-            console.warn('STMB memory boundary jump failed', error);
-            toastr.error('Failed to jump to the Memory Books boundary.', 'STMB');
-        });
+        onClick();
     });
 
     document.body.appendChild(button);
     applyLocale(button);
     return button;
+}
+
+function createMemoryBoundaryButton() {
+    return createFloatingJumpButton({
+        id: 'stmb-memory-boundary-jump',
+        title: translate('Jump to first unprocessed message', 'STMemoryBooks_JumpToUnprocessedMemory'),
+        icon: 'fa-angles-up',
+        getFallbackPosition: getMemoryBoundaryButtonFallbackPosition,
+        savePosition: saveMemoryBoundaryButtonPosition,
+        onClick: () => scrollToMemoryBoundaryTarget().catch(error => {
+            console.warn('STMB memory boundary jump failed', error);
+            toastr.error('Failed to jump to the Memory Books boundary.', 'STMB');
+        }),
+    });
+}
+
+function createChatEndButton() {
+    return createFloatingJumpButton({
+        id: 'stmb-chat-end-jump',
+        title: 'Jump to end of chat',
+        icon: 'fa-angles-down',
+        getFallbackPosition: getChatEndButtonFallbackPosition,
+        savePosition: saveChatEndButtonPosition,
+        onClick: () => scrollToChatEndTarget().catch(error => {
+            console.warn('STMB chat end jump failed', error);
+            toastr.error('Failed to jump to the end of chat.', 'STMB');
+        }),
+    });
 }
 
 function refreshMemoryBoundaryButton() {
@@ -6389,14 +6488,34 @@ function refreshMemoryBoundaryButton() {
         memoryBoundaryButton = createMemoryBoundaryButton();
     }
 
-    applyMemoryBoundaryButtonPosition();
+    applyFloatingJumpButtonPosition(memoryBoundaryButton, getModuleSettings().memoryBoundaryButtonPosition, getMemoryBoundaryButtonFallbackPosition);
     memoryBoundaryButton.style.display = 'inline-flex';
+}
+
+function refreshChatEndButton() {
+    if (power_user.show_floating_chat_end_button === false) {
+        chatEndButton?.remove();
+        chatEndButton = null;
+        return;
+    }
+
+    if (!chatEndButton) {
+        chatEndButton = createChatEndButton();
+    }
+
+    applyFloatingJumpButtonPosition(chatEndButton, getModuleSettings().chatEndButtonPosition, getChatEndButtonFallbackPosition);
+    chatEndButton.style.display = 'inline-flex';
+}
+
+function refreshFloatingJumpButtons() {
+    refreshMemoryBoundaryButton();
+    refreshChatEndButton();
 }
 
 /** Refreshes the visible STMB processed-message boundary without changing chat state. */
 function refreshMemoryBoundaryUi() {
     refreshMemoryBoundaryDivider();
-    refreshMemoryBoundaryButton();
+    refreshFloatingJumpButtons();
 }
 
 function setHighestProcessedMessageId(messageId) {
@@ -9382,11 +9501,12 @@ export function initStmb() {
     });
     ensureStmbJobExecutorsRegistered();
     initStmbJobsUi();
+    refreshFloatingJumpButtons();
     setTimeout(() => {
         validateSceneMarkers();
         renderAllSceneButtons();
     }, 0);
-    window.addEventListener('resize', refreshMemoryBoundaryButton);
+    window.addEventListener('resize', refreshFloatingJumpButtons);
 
     eventSource.on(event_types.CHAT_CHANGED, () => {
         hideFloatingClipButton();
@@ -9443,7 +9563,16 @@ export function initStmb() {
 
     eventSource.on(event_types.SETTINGS_LOADED, () => {
         refreshFloatingClipButtonSetting();
+        refreshFloatingJumpButtons();
         renderAllSceneButtons();
+    });
+
+    eventSource.on(event_types.FLOATING_BUTTONS_UPDATED, () => {
+        refreshFloatingJumpButtons();
+    });
+
+    eventSource.once(event_types.APP_READY, () => {
+        refreshFloatingJumpButtons();
     });
 
     eventSource.on(event_types.MESSAGE_DELETED, (deletedId) => {
