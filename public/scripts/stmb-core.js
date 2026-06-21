@@ -367,6 +367,7 @@ export function createDefaultStmbSettings() {
             showFloatingClipButton: true,
             memoryBoundaryMode: STMB_MEMORY_BOUNDARY_MODES.BOTH,
             memoryBoundaryButtonPosition: null,
+            chatEndButtonPosition: null,
             compactionPromptTemplate: STMB_DEFAULT_COMPACTION_PROMPT_TEMPLATE,
             topicalClipPromptTemplate: '',
             compactionProfileIndex: 0,
@@ -654,6 +655,7 @@ export function normalizeStmbSettings(rawSettings, legacySettings = null) {
     moduleSettings.showFloatingClipButton = moduleSettings.showFloatingClipButton !== false;
     moduleSettings.memoryBoundaryMode = normalizeStmbMemoryBoundaryMode(moduleSettings.memoryBoundaryMode);
     moduleSettings.memoryBoundaryButtonPosition = normalizeStmbMemoryBoundaryButtonPosition(moduleSettings.memoryBoundaryButtonPosition);
+    moduleSettings.chatEndButtonPosition = normalizeStmbMemoryBoundaryButtonPosition(moduleSettings.chatEndButtonPosition);
     moduleSettings.compactionPromptTemplate = typeof moduleSettings.compactionPromptTemplate === 'string'
         && moduleSettings.compactionPromptTemplate.trim()
         && moduleSettings.compactionPromptTemplate.includes('{{ENTRY_CONTENT}}')

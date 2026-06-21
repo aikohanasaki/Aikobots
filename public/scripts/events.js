@@ -30,6 +30,7 @@ export const event_types = {
     MOVABLE_PANELS_RESET: 'movable_panels_reset',
     SETTINGS_LOADED_BEFORE: 'settings_loaded_before',
     SETTINGS_LOADED_AFTER: 'settings_loaded_after',
+    FLOATING_BUTTONS_UPDATED: 'floating_buttons_updated',
     CHATCOMPLETION_SOURCE_CHANGED: 'chatcompletion_source_changed',
     CHATCOMPLETION_MODEL_CHANGED: 'chatcompletion_model_changed',
     OAI_PRESET_CHANGED_BEFORE: 'oai_preset_changed_before',
