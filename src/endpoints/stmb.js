@@ -1,5 +1,5 @@
 import express from 'express';
-import { resolveLogicalChatReference } from './chats.js';
+import { resolveSqliteLogicalChatReference } from './chats.js';
 import { stableHashString } from '../../public/scripts/hashing.js';
 
 import {
@@ -182,11 +182,44 @@ function getResolvedRangeInfo(chatState, requestedStart = null, requestedEnd = n
 }
 
 function resolveStmbChatState(request, chatRef) {
-    return resolveLogicalChatReference(request.user.directories, chatRef);
+    return resolveSqliteLogicalChatReference(request.user.directories, chatRef);
 }
 
-function resolveCapturedScene(request, normalizedRequest) {
-    const chatState = resolveStmbChatState(request, normalizedRequest.chatRef);
+function assertSqliteChatStorageAvailable(chatState) {
+    if (chatState?.sqliteMissing) {
+        throw createStmbRequestError(404, 'StmbChatStorageUnavailable', 'SQLite chat storage is not available for this chat.', {
+            totalLogicalMessages: 0,
+            lastAvailableMessageId: -1,
+            storageMode: 'sqlite',
+            storageHealthy: false,
+        });
+    }
+}
+
+async function resolveStmbChatStateForRange(request, chatRef, rangeStart = null, rangeEnd = null) {
+    return resolveSqliteLogicalChatReference(request.user.directories, chatRef, {
+        rangeStart,
+        rangeEnd,
+        includeMessages: true,
+    });
+}
+
+async function resolveCapturedScene(request, normalizedRequest) {
+    if (!Number.isInteger(normalizedRequest.sceneStart) || !Number.isInteger(normalizedRequest.sceneEnd)) {
+        throw createStmbRequestError(400, 'StmbBadRequest', 'sceneStart and sceneEnd are required.');
+    }
+
+    if (normalizedRequest.sceneStart < 0 || normalizedRequest.sceneEnd < 0 || normalizedRequest.sceneStart > normalizedRequest.sceneEnd) {
+        throw createStmbRequestError(400, 'StmbInvalidRange', 'Start message cannot be greater than end message.');
+    }
+
+    const chatState = await resolveStmbChatStateForRange(
+        request,
+        normalizedRequest.chatRef,
+        normalizedRequest.sceneStart,
+        normalizedRequest.sceneEnd,
+    );
+    assertSqliteChatStorageAvailable(chatState);
     const totalLogicalMessages = Number(chatState?.totalMessages) || 0;
 
     if (totalLogicalMessages === 0) {
@@ -196,14 +229,6 @@ function resolveCapturedScene(request, normalizedRequest) {
             storageMode: chatState?.storageMode,
             storageHealthy: chatState?.storageHealthy,
         });
-    }
-
-    if (!Number.isInteger(normalizedRequest.sceneStart) || !Number.isInteger(normalizedRequest.sceneEnd)) {
-        throw createStmbRequestError(400, 'StmbBadRequest', 'sceneStart and sceneEnd are required.');
-    }
-
-    if (normalizedRequest.sceneStart < 0 || normalizedRequest.sceneEnd < 0 || normalizedRequest.sceneStart > normalizedRequest.sceneEnd) {
-        throw createStmbRequestError(400, 'StmbInvalidRange', 'Start message cannot be greater than end message.');
     }
 
     if (normalizedRequest.sceneEnd >= totalLogicalMessages) {
@@ -511,12 +536,6 @@ router.post('/context-settings/migrate-lorebook-reference', async (request, resp
 router.post('/chat-range-info', async (request, response) => {
     try {
         const normalizedRequest = normalizeRangeInfoRequest(request.body);
-        const chatState = resolveStmbChatState(request, normalizedRequest.chatRef);
-        const totalLogicalMessages = Number(chatState?.totalMessages) || 0;
-        const lastAvailableMessageId = Number.isInteger(chatState?.lastAvailableMessageId)
-            ? chatState.lastAvailableMessageId
-            : -1;
-
         if (normalizedRequest.rangeStart !== null && (!Number.isInteger(normalizedRequest.rangeStart) || normalizedRequest.rangeStart < 0)) {
             throw createStmbRequestError(400, 'StmbBadRequest', 'rangeStart must be a non-negative integer.');
         }
@@ -526,6 +545,39 @@ router.post('/chat-range-info', async (request, response) => {
         if (normalizedRequest.rangeStart !== null && normalizedRequest.rangeEnd !== null && normalizedRequest.rangeStart > normalizedRequest.rangeEnd) {
             throw createStmbRequestError(400, 'StmbInvalidRange', 'Start message cannot be greater than end message.');
         }
+
+        const metadataState = await resolveStmbChatState(request, normalizedRequest.chatRef);
+        assertSqliteChatStorageAvailable(metadataState);
+        const totalLogicalMessages = Number(metadataState?.totalMessages) || 0;
+        const lastAvailableMessageId = Number.isInteger(metadataState?.lastAvailableMessageId)
+            ? metadataState.lastAvailableMessageId
+            : -1;
+
+        if (totalLogicalMessages > 0 && normalizedRequest.rangeEnd !== null && normalizedRequest.rangeEnd > lastAvailableMessageId) {
+            throw createStmbRequestError(
+                400,
+                'StmbRangeOutOfBounds',
+                `Message IDs out of range. Valid range: 0-${lastAvailableMessageId}`,
+                {
+                    requestedStart: normalizedRequest.rangeStart,
+                    requestedEnd: normalizedRequest.rangeEnd,
+                    totalLogicalMessages,
+                    lastAvailableMessageId,
+                    storageMode: metadataState?.storageMode,
+                    storageHealthy: metadataState?.storageHealthy,
+                },
+            );
+        }
+
+        const rangeEndForRead = normalizedRequest.rangeEnd !== null
+            ? normalizedRequest.rangeEnd
+            : lastAvailableMessageId;
+        const shouldReadRange = totalLogicalMessages > 0
+            && normalizedRequest.rangeStart !== null
+            && normalizedRequest.rangeStart <= rangeEndForRead;
+        const chatState = shouldReadRange
+            ? await resolveStmbChatStateForRange(request, normalizedRequest.chatRef, normalizedRequest.rangeStart, rangeEndForRead)
+            : metadataState;
 
         const resolvedRangeInfo = getResolvedRangeInfo(chatState, normalizedRequest.rangeStart, normalizedRequest.rangeEnd);
         return response.send({
@@ -548,7 +600,7 @@ router.post('/chat-range-info', async (request, response) => {
 router.post('/capture-scene', async (request, response) => {
     try {
         const normalizedRequest = normalizeSceneEndpointRequest(request.body);
-        const result = resolveCapturedScene(request, normalizedRequest);
+        const result = await resolveCapturedScene(request, normalizedRequest);
         return response.send({
             ok: true,
             compiledScene: result.compiledScene,

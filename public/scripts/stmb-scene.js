@@ -1,11 +1,13 @@
 import {
     CHAT_SAVE_RESULT,
     chat,
+    characters,
     getCurrentChatId,
     isChatFullyHydrated,
     name1,
     name2,
     saveChatConditional,
+    this_chid,
 } from '../script.js';
 import { getContext } from './extensions.js';
 import { groups, selected_group } from './group-chats.js';
@@ -23,12 +25,13 @@ function buildCharacterChatKeyParts(chatLike = {}) {
 export function buildStmbSceneContext() {
     const context = getContext();
     const group = selected_group ? groups.find(item => item.id === selected_group) : null;
+    const activeCharacter = this_chid !== undefined ? characters[this_chid] : context?.characters?.[context.characterId];
     const chatId = selected_group
         ? String(group?.chat_id || context?.chatId || getCurrentChatId() || '')
-        : String(context?.chatId || getCurrentChatId() || '');
+        : String(activeCharacter?.chat || getCurrentChatId() || context?.chatId || '');
     const characterName = selected_group
         ? String(group?.name || name2 || '')
-        : String(name2 || context?.characters?.[context.characterId]?.name || '');
+        : String(name2 || activeCharacter?.name || '');
 
     if (selected_group) {
         return {
@@ -43,7 +46,6 @@ export function buildStmbSceneContext() {
         };
     }
 
-    const activeCharacter = context?.characters?.[context.characterId];
     return {
         chatRef: {
             type: 'character',

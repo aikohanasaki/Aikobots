@@ -7,8 +7,10 @@ import { beforeAll, describe, expect, it } from '@jest/globals';
 let applyLoadedMessageRange;
 let buildChunkedChatPayload;
 let cloneSqliteMessageAfter;
+let compileScene;
 let getLogicalChatData;
 let insertLogicalMessageAfter;
+let resolveSqliteLogicalChatReference;
 let writeLogicalChat;
 
 function getConfigPath() {
@@ -46,10 +48,13 @@ describe('SQLite chat length handling', () => {
 
         const chatsModule = await import('../endpoints/chats.js');
         const sqliteModule = await import('../sqlite-manager.js');
+        const stmbCoreModule = await import('../../public/scripts/stmb-core.js');
         applyLoadedMessageRange = chatsModule.applyLoadedMessageRange;
         buildChunkedChatPayload = chatsModule.buildChunkedChatPayload;
         cloneSqliteMessageAfter = chatsModule.cloneSqliteMessageAfter;
+        compileScene = stmbCoreModule.compileScene;
         getLogicalChatData = chatsModule.getLogicalChatData;
+        resolveSqliteLogicalChatReference = chatsModule.resolveSqliteLogicalChatReference;
         insertLogicalMessageAfter = sqliteModule.insertLogicalMessageAfter;
         writeLogicalChat = chatsModule.writeLogicalChat;
     });
@@ -162,6 +167,136 @@ describe('SQLite chat length handling', () => {
             expect(payload.messages).toHaveLength(1000);
             expect(payload.messages[0].mes).toBe('message 6353');
             expect(payload.messages.at(-1).mes).toBe('message 7352');
+        } finally {
+            fs.rmSync(tempDir, { recursive: true, force: true });
+        }
+    });
+
+    it('resolves SQLite chat range metadata without loading the full chat', async () => {
+        const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'sqlite-stmb-range-info-'));
+        const chatsDir = path.join(tempDir, 'chats');
+        const groupChatsDir = path.join(tempDir, 'group chats');
+        const chatPath = path.join(chatsDir, 'avatar', 'chat.jsonl');
+
+        try {
+            fs.mkdirSync(path.dirname(chatPath), { recursive: true });
+            await writeLogicalChat(chatPath, makeHeader(), makeMessages(1000));
+
+            const chatState = await resolveSqliteLogicalChatReference({
+                chats: chatsDir,
+                groupChats: groupChatsDir,
+            }, {
+                type: 'character',
+                avatarUrl: 'avatar.png',
+                fileName: 'chat',
+            });
+
+            expect(chatState.sqliteMissing).toBe(false);
+            expect(chatState.totalMessages).toBe(1000);
+            expect(chatState.lastAvailableMessageId).toBe(999);
+            expect(chatState.messages).toHaveLength(0);
+        } finally {
+            fs.rmSync(tempDir, { recursive: true, force: true });
+        }
+    });
+
+    it('loads only the requested SQLite range into sparse logical positions', async () => {
+        const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'sqlite-stmb-range-capture-'));
+        const chatsDir = path.join(tempDir, 'chats');
+        const groupChatsDir = path.join(tempDir, 'group chats');
+        const chatPath = path.join(chatsDir, 'avatar', 'chat.jsonl');
+
+        try {
+            fs.mkdirSync(path.dirname(chatPath), { recursive: true });
+            await writeLogicalChat(chatPath, makeHeader(), makeMessages(1000));
+
+            const chatState = await resolveSqliteLogicalChatReference({
+                chats: chatsDir,
+                groupChats: groupChatsDir,
+            }, {
+                type: 'character',
+                avatarUrl: 'avatar.png',
+                fileName: 'chat',
+            }, {
+                rangeStart: 901,
+                rangeEnd: 999,
+                includeMessages: true,
+            });
+
+            expect(chatState.totalMessages).toBe(1000);
+            expect(chatState.messages).toHaveLength(1000);
+            expect(chatState.messages[900]).toBeUndefined();
+            expect(chatState.messages[901].mes).toBe('message 901');
+            expect(chatState.messages[999].mes).toBe('message 999');
+            expect(chatState.missingRanges).toEqual([]);
+        } finally {
+            fs.rmSync(tempDir, { recursive: true, force: true });
+        }
+    });
+
+    it('compiles an unloaded SQLite range from sparse logical storage reads', async () => {
+        const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'sqlite-stmb-range-compile-'));
+        const chatsDir = path.join(tempDir, 'chats');
+        const groupChatsDir = path.join(tempDir, 'group chats');
+        const chatPath = path.join(chatsDir, 'avatar', 'chat.jsonl');
+
+        try {
+            fs.mkdirSync(path.dirname(chatPath), { recursive: true });
+            await writeLogicalChat(chatPath, makeHeader(), makeMessages(1000));
+
+            const chatState = await resolveSqliteLogicalChatReference({
+                chats: chatsDir,
+                groupChats: groupChatsDir,
+            }, {
+                type: 'character',
+                avatarUrl: 'avatar.png',
+                fileName: 'chat',
+            }, {
+                rangeStart: 901,
+                rangeEnd: 999,
+                includeMessages: true,
+            });
+            const compiledScene = compileScene(chatState.messages, {
+                sceneStart: 901,
+                sceneEnd: 999,
+                chatId: 'chat',
+                characterName: 'Character',
+                userName: 'User',
+            });
+
+            expect(compiledScene.metadata.sceneStart).toBe(901);
+            expect(compiledScene.metadata.sceneEnd).toBe(999);
+            expect(compiledScene.metadata.totalChatLength).toBe(1000);
+            expect(compiledScene.messages[0].id).toBe(901);
+            expect(compiledScene.messages.at(-1).id).toBe(999);
+        } finally {
+            fs.rmSync(tempDir, { recursive: true, force: true });
+        }
+    });
+
+    it('reports missing SQLite storage without falling back to JSONL', async () => {
+        const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'sqlite-stmb-missing-'));
+        const chatsDir = path.join(tempDir, 'chats');
+        const groupChatsDir = path.join(tempDir, 'group chats');
+        const jsonlPath = path.join(chatsDir, 'avatar', 'chat.jsonl');
+
+        try {
+            fs.mkdirSync(path.dirname(jsonlPath), { recursive: true });
+            fs.writeFileSync(jsonlPath, [makeHeader(), ...makeMessages(3)].map(record => JSON.stringify(record)).join('\n'), 'utf8');
+
+            const chatState = await resolveSqliteLogicalChatReference({
+                chats: chatsDir,
+                groupChats: groupChatsDir,
+            }, {
+                type: 'character',
+                avatarUrl: 'avatar.png',
+                fileName: 'chat',
+            });
+
+            expect(chatState.sqliteMissing).toBe(true);
+            expect(chatState.totalMessages).toBe(0);
+            expect(chatState.lastAvailableMessageId).toBe(-1);
+            expect(chatState.messages).toEqual([]);
         } finally {
             fs.rmSync(tempDir, { recursive: true, force: true });
         }

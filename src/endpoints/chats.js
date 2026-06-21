@@ -1611,6 +1611,104 @@ export async function resolveLogicalChatReference(directories, chatRef) {
     return await resolveDirectLogicalChat(filePath);
 }
 
+function createSparseLogicalMessages(totalMessages, rangeStart, rangeMessages) {
+    const messages = [];
+    messages.length = Math.max(0, Number(totalMessages) || 0);
+
+    if (!Number.isInteger(rangeStart) || rangeStart < 0 || !Array.isArray(rangeMessages)) {
+        return messages;
+    }
+
+    for (let index = 0; index < rangeMessages.length; index++) {
+        messages[rangeStart + index] = rangeMessages[index];
+    }
+
+    return messages;
+}
+
+/**
+ * Resolves a chat reference against SQLite storage and optionally loads one logical message range.
+ * @param {object} directories User storage directories.
+ * @param {object} chatRef STMB chat reference.
+ * @param {object} [options] Range loading options.
+ * @param {number|null} [options.rangeStart] First zero-based logical message id to load.
+ * @param {number|null} [options.rangeEnd] Last zero-based logical message id to load.
+ * @param {boolean} [options.includeMessages] Whether to populate the requested range in a sparse message array.
+ * @returns {Promise<object>} SQLite-backed logical chat state.
+ */
+export async function resolveSqliteLogicalChatReference(directories, chatRef, options = {}) {
+    const reference = validateStmbChatRef(chatRef);
+    const isGroup = reference.type === 'group';
+    const chatType = isGroup ? 'group' : 'character';
+    let filePath = '';
+
+    if (isGroup) {
+        if (reference.chatId) {
+            filePath = resolveGroupChatFilePath(directories.groupChats, reference.chatId);
+        }
+    } else if (reference.avatarUrl && reference.fileName) {
+        filePath = resolveCharacterChatFilePath(directories.chats, reference.avatarUrl, reference.fileName);
+    }
+
+    const sqlitePath = filePath ? replaceChatStorageExtension(filePath, '.sqlite') : '';
+    if (!sqlitePath || !fs.existsSync(sqlitePath)) {
+        return {
+            chatType,
+            filePath,
+            sqlitePath,
+            header: null,
+            messages: [],
+            totalMessages: 0,
+            lastAvailableMessageId: -1,
+            missingRanges: [],
+            storageMode: 'sqlite',
+            storageHealthy: false,
+            sqliteMissing: true,
+        };
+    }
+
+    const db = await loadDb(sqlitePath);
+    try {
+        const header = getChatHeader(db);
+        const totalMessages = getMessageCount(db);
+        const lastAvailableMessageId = totalMessages > 0 ? totalMessages - 1 : -1;
+        const rangeStart = Number(options.rangeStart);
+        const rangeEnd = Number(options.rangeEnd);
+        const shouldLoadRange = options.includeMessages === true
+            && Number.isInteger(rangeStart)
+            && Number.isInteger(rangeEnd)
+            && rangeStart >= 0
+            && rangeEnd >= rangeStart
+            && rangeStart <= lastAvailableMessageId;
+        const clampedRangeEnd = shouldLoadRange ? Math.min(rangeEnd, lastAvailableMessageId) : -1;
+        const rangeMessages = shouldLoadRange
+            ? getMessageRange(db, rangeStart, clampedRangeEnd - rangeStart + 1)
+            : [];
+        const expectedRangeCount = shouldLoadRange ? clampedRangeEnd - rangeStart + 1 : 0;
+        const missingRanges = shouldLoadRange && rangeMessages.length < expectedRangeCount
+            ? [{ start: rangeStart + rangeMessages.length, end: clampedRangeEnd }]
+            : [];
+
+        return {
+            chatType,
+            filePath,
+            sqlitePath,
+            header: stripChatStorage(header),
+            messages: shouldLoadRange ? createSparseLogicalMessages(totalMessages, rangeStart, rangeMessages) : [],
+            totalMessages,
+            lastAvailableMessageId,
+            missingRanges,
+            storageMode: 'sqlite',
+            storageHealthy: Boolean(header),
+            sqliteMissing: false,
+            loadedRangeStart: shouldLoadRange ? rangeStart : null,
+            loadedRangeEnd: shouldLoadRange ? clampedRangeEnd : null,
+        };
+    } finally {
+        db.close();
+    }
+}
+
 function isPromptExcludedMessage(message) {
     return Boolean(message?.extra?.ignore);
 }
