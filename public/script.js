@@ -4848,8 +4848,12 @@ async function replaceChunkedChatPayloadWithLatestTail(response) {
 }
 
 async function fetchChunkedChat({ rangeStart = null, count = null, hydrateFull = false } = {}) {
-    const requestedCount = Number.isFinite(Number(count))
-        ? Number(count)
+    const normalizedCount = Number(count);
+    const requestedCount = count !== null
+        && count !== undefined
+        && Number.isFinite(normalizedCount)
+        && normalizedCount > 0
+        ? normalizedCount
         : getConfiguredLongChatDisplayCount();
 
     if (selected_group) {
