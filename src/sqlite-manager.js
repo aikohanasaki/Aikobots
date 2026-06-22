@@ -185,10 +185,13 @@ export function getMessageRange(db, offset, limit) {
     const stmt = db.prepare('SELECT content FROM messages WHERE order_index > 0 ORDER BY order_index ASC LIMIT ? OFFSET ?');
     stmt.bind([limit, offset]);
     const messages = [];
-    while (stmt.step()) {
-        messages.push(JSON.parse(stmt.get()[0]));
+    try {
+        while (stmt.step()) {
+            messages.push(JSON.parse(stmt.get()[0]));
+        }
+    } finally {
+        stmt.free();
     }
-    stmt.free();
     return messages;
 }
 
@@ -389,9 +392,12 @@ export function getMetadata(db, key) {
     const stmt = db.prepare('SELECT value FROM metadata WHERE key = ?');
     stmt.bind([key]);
     let result = null;
-    if (stmt.step()) {
-        result = stmt.get()[0];
+    try {
+        if (stmt.step()) {
+            result = stmt.get()[0];
+        }
+    } finally {
+        stmt.free();
     }
-    stmt.free();
     return result;
 }
