@@ -15796,7 +15796,7 @@ export async function importCharacterChat(formData, { refresh = true } = {}) {
             return [];
         }
 
-        if (data.res && refresh) {
+        if (data?.res && refresh) {
             await displayPastChats();
         }
         return data?.fileNames || [];
