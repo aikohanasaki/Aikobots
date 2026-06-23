@@ -1496,6 +1496,7 @@ function removeImageAttachmentsFromMessage(message) {
         return removedImages;
     }
 
+    delete message.extra.inline_image;
     message.extra.media = retainedMedia;
     const retainedSelectedIndex = oldSelectedMedia ? retainedMedia.indexOf(oldSelectedMedia) : -1;
     message.extra.media_index = retainedSelectedIndex >= 0
