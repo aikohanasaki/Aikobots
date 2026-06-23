@@ -542,6 +542,9 @@ router.post('/chat-range-info', async (request, response) => {
         if (normalizedRequest.rangeEnd !== null && (!Number.isInteger(normalizedRequest.rangeEnd) || normalizedRequest.rangeEnd < 0)) {
             throw createStmbRequestError(400, 'StmbBadRequest', 'rangeEnd must be a non-negative integer.');
         }
+        if (normalizedRequest.rangeStart === null && normalizedRequest.rangeEnd !== null) {
+            throw createStmbRequestError(400, 'StmbBadRequest', 'rangeStart is required when rangeEnd is provided.');
+        }
         if (normalizedRequest.rangeStart !== null && normalizedRequest.rangeEnd !== null && normalizedRequest.rangeStart > normalizedRequest.rangeEnd) {
             throw createStmbRequestError(400, 'StmbInvalidRange', 'Start message cannot be greater than end message.');
         }
