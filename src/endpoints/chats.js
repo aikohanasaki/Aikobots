@@ -3266,7 +3266,7 @@ router.post('/search', validateAvatarUrlMiddleware, async function (request, res
                 .map(chatId => {
                     const filePath = getGroupChatFilePath(groupChatsDir, chatId);
                     const sqlitePath = replaceChatStorageExtension(filePath, '.sqlite');
-                    if (!fs.existsSync(filePath) && !fs.existsSync(sqlitePath)) return null;
+                    if (!fs.existsSync(sqlitePath)) return null;
                     const fileStats = getChatFileStats(filePath);
                     return {
                         file_name: chatId,
@@ -3283,7 +3283,7 @@ router.post('/search', validateAvatarUrlMiddleware, async function (request, res
                 return response.send([]);
             }
 
-            chatFiles = getDeduplicatedChatHistoryFileNames(fs.readdirSync(directoryPath))
+            chatFiles = getDeduplicatedChatHistoryFileNames(fs.readdirSync(directoryPath), { includeLegacyJsonl: false })
                 .map(fileName => {
                     const filePath = path.join(directoryPath, fileName);
                     const stats = getChatFileStats(filePath);
@@ -3370,7 +3370,7 @@ router.post('/orphaned', async function (request, response) {
             const avatarUrl = `${orphanKey}.png`;
             const orphanChatDir = path.join(request.user.directories.chats, orphanKey);
             const orphanChatFiles = await fs.promises.readdir(orphanChatDir, { withFileTypes: true }).catch(() => []);
-            const directChatFiles = getDeduplicatedChatHistoryFileNames(orphanChatFiles);
+            const directChatFiles = getDeduplicatedChatHistoryFileNames(orphanChatFiles, { includeLegacyJsonl: false });
 
             const directChats = fragments.length
                 ? (await Promise.all(directChatFiles
@@ -3406,7 +3406,7 @@ router.post('/orphaned', async function (request, response) {
                     ? (await Promise.all((Array.isArray(group.chats) ? group.chats : [])
                         .map(async chatId => {
                             const filePath = getGroupChatFilePath(request.user.directories.groupChats, chatId);
-                            if (!fs.existsSync(filePath) && !fs.existsSync(replaceChatStorageExtension(filePath, '.sqlite'))) {
+                            if (!fs.existsSync(replaceChatStorageExtension(filePath, '.sqlite'))) {
                                 return null;
                             }
 
@@ -3422,7 +3422,7 @@ router.post('/orphaned', async function (request, response) {
                     : (await Promise.allSettled(
                         (Array.isArray(group.chats) ? group.chats : []).map(chatId => {
                             const filePath = getGroupChatFilePath(request.user.directories.groupChats, chatId);
-                            if (!fs.existsSync(filePath) && !fs.existsSync(replaceChatStorageExtension(filePath, '.sqlite'))) {
+                            if (!fs.existsSync(replaceChatStorageExtension(filePath, '.sqlite'))) {
                                 return Promise.resolve(null);
                             }
 
@@ -3480,9 +3480,9 @@ router.post('/recent', async function (request, response) {
                 const pathStats = await fs.promises.stat(pathToChats);
                 if (pathStats.isDirectory()) {
                     const chatFiles = await fs.promises.readdir(pathToChats);
-                    const jsonlFiles = getDeduplicatedChatHistoryFileNames(chatFiles);
+                    const storageFiles = getDeduplicatedChatHistoryFileNames(chatFiles, { includeLegacyJsonl: false });
 
-                    for (const file of jsonlFiles) {
+                    for (const file of storageFiles) {
                         const filePath = path.join(pathToChats, file);
                         const fileStats = getChatFileStats(filePath);
                         allChatFiles.push({ pngFile, filePath, mtime: fileStats.latestMtimeMs });
@@ -3504,7 +3504,7 @@ router.post('/recent', async function (request, response) {
                     if (Array.isArray(groupData.chats)) {
                         for (const chat of groupData.chats) {
                             const filePath = getGroupChatFilePath(request.user.directories.groupChats, chat);
-                            if (!fs.existsSync(filePath) && !fs.existsSync(replaceChatStorageExtension(filePath, '.sqlite'))) {
+                            if (!fs.existsSync(replaceChatStorageExtension(filePath, '.sqlite'))) {
                                 continue;
                             }
                             const fileStats = getChatFileStats(filePath);
@@ -3520,7 +3520,7 @@ router.post('/recent', async function (request, response) {
 
                             const getRootChatFiles = async () => {
                             const dirents = await fs.promises.readdir(request.user.directories.chats, { withFileTypes: true });
-                            const chatFiles = getDeduplicatedChatHistoryFileNames(dirents);
+                            const chatFiles = getDeduplicatedChatHistoryFileNames(dirents, { includeLegacyJsonl: false });
 
                             for (const file of chatFiles) {
                             const filePath = path.join(request.user.directories.chats, file);

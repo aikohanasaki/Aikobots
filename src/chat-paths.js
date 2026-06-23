@@ -138,9 +138,10 @@ function isChatHistoryFileName(fileName) {
 /**
  * Returns one storage file per logical chat history, preferring SQLite over legacy JSONL.
  * @param {(string|import('node:fs').Dirent)[]} files Directory entries or file names to inspect.
+ * @param {{includeLegacyJsonl?: boolean}} [options] Include JSONL-only legacy chat files.
  * @returns {string[]} Deduplicated chat file names.
  */
-export function getDeduplicatedChatHistoryFileNames(files) {
+export function getDeduplicatedChatHistoryFileNames(files, { includeLegacyJsonl = true } = {}) {
     const chatFiles = new Map();
 
     for (const file of files) {
@@ -150,6 +151,9 @@ export function getDeduplicatedChatHistoryFileNames(files) {
 
         const fileName = typeof file === 'string' ? file : file?.name;
         if (!fileName || !isChatHistoryFileName(fileName)) {
+            continue;
+        }
+        if (!includeLegacyJsonl && path.extname(fileName).toLowerCase() === '.jsonl') {
             continue;
         }
 

@@ -2449,7 +2449,7 @@ router.post('/chats', validateAvatarUrlMiddleware, async function (request, resp
         }
 
         const files = fs.readdirSync(chatsDirectory, { withFileTypes: true });
-        const jsonFiles = getDeduplicatedChatHistoryFileNames(files);
+        const jsonFiles = getDeduplicatedChatHistoryFileNames(files, { includeLegacyJsonl: false });
 
         if (jsonFiles.length === 0) {
             return response.send([]);
