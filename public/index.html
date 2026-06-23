@@ -5755,6 +5755,12 @@
                 retryStarted = true;
                 const pageKey = getPageKey();
                 if (hasRecentRetry(pageKey)) {
+                    clearRetryState();
+                    const url = new URL(window.location.href);
+                    if (url.searchParams.has(retryParam) && window.history?.replaceState) {
+                        url.searchParams.delete(retryParam);
+                        window.history.replaceState(window.history.state, document.title, `${url.pathname}${url.search}${url.hash}`);
+                    }
                     setLoaderMessage('A required script failed to load. Refresh the page to try again.');
                     console.error(`Startup module load failed after retry: ${reason}`);
                     return;
