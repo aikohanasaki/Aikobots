@@ -193,8 +193,17 @@ function validateSaveRevision(requestBody, existingHeader) {
     return { ok: true, currentRevision, nextRevision: currentRevision + 1 };
 }
 
+/**
+ * Uses the SQLite storage path as the single lock key for a logical chat.
+ * This keeps .jsonl, .sqlite, and extension-normalized requests serialized together.
+ */
+function getChatSaveLockPath(filePath) {
+    return replaceChatStorageExtension(filePath, '.sqlite');
+}
+
 async function withChatSaveLock(filePath, callback) {
-    const lockPath = `${filePath}.lock`;
+    const lockTargetPath = getChatSaveLockPath(filePath);
+    const lockPath = `${lockTargetPath}.lock`;
     const started = Date.now();
     let lockHandle = null;
 
@@ -219,7 +228,7 @@ async function withChatSaveLock(filePath, callback) {
             }
 
             if ((Date.now() - started) > CHAT_SAVE_LOCK_TIMEOUT_MS) {
-                const timeoutError = new Error(`Timed out waiting for chat save lock: ${filePath}`);
+                const timeoutError = new Error(`Timed out waiting for chat save lock: ${lockTargetPath}`);
                 timeoutError.code = 'CHAT_SAVE_LOCK_TIMEOUT';
                 throw timeoutError;
             }
