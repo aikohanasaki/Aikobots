@@ -1461,6 +1461,18 @@ function expandMessageMedia(messageId, mediaIndex) {
 }
 
 /**
+ * Clears media fields when a message no longer has attachments.
+ * @param {ChatMessage} message Message object
+ */
+function clearMessageMediaMetadata(message) {
+    delete message.extra.media;
+    delete message.extra.media_index;
+    delete message.extra.inline_image;
+    delete message.extra.title;
+    delete message.extra.append_title;
+}
+
+/**
  * Removes all image attachments from a message.
  * @param {ChatMessage} message Message object
  * @returns {MediaAttachment[]} Removed image attachments
@@ -1488,11 +1500,7 @@ function removeImageAttachmentsFromMessage(message) {
     }
 
     if (retainedMedia.length === 0) {
-        delete message.extra.media;
-        delete message.extra.media_index;
-        delete message.extra.inline_image;
-        delete message.extra.title;
-        delete message.extra.append_title;
+        clearMessageMediaMetadata(message);
         return removedImages;
     }
 
@@ -1614,12 +1622,24 @@ async function deleteMessageMedia(messageId, mediaIndex, messageBlock) {
     } else if (deleteAllImages) {
         deleteMedia.push(...removeImageAttachmentsFromMessage(message));
     } else {
-        deleteMedia.push(message.extra.media[mediaIndex]);
+        const previousMediaIndex = Number(message.extra.media_index);
+        const deletedAttachment = message.extra.media[mediaIndex];
+        deleteMedia.push(deletedAttachment);
         message.extra.media.splice(mediaIndex, 1);
 
-        if (message.extra.media_index === mediaIndex) {
-            const newIndex = mediaIndex > 0 ? mediaIndex - 1 : 0;
-            message.extra.media_index = clamp(newIndex, 0, message.extra.media.length - 1);
+        if (message.extra.media.length === 0) {
+            clearMessageMediaMetadata(message);
+        } else {
+            if (isImageAttachment(deletedAttachment) && !message.extra.media.some(isImageAttachment)) {
+                delete message.extra.inline_image;
+            }
+
+            if (Number.isInteger(previousMediaIndex)) {
+                const newIndex = previousMediaIndex === mediaIndex
+                    ? (mediaIndex > 0 ? mediaIndex - 1 : 0)
+                    : (previousMediaIndex > mediaIndex ? previousMediaIndex - 1 : previousMediaIndex);
+                message.extra.media_index = clamp(newIndex, 0, message.extra.media.length - 1);
+            }
         }
     }
 
