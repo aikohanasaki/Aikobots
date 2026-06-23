@@ -188,7 +188,7 @@ export async function openWelcomeScreen({ force = false, expand = false } = {}) 
         $('#chat').empty();
     }
 
-    await sendWelcomePanel(recentChats, expand);
+    await sendWelcomePanel(recentChats, expand, currentChatId);
     if (getCurrentChatId() !== currentChatId) {
         console.debug('Chat changed while rendering welcome panel.');
         return;
@@ -310,8 +310,9 @@ function createFaIcon(name) {
  * Sends the welcome panel to the chat.
  * @param {RecentChat[]} chats List of recent chats
  * @param {boolean} [expand=false] If true, expands the recent chats section
+ * @param {string|undefined} [expectedChatId] Chat ID that must still be active before appending
  */
-async function sendWelcomePanel(chats, expand = false) {
+async function sendWelcomePanel(chats, expand = false, expectedChatId = getCurrentChatId()) {
     try {
         const chatElement = document.getElementById('chat');
         const sendTextArea = document.getElementById('send_textarea');
@@ -450,6 +451,10 @@ async function sendWelcomePanel(chats, expand = false) {
                 }
             });
         });
+        if (getCurrentChatId() !== expectedChatId) {
+            console.debug('Skipping welcome panel because chat changed.');
+            return;
+        }
         chatElement.append(fragment.firstChild);
         if (expand) {
             chatElement.querySelectorAll('button.showMoreChats').forEach((button) => {
