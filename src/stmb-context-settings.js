@@ -314,6 +314,9 @@ export async function upsertStmbContextSetting(user, setting) {
     return await runWithStmbContextSettingsLock(user, async (lock) => {
         const document = await lock.run(async () => readStmbContextSettingsDocument(user));
         const existingKey = normalizeKey(setting?.key);
+        if (existingKey === STMB_CONTEXT_NONE_KEY) {
+            throw createRequestError(400, 'StmbContextSettingInvalidKey', 'Context setting key is reserved.');
+        }
         const existing = existingKey ? document.settings[existingKey] : null;
         const timestamp = nowIsoString();
         const normalized = normalizeStmbContextSetting({
@@ -366,6 +369,8 @@ export async function deleteStmbContextSetting(user, key) {
     });
 }
 
+// Storage distinction is not needed. Secure entries are not available to users unless the user is
+// also the owner. If the user is the owner there cannot be another lorebook with the same name.
 export async function migrateStmbContextSettingsLorebookReference(user, { operation, oldName, newName = '' } = {}) {
     return await runWithStmbContextSettingsLock(user, async (lock) => {
         const normalizedOperation = String(operation || '').trim();
