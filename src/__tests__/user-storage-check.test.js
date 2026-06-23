@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
-import { afterEach, describe, expect, it } from '@jest/globals';
+import { afterAll, afterEach, describe, expect, it, jest } from '@jest/globals';
 
 import {
     buildUserStorageCheckEvaluation,
@@ -13,9 +13,15 @@ import {
     STORAGE_CHECK_BYTES_PER_GB,
     STORAGE_CHECK_CODES,
 } from '../user-storage-check.js';
+import { setConfigFilePath } from '../util.js';
 
 const tempDirs = [];
 const originalDataRoot = globalThis.DATA_ROOT;
+const configTempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'storage-check-config-'));
+const configPath = path.join(configTempDir, 'config.yaml');
+
+fs.writeFileSync(configPath, '{}\n', 'utf8');
+setConfigFilePath(configPath);
 
 function makeTempDir(prefix) {
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
@@ -28,7 +34,28 @@ function writeSizedFile(filePath, size) {
     fs.writeFileSync(filePath, Buffer.alloc(size));
 }
 
+function writeSparseFile(filePath, size) {
+    fs.mkdirSync(path.dirname(filePath), { recursive: true });
+    const fd = fs.openSync(filePath, 'w');
+
+    try {
+        fs.writeSync(fd, Buffer.from([0]), 0, 1, size - 1);
+    } finally {
+        fs.closeSync(fd);
+    }
+}
+
+function countAdminMessageRecords(filePath) {
+    return fs.readFileSync(filePath, 'utf8')
+        .trim()
+        .split('\n')
+        .filter(line => JSON.parse(line).type === 'message')
+        .length;
+}
+
 afterEach(() => {
+    jest.restoreAllMocks();
+
     while (tempDirs.length) {
         fs.rmSync(tempDirs.pop(), { recursive: true, force: true });
     }
@@ -38,6 +65,10 @@ afterEach(() => {
     } else {
         globalThis.DATA_ROOT = originalDataRoot;
     }
+});
+
+afterAll(() => {
+    fs.rmSync(configTempDir, { recursive: true, force: true });
 });
 
 describe('user storage checks', () => {
@@ -146,7 +177,7 @@ describe('user storage checks', () => {
         expect(result.adminAlerts.map(alert => alert.code)).toEqual([STORAGE_CHECK_CODES.USER_DIRECTORY_3GB]);
     });
 
-    it('suppresses repeated warning and admin alert codes once per day', async () => {
+    it('suppresses repeated warnings once per day and leaves admin alerts due until delivered', async () => {
         const tempDir = makeTempDir('storage-check-state-');
         const statePath = path.join(tempDir, 'state.json');
         const evaluation = buildUserStorageCheckEvaluation({
@@ -172,7 +203,7 @@ describe('user storage checks', () => {
         expect(first.warnings).toHaveLength(1);
         expect(first.adminAlerts).toHaveLength(1);
         expect(second.warnings).toHaveLength(0);
-        expect(second.adminAlerts).toHaveLength(0);
+        expect(second.adminAlerts).toHaveLength(1);
         expect(nextDay.warnings).toHaveLength(1);
         expect(nextDay.adminAlerts).toHaveLength(1);
     });
@@ -222,5 +253,46 @@ describe('user storage checks', () => {
         })).resolves.toEqual({ warnings: [] });
 
         expect(fs.readFileSync(messagePath, 'utf8')).toContain('user character files are at least 2x');
+    });
+
+    it('retries failed admin alerts without repeating the shared user warning', async () => {
+        const tempDir = makeTempDir('storage-check-admin-retry-');
+        const handle = 'admin-retry-user';
+        const directories = {
+            root: path.join(tempDir, handle),
+            chats: path.join(tempDir, handle, 'chats'),
+            groupChats: path.join(tempDir, handle, 'group chats'),
+            userImages: path.join(tempDir, handle, 'user', 'images'),
+            characters: path.join(tempDir, handle, 'characters'),
+        };
+        const messagesPath = path.join(tempDir, handle, 'messages');
+        const messagePath = path.join(messagesPath, 'admin.jsonl');
+        const warnSpy = jest.spyOn(console, 'warn').mockImplementation(() => { });
+        globalThis.DATA_ROOT = tempDir;
+
+        writeSparseFile(path.join(directories.chats, 'bot', 'chat.sqlite'), (2 * STORAGE_CHECK_BYTES_PER_GB) + 1);
+        writeSizedFile(messagesPath, 1);
+
+        await expect(runUserStorageCheck({
+            profile: { handle, name: 'Admin Retry User', admin: false },
+            directories,
+        })).resolves.toEqual({
+            warnings: [expect.objectContaining({ code: STORAGE_CHECK_CODES.CHAT_2GB })],
+        });
+        expect(warnSpy).toHaveBeenCalledTimes(1);
+
+        fs.rmSync(messagesPath, { force: true });
+
+        await expect(runUserStorageCheck({
+            profile: { handle, name: 'Admin Retry User', admin: false },
+            directories,
+        })).resolves.toEqual({ warnings: [] });
+        expect(fs.readFileSync(messagePath, 'utf8')).toContain('chat files are over 2GB');
+
+        await expect(runUserStorageCheck({
+            profile: { handle, name: 'Admin Retry User', admin: false },
+            directories,
+        })).resolves.toEqual({ warnings: [] });
+        expect(countAdminMessageRecords(messagePath)).toBe(1);
     });
 });

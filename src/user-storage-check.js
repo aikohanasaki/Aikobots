@@ -37,19 +37,40 @@ function getStorageCheckDateKey(now = Date.now()) {
 
 function getEmptyStorageCheckState() {
     return {
-        version: 1,
+        version: 2,
         emitted: {},
+        adminEmitted: {},
     };
 }
 
-function normalizeStorageCheckState(value) {
-    const emitted = value?.emitted && typeof value.emitted === 'object' && !Array.isArray(value.emitted)
-        ? value.emitted
+function normalizeStorageCheckCodeMaps(value) {
+    return value && typeof value === 'object' && !Array.isArray(value)
+        ? value
         : {};
+}
+
+function cloneStorageCheckCodeMaps(value) {
+    const clone = {};
+
+    for (const [userHandle, codeMap] of Object.entries(normalizeStorageCheckCodeMaps(value))) {
+        if (codeMap && typeof codeMap === 'object' && !Array.isArray(codeMap)) {
+            clone[userHandle] = { ...codeMap };
+        }
+    }
+
+    return clone;
+}
+
+function normalizeStorageCheckState(value) {
+    const emitted = normalizeStorageCheckCodeMaps(value?.emitted);
+    const adminEmitted = Object.prototype.hasOwnProperty.call(value || {}, 'adminEmitted')
+        ? normalizeStorageCheckCodeMaps(value?.adminEmitted)
+        : cloneStorageCheckCodeMaps(emitted);
 
     return {
-        version: 1,
+        version: 2,
         emitted,
+        adminEmitted,
     };
 }
 
@@ -86,26 +107,22 @@ async function withStorageCheckStateLock(statePath, operation) {
     }, operation);
 }
 
-function getUserCodeMap(state, userHandle) {
+function getUserCodeMap(state, stateKey, userHandle) {
     const handle = String(userHandle || '').trim() || 'default-user';
-    const emitted = state.emitted && typeof state.emitted === 'object' && !Array.isArray(state.emitted)
-        ? state.emitted
+    const emitted = state[stateKey] && typeof state[stateKey] === 'object' && !Array.isArray(state[stateKey])
+        ? state[stateKey]
         : {};
 
     if (!emitted[handle] || typeof emitted[handle] !== 'object' || Array.isArray(emitted[handle])) {
         emitted[handle] = {};
     }
 
-    state.emitted = emitted;
+    state[stateKey] = emitted;
     return emitted[handle];
 }
 
-function getDueStorageCheckCodes(evaluation, codeMap, dateKey) {
+function getDueStorageCheckCodes(items, codeMap, dateKey) {
     const dueCodes = new Set();
-    const items = [
-        ...(evaluation.warnings || []),
-        ...(evaluation.adminAlerts || []),
-    ];
 
     for (const item of items) {
         const code = String(item?.code || '');
@@ -115,11 +132,17 @@ function getDueStorageCheckCodes(evaluation, codeMap, dateKey) {
         }
     }
 
-    for (const code of dueCodes) {
-        codeMap[code] = dateKey;
-    }
-
     return dueCodes;
+}
+
+function markStorageCheckCodesEmitted(items, codeMap, dateKey) {
+    for (const item of items) {
+        const code = String(item?.code || '');
+
+        if (code) {
+            codeMap[code] = dateKey;
+        }
+    }
 }
 
 function filterItemsByDueCodes(items, dueCodes) {
@@ -254,7 +277,7 @@ export function buildUserStorageCheckEvaluation(sizes) {
 }
 
 /**
- * Applies once-per-day rate limiting to storage warnings and admin alerts.
+ * Applies once-per-day rate limiting to storage warnings and already-delivered admin alerts.
  * @param {string} userHandle User handle.
  * @param {{ warnings: object[], adminAlerts: object[] }} evaluation Evaluation to filter.
  * @param {{ now?: number, statePath?: string }} [options]
@@ -266,16 +289,58 @@ export async function filterDueUserStorageCheckEvaluation(userHandle, evaluation
 
     return await withStorageCheckStateLock(statePath, async lock => {
         const state = await readStorageCheckState(statePath);
-        const codeMap = getUserCodeMap(state, userHandle);
-        const dueCodes = getDueStorageCheckCodes(evaluation, codeMap, dateKey);
-        const warnings = filterItemsByDueCodes(evaluation.warnings || [], dueCodes);
-        const adminAlerts = filterItemsByDueCodes(evaluation.adminAlerts || [], dueCodes);
+        const warningCodeMap = getUserCodeMap(state, 'emitted', userHandle);
+        const adminCodeMap = getUserCodeMap(state, 'adminEmitted', userHandle);
+        const warningDueCodes = getDueStorageCheckCodes(evaluation.warnings || [], warningCodeMap, dateKey);
+        const adminDueCodes = getDueStorageCheckCodes(evaluation.adminAlerts || [], adminCodeMap, dateKey);
+        const warnings = filterItemsByDueCodes(evaluation.warnings || [], warningDueCodes);
+        const adminAlerts = filterItemsByDueCodes(evaluation.adminAlerts || [], adminDueCodes);
 
         await lock.run(async () => {
+            markStorageCheckCodesEmitted(warnings, warningCodeMap, dateKey);
             await writeStorageCheckState(statePath, state);
         });
 
         return { warnings, adminAlerts };
+    });
+}
+
+/**
+ * Filters due storage notifications and records admin alert codes after delivery succeeds.
+ * @param {import('./users.js').User} user User profile.
+ * @param {{ warnings: object[], adminAlerts: object[] }} evaluation Evaluation to filter.
+ * @param {{ now?: number, statePath?: string }} [options]
+ * @returns {Promise<{ warnings: object[], adminAlertError: Error|null }>}
+ */
+async function runDueUserStorageCheckEvaluation(user, evaluation, options = {}) {
+    const statePath = options.statePath || getStorageCheckStatePath();
+    const dateKey = getStorageCheckDateKey(options.now);
+    let adminAlertError = null;
+
+    return await withStorageCheckStateLock(statePath, async lock => {
+        const state = await readStorageCheckState(statePath);
+        const warningCodeMap = getUserCodeMap(state, 'emitted', user.handle);
+        const adminCodeMap = getUserCodeMap(state, 'adminEmitted', user.handle);
+        const warningDueCodes = getDueStorageCheckCodes(evaluation.warnings || [], warningCodeMap, dateKey);
+        const adminDueCodes = getDueStorageCheckCodes(evaluation.adminAlerts || [], adminCodeMap, dateKey);
+        const warnings = filterItemsByDueCodes(evaluation.warnings || [], warningDueCodes);
+        const adminAlerts = filterItemsByDueCodes(evaluation.adminAlerts || [], adminDueCodes);
+
+        await lock.run(async () => {
+            markStorageCheckCodesEmitted(warnings, warningCodeMap, dateKey);
+
+            try {
+                await sendStorageCheckAdminAlerts(user, adminAlerts, alert => {
+                    markStorageCheckCodesEmitted([alert], adminCodeMap, dateKey);
+                });
+            } catch (error) {
+                adminAlertError = error;
+            }
+
+            await writeStorageCheckState(statePath, state);
+        });
+
+        return { warnings, adminAlertError };
     });
 }
 
@@ -305,8 +370,16 @@ export async function getUserStorageCheckSizes(directories, options = {}) {
     };
 }
 
-async function sendStorageCheckAdminAlerts(user, adminAlerts) {
-    if (user?.admin || !adminAlerts.length) {
+async function sendStorageCheckAdminAlerts(user, adminAlerts, onAlertSent) {
+    if (!adminAlerts.length) {
+        return;
+    }
+
+    if (user?.admin) {
+        for (const alert of adminAlerts) {
+            onAlertSent?.(alert);
+        }
+
         return;
     }
 
@@ -319,6 +392,7 @@ async function sendStorageCheckAdminAlerts(user, adminAlerts) {
             senderName: user.name || user.handle,
             body: String(alert.message || ''),
         });
+        onAlertSent?.(alert);
     }
 }
 
@@ -330,12 +404,10 @@ async function sendStorageCheckAdminAlerts(user, adminAlerts) {
 export async function runUserStorageCheck(userContext) {
     const sizes = await getUserStorageCheckSizes(userContext.directories);
     const evaluation = buildUserStorageCheckEvaluation(sizes);
-    const dueEvaluation = await filterDueUserStorageCheckEvaluation(userContext.profile.handle, evaluation);
+    const dueEvaluation = await runDueUserStorageCheckEvaluation(userContext.profile, evaluation);
 
-    try {
-        await sendStorageCheckAdminAlerts(userContext.profile, dueEvaluation.adminAlerts);
-    } catch (error) {
-        console.warn('Failed to send one or more storage check admin notifications.', error);
+    if (dueEvaluation.adminAlertError) {
+        console.warn('Failed to send one or more storage check admin notifications.', dueEvaluation.adminAlertError);
     }
 
     return {
