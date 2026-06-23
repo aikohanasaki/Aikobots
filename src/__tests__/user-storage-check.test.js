@@ -9,11 +9,13 @@ import {
     filterDueUserStorageCheckEvaluation,
     getRecursiveDirectorySize,
     getUserStorageCheckSizes,
+    runUserStorageCheck,
     STORAGE_CHECK_BYTES_PER_GB,
     STORAGE_CHECK_CODES,
 } from '../user-storage-check.js';
 
 const tempDirs = [];
+const originalDataRoot = globalThis.DATA_ROOT;
 
 function makeTempDir(prefix) {
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
@@ -29,6 +31,12 @@ function writeSizedFile(filePath, size) {
 afterEach(() => {
     while (tempDirs.length) {
         fs.rmSync(tempDirs.pop(), { recursive: true, force: true });
+    }
+
+    if (originalDataRoot === undefined) {
+        delete globalThis.DATA_ROOT;
+    } else {
+        globalThis.DATA_ROOT = originalDataRoot;
     }
 });
 
@@ -65,10 +73,11 @@ describe('user storage checks', () => {
     it('includes direct chats and group chats in chat storage', async () => {
         const tempDir = makeTempDir('storage-check-sizes-');
         const directories = {
-            chats: path.join(tempDir, 'chats'),
-            groupChats: path.join(tempDir, 'group chats'),
-            userImages: path.join(tempDir, 'user', 'images'),
-            characters: path.join(tempDir, 'characters'),
+            root: path.join(tempDir, 'user-root'),
+            chats: path.join(tempDir, 'user-root', 'chats'),
+            groupChats: path.join(tempDir, 'user-root', 'group chats'),
+            userImages: path.join(tempDir, 'user-root', 'user', 'images'),
+            characters: path.join(tempDir, 'user-root', 'characters'),
         };
         const sharedCharactersDirectory = path.join(tempDir, '_secure', 'shared-characters');
 
@@ -76,9 +85,11 @@ describe('user storage checks', () => {
         writeSizedFile(path.join(directories.groupChats, 'group.sqlite'), 11);
         writeSizedFile(path.join(directories.userImages, 'image.png'), 13);
         writeSizedFile(path.join(directories.characters, 'bot.png'), 17);
+        writeSizedFile(path.join(directories.root, 'settings.json'), 23);
         writeSizedFile(path.join(sharedCharactersDirectory, 'shared.png'), 19);
 
         await expect(getUserStorageCheckSizes(directories, { sharedCharactersDirectory })).resolves.toEqual({
+            rootBytes: 71,
             chatBytes: 18,
             imageBytes: 13,
             characterBytes: 17,
@@ -122,6 +133,19 @@ describe('user storage checks', () => {
         expect(result.adminAlerts.map(alert => alert.code)).toEqual([STORAGE_CHECK_CODES.CHARACTERS_2X_SHARED]);
     });
 
+    it('creates an admin-only alert when the whole user directory is over 3GB', () => {
+        const result = buildUserStorageCheckEvaluation({
+            rootBytes: (3 * STORAGE_CHECK_BYTES_PER_GB) + 1,
+            chatBytes: 0,
+            imageBytes: 0,
+            characterBytes: 0,
+            sharedCharacterBytes: 0,
+        });
+
+        expect(result.warnings).toHaveLength(0);
+        expect(result.adminAlerts.map(alert => alert.code)).toEqual([STORAGE_CHECK_CODES.USER_DIRECTORY_3GB]);
+    });
+
     it('suppresses repeated warning and admin alert codes once per day', async () => {
         const tempDir = makeTempDir('storage-check-state-');
         const statePath = path.join(tempDir, 'state.json');
@@ -151,5 +175,52 @@ describe('user storage checks', () => {
         expect(second.adminAlerts).toHaveLength(0);
         expect(nextDay.warnings).toHaveLength(1);
         expect(nextDay.adminAlerts).toHaveLength(1);
+    });
+
+    it('does not write admin alert messages for admin users', async () => {
+        const tempDir = makeTempDir('storage-check-admin-user-');
+        const handle = 'admin-user';
+        const directories = {
+            root: path.join(tempDir, handle),
+            chats: path.join(tempDir, handle, 'chats'),
+            groupChats: path.join(tempDir, handle, 'group chats'),
+            userImages: path.join(tempDir, handle, 'user', 'images'),
+            characters: path.join(tempDir, handle, 'characters'),
+        };
+        globalThis.DATA_ROOT = tempDir;
+
+        writeSizedFile(path.join(directories.characters, 'character.png'), 2);
+        writeSizedFile(path.join(tempDir, '_secure', 'shared-characters', 'shared.png'), 1);
+
+        await expect(runUserStorageCheck({
+            profile: { handle, name: 'Admin User', admin: true },
+            directories,
+        })).resolves.toEqual({ warnings: [] });
+
+        expect(fs.existsSync(path.join(tempDir, handle, 'messages', 'admin.jsonl'))).toBe(false);
+    });
+
+    it('still writes admin alert messages for regular users', async () => {
+        const tempDir = makeTempDir('storage-check-regular-user-');
+        const handle = 'regular-user';
+        const directories = {
+            root: path.join(tempDir, handle),
+            chats: path.join(tempDir, handle, 'chats'),
+            groupChats: path.join(tempDir, handle, 'group chats'),
+            userImages: path.join(tempDir, handle, 'user', 'images'),
+            characters: path.join(tempDir, handle, 'characters'),
+        };
+        const messagePath = path.join(tempDir, handle, 'messages', 'admin.jsonl');
+        globalThis.DATA_ROOT = tempDir;
+
+        writeSizedFile(path.join(directories.characters, 'character.png'), 2);
+        writeSizedFile(path.join(tempDir, '_secure', 'shared-characters', 'shared.png'), 1);
+
+        await expect(runUserStorageCheck({
+            profile: { handle, name: 'Regular User', admin: false },
+            directories,
+        })).resolves.toEqual({ warnings: [] });
+
+        expect(fs.readFileSync(messagePath, 'utf8')).toContain('user character files are at least 2x');
     });
 });

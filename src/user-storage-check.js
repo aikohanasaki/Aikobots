@@ -13,6 +13,7 @@ export const STORAGE_CHECK_CODES = Object.freeze({
     IMAGES_1GB: 'images_1gb',
     IMAGES_2GB: 'images_2gb',
     CHARACTERS_2X_SHARED: 'characters_2x_shared',
+    USER_DIRECTORY_3GB: 'user_directory_3gb',
 });
 
 const STORAGE_CHECK_STATE_FILE_NAME = 'storage-check-alerts.json';
@@ -180,18 +181,27 @@ export async function getRecursiveDirectorySize(directoryPath) {
 
 /**
  * Builds storage warnings and admin alerts from aggregate byte counts.
- * @param {{ chatBytes: number, imageBytes: number, characterBytes: number, sharedCharacterBytes: number }} sizes
+ * @param {{ rootBytes?: number, chatBytes: number, imageBytes: number, characterBytes: number, sharedCharacterBytes: number }} sizes
  * @returns {{ warnings: object[], adminAlerts: object[] }}
  */
 export function buildUserStorageCheckEvaluation(sizes) {
+    const rootBytes = Number(sizes?.rootBytes) || 0;
     const chatBytes = Number(sizes?.chatBytes) || 0;
     const imageBytes = Number(sizes?.imageBytes) || 0;
     const characterBytes = Number(sizes?.characterBytes) || 0;
     const sharedCharacterBytes = Number(sizes?.sharedCharacterBytes) || 0;
     const oneGb = STORAGE_CHECK_BYTES_PER_GB;
     const twoGb = STORAGE_CHECK_BYTES_PER_GB * 2;
+    const threeGb = STORAGE_CHECK_BYTES_PER_GB * 3;
     const warnings = [];
     const adminAlerts = [];
+
+    if (rootBytes > threeGb) {
+        adminAlerts.push({
+            code: STORAGE_CHECK_CODES.USER_DIRECTORY_3GB,
+            message: `Automated Aiko storage alert: entire user directory is over 3GB (${rootBytes} bytes).`,
+        });
+    }
 
     if (chatBytes > twoGb) {
         warnings.push({
@@ -273,11 +283,12 @@ export async function filterDueUserStorageCheckEvaluation(userHandle, evaluation
  * Gets aggregate storage sizes used by the user storage check.
  * @param {import('./users.js').UserDirectoryList} directories User directories.
  * @param {{ sharedCharactersDirectory?: string }} [options]
- * @returns {Promise<{ chatBytes: number, imageBytes: number, characterBytes: number, sharedCharacterBytes: number }>}
+ * @returns {Promise<{ rootBytes: number, chatBytes: number, imageBytes: number, characterBytes: number, sharedCharacterBytes: number }>}
  */
 export async function getUserStorageCheckSizes(directories, options = {}) {
     const sharedCharactersDirectory = options.sharedCharactersDirectory || getSharedCharactersDirectory();
-    const [chatsBytes, groupChatsBytes, imageBytes, characterBytes, sharedCharacterBytes] = await Promise.all([
+    const [rootBytes, chatsBytes, groupChatsBytes, imageBytes, characterBytes, sharedCharacterBytes] = await Promise.all([
+        getRecursiveDirectorySize(directories.root),
         getRecursiveDirectorySize(directories.chats),
         getRecursiveDirectorySize(directories.groupChats),
         getRecursiveDirectorySize(directories.userImages),
@@ -286,6 +297,7 @@ export async function getUserStorageCheckSizes(directories, options = {}) {
     ]);
 
     return {
+        rootBytes,
         chatBytes: chatsBytes + groupChatsBytes,
         imageBytes,
         characterBytes,
@@ -294,7 +306,7 @@ export async function getUserStorageCheckSizes(directories, options = {}) {
 }
 
 async function sendStorageCheckAdminAlerts(user, adminAlerts) {
-    if (!adminAlerts.length) {
+    if (user?.admin || !adminAlerts.length) {
         return;
     }
 
