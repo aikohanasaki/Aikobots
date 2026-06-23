@@ -4,7 +4,7 @@ import path from 'node:path';
 import express from 'express';
 import mime from 'mime-types';
 import { getSettingsBackupFilePrefix } from './settings.js';
-import { CHAT_BACKUPS_PREFIX, getLogicalChatData, serializeJsonl, isHeadChatFile } from './chats.js';
+import { CHAT_BACKUPS_PREFIX, getDeduplicatedChatHistoryFileNames, getLogicalChatData, serializeJsonl, isHeadChatFile } from './chats.js';
 import { tryParse } from '../util.js';
 import { SETTINGS_FILE } from '../constants.js';
 
@@ -681,22 +681,18 @@ export class DataMaidService {
             const allChats = [];
 
             const groupChats = await fs.promises.readdir(this.directories.groupChats, { withFileTypes: true });
-            for (const file of groupChats) {
-                if (file.isFile() && path.parse(file.name).ext === '.jsonl' && !isHeadChatFile(file.name)) {
-                    const chatMessages = await this.#parseChatFile(path.join(this.directories.groupChats, file.name));
-                    allChats.push(...chatMessages.filter(filterFn));
-                }
+            for (const fileName of getDeduplicatedChatHistoryFileNames(groupChats)) {
+                const chatMessages = await this.#parseChatFile(path.join(this.directories.groupChats, fileName));
+                allChats.push(...chatMessages.filter(filterFn));
             }
 
             const chatDirectories = await fs.promises.readdir(this.directories.chats, { withFileTypes: true });
             for (const directory of chatDirectories) {
                 if (directory.isDirectory()) {
                     const chatFiles = await fs.promises.readdir(path.join(this.directories.chats, directory.name), { withFileTypes: true });
-                    for (const file of chatFiles) {
-                        if (file.isFile() && path.parse(file.name).ext === '.jsonl' && !isHeadChatFile(file.name)) {
-                            const chatMessages = await this.#parseChatFile(path.join(this.directories.chats, directory.name, file.name));
-                            allChats.push(...chatMessages.filter(filterFn));
-                        }
+                    for (const fileName of getDeduplicatedChatHistoryFileNames(chatFiles)) {
+                        const chatMessages = await this.#parseChatFile(path.join(this.directories.chats, directory.name, fileName));
+                        allChats.push(...chatMessages.filter(filterFn));
                     }
                 }
             }
@@ -719,13 +715,11 @@ export class DataMaidService {
             const allMetadata = [];
 
             const groupChats = await fs.promises.readdir(this.directories.groupChats, { withFileTypes: true });
-            for (const file of groupChats) {
-                if (file.isFile() && path.parse(file.name).ext === '.jsonl' && !isHeadChatFile(file.name)) {
-                    const chatMessages = await this.#parseChatFile(path.join(this.directories.groupChats, file.name));
-                    const chatMetadata = chatMessages?.[0]?.chat_metadata;
-                    if (chatMetadata && filterFn(chatMetadata)) {
-                        allMetadata.push(chatMetadata);
-                    }
+            for (const fileName of getDeduplicatedChatHistoryFileNames(groupChats)) {
+                const chatMessages = await this.#parseChatFile(path.join(this.directories.groupChats, fileName));
+                const chatMetadata = chatMessages?.[0]?.chat_metadata;
+                if (chatMetadata && filterFn(chatMetadata)) {
+                    allMetadata.push(chatMetadata);
                 }
             }
 
@@ -733,13 +727,11 @@ export class DataMaidService {
             for (const directory of chatDirectories) {
                 if (directory.isDirectory()) {
                     const chatFiles = await fs.promises.readdir(path.join(this.directories.chats, directory.name), { withFileTypes: true });
-                    for (const file of chatFiles) {
-                        if (file.isFile() && path.parse(file.name).ext === '.jsonl' && !isHeadChatFile(file.name)) {
-                            const chatMessages = await this.#parseChatFile(path.join(this.directories.chats, directory.name, file.name));
-                            const chatMetadata = chatMessages?.[0]?.chat_metadata;
-                            if (chatMetadata && filterFn(chatMetadata)) {
-                                allMetadata.push(chatMetadata);
-                            }
+                    for (const fileName of getDeduplicatedChatHistoryFileNames(chatFiles)) {
+                        const chatMessages = await this.#parseChatFile(path.join(this.directories.chats, directory.name, fileName));
+                        const chatMetadata = chatMessages?.[0]?.chat_metadata;
+                        if (chatMetadata && filterFn(chatMetadata)) {
+                            allMetadata.push(chatMetadata);
                         }
                     }
                 }
