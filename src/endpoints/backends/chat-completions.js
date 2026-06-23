@@ -1,11 +1,11 @@
 import path from 'node:path';
 import { promises as fsPromises } from 'node:fs';
+import { createHash } from 'node:crypto';
 import process from 'node:process';
 import util from 'node:util';
 import express from 'express';
 import fetch from 'node-fetch';
 import urlJoin from 'url-join';
-import sanitize from 'sanitize-filename';
 import writeFileAtomic from 'write-file-atomic';
 
 import {
@@ -2336,12 +2336,21 @@ function getPromptInspectionSnapshotDirectory() {
     return path.join(path.resolve(String(globalThis.DATA_ROOT || '.')), ...PROMPT_INSPECTION_DIRECTORY);
 }
 
+/**
+ * Uses the full snapshot key for a collision-resistant filesystem name.
+ * @param {string} key
+ * @returns {string}
+ */
+function getPromptInspectionSnapshotFilenameForKey(key) {
+    return createHash('sha256').update(String(key)).digest('hex');
+}
+
 function getPromptInspectionSnapshotPathForKey(key) {
     if (!parsePromptSnapshotKey(key)) {
         throw new Error('Invalid prompt inspection key.');
     }
 
-    const filename = sanitize(String(key || '').replace(/\|/g, '_')).trim();
+    const filename = getPromptInspectionSnapshotFilenameForKey(key);
     if (!filename) {
         throw new Error('Invalid prompt inspection key.');
     }
@@ -2357,6 +2366,10 @@ async function readPromptInspectionSnapshotForKey(key) {
     try {
         const snapshotText = await fsPromises.readFile(getPromptInspectionSnapshotPathForKey(key), 'utf8');
         const parsedSnapshot = JSON.parse(snapshotText);
+        if (parsedSnapshot?.key !== key) {
+            return null;
+        }
+
         return clonePromptInspectionSnapshot(parsedSnapshot);
     } catch (error) {
         if (error?.code === 'ENOENT' || error instanceof SyntaxError) {
