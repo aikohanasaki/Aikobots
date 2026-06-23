@@ -2141,9 +2141,6 @@ async function refreshTopChatBarState() {
         topChatBarChatNameSelect.disabled = true;
         lastTopChatSelectorEntries = null;
         await populateTopChatSidebar();
-        //if (isTopChatSidebarVisible()) {
-        //    await populateTopChatSidebar();
-        //}
         return;
     }
 
@@ -5165,8 +5162,8 @@ export async function renderMessageWindow(startId = 0, count = null, navigationT
 
         const normalizedStartId = clamp(Number(startId) || 0, 0, Math.max(0, chat.length - 1));
         const requestedWindowSize = getConfiguredChatWindowSize(count);
-        // Cap initial render to 500 messages to prevent browser hang
-        const windowSize = count === null ? Math.min(500, requestedWindowSize) : requestedWindowSize;
+        // Cap initial render to prevent browser hang
+        const windowSize = count === null ? Math.min(INITIAL_CHAT_RENDER_MAX, requestedWindowSize) : requestedWindowSize;
         const endId = Math.min(chat.length - 1, normalizedStartId + windowSize - 1);
 
         await ensureChatRangeLoaded(normalizedStartId, windowSize);
@@ -6548,7 +6545,8 @@ export function addOneMessage(mes, { type = 'normal', insertAfter = null, scroll
     // if mes.extra.uses_system_ui is true, set an override on the sanitizer options
     const sanitizerOverrides = mes.extra?.uses_system_ui ? { MESSAGE_ALLOW_SYSTEM_UI: true } : {};
 
-    const mesId = forceId ?? (chat.indexOf(mes) !== -1 ? chat.indexOf(mes) : chat.length - 1);
+    const chatIndex = forceId === null || forceId === undefined ? chat.indexOf(mes) : -1;
+    const mesId = forceId ?? (chatIndex !== -1 ? chatIndex : chat.length - 1);
     messageText = messageFormatting(
         messageText,
         mes.name,
@@ -11491,7 +11489,7 @@ export async function saveChat({ chatName, withMetadata, mesId, force = false } 
     });
 
     const shouldTrackRevision = chatName === undefined && normalizedMesId === undefined;
-    if ((!shouldTrackRevision || normalizedMesId !== undefined) && !isChatFullyHydrated()) {
+    if (!shouldTrackRevision && !isChatFullyHydrated()) {
         const hydrated = await hydrateCurrentChatForEditing();
         if (!hydrated) {
             return CHAT_SAVE_RESULT.FAILED;
