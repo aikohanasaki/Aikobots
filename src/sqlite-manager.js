@@ -68,30 +68,35 @@ export function saveDb(db, filePath) {
 }
 
 /**
- * Migrates a JSONL chat file to a SQLite file.
- * @param {string} jsonlPath
+ * Migrates JSONL records to a SQLite file.
+ * @param {Iterable<string|{content: string, label?: string}>|AsyncIterable<string|{content: string, label?: string}>} records JSONL record strings.
  * @param {string} sqlitePath
  * @returns {Promise<void>}
  */
-export async function migrateFromJsonl(jsonlPath, sqlitePath) {
+export async function migrateFromJsonlRecords(records, sqlitePath) {
     await initSql();
     const db = createDatabase();
     try {
-        const content = fs.readFileSync(jsonlPath, 'utf-8');
-        const lines = content.split('\n').filter(line => line.trim());
-
         db.run('BEGIN TRANSACTION');
         let stmt;
         try {
             stmt = db.prepare('INSERT INTO messages (order_index, content) VALUES (?, ?)');
-            for (let i = 0; i < lines.length; i++) {
+            let index = 0;
+            for await (const record of records) {
+                const line = typeof record === 'string' ? record : record?.content;
+                if (!String(line || '').trim()) {
+                    continue;
+                }
+
                 // Use index as order_index for initial migration
                 try {
-                    JSON.parse(lines[i]);
+                    JSON.parse(line);
                 } catch (error) {
-                    throw new Error(`Invalid JSONL at line ${i + 1}: ${error.message}`);
+                    const label = typeof record === 'object' && record?.label ? record.label : `line ${index + 1}`;
+                    throw new Error(`Invalid JSONL at ${label}: ${error.message}`);
                 }
-                stmt.run([i, lines[i]]);
+                stmt.run([index, line]);
+                index++;
             }
             db.run('COMMIT');
         } catch (error) {
@@ -105,6 +110,18 @@ export async function migrateFromJsonl(jsonlPath, sqlitePath) {
     } finally {
         db.close();
     }
+}
+
+/**
+ * Migrates a JSONL chat file to a SQLite file.
+ * @param {string} jsonlPath
+ * @param {string} sqlitePath
+ * @returns {Promise<void>}
+ */
+export async function migrateFromJsonl(jsonlPath, sqlitePath) {
+    const content = fs.readFileSync(jsonlPath, 'utf-8');
+    const lines = content.split('\n').filter(line => line.trim());
+    await migrateFromJsonlRecords(lines, sqlitePath);
 }
 
 /**

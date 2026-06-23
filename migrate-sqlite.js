@@ -7,6 +7,9 @@ import { CommandLineParser } from './src/command-line.js';
 import { serverDirectory } from './src/server-directory.js';
 
 const INITIAL_LONG_CHAT_DISPLAY_COUNT = 100;
+const CHAT_STORAGE_KEY = 'chat_storage';
+const CHAT_STORAGE_MODE_SPLIT_TAIL = 'split-tail';
+const CHAT_HEAD_FILE_SUFFIX = '.head.jsonl';
 
 // config.yaml will be set when parsing command line arguments
 const cliArgs = new CommandLineParser().parse(process.argv);
@@ -39,16 +42,176 @@ async function readJsonlHeader(filePath) {
     return null;
 }
 
-/**
- * Rejects legacy split-chat fragments before SQLite migration can treat them as complete chats.
- * @param {string} filePath JSONL file path.
- * @returns {Promise<void>}
- */
-async function assertMigratableJsonlChat(filePath) {
-    const header = await readJsonlHeader(filePath);
-    if (header?.chat_storage?.mode === 'split-tail' || header?.split_part) {
-        throw new Error(`Legacy split chat storage is no longer supported; refusing to migrate partial JSONL: ${filePath}`);
+function isLegacySplitTailHeader(header) {
+    return header?.[CHAT_STORAGE_KEY]?.mode === CHAT_STORAGE_MODE_SPLIT_TAIL;
+}
+
+function isUnsafeLegacyHeadFileName(fileName) {
+    const normalized = String(fileName || '').trim();
+    return !normalized
+        || normalized === '.'
+        || normalized === '..'
+        || normalized.includes('\0')
+        || normalized.includes('/')
+        || normalized.includes('\\')
+        || path.posix.isAbsolute(normalized)
+        || path.win32.isAbsolute(normalized)
+        || /^[a-zA-Z]:/.test(normalized)
+        || !normalized.toLowerCase().endsWith(CHAT_HEAD_FILE_SUFFIX);
+}
+
+function resolveLegacySplitHeadPath(filePath, storage) {
+    const defaultHeadFileName = `${path.parse(filePath).name}${CHAT_HEAD_FILE_SUFFIX}`;
+    const headFileName = String(storage?.head_file || defaultHeadFileName).trim();
+
+    if (isUnsafeLegacyHeadFileName(headFileName)) {
+        throw new Error(`Invalid legacy split chat head file reference: ${headFileName || '(empty)'}`);
     }
+
+    return path.join(path.dirname(path.resolve(filePath)), headFileName);
+}
+
+function stripLegacySplitMetadata(header) {
+    if (!header || typeof header !== 'object' || Array.isArray(header)) {
+        return header;
+    }
+
+    const result = { ...header };
+    delete result[CHAT_STORAGE_KEY];
+    delete result.split_part;
+    return result;
+}
+
+/**
+ * Builds a migration plan for a JSONL chat, including legacy split-tail companions.
+ * @param {string} filePath Tail or complete JSONL chat path.
+ * @returns {Promise<{type: 'full-jsonl', header: object|null}|{type: 'legacy-split-tail', tailPath: string, header: object, storage: object, headPath: string}>}
+ */
+async function createJsonlMigrationPlan(filePath) {
+    const header = await readJsonlHeader(filePath);
+    if (!header) {
+        return { type: 'full-jsonl', header };
+    }
+
+    if (!isLegacySplitTailHeader(header)) {
+        if (header.split_part) {
+            throw new Error(`Legacy split chat storage is no longer supported; refusing to migrate partial JSONL: ${filePath}`);
+        }
+        return { type: 'full-jsonl', header };
+    }
+
+    const storage = header[CHAT_STORAGE_KEY];
+    const headPath = resolveLegacySplitHeadPath(filePath, storage);
+    if (!fs.existsSync(headPath)) {
+        throw new Error(`Legacy split chat head file is missing: ${headPath}`);
+    }
+
+    const headHeader = await readJsonlHeader(headPath);
+    if (!headHeader) {
+        throw new Error(`Legacy split chat head file is empty: ${headPath}`);
+    }
+
+    if (headHeader[CHAT_STORAGE_KEY]?.mode === CHAT_STORAGE_MODE_SPLIT_TAIL || (headHeader.split_part && headHeader.split_part !== 'head')) {
+        throw new Error(`Legacy split chat head file has invalid split metadata: ${headPath}`);
+    }
+
+    return {
+        type: 'legacy-split-tail',
+        tailPath: filePath,
+        header,
+        storage,
+        headPath,
+    };
+}
+
+/**
+ * Streams non-header JSONL records from a chat segment and counts yielded messages.
+ * @param {string} filePath JSONL segment path.
+ * @param {{count: number}} counter Mutable yielded-message counter.
+ */
+async function* readJsonlRecordsAfterHeader(filePath, counter) {
+    const stream = fs.createReadStream(filePath, { encoding: 'utf8' });
+    const lines = readline.createInterface({ input: stream, crlfDelay: Infinity });
+    let foundHeader = false;
+    let lineNumber = 0;
+
+    try {
+        for await (const line of lines) {
+            lineNumber++;
+            if (!line.trim()) {
+                continue;
+            }
+
+            if (!foundHeader) {
+                foundHeader = true;
+                continue;
+            }
+
+            counter.count++;
+            yield {
+                content: line,
+                label: `${filePath}:${lineNumber}`,
+            };
+        }
+    } finally {
+        lines.close();
+        stream.destroy();
+    }
+}
+
+/**
+ * Rejects split chats whose declared head or tail message counts cannot be satisfied.
+ * @param {{storage: object, headPath: string, tailPath: string}} plan Split migration plan.
+ * @param {{head: number, tail: number}} counts Actual message counts.
+ */
+function assertLegacySplitCounts(plan, counts) {
+    const declaredHeadCount = Number.isInteger(plan.storage?.head_count) ? Math.max(0, plan.storage.head_count) : null;
+    const declaredTailCount = Number.isInteger(plan.storage?.tail_count) ? Math.max(0, plan.storage.tail_count) : null;
+
+    if (declaredHeadCount !== null && counts.head < declaredHeadCount) {
+        throw new Error(`Legacy split chat head is incomplete: expected at least ${declaredHeadCount} message(s), found ${counts.head}: ${plan.headPath}`);
+    }
+
+    if (declaredTailCount !== null && counts.tail < declaredTailCount) {
+        throw new Error(`Legacy split chat tail is incomplete: expected at least ${declaredTailCount} message(s), found ${counts.tail}: ${plan.tailPath}`);
+    }
+}
+
+/**
+ * Streams a complete logical chat from a legacy head segment plus tail segment.
+ * @param {{tailPath: string, headPath: string, header: object, storage: object}} plan Split migration plan.
+ */
+async function* readLegacySplitChatRecords(plan) {
+    const headCounter = { count: 0 };
+    const tailCounter = { count: 0 };
+
+    yield {
+        content: JSON.stringify(stripLegacySplitMetadata(plan.header)),
+        label: `${plan.tailPath}:header`,
+    };
+
+    yield* readJsonlRecordsAfterHeader(plan.headPath, headCounter);
+    yield* readJsonlRecordsAfterHeader(plan.tailPath, tailCounter);
+
+    assertLegacySplitCounts(plan, {
+        head: headCounter.count,
+        tail: tailCounter.count,
+    });
+}
+
+/**
+ * Resolves the legacy head companion only when an existing verified SQLite makes cleanup safe.
+ * @param {string} filePath Tail JSONL path.
+ * @returns {Promise<string|null>}
+ */
+async function getVerifiedLegacySplitHeadPath(filePath) {
+    const header = await readJsonlHeader(filePath);
+    if (!isLegacySplitTailHeader(header)) {
+        return null;
+    }
+
+    const headPath = resolveLegacySplitHeadPath(filePath, header[CHAT_STORAGE_KEY]);
+    return fs.existsSync(headPath) ? headPath : null;
 }
 
 /**
@@ -58,7 +221,7 @@ async function assertMigratableJsonlChat(filePath) {
 async function migrateAllUsersChatsToSqlite() {
     const { getAllUserHandles, getUserDirectories } = await import('./src/users.js');
     const { isHeadChatFile } = await import('./src/chat-paths.js');
-    const { loadDb, migrateFromJsonl } = await import('./src/sqlite-manager.js');
+    const { loadDb, migrateFromJsonl, migrateFromJsonlRecords } = await import('./src/sqlite-manager.js');
     const handles = await getAllUserHandles();
     let totalMigrated = 0;
     let totalRemovedExisting = 0;
@@ -108,12 +271,20 @@ async function migrateAllUsersChatsToSqlite() {
     for (const { entryPath, sqlitePath } of allEntries) {
         if (!fs.existsSync(sqlitePath)) {
             try {
-                await assertMigratableJsonlChat(entryPath);
-                console.info(`[Data Maid] Migrating ${entryPath} to SQLite...`);
-                await migrateFromJsonl(entryPath, sqlitePath);
+                const migrationPlan = await createJsonlMigrationPlan(entryPath);
+                if (migrationPlan.type === 'legacy-split-tail') {
+                    console.info(`[Data Maid] Recombining legacy split chat ${migrationPlan.headPath} + ${entryPath} to SQLite...`);
+                    await migrateFromJsonlRecords(readLegacySplitChatRecords(migrationPlan), sqlitePath);
+                } else {
+                    console.info(`[Data Maid] Migrating ${entryPath} to SQLite...`);
+                    await migrateFromJsonl(entryPath, sqlitePath);
+                }
                 await verifySqliteIntegrity(sqlitePath);
                 // Remove the verified legacy JSONL source after successful migration.
                 await fs.promises.unlink(entryPath);
+                if (migrationPlan.type === 'legacy-split-tail' && fs.existsSync(migrationPlan.headPath)) {
+                    await fs.promises.unlink(migrationPlan.headPath);
+                }
                 totalMigrated++;
             } catch (error) {
                 totalFailed++;
@@ -125,8 +296,18 @@ async function migrateAllUsersChatsToSqlite() {
             if (fs.existsSync(entryPath)) {
                 try {
                     await verifySqliteIntegrity(sqlitePath);
+                    let legacyHeadPath = null;
+                    try {
+                        legacyHeadPath = await getVerifiedLegacySplitHeadPath(entryPath);
+                    } catch (error) {
+                        console.warn(`[Data Maid] Could not resolve legacy split head companion for ${entryPath}; leaving any head file in place:`, error);
+                    }
                     console.info(`[Data Maid] ${sqlitePath} already exists and passed integrity check, removing legacy JSONL ${entryPath}...`);
                     await fs.promises.unlink(entryPath);
+                    if (legacyHeadPath) {
+                        console.info(`[Data Maid] Removing legacy split head JSONL ${legacyHeadPath}...`);
+                        await fs.promises.unlink(legacyHeadPath);
+                    }
                     totalRemovedExisting++;
                 } catch (error) {
                     totalFailed++;
