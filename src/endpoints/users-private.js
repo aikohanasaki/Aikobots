@@ -11,6 +11,7 @@ import { getPersonasPath } from '../persona-repository.js';
 import { checkForNewContent, CONTENT_TYPES } from './content-manager.js';
 import { color, getConfigValue } from '../util.js';
 import { clearUserFlowState, getUserFlowState, setUserFlowState } from './user-flow-state.js';
+import { runUserStorageCheck } from '../user-storage-check.js';
 
 const ACCOUNT_RESET_FLOW = 'account-reset';
 
@@ -52,6 +53,19 @@ router.get('/me', async (request, response) => {
         return response.json(viewModel);
     } catch (error) {
         console.error(error);
+        return response.sendStatus(500);
+    }
+});
+
+router.get('/storage-check', async (request, response) => {
+    try {
+        if (!request.user) {
+            return response.sendStatus(403);
+        }
+
+        return response.json(await runUserStorageCheck(request.user));
+    } catch (error) {
+        console.warn('Failed to run user storage check.', error);
         return response.sendStatus(500);
     }
 });

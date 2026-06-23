@@ -3166,6 +3166,47 @@ export async function pingServer() {
     }
 }
 
+function showStorageCheckWarning(warning) {
+    const message = String(warning?.message || '').trim();
+
+    if (!message) {
+        return;
+    }
+
+    const title = String(warning?.title || 'Storage').trim();
+    const options = warning?.severity === 'error'
+        ? { timeOut: 0, extendedTimeOut: 0, preventDuplicates: true }
+        : { timeOut: 10000, extendedTimeOut: 2000, preventDuplicates: true };
+
+    if (warning?.severity === 'error') {
+        toastr.error(message, title, options);
+    } else {
+        toastr.warning(message, title, options);
+    }
+}
+
+async function runStorageCheckOnAppReady() {
+    try {
+        const response = await fetch('/api/users/storage-check', {
+            headers: getRequestHeaders(),
+            cache: 'no-cache',
+        });
+
+        if (!response.ok) {
+            throw new Error(`Storage check failed with status ${response.status}`);
+        }
+
+        const data = await response.json();
+        const warnings = Array.isArray(data?.warnings) ? data.warnings : [];
+
+        for (const warning of warnings) {
+            showStorageCheckWarning(warning);
+        }
+    } catch (error) {
+        console.warn('User storage check failed.', error);
+    }
+}
+
 //MARK: firstLoadInit
 async function firstLoadInit() {
     try {
@@ -3236,6 +3277,9 @@ async function firstLoadInit() {
     await fixViewport();
     initializeModelTagInjection();
     await initializeHiddenTemplates();
+    eventSource.once(event_types.APP_READY, () => {
+        runStorageCheckOnAppReady();
+    });
     await eventSource.emit(event_types.APP_READY);
 }
 
