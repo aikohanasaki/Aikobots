@@ -94,6 +94,7 @@ import {
     hasActiveMessageEditSession,
     applyChunkedChatPayload,
     getConfiguredLongChatDisplayCount,
+    getInitialChatDisplayCount,
     prefetchCurrentChatTailBuffer,
     prepareCurrentChatSavePayload,
 } from '../script.js';
@@ -354,7 +355,7 @@ async function loadGroupChat(chatId, { withMetadata = false, chunked = false } =
         body: JSON.stringify({
             id: chatId,
             ...(withMetadata ? { with_metadata: true } : {}),
-            ...(chunked ? { chunked: true, count: getConfiguredLongChatDisplayCount() } : {}),
+            ...(chunked ? { chunked: true, count: getInitialChatDisplayCount(), display_count: getConfiguredLongChatDisplayCount() } : {}),
         }),
     });
 

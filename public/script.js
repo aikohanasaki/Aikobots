@@ -86,7 +86,6 @@ import {
     getCustomStoppingStrings,
     MAX_CONTEXT_DEFAULT,
     MAX_RESPONSE_DEFAULT,
-    LONG_CHAT_DISPLAY_MAX,
     LONG_CHAT_DISPLAY_MIN,
     normalizeLongChatHandlingSettings,
     sortEntitiesList,
@@ -961,7 +960,6 @@ const RETURN_TO_TAIL_CONTROL_ID = 'return_to_live_tail';
 const HYDRATE_CHAT_CONTROL_ID = 'load_full_chat_for_editing';
 const CHAT_GAP_INDICATOR_CLASS = 'chat_gap_indicator';
 const FALLBACK_CHAT_WINDOW_SIZE = 200;
-const INITIAL_CHAT_RENDER_MAX = 500;
 const LONG_CHAT_PREFETCH_MULTIPLIER = 2;
 const LONG_CHAT_PREFETCH_MAX = 500;
 
@@ -983,15 +981,39 @@ let historyWindowNavigationQueue = Promise.resolve();
 let isRunningHistoryWindowNavigation = false;
 let isHistoryWindowNavigationQueued = false;
 let activeHistoryWindowNavigationToken = null;
+let historyWindowNavigationEpoch = 0;
+
+function invalidateHistoryWindowNavigation() {
+    historyWindowNavigationEpoch++;
+    activeHistoryWindowNavigationToken = null;
+    isRunningHistoryWindowNavigation = false;
+    isHistoryWindowNavigationQueued = false;
+    historyWindowNavigationQueue = Promise.resolve();
+}
+
+function isHistoryWindowNavigationTokenCurrent(navigationToken) {
+    return Boolean(navigationToken)
+        && navigationToken === activeHistoryWindowNavigationToken
+        && navigationToken.epoch === historyWindowNavigationEpoch;
+}
+
+function hasActiveChatSelection() {
+    return getCurrentChatId() !== undefined;
+}
 
 function serializeHistoryWindowNavigation(callback, navigationToken = null) {
-    if (navigationToken && navigationToken === activeHistoryWindowNavigationToken) {
+    if (navigationToken && isHistoryWindowNavigationTokenCurrent(navigationToken)) {
         return callback(navigationToken);
     }
 
     isHistoryWindowNavigationQueued = true;
+    const queuedEpoch = historyWindowNavigationEpoch;
     const run = historyWindowNavigationQueue.then(async () => {
-        const token = {};
+        if (queuedEpoch !== historyWindowNavigationEpoch) {
+            return;
+        }
+
+        const token = { epoch: queuedEpoch };
         isHistoryWindowNavigationQueued = false;
         isRunningHistoryWindowNavigation = true;
         activeHistoryWindowNavigationToken = token;
@@ -4206,6 +4228,15 @@ export function getConfiguredLongChatDisplayCount() {
     return Math.max(LONG_CHAT_DISPLAY_MIN, displayCount);
 }
 
+/**
+ * Gets the UI-safe first chat window size before background tail hydration continues.
+ * @returns {number} Initial chat load count
+ */
+export function getInitialChatDisplayCount() {
+    const { initialLoadCount } = getNormalizedLongChatHandling();
+    return initialLoadCount;
+}
+
 export function getConfiguredLongChatBufferMax() {
     const displayCount = getConfiguredLongChatDisplayCount();
     return Math.max(displayCount, Math.min(LONG_CHAT_PREFETCH_MAX, displayCount * LONG_CHAT_PREFETCH_MULTIPLIER));
@@ -4767,15 +4798,18 @@ function chunkedPayloadIncludesLatestTail(response) {
 
 async function fetchLatestTailForPayload(response, options = {}) {
     const totalMessages = Number(response?.totalMessages);
-    const count = getConfiguredLongChatDisplayCount();
+    const optionCount = Number(options?.count);
+    const count = Number.isFinite(optionCount) && optionCount > 0
+        ? optionCount
+        : getConfiguredLongChatDisplayCount();
     const rangeStart = Number.isInteger(totalMessages)
         ? Math.max(0, totalMessages - count)
         : null;
 
     return fetchChunkedChat({
+        ...options,
         rangeStart,
         count,
-        ...options,
     });
 }
 
@@ -4805,25 +4839,27 @@ function getTailPrefetchRange() {
 export async function prefetchCurrentChatTailBuffer(chatId) {
     const groupId = selected_group;
     const characterId = this_chid;
+    const prefetchEpoch = historyWindowNavigationEpoch;
 
     try {
         await delay(0);
 
-        if (chatId !== getCurrentChatId() || groupId !== selected_group || characterId !== this_chid) {
-            return;
-        }
+        while (prefetchEpoch === historyWindowNavigationEpoch && chatId === getCurrentChatId() && groupId === selected_group && characterId === this_chid) {
+            const range = getTailPrefetchRange();
+            if (!range) {
+                return;
+            }
 
-        const range = getTailPrefetchRange();
-        if (!range) {
-            return;
-        }
+            const count = Math.min(range.count, LONG_CHAT_PREFETCH_MAX);
+            const rangeStart = range.rangeStart + range.count - count;
+            const response = await fetchChunkedChat({ rangeStart, count });
+            if (prefetchEpoch !== historyWindowNavigationEpoch || chatId !== getCurrentChatId() || groupId !== selected_group || characterId !== this_chid) {
+                return;
+            }
 
-        const response = await fetchChunkedChat(range);
-        if (chatId !== getCurrentChatId() || groupId !== selected_group || characterId !== this_chid) {
-            return;
+            applyChunkedChatPayload(response, { replace: false, currentView: chatLoadState.currentView });
+            await delay(0);
         }
-
-        applyChunkedChatPayload(response, { replace: false, currentView: chatLoadState.currentView });
     } catch (error) {
         console.debug('Failed to prefetch chat tail buffer', error);
     }
@@ -4945,7 +4981,7 @@ async function fetchChunkedChat({ rangeStart = null, count = null, hydrateFull =
     return await response.json();
 }
 
-async function ensureChatRangeLoaded(startId, count = null) {
+async function ensureChatRangeLoaded(startId, count = null, navigationToken = null) {
     if (isChatFullyHydrated()) {
         return true;
     }
@@ -4967,6 +5003,10 @@ async function ensureChatRangeLoaded(startId, count = null) {
     }
 
     const response = await fetchChunkedChat({ rangeStart: normalizedStartId, count: windowSize });
+    if (navigationToken && !isHistoryWindowNavigationTokenCurrent(navigationToken)) {
+        return false;
+    }
+
     applyChunkedChatPayload(response, { replace: false, currentView: normalizedStartId < chatLoadState.tailStartId ? 'history' : 'tail' });
     return true;
 }
@@ -4989,7 +5029,11 @@ export async function returnToLiveTailView(navigationToken = null) {
 
         const count = getConfiguredLongChatDisplayCount();
         const startId = Math.max(0, getTotalChatMessages() - count);
-        await ensureChatRangeLoaded(startId, count);
+        await ensureChatRangeLoaded(startId, count, activeNavigationToken);
+        if (!isHistoryWindowNavigationTokenCurrent(activeNavigationToken)) {
+            return;
+        }
+
         chatLoadState.currentView = 'tail';
         await renderMessageWindow(startId, count, activeNavigationToken);
         scrollChatToBottom();
@@ -5005,6 +5049,10 @@ export async function hydrateCurrentChatForEditing(navigationToken = null) {
         const previousStartId = getFirstDisplayedMessageId();
         const previousCount = Math.max(1, chatElement.find('.mes').length || getConfiguredChatWindowSize());
         const response = await fetchChunkedChat({ hydrateFull: true, count: getTotalChatMessages() });
+        if (!isHistoryWindowNavigationTokenCurrent(activeNavigationToken)) {
+            return false;
+        }
+
         applyChunkedChatPayload(response, { replace: true, currentView: chatLoadState.currentView });
         chatLoadState.isHydrated = true;
 
@@ -5039,7 +5087,7 @@ function getConfiguredChatWindowSize(count = null) {
         return candidate;
     }
 
-    return Math.min(getConfiguredLongChatDisplayCount(), INITIAL_CHAT_RENDER_MAX);
+    return getConfiguredLongChatDisplayCount();
 }
 
 function setVisibleChatRange(startId = null, endId = null) {
@@ -5129,13 +5177,16 @@ function removeHistoryControls() {
 function updateHistoryControls() {
     removeHistoryControls();
 
-    if (!Number.isFinite(visibleChatStartId) || !Number.isFinite(visibleChatEndId)) {
+    if (!hasActiveChatSelection() || !Number.isFinite(visibleChatStartId) || !Number.isFinite(visibleChatEndId)) {
         return;
     }
 
-    if (!isChatFullyHydrated() && chatLoadState.currentView === 'history') {
+    if (visibleChatEndId < getTotalChatMessages() - 1) {
+        chatElement.prepend(`<button id="${RETURN_TO_TAIL_CONTROL_ID}" type="button" class="chat_history_button">Return to last message</button>`);
+    }
+
+    if (!isChatFullyHydrated() && visibleChatEndId < getTotalChatMessages() - 1) {
         chatElement.prepend(`<button id="${HYDRATE_CHAT_CONTROL_ID}" type="button" class="chat_history_button">Load full chat for editing</button>`);
-        chatElement.prepend(`<button id="${RETURN_TO_TAIL_CONTROL_ID}" type="button" class="chat_history_button">Return to live tail</button>`);
     }
 }
 
@@ -5150,7 +5201,7 @@ function finalizeRenderedMessageWindow() {
 }
 
 export async function renderMessageWindow(startId = 0, count = null, navigationToken = null) {
-    return serializeHistoryWindowNavigation(async () => {
+    return serializeHistoryWindowNavigation(async (activeNavigationToken) => {
         closeMessageEditor();
         removeHistoryControls();
         chatElement.children(`.mes, .${CHAT_GAP_INDICATOR_CLASS}`).remove();
@@ -5162,11 +5213,13 @@ export async function renderMessageWindow(startId = 0, count = null, navigationT
 
         const normalizedStartId = clamp(Number(startId) || 0, 0, Math.max(0, chat.length - 1));
         const requestedWindowSize = getConfiguredChatWindowSize(count);
-        // Cap initial render to prevent browser hang
-        const windowSize = count === null ? Math.min(INITIAL_CHAT_RENDER_MAX, requestedWindowSize) : requestedWindowSize;
+        const windowSize = count === null ? getInitialChatDisplayCount() : requestedWindowSize;
         const endId = Math.min(chat.length - 1, normalizedStartId + windowSize - 1);
 
-        await ensureChatRangeLoaded(normalizedStartId, windowSize);
+        const isLoaded = await ensureChatRangeLoaded(normalizedStartId, windowSize, activeNavigationToken);
+        if (!isLoaded || !isHistoryWindowNavigationTokenCurrent(activeNavigationToken)) {
+            return;
+        }
 
         for (let i = normalizedStartId; i <= endId; i++) {
             if (!chat[i]) continue;
@@ -5205,6 +5258,9 @@ export async function jumpToMessageWindow(messageId, count = null, navigationTok
                 Math.max(0, chat.length - windowSize),
             );
             await renderMessageWindow(startId, windowSize, activeNavigationToken);
+            if (!isHistoryWindowNavigationTokenCurrent(activeNavigationToken)) {
+                return $();
+            }
         }
 
         return chatElement.find(`.mes[mesid="${normalizedMessageId}"]`);
@@ -5235,7 +5291,7 @@ export async function scrollChatElementIntoView(element, behavior = 'smooth') {
 }
 
 export async function showMoreMessages(messagesToLoad = null, navigationToken = null) {
-    return serializeHistoryWindowNavigation(async () => {
+    return serializeHistoryWindowNavigation(async (activeNavigationToken) => {
         const firstDisplayedMessageId = getFirstDisplayedMessageId();
         let messageId = firstDisplayedMessageId;
         let count = getConfiguredChatWindowSize(messagesToLoad);
@@ -5252,7 +5308,10 @@ export async function showMoreMessages(messagesToLoad = null, navigationToken = 
             : null;
         const loadStartId = Math.max(0, messageId - count);
 
-        await ensureChatRangeLoaded(loadStartId, count);
+        const isLoaded = await ensureChatRangeLoaded(loadStartId, count, activeNavigationToken);
+        if (!isLoaded || !isHistoryWindowNavigationTokenCurrent(activeNavigationToken)) {
+            return;
+        }
 
         removeHistoryControls();
 
@@ -5316,7 +5375,10 @@ export async function showNewerMessages(messagesToLoad = null, navigationToken =
 
         removeHistoryControls();
 
-        await ensureChatRangeLoaded(messageId + 1, count);
+        const isLoaded = await ensureChatRangeLoaded(messageId + 1, count, activeNavigationToken);
+        if (!isLoaded || !isHistoryWindowNavigationTokenCurrent(activeNavigationToken)) {
+            return;
+        }
 
         const chunkContainer = $('<div></div>');
         while (messageId < chat.length - 1 && count > 0) {
@@ -5360,7 +5422,7 @@ export async function showNewerMessages(messagesToLoad = null, navigationToken =
 }
 
 function getInitialChatRenderCount() {
-    const fallbackCount = Math.min(getConfiguredLongChatDisplayCount(), INITIAL_CHAT_RENDER_MAX);
+    const fallbackCount = getInitialChatDisplayCount();
 
     if (!chat.length) {
         return fallbackCount;
@@ -5370,7 +5432,7 @@ function getInitialChatRenderCount() {
     const loadedTailCount = Math.max(0, chat.length - loadedTailStartId);
     const candidateCount = isChatFullyHydrated() ? chat.length : loadedTailCount;
 
-    return Math.max(1, Math.min(candidateCount || fallbackCount, INITIAL_CHAT_RENDER_MAX));
+    return Math.max(1, Math.min(candidateCount || fallbackCount, fallbackCount));
 }
 
 export async function printMessages() {
@@ -5453,6 +5515,8 @@ export async function flushDebouncedChatSave() {
 }
 
 export async function clearChat({ flushPendingSave = true } = {}) {
+    invalidateHistoryWindowNavigation();
+
     if (flushPendingSave) {
         const saveResult = await flushDebouncedChatSave();
         if (saveResult !== CHAT_SAVE_RESULT.SAVED) {
@@ -11742,14 +11806,15 @@ export async function unshallowCharacter(characterId) {
 export async function getChat() {
     //console.log('/api/chats/get -- entered for -- ' + characters[this_chid].name);
     try {
-        let response = await fetchChunkedChat();
+        const initialCount = getInitialChatDisplayCount();
+        let response = await fetchChunkedChat({ count: initialCount });
         if (!chunkedPayloadIncludesLatestTail(response)) {
             console.warn('Initial chat payload did not include the latest tail. Refetching latest tail before render.', {
                 totalMessages: response?.totalMessages,
                 loadedRangeStart: response?.loadedRangeStart,
                 loadedRangeEnd: response?.loadedRangeEnd,
             });
-            response = await fetchLatestTailForPayload(response);
+            response = await fetchLatestTailForPayload(response, { count: initialCount });
             if (!chunkedPayloadIncludesLatestTail(response)) {
                 throw new Error('Latest chat tail could not be loaded');
             }
@@ -12186,6 +12251,8 @@ export async function saveSettings(loopCounter = 0) {
         console.error('Response length is currently being overridden, but the save loop has reached the maximum number of retries');
         TempResponseLength.restoreAll();
     }
+
+    normalizeLongChatHandlingSettings(power_user);
 
     const payload = {
         firstRun: firstRun,
@@ -17609,7 +17676,7 @@ jQuery(async function () {
 
     const chatElementScroll = document.getElementById('chat');
     const chatScrollHandler = async function () {
-        if (power_user.waifuMode || isRunningHistoryWindowNavigation || isHistoryWindowNavigationQueued || isChatSaving) {
+        if (!hasActiveChatSelection() || power_user.waifuMode || isRunningHistoryWindowNavigation || isHistoryWindowNavigationQueued || isChatSaving) {
             return;
         }
 

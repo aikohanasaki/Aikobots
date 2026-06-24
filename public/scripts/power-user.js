@@ -67,8 +67,10 @@ export const toastPositionClasses = [
 
 export const MAX_CONTEXT_DEFAULT = 8192;
 export const MAX_RESPONSE_DEFAULT = 2048;
-export const LONG_CHAT_DISPLAY_MIN = 25;
-export const LONG_CHAT_DISPLAY_MAX = 1048576; // 2^20
+export const LONG_CHAT_INITIAL_LOAD_MIN = 10;
+export const LONG_CHAT_INITIAL_LOAD_MAX = 100;
+export const LONG_CHAT_DISPLAY_MIN = 100;
+export const LONG_CHAT_DISPLAY_MAX = 1000;
 const MAX_CONTEXT_UNLOCKED = 512 * 1024;
 const MAX_RESPONSE_UNLOCKED = 64 * 1024;
 const unlockedMaxContextStep = 512;
@@ -277,6 +279,7 @@ export const power_user = {
         target_length: 400,
     },
     markdown_escape_strings: '',
+    initial_load: 100,
     long_chat_display_count: 100,
     streaming_fps: 30,
     smooth_streaming: false,
@@ -457,10 +460,17 @@ function clampLongChatValue(value, min, max, fallback) {
 export function normalizeLongChatHandlingSettings(settings = power_user) {
     if (!settings || typeof settings !== 'object') {
         return {
+            initialLoadCount: 100,
             displayCount: 100,
         };
     }
 
+    const initialLoadCount = clampLongChatValue(
+        settings.initial_load ?? settings.long_chat_initial_load_count,
+        LONG_CHAT_INITIAL_LOAD_MIN,
+        LONG_CHAT_INITIAL_LOAD_MAX,
+        100,
+    );
     const displayCount = clampLongChatValue(
         settings.long_chat_display_count,
         LONG_CHAT_DISPLAY_MIN,
@@ -468,15 +478,20 @@ export function normalizeLongChatHandlingSettings(settings = power_user) {
         100,
     );
 
+    settings.initial_load = initialLoadCount;
+    delete settings.long_chat_initial_load_count;
     settings.long_chat_display_count = displayCount;
 
     return {
+        initialLoadCount,
         displayCount,
     };
 }
 
 function syncLongChatHandlingControls() {
-    const { displayCount } = normalizeLongChatHandlingSettings();
+    const { initialLoadCount, displayCount } = normalizeLongChatHandlingSettings();
+    $('#initial_load').val(initialLoadCount);
+    $('#initial_load_counter').val(initialLoadCount);
     $('#long_chat_display_count').val(displayCount);
     $('#long_chat_display_count_counter').val(displayCount);
 }
@@ -3915,6 +3930,14 @@ jQuery(() => {
 
     $('#aiko_layout_asset_upload_button').on('click', function () {
         $('#aiko_layout_asset_upload').trigger('click');
+    });
+
+    $('#initial_load, #initial_load_counter').on('input', function () {
+        power_user.initial_load = $(this).val();
+        const { initialLoadCount } = normalizeLongChatHandlingSettings();
+        $('#initial_load').val(initialLoadCount);
+        $('#initial_load_counter').val(initialLoadCount);
+        saveSettingsDebounced();
     });
 
     $('#long_chat_display_count, #long_chat_display_count_counter').on('input', function () {

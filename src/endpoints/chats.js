@@ -3279,6 +3279,7 @@ router.post('/search', validateAvatarUrlMiddleware, async function (request, res
             }
 
             // Find group chat files for given group ID
+            // JSONL compatability intentionally not supported
             const groupChatsDir = request.user.directories.groupChats;
             chatFiles = targetGroup.chats
                 .map(chatId => {

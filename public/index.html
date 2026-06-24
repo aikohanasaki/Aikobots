@@ -2533,12 +2533,22 @@
                                 <div class="flex-container">
                                     <div class="alignitemscenter flex-container flexFlowColumn flexBasis48p flexGrow flexShrink gap0">
                                         <small>
-                                            <span data-i18n="Initial messages to show">Initial messages to show</span>
+                                            <span data-i18n="Initial Load">Initial Load</span>
 
-                                            <div class="fa-solid fa-circle-info opacity50p" data-i18n="[title]Preferred number of latest chat messages to show first when opening a larger chat." title="Preferred number of latest chat messages to show first when opening a larger chat."></div>
+                                            <div class="fa-solid fa-circle-info opacity50p" data-i18n="[title]Number of latest chat messages to fetch and render immediately when opening a larger chat." title="Number of latest chat messages to fetch and render immediately when opening a larger chat."></div>
                                         </small>
-                                        <input class="neo-range-slider" type="range" id="long_chat_display_count" name="long_chat_display_count" min="25" max="1048576" step="1">
-                                        <input class="neo-range-input" type="number" min="25" max="1048576" step="1" data-for="long_chat_display_count" id="long_chat_display_count_counter">
+                                        <input class="neo-range-slider" type="range" id="initial_load" name="initial_load" min="10" max="100" step="1">
+                                        <input class="neo-range-input" type="number" min="10" max="100" step="1" data-for="initial_load" id="initial_load_counter">
+                                    </div>
+
+                                    <div class="alignitemscenter flex-container flexFlowColumn flexBasis48p flexGrow flexShrink gap0">
+                                        <small>
+                                            <span data-i18n="Display Window">Display Window</span>
+
+                                            <div class="fa-solid fa-circle-info opacity50p" data-i18n="[title]Number of chat messages to render in one history window or navigation batch." title="Number of chat messages to render in one history window or navigation batch."></div>
+                                        </small>
+                                        <input class="neo-range-slider" type="range" id="long_chat_display_count" name="long_chat_display_count" min="100" max="1000" step="1">
+                                        <input class="neo-range-input" type="number" min="100" max="1000" step="1" data-for="long_chat_display_count" id="long_chat_display_count_counter">
                                     </div>
 
                                     <div class="alignitemscenter flex-container flexFlowColumn flexBasis48p flexGrow flexShrink gap0">

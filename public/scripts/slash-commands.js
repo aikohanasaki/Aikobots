@@ -23,6 +23,7 @@ import {
     generateRaw,
     getCurrentChatDetails,
     getCurrentChatId,
+    getTotalChatMessages,
     getThumbnailUrl,
     is_send_press,
     jumpToMessageWindow,
@@ -2688,14 +2689,18 @@ export function initDefaultSlashCommands() {
         aliases: ['chat-scrollto', 'floor-teleport'],
         callback: async (_, index) => {
             const messageIndex = Number(index);
+            const totalMessages = getTotalChatMessages();
 
-            if (isNaN(messageIndex) || messageIndex < 0 || messageIndex >= chat.length) {
-                toastr.warning(t`Invalid message index: ${index}. Please enter a number between 0 and ${chat.length}.`);
-                console.warn(`WARN: Invalid message index provided for /chat-jump: ${index}. Max index: ${chat.length}`);
+            if (!Number.isInteger(messageIndex) || messageIndex < 0 || messageIndex >= totalMessages) {
+                toastr.warning(t`Invalid message index: ${index}. Please enter a number between 0 and ${totalMessages}.`);
+                console.warn(`WARN: Invalid message index provided for /chat-jump: ${index}. Max index: ${totalMessages}`);
                 return '';
             }
 
-            const target = await jumpToMessageWindow(messageIndex);
+            let target = await jumpToMessageWindow(messageIndex);
+            if (!target?.length) {
+                target = await jumpToMessageWindow(messageIndex, 1);
+            }
 
             if (target?.length && await scrollChatElementIntoView(target, 'auto')) {
                 flashHighlight(target, 2000);
