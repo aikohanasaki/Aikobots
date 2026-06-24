@@ -840,45 +840,46 @@ async function getChatSegments(filePath, { metadataOnly = false } = {}) {
     const sqlitePath = replaceChatStorageExtension(filePath, '.sqlite');
     if (fs.existsSync(sqlitePath)) {
         const db = await loadDb(sqlitePath);
+        try {
+            if (metadataOnly) {
+                const header = getChatHeader(db);
+                const messageCount = getMessageCount(db);
+                const lastMessage = getLastMessage(db);
 
-        if (metadataOnly) {
-            const header = getChatHeader(db);
-            const messageCount = getMessageCount(db);
-            const lastMessage = getLastMessage(db);
+                console.debug(`[SQLite] Loaded metadata for ${filePath}: ${messageCount} messages.`);
+
+                return {
+                    header,
+                    messageCount,
+                    lastMessage,
+                    isSqlite: true,
+                    metadataOnly: true,
+                    storage: null,
+                    tailMessages: [],
+                    messages: [],
+                };
+            }
+
+            const messages = getMessages(db);
+
+            if (messages.length === 0) {
+                return {
+                    header: null,
+                    storage: null,
+                    tailMessages: [],
+                    messages: [],
+                };
+            }
+
+            return {
+                header: messages[0],
+                storage: null,
+                tailMessages: messages.slice(1),
+                messages: messages.slice(1),
+            };
+        } finally {
             db.close();
-
-            console.debug(`[SQLite] Loaded metadata for ${filePath}: ${messageCount} messages.`);
-
-            return {
-                header,
-                messageCount,
-                lastMessage,
-                isSqlite: true,
-                metadataOnly: true,
-                storage: null,
-                tailMessages: [],
-                messages: [],
-            };
         }
-
-        const messages = getMessages(db);
-        db.close();
-
-        if (messages.length === 0) {
-            return {
-                header: null,
-                storage: null,
-                tailMessages: [],
-                messages: [],
-            };
-        }
-
-        return {
-            header: messages[0],
-            storage: null,
-            tailMessages: messages.slice(1),
-            messages: messages.slice(1),
-        };
     }
 
     const tailObjects = readJsonlObjects(filePath);
@@ -1021,8 +1022,12 @@ async function buildChunkedGroupChatPayload(user, chatId, filePath, {
 
     if (fs.existsSync(sqlitePath)) {
         const db = await loadDb(sqlitePath);
-        const header = getChatHeader(db);
-        db.close();
+        let header;
+        try {
+            header = getChatHeader(db);
+        } finally {
+            db.close();
+        }
 
         if (isGroupChatHeader(header)) {
             const payload = await buildChunkedChatPayload(filePath, {
@@ -1131,59 +1136,60 @@ export async function buildChunkedChatPayload(filePath, {
 
     if (fs.existsSync(sqlitePath)) {
         const db = await loadDb(sqlitePath);
-        const header = getChatHeader(db);
-        const totalMessages = getMessageCount(db);
+        try {
+            const header = getChatHeader(db);
+            const totalMessages = getMessageCount(db);
 
-        if (!header) {
-            db.close();
+            if (!header) {
+                return {
+                    mode: 'full',
+                    header: null,
+                    messages: [],
+                    totalMessages: 0,
+                    loadedRangeStart: 0,
+                    loadedRangeEnd: -1,
+                    tailStartId: 0,
+                    tailEndId: -1,
+                    headCount: 0,
+                    tailCount: 0,
+                };
+            }
+
+            const normalizedCount = hydrateFull
+                ? totalMessages
+                : Math.max(1, Number(count) || config.displayCount);
+
+            let startId = Number.isInteger(rangeStart)
+                ? rangeStart
+                : Math.max(0, totalMessages - normalizedCount);
+
+            startId = Math.max(0, Math.min(startId, Math.max(0, totalMessages - 1)));
+            const endId = totalMessages > 0 ? Math.min(totalMessages - 1, startId + normalizedCount - 1) : -1;
+            const loadedRangeStart = startId;
+            const loadedRangeEnd = endId;
+
+            const messages = totalMessages > 0 && endId >= startId
+                ? getMessageRange(db, startId, endId - startId + 1)
+                : [];
+
             return {
                 mode: 'full',
-                header: null,
-                messages: [],
-                totalMessages: 0,
-                loadedRangeStart: 0,
-                loadedRangeEnd: -1,
-                tailStartId: 0,
-                tailEndId: -1,
-                headCount: 0,
-                tailCount: 0,
+                header: stripChatStorage(header),
+                messages,
+                totalMessages,
+                loadedRangeStart,
+                loadedRangeEnd,
+                tailStartId: startId,
+                tailEndId: totalMessages > 0 ? totalMessages - 1 : -1,
+                headCount: startId,
+                tailCount: totalMessages - startId,
+                displayCount: config.displayCount,
+                isHydrated: hydrateFull || (startId === 0 && messages.length >= totalMessages),
             };
+        } finally {
+            db.close();
         }
-
-        const normalizedCount = hydrateFull
-            ? totalMessages
-            : Math.max(1, Number(count) || config.displayCount);
-
-        let startId = Number.isInteger(rangeStart)
-            ? rangeStart
-            : Math.max(0, totalMessages - normalizedCount);
-
-        startId = Math.max(0, Math.min(startId, Math.max(0, totalMessages - 1)));
-        const endId = totalMessages > 0 ? Math.min(totalMessages - 1, startId + normalizedCount - 1) : -1;
-        const loadedRangeStart = startId;
-        const loadedRangeEnd = endId;
-
-        const messages = totalMessages > 0 && endId >= startId
-            ? getMessageRange(db, startId, endId - startId + 1)
-            : [];
-
-        db.close();
-
-        return {
-            mode: 'full',
-            header: stripChatStorage(header),
-            messages,
-            totalMessages,
-            loadedRangeStart,
-            loadedRangeEnd,
-            tailStartId: startId,
-            tailEndId: totalMessages > 0 ? totalMessages - 1 : -1,
-            headCount: startId,
-            tailCount: totalMessages - startId,
-            displayCount: config.displayCount,
-            isHydrated: hydrateFull || (startId === 0 && messages.length >= totalMessages),
-        };
-        }
+    }
 
     const segments = await getChatSegments(filePath);
     const header = stripChatStorage(segments.header);
@@ -1740,21 +1746,24 @@ export async function resolveCoreChatPayload(chatsDirectory, coreChatPayload) {
 
         if (fs.existsSync(sqlitePath)) {
             const db = await loadDb(sqlitePath);
-            const totalMessages = getMessageCount(db);
-            const tailStartId = Number.isInteger(coreChatPayload.tailStartId)
-                ? Math.max(0, Math.min(coreChatPayload.tailStartId, totalMessages))
-                : 0;
+            try {
+                const totalMessages = getMessageCount(db);
+                const tailStartId = Number.isInteger(coreChatPayload.tailStartId)
+                    ? Math.max(0, Math.min(coreChatPayload.tailStartId, totalMessages))
+                    : 0;
 
-            const parentMessages = coreChatPayload.useParentUnhiddenMessages
-                ? getMessageRange(db, 0, tailStartId).filter(isResidentParentPromptMessage)
-                : [];
+                const parentMessages = coreChatPayload.useParentUnhiddenMessages
+                    ? getMessageRange(db, 0, tailStartId).filter(isResidentParentPromptMessage)
+                    : [];
 
-            const tailMessages = coreChatPayload.useTailContents === false
-                ? []
-                : getMessageRange(db, tailStartId, totalMessages - tailStartId);
+                const tailMessages = coreChatPayload.useTailContents === false
+                    ? []
+                    : getMessageRange(db, tailStartId, totalMessages - tailStartId);
 
-            db.close();
-            return [...parentMessages, ...tailMessages];
+                return [...parentMessages, ...tailMessages];
+            } finally {
+                db.close();
+            }
         }
     }
 
