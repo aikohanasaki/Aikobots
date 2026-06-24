@@ -626,23 +626,46 @@ function normalizeImportedMessage(message, { chatScope, mesId }) {
     return normalizedMessage;
 }
 
-function normalizeImportedSerializedChat(serializedChat, fileName) {
-    const records = String(serializedChat || '')
-        .split('\n')
-        .map(line => tryParse(line))
-        .filter(record => _.isPlainObject(record));
+function normalizeImportedChatRecords(records, fileName) {
+    const chatRecords = Array.isArray(records)
+        ? records.filter(record => _.isPlainObject(record))
+        : [];
 
-    if (!records.length) {
+    if (!chatRecords.length) {
         return null;
     }
 
-    const [header, ...messages] = records;
+    const [header, ...messages] = chatRecords;
     const chatScope = `chat:${path.parse(String(fileName || '')).name}`;
 
     return {
+        sourceHeader: header,
         header: normalizeImportedHeader(header),
         messages: messages.map((message, mesId) => normalizeImportedMessage(message, { chatScope, mesId })),
     };
+}
+
+function normalizeImportedSerializedChat(serializedChat, fileName) {
+    const records = String(serializedChat || '')
+        .split('\n')
+        .map(line => tryParse(line));
+
+    return normalizeImportedChatRecords(records, fileName);
+}
+
+/**
+ * Reads an uploaded SQLite chat through the normal chat DB loader before re-saving it.
+ * @param {string} sqlitePath Uploaded SQLite file path.
+ * @param {string} fileName Target chat file name used for imported metadata keys.
+ * @returns {Promise<{sourceHeader: object, header: object, messages: object[]}|null>}
+ */
+async function normalizeImportedSqliteChat(sqlitePath, fileName) {
+    const db = await loadDb(sqlitePath);
+    try {
+        return normalizeImportedChatRecords(getMessages(db), fileName);
+    } finally {
+        db.close();
+    }
 }
 
 function clampLongChatValue(value, min, max, fallback) {
@@ -2824,6 +2847,7 @@ router.post('/export', validateAvatarUrlMiddleware, async function (request, res
 router.post('/group/import', async function (request, response) {
     try {
         const filedata = request.file;
+        const format = request.body?.file_type;
 
         if (!filedata) {
             return response.sendStatus(400);
@@ -2831,6 +2855,27 @@ router.post('/group/import', async function (request, response) {
 
         const chatname = humanizedISO8601DateTime();
         const pathToUpload = assertPathInside(filedata.destination, path.join(filedata.destination, filedata.filename), 'upload_file');
+
+        if (format === 'sqlite') {
+            const normalizedImportedChat = await normalizeImportedSqliteChat(pathToUpload, `${chatname}.sqlite`);
+            const unsupportedImportMessage = getUnsupportedImportedJsonlMessage(normalizedImportedChat?.sourceHeader);
+            if (unsupportedImportMessage) {
+                fs.unlinkSync(pathToUpload);
+                console.warn('Rejected unsupported group SQLite chat import:', unsupportedImportMessage);
+                return response.status(400).send({ error: true, message: unsupportedImportMessage });
+            }
+
+            if (!normalizedImportedChat?.header) {
+                fs.unlinkSync(pathToUpload);
+                return response.status(400).send({ error: true, message: 'Imported chat could not be normalized.' });
+            }
+
+            const pathToNewFile = getGroupChatFilePath(request.user.directories.groupChats, chatname);
+            await writeGroupChat(pathToNewFile, normalizedImportedChat.messages, normalizedImportedChat.header.chat_metadata || {}, normalizedImportedChat.header);
+            fs.unlinkSync(pathToUpload);
+            return response.send({ res: chatname, fileNames: [`${chatname}.sqlite`] });
+        }
+
         const serializedChat = String(fs.readFileSync(pathToUpload, 'utf8') || '');
         const header = tryParse(serializedChat.split('\n').find(line => line.trim()) || '');
         const unsupportedImportMessage = getUnsupportedImportedJsonlMessage(header);
@@ -2877,7 +2922,6 @@ router.post('/import', validateAvatarUrlMiddleware, async function (request, res
 
     try {
         const pathToUpload = assertPathInside(request.file.destination, path.join(request.file.destination, request.file.filename), 'upload_file');
-        const data = fs.readFileSync(pathToUpload, 'utf8');
         const chatsDirectory = resolveCharacterChatDirectory(request.user.directories.chats, avatarUrl);
         const importedChatBaseName = getImportedChatBaseName(request.file.originalname, characterName);
 
@@ -2897,6 +2941,7 @@ router.post('/import', validateAvatarUrlMiddleware, async function (request, res
         };
 
         if (format === 'json') {
+            const data = fs.readFileSync(pathToUpload, 'utf8');
             fs.unlinkSync(pathToUpload);
             const jsonData = JSON.parse(data);
 
@@ -2942,9 +2987,10 @@ router.post('/import', validateAvatarUrlMiddleware, async function (request, res
             }
 
             return response.send({ res: true, fileNames });
-            }
+        }
 
-            if (format === 'jsonl') {
+        if (format === 'jsonl') {
+            const data = fs.readFileSync(pathToUpload, 'utf8');
             let lines = data.split('\n');
             const header = lines.find(line => line.trim()) || '';
 
@@ -2984,9 +3030,32 @@ router.post('/import', validateAvatarUrlMiddleware, async function (request, res
             await writeLogicalChat(filePath, normalizedImportedChat.header, normalizedImportedChat.messages);
             fs.unlinkSync(pathToUpload);
             return response.send({ res: true, fileNames });
+        }
+
+        if (format === 'sqlite') {
+            const fileName = getImportedChatFileName(fileNames);
+            const filePath = resolveCharacterChatFilePath(request.user.directories.chats, avatarUrl, fileName);
+            const normalizedImportedChat = await normalizeImportedSqliteChat(pathToUpload, fileName);
+            const unsupportedImportMessage = getUnsupportedImportedJsonlMessage(normalizedImportedChat?.sourceHeader);
+
+            if (unsupportedImportMessage) {
+                console.warn('Rejected unsupported SQLite chat import:', unsupportedImportMessage);
+                fs.unlinkSync(pathToUpload);
+                return response.status(400).send({ error: true, message: unsupportedImportMessage });
             }
 
-            return response.status(400).send({ error: true, message: 'Unsupported chat import file type.' });
+            if (!normalizedImportedChat?.header) {
+                fs.unlinkSync(pathToUpload);
+                return response.status(400).send({ error: true, message: 'Imported chat could not be normalized.' });
+            }
+
+            fileNames.push(fileName);
+            await writeLogicalChat(filePath, normalizedImportedChat.header, normalizedImportedChat.messages);
+            fs.unlinkSync(pathToUpload);
+            return response.send({ res: true, fileNames });
+        }
+
+        return response.status(400).send({ error: true, message: 'Unsupported chat import file type.' });
     } catch (error) {
         if (isUnsupportedSplitTailChatError(error)) {
             return sendUnsupportedSplitTailChatError(response, error);

@@ -18769,8 +18769,8 @@ jQuery(async function () {
             const ext = file.name.match(/\.(\w+)$/);
             const format = ext?.[1]?.toLowerCase();
 
-            if (!['json', 'jsonl'].includes(format)) {
-                toastr.warning(t`Only JSON and JSONL files are supported for chat imports.`);
+            if (!['json', 'jsonl', 'sqlite'].includes(format)) {
+                toastr.warning(t`Only JSON, JSONL, and SQLite files are supported for chat imports.`);
                 continue;
             }
 
