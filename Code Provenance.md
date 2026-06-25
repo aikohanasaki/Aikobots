@@ -4,7 +4,7 @@ Aikobots is a fork of SillyTavern. Portions of the codebase remain derived from 
 
 This document summarizes major Aikobots-specific additions, integrations, and behavioral changes from the upstream SillyTavern base. It is intended as a provenance and orientation guide, not a complete line-by-line changelog.
 
-Fact-check basis: this document has been checked against the current `chat-dbs` / v3 workspace, including `readme.md`, `readme/sqlite.md`, `public/index.html`, `public/scripts/world-info.js`, the `public/scripts/stmb*.js` modules, `src/endpoints/chats.js`, `src/sqlite-manager.js`, `src/lorebook-repository.js`, `src/character-sharing-repository.js`, `src/character-submissions.js`, `src/active-session-store.js`, and related endpoint files. It remains a high-level provenance guide, not a formal exhaustive diff against every upstream SillyTavern commit.
+Fact-check basis: this document has been checked against the current `chat-dbs` / v3 workspace, including `readme.md`, `readme/sqlite.md`, `public/index.html`, `public/scripts/world-info.js`, the `public/scripts/stmb*.js` modules, `src/endpoints/chats.js`, `src/sqlite-manager.js`, `src/lorebook-repository.js`, `src/character-sharing-repository.js`, `src/character-submissions.js`, `src/active-session-store.js`, and related endpoint files. It is a high-level provenance guide, not a formal exhaustive diff against every upstream SillyTavern commit.
 
 ## Attribution
 
@@ -69,7 +69,7 @@ Later development work moves toward replacing JSONL/split-tail behavior with SQL
 
 Repository history confirms LeRobber authored key SQLite retrieval and migration commits. Subsequent branch history also shows substantial Aikobots integration, migration, locking, STMB compatibility, and bugfix work by Aiko/aikohanasaki around the same chat-storage area.
 
-Fact-check update for the current v3 workspace: SQLite-backed chat storage is now the documented current architecture, not only future work. New chat paths default to `.sqlite`, legacy `.jsonl` remains a compatibility input, split-tail storage is intentionally unsupported, chat imports/exports include SQLite, and migration tooling verifies SQLite integrity before removing legacy JSONL sources.
+Fact-check update for the current v3 workspace: SQLite-backed chat storage is now the documented current architecture, not only future work. New chat paths default to `.sqlite`, legacy `.jsonl` remains a compatibility input, v2's split-tail storage is intentionally unsupported by v3, chat imports/exports include SQLite, and migration tooling verifies SQLite integrity before removing legacy JSONL sources.
 
 The current chat system also includes chat revisions, stale-write conflict detection, active-session checks on mutations, application-level save locks, chunked/range reads, STMB sparse range resolution, raw SQLite export, message cloning, and prompt snapshot invalidation for affected cloned messages.
 
