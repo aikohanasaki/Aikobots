@@ -13,7 +13,7 @@ Aikobots is a multi-user fork of SillyTavern built around chat completion APIs. 
 
 ## License and credits
 
-**This program is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU Affero General Public License for more details.**
+**This program is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the [GNU Affero General Public License](https://www.gnu.org/licenses/agpl-3.0.en.html) for more details.**
 
 SillyTavern's Credits
 * [TavernAI](https://github.com/TavernAI/TavernAI) 1.2.8 by Humi: MIT License
