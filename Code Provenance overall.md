@@ -92,9 +92,9 @@ Current code implements active-session leases with claim, take-over, heartbeat, 
 
 ### 10. Provider, Token, and Prompt Workflow Changes
 
-Aikobots includes provider registry work, token dry-run behavior, prompt inspection/support workflows, and related utilities used to improve reliability and transparency for generation setup.
+Aikobots includes provider registry work, token dry-run behavior, redacted prompt inspection/support workflows, and related utilities used to improve reliability and transparency for generation setup.
 
-Current code includes character token dry-run metadata, itemized prompt display, server-side prompt inspection snapshots, prompt snapshot maintenance, connection profiles, and provider-specific prompt conversion/dispatch paths. Prompt inspection responses are sanitized before they are returned to the client.
+Current code includes character token dry-run metadata, redacted itemized prompt display, server-side prompt inspection snapshots, prompt snapshot maintenance, connection profiles, and provider-specific prompt conversion/dispatch paths. Prompt inspection responses are sanitized before they are returned to the client.
 
 ### 11. Multi-User Hosted Architecture
 
