@@ -81,8 +81,6 @@ Examples include custom layout modules, top information display behavior, and ro
 
 Current code includes a modular layout system with built-in layouts, a layout variable contract, custom CSS upload, layout asset upload with image conversion/storage limits, and route-level validation that rejects unsafe filenames, unsafe CSS markers, and arbitrary remote asset URLs.
 
-The integrated top chat bar provides chat navigation/actions and connection-profile access from the main chat view. The integrated Favorites Carousel / HotSwap workflow exposes favorited character quick-select controls.
-
 ### 9. Session and Safety Guards
 
 Aikobots includes session-handling and write-safety behavior intended to reduce accidental overwrites, stale writes, and multi-tab conflicts.
