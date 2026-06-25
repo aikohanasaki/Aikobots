@@ -36,12 +36,13 @@ This includes Aikobots-specific concepts such as admin/user visibility rules, pr
 
 Current code separates user, secure, and shared secure lorebook storage, supports owner lists and checkout state for shared secure lorebooks, and preserves hidden lorebook bindings/templates through rename and migration paths.
 
-### 4. 9Z / 9ZZ Lorebook Naming Conventions
+### 4. Lorebook Naming Conventions
 
 Aikobots uses distinctive naming conventions for hidden/system-managed lorebooks.
 
-* `9Z` is used for world/global lorebook handling.
-* `9ZZ` is used for character-specific lorebook handling.
+* `9Z` is used for admin world/global lorebook handling.
+* `9ZZ` is used for admin character-specific lorebook handling.
+* `Z-` is used for non-admin lorebook handling.
 
 These conventions are part of Aikobots’ hidden lorebook, privacy, and integration behavior.
 
