@@ -805,6 +805,27 @@ export async function convertSoloToGroupChat() {
         return;
     }
 
+    if (!isChatFullyHydrated()) {
+        const hydrated = await hydrateCurrentChatForEditing();
+        if (!hydrated) {
+            toastr.warning(t`Load the full chat before converting it to a group chat.`, t`Convert to group chat`);
+            return;
+        }
+    }
+
+    const totalMessages = getTotalChatMessages();
+    for (let index = 0; index < totalMessages; index++) {
+        if (!chat[index] || typeof chat[index] !== 'object') {
+            console.error('Solo to group conversion aborted because the chat is not fully loaded.', {
+                index,
+                totalMessages,
+                isHydrated: isChatFullyHydrated(),
+            });
+            toastr.error(t`The full chat could not be loaded. Reload the chat and try again.`, t`Convert to group chat`);
+            return;
+        }
+    }
+
     const character = characters[this_chid];
 
     // Populate group required fields
@@ -851,7 +872,7 @@ export async function convertSoloToGroupChat() {
     await getCharacters();
 
     // Convert chat to group format
-    const groupChat = chat.map(message => structuredClone(message));
+    const groupChat = Array.from({ length: totalMessages }, (_, index) => structuredClone(chat[index]));
     const genIdFirst = Date.now();
 
     for (let index = 0; index < groupChat.length; index++) {
@@ -883,6 +904,7 @@ export async function convertSoloToGroupChat() {
             id: chatName,
             chat: groupChat,
             chat_metadata: metadata,
+            full_chat: true,
         }),
     });
 
