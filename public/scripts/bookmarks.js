@@ -1,7 +1,6 @@
 import {
     characters,
     saveChat,
-    system_message_types,
     this_chid,
     openCharacterChat,
     openManageChatsOwnerChat,
@@ -21,6 +20,8 @@ import {
     isHistoricalChatMessage,
     syncSwipeToMes,
     handleManageChatsBulkRowClick,
+    getCurrentChatId,
+    CHAT_SAVE_RESULT,
 } from '../script.js';
 import { saveMetadataDebounced } from './extensions.js';
 import { humanizedDateTime } from './RossAscends-mods.js';
@@ -664,6 +665,14 @@ export async function createBranch(mesId, { swipeId = null } = {}) {
         extra: structuredClone(lastMes.extra),
     };
 
+    if (selected_group && selectedSwipeId !== null) {
+        const saveResult = await saveChatConditional();
+        if (saveResult !== CHAT_SAVE_RESULT.SAVED) {
+            toastr.warning('Could not save the current chat before branching.', 'Branch creation failed');
+            return null;
+        }
+    }
+
     try {
         if (selectedSwipeId !== null && !syncSwipeToMes(mesId, selectedSwipeId, lastMes)) {
             toastr.warning('Could not prepare the selected swipe for branching.', 'Branch creation failed');
@@ -671,7 +680,10 @@ export async function createBranch(mesId, { swipeId = null } = {}) {
         }
 
         if (selected_group) {
-            const saved = await saveGroupBookmarkChat(selected_group, name, newMetadata, mesId);
+            const saved = await saveGroupBookmarkChat(selected_group, name, newMetadata, mesId, {
+                messageOverride: selectedSwipeId !== null ? lastMes : null,
+                skipSourceSave: selectedSwipeId !== null,
+            });
             if (!saved) {
                 return null;
             }
@@ -748,7 +760,9 @@ export async function createNewBookmark(mesId, { forceName = null } = {}) {
     await saveItemizedPrompts(name);
 
     if (selected_group) {
-        const saved = await saveGroupBookmarkChat(selected_group, name, newMetadata, mesId);
+        const saved = await saveGroupBookmarkChat(selected_group, name, newMetadata, mesId, {
+            replaceTarget: Boolean(isReplace),
+        });
         if (!saved) {
             return null;
         }
@@ -811,28 +825,18 @@ export async function convertSoloToGroupChat() {
         return;
     }
 
-    if (!isChatFullyHydrated()) {
-        const hydrated = await hydrateCurrentChatForEditing();
-        if (!hydrated) {
-            toastr.warning(t`Load the full chat before converting it to a group chat.`, t`Convert to group chat`);
-            return;
-        }
-    }
-
-    const totalMessages = getTotalChatMessages();
-    for (let index = 0; index < totalMessages; index++) {
-        if (!chat[index] || typeof chat[index] !== 'object') {
-            console.error('Solo to group conversion aborted because the chat is not fully loaded.', {
-                index,
-                totalMessages,
-                isHydrated: isChatFullyHydrated(),
-            });
-            toastr.error(t`The full chat could not be loaded. Reload the chat and try again.`, t`Convert to group chat`);
-            return;
-        }
+    const saveResult = await saveChatConditional();
+    if (saveResult !== CHAT_SAVE_RESULT.SAVED) {
+        toastr.warning(t`Save the current chat before converting it to a group chat.`, t`Convert to group chat`);
+        return;
     }
 
     const character = characters[this_chid];
+    const sourceChatId = getCurrentChatId();
+    if (!sourceChatId) {
+        toastr.error(t`Current chat could not be resolved.`, t`Convert to group chat`);
+        return;
+    }
 
     // Populate group required fields
     const name = getUniqueName(`Group: ${character.name}`, y => groups.findIndex(x => x.name === y) !== -1);
@@ -871,40 +875,15 @@ export async function convertSoloToGroupChat() {
 
     const group = await createGroupResponse.json();
 
-    // Convert chat to group format
-    const groupChat = Array.from({ length: totalMessages }, (_, index) => structuredClone(chat[index]));
-    const genIdFirst = Date.now();
-
-    for (let index = 0; index < groupChat.length; index++) {
-        const message = groupChat[index];
-
-        // Skip messages we don't care about
-        if (message.is_user || message.is_system || message.extra?.type === system_message_types.NARRATOR || message.force_avatar !== undefined) {
-            continue;
-        }
-
-        if (!message.extra || typeof message.extra !== 'object') {
-            message.extra = {};
-        }
-
-        // Set force fields for solo character
-        message.name = character.name;
-        message.original_avatar = character.avatar;
-        message.force_avatar = getThumbnailUrl('avatar', character.avatar);
-
-        // Allow regens of a single message in group
-        message.extra.gen_id = genIdFirst + index;
-    }
-
-    // Save group chat
-    const createChatResponse = await fetch('/api/chats/group/save', {
+    const createChatResponse = await fetch('/api/chats/group/create-from-direct', {
         method: 'POST',
         headers: getRequestHeaders(),
         body: JSON.stringify({
             id: chatName,
-            chat: groupChat,
+            avatar_url: character.avatar,
+            file_name: sourceChatId,
+            character_name: character.name,
             chat_metadata: metadata,
-            full_chat: true,
         }),
     });
 

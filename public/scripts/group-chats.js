@@ -97,9 +97,6 @@ import {
     getInitialChatDisplayCount,
     prefetchCurrentChatTailBuffer,
     prepareCurrentChatSavePayload,
-    getTotalChatMessages,
-    isChatFullyHydrated,
-    hydrateCurrentChatForEditing,
 } from '../script.js';
 import { printTagList, createTagMapFromList, applyTagsOnCharacterSelect, tag_map, applyTagsOnGroupSelect } from './tags.js';
 import { FILTER_TYPES, FilterHelper } from './filters.js';
@@ -921,54 +918,29 @@ export async function renameGroupMember(oldAvatar, newAvatar, newName) {
 
             // Replace group member avatar id and save the changes
             group.members[memberIndex] = newAvatar;
-            await editGroup(group.id, true, false);
-            console.log(`Renamed character ${newName} in group: ${group.name}`);
+            const response = await fetch('/api/chats/group/member/rename-history', {
+                method: 'POST',
+                headers: getRequestHeaders(),
+                body: JSON.stringify({
+                    group_id: group.id,
+                    old_avatar: oldAvatar,
+                    new_avatar: newAvatar,
+                    new_name: newName,
+                    save_session_id: getChatSaveSessionId(),
+                }),
+            });
 
-            // Load all chats from this group
-            for (const chatId of group.chats) {
-                const chatPayload = await loadGroupChat(chatId, { withMetadata: true });
-                const messages = chatPayload.messages;
+            if (!response.ok) {
+                throw new Error('Group member could not be renamed');
+            }
 
-                // Only save the chat if there were any changes to the chat content
-                let hadChanges = false;
-                // Chat shouldn't be empty
-                if (Array.isArray(messages) && messages.length) {
-                    // Iterate over every chat message
-                    for (const message of messages) {
-                        // Only look at character messages
-                        if (message.is_user || message.is_system) {
-                            continue;
-                        }
+            const result = await response.json();
+            console.log(`Renamed character ${newName} in group: ${group.name}`, result);
 
-                        // Message belonged to the old-named character:
-                        // Update name, avatar thumbnail URL and original avatar link
-                        if (message.force_avatar && message.force_avatar.indexOf(encodeURIComponent(oldAvatar)) !== -1) {
-                            message.name = newName;
-                            message.force_avatar = message.force_avatar.replace(encodeURIComponent(oldAvatar), encodeURIComponent(newAvatar));
-                            message.original_avatar = newAvatar;
-                            hadChanges = true;
-                        }
-                    }
-
-                    if (hadChanges) {
-                        const saveChatResponse = await fetch('/api/chats/group/save', {
-                            method: 'POST',
-                            headers: getRequestHeaders(),
-                            body: JSON.stringify({
-                                id: chatId,
-                                chat: [...messages],
-                                full_chat: true,
-                                base_revision: chatPayload.chat_revision,
-                                save_session_id: getChatSaveSessionId(),
-                            }),
-                        });
-
-                        if (!saveChatResponse.ok) {
-                            throw new Error('Group member could not be renamed');
-                        }
-
-                        console.log(`Renamed character ${newName} in group chat: ${chatId}`);
-                    }
+            if (String(selected_group) === String(group.id)) {
+                const activeGroup = groups.find(x => x.id === group.id);
+                if (activeGroup?.chat_id) {
+                    await getGroupChat(group.id, true);
                 }
             }
         }
@@ -2504,7 +2476,7 @@ export async function importGroupChat(formData, { refresh = true, groupId = sele
     return [];
 }
 
-export async function saveGroupBookmarkChat(groupId, name, metadata, mesId) {
+export async function saveGroupBookmarkChat(groupId, name, metadata, mesId, { messageOverride = null, skipSourceSave = false, replaceTarget = false } = {}) {
     const group = groups.find(x => x.id === groupId);
 
     if (!group) {
@@ -2516,46 +2488,39 @@ export async function saveGroupBookmarkChat(groupId, name, metadata, mesId) {
         ...(metadata || {}),
     });
 
-    if (!isChatFullyHydrated()) {
-        const hydrated = await hydrateCurrentChatForEditing();
-        if (!hydrated) {
-            toastr.warning(t`Load the full chat before creating a group checkpoint.`, t`Create Checkpoint`);
+    const sourceChatId = group.chat_id || getCurrentChatId();
+    const targetEndId = Number(mesId);
+    if (!sourceChatId || !Number.isInteger(targetEndId) || targetEndId < 0) {
+        toastr.warning(t`Invalid message ID.`, t`Create Checkpoint`);
+        return false;
+    }
+
+    if (!skipSourceSave) {
+        const saveResult = await saveChatConditional();
+        if (saveResult !== CHAT_SAVE_RESULT.SAVED) {
+            toastr.warning(t`Could not save the current group chat before creating a checkpoint.`, t`Create Checkpoint`);
             return false;
         }
     }
 
-    const totalMessages = getTotalChatMessages();
-    const targetEndId = (mesId !== undefined && mesId >= 0 && mesId < totalMessages)
-        ? Number.parseInt(mesId, 10)
-        : totalMessages - 1;
+    const body = {
+        source_id: sourceChatId,
+        target_id: name,
+        end_message_id: targetEndId,
+        chat_metadata: bookmarkMetadata,
+        regenerate_identities: true,
+        replace_target: replaceTarget === true,
+        save_session_id: getChatSaveSessionId(),
+    };
 
-    for (let index = 0; index <= targetEndId; index++) {
-        if (!chat[index] || typeof chat[index] !== 'object') {
-            console.error('Group checkpoint creation aborted because the chat prefix is not fully loaded.', {
-                index,
-                targetEndId,
-                totalMessages,
-                isHydrated: isChatFullyHydrated(),
-            });
-            toastr.error(t`The full chat could not be loaded. Reload the chat and try again.`, t`Create Checkpoint`);
-            return false;
-        }
+    if (messageOverride) {
+        body.message_override = structuredClone(messageOverride);
     }
 
-    const trimmed_chat = Array.from({ length: targetEndId + 1 }, (_, index) => chat[index]);
-    const branchChat = structuredClone(trimmed_chat);
-    normalizeChatIdentities(branchChat, { generateUuid: uuidv4, regenerateAll: true });
-
-    const response = await fetch('/api/chats/group/save', {
+    const response = await fetch('/api/chats/group/copy-prefix', {
         method: 'POST',
         headers: getRequestHeaders(),
-        body: JSON.stringify({
-            id: name,
-            chat: branchChat,
-            chat_metadata: bookmarkMetadata,
-            regenerate_identities: true,
-            full_chat: true,
-        }),
+        body: JSON.stringify(body),
     });
 
     if (!response.ok) {
@@ -2564,7 +2529,9 @@ export async function saveGroupBookmarkChat(groupId, name, metadata, mesId) {
         return false;
     }
 
-    group.chats.push(name);
+    if (!group.chats.includes(name)) {
+        group.chats.push(name);
+    }
     await editGroup(groupId, true, false);
     return true;
 }

@@ -1029,6 +1029,106 @@ async function writeGroupChat(filePath, messages, chatMetadata = {}, existingHea
     return await writeLogicalChat(filePath, buildGroupChatHeader(chatMetadata, existingHeader), messages);
 }
 
+function getAvatarThumbnailUrl(avatarUrl) {
+    return `/thumbnail?type=avatar&file=${encodeURIComponent(avatarUrl)}`;
+}
+
+function normalizeGroupChatMetadataPayload(chatMetadata) {
+    return _.isPlainObject(chatMetadata) ? _.cloneDeep(chatMetadata) : {};
+}
+
+function assertNewGroupChatTarget(user, chatId, { allowExisting = false } = {}) {
+    const targetPath = getGroupChatFilePath(user.directories.groupChats, chatId);
+    const sqlitePath = replaceChatStorageExtension(targetPath, '.sqlite');
+    const jsonlPath = replaceChatStorageExtension(targetPath, '.jsonl');
+
+    if (!allowExisting && (fs.existsSync(sqlitePath) || fs.existsSync(jsonlPath))) {
+        throw new ChatMutationError(409, 'target_chat_exists');
+    }
+
+    return targetPath;
+}
+
+function getNewGroupChatHeader(chatMetadata, saveSessionId) {
+    return setChatRevision(buildGroupChatHeader(normalizeGroupChatMetadataPayload(chatMetadata)), 1, saveSessionId);
+}
+
+function transformDirectMessagesForGroup(messages, { characterName, avatarUrl }) {
+    const genIdFirst = Date.now();
+    const forceAvatar = getAvatarThumbnailUrl(avatarUrl);
+    const groupMessages = Array.isArray(messages)
+        ? _.cloneDeep(messages)
+        : [];
+
+    for (let index = 0; index < groupMessages.length; index++) {
+        const message = groupMessages[index];
+        if (!_.isPlainObject(message)) {
+            continue;
+        }
+
+        if (message.is_user || message.is_system || message.extra?.type === 'narrator' || message.force_avatar !== undefined) {
+            continue;
+        }
+
+        if (!_.isPlainObject(message.extra)) {
+            message.extra = {};
+        }
+
+        message.name = characterName;
+        message.original_avatar = avatarUrl;
+        message.force_avatar = forceAvatar;
+        message.extra.gen_id = genIdFirst + index;
+    }
+
+    return groupMessages;
+}
+
+function normalizeGroupId(groupId) {
+    const id = String(groupId || '').trim();
+    return id && sanitize(id) === id ? id : '';
+}
+
+function getGroupFilePath(groupsDirectory, groupId) {
+    const id = normalizeGroupId(groupId);
+    if (!id) {
+        throw new ChatMutationError(400, 'invalid_group_id');
+    }
+
+    return path.join(groupsDirectory, sanitize(`${id}.json`));
+}
+
+function sanitizeGroupForPersistence(group) {
+    const sanitizedGroup = _.cloneDeep(group);
+    delete sanitizedGroup.chat_metadata;
+    delete sanitizedGroup.past_metadata;
+    delete sanitizedGroup.fav;
+    return sanitizedGroup;
+}
+
+function getRenamedGroupMemberMessageUpdates(messages, { oldAvatar, newAvatar, newName }) {
+    const encodedOldAvatar = encodeURIComponent(oldAvatar);
+    const encodedNewAvatar = encodeURIComponent(newAvatar);
+    let changed = 0;
+    const updatedMessages = Array.isArray(messages)
+        ? _.cloneDeep(messages)
+        : [];
+
+    for (const message of updatedMessages) {
+        if (!_.isPlainObject(message) || message.is_user || message.is_system) {
+            continue;
+        }
+
+        if (typeof message.force_avatar === 'string' && message.force_avatar.includes(encodedOldAvatar)) {
+            message.name = newName;
+            message.force_avatar = message.force_avatar.replace(encodedOldAvatar, encodedNewAvatar);
+            message.original_avatar = newAvatar;
+            changed++;
+        }
+    }
+
+    return { messages: updatedMessages, changed };
+}
+
 async function ensureGroupChatHeader(user, chatId, filePath) {
     const payload = await getGroupChatPayload(filePath);
     if (payload.hasHeader || payload.messages.length === 0) {
@@ -3193,6 +3293,238 @@ router.post('/group/delete', async (request, response) => {
         }
         console.error(error);
         return response.sendStatus(500);
+    }
+});
+
+router.post('/group/create-from-direct', validateAvatarUrlMiddleware, async (request, response) => {
+    try {
+        if (!request.body || !request.body.id || !request.body.file_name) {
+            return response.sendStatus(400);
+        }
+
+        const id = String(request.body.id);
+        const avatarUrl = String(request.body.avatar_url || '');
+        const characterName = String(request.body.character_name || '').trim();
+        if (!characterName) {
+            return response.status(400).send({ error: 'invalid_character_name' });
+        }
+
+        const sourcePath = resolveCharacterChatFilePath(request.user.directories.chats, avatarUrl, request.body.file_name);
+        const sourceSqlitePath = replaceChatStorageExtension(sourcePath, '.sqlite');
+        if (!fs.existsSync(sourcePath) && !fs.existsSync(sourceSqlitePath)) {
+            return response.status(404).send({ error: 'source_chat_not_found' });
+        }
+
+        const targetPath = assertNewGroupChatTarget(request.user, id);
+        if (!fs.existsSync(request.user.directories.groupChats)) {
+            fs.mkdirSync(request.user.directories.groupChats, { recursive: true });
+        }
+
+        return await withChatSaveLock(sourcePath, async () => {
+            const sourceRecords = await getLogicalChatData(sourcePath);
+            if (!sourceRecords.length) {
+                return response.status(404).send({ error: 'source_chat_not_found' });
+            }
+
+            const messages = transformDirectMessagesForGroup(sourceRecords.slice(1), {
+                characterName,
+                avatarUrl,
+            });
+
+            return await withChatSaveLock(targetPath, async () => {
+                assertNewGroupChatTarget(request.user, id);
+                await request.activeSessionOperation?.assertAllowed();
+                const header = getNewGroupChatHeader(request.body.chat_metadata, getRequestSaveSessionId(request.body));
+                const writeResult = await writeLogicalChat(targetPath, header, messages);
+                if (writeResult.fullJsonl) {
+                    getBackupFunction(request.user.profile.handle)(request.user.directories.backups, String(id), writeResult.fullJsonl);
+                }
+
+                return response.send({ ok: true, chat_revision: getChatRevision(header) });
+            });
+        });
+    } catch (error) {
+        if (isActiveSessionError(error)) {
+            return sendActiveSessionRequired(response);
+        }
+        if (isUnsupportedSplitTailChatError(error)) {
+            return sendUnsupportedSplitTailChatError(response, error);
+        }
+        if (isChatPathValidationError(error)) {
+            return sendChatPathValidationError(response, error);
+        }
+        if (error instanceof ChatMutationError) {
+            return response.status(error.status || 400).send({ error: error.error, message: error.message, ...error.details });
+        }
+        console.error(error);
+        return response.status(500).send({ error: 'create_group_chat_from_direct_failed' });
+    }
+});
+
+router.post('/group/copy-prefix', async (request, response) => {
+    try {
+        if (!request.body || !request.body.source_id || !request.body.target_id) {
+            return response.sendStatus(400);
+        }
+
+        const sourceId = String(request.body.source_id);
+        const targetId = String(request.body.target_id);
+        const prefixEndId = Number(request.body.end_message_id);
+        if (!Number.isInteger(prefixEndId) || prefixEndId < 0) {
+            return response.status(400).send({ error: 'invalid_message_id' });
+        }
+
+        const sourcePath = getGroupChatFilePath(request.user.directories.groupChats, sourceId);
+        if (!fs.existsSync(sourcePath) && !fs.existsSync(replaceChatStorageExtension(sourcePath, '.sqlite'))) {
+            return response.status(404).send({ error: 'source_chat_not_found' });
+        }
+
+        const allowExistingTarget = request.body.replace_target === true;
+        const targetPath = assertNewGroupChatTarget(request.user, targetId, { allowExisting: allowExistingTarget });
+        if (!fs.existsSync(request.user.directories.groupChats)) {
+            fs.mkdirSync(request.user.directories.groupChats, { recursive: true });
+        }
+
+        return await withChatSaveLock(sourcePath, async () => {
+            const sourcePayload = await ensureGroupChatHeader(request.user, sourceId, sourcePath);
+            if (!sourcePayload.header || prefixEndId >= sourcePayload.messages.length) {
+                return response.status(400).send({ error: 'invalid_message_id' });
+            }
+
+            const messages = sourcePayload.messages.slice(0, prefixEndId + 1);
+            if (request.body.message_override !== undefined) {
+                if (!_.isPlainObject(request.body.message_override)) {
+                    return response.status(400).send({ error: 'invalid_message_override' });
+                }
+                messages[prefixEndId] = _.cloneDeep(request.body.message_override);
+            }
+
+            return await withChatSaveLock(targetPath, async () => {
+                assertNewGroupChatTarget(request.user, targetId, { allowExisting: allowExistingTarget });
+                await request.activeSessionOperation?.assertAllowed();
+                const header = getNewGroupChatHeader(request.body.chat_metadata, getRequestSaveSessionId(request.body));
+                const writeResult = await writeLogicalChat(targetPath, header, messages, {
+                    regenerateIdentities: request.body.regenerate_identities === true,
+                });
+                if (writeResult.fullJsonl) {
+                    getBackupFunction(request.user.profile.handle)(request.user.directories.backups, String(targetId), writeResult.fullJsonl);
+                }
+
+                return response.send({ ok: true, chat_revision: getChatRevision(header) });
+            });
+        });
+    } catch (error) {
+        if (isActiveSessionError(error)) {
+            return sendActiveSessionRequired(response);
+        }
+        if (isUnsupportedSplitTailChatError(error)) {
+            return sendUnsupportedSplitTailChatError(response, error);
+        }
+        if (isChatPathValidationError(error)) {
+            return sendChatPathValidationError(response, error);
+        }
+        if (error instanceof ChatMutationError) {
+            return response.status(error.status || 400).send({ error: error.error, message: error.message, ...error.details });
+        }
+        console.error(error);
+        return response.status(500).send({ error: 'copy_group_chat_prefix_failed' });
+    }
+});
+
+router.post('/group/member/rename-history', async (request, response) => {
+    try {
+        const groupId = normalizeGroupId(request.body?.group_id);
+        const oldAvatar = String(request.body?.old_avatar || '');
+        const newAvatar = String(request.body?.new_avatar || '');
+        const newName = String(request.body?.new_name || '').trim();
+
+        if (!groupId || !oldAvatar || !newAvatar || !newName) {
+            return response.status(400).send({ error: 'invalid_rename_request' });
+        }
+
+        const groupPath = getGroupFilePath(request.user.directories.groups, groupId);
+        if (!fs.existsSync(groupPath)) {
+            return response.status(404).send({ error: 'group_not_found' });
+        }
+
+        await request.activeSessionOperation?.assertAllowed();
+
+        const group = JSON.parse(fs.readFileSync(groupPath, 'utf8'));
+        if (!Array.isArray(group.members) || !Array.isArray(group.chats)) {
+            return response.status(400).send({ error: 'invalid_group' });
+        }
+
+        let groupChanged = false;
+        const memberIndex = group.members.findIndex(member => member === oldAvatar);
+        if (memberIndex !== -1) {
+            group.members[memberIndex] = newAvatar;
+            groupChanged = true;
+        }
+
+        let changedChats = 0;
+        let changedMessages = 0;
+        for (const chatId of group.chats) {
+            const chatPath = getGroupChatFilePath(request.user.directories.groupChats, chatId);
+            if (!fs.existsSync(chatPath) && !fs.existsSync(replaceChatStorageExtension(chatPath, '.sqlite'))) {
+                continue;
+            }
+
+            await withChatSaveLock(chatPath, async () => {
+                const payload = await ensureGroupChatHeader(request.user, chatId, chatPath);
+                if (!payload.header || !payload.messages.length) {
+                    return;
+                }
+
+                const updateResult = getRenamedGroupMemberMessageUpdates(payload.messages, {
+                    oldAvatar,
+                    newAvatar,
+                    newName,
+                });
+                if (updateResult.changed === 0) {
+                    return;
+                }
+
+                const nextRevision = getChatRevision(payload.header) + 1;
+                const header = setChatRevision(
+                    buildGroupChatHeader(payload.header.chat_metadata || {}, payload.header),
+                    nextRevision,
+                    getRequestSaveSessionId(request.body),
+                );
+                const writeResult = await writeLogicalChat(chatPath, header, updateResult.messages);
+                if (writeResult.fullJsonl) {
+                    getBackupFunction(request.user.profile.handle)(request.user.directories.backups, String(chatId), writeResult.fullJsonl);
+                }
+
+                changedChats++;
+                changedMessages += updateResult.changed;
+            });
+        }
+
+        if (groupChanged) {
+            writeFileAtomicSync(groupPath, JSON.stringify(sanitizeGroupForPersistence(group), null, 4));
+        }
+
+        return response.send({
+            ok: true,
+            group_changed: groupChanged,
+            changed_chats: changedChats,
+            changed_messages: changedMessages,
+        });
+    } catch (error) {
+        if (isActiveSessionError(error)) {
+            return sendActiveSessionRequired(response);
+        }
+        if (isUnsupportedSplitTailChatError(error)) {
+            return sendUnsupportedSplitTailChatError(response, error);
+        }
+        if (isChatPathValidationError(error)) {
+            return sendChatPathValidationError(response, error);
+        }
+        if (error instanceof ChatMutationError) {
+            return response.status(error.status || 400).send({ error: error.error, message: error.message, ...error.details });
+        }
+        console.error(error);
+        return response.status(500).send({ error: 'rename_group_member_history_failed' });
     }
 });
 
