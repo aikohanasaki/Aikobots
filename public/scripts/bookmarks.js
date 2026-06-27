@@ -880,10 +880,11 @@ export async function convertSoloToGroupChat() {
         method: 'POST',
         headers: getRequestHeaders(),
         body: JSON.stringify({
-            id: chatName,
-            chat: groupChat,
-            chat_metadata: metadata,
-        }),
+          id: chatName,
+          chat: groupChat,
+          chat_metadata: metadata,
+          full_chat: true, // <-- ADDED
+      }),
     });
 
     if (!createChatResponse.ok) {
