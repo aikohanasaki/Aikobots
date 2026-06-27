@@ -9045,7 +9045,7 @@ async function stmbCatchupCommand(namedArgs = {}) {
         try {
             parsed = parseStmbCatchupCommandArgs(namedArgs);
         } catch (error) {
-            toastr.error(error?.message || 'Missing or invalid arguments. Use: /stmb-catchup interval:<chunk size> start:<message id> end:<message id>', 'STMB');
+            toastr.error(error?.message || 'Missing or invalid arguments. Use: /stmb-catchup interval=<chunk size> start=<message id> end=<message id>', 'STMB');
             return '';
         }
 
@@ -9349,7 +9349,7 @@ function registerSlashCommands() {
                 isRequired: true,
             }),
         ],
-        helpString: 'Create scene memories over a message range in chunks. Usage: /stmb-catchup interval:50 start:0 end:600',
+        helpString: 'Create scene memories over a message range in chunks. Usage: /stmb-catchup interval=<chunk size> start=<message id> end=<message id>',
     }));
 
     SlashCommandParser.addCommandObject(SlashCommand.fromProps({

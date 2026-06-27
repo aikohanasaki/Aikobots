@@ -1126,12 +1126,12 @@ function parseRequiredIntegerArgument(rawValue, name) {
         ? rawValue.value
         : rawValue;
     if (value === undefined || value === null || value === '') {
-        throw new Error(`Missing or invalid ${name}. Use: /stmb-catchup interval:<chunk size> start:<message id> end:<message id>`);
+        throw new Error(`Missing or invalid ${name}. Use: /stmb-catchup interval=<chunk size> start=<message id> end=<message id>`);
     }
 
     const parsed = Number(value);
     if (!Number.isFinite(parsed) || !Number.isInteger(parsed)) {
-        throw new Error(`Missing or invalid ${name}. Use: /stmb-catchup interval:<chunk size> start:<message id> end:<message id>`);
+        throw new Error(`Missing or invalid ${name}. Use: /stmb-catchup interval=<chunk size> start=<message id> end=<message id>`);
     }
 
     return parsed;
