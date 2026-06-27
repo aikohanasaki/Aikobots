@@ -852,6 +852,7 @@ async function saveGroupChat(groupId, shouldSaveGroup) {
         headers: getRequestHeaders(),
         body: JSON.stringify({
             id: chat_id,
+            group_id: String(groupId),
             chat: savePayload.chat,
             chat_metadata: JSON.parse(JSON.stringify(chat_metadata)),
             save_mode: savePayload.saveMode,

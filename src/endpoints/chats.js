@@ -1097,6 +1097,36 @@ function getGroupFilePath(groupsDirectory, groupId) {
     return path.join(groupsDirectory, sanitize(`${id}.json`));
 }
 
+/**
+ * Uses the stable group id for group chat backups after verifying it owns the chat id.
+ */
+function getVerifiedGroupBackupOwnerKey(user, chatId, groupId) {
+    const fallbackKey = String(chatId);
+    const id = normalizeGroupId(groupId);
+    if (!id) {
+        return fallbackKey;
+    }
+
+    try {
+        const groupPath = getGroupFilePath(user.directories.groups, id);
+        if (!fs.existsSync(groupPath)) {
+            return fallbackKey;
+        }
+
+        const group = JSON.parse(fs.readFileSync(groupPath, 'utf8'));
+        const groupChatIds = Array.isArray(group?.chats) ? group.chats.map(String) : [];
+        const groupOwnsChat = groupChatIds.includes(String(chatId)) || String(group?.chat_id || '') === String(chatId);
+
+        if (String(group?.id) === id && groupOwnsChat) {
+            return id;
+        }
+    } catch {
+        return fallbackKey;
+    }
+
+    return fallbackKey;
+}
+
 function sanitizeGroupForPersistence(group) {
     const sanitizedGroup = _.cloneDeep(group);
     delete sanitizedGroup.chat_metadata;
@@ -3706,6 +3736,7 @@ router.post('/group/save', async (request, response) => {
         }
 
         const id = request.body.id;
+        const backupOwnerKey = getVerifiedGroupBackupOwnerKey(request.user, id, request.body.group_id);
         const pathToFile = getGroupChatFilePath(request.user.directories.groupChats, id);
 
         if (!fs.existsSync(request.user.directories.groupChats)) {
@@ -3767,7 +3798,7 @@ router.post('/group/save', async (request, response) => {
             await request.activeSessionOperation?.assertAllowed();
             const writeResult = await writeLogicalChat(pathToFile, header, messages, writeOptions);
             if (writeResult.fullJsonl) {
-                getBackupFunction(request.user.profile.handle)(request.user.directories.backups, String(id), writeResult.fullJsonl);
+                getBackupFunction(request.user.profile.handle)(request.user.directories.backups, backupOwnerKey, writeResult.fullJsonl);
             }
             return response.send({ ok: true, chat_revision: revisionCheck.nextRevision });
         });

@@ -14,6 +14,29 @@ function normalizeBackupOwnerKey(ownerKey) {
     return normalized;
 }
 
+/**
+ * Normalizes the requested primary and compatibility backup owner keys.
+ */
+function normalizeBackupOwnerKeys(ownerKey, additionalOwnerKeys) {
+    const rawKeys = [
+        ownerKey,
+        ...(Array.isArray(additionalOwnerKeys) ? additionalOwnerKeys : []),
+    ];
+    const normalizedKeys = new Set();
+
+    for (const rawKey of rawKeys) {
+        const normalizedKey = normalizeBackupOwnerKey(rawKey);
+        if (normalizedKey) {
+            normalizedKeys.add(normalizedKey);
+        }
+        if (normalizedKeys.size >= 100) {
+            break;
+        }
+    }
+
+    return [...normalizedKeys];
+}
+
 function getRequestedChatBackupPath(request, name) {
     const rawName = String(name || '');
     const sanitizedName = sanitize(rawName);
@@ -33,15 +56,17 @@ function getRequestedChatBackupPath(request, name) {
 
 router.post('/chat/list', async (request, response) => {
     try {
-        const ownerKey = normalizeBackupOwnerKey(request.body?.owner_key);
-        if (!ownerKey) {
+        const ownerKeys = normalizeBackupOwnerKeys(request.body?.owner_key, request.body?.owner_keys);
+        if (!ownerKeys.length) {
             return response.status(400).json([]);
         }
 
-        const backupPrefix = `${CHAT_BACKUPS_PREFIX}${ownerKey}_`;
+        const backupPrefixes = ownerKeys.map(ownerKey => `${CHAT_BACKUPS_PREFIX}${ownerKey}_`);
         const directoryEntries = await fsPromises.readdir(request.user.directories.backups, { withFileTypes: true });
         const backupFiles = directoryEntries
-            .filter(entry => entry.isFile() && path.extname(entry.name).toLowerCase() === '.jsonl' && entry.name.startsWith(backupPrefix))
+            .filter(entry => entry.isFile()
+                && path.extname(entry.name).toLowerCase() === '.jsonl'
+                && backupPrefixes.some(prefix => entry.name.startsWith(prefix)))
             .map(entry => entry.name);
 
         const backupModels = (await Promise.all(backupFiles.map(async (name) => {

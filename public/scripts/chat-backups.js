@@ -17,7 +17,7 @@ class ManageChatsBackupsBrowser {
     #isOpen = false;
     /** @type {string} */
     #ownerKey = '';
-    /** @type {{ ownerContext: object, avatarUrl: string, characterName: string, groupId: string | null, isGroup: boolean } | null} */
+    /** @type {{ ownerContext: object, avatarUrl: string, characterName: string, groupId: string | null, isGroup: boolean, backupOwnerKeys: string[] } | null} */
     #ownerDetails = null;
 
     #normalizeOwnerDetails(ownerDetails) {
@@ -31,6 +31,9 @@ class ManageChatsBackupsBrowser {
             characterName: ownerDetails.characterName || '',
             groupId: ownerDetails.groupId ? String(ownerDetails.groupId) : null,
             isGroup: Boolean(ownerDetails.isGroup),
+            backupOwnerKeys: Array.isArray(ownerDetails.backupOwnerKeys)
+                ? ownerDetails.backupOwnerKeys.map(key => String(key || '').trim()).filter(Boolean)
+                : [],
         };
     }
 
@@ -42,6 +45,16 @@ class ManageChatsBackupsBrowser {
         return ownerDetails.isGroup
             ? String(ownerDetails.groupId || '').trim()
             : String(ownerDetails.avatarUrl || '').replace(/\.png$/i, '').trim();
+    }
+
+    #getOwnerKeys(ownerDetails) {
+        const ownerKey = this.#getOwnerKey(ownerDetails);
+        const keys = [
+            ownerKey,
+            ...(Array.isArray(ownerDetails?.backupOwnerKeys) ? ownerDetails.backupOwnerKeys : []),
+        ].map(key => String(key || '').trim()).filter(Boolean);
+
+        return [...new Set(keys)];
     }
 
     #setVisible(visible) {
@@ -216,7 +229,10 @@ class ManageChatsBackupsBrowser {
             const response = await fetch('/api/backups/chat/list', {
                 method: 'POST',
                 headers: getRequestHeaders(),
-                body: JSON.stringify({ owner_key: this.#ownerKey }),
+                body: JSON.stringify({
+                    owner_key: this.#ownerKey,
+                    owner_keys: this.#ownerDetails?.backupOwnerKeys || [],
+                }),
                 signal,
             });
 
@@ -414,12 +430,13 @@ class ManageChatsBackupsBrowser {
 
         const normalizedOwnerDetails = enabled ? this.#normalizeOwnerDetails(ownerDetails) : null;
         const nextOwnerKey = normalizedOwnerDetails ? this.#getOwnerKey(normalizedOwnerDetails) : '';
+        const nextOwnerKeys = normalizedOwnerDetails ? this.#getOwnerKeys(normalizedOwnerDetails) : [];
         const ownerChanged = nextOwnerKey !== this.#ownerKey;
 
         this.#ownerDetails = normalizedOwnerDetails;
         this.#ownerKey = nextOwnerKey;
 
-        if (!normalizedOwnerDetails || !nextOwnerKey) {
+        if (!normalizedOwnerDetails || !nextOwnerKeys.length) {
             this.closeBackups();
             this.#setVisible(false);
             return;

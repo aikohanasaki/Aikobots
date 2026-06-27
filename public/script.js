@@ -12925,6 +12925,7 @@ function getManageChatsOwnerDetails(ownerContext = getCurrentManageChatsOwner())
             characterId: null,
             groupId: null,
             isGroup: false,
+            backupOwnerKeys: [],
         };
     }
 
@@ -12941,7 +12942,16 @@ function getManageChatsOwnerDetails(ownerContext = getCurrentManageChatsOwner())
                 characterId: null,
                 groupId: null,
                 isGroup: true,
+                backupOwnerKeys: [],
             };
+        }
+
+        const backupOwnerKeys = Array.isArray(group.chats)
+            ? group.chats.map(chatId => String(chatId || '').trim()).filter(Boolean)
+            : [];
+        const activeChatId = String(group.chat_id || '').trim();
+        if (activeChatId && !backupOwnerKeys.includes(activeChatId)) {
+            backupOwnerKeys.push(activeChatId);
         }
 
         return {
@@ -12954,6 +12964,7 @@ function getManageChatsOwnerDetails(ownerContext = getCurrentManageChatsOwner())
             characterId: null,
             groupId: String(group.id),
             isGroup: true,
+            backupOwnerKeys,
         };
     }
 
@@ -12969,6 +12980,7 @@ function getManageChatsOwnerDetails(ownerContext = getCurrentManageChatsOwner())
             characterId: null,
             groupId: null,
             isGroup: false,
+            backupOwnerKeys: [],
         };
     }
 
@@ -12982,6 +12994,7 @@ function getManageChatsOwnerDetails(ownerContext = getCurrentManageChatsOwner())
         characterId: Number(normalizedOwner.id),
         groupId: null,
         isGroup: false,
+        backupOwnerKeys: [],
     };
 }
 
