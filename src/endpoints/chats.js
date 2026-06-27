@@ -718,8 +718,18 @@ function hasValidChatPayload(chat) {
     return Array.isArray(chat) && _.isPlainObject(chat[0]);
 }
 
-function hasValidGroupChatPayload(chat) {
-    return Array.isArray(chat) && chat.every(message => _.isPlainObject(message));
+export function hasValidGroupChatPayload(chat) {
+    if (!Array.isArray(chat)) {
+        return false;
+    }
+
+    for (let index = 0; index < chat.length; index++) {
+        if (!Object.prototype.hasOwnProperty.call(chat, index) || !_.isPlainObject(chat[index])) {
+            return false;
+        }
+    }
+
+    return true;
 }
 
 function getPersonaThumbnailUrl(personaAvatar) {

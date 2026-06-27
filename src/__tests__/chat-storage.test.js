@@ -9,6 +9,7 @@ let buildChunkedChatPayload;
 let cloneSqliteMessageAfter;
 let compileScene;
 let getLogicalChatData;
+let hasValidGroupChatPayload;
 let insertLogicalMessageAfter;
 let resolveSqliteLogicalChatReference;
 let writeLogicalChat;
@@ -54,9 +55,26 @@ describe('SQLite chat length handling', () => {
         cloneSqliteMessageAfter = chatsModule.cloneSqliteMessageAfter;
         compileScene = stmbCoreModule.compileScene;
         getLogicalChatData = chatsModule.getLogicalChatData;
+        hasValidGroupChatPayload = chatsModule.hasValidGroupChatPayload;
         resolveSqliteLogicalChatReference = chatsModule.resolveSqliteLogicalChatReference;
         insertLogicalMessageAfter = sqliteModule.insertLogicalMessageAfter;
         writeLogicalChat = chatsModule.writeLogicalChat;
+    });
+
+    it('accepts only dense group chat message payloads', () => {
+        const densePayload = makeMessages(3);
+        const sparsePayload = [];
+        sparsePayload.length = 3;
+        sparsePayload[0] = densePayload[0];
+        sparsePayload[2] = densePayload[2];
+
+        expect(hasValidGroupChatPayload(densePayload)).toBe(true);
+        expect(hasValidGroupChatPayload([])).toBe(true);
+        expect(hasValidGroupChatPayload(sparsePayload)).toBe(false);
+        expect(hasValidGroupChatPayload([densePayload[0], undefined])).toBe(false);
+        expect(hasValidGroupChatPayload([densePayload[0], null])).toBe(false);
+        expect(hasValidGroupChatPayload([densePayload[0], []])).toBe(false);
+        expect(hasValidGroupChatPayload({ 0: densePayload[0], length: 1 })).toBe(false);
     });
 
     it('uses display count as the initial latest-message window only', async () => {

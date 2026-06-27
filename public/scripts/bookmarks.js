@@ -671,7 +671,10 @@ export async function createBranch(mesId, { swipeId = null } = {}) {
         }
 
         if (selected_group) {
-            await saveGroupBookmarkChat(selected_group, name, newMetadata, mesId);
+            const saved = await saveGroupBookmarkChat(selected_group, name, newMetadata, mesId);
+            if (!saved) {
+                return null;
+            }
         } else {
             await saveChat({ chatName: name, withMetadata: newMetadata, mesId });
         }
@@ -745,7 +748,10 @@ export async function createNewBookmark(mesId, { forceName = null } = {}) {
     await saveItemizedPrompts(name);
 
     if (selected_group) {
-        await saveGroupBookmarkChat(selected_group, name, newMetadata, mesId);
+        const saved = await saveGroupBookmarkChat(selected_group, name, newMetadata, mesId);
+        if (!saved) {
+            return null;
+        }
     } else {
         await saveChat({ chatName: name, withMetadata: newMetadata, mesId });
     }
@@ -865,12 +871,6 @@ export async function convertSoloToGroupChat() {
 
     const group = await createGroupResponse.json();
 
-    // Convert tags list and assign to group
-    createTagMapFromList('#tagList', group.id);
-
-    // Update chars list
-    await getCharacters();
-
     // Convert chat to group format
     const groupChat = Array.from({ length: totalMessages }, (_, index) => structuredClone(chat[index]));
     const genIdFirst = Date.now();
@@ -910,9 +910,32 @@ export async function convertSoloToGroupChat() {
 
     if (!createChatResponse.ok) {
         console.error('Group chat creation unsuccessful');
-        toastr.error('Group chat creation unsuccessful');
+        let rollbackOk = false;
+        try {
+            const rollbackResponse = await fetch('/api/groups/delete', {
+                method: 'POST',
+                headers: getRequestHeaders(),
+                body: JSON.stringify({ id: group.id }),
+            });
+            rollbackOk = rollbackResponse.ok;
+        } catch (error) {
+            console.error('Failed to roll back group created during solo chat conversion', error);
+        }
+
+        if (!rollbackOk) {
+            console.error('Failed to roll back group created during solo chat conversion', { groupId: group.id });
+            toastr.error(t`Group chat creation failed. The empty group could not be removed automatically.`, t`Convert to group chat`);
+        } else {
+            toastr.error(t`Group chat creation failed. The empty group was removed.`, t`Convert to group chat`);
+        }
         return;
     }
+
+    // Convert tags list and assign to group
+    createTagMapFromList('#tagList', group.id);
+
+    // Update chars list
+    await getCharacters();
 
     // Click on the freshly selected group to open it
     await openGroupById(group.id);

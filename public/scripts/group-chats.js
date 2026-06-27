@@ -97,6 +97,9 @@ import {
     getInitialChatDisplayCount,
     prefetchCurrentChatTailBuffer,
     prepareCurrentChatSavePayload,
+    getTotalChatMessages,
+    isChatFullyHydrated,
+    hydrateCurrentChatForEditing,
 } from '../script.js';
 import { printTagList, createTagMapFromList, applyTagsOnCharacterSelect, tag_map, applyTagsOnGroupSelect } from './tags.js';
 import { FILTER_TYPES, FilterHelper } from './filters.js';
@@ -923,7 +926,8 @@ export async function renameGroupMember(oldAvatar, newAvatar, newName) {
 
             // Load all chats from this group
             for (const chatId of group.chats) {
-                const messages = await loadGroupChat(chatId);
+                const chatPayload = await loadGroupChat(chatId, { withMetadata: true });
+                const messages = chatPayload.messages;
 
                 // Only save the chat if there were any changes to the chat content
                 let hadChanges = false;
@@ -947,13 +951,15 @@ export async function renameGroupMember(oldAvatar, newAvatar, newName) {
                     }
 
                     if (hadChanges) {
-                     const saveChatResponse = await fetch('/api/chats/group/save', {
-                             method: 'POST',
+                        const saveChatResponse = await fetch('/api/chats/group/save', {
+                            method: 'POST',
                             headers: getRequestHeaders(),
-                              body: JSON.stringify({ 
-                                  id: chatId, 
-                                 chat: [...messages],
-                            full_chat: true, // <-- ADDED
+                            body: JSON.stringify({
+                                id: chatId,
+                                chat: [...messages],
+                                full_chat: true,
+                                base_revision: chatPayload.chat_revision,
+                                save_session_id: getChatSaveSessionId(),
                             }),
                         });
 
@@ -2502,39 +2508,65 @@ export async function saveGroupBookmarkChat(groupId, name, metadata, mesId) {
     const group = groups.find(x => x.id === groupId);
 
     if (!group) {
-        return;
+        return false;
     }
 
     const bookmarkMetadata = cloneGroupChatMetadata({
         ...cloneGroupChatMetadata(chat_metadata),
         ...(metadata || {}),
     });
-    group.chats.push(name);
 
-    const trimmed_chat = (mesId !== undefined && mesId >= 0 && mesId < chat.length)
-        ? chat.slice(0, parseInt(mesId) + 1)
-        : chat;
+    if (!isChatFullyHydrated()) {
+        const hydrated = await hydrateCurrentChatForEditing();
+        if (!hydrated) {
+            toastr.warning(t`Load the full chat before creating a group checkpoint.`, t`Create Checkpoint`);
+            return false;
+        }
+    }
+
+    const totalMessages = getTotalChatMessages();
+    const targetEndId = (mesId !== undefined && mesId >= 0 && mesId < totalMessages)
+        ? Number.parseInt(mesId, 10)
+        : totalMessages - 1;
+
+    for (let index = 0; index <= targetEndId; index++) {
+        if (!chat[index] || typeof chat[index] !== 'object') {
+            console.error('Group checkpoint creation aborted because the chat prefix is not fully loaded.', {
+                index,
+                targetEndId,
+                totalMessages,
+                isHydrated: isChatFullyHydrated(),
+            });
+            toastr.error(t`The full chat could not be loaded. Reload the chat and try again.`, t`Create Checkpoint`);
+            return false;
+        }
+    }
+
+    const trimmed_chat = Array.from({ length: targetEndId + 1 }, (_, index) => chat[index]);
     const branchChat = structuredClone(trimmed_chat);
     normalizeChatIdentities(branchChat, { generateUuid: uuidv4, regenerateAll: true });
-
-    await editGroup(groupId, true, false);
 
     const response = await fetch('/api/chats/group/save', {
         method: 'POST',
         headers: getRequestHeaders(),
         body: JSON.stringify({
-          id: name,
-          chat: branchChat,
-          chat_metadata: bookmarkMetadata,
-          regenerate_identities: true,
-          full_chat: true, // <-- ADDED
-      }),
+            id: name,
+            chat: branchChat,
+            chat_metadata: bookmarkMetadata,
+            regenerate_identities: true,
+            full_chat: true,
+        }),
     });
 
     if (!response.ok) {
         toastr.error(t`Check the server connection and reload the page to prevent data loss.`, t`Group chat could not be saved`);
         console.error('Group chat could not be saved', response);
+        return false;
     }
+
+    group.chats.push(name);
+    await editGroup(groupId, true, false);
+    return true;
 }
 
 function onSendTextareaInput() {
