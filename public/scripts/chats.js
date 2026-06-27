@@ -40,7 +40,7 @@ import {
     flushDebouncedChatSave,
     CHAT_SAVE_RESULT,
 } from '../script.js';
-import { selected_group } from './group-chats.js';
+import { saveCurrentGroupMessageIncremental, selected_group } from './group-chats.js';
 import { power_user } from './power-user.js';
 import {
     extractTextFromHTML,
@@ -468,6 +468,23 @@ async function ensurePromptRelevantMessageEditable(messageId) {
     }
 
     return hydrateCurrentChatForEditing();
+}
+
+/**
+ * Saves a one-message mutation incrementally for group chats, otherwise uses the current save path.
+ * @param {number} messageId Logical message id
+ * @param {object} message Message payload to persist
+ * @returns {Promise<string>} Chat save result
+ */
+async function saveSingleMessageMutation(messageId, message) {
+    if (selected_group) {
+        const result = await saveCurrentGroupMessageIncremental(messageId, message);
+        if (result === CHAT_SAVE_RESULT.SAVED) {
+            return result;
+        }
+    }
+
+    return await saveChatConditional();
 }
 
 const CHAT_MESSAGE_VISIBILITY_SAVE_RESULT = {
@@ -933,7 +950,7 @@ async function deleteMessageFile(messageBlock, messageId, fileIndex) {
     const url = message.extra.files[fileIndex]?.url;
     message.extra.files.splice(fileIndex, 1);
 
-    await saveChatConditional();
+    await saveSingleMessageMutation(messageId, message);
     await deleteFileFromServer(url);
 
     appendMediaToMessage(message, messageBlock, SCROLL_BEHAVIOR.KEEP);
@@ -1008,7 +1025,7 @@ function embedMessageFile(messageId, messageBlock) {
         await populateFileAttachment(message, 'embed_file_input');
         await eventSource.emit(event_types.MESSAGE_FILE_EMBEDDED, messageId);
         appendMediaToMessage(message, messageBlock, SCROLL_BEHAVIOR.KEEP);
-        await saveChatConditional();
+        await saveSingleMessageMutation(messageId, message);
     }
 }
 
@@ -1662,7 +1679,11 @@ async function deleteMessageMedia(messageId, mediaIndex, messageBlock) {
         }
     }
 
-    await saveChatConditional();
+    if (deleteImagesFromChat) {
+        await saveChatConditional();
+    } else {
+        await saveSingleMessageMutation(messageId, message);
+    }
     if (deleteImagesFromChat) {
         refreshRenderedMessageMedia();
     } else {
@@ -1695,7 +1716,7 @@ async function switchMessageMediaDisplay(messageId, messageBlock, targetDisplay)
     }
 
     message.extra.media_display = targetDisplay;
-    await saveChatConditional();
+    await saveSingleMessageMutation(messageId, message);
     appendMediaToMessage(message, messageBlock, SCROLL_BEHAVIOR.KEEP);
 }
 
@@ -2723,7 +2744,7 @@ async function onImageSwiped(messageId, element, direction) {
         message.extra.media_index = newIndex >= media.length ? 0 : newIndex;
     }
 
-    await saveChatConditional();
+    await saveSingleMessageMutation(messageId, message);
     appendMediaToMessage(message, element);
 }
 

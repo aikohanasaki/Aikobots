@@ -1129,6 +1129,89 @@ function getRenamedGroupMemberMessageUpdates(messages, { oldAvatar, newAvatar, n
     return { messages: updatedMessages, changed };
 }
 
+/**
+ * Replaces exactly one logical group chat message row in SQLite.
+ * @param {{filePath: string, requestBody: object, saveSessionId?: string|null}} options Update options
+ * @returns {Promise<{result: string, chat_revision: number, message_id: number}>}
+ */
+async function updateGroupChatMessageRow({ filePath, requestBody, saveSessionId }) {
+    const sqlitePath = replaceChatStorageExtension(filePath, '.sqlite');
+    if (!fs.existsSync(sqlitePath)) {
+        throw new ChatMutationError(409, 'message_update_requires_sqlite', 'Message update requires SQLite chat storage.');
+    }
+
+    const messageId = Number(requestBody?.message_id);
+    if (!Number.isInteger(messageId) || messageId < 0) {
+        throw new ChatMutationError(400, 'invalid_message_id');
+    }
+
+    if (!_.isPlainObject(requestBody?.message)) {
+        throw new ChatMutationError(400, 'invalid_message_payload');
+    }
+
+    if (!Object.prototype.hasOwnProperty.call(requestBody || {}, 'base_revision')) {
+        throw new ChatMutationError(400, 'base_revision_required');
+    }
+
+    if (!saveSessionId) {
+        throw new ChatMutationError(400, 'save_session_id_required');
+    }
+
+    const db = await loadDb(sqlitePath);
+    try {
+        const header = getChatHeader(db);
+        if (!header) {
+            throw new ChatMutationError(404, 'chat_not_found');
+        }
+        assertSupportedChatStorage(header);
+
+        const revisionCheck = validateSaveRevision(requestBody, header);
+        if (!revisionCheck.ok) {
+            throw new ChatMutationError(revisionCheck.status, revisionCheck.error, revisionCheck.error, {
+                current_revision: revisionCheck.currentRevision,
+                last_save_session_id: revisionCheck.lastSaveSessionId,
+            });
+        }
+
+        const existingRow = getLogicalMessageRow(db, messageId);
+        if (!existingRow) {
+            throw new ChatMutationError(400, 'invalid_message_id');
+        }
+
+        db.run('BEGIN TRANSACTION');
+        let headerStmt;
+        let messageStmt;
+        try {
+            const revisedHeader = setChatRevision(stripChatStorage(header), revisionCheck.nextRevision, saveSessionId);
+            headerStmt = db.prepare('UPDATE messages SET content = ? WHERE order_index = 0');
+            headerStmt.run([JSON.stringify(sanitizeChatHeaderForPersistence(revisedHeader))]);
+
+            messageStmt = db.prepare('UPDATE messages SET content = ? WHERE id = ?');
+            messageStmt.run([
+                JSON.stringify(sanitizeChatMessageForPersistence(requestBody.message)),
+                existingRow.id,
+            ]);
+
+            db.run('COMMIT');
+        } catch (error) {
+            db.run('ROLLBACK');
+            throw error;
+        } finally {
+            headerStmt?.free();
+            messageStmt?.free();
+        }
+
+        saveDb(db, sqlitePath);
+        return {
+            result: 'ok',
+            chat_revision: revisionCheck.nextRevision,
+            message_id: messageId,
+        };
+    } finally {
+        db.close();
+    }
+}
+
 async function ensureGroupChatHeader(user, chatId, filePath) {
     const payload = await getGroupChatPayload(filePath);
     if (payload.hasHeader || payload.messages.length === 0) {
@@ -3369,6 +3452,10 @@ router.post('/group/copy-prefix', async (request, response) => {
 
         const sourceId = String(request.body.source_id);
         const targetId = String(request.body.target_id);
+        if (sourceId === targetId) {
+            return response.status(400).send({ error: 'invalid_target_chat_id' });
+        }
+
         const prefixEndId = Number(request.body.end_message_id);
         if (!Number.isInteger(prefixEndId) || prefixEndId < 0) {
             return response.status(400).send({ error: 'invalid_message_id' });
@@ -3525,6 +3612,45 @@ router.post('/group/member/rename-history', async (request, response) => {
         }
         console.error(error);
         return response.status(500).send({ error: 'rename_group_member_history_failed' });
+    }
+});
+
+router.patch('/group/message/update', async (request, response) => {
+    try {
+        if (!request.body || !request.body.id) {
+            return response.sendStatus(400);
+        }
+
+        const id = request.body.id;
+        const pathToFile = getGroupChatFilePath(request.user.directories.groupChats, id);
+        if (!fs.existsSync(pathToFile) && !fs.existsSync(replaceChatStorageExtension(pathToFile, '.sqlite'))) {
+            return response.status(404).send({ error: 'chat_not_found' });
+        }
+
+        return await withChatSaveLock(pathToFile, async () => {
+            await request.activeSessionOperation?.assertAllowed();
+            const result = await updateGroupChatMessageRow({
+                filePath: pathToFile,
+                requestBody: request.body,
+                saveSessionId: getRequestSaveSessionId(request.body),
+            });
+            return response.send(result);
+        });
+    } catch (error) {
+        if (isActiveSessionError(error)) {
+            return sendActiveSessionRequired(response);
+        }
+        if (isUnsupportedSplitTailChatError(error)) {
+            return sendUnsupportedSplitTailChatError(response, error);
+        }
+        if (isChatPathValidationError(error)) {
+            return sendChatPathValidationError(response, error);
+        }
+        if (error instanceof ChatMutationError) {
+            return response.status(error.status || 400).send({ error: error.error, message: error.message, ...error.details });
+        }
+        console.error(error);
+        return response.status(500).send({ error: 'message_update_failed' });
     }
 });
 

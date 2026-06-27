@@ -73,6 +73,7 @@ import {
     getGroupDepthPrompts,
     openGroupById,
     openGroupChat,
+    saveCurrentGroupMessageIncremental,
 } from './scripts/group-chats.js';
 
 import {
@@ -12780,7 +12781,14 @@ async function messageEditDone(div) {
     await eventSource.emit(event_types.MESSAGE_UPDATED, messageId);
     this_edit_mes_id = undefined;
     clearActiveMessageEditSession();
-    await saveChatConditional();
+    if (selected_group) {
+        const saveResult = await saveCurrentGroupMessageIncremental(messageId, mes);
+        if (saveResult !== CHAT_SAVE_RESULT.SAVED) {
+            await saveChatConditional();
+        }
+    } else {
+        await saveChatConditional();
+    }
     showSwipeButtons();
 }
 
@@ -16588,7 +16596,14 @@ export async function swipe(event, direction, { source, repeated, message = chat
                 await reloadCurrentChat();
             }
         } else if (source !== SWIPE_SOURCE.BACK) {
-            saveChatDebounced();
+            if (selected_group) {
+                const saveResult = await saveCurrentGroupMessageIncremental(mesId, chat[mesId]);
+                if (saveResult !== CHAT_SAVE_RESULT.SAVED) {
+                    saveChatDebounced();
+                }
+            } else {
+                saveChatDebounced();
+            }
         }
 
         swipeState = SWIPE_STATE.NONE;

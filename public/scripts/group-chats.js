@@ -904,6 +904,56 @@ async function persistActiveGroupChat(groupId) {
     await saveGroupChat(groupId, false);
 }
 
+/**
+ * Persists one loaded message in the active group chat without replacing the whole chat.
+ * @param {number} messageId Logical message id
+ * @param {object} message Message payload to persist
+ * @returns {Promise<string>} Chat save result
+ */
+export async function saveCurrentGroupMessageIncremental(messageId, message) {
+    if (!selected_group) {
+        return CHAT_SAVE_RESULT.FAILED;
+    }
+
+    const chatId = getCurrentChatId();
+    const targetMessageId = Number(messageId);
+    if (!chatId || !Number.isInteger(targetMessageId) || targetMessageId < 0 || !message || typeof message !== 'object' || Array.isArray(message)) {
+        return CHAT_SAVE_RESULT.FAILED;
+    }
+
+    const response = await fetch('/api/chats/group/message/update', {
+        method: 'PATCH',
+        headers: getRequestHeaders(),
+        body: JSON.stringify({
+            id: chatId,
+            message_id: targetMessageId,
+            message: structuredClone(message),
+            base_revision: getChatSaveRevision(),
+            save_session_id: getChatSaveSessionId(),
+        }),
+    });
+
+    if (!response.ok) {
+        try {
+            const errorData = await response.json();
+            if (errorData?.error === 'stale_revision') {
+                warnStaleChatSave(errorData);
+                console.error('Group message update rejected as stale', errorData);
+                return CHAT_SAVE_RESULT.FAILED;
+            }
+        } catch {
+            // Fall through to generic save failure.
+        }
+
+        console.error('Group message could not be updated incrementally', response);
+        return CHAT_SAVE_RESULT.FAILED;
+    }
+
+    const responseData = await response.json();
+    setChatSaveRevision(responseData?.chat_revision);
+    return CHAT_SAVE_RESULT.SAVED;
+}
+
 export async function renameGroupMember(oldAvatar, newAvatar, newName) {
     // Scan every group for our renamed character
     for (const group of groups) {
@@ -916,8 +966,6 @@ export async function renameGroupMember(oldAvatar, newAvatar, newName) {
                 continue;
             }
 
-            // Replace group member avatar id and save the changes
-            group.members[memberIndex] = newAvatar;
             const response = await fetch('/api/chats/group/member/rename-history', {
                 method: 'POST',
                 headers: getRequestHeaders(),
@@ -935,6 +983,7 @@ export async function renameGroupMember(oldAvatar, newAvatar, newName) {
             }
 
             const result = await response.json();
+            group.members[memberIndex] = newAvatar;
             console.log(`Renamed character ${newName} in group: ${group.name}`, result);
 
             if (String(selected_group) === String(group.id)) {
