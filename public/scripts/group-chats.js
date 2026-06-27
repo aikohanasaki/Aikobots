@@ -947,10 +947,14 @@ export async function renameGroupMember(oldAvatar, newAvatar, newName) {
                     }
 
                     if (hadChanges) {
-                        const saveChatResponse = await fetch('/api/chats/group/save', {
-                            method: 'POST',
+                     const saveChatResponse = await fetch('/api/chats/group/save', {
+                             method: 'POST',
                             headers: getRequestHeaders(),
-                            body: JSON.stringify({ id: chatId, chat: [...messages] }),
+                              body: JSON.stringify({ 
+                                  id: chatId, 
+                                 chat: [...messages],
+                            full_chat: true, // <-- ADDED
+                            }),
                         });
 
                         if (!saveChatResponse.ok) {
@@ -2519,11 +2523,12 @@ export async function saveGroupBookmarkChat(groupId, name, metadata, mesId) {
         method: 'POST',
         headers: getRequestHeaders(),
         body: JSON.stringify({
-            id: name,
-            chat: branchChat,
-            chat_metadata: bookmarkMetadata,
-            regenerate_identities: true,
-        }),
+          id: name,
+          chat: branchChat,
+          chat_metadata: bookmarkMetadata,
+          regenerate_identities: true,
+          full_chat: true, // <-- ADDED
+      }),
     });
 
     if (!response.ok) {
