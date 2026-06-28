@@ -195,10 +195,11 @@ function getGroupChatMaxTurnsControlValue() {
 function setGroupChatMaxTurnsControls(value) {
     const maxTurns = normalizeGroupChatMaxTurns(value);
     const isEnabled = maxTurns > 0;
+    const currentInputValue = normalizeGroupChatMaxTurns($('#rm_group_chat_max_turns').val()) || 1;
 
     $('#rm_group_chat_max_turns_enabled').prop('checked', isEnabled);
     $('#rm_group_chat_max_turns')
-        .val(isEnabled ? maxTurns : 1)
+        .val(isEnabled ? maxTurns : currentInputValue)
         .prop('disabled', !isEnabled);
 }
 
