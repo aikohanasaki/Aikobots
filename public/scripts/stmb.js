@@ -8451,6 +8451,7 @@ async function executeMemoryCreationFromRange(range, options = {}) {
             settings: requestSettings,
             profile: effectiveSettings.profileSettings,
             sceneContext,
+            contextSettingKey,
         });
     } catch (error) {
         console.warn('STMB after-memory side prompt planning failed', error);

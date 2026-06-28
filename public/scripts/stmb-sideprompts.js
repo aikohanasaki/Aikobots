@@ -125,7 +125,7 @@ function getChatContextSettingKey() {
     return key && key !== STMB_CONTEXT_NONE_KEY ? key : STMB_CONTEXT_NONE_KEY;
 }
 
-async function resolveSidePromptAdditionalContextEntries(template) {
+async function resolveSidePromptAdditionalContextEntries(template, options = {}) {
     const config = template?.settings?.additionalContext && typeof template.settings.additionalContext === 'object'
         ? template.settings.additionalContext
         : {};
@@ -136,9 +136,12 @@ async function resolveSidePromptAdditionalContextEntries(template) {
         return [];
     }
 
+    const hasContextSettingKey = options?.contextSettingKey !== undefined;
     const key = mode === STMB_CONTEXT_SOURCE_MODES.FIXED
         ? String(config.contextSettingKey || '').trim()
-        : getChatContextSettingKey();
+        : hasContextSettingKey
+            ? String(options.contextSettingKey || STMB_CONTEXT_NONE_KEY).trim()
+            : getChatContextSettingKey();
     return await resolveAdditionalContextEntriesForKey(key);
 }
 
@@ -559,11 +562,11 @@ async function runSidePromptAttempt({
     }
 }
 
-async function prepareSidePromptRun({ template, lorebookName, lorebookData, compiledScene, settings, profile = null, runtimeMacros = {}, fallbackKinds = [], signal = null }) {
+async function prepareSidePromptRun({ template, lorebookName, lorebookData, compiledScene, settings, profile = null, runtimeMacros = {}, fallbackKinds = [], contextSettingKey, signal = null }) {
     const unifiedTitle = getUnifiedSidePromptTitle(template, runtimeMacros);
     const existing = findFirstLorebookEntryByTitle(lorebookData, getSidePromptLookupTitles(template, runtimeMacros, fallbackKinds));
     const previousMemories = fetchPreviousMemories(lorebookData, Number(template?.settings?.previousMemoriesCount ?? 0));
-    const additionalContextEntries = await resolveSidePromptAdditionalContextEntries(template);
+    const additionalContextEntries = await resolveSidePromptAdditionalContextEntries(template, { contextSettingKey });
     const finalPrompt = buildSidePromptText(
         template.prompt,
         existing?.content || '',
@@ -616,6 +619,7 @@ export async function buildQueuedSidePromptJob({
     setKey = '',
     setName = '',
     setItemId = '',
+    contextSettingKey = getChatContextSettingKey(),
 }) {
     return {
         type: 'sidePrompt',
@@ -645,6 +649,7 @@ export async function buildQueuedSidePromptJob({
             fallbackKinds: Array.isArray(fallbackKinds) ? fallbackKinds.slice() : [],
             metadataUpdates: structuredClone(metadataUpdates || {}),
             commitCheckpoint: commitCheckpoint ? structuredClone(commitCheckpoint) : null,
+            contextSettingKey: contextSettingKey || STMB_CONTEXT_NONE_KEY,
             trigger,
         },
     };
@@ -657,6 +662,7 @@ export async function buildQueuedAfterMemorySidePromptJobs({
     settings,
     profile = null,
     sceneContext = null,
+    contextSettingKey = getChatContextSettingKey(),
 }) {
     const selectedSetKey = getSelectedAfterMemorySetKey();
     let selectedSet = null;
@@ -739,6 +745,7 @@ export async function buildQueuedAfterMemorySidePromptJobs({
                 setKey: runItem.setKey || selectedSet?.key || '',
                 setName: runItem.setName || selectedSet?.name || '',
                 setItemId: runItem.setItemId || '',
+                contextSettingKey,
             }));
         }
     }
@@ -757,6 +764,7 @@ function buildQueuedSidePromptBatchJobFromItems({
     trigger = 'manual',
     sceneContext = null,
     includeLastMsgId = true,
+    contextSettingKey = getChatContextSettingKey(),
 }) {
     const checkpointTimestamp = new Date().toISOString();
     const endId = compiledScene?.metadata?.sceneEnd ?? range?.sceneEnd;
@@ -780,6 +788,7 @@ function buildQueuedSidePromptBatchJobFromItems({
             range: range ? structuredClone(range) : null,
             settings: settings ? structuredClone(settings) : null,
             profile: profile ? structuredClone(profile) : null,
+            contextSettingKey: contextSettingKey || STMB_CONTEXT_NONE_KEY,
             trigger,
             setKey: set?.key || '',
             setName: set?.name || '',
@@ -826,6 +835,7 @@ export async function buildQueuedSidePromptWorkflowJobs({
     commitCheckpoint = null,
     trigger = 'manual',
     sceneContext = null,
+    contextSettingKey = getChatContextSettingKey(),
 }) {
     const job = await buildQueuedSidePromptJob({
         template,
@@ -840,6 +850,7 @@ export async function buildQueuedSidePromptWorkflowJobs({
         commitCheckpoint,
         trigger,
         sceneContext,
+        contextSettingKey,
     });
     return [job];
 }
@@ -947,6 +958,7 @@ async function runTemplateForCompiledScene({
     metadataUpdates = {},
     trigger = 'manual',
     previewAllowRetry = true,
+    contextSettingKey,
     signal = null,
 }) {
     for (;;) {
@@ -960,6 +972,7 @@ async function runTemplateForCompiledScene({
             profile,
             runtimeMacros,
             fallbackKinds,
+            contextSettingKey,
             signal,
         });
         let resultText = await runSidePromptAttempt({
@@ -1036,6 +1049,7 @@ export async function evaluateTrackers(settings, options = {}) {
         const parentTask = options.signal ? null : createStmbTask('SidePrompts:onInterval');
         const signal = options.signal || parentTask?.signal || null;
         const sceneContext = options.sceneContext || null;
+        const contextSettingKey = options.contextSettingKey ?? getChatContextSettingKey();
         try {
             const templates = await listByTrigger('onInterval');
             if (!templates || templates.length === 0) return;
@@ -1102,6 +1116,7 @@ export async function evaluateTrackers(settings, options = {}) {
                         includeTrackerFallback: true,
                     },
                     sceneContext,
+                    contextSettingKey,
                 }));
             }
 
@@ -1135,6 +1150,7 @@ export async function enqueueAfterMemorySidePromptJobs(compiledScene, settings, 
     throwIfStmbAborted(options.signal || null);
     const lorebookName = options.lorebookName || await ensureLorebookName(settings);
     const sceneContext = options.sceneContext || buildStmbSceneContext();
+    const contextSettingKey = options.contextSettingKey ?? getChatContextSettingKey();
     const range = options.range || {
         sceneStart: compiledScene?.metadata?.sceneStart,
         sceneEnd: compiledScene?.metadata?.sceneEnd,
@@ -1146,6 +1162,7 @@ export async function enqueueAfterMemorySidePromptJobs(compiledScene, settings, 
         settings,
         profile,
         sceneContext,
+        contextSettingKey,
     });
     ensureSidePromptJobExecutorRegistered();
     for (const job of jobs) {
@@ -1160,6 +1177,7 @@ export async function runSidePrompt(rawInput, settings, options = {}) {
     let activeTemplateName = '';
     try {
         const sceneContext = options.sceneContext || buildStmbSceneContext();
+        const contextSettingKey = options.contextSettingKey ?? getChatContextSettingKey();
         const parsed = parseSidePromptCommandInput(rawInput);
         if (parsed.error || !parsed.name) {
             toastr.error('SidePrompt name not provided. Usage: /sideprompt "Name" {{macro}}="value" [X-Y]', 'STMB');
@@ -1266,6 +1284,7 @@ export async function runSidePrompt(rawInput, settings, options = {}) {
                 includeTrackerFallback: true,
             },
             sceneContext,
+            contextSettingKey,
         });
         ensureSidePromptJobExecutorRegistered();
         for (const job of jobs) {
@@ -1292,6 +1311,7 @@ export async function runSidePromptSet(rawInput, settings, options = {}) {
     const macroMode = Boolean(options.macroMode);
     try {
         const sceneContext = options.sceneContext || buildStmbSceneContext();
+        const contextSettingKey = options.contextSettingKey ?? getChatContextSettingKey();
         const parsed = parseSidePromptCommandInput(rawInput);
         if (parsed.error || !parsed.name) {
             toastr.error(macroMode
@@ -1418,6 +1438,7 @@ export async function runSidePromptSet(rawInput, settings, options = {}) {
                 trigger: macroMode ? 'macroset' : 'sideprompt-set',
                 sceneContext,
                 includeLastMsgId: true,
+                contextSettingKey,
             }));
             queued++;
         }
@@ -1482,6 +1503,7 @@ async function executeSidePromptJob(job, context) {
         profile: payload.profile || null,
         runtimeMacros: payload.runtimeMacros || {},
         fallbackKinds: payload.fallbackKinds || [],
+        contextSettingKey: payload.contextSettingKey,
         signal,
     });
 
@@ -1631,6 +1653,7 @@ async function executeSidePromptBatchJob(job, context) {
                 profile: payload.profile || null,
                 runtimeMacros: input?.runtimeMacros || {},
                 fallbackKinds: input?.fallbackKinds || [],
+                contextSettingKey: payload.contextSettingKey,
                 signal,
             });
             const resultText = await runSidePromptAttempt({
