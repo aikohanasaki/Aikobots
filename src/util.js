@@ -530,6 +530,10 @@ export function getImages(directoryPath, sortBy = 'name') {
  * @returns {Promise<void>}
  */
 async function waitForWritableDrain(writable) {
+    if (writable.destroyed || writable.writableEnded || writable.writableFinished) {
+        return;
+    }
+
     const controller = new AbortController();
 
     try {
