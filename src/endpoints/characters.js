@@ -953,6 +953,19 @@ function canEditCharacterLorebooks(characterCard, request) {
 }
 
 /**
+ * Checks whether the current requester can edit character card metadata.
+ * Pushed/owned characters are creator/admin-managed; non-owners can still
+ * update local avatar art and favorite state through dedicated endpoints.
+ * @param {object|null|undefined} characterCard Character card data
+ * @param {import('express').Request} request Express request object
+ * @returns {boolean}
+ */
+function canEditCharacterMetadata(characterCard, request) {
+    const ownerHandles = getCharacterOwnerHandles(characterCard);
+    return ownerHandles.length === 0 || Boolean(request.user?.profile?.admin) || ownerHandles.includes(request.user?.profile?.handle);
+}
+
+/**
  * Checks whether the current requester is one of the character owners.
  * @param {object|null|undefined} characterCard Character card data
  * @param {import('express').Request} request Express request object
@@ -1856,6 +1869,11 @@ router.post('/edit', validateAvatarUrlMiddleware, async function (request, respo
         const avatarPath = resolveCharacterFilePath(request.user.directories, request.body.avatar_url);
         const rawCharacterData = await readCharacterData(avatarPath);
         const existingCharacter = rawCharacterData ? getCharaCardV2(JSON.parse(rawCharacterData), request.user.directories, false) : null;
+        if (existingCharacter && !canEditCharacterMetadata(existingCharacter, request)) {
+            const ownerLabel = getCharacterOwnerLabel(existingCharacter);
+            return response.status(403).json({ error: `Only ${ownerLabel} and admins can edit this character's metadata.` });
+        }
+
         const requestedFavorite = coerceFavoriteValue(request.body.fav);
         const canEditLorebooks = canEditCharacterLorebooks(existingCharacter, request);
         const requestedJsonData = tryParse(request.body.json_data);
@@ -2033,6 +2051,11 @@ router.post('/edit-attribute', validateAvatarUrlMiddleware, async function (requ
 
         const char = JSON.parse(charJSON);
         const existingCharacter = _.cloneDeep(char);
+        if (!canEditCharacterMetadata(char, request)) {
+            const ownerLabel = getCharacterOwnerLabel(char);
+            return response.status(403).json({ error: `Only ${ownerLabel} and admins can edit this character's metadata.` });
+        }
+
         //check if the field exists
         if (char[request.body.field] === undefined && char.data[request.body.field] === undefined) {
             console.warn('Error: invalid field.');
@@ -2087,6 +2110,11 @@ router.post('/merge-attributes', getFileNameValidationFunction('avatar'), async 
 
         let character = JSON.parse(pngStringData);
         const existingCharacter = _.cloneDeep(character);
+        if (!canEditCharacterMetadata(character, request)) {
+            const ownerLabel = getCharacterOwnerLabel(character);
+            return response.status(403).json({ error: `Only ${ownerLabel} and admins can edit this character's metadata.` });
+        }
+
         const canEditLorebooks = canEditCharacterLorebooks(character, request);
         const updatesWorld = _.has(update, 'data.extensions.world');
         const updatesEmbeddedBook = _.has(update, 'data.character_book');

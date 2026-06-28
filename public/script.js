@@ -1145,16 +1145,30 @@ function updateCharacterSaveButtonState() {
     }
 
     const isEditMode = $('#form_create').attr('actiontype') === 'editcharacter';
+    const canSaveMetadata = !isEditMode || canEditCharacterMetadata(this_chid);
     saveButtonLabel
         .toggleClass('fa-user-check', !isEditMode)
         .toggleClass('fa-floppy-disk', isEditMode)
-        .attr('title', isEditMode ? t`Save Character` : t`Create Character`);
+        .toggleClass('disabled', !canSaveMetadata)
+        .attr('aria-disabled', !canSaveMetadata ? 'true' : 'false')
+        .attr('title', isEditMode
+            ? canSaveMetadata
+                ? t`Save Character`
+                : t`Only botmakers and admins can edit character metadata`
+            : t`Create Character`);
 
-    $('#create_button').attr('aria-label', isEditMode ? t`Save Character` : t`Create Character`);
+    $('#create_button')
+        .prop('disabled', !canSaveMetadata)
+        .attr('aria-label', isEditMode ? t`Save Character` : t`Create Character`);
 }
 
 export function markCharacterEditorDirty() {
     if (!isCharacterEditorInEditMode()) {
+        return;
+    }
+
+    if (!canEditCharacterMetadata(this_chid)) {
+        clearCharacterEditorDirtyState();
         return;
     }
 
@@ -15001,6 +15015,7 @@ export function select_selected_character(chid, { switchMenu = true, forceRefres
 
     $('#form_create').attr('actiontype', 'editcharacter');
     $('.form_create_bottom_buttons_block .chat_lorebook_button').show();
+    updateCharacterMetadataEditability(chid);
     if (!shouldPreserveUnsavedEdits) {
         clearCharacterEditorDirtyState();
     }
@@ -15092,6 +15107,7 @@ function select_rm_create({ switchMenu = true, hydrateForm = true } = {}) {
     $('#form_create').attr('actiontype', 'createcharacter');
     $('.form_create_bottom_buttons_block .chat_lorebook_button').hide();
     $('#character_open_media_overrides').hide();
+    updateCharacterMetadataEditability(undefined);
     hydrateForm && clearCharacterEditorDirtyState();
     updateCharacterSaveButtonState();
     updateCharacterTokenDryRunButton(undefined);
@@ -15231,6 +15247,44 @@ function isSharedCharacter(chid) {
 export function canEditCharacterMetadata(chid) {
     const ownerHandles = getCharacterOwnerHandles(chid);
     return ownerHandles.length === 0 || isAdmin() || ownerHandles.includes(currentUser?.handle);
+}
+
+const characterMetadataControlSelectors = [
+    '#character_name_pole',
+    '#description_textarea',
+    '#character_world',
+    '#creator_notes_textarea',
+    '#character_version_textarea',
+    '#system_prompt_textarea',
+    '#post_history_instructions_textarea',
+    '#tags_textarea',
+    '#creator_textarea',
+    '#personality_textarea',
+    '#firstmessage_textarea',
+    '#scenario_pole',
+    '#depth_prompt_prompt',
+    '#depth_prompt_depth',
+    '#depth_prompt_role',
+    '#talkativeness_slider',
+    '#mes_example_textarea',
+    '#selected_chat_pole',
+];
+
+function updateCharacterMetadataEditability(chid = this_chid) {
+    const isEditMode = $('#form_create').attr('actiontype') === 'editcharacter';
+    const readOnly = isEditMode && !canEditCharacterMetadata(chid);
+
+    for (const selector of characterMetadataControlSelectors) {
+        const control = $(selector);
+        control
+            .prop('readonly', readOnly)
+            .prop('disabled', readOnly && control.is('select, input[type="range"]'))
+            .toggleClass('disabled', readOnly);
+    }
+
+    $('#renameCharButton, .open_alternate_greetings, #set_character_world, #char_connections_button')
+        .toggleClass('disabled', readOnly)
+        .attr('aria-disabled', readOnly ? 'true' : 'false');
 }
 
 function getCharacterTokenDryRunMetadata(chid) {
@@ -16472,6 +16526,9 @@ function openAlternateGreetings() {
     if (menu_type != 'create' && chid === undefined) {
         toastr.error('Does not have an Id for this character in editor menu.');
         return;
+    } else if (menu_type != 'create' && !canEditCharacterMetadata(chid)) {
+        toastr.info(`Only ${getCharacterOwnerLabel(chid)} and admins can edit alternate greetings for this character.`, t`Character locked`);
+        return;
     } else {
         // If the character does not have alternate greetings, create an empty array
         if (characters[chid] && !Array.isArray(characters[chid].data.alternate_greetings)) {
@@ -16598,6 +16655,12 @@ export async function createOrEditCharacter(e) {
     const formData = new FormData(/** @type {HTMLFormElement} */($('#form_create').get(0)));
     formData.set('fav', String(fav_ch_checked));
     const isNewChat = e instanceof CustomEvent && e.type === 'newChat';
+    if ($('#form_create').attr('actiontype') === 'editcharacter' && !canEditCharacterMetadata(this_chid)) {
+        toastr.error(t`Only botmakers and admins can edit character metadata.`);
+        clearCharacterEditorDirtyState();
+        return false;
+    }
+
     const getFetchErrorMessage = async (response) => {
         try {
             const errorData = await response.json();
