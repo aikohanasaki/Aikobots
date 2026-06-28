@@ -454,6 +454,15 @@ const claude_max_temp = 1.0;
 const openrouter_website_model = 'OR_Website';
 const openai_max_stop_strings = 4;
 
+/**
+ * Get the fallback context size for a model whose provider metadata is unavailable.
+ * @param {string} model Model identifier
+ * @returns {number} Maximum context size in tokens
+ */
+function getUnknownModelMaxContext(model) {
+    return String(model).toLowerCase().includes('gemini') ? max_1mil : max_128k;
+}
+
 
 let biasCache = undefined;
 export let model_list = [];
@@ -4961,8 +4970,7 @@ function getMaxContextOpenAI(value) {
         return max_2k;
     }
     else {
-        // default to gpt-3 (4095 tokens)
-        return max_128k;
+        return getUnknownModelMaxContext(value);
     }
 }
 
@@ -4984,8 +4992,8 @@ function getMistralMaxContext(model, isUnlocked) {
         }
     }
 
-    // Return context size if model found, otherwise default to 32k
-    return max_128k;
+    // Return context size if model found, otherwise use the unknown model fallback
+    return getUnknownModelMaxContext(model);
 }
 
 /**
@@ -5031,8 +5039,8 @@ function getGroqMaxContext(model, isUnlocked) {
         'qwen/qwen3-32b': max_128k,
     };
 
-    // Return context size if model found, otherwise default to 128k
-    return Object.entries(contextMap).find(([key]) => model.includes(key))?.[1] || max_128k;
+    // Return context size if model found, otherwise use the unknown model fallback
+    return Object.entries(contextMap).find(([key]) => model.includes(key))?.[1] || getUnknownModelMaxContext(model);
 }
 
 /**
@@ -5065,8 +5073,8 @@ function getZaiMaxContext(model, isUnlocked) {
         'autoglm-phone-multilingual': max_64k,
     };
 
-    // Return context size if model found, otherwise default to 128k
-    return Object.entries(contextMap).find(([key]) => model.includes(key))?.[1] || max_128k;
+    // Return context size if model found, otherwise use the unknown model fallback
+    return Object.entries(contextMap).find(([key]) => model.includes(key))?.[1] || getUnknownModelMaxContext(model);
 }
 
 /**
@@ -5185,7 +5193,7 @@ function getFireworksMaxContext(model, isUnlocked) {
         }
     }
 
-    return max_128k;
+    return getUnknownModelMaxContext(model);
 }
 
 /**
@@ -5205,7 +5213,7 @@ function getElectronHubMaxContext(model, isUnlocked) {
             return modelInfo.tokens;
         }
     }
-    return max_128k;
+    return getUnknownModelMaxContext(model);
 }
 
 /**
@@ -5236,7 +5244,7 @@ function getNanoGptMaxContext(model, isUnlocked) {
         }
     }
 
-    return max_128k;
+    return getUnknownModelMaxContext(model);
 }
 
 async function onModelChange() {
@@ -5487,7 +5495,7 @@ async function onModelChange() {
             if (model?.context_length) {
                 $('#openai_max_context').attr('max', model.context_length);
             } else {
-                $('#openai_max_context').attr('max', max_128k);
+                $('#openai_max_context').attr('max', getUnknownModelMaxContext(oai_settings.openrouter_model));
             }
         }
         oai_settings.openai_max_context = Math.min(Number($('#openai_max_context').attr('max')), oai_settings.openai_max_context);
@@ -5728,7 +5736,7 @@ async function onModelChange() {
             maxContext = unlocked_max;
         } else {
             const model = model_list.find(m => m.id === oai_settings.aimlapi_model);
-            maxContext = (model?.info?.contextLength ?? model?.context_length) || max_128k;
+            maxContext = (model?.info?.contextLength ?? model?.context_length) || getUnknownModelMaxContext(oai_settings.aimlapi_model);
             console.log('[AI/ML API] Model CTX:', model?.info?.contextLength);
         }
 
