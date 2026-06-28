@@ -12,12 +12,26 @@ import { isChatPathValidationError, resolveGroupChatStoragePaths } from '../chat
 
 export const router = express.Router();
 
+const DEFAULT_GROUP_CHAT_MAX_TURNS = 0;
+
+/** Normalizes the per-group speaker cap. 0 means unlimited. */
+const normalizeGroupChatMaxTurns = (value) => {
+    const maxTurns = Number(value);
+
+    if (!Number.isFinite(maxTurns) || !Number.isInteger(maxTurns) || maxTurns < 0) {
+        return DEFAULT_GROUP_CHAT_MAX_TURNS;
+    }
+
+    return maxTurns;
+};
+
 const sanitizeGroupPayload = (group, { stripFavorite = true } = {}) => {
     if (!group || typeof group !== 'object') {
         return group;
     }
 
     const sanitizedGroup = JSON.parse(JSON.stringify(group));
+    sanitizedGroup.group_chat_max_turns = normalizeGroupChatMaxTurns(sanitizedGroup.group_chat_max_turns);
     delete sanitizedGroup.chat_metadata;
     delete sanitizedGroup.past_metadata;
     if (stripFavorite) {
@@ -122,6 +136,7 @@ router.post('/create', (request, response) => {
         chat_id: request.body.chat_id ?? id,
         chats: request.body.chats ?? [id],
         auto_mode_delay: request.body.auto_mode_delay ?? 5,
+        group_chat_max_turns: request.body.group_chat_max_turns ?? 0,
         generation_mode_join_prefix: request.body.generation_mode_join_prefix ?? '',
         generation_mode_join_suffix: request.body.generation_mode_join_suffix ?? '',
     });

@@ -149,6 +149,7 @@ export const group_generation_mode = {
 };
 
 export const DEFAULT_AUTO_MODE_DELAY = 5;
+const DEFAULT_GROUP_CHAT_MAX_TURNS = 0;
 
 export const groupCandidatesFilter = new FilterHelper(debounce(printGroupCandidates, debounce_timeout.quick));
 let autoModeWorker = null;
@@ -160,6 +161,28 @@ let manualSpeakerQueue = [];
 let manualSpeakerQueueGroupId = null;
 let manualSpeakerQueueDraining = false;
 let manualSpeakerCurrentAvatar = null;
+
+/** Normalizes the per-group speaker cap. 0 means unlimited. */
+function normalizeGroupChatMaxTurns(value) {
+    const maxTurns = Number(value);
+
+    if (!Number.isFinite(maxTurns) || !Number.isInteger(maxTurns) || maxTurns < 0) {
+        return DEFAULT_GROUP_CHAT_MAX_TURNS;
+    }
+
+    return maxTurns;
+}
+
+/** Applies the per-group speaker cap to strategy-selected member ids. */
+function applyGroupChatMaxTurns(memberIds, group) {
+    const maxTurns = normalizeGroupChatMaxTurns(group?.group_chat_max_turns);
+
+    if (maxTurns === 0) {
+        return memberIds;
+    }
+
+    return memberIds.slice(0, maxTurns);
+}
 
 function hasManualSpeakerQueueState() {
     return Boolean(manualSpeakerCurrentAvatar || manualSpeakerQueue.length || manualSpeakerQueueGroupId !== null);
@@ -1034,6 +1057,7 @@ async function getGroups() {
             if (Array.isArray(group.chats) && group.chats.some(x => typeof x === 'number')) {
                 group.chats = group.chats.map(x => String(x));
             }
+            group.group_chat_max_turns = normalizeGroupChatMaxTurns(group.group_chat_max_turns);
             delete group.chat_metadata;
             delete group.past_metadata;
         }
@@ -1252,6 +1276,7 @@ async function generateGroupWrapper(by_auto_mode, type = null, params = {}) {
         const activationStrategy = Number(group.activation_strategy ?? group_activation_strategy.NATURAL);
         const enabledMembers = group.members.filter(x => !group.disabled_members.includes(x));
         let activatedMembers = [];
+        let shouldApplyMaxTurns = false;
 
         if (params && typeof params.force_chid == 'number') {
             activatedMembers = [params.force_chid];
@@ -1275,15 +1300,22 @@ async function generateGroupWrapper(by_auto_mode, type = null, params = {}) {
         }
         else if (activationStrategy === group_activation_strategy.NATURAL) {
             activatedMembers = activateNaturalOrder(enabledMembers, activationText, lastMessage, group.allow_self_responses, isUserInput);
+            shouldApplyMaxTurns = true;
         }
         else if (activationStrategy === group_activation_strategy.LIST) {
             activatedMembers = activateListOrder(enabledMembers);
+            shouldApplyMaxTurns = true;
         }
         else if (activationStrategy === group_activation_strategy.POOLED) {
             activatedMembers = activatePooledOrder(enabledMembers, lastMessage, isUserInput);
+            shouldApplyMaxTurns = true;
         }
         else if (activationStrategy === group_activation_strategy.MANUAL && !isUserInput) {
             activatedMembers = shuffle(enabledMembers).slice(0, 1).map(x => characters.findIndex(y => y.avatar === x)).filter(x => x !== -1);
+        }
+
+        if (shouldApplyMaxTurns) {
+            activatedMembers = applyGroupChatMaxTurns(activatedMembers, group);
         }
 
         if (activatedMembers.length === 0) {
@@ -1724,6 +1756,15 @@ async function onGroupAutoModeDelayInput(e) {
     }
 }
 
+async function onGroupChatMaxTurnsInput(e) {
+    if (openGroupId) {
+        let _thisGroup = groups.find((x) => x.id == openGroupId);
+        _thisGroup.group_chat_max_turns = normalizeGroupChatMaxTurns(e.target.value);
+        $('#rm_group_chat_max_turns').val(_thisGroup.group_chat_max_turns);
+        await editGroup(openGroupId, false, false);
+    }
+}
+
 async function onGroupGenerationModeTemplateInput(e) {
     if (openGroupId) {
         let _thisGroup = groups.find((x) => x.id == openGroupId);
@@ -1984,6 +2025,7 @@ function select_group_chats(groupId, skipAnimation) {
     $('#rm_group_allow_self_responses').prop('checked', group && group.allow_self_responses);
     $('#rm_group_hidemutedsprites').prop('checked', group && group.hideMutedSprites);
     $('#rm_group_automode_delay').val(group?.auto_mode_delay ?? DEFAULT_AUTO_MODE_DELAY);
+    $('#rm_group_chat_max_turns').val(normalizeGroupChatMaxTurns(group?.group_chat_max_turns));
 
     $('#rm_group_generation_mode_join_prefix').val(group?.generation_mode_join_prefix ?? '').attr('setting', 'generation_mode_join_prefix');
     $('#rm_group_generation_mode_join_suffix').val(group?.generation_mode_join_suffix ?? '').attr('setting', 'generation_mode_join_suffix');
@@ -2223,6 +2265,7 @@ async function createGroup() {
     let activationStrategy = Number($('#rm_group_activation_strategy').find(':selected').val()) ?? group_activation_strategy.NATURAL;
     let generationMode = Number($('#rm_group_generation_mode').find(':selected').val()) ?? group_generation_mode.SWAP;
     let autoModeDelay = Number($('#rm_group_automode_delay').val()) ?? DEFAULT_AUTO_MODE_DELAY;
+    let groupChatMaxTurns = normalizeGroupChatMaxTurns($('#rm_group_chat_max_turns').val());
     const members = newGroupMembers;
     const memberNames = characters.filter(x => members.includes(x.avatar)).map(x => x.name).join(', ');
 
@@ -2251,6 +2294,7 @@ async function createGroup() {
             chat_id: chatName,
             chats: chats,
             auto_mode_delay: autoModeDelay,
+            group_chat_max_turns: groupChatMaxTurns,
         }),
     });
 
@@ -2680,6 +2724,7 @@ jQuery(() => {
     $('#rm_group_activation_strategy').on('change', onGroupActivationStrategyInput);
     $('#rm_group_generation_mode').on('change', onGroupGenerationModeInput);
     $('#rm_group_automode_delay').on('input', onGroupAutoModeDelayInput);
+    $('#rm_group_chat_max_turns').on('input', onGroupChatMaxTurnsInput);
     $('#rm_group_generation_mode_join_prefix').on('input', onGroupGenerationModeTemplateInput);
     $('#rm_group_generation_mode_join_suffix').on('input', onGroupGenerationModeTemplateInput);
     $('#group_avatar_button').on('input', uploadGroupAvatar);
