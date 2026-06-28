@@ -38,7 +38,7 @@ import { getChatInfo, getDeduplicatedChatHistoryFileNames } from './chats.js';
 import { ByafParser } from '../byaf.js';
 import cacheBuster from '../middleware/cacheBuster.js';
 import { assertPathUnderParent, assertSafeFileName, PathSecurityError, resolvePathUnderParent } from '../path-security.js';
-import { DISTRIBUTION_SOURCE_TYPES, PUBLISH_MODES, SUBMISSION_STATUSES, distributeCharacterFile, getSubmissionPaths, getSubmissionRecord } from '../character-submissions.js';
+import { DISTRIBUTION_SOURCE_TYPES, PUBLISH_MODES, SUBMISSION_STATUSES, distributeCharacterFile, getExistingApprovedDistributionViewForSource, getSubmissionPaths, getSubmissionRecord } from '../character-submissions.js';
 import {
     reconcileCharacterRepushBlacklistEntries,
     removeCharacterRepushBlacklistEntry,
@@ -618,10 +618,11 @@ const processCharacter = async (item, directories, { shallow, user = null, share
  * @param {import('../users.js').UserDirectoryList} directories Source user directories
  * @param {object} options Options
  * @param {import('../users.js').User} options.user Acting user
+ * @param {string} options.sourceOwnerHandle Source user handle
  * @param {object} [options.sharedIndex] Shared character index snapshot
  * @returns {Promise<object|null>}
  */
-const processAdminSourceCharacter = async (item, directories, { user, sharedIndex = null }) => {
+const processAdminSourceCharacter = async (item, directories, { user, sourceOwnerHandle, sharedIndex = null }) => {
     try {
         const imgFile = path.join(directories.characters, item);
         const imgData = await readCharacterData(imgFile);
@@ -638,12 +639,38 @@ const processAdminSourceCharacter = async (item, directories, { user, sharedInde
             sharedIndex,
         }));
 
+        let distributionDefaults = null;
+        try {
+            distributionDefaults = await getExistingApprovedDistributionViewForSource({
+                sourcePath: imgFile,
+                ownerHandle: character.ownerHandle || sourceOwnerHandle,
+                originalFilename: item,
+                includeUserBlacklist: true,
+            });
+        } catch (error) {
+            console.warn(`Could not resolve admin source distribution defaults for ${item}`, error);
+        }
+
+        const reusableDistribution = Boolean(distributionDefaults?.publishMode && distributionDefaults?.publishedFilename)
+            && (distributionDefaults.publishMode !== PUBLISH_MODES.SELECTED
+                || Array.isArray(distributionDefaults.requestedTargetHandles) && distributionDefaults.requestedTargetHandles.length > 0
+                || Array.isArray(distributionDefaults.whitelistHandles) && distributionDefaults.whitelistHandles.length > 0);
+
         return {
             name: character.name,
             avatar: item,
             ownerHandle: character.ownerHandle || '',
             ownerHandles: Array.isArray(character.ownerHandles) ? character.ownerHandles : [],
             sharedCharacterKey: character.sharedCharacterKey || '',
+            distributionDefaults: {
+                reusable: reusableDistribution,
+                publishMode: distributionDefaults?.publishMode || null,
+                publishedFilename: distributionDefaults?.publishedFilename || '',
+                requestedTargetHandles: Array.isArray(distributionDefaults?.requestedTargetHandles) ? distributionDefaults.requestedTargetHandles : [],
+                whitelistHandles: Array.isArray(distributionDefaults?.whitelistHandles) ? distributionDefaults.whitelistHandles : [],
+                adminBlacklistHandles: Array.isArray(distributionDefaults?.adminBlacklistHandles) ? distributionDefaults.adminBlacklistHandles : [],
+                userBlacklistHandles: Array.isArray(distributionDefaults?.userBlacklistHandles) ? distributionDefaults.userBlacklistHandles : [],
+            },
         };
     } catch (err) {
         console.error(`Could not process admin source character: ${item}`, err);
@@ -2449,6 +2476,7 @@ router.post('/admin/source-list', requireAdminMiddleware, async function (reques
         const sharedIndex = await readSharedCharacterIndexSnapshot();
         const processed = await Promise.all(pngFiles.map(file => processAdminSourceCharacter(file, sourceDirectories, {
             user: request.user,
+            sourceOwnerHandle: sourceUser.handle,
             sharedIndex,
         })));
         const characters = processed

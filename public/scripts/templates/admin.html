@@ -124,8 +124,12 @@
             </label>
             <label class="flex-container flexFlowColumn flexNoGap">
                 <span>Source Bot</span>
-                <select class="text_pole pushBotSourceCharacter"></select>
+                <select class="text_pole pushBotSourceCharacter" multiple size="8"></select>
             </label>
+            <div class="pushBotBatchPolicyNotice flex-container flexFlowColumn flexGap5 opacity50p" style="display: none;">
+                <span>Batch re-push</span>
+                <small>Each selected bot will reuse its last push settings.</small>
+            </div>
             <label class="flex-container flexFlowColumn flexNoGap">
                 <span>Published Filename</span>
                 <input class="text_pole pushBotPublishedFilename" type="text">

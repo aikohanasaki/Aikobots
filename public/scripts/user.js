@@ -1924,9 +1924,31 @@ async function openAdminPanel(initialTab = 'usersList') {
         }
     }
 
+    function getSelectedPushBotAvatars() {
+        const selectedValue = template.find('.pushBotSourceCharacter').val();
+        if (Array.isArray(selectedValue)) {
+            return selectedValue.map(value => String(value || '').trim()).filter(Boolean);
+        }
+
+        const avatar = String(selectedValue || '').trim();
+        return avatar ? [avatar] : [];
+    }
+
+    function getSelectedPushBotCharacters() {
+        const selectedAvatars = new Set(getSelectedPushBotAvatars());
+        return pushBotSourceCharacters.filter(character => selectedAvatars.has(character.avatar));
+    }
+
     function getSelectedPushBotCharacter() {
-        const avatar = String(template.find('.pushBotSourceCharacter').val() || '').trim();
-        return pushBotSourceCharacters.find(character => character.avatar === avatar) || null;
+        return getSelectedPushBotCharacters()[0] || null;
+    }
+
+    function isPushBotBatchMode() {
+        return getSelectedPushBotAvatars().length > 1;
+    }
+
+    function getPushBotDisplayName(character) {
+        return String(character?.name || character?.avatar || '').trim() || 'Unknown bot';
     }
 
     function getPushBotPublishedFilenameFallback(character) {
@@ -1934,14 +1956,19 @@ async function openAdminPanel(initialTab = 'usersList') {
     }
 
     function syncPushBotBlocks() {
+        const batchMode = isPushBotBatchMode();
         const publishMode = String(template.find('.pushBotPublishMode').val() || 'global');
         const applyBlacklist = Boolean(template.find('.pushBotApplyBlacklist').prop('checked'));
         const hasUserBlacklist = String(template.find('.pushBotUserBlacklistHandles').val() || '').trim().length > 0;
 
-        template.find('.pushBotTargetsBlock').toggle(publishMode === 'selected');
-        template.find('.pushBotApplyBlacklistBlock').toggle(publishMode === 'global');
-        template.find('.pushBotBlacklistBlock').toggle(publishMode === 'global' && applyBlacklist);
-        template.find('.pushBotUserBlacklistBlock').toggle(hasUserBlacklist);
+        template.find('.pushBotPublishedFilename, .pushBotPublishMode, .pushBotTargetHandles, .pushBotApplyBlacklist, .pushBotBlacklistHandles, .pushBotUserBlacklistHandles')
+            .prop('disabled', batchMode);
+        template.find('.pushBotBatchPolicyNotice').toggle(batchMode);
+        template.find('.pushBotSubmitButton span').text(batchMode ? 'Push Bots' : 'Push Bot');
+        template.find('.pushBotTargetsBlock').toggle(!batchMode && publishMode === 'selected');
+        template.find('.pushBotApplyBlacklistBlock').toggle(!batchMode && publishMode === 'global');
+        template.find('.pushBotBlacklistBlock').toggle(!batchMode && publishMode === 'global' && applyBlacklist);
+        template.find('.pushBotUserBlacklistBlock').toggle(!batchMode && hasUserBlacklist);
     }
 
     async function loadPushBotPolicy({ overwriteRecipients = false } = {}) {
@@ -1949,6 +1976,12 @@ async function openAdminPanel(initialTab = 'usersList') {
         const character = getSelectedPushBotCharacter();
         const publishedFilename = String(template.find('.pushBotPublishedFilename').val() || '').trim();
         const requestId = ++pushBotPolicyRequestId;
+
+        if (isPushBotBatchMode()) {
+            template.find('.pushBotTargetHandles, .pushBotBlacklistHandles, .pushBotUserBlacklistHandles').val('');
+            syncPushBotBlocks();
+            return;
+        }
 
         if (!sourceOwnerHandle || !character || !publishedFilename) {
             template.find('.pushBotUserBlacklistHandles').val('');
@@ -1993,6 +2026,7 @@ async function openAdminPanel(initialTab = 'usersList') {
                 : character.avatar;
             select.append($('<option></option>').val(character.avatar).text(label));
         }
+        select.find('option').first().prop('selected', true);
 
         const selectedCharacter = getSelectedPushBotCharacter();
         template.find('.pushBotPublishedFilename').val(getPushBotPublishedFilenameFallback(selectedCharacter));
@@ -2053,9 +2087,110 @@ async function openAdminPanel(initialTab = 'usersList') {
         await loadPushBotCharacters();
     }
 
+    function getReusablePushBotDistributionPayload({ sourceOwnerHandle, character }) {
+        const defaults = character?.distributionDefaults && typeof character.distributionDefaults === 'object'
+            ? character.distributionDefaults
+            : {};
+        const publishMode = String(defaults.publishMode || '').trim();
+        const publishedFilename = String(defaults.publishedFilename || '').trim();
+
+        if (!defaults.reusable || !publishedFilename) {
+            return null;
+        }
+
+        const basePayload = {
+            sourceType: 'character',
+            sourceOwnerHandle,
+            sourceAvatar: character.avatar,
+            publishedFilename,
+            publishMode,
+        };
+
+        if (publishMode === 'global') {
+            return basePayload;
+        }
+
+        if (publishMode === 'selected') {
+            const targetHandles = Array.isArray(defaults.whitelistHandles) && defaults.whitelistHandles.length > 0
+                ? defaults.whitelistHandles
+                : Array.isArray(defaults.requestedTargetHandles) ? defaults.requestedTargetHandles : [];
+
+            if (targetHandles.length === 0) {
+                return null;
+            }
+
+            return {
+                ...basePayload,
+                targetHandles,
+            };
+        }
+
+        return null;
+    }
+
+    async function submitPushBotBatch({ sourceOwnerHandle, selectedCharacters }) {
+        const confirm = await Popup.show.confirm(
+            'Push Bots',
+            `Push ${selectedCharacters.length} bots from ${sourceOwnerHandle}? Each bot will reuse its last push settings. Existing bots with the same published filenames will be overwritten.`,
+            {
+                okButton: 'Push Bots',
+                cancelButton: 'Cancel',
+            },
+        );
+        if (confirm !== POPUP_RESULT.AFFIRMATIVE) {
+            return;
+        }
+
+        const submitButton = template.find('.pushBotSubmitButton');
+        submitButton.prop('disabled', true).addClass('disabled');
+
+        const pushed = [];
+        const skipped = [];
+        const failed = [];
+
+        try {
+            for (const character of selectedCharacters) {
+                const payload = getReusablePushBotDistributionPayload({ sourceOwnerHandle, character });
+
+                if (!payload) {
+                    skipped.push(getPushBotDisplayName(character));
+                    continue;
+                }
+
+                try {
+                    const result = await pushAdminSourceCharacter(payload);
+                    pushed.push(result.publishedFilename || payload.publishedFilename || getPushBotDisplayName(character));
+                } catch (error) {
+                    console.error('Error pushing bot:', error);
+                    failed.push(getPushBotDisplayName(character));
+                }
+            }
+
+            const details = [];
+            if (skipped.length > 0) {
+                details.push(`Skipped: ${skipped.join(', ')}`);
+            }
+            if (failed.length > 0) {
+                details.push(`Failed: ${failed.join(', ')}`);
+            }
+
+            const message = `Pushed ${pushed.length}, failed ${failed.length}, skipped ${skipped.length}.${details.length ? ` ${details.join(' ')}` : ''}`;
+            if (failed.length > 0 || skipped.length > 0) {
+                toastr.warning(message, 'Admin batch push complete');
+            } else {
+                toastr.success(message, 'Admin batch push complete');
+            }
+
+            await loadPushBotCharacters();
+        } finally {
+            submitButton.prop('disabled', false).removeClass('disabled');
+        }
+    }
+
     async function submitPushBot() {
         const sourceOwnerHandle = String(template.find('.pushBotSourceUser').val() || '').trim();
-        const character = getSelectedPushBotCharacter();
+        const selectedCharacters = getSelectedPushBotCharacters();
+        const character = selectedCharacters[0] || null;
         const publishMode = String(template.find('.pushBotPublishMode').val() || 'global');
         const publishedFilename = String(template.find('.pushBotPublishedFilename').val() || '').trim();
         const targetHandles = parseDistributionHandles(template.find('.pushBotTargetHandles').val());
@@ -2064,8 +2199,13 @@ async function openAdminPanel(initialTab = 'usersList') {
             ? parseDistributionHandles(template.find('.pushBotBlacklistHandles').val())
             : [];
 
-        if (!sourceOwnerHandle || !character?.avatar) {
+        if (!sourceOwnerHandle || selectedCharacters.length === 0) {
             toastr.error('Choose a source user and bot.', 'Admin push unavailable');
+            return;
+        }
+
+        if (selectedCharacters.length > 1) {
+            await submitPushBotBatch({ sourceOwnerHandle, selectedCharacters });
             return;
         }
 
@@ -2271,10 +2411,14 @@ async function openAdminPanel(initialTab = 'usersList') {
     template.find('.pushBotSourceUser').on('change', () => loadPushBotCharacters());
     template.find('.pushBotSourceCharacter').on('change', function () {
         const character = getSelectedPushBotCharacter();
-        template.find('.pushBotPublishedFilename').val(getPushBotPublishedFilenameFallback(character));
+        template.find('.pushBotPublishedFilename').val(isPushBotBatchMode() ? '' : getPushBotPublishedFilenameFallback(character));
         void loadPushBotPolicy({ overwriteRecipients: true });
     });
-    template.find('.pushBotPublishedFilename').on('input', () => loadPushBotPolicy());
+    template.find('.pushBotPublishedFilename').on('input', () => {
+        if (!isPushBotBatchMode()) {
+            void loadPushBotPolicy();
+        }
+    });
     template.find('.pushBotPublishMode').on('change', function () {
         syncPushBotBlocks();
         void loadPushBotPolicy({ overwriteRecipients: true });
