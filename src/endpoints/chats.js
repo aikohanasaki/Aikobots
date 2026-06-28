@@ -300,6 +300,8 @@ function sanitizeChatMessageForPersistence(message) {
     }
 
     const sanitizedMessage = _.cloneDeep(message);
+    delete sanitizedMessage.id;
+    delete sanitizedMessage.order_index;
 
     if (_.isPlainObject(sanitizedMessage.extra)) {
         sanitizedMessage.extra = stripPersistedChatExtra(sanitizedMessage.extra);
@@ -850,7 +852,15 @@ function isLogicalChatSaveNoop(existingChatData, nextChatData) {
 }
 
 export function serializeJsonl(data) {
-    return data.map(x => JSON.stringify(x)).join('\n');
+    return data.map(x => {
+        if (x && typeof x === 'object') {
+            const copy = { ...x };
+            delete copy.id;
+            delete copy.order_index;
+            return JSON.stringify(copy);
+        }
+        return JSON.stringify(x);
+    }).join('\n');
 }
 
 export function readJsonlObjects(filePath) {
