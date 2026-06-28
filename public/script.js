@@ -18520,6 +18520,12 @@ jQuery(async function () {
             return;
         }
         if (this_chid !== undefined || selected_group || name2 === neutralCharacterName) {
+            const clickedMessageId = Number($(this).closest('.mes').attr('mesid'));
+            if (!Number.isInteger(clickedMessageId) || clickedMessageId < 0) {
+                console.warn(`Invalid message id for edit: ${clickedMessageId}`);
+                return;
+            }
+
             // Previously system messages we're allowed to be edited
             /*const message = $(this).closest(".mes");
 
@@ -18528,11 +18534,12 @@ jQuery(async function () {
             }*/
 
             if (this_edit_mes_id >= 0) {
-                let mes_edited = chatElement.find(`[mesid="${this_edit_mes_id}"]`).find('.mes_edit_done');
-                if (Number(edit_mes_id) == chat.length - 1) { //if the generating swipe (...)
+                const mes_edited = chatElement.find(`[mesid="${this_edit_mes_id}"]`).find('.mes_edit_done');
+                const clickedMessage = chat[clickedMessageId];
+                if (clickedMessage && clickedMessageId == chat.length - 1) { //if the generating swipe (...)
                     let run_edit = true;
-                    if (chat[edit_mes_id]['swipe_id'] !== undefined) {
-                        if (chat[edit_mes_id]['swipes'].length === chat[edit_mes_id]['swipe_id']) {
+                    if (clickedMessage['swipe_id'] !== undefined) {
+                        if (clickedMessage['swipes'].length === clickedMessage['swipe_id']) {
                             run_edit = false;
                         }
                     }
@@ -18542,9 +18549,8 @@ jQuery(async function () {
                 }
                 await messageEditDone(mes_edited);
             }
-            var edit_mes_id = Number($(this).closest('.mes').attr('mesid'));
 
-            await messageEdit(edit_mes_id);
+            await messageEdit(clickedMessageId);
         }
     });
 
