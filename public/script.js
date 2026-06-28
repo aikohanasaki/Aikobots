@@ -3315,6 +3315,7 @@ function showStorageCheckWarning(warning) {
 async function runStorageCheckOnAppReady() {
     try {
         const response = await fetch('/api/users/storage-check', {
+            method: 'POST',
             headers: getRequestHeaders(),
             cache: 'no-cache',
         });

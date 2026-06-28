@@ -57,7 +57,7 @@ router.get('/me', async (request, response) => {
     }
 });
 
-router.get('/storage-check', async (request, response) => {
+router.post('/storage-check', async (request, response) => {
     try {
         if (!request.user) {
             return response.sendStatus(403);
