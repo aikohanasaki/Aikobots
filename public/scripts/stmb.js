@@ -5397,7 +5397,7 @@ async function showMainEntryPopup() {
         }
         if (target.matches('#stmb-settings-default-memory-count')) {
             const value = Number(target.value);
-            moduleSettings.defaultMemoryCount = Number.isFinite(value) ? Math.max(0, Math.min(7, Math.trunc(value))) : 0;
+            moduleSettings.defaultMemoryCount = normalizeMemoryContextCount(value);
             persistSettings();
             return;
         }
@@ -5801,9 +5801,7 @@ async function estimateAdvancedMemoryTokens(compiledScene, lorebookName, options
         ? Number(rawProfileIndex)
         : null;
     const promptText = String(options?.promptText || '').trim();
-    const memoryCount = Number.isFinite(Number(options?.memoryCount))
-        ? Math.max(0, Math.min(7, Math.trunc(Number(options.memoryCount))))
-        : 0;
+    const memoryCount = normalizeMemoryContextCount(options?.memoryCount);
     const sourceProfile = options?.profile && typeof options.profile === 'object'
         ? options.profile
         : getActiveStmbProfile(stmbSettings, profileIndex);
@@ -5836,10 +5834,7 @@ async function estimateAdvancedMemoryTokens(compiledScene, lorebookName, options
 async function showAndGetMemorySettings(compiledScene, range, lorebookName, selectedProfileIndex = null) {
     await firstRunInitSummaryPromptPresets(stmbSettings);
     const tokenThreshold = getModuleSettings().tokenWarningThreshold ?? 30000;
-    const rawDefaultMemoryCount = Number(getModuleSettings().defaultMemoryCount);
-    const defaultMemoryCount = Number.isFinite(rawDefaultMemoryCount)
-        ? Math.max(0, Math.min(7, Math.trunc(rawDefaultMemoryCount)))
-        : 0;
+    const defaultMemoryCount = normalizeMemoryContextCount(getModuleSettings().defaultMemoryCount);
     const defaultProfileIndex = selectedProfileIndex ?? stmbSettings.defaultProfile ?? 0;
     const estimatedTokens = await estimateAdvancedMemoryTokens(compiledScene, lorebookName, {
         profileIndex: defaultProfileIndex,
@@ -5948,7 +5943,7 @@ async function showAndGetMemorySettings(compiledScene, range, lorebookName, sele
         }
         return {
             profileSettings: effectiveSavedProfile,
-            summaryCount: Math.max(0, Math.min(7, Number(advanced.memoryCount ?? 0))),
+            summaryCount: normalizeMemoryContextCount(advanced.memoryCount),
             tokenThreshold,
         };
     }
@@ -5971,7 +5966,7 @@ async function showAndGetMemorySettings(compiledScene, range, lorebookName, sele
 
     return {
         profileSettings: effectiveProfile,
-        summaryCount: Math.max(0, Math.min(7, Number(advanced.memoryCount ?? 0))),
+        summaryCount: normalizeMemoryContextCount(advanced.memoryCount),
         tokenThreshold,
     };
 }
@@ -7164,7 +7159,7 @@ async function requestStructuredMemory(compiledScene, profile, lorebookName, sum
         ...stmbSettings,
         moduleSettings: {
             ...(stmbSettings.moduleSettings || {}),
-            defaultMemoryCount: Math.max(0, Math.min(7, Number(summaryCount ?? 0))),
+            defaultMemoryCount: normalizeMemoryContextCount(summaryCount),
         },
     };
     const worldInfo = await loadWorldInfo(lorebookName) || { entries: {} };
@@ -8229,12 +8224,22 @@ async function runPostConsolidationCommitFlow({
     }
 }
 
+/**
+ * Normalizes the requested number of prior memories included as context.
+ */
+function normalizeMemoryContextCount(value) {
+    const parsed = Number(value);
+    return Number.isFinite(parsed)
+        ? Math.max(0, Math.min(7, Math.trunc(parsed)))
+        : 0;
+}
+
 function buildMemoryRequestSettings(summaryCount = 0) {
     return {
         ...stmbSettings,
         moduleSettings: {
             ...(stmbSettings.moduleSettings || {}),
-            defaultMemoryCount: Math.max(0, Math.min(7, Number(summaryCount ?? 0))),
+            defaultMemoryCount: normalizeMemoryContextCount(summaryCount),
         },
     };
 }
@@ -9075,6 +9080,7 @@ async function stmbCatchupCommand(namedArgs = {}) {
         }
 
         const tokenThreshold = Math.max(1000, Math.trunc(Number(getModuleSettings().tokenWarningThreshold ?? 30000)));
+        const defaultMemoryCount = normalizeMemoryContextCount(getModuleSettings().defaultMemoryCount);
         const skipSystemMessages = !getModuleSettings().unhideBeforeMemory;
         const queuedProfile = buildEffectiveMemoryProfile(profile);
         const contextSettingKey = getChatContextSettingKey();
@@ -9099,7 +9105,7 @@ async function stmbCatchupCommand(namedArgs = {}) {
                     range,
                     lorebookName,
                     profile: queuedProfile,
-                    summaryCount: 0,
+                    summaryCount: defaultMemoryCount,
                     contextSettingKey,
                     keepSceneMarkers: true,
                     source: 'catchup',
