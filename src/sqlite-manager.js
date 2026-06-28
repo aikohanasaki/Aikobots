@@ -152,9 +152,18 @@ function setMessagesWithoutTransaction(db, messages) {
  * @returns {any[]}
  */
 export function getMessages(db) {
-    const res = db.exec('SELECT content FROM messages ORDER BY order_index ASC');
+    const res = db.exec('SELECT id, order_index, content FROM messages ORDER BY order_index ASC');
     if (res.length === 0) return [];
-    const messages = res[0].values.map(row => JSON.parse(row[0]));
+    const messages = res[0].values.map(row => {
+        const id = Number(row[0]);
+        const orderIndex = Number(row[1]);
+        const message = JSON.parse(row[2]);
+        if (message && typeof message === 'object') {
+            message.id = id;
+            message.order_index = orderIndex;
+        }
+        return message;
+    });
     return messages;
 }
 
@@ -164,9 +173,17 @@ export function getMessages(db) {
  * @returns {any|null}
  */
 export function getChatHeader(db) {
-    const res = db.exec('SELECT content FROM messages WHERE order_index = 0');
+    const res = db.exec('SELECT id, order_index, content FROM messages WHERE order_index = 0');
     if (res.length === 0 || res[0].values.length === 0) return null;
-    return JSON.parse(res[0].values[0][0]);
+    const row = res[0].values[0];
+    const id = Number(row[0]);
+    const orderIndex = Number(row[1]);
+    const message = JSON.parse(row[2]);
+    if (message && typeof message === 'object') {
+        message.id = id;
+        message.order_index = orderIndex;
+    }
+    return message;
 }
 
 /**
@@ -186,9 +203,17 @@ export function getMessageCount(db) {
  * @returns {any|null}
  */
 export function getLastMessage(db) {
-    const res = db.exec('SELECT content FROM messages WHERE order_index > 0 ORDER BY order_index DESC LIMIT 1');
+    const res = db.exec('SELECT id, order_index, content FROM messages WHERE order_index > 0 ORDER BY order_index DESC LIMIT 1');
     if (res.length === 0 || res[0].values.length === 0) return null;
-    return JSON.parse(res[0].values[0][0]);
+    const row = res[0].values[0];
+    const id = Number(row[0]);
+    const orderIndex = Number(row[1]);
+    const message = JSON.parse(row[2]);
+    if (message && typeof message === 'object') {
+        message.id = id;
+        message.order_index = orderIndex;
+    }
+    return message;
 }
 
 /**
@@ -199,12 +224,20 @@ export function getLastMessage(db) {
  * @returns {any[]}
  */
 export function getMessageRange(db, offset, limit) {
-    const stmt = db.prepare('SELECT content FROM messages WHERE order_index > 0 ORDER BY order_index ASC LIMIT ? OFFSET ?');
+    const stmt = db.prepare('SELECT id, order_index, content FROM messages WHERE order_index > 0 ORDER BY order_index ASC LIMIT ? OFFSET ?');
     stmt.bind([limit, offset]);
     const messages = [];
     try {
         while (stmt.step()) {
-            messages.push(JSON.parse(stmt.get()[0]));
+            const row = stmt.get();
+            const id = Number(row[0]);
+            const orderIndex = Number(row[1]);
+            const message = JSON.parse(row[2]);
+            if (message && typeof message === 'object') {
+                message.id = id;
+                message.order_index = orderIndex;
+            }
+            messages.push(message);
         }
     } finally {
         stmt.free();
@@ -232,11 +265,18 @@ export function getLogicalMessageRow(db, messageId) {
         }
 
         const row = stmt.get();
+        const id = Number(row[0]);
+        const orderIndex = Number(row[1]);
+        const message = JSON.parse(row[2]);
+        if (message && typeof message === 'object') {
+            message.id = id;
+            message.order_index = orderIndex;
+        }
         return {
-            id: row[0],
-            orderIndex: row[1],
+            id: id,
+            orderIndex: orderIndex,
             content: row[2],
-            message: JSON.parse(row[2]),
+            message: message,
         };
     } finally {
         stmt.free();

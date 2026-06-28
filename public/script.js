@@ -173,6 +173,7 @@ import {
 import { debounce_timeout, GENERATION_TYPE_TRIGGERS, IGNORE_SYMBOL, inject_ids, MEDIA_DISPLAY, MEDIA_SOURCE, MEDIA_TYPE, OVERSWIPE_BEHAVIOR, SCROLL_BEHAVIOR, SWIPE_DIRECTION, SWIPE_SOURCE, SWIPE_STATE } from './scripts/constants.js';
 import {
     AIKOBOTS_SWIPE_UUID_KEY,
+    cloneMessageWithNewIdentity,
     ensureMessageIdentity,
     ensureSwipeIdentities,
     findMessageByAikobotsUuid,
@@ -12772,10 +12773,67 @@ async function cloneEditedMessage() {
         toastr.warning(t`Load this message before cloning it.`);
         return;
     }
-
+    const debugClones = false;
+    if (debugClones) {console.log(JSON.stringify(target, null, 4));}
     const messageElement = chatElement.find(`.mes[mesid="${target.index}"]`);
+    if (debugClones) {console.log(JSON.stringify(messageElement, null, 4));}
     const editText = messageElement.find('.edit_textarea').val() ?? target.message?.mes ?? '';
     const { text, bias } = normalizeMessageEditText(target.message, editText);
+
+    // 1. Fetch the source message object chat[target.index]
+    const sourceMessage = chat[target.index];
+
+    // 2. Compute the clone's order_index
+    const sourceOrderIndex = typeof sourceMessage.order_index === 'number' ? sourceMessage.order_index : target.index;
+    const nextMessage = chat[target.index + 1];
+    let cloneOrderIndex;
+    if (nextMessage) {
+        const nextOrderIndex = typeof nextMessage.order_index === 'number' ? nextMessage.order_index : (target.index + 1);
+        cloneOrderIndex = (sourceOrderIndex + nextOrderIndex) / 2;
+    } else {
+        cloneOrderIndex = sourceOrderIndex + 1;
+    }
+
+    // 3. Create the cloned message object using cloneMessageWithNewIdentity
+    const clone = cloneMessageWithNewIdentity(sourceMessage, { generateUuid: uuidv4 });
+
+    // 4. Apply the edited text and bias overrides to the clone
+    clone.mes = text;
+    if (bias) {
+        if (!clone.extra) {
+            clone.extra = {};
+        }
+        clone.extra.bias = bias;
+    } else if (clone.extra) {
+        delete clone.extra.bias;
+    }
+    clone.order_index = cloneOrderIndex;
+
+    // 5. Close the active message editor session using closeMessageEditor()
+    closeMessageEditor();
+
+    // 6. Insert the clone into the local chat array at target.index + 1
+    const insertAt = target.index + 1;
+    chat.splice(insertAt, 0, clone);
+
+    // 7. Render the clone and insert it into the DOM immediately after the original message element
+    addOneMessage(clone, { scroll: false, forceId: insertAt, insertAfter: target.index, showSwipes: false, refreshGaps: false });
+
+    // 8. Re-index all subsequent message DOM elements' attributes and labels
+    const startIndex = getFirstDisplayedMessageId();
+    updateViewMessageIds(startIndex);
+
+    // 9. Run the client-side prompt snapshot key rekeying and timed world info recomputation
+    const rekeys = [];
+    const remapTimedWorldInfoIndex = createInsertMessageIndexMapper(insertAt);
+    for (let messageIndex = chat.length - 1; messageIndex > insertAt; messageIndex--) {
+        rekeyMessagePromptSnapshotKeys(chat[messageIndex], messageIndex, rekeys, { remapTimedWorldInfoIndex });
+    }
+    await syncLatestPromptInspectorAfterMessageInsertion(insertAt);
+    await maintainPromptSnapshotKeys({ rekeys });
+    await recomputeTimedWorldInfo();
+
+   
     const endpoint = selected_group ? '/api/chats/group/message/clone' : '/api/chats/message/clone';
     const currentChatDetails = selected_group ? null : getCurrentChatDetails();
     const body = selected_group
@@ -12799,45 +12857,63 @@ async function cloneEditedMessage() {
             save_session_id: getChatSaveSessionId(),
             display_count: getConfiguredLongChatDisplayCount(),
         };
+    if (debugClones) {console.log(JSON.stringify(body, null, 4));}
 
-    const response = await fetch(endpoint, {
-        method: 'POST',
-        headers: getRequestHeaders(),
-        cache: 'no-cache',
-        body: JSON.stringify(body),
-    });
-
-    if (!response.ok) {
-        let errorData = null;
-        try {
-            errorData = await response.json();
-        } catch {
-            // Fall through to generic message below.
+    async function rollbackClone(insertedId) {
+        if (chat[insertedId] === clone) {
+            chat.splice(insertedId, 1);
         }
+        chatElement.find(`.mes[mesid="${insertedId}"]`).remove();
+        updateViewMessageIds(getFirstDisplayedMessageId());
+        await reloadCurrentChat();
+    }
 
-        if (errorData?.error === 'stale_revision') {
-            warnStaleChatSave(errorData);
+    try {
+        const response = await fetch(endpoint, {
+            method: 'POST',
+            headers: getRequestHeaders(),
+            cache: 'no-cache',
+            body: JSON.stringify(body),
+        });
+
+        if (!response.ok) {
+            let errorData = null;
+            try {
+                errorData = await response.json();
+            } catch {
+                // Fall through to generic message below.
+            }
+
+            if (errorData?.error === 'stale_revision') {
+                warnStaleChatSave(errorData);
+                await rollbackClone(insertAt);
+                return;
+            }
+
+            toastr.error(errorData?.message || t`Message clone failed.`);
+            await rollbackClone(insertAt);
             return;
         }
 
-        toastr.error(errorData?.message || t`Message clone failed.`);
-        return;
-    }
+        const payload = await response.json();
+        setLatestItemizedPrompt(null);
+        await saveItemizedPrompts(getCurrentChatId());
 
-    const payload = await response.json();
-    setLatestItemizedPrompt(null);
-    await saveItemizedPrompts(getCurrentChatId());
-
-    const nextView = Number(payload?.loadedRangeEnd) === Number(payload?.totalMessages) - 1 ? 'tail' : 'history';
-    applyChunkedChatPayload(payload, { replace: true, currentView: nextView });
-    const renderStart = Number.isInteger(payload?.loadedRangeStart) ? payload.loadedRangeStart : payload.inserted_message_id;
-    const renderCount = Array.isArray(payload?.messages) && payload.messages.length > 0
-        ? payload.messages.length
-        : getConfiguredLongChatDisplayCount();
-    await renderMessageWindow(renderStart, renderCount);
-    const clonedMessage = await jumpToMessageWindow(payload.inserted_message_id, renderCount);
-    if (clonedMessage?.length) {
-        flashHighlight(clonedMessage);
+        const nextView = Number(payload?.loadedRangeEnd) === Number(payload?.totalMessages) - 1 ? 'tail' : 'history';
+        applyChunkedChatPayload(payload, { replace: true, currentView: nextView });
+        const renderStart = Number.isInteger(payload?.loadedRangeStart) ? payload.loadedRangeStart : payload.inserted_message_id;
+        const renderCount = Array.isArray(payload?.messages) && payload.messages.length > 0
+            ? payload.messages.length
+            : getConfiguredLongChatDisplayCount();
+        await renderMessageWindow(renderStart, renderCount);
+        const clonedMessage = await jumpToMessageWindow(payload.inserted_message_id, renderCount);
+        if (clonedMessage?.length) {
+            flashHighlight(clonedMessage);
+        }
+    } catch (err) {
+        console.error('Clone failed:', err);
+        toastr.error(t`Network error: Message clone failed.`);
+        await rollbackClone(insertAt);
     }
 }
 
