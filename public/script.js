@@ -605,8 +605,13 @@ function buildPromptSnapshotKeyForMessage(messageId, swipeId = null) {
     });
 }
 
-async function maybeShowPromptTokenWarning(promptInspectionResponseData) {
-    if (!power_user.prompt_token_warning_enabled || promptTokenWarningDismissedUntilRefresh || promptTokenWarningPopupOpen) {
+function maybeShowPromptTokenWarning(promptInspectionResponseData) {
+    if (
+        !power_user.prompt_token_warning_enabled ||
+        promptTokenWarningDismissedUntilRefresh ||
+        promptTokenWarningPopupOpen ||
+        Popup.util.isPopupOpen()
+    ) {
         return;
     }
 
@@ -616,25 +621,56 @@ async function maybeShowPromptTokenWarning(promptInspectionResponseData) {
         return;
     }
 
-    const content = document.createElement('div');
-    content.textContent = `prompt is now ${Math.round(promptTokenCount)} tokens long, please make memories or start a new chat!`;
-
-    const popup = new Popup(content, POPUP_TYPE.TEXT, '', {
-        customInputs: [
-            {
-                id: 'prompt_token_warning_dismiss_until_refresh',
-                label: 'dismiss until refresh',
-            },
-        ],
-    });
-
     promptTokenWarningPopupOpen = true;
-    try {
-        await popup.show();
-        promptTokenWarningDismissedUntilRefresh = Boolean(popup.inputResults?.get('prompt_token_warning_dismiss_until_refresh'));
-    } finally {
+    const warningBox = document.createElement('div');
+    warningBox.setAttribute('role', 'alertdialog');
+    warningBox.style.position = 'fixed';
+    warningBox.style.left = '50%';
+    warningBox.style.bottom = '88px';
+    warningBox.style.transform = 'translateX(-50%)';
+    warningBox.style.zIndex = '10000';
+    warningBox.style.maxWidth = 'min(520px, calc(100dvw - 32px))';
+    warningBox.style.padding = '14px';
+    warningBox.style.display = 'flex';
+    warningBox.style.flexDirection = 'column';
+    warningBox.style.gap = '10px';
+    warningBox.style.color = 'var(--SmartThemeBodyColor)';
+    warningBox.style.backgroundColor = 'var(--SmartThemeBlurTintColor)';
+    warningBox.style.border = '1px solid var(--SmartThemeBorderColor)';
+    warningBox.style.borderRadius = '8px';
+    warningBox.style.boxShadow = '0 0 14px var(--black70a)';
+
+    const message = document.createElement('div');
+    message.textContent = `prompt is now ${Math.round(promptTokenCount)} tokens long, please make memories or start a new chat!`;
+    warningBox.append(message);
+
+    const dismissId = `prompt_token_warning_dismiss_until_refresh_${Date.now()}`;
+    const dismissLabel = document.createElement('label');
+    dismissLabel.classList.add('checkbox_label');
+    dismissLabel.setAttribute('for', dismissId);
+
+    const dismissCheckbox = document.createElement('input');
+    dismissCheckbox.id = dismissId;
+    dismissCheckbox.type = 'checkbox';
+    dismissLabel.append(dismissCheckbox);
+
+    const dismissText = document.createElement('small');
+    dismissText.textContent = 'dismiss until refresh';
+    dismissLabel.append(dismissText);
+    warningBox.append(dismissLabel);
+
+    const closeButton = document.createElement('button');
+    closeButton.type = 'button';
+    closeButton.classList.add('menu_button');
+    closeButton.textContent = 'OK';
+    closeButton.addEventListener('click', () => {
+        promptTokenWarningDismissedUntilRefresh = dismissCheckbox.checked;
+        warningBox.remove();
         promptTokenWarningPopupOpen = false;
-    }
+    });
+    warningBox.append(closeButton);
+
+    document.body.append(warningBox);
 }
 
 function applyPromptInspectionResponseDataToMessage(messageId, promptInspectionResponseData, { allowFallbackPromptSnapshotKey = false } = {}) {
