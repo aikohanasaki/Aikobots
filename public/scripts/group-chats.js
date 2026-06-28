@@ -184,6 +184,24 @@ function applyGroupChatMaxTurns(memberIds, group) {
     return memberIds.slice(0, maxTurns);
 }
 
+function getGroupChatMaxTurnsControlValue() {
+    if (!$('#rm_group_chat_max_turns_enabled').prop('checked')) {
+        return DEFAULT_GROUP_CHAT_MAX_TURNS;
+    }
+
+    return normalizeGroupChatMaxTurns($('#rm_group_chat_max_turns').val()) || 1;
+}
+
+function setGroupChatMaxTurnsControls(value) {
+    const maxTurns = normalizeGroupChatMaxTurns(value);
+    const isEnabled = maxTurns > 0;
+
+    $('#rm_group_chat_max_turns_enabled').prop('checked', isEnabled);
+    $('#rm_group_chat_max_turns')
+        .val(isEnabled ? maxTurns : 1)
+        .prop('disabled', !isEnabled);
+}
+
 function hasManualSpeakerQueueState() {
     return Boolean(manualSpeakerCurrentAvatar || manualSpeakerQueue.length || manualSpeakerQueueGroupId !== null);
 }
@@ -1756,11 +1774,11 @@ async function onGroupAutoModeDelayInput(e) {
     }
 }
 
-async function onGroupChatMaxTurnsInput(e) {
+async function onGroupChatMaxTurnsInput() {
     if (openGroupId) {
         let _thisGroup = groups.find((x) => x.id == openGroupId);
-        _thisGroup.group_chat_max_turns = normalizeGroupChatMaxTurns(e.target.value);
-        $('#rm_group_chat_max_turns').val(_thisGroup.group_chat_max_turns);
+        _thisGroup.group_chat_max_turns = getGroupChatMaxTurnsControlValue();
+        setGroupChatMaxTurnsControls(_thisGroup.group_chat_max_turns);
         await editGroup(openGroupId, false, false);
     }
 }
@@ -2025,7 +2043,7 @@ function select_group_chats(groupId, skipAnimation) {
     $('#rm_group_allow_self_responses').prop('checked', group && group.allow_self_responses);
     $('#rm_group_hidemutedsprites').prop('checked', group && group.hideMutedSprites);
     $('#rm_group_automode_delay').val(group?.auto_mode_delay ?? DEFAULT_AUTO_MODE_DELAY);
-    $('#rm_group_chat_max_turns').val(normalizeGroupChatMaxTurns(group?.group_chat_max_turns));
+    setGroupChatMaxTurnsControls(group?.group_chat_max_turns);
 
     $('#rm_group_generation_mode_join_prefix').val(group?.generation_mode_join_prefix ?? '').attr('setting', 'generation_mode_join_prefix');
     $('#rm_group_generation_mode_join_suffix').val(group?.generation_mode_join_suffix ?? '').attr('setting', 'generation_mode_join_suffix');
@@ -2265,7 +2283,7 @@ async function createGroup() {
     let activationStrategy = Number($('#rm_group_activation_strategy').find(':selected').val()) ?? group_activation_strategy.NATURAL;
     let generationMode = Number($('#rm_group_generation_mode').find(':selected').val()) ?? group_generation_mode.SWAP;
     let autoModeDelay = Number($('#rm_group_automode_delay').val()) ?? DEFAULT_AUTO_MODE_DELAY;
-    let groupChatMaxTurns = normalizeGroupChatMaxTurns($('#rm_group_chat_max_turns').val());
+    let groupChatMaxTurns = getGroupChatMaxTurnsControlValue();
     const members = newGroupMembers;
     const memberNames = characters.filter(x => members.includes(x.avatar)).map(x => x.name).join(', ');
 
@@ -2724,6 +2742,7 @@ jQuery(() => {
     $('#rm_group_activation_strategy').on('change', onGroupActivationStrategyInput);
     $('#rm_group_generation_mode').on('change', onGroupGenerationModeInput);
     $('#rm_group_automode_delay').on('input', onGroupAutoModeDelayInput);
+    $('#rm_group_chat_max_turns_enabled').on('input', onGroupChatMaxTurnsInput);
     $('#rm_group_chat_max_turns').on('input', onGroupChatMaxTurnsInput);
     $('#rm_group_generation_mode_join_prefix').on('input', onGroupGenerationModeTemplateInput);
     $('#rm_group_generation_mode_join_suffix').on('input', onGroupGenerationModeTemplateInput);
