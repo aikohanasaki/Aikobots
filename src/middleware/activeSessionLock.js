@@ -60,6 +60,10 @@ activeSessionRouter.post('/verify', async (request, response) => {
         const tabSessionId = activeSessionStore.getTabSessionId(request);
         const status = await activeSessionStore.verify(request.user.profile.handle, tabSessionId);
         if (!status.active) {
+            if (!status.hasActiveSession) {
+                return response.json(status);
+            }
+
             return sendActiveSessionRequired(response);
         }
 

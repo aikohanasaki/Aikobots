@@ -2624,11 +2624,14 @@ const ACTIVE_SESSION_DUPLICATE_STORAGE_KEY = 'aikobots.activeSession.tabProbe';
 const ACTIVE_SESSION_TAKEOVER_STORAGE_KEY = 'aikobots.activeSession.takeover';
 const ACTIVE_SESSION_LOCK_MESSAGE = 'Aikobots is open in another tab or browser session. This session is now read-only. Reload this page to make this tab active.';
 const ACTIVE_SESSION_VERIFY_DEBOUNCE_MS = 750;
+const ACTIVE_SESSION_HEARTBEAT_MS = 30_000;
 const ACTIVE_SESSION_DUPLICATE_PROBE_MS = 500;
 const ACTIVE_SESSION_DUPLICATE_PROBE_ATTEMPTS = 2;
 const ACTIVE_SESSION_WRITE_CONTROL_PATTERN = /(send|generate|regenerate|continue|swipe|save|delete|remove|trash|edit|rename|create|new|import|upload|restore|backup|reset|submit|install|update|switch|move|clone|duplicate|merge|promote|demote|checkout|checkin|consolidate|compact|capture|commit|memory|clip|persona|avatar)/i;
 let activeSessionVerifyTimer = null;
 let activeSessionVerifyInFlight = false;
+let activeSessionHeartbeatTimer = null;
+let activeSessionHeartbeatInFlight = false;
 let activeSessionLockModal = null;
 let activeSessionReadOnlyObserver = null;
 let activeSessionDuplicateChannel = null;
@@ -2947,6 +2950,7 @@ function setActiveSessionLocked(locked) {
             clearTimeout(activeSessionVerifyTimer);
             activeSessionVerifyTimer = null;
         }
+        stopActiveSessionHeartbeat();
         if (is_send_press) {
             stopGeneration();
         }
@@ -2970,7 +2974,7 @@ async function parseActiveSessionErrorResponse(response) {
 async function handleActiveSessionResponse(response) {
     const data = await parseActiveSessionErrorResponse(response);
     if (data) {
-        setActiveSessionLocked(true);
+        await recoverOrLockActiveSession();
     }
 }
 
@@ -3029,7 +3033,7 @@ $(document).ajaxError((_event, jqXHR) => {
     }
 
     if (data?.error === 'active_session_required') {
-        setActiveSessionLocked(true);
+        void recoverOrLockActiveSession();
     }
 });
 
@@ -3038,6 +3042,94 @@ async function postActiveSession(endpoint) {
         method: 'POST',
         headers: getRequestHeaders(),
     });
+}
+
+async function claimActiveSessionIfUnowned(status) {
+    if (!status || status.hasActiveSession) {
+        return false;
+    }
+
+    const response = await postActiveSession('claim');
+    if (!response.ok) {
+        return false;
+    }
+
+    const claimedStatus = await response.json();
+    setActiveSessionLocked(!claimedStatus.active);
+    if (claimedStatus.active) {
+        startActiveSessionHeartbeat();
+    }
+    return Boolean(claimedStatus.active);
+}
+
+async function readActiveSessionStatus() {
+    const response = await postActiveSession('status');
+    if (!response.ok) {
+        return null;
+    }
+
+    return await response.json();
+}
+
+async function recoverOrLockActiveSession() {
+    const status = await readActiveSessionStatus();
+    if (await claimActiveSessionIfUnowned(status)) {
+        return;
+    }
+
+    setActiveSessionLocked(true);
+}
+
+async function heartbeatActiveSession() {
+    try {
+        if (isActiveSessionLocked || activeSessionHeartbeatInFlight) {
+            return;
+        }
+
+        activeSessionHeartbeatInFlight = true;
+        const response = await postActiveSession('heartbeat');
+        if (response.ok) {
+            const status = await response.json();
+            if (status.active) {
+                return;
+            }
+
+            if (await claimActiveSessionIfUnowned(status)) {
+                return;
+            }
+
+            setActiveSessionLocked(true);
+            return;
+        }
+
+        const status = await readActiveSessionStatus();
+        if (await claimActiveSessionIfUnowned(status)) {
+            return;
+        }
+
+        await handleActiveSessionResponse(response);
+    } catch (error) {
+        console.warn('Active tab session heartbeat failed', error);
+    } finally {
+        activeSessionHeartbeatInFlight = false;
+    }
+}
+
+function startActiveSessionHeartbeat() {
+    if (activeSessionHeartbeatTimer) {
+        return;
+    }
+
+    activeSessionHeartbeatTimer = setInterval(heartbeatActiveSession, ACTIVE_SESSION_HEARTBEAT_MS);
+}
+
+function stopActiveSessionHeartbeat() {
+    if (!activeSessionHeartbeatTimer) {
+        return;
+    }
+
+    clearInterval(activeSessionHeartbeatTimer);
+    activeSessionHeartbeatTimer = null;
 }
 
 async function activateActiveSessionOnBoot() {
@@ -3052,6 +3144,7 @@ async function activateActiveSessionOnBoot() {
     const status = await response.json();
     setActiveSessionLocked(!status.active);
     if (status.active) {
+        startActiveSessionHeartbeat();
         broadcastActiveSessionTakeover();
     }
     return Boolean(status.active);
@@ -3065,14 +3158,25 @@ async function verifyActiveSession() {
 
         activeSessionVerifyInFlight = true;
         const response = await postActiveSession('verify');
-        await handleActiveSessionResponse(response);
         if (!response.ok) {
-            setActiveSessionLocked(true);
+            const status = await readActiveSessionStatus();
+            if (await claimActiveSessionIfUnowned(status)) {
+                return;
+            }
+
+            await handleActiveSessionResponse(response);
             return;
         }
 
         const status = await response.json();
+        if (await claimActiveSessionIfUnowned(status)) {
+            return;
+        }
+
         setActiveSessionLocked(!status.active);
+        if (status.active) {
+            startActiveSessionHeartbeat();
+        }
     } catch (error) {
         console.warn('Active tab session verification failed', error);
     } finally {
