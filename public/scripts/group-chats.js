@@ -97,6 +97,7 @@ import {
     getInitialChatDisplayCount,
     prefetchCurrentChatTailBuffer,
     prepareCurrentChatSavePayload,
+    setTemporaryGroupChat,
 } from '../script.js';
 import { printTagList, createTagMapFromList, applyTagsOnCharacterSelect, tag_map, applyTagsOnGroupSelect } from './tags.js';
 import { FILTER_TYPES, FilterHelper } from './filters.js';
@@ -2270,12 +2271,16 @@ export async function createNewGroupChat(groupId) {
     }
 
     const newChatName = humanizedDateTime();
+    const hadExistingChats = group.chats.length > 0;
 
     await persistActiveGroupChat(groupId);
     await clearChat();
     chat.length = 0;
     group.chats.push(newChatName);
     group.chat_id = newChatName;
+    if (hadExistingChats) {
+        setTemporaryGroupChat(groupId, newChatName);
+    }
     updateChatMetadata({}, true);
 
     await editGroup(group.id, true, false);

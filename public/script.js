@@ -898,6 +898,7 @@ let chatSaveDirty = false;
 let chatSaveQueuePromise = null;
 let chatSaveRequestOptions = {};
 let temporaryCharacterChat = null;
+let temporaryGroupChat = null;
 const CHAT_SAVE_RESULT = {
     SAVED: 'saved',
     FAILED: 'failed',
@@ -1444,6 +1445,57 @@ function getTemporaryCharacterChatSaveFileName() {
 
 function getTemporaryChatDisplayName() {
     return getTemporaryCharacterChatPendingFileName() || TEMPORARY_CHAT_DISPLAY_NAME;
+}
+
+function clearTemporaryGroupChat() {
+    temporaryGroupChat = null;
+}
+
+function isCurrentGroupChatTemporary() {
+    if (!temporaryGroupChat || !selected_group) {
+        return false;
+    }
+
+    const group = groups.find(x => String(x.id) === String(selected_group));
+    const currentChatId = String(getCurrentChatId() || '');
+    return Boolean(
+        group
+        && currentChatId
+        && String(temporaryGroupChat.groupId) === String(selected_group)
+        && String(temporaryGroupChat.chatId) === currentChatId
+        && !hasUserMessageInCurrentChat(),
+    );
+}
+
+function isCurrentChatTemporaryForDisplay() {
+    return isCurrentCharacterChatTemporary() || isCurrentGroupChatTemporary();
+}
+
+export function setTemporaryGroupChat(groupId, chatId) {
+    if (!groupId || !chatId) {
+        temporaryGroupChat = null;
+        return;
+    }
+
+    temporaryGroupChat = {
+        groupId: String(groupId),
+        chatId: String(chatId),
+    };
+}
+
+async function isGroupChatNameTaken(groupId, newChatName, currentChatId = '') {
+    const normalizedNewChatName = normalizeTopChatFileName(newChatName);
+    if (!groupId || !normalizedNewChatName) {
+        return false;
+    }
+
+    const group = groups.find(x => String(x.id) === String(groupId));
+    const groupChatNames = (group?.chats ?? []).map(normalizeTopChatFileName);
+    const storedChatNames = (await getGroupPastChats(groupId)).map(chat => normalizeTopChatFileName(chat.file_name));
+    const existingChatNames = [...groupChatNames, ...storedChatNames]
+        .filter(chatName => chatName && !equalsIgnoreCaseAndAccents(chatName, currentChatId));
+
+    return existingChatNames.some(chatName => equalsIgnoreCaseAndAccents(chatName, normalizedNewChatName));
 }
 
 function setTemporaryCharacterChatPendingFileName(fileName) {
@@ -2152,7 +2204,7 @@ async function refreshTopChatBarState() {
     const currentChatId = normalizeTopChatFileName(getCurrentChatId());
     const hasChat = Boolean(currentChatId);
     const isChatBusy = isTopChatInteractionBusy();
-    const isTemporaryChat = isCurrentCharacterChatTemporary();
+    const isTemporaryChat = isCurrentChatTemporaryForDisplay();
     const currentChatDisplayName = isTemporaryChat ? getTemporaryChatDisplayName() : currentChatId;
     setTopChatAvailabilityState(hasChat);
 
@@ -2222,7 +2274,7 @@ async function renameCurrentTopChat() {
     }
 
     const popupText = await renderTemplateAsync('chatRename');
-    const isTemporaryChat = isCurrentCharacterChatTemporary();
+    const isTemporaryChat = isCurrentChatTemporaryForDisplay();
     const currentDisplayName = isTemporaryChat ? getTemporaryChatDisplayName() : currentChatId;
     const newChatName = await callGenericPopup(popupText, POPUP_TYPE.INPUT, currentDisplayName);
     if (!newChatName || typeof newChatName !== 'string') {
@@ -2241,6 +2293,21 @@ async function renameCurrentTopChat() {
 
         if (isUnsafeTemporaryChatFileName(normalizedNewChatName)) {
             toastr.warning(t`Invalid chat name.`, t`Rename Chat`);
+            return;
+        }
+
+        if (isCurrentGroupChatTemporary()) {
+            const nameAlreadyExists = await isGroupChatNameTaken(selected_group, normalizedNewChatName, currentChatId);
+            if (nameAlreadyExists) {
+                toastr.warning(t`A chat with that name already exists.`, t`Rename Chat`);
+                return;
+            }
+
+            await renameChat(currentChatId, normalizedNewChatName);
+            if (!equalsIgnoreCaseAndAccents(normalizeTopChatFileName(getCurrentChatId()), currentChatId)) {
+                clearTemporaryGroupChat();
+            }
+            await refreshTopChatBarState();
             return;
         }
 
@@ -2265,6 +2332,15 @@ async function renameCurrentTopChat() {
 
     if (newChatName === currentChatId) {
         return;
+    }
+
+    if (selected_group) {
+        const normalizedNewChatName = normalizeTopChatFileName(newChatName);
+        const nameAlreadyExists = await isGroupChatNameTaken(selected_group, normalizedNewChatName, currentChatId);
+        if (nameAlreadyExists) {
+            toastr.warning(t`A chat with that name already exists.`, t`Rename Chat`);
+            return;
+        }
     }
 
     await renameChat(currentChatId, String(newChatName));
@@ -2370,6 +2446,7 @@ function initTopChatUi() {
     eventSource.on(event_types.CHAT_DELETED, refreshTopChatUiDebounced);
     eventSource.on(event_types.GROUP_CHAT_CREATED, refreshTopChatUiDebounced);
     eventSource.on(event_types.GROUP_CHAT_DELETED, refreshTopChatUiDebounced);
+    eventSource.on(event_types.MESSAGE_SENT, refreshTopChatUiDebounced);
     eventSource.on(event_types.GENERATION_STARTED, refreshTopChatAvailabilityDebounced);
     eventSource.on(event_types.GENERATION_STOPPED, refreshTopChatAvailabilityDebounced);
     eventSource.on(event_types.GENERATION_ENDED, refreshTopChatAvailabilityDebounced);
