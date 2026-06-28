@@ -457,10 +457,11 @@ const openai_max_stop_strings = 4;
 /**
  * Get the fallback context size for a model whose provider metadata is unavailable.
  * @param {string} model Model identifier
+ * @param {number} defaultContext Default context size for non-Gemini unknown models
  * @returns {number} Maximum context size in tokens
  */
-function getUnknownModelMaxContext(model) {
-    return String(model).toLowerCase().includes('gemini') ? max_1mil : max_128k;
+function getUnknownModelMaxContext(model, defaultContext = max_128k) {
+    return String(model).toLowerCase().includes('gemini') ? max_1mil : defaultContext;
 }
 
 
@@ -5131,8 +5132,8 @@ function getSiliconflowMaxContext(model, isUnlocked) {
         'zai-org/GLM-4.6': max_200k,
     };
 
-    // Return context size if model found, otherwise default to 32k
-    return Object.entries(contextMap).find(([key]) => model.includes(key))?.[1] || max_32k;
+    // Return context size if model found, otherwise use the unknown model fallback
+    return Object.entries(contextMap).find(([key]) => model.includes(key))?.[1] || getUnknownModelMaxContext(model, max_32k);
 
 }
 
@@ -5167,8 +5168,8 @@ function getMoonshotMaxContext(model, isUnlocked) {
         'kimi-thinking-preview': max_32k,
     };
 
-    // Return context size if model found, otherwise default to 32k
-    return Object.entries(contextMap).find(([key]) => model.includes(key))?.[1] || max_32k;
+    // Return context size if model found, otherwise use the unknown model fallback
+    return Object.entries(contextMap).find(([key]) => model.includes(key))?.[1] || getUnknownModelMaxContext(model, max_32k);
 }
 
 /**
@@ -5219,11 +5220,12 @@ function getElectronHubMaxContext(model, isUnlocked) {
 /**
  * Get the maximum context size for the Navy model.
  * Navy's models endpoint does not publish context limits yet.
+ * @param {string} model Model identifier
  * @param {boolean} isUnlocked Whether context limits are unlocked
  * @returns {number} Maximum context size in tokens
  */
-function getNavyMaxContext(isUnlocked) {
-    return isUnlocked ? unlocked_max : max_128k;
+function getNavyMaxContext(model, isUnlocked) {
+    return isUnlocked ? unlocked_max : getUnknownModelMaxContext(model);
 }
 
 /**
@@ -5478,7 +5480,7 @@ async function onModelChange() {
         } else if (value.includes('gemma-3')) {
             $('#openai_max_context').attr('max', max_32k);
         } else {
-            $('#openai_max_context').attr('max', max_1mil);
+            $('#openai_max_context').attr('max', getUnknownModelMaxContext(value, max_1mil));
         }
         let makersuite_max_temp = (value.includes('vision') || value.includes('ultra') || value.includes('gemma')) ? 1.0 : 2.0;
         oai_settings.temp_openai = Math.min(makersuite_max_temp, oai_settings.temp_openai);
@@ -5524,7 +5526,7 @@ async function onModelChange() {
             $('#openai_max_context').attr('max', max_200k);
         }
         else {
-            $('#openai_max_context').attr('max', max_200k);
+            $('#openai_max_context').attr('max', getUnknownModelMaxContext(value, max_200k));
         }
 
         oai_settings.openai_max_context = Math.min(oai_settings.openai_max_context, Number($('#openai_max_context').attr('max')));
@@ -5576,7 +5578,7 @@ async function onModelChange() {
             $('#openai_max_context').attr('max', max_16k);
         }
         else {
-            $('#openai_max_context').attr('max', max_128k);
+            $('#openai_max_context').attr('max', getUnknownModelMaxContext(oai_settings.cohere_model));
         }
         oai_settings.openai_max_context = Math.min(Number($('#openai_max_context').attr('max')), oai_settings.openai_max_context);
         $('#openai_max_context').val(oai_settings.openai_max_context).trigger('input');
@@ -5599,7 +5601,7 @@ async function onModelChange() {
             $('#openai_max_context').attr('max', contextSize);
         }
         else {
-            $('#openai_max_context').attr('max', max_128k);
+            $('#openai_max_context').attr('max', getUnknownModelMaxContext(oai_settings.perplexity_model));
         }
         oai_settings.openai_max_context = Math.min(Number($('#openai_max_context').attr('max')), oai_settings.openai_max_context);
         $('#openai_max_context').val(oai_settings.openai_max_context).trigger('input');
@@ -5621,6 +5623,8 @@ async function onModelChange() {
             $('#openai_max_context').attr('max', unlocked_max);
         } else if (oai_settings.ai21_model.startsWith('jamba-')) {
             $('#openai_max_context').attr('max', max_256k);
+        } else {
+            $('#openai_max_context').attr('max', getUnknownModelMaxContext(oai_settings.ai21_model));
         }
 
         oai_settings.openai_max_context = Math.min(Number($('#openai_max_context').attr('max')), oai_settings.openai_max_context);
@@ -5647,7 +5651,7 @@ async function onModelChange() {
     }
 
     if (oai_settings.chat_completion_source == chat_completion_sources.NAVY) {
-        const maxContext = getNavyMaxContext(oai_settings.max_context_unlocked);
+        const maxContext = getNavyMaxContext(oai_settings.navy_model, oai_settings.max_context_unlocked);
         $('#openai_max_context').attr('max', maxContext);
         oai_settings.openai_max_context = Math.min(Number($('#openai_max_context').attr('max')), oai_settings.openai_max_context);
         $('#openai_max_context').val(oai_settings.openai_max_context).trigger('input');
@@ -5658,7 +5662,7 @@ async function onModelChange() {
     }
 
     if (oai_settings.chat_completion_source == chat_completion_sources.ZANITY) {
-        $('#openai_max_context').attr('max', oai_settings.max_context_unlocked ? unlocked_max : max_128k);
+        $('#openai_max_context').attr('max', oai_settings.max_context_unlocked ? unlocked_max : getUnknownModelMaxContext(oai_settings.zanity_model));
         oai_settings.openai_max_context = Math.min(Number($('#openai_max_context').attr('max')), oai_settings.openai_max_context);
         $('#openai_max_context').val(oai_settings.openai_max_context).trigger('input');
         oai_settings.temp_openai = Math.min(oai_max_temp, oai_settings.temp_openai);
@@ -5678,7 +5682,7 @@ async function onModelChange() {
         if (oai_settings.max_context_unlocked) {
             $('#openai_max_context').attr('max', unlocked_max);
         } else {
-            $('#openai_max_context').attr('max', max_128k);
+            $('#openai_max_context').attr('max', getUnknownModelMaxContext(oai_settings.pollinations_model));
         }
 
         oai_settings.openai_max_context = Math.min(Number($('#openai_max_context').attr('max')), oai_settings.openai_max_context);
@@ -5694,7 +5698,7 @@ async function onModelChange() {
         } else if (oai_settings.deepseek_model == 'deepseek-coder') {
             $('#openai_max_context').attr('max', max_16k);
         } else {
-            $('#openai_max_context').attr('max', max_128k);
+            $('#openai_max_context').attr('max', getUnknownModelMaxContext(oai_settings.deepseek_model));
         }
 
         oai_settings.openai_max_context = Math.min(Number($('#openai_max_context').attr('max')), oai_settings.openai_max_context);
@@ -5703,7 +5707,7 @@ async function onModelChange() {
     }
 
     if (oai_settings.chat_completion_source === chat_completion_sources.COMETAPI) {
-        $('#openai_max_context').attr('max', oai_settings.max_context_unlocked ? unlocked_max : max_128k);
+        $('#openai_max_context').attr('max', oai_settings.max_context_unlocked ? unlocked_max : getUnknownModelMaxContext(oai_settings.cometapi_model));
         oai_settings.openai_max_context = Math.min(Number($('#openai_max_context').attr('max')), oai_settings.openai_max_context);
         $('#openai_max_context').val(oai_settings.openai_max_context).trigger('input');
         $('#temp_openai').attr('max', oai_max_temp).val(oai_settings.temp_openai).trigger('input');
@@ -5721,8 +5725,7 @@ async function onModelChange() {
         } else if (oai_settings.xai_model.includes('grok-code')) {
             $('#openai_max_context').attr('max', max_256k);
         } else {
-            // grok 2 and grok 3
-            $('#openai_max_context').attr('max', max_128k);
+            $('#openai_max_context').attr('max', getUnknownModelMaxContext(oai_settings.xai_model));
         }
 
         oai_settings.openai_max_context = Math.min(Number($('#openai_max_context').attr('max')), oai_settings.openai_max_context);
