@@ -262,6 +262,11 @@ export const persona_description_positions = {
     NONE: 9,
 };
 
+const PROMPT_TOKEN_WARNING_THRESHOLD_MIN = 32000;
+const PROMPT_TOKEN_WARNING_THRESHOLD_MAX = 2000000;
+const PROMPT_TOKEN_WARNING_THRESHOLD_STEP = 1000;
+const PROMPT_TOKEN_WARNING_THRESHOLD_DEFAULT = 96000;
+
 export const power_user = {
     charListGrid: false,
     tokenizer: tokenizers.BEST_MATCH,
@@ -359,6 +364,8 @@ export const power_user = {
     hideChatAvatars_enabled: false,
     max_context_unlocked: false,
     message_token_count_enabled: false,
+    prompt_token_warning_enabled: true,
+    prompt_token_warning_threshold: PROMPT_TOKEN_WARNING_THRESHOLD_DEFAULT,
     expand_message_actions: false,
     enableZenSliders: false,
     enableLabMode: false,
@@ -494,6 +501,35 @@ function syncLongChatHandlingControls() {
     $('#initial_load_counter').val(initialLoadCount);
     $('#long_chat_display_count').val(displayCount);
     $('#long_chat_display_count_counter').val(displayCount);
+}
+
+function clampPromptTokenWarningThreshold(value) {
+    const numeric = Number(value);
+    if (!Number.isFinite(numeric)) {
+        return PROMPT_TOKEN_WARNING_THRESHOLD_DEFAULT;
+    }
+
+    const stepped = Math.round(numeric / PROMPT_TOKEN_WARNING_THRESHOLD_STEP) * PROMPT_TOKEN_WARNING_THRESHOLD_STEP;
+    return Math.min(PROMPT_TOKEN_WARNING_THRESHOLD_MAX, Math.max(PROMPT_TOKEN_WARNING_THRESHOLD_MIN, stepped));
+}
+
+function normalizePromptTokenWarningSettings(settings = power_user) {
+    if (!settings || typeof settings !== 'object') {
+        return PROMPT_TOKEN_WARNING_THRESHOLD_DEFAULT;
+    }
+
+    settings.prompt_token_warning_enabled = settings.prompt_token_warning_enabled !== false;
+    settings.prompt_token_warning_threshold = clampPromptTokenWarningThreshold(settings.prompt_token_warning_threshold);
+    return settings.prompt_token_warning_threshold;
+}
+
+function syncPromptTokenWarningControls() {
+    const threshold = normalizePromptTokenWarningSettings();
+    const enabled = !!power_user.prompt_token_warning_enabled;
+    $('#prompt_token_warning_enabled').prop('checked', enabled);
+    $('#prompt_token_warning_threshold').val(threshold);
+    $('#prompt_token_warning_threshold_counter').val(threshold);
+    $('#prompt_token_warning_threshold_block').toggle(enabled);
 }
 
 let themes = [];
@@ -2267,6 +2303,7 @@ export async function loadPowerUserSettings(settings, data) {
     const customLayoutsAvailable = await loadCustomLayoutModules();
 
     normalizeLongChatHandlingSettings();
+    normalizePromptTokenWarningSettings();
 
     if (!['future_only', 'ask_clean_chat_on_open'].includes(String(power_user.strip_ai_thinking_cleanup_mode))) {
         power_user.strip_ai_thinking_cleanup_mode = 'future_only';
@@ -2399,6 +2436,7 @@ export async function loadPowerUserSettings(settings, data) {
     $('#trim_sentences_checkbox').prop('checked', power_user.trim_sentences);
     $('#disable_group_trimming').prop('checked', power_user.disable_group_trimming);
     $('#markdown_escape_strings').val(power_user.markdown_escape_strings);
+    syncPromptTokenWarningControls();
     $('#strip_ai_thinking_from_response').prop('checked', power_user.strip_ai_thinking_from_response);
     $('#strip_ai_thinking_cleanup_mode').val(power_user.strip_ai_thinking_cleanup_mode);
     toggleStripAiThinkingCleanupMode();
@@ -3741,6 +3779,18 @@ jQuery(() => {
         power_user.markdown_escape_strings = String($(this).val());
         saveSettingsDebounced();
         reloadMarkdownProcessor();
+    });
+
+    $('#prompt_token_warning_enabled').on('input', function () {
+        power_user.prompt_token_warning_enabled = !!$(this).prop('checked');
+        syncPromptTokenWarningControls();
+        saveSettingsDebounced();
+    });
+
+    $('#prompt_token_warning_threshold, #prompt_token_warning_threshold_counter').on('input', function () {
+        power_user.prompt_token_warning_threshold = clampPromptTokenWarningThreshold($(this).val());
+        syncPromptTokenWarningControls();
+        saveSettingsDebounced();
     });
 
     $('#start_reply_with').on('input', function () {

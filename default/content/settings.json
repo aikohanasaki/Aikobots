@@ -101,6 +101,8 @@
         "hideChatAvatars_enabled": false,
         "max_context_unlocked": false,
         "message_token_count_enabled": true,
+        "prompt_token_warning_enabled": true,
+        "prompt_token_warning_threshold": 96000,
         "expand_message_actions": true,
         "enableZenSliders": false,
         "enableLabMode": false,

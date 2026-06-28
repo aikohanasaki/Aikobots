@@ -2448,6 +2448,23 @@
 
                         <div name="MiscellaneousToggles">
                             <h4><span data-i18n="Miscellaneous">Miscellaneous</span></h4>
+                            <label class="checkbox_label" for="prompt_token_warning_enabled">
+                                <input id="prompt_token_warning_enabled" type="checkbox" />
+                                <small>Token warning threshold</small>
+                            </label>
+                            <div id="prompt_token_warning_threshold_block" class="range-block">
+                                <div class="range-block-title justifyLeft">
+                                    <small>Token warning threshold</small>
+                                </div>
+                                <div class="range-block-range-and-counter">
+                                    <div class="range-block-range">
+                                        <input class="neo-range-slider" type="range" id="prompt_token_warning_threshold" name="prompt_token_warning_threshold" min="32000" max="2000000" step="1000">
+                                    </div>
+                                    <div class="range-block-counter">
+                                        <input class="neo-range-input" type="number" min="32000" max="2000000" step="1000" data-for="prompt_token_warning_threshold" id="prompt_token_warning_threshold_counter">
+                                    </div>
+                                </div>
+                            </div>
                             <div class="flex-container flexGap2">
                                 <div id="reload_chat" class="menu_button whitespacenowrap" data-i18n="[title]Reload and redraw the currently open chat" title="Reload and redraw the currently open chat.">
                                     <small data-i18n="Reload Chat">Reload Chat</small>

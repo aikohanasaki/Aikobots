@@ -274,6 +274,8 @@ import { MessageFormatter } from './scripts/message-formatter.js';
 export { sanitizeMessageHtml } from './scripts/chats.js';
 
 let pendingPromptInspectorRecord = null;
+let promptTokenWarningDismissedUntilRefresh = false;
+let promptTokenWarningPopupOpen = false;
 
 function createPromptInspectorButton() {
     return $('<div>', {
@@ -603,6 +605,38 @@ function buildPromptSnapshotKeyForMessage(messageId, swipeId = null) {
     });
 }
 
+async function maybeShowPromptTokenWarning(promptInspectionResponseData) {
+    if (!power_user.prompt_token_warning_enabled || promptTokenWarningDismissedUntilRefresh || promptTokenWarningPopupOpen) {
+        return;
+    }
+
+    const promptTokenCount = Number(promptInspectionResponseData?.promptTokenCount);
+    const threshold = Number(power_user.prompt_token_warning_threshold);
+    if (!Number.isFinite(promptTokenCount) || !Number.isFinite(threshold) || promptTokenCount <= threshold) {
+        return;
+    }
+
+    const content = document.createElement('div');
+    content.textContent = `prompt is now ${Math.round(promptTokenCount)} tokens long, please make memories or start a new chat!`;
+
+    const popup = new Popup(content, POPUP_TYPE.TEXT, '', {
+        customInputs: [
+            {
+                id: 'prompt_token_warning_dismiss_until_refresh',
+                label: 'dismiss until refresh',
+            },
+        ],
+    });
+
+    promptTokenWarningPopupOpen = true;
+    try {
+        await popup.show();
+        promptTokenWarningDismissedUntilRefresh = Boolean(popup.inputResults?.get('prompt_token_warning_dismiss_until_refresh'));
+    } finally {
+        promptTokenWarningPopupOpen = false;
+    }
+}
+
 function applyPromptInspectionResponseDataToMessage(messageId, promptInspectionResponseData, { allowFallbackPromptSnapshotKey = false } = {}) {
     let promptSnapshotKey = promptInspectionResponseData?.promptSnapshotKey;
     if ((typeof promptSnapshotKey !== 'string' || !promptSnapshotKey) && allowFallbackPromptSnapshotKey) {
@@ -619,6 +653,7 @@ function applyPromptInspectionResponseDataToMessage(messageId, promptInspectionR
 
     item.extra ??= {};
     item.extra.promptSnapshotKey = promptSnapshotKey;
+    void maybeShowPromptTokenWarning(promptInspectionResponseData);
     return promptSnapshotKey;
 }
 

@@ -114,6 +114,7 @@ function getOpenAIResponseMetadataEntry(requestId, { create = false } = {}) {
         entry = {
             timedWorldInfo: null,
             promptSnapshotKey: null,
+            promptTokenCount: null,
             chatScope: null,
         };
         pendingOpenAIResponseMetadata.set(requestId, entry);
@@ -130,7 +131,8 @@ function cleanupOpenAIResponseMetadataEntry(requestId) {
 
     const hasTimedWorldInfo = entry.timedWorldInfo && typeof entry.timedWorldInfo === 'object';
     const hasPromptSnapshotKey = typeof entry.promptSnapshotKey === 'string' && entry.promptSnapshotKey;
-    if (!hasTimedWorldInfo && !hasPromptSnapshotKey) {
+    const hasPromptTokenCount = Number.isFinite(entry.promptTokenCount) && entry.promptTokenCount >= 0;
+    if (!hasTimedWorldInfo && !hasPromptSnapshotKey && !hasPromptTokenCount) {
         pendingOpenAIResponseMetadata.delete(requestId);
     }
 }
@@ -1353,6 +1355,8 @@ function applyAssemblyResponseMetadata(response, requestId, type) {
 
 function applyTimedWorldInfoResponseData(data, requestId) {
     const promptSnapshotKey = data?.x_sillytavern?.promptSnapshotKey;
+    const promptTokenCount = Number(data?.x_sillytavern?.promptTokenCount);
+    const hasPromptTokenCount = Number.isFinite(promptTokenCount) && promptTokenCount >= 0;
     const timedWorldInfo = data?.x_sillytavern?.timedWorldInfo;
     const messagesCount = data?.x_sillytavern?.messagesCount;
     const hasMessagesCount = Number.isFinite(messagesCount) && messagesCount >= 0;
@@ -1360,6 +1364,7 @@ function applyTimedWorldInfoResponseData(data, requestId) {
     const chatScope = entry?.chatScope ?? getCurrentPromptInspectionChatScope();
     const hasMetadata =
         (typeof promptSnapshotKey === 'string' && promptSnapshotKey) ||
+        hasPromptTokenCount ||
         (timedWorldInfo && typeof timedWorldInfo === 'object') ||
         hasMessagesCount;
 
@@ -1377,6 +1382,9 @@ function applyTimedWorldInfoResponseData(data, requestId) {
     }
     if (entry && timedWorldInfo && typeof timedWorldInfo === 'object') {
         entry.timedWorldInfo = structuredClone(timedWorldInfo);
+    }
+    if (entry && hasPromptTokenCount) {
+        entry.promptTokenCount = promptTokenCount;
     }
     if (hasMessagesCount && chatScope === getCurrentPromptInspectionChatScope()) {
         openai_messages_count = messagesCount;
@@ -1402,11 +1410,16 @@ export function consumeOpenAIPromptInspectionResponseData(requestId = null) {
     const promptSnapshotKey = typeof entry?.promptSnapshotKey === 'string' && entry.promptSnapshotKey
         ? entry.promptSnapshotKey
         : null;
-    const value = promptSnapshotKey
-        ? { promptSnapshotKey }
-        : { promptSnapshotKey: null };
+    const promptTokenCount = Number.isFinite(entry?.promptTokenCount) && entry.promptTokenCount >= 0
+        ? entry.promptTokenCount
+        : null;
+    const value = {
+        promptSnapshotKey,
+        promptTokenCount,
+    };
     if (entry) {
         entry.promptSnapshotKey = null;
+        entry.promptTokenCount = null;
         cleanupOpenAIResponseMetadataEntry(requestId);
     }
     return value;

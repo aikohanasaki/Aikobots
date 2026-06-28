@@ -995,6 +995,7 @@ async function sendProviderDispatchResult(result, request, response, {
     worldInfo = null,
     promptSnapshotKey = null,
     messagesCount = null,
+    promptTokenCount = null,
 } = {}) {
     try {
         await assertActiveSessionOperation(request);
@@ -1026,6 +1027,7 @@ async function sendProviderDispatchResult(result, request, response, {
                 worldInfo,
                 promptSnapshotKey,
                 messagesCount,
+                promptTokenCount,
             );
         }
 
@@ -1037,7 +1039,7 @@ async function sendProviderDispatchResult(result, request, response, {
         }
 
         const payload = result.ok
-            ? attachWorldInfoResponseData(result.body, request, timedWorldInfo, worldInfoOverflowed, worldInfo, promptSnapshotKey, messagesCount)
+            ? attachWorldInfoResponseData(result.body, request, timedWorldInfo, worldInfoOverflowed, worldInfo, promptSnapshotKey, messagesCount, promptTokenCount)
             : annotateErrorPayload(result.body, {
                 request,
                 stage: 'provider_response',
@@ -2938,7 +2940,7 @@ function buildWorldInfoSummaryResponseData(worldInfo, user) {
     return { sanitizedWorldInfo, worldInfoSummary, worldInfoReport };
 }
 
-function buildXSillyTavernPayload(request, timedWorldInfo, worldInfoOverflowed = false, worldInfo = null, promptSnapshotKey = null, messagesCount = null) {
+function buildXSillyTavernPayload(request, timedWorldInfo, worldInfoOverflowed = false, worldInfo = null, promptSnapshotKey = null, messagesCount = null, promptTokenCount = null) {
     void request;
     void worldInfo;
     const xSillyTavern = {};
@@ -2955,11 +2957,15 @@ function buildXSillyTavernPayload(request, timedWorldInfo, worldInfoOverflowed =
     if (messagesCount !== null) {
         xSillyTavern.messagesCount = Number(messagesCount);
     }
+    const numericPromptTokenCount = Number(promptTokenCount);
+    if (Number.isFinite(numericPromptTokenCount) && numericPromptTokenCount >= 0) {
+        xSillyTavern.promptTokenCount = numericPromptTokenCount;
+    }
 
     return xSillyTavern;
 }
 
-function attachWorldInfoResponseData(payload, request, timedWorldInfo, worldInfoOverflowed = false, worldInfo = null, promptSnapshotKey = null, messagesCount = null) {
+function attachWorldInfoResponseData(payload, request, timedWorldInfo, worldInfoOverflowed = false, worldInfo = null, promptSnapshotKey = null, messagesCount = null, promptTokenCount = null) {
     void request;
     void worldInfo;
     if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
@@ -2968,7 +2974,7 @@ function attachWorldInfoResponseData(payload, request, timedWorldInfo, worldInfo
 
     const xSillyTavern = {
         ...(payload.x_sillytavern && typeof payload.x_sillytavern === 'object' ? payload.x_sillytavern : {}),
-        ...buildXSillyTavernPayload(request, timedWorldInfo, worldInfoOverflowed, worldInfo, promptSnapshotKey, messagesCount),
+        ...buildXSillyTavernPayload(request, timedWorldInfo, worldInfoOverflowed, worldInfo, promptSnapshotKey, messagesCount, promptTokenCount),
     };
 
     if (!Object.keys(xSillyTavern).length) {
@@ -2981,12 +2987,12 @@ function attachWorldInfoResponseData(payload, request, timedWorldInfo, worldInfo
     return payload;
 }
 
-function writeWorldInfoSseEvent(response, request, timedWorldInfo, worldInfoOverflowed = false, worldInfo = null, promptSnapshotKey = null, messagesCount = null) {
+function writeWorldInfoSseEvent(response, request, timedWorldInfo, worldInfoOverflowed = false, worldInfo = null, promptSnapshotKey = null, messagesCount = null, promptTokenCount = null) {
     if (response.writableEnded) {
         return;
     }
 
-    const xSillyTavern = buildXSillyTavernPayload(request, timedWorldInfo, worldInfoOverflowed, worldInfo, promptSnapshotKey, messagesCount);
+    const xSillyTavern = buildXSillyTavernPayload(request, timedWorldInfo, worldInfoOverflowed, worldInfo, promptSnapshotKey, messagesCount, promptTokenCount);
     if (!Object.keys(xSillyTavern).length) {
         return;
     }
@@ -3023,7 +3029,7 @@ function stopStreamHeartbeat(heartbeat) {
     }
 }
 
-async function forwardFetchResponseWithWorldInfo(from, to, request, timedWorldInfo, worldInfoOverflowed = false, worldInfo = null, promptSnapshotKey = null, messagesCount = null) {
+async function forwardFetchResponseWithWorldInfo(from, to, request, timedWorldInfo, worldInfoOverflowed = false, worldInfo = null, promptSnapshotKey = null, messagesCount = null, promptTokenCount = null) {
     let statusCode = from.status;
     let statusText = from.statusText;
 
@@ -3046,12 +3052,12 @@ async function forwardFetchResponseWithWorldInfo(from, to, request, timedWorldIn
     }
 
     if (!from.body || !to.socket) {
-        writeWorldInfoSseEvent(to, request, timedWorldInfo, worldInfoOverflowed, worldInfo, promptSnapshotKey, messagesCount);
+        writeWorldInfoSseEvent(to, request, timedWorldInfo, worldInfoOverflowed, worldInfo, promptSnapshotKey, messagesCount, promptTokenCount);
         to.end();
         return;
     }
 
-    writeWorldInfoSseEvent(to, request, timedWorldInfo, worldInfoOverflowed, worldInfo, promptSnapshotKey, messagesCount);
+    writeWorldInfoSseEvent(to, request, timedWorldInfo, worldInfoOverflowed, worldInfo, promptSnapshotKey, messagesCount, promptTokenCount);
     const heartbeat = startStreamHeartbeat(to);
     const responseSocket = to.socket;
 
@@ -3715,6 +3721,7 @@ export async function handleChatCompletionsGenerate(request, response) {
                 worldInfo: assembledPromptSnapshot?.worldInfo || null,
                 promptSnapshotKey: dispatchedPromptSnapshotKey || promptInspectionInfo?.key || null,
                 messagesCount: assembledMessagesCount,
+                promptTokenCount: assembledPromptSnapshot?.itemization?.finalPromptTokens ?? null,
             });
             cleanup();
             return result;
@@ -4093,6 +4100,7 @@ export async function handleChatCompletionsGenerate(request, response) {
         worldInfo: assembledPromptSnapshot?.worldInfo || null,
         promptSnapshotKey: dispatchedPromptSnapshotKey || promptInspectionInfo?.key || null,
         messagesCount: assembledMessagesCount,
+        promptTokenCount: assembledPromptSnapshot?.itemization?.finalPromptTokens ?? null,
     });
     cleanup();
     return result;
