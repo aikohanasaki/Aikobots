@@ -16665,20 +16665,42 @@ function addAlternateGreeting(template, greeting, index, getArray, popup) {
 }
 
 /**
+ * Checks whether a blocked character metadata save should notify the user.
+ * Programmatic saves may run before unrelated workflows, so they should fail
+ * closed without surfacing a manual-save error toast.
+ * @param {Event} [event] Event that triggered the save.
+ * @param {object} [options] Save options.
+ * @param {boolean} [options.silentPermissionError] Suppress the permission toast.
+ * @returns {boolean} True if the permission toast should be shown.
+ */
+function shouldShowCharacterMetadataPermissionToast(event, { silentPermissionError = false } = {}) {
+    if (silentPermissionError) {
+        return false;
+    }
+
+    return event instanceof Event && event.type === 'submit';
+}
+
+/**
  * Creates or edits a character based on the form data.
  * @param {Event} [e] Event that triggered the function call.
+ * @param {object} [options] Save options.
+ * @param {boolean} [options.silentPermissionError] Suppress permission toast for programmatic saves.
  * @returns {Promise<boolean>} Whether the character was saved successfully.
  */
-export async function createOrEditCharacter(e) {
+export async function createOrEditCharacter(e, options = {}) {
     $('#rm_info_avatar').html('');
-    const formData = new FormData(/** @type {HTMLFormElement} */($('#form_create').get(0)));
-    formData.set('fav', String(fav_ch_checked));
     const isNewChat = e instanceof CustomEvent && e.type === 'newChat';
     if ($('#form_create').attr('actiontype') === 'editcharacter' && !canEditCharacterMetadata(this_chid)) {
-        toastr.error(t`Only botmakers and admins can edit character metadata.`);
+        if (shouldShowCharacterMetadataPermissionToast(e, options)) {
+            toastr.error(t`Only botmakers and admins can edit character metadata.`);
+        }
         clearCharacterEditorDirtyState();
         return false;
     }
+
+    const formData = new FormData(/** @type {HTMLFormElement} */($('#form_create').get(0)));
+    formData.set('fav', String(fav_ch_checked));
 
     const getFetchErrorMessage = async (response) => {
         try {
