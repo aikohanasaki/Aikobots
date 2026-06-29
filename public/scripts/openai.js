@@ -4291,7 +4291,14 @@ function setContinuePostfixControls() {
 }
 
 function setGlobalPromptPostProcessingControls() {
-    $('#global_prompt_post_processing_modes_controls').toggle(Boolean(oai_settings.use_global_prompt_post_processing_modes));
+    const useGlobalModes = Boolean(oai_settings.use_global_prompt_post_processing_modes);
+    const defaultTitle = 'Applies additional processing to the prompt before sending it to the API.';
+    const disabledTitle = 'changing this is disabled by "Use Global Prompt Post-Processing Modes".';
+
+    $('#global_prompt_post_processing_modes_controls').toggle(useGlobalModes);
+    $('#custom_prompt_post_processing')
+        .prop('disabled', useGlobalModes)
+        .attr('title', useGlobalModes ? disabledTitle : defaultTitle);
 }
 
 async function getStatusOpen() {
