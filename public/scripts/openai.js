@@ -80,6 +80,7 @@ export {
     oai_settings,
     openai_messages_count,
     buildOpenAIGenerateData,
+    getEffectivePromptPostProcessing,
     loadOpenAISettings,
     setOpenAIMessages,
     setOpenAIMessageExamples,
@@ -626,6 +627,9 @@ export const settingsToUpdate = {
     custom_exclude_body: ['#custom_exclude_body', 'custom_exclude_body', false, true],
     custom_include_headers: ['#custom_include_headers', 'custom_include_headers', false, true],
     custom_prompt_post_processing: ['#custom_prompt_post_processing', 'custom_prompt_post_processing', false, true],
+    use_global_prompt_post_processing_modes: ['#use_global_prompt_post_processing_modes', 'use_global_prompt_post_processing_modes', true, true],
+    global_prompt_post_processing_single: ['#global_prompt_post_processing_single', 'global_prompt_post_processing_single', false, true],
+    global_prompt_post_processing_group: ['#global_prompt_post_processing_group', 'global_prompt_post_processing_group', false, true],
     google_model: ['#model_google_select', 'google_model', false, true],
     vertexai_model: ['#model_vertexai_select', 'vertexai_model', false, true],
     zai_model: ['#model_zai_select', 'zai_model', false, true],
@@ -774,6 +778,9 @@ const default_settings = {
     names_behavior: character_names_behavior.DEFAULT,
     continue_postfix: continue_postfix_types.SPACE,
     custom_prompt_post_processing: custom_prompt_post_processing_types.NONE,
+    use_global_prompt_post_processing_modes: true,
+    global_prompt_post_processing_single: custom_prompt_post_processing_types.NONE,
+    global_prompt_post_processing_group: custom_prompt_post_processing_types.SINGLE,
     show_thoughts: true,
     reasoning_effort: reasoning_effort_types.auto,
     verbosity: verbosity_levels.auto,
@@ -1025,6 +1032,20 @@ const providerConfigs = {
 };
 
 const oai_settings = structuredClone(default_settings);
+
+/**
+ * Gets the Prompt Post-Processing mode that should be used for the next request.
+ * @returns {string} Effective Prompt Post-Processing mode
+ */
+function getEffectivePromptPostProcessing() {
+    if (!oai_settings.use_global_prompt_post_processing_modes) {
+        return oai_settings.custom_prompt_post_processing;
+    }
+
+    return selected_group
+        ? oai_settings.global_prompt_post_processing_group
+        : oai_settings.global_prompt_post_processing_single;
+}
 
 export let proxies = [
     {
@@ -2704,7 +2725,7 @@ async function buildOpenAIGenerateData(type, messages, { jsonSchema = null } = {
         'verbosity': getVerbosity(),
         'enable_web_search': Boolean(oai_settings.enable_web_search),
         'request_images': Boolean(oai_settings.request_images),
-        'custom_prompt_post_processing': oai_settings.custom_prompt_post_processing,
+        'custom_prompt_post_processing': getEffectivePromptPostProcessing(),
     };
 
     if (isAzureOpenAI) {
@@ -4217,6 +4238,7 @@ function loadOpenAISettings(data, settings) {
 
     setNamesBehaviorControls();
     setContinuePostfixControls();
+    setGlobalPromptPostProcessingControls();
 
     $('#openrouter_providers_chat').trigger('change');
     $('#chat_completion_source').trigger('change');
@@ -4266,6 +4288,10 @@ function setContinuePostfixControls() {
     $('#continue_postfix').val(oai_settings.continue_postfix);
     const checkedItemText = $('input[name="continue_postfix"]:checked ~ span').text().trim();
     $('#continue_postfix_display').text(checkedItemText);
+}
+
+function setGlobalPromptPostProcessingControls() {
+    $('#global_prompt_post_processing_modes_controls').toggle(Boolean(oai_settings.use_global_prompt_post_processing_modes));
 }
 
 async function getStatusOpen() {
@@ -4409,6 +4435,9 @@ async function saveOpenAIPreset(name, settings, triggerUi = true) {
         custom_exclude_body: settings.custom_exclude_body,
         custom_include_headers: settings.custom_include_headers,
         custom_prompt_post_processing: settings.custom_prompt_post_processing,
+        use_global_prompt_post_processing_modes: settings.use_global_prompt_post_processing_modes,
+        global_prompt_post_processing_single: settings.global_prompt_post_processing_single,
+        global_prompt_post_processing_group: settings.global_prompt_post_processing_group,
         google_model: settings.google_model,
         vertexai_model: settings.vertexai_model,
         nanogpt_model: settings.nanogpt_model,
@@ -6872,6 +6901,25 @@ export function initOpenAI() {
 
     $('#custom_prompt_post_processing').on('change', function () {
         oai_settings.custom_prompt_post_processing = String($(this).val());
+        updateFeatureSupportFlags();
+        saveSettingsDebounced();
+    });
+
+    $('#use_global_prompt_post_processing_modes').on('input', function () {
+        oai_settings.use_global_prompt_post_processing_modes = Boolean($(this).prop('checked'));
+        setGlobalPromptPostProcessingControls();
+        updateFeatureSupportFlags();
+        saveSettingsDebounced();
+    });
+
+    $('#global_prompt_post_processing_single').on('change', function () {
+        oai_settings.global_prompt_post_processing_single = String($(this).val());
+        updateFeatureSupportFlags();
+        saveSettingsDebounced();
+    });
+
+    $('#global_prompt_post_processing_group').on('change', function () {
+        oai_settings.global_prompt_post_processing_group = String($(this).val());
         updateFeatureSupportFlags();
         saveSettingsDebounced();
     });

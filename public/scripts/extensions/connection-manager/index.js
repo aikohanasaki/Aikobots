@@ -14,10 +14,13 @@ import { SlashCommandScope } from '../../slash-commands/SlashCommandScope.js';
 import { collapseSpaces, getUniqueName, isFalseBoolean, uuidv4, waitUntilCondition } from '../../utils.js';
 import { t } from '../../i18n.js';
 import { getSecretLabelById } from '../../secrets.js';
+import { oai_settings } from '../../openai.js';
 
 const MODULE_NAME = 'connection-manager';
 const NONE = '<None>';
 const EMPTY = '<Empty>';
+const PROMPT_POST_PROCESSING_COMMAND = 'prompt-post-processing';
+const PROMPT_POST_PROCESSING_DISABLED_TITLE = 'changing this is disabled by "Use Global Prompt Post-Processing Modes".';
 
 const DEFAULT_SETTINGS = {
     profiles: [],
@@ -69,10 +72,35 @@ const FANCY_NAMES = {
     'stop-strings': 'Custom Stopping Strings',
     'start-reply-with': 'Start Reply With',
     'reasoning-template': 'Reasoning Template',
-    'prompt-post-processing': 'Prompt Post-Processing',
+    [PROMPT_POST_PROCESSING_COMMAND]: 'Prompt Post-Processing',
     'secret-id': 'Secret',
     'regex-preset': 'Regex Preset',
 };
+
+function isGlobalPromptPostProcessingEnabled() {
+    return Boolean(oai_settings.use_global_prompt_post_processing_modes);
+}
+
+function shouldSkipPromptPostProcessingCommand(command) {
+    return command === PROMPT_POST_PROCESSING_COMMAND && isGlobalPromptPostProcessingEnabled();
+}
+
+/**
+ * Disables profile Prompt Post-Processing controls while the global override owns the setting.
+ * @param {JQuery<HTMLElement>} template Connection profile popup template
+ */
+function disablePromptPostProcessingProfileControls(template) {
+    if (!isGlobalPromptPostProcessingEnabled()) {
+        return;
+    }
+
+    template.find('input[name="exclude"]').filter(function () {
+        return String($(this).val()) === FANCY_NAMES[PROMPT_POST_PROCESSING_COMMAND];
+    }).prop('disabled', true)
+        .attr('title', PROMPT_POST_PROCESSING_DISABLED_TITLE)
+        .closest('label')
+        .attr('title', PROMPT_POST_PROCESSING_DISABLED_TITLE);
+}
 
 /**
  * A wrapper for the connection manager spinner.
@@ -198,6 +226,10 @@ async function readProfileFromCommands(mode, profile, cleanUp = false) {
     const excludeList = Array.isArray(profile.exclude) ? profile.exclude : [];
     for (const command of commands) {
         try {
+            if (shouldSkipPromptPostProcessingCommand(command)) {
+                continue;
+            }
+
             if (excludeList.includes(command)) {
                 continue;
             }
@@ -248,7 +280,11 @@ async function createConnectionProfile(forceName = null) {
     await readProfileFromCommands(mode, profile);
 
     const profileForDisplay = makeFancyProfile(profile);
+    if (mode === 'cc' && isGlobalPromptPostProcessingEnabled() && !profileForDisplay[FANCY_NAMES[PROMPT_POST_PROCESSING_COMMAND]]) {
+        profileForDisplay[FANCY_NAMES[PROMPT_POST_PROCESSING_COMMAND]] = EMPTY;
+    }
     const template = $(await renderExtensionTemplateAsync(MODULE_NAME, 'profile', { profile: profileForDisplay }));
+    disablePromptPostProcessingProfileControls(template);
     template.find('input[name="exclude"]').on('input', function () {
         const fancyName = String($(this).val());
         const keyName = Object.entries(FANCY_NAMES).find(x => x[1] === fancyName)?.[0];
@@ -389,6 +425,10 @@ async function applyConnectionProfile(profile) {
 
         const argument = profile[command];
         const allowEmpty = ALLOW_EMPTY.includes(command);
+        if (shouldSkipPromptPostProcessingCommand(command)) {
+            continue;
+        }
+
         if (!argument && !(allowEmpty && argument === '')) {
             continue;
         }
@@ -591,6 +631,7 @@ async function renderDetailsContent(detailsContent) {
             return acc;
         }, {});
         const template = $(await renderExtensionTemplateAsync(MODULE_NAME, 'edit', { name: profile.name, settings }));
+        disablePromptPostProcessingProfileControls(template);
         let newName = await callGenericPopup(template, POPUP_TYPE.INPUT, profile.name, {
             customButtons: [{
                 text: t`Save and Update`,
