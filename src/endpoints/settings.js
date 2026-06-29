@@ -7,6 +7,15 @@ import { sync as writeFileAtomicSync } from 'write-file-atomic';
 
 import { SETTINGS_FILE } from '../constants.js';
 import {
+    buildCustomsDocumentFromSettings,
+    getCustomsPath,
+    isEmptyCustomsDocument,
+    mergeCustomsIntoSettings,
+    readCustomsDocument,
+    stripCustomsFromSettings,
+    writeCustomsDocument,
+} from '../customs-repository.js';
+import {
     buildPersonasDocumentFromLegacySettings,
     getPersonasPath,
     mergePersonasIntoSettings,
@@ -117,6 +126,10 @@ function getPersonasBackupFilePrefix(handle) {
     return `personas_${handle}_`;
 }
 
+function getCustomsBackupFilePrefix(handle) {
+    return `customs_${handle}_`;
+}
+
 function getSnapshotTimestamp(fileName, prefix) {
     if (!fileName.startsWith(prefix) || !fileName.endsWith('.json')) {
         return '';
@@ -134,6 +147,17 @@ function getPairedPersonasBackupPath(handle, settingsSnapshotPathOrName) {
 
     const userDirectories = getUserDirectories(handle);
     return path.join(userDirectories.backups, `${getPersonasBackupFilePrefix(handle)}${timestamp}.json`);
+}
+
+function getPairedCustomsBackupPath(handle, settingsSnapshotPathOrName) {
+    const settingsSnapshotName = path.basename(settingsSnapshotPathOrName);
+    const timestamp = getSnapshotTimestamp(settingsSnapshotName, getSettingsBackupFilePrefix(handle));
+    if (!timestamp) {
+        return null;
+    }
+
+    const userDirectories = getUserDirectories(handle);
+    return path.join(userDirectories.backups, `${getCustomsBackupFilePrefix(handle)}${timestamp}.json`);
 }
 
 function readPresetsFromDirectory(directoryPath, options = {}) {
@@ -189,8 +213,9 @@ function backupUserSettings(handle, preventDuplicates) {
 
     const sourceFile = path.join(userDirectories.root, SETTINGS_FILE);
     const personasSourceFile = getPersonasPath(userDirectories);
+    const customsSourceFile = getCustomsPath(userDirectories);
 
-    if (preventDuplicates && isDuplicateBackup(handle, sourceFile, personasSourceFile)) {
+    if (preventDuplicates && isDuplicateBackup(handle, sourceFile, personasSourceFile, customsSourceFile)) {
         return;
     }
 
@@ -201,6 +226,7 @@ function backupUserSettings(handle, preventDuplicates) {
     const timestamp = generateTimestamp();
     const backupFile = path.join(userDirectories.backups, `${getSettingsBackupFilePrefix(handle)}${timestamp}.json`);
     const personasBackupFile = path.join(userDirectories.backups, `${getPersonasBackupFilePrefix(handle)}${timestamp}.json`);
+    const customsBackupFile = path.join(userDirectories.backups, `${getCustomsBackupFilePrefix(handle)}${timestamp}.json`);
 
     fs.copyFileSync(sourceFile, backupFile);
     if (fs.existsSync(personasSourceFile)) {
@@ -208,9 +234,15 @@ function backupUserSettings(handle, preventDuplicates) {
     } else {
         fs.rmSync(personasBackupFile, { force: true });
     }
+    if (fs.existsSync(customsSourceFile)) {
+        fs.copyFileSync(customsSourceFile, customsBackupFile);
+    } else {
+        fs.rmSync(customsBackupFile, { force: true });
+    }
 
     removeOldBackups(userDirectories.backups, `settings_${handle}`);
     removeOldBackups(userDirectories.backups, `personas_${handle}`);
+    removeOldBackups(userDirectories.backups, `customs_${handle}`);
 }
 
 /**
@@ -218,16 +250,18 @@ function backupUserSettings(handle, preventDuplicates) {
  * @param {string} handle User handle
  * @param {string} sourceFile Source settings file path
  * @param {string} personasSourceFile Source personas file path
+ * @param {string} customsSourceFile Source customs file path
  * @returns {boolean} True if the backup is a duplicate
  */
-function isDuplicateBackup(handle, sourceFile, personasSourceFile) {
+function isDuplicateBackup(handle, sourceFile, personasSourceFile, customsSourceFile) {
     const latestBackup = getLatestBackup(handle);
     if (!latestBackup) {
         return false;
     }
 
     return areFilesEquivalent(latestBackup, sourceFile)
-        && areFilesEquivalent(getPairedPersonasBackupPath(handle, latestBackup), personasSourceFile);
+        && areFilesEquivalent(getPairedPersonasBackupPath(handle, latestBackup), personasSourceFile)
+        && areFilesEquivalent(getPairedCustomsBackupPath(handle, latestBackup), customsSourceFile);
 }
 
 /**
@@ -266,8 +300,11 @@ function areFilesEquivalent(file1, file2) {
     return areFilesEqual(file1, file2);
 }
 
-function buildMergedSettingsString(settings, personasDocument) {
-    const mergedSettings = mergePersonasIntoSettings(stripPersonaRegistryFromSettings(settings), personasDocument);
+function buildMergedSettingsString(settings, personasDocument, customsDocument) {
+    const mergedSettings = mergeCustomsIntoSettings(
+        mergePersonasIntoSettings(stripCustomsFromSettings(stripPersonaRegistryFromSettings(settings)), personasDocument),
+        customsDocument,
+    );
     return JSON.stringify(mergedSettings, null, 4);
 }
 
@@ -316,17 +353,20 @@ async function withSettingsPersonasTransaction(directories, operation) {
     return await withSettingsPersonasLock(directories, async (lock) => {
         const pathToSettings = getSettingsPath(directories);
         const pathToPersonas = getPersonasPath(directories);
+        const pathToCustoms = getCustomsPath(directories);
         const settingsSnapshot = await lock.run(() => readFileSnapshot(pathToSettings));
         const personasSnapshot = await lock.run(() => readFileSnapshot(pathToPersonas));
+        const customsSnapshot = await lock.run(() => readFileSnapshot(pathToCustoms));
 
         try {
-            return await operation({ lock, pathToSettings, pathToPersonas });
+            return await operation({ lock, pathToSettings, pathToPersonas, pathToCustoms });
         } catch (error) {
             try {
                 await lock.run(() => restoreFileSnapshot(pathToSettings, settingsSnapshot));
                 await lock.run(() => restoreFileSnapshot(pathToPersonas, personasSnapshot));
+                await lock.run(() => restoreFileSnapshot(pathToCustoms, customsSnapshot));
             } catch (rollbackError) {
-                console.error('Failed to rollback settings/personas state:', rollbackError);
+                console.error('Failed to rollback settings/personas/customs state:', rollbackError);
                 error.rollbackError = rollbackError;
             }
 
@@ -362,7 +402,8 @@ router.post('/save', async function (request, response) {
     try {
         const settings = structuredClone(request.body ?? {});
         const personasDocument = buildPersonasDocumentFromLegacySettings(settings);
-        const strippedSettings = stripPersonaRegistryFromSettings(settings);
+        const customsDocument = buildCustomsDocumentFromSettings(settings, readCustomsDocument(request.user.directories));
+        const strippedSettings = stripCustomsFromSettings(stripPersonaRegistryFromSettings(settings));
 
         await withSettingsPersonasTransaction(request.user.directories, async ({ lock, pathToSettings }) => {
             const existingSettings = await lock.run(() => readExistingSettingsForPreservedKeys(pathToSettings));
@@ -370,6 +411,7 @@ router.post('/save', async function (request, response) {
 
             await request.activeSessionOperation?.assertAllowed();
             await lock.run(() => writePersonasDocument(request.user.directories, personasDocument));
+            await lock.run(() => writeCustomsDocument(request.user.directories, customsDocument));
             await lock.run(() => writeFileAtomicSync(pathToSettings, JSON.stringify(settingsToWrite, null, 4), 'utf8'));
         });
         triggerAutoSave(request.user.profile.handle);
@@ -391,10 +433,11 @@ router.post('/get', async (request, response) => {
             const pathToSettings = getSettingsPath(request.user.directories);
             const settings = JSON.parse(fs.readFileSync(pathToSettings, 'utf8'));
             const personasDocument = readOrMigratePersonasDocument(request.user.directories, settings);
-            return buildMergedSettingsString(settings, personasDocument);
+            const customsDocument = readCustomsDocument(request.user.directories);
+            return buildMergedSettingsString(settings, personasDocument, customsDocument);
         });
     } catch (error) {
-        console.error('Failed to load settings/personas payload:', error);
+        console.error('Failed to load settings/personas/customs payload:', error);
         return response.sendStatus(error.status || 500);
     }
 
@@ -477,6 +520,7 @@ router.post('/load-snapshot', getFileNameValidationFunction('name'), async (requ
         const snapshotName = request.body.name;
         const snapshotPath = path.join(request.user.directories.backups, snapshotName);
         const personasSnapshotPath = getPairedPersonasBackupPath(request.user.profile.handle, snapshotName);
+        const customsSnapshotPath = getPairedCustomsBackupPath(request.user.profile.handle, snapshotName);
 
         if (!fs.existsSync(snapshotPath)) {
             return response.sendStatus(404);
@@ -487,8 +531,11 @@ router.post('/load-snapshot', getFileNameValidationFunction('name'), async (requ
         const personasDocument = fs.existsSync(personasSnapshotPath)
             ? parseSnapshotSettings(fs.readFileSync(personasSnapshotPath, 'utf8'), `personas snapshot for "${snapshotName}"`)
             : buildPersonasDocumentFromLegacySettings(settings);
+        const customsDocument = fs.existsSync(customsSnapshotPath)
+            ? parseSnapshotSettings(fs.readFileSync(customsSnapshotPath, 'utf8'), `customs snapshot for "${snapshotName}"`)
+            : buildCustomsDocumentFromSettings(settings);
 
-        response.send(buildMergedSettingsString(settings, personasDocument));
+        response.send(buildMergedSettingsString(settings, personasDocument, customsDocument));
     } catch (error) {
         console.error(error);
         response.sendStatus(500);
@@ -516,6 +563,7 @@ router.post('/restore-snapshot', getFileNameValidationFunction('name'), async (r
         const snapshotName = request.body.name;
         const snapshotPath = path.join(request.user.directories.backups, snapshotName);
         const personasSnapshotPath = getPairedPersonasBackupPath(request.user.profile.handle, snapshotName);
+        const customsSnapshotPath = getPairedCustomsBackupPath(request.user.profile.handle, snapshotName);
 
         if (!fs.existsSync(snapshotPath)) {
             return response.sendStatus(404);
@@ -526,17 +574,24 @@ router.post('/restore-snapshot', getFileNameValidationFunction('name'), async (r
         const personasDocument = fs.existsSync(personasSnapshotPath)
             ? parseSnapshotSettings(fs.readFileSync(personasSnapshotPath, 'utf8'), `personas snapshot for "${snapshotName}"`)
             : buildPersonasDocumentFromLegacySettings(settings);
-        const strippedSettings = stripPersonaRegistryFromSettings(settings);
+        const customsDocument = fs.existsSync(customsSnapshotPath)
+            ? parseSnapshotSettings(fs.readFileSync(customsSnapshotPath, 'utf8'), `customs snapshot for "${snapshotName}"`)
+            : buildCustomsDocumentFromSettings(settings);
+        const strippedSettings = stripCustomsFromSettings(stripPersonaRegistryFromSettings(settings));
 
-        await withSettingsPersonasTransaction(request.user.directories, async ({ pathToSettings, pathToPersonas }) => {
+        await withSettingsPersonasTransaction(request.user.directories, async ({ pathToSettings, pathToPersonas, pathToCustoms }) => {
             const existingSettings = readExistingSettingsForPreservedKeys(pathToSettings);
             const settingsToWrite = preserveCharacterRepushBlacklistSettings(strippedSettings, existingSettings);
 
             await request.activeSessionOperation?.assertAllowed();
             writePersonasDocument(request.user.directories, personasDocument);
+            writeCustomsDocument(request.user.directories, customsDocument);
             writeFileAtomicSync(pathToSettings, JSON.stringify(settingsToWrite, null, 4), 'utf8');
             if (isEmptyPersonasDocument(personasDocument)) {
                 fs.rmSync(pathToPersonas, { force: true });
+            }
+            if (isEmptyCustomsDocument(customsDocument)) {
+                fs.rmSync(pathToCustoms, { force: true });
             }
         });
 

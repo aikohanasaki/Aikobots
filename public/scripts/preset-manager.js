@@ -35,6 +35,11 @@ const CHAT_COMPLETIONS_ONLY_PRESET_MANAGERS = new Set(['openai', 'reasoning']);
  * Automatically select a preset for current API based on character or group name.
  */
 function autoSelectPreset() {
+    if (power_user.generationLocks?.enabled) {
+        console.debug('Skipping auto-select preset because Generation Locks are enabled.');
+        return;
+    }
+
     const presetManager = getPresetManager();
 
     if (!presetManager) {

@@ -2466,6 +2466,82 @@
 
                         </div>
 
+                        <div name="GenerationLocksToggles">
+                            <h4><span>Generation Locks</span></h4>
+                            <label class="checkbox_label" for="generation_locks_enabled" title="Apply saved generation settings by chat, character, group, or drafted group speaker.">
+                                <input id="generation_locks_enabled" type="checkbox" />
+                                <small>Use Generation Locks</small>
+                            </label>
+                            <div class="flex-container alignitemscenter">
+                                <label for="generation_locks_default_apply_mode"><small>Default mode</small></label>
+                                <select id="generation_locks_default_apply_mode" class="widthNatural flex1 margin0">
+                                    <option value="apply">Apply</option>
+                                    <option value="ask">Ask</option>
+                                    <option value="off">Off</option>
+                                </select>
+                            </div>
+                            <label class="checkbox_label" for="generation_locks_chat_beats_character" title="Only applies to single-character chats. When off, character locks beat chat locks.">
+                                <input id="generation_locks_chat_beats_character" type="checkbox" />
+                                <small>Chat beats character</small>
+                            </label>
+                            <label class="checkbox_label" for="generation_locks_group_beats_chat" title="Only applies to group chats. When off, group-chat locks beat group locks.">
+                                <input id="generation_locks_group_beats_chat" type="checkbox" />
+                                <small>Group beats chat</small>
+                            </label>
+                            <label class="checkbox_label" for="generation_locks_use_individual_character_settings_in_groups" title="Use the drafted speaker character's Generation Lock before group/chat fallback.">
+                                <input id="generation_locks_use_individual_character_settings_in_groups" type="checkbox" />
+                                <small>Use individual character settings in groups</small>
+                            </label>
+                            <label class="checkbox_label" for="generation_locks_use_chat_locks">
+                                <input id="generation_locks_use_chat_locks" type="checkbox" />
+                                <small>Use chat Generation Locks</small>
+                            </label>
+                            <label class="checkbox_label" for="generation_locks_use_character_locks">
+                                <input id="generation_locks_use_character_locks" type="checkbox" />
+                                <small>Use character Generation Locks</small>
+                            </label>
+                            <label class="checkbox_label" for="generation_locks_use_group_locks">
+                                <input id="generation_locks_use_group_locks" type="checkbox" />
+                                <small>Use group Generation Locks</small>
+                            </label>
+                            <div class="flex-container alignitemscenter">
+                                <label for="generation_locks_context_apply_mode"><small>Saved lock mode</small></label>
+                                <select id="generation_locks_context_apply_mode" class="widthNatural flex1 margin0">
+                                    <option value="inherit">Inherit</option>
+                                    <option value="apply">Apply</option>
+                                    <option value="ask">Ask</option>
+                                    <option value="off">Off</option>
+                                </select>
+                            </div>
+                            <div class="flex-container flexGap2">
+                                <div id="generation_locks_save_chat" class="menu_button whitespacenowrap" title="Save current profile, preset, temperature, top-p, and top-k to the current chat.">
+                                    <small>Save Chat</small>
+                                </div>
+                                <div id="generation_locks_save_character" class="menu_button whitespacenowrap" title="Save current profile, preset, temperature, top-p, and top-k to the current character.">
+                                    <small>Save Character</small>
+                                </div>
+                                <div id="generation_locks_save_group" class="menu_button whitespacenowrap" title="Save current profile, preset, temperature, top-p, and top-k to the current group.">
+                                    <small>Save Group</small>
+                                </div>
+                            </div>
+                            <div class="flex-container flexGap2">
+                                <div id="generation_locks_apply_now" class="menu_button whitespacenowrap">
+                                    <small>Apply Now</small>
+                                </div>
+                                <div id="generation_locks_clear_chat" class="menu_button whitespacenowrap">
+                                    <small>Clear Chat</small>
+                                </div>
+                                <div id="generation_locks_clear_character" class="menu_button whitespacenowrap">
+                                    <small>Clear Character</small>
+                                </div>
+                                <div id="generation_locks_clear_group" class="menu_button whitespacenowrap">
+                                    <small>Clear Group</small>
+                                </div>
+                            </div>
+                            <small>Effective: <span id="generation_locks_status">Disabled</span></small>
+                            <div id="generation_locks_group_members" class="flex-container flexFlowColumn flexNoGap"></div>
+                        </div>
+
                         <div name="MiscellaneousToggles">
                             <h4><span data-i18n="Miscellaneous">Miscellaneous</span></h4>
                             <label class="checkbox_label" for="prompt_token_warning_enabled">

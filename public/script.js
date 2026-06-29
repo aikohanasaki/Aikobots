@@ -270,6 +270,7 @@ import { getStmbSettings, initStmb, loadStmbSettings } from './scripts/stmb.js';
 import { syncManageChatsBackupsBrowser } from './scripts/chat-backups.js';
 import { canJumpToSwipeForMessage, canOpenSwipePickerForMessage, initSwipePicker } from './scripts/swipe-picker.js';
 import { MessageFormatter } from './scripts/message-formatter.js';
+import { initGenerationLocks } from './scripts/generation-locks.js';
 
 export { sanitizeMessageHtml } from './scripts/chats.js';
 
@@ -1040,6 +1041,13 @@ const LONG_CHAT_PREFETCH_MAX = 500;
 let dialogueResolve = null;
 let dialogueCloseStop = false;
 export let chat_metadata = {};
+export let customs = {
+    version: 1,
+    generationLocks: {
+        characters: {},
+        groups: {},
+    },
+};
 /** @type {StreamingProcessor} */
 export let streamingProcessor = null;
 let crop_data = undefined;
@@ -3553,6 +3561,7 @@ async function firstLoadInit() {
     initServerHistory();
     initBulkEdit();
     initReasoning();
+    initGenerationLocks();
     initWelcomeScreen();
     initTopChatUi();
     await initScrapers();
@@ -12398,6 +12407,15 @@ export async function getSettings() {
     const data = await response.json();
     if (data.result != 'file not find' && data.settings) {
         settings = JSON.parse(data.settings);
+        customs = settings.customs && typeof settings.customs === 'object'
+            ? settings.customs
+            : {
+                version: 1,
+                generationLocks: {
+                    characters: {},
+                    groups: {},
+                },
+            };
         if (settings.username !== undefined && settings.username !== '') {
             name1 = settings.username;
             $('#your_name').text(name1);
@@ -12544,6 +12562,7 @@ export async function saveSettings(loopCounter = 0) {
         tags: tags,
         tag_map: tag_map,
         oai_settings: oai_settings,
+        customs: customs,
         background: background_settings,
         proxies: proxies,
         selected_proxy: selected_proxy,

@@ -405,7 +405,7 @@ function makeFancyProfile(profile) {
  * @param {ConnectionProfile} profile Connection profile
  * @returns {Promise<void>}
  */
-async function applyConnectionProfile(profile) {
+export async function applyConnectionProfile(profile) {
     if (!profile) {
         return;
     }
@@ -441,6 +441,42 @@ async function applyConnectionProfile(profile) {
     }
 
     spinner.stop();
+}
+
+/**
+ * Finds a connection profile by id.
+ * @param {string} profileId Profile id
+ * @returns {ConnectionProfile|null} Connection profile
+ */
+export function findConnectionProfileById(profileId) {
+    if (!profileId) {
+        return null;
+    }
+
+    return extension_settings.connectionManager?.profiles?.find(p => p.id === profileId) ?? null;
+}
+
+/**
+ * Applies a connection profile by id.
+ * @param {string} profileId Profile id
+ * @returns {Promise<ConnectionProfile|null>} Applied profile or null
+ */
+export async function applyConnectionProfileById(profileId) {
+    const profile = findConnectionProfileById(profileId);
+    if (!profile) {
+        return null;
+    }
+
+    extension_settings.connectionManager.selectedProfile = profile.id;
+    const profiles = document.getElementById('connection_profiles');
+    if (profiles instanceof HTMLSelectElement) {
+        profiles.value = profile.id;
+    }
+    saveSettingsDebounced();
+
+    await applyConnectionProfile(profile);
+    await eventSource.emit(event_types.CONNECTION_PROFILE_LOADED, profile.name);
+    return profile;
 }
 
 /**
