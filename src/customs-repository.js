@@ -44,6 +44,7 @@ function normalizeOverrides(overrides) {
 function normalizeGenerationLockRecord(record) {
     const source = isPlainObject(record) ? record : {};
     const connectionProfileId = toOptionalString(source.connectionProfileId);
+    const modelId = toOptionalString(source.modelId);
     const presetName = typeof source.presetName === 'string' ? source.presetName : '';
     const overrides = normalizeOverrides(source.overrides);
     const updatedAt = toOptionalString(source.updatedAt) || new Date(0).toISOString();
@@ -51,6 +52,7 @@ function normalizeGenerationLockRecord(record) {
     return {
         version: CUSTOMS_VERSION,
         connectionProfileId,
+        modelId,
         presetName,
         overrides,
         updatedAt,

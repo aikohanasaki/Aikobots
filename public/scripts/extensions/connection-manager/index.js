@@ -480,6 +480,40 @@ export async function applyConnectionProfileById(profileId) {
 }
 
 /**
+ * Reads the currently selected model through the connection profile command path.
+ * @returns {Promise<string>} Current model id, or an empty string when unavailable.
+ */
+export async function readCurrentConnectionModel() {
+    try {
+        const result = await SlashCommandParser.commands.model.callback(getNamedArguments(), '');
+        return typeof result === 'string' ? result.trim() : '';
+    } catch (error) {
+        console.error('Failed to read current model', error);
+        return '';
+    }
+}
+
+/**
+ * Applies a model through the connection profile command path.
+ * @param {string} modelId Model id
+ * @returns {Promise<boolean>} True if a model was applied.
+ */
+export async function applyConnectionModel(modelId) {
+    const normalizedModelId = typeof modelId === 'string' ? modelId.trim() : '';
+    if (!normalizedModelId) {
+        return false;
+    }
+
+    try {
+        await SlashCommandParser.commands.model.callback(getNamedArguments(), normalizedModelId);
+        return true;
+    } catch (error) {
+        console.error(`Failed to execute command: model ${normalizedModelId}`, error);
+        return false;
+    }
+}
+
+/**
  * Updates the selected connection profile.
  * @param {ConnectionProfile} profile Connection profile
  * @returns {Promise<void>}

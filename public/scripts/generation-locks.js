@@ -99,6 +99,7 @@ function normalizeGenerationLock(record) {
     return {
         version: 1,
         connectionProfileId: typeof source.connectionProfileId === 'string' ? source.connectionProfileId : '',
+        modelId: typeof source.modelId === 'string' ? source.modelId.trim() : '',
         presetName: typeof source.presetName === 'string' ? source.presetName : '',
         overrides,
         updatedAt: typeof source.updatedAt === 'string' && source.updatedAt ? source.updatedAt : new Date().toISOString(),
@@ -106,7 +107,7 @@ function normalizeGenerationLock(record) {
 }
 
 function hasLockTarget(lock) {
-    return Boolean(lock?.connectionProfileId || lock?.presetName || Object.keys(lock?.overrides || {}).length);
+    return Boolean(lock?.connectionProfileId || lock?.modelId || lock?.presetName || Object.keys(lock?.overrides || {}).length);
 }
 
 function getCharacterAvatar(characterId) {
@@ -245,6 +246,9 @@ function describeGenerationLock(lock) {
     const parts = [];
     if (normalized.connectionProfileId) {
         parts.push(getProfileById(normalized.connectionProfileId)?.name || normalized.connectionProfileId);
+    }
+    if (normalized.modelId) {
+        parts.push(normalized.modelId);
     }
     if (normalized.presetName) {
         parts.push(normalized.presetName);
@@ -392,6 +396,27 @@ function isPresetActive(presetName) {
     return !presetName || getCurrentPresetName() === presetName;
 }
 
+async function getCurrentModelId() {
+    const connectionManager = await getConnectionManagerModule();
+    return await connectionManager.readCurrentConnectionModel();
+}
+
+async function applyModel(modelId) {
+    if (!modelId) {
+        return;
+    }
+
+    const connectionManager = await getConnectionManagerModule();
+    const applied = await connectionManager.applyConnectionModel(modelId);
+    if (!applied) {
+        toastr.warning(t`Generation Lock model could not be applied: ${modelId}`);
+    }
+}
+
+async function isModelActive(modelId) {
+    return !modelId || await getCurrentModelId() === modelId;
+}
+
 function areOverridesActive(overrides) {
     for (const [key, value] of Object.entries(overrides || {})) {
         if (!areGenerationLockNumbersEqual(oai_settings[key], value)) {
@@ -420,14 +445,12 @@ export async function applyResolvedGenerationLock(resolved, options = {}) {
     }
 
     const signature = getGenerationLockSignature(resolved);
-    if (!options.force && signature && signature === lastAppliedSignature) {
-        return false;
-    }
-
     const shouldApplyProfile = !isConnectionProfileActive(resolved.lock.connectionProfileId);
     const shouldApplyPreset = !isPresetActive(resolved.lock.presetName);
+    const shouldApplyModel = Boolean(resolved.lock.modelId)
+        && (shouldApplyProfile || shouldApplyPreset || !await isModelActive(resolved.lock.modelId));
     const shouldApplyOverrides = !areOverridesActive(resolved.lock.overrides);
-    if (!options.force && !shouldApplyProfile && !shouldApplyPreset && !shouldApplyOverrides) {
+    if (!options.force && !shouldApplyProfile && !shouldApplyPreset && !shouldApplyModel && !shouldApplyOverrides) {
         lastAppliedSignature = signature;
         updateGenerationLocksStatus(resolved);
         return false;
@@ -440,6 +463,9 @@ export async function applyResolvedGenerationLock(resolved, options = {}) {
         }
         if (shouldApplyPreset || options.force) {
             await applyPreset(resolved.lock.presetName);
+        }
+        if (shouldApplyModel || options.force) {
+            await applyModel(resolved.lock.modelId);
         }
         if (shouldApplyOverrides || options.force) {
             applyOverrides(resolved.lock.overrides);
@@ -478,9 +504,10 @@ function getCurrentOverrides() {
     };
 }
 
-function createCurrentGenerationLock() {
+async function createCurrentGenerationLock() {
     return normalizeGenerationLock({
         connectionProfileId: getCurrentProfileId(),
+        modelId: await getCurrentModelId(),
         presetName: getCurrentPresetName(),
         overrides: getCurrentOverrides(),
         updatedAt: new Date().toISOString(),
@@ -501,7 +528,7 @@ function getCurrentEntityKey(type) {
 }
 
 async function saveCurrentGenerationLock(type) {
-    const lock = createCurrentGenerationLock();
+    const lock = await createCurrentGenerationLock();
 
     if (type === 'chat') {
         chat_metadata[GENERATION_LOCKS_METADATA_KEY] = lock;
@@ -598,6 +625,9 @@ function updateGenerationLocksStatus(resolved = resolveGenerationLock()) {
     if (resolved.lock.connectionProfileId) {
         const profileName = getProfileById(resolved.lock.connectionProfileId)?.name || resolved.lock.connectionProfileId;
         parts.push(profileName);
+    }
+    if (resolved.lock.modelId) {
+        parts.push(resolved.lock.modelId);
     }
     if (resolved.lock.presetName) {
         parts.push(resolved.lock.presetName);
