@@ -27,6 +27,11 @@ const OVERRIDE_SELECTORS = Object.freeze({
     top_p_openai: '#top_p_openai',
     top_k_openai: '#top_k_openai',
 });
+const OVERRIDE_LABELS = Object.freeze({
+    temp_openai: 'Temp',
+    top_p_openai: 'Top P',
+    top_k_openai: 'Top K',
+});
 
 let isInitialized = false;
 let isApplyingGenerationLock = false;
@@ -244,12 +249,19 @@ function describeGenerationLock(lock) {
     if (normalized.presetName) {
         parts.push(normalized.presetName);
     }
-    const overrideNames = Object.keys(normalized.overrides);
-    if (overrideNames.length) {
-        parts.push(overrideNames.join(', '));
+    const overridesText = formatGenerationLockOverrides(normalized.overrides);
+    if (overridesText) {
+        parts.push(overridesText);
     }
 
     return parts.length ? parts.join(' - ') : t`No target`;
+}
+
+function formatGenerationLockOverrides(overrides) {
+    return Object.entries(overrides || {})
+        .filter(([, value]) => Number.isFinite(Number(value)))
+        .map(([key, value]) => `${OVERRIDE_LABELS[key] || key}: ${Number(value)}`)
+        .join(', ');
 }
 
 function renderGroupMemberGenerationLocks() {
@@ -589,6 +601,10 @@ function updateGenerationLocksStatus(resolved = resolveGenerationLock()) {
     }
     if (resolved.lock.presetName) {
         parts.push(resolved.lock.presetName);
+    }
+    const overridesText = formatGenerationLockOverrides(resolved.lock.overrides);
+    if (overridesText) {
+        parts.push(overridesText);
     }
 
     status.text(parts.join(' - '));
