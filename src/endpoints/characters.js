@@ -1328,30 +1328,50 @@ function preserveTokenDryRunMetadata(targetCharacter, sourceCharacter) {
     }
 }
 
+const relaxedCharacterMetadataPaths = new Set([
+    'avatar',
+    'chat',
+    'fav',
+    'tags',
+    'talkativeness',
+    'data.avatar',
+    'data.fav',
+    'data.tags',
+    'data.talkativeness',
+    'data.extensions.fav',
+    'data.extensions.talkativeness',
+]);
+
+function getLeafPaths(value, pathParts = []) {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) {
+        return [pathParts.join('.')];
+    }
+
+    const entries = Object.entries(value);
+    if (entries.length === 0) {
+        return [pathParts.join('.')];
+    }
+
+    return entries.flatMap(([key, child]) => getLeafPaths(child, [...pathParts, key]));
+}
+
 function isRelaxedCharacterMetadataUpdate(update) {
-    const allowedPaths = new Set([
-        'avatar',
-        'chat',
-        'tags',
-        'talkativeness',
-        'data.tags',
-        'data.extensions.talkativeness',
-    ]);
+    return getLeafPaths(update).every(path => relaxedCharacterMetadataPaths.has(path));
+}
 
-    const walk = (value, pathParts = []) => {
-        if (!value || typeof value !== 'object' || Array.isArray(value)) {
-            return [pathParts.join('.')];
-        }
+function withoutRelaxedCharacterMetadata(character) {
+    const comparable = _.cloneDeep(character);
+    for (const path of relaxedCharacterMetadataPaths) {
+        _.unset(comparable, path);
+    }
+    return comparable;
+}
 
-        const entries = Object.entries(value);
-        if (entries.length === 0) {
-            return [pathParts.join('.')];
-        }
-
-        return entries.flatMap(([key, child]) => walk(child, [...pathParts, key]));
-    };
-
-    return walk(update).every(path => allowedPaths.has(path));
+function isRelaxedCharacterMetadataChange(existingCharacter, requestedCharacter) {
+    return _.isEqual(
+        withoutRelaxedCharacterMetadata(existingCharacter),
+        withoutRelaxedCharacterMetadata(requestedCharacter),
+    );
 }
 
 /**
@@ -1922,11 +1942,8 @@ router.post('/edit', validateAvatarUrlMiddleware, async function (request, respo
         const avatarPath = resolveCharacterFilePath(request.user.directories, request.body.avatar_url);
         const rawCharacterData = await readCharacterData(avatarPath);
         const existingCharacter = rawCharacterData ? getCharaCardV2(JSON.parse(rawCharacterData), request.user.directories, false) : null;
-        if (existingCharacter && !canEditCharacterMetadata(existingCharacter, request)) {
-            const ownerLabel = getCharacterOwnerLabel(existingCharacter);
-            return response.status(403).json({ error: `Only ${ownerLabel} and admins can edit this character's metadata.` });
-        }
 
+        const canEditMetadata = !existingCharacter || canEditCharacterMetadata(existingCharacter, request);
         const requestedFavorite = coerceFavoriteValue(request.body.fav);
         const canEditLorebooks = canEditCharacterLorebooks(existingCharacter, request);
         const requestedJsonData = tryParse(request.body.json_data);
@@ -1968,6 +1985,12 @@ router.post('/edit', validateAvatarUrlMiddleware, async function (request, respo
 
         char.chat = request.body.chat;
         char.create_date = request.body.create_date;
+
+        if (existingCharacter && !canEditMetadata && !isRelaxedCharacterMetadataChange(existingCharacter, char)) {
+            const ownerLabel = getCharacterOwnerLabel(existingCharacter);
+            return response.status(403).json({ error: `Only ${ownerLabel} and admins can edit this character's metadata.` });
+        }
+
         char = JSON.stringify(char);
         let targetFile = (request.body.avatar_url).replace('.png', '');
 
@@ -2104,10 +2127,6 @@ router.post('/edit-attribute', validateAvatarUrlMiddleware, async function (requ
 
         const char = JSON.parse(charJSON);
         const existingCharacter = _.cloneDeep(char);
-        if (!canEditCharacterMetadata(char, request)) {
-            const ownerLabel = getCharacterOwnerLabel(char);
-            return response.status(403).json({ error: `Only ${ownerLabel} and admins can edit this character's metadata.` });
-        }
 
         //check if the field exists
         if (char[request.body.field] === undefined && char.data[request.body.field] === undefined) {
@@ -2118,6 +2137,12 @@ router.post('/edit-attribute', validateAvatarUrlMiddleware, async function (requ
         char[request.body.field] = request.body.value;
         char.data[request.body.field] = request.body.value;
         preserveTokenDryRunMetadata(char, existingCharacter);
+
+        if (!canEditCharacterMetadata(existingCharacter, request) && !isRelaxedCharacterMetadataChange(existingCharacter, char)) {
+            const ownerLabel = getCharacterOwnerLabel(existingCharacter);
+            return response.status(403).json({ error: `Only ${ownerLabel} and admins can edit this character's metadata.` });
+        }
+
         let newCharJSON = JSON.stringify(char);
         const targetFile = (request.body.avatar_url).replace('.png', '');
         await writeCharacterData(avatarPath, newCharJSON, targetFile, request);

@@ -411,6 +411,10 @@ function getCharacterName(card) {
  */
 function stripPrivateShareFields(card) {
     _.unset(card, 'chat');
+    _.unset(card, 'tags');
+    _.unset(card, 'talkativeness');
+    _.unset(card, 'data.tags');
+    _.unset(card, 'data.extensions.talkativeness');
     _.unset(card, 'data.extensions.chat');
 }
 
