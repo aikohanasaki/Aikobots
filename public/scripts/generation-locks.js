@@ -355,6 +355,10 @@ function applyOverrides(overrides) {
             continue;
         }
 
+        if (areGenerationLockNumbersEqual(oai_settings[key], value)) {
+            continue;
+        }
+
         oai_settings[key] = value;
         $(selector).val(value).trigger('input');
         changed = true;
@@ -363,6 +367,41 @@ function applyOverrides(overrides) {
     if (changed) {
         saveSettingsDebounced();
     }
+}
+
+function areGenerationLockNumbersEqual(left, right) {
+    return Number.isFinite(Number(left)) && Number.isFinite(Number(right)) && Math.abs(Number(left) - Number(right)) < 0.000001;
+}
+
+function isConnectionProfileActive(profileId) {
+    if (!profileId) {
+        return true;
+    }
+
+    if (getCurrentProfileId() !== profileId) {
+        return false;
+    }
+
+    const profile = getProfileById(profileId);
+    if (profile?.mode === 'cc' && profile.api === chat_completion_sources.CUSTOM && profile['secret-id']) {
+        return secret_state[SECRET_KEYS.CUSTOM]?.some(secret => secret.id === profile['secret-id'] && secret.active) ?? false;
+    }
+
+    return true;
+}
+
+function isPresetActive(presetName) {
+    return !presetName || getCurrentPresetName() === presetName;
+}
+
+function areOverridesActive(overrides) {
+    for (const [key, value] of Object.entries(overrides || {})) {
+        if (!areGenerationLockNumbersEqual(oai_settings[key], value)) {
+            return false;
+        }
+    }
+
+    return true;
 }
 
 export async function applyResolvedGenerationLock(resolved, options = {}) {
@@ -387,11 +426,26 @@ export async function applyResolvedGenerationLock(resolved, options = {}) {
         return false;
     }
 
+    const shouldApplyProfile = !isConnectionProfileActive(resolved.lock.connectionProfileId);
+    const shouldApplyPreset = !isPresetActive(resolved.lock.presetName);
+    const shouldApplyOverrides = !areOverridesActive(resolved.lock.overrides);
+    if (!options.force && !shouldApplyProfile && !shouldApplyPreset && !shouldApplyOverrides) {
+        lastAppliedSignature = signature;
+        updateGenerationLocksStatus(resolved);
+        return false;
+    }
+
     isApplyingGenerationLock = true;
     try {
-        await applyConnectionProfile(resolved.lock.connectionProfileId);
-        await applyPreset(resolved.lock.presetName);
-        applyOverrides(resolved.lock.overrides);
+        if (shouldApplyProfile || options.force) {
+            await applyConnectionProfile(resolved.lock.connectionProfileId);
+        }
+        if (shouldApplyPreset || options.force) {
+            await applyPreset(resolved.lock.presetName);
+        }
+        if (shouldApplyOverrides || options.force) {
+            applyOverrides(resolved.lock.overrides);
+        }
         lastAppliedSignature = signature;
         updateGenerationLocksStatus(resolved);
         return true;
@@ -587,7 +641,7 @@ export function initGenerationLocks() {
     });
     eventSource.on(event_types.GENERATION_STARTED, async () => {
         if (!selected_group) {
-            await applyGenerationLockForCurrentContext({ ignoreLastApplied: true });
+            await applyGenerationLockForCurrentContext();
         }
     });
     eventSource.on(event_types.GROUP_MEMBER_DRAFTED, async (chId) => {
