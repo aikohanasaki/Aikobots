@@ -12336,7 +12336,11 @@ export async function openCharacterChat(file_name) {
         setTemporaryCharacterChatPreviousFileName(previousChatFileName);
         $('#selected_chat_pole').val(file_name);
         if (!isCurrentCharacterChatTemporary()) {
-            await createOrEditCharacter(new CustomEvent('newChat'));
+            if (canEditCharacterMetadata(this_chid)) {
+                await createOrEditCharacter(new CustomEvent('newChat'));
+            } else {
+                await updateRemoteChatName(this_chid, file_name);
+            }
         }
     } finally {
         await deferredLoader.clear();
@@ -16766,7 +16770,7 @@ export async function createOrEditCharacter(e, options = {}) {
     $('#rm_info_avatar').html('');
     const isNewChat = e instanceof CustomEvent && e.type === 'newChat';
     if ($('#form_create').attr('actiontype') === 'editcharacter' && !canEditCharacterMetadata(this_chid)) {
-        if (canEditRelaxedCharacterMetadata(this_chid)) {
+        if (e instanceof Event && e.type === 'submit' && canEditRelaxedCharacterMetadata(this_chid)) {
             return saveRelaxedCharacterMetadata();
         }
 

@@ -1331,6 +1331,7 @@ function preserveTokenDryRunMetadata(targetCharacter, sourceCharacter) {
 function isRelaxedCharacterMetadataUpdate(update) {
     const allowedPaths = new Set([
         'avatar',
+        'chat',
         'tags',
         'talkativeness',
         'data.tags',
