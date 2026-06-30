@@ -1,4 +1,4 @@
-import { getRequestHeaders, messageFormatting, sanitizeMessageHtml } from '../script.js';
+import { getRequestHeaders, messageFormatting, refreshCsrfToken, sanitizeMessageHtml } from '../script.js';
 import { POPUP_RESULT, POPUP_TYPE, Popup, callGenericPopup } from './popup.js';
 import { renderTemplateAsync } from './templates.js';
 import { ensureImageFormatSupported, getBase64Async, humanFileSize } from './utils.js';
@@ -2461,10 +2461,36 @@ async function openAdminPanel(initialTab = 'usersList') {
  * @returns {Promise<void>}
  */
 async function logout() {
-    await fetch('/api/users/logout', {
+    let response = await fetch('/api/users/logout', {
         method: 'POST',
         headers: getRequestHeaders(),
     });
+
+    if (response.status === 403) {
+        try {
+            await refreshCsrfToken();
+            response = await fetch('/api/users/logout', {
+                method: 'POST',
+                headers: getRequestHeaders(),
+            });
+        } catch (error) {
+            console.error('Failed to refresh CSRF token during logout:', error);
+        }
+    }
+
+    if (!response.ok) {
+        try {
+            const sessionResponse = await fetch('/api/users/me');
+            if (sessionResponse.status !== 403) {
+                toastr.error('Refresh the page and try again.', 'Logout failed');
+                return;
+            }
+        } catch (error) {
+            console.error('Failed to verify session state during logout:', error);
+            toastr.error('Refresh the page and try again.', 'Logout failed');
+            return;
+        }
+    }
 
     // On an explicit logout stop auto login
     // to allow user to change username even

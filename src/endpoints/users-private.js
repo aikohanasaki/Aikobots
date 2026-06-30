@@ -17,7 +17,7 @@ const ACCOUNT_RESET_FLOW = 'account-reset';
 
 export const router = express.Router();
 
-router.post('/logout', async (request, response) => {
+export async function logoutUser(request, response) {
     try {
         if (!request.session) {
             console.error('Session not available');
@@ -32,7 +32,9 @@ router.post('/logout', async (request, response) => {
         console.error(error);
         return response.sendStatus(500);
     }
-});
+}
+
+router.post('/logout', logoutUser);
 
 router.get('/me', async (request, response) => {
     try {

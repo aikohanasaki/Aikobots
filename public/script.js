@@ -3020,6 +3020,17 @@ const activeSessionStartedAt = Date.now();
 const activeSessionRuntimeId = createActiveSessionUuid();
 let tabSessionId = getTabSessionId();
 
+/**
+ * Refreshes the CSRF token used by API requests.
+ * @returns {Promise<string>} The refreshed CSRF token.
+ */
+export async function refreshCsrfToken() {
+    const tokenResponse = await fetch('/csrf-token');
+    const tokenData = await tokenResponse.json();
+    token = tokenData.token;
+    return token;
+}
+
 export function getRequestHeaders({ omitContentType = false } = {}) {
     const headers = {
         'Content-Type': 'application/json',
@@ -3508,9 +3519,7 @@ async function runStorageCheckOnAppReady() {
 //MARK: firstLoadInit
 async function firstLoadInit() {
     try {
-        const tokenResponse = await fetch('/csrf-token');
-        const tokenData = await tokenResponse.json();
-        token = tokenData.token;
+        await refreshCsrfToken();
     } catch {
         toastr.error(t`Couldn't get CSRF token. Please refresh the page.`, t`Error`, { timeOut: 0, extendedTimeOut: 0, preventDuplicates: true });
         throw new Error('Initialization failed');
