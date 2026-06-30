@@ -72,6 +72,7 @@ import {
     buildStmbCatchupChunks,
 } from './stmb-core.js';
 import { buildStmbSceneContext, captureStmbSceneRange, fetchStmbChatRangeInfo, getStmbChatKey, isPassiveStmbFlushSuppressedForChat } from './stmb-scene.js';
+import { isMobile } from './RossAscends-mods.js';
 import {
     STMB_SUMMARY_RESPONSE_SCHEMA,
     buildBriefsFromEntries,
@@ -6276,6 +6277,48 @@ function clampFloatingJumpButtonPosition(position = {}, fallbackPosition = getFa
     };
 }
 
+function getFloatingButtonDeviceProfile() {
+    return isMobile() ? 'mobile' : 'desktop';
+}
+
+function isValidFloatingJumpButtonPosition(position) {
+    return Number.isFinite(Number(position?.left)) && Number.isFinite(Number(position?.top));
+}
+
+function getSavedFloatingJumpButtonPosition(positionKey, legacyPositionKey) {
+    const moduleSettings = getModuleSettings();
+    const deviceProfile = getFloatingButtonDeviceProfile();
+    const profilePosition = moduleSettings.floatingButtonPositions?.[deviceProfile]?.[positionKey];
+
+    if (isValidFloatingJumpButtonPosition(profilePosition)) {
+        return profilePosition;
+    }
+
+    if (deviceProfile === 'desktop' && isValidFloatingJumpButtonPosition(moduleSettings[legacyPositionKey])) {
+        return moduleSettings[legacyPositionKey];
+    }
+
+    return null;
+}
+
+function saveFloatingJumpButtonPosition(positionKey, position, getFallbackPosition) {
+    const deviceProfile = getFloatingButtonDeviceProfile();
+    const moduleSettings = stmbSettings.moduleSettings || {};
+    const floatingButtonPositions = moduleSettings.floatingButtonPositions && typeof moduleSettings.floatingButtonPositions === 'object'
+        ? moduleSettings.floatingButtonPositions
+        : {};
+    const profilePositions = floatingButtonPositions[deviceProfile] && typeof floatingButtonPositions[deviceProfile] === 'object'
+        ? floatingButtonPositions[deviceProfile]
+        : {};
+
+    profilePositions[positionKey] = clampFloatingJumpButtonPosition(position, getFallbackPosition());
+    floatingButtonPositions[deviceProfile] = profilePositions;
+    moduleSettings.floatingButtonPositions = floatingButtonPositions;
+    stmbSettings.moduleSettings = moduleSettings;
+    stmbSettings = normalizeStmbSettings(stmbSettings);
+    saveSettingsDebounced();
+}
+
 function applyFloatingJumpButtonPosition(button, savedPosition, getFallbackPosition) {
     if (!button) {
         return;
@@ -6288,15 +6331,11 @@ function applyFloatingJumpButtonPosition(button, savedPosition, getFallbackPosit
 }
 
 function saveMemoryBoundaryButtonPosition(position) {
-    stmbSettings.moduleSettings.memoryBoundaryButtonPosition = clampFloatingJumpButtonPosition(position, getMemoryBoundaryButtonFallbackPosition());
-    stmbSettings = normalizeStmbSettings(stmbSettings);
-    saveSettingsDebounced();
+    saveFloatingJumpButtonPosition('memoryBoundary', position, getMemoryBoundaryButtonFallbackPosition);
 }
 
 function saveChatEndButtonPosition(position) {
-    stmbSettings.moduleSettings.chatEndButtonPosition = clampFloatingJumpButtonPosition(position, getChatEndButtonFallbackPosition());
-    stmbSettings = normalizeStmbSettings(stmbSettings);
-    saveSettingsDebounced();
+    saveFloatingJumpButtonPosition('chatEnd', position, getChatEndButtonFallbackPosition);
 }
 
 function showNoMemoryBoundaryToast() {
@@ -6483,7 +6522,11 @@ function refreshMemoryBoundaryButton() {
         memoryBoundaryButton = createMemoryBoundaryButton();
     }
 
-    applyFloatingJumpButtonPosition(memoryBoundaryButton, getModuleSettings().memoryBoundaryButtonPosition, getMemoryBoundaryButtonFallbackPosition);
+    applyFloatingJumpButtonPosition(
+        memoryBoundaryButton,
+        getSavedFloatingJumpButtonPosition('memoryBoundary', 'memoryBoundaryButtonPosition'),
+        getMemoryBoundaryButtonFallbackPosition,
+    );
     memoryBoundaryButton.style.display = 'inline-flex';
 }
 
@@ -6498,7 +6541,11 @@ function refreshChatEndButton() {
         chatEndButton = createChatEndButton();
     }
 
-    applyFloatingJumpButtonPosition(chatEndButton, getModuleSettings().chatEndButtonPosition, getChatEndButtonFallbackPosition);
+    applyFloatingJumpButtonPosition(
+        chatEndButton,
+        getSavedFloatingJumpButtonPosition('chatEnd', 'chatEndButtonPosition'),
+        getChatEndButtonFallbackPosition,
+    );
     chatEndButton.style.display = 'inline-flex';
 }
 

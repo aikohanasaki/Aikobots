@@ -1348,40 +1348,84 @@ function writeFloatingBookBool(key, value) {
     accountStorage.setItem(key, value ? 'true' : 'false');
 }
 
-function readFloatingBookPosition() {
+function getFloatingBookDeviceProfile() {
+    return isMobile() ? 'mobile' : 'desktop';
+}
+
+function isValidFloatingBookPosition(position) {
+    return Number.isFinite(Number(position?.left)) && Number.isFinite(Number(position?.top));
+}
+
+function normalizeFloatingBookPosition(position) {
+    if (!isValidFloatingBookPosition(position)) {
+        return null;
+    }
+
+    return {
+        left: Number(position.left),
+        top: Number(position.top),
+    };
+}
+
+function readFloatingBookPositionProfiles() {
     const raw = accountStorage.getItem(FLOATING_BOOK_STORAGE_KEYS.position);
     if (!raw) {
-        return null;
+        return {};
     }
 
     try {
         const parsed = JSON.parse(raw);
-        const left = Number(parsed?.left);
-        const top = Number(parsed?.top);
-
-        if (!Number.isFinite(left) || !Number.isFinite(top)) {
-            return null;
+        const legacyPosition = normalizeFloatingBookPosition(parsed);
+        if (legacyPosition) {
+            return { desktop: legacyPosition };
         }
 
-        return { left, top };
+        const positions = {};
+        const desktopPosition = normalizeFloatingBookPosition(parsed?.desktop);
+        const mobilePosition = normalizeFloatingBookPosition(parsed?.mobile);
+
+        if (desktopPosition) {
+            positions.desktop = desktopPosition;
+        }
+
+        if (mobilePosition) {
+            positions.mobile = mobilePosition;
+        }
+
+        return positions;
     } catch {
-        return null;
+        return {};
     }
+}
+
+function readFloatingBookPosition() {
+    return readFloatingBookPositionProfiles()[getFloatingBookDeviceProfile()] || null;
 }
 
 function writeFloatingBookPosition(position) {
-    if (!position || !Number.isFinite(position.left) || !Number.isFinite(position.top)) {
+    const normalizedPosition = normalizeFloatingBookPosition(position);
+    if (!normalizedPosition) {
         return;
     }
 
-    accountStorage.setItem(FLOATING_BOOK_STORAGE_KEYS.position, JSON.stringify({
-        left: Math.round(position.left),
-        top: Math.round(position.top),
-    }));
+    const positions = readFloatingBookPositionProfiles();
+    positions[getFloatingBookDeviceProfile()] = {
+        left: Math.round(normalizedPosition.left),
+        top: Math.round(normalizedPosition.top),
+    };
+
+    accountStorage.setItem(FLOATING_BOOK_STORAGE_KEYS.position, JSON.stringify(positions));
 }
 
 function clearFloatingBookPosition() {
-    accountStorage.removeItem(FLOATING_BOOK_STORAGE_KEYS.position);
+    const positions = readFloatingBookPositionProfiles();
+    delete positions[getFloatingBookDeviceProfile()];
+
+    if (positions.desktop || positions.mobile) {
+        accountStorage.setItem(FLOATING_BOOK_STORAGE_KEYS.position, JSON.stringify(positions));
+    } else {
+        accountStorage.removeItem(FLOATING_BOOK_STORAGE_KEYS.position);
+    }
 }
 
 function getFloatingBookSettings() {
