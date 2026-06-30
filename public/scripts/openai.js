@@ -23,6 +23,7 @@ import {
     resultCheckStatus,
     saveSettingsDebounced,
     setOnlineStatus,
+    setInContextMessageId,
     setInContextMessages,
     startStatusLoading,
     substituteParams,
@@ -1353,14 +1354,39 @@ export function parseExampleIntoIndividual(messageExampleString, appendNamesForG
 
 // Runtime chat-completion assembly is server-owned. The legacy client builder
 // stays out of the live request path and has been removed from this module.
+/** Applies exact prompt-boundary metadata, falling back to the legacy count if needed. */
+function applyInContextBoundaryMetadata(messagesCount, firstIncludedMessageId, type) {
+    const normalizedMessagesCount = Number(messagesCount);
+    if (Number.isFinite(normalizedMessagesCount) && normalizedMessagesCount >= 0) {
+        openai_messages_count = normalizedMessagesCount;
+    }
+
+    const normalizedFirstIncludedMessageId = Number(firstIncludedMessageId);
+    if (Number.isInteger(normalizedFirstIncludedMessageId) && normalizedFirstIncludedMessageId >= 0) {
+        setInContextMessageId(normalizedFirstIncludedMessageId);
+        return;
+    }
+
+    if (!Number.isFinite(normalizedMessagesCount) || normalizedMessagesCount < 0) {
+        return;
+    }
+
+    setInContextMessages(openai_messages_count, type);
+}
+
 function applyAssemblyResponseMetadata(response, requestId, type) {
     const messagesCountHeader = response.headers.get('X-ST-Messages-Count');
-    if (messagesCountHeader === null) {
+    const firstIncludedMessageIdHeader = response.headers.get('X-ST-First-Included-Message-Id');
+    if (messagesCountHeader === null && firstIncludedMessageIdHeader === null) {
         return;
     }
 
     const messagesCount = Number(messagesCountHeader);
-    if (!Number.isFinite(messagesCount) || messagesCount < 0) {
+    const firstIncludedMessageId = Number(firstIncludedMessageIdHeader);
+    if (
+        (!Number.isFinite(messagesCount) || messagesCount < 0) &&
+        (!Number.isInteger(firstIncludedMessageId) || firstIncludedMessageId < 0)
+    ) {
         return;
     }
 
@@ -1370,8 +1396,7 @@ function applyAssemblyResponseMetadata(response, requestId, type) {
         return;
     }
 
-    openai_messages_count = messagesCount;
-    setInContextMessages(openai_messages_count, type);
+    applyInContextBoundaryMetadata(messagesCount, firstIncludedMessageId, type);
 }
 
 function applyTimedWorldInfoResponseData(data, requestId) {
@@ -1381,13 +1406,16 @@ function applyTimedWorldInfoResponseData(data, requestId) {
     const timedWorldInfo = data?.x_sillytavern?.timedWorldInfo;
     const messagesCount = data?.x_sillytavern?.messagesCount;
     const hasMessagesCount = Number.isFinite(messagesCount) && messagesCount >= 0;
+    const firstIncludedMessageId = data?.x_sillytavern?.firstIncludedMessageId;
+    const hasFirstIncludedMessageId = Number.isInteger(firstIncludedMessageId) && firstIncludedMessageId >= 0;
     const entry = getOpenAIResponseMetadataEntry(requestId, { create: true });
     const chatScope = entry?.chatScope ?? getCurrentPromptInspectionChatScope();
     const hasMetadata =
         (typeof promptSnapshotKey === 'string' && promptSnapshotKey) ||
         hasPromptTokenCount ||
         (timedWorldInfo && typeof timedWorldInfo === 'object') ||
-        hasMessagesCount;
+        hasMessagesCount ||
+        hasFirstIncludedMessageId;
 
     if (!hasMetadata) {
         storeLastPromptInspectionSnapshotKey(null, chatScope);
@@ -1407,9 +1435,8 @@ function applyTimedWorldInfoResponseData(data, requestId) {
     if (entry && hasPromptTokenCount) {
         entry.promptTokenCount = promptTokenCount;
     }
-    if (hasMessagesCount && chatScope === getCurrentPromptInspectionChatScope()) {
-        openai_messages_count = messagesCount;
-        setInContextMessages(openai_messages_count, entry?.type || 'normal');
+    if ((hasMessagesCount || hasFirstIncludedMessageId) && chatScope === getCurrentPromptInspectionChatScope()) {
+        applyInContextBoundaryMetadata(messagesCount, firstIncludedMessageId, entry?.type || 'normal');
     }
     maybeNotifyWorldInfoOverflow(data);
 }

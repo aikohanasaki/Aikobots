@@ -340,7 +340,7 @@ body.layout-custom .mes {
 
 Avoid hardcoding colors in reusable layouts unless the color is intentionally independent of the user's active theme.
 
-STMB popup surfaces in `public/style.css` also use SmartTheme variables for borders and text-adjacent UI. The Topical Clip source memory selector uses `.stmb-topical-source-selector` for the scrollable bordered list and `.stmb-topical-source-select-label` for checkbox rows. The processed-memory boundary uses `.stmb_memory_boundary_divider` and `.stmb_memory_boundary_button`.
+STMB popup surfaces in `public/style.css` also use SmartTheme variables for borders and text-adjacent UI. The Topical Clip source memory selector uses `.stmb-topical-source-selector` for the scrollable bordered list and `.stmb-topical-source-select-label` for checkbox rows. The processed-memory boundary uses `.stmb_memory_boundary_divider` and `.stmb_memory_boundary_button`; the divider is intentionally offset slightly above the target message with reduced opacity so it does not obscure message text.
 
 ## 7. Minimal Custom Layout Template
 

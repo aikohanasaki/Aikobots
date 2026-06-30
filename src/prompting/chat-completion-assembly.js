@@ -220,6 +220,9 @@ class Message {
         message.extension = Boolean(prompt?.extension);
         message.injected = Boolean(prompt?.injected);
         message.systemPrompt = Boolean(prompt?.system_prompt);
+        if (Number.isInteger(Number(prompt?.messageId))) {
+            message.sourceMessageId = Math.trunc(Number(prompt.messageId));
+        }
         return message;
     }
 
@@ -565,9 +568,29 @@ function serializeMessageNode(node) {
         extension: Boolean(node.extension),
         injected: Boolean(node.injected),
         systemPrompt: Boolean(node.systemPrompt),
+        sourceMessageId: Number.isInteger(node.sourceMessageId) ? node.sourceMessageId : undefined,
         tool_calls: node.tool_calls,
         signature: node.signature,
     };
+}
+
+/** Returns the earliest absolute chat message ID represented in the assembled prompt. */
+function getFirstIncludedMessageId(messagesNode) {
+    const messages = messagesNode?.flatten?.() ?? [];
+    let firstIncludedMessageId = null;
+
+    for (const message of messages) {
+        const sourceMessageId = Number(message?.sourceMessageId);
+        if (!Number.isInteger(sourceMessageId) || sourceMessageId < 0) {
+            continue;
+        }
+
+        firstIncludedMessageId = firstIncludedMessageId === null
+            ? sourceMessageId
+            : Math.min(firstIncludedMessageId, sourceMessageId);
+    }
+
+    return firstIncludedMessageId;
 }
 
 function createPromptItemization(serviceSettings = {}) {
@@ -2340,8 +2363,10 @@ export async function assembleChatCompletionPrompt(payload = {}) {
         await chatCompletion.squashSystemMessages();
     }
 
+    const messagesState = chatCompletion.getMessages();
     const chat = chatCompletion.getChat();
     const messagesCount = chat.filter(message => !message?.tool_calls && ['user', 'assistant', 'tool'].includes(message?.role)).length || 0;
+    const firstIncludedMessageId = getFirstIncludedMessageId(messagesState);
     const examplesCount = Array.isArray(context.messageExamples) ? context.messageExamples.length : 0;
 
     return {
@@ -2350,9 +2375,10 @@ export async function assembleChatCompletionPrompt(payload = {}) {
         counts: itemization ? structuredClone(itemization) : false,
         itemization,
         messagesCount,
+        firstIncludedMessageId,
         examplesCount,
         overriddenPrompts: prompts.overriddenPrompts,
-        messagesState: serializeMessageNode(chatCompletion.getMessages()),
+        messagesState: serializeMessageNode(messagesState),
         timedWorldInfo: structuredClone(context.worldInfoTimedState || context.worldInfoRequest?.timedWorldInfo || {}),
         worldInfoOverflowed: Boolean(context.worldInfoOverflowed),
         worldInfo: structuredClone(context.worldInfoDebug || null),

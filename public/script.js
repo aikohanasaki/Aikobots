@@ -9062,6 +9062,7 @@ export async function Generate(type, { automatic_trigger, force_name2, quiet_pro
     }
 
     coreChat = await Promise.all(coreChat.map(async (/** @type {ChatMessage} */ chatItem, index) => {
+        const messageId = chat.indexOf(chatItem);
         let message = chatItem.mes;
         let regexType = chatItem.is_user ? regex_placement.USER_INPUT : regex_placement.AI_OUTPUT;
         let options = { isPrompt: true, depth: (coreChat.length - index - (isContinue ? 2 : 1)) };
@@ -9088,6 +9089,7 @@ export async function Generate(type, { automatic_trigger, force_name2, quiet_pro
             ...chatItem,
             mes: regexedMessage,
             index,
+            messageId: messageId >= 0 ? messageId : index,
         };
     }));
 
@@ -10433,6 +10435,30 @@ export function setInContextMessages(msgInContextCount, type) {
     // Update last id to chat. No metadata save on purpose, gets hopefully saved via another call
     const lastMessageId = Math.max(0, chat.length - msgInContextCount);
     chat_metadata['lastInContextMessageId'] = lastMessageId;
+}
+
+/** Marks the first rendered chat message included in the prompt by absolute message ID. */
+export function setInContextMessageId(firstIncludedMessageId) {
+    const normalizedMessageId = Number(firstIncludedMessageId);
+    if (!Number.isInteger(normalizedMessageId) || normalizedMessageId < 0) {
+        return false;
+    }
+
+    chatElement.find('.mes').removeClass('lastInContext');
+
+    const messageBlock = chatElement.find(`.mes[mesid="${normalizedMessageId}"]`);
+    if (messageBlock.length > 0) {
+        messageBlock.addClass('lastInContext');
+    } else {
+        const firstMessageId = getFirstDisplayedMessageId();
+        if (Number.isInteger(firstMessageId) && firstMessageId > normalizedMessageId) {
+            chatElement.find(`.mes[mesid="${firstMessageId}"]`).addClass('lastInContext');
+        }
+    }
+
+    // Update last id to chat. No metadata save on purpose, gets hopefully saved via another call
+    chat_metadata['lastInContextMessageId'] = normalizedMessageId;
+    return true;
 }
 
 /**

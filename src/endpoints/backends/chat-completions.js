@@ -995,6 +995,7 @@ async function sendProviderDispatchResult(result, request, response, {
     worldInfo = null,
     promptSnapshotKey = null,
     messagesCount = null,
+    firstIncludedMessageId = null,
     promptTokenCount = null,
 } = {}) {
     try {
@@ -1027,6 +1028,7 @@ async function sendProviderDispatchResult(result, request, response, {
                 worldInfo,
                 promptSnapshotKey,
                 messagesCount,
+                firstIncludedMessageId,
                 promptTokenCount,
             );
         }
@@ -1039,7 +1041,7 @@ async function sendProviderDispatchResult(result, request, response, {
         }
 
         const payload = result.ok
-            ? attachWorldInfoResponseData(result.body, request, timedWorldInfo, worldInfoOverflowed, worldInfo, promptSnapshotKey, messagesCount, promptTokenCount)
+            ? attachWorldInfoResponseData(result.body, request, timedWorldInfo, worldInfoOverflowed, worldInfo, promptSnapshotKey, messagesCount, firstIncludedMessageId, promptTokenCount)
             : annotateErrorPayload(result.body, {
                 request,
                 stage: 'provider_response',
@@ -2940,7 +2942,7 @@ function buildWorldInfoSummaryResponseData(worldInfo, user) {
     return { sanitizedWorldInfo, worldInfoSummary, worldInfoReport };
 }
 
-function buildXSillyTavernPayload(request, timedWorldInfo, worldInfoOverflowed = false, worldInfo = null, promptSnapshotKey = null, messagesCount = null, promptTokenCount = null) {
+function buildXSillyTavernPayload(request, timedWorldInfo, worldInfoOverflowed = false, worldInfo = null, promptSnapshotKey = null, messagesCount = null, firstIncludedMessageId = null, promptTokenCount = null) {
     void request;
     void worldInfo;
     const xSillyTavern = {};
@@ -2957,6 +2959,10 @@ function buildXSillyTavernPayload(request, timedWorldInfo, worldInfoOverflowed =
     if (messagesCount !== null) {
         xSillyTavern.messagesCount = Number(messagesCount);
     }
+    const numericFirstIncludedMessageId = Number(firstIncludedMessageId);
+    if (Number.isInteger(numericFirstIncludedMessageId) && numericFirstIncludedMessageId >= 0) {
+        xSillyTavern.firstIncludedMessageId = numericFirstIncludedMessageId;
+    }
     const numericPromptTokenCount = Number(promptTokenCount);
     if (Number.isFinite(numericPromptTokenCount) && numericPromptTokenCount >= 0) {
         xSillyTavern.promptTokenCount = numericPromptTokenCount;
@@ -2965,7 +2971,7 @@ function buildXSillyTavernPayload(request, timedWorldInfo, worldInfoOverflowed =
     return xSillyTavern;
 }
 
-function attachWorldInfoResponseData(payload, request, timedWorldInfo, worldInfoOverflowed = false, worldInfo = null, promptSnapshotKey = null, messagesCount = null, promptTokenCount = null) {
+function attachWorldInfoResponseData(payload, request, timedWorldInfo, worldInfoOverflowed = false, worldInfo = null, promptSnapshotKey = null, messagesCount = null, firstIncludedMessageId = null, promptTokenCount = null) {
     void request;
     void worldInfo;
     if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
@@ -2974,7 +2980,7 @@ function attachWorldInfoResponseData(payload, request, timedWorldInfo, worldInfo
 
     const xSillyTavern = {
         ...(payload.x_sillytavern && typeof payload.x_sillytavern === 'object' ? payload.x_sillytavern : {}),
-        ...buildXSillyTavernPayload(request, timedWorldInfo, worldInfoOverflowed, worldInfo, promptSnapshotKey, messagesCount, promptTokenCount),
+        ...buildXSillyTavernPayload(request, timedWorldInfo, worldInfoOverflowed, worldInfo, promptSnapshotKey, messagesCount, firstIncludedMessageId, promptTokenCount),
     };
 
     if (!Object.keys(xSillyTavern).length) {
@@ -2987,12 +2993,12 @@ function attachWorldInfoResponseData(payload, request, timedWorldInfo, worldInfo
     return payload;
 }
 
-function writeWorldInfoSseEvent(response, request, timedWorldInfo, worldInfoOverflowed = false, worldInfo = null, promptSnapshotKey = null, messagesCount = null, promptTokenCount = null) {
+function writeWorldInfoSseEvent(response, request, timedWorldInfo, worldInfoOverflowed = false, worldInfo = null, promptSnapshotKey = null, messagesCount = null, firstIncludedMessageId = null, promptTokenCount = null) {
     if (response.writableEnded) {
         return;
     }
 
-    const xSillyTavern = buildXSillyTavernPayload(request, timedWorldInfo, worldInfoOverflowed, worldInfo, promptSnapshotKey, messagesCount, promptTokenCount);
+    const xSillyTavern = buildXSillyTavernPayload(request, timedWorldInfo, worldInfoOverflowed, worldInfo, promptSnapshotKey, messagesCount, firstIncludedMessageId, promptTokenCount);
     if (!Object.keys(xSillyTavern).length) {
         return;
     }
@@ -3029,7 +3035,7 @@ function stopStreamHeartbeat(heartbeat) {
     }
 }
 
-async function forwardFetchResponseWithWorldInfo(from, to, request, timedWorldInfo, worldInfoOverflowed = false, worldInfo = null, promptSnapshotKey = null, messagesCount = null, promptTokenCount = null) {
+async function forwardFetchResponseWithWorldInfo(from, to, request, timedWorldInfo, worldInfoOverflowed = false, worldInfo = null, promptSnapshotKey = null, messagesCount = null, firstIncludedMessageId = null, promptTokenCount = null) {
     let statusCode = from.status;
     let statusText = from.statusText;
 
@@ -3052,12 +3058,12 @@ async function forwardFetchResponseWithWorldInfo(from, to, request, timedWorldIn
     }
 
     if (!from.body || !to.socket) {
-        writeWorldInfoSseEvent(to, request, timedWorldInfo, worldInfoOverflowed, worldInfo, promptSnapshotKey, messagesCount, promptTokenCount);
+        writeWorldInfoSseEvent(to, request, timedWorldInfo, worldInfoOverflowed, worldInfo, promptSnapshotKey, messagesCount, firstIncludedMessageId, promptTokenCount);
         to.end();
         return;
     }
 
-    writeWorldInfoSseEvent(to, request, timedWorldInfo, worldInfoOverflowed, worldInfo, promptSnapshotKey, messagesCount, promptTokenCount);
+    writeWorldInfoSseEvent(to, request, timedWorldInfo, worldInfoOverflowed, worldInfo, promptSnapshotKey, messagesCount, firstIncludedMessageId, promptTokenCount);
     const heartbeat = startStreamHeartbeat(to);
     const responseSocket = to.socket;
 
@@ -3602,6 +3608,7 @@ export async function handleChatCompletionsGenerate(request, response) {
         let assembledTimedWorldInfo = null;
         let assembledWorldInfoOverflowed = false;
         let assembledMessagesCount = null;
+        let assembledFirstIncludedMessageId = null;
         let assembledPromptSnapshot = null;
         let promptInspectionInfo = null;
         let dispatchedPromptSnapshotKey = null;
@@ -3640,7 +3647,13 @@ export async function handleChatCompletionsGenerate(request, response) {
             rewriteSystemMessagesForO1Model(request.body.prompt_context.model, request.body.prompt_context.chatCompletionSource, assembled.chat);
             request.body.messages = assembled.chat;
             assembledMessagesCount = Number(assembled.messagesCount) || 0;
+            assembledFirstIncludedMessageId = Number.isInteger(Number(assembled.firstIncludedMessageId))
+                ? Math.trunc(Number(assembled.firstIncludedMessageId))
+                : null;
             response.setHeader('X-ST-Messages-Count', String(assembledMessagesCount));
+            if (assembledFirstIncludedMessageId !== null) {
+                response.setHeader('X-ST-First-Included-Message-Id', String(assembledFirstIncludedMessageId));
+            }
             assembledTimedWorldInfo = assembled.timedWorldInfo;
             assembledWorldInfoOverflowed = Boolean(assembled.worldInfoOverflowed);
             assembledPromptContext = true;
@@ -3721,6 +3734,7 @@ export async function handleChatCompletionsGenerate(request, response) {
                 worldInfo: assembledPromptSnapshot?.worldInfo || null,
                 promptSnapshotKey: dispatchedPromptSnapshotKey || promptInspectionInfo?.key || null,
                 messagesCount: assembledMessagesCount,
+                firstIncludedMessageId: assembledFirstIncludedMessageId,
                 promptTokenCount: assembledPromptSnapshot?.itemization?.finalPromptTokens ?? null,
             });
             cleanup();
@@ -4100,6 +4114,7 @@ export async function handleChatCompletionsGenerate(request, response) {
         worldInfo: assembledPromptSnapshot?.worldInfo || null,
         promptSnapshotKey: dispatchedPromptSnapshotKey || promptInspectionInfo?.key || null,
         messagesCount: assembledMessagesCount,
+        firstIncludedMessageId: assembledFirstIncludedMessageId,
         promptTokenCount: assembledPromptSnapshot?.itemization?.finalPromptTokens ?? null,
     });
     cleanup();
