@@ -1153,7 +1153,7 @@ function updateCharacterSaveButtonState() {
     }
 
     const isEditMode = $('#form_create').attr('actiontype') === 'editcharacter';
-    const canSaveMetadata = !isEditMode || canEditCharacterMetadata(this_chid);
+    const canSaveMetadata = !isEditMode || canEditCharacterMetadata(this_chid) || canEditRelaxedCharacterMetadata(this_chid);
     saveButtonLabel
         .toggleClass('fa-user-check', !isEditMode)
         .toggleClass('fa-floppy-disk', isEditMode)
@@ -1161,7 +1161,9 @@ function updateCharacterSaveButtonState() {
         .attr('aria-disabled', !canSaveMetadata ? 'true' : 'false')
         .attr('title', isEditMode
             ? canSaveMetadata
-                ? t`Save Character`
+                ? canEditCharacterMetadata(this_chid)
+                    ? t`Save Character`
+                    : t`Save tags and talkativeness`
                 : t`Only botmakers and admins can edit character metadata`
             : t`Create Character`);
 
@@ -1170,12 +1172,13 @@ function updateCharacterSaveButtonState() {
         .attr('aria-label', isEditMode ? t`Save Character` : t`Create Character`);
 }
 
-export function markCharacterEditorDirty() {
+export function markCharacterEditorDirty(sourceSelector = null) {
     if (!isCharacterEditorInEditMode()) {
         return;
     }
 
-    if (!canEditCharacterMetadata(this_chid)) {
+    const isRelaxedControl = sourceSelector && relaxedCharacterMetadataControlSelectors.has(sourceSelector);
+    if (!canEditCharacterMetadata(this_chid) && !isRelaxedControl) {
         clearCharacterEditorDirtyState();
         return;
     }
@@ -15277,6 +15280,15 @@ export function canEditCharacterMetadata(chid) {
     return ownerHandles.length === 0 || isAdmin() || ownerHandles.includes(currentUser?.handle);
 }
 
+function canEditRelaxedCharacterMetadata(chid) {
+    return chid !== undefined && chid !== null && !!characters[chid];
+}
+
+const relaxedCharacterMetadataControlSelectors = new Set([
+    '#tags_textarea',
+    '#talkativeness_slider',
+]);
+
 const characterMetadataControlSelectors = [
     '#character_name_pole',
     '#description_textarea',
@@ -15304,10 +15316,11 @@ function updateCharacterMetadataEditability(chid = this_chid) {
 
     for (const selector of characterMetadataControlSelectors) {
         const control = $(selector);
+        const controlReadOnly = readOnly && !relaxedCharacterMetadataControlSelectors.has(selector);
         control
-            .prop('readonly', readOnly)
-            .prop('disabled', readOnly && control.is('select, input[type="range"]'))
-            .toggleClass('disabled', readOnly);
+            .prop('readonly', controlReadOnly)
+            .prop('disabled', controlReadOnly && control.is('select, input[type="range"]'))
+            .toggleClass('disabled', controlReadOnly);
     }
 
     $('#renameCharButton, .open_alternate_greetings, #set_character_world, #char_connections_button')
@@ -16690,6 +16703,58 @@ function shouldShowCharacterMetadataPermissionToast(event, { silentPermissionErr
     return event instanceof Event && event.type === 'submit';
 }
 
+function getRelaxedCharacterTagsFromEditor() {
+    return String($('#tags_textarea').val() ?? '')
+        .split(',')
+        .map(x => x.trim())
+        .filter(Boolean);
+}
+
+async function saveRelaxedCharacterMetadata() {
+    const character = characters[this_chid];
+    if (!character) {
+        return false;
+    }
+
+    const tags = getRelaxedCharacterTagsFromEditor();
+    const talkativeness = Number($('#talkativeness_slider').val() || talkativeness_default);
+    const mergeRequest = {
+        avatar: character.avatar,
+        tags,
+        data: {
+            tags,
+            extensions: {
+                talkativeness,
+            },
+        },
+        talkativeness,
+    };
+
+    const mergeResponse = await fetch('/api/characters/merge-attributes', {
+        method: 'POST',
+        headers: getRequestHeaders(),
+        body: JSON.stringify(mergeRequest),
+    });
+
+    if (!mergeResponse.ok) {
+        let errorMessage = '';
+        try {
+            const errorData = await mergeResponse.json();
+            errorMessage = errorData?.error?.message || errorData?.error || errorData?.message || '';
+        } catch {
+            errorMessage = mergeResponse.statusText;
+        }
+
+        toastr.error(errorMessage || t`Failed to save tags and talkativeness.`);
+        return false;
+    }
+
+    await getOneCharacter(character.avatar);
+    await printCharacters(false);
+    clearCharacterEditorDirtyState();
+    return true;
+}
+
 /**
  * Creates or edits a character based on the form data.
  * @param {Event} [e] Event that triggered the function call.
@@ -16701,6 +16766,10 @@ export async function createOrEditCharacter(e, options = {}) {
     $('#rm_info_avatar').html('');
     const isNewChat = e instanceof CustomEvent && e.type === 'newChat';
     if ($('#form_create').attr('actiontype') === 'editcharacter' && !canEditCharacterMetadata(this_chid)) {
+        if (canEditRelaxedCharacterMetadata(this_chid)) {
+            return saveRelaxedCharacterMetadata();
+        }
+
         if (shouldShowCharacterMetadataPermissionToast(e, options)) {
             toastr.error(t`Only botmakers and admins can edit character metadata.`);
         }
@@ -18574,7 +18643,7 @@ jQuery(async function () {
             if (menu_type == 'create') {
                 elementsToUpdate[id]();
             } else {
-                markCharacterEditorDirty();
+                markCharacterEditorDirty(id);
             }
         });
     });

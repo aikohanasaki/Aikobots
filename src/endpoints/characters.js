@@ -1328,6 +1328,31 @@ function preserveTokenDryRunMetadata(targetCharacter, sourceCharacter) {
     }
 }
 
+function isRelaxedCharacterMetadataUpdate(update) {
+    const allowedPaths = new Set([
+        'avatar',
+        'tags',
+        'talkativeness',
+        'data.tags',
+        'data.extensions.talkativeness',
+    ]);
+
+    const walk = (value, pathParts = []) => {
+        if (!value || typeof value !== 'object' || Array.isArray(value)) {
+            return [pathParts.join('.')];
+        }
+
+        const entries = Object.entries(value);
+        if (entries.length === 0) {
+            return [pathParts.join('.')];
+        }
+
+        return entries.flatMap(([key, child]) => walk(child, [...pathParts, key]));
+    };
+
+    return walk(update).every(path => allowedPaths.has(path));
+}
+
 /**
  * Removes an embedded lorebook when the edit request explicitly clears the
  * embedded-lorebook selector and the submitted JSON no longer carries the
@@ -2135,9 +2160,14 @@ router.post('/merge-attributes', getFileNameValidationFunction('avatar'), async 
             return response.status(400).send('Error: invalid character file.');
         }
 
+        _.unset(update, 'json_data');
+        _.unset(update, 'fav');
+        _.unset(update, 'data.extensions.fav');
+
         let character = JSON.parse(pngStringData);
         const existingCharacter = _.cloneDeep(character);
-        if (!canEditCharacterMetadata(character, request)) {
+        const canEditMetadata = canEditCharacterMetadata(character, request);
+        if (!canEditMetadata && !isRelaxedCharacterMetadataUpdate(update)) {
             const ownerLabel = getCharacterOwnerLabel(character);
             return response.status(403).json({ error: `Only ${ownerLabel} and admins can edit this character's metadata.` });
         }
@@ -2153,9 +2183,6 @@ router.post('/merge-attributes', getFileNameValidationFunction('avatar'), async 
             return response.status(403).json({ error: `Only ${ownerLabel} and admins can change this character's lorebook assignments.` });
         }
 
-        _.unset(update, 'json_data');
-        _.unset(update, 'fav');
-        _.unset(update, 'data.extensions.fav');
         _.unset(character, 'json_data');
 
         character = deepMerge(character, update);
