@@ -21,7 +21,6 @@ import { delay } from './utils.js';
 
 export const GENERATION_LOCKS_METADATA_KEY = 'aikobots_generation_locks';
 
-const APPLY_MODES = new Set(['inherit', 'apply', 'ask', 'off']);
 const GLOBAL_APPLY_MODES = new Set(['apply', 'ask', 'off']);
 const OVERRIDE_SELECTORS = Object.freeze({
     temp_openai: '#temp_openai',
@@ -94,7 +93,6 @@ function normalizeGenerationLock(record) {
 
     return {
         version: 1,
-        applyMode: APPLY_MODES.has(source.applyMode) ? source.applyMode : 'inherit',
         connectionProfileId: typeof source.connectionProfileId === 'string' ? source.connectionProfileId : '',
         presetName: typeof source.presetName === 'string' ? source.presetName : '',
         overrides,
@@ -142,7 +140,7 @@ function makeCandidate(source, lock) {
     }
 
     const normalized = normalizeGenerationLock(lock);
-    if (normalized.applyMode === 'off' || !hasLockTarget(normalized)) {
+    if (!hasLockTarget(normalized)) {
         return null;
     }
 
@@ -180,14 +178,6 @@ export function resolveGenerationLock(options = {}) {
     return settings.chatBeatsCharacter
         ? firstCandidate([chatCandidate, characterCandidate])
         : firstCandidate([characterCandidate, chatCandidate]);
-}
-
-function getEffectiveApplyMode(lock) {
-    if (lock.applyMode === 'inherit') {
-        return getGenerationLocksSettings().defaultApplyMode;
-    }
-
-    return lock.applyMode;
 }
 
 function getGenerationLockSignature(resolved) {
@@ -247,10 +237,6 @@ function describeGenerationLock(lock) {
     }
 
     const normalized = normalizeGenerationLock(lock);
-    if (normalized.applyMode === 'off') {
-        return t`Off`;
-    }
-
     const parts = [];
     if (normalized.connectionProfileId) {
         parts.push(getProfileById(normalized.connectionProfileId)?.name || normalized.connectionProfileId);
@@ -409,12 +395,12 @@ export async function applyResolvedGenerationLock(resolved, options = {}) {
         return false;
     }
 
-    const applyMode = getEffectiveApplyMode(resolved.lock);
-    if (applyMode === 'off') {
+    const defaultMode = getGenerationLocksSettings().defaultApplyMode;
+    if (defaultMode === 'off') {
         return false;
     }
 
-    if (applyMode === 'ask' && !options.force) {
+    if (defaultMode === 'ask' && !options.force) {
         const confirmed = await askToApplyGenerationLock(resolved);
         if (!confirmed) {
             return false;
@@ -422,7 +408,7 @@ export async function applyResolvedGenerationLock(resolved, options = {}) {
     }
 
     const signature = getGenerationLockSignature(resolved);
-    if (!options.force && !options.ignoreLastApplied && signature && signature === lastAppliedSignature) {
+    if (!options.force && signature && signature === lastAppliedSignature) {
         return false;
     }
 
@@ -482,7 +468,6 @@ function getCurrentOverrides() {
 
 function createCurrentGenerationLock() {
     return normalizeGenerationLock({
-        applyMode: String($('#generation_locks_context_apply_mode').val() || 'inherit'),
         connectionProfileId: getCurrentProfileId(),
         presetName: getCurrentPresetName(),
         overrides: getCurrentOverrides(),
@@ -645,7 +630,7 @@ export function initGenerationLocks() {
         }
     });
     eventSource.on(event_types.GROUP_MEMBER_DRAFTED, async (chId) => {
-        await applyGenerationLockForCurrentContext({ speakerCharacterId: chId, ignoreLastApplied: true });
+        await applyGenerationLockForCurrentContext({ speakerCharacterId: chId });
     });
     eventSource.on(event_types.CONNECTION_PROFILE_CREATED, () => updateGenerationLocksStatus());
     eventSource.on(event_types.CONNECTION_PROFILE_UPDATED, () => updateGenerationLocksStatus());

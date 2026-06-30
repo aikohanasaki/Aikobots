@@ -7,7 +7,6 @@ export const CUSTOMS_FILE = 'customs.json';
 export const CUSTOMS_VERSION = 1;
 
 const CUSTOMS_SETTINGS_FIELD = 'customs';
-const VALID_APPLY_MODES = new Set(['inherit', 'apply', 'ask', 'off']);
 const OVERRIDE_KEYS = Object.freeze([
     'temp_openai',
     'top_p_openai',
@@ -44,7 +43,6 @@ function normalizeOverrides(overrides) {
 
 function normalizeGenerationLockRecord(record) {
     const source = isPlainObject(record) ? record : {};
-    const applyMode = VALID_APPLY_MODES.has(source.applyMode) ? source.applyMode : 'inherit';
     const connectionProfileId = toOptionalString(source.connectionProfileId);
     const presetName = typeof source.presetName === 'string' ? source.presetName : '';
     const overrides = normalizeOverrides(source.overrides);
@@ -52,7 +50,6 @@ function normalizeGenerationLockRecord(record) {
 
     return {
         version: CUSTOMS_VERSION,
-        applyMode,
         connectionProfileId,
         presetName,
         overrides,
