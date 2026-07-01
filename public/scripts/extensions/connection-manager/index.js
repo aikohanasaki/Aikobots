@@ -21,6 +21,9 @@ const NONE = '<None>';
 const EMPTY = '<Empty>';
 const PROMPT_POST_PROCESSING_COMMAND = 'prompt-post-processing';
 const PROMPT_POST_PROCESSING_DISABLED_TITLE = 'changing this is disabled by "Use Global Prompt Post-Processing Modes".';
+const REMOVED_PROFILE_COMMANDS = [
+    'regex-preset',
+];
 const CONNECTION_PROFILE_DEBUG_PREFIX = '[ConnectionProfileDebug]';
 const CONNECTION_PROFILE_DEBUG_GRACE_MS = 10_000;
 const CONNECTION_PROFILE_DEBUG_MAX_BODY_LENGTH = 5_000;
@@ -75,7 +78,6 @@ const CC_COMMANDS = [
     'reasoning-template',
     'prompt-post-processing',
     'secret-id',
-    'regex-preset',
 ];
 
 const TC_COMMANDS = [
@@ -88,7 +90,6 @@ const TC_COMMANDS = [
     'start-reply-with',
     'reasoning-template',
     'secret-id',
-    'regex-preset',
 ];
 
 const FANCY_NAMES = {
@@ -103,7 +104,6 @@ const FANCY_NAMES = {
     'reasoning-template': 'Reasoning Template',
     [PROMPT_POST_PROCESSING_COMMAND]: 'Prompt Post-Processing',
     'secret-id': 'Secret',
-    'regex-preset': 'Regex Preset',
 };
 
 function isGlobalPromptPostProcessingEnabled() {
@@ -602,6 +602,32 @@ async function emitConnectionProfileLoadedWithDebug(session, profileName) {
 }
 
 /**
+ * Removes profile fields that connection manager no longer owns.
+ * @param {ConnectionProfile} profile Connection profile
+ * @returns {boolean} True when the profile was changed.
+ */
+function removeObsoleteProfileCommands(profile) {
+    let changed = false;
+
+    for (const command of REMOVED_PROFILE_COMMANDS) {
+        if (Object.prototype.hasOwnProperty.call(profile, command)) {
+            delete profile[command];
+            changed = true;
+        }
+    }
+
+    if (Array.isArray(profile.exclude)) {
+        const filteredExclude = profile.exclude.filter(command => !REMOVED_PROFILE_COMMANDS.includes(command));
+        if (filteredExclude.length !== profile.exclude.length) {
+            profile.exclude = filteredExclude;
+            changed = true;
+        }
+    }
+
+    return changed;
+}
+
+/**
  * @typedef {Object} ConnectionProfile
  * @property {string} id Unique identifier
  * @property {string} mode Mode of the connection profile
@@ -617,7 +643,6 @@ async function emitConnectionProfileLoadedWithDebug(session, profileName) {
  * @property {string} [prompt-post-processing] Prompt Post-Processing
  * @property {string} [api-url] Server URL
  * @property {string} [secret-id] Secret ID
- * @property {string} [regex-preset] Regex Preset ID
  * @property {string[]} [exclude] Commands to exclude
  */
 
@@ -691,6 +716,7 @@ async function readProfileFromCommands(mode, profile, cleanUp = false) {
 
             delete profile[command];
         }
+        removeObsoleteProfileCommands(profile);
     }
 }
 
@@ -813,14 +839,6 @@ function makeFancyProfile(profile) {
         // UUID is not very useful in the UI, so we replace it with a label (if available)
         if (key === 'secret-id') {
             const label = getSecretLabelById(profile[key]);
-            if (label) {
-                acc[value] = label;
-                return acc;
-            }
-        }
-
-        if (key === 'regex-preset') {
-            const label = extension_settings.regex_presets?.find(p => p.id === profile[key])?.name;
             if (label) {
                 acc[value] = label;
                 return acc;
@@ -1022,6 +1040,15 @@ async function renderDetailsContent(detailsContent) {
     for (const key of Object.keys(DEFAULT_SETTINGS)) {
         if (extension_settings.connectionManager[key] === undefined) {
             extension_settings.connectionManager[key] = DEFAULT_SETTINGS[key];
+        }
+    }
+
+    if (Array.isArray(extension_settings.connectionManager.profiles)) {
+        const removedObsoleteCommands = extension_settings.connectionManager.profiles
+            .map(removeObsoleteProfileCommands)
+            .some(Boolean);
+        if (removedObsoleteCommands) {
+            saveSettingsDebounced();
         }
     }
 
