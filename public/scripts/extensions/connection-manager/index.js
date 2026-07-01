@@ -21,6 +21,35 @@ const NONE = '<None>';
 const EMPTY = '<Empty>';
 const PROMPT_POST_PROCESSING_COMMAND = 'prompt-post-processing';
 const PROMPT_POST_PROCESSING_DISABLED_TITLE = 'changing this is disabled by "Use Global Prompt Post-Processing Modes".';
+const CONNECTION_PROFILE_DEBUG_PREFIX = '[ConnectionProfileDebug]';
+const CONNECTION_PROFILE_DEBUG_GRACE_MS = 10_000;
+const CONNECTION_PROFILE_DEBUG_MAX_BODY_LENGTH = 5_000;
+const CONNECTION_PROFILE_DEBUG_REDACTED = '[redacted]';
+const CONNECTION_PROFILE_DEBUG_TRUNCATED = '[truncated]';
+
+const CONNECTION_PROFILE_DEBUG_SENSITIVE_KEYS = [
+    'authorization',
+    'cookie',
+    'csrf',
+    'key',
+    'secret',
+    'token',
+    'password',
+    'auth',
+];
+
+const CONNECTION_PROFILE_DEBUG_TEXT_KEYS = [
+    'chat',
+    'content',
+    'entries',
+    'entry',
+    'message',
+    'messages',
+    'prompt',
+    'text',
+    'world_info',
+    'worldinfo',
+];
 
 const DEFAULT_SETTINGS = {
     profiles: [],
@@ -168,6 +197,409 @@ const profilesProvider = () => [
     new SlashCommandEnumValue(NONE),
     ...extension_settings.connectionManager.profiles.map(p => new SlashCommandEnumValue(p.name, null, enumTypes.name, enumIcons.server)),
 ];
+
+function isConnectionProfileDebugSensitiveKey(key) {
+    const normalizedKey = String(key || '').toLowerCase();
+    return CONNECTION_PROFILE_DEBUG_SENSITIVE_KEYS.some(part => normalizedKey.includes(part));
+}
+
+function isConnectionProfileDebugTextKey(key) {
+    const normalizedKey = String(key || '').toLowerCase();
+    return CONNECTION_PROFILE_DEBUG_TEXT_KEYS.some(part => normalizedKey.includes(part));
+}
+
+function truncateConnectionProfileDebugString(value) {
+    if (value.length <= CONNECTION_PROFILE_DEBUG_MAX_BODY_LENGTH) {
+        return value;
+    }
+
+    return `${value.slice(0, CONNECTION_PROFILE_DEBUG_MAX_BODY_LENGTH)} ${CONNECTION_PROFILE_DEBUG_TRUNCATED} ${value.length} chars`;
+}
+
+function redactConnectionProfileDebugHeaders(headers) {
+    if (!headers) {
+        return {};
+    }
+
+    const entries = headers instanceof Headers
+        ? Array.from(headers.entries())
+        : Array.isArray(headers)
+            ? headers
+            : Object.entries(headers);
+
+    return entries.reduce((acc, [key, value]) => {
+        acc[key] = isConnectionProfileDebugSensitiveKey(key)
+            ? CONNECTION_PROFILE_DEBUG_REDACTED
+            : redactConnectionProfileDebugValue(value, key);
+        return acc;
+    }, {});
+}
+
+function redactConnectionProfileDebugValue(value, key = '', seen = new WeakSet()) {
+    if (isConnectionProfileDebugSensitiveKey(key)) {
+        return CONNECTION_PROFILE_DEBUG_REDACTED;
+    }
+
+    if (typeof value === 'string') {
+        if (isConnectionProfileDebugTextKey(key)) {
+            return value ? `${CONNECTION_PROFILE_DEBUG_REDACTED} ${value.length} chars` : '';
+        }
+
+        return truncateConnectionProfileDebugString(value);
+    }
+
+    if (value === null || value === undefined || typeof value !== 'object') {
+        return value;
+    }
+
+    if (value instanceof Headers) {
+        return redactConnectionProfileDebugHeaders(value);
+    }
+
+    if (value instanceof FormData) {
+        const formData = {};
+        for (const [formKey, formValue] of value.entries()) {
+            formData[formKey] = formValue instanceof File
+                ? { name: formValue.name, size: formValue.size, type: formValue.type }
+                : redactConnectionProfileDebugValue(String(formValue), formKey, seen);
+        }
+        return formData;
+    }
+
+    if (value instanceof URLSearchParams) {
+        const params = {};
+        for (const [paramKey, paramValue] of value.entries()) {
+            params[paramKey] = redactConnectionProfileDebugValue(paramValue, paramKey, seen);
+        }
+        return params;
+    }
+
+    if (value instanceof Blob) {
+        return { type: value.type, size: value.size };
+    }
+
+    if (value instanceof ArrayBuffer) {
+        return { type: 'ArrayBuffer', byteLength: value.byteLength };
+    }
+
+    if (ArrayBuffer.isView(value)) {
+        return { type: value.constructor.name, byteLength: value.byteLength };
+    }
+
+    if (seen.has(value)) {
+        return '[circular]';
+    }
+    seen.add(value);
+
+    if (Array.isArray(value)) {
+        return value.map(item => redactConnectionProfileDebugValue(item, key, seen));
+    }
+
+    return Object.entries(value).reduce((acc, [entryKey, entryValue]) => {
+        acc[entryKey] = redactConnectionProfileDebugValue(entryValue, entryKey, seen);
+        return acc;
+    }, {});
+}
+
+function parseConnectionProfileDebugBodyText(text) {
+    if (!text) {
+        return '';
+    }
+
+    try {
+        return redactConnectionProfileDebugValue(JSON.parse(text));
+    } catch {
+        return truncateConnectionProfileDebugString(text);
+    }
+}
+
+function getConnectionProfileDebugRequestBody(init) {
+    if (!init || !Object.prototype.hasOwnProperty.call(init, 'body')) {
+        return undefined;
+    }
+
+    const body = init.body;
+    if (typeof body === 'string') {
+        return parseConnectionProfileDebugBodyText(body);
+    }
+
+    return redactConnectionProfileDebugValue(body, 'body');
+}
+
+function redactConnectionProfileDebugCommandArgument(command, argument) {
+    return redactConnectionProfileDebugValue(argument, command);
+}
+
+class ConnectionProfileDebugSession {
+    static active = null;
+    static originalFetch = null;
+    static originalJQueryAjax = null;
+    static nextSessionId = 1;
+
+    constructor(profile, source, previousProfileId) {
+        this.id = ConnectionProfileDebugSession.nextSessionId++;
+        this.profile = profile;
+        this.source = source;
+        this.previousProfileId = previousProfileId ?? null;
+        this.requestCounter = 0;
+        this.stopTimer = null;
+        this.startedAt = performance.now();
+        this.closed = false;
+    }
+
+    static start(profile, source, previousProfileId) {
+        ConnectionProfileDebugSession.active?.stopNow('replaced by a new profile diagnostic session');
+        const session = new ConnectionProfileDebugSession(profile, source, previousProfileId);
+        ConnectionProfileDebugSession.active = session;
+        ConnectionProfileDebugSession.installFetchWrapper();
+        ConnectionProfileDebugSession.installJQueryAjaxWrapper();
+        session.logStart();
+        return session;
+    }
+
+    static installFetchWrapper() {
+        if (ConnectionProfileDebugSession.originalFetch || typeof window.fetch !== 'function') {
+            return;
+        }
+
+        ConnectionProfileDebugSession.originalFetch = window.fetch;
+        window.fetch = async function (...args) {
+            const session = ConnectionProfileDebugSession.active;
+            if (!session) {
+                return ConnectionProfileDebugSession.originalFetch.apply(this, args);
+            }
+
+            const requestId = session.nextRequestId('fetch');
+            const startedAt = performance.now();
+            session.logFetchRequest(requestId, args);
+
+            try {
+                const response = await ConnectionProfileDebugSession.originalFetch.apply(this, args);
+                void session.logFetchResponse(requestId, response, startedAt);
+                return response;
+            } catch (error) {
+                session.logRequestError(requestId, error, startedAt);
+                throw error;
+            }
+        };
+    }
+
+    static installJQueryAjaxWrapper() {
+        if (ConnectionProfileDebugSession.originalJQueryAjax || !window.jQuery?.ajax) {
+            return;
+        }
+
+        ConnectionProfileDebugSession.originalJQueryAjax = window.jQuery.ajax;
+        window.jQuery.ajax = function (...args) {
+            const session = ConnectionProfileDebugSession.active;
+            if (!session) {
+                return ConnectionProfileDebugSession.originalJQueryAjax.apply(this, args);
+            }
+
+            const requestId = session.nextRequestId('ajax');
+            const startedAt = performance.now();
+            session.logJQueryAjaxRequest(requestId, args);
+
+            const jqXHR = ConnectionProfileDebugSession.originalJQueryAjax.apply(this, args);
+            jqXHR.done((data, textStatus, xhr) => {
+                session.logJQueryAjaxResponse(requestId, data, textStatus, xhr, startedAt);
+            });
+            jqXHR.fail((xhr, textStatus, errorThrown) => {
+                session.logJQueryAjaxError(requestId, xhr, textStatus, errorThrown, startedAt);
+            });
+            return jqXHR;
+        };
+    }
+
+    static restoreWrappers() {
+        if (ConnectionProfileDebugSession.originalFetch) {
+            window.fetch = ConnectionProfileDebugSession.originalFetch;
+            ConnectionProfileDebugSession.originalFetch = null;
+        }
+
+        if (ConnectionProfileDebugSession.originalJQueryAjax && window.jQuery?.ajax) {
+            window.jQuery.ajax = ConnectionProfileDebugSession.originalJQueryAjax;
+            ConnectionProfileDebugSession.originalJQueryAjax = null;
+        }
+    }
+
+    nextRequestId(type) {
+        this.requestCounter += 1;
+        return `${this.id}:${type}:${this.requestCounter}`;
+    }
+
+    getElapsedMs(startedAt = this.startedAt) {
+        return Math.round(performance.now() - startedAt);
+    }
+
+    logStart() {
+        console.groupCollapsed(`${CONNECTION_PROFILE_DEBUG_PREFIX} Profile change #${this.id}: ${this.profile?.name || '(unnamed profile)'}`);
+        console.info(`${CONNECTION_PROFILE_DEBUG_PREFIX} Started`, redactConnectionProfileDebugValue({
+            source: this.source,
+            previousProfileId: this.previousProfileId,
+            selectedProfileId: this.profile?.id,
+            selectedProfileName: this.profile?.name,
+            mode: this.profile?.mode,
+            onlineStatus: online_status,
+            commands: this.getCommandLogList(),
+        }));
+    }
+
+    getCommandLogList() {
+        const commands = this.profile?.mode === 'cc' ? CC_COMMANDS : TC_COMMANDS;
+        return commands.map(command => ({
+            command,
+            skipped: shouldSkipPromptPostProcessingCommand(command)
+                || (!this.profile?.[command] && !(ALLOW_EMPTY.includes(command) && this.profile?.[command] === '')),
+            value: redactConnectionProfileDebugCommandArgument(command, this.profile?.[command] ?? null),
+        }));
+    }
+
+    logCommandStart(command, argument) {
+        console.info(`${CONNECTION_PROFILE_DEBUG_PREFIX} Command start`, {
+            command,
+            argument: redactConnectionProfileDebugCommandArgument(command, argument),
+        });
+    }
+
+    logCommandSuccess(command, elapsedMs) {
+        console.info(`${CONNECTION_PROFILE_DEBUG_PREFIX} Command success`, { command, elapsedMs });
+    }
+
+    logCommandSkipped(command, reason) {
+        console.info(`${CONNECTION_PROFILE_DEBUG_PREFIX} Command skipped`, { command, reason });
+    }
+
+    logCommandError(command, argument, error) {
+        console.error(`${CONNECTION_PROFILE_DEBUG_PREFIX} Command error`, {
+            command,
+            argument: redactConnectionProfileDebugCommandArgument(command, argument),
+        }, error);
+    }
+
+    logProfileLoaded(profileName) {
+        console.info(`${CONNECTION_PROFILE_DEBUG_PREFIX} CONNECTION_PROFILE_LOADED`, {
+            profileName,
+            onlineStatus: online_status,
+            elapsedMs: this.getElapsedMs(),
+        });
+    }
+
+    scheduleStop(reason = 'profile loaded') {
+        clearTimeout(this.stopTimer);
+        this.stopTimer = setTimeout(() => this.stopNow(reason), CONNECTION_PROFILE_DEBUG_GRACE_MS);
+    }
+
+    stopNow(reason = 'stopped') {
+        if (this.closed) {
+            return;
+        }
+
+        this.closed = true;
+        clearTimeout(this.stopTimer);
+        console.info(`${CONNECTION_PROFILE_DEBUG_PREFIX} Stopped`, {
+            reason,
+            onlineStatus: online_status,
+            elapsedMs: this.getElapsedMs(),
+            graceMs: CONNECTION_PROFILE_DEBUG_GRACE_MS,
+        });
+        console.groupEnd();
+
+        if (ConnectionProfileDebugSession.active === this) {
+            ConnectionProfileDebugSession.active = null;
+            ConnectionProfileDebugSession.restoreWrappers();
+        }
+    }
+
+    logFetchRequest(requestId, args) {
+        const [input, init] = args;
+        const request = input instanceof Request ? input : null;
+        console.info(`${CONNECTION_PROFILE_DEBUG_PREFIX} API request`, redactConnectionProfileDebugValue({
+            requestId,
+            type: 'fetch',
+            method: init?.method || request?.method || 'GET',
+            url: request?.url || String(input),
+            timestamp: new Date().toISOString(),
+            headers: redactConnectionProfileDebugHeaders(init?.headers || request?.headers),
+            body: getConnectionProfileDebugRequestBody(init),
+        }));
+    }
+
+    async logFetchResponse(requestId, response, startedAt) {
+        let body = '[unavailable]';
+        try {
+            body = parseConnectionProfileDebugBodyText(await response.clone().text());
+        } catch (error) {
+            body = `Failed to read response body: ${error?.message || error}`;
+        }
+
+        console.info(`${CONNECTION_PROFILE_DEBUG_PREFIX} API response`, redactConnectionProfileDebugValue({
+            requestId,
+            type: 'fetch',
+            url: response.url,
+            status: response.status,
+            statusText: response.statusText,
+            elapsedMs: this.getElapsedMs(startedAt),
+            body,
+        }));
+    }
+
+    logJQueryAjaxRequest(requestId, args) {
+        const [firstArg, secondArg] = args;
+        const options = typeof firstArg === 'string'
+            ? { ...(secondArg || {}), url: firstArg }
+            : { ...(firstArg || {}) };
+
+        console.info(`${CONNECTION_PROFILE_DEBUG_PREFIX} API request`, redactConnectionProfileDebugValue({
+            requestId,
+            type: 'jQuery.ajax',
+            method: options.type || options.method || 'GET',
+            url: options.url,
+            timestamp: new Date().toISOString(),
+            headers: redactConnectionProfileDebugHeaders(options.headers),
+            body: typeof options.data === 'string'
+                ? parseConnectionProfileDebugBodyText(options.data)
+                : redactConnectionProfileDebugValue(options.data, 'data'),
+        }));
+    }
+
+    logJQueryAjaxResponse(requestId, data, textStatus, xhr, startedAt) {
+        console.info(`${CONNECTION_PROFILE_DEBUG_PREFIX} API response`, redactConnectionProfileDebugValue({
+            requestId,
+            type: 'jQuery.ajax',
+            status: xhr?.status,
+            statusText: xhr?.statusText || textStatus,
+            elapsedMs: this.getElapsedMs(startedAt),
+            body: data,
+        }));
+    }
+
+    logRequestError(requestId, error, startedAt) {
+        console.error(`${CONNECTION_PROFILE_DEBUG_PREFIX} API error`, {
+            requestId,
+            elapsedMs: this.getElapsedMs(startedAt),
+            error,
+        });
+    }
+
+    logJQueryAjaxError(requestId, xhr, textStatus, errorThrown, startedAt) {
+        console.error(`${CONNECTION_PROFILE_DEBUG_PREFIX} API error`, redactConnectionProfileDebugValue({
+            requestId,
+            type: 'jQuery.ajax',
+            status: xhr?.status,
+            statusText: xhr?.statusText || textStatus,
+            elapsedMs: this.getElapsedMs(startedAt),
+            responseText: xhr?.responseText,
+            error: errorThrown?.message || errorThrown || textStatus,
+        }));
+    }
+}
+
+async function emitConnectionProfileLoadedWithDebug(session, profileName) {
+    session?.logProfileLoaded(profileName);
+    await eventSource.emit(event_types.CONNECTION_PROFILE_LOADED, profileName);
+    session?.scheduleStop();
+}
 
 /**
  * @typedef {Object} ConnectionProfile
@@ -416,26 +848,34 @@ export async function applyConnectionProfile(profile) {
     const mode = profile.mode;
     const commands = mode === 'cc' ? CC_COMMANDS : TC_COMMANDS;
     const spinner = new ConnectionManagerSpinner();
+    const debugSession = ConnectionProfileDebugSession.active;
     spinner.start();
 
     for (const command of commands) {
         if (spinner.isAborted()) {
+            debugSession?.logCommandError(command, profile[command], new Error('Profile application aborted'));
             throw new Error('Profile application aborted');
         }
 
         const argument = profile[command];
         const allowEmpty = ALLOW_EMPTY.includes(command);
         if (shouldSkipPromptPostProcessingCommand(command)) {
+            debugSession?.logCommandSkipped(command, 'global prompt post-processing override is enabled');
             continue;
         }
 
         if (!argument && !(allowEmpty && argument === '')) {
+            debugSession?.logCommandSkipped(command, 'profile has no value for this command');
             continue;
         }
         try {
             const args = getNamedArguments(allowEmpty ? { force: 'true' } : {});
+            const commandStartedAt = performance.now();
+            debugSession?.logCommandStart(command, argument);
             await SlashCommandParser.commands[command].callback(args, argument);
+            debugSession?.logCommandSuccess(command, Math.round(performance.now() - commandStartedAt));
         } catch (error) {
+            debugSession?.logCommandError(command, argument, error);
             console.error(`Failed to execute command: ${command} ${argument}`, error);
         }
     }
@@ -467,6 +907,7 @@ export async function applyConnectionProfileById(profileId) {
         return null;
     }
 
+    const previousProfileId = extension_settings.connectionManager.selectedProfile;
     extension_settings.connectionManager.selectedProfile = profile.id;
     const profiles = document.getElementById('connection_profiles');
     if (profiles instanceof HTMLSelectElement) {
@@ -474,8 +915,14 @@ export async function applyConnectionProfileById(profileId) {
     }
     saveSettingsDebounced();
 
-    await applyConnectionProfile(profile);
-    await eventSource.emit(event_types.CONNECTION_PROFILE_LOADED, profile.name);
+    const debugSession = ConnectionProfileDebugSession.start(profile, 'applyConnectionProfileById', previousProfileId);
+    try {
+        await applyConnectionProfile(profile);
+        await emitConnectionProfileLoadedWithDebug(debugSession, profile.name);
+    } catch (error) {
+        debugSession.stopNow('profile application failed');
+        throw error;
+    }
     return profile;
 }
 
@@ -603,6 +1050,7 @@ async function renderDetailsContent(detailsContent) {
         }
 
         const profileId = selectedProfile.value;
+        const previousProfileId = extension_settings.connectionManager.selectedProfile;
         extension_settings.connectionManager.selectedProfile = profileId;
         saveSettingsDebounced();
         await renderDetailsContent(detailsContent);
@@ -622,8 +1070,14 @@ async function renderDetailsContent(detailsContent) {
             return;
         }
 
-        await applyConnectionProfile(profile);
-        await eventSource.emit(event_types.CONNECTION_PROFILE_LOADED, profile.name);
+        const debugSession = ConnectionProfileDebugSession.start(profile, 'select change', previousProfileId);
+        try {
+            await applyConnectionProfile(profile);
+            await emitConnectionProfileLoadedWithDebug(debugSession, profile.name);
+        } catch (error) {
+            debugSession.stopNow('profile application failed');
+            throw error;
+        }
     });
 
     const reloadButton = document.getElementById('reload_connection_profile');
@@ -634,9 +1088,15 @@ async function renderDetailsContent(detailsContent) {
             console.log('No profile selected');
             return;
         }
-        await applyConnectionProfile(profile);
-        await renderDetailsContent(detailsContent);
-        await eventSource.emit(event_types.CONNECTION_PROFILE_LOADED, profile.name);
+        const debugSession = ConnectionProfileDebugSession.start(profile, 'reload button', selectedProfile);
+        try {
+            await applyConnectionProfile(profile);
+            await renderDetailsContent(detailsContent);
+            await emitConnectionProfileLoadedWithDebug(debugSession, profile.name);
+        } catch (error) {
+            debugSession.stopNow('profile application failed');
+            throw error;
+        }
         toastr.success('Connection profile reloaded', '', { timeOut: 1500 });
     });
 
