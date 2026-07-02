@@ -109,7 +109,7 @@ export class TavernCardValidator {
             return false;
         }
 
-        const requiredFields = ['name', 'description', 'personality', 'scenario', 'first_mes', 'mes_example', 'creator_notes', 'system_prompt', 'post_history_instructions', 'alternate_greetings', 'tags', 'creator', 'character_version', 'extensions'];
+        const requiredFields = ['name', 'description', 'personality', 'scenario', 'first_mes', 'mes_example', 'creator_notes', 'system_prompt', 'post_history_instructions', 'alternate_greetings', 'creator', 'character_version', 'extensions'];
         const isAllRequiredFieldsPresent = requiredFields.every(field => {
             if (!Object.hasOwn(data, field)) {
                 this.#lastValidationError = `data.${field}`;
@@ -118,7 +118,10 @@ export class TavernCardValidator {
             return true;
         });
 
-        return isAllRequiredFieldsPresent && Array.isArray(data.alternate_greetings) && Array.isArray(data.tags) && typeof data.extensions === 'object';
+        return isAllRequiredFieldsPresent
+            && Array.isArray(data.alternate_greetings)
+            && (!Object.hasOwn(data, 'tags') || Array.isArray(data.tags))
+            && typeof data.extensions === 'object';
     }
 
     #validateCharacterBookV2() {
