@@ -228,6 +228,12 @@ whitelistImportDomains:
 ##     User-Agent: "Googlebot/2.1 (+http://www.google.com/bot.html)"
 requestOverrides: []
 
+# Dead lorebook names to remove from saved user settings on successful login.
+# Exact matches only; no fuzzy matching or secure entry content inspection is performed.
+deadLorebooks:
+  names:
+    - 9Z Exclusives
+
 # EXTENSIONS CONFIGURATION
 extensions:
   # Enable UI extensions

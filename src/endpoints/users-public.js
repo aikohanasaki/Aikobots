@@ -5,7 +5,8 @@ import express from 'express';
 import { RateLimiterMemory, RateLimiterRes } from 'rate-limiter-flexible';
 import { getIpAddress } from '../express-common.js';
 import { color, getConfigValue } from '../util.js';
-import { KEY_PREFIX, getUserAvatar, toKey, getPasswordHash, getPasswordSalt } from '../users.js';
+import { KEY_PREFIX, getUserAvatar, toKey, getPasswordHash, getPasswordSalt, getUserDirectories } from '../users.js';
+import { cleanupDeadLorebookSettingsReferences } from '../dead-lorebook-cleanup.js';
 import { clearUserFlowState, getUserFlowState, setUserFlowState } from './user-flow-state.js';
 
 const DISCREET_LOGIN = getConfigValue('enableDiscreetLogin', false, 'boolean');
@@ -91,6 +92,14 @@ router.post('/login', async (request, response) => {
 
         await loginLimiter.delete(ip);
         request.session.handle = user.handle;
+        try {
+            const cleanupResult = await cleanupDeadLorebookSettingsReferences(getUserDirectories(user.handle));
+            if (cleanupResult.changed) {
+                console.info(`Cleaned ${cleanupResult.removedCount} dead lorebook reference${cleanupResult.removedCount === 1 ? '' : 's'} for user ${user.handle}.`);
+            }
+        } catch (error) {
+            console.error(`Failed to clean dead lorebook references for user ${user.handle}:`, error);
+        }
         console.info('Login successful:', user.handle, 'from', ip, 'at', new Date().toLocaleString());
         return response.json({ handle: user.handle });
     } catch (error) {
