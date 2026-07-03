@@ -2544,10 +2544,10 @@ function initTopChatUi() {
     eventSource.on(event_types.GROUP_CHAT_DELETED, refreshTopChatUiDebounced);
     eventSource.on(event_types.MESSAGE_SENT, refreshTopChatUiDebounced);
     eventSource.on(event_types.GENERATION_STARTED, refreshTopChatAvailabilityDebounced);
-    eventSource.on(event_types.GENERATION_STOPPED, refreshTopChatAvailabilityDebounced);
-    eventSource.on(event_types.GENERATION_ENDED, refreshTopChatAvailabilityDebounced);
+    eventSource.on(event_types.GENERATION_STOPPED, refreshTopChatUiDebounced);
+    eventSource.on(event_types.GENERATION_ENDED, refreshTopChatUiDebounced);
     eventSource.on(event_types.GROUP_WRAPPER_STARTED, refreshTopChatAvailabilityDebounced);
-    eventSource.on(event_types.GROUP_WRAPPER_FINISHED, refreshTopChatAvailabilityDebounced);
+    eventSource.on(event_types.GROUP_WRAPPER_FINISHED, refreshTopChatUiDebounced);
     eventSource.on(event_types.ONLINE_STATUS_CHANGED, refreshTopChatConnectionProfilesDebounced);
     eventSource.on(event_types.CONNECTION_PROFILE_LOADED, refreshTopChatConnectionProfilesDebounced);
     eventSource.on(event_types.CHATCOMPLETION_SOURCE_CHANGED, refreshTopChatConnectionProfilesDebounced);
