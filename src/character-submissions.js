@@ -508,6 +508,80 @@ async function upsertDefaultContentCharacter(relativeFilename) {
     });
 }
 
+function normalizeDefaultContentCharacterFilename(value) {
+    const rawValue = String(value || '').trim();
+    const parsed = path.parse(rawValue);
+    const fileName = parsed.base;
+
+    if (
+        !fileName
+        || parsed.dir
+        || fileName !== sanitize(fileName)
+        || path.extname(fileName).toLowerCase() !== '.png'
+    ) {
+        throw new Error('Invalid character file name.');
+    }
+
+    return fileName;
+}
+
+/**
+ * Deletes a globally published character from the default content catalog.
+ * @param {string} characterFilename
+ * @returns {Promise<{ removedFile: boolean, removedIndexEntry: boolean, removed: boolean }>}
+ */
+export async function deleteDefaultContentCharacter(characterFilename) {
+    const outputFilename = normalizeDefaultContentCharacterFilename(characterFilename);
+    const relativeFilename = `characters/${outputFilename}`;
+    const defaultContentPath = path.join(DEFAULT_CONTENT_ROOT, 'characters', outputFilename);
+    const removedFile = fs.existsSync(defaultContentPath);
+
+    await fsPromises.rm(defaultContentPath, { force: true });
+
+    let removedIndexEntry = false;
+    await runWithDefaultContentIndexLock(async (lock) => {
+        if (!fs.existsSync(DEFAULT_CONTENT_INDEX)) {
+            return;
+        }
+
+        /** @type {{filename: string, type: string}[]} */
+        let contentIndex = [];
+        let shouldRewriteIndex = false;
+        try {
+            const raw = await lock.run(async () => await fsPromises.readFile(DEFAULT_CONTENT_INDEX, 'utf8'));
+            const parsed = JSON.parse(raw);
+            if (Array.isArray(parsed)) {
+                contentIndex = parsed;
+            } else {
+                shouldRewriteIndex = true;
+            }
+        } catch (error) {
+            if (error?.code === 'ELOCKLOST') {
+                throw error;
+            }
+
+            shouldRewriteIndex = true;
+            console.warn('Failed to read default content index. Recreating it.', error);
+        }
+
+        const nextIndex = contentIndex.filter(item => {
+            const shouldRemove = item?.type === 'character' && item?.filename === relativeFilename;
+            removedIndexEntry ||= shouldRemove;
+            return !shouldRemove;
+        });
+
+        if (removedIndexEntry || shouldRewriteIndex) {
+            await lock.run(async () => await writeFileAtomic(DEFAULT_CONTENT_INDEX, JSON.stringify(nextIndex, null, 4)));
+        }
+    });
+
+    return {
+        removedFile,
+        removedIndexEntry,
+        removed: removedFile || removedIndexEntry,
+    };
+}
+
 /**
  * Checks whether a globally published character is listed in default content.
  * @param {string} outputFilename

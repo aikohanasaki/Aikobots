@@ -38,7 +38,7 @@ import { getChatInfo, getDeduplicatedChatHistoryFileNames } from './chats.js';
 import { ByafParser } from '../byaf.js';
 import cacheBuster from '../middleware/cacheBuster.js';
 import { assertPathUnderParent, assertSafeFileName, PathSecurityError, resolvePathUnderParent } from '../path-security.js';
-import { DISTRIBUTION_SOURCE_TYPES, PUBLISH_MODES, SUBMISSION_STATUSES, distributeCharacterFile, getExistingApprovedDistributionViewForSource, getSubmissionPaths, getSubmissionRecord } from '../character-submissions.js';
+import { DISTRIBUTION_SOURCE_TYPES, PUBLISH_MODES, SUBMISSION_STATUSES, deleteDefaultContentCharacter, distributeCharacterFile, getExistingApprovedDistributionViewForSource, getSubmissionPaths, getSubmissionRecord } from '../character-submissions.js';
 import {
     reconcileCharacterRepushBlacklistEntries,
     removeCharacterRepushBlacklistEntry,
@@ -2456,7 +2456,9 @@ router.post('/delete', validateAvatarUrlMiddleware, async function (request, res
                 deletedCount += Number(await deleteCharacterFromDirectories(directories));
             }
 
-            if (!deletedCount && !removedSharedBacking) {
+            const removedCatalogSource = (await deleteDefaultContentCharacter(avatarUrl)).removed;
+
+            if (!deletedCount && !removedSharedBacking && !removedCatalogSource) {
                 return response.sendStatus(400);
             }
         } catch (err) {
