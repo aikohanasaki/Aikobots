@@ -73,6 +73,107 @@ const TOKEN_DRY_RUN_TOKENIZER_MODE = 'standardized_local_estimate';
 const TOKEN_DRY_RUN_MODE = 'zero_history_zero_persona';
 const TOKEN_DRY_RUN_VERSION = 1;
 const TOKEN_DRY_RUN_ASSEMBLY_MODEL = 'gpt-4o';
+const CATALOG_CHARACTER_DIRECTORY = 'characters';
+const CATALOG_CHARACTER_EXTENSION = '.png';
+
+function getDefaultContentRoot() {
+    return path.resolve(String(globalThis.DEFAULT_CONTENT_ROOT || './default/content'));
+}
+
+function getDefaultContentIndexPath() {
+    return path.join(getDefaultContentRoot(), 'index.json');
+}
+
+function getCatalogCharactersDirectory() {
+    return path.join(getDefaultContentRoot(), CATALOG_CHARACTER_DIRECTORY);
+}
+
+function normalizeCatalogCharacterIndexFilename(value) {
+    const normalizedFilename = String(value || '').replaceAll('\\', '/').trim();
+    const parsed = path.posix.parse(normalizedFilename);
+    if (
+        parsed.dir !== CATALOG_CHARACTER_DIRECTORY
+        || parsed.base !== sanitize(parsed.base)
+        || path.posix.extname(parsed.base).toLowerCase() !== CATALOG_CHARACTER_EXTENSION
+    ) {
+        return '';
+    }
+
+    return `${CATALOG_CHARACTER_DIRECTORY}/${parsed.base}`;
+}
+
+async function readCatalogCharacterIndex() {
+    const indexPath = getDefaultContentIndexPath();
+    if (!fs.existsSync(indexPath)) {
+        return [];
+    }
+
+    const rawIndex = await fsPromises.readFile(indexPath, 'utf8');
+    const parsedIndex = JSON.parse(rawIndex);
+    if (!Array.isArray(parsedIndex)) {
+        return [];
+    }
+
+    const filenames = new Map();
+    for (const item of parsedIndex) {
+        if (item?.type !== 'character') {
+            continue;
+        }
+
+        const normalizedFilename = normalizeCatalogCharacterIndexFilename(item?.filename);
+        if (!normalizedFilename) {
+            continue;
+        }
+
+        filenames.set(normalizedFilename, normalizedFilename);
+    }
+
+    return Array.from(filenames.values()).sort((left, right) => left.localeCompare(right));
+}
+
+async function getIndexedCatalogCharacter(filename, indexedFilenames = null) {
+    const normalizedFilename = normalizeCatalogCharacterIndexFilename(filename);
+    if (!normalizedFilename) {
+        return null;
+    }
+
+    const catalogIndex = indexedFilenames ?? await readCatalogCharacterIndex();
+    if (!catalogIndex.includes(normalizedFilename)) {
+        return null;
+    }
+
+    const publishedFilename = path.posix.basename(normalizedFilename);
+    const filePath = resolvePathUnderParent(getCatalogCharactersDirectory(), publishedFilename, 'catalog character');
+    if (!fs.existsSync(filePath)) {
+        return null;
+    }
+
+    return {
+        indexFilename: normalizedFilename,
+        publishedFilename,
+        filePath,
+    };
+}
+
+async function readCatalogCharacterCard(filePath) {
+    const [rawBuffer, rawCard] = await Promise.all([
+        fsPromises.readFile(filePath),
+        parse(filePath, 'png'),
+    ]);
+
+    return {
+        rawBuffer,
+        card: JSON.parse(rawCard),
+    };
+}
+
+async function writeCatalogCharacterToUser(sourcePath, destinationPath) {
+    const { rawBuffer, card } = await readCatalogCharacterCard(sourcePath);
+    clearCharacterFavoriteState(card);
+    await fsPromises.mkdir(path.dirname(destinationPath), { recursive: true });
+    writeFileAtomicSync(destinationPath, write(rawBuffer, JSON.stringify(card)));
+    return card;
+}
 
 function resolveUploadedFilePath(file) {
     return assertPathUnderParent(file.destination, path.join(file.destination, file.filename), 'upload');
@@ -2668,6 +2769,128 @@ router.post('/import', async function (request, response) {
 
         console.error(err);
         response.send({ error: true });
+    }
+});
+
+router.get('/catalog/avatar/:filename', async function (request, response) {
+    try {
+        const publishedFilename = String(request.params?.filename || '').trim();
+        const catalogCharacter = await getIndexedCatalogCharacter(`${CATALOG_CHARACTER_DIRECTORY}/${publishedFilename}`);
+        if (!catalogCharacter) {
+            return response.sendStatus(404);
+        }
+
+        response.type('png');
+        return response.sendFile(catalogCharacter.filePath);
+    } catch (error) {
+        if (error instanceof PathSecurityError) {
+            return response.status(400).json({ error: error.message });
+        }
+
+        console.error('Failed to serve catalog character avatar', error);
+        return response.sendStatus(500);
+    }
+});
+
+router.post('/catalog/list', async function (request, response) {
+    try {
+        const indexedFilenames = await readCatalogCharacterIndex();
+        const entries = [];
+
+        for (const indexFilename of indexedFilenames) {
+            const catalogCharacter = await getIndexedCatalogCharacter(indexFilename, indexedFilenames);
+            if (!catalogCharacter) {
+                continue;
+            }
+
+            try {
+                const { card } = await readCatalogCharacterCard(catalogCharacter.filePath);
+                const character = getCharaCardV2(card, request.user.directories, false);
+                const ownerHandles = getCharacterOwnerHandles(character);
+                const ownerHandle = getCharacterOwnerHandle(character);
+                entries.push({
+                    publishedFilename: catalogCharacter.publishedFilename,
+                    name: String(_.get(character, 'data.name', character.name) || path.parse(catalogCharacter.publishedFilename).name),
+                    creator: String(_.get(character, 'data.creator', character.creator) || ''),
+                    ownerHandle,
+                    ownerHandles,
+                    sharedCharacterKey: getCharacterSharedKey(character),
+                    alreadyInstalled: fs.existsSync(resolveCharacterFilePath(request.user.directories, catalogCharacter.publishedFilename)),
+                    avatarUrl: `/api/characters/catalog/avatar/${encodeURIComponent(catalogCharacter.publishedFilename)}`,
+                });
+            } catch (error) {
+                console.warn(`Skipping unreadable catalog character: ${indexFilename}`, error);
+            }
+        }
+
+        return response.json({ entries });
+    } catch (error) {
+        console.error('Failed to list catalog characters', error);
+        return response.status(500).json({ error: 'Failed to list catalog characters.' });
+    }
+});
+
+router.post('/catalog/retrieve', async function (request, response) {
+    try {
+        const publishedFilename = String(request.body?.publishedFilename || '').trim();
+        const catalogCharacter = await getIndexedCatalogCharacter(`${CATALOG_CHARACTER_DIRECTORY}/${publishedFilename}`);
+        if (!catalogCharacter) {
+            return response.status(404).json({ error: 'Catalog character not found.' });
+        }
+
+        const destinationPath = resolveCharacterFilePath(request.user.directories, catalogCharacter.publishedFilename);
+        if (fs.existsSync(destinationPath)) {
+            return response.status(409).json({ error: 'Character is already installed.' });
+        }
+
+        const card = await writeCatalogCharacterToUser(catalogCharacter.filePath, destinationPath);
+        invalidateThumbnail(request.user.directories, 'avatar', catalogCharacter.publishedFilename);
+
+        const userHandle = String(request.user?.profile?.handle || '').trim();
+        const ownerHandle = getCharacterOwnerHandle(card);
+        const characterKey = getCharacterSharedKey(card);
+        let removedRepushOptOut = false;
+
+        if (userHandle && (ownerHandle || characterKey)) {
+            const policy = await getCharacterDistributionPolicy({
+                ownerHandle,
+                characterKey,
+                publishedFilename: path.parse(catalogCharacter.publishedFilename).name,
+            });
+            const userBlacklistHandles = policy.userBlacklistHandles.filter(handle => handle !== userHandle);
+
+            if (userBlacklistHandles.length !== policy.userBlacklistHandles.length) {
+                await setCharacterDistributionPolicy({
+                    ownerHandle,
+                    characterKey,
+                    publishedFilename: path.parse(catalogCharacter.publishedFilename).name,
+                    userBlacklistHandles,
+                    updatedBy: userHandle,
+                });
+                removedRepushOptOut = true;
+            }
+
+            const registryEntries = await getCharacterDistributionUserBlacklistEntries(userHandle);
+            const entries = await reconcileCharacterRepushBlacklistEntries(request.user.directories, registryEntries);
+            const matchingEntry = entries.find(entry => entry.key === policy.key);
+            if (matchingEntry) {
+                await removeCharacterRepushBlacklistEntry(request.user.directories, matchingEntry.key);
+                removedRepushOptOut = true;
+            }
+        }
+
+        return response.json({
+            ok: true,
+            publishedFilename: catalogCharacter.publishedFilename,
+            removedRepushOptOut,
+        });
+    } catch (error) {
+        if (error instanceof PathSecurityError) {
+            return response.status(400).json({ error: error.message });
+        }
+
+        console.error('Failed to retrieve catalog character', error);
+        return response.status(500).json({ error: 'Failed to retrieve catalog character.' });
     }
 });
 

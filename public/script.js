@@ -17813,6 +17813,116 @@ function doCharListDisplaySwitch() {
     saveSettingsDebounced();
 }
 
+async function getCatalogCharacters() {
+    const response = await fetch('/api/characters/catalog/list', {
+        method: 'POST',
+        headers: getRequestHeaders(),
+    });
+
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) {
+        throw new Error(data?.error || 'Failed to load The Catalog.');
+    }
+
+    return Array.isArray(data?.entries) ? data.entries : [];
+}
+
+async function retrieveCatalogCharacter(publishedFilename) {
+    const response = await fetch('/api/characters/catalog/retrieve', {
+        method: 'POST',
+        headers: getRequestHeaders(),
+        body: JSON.stringify({ publishedFilename }),
+    });
+
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) {
+        throw new Error(data?.error || 'Failed to retrieve bot from The Catalog.');
+    }
+
+    return data;
+}
+
+function getCatalogCharacterRow(entry) {
+    const publishedFilename = String(entry.publishedFilename || '').trim();
+    const displayName = String(entry.name || publishedFilename || 'Unknown bot').trim();
+    const botmakerName = String(entry.creator || entry.botmakerName || '').trim();
+    const ownerHandles = Array.isArray(entry.ownerHandles) && entry.ownerHandles.length
+        ? entry.ownerHandles.map(handle => String(handle || '').trim()).filter(Boolean)
+        : [String(entry.ownerHandle || '').trim()].filter(Boolean);
+    const row = $('<div class="flex-container alignitemscenter flexGap10 wide100p"></div>');
+    const avatarUrl = entry.alreadyInstalled ? getThumbnailUrl('avatar', publishedFilename) : String(entry.avatarUrl || default_avatar);
+    const avatar = $('<img class="avatar" alt="">')
+        .attr('src', avatarUrl)
+        .attr('alt', displayName)
+        .css('flex', '0 0 auto')
+        .on('error', function () {
+            $(this).attr('src', default_avatar);
+        });
+    const details = $('<div class="flex-container flexFlowColumn flex1 overflowHidden"></div>');
+    const makerNames = botmakerName ? [botmakerName] : ownerHandles;
+    const metadata = [publishedFilename, makerNames.length ? `by ${makerNames.join(', ')}` : ''].filter(Boolean).join(' ');
+    const retrieveButton = $('<button type="button" class="menu_button menu_button_icon margin0"></button>');
+
+    details
+        .append($('<strong></strong>').text(displayName))
+        .append($('<small class="opacity50p"></small>').text(metadata));
+
+    retrieveButton
+        .append('<i class="fa-fw fa-solid fa-download"></i>')
+        .append($('<span></span>').text(entry.alreadyInstalled ? 'Installed' : 'Retrieve'))
+        .prop('disabled', Boolean(entry.alreadyInstalled))
+        .on('click', async () => {
+            retrieveButton.prop('disabled', true).find('span').text('Retrieving...');
+            try {
+                await retrieveCatalogCharacter(publishedFilename);
+                entry.alreadyInstalled = true;
+                avatar.attr('src', getThumbnailUrl('avatar', publishedFilename, true));
+                retrieveButton.find('span').text('Installed');
+                toastr.success(`${displayName} was retrieved from The Catalog.`);
+                await getCharacters();
+                await printCharacters(true);
+            } catch (error) {
+                retrieveButton.prop('disabled', false).find('span').text('Retrieve');
+                toastr.error(error?.message || 'Failed to retrieve bot from The Catalog.');
+            }
+        });
+
+    row.append(avatar, details, retrieveButton);
+    return row;
+}
+
+async function showCharacterCatalog() {
+    const container = $('<div class="flex-container flexFlowColumn flexGap10"></div>');
+    const list = $('<div class="flex-container flexFlowColumn flexGap10"></div>');
+
+    container
+        .append($('<h3 class="margin0"></h3>').text('The Catalog'))
+        .append(list.append($('<div class="opacity50p"></div>').text('Loading catalog...')));
+
+    const popupPromise = callGenericPopup(container, POPUP_TYPE.TEXT, '', {
+        wide: true,
+        large: true,
+        allowVerticalScrolling: true,
+    });
+
+    try {
+        const entries = await getCatalogCharacters();
+        list.empty();
+        if (!entries.length) {
+            list.append($('<div class="opacity50p"></div>').text('No globally pushed bots are available.'));
+        } else {
+            for (const entry of entries) {
+                list.append(getCatalogCharacterRow(entry));
+            }
+        }
+    } catch (error) {
+        list.empty().append($('<div class="text_block"></div>').text(error?.message || 'Failed to load The Catalog.'));
+        toastr.error(error?.message || 'Failed to load The Catalog.');
+    }
+
+    await popupPromise;
+}
+
 /**
  * Deletes a character completely, including associated chats if specified
  *
@@ -19840,6 +19950,10 @@ jQuery(async function () {
 
     $('#charListGridToggle').on('click', async () => {
         doCharListDisplaySwitch();
+    });
+
+    $('#character_catalog_button').on('click', async () => {
+        await showCharacterCatalog();
     });
 
     $('#hideCharPanelAvatarButton').on('click', () => {

@@ -230,9 +230,9 @@ requestOverrides: []
 
 # Dead lorebook names to remove from saved user settings on successful login.
 # Exact matches only; no fuzzy matching or secure entry content inspection is performed.
-deadLorebooks:
-  names:
-    - 9Z Exclusives
+# deadLorebooks:
+#   names:
+#     - Name of Dead Lorebook
 
 # EXTENSIONS CONFIGURATION
 extensions:
