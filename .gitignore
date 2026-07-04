@@ -1,6 +1,7 @@
 /.github/
 /.vscode/
 !.vscode/extensions.json
+/default/content/index.json
 /docker/config
 /docker/user
 /docker/extensions
