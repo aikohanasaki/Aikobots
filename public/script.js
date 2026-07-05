@@ -5838,12 +5838,13 @@ export async function clearChat({ flushPendingSave = true } = {}) {
     refreshPromptInspectorButton();
 }
 
-export async function deleteLastMessage() {
+export async function deleteLastMessage({ persist = false, regeneratePrepare = false } = {}) {
     if (blockIfEditing('deleting messages')) {
         return;
     }
 
     const deletedId = chat.length - 1;
+    const deletedMessage = chat[deletedId];
     const deletedSnapshotKeys = deletedId >= 0 ? getPromptSnapshotKeysFromMessage(chat[deletedId]) : [];
     chat.length = chat.length - 1;
     remapLoadedRangesAfterMessageDeletion(deletedId);
@@ -5854,6 +5855,13 @@ export async function deleteLastMessage() {
     await maintainPromptSnapshotKeys({ deletes: deletedSnapshotKeys });
     updateHistoryControls();
     await recomputeTimedWorldInfo();
+    if (persist && currentChatFileNameLooksSqlite()) {
+        const saveResult = await saveSqliteTailRemoval(deletedId, deletedMessage, { regeneratePrepare });
+        if (saveResult !== CHAT_SAVE_RESULT.SAVED) {
+            await reloadCurrentChat();
+            return;
+        }
+    }
     await eventSource.emit(event_types.MESSAGE_DELETED, deletedId, chat.length);
 }
 
@@ -5921,6 +5929,7 @@ export async function deleteMessage(id, swipeDeletionIndex = undefined, askConfi
         await messageEditCancel(id);
     }
 
+    const deletedMessageUuid = chat[id]?.[AIKOBOTS_MESSAGE_UUID_KEY];
     const deletedSnapshotKeys = getPromptSnapshotKeysFromMessage(chat[id]);
     chat.splice(id, 1);
     remapLoadedRangesAfterMessageDeletion(id);
@@ -5939,7 +5948,13 @@ export async function deleteMessage(id, swipeDeletionIndex = undefined, askConfi
 
     const startIndex = [0, minId].includes(id) ? id : null;
     updateViewMessageIds(startIndex);
-    if (askConfirmation) {
+    if (currentChatFileNameLooksSqlite()) {
+        const saveResult = await saveSqliteMessageDeleteByUuid(deletedMessageUuid);
+        if (saveResult !== CHAT_SAVE_RESULT.SAVED) {
+            await reloadCurrentChat();
+            return;
+        }
+    } else if (askConfirmation) {
         await saveChatConditional();
     } else {
         saveChatDebounced();
@@ -8241,7 +8256,17 @@ class StreamingProcessor {
 
         syncMesToSwipe(messageId);
         saveLogprobsForActiveMessage(this.messageLogprobs.filter(Boolean), this.continueMessage);
-        await saveChatConditional();
+        const saveResult = currentChatFileNameLooksSqlite()
+            ? await saveSqliteReplyMutation({
+                mutation: this.type === 'swipe' || this.type === 'continue' ? 'update' : 'append',
+                messageId,
+            })
+            : await saveChatConditional();
+        if (saveResult !== CHAT_SAVE_RESULT.SAVED) {
+            await reloadCurrentChat();
+            unblockGeneration();
+            return;
+        }
         unblockGeneration();
 
         const isAborted = this.abortController.signal.aborted;
@@ -8990,7 +9015,9 @@ export async function Generate(type, { automatic_trigger, force_name2, quiet_pro
             const insertedMessageId = chat.length;
             sendSystemMessage(system_message_types.GENERIC, ' ', { bias: messageBias });
             const insertedMessage = chat[insertedMessageId];
-            const saveResult = await saveChatConditional();
+            const saveResult = currentChatFileNameLooksSqlite()
+                ? await saveSqliteMessageAppend(insertedMessageId, insertedMessage)
+                : await saveChatConditional();
             if (saveResult !== CHAT_SAVE_RESULT.SAVED) {
                 await rollbackUnsavedInsertedMessage(insertedMessageId, insertedMessage);
                 unblockGeneration(type);
@@ -8998,16 +9025,26 @@ export async function Generate(type, { automatic_trigger, force_name2, quiet_pro
             }
         }
         else {
-            await sendMessageAsUser(textareaText, messageBias);
+            const sentMessage = await sendMessageAsUser(textareaText, messageBias);
+            if (!sentMessage) {
+                unblockGeneration(type);
+                return Promise.resolve();
+            }
         }
     }
     else if (textareaText == '' && !automatic_trigger && !dryRun && type === undefined && main_api == 'openai' && oai_settings.send_if_empty.trim().length > 0) {
         // Use send_if_empty if set and the user message is empty. Only when sending messages normally
-        await sendMessageAsUser(oai_settings.send_if_empty.trim(), messageBias);
+        const sentMessage = await sendMessageAsUser(oai_settings.send_if_empty.trim(), messageBias);
+        if (!sentMessage) {
+            unblockGeneration(type);
+            return Promise.resolve();
+        }
     }
 
     if (generationStartMutatedChat) {
-        const saveResult = await saveChatConditional();
+        const saveResult = currentChatFileNameLooksSqlite()
+            ? await saveSqliteTailRemoval(generationStartDeletedId, generationStartDeletedMessage, { regeneratePrepare: type === 'regenerate' })
+            : await saveChatConditional();
         if (saveResult !== CHAT_SAVE_RESULT.SAVED) {
             if (continueTimerRollback?.message) {
                 continueTimerRollback.message['gen_started'] = continueTimerRollback.gen_started;
@@ -9917,6 +9954,7 @@ export async function Generate(type, { automatic_trigger, force_name2, quiet_pro
 
         const swipes = extractMultiSwipes(data, type);
         const swipeReasoning = extractMultiSwipeReasoning(data, type);
+        let replyResult = null;
 
         messageChunk = cleanUpMessage({
             getMessage: getMessage,
@@ -9958,12 +9996,10 @@ export async function Generate(type, { automatic_trigger, force_name2, quiet_pro
         }
         else {
             // Without streaming we'll be having a full message on continuation. Treat it as a last chunk.
-            if (originalType !== 'continue') {
-                ({ type, getMessage } = await saveReply({ type, getMessage, title, swipes, swipeReasoning, reasoning, reasoningSignature, imageUrls, openAIRequestId, swipeTarget }));
-            }
-            else {
-                ({ type, getMessage } = await saveReply({ type: 'appendFinal', getMessage, title, swipes, swipeReasoning, reasoning, reasoningSignature, imageUrls, openAIRequestId }));
-            }
+            replyResult = originalType !== 'continue'
+                ? await saveReply({ type, getMessage, title, swipes, swipeReasoning, reasoning, reasoningSignature, imageUrls, openAIRequestId, swipeTarget })
+                : await saveReply({ type: 'appendFinal', getMessage, title, swipes, swipeReasoning, reasoning, reasoningSignature, imageUrls, openAIRequestId });
+            ({ type, getMessage } = replyResult);
 
             // This relies on `saveReply` having been called to add the message to the chat, so it must be last.
             parseAndSaveLogprobs(data, continue_mag);
@@ -9994,6 +10030,17 @@ export async function Generate(type, { automatic_trigger, force_name2, quiet_pro
             playMessageSound();
         }
 
+        const shouldUseSqliteReplyMutation = currentChatFileNameLooksSqlite() && replyResult;
+        if (shouldUseSqliteReplyMutation) {
+            const sqliteSaveResult = await saveSqliteReplyMutation(replyResult);
+            if (sqliteSaveResult !== CHAT_SAVE_RESULT.SAVED) {
+                await reloadCurrentChat();
+                unblockGeneration(type);
+                streamingProcessor = null;
+                return Promise.resolve();
+            }
+        }
+
         const isAborted = abortController && abortController.signal.aborted;
         if (!isAborted && power_user.auto_swipe && generatedTextFiltered(getMessage)) {
             is_send_press = false;
@@ -10005,7 +10052,15 @@ export async function Generate(type, { automatic_trigger, force_name2, quiet_pro
         }
 
         console.debug('/api/chats/save called by /Generate');
-        await saveChatConditional();
+        const finalSaveResult = shouldUseSqliteReplyMutation
+            ? CHAT_SAVE_RESULT.SAVED
+            : await saveChatConditional();
+        if (finalSaveResult !== CHAT_SAVE_RESULT.SAVED) {
+            await reloadCurrentChat();
+            unblockGeneration(type);
+            streamingProcessor = null;
+            return Promise.resolve();
+        }
         unblockGeneration(type);
         streamingProcessor = null;
 
@@ -10355,7 +10410,13 @@ export async function sendMessageAsUser(messageText, messageBias, insertAt = nul
             await renderLiveTailWindowAfterSend();
         }
         await eventSource.emit(event_types.USER_MESSAGE_RENDERED, chat_id);
-        await saveChatConditional();
+        const saveResult = currentChatFileNameLooksSqlite()
+            ? await saveSqliteMessageAppend(chat_id, message)
+            : await saveChatConditional();
+        if (saveResult !== CHAT_SAVE_RESULT.SAVED) {
+            await rollbackUnsavedInsertedMessage(chat_id, message);
+            return null;
+        }
     }
 
     return message;
@@ -10989,6 +11050,8 @@ export async function saveReply({ type, getMessage, fromStreaming = false, title
         : consumeOpenAIResponseData(openAIRequestId);
 
     let oldMessage = '';
+    let mutation = 'update';
+    let mutationMessageId = Math.max(0, chat.length - 1);
     const generationFinished = new Date();
     if (type === 'swipe') {
         const targetMessage = swipeTargetValidation.message;
@@ -11012,6 +11075,8 @@ export async function saveReply({ type, getMessage, fromStreaming = false, title
             targetMessage['extra']['token_count'] = await getTokenCountAsync(tokenCountText, 0);
         }
         const chat_id = swipeTargetValidation.messageId;
+        mutationMessageId = chat_id;
+        mutation = 'update';
         !fromStreaming && await eventSource.emit(event_types.MESSAGE_RECEIVED, chat_id, type);
         addOneMessage(chat[chat_id], { type: 'swipe' });
         !fromStreaming && await eventSource.emit(event_types.CHARACTER_MESSAGE_RENDERED, chat_id, type);
@@ -11034,6 +11099,8 @@ export async function saveReply({ type, getMessage, fromStreaming = false, title
             chat[chat.length - 1]['extra']['token_count'] = await getTokenCountAsync(tokenCountText, 0);
         }
         const chat_id = (chat.length - 1);
+        mutationMessageId = chat_id;
+        mutation = 'update';
         !fromStreaming && await eventSource.emit(event_types.MESSAGE_RECEIVED, chat_id, type);
         addOneMessage(chat[chat_id], { type: 'swipe' });
         !fromStreaming && await eventSource.emit(event_types.CHARACTER_MESSAGE_RENDERED, chat_id, type);
@@ -11056,6 +11123,8 @@ export async function saveReply({ type, getMessage, fromStreaming = false, title
             chat[chat.length - 1]['extra']['token_count'] = await getTokenCountAsync(tokenCountText, 0);
         }
         const chat_id = (chat.length - 1);
+        mutationMessageId = chat_id;
+        mutation = 'update';
         !fromStreaming && await eventSource.emit(event_types.MESSAGE_RECEIVED, chat_id, type);
         addOneMessage(chat[chat_id], { type: 'swipe' });
         !fromStreaming && await eventSource.emit(event_types.CHARACTER_MESSAGE_RENDERED, chat_id, type);
@@ -11099,6 +11168,8 @@ export async function saveReply({ type, getMessage, fromStreaming = false, title
 
         await processImageAttachment(chat[chat.length - 1], { imageUrls });
         const chat_id = (chat.length - 1);
+        mutationMessageId = chat_id;
+        mutation = 'append';
         markChatRangeLoaded(chat_id);
 
         !fromStreaming && await eventSource.emit(event_types.MESSAGE_RECEIVED, chat_id, type);
@@ -11171,13 +11242,14 @@ export async function saveReply({ type, getMessage, fromStreaming = false, title
     }
 
     normalizeActiveChatIdentities();
+    mutationMessageId = Math.min(mutationMessageId, chat.length - 1);
 
     if (!fromStreaming) {
         await commitLatestPromptInspectorRecord(chat.length - 1);
     }
 
     statMesProcess(chat[chat.length - 1], type, characters, this_chid, oldMessage);
-    return { type, getMessage };
+    return { type, getMessage, mutation, messageId: mutationMessageId };
 }
 
 function applyTimedWorldInfoToMessage(messageId, timedWorldInfo) {
@@ -12773,7 +12845,15 @@ function messageEditAuto(div) {
     ));
     mesBlock.find('.mes_bias').empty();
     mesBlock.find('.mes_bias').append(messageFormatting(bias, '', false, false, -1, {}, false));
-    saveChatDebounced();
+    if (currentChatFileNameLooksSqlite()) {
+        saveMessageUpdateByUuid(mes).then(async (saveResult) => {
+            if (saveResult !== CHAT_SAVE_RESULT.SAVED) {
+                await reloadCurrentChat();
+            }
+        });
+    } else {
+        saveChatDebounced();
+    }
 }
 
 /**
@@ -13153,34 +13233,69 @@ async function saveMessageUpdateByUuid(message) {
         return CHAT_SAVE_RESULT.FAILED;
     }
 
+    return saveSqliteMessageMutation('update', {
+        message_uuid: messageUuid,
+        message: structuredClone(message),
+    }, t`Message update failed.`);
+}
+
+function getCurrentSqliteChatMutationOwnerFields() {
     const currentChatDetails = selected_group ? null : getCurrentChatDetails();
-    const body = selected_group
+    return selected_group
         ? {
             id: getCurrentChatId(),
-            message_uuid: messageUuid,
-            message: structuredClone(message),
-            base_revision: getChatSaveRevision(),
-            save_session_id: getChatSaveSessionId(),
-            display_count: getConfiguredLongChatDisplayCount(),
         }
         : {
             ch_name: currentChatDetails?.characterName ?? characters[this_chid]?.name,
             file_name: currentChatDetails?.fileName ?? characters[this_chid]?.chat,
             avatar_url: currentChatDetails?.avatarUrl ?? characters[this_chid]?.avatar,
-            message_uuid: messageUuid,
-            message: structuredClone(message),
-            base_revision: getChatSaveRevision(),
-            save_session_id: getChatSaveSessionId(),
-            display_count: getConfiguredLongChatDisplayCount(),
         };
+}
 
-    const endpoint = selected_group ? '/api/chats/group/message/update' : '/api/chats/message/update';
-    const response = await fetch(endpoint, {
-        method: 'POST',
-        headers: getRequestHeaders(),
-        cache: 'no-cache',
-        body: JSON.stringify(body),
-    });
+function getSqliteChatMutationEndpoint(operation) {
+    const directEndpoints = {
+        append: '/api/chats/message/append',
+        update: '/api/chats/message/update',
+        delete: '/api/chats/message/delete',
+        truncate: '/api/chats/truncate-after',
+        regeneratePrepare: '/api/chats/regenerate-prepare',
+    };
+    const groupEndpoints = {
+        append: '/api/chats/group/message/append',
+        update: '/api/chats/group/message/update',
+        delete: '/api/chats/group/message/delete',
+        truncate: '/api/chats/group/truncate-after',
+        regeneratePrepare: '/api/chats/group/truncate-after',
+    };
+
+    return (selected_group ? groupEndpoints : directEndpoints)[operation] || '';
+}
+
+async function saveSqliteMessageMutation(operation, fields, defaultErrorMessage = t`Chat update failed.`) {
+    const endpoint = getSqliteChatMutationEndpoint(operation);
+    if (!endpoint) {
+        return CHAT_SAVE_RESULT.FAILED;
+    }
+
+    let response;
+    try {
+        response = await fetch(endpoint, {
+            method: 'POST',
+            headers: getRequestHeaders(),
+            cache: 'no-cache',
+            body: JSON.stringify({
+                ...getCurrentSqliteChatMutationOwnerFields(),
+                ...fields,
+                base_revision: getChatSaveRevision(),
+                save_session_id: getChatSaveSessionId(),
+                display_count: getConfiguredLongChatDisplayCount(),
+            }),
+        });
+    } catch (error) {
+        console.error('SQLite chat mutation failed', error);
+        toastr.error(defaultErrorMessage);
+        return CHAT_SAVE_RESULT.FAILED;
+    }
 
     if (!response.ok) {
         try {
@@ -13188,10 +13303,10 @@ async function saveMessageUpdateByUuid(message) {
             if (errorData?.error === 'stale_revision') {
                 warnStaleChatSave(errorData);
             } else {
-                toastr.error(errorData?.message || errorData?.error || t`Message update failed.`);
+                toastr.error(errorData?.message || errorData?.error || defaultErrorMessage);
             }
         } catch {
-            toastr.error(t`Message update failed.`);
+            toastr.error(defaultErrorMessage);
         }
 
         return CHAT_SAVE_RESULT.FAILED;
@@ -13200,6 +13315,66 @@ async function saveMessageUpdateByUuid(message) {
     const responseData = await response.json();
     setChatSaveRevision(responseData?.chat_revision);
     return CHAT_SAVE_RESULT.SAVED;
+}
+
+async function saveSqliteMessageAppend(messageId, message) {
+    if (!message || typeof message !== 'object' || Array.isArray(message)) {
+        return CHAT_SAVE_RESULT.FAILED;
+    }
+
+    ensureMessageIdentity(message, { generateUuid: uuidv4 });
+    const expectedTailMessage = Number.isInteger(Number(messageId)) ? chat[Number(messageId) - 1] : null;
+    const expectedTailUuid = expectedTailMessage?.[AIKOBOTS_MESSAGE_UUID_KEY];
+    return saveSqliteMessageMutation('append', {
+        message: structuredClone(message),
+        ...(expectedTailUuid ? { expected_tail_uuid: expectedTailUuid } : {}),
+    }, t`Message append failed.`);
+}
+
+async function saveSqliteMessageDeleteByUuid(messageUuid) {
+    if (!messageUuid) {
+        return CHAT_SAVE_RESULT.FAILED;
+    }
+
+    return saveSqliteMessageMutation('delete', {
+        message_uuid: messageUuid,
+    }, t`Message delete failed.`);
+}
+
+async function saveSqliteTruncateAfterUuid(messageUuid, { regeneratePrepare = false } = {}) {
+    if (!messageUuid) {
+        return CHAT_SAVE_RESULT.FAILED;
+    }
+
+    return saveSqliteMessageMutation(regeneratePrepare ? 'regeneratePrepare' : 'truncate', {
+        branch_point_uuid: messageUuid,
+    }, t`Chat truncate failed.`);
+}
+
+async function saveSqliteTailRemoval(deletedMessageId, deletedMessage, { regeneratePrepare = false } = {}) {
+    const branchPoint = chat[Number(deletedMessageId) - 1];
+    const branchPointUuid = branchPoint?.[AIKOBOTS_MESSAGE_UUID_KEY];
+    if (branchPointUuid) {
+        return saveSqliteTruncateAfterUuid(branchPointUuid, { regeneratePrepare });
+    }
+
+    return saveSqliteMessageDeleteByUuid(deletedMessage?.[AIKOBOTS_MESSAGE_UUID_KEY]);
+}
+
+async function saveSqliteReplyMutation(replyResult) {
+    if (!replyResult || typeof replyResult !== 'object') {
+        return CHAT_SAVE_RESULT.FAILED;
+    }
+
+    const messageId = Number(replyResult.messageId);
+    const message = chat[messageId];
+    if (!message) {
+        return CHAT_SAVE_RESULT.FAILED;
+    }
+
+    return replyResult.mutation === 'append'
+        ? saveSqliteMessageAppend(messageId, message)
+        : saveMessageUpdateByUuid(message);
 }
 
 function currentChatFileNameLooksSqlite() {
@@ -16236,6 +16411,7 @@ export async function deleteSwipe(swipeId = null, messageId = chat.length - 1) {
     await recomputeTimedWorldInfo();
     await eventSource.emit(event_types.MESSAGE_SWIPE_DELETED, { messageId, swipeId, newSwipeId });
 
+    let swipeMutationSaved = false;
     if (swipeId === currentSwipeId) {
         const direction = swipeId <= newSwipeId ? SWIPE_DIRECTION.RIGHT : SWIPE_DIRECTION.LEFT;
         await swipe(null, direction, {
@@ -16250,10 +16426,27 @@ export async function deleteSwipe(swipeId = null, messageId = chat.length - 1) {
             await updateSwipeCounter(chat.length - 1);
         }
         refreshSwipeButtons();
-        saveChatDebounced();
+        if (currentChatFileNameLooksSqlite()) {
+            const saveResult = await saveMessageUpdateByUuid(message);
+            if (saveResult !== CHAT_SAVE_RESULT.SAVED) {
+                await reloadCurrentChat();
+                return;
+            }
+            swipeMutationSaved = true;
+        } else {
+            saveChatDebounced();
+        }
     }
 
-    await saveChatConditional();
+    if (!swipeMutationSaved) {
+        const saveResult = currentChatFileNameLooksSqlite()
+            ? await saveMessageUpdateByUuid(message)
+            : await saveChatConditional();
+        if (saveResult !== CHAT_SAVE_RESULT.SAVED) {
+            await reloadCurrentChat();
+            return;
+        }
+    }
 
     return newSwipeId;
 }
@@ -17227,7 +17420,12 @@ export async function swipe(event, direction, { source, repeated, message = chat
                 await reloadCurrentChat();
             }
         } else if (source !== SWIPE_SOURCE.BACK) {
-            if (selected_group) {
+            if (currentChatFileNameLooksSqlite()) {
+                const saveResult = await saveMessageUpdateByUuid(chat[mesId]);
+                if (saveResult !== CHAT_SAVE_RESULT.SAVED) {
+                    await reloadCurrentChat();
+                }
+            } else if (selected_group) {
                 const saveResult = await saveCurrentGroupMessageIncremental(mesId, chat[mesId]);
                 if (saveResult !== CHAT_SAVE_RESULT.SAVED) {
                     saveChatDebounced();

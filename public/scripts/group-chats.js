@@ -383,7 +383,7 @@ async function regenerateGroup() {
             break;
         }
 
-        await deleteLastMessage();
+        await deleteLastMessage({ persist: true, regeneratePrepare: true });
     }
 
     const abortController = new AbortController();
