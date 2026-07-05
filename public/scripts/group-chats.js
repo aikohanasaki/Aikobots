@@ -98,6 +98,7 @@ import {
     prefetchCurrentChatTailBuffer,
     prepareCurrentChatSavePayload,
     setTemporaryGroupChat,
+    setCurrentChatStorageMode,
 } from '../script.js';
 import { printTagList, createTagMapFromList, applyTagsOnCharacterSelect, tag_map, applyTagsOnGroupSelect } from './tags.js';
 import { FILTER_TYPES, FilterHelper } from './filters.js';
@@ -928,6 +929,9 @@ async function saveGroupChat(groupId, shouldSaveGroup) {
     }
 
     const responseData = await response.json();
+    if (responseData?.storage_mode) {
+        setCurrentChatStorageMode(responseData.storage_mode);
+    }
     if (shouldTrackRevision) {
         setChatSaveRevision(responseData?.chat_revision);
     }

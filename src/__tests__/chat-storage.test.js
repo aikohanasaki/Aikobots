@@ -15,7 +15,10 @@ let hasValidGroupChatPayload;
 let insertLogicalMessageAfter;
 let resolveSqliteLogicalChatReference;
 let truncateSqliteChatAfterUuid;
+let updateSqliteLoadedMessageRange;
 let updateSqliteMessageByUuid;
+let updateSqliteMessageVisibility;
+let updateSqliteUserPersonaMessages;
 let writeLogicalChat;
 
 function getConfigPath() {
@@ -65,7 +68,10 @@ describe('SQLite chat length handling', () => {
         hasValidGroupChatPayload = chatsModule.hasValidGroupChatPayload;
         resolveSqliteLogicalChatReference = chatsModule.resolveSqliteLogicalChatReference;
         truncateSqliteChatAfterUuid = chatsModule.truncateSqliteChatAfterUuid;
+        updateSqliteLoadedMessageRange = chatsModule.updateSqliteLoadedMessageRange;
         updateSqliteMessageByUuid = chatsModule.updateSqliteMessageByUuid;
+        updateSqliteMessageVisibility = chatsModule.updateSqliteMessageVisibility;
+        updateSqliteUserPersonaMessages = chatsModule.updateSqliteUserPersonaMessages;
         insertLogicalMessageAfter = sqliteModule.insertLogicalMessageAfter;
         writeLogicalChat = chatsModule.writeLogicalChat;
     });
@@ -601,6 +607,185 @@ describe('SQLite chat length handling', () => {
             expect(logicalChat[105].mes).toBe('patched 104');
             expect(logicalChat[106].mes).toBe('message 105');
             expect(logicalChat.at(-1).mes).toBe('message 999');
+        } finally {
+            fs.rmSync(tempDir, { recursive: true, force: true });
+        }
+    });
+
+    it('applies direct loaded-range saves through SQLite without hydrating unseen messages', async () => {
+        const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'sqlite-chat-loaded-range-direct-'));
+        const chatPath = path.join(tempDir, 'chat.jsonl');
+
+        try {
+            const header = makeHeader({ chat_revision: 6 });
+            const messages = makeMessages(20);
+            await writeLogicalChat(chatPath, header, messages);
+
+            const patchMessages = messages.slice(5, 8).map((message, index) => ({
+                ...message,
+                mes: `patched direct ${5 + index}`,
+            }));
+            const payload = await updateSqliteLoadedMessageRange({
+                filePath: chatPath,
+                requestBody: {
+                    loaded_range_start: 5,
+                    loaded_range_end: 7,
+                    base_revision: 6,
+                },
+                incomingHeader: header,
+                rangeMessages: patchMessages,
+                saveSessionId: '33333333-3333-4333-8333-333333333333',
+            });
+            const logicalChat = await getLogicalChatData(chatPath);
+
+            expect(payload.chat_revision).toBe(7);
+            expect(payload.storage_mode).toBe('sqlite');
+            expect(payload.tailCount).toBe(20);
+            expect(logicalChat).toHaveLength(21);
+            expect(logicalChat[5].mes).toBe('message 4');
+            expect(logicalChat[6].mes).toBe('patched direct 5');
+            expect(logicalChat[8].mes).toBe('patched direct 7');
+            expect(logicalChat[9].mes).toBe('message 8');
+            expect(logicalChat.at(-1).mes).toBe('message 19');
+        } finally {
+            fs.rmSync(tempDir, { recursive: true, force: true });
+        }
+    });
+
+    it('applies group loaded-range saves while preserving group header metadata', async () => {
+        const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'sqlite-chat-loaded-range-group-'));
+        const chatPath = path.join(tempDir, 'group.jsonl');
+
+        try {
+            const header = {
+                is_group_chat_header: true,
+                group_chat_header_version: 1,
+                create_date: '2026-04-20',
+                chat_revision: 2,
+                chat_metadata: { title: 'group metadata' },
+            };
+            const messages = makeMessages(10);
+            await writeLogicalChat(chatPath, header, messages);
+
+            const patchMessages = messages.slice(2, 5).map((message, index) => ({
+                ...message,
+                mes: `patched group ${2 + index}`,
+            }));
+            await updateSqliteLoadedMessageRange({
+                filePath: chatPath,
+                requestBody: {
+                    loaded_range_start: 2,
+                    loaded_range_end: 4,
+                    base_revision: 2,
+                },
+                incomingHeader: header,
+                rangeMessages: patchMessages,
+                saveSessionId: '33333333-3333-4333-8333-333333333333',
+            });
+            const logicalChat = await getLogicalChatData(chatPath);
+
+            expect(logicalChat[0].is_group_chat_header).toBe(true);
+            expect(logicalChat[0].chat_metadata).toEqual({ title: 'group metadata' });
+            expect(logicalChat[0].chat_revision).toBe(3);
+            expect(logicalChat[2].mes).toBe('message 1');
+            expect(logicalChat[3].mes).toBe('patched group 2');
+            expect(logicalChat[5].mes).toBe('patched group 4');
+            expect(logicalChat[6].mes).toBe('message 5');
+        } finally {
+            fs.rmSync(tempDir, { recursive: true, force: true });
+        }
+    });
+
+    it('updates SQLite message visibility for only the requested range and matching name', async () => {
+        const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'sqlite-chat-visibility-'));
+        const chatPath = path.join(tempDir, 'chat.jsonl');
+
+        try {
+            const header = makeHeader({ chat_revision: 1 });
+            const messages = makeMessages(8).map((message, index) => ({
+                ...message,
+                name: index === 3 ? 'Other' : message.name,
+                is_system: false,
+            }));
+            await writeLogicalChat(chatPath, header, messages);
+
+            const payload = await updateSqliteMessageVisibility({
+                filePath: chatPath,
+                requestBody: { base_revision: 1 },
+                start: 2,
+                end: 5,
+                hide: true,
+                nameFilter: 'User',
+                saveSessionId: '33333333-3333-4333-8333-333333333333',
+            });
+            const logicalChat = await getLogicalChatData(chatPath);
+
+            expect(payload.changed).toBe(2);
+            expect(payload.chat_revision).toBe(2);
+            expect(logicalChat[0].chat_revision).toBe(2);
+            expect(logicalChat[2].is_system).toBe(false);
+            expect(logicalChat[3].is_system).toBe(true);
+            expect(logicalChat[4].is_system).toBe(false);
+            expect(logicalChat[5].is_system).toBe(true);
+            expect(logicalChat[6].is_system).toBe(false);
+        } finally {
+            fs.rmSync(tempDir, { recursive: true, force: true });
+        }
+    });
+
+    it('rejects stale SQLite visibility updates without mutating messages', async () => {
+        const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'sqlite-chat-visibility-stale-'));
+        const chatPath = path.join(tempDir, 'chat.jsonl');
+
+        try {
+            await writeLogicalChat(chatPath, makeHeader({ chat_revision: 3 }), makeMessages(4));
+
+            await expect(updateSqliteMessageVisibility({
+                filePath: chatPath,
+                requestBody: { base_revision: 2 },
+                start: 1,
+                end: 1,
+                hide: true,
+                saveSessionId: '33333333-3333-4333-8333-333333333333',
+            })).rejects.toMatchObject({ status: 409, error: 'stale_revision' });
+
+            const logicalChat = await getLogicalChatData(chatPath);
+            expect(logicalChat[0].chat_revision).toBe(3);
+            expect(logicalChat[2].is_system).toBeUndefined();
+        } finally {
+            fs.rmSync(tempDir, { recursive: true, force: true });
+        }
+    });
+
+    it('syncs SQLite user persona messages in place and increments revision', async () => {
+        const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'sqlite-chat-persona-sync-'));
+        const chatPath = path.join(tempDir, 'chat.jsonl');
+
+        try {
+            const messages = makeMessages(6).map((message) => ({
+                ...message,
+                name: message.is_user ? 'Old User' : message.name,
+                force_avatar: message.is_user ? '/old-avatar.png' : message.force_avatar,
+            }));
+            await writeLogicalChat(chatPath, makeHeader({ chat_revision: 4 }), messages);
+
+            const payload = await updateSqliteUserPersonaMessages({
+                filePath: chatPath,
+                requestBody: { base_revision: 4 },
+                userName: 'New User',
+                forceAvatar: '/thumbnail?type=persona&file=new.png',
+                saveSessionId: '33333333-3333-4333-8333-333333333333',
+            });
+            const logicalChat = await getLogicalChatData(chatPath);
+
+            expect(payload.matched).toBe(3);
+            expect(payload.changed).toBe(3);
+            expect(payload.chat_revision).toBe(5);
+            expect(logicalChat[0].chat_revision).toBe(5);
+            expect(logicalChat[1].name).toBe('New User');
+            expect(logicalChat[1].force_avatar).toBe('/thumbnail?type=persona&file=new.png');
+            expect(logicalChat[2].name).toBe('Character');
+            expect(logicalChat[3].name).toBe('New User');
         } finally {
             fs.rmSync(tempDir, { recursive: true, force: true });
         }

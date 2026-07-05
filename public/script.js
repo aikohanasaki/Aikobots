@@ -1123,6 +1123,7 @@ function getDefaultChatLoadState() {
         tailCount: 0,
         currentView: 'tail',
         isHydrated: true,
+        storageMode: 'unknown',
     };
 }
 
@@ -4512,6 +4513,10 @@ function resetChatLoadState() {
     chatLoadState = getDefaultChatLoadState();
 }
 
+export function setCurrentChatStorageMode(storageMode) {
+    chatLoadState.storageMode = String(storageMode || 'unknown');
+}
+
 function getNormalizedLongChatHandling() {
     return normalizeLongChatHandlingSettings(power_user);
 }
@@ -5039,6 +5044,7 @@ export function applyChunkedChatPayload(response, { replace = false, currentView
     chatLoadState.headCount = chatLoadState.tailStartId;
     chatLoadState.tailCount = Math.max(0, getTotalChatMessages() - chatLoadState.tailStartId);
     chatLoadState.currentView = currentView ?? (loadedRangeStart < chatLoadState.tailStartId ? 'history' : 'tail');
+    chatLoadState.storageMode = String(response?.storageMode || response?.storage_mode || chatLoadState.storageMode || 'unknown');
 
     setChatSaveRevision(header?.chat_revision);
 
@@ -11995,6 +12001,9 @@ export async function saveChat({ chatName, withMetadata, mesId, force = false } 
 
         if (result.ok) {
             const responseData = await result.json();
+            if (responseData?.storage_mode) {
+                chatLoadState.storageMode = String(responseData.storage_mode);
+            }
             if (shouldTrackRevision) {
                 setChatSaveRevision(responseData?.chat_revision);
             }
@@ -13378,7 +13387,7 @@ async function saveSqliteReplyMutation(replyResult) {
 }
 
 function currentChatFileNameLooksSqlite() {
-    return /\.sqlite$/i.test(String(getCurrentChatId() || getCurrentChatDetails()?.sessionName || ''));
+    return chatLoadState.storageMode === 'sqlite';
 }
 
 async function messageEditDone(div) {
