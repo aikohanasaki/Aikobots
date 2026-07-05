@@ -172,6 +172,7 @@ import {
 } from './scripts/utils.js';
 import { debounce_timeout, GENERATION_TYPE_TRIGGERS, IGNORE_SYMBOL, inject_ids, MEDIA_DISPLAY, MEDIA_SOURCE, MEDIA_TYPE, OVERSWIPE_BEHAVIOR, SCROLL_BEHAVIOR, SWIPE_DIRECTION, SWIPE_SOURCE, SWIPE_STATE } from './scripts/constants.js';
 import {
+    AIKOBOTS_MESSAGE_UUID_KEY,
     AIKOBOTS_SWIPE_UUID_KEY,
     cloneMessageWithNewIdentity,
     ensureMessageIdentity,
@@ -13141,6 +13142,70 @@ async function cloneEditedMessage() {
     }
 }
 
+async function saveMessageUpdateByUuid(message) {
+    if (!message || typeof message !== 'object' || Array.isArray(message)) {
+        return CHAT_SAVE_RESULT.FAILED;
+    }
+
+    ensureMessageIdentity(message, { generateUuid: uuidv4 });
+    const messageUuid = message[AIKOBOTS_MESSAGE_UUID_KEY];
+    if (!messageUuid) {
+        return CHAT_SAVE_RESULT.FAILED;
+    }
+
+    const currentChatDetails = selected_group ? null : getCurrentChatDetails();
+    const body = selected_group
+        ? {
+            id: getCurrentChatId(),
+            message_uuid: messageUuid,
+            message: structuredClone(message),
+            base_revision: getChatSaveRevision(),
+            save_session_id: getChatSaveSessionId(),
+            display_count: getConfiguredLongChatDisplayCount(),
+        }
+        : {
+            ch_name: currentChatDetails?.characterName ?? characters[this_chid]?.name,
+            file_name: currentChatDetails?.fileName ?? characters[this_chid]?.chat,
+            avatar_url: currentChatDetails?.avatarUrl ?? characters[this_chid]?.avatar,
+            message_uuid: messageUuid,
+            message: structuredClone(message),
+            base_revision: getChatSaveRevision(),
+            save_session_id: getChatSaveSessionId(),
+            display_count: getConfiguredLongChatDisplayCount(),
+        };
+
+    const endpoint = selected_group ? '/api/chats/group/message/update' : '/api/chats/message/update';
+    const response = await fetch(endpoint, {
+        method: 'POST',
+        headers: getRequestHeaders(),
+        cache: 'no-cache',
+        body: JSON.stringify(body),
+    });
+
+    if (!response.ok) {
+        try {
+            const errorData = await response.json();
+            if (errorData?.error === 'stale_revision') {
+                warnStaleChatSave(errorData);
+            } else {
+                toastr.error(errorData?.message || errorData?.error || t`Message update failed.`);
+            }
+        } catch {
+            toastr.error(t`Message update failed.`);
+        }
+
+        return CHAT_SAVE_RESULT.FAILED;
+    }
+
+    const responseData = await response.json();
+    setChatSaveRevision(responseData?.chat_revision);
+    return CHAT_SAVE_RESULT.SAVED;
+}
+
+function currentChatFileNameLooksSqlite() {
+    return /\.sqlite$/i.test(String(getCurrentChatId() || getCurrentChatDetails()?.sessionName || ''));
+}
+
 async function messageEditDone(div) {
     let updateResult;
     try {
@@ -13187,13 +13252,23 @@ async function messageEditDone(div) {
     await eventSource.emit(event_types.MESSAGE_UPDATED, messageId);
     this_edit_mes_id = undefined;
     clearActiveMessageEditSession();
-    if (selected_group) {
-        const saveResult = await saveCurrentGroupMessageIncremental(messageId, mes);
+
+    let saveResult;
+    if (currentChatFileNameLooksSqlite()) {
+        saveResult = await saveMessageUpdateByUuid(mes);
+    } else if (selected_group) {
+        saveResult = await saveCurrentGroupMessageIncremental(messageId, mes);
         if (saveResult !== CHAT_SAVE_RESULT.SAVED) {
-            await saveChatConditional();
+            saveResult = await saveChatConditional();
         }
     } else {
-        await saveChatConditional();
+        saveResult = await saveChatConditional();
+    }
+
+    if (saveResult !== CHAT_SAVE_RESULT.SAVED) {
+        await reloadCurrentChat();
+        showSwipeButtons();
+        return;
     }
     showSwipeButtons();
 }

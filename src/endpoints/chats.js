@@ -34,7 +34,9 @@ import {
     uuidv4,
 } from '../util.js';
 import {
+    AIKOBOTS_MESSAGE_UUID_KEY,
     cloneMessageWithNewIdentity,
+    isValidAikobotsUuid,
     normalizeChatIdentities,
     regenerateChatIdentities,
     stripAikobotsIdentityMetadata,
@@ -48,8 +50,12 @@ import {
     getMessageCount,
     getLastMessage,
     getMessageRange,
+    appendLogicalMessage,
     insertLogicalMessageAfter,
     getLogicalMessageRow,
+    getLogicalMessageRowByUuid,
+    updateLogicalMessageRowById,
+    deleteLogicalMessagesAfter,
     updateMessages,
 } from '../sqlite-manager.js';
 
@@ -467,6 +473,11 @@ function createInsertMessageIndexMapper(insertAt) {
     return (messageId) => messageId >= insertedMessageId ? messageId + 1 : messageId;
 }
 
+function createDeleteMessageIndexMapper(deletedAt) {
+    const deletedMessageId = Number(deletedAt);
+    return (messageId) => messageId > deletedMessageId ? messageId - 1 : messageId;
+}
+
 class ChatMutationError extends Error {
     constructor(status, error, message = error, details = {}) {
         super(message);
@@ -795,7 +806,40 @@ function getUserPersonaMessageUpdates(db, userName, forceAvatar) {
     return { matched, changed: updates.length, updates };
 }
 
-export function applyLoadedMessageRange(logicalChatData, rangeStart, rangeMessages, rangeEnd = undefined) {
+function getAikobotsMessageUuid(message) {
+    return typeof message?.[AIKOBOTS_MESSAGE_UUID_KEY] === 'string'
+        ? message[AIKOBOTS_MESSAGE_UUID_KEY]
+        : '';
+}
+
+function requireStrictSaveRevision(requestBody) {
+    if (!Object.prototype.hasOwnProperty.call(requestBody || {}, 'base_revision')) {
+        return { ok: false, status: 400, error: 'base_revision_required' };
+    }
+
+    if (!getRequestSaveSessionId(requestBody)) {
+        return { ok: false, status: 400, error: 'save_session_id_required' };
+    }
+
+    return { ok: true };
+}
+
+function validateLoadedMessageRangeIdentity(logicalChatData, startId, rangeMessages) {
+    for (let index = 0; index < rangeMessages.length; index++) {
+        const existingMessage = logicalChatData[startId + 1 + index];
+        const incomingMessage = rangeMessages[index];
+        const existingUuid = getAikobotsMessageUuid(existingMessage);
+        const incomingUuid = getAikobotsMessageUuid(incomingMessage);
+
+        if (!existingUuid || !incomingUuid || existingUuid !== incomingUuid) {
+            return false;
+        }
+    }
+
+    return true;
+}
+
+export function applyLoadedMessageRange(logicalChatData, rangeStart, rangeMessages, rangeEnd = undefined, { requireIdentityMatch = true } = {}) {
     const startId = Number(rangeStart);
     if (!Number.isInteger(startId) || startId < 0 || !Array.isArray(rangeMessages) || rangeMessages.length === 0) {
         return { ok: false, error: 'invalid_loaded_range' };
@@ -808,14 +852,22 @@ export function applyLoadedMessageRange(logicalChatData, rangeStart, rangeMessag
     }
 
     const existingMessageCount = Math.max(0, logicalChatData.length - 1);
-    if (startId > existingMessageCount) {
+    if (startId >= existingMessageCount) {
         return { ok: false, error: 'invalid_loaded_range' };
     }
 
     const endId = startId + rangeMessages.length - 1;
+    if (endId >= existingMessageCount) {
+        return { ok: false, error: 'loaded_range_exceeds_tail' };
+    }
+
     const declaredEndId = Number(rangeEnd);
     if (rangeEnd !== undefined && (!Number.isInteger(declaredEndId) || declaredEndId !== endId)) {
         return { ok: false, error: 'invalid_loaded_range' };
+    }
+
+    if (requireIdentityMatch && !validateLoadedMessageRangeIdentity(logicalChatData, startId, rangeMessages)) {
+        return { ok: false, error: 'loaded_range_identity_mismatch' };
     }
 
     return {
@@ -1180,8 +1232,9 @@ async function updateGroupChatMessageRow({ filePath, requestBody, saveSessionId 
         throw new ChatMutationError(409, 'message_update_requires_sqlite', 'Message update requires SQLite chat storage.');
     }
 
+    const hasMessageUuid = typeof requestBody?.message_uuid === 'string' && requestBody.message_uuid.trim();
     const messageId = Number(requestBody?.message_id);
-    if (!Number.isInteger(messageId) || messageId < 0) {
+    if (!hasMessageUuid && (!Number.isInteger(messageId) || messageId < 0)) {
         throw new ChatMutationError(400, 'invalid_message_id');
     }
 
@@ -1607,6 +1660,305 @@ function applyCloneTextOverride(clone, requestBody) {
     }
 }
 
+function getMutationResponseWindow(focusMessageId, totalMessages, displayCount) {
+    if (!Number.isInteger(focusMessageId) || focusMessageId < 0) {
+        return getCloneResponseWindow(Math.max(0, totalMessages - 1), totalMessages, displayCount);
+    }
+
+    return getCloneResponseWindow(focusMessageId, totalMessages, displayCount);
+}
+
+function buildSqliteMutationPayload(db, header, focusMessageId, displayCount, extra = {}) {
+    const totalMessages = getMessageCount(db);
+    const window = getMutationResponseWindow(focusMessageId, totalMessages, displayCount);
+    const messages = totalMessages > 0 ? getMessageRange(db, window.rangeStart, window.count) : [];
+    return {
+        result: 'ok',
+        ok: true,
+        chat_revision: getChatRevision(header),
+        header: stripChatStorage(header),
+        messages,
+        totalMessages,
+        loadedRangeStart: messages.length > 0 ? window.rangeStart : 0,
+        loadedRangeEnd: messages.length > 0 ? window.rangeStart + messages.length - 1 : -1,
+        tailStartId: messages.length > 0 ? window.rangeStart : 0,
+        tailEndId: totalMessages > 0 ? totalMessages - 1 : -1,
+        headCount: messages.length > 0 ? window.rangeStart : 0,
+        tailCount: messages.length > 0 ? totalMessages - window.rangeStart : 0,
+        displayCount: window.displayCount,
+        isHydrated: window.rangeStart === 0 && messages.length >= totalMessages,
+        ...extra,
+    };
+}
+
+function assertValidMessageUuid(messageUuid) {
+    const normalizedUuid = String(messageUuid || '').trim();
+    if (!normalizedUuid) {
+        throw new ChatMutationError(400, 'message_uuid_required');
+    }
+
+    if (!isValidAikobotsUuid(normalizedUuid)) {
+        throw new ChatMutationError(400, 'invalid_message_uuid');
+    }
+
+    return normalizedUuid;
+}
+
+function requireSqliteMutationRequest(requestBody, header) {
+    const strictRevision = requireStrictSaveRevision(requestBody);
+    if (!strictRevision.ok) {
+        throw new ChatMutationError(strictRevision.status, strictRevision.error);
+    }
+
+    const revisionCheck = validateSaveRevision(requestBody, header);
+    if (!revisionCheck.ok) {
+        throw new ChatMutationError(revisionCheck.status, revisionCheck.error, revisionCheck.error, {
+            current_revision: revisionCheck.currentRevision,
+            last_save_session_id: revisionCheck.lastSaveSessionId,
+        });
+    }
+
+    return revisionCheck;
+}
+
+function updateSqliteHeaderRow(db, header) {
+    const stmt = db.prepare('UPDATE messages SET content = ? WHERE order_index = 0');
+    try {
+        stmt.run([JSON.stringify(sanitizeChatHeaderForPersistence(header))]);
+    } finally {
+        stmt.free();
+    }
+}
+
+function applyMessageUpdatePayload(existingMessage, requestBody) {
+    if (!_.isPlainObject(requestBody?.message)) {
+        throw new ChatMutationError(400, 'invalid_message_payload');
+    }
+
+    const updatedMessage = _.cloneDeep(requestBody.message);
+    const targetUuid = assertValidMessageUuid(requestBody.message_uuid);
+    const submittedUuid = getAikobotsMessageUuid(updatedMessage);
+    if (submittedUuid && submittedUuid !== targetUuid) {
+        throw new ChatMutationError(409, 'message_uuid_mismatch');
+    }
+
+    updatedMessage[AIKOBOTS_MESSAGE_UUID_KEY] = targetUuid;
+    if (existingMessage?.id !== undefined) {
+        delete updatedMessage.id;
+    }
+    delete updatedMessage.order_index;
+    normalizeChatIdentities([updatedMessage], { generateUuid: uuidv4 });
+    return sanitizeChatMessageForPersistence(updatedMessage);
+}
+
+function updateShiftedMessagesAfterDelete(db, deletedLogicalIndex) {
+    const totalMessages = getMessageCount(db);
+    const remapIndex = createDeleteMessageIndexMapper(deletedLogicalIndex);
+
+    for (let logicalIndex = deletedLogicalIndex; logicalIndex < totalMessages; logicalIndex++) {
+        const shiftedRow = getLogicalMessageRow(db, logicalIndex);
+        if (!shiftedRow) {
+            continue;
+        }
+
+        const shiftedMessage = _.cloneDeep(shiftedRow.message);
+        removePromptSnapshotKeysFromMessage(shiftedMessage);
+        remapMessageTimedWorldInfoCheckpoints(shiftedMessage, logicalIndex, remapIndex);
+        updateLogicalMessageRowById(db, shiftedRow.id, sanitizeChatMessageForPersistence(shiftedMessage));
+    }
+}
+
+export async function updateSqliteMessageByUuid({ filePath, requestBody, saveSessionId, displayCount }) {
+    const sqlitePath = replaceChatStorageExtension(filePath, '.sqlite');
+    if (!fs.existsSync(sqlitePath)) {
+        throw new ChatMutationError(409, 'message_update_requires_sqlite', 'Message update requires SQLite chat storage.');
+    }
+
+    const targetUuid = assertValidMessageUuid(requestBody?.message_uuid);
+    const db = await loadDb(sqlitePath);
+    try {
+        const header = getChatHeader(db);
+        if (!header) {
+            throw new ChatMutationError(404, 'chat_not_found');
+        }
+        assertSupportedChatStorage(header);
+
+        const revisionCheck = requireSqliteMutationRequest(requestBody, header);
+        const row = getLogicalMessageRowByUuid(db, targetUuid);
+        if (!row) {
+            throw new ChatMutationError(404, 'message_not_found');
+        }
+
+        const updatedMessage = applyMessageUpdatePayload(row.message, requestBody);
+        const revisedHeader = setChatRevision(stripChatStorage(header), revisionCheck.nextRevision, saveSessionId);
+
+        db.run('BEGIN TRANSACTION');
+        try {
+            updateSqliteHeaderRow(db, revisedHeader);
+            updateLogicalMessageRowById(db, row.id, updatedMessage);
+            db.run('COMMIT');
+        } catch (error) {
+            db.run('ROLLBACK');
+            throw error;
+        }
+
+        saveDb(db, sqlitePath);
+        return buildSqliteMutationPayload(db, revisedHeader, row.logicalIndex, displayCount, {
+            message_uuid: targetUuid,
+            message_id: row.logicalIndex,
+        });
+    } finally {
+        db.close();
+    }
+}
+
+export async function appendSqliteMessage({ filePath, requestBody, saveSessionId, displayCount }) {
+    const sqlitePath = replaceChatStorageExtension(filePath, '.sqlite');
+    if (!fs.existsSync(sqlitePath)) {
+        throw new ChatMutationError(409, 'message_append_requires_sqlite', 'Message append requires SQLite chat storage.');
+    }
+
+    if (!_.isPlainObject(requestBody?.message)) {
+        throw new ChatMutationError(400, 'invalid_message_payload');
+    }
+
+    const db = await loadDb(sqlitePath);
+    try {
+        const header = getChatHeader(db);
+        if (!header) {
+            throw new ChatMutationError(404, 'chat_not_found');
+        }
+        assertSupportedChatStorage(header);
+
+        const revisionCheck = requireSqliteMutationRequest(requestBody, header);
+        const expectedTailUuid = String(requestBody?.expected_tail_uuid || '').trim();
+        if (expectedTailUuid) {
+            if (!isValidAikobotsUuid(expectedTailUuid)) {
+                throw new ChatMutationError(400, 'invalid_expected_tail_uuid');
+            }
+            const tail = getLastMessage(db);
+            if (getAikobotsMessageUuid(tail) !== expectedTailUuid) {
+                throw new ChatMutationError(409, 'tail_mismatch');
+            }
+        }
+
+        const message = _.cloneDeep(requestBody.message);
+        delete message.id;
+        delete message.order_index;
+        normalizeChatIdentities([message], { generateUuid: uuidv4 });
+        const sanitizedMessage = sanitizeChatMessageForPersistence(message);
+        const revisedHeader = setChatRevision(stripChatStorage(header), revisionCheck.nextRevision, saveSessionId);
+        let insertedMessageId;
+
+        db.run('BEGIN TRANSACTION');
+        try {
+            updateSqliteHeaderRow(db, revisedHeader);
+            insertedMessageId = appendLogicalMessage(db, sanitizedMessage);
+            db.run('COMMIT');
+        } catch (error) {
+            db.run('ROLLBACK');
+            throw error;
+        }
+
+        saveDb(db, sqlitePath);
+        return buildSqliteMutationPayload(db, revisedHeader, insertedMessageId, displayCount, {
+            message_uuid: getAikobotsMessageUuid(sanitizedMessage),
+            message_id: insertedMessageId,
+        });
+    } finally {
+        db.close();
+    }
+}
+
+export async function deleteSqliteMessageByUuid({ filePath, requestBody, saveSessionId, displayCount }) {
+    const sqlitePath = replaceChatStorageExtension(filePath, '.sqlite');
+    if (!fs.existsSync(sqlitePath)) {
+        throw new ChatMutationError(409, 'message_delete_requires_sqlite', 'Message delete requires SQLite chat storage.');
+    }
+
+    const targetUuid = assertValidMessageUuid(requestBody?.message_uuid);
+    const db = await loadDb(sqlitePath);
+    try {
+        const header = getChatHeader(db);
+        if (!header) {
+            throw new ChatMutationError(404, 'chat_not_found');
+        }
+        assertSupportedChatStorage(header);
+
+        const revisionCheck = requireSqliteMutationRequest(requestBody, header);
+        const row = getLogicalMessageRowByUuid(db, targetUuid);
+        if (!row) {
+            throw new ChatMutationError(404, 'message_not_found');
+        }
+
+        const revisedHeader = setChatRevision(stripChatStorage(header), revisionCheck.nextRevision, saveSessionId);
+        db.run('BEGIN TRANSACTION');
+        let stmt;
+        try {
+            updateSqliteHeaderRow(db, revisedHeader);
+            stmt = db.prepare('DELETE FROM messages WHERE id = ?');
+            stmt.run([row.id]);
+            updateShiftedMessagesAfterDelete(db, row.logicalIndex);
+            db.run('COMMIT');
+        } catch (error) {
+            db.run('ROLLBACK');
+            throw error;
+        } finally {
+            stmt?.free();
+        }
+
+        saveDb(db, sqlitePath);
+        return buildSqliteMutationPayload(db, revisedHeader, Math.max(0, row.logicalIndex - 1), displayCount, {
+            message_uuid: targetUuid,
+            deleted_message_id: row.logicalIndex,
+        });
+    } finally {
+        db.close();
+    }
+}
+
+export async function truncateSqliteChatAfterUuid({ filePath, requestBody, saveSessionId, displayCount }) {
+    const sqlitePath = replaceChatStorageExtension(filePath, '.sqlite');
+    if (!fs.existsSync(sqlitePath)) {
+        throw new ChatMutationError(409, 'truncate_requires_sqlite', 'Truncate requires SQLite chat storage.');
+    }
+
+    const targetUuid = assertValidMessageUuid(requestBody?.branch_point_uuid || requestBody?.message_uuid);
+    const db = await loadDb(sqlitePath);
+    try {
+        const header = getChatHeader(db);
+        if (!header) {
+            throw new ChatMutationError(404, 'chat_not_found');
+        }
+        assertSupportedChatStorage(header);
+
+        const revisionCheck = requireSqliteMutationRequest(requestBody, header);
+        const row = getLogicalMessageRowByUuid(db, targetUuid);
+        if (!row) {
+            throw new ChatMutationError(404, 'message_not_found');
+        }
+
+        const revisedHeader = setChatRevision(stripChatStorage(header), revisionCheck.nextRevision, saveSessionId);
+        db.run('BEGIN TRANSACTION');
+        try {
+            updateSqliteHeaderRow(db, revisedHeader);
+            deleteLogicalMessagesAfter(db, row.logicalIndex);
+            db.run('COMMIT');
+        } catch (error) {
+            db.run('ROLLBACK');
+            throw error;
+        }
+
+        saveDb(db, sqlitePath);
+        return buildSqliteMutationPayload(db, revisedHeader, row.logicalIndex, displayCount, {
+            message_uuid: targetUuid,
+            branch_point_message_id: row.logicalIndex,
+        });
+    } finally {
+        db.close();
+    }
+}
+
 /**
  * Clones one logical SQLite chat message immediately after the source message.
  * @param {{filePath: string, requestBody: object, saveSessionId?: string|null, displayCount?: number}} options
@@ -1639,7 +1991,9 @@ export async function cloneSqliteMessageAfter({ filePath, requestBody, saveSessi
             });
         }
 
-        const sourceRow = getLogicalMessageRow(db, messageId);
+        const sourceRow = hasMessageUuid
+            ? getLogicalMessageRowByUuid(db, requestBody.message_uuid)
+            : getLogicalMessageRow(db, messageId);
         if (!sourceRow) {
             throw new ChatMutationError(400, 'invalid_message_id');
         }
@@ -1650,7 +2004,7 @@ export async function cloneSqliteMessageAfter({ filePath, requestBody, saveSessi
         removePromptSnapshotKeysFromMessage(clone);
         removeTimedWorldInfoCheckpointsFromMessage(clone);
 
-        const insertedMessageId = insertLogicalMessageAfter(db, messageId, sanitizeChatMessageForPersistence(clone));
+        const insertedMessageId = insertLogicalMessageAfter(db, sourceRow.logicalIndex ?? messageId, sanitizeChatMessageForPersistence(clone));
         const totalMessages = getMessageCount(db);
         const shiftedMessages = getMessageRange(db, insertedMessageId, totalMessages - insertedMessageId);
         const remapIndex = createInsertMessageIndexMapper(insertedMessageId);
@@ -2491,6 +2845,171 @@ router.post('/message/clone', validateAvatarUrlMiddleware, async function (reque
     }
 });
 
+router.post('/message/append', validateAvatarUrlMiddleware, async function (request, response) {
+    try {
+        const filePath = resolveCharacterChatFilePath(request.user.directories.chats, request.body.avatar_url, request.body.file_name);
+        if (!fs.existsSync(replaceChatStorageExtension(filePath, '.sqlite'))) {
+            return response.status(404).send({ error: 'chat_not_found' });
+        }
+
+        return await withChatSaveLock(filePath, async () => {
+            await request.activeSessionOperation?.assertAllowed();
+            const payload = await appendSqliteMessage({
+                filePath,
+                requestBody: request.body,
+                saveSessionId: getRequestSaveSessionId(request.body),
+                displayCount: request.body.display_count,
+            });
+            return response.send(payload);
+        });
+    } catch (error) {
+        if (isActiveSessionError(error)) {
+            return sendActiveSessionRequired(response);
+        }
+        if (isChatPathValidationError(error)) {
+            return sendChatPathValidationError(response, error);
+        }
+        if (error instanceof ChatMutationError) {
+            return response.status(error.status || 400).send({ error: error.error, message: error.message, ...error.details });
+        }
+        console.error(error);
+        return response.status(500).send({ error: 'append_failed' });
+    }
+});
+
+router.post('/message/update', validateAvatarUrlMiddleware, async function (request, response) {
+    try {
+        const filePath = resolveCharacterChatFilePath(request.user.directories.chats, request.body.avatar_url, request.body.file_name);
+        if (!fs.existsSync(replaceChatStorageExtension(filePath, '.sqlite'))) {
+            return response.status(404).send({ error: 'chat_not_found' });
+        }
+
+        return await withChatSaveLock(filePath, async () => {
+            await request.activeSessionOperation?.assertAllowed();
+            const payload = await updateSqliteMessageByUuid({
+                filePath,
+                requestBody: request.body,
+                saveSessionId: getRequestSaveSessionId(request.body),
+                displayCount: request.body.display_count,
+            });
+            return response.send(payload);
+        });
+    } catch (error) {
+        if (isActiveSessionError(error)) {
+            return sendActiveSessionRequired(response);
+        }
+        if (isChatPathValidationError(error)) {
+            return sendChatPathValidationError(response, error);
+        }
+        if (error instanceof ChatMutationError) {
+            return response.status(error.status || 400).send({ error: error.error, message: error.message, ...error.details });
+        }
+        console.error(error);
+        return response.status(500).send({ error: 'message_update_failed' });
+    }
+});
+
+router.post('/message/delete', validateAvatarUrlMiddleware, async function (request, response) {
+    try {
+        const filePath = resolveCharacterChatFilePath(request.user.directories.chats, request.body.avatar_url, request.body.file_name);
+        if (!fs.existsSync(replaceChatStorageExtension(filePath, '.sqlite'))) {
+            return response.status(404).send({ error: 'chat_not_found' });
+        }
+
+        return await withChatSaveLock(filePath, async () => {
+            await request.activeSessionOperation?.assertAllowed();
+            const payload = await deleteSqliteMessageByUuid({
+                filePath,
+                requestBody: request.body,
+                saveSessionId: getRequestSaveSessionId(request.body),
+                displayCount: request.body.display_count,
+            });
+            return response.send(payload);
+        });
+    } catch (error) {
+        if (isActiveSessionError(error)) {
+            return sendActiveSessionRequired(response);
+        }
+        if (isChatPathValidationError(error)) {
+            return sendChatPathValidationError(response, error);
+        }
+        if (error instanceof ChatMutationError) {
+            return response.status(error.status || 400).send({ error: error.error, message: error.message, ...error.details });
+        }
+        console.error(error);
+        return response.status(500).send({ error: 'message_delete_failed' });
+    }
+});
+
+router.post('/truncate-after', validateAvatarUrlMiddleware, async function (request, response) {
+    try {
+        const filePath = resolveCharacterChatFilePath(request.user.directories.chats, request.body.avatar_url, request.body.file_name);
+        if (!fs.existsSync(replaceChatStorageExtension(filePath, '.sqlite'))) {
+            return response.status(404).send({ error: 'chat_not_found' });
+        }
+
+        return await withChatSaveLock(filePath, async () => {
+            await request.activeSessionOperation?.assertAllowed();
+            const payload = await truncateSqliteChatAfterUuid({
+                filePath,
+                requestBody: request.body,
+                saveSessionId: getRequestSaveSessionId(request.body),
+                displayCount: request.body.display_count,
+            });
+            return response.send(payload);
+        });
+    } catch (error) {
+        if (isActiveSessionError(error)) {
+            return sendActiveSessionRequired(response);
+        }
+        if (isChatPathValidationError(error)) {
+            return sendChatPathValidationError(response, error);
+        }
+        if (error instanceof ChatMutationError) {
+            return response.status(error.status || 400).send({ error: error.error, message: error.message, ...error.details });
+        }
+        console.error(error);
+        return response.status(500).send({ error: 'truncate_failed' });
+    }
+});
+
+router.post('/regenerate-prepare', validateAvatarUrlMiddleware, async function (request, response) {
+    try {
+        const filePath = resolveCharacterChatFilePath(request.user.directories.chats, request.body.avatar_url, request.body.file_name);
+        if (!fs.existsSync(replaceChatStorageExtension(filePath, '.sqlite'))) {
+            return response.status(404).send({ error: 'chat_not_found' });
+        }
+
+        const requestBody = {
+            ...request.body,
+            branch_point_uuid: request.body.branch_point_uuid ?? request.body.message_uuid,
+        };
+
+        return await withChatSaveLock(filePath, async () => {
+            await request.activeSessionOperation?.assertAllowed();
+            const payload = await truncateSqliteChatAfterUuid({
+                filePath,
+                requestBody,
+                saveSessionId: getRequestSaveSessionId(requestBody),
+                displayCount: requestBody.display_count,
+            });
+            return response.send(payload);
+        });
+    } catch (error) {
+        if (isActiveSessionError(error)) {
+            return sendActiveSessionRequired(response);
+        }
+        if (isChatPathValidationError(error)) {
+            return sendChatPathValidationError(response, error);
+        }
+        if (error instanceof ChatMutationError) {
+            return response.status(error.status || 400).send({ error: error.error, message: error.message, ...error.details });
+        }
+        console.error(error);
+        return response.status(500).send({ error: 'regenerate_prepare_failed' });
+    }
+});
+
 router.post('/message-visibility', validateAvatarUrlMiddleware, async function (request, response) {
     try {
         const directoryName = normalizeCharacterChatDirectoryName(request.body.avatar_url);
@@ -2713,7 +3232,16 @@ router.post('/save', validateAvatarUrlMiddleware, async function (request, respo
             }
 
             let logicalChatData = chatData;
-            const existingSegments = fs.existsSync(filePath) || fs.existsSync(replaceChatStorageExtension(filePath, '.sqlite')) ? await getChatSegments(filePath) : null;
+            const sqlitePath = replaceChatStorageExtension(filePath, '.sqlite');
+            const existingSqliteChat = fs.existsSync(sqlitePath);
+            const existingSegments = fs.existsSync(filePath) || existingSqliteChat ? await getChatSegments(filePath) : null;
+
+            if (existingSqliteChat && existingSegments?.header && !request.body.force) {
+                const strictRevision = requireStrictSaveRevision(request.body);
+                if (!strictRevision.ok) {
+                    return response.status(strictRevision.status).send({ error: strictRevision.error });
+                }
+            }
 
             if (request.body.save_mode === 'tail') {
                 return response.status(400).send({ error: 'invalid_save_mode' });
@@ -3694,6 +4222,166 @@ router.patch('/group/message/update', async (request, response) => {
     }
 });
 
+router.post('/group/message/update', async (request, response) => {
+    try {
+        if (!request.body || !request.body.id) {
+            return response.sendStatus(400);
+        }
+
+        const id = request.body.id;
+        const pathToFile = getGroupChatFilePath(request.user.directories.groupChats, id);
+        if (!fs.existsSync(replaceChatStorageExtension(pathToFile, '.sqlite'))) {
+            return response.status(404).send({ error: 'chat_not_found' });
+        }
+
+        return await withChatSaveLock(pathToFile, async () => {
+            await request.activeSessionOperation?.assertAllowed();
+            const payload = await updateSqliteMessageByUuid({
+                filePath: pathToFile,
+                requestBody: request.body,
+                saveSessionId: getRequestSaveSessionId(request.body),
+                displayCount: request.body.display_count,
+            });
+            return response.send(payload);
+        });
+    } catch (error) {
+        if (isActiveSessionError(error)) {
+            return sendActiveSessionRequired(response);
+        }
+        if (isUnsupportedSplitTailChatError(error)) {
+            return sendUnsupportedSplitTailChatError(response, error);
+        }
+        if (isChatPathValidationError(error)) {
+            return sendChatPathValidationError(response, error);
+        }
+        if (error instanceof ChatMutationError) {
+            return response.status(error.status || 400).send({ error: error.error, message: error.message, ...error.details });
+        }
+        console.error(error);
+        return response.status(500).send({ error: 'message_update_failed' });
+    }
+});
+
+router.post('/group/message/append', async (request, response) => {
+    try {
+        if (!request.body || !request.body.id) {
+            return response.sendStatus(400);
+        }
+
+        const id = request.body.id;
+        const pathToFile = getGroupChatFilePath(request.user.directories.groupChats, id);
+        if (!fs.existsSync(replaceChatStorageExtension(pathToFile, '.sqlite'))) {
+            return response.status(404).send({ error: 'chat_not_found' });
+        }
+
+        return await withChatSaveLock(pathToFile, async () => {
+            await request.activeSessionOperation?.assertAllowed();
+            const payload = await appendSqliteMessage({
+                filePath: pathToFile,
+                requestBody: request.body,
+                saveSessionId: getRequestSaveSessionId(request.body),
+                displayCount: request.body.display_count,
+            });
+            return response.send(payload);
+        });
+    } catch (error) {
+        if (isActiveSessionError(error)) {
+            return sendActiveSessionRequired(response);
+        }
+        if (isUnsupportedSplitTailChatError(error)) {
+            return sendUnsupportedSplitTailChatError(response, error);
+        }
+        if (isChatPathValidationError(error)) {
+            return sendChatPathValidationError(response, error);
+        }
+        if (error instanceof ChatMutationError) {
+            return response.status(error.status || 400).send({ error: error.error, message: error.message, ...error.details });
+        }
+        console.error(error);
+        return response.status(500).send({ error: 'append_failed' });
+    }
+});
+
+router.post('/group/message/delete', async (request, response) => {
+    try {
+        if (!request.body || !request.body.id) {
+            return response.sendStatus(400);
+        }
+
+        const id = request.body.id;
+        const pathToFile = getGroupChatFilePath(request.user.directories.groupChats, id);
+        if (!fs.existsSync(replaceChatStorageExtension(pathToFile, '.sqlite'))) {
+            return response.status(404).send({ error: 'chat_not_found' });
+        }
+
+        return await withChatSaveLock(pathToFile, async () => {
+            await request.activeSessionOperation?.assertAllowed();
+            const payload = await deleteSqliteMessageByUuid({
+                filePath: pathToFile,
+                requestBody: request.body,
+                saveSessionId: getRequestSaveSessionId(request.body),
+                displayCount: request.body.display_count,
+            });
+            return response.send(payload);
+        });
+    } catch (error) {
+        if (isActiveSessionError(error)) {
+            return sendActiveSessionRequired(response);
+        }
+        if (isUnsupportedSplitTailChatError(error)) {
+            return sendUnsupportedSplitTailChatError(response, error);
+        }
+        if (isChatPathValidationError(error)) {
+            return sendChatPathValidationError(response, error);
+        }
+        if (error instanceof ChatMutationError) {
+            return response.status(error.status || 400).send({ error: error.error, message: error.message, ...error.details });
+        }
+        console.error(error);
+        return response.status(500).send({ error: 'message_delete_failed' });
+    }
+});
+
+router.post('/group/truncate-after', async (request, response) => {
+    try {
+        if (!request.body || !request.body.id) {
+            return response.sendStatus(400);
+        }
+
+        const id = request.body.id;
+        const pathToFile = getGroupChatFilePath(request.user.directories.groupChats, id);
+        if (!fs.existsSync(replaceChatStorageExtension(pathToFile, '.sqlite'))) {
+            return response.status(404).send({ error: 'chat_not_found' });
+        }
+
+        return await withChatSaveLock(pathToFile, async () => {
+            await request.activeSessionOperation?.assertAllowed();
+            const payload = await truncateSqliteChatAfterUuid({
+                filePath: pathToFile,
+                requestBody: request.body,
+                saveSessionId: getRequestSaveSessionId(request.body),
+                displayCount: request.body.display_count,
+            });
+            return response.send(payload);
+        });
+    } catch (error) {
+        if (isActiveSessionError(error)) {
+            return sendActiveSessionRequired(response);
+        }
+        if (isUnsupportedSplitTailChatError(error)) {
+            return sendUnsupportedSplitTailChatError(response, error);
+        }
+        if (isChatPathValidationError(error)) {
+            return sendChatPathValidationError(response, error);
+        }
+        if (error instanceof ChatMutationError) {
+            return response.status(error.status || 400).send({ error: error.error, message: error.message, ...error.details });
+        }
+        console.error(error);
+        return response.status(500).send({ error: 'truncate_failed' });
+    }
+});
+
 router.post('/group/message/clone', async (request, response) => {
     try {
         if (!request.body || !request.body.id) {
@@ -3756,6 +4444,12 @@ router.post('/group/save', async (request, response) => {
         return await withChatSaveLock(pathToFile, async () => {
             const chat_data = request.body.chat;
             const existingPayload = await getGroupChatPayload(pathToFile);
+            if (fs.existsSync(replaceChatStorageExtension(pathToFile, '.sqlite')) && existingPayload.header) {
+                const strictRevision = requireStrictSaveRevision(request.body);
+                if (!strictRevision.ok) {
+                    return response.status(strictRevision.status).send({ error: strictRevision.error });
+                }
+            }
             const revisionCheck = validateSaveRevision(request.body, existingPayload.header);
 
             if (!revisionCheck.ok) {

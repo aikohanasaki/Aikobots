@@ -313,6 +313,105 @@ function getLastOrderIndex(db) {
 }
 
 /**
+ * Gets an ordered logical message row by Aikobots message UUID.
+ * @param {import('sql.js').Database} db
+ * @param {string} messageUuid
+ * @returns {{logicalIndex: number, id: number, orderIndex: number, content: string, message: any}|null}
+ */
+export function getLogicalMessageRowByUuid(db, messageUuid) {
+    const normalizedUuid = String(messageUuid || '').trim();
+    if (!normalizedUuid) {
+        return null;
+    }
+
+    const rows = getOrderedRows(db, 1, getMessageCount(db));
+    let match = null;
+
+    for (let index = 0; index < rows.length; index++) {
+        const message = JSON.parse(rows[index].content);
+        if (message?.aikobots_message_uuid !== normalizedUuid) {
+            continue;
+        }
+
+        if (match) {
+            return null;
+        }
+
+        if (message && typeof message === 'object') {
+            message.id = rows[index].id;
+            message.order_index = Number(rows[index].orderIndex);
+        }
+
+        match = {
+            logicalIndex: index,
+            id: rows[index].id,
+            orderIndex: Number(rows[index].orderIndex),
+            content: rows[index].content,
+            message,
+        };
+    }
+
+    return match;
+}
+
+/**
+ * Appends one logical message after the current SQLite tail.
+ * @param {import('sql.js').Database} db
+ * @param {any} message
+ * @returns {number} Inserted logical message id.
+ */
+export function appendLogicalMessage(db, message) {
+    const orderIndex = getLastOrderIndex(db) + 1;
+    const stmt = db.prepare('INSERT INTO messages (order_index, content) VALUES (?, ?)');
+    try {
+        stmt.run([orderIndex, JSON.stringify(message)]);
+    } finally {
+        stmt.free();
+    }
+
+    return getMessageCount(db) - 1;
+}
+
+/**
+ * Updates a logical message row by SQLite row id.
+ * @param {import('sql.js').Database} db
+ * @param {number} rowId
+ * @param {any} message
+ */
+export function updateLogicalMessageRowById(db, rowId, message) {
+    const id = Number(rowId);
+    if (!Number.isInteger(id) || id <= 0) {
+        throw new Error('Invalid SQLite message row id.');
+    }
+
+    const stmt = db.prepare('UPDATE messages SET content = ? WHERE id = ?');
+    try {
+        stmt.run([JSON.stringify(message), id]);
+    } finally {
+        stmt.free();
+    }
+}
+
+/**
+ * Deletes all logical rows after the supplied logical message id.
+ * @param {import('sql.js').Database} db
+ * @param {number} messageId
+ */
+export function deleteLogicalMessagesAfter(db, messageId) {
+    const row = getLogicalMessageRow(db, messageId);
+    if (!row) {
+        throw new Error('Message to truncate after was not found.');
+    }
+
+    const stmt = db.prepare('DELETE FROM messages WHERE order_index > ?');
+    try {
+        stmt.run([row.orderIndex]);
+    } finally {
+        stmt.free();
+    }
+}
+
+/**
  * Inserts a logical message immediately after the supplied logical message id.
  * @param {import('sql.js').Database} db
  * @param {number} messageId

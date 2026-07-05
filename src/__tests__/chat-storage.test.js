@@ -5,13 +5,17 @@ import path from 'node:path';
 import { beforeAll, describe, expect, it } from '@jest/globals';
 
 let applyLoadedMessageRange;
+let appendSqliteMessage;
 let buildChunkedChatPayload;
 let cloneSqliteMessageAfter;
 let compileScene;
+let deleteSqliteMessageByUuid;
 let getLogicalChatData;
 let hasValidGroupChatPayload;
 let insertLogicalMessageAfter;
 let resolveSqliteLogicalChatReference;
+let truncateSqliteChatAfterUuid;
+let updateSqliteMessageByUuid;
 let writeLogicalChat;
 
 function getConfigPath() {
@@ -35,6 +39,7 @@ function makeHeader(overrides = {}) {
 
 function makeMessages(count) {
     return Array.from({ length: count }, (_, index) => ({
+        aikobots_message_uuid: `00000000-0000-4000-8000-${String(index).padStart(12, '0')}`,
         name: index % 2 === 0 ? 'User' : 'Character',
         is_user: index % 2 === 0,
         mes: `message ${index}`,
@@ -51,12 +56,16 @@ describe('SQLite chat length handling', () => {
         const sqliteModule = await import('../sqlite-manager.js');
         const stmbCoreModule = await import('../../public/scripts/stmb-core.js');
         applyLoadedMessageRange = chatsModule.applyLoadedMessageRange;
+        appendSqliteMessage = chatsModule.appendSqliteMessage;
         buildChunkedChatPayload = chatsModule.buildChunkedChatPayload;
         cloneSqliteMessageAfter = chatsModule.cloneSqliteMessageAfter;
         compileScene = stmbCoreModule.compileScene;
+        deleteSqliteMessageByUuid = chatsModule.deleteSqliteMessageByUuid;
         getLogicalChatData = chatsModule.getLogicalChatData;
         hasValidGroupChatPayload = chatsModule.hasValidGroupChatPayload;
         resolveSqliteLogicalChatReference = chatsModule.resolveSqliteLogicalChatReference;
+        truncateSqliteChatAfterUuid = chatsModule.truncateSqliteChatAfterUuid;
+        updateSqliteMessageByUuid = chatsModule.updateSqliteMessageByUuid;
         insertLogicalMessageAfter = sqliteModule.insertLogicalMessageAfter;
         writeLogicalChat = chatsModule.writeLogicalChat;
     });
@@ -322,7 +331,7 @@ describe('SQLite chat length handling', () => {
 
     it('preserves existing suffix data when applying a loaded range', () => {
         const existing = [makeHeader(), ...makeMessages(1000)];
-        const rangeMessages = makeMessages(50).map((message, index) => ({
+        const rangeMessages = existing.slice(101, 151).map((message, index) => ({
             ...message,
             mes: `updated ${100 + index}`,
         }));
@@ -335,6 +344,237 @@ describe('SQLite chat length handling', () => {
         expect(result.chatData[150].mes).toBe('updated 149');
         expect(result.chatData[151].mes).toBe('message 150');
         expect(result.chatData.at(-1).mes).toBe('message 999');
+    });
+
+    it('rejects a stale loaded range that extends beyond the server tail', () => {
+        const existing = [makeHeader(), ...makeMessages(100)];
+        const rangeMessages = Array.from({ length: 20 }, (_, index) => ({
+            ...makeMessages(110)[90 + index],
+            mes: `stale duplicate ${90 + index}`,
+        }));
+
+        const result = applyLoadedMessageRange(existing, 90, rangeMessages, 109);
+
+        expect(result.ok).toBe(false);
+        expect(result.error).toBe('loaded_range_exceeds_tail');
+    });
+
+    it('rejects a loaded range when submitted UUID continuity does not match server state', () => {
+        const existing = [makeHeader(), ...makeMessages(100)];
+        const rangeMessages = makeMessages(5).map((message, index) => ({
+            ...message,
+            aikobots_message_uuid: `11111111-1111-4111-8111-${String(index).padStart(12, '0')}`,
+            mes: `wrong message ${index}`,
+        }));
+
+        const result = applyLoadedMessageRange(existing, 10, rangeMessages, 14);
+
+        expect(result.ok).toBe(false);
+        expect(result.error).toBe('loaded_range_identity_mismatch');
+    });
+
+    it('updates an existing SQLite message by UUID without appending duplicated text', async () => {
+        const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'sqlite-chat-uuid-update-'));
+        const chatPath = path.join(tempDir, 'chat.jsonl');
+
+        try {
+            const header = makeHeader({ chat_revision: 7 });
+            const messages = makeMessages(6);
+            await writeLogicalChat(chatPath, header, messages);
+
+            const updatedMessage = { ...messages[2], mes: 'edited historical text' };
+            const payload = await updateSqliteMessageByUuid({
+                filePath: chatPath,
+                requestBody: {
+                    message_uuid: messages[2].aikobots_message_uuid,
+                    message: updatedMessage,
+                    base_revision: 7,
+                    save_session_id: '33333333-3333-4333-8333-333333333333',
+                },
+                saveSessionId: '33333333-3333-4333-8333-333333333333',
+                displayCount: 10,
+            });
+
+            const logicalChat = await getLogicalChatData(chatPath);
+            expect(payload.chat_revision).toBe(8);
+            expect(logicalChat).toHaveLength(7);
+            expect(logicalChat[3].mes).toBe('edited historical text');
+            expect(logicalChat.at(-1).mes).toBe('message 5');
+        } finally {
+            fs.rmSync(tempDir, { recursive: true, force: true });
+        }
+    });
+
+    it('rejects UUID updates without a base revision', async () => {
+        const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'sqlite-chat-uuid-update-revision-'));
+        const chatPath = path.join(tempDir, 'chat.jsonl');
+
+        try {
+            const header = makeHeader({ chat_revision: 7 });
+            const messages = makeMessages(2);
+            await writeLogicalChat(chatPath, header, messages);
+
+            await expect(updateSqliteMessageByUuid({
+                filePath: chatPath,
+                requestBody: {
+                    message_uuid: messages[0].aikobots_message_uuid,
+                    message: { ...messages[0], mes: 'should fail' },
+                    save_session_id: '33333333-3333-4333-8333-333333333333',
+                },
+                saveSessionId: '33333333-3333-4333-8333-333333333333',
+                displayCount: 10,
+            })).rejects.toMatchObject({ error: 'base_revision_required' });
+        } finally {
+            fs.rmSync(tempDir, { recursive: true, force: true });
+        }
+    });
+
+    it('rejects explicit appends when the expected tail UUID is stale', async () => {
+        const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'sqlite-chat-uuid-append-tail-'));
+        const chatPath = path.join(tempDir, 'chat.jsonl');
+
+        try {
+            const header = makeHeader({ chat_revision: 1 });
+            const messages = makeMessages(2);
+            await writeLogicalChat(chatPath, header, messages);
+
+            await expect(appendSqliteMessage({
+                filePath: chatPath,
+                requestBody: {
+                    message: {
+                        name: 'Character',
+                        is_user: false,
+                        mes: 'new explicit append',
+                        send_date: 99,
+                    },
+                    expected_tail_uuid: messages[0].aikobots_message_uuid,
+                    base_revision: 1,
+                    save_session_id: '33333333-3333-4333-8333-333333333333',
+                },
+                saveSessionId: '33333333-3333-4333-8333-333333333333',
+                displayCount: 10,
+            })).rejects.toMatchObject({ error: 'tail_mismatch' });
+        } finally {
+            fs.rmSync(tempDir, { recursive: true, force: true });
+        }
+    });
+
+    it('explicitly appends a SQLite message and assigns a UUID when missing', async () => {
+        const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'sqlite-chat-uuid-append-'));
+        const chatPath = path.join(tempDir, 'chat.jsonl');
+
+        try {
+            const header = makeHeader({ chat_revision: 1 });
+            const messages = makeMessages(2);
+            await writeLogicalChat(chatPath, header, messages);
+
+            const payload = await appendSqliteMessage({
+                filePath: chatPath,
+                requestBody: {
+                    message: {
+                        name: 'Character',
+                        is_user: false,
+                        mes: 'new explicit append',
+                        send_date: 99,
+                    },
+                    expected_tail_uuid: messages[1].aikobots_message_uuid,
+                    base_revision: 1,
+                    save_session_id: '33333333-3333-4333-8333-333333333333',
+                },
+                saveSessionId: '33333333-3333-4333-8333-333333333333',
+                displayCount: 10,
+            });
+
+            const logicalChat = await getLogicalChatData(chatPath);
+            expect(payload.chat_revision).toBe(2);
+            expect(payload.message_uuid).toMatch(/^[0-9a-f-]{36}$/i);
+            expect(logicalChat).toHaveLength(4);
+            expect(logicalChat.at(-1).mes).toBe('new explicit append');
+            expect(logicalChat.at(-1).aikobots_message_uuid).toBe(payload.message_uuid);
+        } finally {
+            fs.rmSync(tempDir, { recursive: true, force: true });
+        }
+    });
+
+    it('deletes a SQLite message by UUID and repairs shifted positional metadata', async () => {
+        const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'sqlite-chat-uuid-delete-'));
+        const chatPath = path.join(tempDir, 'chat.jsonl');
+
+        try {
+            const header = makeHeader({ chat_revision: 9 });
+            const messages = makeMessages(4);
+            messages[2].extra = {
+                promptSnapshotKey: 'chat|2|0|abc',
+                timedWorldInfoCheckpoint: {
+                    version: 1,
+                    messageId: 2,
+                    timedWorldInfo: {
+                        sticky: { entry: { start: 2, end: 3 } },
+                        cooldown: {},
+                    },
+                },
+            };
+            await writeLogicalChat(chatPath, header, messages);
+
+            const payload = await deleteSqliteMessageByUuid({
+                filePath: chatPath,
+                requestBody: {
+                    message_uuid: messages[1].aikobots_message_uuid,
+                    base_revision: 9,
+                    save_session_id: '33333333-3333-4333-8333-333333333333',
+                },
+                saveSessionId: '33333333-3333-4333-8333-333333333333',
+                displayCount: 10,
+            });
+
+            const logicalChat = await getLogicalChatData(chatPath);
+            const shiftedMessage = logicalChat[2];
+            expect(payload.chat_revision).toBe(10);
+            expect(logicalChat.map(message => message.mes)).toEqual([
+                undefined,
+                'message 0',
+                'message 2',
+                'message 3',
+            ]);
+            expect(shiftedMessage.extra.promptSnapshotKey).toBeUndefined();
+            expect(shiftedMessage.extra.timedWorldInfoCheckpoint.messageId).toBe(1);
+            expect(shiftedMessage.extra.timedWorldInfoCheckpoint.timedWorldInfo.sticky.entry.start).toBe(1);
+            expect(shiftedMessage.extra.timedWorldInfoCheckpoint.timedWorldInfo.sticky.entry.end).toBe(2);
+        } finally {
+            fs.rmSync(tempDir, { recursive: true, force: true });
+        }
+    });
+
+    it('truncates descendants after a stable SQLite message UUID', async () => {
+        const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'sqlite-chat-uuid-truncate-'));
+        const chatPath = path.join(tempDir, 'chat.jsonl');
+
+        try {
+            const header = makeHeader({ chat_revision: 4 });
+            const messages = makeMessages(5);
+            await writeLogicalChat(chatPath, header, messages);
+
+            const payload = await truncateSqliteChatAfterUuid({
+                filePath: chatPath,
+                requestBody: {
+                    branch_point_uuid: messages[1].aikobots_message_uuid,
+                    base_revision: 4,
+                    save_session_id: '33333333-3333-4333-8333-333333333333',
+                },
+                saveSessionId: '33333333-3333-4333-8333-333333333333',
+                displayCount: 10,
+            });
+
+            const logicalChat = await getLogicalChatData(chatPath);
+            expect(payload.chat_revision).toBe(5);
+            expect(logicalChat.map(message => message.mes)).toEqual([
+                undefined,
+                'message 0',
+                'message 1',
+            ]);
+        } finally {
+            fs.rmSync(tempDir, { recursive: true, force: true });
+        }
     });
 
     it('updates a targeted SQLite message range without dropping unseen messages', async () => {
