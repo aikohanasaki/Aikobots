@@ -12869,6 +12869,37 @@ function openMessageDelete(fromSlashCommand) {
     is_delete_mode = true;
 }
 
+const SQLITE_AUTO_EDIT_SAVE_DELAY = 500;
+let sqliteMessageUpdateSaveQueue = Promise.resolve();
+let sqliteAutoEditSaveTimer = null;
+let pendingSqliteAutoEditMessage = null;
+
+function cancelPendingSqliteAutoEditSave() {
+    if (sqliteAutoEditSaveTimer) {
+        clearTimeout(sqliteAutoEditSaveTimer);
+        sqliteAutoEditSaveTimer = null;
+    }
+    pendingSqliteAutoEditMessage = null;
+}
+
+function scheduleSqliteAutoEditSave(message) {
+    pendingSqliteAutoEditMessage = message;
+    if (sqliteAutoEditSaveTimer) {
+        clearTimeout(sqliteAutoEditSaveTimer);
+    }
+
+    sqliteAutoEditSaveTimer = setTimeout(() => {
+        sqliteAutoEditSaveTimer = null;
+        const messageToSave = pendingSqliteAutoEditMessage;
+        pendingSqliteAutoEditMessage = null;
+        saveMessageUpdateByUuid(messageToSave).then(async (saveResult) => {
+            if (saveResult !== CHAT_SAVE_RESULT.SAVED) {
+                await reloadCurrentChat();
+            }
+        });
+    }, SQLITE_AUTO_EDIT_SAVE_DELAY);
+}
+
 function messageEditAuto(div) {
     let updateResult;
     try {
@@ -12894,11 +12925,7 @@ function messageEditAuto(div) {
     mesBlock.find('.mes_bias').empty();
     mesBlock.find('.mes_bias').append(messageFormatting(bias, '', false, false, -1, {}, false));
     if (currentChatFileNameLooksSqlite()) {
-        saveMessageUpdateByUuid(mes).then(async (saveResult) => {
-            if (saveResult !== CHAT_SAVE_RESULT.SAVED) {
-                await reloadCurrentChat();
-            }
-        });
+        scheduleSqliteAutoEditSave(mes);
     } else {
         saveChatDebounced();
     }
@@ -13307,10 +13334,13 @@ async function saveMessageUpdateByUuid(message) {
         return CHAT_SAVE_RESULT.FAILED;
     }
 
-    return saveSqliteMessageMutation('update', {
+    const saveMessage = () => saveSqliteMessageMutation('update', {
         message_uuid: messageUuid,
         message: structuredClone(message),
     }, t`Message update failed.`);
+    const queuedSave = sqliteMessageUpdateSaveQueue.then(saveMessage, saveMessage);
+    sqliteMessageUpdateSaveQueue = queuedSave.catch(() => {});
+    return queuedSave;
 }
 
 function getCurrentSqliteChatMutationOwnerFields() {
@@ -13508,6 +13538,7 @@ async function messageEditDone(div) {
 
     let saveResult;
     if (currentChatFileNameLooksSqlite()) {
+        cancelPendingSqliteAutoEditSave();
         saveResult = await saveMessageUpdateByUuid(mes);
     } else if (selected_group) {
         saveResult = await saveCurrentGroupMessageIncremental(messageId, mes);
