@@ -8263,10 +8263,13 @@ class StreamingProcessor {
 
         syncMesToSwipe(messageId);
         saveLogprobsForActiveMessage(this.messageLogprobs.filter(Boolean), this.continueMessage);
+        const sqliteMutationMessageId = this.type === 'swipe'
+            ? finishSwipeValidation.messageId
+            : messageId;
         const saveResult = currentChatFileNameLooksSqlite()
             ? await saveSqliteReplyMutation({
                 mutation: this.type === 'swipe' || this.type === 'continue' ? 'update' : 'append',
-                messageId,
+                messageId: sqliteMutationMessageId,
             })
             : await saveChatConditional();
         if (saveResult !== CHAT_SAVE_RESULT.SAVED) {

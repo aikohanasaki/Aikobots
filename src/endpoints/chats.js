@@ -2142,6 +2142,10 @@ export async function appendSqliteMessage({ filePath, requestBody, saveSessionId
         delete message.order_index;
         normalizeChatIdentities([message], { generateUuid: uuidv4 });
         const sanitizedMessage = sanitizeChatMessageForPersistence(message);
+        const messageUuid = getAikobotsMessageUuid(sanitizedMessage);
+        if (!messageUuid || getLogicalMessageRowByUuid(db, messageUuid)) {
+            throw new ChatMutationError(409, 'message_uuid_conflict');
+        }
         const revisedHeader = setChatRevision(stripChatStorage(header), revisionCheck.nextRevision, saveSessionId);
         let insertedMessageId;
 
@@ -2157,7 +2161,7 @@ export async function appendSqliteMessage({ filePath, requestBody, saveSessionId
 
         saveDb(db, sqlitePath);
         return buildSqliteMutationPayload(db, revisedHeader, insertedMessageId, displayCount, {
-            message_uuid: getAikobotsMessageUuid(sanitizedMessage),
+            message_uuid: messageUuid,
             message_id: insertedMessageId,
         });
     } finally {

@@ -465,6 +465,41 @@ describe('SQLite chat length handling', () => {
         }
     });
 
+    it('rejects explicit appends that reuse an existing message UUID', async () => {
+        const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'sqlite-chat-uuid-append-conflict-'));
+        const chatPath = path.join(tempDir, 'chat.jsonl');
+
+        try {
+            const header = makeHeader({ chat_revision: 1 });
+            const messages = makeMessages(2);
+            await writeLogicalChat(chatPath, header, messages);
+
+            await expect(appendSqliteMessage({
+                filePath: chatPath,
+                requestBody: {
+                    message: {
+                        aikobots_message_uuid: messages[0].aikobots_message_uuid,
+                        name: 'Character',
+                        is_user: false,
+                        mes: 'duplicate UUID append',
+                        send_date: 99,
+                    },
+                    expected_tail_uuid: messages[1].aikobots_message_uuid,
+                    base_revision: 1,
+                    save_session_id: '33333333-3333-4333-8333-333333333333',
+                },
+                saveSessionId: '33333333-3333-4333-8333-333333333333',
+                displayCount: 10,
+            })).rejects.toMatchObject({ error: 'message_uuid_conflict' });
+
+            const logicalChat = await getLogicalChatData(chatPath);
+            expect(logicalChat).toHaveLength(3);
+            expect(logicalChat.at(-1).aikobots_message_uuid).toBe(messages[1].aikobots_message_uuid);
+        } finally {
+            fs.rmSync(tempDir, { recursive: true, force: true });
+        }
+    });
+
     it('explicitly appends a SQLite message and assigns a UUID when missing', async () => {
         const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'sqlite-chat-uuid-append-'));
         const chatPath = path.join(tempDir, 'chat.jsonl');
