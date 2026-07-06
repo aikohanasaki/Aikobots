@@ -179,6 +179,7 @@ import {
     ensureSwipeIdentities,
     findMessageByAikobotsUuid,
     findSwipeByAikobotsUuid,
+    isValidAikobotsUuid,
     normalizeChatIdentities,
     validateChatIdentities,
 } from './scripts/chat-identities.js';
@@ -12904,11 +12905,35 @@ function messageEditAuto(div) {
 }
 
 /**
+ * Allows only targeted SQLite edits that cannot collide with the active tail generation.
+ * @param {number} messageId Message ID to edit.
+ * @returns {boolean} True if the edit can proceed while generation is active.
+ */
+function canEditMessageDuringGeneration(messageId) {
+    const normalizedMessageId = Number(messageId);
+    if (!Number.isInteger(normalizedMessageId) || normalizedMessageId < 0) {
+        return false;
+    }
+
+    if (!currentChatFileNameLooksSqlite() || !isChatMessageLoaded(normalizedMessageId)) {
+        return false;
+    }
+
+    if (normalizedMessageId >= chat.length - 1) {
+        return false;
+    }
+
+    const message = chat[normalizedMessageId];
+    return isValidAikobotsUuid(message?.[AIKOBOTS_MESSAGE_UUID_KEY]);
+}
+
+/**
  * Create the message edit UI.
  * @param {number} editMessageId The ID of the message to edit
  */
 export async function messageEdit(editMessageId) {
-    if (isGenerating()) {
+    const isGenerationActive = isGenerating();
+    if (isGenerationActive && !canEditMessageDuringGeneration(editMessageId)) {
         toastr.warning(t`Wait for generation to finish before editing messages.`);
         return;
     }
@@ -12917,7 +12942,9 @@ export async function messageEdit(editMessageId) {
         return;
     }
 
-    normalizeActiveChatIdentities();
+    if (!isGenerationActive) {
+        normalizeActiveChatIdentities();
+    }
 
     const editMessage = chat[editMessageId];
     if (!editMessage) {
