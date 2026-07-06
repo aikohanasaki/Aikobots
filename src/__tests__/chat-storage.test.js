@@ -913,6 +913,38 @@ describe('SQLite chat length handling', () => {
         }
     });
 
+    it('clones a SQLite message addressed by UUID without a message id', async () => {
+        const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'sqlite-chat-clone-uuid-'));
+        const chatPath = path.join(tempDir, 'chat.jsonl');
+
+        try {
+            const header = makeHeader({ chat_revision: 5 });
+            const messages = makeMessages(3);
+            await writeLogicalChat(chatPath, header, messages);
+
+            const payload = await cloneSqliteMessageAfter({
+                filePath: chatPath,
+                requestBody: {
+                    message_uuid: messages[1].aikobots_message_uuid,
+                    text_override: 'uuid clone',
+                    base_revision: 5,
+                },
+                saveSessionId: '44444444-4444-4444-8444-444444444444',
+                displayCount: 10,
+            });
+            const logicalChat = await getLogicalChatData(chatPath);
+            const clone = logicalChat[3];
+
+            expect(payload.inserted_message_id).toBe(2);
+            expect(payload.chat_revision).toBe(6);
+            expect(logicalChat).toHaveLength(5);
+            expect(clone.mes).toBe('uuid clone');
+            expect(clone.aikobots_message_uuid).not.toBe(messages[1].aikobots_message_uuid);
+        } finally {
+            fs.rmSync(tempDir, { recursive: true, force: true });
+        }
+    });
+
     it('rejects legacy split-tail JSONL clearly', async () => {
         const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'legacy-split-tail-chat-'));
         const chatPath = path.join(tempDir, 'chat.jsonl');

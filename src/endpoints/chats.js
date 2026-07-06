@@ -2263,8 +2263,9 @@ export async function cloneSqliteMessageAfter({ filePath, requestBody, saveSessi
         throw new ChatMutationError(409, 'clone_requires_sqlite', 'Message clone requires SQLite chat storage.');
     }
 
+    const hasMessageUuid = typeof requestBody?.message_uuid === 'string' && requestBody.message_uuid.trim();
     const messageId = Number(requestBody?.message_id);
-    if (!Number.isInteger(messageId) || messageId < 0) {
+    if (!hasMessageUuid && (!Number.isInteger(messageId) || messageId < 0)) {
         throw new ChatMutationError(400, 'invalid_message_id');
     }
 

@@ -13321,8 +13321,12 @@ async function saveSqliteMessageMutation(operation, fields, defaultErrorMessage 
         return CHAT_SAVE_RESULT.FAILED;
     }
 
-    const responseData = await response.json();
-    setChatSaveRevision(responseData?.chat_revision);
+    try {
+        const responseData = await response.json();
+        setChatSaveRevision(responseData?.chat_revision);
+    } catch {
+        // Successful save without a JSON body: keep the previous revision.
+    }
     return CHAT_SAVE_RESULT.SAVED;
 }
 
