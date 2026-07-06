@@ -384,7 +384,10 @@ async function regenerateGroup() {
             break;
         }
 
-        await deleteLastMessage({ persist: true, regeneratePrepare: true });
+        const deleteResult = await deleteLastMessage({ persist: true, regeneratePrepare: true });
+        if (deleteResult === CHAT_SAVE_RESULT.FAILED) {
+            return;
+        }
     }
 
     const abortController = new AbortController();

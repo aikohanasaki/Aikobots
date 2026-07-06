@@ -5846,7 +5846,7 @@ export async function clearChat({ flushPendingSave = true } = {}) {
 
 export async function deleteLastMessage({ persist = false, regeneratePrepare = false } = {}) {
     if (blockIfEditing('deleting messages')) {
-        return;
+        return CHAT_SAVE_RESULT.FAILED;
     }
 
     const deletedId = chat.length - 1;
@@ -5865,10 +5865,11 @@ export async function deleteLastMessage({ persist = false, regeneratePrepare = f
         const saveResult = await saveSqliteTailRemoval(deletedId, deletedMessage, { regeneratePrepare });
         if (saveResult !== CHAT_SAVE_RESULT.SAVED) {
             await reloadCurrentChat();
-            return;
+            return CHAT_SAVE_RESULT.FAILED;
         }
     }
     await eventSource.emit(event_types.MESSAGE_DELETED, deletedId, chat.length);
+    return CHAT_SAVE_RESULT.SAVED;
 }
 
 /**
