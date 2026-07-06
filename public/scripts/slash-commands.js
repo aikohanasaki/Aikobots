@@ -5220,6 +5220,7 @@ export async function executeSlashCommandsOnChatInput(text, options = {}) {
  * @returns {Promise<SlashCommandClosureResult>}
  */
 async function executeSlashCommandsWithOptions(text, options = {}) {
+    text = String(text ?? '').replace(/[\r\n]+$/g, '');
     if (!text) {
         return null;
     }
