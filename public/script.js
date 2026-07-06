@@ -981,7 +981,7 @@ const CHAT_SAVE_SESSION_ID_KEY = 'aikobots_chat_save_session_id';
 const TEMPORARY_CHAT_DISPLAY_NAME = '(Temporary Chat)';
 const TEMPORARY_CHAT_PENDING_NAME_STORAGE_KEY_PREFIX = 'aikobots_temporary_chat_pending_name:';
 const SYNC_CURRENT_CHAT_COOLDOWN_MS = 60_000;
-const SYNC_CURRENT_CHAT_TITLE = 'update server with current browser chat state';
+const SYNC_CURRENT_CHAT_TITLE = 'push current browser chat state to the server';
 let syncCurrentChatCooldownUntil = 0;
 let syncCurrentChatCooldownInterval = null;
 let chat_create_date = '';
@@ -1713,7 +1713,7 @@ function startSyncCurrentChatCooldown() {
     syncCurrentChatCooldownInterval = setInterval(updateSyncCurrentChatCooldownState, 1000);
 }
 
-// The cooldown is intentionally per-click and not per-successful-save. 
+// The cooldown is intentionally per-click and not per-successful-save.
 // This prevents users from hammering the server with save requests by repeatedly clicking the button when they have a large chat that takes a while to save.
 
 async function syncCurrentChatToServer() {
@@ -1727,11 +1727,11 @@ async function syncCurrentChatToServer() {
     }
 
     startSyncCurrentChatCooldown();
-    toastr.info(t`Syncing chat to server`);
+    toastr.info(t`Pushing chat to server`);
     const syncResult = await saveChatConditional();
 
     if (syncResult === CHAT_SAVE_RESULT.SAVED) {
-        toastr.success(t`Chat sync successful`);
+        toastr.success(t`Chat push successful`);
     }
 }
 
@@ -4956,8 +4956,8 @@ export async function prepareCurrentChatSavePayload({ header = null, endId = und
             return {
                 ok: false,
                 reason: 'loaded_range_not_contiguous',
-                message: t`Loaded chat messages are not contiguous. Reload the chat and then click Sync Current Chat.`,
-                title: t`Chat sync blocked`,
+                message: t`Loaded chat messages are not contiguous. Reload the chat and then click Push Current Chat.`,
+                title: t`Chat push blocked`,
             };
         }
 
@@ -5984,14 +5984,16 @@ export const reloadCurrentChat = reloadChatMutex.update.bind(reloadChatMutex);
 /**
  * Reloads the current chat unsafely, without mutex protection.
  * Use `reloadCurrentChat` instead to ensure thread safety.
+ * @param {object} [options] Reload options.
+ * @param {boolean} [options.flushPendingSave=true] Flush pending client saves before clearing the chat.
  * @returns {Promise<void>} A promise that resolves when the chat is reloaded.
  */
-export async function reloadCurrentChatUnsafe() {
+export async function reloadCurrentChatUnsafe({ flushPendingSave = true } = {}) {
     const deferredLoader = isLoaderVisible() ? null : deferLoader();
 
     try {
         preserveNeutralChat();
-        await clearChat();
+        await clearChat({ flushPendingSave });
         chat.length = 0;
 
         if (selected_group) {
@@ -6014,6 +6016,32 @@ export async function reloadCurrentChatUnsafe() {
     } finally {
         await deferredLoader?.clear();
     }
+}
+
+/**
+ * Replaces the active browser chat state with the authoritative server copy.
+ */
+async function refreshCurrentChatFromServer() {
+    if (!hasActiveChatContext()) {
+        return;
+    }
+
+    const confirmed = await Popup.show.confirm(
+        t`Refresh Chat From Server`,
+        t`This will discard unsaved browser-side chat changes and replace the current chat with the server version.`,
+        { okButton: t`Refresh`, cancelButton: t`Cancel` },
+    );
+
+    if (!confirmed) {
+        return;
+    }
+
+    if (chatSaveQueuePromise) {
+        await chatSaveQueuePromise.catch(() => CHAT_SAVE_RESULT.FAILED);
+    }
+
+    await reloadCurrentChat({ flushPendingSave: false });
+    toastr.success(t`Chat refreshed from server`);
 }
 
 /**
@@ -19228,6 +19256,10 @@ jQuery(async function () {
 
         else if (id == 'option_sync_current_chat') {
             await syncCurrentChatToServer();
+        }
+
+        else if (id == 'option_refresh_current_chat') {
+            await refreshCurrentChatFromServer();
         }
 
         else if (id == 'option_start_new_chat') {
