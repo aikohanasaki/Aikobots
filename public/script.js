@@ -8275,20 +8275,22 @@ class StreamingProcessor {
         if (saveResult !== CHAT_SAVE_RESULT.SAVED) {
             await reloadCurrentChat();
             unblockGeneration();
-            return;
+            return false;
         }
         unblockGeneration();
 
         const isAborted = this.abortController.signal.aborted;
         if (!isAborted && power_user.auto_swipe && generatedTextFiltered(text)) {
-            return swipe(null, SWIPE_DIRECTION.RIGHT, {
+            await swipe(null, SWIPE_DIRECTION.RIGHT, {
                 source: SWIPE_SOURCE.AUTO_SWIPE,
                 repeated: true,
                 forceMesId: chat.length - 1,
             });
+            return true;
         }
 
         playMessageSound();
+        return true;
     }
 
     onErrorStreaming() {
@@ -9903,7 +9905,11 @@ export async function Generate(type, { automatic_trigger, force_name2, quiet_pro
             }
 
             if (isStreamFinished) {
-                await streamingProcessor.onFinishStreaming(streamingProcessor.messageId, getMessage);
+                const finishSaved = await streamingProcessor.onFinishStreaming(streamingProcessor.messageId, getMessage);
+                if (finishSaved === false) {
+                    streamingProcessor = null;
+                    return;
+                }
                 streamingProcessor = null;
                 triggerAutoContinue(messageChunk, isImpersonate);
                 return Object.defineProperties(new String(getMessage), {
