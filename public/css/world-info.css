@@ -741,6 +741,10 @@ select.keyselect+span.select2-container .select2-selection--multiple {
     cursor: pointer;
 }
 
+.wi-floating-book-trigger[hidden] {
+    display: none !important;
+}
+
 .wi-floating-book-trigger:hover {
     color: var(--SmartThemeEmColor);
     border-color: var(--SmartThemeEmColor);
