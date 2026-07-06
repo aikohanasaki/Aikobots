@@ -947,6 +947,7 @@ export function applyLoadedMessageRange(logicalChatData, rangeStart, rangeMessag
     if (!rangeValidation.ok) {
         return rangeValidation;
     }
+    const { endId } = rangeValidation;
 
     if (requireIdentityMatch && !validateLoadedMessageRangeIdentity(logicalChatData, startId, rangeMessages)) {
         return { ok: false, error: 'loaded_range_identity_mismatch' };
@@ -1144,6 +1145,7 @@ function getSegmentLayout(segments) {
 }
 
 export async function getLogicalChatData(filePath) {
+    const sqlitePath = replaceChatStorageExtension(filePath, '.sqlite');
     const segments = await getChatSegments(filePath, { metadataOnly: fs.existsSync(sqlitePath) });
 
     if (!segments.header) {
