@@ -1319,7 +1319,7 @@ const FLOATING_BOOK_DEFAULT_SETTINGS = Object.freeze({
     group: true,
     order: true,
     messages: true,
-    drag: false,
+    drag: true,
 });
 
 const FLOATING_BOOK_HIDDEN_GROUP_NAME = 'Hidden Secure Entries';
