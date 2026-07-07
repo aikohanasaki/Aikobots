@@ -973,6 +973,8 @@ let chatSaveQueuePromise = null;
 let chatSaveQueueTimer = null;
 let chatSaveQueueRun = null;
 let chatSaveRequestOptions = {};
+let chatSaveStreamingAppendRetryTimer = null;
+let pendingStreamingSqliteAppend = null;
 let temporaryCharacterChat = null;
 let temporaryGroupChat = null;
 const CHAT_SAVE_RESULT = {
@@ -980,6 +982,7 @@ const CHAT_SAVE_RESULT = {
     FAILED: 'failed',
 };
 export { CHAT_SAVE_RESULT };
+const CHAT_SAVE_STREAMING_APPEND_RETRY_MS = 250;
 const CHAT_SAVE_SESSION_ID_KEY = 'aikobots_chat_save_session_id';
 const TEMPORARY_CHAT_DISPLAY_NAME = '(Temporary Chat)';
 const TEMPORARY_CHAT_PENDING_NAME_STORAGE_KEY_PREFIX = 'aikobots_temporary_chat_pending_name:';
@@ -4669,6 +4672,45 @@ function markChatRangeLoaded(startId, endId = startId) {
 
     mergeLoadedRange(start, Math.min(end, Math.max(0, getTotalChatMessages() - 1)));
     syncPartialChatStateAfterMutation();
+}
+
+// Streaming appends extend the in-memory tail before the SQLite append mutation persists it.
+function markPendingStreamingSqliteAppend(messageId, message) {
+    if (!currentChatFileNameLooksSqlite()) {
+        return;
+    }
+
+    const normalizedMessageId = Number(messageId);
+    const messageUuid = message?.[AIKOBOTS_MESSAGE_UUID_KEY];
+    if (!Number.isInteger(normalizedMessageId) || normalizedMessageId < 0 || !messageUuid) {
+        return;
+    }
+
+    pendingStreamingSqliteAppend = {
+        messageId: normalizedMessageId,
+        messageUuid,
+    };
+}
+
+// Generic loaded-range saves must wait for the append mutation that makes the new tail durable.
+function isPendingStreamingSqliteAppendActive() {
+    if (!currentChatFileNameLooksSqlite() || !pendingStreamingSqliteAppend) {
+        return false;
+    }
+
+    const message = chat[pendingStreamingSqliteAppend.messageId];
+    return message?.[AIKOBOTS_MESSAGE_UUID_KEY] === pendingStreamingSqliteAppend.messageUuid;
+}
+
+function clearPendingStreamingSqliteAppend(message) {
+    if (!pendingStreamingSqliteAppend) {
+        return;
+    }
+
+    const messageUuid = message?.[AIKOBOTS_MESSAGE_UUID_KEY];
+    if (!messageUuid || pendingStreamingSqliteAppend.messageUuid === messageUuid) {
+        pendingStreamingSqliteAppend = null;
+    }
 }
 
 export function getTotalChatMessages() {
@@ -11292,6 +11334,9 @@ export async function saveReply({ type, getMessage, fromStreaming = false, title
 
     normalizeActiveChatIdentities();
     mutationMessageId = Math.min(mutationMessageId, chat.length - 1);
+    if (fromStreaming && mutation === 'append') {
+        markPendingStreamingSqliteAppend(mutationMessageId, chat[mutationMessageId]);
+    }
 
     if (!fromStreaming) {
         await commitLatestPromptInspectorRecord(chat.length - 1);
@@ -13484,9 +13529,15 @@ async function saveSqliteReplyMutation(replyResult) {
         return CHAT_SAVE_RESULT.FAILED;
     }
 
-    return replyResult.mutation === 'append'
-        ? saveSqliteMessageAppend(messageId, message)
-        : saveMessageUpdateByUuid(message);
+    if (replyResult.mutation === 'append') {
+        try {
+            return await saveSqliteMessageAppend(messageId, message);
+        } finally {
+            clearPendingStreamingSqliteAppend(message);
+        }
+    }
+
+    return saveMessageUpdateByUuid(message);
 }
 
 function currentChatFileNameLooksSqlite() {
@@ -16652,8 +16703,13 @@ async function drainChatSaveQueue() {
 
     try {
         while (chatSaveDirty) {
-            chatSaveDirty = false;
             const options = chatSaveRequestOptions;
+            if (shouldDeferChatSaveForStreamingAppend(options)) {
+                scheduleChatSaveAfterStreamingAppend();
+                return finalResult;
+            }
+
+            chatSaveDirty = false;
             chatSaveRequestOptions = {};
             const result = await saveChatOnce(options);
             finalResult = result;
@@ -16679,6 +16735,27 @@ function cancelChatSaveQueueTimer() {
         clearTimeout(chatSaveQueueTimer);
         chatSaveQueueTimer = null;
     }
+}
+
+function scheduleChatSaveAfterStreamingAppend() {
+    if (chatSaveStreamingAppendRetryTimer) {
+        return;
+    }
+
+    chatSaveStreamingAppendRetryTimer = setTimeout(() => {
+        chatSaveStreamingAppendRetryTimer = null;
+        if (chatSaveDirty && !chatSaveQueuePromise) {
+            void saveChatConditional({ immediate: true });
+        }
+    }, CHAT_SAVE_STREAMING_APPEND_RETRY_MS);
+}
+
+function shouldDeferChatSaveForStreamingAppend(options = {}) {
+    if (!isPendingStreamingSqliteAppendActive()) {
+        return false;
+    }
+
+    return options?.chatName === undefined && options?.mesId === undefined;
 }
 
 export async function saveChatConditional(options = {}) {
