@@ -19428,6 +19428,8 @@ jQuery(async function () {
         });
 
         if (this_del_mes >= 0) {
+            const deletedMessageId = this_del_mes;
+            const retainedMessage = deletedMessageId > 0 ? chat[deletedMessageId - 1] : null;
             chatElement.find(`.mes[mesid="${this_del_mes}"]`).nextAll('div').remove();
             chatElement.find(`.mes[mesid="${this_del_mes}"]`).remove();
             chat.length = this_del_mes;
@@ -19437,9 +19439,18 @@ jQuery(async function () {
             await recomputeTimedWorldInfo();
             updateHistoryControls();
             chat_metadata['tainted'] = true;
-            await saveChatConditional();
+            const saveResult = currentChatFileNameLooksSqlite() && retainedMessage?.[AIKOBOTS_MESSAGE_UUID_KEY]
+                ? await saveSqliteTruncateAfterUuid(retainedMessage[AIKOBOTS_MESSAGE_UUID_KEY])
+                : await saveChatConditional();
+            if (saveResult !== CHAT_SAVE_RESULT.SAVED) {
+                showSwipeButtons();
+                this_del_mes = -1;
+                is_delete_mode = false;
+                await reloadCurrentChat();
+                return;
+            }
             chatElement.scrollTop(chatElement[0].scrollHeight);
-            await eventSource.emit(event_types.MESSAGE_DELETED, this_del_mes, chat.length);
+            await eventSource.emit(event_types.MESSAGE_DELETED, deletedMessageId, chat.length);
             chatElement.find('.mes').removeClass('last_mes');
             chatElement.find('.mes').last().addClass('last_mes');
         } else {
