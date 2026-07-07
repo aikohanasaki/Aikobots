@@ -12429,7 +12429,7 @@ export function renderDetachedMessage(mes, messageId) {
 
 async function getChatResult() {
     name2 = characters[this_chid].name;
-    if (getTotalChatMessages() === 0) {
+    if (getTotalChatMessages() === 0 && !currentChatFileNameLooksSqlite()) {
         const message = getFirstMessage();
         if (message.mes) {
             chat.length = 1;
@@ -12495,6 +12495,11 @@ function getFirstMessage() {
  * @returns {Promise<boolean>} Whether the first message was regenerated.
  */
 export async function refreshPristineFirstMessage() {
+    if (currentChatFileNameLooksSqlite()) {
+        console.warn('Blocked pristine first-message refresh for an existing SQLite chat.');
+        return false;
+    }
+
     const shouldRegenerateMessage =
         !selected_group &&
         !chat_metadata['tainted'] &&

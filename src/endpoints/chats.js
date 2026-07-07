@@ -488,6 +488,98 @@ class ChatMutationError extends Error {
     }
 }
 
+function getRequestBaseRevisionForLog(requestBody) {
+    if (!Object.prototype.hasOwnProperty.call(requestBody || {}, 'base_revision')) {
+        return null;
+    }
+
+    const revision = Number(requestBody.base_revision);
+    return Number.isInteger(revision) && revision >= 0 ? revision : String(requestBody.base_revision);
+}
+
+function getLoadedRangeForLog(requestBody) {
+    if (!requestBody || requestBody.loaded_range_start === undefined) {
+        return null;
+    }
+
+    return {
+        start: requestBody.loaded_range_start,
+        end: requestBody.loaded_range_end,
+    };
+}
+
+function logChatPersistenceOperation(level, {
+    routeName = 'unknown',
+    operationType = 'unknown',
+    filePath = '',
+    oldRevision = null,
+    requestBody = null,
+    submittedMessageCount = null,
+    serverMessageCountBefore = null,
+    serverMessageCountAfter = null,
+    isPrivilegedOperation = false,
+    rejectionReason = null,
+} = {}) {
+    const payload = {
+        route_name: routeName,
+        operation_type: operationType,
+        chat_path: filePath,
+        old_revision: oldRevision,
+        submitted_base_revision: getRequestBaseRevisionForLog(requestBody),
+        save_session_id: getRequestSaveSessionId(requestBody),
+        submitted_message_count: submittedMessageCount,
+        server_message_count_before: serverMessageCountBefore,
+        server_message_count_after: serverMessageCountAfter,
+        loaded_range: getLoadedRangeForLog(requestBody),
+        full_chat: requestBody?.full_chat === true,
+        import_admin_recovery: isPrivilegedOperation === true,
+        rejection_reason: rejectionReason,
+    };
+
+    const message = `[ChatPersistence] ${JSON.stringify(payload)}`;
+    if (level === 'error') {
+        console.error(message);
+    } else if (level === 'warn') {
+        console.warn(message);
+    } else {
+        console.info(message);
+    }
+}
+
+export function validateExistingSqliteFullReplacementRequest({
+    routeName = 'unknown',
+    operationType = 'full_replace',
+    filePath = '',
+    requestBody = null,
+    existingHeader = null,
+    serverMessageCountBefore = null,
+    submittedMessageCount = null,
+    isPrivilegedOperation = false,
+    rejectionReason = 'sqlite_full_replacement_forbidden',
+} = {}) {
+    if (isPrivilegedOperation === true) {
+        return { ok: true };
+    }
+
+    logChatPersistenceOperation('warn', {
+        routeName,
+        operationType,
+        filePath,
+        oldRevision: getChatRevision(existingHeader),
+        requestBody,
+        submittedMessageCount,
+        serverMessageCountBefore,
+        isPrivilegedOperation,
+        rejectionReason,
+    });
+
+    return {
+        ok: false,
+        status: 409,
+        error: rejectionReason,
+    };
+}
+
 function getUnsupportedImportedJsonlMessage(header) {
     if (!header || !_.isObject(header)) {
         return null;
@@ -1214,7 +1306,12 @@ async function getGroupChatPayload(filePath) {
 }
 
 async function writeGroupChat(filePath, messages, chatMetadata = {}, existingHeader = null) {
-    return await writeLogicalChat(filePath, buildGroupChatHeader(chatMetadata, existingHeader), messages);
+    return await writeLogicalChat(filePath, buildGroupChatHeader(chatMetadata, existingHeader), messages, {
+        allowExistingSqliteFullReplacement: true,
+        routeName: 'internal',
+        operationType: 'group_header_migration',
+        isPrivilegedOperation: true,
+    });
 }
 
 function getAvatarThumbnailUrl(avatarUrl) {
@@ -1501,7 +1598,16 @@ async function buildChunkedGroupChatPayload(user, chatId, filePath, {
  * Writes a complete logical chat, or patches messages starting at a logical message id.
  * The header is stored separately at SQLite order_index 0; messageStartId excludes it.
  */
-export async function writeLogicalChat(filePath, header, messages, { regenerateIdentities = false, messageStartId = null, startIndex = undefined } = {}) {
+export async function writeLogicalChat(filePath, header, messages, {
+    regenerateIdentities = false,
+    messageStartId = null,
+    startIndex = undefined,
+    allowExistingSqliteFullReplacement = false,
+    routeName = 'internal',
+    operationType = null,
+    requestBody = null,
+    isPrivilegedOperation = false,
+} = {}) {
     if (startIndex !== undefined) {
         throw new Error('writeLogicalChat startIndex is no longer supported. Use messageStartId with zero-based logical message IDs.');
     }
@@ -1524,23 +1630,66 @@ export async function writeLogicalChat(filePath, header, messages, { regenerateI
     const sanitizedMessages = identityMessages.map(message => sanitizeChatMessageForPersistence(message));
 
     const sqlitePath = replaceChatStorageExtension(filePath, '.sqlite');
+    const existingSqliteFile = fs.existsSync(sqlitePath);
     const db = await loadDb(sqlitePath);
+    let totalMessages = 0;
 
-    if (messageStartId === null) {
-        setMessages(db, [baseHeader, ...sanitizedMessages]);
-    } else {
-        // Header is always order_index 0; logical message ids start after it.
-        if (baseHeader) {
-            const headerStmt = db.prepare('UPDATE messages SET content = ? WHERE order_index = 0');
-            headerStmt.run([JSON.stringify(baseHeader)]);
-            headerStmt.free();
+    try {
+        if (messageStartId === null) {
+            let serverMessageCountBefore = null;
+            let existingHeader = null;
+            const resolvedOperationType = operationType || 'full_replace';
+
+            if (existingSqliteFile) {
+                existingHeader = getChatHeader(db);
+                serverMessageCountBefore = getMessageCount(db);
+                const validation = validateExistingSqliteFullReplacementRequest({
+                    routeName,
+                    operationType: resolvedOperationType,
+                    filePath: sqlitePath,
+                    requestBody,
+                    existingHeader,
+                    serverMessageCountBefore,
+                    submittedMessageCount: sanitizedMessages.length,
+                    isPrivilegedOperation: allowExistingSqliteFullReplacement === true && isPrivilegedOperation === true,
+                });
+
+                if (!validation.ok) {
+                    throw new ChatMutationError(validation.status, validation.error);
+                }
+            }
+
+            setMessages(db, [baseHeader, ...sanitizedMessages]);
+            totalMessages = getMessageCount(db);
+
+            if (existingSqliteFile || isPrivilegedOperation === true) {
+                logChatPersistenceOperation('info', {
+                    routeName,
+                    operationType: resolvedOperationType,
+                    filePath: sqlitePath,
+                    oldRevision: getChatRevision(existingHeader),
+                    requestBody,
+                    submittedMessageCount: sanitizedMessages.length,
+                    serverMessageCountBefore,
+                    serverMessageCountAfter: totalMessages,
+                    isPrivilegedOperation: allowExistingSqliteFullReplacement === true && isPrivilegedOperation === true,
+                });
+            }
+        } else {
+            // Header is always order_index 0; logical message ids start after it.
+            if (baseHeader) {
+                const headerStmt = db.prepare('UPDATE messages SET content = ? WHERE order_index = 0');
+                headerStmt.run([JSON.stringify(baseHeader)]);
+                headerStmt.free();
+            }
+            updateMessages(db, sanitizedMessages, messageStartId + 1);
+            totalMessages = getMessageCount(db);
         }
-        updateMessages(db, sanitizedMessages, messageStartId + 1);
-    }
 
-    const totalMessages = getMessageCount(db);
-    saveDb(db, sqlitePath);
-    db.close();
+        saveDb(db, sqlitePath);
+    } finally {
+        db.close();
+    }
 
     console.debug(`[SQLite] Updated database for ${filePath}: ${sanitizedMessages.length} messages starting at message id ${messageStartId ?? 0}. Total messages: ${totalMessages}.`);
 
@@ -2232,6 +2381,7 @@ export async function truncateSqliteChatAfterUuid({ filePath, requestBody, saveS
         assertSupportedChatStorage(header);
 
         const revisionCheck = requireSqliteMutationRequest(requestBody, header);
+        const serverMessageCountBefore = getMessageCount(db);
         const row = getLogicalMessageRowByUuid(db, targetUuid);
         if (!row) {
             throw new ChatMutationError(404, 'message_not_found');
@@ -2249,6 +2399,18 @@ export async function truncateSqliteChatAfterUuid({ filePath, requestBody, saveS
         }
 
         saveDb(db, sqlitePath);
+        const serverMessageCountAfter = getMessageCount(db);
+        logChatPersistenceOperation('info', {
+            routeName: 'sqlite_mutation',
+            operationType: 'truncate',
+            filePath: sqlitePath,
+            oldRevision: revisionCheck.currentRevision,
+            requestBody,
+            submittedMessageCount: null,
+            serverMessageCountBefore,
+            serverMessageCountAfter,
+            isPrivilegedOperation: true,
+        });
         return buildSqliteMutationPayload(db, revisedHeader, row.logicalIndex, displayCount, {
             message_uuid: targetUuid,
             branch_point_message_id: row.logicalIndex,
@@ -3391,7 +3553,13 @@ router.post('/message-visibility', validateAvatarUrlMiddleware, async function (
 
             const nextRevision = revisionCheck.nextRevision;
             const header = setChatRevision(stripChatStorage(segments.header), nextRevision, getRequestSaveSessionId(request.body));
-            const writeResult = await writeLogicalChat(filePath, header, messages);
+            const writeResult = await writeLogicalChat(filePath, header, messages, {
+                allowExistingSqliteFullReplacement: true,
+                routeName: '/api/chats/message-visibility',
+                operationType: 'visibility_rewrite',
+                requestBody: request.body,
+                isPrivilegedOperation: true,
+            });
             getBackupFunction(request.user.profile.handle)(request.user.directories.backups, directoryName, writeResult.fullJsonl);
 
             return response.send({
@@ -3503,10 +3671,10 @@ router.post('/save', validateAvatarUrlMiddleware, async function (request, respo
             const sqlitePath = replaceChatStorageExtension(filePath, '.sqlite');
             const existingSqliteChat = fs.existsSync(sqlitePath);
             const existingSegments = fs.existsSync(filePath) || existingSqliteChat
-                ? await getChatSegments(filePath, { metadataOnly: existingSqliteChat && request.body.save_mode === 'loaded_range' })
+                ? await getChatSegments(filePath, { metadataOnly: existingSqliteChat })
                 : null;
 
-            if (existingSqliteChat && existingSegments?.header && !request.body.force) {
+            if (existingSqliteChat && existingSegments?.header) {
                 const strictRevision = requireStrictSaveRevision(request.body);
                 if (!strictRevision.ok) {
                     return response.status(strictRevision.status).send({ error: strictRevision.error });
@@ -3548,6 +3716,20 @@ router.post('/save', validateAvatarUrlMiddleware, async function (request, respo
                 return response.status(400).send({ error: 'invalid_save_mode' });
             } else if (request.body.full_chat !== true) {
                 return response.status(400).send({ error: 'full_save_requires_hydration' });
+            }
+
+            if (existingSqliteChat && existingSegments?.header) {
+                const validation = validateExistingSqliteFullReplacementRequest({
+                    routeName: '/api/chats/save',
+                    operationType: 'ordinary_full_replace',
+                    filePath: sqlitePath,
+                    requestBody: request.body,
+                    existingHeader: existingSegments.header,
+                    serverMessageCountBefore: existingSegments.messageCount,
+                    submittedMessageCount: Math.max(0, chatData.length - 1),
+                });
+
+                return response.status(validation.status).send({ error: validation.error });
             }
 
             const revisionCheck = validateSaveRevision(request.body, existingSegments?.header);
@@ -3702,7 +3884,14 @@ router.post('/save-prefix', validateAvatarUrlMiddleware, async function (request
         }
 
         const targetHeader = { ...sourceHeader, ...headerOverrides };
-        const writeResult = await writeLogicalChat(targetPath, targetHeader, messages.slice(0, prefixEndId + 1), { regenerateIdentities: true });
+        const writeResult = await writeLogicalChat(targetPath, targetHeader, messages.slice(0, prefixEndId + 1), {
+            regenerateIdentities: true,
+            allowExistingSqliteFullReplacement: true,
+            routeName: '/api/chats/save-prefix',
+            operationType: 'save_prefix',
+            requestBody: request.body,
+            isPrivilegedOperation: true,
+        });
         getBackupFunction(request.user.profile.handle)(request.user.directories.backups, dirName, writeResult.fullJsonl);
         return response.send({ ok: true });
     } catch (error) {
@@ -3748,7 +3937,13 @@ router.post('/rename', validateAvatarUrlMiddleware, async function (request, res
                 ? buildGroupChatHeader(segments.header?.chat_metadata || {}, segments.header)
                 : stripChatStorage(segments.header);
 
-            await writeLogicalChat(pathToRenamedFile, targetHeader, segments.messages);
+            await writeLogicalChat(pathToRenamedFile, targetHeader, segments.messages, {
+                allowExistingSqliteFullReplacement: true,
+                routeName: '/api/chats/rename',
+                operationType: 'rename_copy',
+                requestBody: request.body,
+                isPrivilegedOperation: true,
+            });
         } else if (request.body.is_group) {
             const groupRecords = readJsonlObjects(pathToOriginalFile);
             writeFileAtomicSync(pathToRenamedFile, serializeJsonl(groupRecords), 'utf8');
@@ -4021,7 +4216,13 @@ router.post('/import', validateAvatarUrlMiddleware, async function (request, res
                 }
 
                 fileNames.push(fileName);
-                await writeLogicalChat(filePath, normalizedImportedChat.header, normalizedImportedChat.messages);
+                await writeLogicalChat(filePath, normalizedImportedChat.header, normalizedImportedChat.messages, {
+                    allowExistingSqliteFullReplacement: true,
+                    routeName: '/api/chats/import',
+                    operationType: 'import_json',
+                    requestBody: request.body,
+                    isPrivilegedOperation: true,
+                });
             };
 
             const chat = importFunc(userName, characterName, jsonData);
@@ -4075,7 +4276,13 @@ router.post('/import', validateAvatarUrlMiddleware, async function (request, res
             }
 
             fileNames.push(fileName);
-            await writeLogicalChat(filePath, normalizedImportedChat.header, normalizedImportedChat.messages);
+            await writeLogicalChat(filePath, normalizedImportedChat.header, normalizedImportedChat.messages, {
+                allowExistingSqliteFullReplacement: true,
+                routeName: '/api/chats/import',
+                operationType: 'import_jsonl',
+                requestBody: request.body,
+                isPrivilegedOperation: true,
+            });
             fs.unlinkSync(pathToUpload);
             return response.send({ res: true, fileNames });
         }
@@ -4098,7 +4305,13 @@ router.post('/import', validateAvatarUrlMiddleware, async function (request, res
             }
 
             fileNames.push(fileName);
-            await writeLogicalChat(filePath, normalizedImportedChat.header, normalizedImportedChat.messages);
+            await writeLogicalChat(filePath, normalizedImportedChat.header, normalizedImportedChat.messages, {
+                allowExistingSqliteFullReplacement: true,
+                routeName: '/api/chats/import',
+                operationType: 'import_sqlite',
+                requestBody: request.body,
+                isPrivilegedOperation: true,
+            });
             fs.unlinkSync(pathToUpload);
             return response.send({ res: true, fileNames });
         }
@@ -4347,6 +4560,11 @@ router.post('/group/copy-prefix', async (request, response) => {
                 const header = getNewGroupChatHeader(request.body.chat_metadata, getRequestSaveSessionId(request.body));
                 const writeResult = await writeLogicalChat(targetPath, header, messages, {
                     regenerateIdentities: request.body.regenerate_identities === true,
+                    allowExistingSqliteFullReplacement: allowExistingTarget,
+                    routeName: '/api/chats/group/copy-prefix',
+                    operationType: 'group_copy_prefix',
+                    requestBody: request.body,
+                    isPrivilegedOperation: allowExistingTarget,
                 });
                 if (writeResult.fullJsonl) {
                     getBackupFunction(request.user.profile.handle)(request.user.directories.backups, String(targetId), writeResult.fullJsonl);
@@ -4432,7 +4650,13 @@ router.post('/group/member/rename-history', async (request, response) => {
                     nextRevision,
                     getRequestSaveSessionId(request.body),
                 );
-                const writeResult = await writeLogicalChat(chatPath, header, updateResult.messages);
+                const writeResult = await writeLogicalChat(chatPath, header, updateResult.messages, {
+                    allowExistingSqliteFullReplacement: true,
+                    routeName: '/api/chats/group/member/rename-history',
+                    operationType: 'group_member_rename_history',
+                    requestBody: request.body,
+                    isPrivilegedOperation: true,
+                });
                 if (writeResult.fullJsonl) {
                     getBackupFunction(request.user.profile.handle)(request.user.directories.backups, String(chatId), writeResult.fullJsonl);
                 }
@@ -4731,10 +4955,10 @@ router.post('/group/save', async (request, response) => {
         return await withChatSaveLock(pathToFile, async () => {
             const chat_data = request.body.chat;
             const groupSqliteExists = fs.existsSync(replaceChatStorageExtension(pathToFile, '.sqlite'));
-            const existingPayload = groupSqliteExists && request.body.save_mode === 'loaded_range'
+            const existingPayload = groupSqliteExists
                 ? null
                 : await getGroupChatPayload(pathToFile);
-            const loadedRangeSqliteSegments = groupSqliteExists && request.body.save_mode === 'loaded_range'
+            const loadedRangeSqliteSegments = groupSqliteExists
                 ? await getChatSegments(pathToFile, { metadataOnly: true })
                 : null;
             const effectiveExistingPayload = existingPayload ?? {
@@ -4809,6 +5033,20 @@ router.post('/group/save', async (request, response) => {
                 return response.status(400).send({ error: 'invalid_save_mode' });
             } else if (request.body.full_chat !== true) {
                 return response.status(400).send({ error: 'full_save_requires_hydration' });
+            }
+
+            if (groupSqliteExists && effectiveExistingPayload.header) {
+                const validation = validateExistingSqliteFullReplacementRequest({
+                    routeName: '/api/chats/group/save',
+                    operationType: 'ordinary_group_full_replace',
+                    filePath: replaceChatStorageExtension(pathToFile, '.sqlite'),
+                    requestBody: request.body,
+                    existingHeader: effectiveExistingPayload.header,
+                    serverMessageCountBefore: loadedRangeSqliteSegments?.messageCount,
+                    submittedMessageCount: chat_data.length,
+                });
+
+                return response.status(validation.status).send({ error: validation.error });
             }
 
             await request.activeSessionOperation?.assertAllowed();

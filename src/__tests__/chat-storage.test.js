@@ -3,7 +3,9 @@ import os from 'node:os';
 import path from 'node:path';
 
 import { beforeAll, describe, expect, it } from '@jest/globals';
+import initSqlJs from 'sql.js';
 
+let SQL;
 let applyLoadedMessageRange;
 let appendSqliteMessage;
 let buildChunkedChatPayload;
@@ -50,8 +52,20 @@ function makeMessages(count) {
     }));
 }
 
+function getSqliteRows(chatPath) {
+    const sqlitePath = String(chatPath).replace(/\.(?:jsonl|sqlite)$/i, '.sqlite');
+    const db = new SQL.Database(fs.readFileSync(sqlitePath));
+    try {
+        const result = db.exec('SELECT order_index, content FROM messages ORDER BY order_index ASC');
+        return result[0]?.values?.map(row => JSON.parse(row[1])) || [];
+    } finally {
+        db.close();
+    }
+}
+
 describe('SQLite chat length handling', () => {
     beforeAll(async () => {
+        SQL = await initSqlJs();
         const utilModule = await import('../util.js');
         utilModule.setConfigFilePath(getConfigPath());
 
@@ -377,6 +391,105 @@ describe('SQLite chat length handling', () => {
 
         expect(result.ok).toBe(false);
         expect(result.error).toBe('loaded_range_identity_mismatch');
+    });
+
+    it('rejects ordinary full replacement of an existing SQLite chat before deleting rows', async () => {
+        const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'sqlite-chat-full-replace-reject-'));
+        const chatPath = path.join(tempDir, 'chat.jsonl');
+
+        try {
+            const header = makeHeader({ chat_revision: 5061 });
+            await writeLogicalChat(chatPath, header, makeMessages(3900));
+
+            const greeting = {
+                aikobots_message_uuid: '11111111-1111-4111-8111-111111111111',
+                name: 'Character',
+                is_user: false,
+                mes: 'starter greeting',
+                send_date: 'July 7, 2026 6:38pm',
+            };
+
+            await expect(writeLogicalChat(chatPath, makeHeader({ chat_revision: 5063 }), [greeting], {
+                routeName: '/api/chats/save',
+                operationType: 'ordinary_full_replace',
+                requestBody: {
+                    base_revision: 5061,
+                    save_session_id: '33333333-3333-4333-8333-333333333333',
+                    full_chat: true,
+                },
+            })).rejects.toMatchObject({ error: 'sqlite_full_replacement_forbidden' });
+
+            const rows = getSqliteRows(chatPath);
+            expect(rows).toHaveLength(3901);
+            expect(rows[0].chat_revision).toBe(5061);
+            expect(rows[1].mes).toBe('message 0');
+            expect(rows.at(-1).mes).toBe('message 3899');
+        } finally {
+            fs.rmSync(tempDir, { recursive: true, force: true });
+        }
+    });
+
+    it('rejects sparse tail payloads mislabeled as full SQLite chats', async () => {
+        const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'sqlite-chat-sparse-full-reject-'));
+        const chatPath = path.join(tempDir, 'chat.jsonl');
+
+        try {
+            const header = makeHeader({ chat_revision: 12 });
+            const messages = makeMessages(3900);
+            await writeLogicalChat(chatPath, header, messages);
+
+            const submittedTail = messages.slice(3875);
+            await expect(writeLogicalChat(chatPath, makeHeader({ chat_revision: 13 }), submittedTail, {
+                routeName: '/api/chats/save',
+                operationType: 'ordinary_full_replace',
+                requestBody: {
+                    base_revision: 12,
+                    save_session_id: '33333333-3333-4333-8333-333333333333',
+                    full_chat: true,
+                },
+            })).rejects.toMatchObject({ error: 'sqlite_full_replacement_forbidden' });
+
+            const rows = getSqliteRows(chatPath);
+            expect(rows).toHaveLength(3901);
+            expect(rows[1].mes).toBe('message 0');
+            expect(rows.at(-1).mes).toBe('message 3899');
+        } finally {
+            fs.rmSync(tempDir, { recursive: true, force: true });
+        }
+    });
+
+    it('allows explicit privileged SQLite full replacement operations', async () => {
+        const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'sqlite-chat-full-replace-privileged-'));
+        const chatPath = path.join(tempDir, 'chat.jsonl');
+
+        try {
+            await writeLogicalChat(chatPath, makeHeader({ chat_revision: 1 }), makeMessages(20));
+
+            const replacement = {
+                aikobots_message_uuid: '22222222-2222-4222-8222-222222222222',
+                name: 'Character',
+                is_user: false,
+                mes: 'recovered replacement',
+                send_date: 'July 7, 2026 6:38pm',
+            };
+            await writeLogicalChat(chatPath, makeHeader({ chat_revision: 2 }), [replacement], {
+                allowExistingSqliteFullReplacement: true,
+                routeName: '/api/chats/import',
+                operationType: 'import_recovery',
+                requestBody: {
+                    full_chat: true,
+                    save_session_id: '33333333-3333-4333-8333-333333333333',
+                },
+                isPrivilegedOperation: true,
+            });
+
+            const rows = getSqliteRows(chatPath);
+            expect(rows).toHaveLength(2);
+            expect(rows[0].chat_revision).toBe(2);
+            expect(rows[1].mes).toBe('recovered replacement');
+        } finally {
+            fs.rmSync(tempDir, { recursive: true, force: true });
+        }
     });
 
     it('updates an existing SQLite message by UUID without appending duplicated text', async () => {
