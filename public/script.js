@@ -970,6 +970,8 @@ let chatSaveRevision = 0;
 let chatSaveSessionId = '';
 let chatSaveDirty = false;
 let chatSaveQueuePromise = null;
+let chatSaveQueueTimer = null;
+let chatSaveQueueRun = null;
 let chatSaveRequestOptions = {};
 let temporaryCharacterChat = null;
 let temporaryGroupChat = null;
@@ -1134,6 +1136,8 @@ let chatLoadState = getDefaultChatLoadState();
 export const DEFAULT_SAVE_EDIT_TIMEOUT = debounce_timeout.relaxed;
 /** @type {number} The debounce timeout used for debounced chat saves: 15000 ms */
 const DEFAULT_CHAT_SAVE_EDIT_TIMEOUT = 15_000;
+/** @type {number} The batching window used for direct chat save requests. */
+const CHAT_SAVE_QUEUE_COALESCE_TIMEOUT = 2_000;
 /** @type {debounce_timeout} The debounce timeout used for printing. debounce_timeout.quick: 100 ms */
 export const DEFAULT_PRINT_TIMEOUT = debounce_timeout.quick;
 const CHAT_SAVE_METADATA_STRIP_KEYS = Object.freeze(['timedWorldInfo', 'worldInfoSummary', 'worldInfoReport']);
@@ -5805,7 +5809,7 @@ export async function flushDebouncedChatSave() {
 
     cancelDebouncedChatSave();
     toastr.info(t`Please wait until the chat is saved.`, t`Your chat is still saving...`);
-    const result = await saveChatConditional();
+    const result = await saveChatConditional({ immediate: true });
 
     if (result !== CHAT_SAVE_RESULT.SAVED) {
         saveChatDebounced();
@@ -16667,19 +16671,67 @@ async function drainChatSaveQueue() {
     }
 }
 
+/**
+ * Cancels the pending direct-save batching timer without clearing dirty chat state.
+ */
+function cancelChatSaveQueueTimer() {
+    if (chatSaveQueueTimer) {
+        clearTimeout(chatSaveQueueTimer);
+        chatSaveQueueTimer = null;
+    }
+}
+
 export async function saveChatConditional(options = {}) {
+    const immediate = options?.immediate === true;
+    const saveOptions = { ...(options || {}) };
+    delete saveOptions.immediate;
+
     chatSaveDirty = true;
     chatSaveRequestOptions = {
         ...chatSaveRequestOptions,
-        ...(options || {}),
+        ...saveOptions,
     };
 
     if (!chatSaveQueuePromise) {
-        chatSaveQueuePromise = drainChatSaveQueue().catch((error) => {
+        let runImmediately = false;
+        let started = false;
+        chatSaveQueuePromise = new Promise((resolve, reject) => {
+            chatSaveQueueRun = async () => {
+                if (started) {
+                    return;
+                }
+
+                started = true;
+                cancelChatSaveQueueTimer();
+                chatSaveQueueRun = null;
+
+                try {
+                    resolve(await drainChatSaveQueue());
+                } catch (error) {
+                    reject(error);
+                }
+            };
+
+            if (immediate) {
+                runImmediately = true;
+            } else {
+                chatSaveQueueTimer = setTimeout(() => {
+                    chatSaveQueueTimer = null;
+                    void chatSaveQueueRun?.();
+                }, CHAT_SAVE_QUEUE_COALESCE_TIMEOUT);
+            }
+        }).catch((error) => {
             console.error('Error saving chat', error);
             chatSaveDirty = false;
             return CHAT_SAVE_RESULT.FAILED;
         });
+
+        if (runImmediately) {
+            void chatSaveQueueRun?.();
+        }
+    } else if (immediate) {
+        cancelChatSaveQueueTimer();
+        void chatSaveQueueRun?.();
     }
 
     return chatSaveQueuePromise;
