@@ -12429,7 +12429,7 @@ export function renderDetachedMessage(mes, messageId) {
 
 async function getChatResult() {
     name2 = characters[this_chid].name;
-    if (getTotalChatMessages() === 0 && !currentChatFileNameLooksSqlite()) {
+    if (getTotalChatMessages() === 0) {
         const message = getFirstMessage();
         if (message.mes) {
             chat.length = 1;
@@ -12492,14 +12492,10 @@ function getFirstMessage() {
 /**
  * Refreshes the first character message for an untouched solo chat.
  * Used when chat rendering inputs change without modifying the character card itself.
+ * This mirrors fresh-load greeting generation and does not persist the refreshed message.
  * @returns {Promise<boolean>} Whether the first message was regenerated.
  */
 export async function refreshPristineFirstMessage() {
-    if (currentChatFileNameLooksSqlite()) {
-        console.warn('Blocked pristine first-message refresh for an existing SQLite chat.');
-        return false;
-    }
-
     const shouldRegenerateMessage =
         !selected_group &&
         !chat_metadata['tainted'] &&
@@ -12517,7 +12513,6 @@ export async function refreshPristineFirstMessage() {
     await printMessages();
     await eventSource.emit(event_types.CHARACTER_MESSAGE_RENDERED, messageId, 'first_message');
     await recomputeTimedWorldInfo();
-    await saveChatConditional();
 
     return true;
 }
