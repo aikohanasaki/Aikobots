@@ -13548,6 +13548,11 @@ async function saveSqliteMessageDeleteByUuid(messageUuid) {
         return CHAT_SAVE_RESULT.FAILED;
     }
 
+    const pendingSaveResult = await flushPendingSqliteMessageUpdateSave();
+    if (pendingSaveResult !== CHAT_SAVE_RESULT.SAVED) {
+        return CHAT_SAVE_RESULT.FAILED;
+    }
+
     return saveSqliteMessageMutation('delete', {
         message_uuid: messageUuid,
     }, t`Message delete failed.`);
@@ -13555,6 +13560,11 @@ async function saveSqliteMessageDeleteByUuid(messageUuid) {
 
 async function saveSqliteTruncateAfterUuid(messageUuid, { regeneratePrepare = false } = {}) {
     if (!messageUuid) {
+        return CHAT_SAVE_RESULT.FAILED;
+    }
+
+    const pendingSaveResult = await flushPendingSqliteMessageUpdateSave();
+    if (pendingSaveResult !== CHAT_SAVE_RESULT.SAVED) {
         return CHAT_SAVE_RESULT.FAILED;
     }
 
