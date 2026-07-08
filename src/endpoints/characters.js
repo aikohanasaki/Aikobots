@@ -56,6 +56,7 @@ import {
 import { countBotDryRunMessageTokens, countBotDryRunTextTokens, countBotDryRunTokens } from './tokenizers.js';
 import { assembleChatCompletionPrompt } from '../prompting/chat-completion-assembly.js';
 import { prepareServerPromptContext } from './backends/chat-completions.js';
+import { migrateFromJsonlRecords } from '../sqlite-manager.js';
 
 // With 100 MB limit it would take roughly 3000 characters to reach this limit
 const memoryCacheCapacity = getConfigValue('performance.memoryCacheCapacity', '100mb');
@@ -1658,12 +1659,15 @@ async function importFromByaf(uploadPath, { request }, preservedFileName) {
         /**
          * @param {Partial<ByafScenario>} scenario
         */
-        const createChatAsCurrentPersona = (scenario) => {
-            const chatName = sanitize(`${scenario.title || card.name} - ${humanizedISO8601DateTime()} imported.jsonl`, { replacement: sanitizeSafeCharacterReplacements });
+        const createChatAsCurrentPersona = async (scenario) => {
+            const chatName = sanitize(`${scenario.title || card.name} - ${humanizedISO8601DateTime()} imported.sqlite`, { replacement: sanitizeSafeCharacterReplacements });
             const filePath = resolveCharacterChatFilePath(request.user.directories, path.basename(fileName), chatName);
             const dir = path.dirname(filePath);
             if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-            writeFileAtomicSync(filePath, ByafParser.getChatFromScenario(scenario, request.body.user_name, card.name, byafData.chatBackgrounds), 'utf8');
+            const chatRecords = ByafParser.getChatFromScenario(scenario, request.body.user_name, card.name, byafData.chatBackgrounds)
+                .split('\n')
+                .filter(line => line.trim());
+            await migrateFromJsonlRecords(chatRecords, filePath);
             console.log(`Created ${chatName} chat from BYAF import`);
             return chatName;
         };
@@ -1688,7 +1692,7 @@ async function importFromByaf(uploadPath, { request }, preservedFileName) {
         // Create chats for each scenario
         if (Array.isArray(byafData.scenarios)) {
             for (const scenario of byafData.scenarios) {
-                chats.push(createChatAsCurrentPersona(scenario));
+                chats.push(await createChatAsCurrentPersona(scenario));
             }
         }
 

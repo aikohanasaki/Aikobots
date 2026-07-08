@@ -2583,7 +2583,7 @@ export async function importGroupChat(formData, { refresh = true, groupId = sele
                 }
             }
 
-            return data?.fileNames || [`${chatId}.jsonl`];
+            return data?.fileNames || [`${chatId}.sqlite`];
         }
 
         return data?.fileNames || [];

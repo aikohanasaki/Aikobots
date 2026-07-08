@@ -2890,6 +2890,10 @@ function backupChat(directory, name, chat) {
             return;
         }
 
+        if (typeof chat !== 'string') {
+            return;
+        }
+
         // replace non-alphanumeric characters with underscores
         name = sanitize(name).replace(/[^a-z0-9]/gi, '_').toLowerCase();
         const backupPrefix = `${CHAT_BACKUPS_PREFIX}${name}_`;
@@ -3946,14 +3950,12 @@ router.post('/rename', validateAvatarUrlMiddleware, async function (request, res
             });
         } else if (request.body.is_group) {
             const groupRecords = readJsonlObjects(pathToOriginalFile);
-            writeFileAtomicSync(pathToRenamedFile, serializeJsonl(groupRecords), 'utf8');
+            await writeGroupChat(pathToRenamedFile, groupRecords);
         } else {
-            if (fs.existsSync(pathToOriginalFile)) {
-                fs.copyFileSync(pathToOriginalFile, pathToRenamedFile);
-            } else {
-                if (fs.existsSync(sqliteOriginal)) {
-                    fs.copyFileSync(sqliteOriginal, sqliteRenamed);
-                }
+            if (fs.existsSync(sqliteOriginal)) {
+                fs.copyFileSync(sqliteOriginal, sqliteRenamed);
+            } else if (fs.existsSync(pathToOriginalFile)) {
+                return response.status(400).send({ error: 'legacy_jsonl_rename_unsupported' });
             }
         }
 
@@ -4034,7 +4036,7 @@ router.post('/export', validateAvatarUrlMiddleware, async function (request, res
             });
         }
 
-        // Short path for JSONL files (including fresh JSONL from SQLite)
+        // Explicit JSONL export path; normal chat persistence remains SQLite-only.
         if (request.body.format === 'jsonl') {
             try {
                 const logicalChatData = await getLogicalChatData(filename);
@@ -5256,7 +5258,7 @@ router.post('/orphaned', async function (request, response) {
 
                             const fileStats = getChatFileStats(filePath);
                             return await getChatSearchResult({
-                                file_name: `${chatId}.jsonl`,
+                                file_name: `${chatId}.sqlite`,
                                 file_size: formatBytes(fileStats.totalSize),
                                 path: filePath,
                             }, fragments, { isGroup: true });

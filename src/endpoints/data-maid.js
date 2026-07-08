@@ -4,7 +4,7 @@ import path from 'node:path';
 import express from 'express';
 import mime from 'mime-types';
 import { getSettingsBackupFilePrefix } from './settings.js';
-import { CHAT_BACKUPS_PREFIX, getDeduplicatedChatHistoryFileNames, getLogicalChatData, serializeJsonl, isHeadChatFile } from './chats.js';
+import { CHAT_BACKUPS_PREFIX, getDeduplicatedChatHistoryFileNames, isHeadChatFile } from './chats.js';
 import { tryParse } from '../util.js';
 import { SETTINGS_FILE } from '../constants.js';
 
@@ -878,10 +878,7 @@ router.get('/view', async (req, res) => {
             return res.sendStatus(404);
         }
 
-        const logicalChat = await getLogicalChatData(pathToFile);
-        const fileBuffer = logicalChat.length > 0
-            ? Buffer.from(serializeJsonl(logicalChat), 'utf8')
-            : await fs.promises.readFile(pathToFile);
+        const fileBuffer = await fs.promises.readFile(pathToFile);
         const mimeType = mime.lookup(pathToFile) || 'text/plain';
         res.setHeader('Content-Type', mimeType);
         return res.send(fileBuffer);
