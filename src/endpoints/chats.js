@@ -63,6 +63,7 @@ const isBackupEnabled = !!getConfigValue('backups.chat.enabled', true, 'boolean'
 const maxTotalChatBackups = Number(getConfigValue('backups.chat.maxTotalBackups', -1, 'number'));
 const throttleInterval = Number(getConfigValue('backups.chat.throttleInterval', 10_000, 'number'));
 const checkIntegrity = !!getConfigValue('backups.chat.checkIntegrity', true, 'boolean');
+const sqliteAppendBackupMessageInterval = Math.max(0, Math.floor(Number(getConfigValue('backups.chat.sqliteAppendBackupMessageInterval', 2, 'number'))));
 const CHAT_STORAGE_KEY = 'chat_storage';
 const CHAT_REVISION_KEY = 'chat_revision';
 const CHAT_LAST_SAVE_SESSION_KEY = 'last_save_session_id';
@@ -1888,6 +1889,9 @@ export async function updateSqliteLoadedMessageRange({ filePath, requestBody, in
         regenerateIdentities,
         messageStartId: validation.startId,
     });
+    const fullJsonl = validation.startId === 0 && rangeMessages.length === totalMessages
+        ? serializeJsonl(await getLogicalChatData(filePath))
+        : null;
 
     return {
         result: 'ok',
@@ -1898,6 +1902,7 @@ export async function updateSqliteLoadedMessageRange({ filePath, requestBody, in
         tailEndId: writeResult.tailEndId,
         headCount: writeResult.headCount,
         tailCount: writeResult.tailCount,
+        fullJsonl,
         payload: null,
     };
 }
@@ -3014,6 +3019,40 @@ function shouldSkipChatBackup(directory, prefix) {
     }
 }
 
+function getSanitizedChatBackupName(name) {
+    return sanitize(name).replace(/[^a-z0-9]/gi, '_').toLowerCase();
+}
+
+function getChatBackupPrefix(name) {
+    return `${CHAT_BACKUPS_PREFIX}${getSanitizedChatBackupName(name)}_`;
+}
+
+function shouldCreatePeriodicSqliteAppendBackup(directory, name, messageCount) {
+    if (!isBackupEnabled || !fs.existsSync(directory) || sqliteAppendBackupMessageInterval <= 0) {
+        return false;
+    }
+
+    const totalMessages = Number(messageCount);
+    if (!Number.isInteger(totalMessages) || totalMessages <= 0 || totalMessages % sqliteAppendBackupMessageInterval !== 0) {
+        return false;
+    }
+
+    return !shouldSkipChatBackup(directory, getChatBackupPrefix(name));
+}
+
+async function maybeBackupSqliteChatAfterAppend(user, filePath, name, messageCount) {
+    if (!shouldCreatePeriodicSqliteAppendBackup(user.directories.backups, name, messageCount)) {
+        return;
+    }
+
+    try {
+        const fullJsonl = serializeJsonl(await getLogicalChatData(filePath));
+        getBackupFunction(user.profile.handle)(user.directories.backups, name, fullJsonl);
+    } catch (error) {
+        console.error(`Could not create periodic SQLite chat backup for ${name}`, error);
+    }
+}
+
 /**
  * Saves a chat to the backups directory.
  * @param {string} directory The user's backups directory.
@@ -3031,8 +3070,8 @@ function backupChat(directory, name, chat) {
         }
 
         // replace non-alphanumeric characters with underscores
-        name = sanitize(name).replace(/[^a-z0-9]/gi, '_').toLowerCase();
-        const backupPrefix = `${CHAT_BACKUPS_PREFIX}${name}_`;
+        name = getSanitizedChatBackupName(name);
+        const backupPrefix = getChatBackupPrefix(name);
 
         if (shouldSkipChatBackup(directory, backupPrefix)) {
             return;
@@ -3449,6 +3488,7 @@ router.post('/message/clone', validateAvatarUrlMiddleware, async function (reque
 
 router.post('/message/append', validateAvatarUrlMiddleware, async function (request, response) {
     try {
+        const directoryName = normalizeCharacterChatDirectoryName(request.body.avatar_url);
         const filePath = resolveCharacterChatFilePath(request.user.directories.chats, request.body.avatar_url, request.body.file_name);
         if (!fs.existsSync(replaceChatStorageExtension(filePath, '.sqlite'))) {
             return response.status(404).send({ error: 'chat_not_found' });
@@ -3462,6 +3502,7 @@ router.post('/message/append', validateAvatarUrlMiddleware, async function (requ
                 saveSessionId: getRequestSaveSessionId(request.body),
                 displayCount: request.body.display_count,
             });
+            await maybeBackupSqliteChatAfterAppend(request.user, filePath, directoryName, payload.totalMessages);
             return response.send(payload);
         });
     } catch (error) {
@@ -3837,8 +3878,12 @@ router.post('/save', validateAvatarUrlMiddleware, async function (request, respo
                         saveSessionId: getRequestSaveSessionId(request.body),
                         regenerateIdentities: request.body.regenerate_identities === true,
                     });
+                    if (payload.fullJsonl) {
+                        getBackupFunction(request.user.profile.handle)(request.user.directories.backups, directoryName, payload.fullJsonl);
+                    }
 
-                    return response.send(payload);
+                    const { fullJsonl, ...responsePayload } = payload;
+                    return response.send(responsePayload);
                 }
 
                 const existingChat = await getLogicalChatData(filePath);
@@ -4924,6 +4969,7 @@ router.post('/group/message/append', async (request, response) => {
         }
 
         const id = request.body.id;
+        const backupOwnerKey = getVerifiedGroupBackupOwnerKey(request.user, id, request.body.group_id);
         const pathToFile = getGroupChatFilePath(request.user.directories.groupChats, id);
         if (!fs.existsSync(replaceChatStorageExtension(pathToFile, '.sqlite'))) {
             return response.status(404).send({ error: 'chat_not_found' });
@@ -4937,6 +4983,7 @@ router.post('/group/message/append', async (request, response) => {
                 saveSessionId: getRequestSaveSessionId(request.body),
                 displayCount: request.body.display_count,
             });
+            await maybeBackupSqliteChatAfterAppend(request.user, pathToFile, backupOwnerKey, payload.totalMessages);
             return response.send(payload);
         });
     } catch (error) {
@@ -5158,6 +5205,9 @@ router.post('/group/save', async (request, response) => {
                         saveSessionId: getRequestSaveSessionId(request.body),
                         regenerateIdentities: request.body.regenerate_identities === true,
                     });
+                    if (payload.fullJsonl) {
+                        getBackupFunction(request.user.profile.handle)(request.user.directories.backups, backupOwnerKey, payload.fullJsonl);
+                    }
                     return response.send({ ok: true, chat_revision: payload.chat_revision, storage_mode: payload.storage_mode });
                 }
 

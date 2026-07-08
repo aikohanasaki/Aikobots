@@ -111,7 +111,9 @@ It:
 
 Important implications:
 
-- Incremental saves do not return `fullJsonl`, so chat backups are skipped for those writes.
+- Incremental and partial range saves do not return `fullJsonl`, so chat backups are skipped for those writes.
+- Complete loaded-range saves for SQLite chats serialize the stored logical chat after the database write and can create a JSONL backup without using ordinary full replacement.
+- SQLite message appends create a periodic full JSONL backup every `backups.chat.sqliteAppendBackupMessageInterval` messages by default, subject to the existing backup throttle.
 - `updateMessages()` may update existing rows or append when the start index is exactly the current row count.
 - `updateMessages()` rejects gaps and overlong ranges to avoid sparse/corrupt row sequences.
 
@@ -216,7 +218,7 @@ Rejected JSONL paths:
 
 Backups remain JSONL files in the backup directory.
 
-Full saves produce a serialized JSONL payload and can be backed up. Incremental/range saves avoid loading the entire chat and return `fullJsonl: null`, so backup creation is skipped for those writes.
+Full saves produce a serialized JSONL payload and can be backed up. Complete loaded-range saves for SQLite chats can also be backed up by serializing the stored logical chat after the database write. SQLite appends also create periodic JSONL backups when the post-append message count is divisible by `backups.chat.sqliteAppendBackupMessageInterval`, default `2`; set it to `0` to disable that cadence. Incremental updates and partial range saves avoid loading the entire chat and return `fullJsonl: null`, so backup creation is skipped for those writes.
 
 Exports are format-specific:
 

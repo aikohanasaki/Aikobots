@@ -741,6 +741,7 @@ describe('SQLite chat length handling', () => {
             const logicalChat = await getLogicalChatData(chatPath);
             expect(payload.chat_revision).toBe(2);
             expect(payload.message_uuid).toMatch(/^[0-9a-f-]{36}$/i);
+            expect(payload.totalMessages).toBe(3);
             expect(logicalChat).toHaveLength(4);
             expect(logicalChat.at(-1).mes).toBe('new explicit append');
             expect(logicalChat.at(-1).aikobots_message_uuid).toBe(payload.message_uuid);
@@ -888,12 +889,54 @@ describe('SQLite chat length handling', () => {
             expect(payload.chat_revision).toBe(7);
             expect(payload.storage_mode).toBe('sqlite');
             expect(payload.tailCount).toBe(20);
+            expect(payload.fullJsonl).toBeNull();
             expect(logicalChat).toHaveLength(21);
             expect(logicalChat[5].mes).toBe('message 4');
             expect(logicalChat[6].mes).toBe('patched direct 5');
             expect(logicalChat[8].mes).toBe('patched direct 7');
             expect(logicalChat[9].mes).toBe('message 8');
             expect(logicalChat.at(-1).mes).toBe('message 19');
+        } finally {
+            fs.rmSync(tempDir, { recursive: true, force: true });
+        }
+    });
+
+    it('returns a JSONL backup payload for complete loaded-range SQLite saves', async () => {
+        const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'sqlite-chat-loaded-range-backup-'));
+        const chatPath = path.join(tempDir, 'chat.jsonl');
+        const saveSessionId = '33333333-3333-4333-8333-333333333333';
+
+        try {
+            const header = makeHeader({ chat_revision: 3, chat_metadata: { title: 'before' } });
+            const nextHeader = makeHeader({ chat_revision: 3, chat_metadata: { title: 'after' } });
+            const messages = makeMessages(4);
+            await writeLogicalChat(chatPath, header, messages);
+
+            const nextMessages = messages.map((message, index) => ({
+                ...message,
+                mes: `complete save ${index}`,
+            }));
+            const payload = await updateSqliteLoadedMessageRange({
+                filePath: chatPath,
+                requestBody: {
+                    loaded_range_start: 0,
+                    loaded_range_end: 3,
+                    base_revision: 3,
+                    save_session_id: saveSessionId,
+                },
+                incomingHeader: nextHeader,
+                rangeMessages: nextMessages,
+                saveSessionId,
+            });
+            const backupRows = payload.fullJsonl.split('\n').map(line => JSON.parse(line));
+
+            expect(payload.chat_revision).toBe(4);
+            expect(backupRows).toHaveLength(5);
+            expect(backupRows[0].chat_revision).toBe(4);
+            expect(backupRows[0].last_save_session_id).toBe(saveSessionId);
+            expect(backupRows[0].chat_metadata).toEqual({ title: 'after' });
+            expect(backupRows[1].mes).toBe('complete save 0');
+            expect(backupRows.at(-1).mes).toBe('complete save 3');
         } finally {
             fs.rmSync(tempDir, { recursive: true, force: true });
         }

@@ -4969,9 +4969,19 @@ function getContiguousChatMessagesForSave(startId, endId) {
     return messages;
 }
 
-function getContiguousLoadedChatRangeForSave() {
+function getContiguousLoadedChatRangeForSave({ includeHydrated = false } = {}) {
     if (isChatFullyHydrated()) {
-        return null;
+        if (!includeHydrated) {
+            return null;
+        }
+
+        const totalMessages = getTotalChatMessages();
+        if (totalMessages <= 0) {
+            return null;
+        }
+
+        const messages = getContiguousChatMessagesForSave(0, totalMessages - 1);
+        return messages ? { start: 0, messages } : null;
     }
 
     if (!chatLoadState.loadedRanges.length) {
@@ -5016,6 +5026,12 @@ export async function prepareCurrentChatSavePayload({ header = null, endId = und
     let saveMode = undefined;
     let loadedRangeStart = undefined;
 
+    const useLoadedRangeSave = (loadedRange) => {
+        loadedRangeStart = loadedRange.start;
+        trimmedChat = loadedRange.messages;
+        saveMode = 'loaded_range';
+    };
+
     if (!allowPartialSave && !isChatFullyHydrated()) {
         return {
             ok: false,
@@ -5025,7 +5041,19 @@ export async function prepareCurrentChatSavePayload({ header = null, endId = und
         };
     }
 
-    if (allowPartialSave && !isChatFullyHydrated() && endId === undefined) {
+    if (allowPartialSave && currentChatFileNameLooksSqlite() && endId === undefined) {
+        const loadedRange = getContiguousLoadedChatRangeForSave({ includeHydrated: true });
+        if (!loadedRange) {
+            return {
+                ok: false,
+                reason: 'loaded_range_not_contiguous',
+                message: t`Loaded chat messages are not contiguous. Reload the chat and then click Push Current Chat.`,
+                title: t`Chat push blocked`,
+            };
+        }
+
+        useLoadedRangeSave(loadedRange);
+    } else if (allowPartialSave && !isChatFullyHydrated() && endId === undefined) {
         const loadedRange = getContiguousLoadedChatRangeForSave();
         if (!loadedRange) {
             return {
@@ -5036,9 +5064,7 @@ export async function prepareCurrentChatSavePayload({ header = null, endId = und
             };
         }
 
-        loadedRangeStart = loadedRange.start;
-        trimmedChat = loadedRange.messages;
-        saveMode = 'loaded_range';
+        useLoadedRangeSave(loadedRange);
     } else {
         const normalizedEndId = endId === undefined
             ? getTotalChatMessages() - 1
