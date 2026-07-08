@@ -511,6 +511,13 @@ async function updateServerChatMessageVisibility(start, end, unhide, nameFilter 
             return CHAT_MESSAGE_VISIBILITY_SAVE_RESULT.ENDPOINT_FAILED;
         }
 
+        if (errorData?.error === 'chat_repaired') {
+            console.warn('Chat message visibility found repaired server identities. Reloading chat before continuing.', errorData);
+            toastr.warning(t`Chat storage was repaired. Reloading the chat before saving again.`, t`Chat could not be saved`);
+            void reloadCurrentChat();
+            return CHAT_MESSAGE_VISIBILITY_SAVE_RESULT.ENDPOINT_FAILED;
+        }
+
         const errorMessage = errorData?.message || errorData?.error || t`Check the server connection and reload the page to prevent data loss.`;
         toastr.error(errorMessage, t`Chat could not be saved`);
         console.error('Chat message visibility could not be saved', error);

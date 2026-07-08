@@ -63,6 +63,27 @@ function getSqliteRows(chatPath) {
     }
 }
 
+function stripSqliteMessageUuids(chatPath) {
+    const sqlitePath = String(chatPath).replace(/\.(?:jsonl|sqlite)$/i, '.sqlite');
+    const db = new SQL.Database(fs.readFileSync(sqlitePath));
+    try {
+        const rows = db.exec('SELECT id, order_index, content FROM messages WHERE order_index > 0 ORDER BY order_index ASC')[0]?.values || [];
+        const stmt = db.prepare('UPDATE messages SET content = ? WHERE id = ?');
+        try {
+            for (const row of rows) {
+                const message = JSON.parse(row[2]);
+                delete message.aikobots_message_uuid;
+                stmt.run([JSON.stringify(message), row[0]]);
+            }
+        } finally {
+            stmt.free();
+        }
+        fs.writeFileSync(sqlitePath, Buffer.from(db.export()));
+    } finally {
+        db.close();
+    }
+}
+
 describe('SQLite chat length handling', () => {
     beforeAll(async () => {
         SQL = await initSqlJs();
@@ -573,6 +594,84 @@ describe('SQLite chat length handling', () => {
                 saveSessionId: '33333333-3333-4333-8333-333333333333',
                 displayCount: 10,
             })).rejects.toMatchObject({ error: 'tail_mismatch' });
+        } finally {
+            fs.rmSync(tempDir, { recursive: true, force: true });
+        }
+    });
+
+    it('repairs modern SQLite chats whose message rows are missing UUIDs on load', async () => {
+        const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'sqlite-chat-identity-repair-load-'));
+        const chatPath = path.join(tempDir, 'chat.jsonl');
+        const saveSessionId = '33333333-3333-4333-8333-333333333333';
+
+        try {
+            await writeLogicalChat(
+                chatPath,
+                makeHeader({ chat_revision: 7, last_save_session_id: saveSessionId }),
+                makeMessages(3),
+            );
+            stripSqliteMessageUuids(chatPath);
+
+            const repairedPayload = await buildChunkedChatPayload(chatPath, { displayCount: 10 });
+            const repairedRows = getSqliteRows(chatPath);
+            const repairedUuids = repairedRows.slice(1).map(message => message.aikobots_message_uuid);
+
+            expect(repairedPayload.chat_repaired).toBe(true);
+            expect(repairedPayload.reload_required).toBe(true);
+            expect(repairedPayload.header.chat_revision).toBe(7);
+            expect(repairedPayload.header.last_save_session_id).toBe(saveSessionId);
+            expect(repairedUuids.every(uuid => /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(uuid))).toBe(true);
+            expect(new Set(repairedUuids).size).toBe(3);
+
+            const stablePayload = await buildChunkedChatPayload(chatPath, { displayCount: 10 });
+            const stableRows = getSqliteRows(chatPath);
+            expect(stablePayload.chat_repaired).toBe(false);
+            expect(stableRows.slice(1).map(message => message.aikobots_message_uuid)).toEqual(repairedUuids);
+        } finally {
+            fs.rmSync(tempDir, { recursive: true, force: true });
+        }
+    });
+
+    it('returns chat_repaired before tail validation when a modern SQLite chat lacks message UUIDs', async () => {
+        const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'sqlite-chat-identity-repair-append-'));
+        const chatPath = path.join(tempDir, 'chat.jsonl');
+        const saveSessionId = '33333333-3333-4333-8333-333333333333';
+
+        try {
+            await writeLogicalChat(
+                chatPath,
+                makeHeader({ chat_revision: 1, last_save_session_id: saveSessionId }),
+                makeMessages(2),
+            );
+            stripSqliteMessageUuids(chatPath);
+
+            await expect(appendSqliteMessage({
+                filePath: chatPath,
+                requestBody: {
+                    message: {
+                        name: 'Character',
+                        is_user: false,
+                        mes: 'new explicit append',
+                        send_date: 99,
+                    },
+                    expected_tail_uuid: '11111111-1111-4111-8111-111111111111',
+                    base_revision: 1,
+                    save_session_id: saveSessionId,
+                },
+                saveSessionId,
+                displayCount: 10,
+            })).rejects.toMatchObject({
+                error: 'chat_repaired',
+                status: 409,
+                details: {
+                    chat_repaired: true,
+                    reload_required: true,
+                },
+            });
+
+            const repairedRows = getSqliteRows(chatPath);
+            expect(repairedRows).toHaveLength(3);
+            expect(repairedRows.slice(1).every(message => message.aikobots_message_uuid)).toBe(true);
         } finally {
             fs.rmSync(tempDir, { recursive: true, force: true });
         }

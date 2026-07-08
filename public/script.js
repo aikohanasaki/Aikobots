@@ -5187,6 +5187,12 @@ async function fetchLatestTailForPayload(response, options = {}) {
     });
 }
 
+async function reloadCurrentChatAfterServerRepair(errorData = null) {
+    console.warn('Chat message identity metadata was repaired by the server. Reloading chat before continuing.', errorData);
+    toastr.warning(t`Chat storage was repaired. Reloading the chat before saving again.`);
+    await reloadCurrentChat();
+}
+
 function getTailPrefetchRange() {
     if (isChatFullyHydrated() || getTotalChatMessages() <= 0) {
         return null;
@@ -12137,6 +12143,11 @@ export async function saveChat({ chatName, withMetadata, mesId, force = false, r
         }
 
         const errorData = await result.json();
+        if (errorData?.error === 'chat_repaired') {
+            await reloadCurrentChatAfterServerRepair(errorData);
+            return CHAT_SAVE_RESULT.FAILED;
+        }
+
         if (errorData?.error === 'stale_revision') {
             const staleResult = warnStaleChatSave(errorData);
             if (retrySameSessionStale && staleResult.sameSessionStale) {
@@ -12328,6 +12339,14 @@ export async function getChat() {
     try {
         const initialCount = getInitialChatDisplayCount();
         let response = await fetchChunkedChat({ count: initialCount });
+        if (response?.chat_repaired === true) {
+            console.warn('Initial chat load repaired SQLite message identities. Refetching chat before render.');
+            toastr.info(t`Chat storage was repaired. Reloading the chat.`);
+            response = await fetchChunkedChat({ count: initialCount });
+            if (response?.chat_repaired === true) {
+                throw new Error('Chat identity repair did not settle after reload');
+            }
+        }
         if (!chunkedPayloadIncludesLatestTail(response)) {
             console.warn('Initial chat payload did not include the latest tail. Refetching latest tail before render.', {
                 totalMessages: response?.totalMessages,
@@ -13406,6 +13425,12 @@ async function cloneEditedMessage() {
                 return;
             }
 
+            if (errorData?.error === 'chat_repaired') {
+                await rollbackClone(insertAt);
+                await reloadCurrentChatAfterServerRepair(errorData);
+                return;
+            }
+
             toastr.error(errorData?.message || t`Message clone failed.`);
             await rollbackClone(insertAt);
             return;
@@ -13519,6 +13544,8 @@ async function saveSqliteMessageMutation(operation, fields, defaultErrorMessage 
                 if (retrySameSessionStale && staleResult.sameSessionStale) {
                     return saveSqliteMessageMutation(operation, fields, defaultErrorMessage, { retrySameSessionStale: false });
                 }
+            } else if (errorData?.error === 'chat_repaired') {
+                await reloadCurrentChatAfterServerRepair(errorData);
             } else {
                 toastr.error(errorData?.message || errorData?.error || defaultErrorMessage);
             }

@@ -66,6 +66,7 @@ const checkIntegrity = !!getConfigValue('backups.chat.checkIntegrity', true, 'bo
 const CHAT_STORAGE_KEY = 'chat_storage';
 const CHAT_REVISION_KEY = 'chat_revision';
 const CHAT_LAST_SAVE_SESSION_KEY = 'last_save_session_id';
+const CHAT_IDENTITY_REPAIR_ERROR = 'chat_repaired';
 const GROUP_CHAT_HEADER_VERSION = 1;
 const CHAT_METADATA_STRIP_KEYS = ['timedWorldInfo', 'worldInfoSummary', 'worldInfoReport'];
 const CHAT_EXTRA_STRIP_KEYS = ['timedWorldInfo', 'worldInfoSummary', 'worldInfoReport'];
@@ -197,6 +198,12 @@ function validateSaveRevision(requestBody, existingHeader) {
     }
 
     return { ok: true, currentRevision, nextRevision: currentRevision + 1 };
+}
+
+function hasModernSaveMetadata(header) {
+    return _.isPlainObject(header)
+        && (Object.prototype.hasOwnProperty.call(header, CHAT_REVISION_KEY)
+            || Object.prototype.hasOwnProperty.call(header, CHAT_LAST_SAVE_SESSION_KEY));
 }
 
 /**
@@ -910,6 +917,7 @@ export async function updateSqliteUserPersonaMessages({ filePath, requestBody, u
         if (!header) {
             throw new ChatMutationError(404, 'chat_not_found');
         }
+        throwIfSqliteChatIdentityRepairNeeded(db, sqlitePath, header);
 
         const revisionCheck = validateSaveRevision(requestBody, header);
         if (!revisionCheck.ok) {
@@ -973,6 +981,115 @@ function getAikobotsMessageUuid(message) {
     return typeof message?.[AIKOBOTS_MESSAGE_UUID_KEY] === 'string'
         ? message[AIKOBOTS_MESSAGE_UUID_KEY]
         : '';
+}
+
+/**
+ * Backfills missing/ambiguous SQLite chat identities created by partial migrations.
+ * Keeps the existing chat revision so clients must reload instead of treating repair as a save.
+ * @param {import('sql.js').Database} db
+ * @param {string} sqlitePath
+ * @param {object|null} header
+ * @returns {{repaired: boolean, changedMessages: number, missingMessages: number, duplicateMessages: number, missingSwipes: number, duplicateSwipes: number}}
+ */
+function repairSqliteChatMessageIdentities(db, sqlitePath, header = null) {
+    if (!hasModernSaveMetadata(header)) {
+        return {
+            repaired: false,
+            changedMessages: 0,
+            missingMessages: 0,
+            duplicateMessages: 0,
+            missingSwipes: 0,
+            duplicateSwipes: 0,
+        };
+    }
+
+    const totalMessages = getMessageCount(db);
+    if (totalMessages <= 0) {
+        return {
+            repaired: false,
+            changedMessages: 0,
+            missingMessages: 0,
+            duplicateMessages: 0,
+            missingSwipes: 0,
+            duplicateSwipes: 0,
+        };
+    }
+
+    const messages = getMessageRange(db, 0, totalMessages);
+    const identityResult = normalizeChatIdentities(messages, { generateUuid: uuidv4 });
+    if (!identityResult.changed) {
+        return {
+            repaired: false,
+            changedMessages: 0,
+            missingMessages: 0,
+            duplicateMessages: 0,
+            missingSwipes: 0,
+            duplicateSwipes: 0,
+        };
+    }
+
+    updateMessages(db, messages.map(message => sanitizeChatMessageForPersistence(message)), 1);
+    saveDb(db, sqlitePath);
+
+    const changedMessageIndexes = new Set([
+        ...identityResult.missingMessageIndexes,
+        ...identityResult.duplicateMessageIndexes,
+        ...identityResult.missingSwipeRefs.map(ref => ref.messageIndex),
+        ...identityResult.duplicateSwipeRefs.map(ref => ref.messageIndex),
+    ]);
+
+    console.info('[SQLite] Repaired chat message identity metadata.', {
+        filePath: sqlitePath,
+        totalMessages,
+        changedMessages: changedMessageIndexes.size,
+        missingMessages: identityResult.missingMessageIndexes.length,
+        duplicateMessages: identityResult.duplicateMessageIndexes.length,
+        missingSwipes: identityResult.missingSwipeRefs.length,
+        duplicateSwipes: identityResult.duplicateSwipeRefs.length,
+    });
+
+    return {
+        repaired: true,
+        changedMessages: changedMessageIndexes.size,
+        missingMessages: identityResult.missingMessageIndexes.length,
+        duplicateMessages: identityResult.duplicateMessageIndexes.length,
+        missingSwipes: identityResult.missingSwipeRefs.length,
+        duplicateSwipes: identityResult.duplicateSwipeRefs.length,
+    };
+}
+
+function throwIfSqliteChatIdentityRepairNeeded(db, sqlitePath, header) {
+    const repair = repairSqliteChatMessageIdentities(db, sqlitePath, header);
+    if (!repair.repaired) {
+        return repair;
+    }
+
+    throw new ChatMutationError(
+        409,
+        CHAT_IDENTITY_REPAIR_ERROR,
+        'Chat message identities were repaired. Reload the chat before saving again.',
+        {
+            chat_repaired: true,
+            reload_required: true,
+            repaired_messages: repair.changedMessages,
+        },
+    );
+}
+
+async function throwIfSqliteChatFileIdentityRepairNeeded(sqlitePath) {
+    if (!fs.existsSync(sqlitePath)) {
+        return;
+    }
+
+    const db = await loadDb(sqlitePath);
+    try {
+        const header = getChatHeader(db);
+        if (header) {
+            throwIfSqliteChatIdentityRepairNeeded(db, sqlitePath, header);
+        }
+    } finally {
+        db.close();
+    }
 }
 
 function requireStrictSaveRevision(requestBody) {
@@ -1481,6 +1598,7 @@ async function updateGroupChatMessageRow({ filePath, requestBody, saveSessionId 
             throw new ChatMutationError(404, 'chat_not_found');
         }
         assertSupportedChatStorage(header);
+        throwIfSqliteChatIdentityRepairNeeded(db, sqlitePath, header);
 
         const revisionCheck = validateSaveRevision(requestBody, header);
         if (!revisionCheck.ok) {
@@ -1727,6 +1845,7 @@ export async function updateSqliteLoadedMessageRange({ filePath, requestBody, in
             throw new ChatMutationError(404, 'chat_not_found');
         }
         assertSupportedChatStorage(header);
+        throwIfSqliteChatIdentityRepairNeeded(db, sqlitePath, header);
 
         validation = validateLoadedMessageRangeForSqlite(db, requestBody?.loaded_range_start, rangeMessages, requestBody?.loaded_range_end);
         if (!validation.ok) {
@@ -1802,6 +1921,7 @@ export async function updateSqliteMessageVisibility({ filePath, requestBody, sta
             throw new ChatMutationError(404, 'chat_not_found');
         }
         assertSupportedChatStorage(header);
+        throwIfSqliteChatIdentityRepairNeeded(db, sqlitePath, header);
 
         const totalMessages = getMessageCount(db);
         if (normalizedEnd >= totalMessages) {
@@ -1889,6 +2009,7 @@ export async function buildChunkedChatPayload(filePath, {
         const db = await loadDb(sqlitePath);
         try {
             const header = getChatHeader(db);
+            const repair = repairSqliteChatMessageIdentities(db, sqlitePath, header);
             const totalMessages = getMessageCount(db);
 
             if (!header) {
@@ -1904,6 +2025,8 @@ export async function buildChunkedChatPayload(filePath, {
                     tailEndId: -1,
                     headCount: 0,
                     tailCount: 0,
+                    chat_repaired: repair.repaired,
+                    reload_required: repair.repaired,
                 };
             }
 
@@ -1938,6 +2061,8 @@ export async function buildChunkedChatPayload(filePath, {
                 tailCount: totalMessages - startId,
                 displayCount: config.displayCount,
                 isHydrated: hydrateFull || (startId === 0 && messages.length >= totalMessages),
+                chat_repaired: repair.repaired,
+                reload_required: repair.repaired,
             };
         } finally {
             db.close();
@@ -2231,6 +2356,7 @@ export async function updateSqliteMessageByUuid({ filePath, requestBody, saveSes
             throw new ChatMutationError(404, 'chat_not_found');
         }
         assertSupportedChatStorage(header);
+        throwIfSqliteChatIdentityRepairNeeded(db, sqlitePath, header);
 
         const revisionCheck = requireSqliteMutationRequest(requestBody, header);
         const row = getLogicalMessageRowByUuid(db, targetUuid);
@@ -2278,6 +2404,7 @@ export async function appendSqliteMessage({ filePath, requestBody, saveSessionId
             throw new ChatMutationError(404, 'chat_not_found');
         }
         assertSupportedChatStorage(header);
+        throwIfSqliteChatIdentityRepairNeeded(db, sqlitePath, header);
 
         const revisionCheck = requireSqliteMutationRequest(requestBody, header);
         const expectedTailUuid = String(requestBody?.expected_tail_uuid || '').trim();
@@ -2337,6 +2464,7 @@ export async function deleteSqliteMessageByUuid({ filePath, requestBody, saveSes
             throw new ChatMutationError(404, 'chat_not_found');
         }
         assertSupportedChatStorage(header);
+        throwIfSqliteChatIdentityRepairNeeded(db, sqlitePath, header);
 
         const revisionCheck = requireSqliteMutationRequest(requestBody, header);
         const row = getLogicalMessageRowByUuid(db, targetUuid);
@@ -2384,6 +2512,7 @@ export async function truncateSqliteChatAfterUuid({ filePath, requestBody, saveS
             throw new ChatMutationError(404, 'chat_not_found');
         }
         assertSupportedChatStorage(header);
+        throwIfSqliteChatIdentityRepairNeeded(db, sqlitePath, header);
 
         const revisionCheck = requireSqliteMutationRequest(requestBody, header);
         const serverMessageCountBefore = getMessageCount(db);
@@ -2449,6 +2578,7 @@ export async function cloneSqliteMessageAfter({ filePath, requestBody, saveSessi
             throw new ChatMutationError(404, 'chat_not_found');
         }
         assertSupportedChatStorage(header);
+        throwIfSqliteChatIdentityRepairNeeded(db, sqlitePath, header);
 
         const revisionCheck = validateSaveRevision(requestBody, header);
         if (!revisionCheck.ok) {
@@ -3686,6 +3816,8 @@ router.post('/save', validateAvatarUrlMiddleware, async function (request, respo
                 : null;
 
             if (existingSqliteChat && existingSegments?.header) {
+                await throwIfSqliteChatFileIdentityRepairNeeded(sqlitePath);
+
                 const strictRevision = requireStrictSaveRevision(request.body);
                 if (!strictRevision.ok) {
                     return response.status(strictRevision.status).send({ error: strictRevision.error });
@@ -4386,6 +4518,8 @@ router.post('/group/get', async (request, response) => {
                         headCount: payload.headCount,
                         tailCount: payload.tailCount,
                         chat_revision: payload.chat_revision,
+                        chat_repaired: payload.chat_repaired === true,
+                        reload_required: payload.reload_required === true,
                         ...(withMetadata ? { chat_metadata: payload.chat_metadata } : {}),
                         header: payload.header,
                         messages: payload.messages,
@@ -4978,6 +5112,8 @@ router.post('/group/save', async (request, response) => {
             };
 
             if (groupSqliteExists && effectiveExistingPayload.header) {
+                await throwIfSqliteChatFileIdentityRepairNeeded(replaceChatStorageExtension(pathToFile, '.sqlite'));
+
                 const strictRevision = requireStrictSaveRevision(request.body);
                 if (!strictRevision.ok) {
                     return response.status(strictRevision.status).send({ error: strictRevision.error });
