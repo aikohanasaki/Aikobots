@@ -1678,23 +1678,28 @@ export function warnStaleChatSave(errorData) {
     const currentSaveSessionId = getChatSaveSessionId();
     const localRevision = getChatSaveRevision();
     const serverRevision = Number(errorData?.current_revision);
-    const canAdoptServerRevision = lastSaveSessionId
+    const submittedBaseRevision = Number(errorData?.submitted_base_revision);
+    const sameSessionStale = lastSaveSessionId
         && lastSaveSessionId === currentSaveSessionId
         && Number.isInteger(serverRevision)
-        && serverRevision > localRevision;
+        && serverRevision >= localRevision;
+    const canAdoptServerRevision = sameSessionStale && serverRevision > localRevision;
 
     console.warn('Chat save rejected as stale', {
         localRevision,
+        submittedBaseRevision: Number.isInteger(submittedBaseRevision) ? submittedBaseRevision : null,
         serverRevision: Number.isInteger(serverRevision) ? serverRevision : null,
         lastSaveSessionId: lastSaveSessionId || null,
         currentSaveSessionId,
+        sameSessionStale,
         adoptedServerRevision: canAdoptServerRevision,
     });
 
-    if (canAdoptServerRevision) {
-        setChatSaveRevision(serverRevision);
-        toastr.warning(t`This chat has a newer save from this browser session. The local save revision was refreshed.`, t`Chat save conflict`);
-        return { adoptedServerRevision: true, localRevision, serverRevision, lastSaveSessionId, currentSaveSessionId };
+    if (sameSessionStale) {
+        if (canAdoptServerRevision) {
+            setChatSaveRevision(serverRevision);
+        }
+        return { adoptedServerRevision: canAdoptServerRevision, sameSessionStale, localRevision, submittedBaseRevision, serverRevision, lastSaveSessionId, currentSaveSessionId };
     }
 
     const conflictMessage = lastSaveSessionId && lastSaveSessionId !== currentSaveSessionId
@@ -1702,7 +1707,7 @@ export function warnStaleChatSave(errorData) {
         : t`This chat has a newer save. Close other tabs/sessions before trying again.`;
 
     toastr.warning(conflictMessage, t`Chat save conflict`);
-    return { adoptedServerRevision: false, localRevision, serverRevision, lastSaveSessionId, currentSaveSessionId };
+    return { adoptedServerRevision: false, sameSessionStale: false, localRevision, submittedBaseRevision, serverRevision, lastSaveSessionId, currentSaveSessionId };
 }
 
 function getSyncCurrentChatCooldownSeconds() {
@@ -12011,10 +12016,11 @@ export function saveChatDebounced() {
  * @param {object} [options.withMetadata] Additional metadata to save with the chat
  * @param {number} [options.mesId] The message ID to save the chat up to
  * @param {boolean} [options.force] Force the saving despite the integrity check result
+ * @param {boolean} [options.retrySameSessionStale] Retry once when this browser session already advanced the server revision
  *
  * @returns {Promise<void>}
  */
-export async function saveChat({ chatName, withMetadata, mesId, force = false } = {}) {
+export async function saveChat({ chatName, withMetadata, mesId, force = false, retrySameSessionStale = true } = {}) {
     if (arguments.length > 0 && typeof arguments[0] !== 'object') {
         console.trace('saveChat called with positional arguments. Please use an object instead.');
         [chatName, withMetadata, mesId, force] = arguments;
@@ -12132,7 +12138,10 @@ export async function saveChat({ chatName, withMetadata, mesId, force = false } 
 
         const errorData = await result.json();
         if (errorData?.error === 'stale_revision') {
-            warnStaleChatSave(errorData);
+            const staleResult = warnStaleChatSave(errorData);
+            if (retrySameSessionStale && staleResult.sameSessionStale) {
+                return saveChat({ chatName, withMetadata, mesId, force, retrySameSessionStale: false });
+            }
             return CHAT_SAVE_RESULT.FAILED;
         }
 
@@ -13476,7 +13485,7 @@ function getSqliteChatMutationEndpoint(operation) {
     return (selected_group ? groupEndpoints : directEndpoints)[operation] || '';
 }
 
-async function saveSqliteMessageMutation(operation, fields, defaultErrorMessage = t`Chat update failed.`) {
+async function saveSqliteMessageMutation(operation, fields, defaultErrorMessage = t`Chat update failed.`, { retrySameSessionStale = true } = {}) {
     const endpoint = getSqliteChatMutationEndpoint(operation);
     if (!endpoint) {
         return CHAT_SAVE_RESULT.FAILED;
@@ -13506,7 +13515,10 @@ async function saveSqliteMessageMutation(operation, fields, defaultErrorMessage 
         try {
             const errorData = await response.json();
             if (errorData?.error === 'stale_revision') {
-                warnStaleChatSave(errorData);
+                const staleResult = warnStaleChatSave(errorData);
+                if (retrySameSessionStale && staleResult.sameSessionStale) {
+                    return saveSqliteMessageMutation(operation, fields, defaultErrorMessage, { retrySameSessionStale: false });
+                }
             } else {
                 toastr.error(errorData?.message || errorData?.error || defaultErrorMessage);
             }

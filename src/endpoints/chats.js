@@ -189,11 +189,11 @@ function validateSaveRevision(requestBody, existingHeader) {
     }
 
     if (!Number.isInteger(baseRevision)) {
-        return { ok: false, status: 400, error: 'invalid_revision', currentRevision };
+        return { ok: false, status: 400, error: 'invalid_revision', currentRevision, submittedBaseRevision: baseRevision };
     }
 
     if (baseRevision !== currentRevision) {
-        return { ok: false, status: 409, error: 'stale_revision', currentRevision, lastSaveSessionId };
+        return { ok: false, status: 409, error: 'stale_revision', currentRevision, lastSaveSessionId, submittedBaseRevision: baseRevision };
     }
 
     return { ok: true, currentRevision, nextRevision: currentRevision + 1 };
@@ -916,6 +916,7 @@ export async function updateSqliteUserPersonaMessages({ filePath, requestBody, u
             throw new ChatMutationError(revisionCheck.status, revisionCheck.error, revisionCheck.error, {
                 current_revision: revisionCheck.currentRevision,
                 last_save_session_id: revisionCheck.lastSaveSessionId,
+                submitted_base_revision: revisionCheck.submittedBaseRevision,
             });
         }
 
@@ -1486,6 +1487,7 @@ async function updateGroupChatMessageRow({ filePath, requestBody, saveSessionId 
             throw new ChatMutationError(revisionCheck.status, revisionCheck.error, revisionCheck.error, {
                 current_revision: revisionCheck.currentRevision,
                 last_save_session_id: revisionCheck.lastSaveSessionId,
+                submitted_base_revision: revisionCheck.submittedBaseRevision,
             });
         }
 
@@ -1755,6 +1757,7 @@ export async function updateSqliteLoadedMessageRange({ filePath, requestBody, in
             throw new ChatMutationError(revisionCheck.status, revisionCheck.error, revisionCheck.error, {
                 current_revision: revisionCheck.currentRevision,
                 last_save_session_id: revisionCheck.lastSaveSessionId,
+                submitted_base_revision: revisionCheck.submittedBaseRevision,
             });
         }
     } finally {
@@ -1810,6 +1813,7 @@ export async function updateSqliteMessageVisibility({ filePath, requestBody, sta
             throw new ChatMutationError(revisionCheck.status, revisionCheck.error, revisionCheck.error, {
                 current_revision: revisionCheck.currentRevision,
                 last_save_session_id: revisionCheck.lastSaveSessionId,
+                submitted_base_revision: revisionCheck.submittedBaseRevision,
             });
         }
 
@@ -2159,6 +2163,7 @@ function requireSqliteMutationRequest(requestBody, header) {
         throw new ChatMutationError(revisionCheck.status, revisionCheck.error, revisionCheck.error, {
             current_revision: revisionCheck.currentRevision,
             last_save_session_id: revisionCheck.lastSaveSessionId,
+            submitted_base_revision: revisionCheck.submittedBaseRevision,
         });
     }
 
@@ -2450,6 +2455,7 @@ export async function cloneSqliteMessageAfter({ filePath, requestBody, saveSessi
             throw new ChatMutationError(revisionCheck.status, revisionCheck.error, revisionCheck.error, {
                 current_revision: revisionCheck.currentRevision,
                 last_save_session_id: revisionCheck.lastSaveSessionId,
+                submitted_base_revision: revisionCheck.submittedBaseRevision,
             });
         }
 
@@ -3521,6 +3527,7 @@ router.post('/message-visibility', validateAvatarUrlMiddleware, async function (
                     error: revisionCheck.error,
                     current_revision: revisionCheck.currentRevision,
                     last_save_session_id: revisionCheck.lastSaveSessionId,
+                    submitted_base_revision: revisionCheck.submittedBaseRevision,
                 });
             }
 
@@ -3761,6 +3768,7 @@ router.post('/save', validateAvatarUrlMiddleware, async function (request, respo
                     error: revisionCheck.error,
                     current_revision: revisionCheck.currentRevision,
                     last_save_session_id: revisionCheck.lastSaveSessionId,
+                    submitted_base_revision: revisionCheck.submittedBaseRevision,
                 });
             }
 
@@ -4982,6 +4990,7 @@ router.post('/group/save', async (request, response) => {
                     error: revisionCheck.error,
                     current_revision: revisionCheck.currentRevision,
                     last_save_session_id: revisionCheck.lastSaveSessionId,
+                    submitted_base_revision: revisionCheck.submittedBaseRevision,
                 });
             }
 
