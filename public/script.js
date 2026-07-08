@@ -13636,6 +13636,7 @@ function getCurrentSqliteChatMutationOwnerFields() {
     return selected_group
         ? {
             id: getCurrentChatId(),
+            group_id: String(selected_group),
         }
         : {
             ch_name: currentChatDetails?.characterName ?? characters[this_chid]?.name,

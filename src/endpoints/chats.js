@@ -4628,6 +4628,8 @@ router.post('/group/get', async (request, response) => {
 
                     return response.send({
                         mode: payload.mode,
+                        storageMode: payload.storageMode,
+                        storage_mode: payload.storageMode,
                         isHydrated: payload.isHydrated === true,
                         totalMessages: payload.totalMessages,
                         loadedRangeStart: payload.loadedRangeStart,
