@@ -65,6 +65,10 @@ describe('chat path helpers', () => {
             .toThrow(ChatPathValidationError);
         expect(() => resolveDirectChatFilePath(chatsDirectory, 'avatar.png', 'chat-123.txt'))
             .toThrow(ChatPathValidationError);
+        expect(() => resolveDirectChatFilePath(chatsDirectory, 'avatar.png', 'chat-123.sqlite-wal'))
+            .toThrow(ChatPathValidationError);
+        expect(() => resolveDirectChatFilePath(chatsDirectory, 'avatar.png', 'chat-123.sqlite-shm'))
+            .toThrow(ChatPathValidationError);
         expect(resolveDirectChatFilePath(chatsDirectory, 'avatar.png', 'Mr. Darcy'))
             .toBe(path.join(chatsDirectory, 'avatar', 'Mr. Darcy.sqlite'));
         expect(resolveDirectChatFilePath(chatsDirectory, 'avatar.png', 'Dr.Smith'))

@@ -29,6 +29,10 @@ function createOwner(token, createdAt = Date.now()) {
     };
 }
 
+function isMissingOwnerPathError(error) {
+    return error?.code === 'ENOENT' || error?.code === 'ENOTDIR';
+}
+
 async function writeOwner(lockPath, owner) {
     owner.updatedAt = Date.now();
     await fsPromises.writeFile(getOwnerPath(lockPath), JSON.stringify(owner), 'utf8');
@@ -54,7 +58,7 @@ async function readOwner(lockPath) {
         const stats = await fsPromises.stat(ownerPath);
         return { token: '', updatedAt: stats.mtimeMs };
     } catch (error) {
-        if (error?.code !== 'ENOENT') {
+        if (!isMissingOwnerPathError(error)) {
             throw error;
         }
     }

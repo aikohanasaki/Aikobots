@@ -1,8 +1,8 @@
-# Aikobots v3: SQLite Chat Storage and Safer Long Chats
+# Aikobots v3 / v3.1: SQLite Chat Storage and Safer Long Chats
 
 Aikobots v3 keeps the v2 platform direction, but replaces the long-chat storage foundation underneath it.
 
-The main change is chat storage: v3 moves away from the v2 JSONL/split-tail model, itself a departure from base SillyTavern's plain JSONL, and introduces SQLite-backed chat files, with stricter migration rules, safer path handling, revision-aware writes, and SQLite-aware Memory Book behavior.
+The main change is chat storage: v3 moves away from the v2 JSONL/split-tail model, itself a departure from base SillyTavern's plain JSONL, and introduces SQLite-backed chat files, with stricter migration rules, safer path handling, revision-aware writes, SQLite-aware Memory Book behavior, and frontend save recovery paths for long-running chats.
 
 ## What changed
 
@@ -24,6 +24,9 @@ Aikobots v3 supports:
 * In-memory mutation followed by full `.sqlite` export.
 * Atomic whole-file replacement.
 * SQLite integrity checks before persistence.
+* Raw SQLite import/export paths in addition to logical JSONL and text exports.
+
+The current implementation intentionally treats SQLite as a durable file format rather than a long-lived native SQLite connection. It does not use WAL, `-wal`, or `-shm` sidecars for chat storage; application-level save locking and atomic whole-file replacement remain the persistence boundary.
 
 ### Legacy JSONL is still supported, but split-tail runtime storage is not
 
@@ -51,6 +54,8 @@ Aikobots v3 supports:
 * SQLite integrity verification.
 * Source-to-output comparison.
 * Centralized migration behavior.
+* A single migration lock so concurrent instances do not run the migration over the same shared data root.
+* Related data cleanup for initial messages and pushed/orphaned character lore references as part of the v3 migration path.
 
 ### Chat paths are stricter
 
@@ -91,6 +96,10 @@ Aikobots v3 supports:
 * Separate handling for loaded-range saves and full saves.
 * Rejection of v2 tail save mode.
 * Incremental saves that avoid unnecessary full JSONL backup generation.
+* `last_save_session_id` metadata so the client can distinguish its own repeated save from another tab or session.
+* Same-session stale-save retry/adoption behavior in the client.
+* One quiet retry for transient chat save request/server failures.
+* Strict loaded-range validation so partial saves cannot overwrite unseen messages when identities or ranges no longer match.
 
 ### Mutations became SQLite-native
 
@@ -104,6 +113,23 @@ Aikobots v3 supports:
 * Persona sync updates in SQLite.
 * SQLite-only message clone behavior.
 * Rename, delete, import, export, group chat, and Data Maid behavior updated for SQLite.
+* UUID-addressed message updates, appends, deletes, visibility changes, truncation, and clone operations.
+* Message and swipe identity normalization before persistence.
+* Server-side repair for missing or duplicate SQLite message identity metadata, with reload-required responses instead of silent overwrite.
+* Prompt snapshot invalidation and timed-world-info checkpoint remapping when cloned messages change identity.
+
+### Backups and exports became SQLite-aware
+
+v3 preserves JSONL as a compatibility and backup artifact without using it as the primary live chat storage mode.
+
+Aikobots v3 supports:
+
+* Full logical JSONL backup payloads for full saves.
+* JSONL backup payloads after complete loaded-range SQLite saves.
+* Periodic full JSONL backups after SQLite append saves, controlled by `backups.chat.sqliteAppendBackupMessageInterval`.
+* Raw SQLite export as base64 with binary metadata.
+* Logical JSONL export from SQLite-backed chats.
+* Text export from visible logical messages.
 
 ### Memory Books were updated for SQLite chats
 
@@ -120,6 +146,19 @@ Aikobots v3 supports:
 * Group manual queue behavior.
 * Last-processed-message behavior in SQLite-aware paths.
 
+### Temporary chats and client save recovery improved
+
+v3.1 adds client-side save recovery work around temporary chats and revision conflicts so users can continue working without turning transient state into accidental data loss.
+
+Aikobots v3.1 supports:
+
+* Temporary character and group chat tracking in the frontend.
+* Pending temporary chat filename preservation through local storage.
+* Skipping pristine generated temporary greetings instead of persisting empty throwaway chats.
+* User-facing stale revision warnings with current server revision details.
+* Reload-required handling when server-side chat identity repair occurs.
+* Save retry handling that avoids retrying validation, active-session, identity-repair, integrity, or stale-revision failures as if they were transient network failures.
+
 ### Storage visibility improved
 
 v3 adds operational visibility around storage health not present in earlier versions.
@@ -131,10 +170,12 @@ Aikobots v3 supports:
 * User storage alerts.
 * Storage-related tests.
 * SQLite architecture documentation.
+* Chat storage repair responses that identify repair-required cases without exposing chat content.
+* Focused regression coverage for chunked reads, sparse STMB reads, loaded-range saves, clone identity regeneration, path validation, split-tail rejection, and periodic SQLite append backup cadence.
 
 ## Summary
 
-v3 is the storage evolution of Aikobots. It keeps the v2 hosted platform but replaces the long-chat foundation with SQLite-backed chat files: safer migration, stricter path validation, faster range reads, revision-aware writes, and Memory Book behavior that works with sparse long-chat loading — a substantial step beyond what either base SillyTavern or Aikobots v2 supported.
+v3 is the storage evolution of Aikobots. It keeps the v2 hosted platform but replaces the long-chat foundation with SQLite-backed chat files: safer migration, stricter path validation, faster range reads, revision-aware writes, identity-aware message mutation, SQLite-aware backups and exports, and Memory Book behavior that works with sparse long-chat loading — a substantial step beyond what either base SillyTavern or Aikobots v2 supported.
 
 ## Provenance note
 

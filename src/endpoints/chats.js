@@ -11,6 +11,7 @@ import _ from 'lodash';
 import validateAvatarUrlMiddleware from '../middleware/validateFileName.js';
 import { touchUserActivity } from '../users.js';
 import { isActiveSessionError, sendActiveSessionRequired } from '../active-session-store.js';
+import { withDirectoryLock } from '../file-system-lock.js';
 import {
     assertPathInside,
     getDeduplicatedChatHistoryFileNames,
@@ -30,7 +31,6 @@ import {
     formatBytes,
     getUniqueName,
     sanitizeSafeCharacterReplacements,
-    delay,
     uuidv4,
 } from '../util.js';
 import {
@@ -79,6 +79,7 @@ const LONG_CHAT_DISPLAY_DEFAULT = 100;
 const CHAT_SAVE_LOCK_RETRY_MS = 25;
 const CHAT_SAVE_LOCK_TIMEOUT_MS = 10_000;
 const CHAT_SAVE_LOCK_STALE_MS = 10 * 60_000;
+const CHAT_SAVE_LOCK_HEARTBEAT_MS = 1_000;
 
 export const CHAT_BACKUPS_PREFIX = 'chat_';
 
@@ -218,54 +219,60 @@ function getChatSaveLockPath(filePath) {
 async function withChatSaveLock(filePath, callback) {
     const lockTargetPath = getChatSaveLockPath(filePath);
     const lockPath = `${lockTargetPath}.lock`;
-    const started = Date.now();
-    let lockHandle = null;
 
-    while (lockHandle === null) {
-        try {
-            lockHandle = fs.openSync(lockPath, 'wx');
-        } catch (error) {
-            if (error?.code !== 'EEXIST') {
-                throw error;
-            }
+    return await withDirectoryLock({
+        lockPath,
+        retryMs: CHAT_SAVE_LOCK_RETRY_MS,
+        timeoutMs: CHAT_SAVE_LOCK_TIMEOUT_MS,
+        staleMs: CHAT_SAVE_LOCK_STALE_MS,
+        heartbeatMs: CHAT_SAVE_LOCK_HEARTBEAT_MS,
+        timeoutMessage: `Timed out waiting for chat save lock: ${lockTargetPath}`,
+    }, async lock => await lock.run(callback));
+}
 
-            try {
-                const lockStats = fs.statSync(lockPath);
-                if ((Date.now() - lockStats.mtimeMs) > CHAT_SAVE_LOCK_STALE_MS) {
-                    fs.unlinkSync(lockPath);
-                    continue;
-                }
-            } catch (statError) {
-                if (statError?.code !== 'ENOENT') {
-                    throw statError;
-                }
-            }
+async function withChatSaveLocks(filePaths, callback) {
+    const uniqueFilePaths = Array.from(new Map(
+        filePaths.map(filePath => [getChatSaveLockPath(filePath), filePath]),
+    ).values()).sort((left, right) => getChatSaveLockPath(left).localeCompare(getChatSaveLockPath(right)));
 
-            if ((Date.now() - started) > CHAT_SAVE_LOCK_TIMEOUT_MS) {
-                const timeoutError = new Error(`Timed out waiting for chat save lock: ${lockTargetPath}`);
-                timeoutError.code = 'CHAT_SAVE_LOCK_TIMEOUT';
-                throw timeoutError;
-            }
-
-            await delay(CHAT_SAVE_LOCK_RETRY_MS);
+    const runAt = async (index) => {
+        if (index >= uniqueFilePaths.length) {
+            return await callback();
         }
-    }
 
-    try {
-        return await callback();
-    } finally {
-        try {
-            fs.closeSync(lockHandle);
-        } finally {
-            try {
-                fs.unlinkSync(lockPath);
-            } catch (error) {
-                if (error?.code !== 'ENOENT') {
-                    console.warn(`Failed to remove chat save lock: ${lockPath}`, error);
-                }
-            }
-        }
+        return await withChatSaveLock(uniqueFilePaths[index], async () => await runAt(index + 1));
+    };
+
+    return await runAt(0);
+}
+
+function getChatStorageCompanionPaths(filePath) {
+    const sqlitePath = replaceChatStorageExtension(filePath, '.sqlite');
+    return {
+        jsonlPath: replaceChatStorageExtension(filePath, '.jsonl'),
+        sqlitePath,
+        walPath: `${sqlitePath}-wal`,
+        shmPath: `${sqlitePath}-shm`,
+    };
+}
+
+function hasPrimaryChatStorageFile(filePath) {
+    const { jsonlPath, sqlitePath } = getChatStorageCompanionPaths(filePath);
+    return fs.existsSync(jsonlPath) || fs.existsSync(sqlitePath);
+}
+
+function unlinkFileIfExists(filePath) {
+    if (fs.existsSync(filePath)) {
+        fs.unlinkSync(filePath);
     }
+}
+
+function deleteChatStorageCompanions(filePath) {
+    const { jsonlPath, sqlitePath, walPath, shmPath } = getChatStorageCompanionPaths(filePath);
+    unlinkFileIfExists(jsonlPath);
+    unlinkFileIfExists(sqlitePath);
+    unlinkFileIfExists(walPath);
+    unlinkFileIfExists(shmPath);
 }
 
 function isGroupChatHeader(record) {
@@ -4111,44 +4118,45 @@ router.post('/rename', validateAvatarUrlMiddleware, async function (request, res
         console.debug('Old chat name', pathToOriginalFile);
         console.debug('New chat name', pathToRenamedFile);
 
-        const sqliteOriginal = replaceChatStorageExtension(pathToOriginalFile, '.sqlite');
-        const sqliteRenamed = replaceChatStorageExtension(pathToRenamedFile, '.sqlite');
+        const originalCompanions = getChatStorageCompanionPaths(pathToOriginalFile);
+        const renamedCompanions = getChatStorageCompanionPaths(pathToRenamedFile);
 
-        if ((!fs.existsSync(pathToOriginalFile) && !fs.existsSync(sqliteOriginal)) || (fs.existsSync(pathToRenamedFile) || fs.existsSync(sqliteRenamed))) {
-            console.error('Either Source or Destination files are not available');
-            return response.status(400).send({ error: true });
-        }
-
-        const segments = await getChatSegments(pathToOriginalFile);
-
-        if (segments.header) {
-            const targetHeader = request.body.is_group
-                ? buildGroupChatHeader(segments.header?.chat_metadata || {}, segments.header)
-                : stripChatStorage(segments.header);
-
-            await writeLogicalChat(pathToRenamedFile, targetHeader, segments.messages, {
-                allowExistingSqliteFullReplacement: true,
-                routeName: '/api/chats/rename',
-                operationType: 'rename_copy',
-                requestBody: request.body,
-                isPrivilegedOperation: true,
-            });
-        } else if (request.body.is_group) {
-            const groupRecords = readJsonlObjects(pathToOriginalFile);
-            await writeGroupChat(pathToRenamedFile, groupRecords);
-        } else {
-            if (fs.existsSync(sqliteOriginal)) {
-                fs.copyFileSync(sqliteOriginal, sqliteRenamed);
-            } else if (fs.existsSync(pathToOriginalFile)) {
-                return response.status(400).send({ error: 'legacy_jsonl_rename_unsupported' });
+        return await withChatSaveLocks([pathToOriginalFile, pathToRenamedFile], async () => {
+            if (!hasPrimaryChatStorageFile(pathToOriginalFile) || hasPrimaryChatStorageFile(pathToRenamedFile)) {
+                console.error('Either Source or Destination files are not available');
+                return response.status(400).send({ error: true });
             }
-        }
 
-        if (fs.existsSync(pathToOriginalFile)) fs.unlinkSync(pathToOriginalFile);
-        if (fs.existsSync(sqliteOriginal)) fs.unlinkSync(sqliteOriginal);
+            const segments = await getChatSegments(pathToOriginalFile);
 
-        console.info('Successfully renamed chat file.');
-        return response.send({ ok: true, sanitizedFileName });
+            if (segments.header) {
+                const targetHeader = request.body.is_group
+                    ? buildGroupChatHeader(segments.header?.chat_metadata || {}, segments.header)
+                    : stripChatStorage(segments.header);
+
+                await writeLogicalChat(pathToRenamedFile, targetHeader, segments.messages, {
+                    allowExistingSqliteFullReplacement: true,
+                    routeName: '/api/chats/rename',
+                    operationType: 'rename_copy',
+                    requestBody: request.body,
+                    isPrivilegedOperation: true,
+                });
+            } else if (request.body.is_group) {
+                const groupRecords = readJsonlObjects(originalCompanions.jsonlPath);
+                await writeGroupChat(pathToRenamedFile, groupRecords);
+            } else {
+                if (fs.existsSync(originalCompanions.sqlitePath)) {
+                    fs.copyFileSync(originalCompanions.sqlitePath, renamedCompanions.sqlitePath);
+                } else if (fs.existsSync(originalCompanions.jsonlPath)) {
+                    return response.status(400).send({ error: 'legacy_jsonl_rename_unsupported' });
+                }
+            }
+
+            deleteChatStorageCompanions(pathToOriginalFile);
+
+            console.info('Successfully renamed chat file.');
+            return response.send({ ok: true, sanitizedFileName });
+        });
     } catch (error) {
         if (isUnsupportedSplitTailChatError(error)) {
             return sendUnsupportedSplitTailChatError(response, error);
@@ -4164,19 +4172,17 @@ router.post('/rename', validateAvatarUrlMiddleware, async function (request, res
 router.post('/delete', validateAvatarUrlMiddleware, async function (request, response) {
     try {
         const filePath = resolveCharacterChatFilePath(request.user.directories.chats, request.body.avatar_url, request.body.chatfile);
-        const sqlitePath = replaceChatStorageExtension(filePath, '.sqlite');
-        const jsonlPath = replaceChatStorageExtension(filePath, '.jsonl');
-        const chatFileExists = fs.existsSync(jsonlPath) || fs.existsSync(sqlitePath);
 
-        if (!chatFileExists) {
-            console.error(`Chat file not found '${filePath}'`);
-            return response.sendStatus(400);
-        }
+        return await withChatSaveLock(filePath, async () => {
+            if (!hasPrimaryChatStorageFile(filePath)) {
+                console.error(`Chat file not found '${filePath}'`);
+                return response.sendStatus(400);
+            }
 
-        if (fs.existsSync(jsonlPath)) fs.unlinkSync(jsonlPath);
-        if (fs.existsSync(sqlitePath)) fs.unlinkSync(sqlitePath);
-        console.info(`Deleted chat file: ${filePath}`);
-        return response.send('ok');
+            deleteChatStorageCompanions(filePath);
+            console.info(`Deleted chat file: ${filePath}`);
+            return response.send('ok');
+        });
     } catch (error) {
         if (isUnsupportedSplitTailChatError(error)) {
             return sendUnsupportedSplitTailChatError(response, error);
@@ -4301,7 +4307,13 @@ router.post('/group/import', async function (request, response) {
             }
 
             const pathToNewFile = getGroupChatFilePath(request.user.directories.groupChats, chatname);
-            await writeGroupChat(pathToNewFile, normalizedImportedChat.messages, normalizedImportedChat.header.chat_metadata || {}, normalizedImportedChat.header);
+            await withChatSaveLock(pathToNewFile, async () => {
+                if (hasPrimaryChatStorageFile(pathToNewFile)) {
+                    throw new ChatMutationError(409, 'target_chat_exists');
+                }
+
+                await writeGroupChat(pathToNewFile, normalizedImportedChat.messages, normalizedImportedChat.header.chat_metadata || {}, normalizedImportedChat.header);
+            });
             fs.unlinkSync(pathToUpload);
             return response.send({ res: chatname, fileNames: [`${chatname}.sqlite`] });
         }
@@ -4322,7 +4334,13 @@ router.post('/group/import', async function (request, response) {
         }
 
         const pathToNewFile = getGroupChatFilePath(request.user.directories.groupChats, chatname);
-        await writeGroupChat(pathToNewFile, normalizedImportedChat.messages, normalizedImportedChat.header.chat_metadata || {}, normalizedImportedChat.header);
+        await withChatSaveLock(pathToNewFile, async () => {
+            if (hasPrimaryChatStorageFile(pathToNewFile)) {
+                throw new ChatMutationError(409, 'target_chat_exists');
+            }
+
+            await writeGroupChat(pathToNewFile, normalizedImportedChat.messages, normalizedImportedChat.header.chat_metadata || {}, normalizedImportedChat.header);
+        });
         fs.unlinkSync(pathToUpload);
         return response.send({ res: chatname });
     } catch (error) {
@@ -4331,6 +4349,9 @@ router.post('/group/import', async function (request, response) {
         }
         if (isChatPathValidationError(error)) {
             return sendChatPathValidationError(response, error);
+        }
+        if (error instanceof ChatMutationError) {
+            return response.status(error.status || 400).send({ error: error.error, message: error.message, ...error.details });
         }
         console.error(error);
         return response.send({ error: true });
@@ -4403,12 +4424,18 @@ router.post('/import', validateAvatarUrlMiddleware, async function (request, res
                 }
 
                 fileNames.push(fileName);
-                await writeLogicalChat(filePath, normalizedImportedChat.header, normalizedImportedChat.messages, {
-                    allowExistingSqliteFullReplacement: true,
-                    routeName: '/api/chats/import',
-                    operationType: 'import_json',
-                    requestBody: request.body,
-                    isPrivilegedOperation: true,
+                await withChatSaveLock(filePath, async () => {
+                    if (hasPrimaryChatStorageFile(filePath)) {
+                        throw new ChatMutationError(409, 'target_chat_exists');
+                    }
+
+                    await writeLogicalChat(filePath, normalizedImportedChat.header, normalizedImportedChat.messages, {
+                        allowExistingSqliteFullReplacement: true,
+                        routeName: '/api/chats/import',
+                        operationType: 'import_json',
+                        requestBody: request.body,
+                        isPrivilegedOperation: true,
+                    });
                 });
             };
 
@@ -4463,12 +4490,18 @@ router.post('/import', validateAvatarUrlMiddleware, async function (request, res
             }
 
             fileNames.push(fileName);
-            await writeLogicalChat(filePath, normalizedImportedChat.header, normalizedImportedChat.messages, {
-                allowExistingSqliteFullReplacement: true,
-                routeName: '/api/chats/import',
-                operationType: 'import_jsonl',
-                requestBody: request.body,
-                isPrivilegedOperation: true,
+            await withChatSaveLock(filePath, async () => {
+                if (hasPrimaryChatStorageFile(filePath)) {
+                    throw new ChatMutationError(409, 'target_chat_exists');
+                }
+
+                await writeLogicalChat(filePath, normalizedImportedChat.header, normalizedImportedChat.messages, {
+                    allowExistingSqliteFullReplacement: true,
+                    routeName: '/api/chats/import',
+                    operationType: 'import_jsonl',
+                    requestBody: request.body,
+                    isPrivilegedOperation: true,
+                });
             });
             fs.unlinkSync(pathToUpload);
             return response.send({ res: true, fileNames });
@@ -4492,12 +4525,18 @@ router.post('/import', validateAvatarUrlMiddleware, async function (request, res
             }
 
             fileNames.push(fileName);
-            await writeLogicalChat(filePath, normalizedImportedChat.header, normalizedImportedChat.messages, {
-                allowExistingSqliteFullReplacement: true,
-                routeName: '/api/chats/import',
-                operationType: 'import_sqlite',
-                requestBody: request.body,
-                isPrivilegedOperation: true,
+            await withChatSaveLock(filePath, async () => {
+                if (hasPrimaryChatStorageFile(filePath)) {
+                    throw new ChatMutationError(409, 'target_chat_exists');
+                }
+
+                await writeLogicalChat(filePath, normalizedImportedChat.header, normalizedImportedChat.messages, {
+                    allowExistingSqliteFullReplacement: true,
+                    routeName: '/api/chats/import',
+                    operationType: 'import_sqlite',
+                    requestBody: request.body,
+                    isPrivilegedOperation: true,
+                });
             });
             fs.unlinkSync(pathToUpload);
             return response.send({ res: true, fileNames });
@@ -4510,6 +4549,9 @@ router.post('/import', validateAvatarUrlMiddleware, async function (request, res
         }
         if (isChatPathValidationError(error)) {
             return sendChatPathValidationError(response, error);
+        }
+        if (error instanceof ChatMutationError) {
+            return response.status(error.status || 400).send({ error: error.error, message: error.message, ...error.details });
         }
         console.error('Failed to import chat:', {
             format,
@@ -4614,16 +4656,15 @@ router.post('/group/delete', async (request, response) => {
 
         const id = request.body.id;
         const pathToFile = getGroupChatFilePath(request.user.directories.groupChats, id);
-        const sqlitePath = replaceChatStorageExtension(pathToFile, '.sqlite');
-        const jsonlPath = replaceChatStorageExtension(pathToFile, '.jsonl');
 
-        if (fs.existsSync(jsonlPath) || fs.existsSync(sqlitePath)) {
-            if (fs.existsSync(jsonlPath)) fs.unlinkSync(jsonlPath);
-            if (fs.existsSync(sqlitePath)) fs.unlinkSync(sqlitePath);
-            return response.send({ ok: true });
-        }
+        return await withChatSaveLock(pathToFile, async () => {
+            if (hasPrimaryChatStorageFile(pathToFile)) {
+                deleteChatStorageCompanions(pathToFile);
+                return response.send({ ok: true });
+            }
 
-        return response.send({ error: true });
+            return response.send({ error: true });
+        });
     } catch (error) {
         if (isUnsupportedSplitTailChatError(error)) {
             return sendUnsupportedSplitTailChatError(response, error);
