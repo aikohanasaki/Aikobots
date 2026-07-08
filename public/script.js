@@ -14669,6 +14669,57 @@ function updateManageChatsHeader(ownerContext) {
     }
 }
 
+/**
+ * Lets a single Select2 control clear itself when its already-selected result is clicked.
+ * Select2 normally closes on that click without firing change, which makes checked results sticky.
+ * @param {JQuery<HTMLSelectElement>} selector
+ */
+function bindManageChatsSelect2ReselectClear(selector) {
+    let resultsElement = null;
+    let mouseUpHandler = null;
+
+    selector.on('select2:open', function () {
+        const selectElement = this;
+        const resultsId = `select2-${selectElement.id}-results`;
+        resultsElement = document.getElementById(resultsId);
+
+        if (!resultsElement) {
+            return;
+        }
+
+        mouseUpHandler = (event) => {
+            const option = event.target instanceof Element
+                ? event.target.closest('.select2-results__option--selectable')
+                : null;
+
+            if (!option || !resultsElement.contains(option) || !option.classList.contains('select2-results__option--selected')) {
+                return;
+            }
+
+            const control = $(selectElement);
+            if (!control.val()) {
+                return;
+            }
+
+            event.preventDefault();
+            event.stopImmediatePropagation();
+            control.val('').trigger('change');
+            control.select2('close');
+        };
+
+        resultsElement.addEventListener('mouseup', mouseUpHandler, true);
+    });
+
+    selector.on('select2:close', function () {
+        if (resultsElement && mouseUpHandler) {
+            resultsElement.removeEventListener('mouseup', mouseUpHandler, true);
+        }
+
+        resultsElement = null;
+        mouseUpHandler = null;
+    });
+}
+
 function initManageChatsOwnerSelect() {
     if (manageChatsOwnerSelectorInitialized) {
         return;
@@ -14687,6 +14738,7 @@ function initManageChatsOwnerSelect() {
             closeOnSelect: true,
             multiple: false,
         });
+        bindManageChatsSelect2ReselectClear(selector);
     }
 
     selector.on('change', async function () {
