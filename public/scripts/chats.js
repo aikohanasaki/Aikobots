@@ -490,10 +490,11 @@ async function saveSingleMessageMutation(messageId, message) {
 const CHAT_MESSAGE_VISIBILITY_SAVE_RESULT = {
     SAVED: 'saved',
     FAILED: 'failed',
+    ENDPOINT_FAILED: 'endpoint_failed',
     STALE: 'stale',
 };
 
-async function updateServerChatMessageVisibility(start, end, unhide, nameFilter = null) {
+async function updateServerChatMessageVisibility(start, end, unhide, nameFilter = null, { allowStaleRevisionRetry = true } = {}) {
     if (selected_group) {
         toastr.warning(t`Changing historical message visibility in group chats is not supported yet.`, t`Chat message visibility`);
         return CHAT_MESSAGE_VISIBILITY_SAVE_RESULT.FAILED;
@@ -504,10 +505,16 @@ async function updateServerChatMessageVisibility(start, end, unhide, nameFilter 
         return CHAT_MESSAGE_VISIBILITY_SAVE_RESULT.FAILED;
     }
 
-    const handleSaveFailure = (error) => {
-        toastr.error(t`Check the server connection and reload the page to prevent data loss.`, t`Chat could not be saved`);
+    const handleSaveFailure = (error, errorData = null) => {
+        if (errorData?.error === 'active_session_required') {
+            console.warn('Chat message visibility rejected because this tab is not the active session', errorData);
+            return CHAT_MESSAGE_VISIBILITY_SAVE_RESULT.ENDPOINT_FAILED;
+        }
+
+        const errorMessage = errorData?.message || errorData?.error || t`Check the server connection and reload the page to prevent data loss.`;
+        toastr.error(errorMessage, t`Chat could not be saved`);
         console.error('Chat message visibility could not be saved', error);
-        return CHAT_MESSAGE_VISIBILITY_SAVE_RESULT.FAILED;
+        return CHAT_MESSAGE_VISIBILITY_SAVE_RESULT.ENDPOINT_FAILED;
     };
 
     try {
@@ -529,18 +536,23 @@ async function updateServerChatMessageVisibility(start, end, unhide, nameFilter 
         });
 
         if (!response.ok) {
+            let errorData = null;
             try {
-                const errorData = await response.json();
+                errorData = await response.json();
                 if (errorData?.error === 'stale_revision') {
-                    warnStaleChatSave(errorData);
+                    const staleResult = warnStaleChatSave(errorData);
                     console.error('Chat message visibility rejected as stale', errorData);
+                    if (allowStaleRevisionRetry && staleResult?.adoptedServerRevision) {
+                        console.info('Retrying chat message visibility after adopting same-session save revision.');
+                        return updateServerChatMessageVisibility(start, end, unhide, nameFilter, { allowStaleRevisionRetry: false });
+                    }
                     return CHAT_MESSAGE_VISIBILITY_SAVE_RESULT.STALE;
                 }
             } catch {
                 // Fall through to the generic connection error below.
             }
 
-            return handleSaveFailure(response);
+            return handleSaveFailure(response, errorData);
         }
 
         const data = await response.json();
@@ -640,6 +652,10 @@ export async function hideChatMessageRange(start, end, unhide, nameFitler = null
         }
 
         if (saveResult === CHAT_MESSAGE_VISIBILITY_SAVE_RESULT.STALE) {
+            return;
+        }
+
+        if (saveResult === CHAT_MESSAGE_VISIBILITY_SAVE_RESULT.ENDPOINT_FAILED) {
             return;
         }
     }

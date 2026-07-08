@@ -1675,11 +1675,34 @@ export function getChatSaveSessionId() {
 
 export function warnStaleChatSave(errorData) {
     const lastSaveSessionId = String(errorData?.last_save_session_id || '');
-    const conflictMessage = lastSaveSessionId && lastSaveSessionId !== getChatSaveSessionId()
+    const currentSaveSessionId = getChatSaveSessionId();
+    const localRevision = getChatSaveRevision();
+    const serverRevision = Number(errorData?.current_revision);
+    const canAdoptServerRevision = lastSaveSessionId
+        && lastSaveSessionId === currentSaveSessionId
+        && Number.isInteger(serverRevision)
+        && serverRevision > localRevision;
+
+    console.warn('Chat save rejected as stale', {
+        localRevision,
+        serverRevision: Number.isInteger(serverRevision) ? serverRevision : null,
+        lastSaveSessionId: lastSaveSessionId || null,
+        currentSaveSessionId,
+        adoptedServerRevision: canAdoptServerRevision,
+    });
+
+    if (canAdoptServerRevision) {
+        setChatSaveRevision(serverRevision);
+        toastr.warning(t`This chat has a newer save from this browser session. The local save revision was refreshed.`, t`Chat save conflict`);
+        return { adoptedServerRevision: true, localRevision, serverRevision, lastSaveSessionId, currentSaveSessionId };
+    }
+
+    const conflictMessage = lastSaveSessionId && lastSaveSessionId !== currentSaveSessionId
         ? t`Another tab or browser session has a newer save. Close all other tabs/sessions before trying again.`
         : t`This chat has a newer save. Close other tabs/sessions before trying again.`;
 
     toastr.warning(conflictMessage, t`Chat save conflict`);
+    return { adoptedServerRevision: false, localRevision, serverRevision, lastSaveSessionId, currentSaveSessionId };
 }
 
 function getSyncCurrentChatCooldownSeconds() {
@@ -8341,12 +8364,10 @@ class StreamingProcessor {
         const sqliteMutationMessageId = this.type === 'swipe'
             ? finishSwipeValidation.messageId
             : messageId;
-        const saveResult = currentChatFileNameLooksSqlite()
-            ? await saveSqliteReplyMutation({
-                mutation: this.type === 'swipe' || this.type === 'continue' ? 'update' : 'append',
-                messageId: sqliteMutationMessageId,
-            })
-            : await saveChatConditional();
+        const saveResult = await saveSqliteReplyMutation({
+            mutation: this.type === 'swipe' || this.type === 'continue' ? 'update' : 'append',
+            messageId: sqliteMutationMessageId,
+        });
         if (saveResult !== CHAT_SAVE_RESULT.SAVED) {
             await reloadCurrentChat();
             unblockGeneration();
@@ -10121,10 +10142,9 @@ export async function Generate(type, { automatic_trigger, force_name2, quiet_pro
             playMessageSound();
         }
 
-        const shouldUseSqliteReplyMutation = currentChatFileNameLooksSqlite() && replyResult;
-        if (shouldUseSqliteReplyMutation) {
-            const sqliteSaveResult = await saveSqliteReplyMutation(replyResult);
-            if (sqliteSaveResult !== CHAT_SAVE_RESULT.SAVED) {
+        if (replyResult) {
+            const replySaveResult = await saveSqliteReplyMutation(replyResult);
+            if (replySaveResult !== CHAT_SAVE_RESULT.SAVED) {
                 await reloadCurrentChat();
                 unblockGeneration(type);
                 streamingProcessor = null;
@@ -10142,16 +10162,6 @@ export async function Generate(type, { automatic_trigger, force_name2, quiet_pro
             });
         }
 
-        console.debug('/api/chats/save called by /Generate');
-        const finalSaveResult = shouldUseSqliteReplyMutation
-            ? CHAT_SAVE_RESULT.SAVED
-            : await saveChatConditional();
-        if (finalSaveResult !== CHAT_SAVE_RESULT.SAVED) {
-            await reloadCurrentChat();
-            unblockGeneration(type);
-            streamingProcessor = null;
-            return Promise.resolve();
-        }
         unblockGeneration(type);
         streamingProcessor = null;
 
@@ -13467,6 +13477,9 @@ async function saveSqliteMessageMutation(operation, fields, defaultErrorMessage 
 
     try {
         const responseData = await response.json();
+        if (responseData?.storageMode || responseData?.storage_mode) {
+            setCurrentChatStorageMode(responseData.storageMode || responseData.storage_mode);
+        }
         setChatSaveRevision(responseData?.chat_revision);
     } catch {
         // Successful save without a JSON body: keep the previous revision.
