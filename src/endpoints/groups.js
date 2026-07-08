@@ -9,10 +9,41 @@ import { humanizedISO8601DateTime } from '../util.js';
 import { getFileNameValidationFunction } from '../middleware/validateFileName.js';
 import { createFavoritesState, flushFavoritesState, getGroupFavorite, setGroupFavorite } from '../favorites-repository.js';
 import { isChatPathValidationError, resolveGroupChatStoragePaths } from '../chat-paths.js';
+import { withDirectoryLock } from '../file-system-lock.js';
 
 export const router = express.Router();
 
 const DEFAULT_GROUP_CHAT_MAX_TURNS = 0;
+const GROUP_METADATA_LOCK_RETRY_MS = 25;
+const GROUP_METADATA_LOCK_TIMEOUT_MS = 10_000;
+const GROUP_METADATA_LOCK_STALE_MS = 10 * 60_000;
+const GROUP_METADATA_LOCK_HEARTBEAT_MS = 1_000;
+
+async function withGroupMetadataLock(groupPath, callback) {
+    const lockPath = `${groupPath}.lock`;
+
+    return await withDirectoryLock({
+        lockPath,
+        retryMs: GROUP_METADATA_LOCK_RETRY_MS,
+        timeoutMs: GROUP_METADATA_LOCK_TIMEOUT_MS,
+        staleMs: GROUP_METADATA_LOCK_STALE_MS,
+        heartbeatMs: GROUP_METADATA_LOCK_HEARTBEAT_MS,
+        timeoutMessage: `Timed out waiting for group metadata lock: ${groupPath}`,
+    }, async lock => await lock.run(callback));
+}
+
+async function withGroupChatStorageLock(chatPaths, callback) {
+    const lockPath = `${chatPaths.sqlitePath}.lock`;
+
+    return await withDirectoryLock({
+        lockPath,
+        retryMs: GROUP_METADATA_LOCK_RETRY_MS,
+        timeoutMs: GROUP_METADATA_LOCK_TIMEOUT_MS,
+        staleMs: GROUP_METADATA_LOCK_STALE_MS,
+        heartbeatMs: GROUP_METADATA_LOCK_HEARTBEAT_MS,
+        timeoutMessage: `Timed out waiting for group chat storage lock: ${chatPaths.sqlitePath}`,
+    }, async lock => await lock.run(callback));
+}
 
 /** Normalizes the per-group speaker cap. 0 means unlimited. */
 const normalizeGroupChatMaxTurns = (value) => {
@@ -116,7 +147,7 @@ router.post('/all', (request, response) => {
     }
 });
 
-router.post('/create', (request, response) => {
+router.post('/create', async (request, response) => {
     if (!request.body) {
         return response.sendStatus(400);
     }
@@ -143,16 +174,27 @@ router.post('/create', (request, response) => {
     const pathToFile = path.join(request.user.directories.groups, sanitize(`${id}.json`));
     const fileData = JSON.stringify(groupMetadata, null, 4);
 
-    if (!fs.existsSync(request.user.directories.groups)) {
-        fs.mkdirSync(request.user.directories.groups);
-    }
+    try {
+        return await withGroupMetadataLock(pathToFile, async () => {
+            if (!fs.existsSync(request.user.directories.groups)) {
+                fs.mkdirSync(request.user.directories.groups);
+            }
 
-    groupMetadata.fav = setAndFlushGroupFavorite(request.user.directories, { id, value: requestedFavorite });
-    writeFileAtomicSync(pathToFile, fileData);
-    return response.send(groupMetadata);
+            if (fs.existsSync(pathToFile)) {
+                return response.status(409).send({ error: 'group_exists' });
+            }
+
+            groupMetadata.fav = setAndFlushGroupFavorite(request.user.directories, { id, value: requestedFavorite });
+            writeFileAtomicSync(pathToFile, fileData);
+            return response.send(groupMetadata);
+        });
+    } catch (error) {
+        console.error(error);
+        return response.status(error?.status || 500).send({ error: 'group_create_failed' });
+    }
 });
 
-router.post('/edit', getFileNameValidationFunction('id'), (request, response) => {
+router.post('/edit', getFileNameValidationFunction('id'), async (request, response) => {
     if (!request.body || !request.body.id) {
         return response.sendStatus(400);
     }
@@ -160,11 +202,18 @@ router.post('/edit', getFileNameValidationFunction('id'), (request, response) =>
     const pathToFile = path.join(request.user.directories.groups, sanitize(`${id}.json`));
     const fileData = JSON.stringify(sanitizeGroupPayload(request.body), null, 4);
 
-    if (request.body.fav !== undefined) {
-        setAndFlushGroupFavorite(request.user.directories, { id, value: coerceFavoriteValue(request.body.fav) });
+    try {
+        return await withGroupMetadataLock(pathToFile, async () => {
+            if (request.body.fav !== undefined) {
+                setAndFlushGroupFavorite(request.user.directories, { id, value: coerceFavoriteValue(request.body.fav) });
+            }
+            writeFileAtomicSync(pathToFile, fileData);
+            return response.send({ ok: true });
+        });
+    } catch (error) {
+        console.error(error);
+        return response.status(error?.status || 500).send({ error: 'group_edit_failed' });
     }
-    writeFileAtomicSync(pathToFile, fileData);
-    return response.send({ ok: true });
 });
 
 router.post('/delete', getFileNameValidationFunction('id'), async (request, response) => {
@@ -176,38 +225,47 @@ router.post('/delete', getFileNameValidationFunction('id'), async (request, resp
     const pathToGroup = path.join(request.user.directories.groups, sanitize(`${id}.json`));
 
     try {
-        // Delete group chats
-        const group = JSON.parse(fs.readFileSync(pathToGroup, 'utf8'));
+        return await withGroupMetadataLock(pathToGroup, async () => {
+            try {
+                // Delete group chats
+                const group = JSON.parse(fs.readFileSync(pathToGroup, 'utf8'));
 
-        if (group && Array.isArray(group.chats)) {
-            for (const chat of group.chats) {
-                console.info('Deleting group chat', chat);
-                let chatPaths;
-                try {
-                    chatPaths = resolveGroupChatStoragePaths(request.user.directories.groupChats, chat);
-                } catch (error) {
-                    if (isChatPathValidationError(error)) {
-                        continue;
+                if (group && Array.isArray(group.chats)) {
+                    for (const chat of group.chats) {
+                        console.info('Deleting group chat', chat);
+                        let chatPaths;
+                        try {
+                            chatPaths = resolveGroupChatStoragePaths(request.user.directories.groupChats, chat);
+                        } catch (error) {
+                            if (isChatPathValidationError(error)) {
+                                continue;
+                            }
+                            throw error;
+                        }
+
+                        await withGroupChatStorageLock(chatPaths, async () => {
+                            if (fs.existsSync(chatPaths.jsonlPath)) {
+                                fs.unlinkSync(chatPaths.jsonlPath);
+                            }
+
+                            if (fs.existsSync(chatPaths.sqlitePath)) {
+                                fs.unlinkSync(chatPaths.sqlitePath);
+                            }
+                        });
                     }
-                    throw error;
                 }
-
-                if (fs.existsSync(chatPaths.jsonlPath)) {
-                    fs.unlinkSync(chatPaths.jsonlPath);
-                }
-
-                if (fs.existsSync(chatPaths.sqlitePath)) {
-                    fs.unlinkSync(chatPaths.sqlitePath);
-                }
+            } catch (error) {
+                console.error('Could not delete group chats. Clean them up manually.', error);
             }
-        }
+
+            if (fs.existsSync(pathToGroup)) {
+                fs.unlinkSync(pathToGroup);
+            }
+
+            return response.send({ ok: true });
+        });
     } catch (error) {
-        console.error('Could not delete group chats. Clean them up manually.', error);
+        console.error(error);
+        return response.status(error?.status || 500).send({ error: 'group_delete_failed' });
     }
-
-    if (fs.existsSync(pathToGroup)) {
-        fs.unlinkSync(pathToGroup);
-    }
-
-    return response.send({ ok: true });
 });

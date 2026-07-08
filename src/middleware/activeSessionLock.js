@@ -42,6 +42,14 @@ function isReadOnlyRoute(request) {
     return READ_ONLY_POST_ROUTES.some(pattern => pattern.test(request.path));
 }
 
+function isForcePushChatSaveRoute(request) {
+    return request.method === 'POST'
+        && /^\/api\/chats\/(?:save|group\/save)$/.test(request.path)
+        && request.body?.force === true
+        && request.body?.force_push === true
+        && request.body?.save_mode === 'loaded_range';
+}
+
 export const activeSessionRouter = express.Router();
 
 activeSessionRouter.post('/status', async (request, response) => {
@@ -133,7 +141,7 @@ activeSessionRouter.post('/release', async (request, response) => {
 });
 
 export async function activeSessionLockMiddleware(request, response, next) {
-    if (isReadOnlyRoute(request)) {
+    if (isReadOnlyRoute(request) || isForcePushChatSaveRoute(request)) {
         return next();
     }
 

@@ -880,7 +880,7 @@ function resetSelectedGroup() {
     is_group_generating = false;
 }
 
-async function saveGroupChat(groupId, shouldSaveGroup, { retrySameSessionStale = true } = {}) {
+async function saveGroupChat(groupId, shouldSaveGroup, { force = false, forcePush = false, requireLoadedRange = false, retrySameSessionStale = true } = {}) {
     const group = groups.find(x => x.id == groupId);
     const chat_id = group.chat_id;
     group['date_last_chat'] = Date.now();
@@ -888,6 +888,7 @@ async function saveGroupChat(groupId, shouldSaveGroup, { retrySameSessionStale =
     normalizeChatIdentities(chat, { generateUuid: uuidv4 });
     const savePayload = await prepareCurrentChatSavePayload({
         allowPartialSave: shouldTrackRevision,
+        requireLoadedRange,
     });
     if (!savePayload.ok) {
         toastr.warning(savePayload.message, savePayload.title);
@@ -902,6 +903,8 @@ async function saveGroupChat(groupId, shouldSaveGroup, { retrySameSessionStale =
             group_id: String(groupId),
             chat: savePayload.chat,
             chat_metadata: JSON.parse(JSON.stringify(chat_metadata)),
+            force: force,
+            force_push: forcePush,
             save_mode: savePayload.saveMode,
             full_chat: savePayload.fullChat,
             loaded_range_start: savePayload.loadedRangeStart,
@@ -915,13 +918,14 @@ async function saveGroupChat(groupId, shouldSaveGroup, { retrySameSessionStale =
     });
 
     if (!response.ok) {
+        let errorData = null;
         try {
-            const errorData = await response.json();
+            errorData = await response.json();
             if (errorData?.error === 'stale_revision') {
                 const staleResult = warnStaleChatSave(errorData);
                 console.error('Group chat save rejected as stale', errorData);
                 if (retrySameSessionStale && staleResult.sameSessionStale) {
-                    return saveGroupChat(groupId, shouldSaveGroup, { retrySameSessionStale: false });
+                    return saveGroupChat(groupId, shouldSaveGroup, { force, forcePush, requireLoadedRange, retrySameSessionStale: false });
                 }
                 return CHAT_SAVE_RESULT.FAILED;
             }
@@ -929,7 +933,18 @@ async function saveGroupChat(groupId, shouldSaveGroup, { retrySameSessionStale =
             // Fall through to the generic connection error below.
         }
 
-        toastr.error(t`Check the server connection and reload the page to prevent data loss.`, t`Group Chat could not be saved`);
+        if (forcePush && errorData?.error) {
+            toastr.error(t`Force push failed: ${errorData.error}`, t`Force push chat failed`);
+            console.error('Group chat force push failed', errorData);
+            return CHAT_SAVE_RESULT.FAILED;
+        }
+
+        toastr.error(
+            forcePush
+                ? t`Check the server connection and reload if the chat state looks stale.`
+                : t`Check the server connection and reload the page to prevent data loss.`,
+            forcePush ? t`Force push chat failed` : t`Group Chat could not be saved`,
+        );
         console.error('Group chat could not be saved', response);
         return CHAT_SAVE_RESULT.FAILED;
     }

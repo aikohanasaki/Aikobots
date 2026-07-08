@@ -214,6 +214,15 @@ function validateSaveRevision(requestBody, existingHeader) {
     return { ok: true, currentRevision, nextRevision: currentRevision + 1 };
 }
 
+function isForcePushAuthorityRequest(requestBody) {
+    return requestBody?.force === true && requestBody?.force_push === true && requestBody?.save_mode === 'loaded_range';
+}
+
+function getServerAuthorityRevisionCheck(header) {
+    const currentRevision = getChatRevision(header);
+    return { ok: true, currentRevision, nextRevision: currentRevision + 1 };
+}
+
 function hasModernSaveMetadata(header) {
     return _.isPlainObject(header)
         && (Object.prototype.hasOwnProperty.call(header, CHAT_REVISION_KEY)
@@ -1128,6 +1137,10 @@ function requireStrictSaveRevision(requestBody) {
 }
 
 function requireChatMutationRequest(requestBody, header) {
+    if (isForcePushAuthorityRequest(requestBody)) {
+        return getServerAuthorityRevisionCheck(header);
+    }
+
     const strictRevision = requireStrictSaveRevision(requestBody);
     if (!strictRevision.ok) {
         throw new ChatMutationError(strictRevision.status, strictRevision.error);
@@ -1143,6 +1156,14 @@ function requireChatMutationRequest(requestBody, header) {
     }
 
     return revisionCheck;
+}
+
+async function assertChatSaveMutationAllowed(request) {
+    if (isForcePushAuthorityRequest(request.body)) {
+        return;
+    }
+
+    await request.activeSessionOperation?.assertAllowed();
 }
 
 function validateLoadedMessageRangeIdentity(logicalChatData, startId, rangeMessages) {
@@ -1572,6 +1593,19 @@ function getGroupFilePath(groupsDirectory, groupId) {
     }
 
     return path.join(groupsDirectory, sanitize(`${id}.json`));
+}
+
+async function withGroupMetadataLock(groupPath, callback) {
+    const lockPath = `${groupPath}.lock`;
+
+    return await withDirectoryLock({
+        lockPath,
+        retryMs: CHAT_SAVE_LOCK_RETRY_MS,
+        timeoutMs: CHAT_SAVE_LOCK_TIMEOUT_MS,
+        staleMs: CHAT_SAVE_LOCK_STALE_MS,
+        heartbeatMs: CHAT_SAVE_LOCK_HEARTBEAT_MS,
+        timeoutMessage: `Timed out waiting for group metadata lock: ${groupPath}`,
+    }, async lock => await lock.run(callback));
 }
 
 /**
@@ -3893,7 +3927,7 @@ router.post('/save', validateAvatarUrlMiddleware, async function (request, respo
                 return response.status(400).send({ error: 'invalid_save_mode' });
             } else if (request.body.save_mode === 'loaded_range') {
                 if (existingSqliteChat) {
-                    await request.activeSessionOperation?.assertAllowed();
+                    await assertChatSaveMutationAllowed(request);
                     const payload = await updateSqliteLoadedMessageRange({
                         filePath,
                         requestBody: request.body,
@@ -3974,7 +4008,7 @@ router.post('/save', validateAvatarUrlMiddleware, async function (request, respo
 
             const header = setChatRevision(logicalChatData[0], revisionCheck.nextRevision, getRequestSaveSessionId(request.body));
             const messages = logicalChatData.slice(1);
-            await request.activeSessionOperation?.assertAllowed();
+            await assertChatSaveMutationAllowed(request);
 
             const writeOptions = {
                 regenerateIdentities: request.body.regenerate_identities === true,
@@ -4883,72 +4917,74 @@ router.post('/group/member/rename-history', async (request, response) => {
 
         await request.activeSessionOperation?.assertAllowed();
 
-        const group = JSON.parse(fs.readFileSync(groupPath, 'utf8'));
-        if (!Array.isArray(group.members) || !Array.isArray(group.chats)) {
-            return response.status(400).send({ error: 'invalid_group' });
-        }
-
-        let groupChanged = false;
-        const memberIndex = group.members.findIndex(member => member === oldAvatar);
-        if (memberIndex !== -1) {
-            group.members[memberIndex] = newAvatar;
-            groupChanged = true;
-        }
-
-        let changedChats = 0;
-        let changedMessages = 0;
-        for (const chatId of group.chats) {
-            const chatPath = getGroupChatFilePath(request.user.directories.groupChats, chatId);
-            if (!fs.existsSync(chatPath) && !fs.existsSync(replaceChatStorageExtension(chatPath, '.sqlite'))) {
-                continue;
+        return await withGroupMetadataLock(groupPath, async () => {
+            const group = JSON.parse(fs.readFileSync(groupPath, 'utf8'));
+            if (!Array.isArray(group.members) || !Array.isArray(group.chats)) {
+                return response.status(400).send({ error: 'invalid_group' });
             }
 
-            await withChatSaveLock(chatPath, async () => {
-                const payload = await ensureGroupChatHeader(request.user, chatId, chatPath);
-                if (!payload.header || !payload.messages.length) {
-                    return;
+            let groupChanged = false;
+            const memberIndex = group.members.findIndex(member => member === oldAvatar);
+            if (memberIndex !== -1) {
+                group.members[memberIndex] = newAvatar;
+                groupChanged = true;
+            }
+
+            let changedChats = 0;
+            let changedMessages = 0;
+            for (const chatId of group.chats) {
+                const chatPath = getGroupChatFilePath(request.user.directories.groupChats, chatId);
+                if (!fs.existsSync(chatPath) && !fs.existsSync(replaceChatStorageExtension(chatPath, '.sqlite'))) {
+                    continue;
                 }
 
-                const updateResult = getRenamedGroupMemberMessageUpdates(payload.messages, {
-                    oldAvatar,
-                    newAvatar,
-                    newName,
+                await withChatSaveLock(chatPath, async () => {
+                    const payload = await ensureGroupChatHeader(request.user, chatId, chatPath);
+                    if (!payload.header || !payload.messages.length) {
+                        return;
+                    }
+
+                    const updateResult = getRenamedGroupMemberMessageUpdates(payload.messages, {
+                        oldAvatar,
+                        newAvatar,
+                        newName,
+                    });
+                    if (updateResult.changed === 0) {
+                        return;
+                    }
+
+                    const nextRevision = getChatRevision(payload.header) + 1;
+                    const header = setChatRevision(
+                        buildGroupChatHeader(payload.header.chat_metadata || {}, payload.header),
+                        nextRevision,
+                        getRequestSaveSessionId(request.body),
+                    );
+                    const writeResult = await writeLogicalChat(chatPath, header, updateResult.messages, {
+                        allowExistingSqliteFullReplacement: true,
+                        routeName: '/api/chats/group/member/rename-history',
+                        operationType: 'group_member_rename_history',
+                        requestBody: request.body,
+                        isPrivilegedOperation: true,
+                    });
+                    if (writeResult.fullJsonl) {
+                        getBackupFunction(request.user.profile.handle)(request.user.directories.backups, String(chatId), writeResult.fullJsonl);
+                    }
+
+                    changedChats++;
+                    changedMessages += updateResult.changed;
                 });
-                if (updateResult.changed === 0) {
-                    return;
-                }
+            }
 
-                const nextRevision = getChatRevision(payload.header) + 1;
-                const header = setChatRevision(
-                    buildGroupChatHeader(payload.header.chat_metadata || {}, payload.header),
-                    nextRevision,
-                    getRequestSaveSessionId(request.body),
-                );
-                const writeResult = await writeLogicalChat(chatPath, header, updateResult.messages, {
-                    allowExistingSqliteFullReplacement: true,
-                    routeName: '/api/chats/group/member/rename-history',
-                    operationType: 'group_member_rename_history',
-                    requestBody: request.body,
-                    isPrivilegedOperation: true,
-                });
-                if (writeResult.fullJsonl) {
-                    getBackupFunction(request.user.profile.handle)(request.user.directories.backups, String(chatId), writeResult.fullJsonl);
-                }
+            if (groupChanged) {
+                writeFileAtomicSync(groupPath, JSON.stringify(sanitizeGroupForPersistence(group), null, 4));
+            }
 
-                changedChats++;
-                changedMessages += updateResult.changed;
+            return response.send({
+                ok: true,
+                group_changed: groupChanged,
+                changed_chats: changedChats,
+                changed_messages: changedMessages,
             });
-        }
-
-        if (groupChanged) {
-            writeFileAtomicSync(groupPath, JSON.stringify(sanitizeGroupForPersistence(group), null, 4));
-        }
-
-        return response.send({
-            ok: true,
-            group_changed: groupChanged,
-            changed_chats: changedChats,
-            changed_messages: changedMessages,
         });
     } catch (error) {
         if (isActiveSessionError(error)) {
@@ -5269,7 +5305,7 @@ router.post('/group/save', async (request, response) => {
                 return response.status(400).send({ error: 'invalid_save_mode' });
             } else if (request.body.save_mode === 'loaded_range') {
                 if (groupSqliteExists) {
-                    await request.activeSessionOperation?.assertAllowed();
+                    await assertChatSaveMutationAllowed(request);
                     const payload = await updateSqliteLoadedMessageRange({
                         filePath: pathToFile,
                         requestBody: request.body,
@@ -5329,7 +5365,7 @@ router.post('/group/save', async (request, response) => {
                 return response.status(validation.status).send({ error: validation.error });
             }
 
-            await request.activeSessionOperation?.assertAllowed();
+            await assertChatSaveMutationAllowed(request);
             const writeResult = await writeLogicalChat(pathToFile, header, messages, writeOptions);
             if (writeResult.fullJsonl) {
                 getBackupFunction(request.user.profile.handle)(request.user.directories.backups, backupOwnerKey, writeResult.fullJsonl);

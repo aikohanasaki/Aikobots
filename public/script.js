@@ -1758,6 +1758,10 @@ function startSyncCurrentChatCooldown() {
 // The cooldown is intentionally per-click and not per-successful-save.
 // This prevents users from hammering the server with save requests by repeatedly clicking the button when they have a large chat that takes a while to save.
 
+function updateForcePushStatusToast(toast, message) {
+    toast?.find?.('.toast-message')?.text(message);
+}
+
 async function syncCurrentChatToServer() {
     if (getSyncCurrentChatCooldownSeconds() > 0) {
         updateSyncCurrentChatCooldownState();
@@ -1769,11 +1773,38 @@ async function syncCurrentChatToServer() {
     }
 
     startSyncCurrentChatCooldown();
-    toastr.info(t`Pushing chat to server`);
-    const syncResult = await saveChatConditional();
+    const statusToast = toastr.info(
+        t`Taking over active session...`,
+        t`Force Push Chat to Server`,
+        {
+            timeOut: 0,
+            extendedTimeOut: 0,
+            closeButton: true,
+            tapToDismiss: false,
+            progressBar: true,
+            preventDuplicates: true,
+        },
+    );
 
-    if (syncResult === CHAT_SAVE_RESULT.SAVED) {
-        toastr.success(t`Chat push successful`);
+    try {
+        const didTakeOver = await forceTakeOverActiveSessionForWrite();
+        if (!didTakeOver) {
+            toastr.error(t`Could not take over the active session.`, t`Chat push blocked`);
+            return;
+        }
+
+        updateForcePushStatusToast(statusToast, t`Force push queued; waiting for save debounce...`);
+        const syncResult = await saveChatConditional({
+            force: true,
+            forcePush: true,
+            requireLoadedRange: true,
+        });
+
+        if (syncResult === CHAT_SAVE_RESULT.SAVED) {
+            toastr.success(t`Force push chat successful`);
+        }
+    } finally {
+        toastr.clear(statusToast);
     }
 }
 
@@ -3377,6 +3408,28 @@ async function activateActiveSessionOnBoot() {
         broadcastActiveSessionTakeover();
     }
     return Boolean(status.active);
+}
+
+async function forceTakeOverActiveSessionForWrite() {
+    try {
+        const response = await postActiveSession('take-over');
+        if (!response.ok) {
+            await handleActiveSessionResponse(response);
+            setActiveSessionLocked(true);
+            return false;
+        }
+
+        const status = await response.json();
+        setActiveSessionLocked(!status.active);
+        if (status.active) {
+            startActiveSessionHeartbeat();
+            broadcastActiveSessionTakeover();
+        }
+        return Boolean(status.active);
+    } catch (error) {
+        console.warn('Active session force takeover failed', error);
+        return false;
+    }
 }
 
 async function verifyActiveSession() {
@@ -5090,9 +5143,10 @@ function getContiguousLoadedChatRangeForSave({ includeHydrated = false } = {}) {
  * @param {object|null} [options.header] Optional direct-chat header to prepend.
  * @param {number|undefined} [options.endId] Optional final message id for full/hydrated saves.
  * @param {boolean} [options.allowPartialSave] Allow explicit loaded-range saves when the active chat is not hydrated.
+ * @param {boolean} [options.requireLoadedRange] Require an explicit loaded-range save.
  * @returns {Promise<object>} Save payload metadata and messages, or a failure descriptor.
  */
-export async function prepareCurrentChatSavePayload({ header = null, endId = undefined, allowPartialSave = true } = {}) {
+export async function prepareCurrentChatSavePayload({ header = null, endId = undefined, allowPartialSave = true, requireLoadedRange = false } = {}) {
     let trimmedChat = [];
     let saveMode = undefined;
     let loadedRangeStart = undefined;
@@ -5118,7 +5172,7 @@ export async function prepareCurrentChatSavePayload({ header = null, endId = und
             return {
                 ok: false,
                 reason: 'loaded_range_not_contiguous',
-                message: t`Loaded chat messages are not contiguous. Reload the chat and then click Push Current Chat.`,
+                message: t`Loaded chat messages are not contiguous. Reload the chat and then click Force Push Chat to Server.`,
                 title: t`Chat push blocked`,
             };
         }
@@ -5130,13 +5184,22 @@ export async function prepareCurrentChatSavePayload({ header = null, endId = und
             return {
                 ok: false,
                 reason: 'loaded_range_not_contiguous',
-                message: t`Loaded chat messages are not contiguous. Reload the chat and then click Push Current Chat.`,
+                message: t`Loaded chat messages are not contiguous. Reload the chat and then click Force Push Chat to Server.`,
                 title: t`Chat push blocked`,
             };
         }
 
         useLoadedRangeSave(loadedRange);
     } else {
+        if (requireLoadedRange) {
+            return {
+                ok: false,
+                reason: 'loaded_range_required',
+                message: t`Loaded-range save is not available for this chat state. Reload the chat and then click Force Push Chat to Server.`,
+                title: t`Chat push blocked`,
+            };
+        }
+
         const normalizedEndId = endId === undefined
             ? getTotalChatMessages() - 1
             : Math.min(endId, getTotalChatMessages() - 1);
@@ -12180,12 +12243,14 @@ async function fetchChatSaveWithRetry(requestBody) {
  * @param {object} [options.withMetadata] Additional metadata to save with the chat
  * @param {number} [options.mesId] The message ID to save the chat up to
  * @param {boolean} [options.force] Force the saving despite the integrity check result
+ * @param {boolean} [options.forcePush] Take over server authority for a forced loaded-range push
  * @param {boolean} [options.forceFull] Force a complete chat save even when SQLite range saving is available
+ * @param {boolean} [options.requireLoadedRange] Require an explicit loaded-range save
  * @param {boolean} [options.retrySameSessionStale] Retry once when this browser session already advanced the server revision
  *
  * @returns {Promise<void>}
  */
-export async function saveChat({ chatName, withMetadata, mesId, force = false, forceFull = false, retrySameSessionStale = true } = {}) {
+export async function saveChat({ chatName, withMetadata, mesId, force = false, forcePush = false, forceFull = false, requireLoadedRange = false, retrySameSessionStale = true } = {}) {
     if (arguments.length > 0 && typeof arguments[0] !== 'object') {
         console.trace('saveChat called with positional arguments. Please use an object instead.');
         [chatName, withMetadata, mesId, force] = arguments;
@@ -12251,6 +12316,7 @@ export async function saveChat({ chatName, withMetadata, mesId, force = false, f
         header,
         endId: normalizedMesId,
         allowPartialSave: shouldTrackRevision && forceFull !== true,
+        requireLoadedRange,
     });
     if (!savePayload.ok) {
         toastr.warning(savePayload.message, savePayload.title);
@@ -12263,6 +12329,7 @@ export async function saveChat({ chatName, withMetadata, mesId, force = false, f
         chat: savePayload.chat,
         avatar_url: characters[this_chid].avatar,
         force: force,
+        force_push: forcePush,
         save_mode: savePayload.saveMode,
         full_chat: savePayload.fullChat,
         loaded_range_start: savePayload.loadedRangeStart,
@@ -12304,13 +12371,18 @@ export async function saveChat({ chatName, withMetadata, mesId, force = false, f
         if (errorData?.error === 'stale_revision') {
             const staleResult = warnStaleChatSave(errorData);
             if (retrySameSessionStale && staleResult.sameSessionStale) {
-                return saveChat({ chatName, withMetadata, mesId, force, forceFull, retrySameSessionStale: false });
+                return saveChat({ chatName, withMetadata, mesId, force, forcePush, forceFull, requireLoadedRange, retrySameSessionStale: false });
             }
             return CHAT_SAVE_RESULT.FAILED;
         }
 
         const isIntegrityError = errorData?.error === 'integrity' && !force;
         if (!isIntegrityError) {
+            if (forcePush && errorData?.error) {
+                toastr.error(t`Force push failed: ${errorData.error}`, t`Force push chat failed`);
+                return CHAT_SAVE_RESULT.FAILED;
+            }
+
             const errorReason = errorData?.error || result.statusText || `HTTP ${result.status}`;
             throw new Error(`Chat save failed: ${errorReason}`);
         }
@@ -12331,10 +12403,15 @@ export async function saveChat({ chatName, withMetadata, mesId, force = false, f
             return CHAT_SAVE_RESULT.FAILED;
         }
 
-        return await saveChat({ chatName, withMetadata, mesId, force: true });
+        return await saveChat({ chatName, withMetadata, mesId, force: true, forcePush, forceFull, requireLoadedRange });
     } catch (error) {
         console.error(error);
-        toastr.error(t`Check the server connection and reload the page to prevent data loss.`, t`Chat could not be saved`);
+        toastr.error(
+            forcePush
+                ? t`Check the server connection and reload if the chat state looks stale.`
+                : t`Check the server connection and reload the page to prevent data loss.`,
+            forcePush ? t`Force push chat failed` : t`Chat could not be saved`,
+        );
         return CHAT_SAVE_RESULT.FAILED;
     }
 }
