@@ -5866,20 +5866,20 @@ function hasPendingDebouncedChatSave() {
 }
 
 export async function flushDebouncedChatSave() {
-    await waitForSqliteMessageUpdateSaveQueue();
+    await flushPendingSqliteMessageUpdateSave();
 
     if (!hasPendingDebouncedChatSave()) {
         const result = chatSaveQueuePromise
             ? await chatSaveQueuePromise
             : CHAT_SAVE_RESULT.SAVED;
-        await waitForSqliteMessageUpdateSaveQueue();
+        await flushPendingSqliteMessageUpdateSave();
         return result;
     }
 
     cancelDebouncedChatSave();
     toastr.info(t`Please wait until the chat is saved.`, t`Your chat is still saving...`);
     const result = await saveChatConditional({ immediate: true });
-    await waitForSqliteMessageUpdateSaveQueue();
+    await flushPendingSqliteMessageUpdateSave();
 
     if (result !== CHAT_SAVE_RESULT.SAVED) {
         saveChatDebounced();
@@ -6012,6 +6012,14 @@ export async function deleteMessage(id, swipeDeletionIndex = undefined, askConfi
     }
 
     const deletedMessageUuid = chat[id]?.[AIKOBOTS_MESSAGE_UUID_KEY];
+    if (currentChatFileNameLooksSqlite()) {
+        const pendingSaveResult = await flushPendingSqliteMessageUpdateSave();
+        if (pendingSaveResult !== CHAT_SAVE_RESULT.SAVED) {
+            await reloadCurrentChat();
+            return;
+        }
+    }
+
     const deletedSnapshotKeys = getPromptSnapshotKeysFromMessage(chat[id]);
     chat.splice(id, 1);
     remapLoadedRangesAfterMessageDeletion(id);
@@ -12940,6 +12948,31 @@ let pendingSqliteAutoEditMessage = null;
 
 async function waitForSqliteMessageUpdateSaveQueue() {
     await sqliteMessageUpdateSaveQueue;
+}
+
+/**
+ * Persists any delayed SQLite message edit before another revisioned mutation runs.
+ * @returns {Promise<string>} A CHAT_SAVE_RESULT value for the flushed edit, or SAVED when nothing was pending.
+ */
+async function flushPendingSqliteMessageUpdateSave() {
+    await waitForSqliteMessageUpdateSaveQueue();
+
+    if (!sqliteAutoEditSaveTimer) {
+        return CHAT_SAVE_RESULT.SAVED;
+    }
+
+    clearTimeout(sqliteAutoEditSaveTimer);
+    sqliteAutoEditSaveTimer = null;
+    const messageToSave = pendingSqliteAutoEditMessage;
+    pendingSqliteAutoEditMessage = null;
+
+    if (!messageToSave) {
+        return CHAT_SAVE_RESULT.SAVED;
+    }
+
+    const saveResult = await saveMessageUpdateByUuid(messageToSave);
+    await waitForSqliteMessageUpdateSaveQueue();
+    return saveResult;
 }
 
 function cancelPendingSqliteAutoEditSave() {
