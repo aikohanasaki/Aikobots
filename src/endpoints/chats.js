@@ -1269,6 +1269,59 @@ export function applyLoadedMessageRange(logicalChatData, rangeStart, rangeMessag
     };
 }
 
+/**
+ * Replaces the selected loaded message span while preserving server messages outside it.
+ * Unlike ordinary loaded-range saves, force push can change the selected span length.
+ */
+export function applyForcePushLoadedMessageRange(logicalChatData, rangeStart, rangeMessages, rangeEnd = undefined, requestBody = {}) {
+    if (!Array.isArray(logicalChatData) || !_.isPlainObject(logicalChatData[0])) {
+        return { ok: false, error: 'invalid_loaded_range' };
+    }
+
+    const submittedRangeValidation = validateForcePushRangeMessages(rangeMessages);
+    if (!submittedRangeValidation.ok) {
+        return submittedRangeValidation;
+    }
+
+    const startId = Number(rangeStart);
+    const endId = Number(rangeEnd);
+    if (!Number.isInteger(startId) || startId < 0 || !Number.isInteger(endId) || endId !== startId + rangeMessages.length - 1) {
+        return { ok: false, error: 'invalid_loaded_range' };
+    }
+
+    const serverMessageCount = Math.max(0, logicalChatData.length - 1);
+    const clientMessageCount = Number(requestBody?.saved_message_count);
+    if (!Number.isInteger(clientMessageCount) || clientMessageCount < 0) {
+        return { ok: false, error: 'saved_message_count_mismatch' };
+    }
+
+    const messageCountDelta = clientMessageCount - serverMessageCount;
+    const oldRangeCount = rangeMessages.length - messageCountDelta;
+    if (!Number.isInteger(oldRangeCount) || oldRangeCount < 0 || startId + oldRangeCount > serverMessageCount) {
+        return { ok: false, error: 'invalid_loaded_range' };
+    }
+
+    const existingMessages = logicalChatData.slice(1);
+    const nextMessages = [
+        ...existingMessages.slice(0, startId),
+        ...rangeMessages,
+        ...existingMessages.slice(startId + oldRangeCount),
+    ];
+    const identityValidation = validateUniqueLogicalMessageIdentities(nextMessages);
+    if (!identityValidation.ok) {
+        return identityValidation;
+    }
+
+    return {
+        ok: true,
+        replaced: oldRangeCount,
+        chatData: [
+            logicalChatData[0],
+            ...nextMessages,
+        ],
+    };
+}
+
 function normalizeLogicalChatDataForNoopCompare(chatData) {
     if (!Array.isArray(chatData) || !_.isPlainObject(chatData[0])) {
         return [];
@@ -1328,6 +1381,154 @@ function validateLoadedMessageRangeForSqlite(db, rangeStart, rangeMessages, rang
     return {
         ...rangeValidation,
         existingRangeMessages,
+    };
+}
+
+function validateForcePushRangeMessages(rangeMessages) {
+    if (!validateLoadedMessageRangeMessages(rangeMessages)) {
+        return { ok: false, error: 'invalid_loaded_range' };
+    }
+
+    const seenUuids = new Set();
+    for (const message of rangeMessages) {
+        const uuid = getAikobotsMessageUuid(message);
+        if (!uuid) {
+            return { ok: false, error: 'loaded_range_identity_mismatch' };
+        }
+
+        if (seenUuids.has(uuid)) {
+            return { ok: false, error: 'loaded_range_duplicate_identity' };
+        }
+
+        seenUuids.add(uuid);
+    }
+
+    return { ok: true };
+}
+
+function validateUniqueLogicalMessageIdentities(messages) {
+    const seenUuids = new Set();
+    for (const message of messages) {
+        const uuid = getAikobotsMessageUuid(message);
+        if (!uuid) {
+            continue;
+        }
+
+        if (seenUuids.has(uuid)) {
+            return { ok: false, error: 'loaded_range_identity_conflict' };
+        }
+
+        seenUuids.add(uuid);
+    }
+
+    return { ok: true };
+}
+
+/**
+ * Applies a force-push structural replacement to a loaded SQLite range.
+ * The submitted range length may differ from the replaced server range length.
+ */
+async function updateSqliteForcePushLoadedMessageRange({ filePath, requestBody, incomingHeader, rangeMessages, saveSessionId, regenerateIdentities = false }) {
+    const sqlitePath = replaceChatStorageExtension(filePath, '.sqlite');
+    if (!fs.existsSync(sqlitePath)) {
+        throw new ChatMutationError(409, 'loaded_range_requires_sqlite', 'Loaded-range update requires SQLite chat storage.');
+    }
+
+    const submittedRangeValidation = validateForcePushRangeMessages(rangeMessages);
+    if (!submittedRangeValidation.ok) {
+        throw new ChatMutationError(400, submittedRangeValidation.error);
+    }
+
+    const submittedStartId = Number(requestBody?.loaded_range_start);
+    const submittedEndId = Number(requestBody?.loaded_range_end);
+    if (!Number.isInteger(submittedStartId) || submittedStartId < 0 || !Number.isInteger(submittedEndId) || submittedEndId !== submittedStartId + rangeMessages.length - 1) {
+        throw new ChatMutationError(400, 'invalid_loaded_range');
+    }
+
+    const db = await loadDb(sqlitePath);
+    let header;
+    let revisionCheck;
+    let totalMessages;
+    let nextMessages;
+    let oldRangeCount;
+    let existingRangeMessages;
+    try {
+        header = getChatHeader(db);
+        if (!header) {
+            throw new ChatMutationError(404, 'chat_not_found');
+        }
+        assertSupportedChatStorage(header);
+        throwIfSqliteChatIdentityRepairNeeded(db, sqlitePath, header);
+
+        revisionCheck = requireChatMutationRequest(requestBody, header);
+        totalMessages = getMessageCount(db);
+
+        const clientMessageCount = Number(requestBody?.saved_message_count);
+        if (!Number.isInteger(clientMessageCount) || clientMessageCount < 0) {
+            throw new ChatMutationError(400, 'saved_message_count_mismatch');
+        }
+
+        const messageCountDelta = clientMessageCount - totalMessages;
+        oldRangeCount = rangeMessages.length - messageCountDelta;
+        if (!Number.isInteger(oldRangeCount) || oldRangeCount < 0 || submittedStartId + oldRangeCount > totalMessages) {
+            throw new ChatMutationError(400, 'invalid_loaded_range');
+        }
+
+        const existingMessages = totalMessages > 0 ? getMessageRange(db, 0, totalMessages) : [];
+        existingRangeMessages = existingMessages.slice(submittedStartId, submittedStartId + oldRangeCount);
+        nextMessages = [
+            ...existingMessages.slice(0, submittedStartId),
+            ...rangeMessages,
+            ...existingMessages.slice(submittedStartId + oldRangeCount),
+        ];
+        const identityValidation = validateUniqueLogicalMessageIdentities(nextMessages);
+        if (!identityValidation.ok) {
+            throw new ChatMutationError(400, identityValidation.error);
+        }
+
+        if (nextMessages.length !== clientMessageCount) {
+            throw new ChatMutationError(400, 'saved_message_count_mismatch');
+        }
+
+        const candidateHeader = incomingHeader ?? header;
+        if (oldRangeCount === rangeMessages.length && isLoadedRangeSaveNoop(header, candidateHeader, existingRangeMessages, rangeMessages)) {
+            return {
+                result: 'ok',
+                changed: 0,
+                chat_revision: revisionCheck.currentRevision,
+                storage_mode: 'sqlite',
+                tailStartId: 0,
+                tailEndId: totalMessages > 0 ? totalMessages - 1 : -1,
+                headCount: 0,
+                tailCount: totalMessages,
+                payload: null,
+            };
+        }
+    } finally {
+        db.close();
+    }
+
+    const revisedHeader = setChatRevision(incomingHeader ?? header, revisionCheck.nextRevision, saveSessionId);
+    const writeResult = await writeLogicalChat(filePath, revisedHeader, nextMessages, {
+        regenerateIdentities,
+        routeName: requestBody?.group_id ? '/api/chats/group/save' : '/api/chats/save',
+        operationType: 'force_push_loaded_range_replace',
+        requestBody,
+        isPrivilegedOperation: true,
+        allowExistingSqliteFullReplacement: true,
+    });
+
+    return {
+        result: 'ok',
+        changed: rangeMessages.length,
+        replaced: oldRangeCount,
+        chat_revision: revisionCheck.nextRevision,
+        storage_mode: 'sqlite',
+        tailStartId: writeResult.tailStartId,
+        tailEndId: writeResult.tailEndId,
+        headCount: writeResult.headCount,
+        tailCount: writeResult.tailCount,
+        fullJsonl: writeResult.fullJsonl,
     };
 }
 
@@ -1933,6 +2134,17 @@ export async function updateSqliteLoadedMessageRange({ filePath, requestBody, in
     const sqlitePath = replaceChatStorageExtension(filePath, '.sqlite');
     if (!fs.existsSync(sqlitePath)) {
         throw new ChatMutationError(409, 'loaded_range_requires_sqlite', 'Loaded-range update requires SQLite chat storage.');
+    }
+
+    if (isForcePushAuthorityRequest(requestBody)) {
+        return await updateSqliteForcePushLoadedMessageRange({
+            filePath,
+            requestBody,
+            incomingHeader,
+            rangeMessages,
+            saveSessionId,
+            regenerateIdentities,
+        });
     }
 
     const db = await loadDb(sqlitePath);
@@ -3126,37 +3338,67 @@ async function maybeBackupSqliteChatAfterAppend(user, filePath, name, messageCou
  * @param {string} directory The user's backups directory.
  * @param {string} name The name of the chat.
  * @param {string} chat The serialized chat to save.
+ * @param {object} [options] Backup options.
+ * @param {boolean} [options.skipThrottle=false] Bypass the normal time gate.
+ * @param {string} [options.label=''] Optional filename label inserted before the timestamp.
  */
-function backupChat(directory, name, chat) {
+function backupChat(directory, name, chat, { skipThrottle = false, label = '' } = {}) {
     try {
-        if (!isBackupEnabled || !fs.existsSync(directory)) {
+        if (!isBackupEnabled || !fs.existsSync(directory) || typeof chat !== 'string') {
             return;
         }
 
-        if (typeof chat !== 'string') {
-            return;
-        }
-
-        // replace non-alphanumeric characters with underscores
-        name = getSanitizedChatBackupName(name);
-        const backupPrefix = getChatBackupPrefix(name);
-
-        if (shouldSkipChatBackup(directory, backupPrefix)) {
-            return;
-        }
-
-        const backupFile = path.join(directory, `${CHAT_BACKUPS_PREFIX}${name}_${generateTimestamp()}.jsonl`);
-        writeFileAtomicSync(backupFile, chat, 'utf-8');
-
-        removeOldBackups(directory, backupPrefix);
-
-        if (isNaN(maxTotalChatBackups) || maxTotalChatBackups < 0) {
-            return;
-        }
-
-        removeOldBackups(directory, CHAT_BACKUPS_PREFIX, maxTotalChatBackups);
+        writeChatBackup(directory, name, chat, { skipThrottle, label });
     } catch (err) {
         console.error(`Could not backup chat for ${name}`, err);
+    }
+}
+
+function writeChatBackup(directory, name, chat, { skipThrottle = false, label = '' } = {}) {
+    if (!isBackupEnabled || !fs.existsSync(directory)) {
+        throw new Error('Chat backups are disabled or the backups directory is unavailable.');
+    }
+
+    if (typeof chat !== 'string') {
+        throw new Error('Chat backup content must be a JSONL string.');
+    }
+
+    // replace non-alphanumeric characters with underscores
+    name = getSanitizedChatBackupName(name);
+    const backupPrefix = getChatBackupPrefix(name);
+
+    if (!skipThrottle && shouldSkipChatBackup(directory, backupPrefix)) {
+        return null;
+    }
+
+    const sanitizedLabel = label ? `_${getSanitizedChatBackupName(label)}` : '';
+    const backupFile = path.join(directory, `${CHAT_BACKUPS_PREFIX}${name}${sanitizedLabel}_${generateTimestamp()}.jsonl`);
+    writeFileAtomicSync(backupFile, chat, 'utf-8');
+
+    removeOldBackups(directory, backupPrefix);
+
+    if (!isNaN(maxTotalChatBackups) && maxTotalChatBackups >= 0) {
+        removeOldBackups(directory, CHAT_BACKUPS_PREFIX, maxTotalChatBackups);
+    }
+
+    return backupFile;
+}
+
+/** Creates the mandatory JSONL recovery point before a force push overwrites server chat data. */
+async function backupPreForcePushServerChat(user, filePath, name) {
+    try {
+        const serverChat = await getLogicalChatData(filePath);
+        if (!Array.isArray(serverChat) || serverChat.length === 0) {
+            throw new Error('No existing server chat was available to back up.');
+        }
+
+        writeChatBackup(user.directories.backups, name, serializeJsonl(serverChat), {
+            skipThrottle: true,
+            label: 'force_push_pre_server',
+        });
+    } catch (error) {
+        console.error(`Could not create pre-force-push chat backup for ${name}`, error);
+        throw new ChatMutationError(500, 'force_push_backup_failed', 'Could not create a JSONL backup of the server chat. Server copy was not overwritten.');
     }
 }
 
@@ -3928,6 +4170,9 @@ router.post('/save', validateAvatarUrlMiddleware, async function (request, respo
             } else if (request.body.save_mode === 'loaded_range') {
                 if (existingSqliteChat) {
                     await assertChatSaveMutationAllowed(request);
+                    if (isForcePushAuthorityRequest(request.body)) {
+                        await backupPreForcePushServerChat(request.user, filePath, directoryName);
+                    }
                     const payload = await updateSqliteLoadedMessageRange({
                         filePath,
                         requestBody: request.body,
@@ -3949,14 +4194,21 @@ router.post('/save', validateAvatarUrlMiddleware, async function (request, respo
                     return response.status(400).send({ error: 'invalid_loaded_range' });
                 }
 
-                const messageCountValidation = validateSubmittedMessageCount(request.body, existingChat.length - 1);
-                if (!messageCountValidation.ok) {
-                    return response.status(400).send({ error: messageCountValidation.error });
+                const isForcePush = isForcePushAuthorityRequest(request.body);
+                const loadedRangeResult = isForcePush
+                    ? applyForcePushLoadedMessageRange(existingChat, request.body.loaded_range_start, chatData.slice(1), request.body.loaded_range_end, request.body)
+                    : applyLoadedMessageRange(existingChat, request.body.loaded_range_start, chatData.slice(1), request.body.loaded_range_end);
+                if (!isForcePush) {
+                    const messageCountValidation = validateSubmittedMessageCount(request.body, existingChat.length - 1);
+                    if (!messageCountValidation.ok) {
+                        return response.status(400).send({ error: messageCountValidation.error });
+                    }
                 }
-
-                const loadedRangeResult = applyLoadedMessageRange(existingChat, request.body.loaded_range_start, chatData.slice(1), request.body.loaded_range_end);
                 if (!loadedRangeResult.ok) {
                     return response.status(400).send({ error: loadedRangeResult.error });
+                }
+                if (isForcePush) {
+                    await backupPreForcePushServerChat(request.user, filePath, directoryName);
                 }
 
                 logicalChatData = [
@@ -5306,6 +5558,9 @@ router.post('/group/save', async (request, response) => {
             } else if (request.body.save_mode === 'loaded_range') {
                 if (groupSqliteExists) {
                     await assertChatSaveMutationAllowed(request);
+                    if (isForcePushAuthorityRequest(request.body)) {
+                        await backupPreForcePushServerChat(request.user, pathToFile, backupOwnerKey);
+                    }
                     const payload = await updateSqliteLoadedMessageRange({
                         filePath: pathToFile,
                         requestBody: request.body,
@@ -5324,19 +5579,33 @@ router.post('/group/save', async (request, response) => {
                     return response.status(400).send({ error: 'invalid_loaded_range' });
                 }
 
-                const messageCountValidation = validateSubmittedMessageCount(request.body, effectiveExistingPayload.messages.length);
-                if (!messageCountValidation.ok) {
-                    return response.status(400).send({ error: messageCountValidation.error });
+                const isForcePush = isForcePushAuthorityRequest(request.body);
+                const existingLogicalChat = [effectiveExistingPayload.header, ...effectiveExistingPayload.messages];
+                const loadedRangeResult = isForcePush
+                    ? applyForcePushLoadedMessageRange(
+                        existingLogicalChat,
+                        request.body.loaded_range_start,
+                        chat_data,
+                        request.body.loaded_range_end,
+                        request.body,
+                    )
+                    : applyLoadedMessageRange(
+                        existingLogicalChat,
+                        request.body.loaded_range_start,
+                        chat_data,
+                        request.body.loaded_range_end,
+                    );
+                if (!isForcePush) {
+                    const messageCountValidation = validateSubmittedMessageCount(request.body, effectiveExistingPayload.messages.length);
+                    if (!messageCountValidation.ok) {
+                        return response.status(400).send({ error: messageCountValidation.error });
+                    }
                 }
-
-                const loadedRangeResult = applyLoadedMessageRange(
-                    [effectiveExistingPayload.header, ...effectiveExistingPayload.messages],
-                    request.body.loaded_range_start,
-                    chat_data,
-                    request.body.loaded_range_end,
-                );
                 if (!loadedRangeResult.ok) {
                     return response.status(400).send({ error: loadedRangeResult.error });
+                }
+                if (isForcePush) {
+                    await backupPreForcePushServerChat(request.user, pathToFile, backupOwnerKey);
                 }
 
                 messages = loadedRangeResult.chatData.slice(1);

@@ -4855,6 +4855,38 @@ function remapLoadedRangesAfterMessageDeletion(deletedId) {
     replaceLoadedRanges(remappedRanges);
 }
 
+/** Remaps sparse loaded ranges after inserting one logical message id. */
+function remapLoadedRangesAfterMessageInsertion(insertedId) {
+    if (isChatFullyHydrated()) {
+        return;
+    }
+
+    const inserted = Number(insertedId);
+    if (!Number.isInteger(inserted) || inserted < 0 || !chatLoadState.loadedRanges.length) {
+        return;
+    }
+
+    const remappedRanges = [];
+
+    for (const range of chatLoadState.loadedRanges) {
+        const start = Number(range?.start);
+        const end = Number(range?.end);
+        if (!Number.isInteger(start) || !Number.isInteger(end) || start < 0 || end < start) {
+            continue;
+        }
+
+        if (start > inserted) {
+            remappedRanges.push({ start: start + 1, end: end + 1 });
+        } else if (end >= inserted - 1) {
+            remappedRanges.push({ start, end: end + 1 });
+        } else {
+            remappedRanges.push({ start, end });
+        }
+    }
+
+    replaceLoadedRanges(remappedRanges);
+}
+
 /** Clips sparse loaded ranges after deleting a suffix of the logical chat. */
 function clipLoadedRangesToCurrentChatLength() {
     if (isChatFullyHydrated()) {
@@ -10776,6 +10808,8 @@ export async function sendMessageAsUser(messageText, messageBias, insertAt = nul
 
     if (typeof insertAt === 'number' && insertAt >= 0 && insertAt <= chat.length) {
         chat.splice(insertAt, 0, message);
+        remapLoadedRangesAfterMessageInsertion(insertAt);
+        syncPartialChatRangeStateAfterMutation();
         const rekeys = [];
         const remapTimedWorldInfoIndex = createInsertMessageIndexMapper(insertAt);
         for (let messageIndex = chat.length - 1; messageIndex > insertAt; messageIndex--) {
@@ -13687,6 +13721,8 @@ async function cloneEditedMessage() {
     // 6. Insert the clone into the local chat array at target.index + 1
     const insertAt = target.index + 1;
     chat.splice(insertAt, 0, clone);
+    remapLoadedRangesAfterMessageInsertion(insertAt);
+    syncPartialChatRangeStateAfterMutation();
 
     // 7. Render the clone and insert it into the DOM immediately after the original message element
     addOneMessage(clone, { scroll: false, forceId: insertAt, insertAfter: target.index, showSwipes: false, refreshGaps: false });
