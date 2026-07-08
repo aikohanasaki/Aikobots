@@ -4421,18 +4421,74 @@ async function readCharacterLoadError(response) {
     }
 }
 
+async function getCharacterChatDeleteRevisionFields(avatarUrl, chatfile) {
+    const normalizedChatFile = normalizeTopChatFileName(chatfile);
+    const isActiveChat = !selected_group
+        && String(characters[this_chid]?.avatar || '') === String(avatarUrl || '')
+        && String(characters[this_chid]?.chat || '') === normalizedChatFile;
+
+    if (isActiveChat) {
+        return {
+            base_revision: getChatSaveRevision(),
+            save_session_id: getChatSaveSessionId(),
+        };
+    }
+
+    const response = await fetch('/api/chats/get', {
+        method: 'POST',
+        headers: getRequestHeaders(),
+        body: JSON.stringify({
+            file_name: normalizedChatFile,
+            avatar_url: avatarUrl,
+            chunked: true,
+            count: 1,
+        }),
+        cache: 'no-cache',
+    });
+
+    if (!response.ok) {
+        throw new Error('Could not read chat revision before delete.');
+    }
+
+    const payload = await response.json();
+    const revision = Number(payload?.header?.chat_revision ?? payload?.chat_revision);
+    if (!Number.isInteger(revision) || revision < 0) {
+        throw new Error('Chat revision missing before delete.');
+    }
+
+    return {
+        base_revision: revision,
+        save_session_id: getChatSaveSessionId(),
+    };
+}
+
+function reportCharacterChatDeleteRevisionError(error) {
+    toastr.error(t`Check the server connection and reload the page to prevent data loss.`, t`Chat could not be deleted`);
+    console.error('Failed to read chat revision before deleting character chat.', error);
+}
+
 async function delChat(chatfile) {
+    const avatarUrl = characters[this_chid].avatar;
+    let revisionFields;
+    try {
+        revisionFields = await getCharacterChatDeleteRevisionFields(avatarUrl, chatfile);
+    } catch (error) {
+        reportCharacterChatDeleteRevisionError(error);
+        return;
+    }
+
     const response = await fetch('/api/chats/delete', {
         method: 'POST',
         headers: getRequestHeaders(),
         body: JSON.stringify({
             chatfile: chatfile,
-            avatar_url: characters[this_chid].avatar,
+            avatar_url: avatarUrl,
+            ...revisionFields,
         }),
     });
     if (response.ok === true) {
         // choose another chat if current was deleted
-        const name = chatfile.replace('.jsonl', '');
+        const name = normalizeTopChatFileName(chatfile);
         if (name === characters[this_chid].chat) {
             characters[this_chid].chat = '';
             $('#selected_chat_pole').val('');
@@ -4474,12 +4530,21 @@ export async function deleteCharacterChatByName(characterId, fileName) {
         return;
     }
 
+    let revisionFields;
+    try {
+        revisionFields = await getCharacterChatDeleteRevisionFields(character.avatar, fileName);
+    } catch (error) {
+        reportCharacterChatDeleteRevisionError(error);
+        return;
+    }
+
     const response = await fetch('/api/chats/delete', {
         method: 'POST',
         headers: getRequestHeaders(),
         body: JSON.stringify({
             chatfile: fileName,
             avatar_url: character.avatar,
+            ...revisionFields,
         }),
     });
 
@@ -4488,7 +4553,7 @@ export async function deleteCharacterChatByName(characterId, fileName) {
         return;
     }
 
-    if (fileName === character.chat) {
+    if (normalizeTopChatFileName(fileName) === character.chat) {
         const chatsResponse = await fetch('/api/characters/chats', {
             method: 'POST',
             headers: getRequestHeaders(),
@@ -4496,7 +4561,7 @@ export async function deleteCharacterChatByName(characterId, fileName) {
         });
         const chats = Object.values(await chatsResponse.json());
         chats.sort((a, b) => sortMoments(timestampToMoment(a.last_mes), timestampToMoment(b.last_mes)));
-        const newChatName = chats.length && typeof chats[0] === 'object' ? chats[0].file_name.replace('.jsonl', '') : `${character.name} - ${humanizedDateTime()}`;
+        const newChatName = chats.length && typeof chats[0] === 'object' ? normalizeTopChatFileName(chats[0].file_name) : `${character.name} - ${humanizedDateTime()}`;
         await updateRemoteChatName(characterId, newChatName);
     }
 
@@ -4523,7 +4588,7 @@ async function getReplacementCharacterChatName(characterId) {
     chats.sort((a, b) => sortMoments(timestampToMoment(a.last_mes), timestampToMoment(b.last_mes)));
 
     return chats.length && typeof chats[0] === 'object'
-        ? chats[0].file_name.replace('.jsonl', '')
+        ? normalizeTopChatFileName(chats[0].file_name)
         : `${character.name} - ${humanizedDateTime()}`;
 }
 
@@ -11972,7 +12037,7 @@ async function renamePastChats(oldAvatar, newAvatar, newName) {
 
     for (const { file_name } of pastChats) {
         try {
-            const fileNameWithoutExtension = file_name.replace('.jsonl', '');
+            const fileNameWithoutExtension = file_name.replace(/\.(jsonl|sqlite)$/i, '');
             const getChatResponse = await fetch('/api/chats/get', {
                 method: 'POST',
                 headers: getRequestHeaders(),
@@ -14075,7 +14140,7 @@ function getManageChatsRowContext(element) {
 }
 
 function normalizeManageChatsBulkFileName(fileName) {
-    return String(fileName || '').trim().replace(/\.jsonl$/i, '');
+    return String(fileName || '').trim().replace(/\.(jsonl|sqlite)$/i, '');
 }
 
 function cloneManageChatsRowContext(rowContext) {
@@ -15099,12 +15164,22 @@ async function renameOrphanCharacterChat(orphanKey, oldFileName, newFileName) {
 }
 
 async function deleteOrphanCharacterChat(orphanKey, fileName) {
+    const avatarUrl = makeOrphanAvatarUrl(orphanKey);
+    let revisionFields;
+    try {
+        revisionFields = await getCharacterChatDeleteRevisionFields(avatarUrl, fileName);
+    } catch (error) {
+        reportCharacterChatDeleteRevisionError(error);
+        throw error;
+    }
+
     const response = await fetch('/api/chats/delete', {
         method: 'POST',
         headers: getRequestHeaders(),
         body: JSON.stringify({
             chatfile: fileName,
-            avatar_url: makeOrphanAvatarUrl(orphanKey),
+            avatar_url: avatarUrl,
+            ...revisionFields,
         }),
     });
 
@@ -18711,7 +18786,7 @@ export async function deleteCharacter(characterKey, { deleteChats = true, delete
 
         if (deleteChats) {
             for (const chat of pastChats) {
-                const name = chat.file_name.replace('.jsonl', '');
+                const name = chat.file_name.replace(/\.(jsonl|sqlite)$/i, '');
                 await eventSource.emit(event_types.CHAT_DELETED, name);
             }
         }

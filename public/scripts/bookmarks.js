@@ -531,7 +531,7 @@ async function getExistingChatNames() {
 
     if (response.ok) {
         const data = await response.json();
-        const chats = Object.values(data).map(x => x.file_name.replace('.jsonl', ''));
+        const chats = Object.values(data).map(x => x.file_name.replace(/\.(jsonl|sqlite)$/i, ''));
         return [...chats];
     }
 
@@ -1367,7 +1367,7 @@ export function initBookmarks() {
 
         const fileName = $(this).hasClass('mes_bookmark')
             ? $(this).closest('.mes').attr('bookmark_link')
-            : $(this).attr('file_name').replace('.jsonl', '');
+            : $(this).attr('file_name').replace(/\.(jsonl|sqlite)$/i, '');
 
         if (!fileName) {
             return;

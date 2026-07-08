@@ -76,6 +76,7 @@ const TOKEN_DRY_RUN_VERSION = 1;
 const TOKEN_DRY_RUN_ASSEMBLY_MODEL = 'gpt-4o';
 const CATALOG_CHARACTER_DIRECTORY = 'characters';
 const CATALOG_CHARACTER_EXTENSION = '.png';
+const CHAT_STORAGE_EXTENSIONS = new Set(['.jsonl', '.sqlite']);
 
 function getDefaultContentRoot() {
     return path.resolve(String(globalThis.DEFAULT_CONTENT_ROOT || './default/content'));
@@ -566,7 +567,8 @@ const calculateChatSize = (charDir) => {
                 chatSize += chatStat.size;
                 dateLastChat = Math.max(dateLastChat, chatStat.mtimeMs);
 
-                if (path.extname(chat) === '.jsonl' && !chat.endsWith('.head.jsonl') && chatStat.mtimeMs >= latestChatMtime) {
+                const extension = path.extname(chat).toLowerCase();
+                if (CHAT_STORAGE_EXTENSIONS.has(extension) && !chat.toLowerCase().endsWith('.head.jsonl') && chatStat.mtimeMs >= latestChatMtime) {
                     latestChatMtime = chatStat.mtimeMs;
                     latestChat = path.parse(chat).name;
                 }
@@ -576,6 +578,23 @@ const calculateChatSize = (charDir) => {
 
     return { chatSize, dateLastChat, latestChat };
 };
+
+/**
+ * Checks whether a character chat has either current SQLite or legacy JSONL storage.
+ */
+function hasCharacterChatStorageFile(chatsDirectory, chatName) {
+    const normalizedChatName = String(chatName || '').trim();
+    if (!normalizedChatName) {
+        return false;
+    }
+
+    const extension = path.extname(normalizedChatName).toLowerCase();
+    const candidateFileNames = CHAT_STORAGE_EXTENSIONS.has(extension)
+        ? [normalizedChatName]
+        : ['.sqlite', '.jsonl'].map(storageExtension => `${normalizedChatName}${storageExtension}`);
+
+    return candidateFileNames.some(fileName => fs.existsSync(path.join(chatsDirectory, sanitize(fileName))));
+}
 
 // Calculate the total string length of the data object
 const calculateDataSize = (data) => {
@@ -677,8 +696,7 @@ const processCharacter = async (item, directories, { shallow, user = null, share
         character['chat_size'] = chatSize;
         character['date_last_chat'] = dateLastChat;
         const activeChat = typeof character.chat === 'string' ? character.chat.trim() : '';
-        const activeChatPath = activeChat ? path.join(chatsDirectory, sanitize(`${activeChat}.jsonl`)) : '';
-        character['chat'] = activeChat && fs.existsSync(activeChatPath)
+        character['chat'] = activeChat && hasCharacterChatStorageFile(chatsDirectory, activeChat)
             ? activeChat
             : (latestChat || activeChat || `${character.name} - ${humanizedISO8601DateTime()}`);
         character['data_size'] = calculateDataSize(jsonObject?.data);

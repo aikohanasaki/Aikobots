@@ -958,6 +958,44 @@ async function persistActiveGroupChat(groupId) {
     await saveGroupChat(groupId, false);
 }
 
+async function getGroupChatDeleteRevisionFields(groupId, chatId) {
+    const isActiveChat = String(selected_group || '') === String(groupId || '')
+        && String(getCurrentChatId() || '') === String(chatId || '');
+
+    if (isActiveChat) {
+        return {
+            base_revision: getChatSaveRevision(),
+            save_session_id: getChatSaveSessionId(),
+        };
+    }
+
+    const response = await fetch('/api/chats/group/get', {
+        method: 'POST',
+        headers: getRequestHeaders(),
+        body: JSON.stringify({
+            id: chatId,
+            chunked: true,
+            count: 1,
+        }),
+        cache: 'no-cache',
+    });
+
+    if (!response.ok) {
+        throw new Error('Could not read group chat revision before delete.');
+    }
+
+    const payload = await response.json();
+    const revision = Number(payload?.header?.chat_revision ?? payload?.chat_revision);
+    if (!Number.isInteger(revision) || revision < 0) {
+        throw new Error('Group chat revision missing before delete.');
+    }
+
+    return {
+        base_revision: revision,
+        save_session_id: getChatSaveSessionId(),
+    };
+}
+
 /**
  * Persists one loaded message in the active group chat without replacing the whole chat.
  * @param {number} messageId Logical message id
@@ -2452,18 +2490,22 @@ export async function deleteGroupChatByName(groupId, chatName) {
         return;
     }
 
-    group.chats.splice(group.chats.indexOf(chatName), 1);
-
+    const revisionFields = await getGroupChatDeleteRevisionFields(groupId, chatName);
     const response = await fetch('/api/chats/group/delete', {
         method: 'POST',
         headers: getRequestHeaders(),
-        body: JSON.stringify({ id: chatName }),
+        body: JSON.stringify({ id: chatName, ...revisionFields }),
     });
 
     if (!response.ok) {
         toastr.error(t`Check the server connection and reload the page to prevent data loss.`, t`Group chat could not be deleted`);
         console.error('Group chat could not be deleted');
         return;
+    }
+
+    const chatIndex = group.chats.indexOf(chatName);
+    if (chatIndex !== -1) {
+        group.chats.splice(chatIndex, 1);
     }
 
     // If the deleted chat was the current chat, switch to the last chat in the group
@@ -2496,41 +2538,49 @@ export async function deleteGroupChat(groupId, chatId, { jumpToNewChat = true } 
     const isCurrentChat = group.chat_id === chatId;
     const isActiveCurrentChat = isCurrentChat && String(selected_group) === String(groupId);
 
-    group.chats.splice(group.chats.indexOf(chatId), 1);
+    const revisionFields = await getGroupChatDeleteRevisionFields(groupId, chatId);
+    const response = await fetch('/api/chats/group/delete', {
+        method: 'POST',
+        headers: getRequestHeaders(),
+        body: JSON.stringify({ id: chatId, ...revisionFields }),
+    });
+
+    if (!response.ok) {
+        toastr.error(t`Check the server connection and reload the page to prevent data loss.`, t`Group chat could not be deleted`);
+        console.error('Group chat could not be deleted');
+        return;
+    }
+
+    const chatIndex = group.chats.indexOf(chatId);
+    if (chatIndex !== -1) {
+        group.chats.splice(chatIndex, 1);
+    }
 
     if (isCurrentChat) {
         group.chat_id = '';
         updateChatMetadata({}, true);
     }
 
-    const response = await fetch('/api/chats/group/delete', {
-        method: 'POST',
-        headers: getRequestHeaders(),
-        body: JSON.stringify({ id: chatId }),
-    });
-
-    if (response.ok) {
-        if (isActiveCurrentChat && jumpToNewChat) {
-            if (power_user.delete_current_chat_to_welcome) {
-                prepareNextGroupChat(group);
-                await editGroup(groupId, true, false);
-                await closeCurrentChat();
-            } else if (group.chats.length) {
-                const newChatId = group.chats[group.chats.length - 1];
-                group.chat_id = newChatId;
-                group['date_last_chat'] = Date.now();
-                updateChatMetadata({}, true);
-                await editGroup(groupId, true, false);
-                await getGroupChat(groupId);
-            } else {
-                await createNewGroupChat(groupId);
-            }
-        } else {
+    if (isActiveCurrentChat && jumpToNewChat) {
+        if (power_user.delete_current_chat_to_welcome) {
+            prepareNextGroupChat(group);
             await editGroup(groupId, true, false);
+            await closeCurrentChat();
+        } else if (group.chats.length) {
+            const newChatId = group.chats[group.chats.length - 1];
+            group.chat_id = newChatId;
+            group['date_last_chat'] = Date.now();
+            updateChatMetadata({}, true);
+            await editGroup(groupId, true, false);
+            await getGroupChat(groupId);
+        } else {
+            await createNewGroupChat(groupId);
         }
-
-        await eventSource.emit(event_types.GROUP_CHAT_DELETED, chatId);
+    } else {
+        await editGroup(groupId, true, false);
     }
+
+    await eventSource.emit(event_types.GROUP_CHAT_DELETED, chatId);
 }
 
 function prepareNextGroupChat(group) {

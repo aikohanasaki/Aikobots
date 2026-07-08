@@ -879,6 +879,8 @@ describe('SQLite chat length handling', () => {
                     loaded_range_start: 5,
                     loaded_range_end: 7,
                     base_revision: 6,
+                    save_session_id: '33333333-3333-4333-8333-333333333333',
+                    saved_message_count: 20,
                 },
                 incomingHeader: header,
                 rangeMessages: patchMessages,
@@ -896,6 +898,80 @@ describe('SQLite chat length handling', () => {
             expect(logicalChat[8].mes).toBe('patched direct 7');
             expect(logicalChat[9].mes).toBe('message 8');
             expect(logicalChat.at(-1).mes).toBe('message 19');
+        } finally {
+            fs.rmSync(tempDir, { recursive: true, force: true });
+        }
+    });
+
+    it('rejects stale SQLite loaded-range saves before accepting no-op payloads', async () => {
+        const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'sqlite-chat-loaded-range-stale-noop-'));
+        const chatPath = path.join(tempDir, 'chat.jsonl');
+
+        try {
+            const header = makeHeader({ chat_revision: 8 });
+            const messages = makeMessages(6);
+            await writeLogicalChat(chatPath, header, messages);
+
+            await expect(updateSqliteLoadedMessageRange({
+                filePath: chatPath,
+                requestBody: {
+                    loaded_range_start: 2,
+                    loaded_range_end: 3,
+                    base_revision: 7,
+                    save_session_id: '33333333-3333-4333-8333-333333333333',
+                    saved_message_count: 6,
+                },
+                incomingHeader: header,
+                rangeMessages: messages.slice(2, 4),
+                saveSessionId: '33333333-3333-4333-8333-333333333333',
+            })).rejects.toMatchObject({ status: 409, error: 'stale_revision' });
+
+            const logicalChat = await getLogicalChatData(chatPath);
+            expect(logicalChat[0].chat_revision).toBe(8);
+        } finally {
+            fs.rmSync(tempDir, { recursive: true, force: true });
+        }
+    });
+
+    it('rejects sparse or ambiguous SQLite loaded-range saves', async () => {
+        const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'sqlite-chat-loaded-range-invalid-'));
+        const chatPath = path.join(tempDir, 'chat.jsonl');
+
+        try {
+            const header = makeHeader({ chat_revision: 2 });
+            const messages = makeMessages(6);
+            await writeLogicalChat(chatPath, header, messages);
+
+            const sparseMessages = [];
+            sparseMessages.length = 2;
+            sparseMessages[0] = messages[1];
+
+            await expect(updateSqliteLoadedMessageRange({
+                filePath: chatPath,
+                requestBody: {
+                    loaded_range_start: 1,
+                    loaded_range_end: 2,
+                    base_revision: 2,
+                    save_session_id: '33333333-3333-4333-8333-333333333333',
+                    saved_message_count: 6,
+                },
+                incomingHeader: header,
+                rangeMessages: sparseMessages,
+                saveSessionId: '33333333-3333-4333-8333-333333333333',
+            })).rejects.toMatchObject({ status: 400, error: 'invalid_loaded_range' });
+
+            await expect(updateSqliteLoadedMessageRange({
+                filePath: chatPath,
+                requestBody: {
+                    loaded_range_start: 1,
+                    base_revision: 2,
+                    save_session_id: '33333333-3333-4333-8333-333333333333',
+                    saved_message_count: 6,
+                },
+                incomingHeader: header,
+                rangeMessages: messages.slice(1, 3),
+                saveSessionId: '33333333-3333-4333-8333-333333333333',
+            })).rejects.toMatchObject({ status: 400, error: 'invalid_loaded_range' });
         } finally {
             fs.rmSync(tempDir, { recursive: true, force: true });
         }
@@ -923,6 +999,7 @@ describe('SQLite chat length handling', () => {
                     loaded_range_end: 3,
                     base_revision: 3,
                     save_session_id: saveSessionId,
+                    saved_message_count: 4,
                 },
                 incomingHeader: nextHeader,
                 rangeMessages: nextMessages,
@@ -967,6 +1044,8 @@ describe('SQLite chat length handling', () => {
                     loaded_range_start: 2,
                     loaded_range_end: 4,
                     base_revision: 2,
+                    save_session_id: '33333333-3333-4333-8333-333333333333',
+                    saved_message_count: 10,
                 },
                 incomingHeader: header,
                 rangeMessages: patchMessages,
@@ -1001,7 +1080,10 @@ describe('SQLite chat length handling', () => {
 
             const payload = await updateSqliteMessageVisibility({
                 filePath: chatPath,
-                requestBody: { base_revision: 1 },
+                requestBody: {
+                    base_revision: 1,
+                    save_session_id: '33333333-3333-4333-8333-333333333333',
+                },
                 start: 2,
                 end: 5,
                 hide: true,
@@ -1032,7 +1114,10 @@ describe('SQLite chat length handling', () => {
 
             await expect(updateSqliteMessageVisibility({
                 filePath: chatPath,
-                requestBody: { base_revision: 2 },
+                requestBody: {
+                    base_revision: 2,
+                    save_session_id: '33333333-3333-4333-8333-333333333333',
+                },
                 start: 1,
                 end: 1,
                 hide: true,
@@ -1061,7 +1146,10 @@ describe('SQLite chat length handling', () => {
 
             const payload = await updateSqliteUserPersonaMessages({
                 filePath: chatPath,
-                requestBody: { base_revision: 4 },
+                requestBody: {
+                    base_revision: 4,
+                    save_session_id: '33333333-3333-4333-8333-333333333333',
+                },
                 userName: 'New User',
                 forceAvatar: '/thumbnail?type=persona&file=new.png',
                 saveSessionId: '33333333-3333-4333-8333-333333333333',
@@ -1178,6 +1266,7 @@ describe('SQLite chat length handling', () => {
                     text_override: 'cloned text',
                     bias_override: null,
                     base_revision: 2,
+                    save_session_id: '33333333-3333-4333-8333-333333333333',
                 },
                 saveSessionId: '33333333-3333-4333-8333-333333333333',
                 displayCount: 10,
@@ -1218,6 +1307,7 @@ describe('SQLite chat length handling', () => {
                     message_uuid: messages[1].aikobots_message_uuid,
                     text_override: 'uuid clone',
                     base_revision: 5,
+                    save_session_id: '44444444-4444-4444-8444-444444444444',
                 },
                 saveSessionId: '44444444-4444-4444-8444-444444444444',
                 displayCount: 10,
