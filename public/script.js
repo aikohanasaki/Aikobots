@@ -984,6 +984,7 @@ const CHAT_SAVE_RESULT = {
 };
 export { CHAT_SAVE_RESULT };
 const CHAT_SAVE_STREAMING_APPEND_RETRY_MS = 250;
+const CHAT_SAVE_REQUEST_RETRY_DELAY_MS = 750;
 const CHAT_SAVE_SESSION_ID_KEY = 'aikobots_chat_save_session_id';
 const TEMPORARY_CHAT_DISPLAY_NAME = '(Temporary Chat)';
 const TEMPORARY_CHAT_PENDING_NAME_STORAGE_KEY_PREFIX = 'aikobots_temporary_chat_pending_name:';
@@ -12046,6 +12047,67 @@ export function saveChatDebounced() {
     }, DEFAULT_CHAT_SAVE_EDIT_TIMEOUT);
 }
 
+function isRetryableChatSaveResponse(response, errorData) {
+    if (errorData?.error && ['active_session_required', 'chat_repaired', 'integrity', 'stale_revision'].includes(errorData.error)) {
+        return false;
+    }
+
+    return response?.status === 408 || response?.status === 429 || response?.status >= 500;
+}
+
+async function parseChatSaveResponseData(response) {
+    try {
+        return await response.json();
+    } catch {
+        return null;
+    }
+}
+
+/**
+ * Sends a chat save request with one quiet retry for transient request/server failures.
+ * @param {object} requestBody Chat save payload
+ * @returns {Promise<{response: Response, responseData: object|null, errorData: object|null}>}
+ */
+async function fetchChatSaveWithRetry(requestBody) {
+    let lastError = null;
+
+    for (let attempt = 0; attempt < 2; attempt++) {
+        try {
+            const response = await fetch('/api/chats/save', {
+                method: 'POST',
+                cache: 'no-cache',
+                headers: getRequestHeaders(),
+                body: JSON.stringify(requestBody),
+            });
+
+            if (response.ok) {
+                return { response, responseData: await response.json(), errorData: null };
+            }
+
+            const errorData = await parseChatSaveResponseData(response);
+            if (attempt === 0 && isRetryableChatSaveResponse(response, errorData)) {
+                console.warn('Chat save failed; retrying once.', {
+                    status: response.status,
+                    error: errorData?.error || response.statusText || null,
+                });
+                await delay(CHAT_SAVE_REQUEST_RETRY_DELAY_MS);
+                continue;
+            }
+
+            return { response, responseData: null, errorData };
+        } catch (error) {
+            lastError = error;
+            if (attempt === 0) {
+                console.warn('Chat save request failed; retrying once.', error);
+                await delay(CHAT_SAVE_REQUEST_RETRY_DELAY_MS);
+                continue;
+            }
+        }
+    }
+
+    throw lastError || new Error('Chat save request failed');
+}
+
 /**
  * Saves the chat to the server.
  * @param {object} [options] - Additional options.
@@ -12130,32 +12192,27 @@ export async function saveChat({ chatName, withMetadata, mesId, force = false, f
         return CHAT_SAVE_RESULT.FAILED;
     }
 
-    try {
-        const result = await fetch('/api/chats/save', {
-            method: 'POST',
-            cache: 'no-cache',
-            headers: getRequestHeaders(),
-            body: JSON.stringify({
-                ch_name: characters[this_chid].name,
-                file_name: fileName,
-                chat: savePayload.chat,
-                avatar_url: characters[this_chid].avatar,
-                force: force,
-                save_mode: savePayload.saveMode,
-                full_chat: savePayload.fullChat,
-                loaded_range_start: savePayload.loadedRangeStart,
-                loaded_range_end: savePayload.loadedRangeEnd,
-                saved_message_count: savePayload.savedMessageCount,
-                ...(shouldTrackRevision ? {
-                    base_revision: getChatSaveRevision(),
-                    save_session_id: getChatSaveSessionId(),
-                } : {}),
-                regenerate_identities: Boolean(chatName),
-            }),
-        });
+    const requestBody = {
+        ch_name: characters[this_chid].name,
+        file_name: fileName,
+        chat: savePayload.chat,
+        avatar_url: characters[this_chid].avatar,
+        force: force,
+        save_mode: savePayload.saveMode,
+        full_chat: savePayload.fullChat,
+        loaded_range_start: savePayload.loadedRangeStart,
+        loaded_range_end: savePayload.loadedRangeEnd,
+        saved_message_count: savePayload.savedMessageCount,
+        ...(shouldTrackRevision ? {
+            base_revision: getChatSaveRevision(),
+            save_session_id: getChatSaveSessionId(),
+        } : {}),
+        regenerate_identities: Boolean(chatName),
+    };
 
+    try {
+        const { response: result, responseData, errorData } = await fetchChatSaveWithRetry(requestBody);
         if (result.ok) {
-            const responseData = await result.json();
             if (responseData?.storage_mode) {
                 chatLoadState.storageMode = String(responseData.storage_mode);
             }
@@ -12174,7 +12231,6 @@ export async function saveChat({ chatName, withMetadata, mesId, force = false, f
             return CHAT_SAVE_RESULT.SAVED;
         }
 
-        const errorData = await result.json();
         if (errorData?.error === 'chat_repaired') {
             await reloadCurrentChatAfterServerRepair(errorData);
             return CHAT_SAVE_RESULT.FAILED;
