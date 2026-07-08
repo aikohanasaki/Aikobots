@@ -980,6 +980,7 @@ let temporaryGroupChat = null;
 const CHAT_SAVE_RESULT = {
     SAVED: 'saved',
     FAILED: 'failed',
+    MISSING_CHAT: 'missing_chat',
 };
 export { CHAT_SAVE_RESULT };
 const CHAT_SAVE_STREAMING_APPEND_RETRY_MS = 250;
@@ -1533,8 +1534,12 @@ function hasUserMessageInCurrentChat() {
     return chat.some(message => message?.is_user === true);
 }
 
+/**
+ * Skips only pristine temporary character chats that still contain just the generated greeting.
+ * Bot-only generated openings mark the chat tainted and must be persisted.
+ */
 function shouldSkipTemporaryCharacterChatSave() {
-    return isCurrentCharacterChatTemporary() && !hasUserMessageInCurrentChat();
+    return isCurrentCharacterChatTemporary() && !hasUserMessageInCurrentChat() && chat_metadata['tainted'] !== true;
 }
 
 function getTemporaryCharacterChatPendingFileName() {
@@ -12048,11 +12053,12 @@ export function saveChatDebounced() {
  * @param {object} [options.withMetadata] Additional metadata to save with the chat
  * @param {number} [options.mesId] The message ID to save the chat up to
  * @param {boolean} [options.force] Force the saving despite the integrity check result
+ * @param {boolean} [options.forceFull] Force a complete chat save even when SQLite range saving is available
  * @param {boolean} [options.retrySameSessionStale] Retry once when this browser session already advanced the server revision
  *
  * @returns {Promise<void>}
  */
-export async function saveChat({ chatName, withMetadata, mesId, force = false, retrySameSessionStale = true } = {}) {
+export async function saveChat({ chatName, withMetadata, mesId, force = false, forceFull = false, retrySameSessionStale = true } = {}) {
     if (arguments.length > 0 && typeof arguments[0] !== 'object') {
         console.trace('saveChat called with positional arguments. Please use an object instead.');
         [chatName, withMetadata, mesId, force] = arguments;
@@ -12117,7 +12123,7 @@ export async function saveChat({ chatName, withMetadata, mesId, force = false, r
     const savePayload = await prepareCurrentChatSavePayload({
         header,
         endId: normalizedMesId,
-        allowPartialSave: shouldTrackRevision,
+        allowPartialSave: shouldTrackRevision && forceFull !== true,
     });
     if (!savePayload.ok) {
         toastr.warning(savePayload.message, savePayload.title);
@@ -12177,7 +12183,7 @@ export async function saveChat({ chatName, withMetadata, mesId, force = false, r
         if (errorData?.error === 'stale_revision') {
             const staleResult = warnStaleChatSave(errorData);
             if (retrySameSessionStale && staleResult.sameSessionStale) {
-                return saveChat({ chatName, withMetadata, mesId, force, retrySameSessionStale: false });
+                return saveChat({ chatName, withMetadata, mesId, force, forceFull, retrySameSessionStale: false });
             }
             return CHAT_SAVE_RESULT.FAILED;
         }
@@ -13572,6 +13578,8 @@ async function saveSqliteMessageMutation(operation, fields, defaultErrorMessage 
                 }
             } else if (errorData?.error === 'chat_repaired') {
                 await reloadCurrentChatAfterServerRepair(errorData);
+            } else if (operation === 'append' && (errorData?.error === 'chat_not_found' || errorData?.error === 'message_append_requires_sqlite')) {
+                return CHAT_SAVE_RESULT.MISSING_CHAT;
             } else {
                 toastr.error(errorData?.message || errorData?.error || defaultErrorMessage);
             }
@@ -13602,10 +13610,16 @@ async function saveSqliteMessageAppend(messageId, message) {
     ensureMessageIdentity(message, { generateUuid: uuidv4 });
     const expectedTailMessage = Number.isInteger(Number(messageId)) ? chat[Number(messageId) - 1] : null;
     const expectedTailUuid = expectedTailMessage?.[AIKOBOTS_MESSAGE_UUID_KEY];
-    return saveSqliteMessageMutation('append', {
+    const appendResult = await saveSqliteMessageMutation('append', {
         message: structuredClone(message),
         ...(expectedTailUuid ? { expected_tail_uuid: expectedTailUuid } : {}),
     }, t`Message append failed.`);
+
+    if (appendResult !== CHAT_SAVE_RESULT.MISSING_CHAT) {
+        return appendResult;
+    }
+
+    return saveChatConditional({ immediate: true, forceFull: true });
 }
 
 async function saveSqliteMessageDeleteByUuid(messageUuid) {
