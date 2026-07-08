@@ -5866,15 +5866,20 @@ function hasPendingDebouncedChatSave() {
 }
 
 export async function flushDebouncedChatSave() {
+    await waitForSqliteMessageUpdateSaveQueue();
+
     if (!hasPendingDebouncedChatSave()) {
-        return chatSaveQueuePromise
+        const result = chatSaveQueuePromise
             ? await chatSaveQueuePromise
             : CHAT_SAVE_RESULT.SAVED;
+        await waitForSqliteMessageUpdateSaveQueue();
+        return result;
     }
 
     cancelDebouncedChatSave();
     toastr.info(t`Please wait until the chat is saved.`, t`Your chat is still saving...`);
     const result = await saveChatConditional({ immediate: true });
+    await waitForSqliteMessageUpdateSaveQueue();
 
     if (result !== CHAT_SAVE_RESULT.SAVED) {
         saveChatDebounced();
@@ -12932,6 +12937,10 @@ const SQLITE_AUTO_EDIT_SAVE_DELAY = 500;
 let sqliteMessageUpdateSaveQueue = Promise.resolve();
 let sqliteAutoEditSaveTimer = null;
 let pendingSqliteAutoEditMessage = null;
+
+async function waitForSqliteMessageUpdateSaveQueue() {
+    await sqliteMessageUpdateSaveQueue;
+}
 
 function cancelPendingSqliteAutoEditSave() {
     if (sqliteAutoEditSaveTimer) {
