@@ -1762,6 +1762,81 @@ function updateForcePushStatusToast(toast, message) {
     toast?.find?.('.toast-message')?.text(message);
 }
 
+function formatForcePushRangeLabel(range) {
+    const start = Number(range?.start);
+    const end = Number(range?.end);
+    const count = end - start + 1;
+    return `Messages ${start + 1}-${end + 1} (${count} loaded)`;
+}
+
+function getAvailableLoadedChatRangesForSave({ includeHydrated = false } = {}) {
+    if (isChatFullyHydrated()) {
+        if (!includeHydrated) {
+            return [];
+        }
+
+        const totalMessages = getTotalChatMessages();
+        if (totalMessages <= 0) {
+            return [];
+        }
+
+        const messages = getContiguousChatMessagesForSave(0, totalMessages - 1);
+        return messages ? [{ start: 0, end: totalMessages - 1, messages }] : [];
+    }
+
+    return chatLoadState.loadedRanges
+        .map(range => ({
+            start: Number(range?.start),
+            end: Number(range?.end),
+        }))
+        .filter(range => Number.isInteger(range.start) && Number.isInteger(range.end) && range.start >= 0 && range.end >= range.start)
+        .map(range => {
+            const messages = getContiguousChatMessagesForSave(range.start, range.end);
+            return messages ? { ...range, messages } : null;
+        })
+        .filter(Boolean);
+}
+
+async function chooseForcePushLoadedRange() {
+    const ranges = getAvailableLoadedChatRangesForSave({ includeHydrated: true });
+    if (ranges.length === 0) {
+        toastr.warning(t`No contiguous loaded message range is available to force push.`, t`Chat push blocked`);
+        return null;
+    }
+
+    if (ranges.length === 1) {
+        const { start, end } = ranges[0];
+        return { start, end };
+    }
+
+    const rangeListHtml = ranges
+        .map((range, index) => `<li><code>${index + 1}</code> - ${formatForcePushRangeLabel(range)}</li>`)
+        .join('');
+    const selectedRange = await Popup.show.input(
+        t`Choose message range to force push`,
+        `<p>${t`Only the selected loaded range will be written to the server. Messages outside that range will be left unchanged.`}</p><ol>${rangeListHtml}</ol><p>${t`Enter the range number to force push.`}</p>`,
+        '1',
+        {
+            okButton: t`Force Push`,
+            cancelButton: t`Cancel`,
+            wide: true,
+        },
+    );
+
+    if (selectedRange === null) {
+        return null;
+    }
+
+    const selectedIndex = Number(selectedRange) - 1;
+    if (!Number.isInteger(selectedIndex) || selectedIndex < 0 || selectedIndex >= ranges.length) {
+        toastr.warning(t`Invalid range selected.`, t`Chat push blocked`);
+        return null;
+    }
+
+    const { start, end } = ranges[selectedIndex];
+    return { start, end };
+}
+
 async function syncCurrentChatToServer() {
     if (getSyncCurrentChatCooldownSeconds() > 0) {
         updateSyncCurrentChatCooldownState();
@@ -1769,6 +1844,11 @@ async function syncCurrentChatToServer() {
     }
 
     if (!hasActiveChatContext()) {
+        return;
+    }
+
+    const forceLoadedRange = await chooseForcePushLoadedRange();
+    if (!forceLoadedRange) {
         return;
     }
 
@@ -1793,10 +1873,11 @@ async function syncCurrentChatToServer() {
             return;
         }
 
-        updateForcePushStatusToast(statusToast, t`Force push queued; waiting for save debounce...`);
+        updateForcePushStatusToast(statusToast, `${t`Force push queued for`} ${formatForcePushRangeLabel(forceLoadedRange)}; ${t`waiting for save debounce...`}`);
         const syncResult = await saveChatConditional({
             force: true,
             forcePush: true,
+            forceLoadedRange,
             requireLoadedRange: true,
         });
 
@@ -5143,10 +5224,11 @@ function getContiguousLoadedChatRangeForSave({ includeHydrated = false } = {}) {
  * @param {object|null} [options.header] Optional direct-chat header to prepend.
  * @param {number|undefined} [options.endId] Optional final message id for full/hydrated saves.
  * @param {boolean} [options.allowPartialSave] Allow explicit loaded-range saves when the active chat is not hydrated.
+ * @param {{start:number,end:number}|null} [options.forceLoadedRange] Explicit loaded range to save.
  * @param {boolean} [options.requireLoadedRange] Require an explicit loaded-range save.
  * @returns {Promise<object>} Save payload metadata and messages, or a failure descriptor.
  */
-export async function prepareCurrentChatSavePayload({ header = null, endId = undefined, allowPartialSave = true, requireLoadedRange = false } = {}) {
+export async function prepareCurrentChatSavePayload({ header = null, endId = undefined, allowPartialSave = true, forceLoadedRange = null, requireLoadedRange = false } = {}) {
     let trimmedChat = [];
     let saveMode = undefined;
     let loadedRangeStart = undefined;
@@ -5157,16 +5239,39 @@ export async function prepareCurrentChatSavePayload({ header = null, endId = und
         saveMode = 'loaded_range';
     };
 
-    if (!allowPartialSave && !isChatFullyHydrated()) {
+    if (forceLoadedRange) {
+        const requestedStart = Number(forceLoadedRange.start);
+        const requestedEnd = Number(forceLoadedRange.end);
+        if (!allowPartialSave || endId !== undefined || !Number.isInteger(requestedStart) || !Number.isInteger(requestedEnd) || requestedStart < 0 || requestedEnd < requestedStart) {
+            return {
+                ok: false,
+                reason: 'loaded_range_required',
+                message: t`Loaded-range save is not available for this chat state. Reload the chat and then click Force Push Chat to Server.`,
+                title: t`Chat push blocked`,
+            };
+        }
+
+        const loadedRangeContainer = getAvailableLoadedChatRangesForSave({ includeHydrated: true })
+            .find(range => range.start <= requestedStart && range.end >= requestedEnd);
+        const messages = loadedRangeContainer ? getContiguousChatMessagesForSave(requestedStart, requestedEnd) : null;
+        if (!messages) {
+            return {
+                ok: false,
+                reason: 'loaded_range_not_contiguous',
+                message: t`The selected loaded message range is no longer available. Reload the chat and then click Force Push Chat to Server.`,
+                title: t`Chat push blocked`,
+            };
+        }
+
+        useLoadedRangeSave({ start: requestedStart, messages });
+    } else if (!allowPartialSave && !isChatFullyHydrated()) {
         return {
             ok: false,
             reason: 'full_save_requires_hydration',
             message: t`Load the full chat before saving it as a complete replacement.`,
             title: t`Chat save blocked`,
         };
-    }
-
-    if (allowPartialSave && currentChatFileNameLooksSqlite() && endId === undefined) {
+    } else if (allowPartialSave && currentChatFileNameLooksSqlite() && endId === undefined) {
         const loadedRange = getContiguousLoadedChatRangeForSave({ includeHydrated: true });
         if (!loadedRange) {
             return {
@@ -12244,13 +12349,14 @@ async function fetchChatSaveWithRetry(requestBody) {
  * @param {number} [options.mesId] The message ID to save the chat up to
  * @param {boolean} [options.force] Force the saving despite the integrity check result
  * @param {boolean} [options.forcePush] Take over server authority for a forced loaded-range push
+ * @param {{start:number,end:number}|null} [options.forceLoadedRange] Explicit loaded range to save
  * @param {boolean} [options.forceFull] Force a complete chat save even when SQLite range saving is available
  * @param {boolean} [options.requireLoadedRange] Require an explicit loaded-range save
  * @param {boolean} [options.retrySameSessionStale] Retry once when this browser session already advanced the server revision
  *
  * @returns {Promise<void>}
  */
-export async function saveChat({ chatName, withMetadata, mesId, force = false, forcePush = false, forceFull = false, requireLoadedRange = false, retrySameSessionStale = true } = {}) {
+export async function saveChat({ chatName, withMetadata, mesId, force = false, forcePush = false, forceLoadedRange = null, forceFull = false, requireLoadedRange = false, retrySameSessionStale = true } = {}) {
     if (arguments.length > 0 && typeof arguments[0] !== 'object') {
         console.trace('saveChat called with positional arguments. Please use an object instead.');
         [chatName, withMetadata, mesId, force] = arguments;
@@ -12316,6 +12422,7 @@ export async function saveChat({ chatName, withMetadata, mesId, force = false, f
         header,
         endId: normalizedMesId,
         allowPartialSave: shouldTrackRevision && forceFull !== true,
+        forceLoadedRange,
         requireLoadedRange,
     });
     if (!savePayload.ok) {
@@ -12371,7 +12478,7 @@ export async function saveChat({ chatName, withMetadata, mesId, force = false, f
         if (errorData?.error === 'stale_revision') {
             const staleResult = warnStaleChatSave(errorData);
             if (retrySameSessionStale && staleResult.sameSessionStale) {
-                return saveChat({ chatName, withMetadata, mesId, force, forcePush, forceFull, requireLoadedRange, retrySameSessionStale: false });
+                return saveChat({ chatName, withMetadata, mesId, force, forcePush, forceLoadedRange, forceFull, requireLoadedRange, retrySameSessionStale: false });
             }
             return CHAT_SAVE_RESULT.FAILED;
         }
@@ -12403,7 +12510,7 @@ export async function saveChat({ chatName, withMetadata, mesId, force = false, f
             return CHAT_SAVE_RESULT.FAILED;
         }
 
-        return await saveChat({ chatName, withMetadata, mesId, force: true, forcePush, forceFull, requireLoadedRange });
+        return await saveChat({ chatName, withMetadata, mesId, force: true, forcePush, forceLoadedRange, forceFull, requireLoadedRange });
     } catch (error) {
         console.error(error);
         toastr.error(

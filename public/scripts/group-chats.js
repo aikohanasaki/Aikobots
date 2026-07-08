@@ -880,7 +880,7 @@ function resetSelectedGroup() {
     is_group_generating = false;
 }
 
-async function saveGroupChat(groupId, shouldSaveGroup, { force = false, forcePush = false, requireLoadedRange = false, retrySameSessionStale = true } = {}) {
+async function saveGroupChat(groupId, shouldSaveGroup, { force = false, forcePush = false, forceLoadedRange = null, requireLoadedRange = false, retrySameSessionStale = true } = {}) {
     const group = groups.find(x => x.id == groupId);
     const chat_id = group.chat_id;
     group['date_last_chat'] = Date.now();
@@ -888,6 +888,7 @@ async function saveGroupChat(groupId, shouldSaveGroup, { force = false, forcePus
     normalizeChatIdentities(chat, { generateUuid: uuidv4 });
     const savePayload = await prepareCurrentChatSavePayload({
         allowPartialSave: shouldTrackRevision,
+        forceLoadedRange,
         requireLoadedRange,
     });
     if (!savePayload.ok) {
@@ -925,7 +926,7 @@ async function saveGroupChat(groupId, shouldSaveGroup, { force = false, forcePus
                 const staleResult = warnStaleChatSave(errorData);
                 console.error('Group chat save rejected as stale', errorData);
                 if (retrySameSessionStale && staleResult.sameSessionStale) {
-                    return saveGroupChat(groupId, shouldSaveGroup, { force, forcePush, requireLoadedRange, retrySameSessionStale: false });
+                    return saveGroupChat(groupId, shouldSaveGroup, { force, forcePush, forceLoadedRange, requireLoadedRange, retrySameSessionStale: false });
                 }
                 return CHAT_SAVE_RESULT.FAILED;
             }
