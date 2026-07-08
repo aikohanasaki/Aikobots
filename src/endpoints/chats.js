@@ -1651,8 +1651,7 @@ function getSegmentLayout(segments) {
 }
 
 export async function getLogicalChatData(filePath) {
-    const sqlitePath = replaceChatStorageExtension(filePath, '.sqlite');
-    const segments = await getChatSegments(filePath, { metadataOnly: fs.existsSync(sqlitePath) });
+    const segments = await getChatSegments(filePath);
 
     if (!segments.header) {
         return [];
