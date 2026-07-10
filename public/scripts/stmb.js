@@ -2204,13 +2204,13 @@ function buildSettingsPopupHtml(sceneData, currentUiConnection, regexOptions) {
                 <label class="checkbox_label" title="When enabled, automatically creates and binds a lorebook to the chat if none exists."><input type="checkbox" id="stmb-settings-auto-create-lorebook" ${moduleSettings.autoCreateLorebook ? 'checked' : ''} ${manualMode ? 'disabled' : ''}> <span title="When enabled, automatically creates and binds a lorebook to the chat if none exists.">Auto-create lorebook if none exists</span></label>
             </div>
             ${renderManualGroupLorebookBindingsHtml(manualMode)}
-            <div class="world_entry_form_control">
+            <div class="world_entry_form_control marginTop10 marginBot10">
                 <label for="stmb-settings-lorebook-name-template" title="Template for auto-created lorebook names. Supports {{char}}, {{user}}, {{chat}} placeholders.">Lorebook Name Template</label>
                 <input type="text" id="stmb-settings-lorebook-name-template" class="text_pole" value="${escapeHtml(String(moduleSettings.lorebookNameTemplate || 'LTM - {{char}} - {{chat}}'))}" ${moduleSettings.autoCreateLorebook ? '' : 'disabled'} title="Template for auto-created lorebook names. Supports {{char}}, {{user}}, {{chat}} placeholders.">
             </div>
             <div class="world_entry_form_control">
-                <h4 class="stmb-section-title margin0">Lorebook Order Defaults</h4>
-                <div class="buttons_block marginTop5 justifyCenter gap10px whitespacenowrap">
+                <h4 class="stmb-section-title margin5">Lorebook Order Defaults</h4>
+                <div class="buttons_block marginTop10 justifyCenter gap10px whitespacenowrap">
                     <div id="stmb-settings-configure-lorebook-order-defaults" class="menu_button interactable">Configure Lorebook Order Defaults</div>
                 </div>
                 <small id="stmb-settings-lorebook-order-defaults-summary" class="opacity50p">${hasLorebookOrderDefaults ? 'Defaults configured for newly auto-created memory books.' : 'No order defaults configured.'}</small>
