@@ -7548,6 +7548,12 @@ body.active-session-read-only [data-active-session-disabled="true"] {
     display: block;
 }
 
+.stmb-section-title {
+    color: var(--SmartThemeQuoteColor);
+    font-weight: 600;
+    background-color: var(--SmartThemeShadowColor);
+}
+
 @media (max-width: 600px) {
     .stmb-manual-group-lorebook-row {
         grid-template-columns: 1fr;
