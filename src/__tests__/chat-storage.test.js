@@ -376,6 +376,53 @@ describe('SQLite chat length handling', () => {
         }
     });
 
+    it('preserves group avatar identity and participant filters in SQLite range capture', async () => {
+        const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'sqlite-stmb-group-capture-'));
+        const chatsDir = path.join(tempDir, 'chats');
+        const groupChatsDir = path.join(tempDir, 'group chats');
+        const chatPath = path.join(groupChatsDir, 'group.jsonl');
+
+        try {
+            fs.mkdirSync(groupChatsDir, { recursive: true });
+            await writeLogicalChat(chatPath, {
+                is_group_chat_header: true,
+                group_chat_header_version: 1,
+                create_date: '2026-07-09',
+                chat_metadata: {},
+            }, [
+                { ...makeMessages(1)[0], name: 'Alice', is_user: false, original_avatar: 'alice.png' },
+                { ...makeMessages(2)[1], name: 'Bob', is_user: false, original_avatar: 'bob.webp' },
+            ]);
+
+            const chatState = await resolveSqliteLogicalChatReference({
+                chats: chatsDir,
+                groupChats: groupChatsDir,
+            }, {
+                type: 'group',
+                chatId: 'group',
+            }, {
+                rangeStart: 0,
+                rangeEnd: 1,
+                includeMessages: true,
+            });
+            const compiledScene = compileScene(chatState.messages, {
+                sceneStart: 0,
+                sceneEnd: 1,
+                groupName: 'Party',
+            }, {
+                groupParticipants: [
+                    { key: 'alice.png', avatar: 'alice.png', name: 'Alice' },
+                    { key: 'bob.webp', avatar: 'bob.webp', name: 'Bob' },
+                ],
+            });
+
+            expect(compiledScene.messages.map(message => message.original_avatar)).toEqual(['alice.png', 'bob.webp']);
+            expect(compiledScene.metadata.characterFilterNames).toEqual(['alice', 'bob']);
+        } finally {
+            fs.rmSync(tempDir, { recursive: true, force: true });
+        }
+    });
+
     it('reports missing SQLite storage without falling back to JSONL', async () => {
         const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'sqlite-stmb-missing-'));
         const chatsDir = path.join(tempDir, 'chats');

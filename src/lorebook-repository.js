@@ -2179,6 +2179,18 @@ export function getLorebookForManagement(user, name, allowDummy = false, storage
 }
 
 /**
+ * Validates the shared-secure checkout state before a management transaction writes anything.
+ * Management reads already validate ownership and permissions.
+ * @param {import('./users.js').User} user
+ * @param {object} metadata Lorebook metadata returned by getLorebookForManagement.
+ */
+export function assertLorebookCheckoutForManagement(user, metadata) {
+    if (metadata?.storage === 'secure') {
+        assertSharedLorebookCheckedOutForEdit(user, metadata);
+    }
+}
+
+/**
  * @param {import('./users.js').User} user
  * @param {string} name
  * @param {boolean} [allowDummy=false]
@@ -2259,55 +2271,63 @@ export function hasLorebookForGeneration(user, name) {
  * @param {'user'|'secure'} [storage='user'] Target storage location for the save
  */
 function saveLorebookForManagementUnlocked(user, name, data, storage = 'user') {
-        assertLorebookSaveNameAllowed(name);
-        const canonicalName = assertCanonicalName(name);
-        assertLorebookData(data, canonicalName);
-        const sanitizedData = sanitizeLorebookDataForStorage(data);
-        const secureRecord = getSecureIndexEntry(canonicalName);
-        const sharedSecureRecord = getSharedSecureIndexEntry(canonicalName);
-        const preferredStorage = storage === 'secure' ? 'secure' : 'user';
+    assertLorebookSaveNameAllowed(name);
+    const canonicalName = assertCanonicalName(name);
+    assertLorebookData(data, canonicalName);
+    const sanitizedData = sanitizeLorebookDataForStorage(data);
+    const secureRecord = getSecureIndexEntry(canonicalName);
+    const sharedSecureRecord = getSharedSecureIndexEntry(canonicalName);
+    const preferredStorage = storage === 'secure' ? 'secure' : 'user';
 
-        if (preferredStorage === 'secure') {
-            if (sharedSecureRecord) {
-                if (!canManageSecureLorebook(user, sharedSecureRecord)) {
-                    throw new LorebookRepositoryError('LorebookNotFound', `Lorebook "${canonicalName}" not found.`, 404);
-                }
-
-                assertSharedLorebookCheckedOutForEdit(user, sharedSecureRecord);
-                writeSharedSecureLorebook(canonicalName, sanitizedData);
-                writeSharedSecureLorebookMetadata(canonicalName, sharedSecureRecord.ownerHandles, user.profile.handle, sharedSecureRecord);
-                const updatedRecord = getSharedSecureIndexEntry(canonicalName);
-                return buildLorebookMetadata(updatedRecord || sharedSecureRecord, user);
-            }
-
-            if (!secureRecord || !canManageSecureLorebook(user, secureRecord)) {
+    if (preferredStorage === 'secure') {
+        if (sharedSecureRecord) {
+            if (!canManageSecureLorebook(user, sharedSecureRecord)) {
                 throw new LorebookRepositoryError('LorebookNotFound', `Lorebook "${canonicalName}" not found.`, 404);
             }
 
-            writeUserLorebook(secureRecord.ownerHandle, canonicalName, sanitizedData);
-            writeSecureLorebookMetadata(canonicalName, secureRecord.ownerHandle, user.profile.handle, secureRecord);
-            return buildLorebookMetadata(getSecureIndexEntry(canonicalName) || secureRecord, user);
+            assertSharedLorebookCheckedOutForEdit(user, sharedSecureRecord);
+            writeSharedSecureLorebook(canonicalName, sanitizedData);
+            writeSharedSecureLorebookMetadata(canonicalName, sharedSecureRecord.ownerHandles, user.profile.handle, sharedSecureRecord);
+            const updatedRecord = getSharedSecureIndexEntry(canonicalName);
+            return buildLorebookMetadata(updatedRecord || sharedSecureRecord, user);
         }
 
-        assertUserLorebookNameAvailable(canonicalName);
-        writeUserLorebook(user.profile.handle, canonicalName, sanitizedData);
-        return {
-            name: canonicalName,
-            storage: 'user',
-            ownerHandle: user.profile.handle,
-            ownerHandles: [user.profile.handle].filter(Boolean),
-            sharingMode: 'single',
-            checkedOutBy: null,
-            checkedOutAt: null,
-            checkoutState: 'available',
-            canCheckOut: false,
-            canCheckIn: false,
-            canForceCheckout: false,
-            canManageOwners: false,
-            shadowingSecure: false,
-        };
+        if (!secureRecord || !canManageSecureLorebook(user, secureRecord)) {
+            throw new LorebookRepositoryError('LorebookNotFound', `Lorebook "${canonicalName}" not found.`, 404);
+        }
+
+        writeUserLorebook(secureRecord.ownerHandle, canonicalName, sanitizedData);
+        writeSecureLorebookMetadata(canonicalName, secureRecord.ownerHandle, user.profile.handle, secureRecord);
+        return buildLorebookMetadata(getSecureIndexEntry(canonicalName) || secureRecord, user);
+    }
+
+    assertUserLorebookNameAvailable(canonicalName);
+    writeUserLorebook(user.profile.handle, canonicalName, sanitizedData);
+    return {
+        name: canonicalName,
+        storage: 'user',
+        ownerHandle: user.profile.handle,
+        ownerHandles: [user.profile.handle].filter(Boolean),
+        sharingMode: 'single',
+        checkedOutBy: null,
+        checkedOutAt: null,
+        checkoutState: 'available',
+        canCheckOut: false,
+        canCheckIn: false,
+        canForceCheckout: false,
+        canManageOwners: false,
+        shadowingSecure: false,
+    };
 }
 
+/**
+ * Saves a manageable lorebook while holding the shared mutation lock.
+ * @param {import('./users.js').User} user
+ * @param {string} name
+ * @param {object} data
+ * @param {'user'|'secure'} [storage='user']
+ * @returns {Promise<object>}
+ */
 export async function saveLorebookForManagement(user, name, data, storage = 'user') {
     return runWithSecureLorebookMutationLock(() => saveLorebookForManagementUnlocked(user, name, data, storage));
 }

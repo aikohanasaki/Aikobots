@@ -1080,7 +1080,10 @@ export function applyStmbMaxTokensToGenerateData(generateData, stmbMaxTokens) {
  */
 export function getStmbCharacterFilterName(avatar) {
     const value = String(avatar || '').trim();
-    return value ? value.replace(/\.[^/.]+$/, '') : '';
+    if (!value) return '';
+    const withoutQuery = value.split(/[?#]/, 1)[0];
+    const basename = withoutQuery.split(/[\\/]/).at(-1) || '';
+    return basename.replace(/\.[^/.]+$/, '');
 }
 
 /**
@@ -1219,20 +1222,20 @@ export function compileScene(messages, sceneRequest, options = {}) {
     }
 
     const metadata = {
-            sceneStart,
-            sceneEnd,
-            messageCount: sceneMessages.length,
-            totalRequestedRange: sceneEnd - sceneStart + 1,
-            hiddenMessagesSkipped: hiddenMessageCount,
-            messagesSkipped: skippedMessageCount,
-            compiledAt: new Date().toISOString(),
-            totalChatLength: sourceMessages.length,
-            chatId: String(sceneRequest?.chatId || ''),
-            characterName: String(sceneRequest?.characterName || ''),
-            userName: String(sceneRequest?.userName || ''),
-            groupName: String(sceneRequest?.groupName || ''),
-            stmbPromptTarget: String(sceneRequest?.stmbPromptTarget || ''),
-        };
+        sceneStart,
+        sceneEnd,
+        messageCount: sceneMessages.length,
+        totalRequestedRange: sceneEnd - sceneStart + 1,
+        hiddenMessagesSkipped: hiddenMessageCount,
+        messagesSkipped: skippedMessageCount,
+        compiledAt: new Date().toISOString(),
+        totalChatLength: sourceMessages.length,
+        chatId: String(sceneRequest?.chatId || ''),
+        characterName: String(sceneRequest?.characterName || ''),
+        userName: String(sceneRequest?.userName || ''),
+        groupName: String(sceneRequest?.groupName || ''),
+        stmbPromptTarget: String(sceneRequest?.stmbPromptTarget || ''),
+    };
     if (participantFilterNames.size > 0) {
         metadata.characterFilterNames = Array.from(participantFilterNames);
     }

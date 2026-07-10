@@ -6490,9 +6490,12 @@ async function confirmGroupMemoryParticipants(compiledScene, snapshot) {
     return normalizeStmbCharacterFilterNames(chosen.length > 0 ? chosen : allNames);
 }
 
-async function prepareManualGroupMemorySnapshot(compiledScene, sceneContext) {
-    if (!getModuleSettings().manualModeEnabled || !sceneContext?.isGroupChat) return null;
-    const snapshot = validateManualGroupBindingSnapshot(getManualGroupBindingSnapshot(sceneContext));
+async function prepareGroupMemoryParticipantSnapshot(compiledScene, sceneContext) {
+    if (!sceneContext?.isGroupChat) return null;
+    const rawSnapshot = getManualGroupBindingSnapshot(sceneContext);
+    const snapshot = getModuleSettings().manualModeEnabled
+        ? validateManualGroupBindingSnapshot(rawSnapshot)
+        : rawSnapshot;
     const characterFilterNames = await confirmGroupMemoryParticipants(compiledScene, snapshot);
     if (!characterFilterNames) return null;
     compiledScene.metadata = {
@@ -8890,9 +8893,11 @@ async function executeMemoryCreationFromRange(range, options = {}) {
     if (!effectiveSettings) {
         return null;
     }
-    const manualGroupSnapshot = await prepareManualGroupMemorySnapshot(compiledScene, sceneContext);
-    if (getModuleSettings().manualModeEnabled && sceneContext.isGroupChat && !manualGroupSnapshot) {
-        return null;
+    let manualGroupSnapshot = null;
+    if (sceneContext.isGroupChat) {
+        const groupParticipantSnapshot = await prepareGroupMemoryParticipantSnapshot(compiledScene, sceneContext);
+        if (!groupParticipantSnapshot) return null;
+        if (getModuleSettings().manualModeEnabled) manualGroupSnapshot = groupParticipantSnapshot;
     }
     ensureStmbJobExecutorsRegistered();
     const memoryJobId = createMemoryJobId();
@@ -9067,23 +9072,19 @@ export async function createSummaryForTier(targetTier, options = {}) {
     const selectedEntryIds = Array.isArray(options.selectedEntryIds)
         ? options.selectedEntryIds.map(value => String(value))
         : null;
-    const realSourceEntries = resolveSelectedSummarySourceEntries(
+    const sourceEntries = resolveSelectedSummarySourceEntries(
         lorebookData.entries,
         normalizedTargetTier,
         selectedEntryIds,
     );
-    const gapMarkers = (Array.isArray(payload.gapMarkers) ? payload.gapMarkers : [])
-        .filter(marker => marker?.__stmbGapMarker)
-        .map(marker => structuredClone(marker));
-    const sourceEntries = [...realSourceEntries, ...gapMarkers];
     const configuredMinimum = getModuleSettings().summaryTierMinimums?.[normalizedTargetTier];
     const requiredMinimum = normalizeSummaryMinChildren(
         options.requiredMin,
         configuredMinimum ?? getDefaultSummaryMinChildren(normalizedTargetTier),
     );
-    if (realSourceEntries.length < requiredMinimum) {
+    if (sourceEntries.length < requiredMinimum) {
         throw new Error(
-            `Not enough ${getSummaryTierLabel(normalizedTargetTier - 1).toLowerCase()} entries to create a ${getSummaryTierLabel(normalizedTargetTier).toLowerCase()} summary (${realSourceEntries.length}/${requiredMinimum})`,
+            `Not enough ${getSummaryTierLabel(normalizedTargetTier - 1).toLowerCase()} entries to create a ${getSummaryTierLabel(normalizedTargetTier).toLowerCase()} summary (${sourceEntries.length}/${requiredMinimum})`,
         );
     }
 
@@ -9211,19 +9212,22 @@ async function runSummaryConsolidationNow(payload = {}, signal = null, onRateLim
     const selectedEntryIds = Array.isArray(payload.selectedEntryIds)
         ? payload.selectedEntryIds.map(value => String(value))
         : null;
-    const sourceEntries = resolveSelectedSummarySourceEntries(
+    const realSourceEntries = resolveSelectedSummarySourceEntries(
         lorebookData.entries,
         normalizedTargetTier,
         selectedEntryIds,
     );
+    const gapMarkers = (Array.isArray(payload.gapMarkers) ? payload.gapMarkers : [])
+        .filter(marker => marker?.__stmbGapMarker)
+        .map(marker => structuredClone(marker));
     const configuredMinimum = getModuleSettings().summaryTierMinimums?.[normalizedTargetTier];
     const requiredMinimum = normalizeSummaryMinChildren(
         payload.requiredMin,
         configuredMinimum ?? getDefaultSummaryMinChildren(normalizedTargetTier),
     );
-    if (sourceEntries.length < requiredMinimum) {
+    if (realSourceEntries.length < requiredMinimum) {
         throw new Error(
-            `Not enough ${getSummaryTierLabel(normalizedTargetTier - 1).toLowerCase()} entries to create a ${getSummaryTierLabel(normalizedTargetTier).toLowerCase()} summary (${sourceEntries.length}/${requiredMinimum})`,
+            `Not enough ${getSummaryTierLabel(normalizedTargetTier - 1).toLowerCase()} entries to create a ${getSummaryTierLabel(normalizedTargetTier).toLowerCase()} summary (${realSourceEntries.length}/${requiredMinimum})`,
         );
     }
 
@@ -9261,10 +9265,16 @@ async function runSummaryConsolidationNow(payload = {}, signal = null, onRateLim
         });
         const runAnalysis = async (entries, lockedSummaries = []) => {
             context?.setState?.('generating', { detail: targetLabel });
-            return await runSequentialSummaryAnalysis(entries, buildAnalysisOptions(lockedSummaries), profile, signal, onRateLimitWait);
+            return await runSequentialSummaryAnalysis(
+                [...entries, ...gapMarkers],
+                buildAnalysisOptions(lockedSummaries),
+                profile,
+                signal,
+                onRateLimitWait,
+            );
         };
 
-        const analysisResult = await runAnalysis(sourceEntries, []);
+        const analysisResult = await runAnalysis(realSourceEntries, []);
         const { summaryCandidates, leftovers, rawResponse, retryRawResponse } = analysisResult;
         if (summaryCandidates.length === 0) {
             const emptyError = new Error(`Model did not return a usable ${getSummaryTierLabel(normalizedTargetTier).toLowerCase()} summary`);
@@ -9279,7 +9289,7 @@ async function runSummaryConsolidationNow(payload = {}, signal = null, onRateLim
             const previewResult = await runConsolidationPreviewWorkflow({
                 context,
                 initialAnalysis: analysisResult,
-                selectedEntries: sourceEntries,
+                selectedEntries: realSourceEntries,
                 sourceLabel,
                 targetLabel,
                 generateAnalysis: runAnalysis,
@@ -9642,13 +9652,14 @@ async function stmbCatchupCommand(namedArgs = {}) {
             };
             let compiledScene = null;
             let manualGroupSnapshot = null;
-            if (getModuleSettings().manualModeEnabled && sceneContext.isGroupChat) {
+            if (sceneContext.isGroupChat) {
                 compiledScene = (await captureStmbSceneRange(range, {
                     skipSystemMessages,
                     sceneContext,
                 }))?.compiledScene;
-                manualGroupSnapshot = await prepareManualGroupMemorySnapshot(compiledScene, sceneContext);
-                if (!manualGroupSnapshot) return '';
+                const groupParticipantSnapshot = await prepareGroupMemoryParticipantSnapshot(compiledScene, sceneContext);
+                if (!groupParticipantSnapshot) return '';
+                if (getModuleSettings().manualModeEnabled) manualGroupSnapshot = groupParticipantSnapshot;
             }
             enqueueStmbJob({
                 type: 'memory',

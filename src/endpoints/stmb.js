@@ -8,6 +8,7 @@ import {
     getNextManagedMemorySequenceNumber,
     parseSequenceFromTitle,
     compileScene,
+    STMB_MANAGED_FLAG,
 } from '../../public/scripts/stmb-core.js';
 import {
     createManagedSummaryEntryData,
@@ -17,6 +18,7 @@ import {
     verifySummarySourceFingerprints,
 } from '../../public/scripts/stmb-summary.js';
 import {
+    assertLorebookCheckoutForManagement,
     getLorebookForManagement,
     LorebookRepositoryError,
     saveLorebookForManagement,
@@ -450,9 +452,21 @@ function normalizeGroupMemoryWriteTarget(value, label) {
     if (!title || !content) {
         throw createStmbRequestError(400, 'StmbBadRequest', `${label} memoryObject requires title and content.`);
     }
+    if (value.storage !== undefined && !['user', 'secure'].includes(value.storage)) {
+        throw createStmbRequestError(400, 'StmbBadRequest', `${label} storage must be "user" or "secure".`);
+    }
+    if (memoryObject.keywords !== undefined && !Array.isArray(memoryObject.keywords)) {
+        throw createStmbRequestError(400, 'StmbBadRequest', `${label} memoryObject keywords must be an array.`);
+    }
+    if (value.characterFilterNames !== undefined && !Array.isArray(value.characterFilterNames)) {
+        throw createStmbRequestError(400, 'StmbBadRequest', `${label} characterFilterNames must be an array.`);
+    }
+    if (value.usePrimaryTitle !== undefined && typeof value.usePrimaryTitle !== 'boolean') {
+        throw createStmbRequestError(400, 'StmbBadRequest', `${label} usePrimaryTitle must be a boolean.`);
+    }
     return {
         lorebookName,
-        storage: normalizeStorage(value.storage) || 'user',
+        storage: value.storage || 'user',
         memoryObject: {
             title,
             content,
@@ -467,6 +481,7 @@ function normalizeGroupMemoryWriteTarget(value, label) {
 }
 
 function getCanonicalMemoryNumber(entry) {
+    if (entry?.[STMB_MANAGED_FLAG] !== true || entry?.stmbSummary === true) return null;
     const direct = Number(entry?.STMB_canonicalMemoryNumber ?? entry?.STMB_memoryNumber);
     if (Number.isFinite(direct) && direct > 0) return Math.trunc(direct);
     const parsed = parseSequenceFromTitle(entry?.comment || entry?.title || '');
@@ -501,6 +516,11 @@ function createCanonicalEntryMetadata(inclusionGroup, canonicalLorebookName, can
         STMB_canonicalMemoryNumber: canonicalNumber,
         STMB_inclusionGroup: inclusionGroup,
     };
+}
+
+function restoreManagedInclusionGroup(entry) {
+    const inclusionGroup = String(entry?.STMB_inclusionGroup || '').trim();
+    if (inclusionGroup) entry.group = inclusionGroup;
 }
 
 router.post('/context-settings/list', (request, response) => {
@@ -752,9 +772,18 @@ router.post('/save-group-memory', async (request, response) => {
     const sceneContext = request.body?.sceneContext;
     const profile = request.body?.profile || {};
     try {
+        const rawTargets = request.body?.targets;
+        if (rawTargets !== undefined && !Array.isArray(rawTargets)) {
+            throw createStmbRequestError(400, 'StmbBadRequest', 'targets must be an array.');
+        }
+        if (Array.isArray(rawTargets) && rawTargets.length > 100) {
+            throw createStmbRequestError(400, 'StmbBadRequest', 'No more than 100 group memory targets are allowed.');
+        }
+        if (!profile || typeof profile !== 'object' || Array.isArray(profile)) {
+            throw createStmbRequestError(400, 'StmbBadRequest', 'profile must be an object.');
+        }
         primary = normalizeGroupMemoryWriteTarget(request.body?.primary, 'primary');
-        targets = (Array.isArray(request.body?.targets) ? request.body.targets : [])
-            .slice(0, 100)
+        targets = (rawTargets || [])
             .map((target, index) => normalizeGroupMemoryWriteTarget(target, `targets[${index}]`));
         if (!sceneContext || typeof sceneContext !== 'object' || Array.isArray(sceneContext)) {
             throw createStmbRequestError(400, 'StmbBadRequest', 'sceneContext is required.');
@@ -774,6 +803,7 @@ router.post('/save-group-memory', async (request, response) => {
         const result = await withLorebookManagementTransaction(async transaction => {
             const requested = [primary, ...targets];
             const lorebooks = [];
+            const resolvedLorebookKeys = new Set();
             for (const target of requested) {
                 const loaded = await getLorebookForManagement(
                     request.user,
@@ -784,6 +814,12 @@ router.post('/save-group-memory', async (request, response) => {
                 if (!loaded?.data) {
                     throw createStmbRequestError(404, 'StmbLorebookNotFound', 'A configured group memory lorebook was not found.');
                 }
+                assertLorebookCheckoutForManagement(request.user, loaded.metadata);
+                const resolvedKey = `${loaded.metadata.storage}:${loaded.metadata.name}`;
+                if (resolvedLorebookKeys.has(resolvedKey)) {
+                    throw createStmbRequestError(400, 'StmbDuplicateGroupLorebook', 'Each group memory target lorebook must be unique.');
+                }
+                resolvedLorebookKeys.add(resolvedKey);
                 ensureEntriesObject(loaded.data);
                 lorebooks.push({
                     request: target,
@@ -826,6 +862,7 @@ router.post('/save-group-memory', async (request, response) => {
                 orderNumberLabel: 'memory',
                 onOrderClamped: notification => orderClampNotifications.push(notification),
             });
+            restoreManagedInclusionGroup(primaryEntry);
 
             const created = [{
                 lorebookName: primaryBook.metadata.name,
@@ -864,6 +901,7 @@ router.post('/save-group-memory', async (request, response) => {
                     orderNumberLabel: 'memory',
                     onOrderClamped: notification => orderClampNotifications.push(notification),
                 });
+                restoreManagedInclusionGroup(entry);
                 created.push({ lorebookName: book.metadata.name, storage: book.metadata.storage, entry });
             }
 
@@ -909,6 +947,15 @@ router.post('/save-group-memory', async (request, response) => {
         });
         return response.send({ ok: true, ...result });
     } catch (error) {
+        if (!(error instanceof LorebookRepositoryError) && !Number.isInteger(error?.status) && !isActiveSessionError(error)) {
+            console.error('[STMB] Group memory save failed', String(error?.name || 'Error'));
+            return response.status(500).send({
+                error: {
+                    type: 'StmbGroupMemoryWriteFailed',
+                    message: 'The group memory could not be saved.',
+                },
+            });
+        }
         return sendStmbError(response, error);
     }
 });
@@ -966,6 +1013,7 @@ router.post('/commit-summaries', async (request, response) => {
                 orderNumberLabel: getSummaryTierLabel(targetTier).toLowerCase(),
                 onOrderClamped: notification => orderClampNotifications.push(notification),
             });
+            restoreManagedInclusionGroup(entry);
 
             if (disableOriginals) {
                 const sourceIds = new Set((summaryCandidate.memberIds || []).map(String));

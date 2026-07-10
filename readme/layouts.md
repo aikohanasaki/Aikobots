@@ -2,6 +2,8 @@
 
 Aikobots layouts are CSS-only templates. A layout does **not** replace the chat HTML. Instead, it changes CSS variables and selected classes that the app already provides.
 
+Memory Books keeps its primary popup focused on scene, lorebook, profile, and prompt-manager actions. General preferences and automatic-memory controls open as separate sub-popups. Per-member group lorebook bindings use a responsive grid that collapses to one column below 600px and inherits the active smart-theme control colors.
+
 ## 1. Where Layouts Live
 
 Built-in layout CSS files are here:

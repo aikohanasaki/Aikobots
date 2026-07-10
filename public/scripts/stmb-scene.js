@@ -11,7 +11,7 @@ import {
 } from '../script.js';
 import { getContext } from './extensions.js';
 import { groups, selected_group } from './group-chats.js';
-import { compileScene } from './stmb-core.js';
+import { compileScene, getStmbCharacterFilterName } from './stmb-core.js';
 import { captureStmbScene, getStmbChatRangeInfo } from './stmb-api.js';
 
 const suppressedPassiveFlushCounts = new Map();
@@ -40,7 +40,7 @@ export function getCurrentStmbGroupParticipants() {
             avatar,
             memberId,
             name: String(character?.name || memberId).trim() || memberId,
-            characterFilterName: avatar.replace(/\.[^/.]+$/, ''),
+            characterFilterName: getStmbCharacterFilterName(avatar),
         });
     }
     return participants;
