@@ -32,6 +32,110 @@ function isObject(value) {
     return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
 }
 
+function normalizeComparableSwipeExtra(extra) {
+    if (!isObject(extra)) {
+        return {};
+    }
+
+    const comparable = structuredClone(extra);
+    if (comparable.bias === null) {
+        delete comparable.bias;
+    }
+    delete comparable.worldInfoSummary;
+    delete comparable.worldInfoReport;
+    return comparable;
+}
+
+function areJsonValuesEqual(left, right) {
+    if (Object.is(left, right)) {
+        return true;
+    }
+    if (Array.isArray(left) || Array.isArray(right)) {
+        return Array.isArray(left)
+            && Array.isArray(right)
+            && left.length === right.length
+            && left.every((value, index) => areJsonValuesEqual(value, right[index]));
+    }
+    if (!isObject(left) || !isObject(right)) {
+        return false;
+    }
+
+    const leftKeys = Object.keys(left).sort();
+    const rightKeys = Object.keys(right).sort();
+    return leftKeys.length === rightKeys.length
+        && leftKeys.every((key, index) => key === rightKeys[index] && areJsonValuesEqual(left[key], right[key]));
+}
+
+/**
+ * Validates the active swipe fields that must be persisted as one consistent message.
+ * Legacy `bias: null` and an absent bias are treated as equivalent metadata.
+ * @param {object} message Chat message to validate.
+ * @param {object} [options] Validation options.
+ * @param {boolean} [options.allowMesMismatch=false] Allows the greeting's rendered macro text to differ from its stored swipe.
+ * @param {boolean} [options.allowMetadataMismatch=false] Allows legacy greeting metadata to differ from its selected swipe.
+ * @returns {{ok: boolean, reason: string, swipeId: number|null, selectedSwipeUuid: string|null}}
+ */
+export function validateMessageSwipeState(message, { allowMesMismatch = false, allowMetadataMismatch = false } = {}) {
+    const result = { ok: true, reason: '', swipeId: null, selectedSwipeUuid: null };
+    if (!isObject(message)) {
+        return { ...result, ok: false, reason: 'invalid_message' };
+    }
+
+    const hasSwipes = Array.isArray(message.swipes);
+    const hasSwipeInfo = Array.isArray(message.swipe_info);
+    const hasSwipeId = Object.prototype.hasOwnProperty.call(message, 'swipe_id');
+    if (!hasSwipes && !hasSwipeInfo && !hasSwipeId) {
+        return result;
+    }
+    if (!hasSwipes || !hasSwipeInfo) {
+        return { ...result, ok: false, reason: 'invalid_swipe_arrays' };
+    }
+    if (message.swipes.length !== message.swipe_info.length) {
+        return { ...result, ok: false, reason: 'swipe_length_mismatch' };
+    }
+
+    const swipeId = Number(message.swipe_id);
+    if (!Number.isInteger(swipeId) || swipeId < 0 || swipeId >= message.swipes.length) {
+        return { ...result, ok: false, reason: 'swipe_id_out_of_bounds', swipeId };
+    }
+    result.swipeId = swipeId;
+
+    if (!allowMesMismatch && message.mes !== message.swipes[swipeId]) {
+        return { ...result, ok: false, reason: 'active_swipe_text_mismatch' };
+    }
+
+    const seenSwipeUuids = new Set();
+    for (let index = 0; index < message.swipe_info.length; index++) {
+        const swipeUuid = message.swipe_info[index]?.[AIKOBOTS_SWIPE_UUID_KEY];
+        if (!isValidAikobotsUuid(swipeUuid)) {
+            return { ...result, ok: false, reason: 'invalid_swipe_uuid' };
+        }
+        if (seenSwipeUuids.has(swipeUuid)) {
+            return { ...result, ok: false, reason: 'duplicate_swipe_uuid' };
+        }
+        seenSwipeUuids.add(swipeUuid);
+    }
+
+    const selectedSwipeInfo = message.swipe_info[swipeId];
+    result.selectedSwipeUuid = selectedSwipeInfo[AIKOBOTS_SWIPE_UUID_KEY];
+    if (allowMetadataMismatch) {
+        return result;
+    }
+    for (const key of ['send_date', 'gen_started', 'gen_finished']) {
+        if (!Object.is(message[key], selectedSwipeInfo[key])) {
+            return { ...result, ok: false, reason: `active_swipe_${key}_mismatch` };
+        }
+    }
+
+    const topLevelExtra = normalizeComparableSwipeExtra(message.extra);
+    const selectedSwipeExtra = normalizeComparableSwipeExtra(selectedSwipeInfo.extra);
+    if (!areJsonValuesEqual(topLevelExtra, selectedSwipeExtra)) {
+        return { ...result, ok: false, reason: 'active_swipe_extra_mismatch' };
+    }
+
+    return result;
+}
+
 function ensureUniqueUuid(currentUuid, seenUuids, { generateUuid, repairDuplicates, regenerate }) {
     const isMissing = !isValidAikobotsUuid(currentUuid);
     const isDuplicate = Boolean(seenUuids?.has(currentUuid));

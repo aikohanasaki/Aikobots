@@ -10,6 +10,7 @@ import { migrateHiddenLorebookBindingReferences } from './hidden-lorebook-bindin
 import { compileAndWriteHiddenLorebookTemplates, migrateHiddenLorebookTemplateReferences } from './hidden-lorebook-templates.js';
 import { getUserDirectories } from './users.js';
 import { assertPathUnderParent, hasUnsafePathSegment } from './path-security.js';
+import { withDirectoryLock } from './file-system-lock.js';
 
 const SECURE_LOREBOOK_DIRECTORY = ['_secure', 'worlds'];
 const SHARED_SECURE_LOREBOOK_DIRECTORY = ['_secure', 'shared-worlds'];
@@ -19,6 +20,10 @@ const SHARED_SECURE_INDEX_FILENAME = 'index.json';
 const SECURE_INDEX_LOCK_SUFFIX = '.lock';
 const SECURE_INDEX_LOCK_STALE_MS = 60_000;
 let secureLorebookMutationQueue = Promise.resolve();
+const LOREBOOK_MUTATION_LOCK_RETRY_MS = 50;
+const LOREBOOK_MUTATION_LOCK_TIMEOUT_MS = 30_000;
+const LOREBOOK_MUTATION_LOCK_STALE_MS = 120_000;
+const LOREBOOK_MUTATION_LOCK_HEARTBEAT_MS = 10_000;
 
 export class LorebookRepositoryError extends Error {
     /**
@@ -37,7 +42,19 @@ export class LorebookRepositoryError extends Error {
 }
 
 function runWithSecureLorebookMutationLock(operation) {
-    const queuedOperation = secureLorebookMutationQueue.catch(() => { }).then(async () => await operation());
+    const queuedOperation = secureLorebookMutationQueue.catch(() => { }).then(async () => {
+        if (!globalThis.DATA_ROOT) {
+            throw new Error('DATA_ROOT must be defined before mutating lorebooks');
+        }
+        return await withDirectoryLock({
+            lockPath: path.join(globalThis.DATA_ROOT, '_locks', 'lorebooks.mutation.lock'),
+            retryMs: LOREBOOK_MUTATION_LOCK_RETRY_MS,
+            timeoutMs: LOREBOOK_MUTATION_LOCK_TIMEOUT_MS,
+            staleMs: LOREBOOK_MUTATION_LOCK_STALE_MS,
+            heartbeatMs: LOREBOOK_MUTATION_LOCK_HEARTBEAT_MS,
+            timeoutMessage: 'Timed out waiting for the lorebook mutation lock.',
+        }, operation);
+    });
     secureLorebookMutationQueue = queuedOperation.catch(() => { });
     return queuedOperation;
 }
@@ -1376,6 +1393,17 @@ function migrateStmbStateReferences(state, oldCanonicalName, newCanonicalName = 
         changed = true;
     }
 
+    if (state.manualCharacterLorebooks && typeof state.manualCharacterLorebooks === 'object' && !Array.isArray(state.manualCharacterLorebooks)) {
+        for (const [memberKey, value] of Object.entries(state.manualCharacterLorebooks)) {
+            const migrated = migrateLorebookReferenceScalar(value, oldCanonicalName, newCanonicalName);
+            if (!migrated.changed) continue;
+            if (migrated.value) state.manualCharacterLorebooks[memberKey] = migrated.value;
+            else delete state.manualCharacterLorebooks[memberKey];
+            changed = true;
+        }
+        if (Object.keys(state.manualCharacterLorebooks).length === 0) delete state.manualCharacterLorebooks;
+    }
+
     if (state.sidePromptLorebookOverrides && typeof state.sidePromptLorebookOverrides === 'object' && !Array.isArray(state.sidePromptLorebookOverrides)) {
         for (const [key, value] of Object.entries(state.sidePromptLorebookOverrides)) {
             const migrated = migrateLorebookReferenceScalar(value, oldCanonicalName, newCanonicalName);
@@ -2230,8 +2258,7 @@ export function hasLorebookForGeneration(user, name) {
  * @param {object} data
  * @param {'user'|'secure'} [storage='user'] Target storage location for the save
  */
-export async function saveLorebookForManagement(user, name, data, storage = 'user') {
-    return runWithSecureLorebookMutationLock(() => {
+function saveLorebookForManagementUnlocked(user, name, data, storage = 'user') {
         assertLorebookSaveNameAllowed(name);
         const canonicalName = assertCanonicalName(name);
         assertLorebookData(data, canonicalName);
@@ -2279,7 +2306,23 @@ export async function saveLorebookForManagement(user, name, data, storage = 'use
             canManageOwners: false,
             shadowingSecure: false,
         };
-    });
+}
+
+export async function saveLorebookForManagement(user, name, data, storage = 'user') {
+    return runWithSecureLorebookMutationLock(() => saveLorebookForManagementUnlocked(user, name, data, storage));
+}
+
+/**
+ * Runs a multi-lorebook management operation under the shared mutation lock.
+ * The callback must use the supplied save function to avoid reacquiring the lock.
+ * @param {(transaction: {save: typeof saveLorebookForManagementUnlocked}) => Promise<any>} operation
+ * @returns {Promise<any>}
+ */
+export async function withLorebookManagementTransaction(operation) {
+    if (typeof operation !== 'function') {
+        throw new TypeError('Lorebook management transaction callback is required.');
+    }
+    return runWithSecureLorebookMutationLock(() => operation({ save: saveLorebookForManagementUnlocked }));
 }
 
 /**

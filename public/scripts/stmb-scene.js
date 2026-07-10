@@ -16,6 +16,36 @@ import { captureStmbScene, getStmbChatRangeInfo } from './stmb-api.js';
 
 const suppressedPassiveFlushCounts = new Map();
 
+/**
+ * Returns a serializable snapshot of the current group's stable member identities.
+ * @returns {Array<{key:string, avatar:string, memberId:string, name:string, characterFilterName:string}>}
+ */
+export function getCurrentStmbGroupParticipants() {
+    if (!selected_group || !Array.isArray(groups) || !Array.isArray(characters)) return [];
+    const group = groups.find(item => String(item?.id) === String(selected_group));
+    if (!group || !Array.isArray(group.members)) return [];
+
+    const participants = [];
+    const seen = new Set();
+    for (const rawMember of group.members) {
+        const memberId = String(rawMember || '').trim();
+        if (!memberId) continue;
+        const character = characters.find(item => item?.avatar === memberId || item?.name === memberId);
+        const avatar = String(character?.avatar || memberId).trim();
+        const key = avatar || memberId;
+        if (!key || seen.has(key)) continue;
+        seen.add(key);
+        participants.push({
+            key,
+            avatar,
+            memberId,
+            name: String(character?.name || memberId).trim() || memberId,
+            characterFilterName: avatar.replace(/\.[^/.]+$/, ''),
+        });
+    }
+    return participants;
+}
+
 function buildCharacterChatKeyParts(chatLike = {}) {
     const fileName = String(chatLike?.chatRef?.fileName || chatLike?.fileName || chatLike?.chatId || '').trim();
     const avatarUrl = String(chatLike?.chatRef?.avatarUrl || chatLike?.avatarUrl || '').trim();
@@ -41,6 +71,9 @@ export function buildStmbSceneContext() {
             },
             chatId,
             groupId: String(selected_group || ''),
+            isGroupChat: true,
+            groupName: String(group?.name || name2 || ''),
+            groupParticipants: getCurrentStmbGroupParticipants(),
             characterName,
             userName: String(name1 || ''),
         };
@@ -53,6 +86,7 @@ export function buildStmbSceneContext() {
             fileName: chatId,
         },
         chatId,
+        isGroupChat: false,
         characterName,
         userName: String(name1 || ''),
     };
@@ -234,8 +268,11 @@ function buildLocalCompiledScene(range, { skipSystemMessages = true, allowPartia
         chatId: String(resolvedSceneContext?.chatId || ''),
         characterName: String(resolvedSceneContext?.characterName || ''),
         userName: String(resolvedSceneContext?.userName || ''),
+        groupName: String(resolvedSceneContext?.groupName || ''),
+        stmbPromptTarget: resolvedSceneContext?.isGroupChat ? 'group' : 'character',
     }, {
         skipSystemMessages,
+        groupParticipants: resolvedSceneContext?.groupParticipants,
     });
 
     return {

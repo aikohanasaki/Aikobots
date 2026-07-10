@@ -2,7 +2,7 @@ import { cloneStloSettings } from './stlo-utils.js';
 
 export const STMB_PARITY = Object.freeze({
     sourceRepo: 'aikohanasaki/SillyTavern-MemoryBooks',
-    sourceCommit: 'c712a9b7aa9d178e6849bbe7da389389da6509d7',
+    sourceCommit: '699840b63bae5f3613c3632b7b195cbf63dd1909',
 });
 
 export const STMB_SETTINGS_VERSION = 4;
@@ -99,6 +99,86 @@ Capture ALL nuance without repeating verbatim. Make it comprehensive yet digesti
 For the keywords field, provide 15-30 specific, descriptive, relevant keywords for keyword retrieval via word-matching in chat context. Keywords must be concrete and scene-specific (locations, objects, proper nouns, unique actions). Do not use abstract themes (e.g., "sadness", "love") or character names.
 
 Return ONLY the JSON, no other text.`,
+    group: `Analyze the following roleplay scene and create a memory entry from an omniscient point of view.
+
+You must respond with ONLY valid JSON in this exact format:
+{
+  "title": "Short, descriptive scene title (3-6 words)",
+  "content": "Structured memory summary...",
+  "keywords": ["keyword1", "keyword2", "keyword3"]
+}
+
+- Write the memory as continuity relevant to the target group as a shared unit.
+- Include shared events, mutual decisions, group plans, promises, conflicts, secrets, relationship shifts, unresolved tensions, and facts that affect the group dynamic.
+- Include individual actions or emotions only when they changed the shared group state.
+- Do not create a merged personality for the group. Keep attribution clear: Alice did X, Bob thought Y, both agreed Z.
+- If only one member knows something, say so. Do not imply shared knowledge unless the scene supports it.
+
+For the content field, use this markdown structure:
+
+# [Scene Title]
+**Timeline**: (date/day/time, if known)
+
+## Target-Relevant Events
+- Summarize the events that matter to this group in chronological order.
+- Use cause -> intention -> reaction -> consequence logic.
+- Exclude flavor-only details unless they reveal a lasting character or relationship change.
+
+## Attribution
+- Clearly state who did what, knew what, and felt, believed, suspected, misunderstood, or intended what.
+- Do not assign private thoughts or emotions to a character unless the scene text supports them.
+
+## Continuity Impact
+- Record decisions, injuries, promises, secrets, changed relationships, new knowledge, unresolved threads, practical consequences, emotional shifts, or altered trust.
+- Separate shared knowledge from member-specific knowledge.
+
+## Exclusions
+- Ignore and exclude all [OOC] or meta discussion.
+- Do not include unsupported assumptions.
+- Do not collapse multiple characters into vague phrases unless every target member clearly shares the state.
+
+For the keywords field, generate 15-30 standalone, concrete, scene-specific retrieval keywords. Do not use abstract themes or these major character names: {{group}}.
+
+Return ONLY the JSON, no additional text.`,
+    char: `Analyze the following scene and create a memory entry written with {{char}} as the focus.
+
+You must respond with ONLY valid JSON in this exact format:
+{
+  "title": "Short, descriptive scene title (3-6 words)",
+  "content": "Structured memory summary...",
+  "keywords": ["keyword1", "keyword2", "keyword3"]
+}
+
+Important: This is a targeted memory entry, not a general scene summary.
+- Write the memory as continuity relevant to {{char}}.
+- Include what {{char}} did, said, thought, felt, noticed, learned, decided, promised, concealed, misunderstood, or was affected by.
+- Include other characters only where their actions, words, emotions, or decisions matter to {{char}}'s future continuity.
+- Do not include information {{char}} could not know unless it directly affects future continuity and is clearly marked as external scene knowledge.
+- Attribute actions, thoughts, emotions, and knowledge clearly.
+
+For the content field, use this markdown structure:
+
+# [Scene Title]
+**Timeline**: (date/day/time, if known)
+
+## Target-Relevant Events
+- Summarize the events that matter to {{char}} in chronological order.
+- Use cause -> intention -> reaction -> consequence logic.
+
+## Attribution
+- Clearly state who did what, knew what, and felt, believed, suspected, misunderstood, or intended what.
+
+## Continuity Impact
+- Record decisions, injuries, promises, secrets, changed relationships, new knowledge, unresolved threads, practical consequences, emotional shifts, or altered trust.
+
+## Exclusions
+- Ignore and exclude all [OOC] or meta discussion.
+- Do not summarize material that is not relevant to {{char}}.
+- Do not include unsupported assumptions.
+
+For the keywords field, generate 15-30 concrete, scene-specific retrieval keywords. Do not use abstract themes or character names.
+
+Return ONLY the JSON, no additional text.`,
     summarize: `Analyze the following roleplay scene and return a structured summary as JSON.
 
 You must respond with ONLY valid JSON in this exact format:
@@ -322,6 +402,9 @@ export function createDefaultStmbProfile() {
         name: STMB_DEFAULT_PROFILE_NAME,
         isBuiltinCurrentST: true,
         preset: 'summary',
+        useGroupSpecificPrompts: false,
+        groupPreset: 'group',
+        characterPreset: 'char',
         skipStructuredOutput: false,
         connection: {
             api: 'current_st',
@@ -351,6 +434,7 @@ export function createDefaultStmbSettings() {
             defaultMemoryCount: 0,
             autoClearSceneAfterMemory: false,
             manualModeEnabled: false,
+            autoAcceptGroupParticipants: false,
             allowSceneOverlap: false,
             autoHideMode: 'all',
             unhiddenEntriesCount: 2,
@@ -436,6 +520,11 @@ function sanitizeProfile(rawProfile) {
         name: typeof profile.name === 'string' && profile.name.trim() ? profile.name.trim() : fallback.name,
         isBuiltinCurrentST: Boolean(profile.isBuiltinCurrentST),
         preset,
+        useGroupSpecificPrompts: Boolean(profile.useGroupSpecificPrompts),
+        groupPreset: typeof profile.groupPreset === 'string' && profile.groupPreset.trim() ? profile.groupPreset.trim() : fallback.groupPreset,
+        characterPreset: typeof profile.characterPreset === 'string' && profile.characterPreset.trim()
+            ? profile.characterPreset.trim()
+            : (typeof profile.charPreset === 'string' && profile.charPreset.trim() ? profile.charPreset.trim() : fallback.characterPreset),
         skipStructuredOutput: Boolean(profile.skipStructuredOutput),
         connection: {
             api: connectionApi,
@@ -641,6 +730,7 @@ export function normalizeStmbSettings(rawSettings, legacySettings = null) {
         ? Math.max(0, Math.min(7, Math.trunc(Number(moduleSettings.defaultMemoryCount))))
         : defaults.moduleSettings.defaultMemoryCount;
     moduleSettings.showConsolidationPreviews = Boolean(moduleSettings.showConsolidationPreviews);
+    moduleSettings.autoAcceptGroupParticipants = Boolean(moduleSettings.autoAcceptGroupParticipants);
     moduleSettings.unhiddenEntriesCount = moduleSettings.unhiddenEntriesCount === undefined || moduleSettings.unhiddenEntriesCount === null
         ? defaults.moduleSettings.unhiddenEntriesCount
         : moduleSettings.unhiddenEntriesCount;
@@ -983,11 +1073,97 @@ export function applyStmbMaxTokensToGenerateData(generateData, stmbMaxTokens) {
     return next;
 }
 
+/**
+ * Converts an avatar filename into the stable name used by world-info character filters.
+ * @param {unknown} avatar Avatar filename or identifier.
+ * @returns {string}
+ */
+export function getStmbCharacterFilterName(avatar) {
+    const value = String(avatar || '').trim();
+    return value ? value.replace(/\.[^/.]+$/, '') : '';
+}
+
+/**
+ * Normalizes a list of world-info character filter names without changing order.
+ * @param {unknown} value Candidate list.
+ * @returns {string[]}
+ */
+export function normalizeStmbCharacterFilterNames(value) {
+    const result = [];
+    const seen = new Set();
+    for (const item of Array.isArray(value) ? value : []) {
+        const name = String(item || '').trim();
+        if (!name || seen.has(name)) continue;
+        seen.add(name);
+        result.push(name);
+    }
+    return result;
+}
+
+/**
+ * Builds a participant resolver from a serializable group-member snapshot.
+ * @param {unknown} participants Group participant descriptors.
+ * @returns {{members: object[], memberAvatars: Set<string>, avatarsBySpeaker: Map<string, Set<string>>}|null}
+ */
+export function createStmbGroupParticipantResolver(participants) {
+    if (!Array.isArray(participants) || participants.length === 0) return null;
+
+    const members = [];
+    const memberAvatars = new Set();
+    const avatarsBySpeaker = new Map();
+    const seenKeys = new Set();
+    for (const item of participants) {
+        const avatar = String(item?.avatar || item?.memberId || item?.key || '').trim();
+        const key = String(item?.key || avatar).trim();
+        if (!avatar || !key || seenKeys.has(key)) continue;
+
+        const name = String(item?.name || item?.speakerName || key).trim() || key;
+        const characterFilterName = String(item?.characterFilterName || getStmbCharacterFilterName(avatar)).trim();
+        if (!characterFilterName) continue;
+
+        const member = {
+            key,
+            avatar,
+            memberId: String(item?.memberId || avatar).trim() || avatar,
+            name,
+            characterFilterName,
+        };
+        members.push(member);
+        seenKeys.add(key);
+        memberAvatars.add(avatar);
+        if (name) {
+            if (!avatarsBySpeaker.has(name)) avatarsBySpeaker.set(name, new Set());
+            avatarsBySpeaker.get(name).add(avatar);
+        }
+    }
+
+    return members.length > 0 ? { members, memberAvatars, avatarsBySpeaker } : null;
+}
+
+/**
+ * Resolves a group message to a world-info character filter name.
+ * @param {object} message Chat message.
+ * @param {ReturnType<typeof createStmbGroupParticipantResolver>} resolver Participant resolver.
+ * @returns {string}
+ */
+export function resolveStmbGroupParticipantFilterName(message, resolver) {
+    if (!resolver) return '';
+    const originalAvatar = String(message?.original_avatar || '').trim();
+    if (originalAvatar && resolver.memberAvatars.has(originalAvatar)) {
+        return getStmbCharacterFilterName(originalAvatar);
+    }
+
+    const speakerName = String(message?.name || '').trim();
+    const matches = speakerName ? resolver.avatarsBySpeaker.get(speakerName) : null;
+    return matches?.size === 1 ? getStmbCharacterFilterName(matches.values().next().value) : '';
+}
+
 export function compileScene(messages, sceneRequest, options = {}) {
     const sourceMessages = Array.isArray(messages) ? messages : [];
     const sceneStart = Number(sceneRequest?.sceneStart);
     const sceneEnd = Number(sceneRequest?.sceneEnd);
     const skipSystemMessages = options?.skipSystemMessages !== false;
+    const groupParticipantResolver = createStmbGroupParticipantResolver(options?.groupParticipants);
 
     if (!Number.isInteger(sceneStart) || !Number.isInteger(sceneEnd)) {
         throw new Error('Scene markers are required');
@@ -1000,6 +1176,7 @@ export function compileScene(messages, sceneRequest, options = {}) {
     }
 
     const sceneMessages = [];
+    const participantFilterNames = new Set();
     let hiddenMessageCount = 0;
     let skippedMessageCount = 0;
 
@@ -1020,21 +1197,28 @@ export function compileScene(messages, sceneRequest, options = {}) {
             continue;
         }
 
-        sceneMessages.push({
+        const compiledMessage = {
             id: index,
             name: String(message.name || '').trim() || 'Unknown',
             mes: content,
             send_date: message.send_date || new Date().toISOString(),
             is_user: Boolean(message.is_user),
-        });
+        };
+        if (!message.is_user && typeof message.original_avatar === 'string' && message.original_avatar.trim()) {
+            compiledMessage.original_avatar = message.original_avatar.trim();
+        }
+        if (!message.is_user && groupParticipantResolver) {
+            const filterName = resolveStmbGroupParticipantFilterName(message, groupParticipantResolver);
+            if (filterName) participantFilterNames.add(filterName);
+        }
+        sceneMessages.push(compiledMessage);
     }
 
     if (sceneMessages.length === 0) {
         throw new Error(`No visible messages in range ${sceneStart}-${sceneEnd}`);
     }
 
-    return {
-        metadata: {
+    const metadata = {
             sceneStart,
             sceneEnd,
             messageCount: sceneMessages.length,
@@ -1046,7 +1230,15 @@ export function compileScene(messages, sceneRequest, options = {}) {
             chatId: String(sceneRequest?.chatId || ''),
             characterName: String(sceneRequest?.characterName || ''),
             userName: String(sceneRequest?.userName || ''),
-        },
+            groupName: String(sceneRequest?.groupName || ''),
+            stmbPromptTarget: String(sceneRequest?.stmbPromptTarget || ''),
+        };
+    if (participantFilterNames.size > 0) {
+        metadata.characterFilterNames = Array.from(participantFilterNames);
+    }
+
+    return {
+        metadata,
         messages: sceneMessages,
     };
 }
@@ -2059,9 +2251,9 @@ export function getNextManagedMemorySequenceNumber(entries, titleFormat = null) 
     return Math.max(...existingNumbers) + 1;
 }
 
-export function createManagedLorebookEntryData(memoryObject, context, profile, sequenceNumber) {
+export function createManagedLorebookEntryData(memoryObject, context, profile, sequenceNumber, options = {}) {
     const now = new Date();
-    const title = formatMemoryTitle(profile?.titleFormat || context?.titleFormat, {
+    const generatedTitle = formatMemoryTitle(profile?.titleFormat || context?.titleFormat, {
         ...context,
         title: memoryObject.title,
         sceneRange: context?.sceneRange || `${context?.sceneStart ?? '?'}-${context?.sceneEnd ?? '?'}`,
@@ -2069,6 +2261,9 @@ export function createManagedLorebookEntryData(memoryObject, context, profile, s
         time: formatLocalTimePart(now),
         profileName: profile?.name || '',
     }, sequenceNumber);
+    const title = typeof options?.entryTitle === 'string' && options.entryTitle.trim()
+        ? options.entryTitle.trim()
+        : generatedTitle;
 
     const normalizedContent = String(memoryObject.content || '').trim();
     const entry = {
@@ -2081,6 +2276,28 @@ export function createManagedLorebookEntryData(memoryObject, context, profile, s
     if (Number.isInteger(context?.sceneStart) && Number.isInteger(context?.sceneEnd)) {
         entry.STMB_start = context.sceneStart;
         entry.STMB_end = context.sceneEnd;
+    }
+
+    const characterFilterNames = normalizeStmbCharacterFilterNames(
+        options?.characterFilterNames ?? context?.characterFilterNames,
+    );
+    if (characterFilterNames.length > 0) {
+        entry.characterFilter = {
+            isExclude: false,
+            names: characterFilterNames,
+            tags: [],
+        };
+    }
+
+    if (options?.inclusionGroup) {
+        entry.group = String(options.inclusionGroup);
+        entry.STMB_inclusionGroup = String(options.inclusionGroup);
+    }
+    if (options?.entryMetadata && typeof options.entryMetadata === 'object' && !Array.isArray(options.entryMetadata)) {
+        for (const [key, value] of Object.entries(options.entryMetadata)) {
+            if (key === 'uid' || key === 'comment' || key === 'content') continue;
+            entry[key] = structuredClone(value);
+        }
     }
 
     return entry;

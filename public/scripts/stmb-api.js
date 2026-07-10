@@ -61,6 +61,11 @@ export async function saveStmbMemoryEntry(payload, options = {}) {
     return signal ? postStmbWithSignal('save-memory', payload, signal) : postStmb('save-memory', payload);
 }
 
+export async function saveStmbGroupMemoryEntries(payload, options = {}) {
+    const { signal = null } = options;
+    return signal ? postStmbWithSignal('save-group-memory', payload, signal) : postStmb('save-group-memory', payload);
+}
+
 export async function getStmbChatRangeInfo(payload, options = {}) {
     const { signal = null } = options;
     return signal ? postStmbWithSignal('chat-range-info', payload, signal) : postStmb('chat-range-info', payload);

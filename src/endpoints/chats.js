@@ -35,11 +35,13 @@ import {
 } from '../util.js';
 import {
     AIKOBOTS_MESSAGE_UUID_KEY,
+    AIKOBOTS_SWIPE_UUID_KEY,
     cloneMessageWithNewIdentity,
     isValidAikobotsUuid,
     normalizeChatIdentities,
     regenerateChatIdentities,
     stripAikobotsIdentityMetadata,
+    validateMessageSwipeState,
 } from '../../public/scripts/chat-identities.js';
 import {
     loadDb,
@@ -2520,20 +2522,27 @@ function applyCloneTextOverride(clone, requestBody) {
         clone.swipes[swipeId] = requestBody.text_override;
     }
 
-    if (!Object.prototype.hasOwnProperty.call(requestBody || {}, 'bias_override')) {
-        return;
+    if (Object.prototype.hasOwnProperty.call(requestBody || {}, 'bias_override')) {
+        if (requestBody.bias_override !== null && typeof requestBody.bias_override !== 'string') {
+            throw new ChatMutationError(400, 'invalid_bias_override');
+        }
+        clone.extra ??= {};
+        clone.extra.bias = requestBody.bias_override;
     }
-
-    if (requestBody.bias_override !== null && typeof requestBody.bias_override !== 'string') {
-        throw new ChatMutationError(400, 'invalid_bias_override');
-    }
-
-    clone.extra ??= {};
-    clone.extra.bias = requestBody.bias_override;
 
     if (Array.isArray(clone.swipe_info) && _.isPlainObject(clone.swipe_info[swipeId])) {
-        clone.swipe_info[swipeId].extra ??= {};
-        clone.swipe_info[swipeId].extra.bias = requestBody.bias_override;
+        const selectedSwipeInfo = clone.swipe_info[swipeId];
+        selectedSwipeInfo.send_date = clone.send_date;
+        selectedSwipeInfo.gen_started = clone.gen_started;
+        selectedSwipeInfo.gen_finished = clone.gen_finished;
+        selectedSwipeInfo.extra = _.cloneDeep(clone.extra ?? {});
+    }
+
+    const swipeValidation = validateMessageSwipeState(clone);
+    if (!swipeValidation.ok) {
+        throw new ChatMutationError(409, 'invalid_message_swipe_state', 'Cloned message swipe data is inconsistent.', {
+            reason: swipeValidation.reason,
+        });
     }
 }
 
@@ -2607,6 +2616,17 @@ function applyMessageUpdatePayload(existingMessage, requestBody) {
         throw new ChatMutationError(409, 'message_uuid_mismatch');
     }
 
+    const swipeValidation = validateMessageSwipeState(updatedMessage);
+    if (!swipeValidation.ok) {
+        throw new ChatMutationError(409, 'invalid_message_swipe_state', 'Message swipe data is inconsistent.', {
+            reason: swipeValidation.reason,
+        });
+    }
+
+    if (requestBody.mutation_type === 'ordinary_text_edit') {
+        assertOrdinaryTextEditPreservesSwipes(existingMessage, updatedMessage, requestBody.selected_swipe_uuid);
+    }
+
     updatedMessage[AIKOBOTS_MESSAGE_UUID_KEY] = targetUuid;
     if (existingMessage?.id !== undefined) {
         delete updatedMessage.id;
@@ -2614,6 +2634,50 @@ function applyMessageUpdatePayload(existingMessage, requestBody) {
     delete updatedMessage.order_index;
     normalizeChatIdentities([updatedMessage], { generateUuid: uuidv4 });
     return sanitizeChatMessageForPersistence(updatedMessage);
+}
+
+/**
+ * Rejects ordinary text edits that replace the selected identity or mutate sibling swipes.
+ * @param {object} existingMessage Stored message before the edit.
+ * @param {object} updatedMessage Submitted edited message.
+ * @param {string|null} selectedSwipeUuid Client-captured selected swipe UUID.
+ */
+function assertOrdinaryTextEditPreservesSwipes(existingMessage, updatedMessage, selectedSwipeUuid) {
+    const existingHasSwipes = Array.isArray(existingMessage?.swipes);
+    const updatedHasSwipes = Array.isArray(updatedMessage?.swipes);
+    if (!existingHasSwipes || !updatedHasSwipes) {
+        const swipeFields = ['swipes', 'swipe_info', 'swipe_id'];
+        if (existingHasSwipes !== updatedHasSwipes
+            || swipeFields.some(key => !_.isEqual(existingMessage?.[key], updatedMessage?.[key]))) {
+            throw new ChatMutationError(409, 'ordinary_text_edit_swipe_mutation', 'An ordinary text edit cannot add, remove, or replace swipe data.');
+        }
+        return;
+    }
+
+    const existingSwipeUuids = existingMessage.swipe_info.map(info => info?.[AIKOBOTS_SWIPE_UUID_KEY]);
+    const updatedSwipeUuids = updatedMessage.swipe_info.map(info => info?.[AIKOBOTS_SWIPE_UUID_KEY]);
+    if (!_.isEqual(existingSwipeUuids, updatedSwipeUuids)) {
+        throw new ChatMutationError(409, 'ordinary_text_edit_swipe_mutation', 'An ordinary text edit cannot replace or reorder swipes.');
+    }
+
+    const existingSwipeId = Number(existingMessage.swipe_id);
+    const updatedSwipeId = Number(updatedMessage.swipe_id);
+    const expectedSwipeUuid = existingSwipeUuids[existingSwipeId];
+    if (!isValidAikobotsUuid(selectedSwipeUuid)
+        || selectedSwipeUuid !== expectedSwipeUuid
+        || updatedSwipeUuids[updatedSwipeId] !== selectedSwipeUuid) {
+        throw new ChatMutationError(409, 'ordinary_text_edit_swipe_uuid_mismatch', 'The selected swipe changed during the text edit.');
+    }
+
+    for (let index = 0; index < existingMessage.swipes.length; index++) {
+        if (index === existingSwipeId) {
+            continue;
+        }
+        if (existingMessage.swipes[index] !== updatedMessage.swipes[index]
+            || !_.isEqual(existingMessage.swipe_info[index], updatedMessage.swipe_info[index])) {
+            throw new ChatMutationError(409, 'ordinary_text_edit_swipe_mutation', 'An ordinary text edit cannot change a non-selected swipe.');
+        }
+    }
 }
 
 function updateShiftedMessagesAfterDelete(db, deletedLogicalIndex) {

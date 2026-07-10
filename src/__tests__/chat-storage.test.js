@@ -21,6 +21,7 @@ let updateSqliteLoadedMessageRange;
 let updateSqliteMessageByUuid;
 let updateSqliteMessageVisibility;
 let updateSqliteUserPersonaMessages;
+let validateMessageSwipeState;
 let writeLogicalChat;
 
 function getConfigPath() {
@@ -50,6 +51,37 @@ function makeMessages(count) {
         mes: `message ${index}`,
         send_date: index,
     }));
+}
+
+function makeMultiSwipeAssistant() {
+    return {
+        aikobots_message_uuid: '11111111-1111-4111-8111-111111111111',
+        name: 'Character',
+        is_user: false,
+        mes: 'selected text',
+        swipe_id: 1,
+        swipes: ['other text', 'selected text'],
+        send_date: 'June 14, 2026 10:30am',
+        gen_started: '2026-06-14T17:30:40.886Z',
+        gen_finished: '2026-06-14T17:31:00.052Z',
+        extra: { model: 'test-model', bias: null },
+        swipe_info: [
+            {
+                aikobots_swipe_uuid: '22222222-2222-4222-8222-222222222222',
+                send_date: 'June 14, 2026 10:29am',
+                gen_started: '2026-06-14T17:29:46.906Z',
+                gen_finished: '2026-06-14T17:30:03.746Z',
+                extra: { model: 'test-model' },
+            },
+            {
+                aikobots_swipe_uuid: '33333333-3333-4333-8333-333333333333',
+                send_date: 'June 14, 2026 10:30am',
+                gen_started: '2026-06-14T17:30:40.886Z',
+                gen_finished: '2026-06-14T17:31:00.052Z',
+                extra: { model: 'test-model' },
+            },
+        ],
+    };
 }
 
 function getSqliteRows(chatPath) {
@@ -91,6 +123,7 @@ describe('SQLite chat length handling', () => {
         utilModule.setConfigFilePath(getConfigPath());
 
         const chatsModule = await import('../endpoints/chats.js');
+        const identityModule = await import('../../public/scripts/chat-identities.js');
         const sqliteModule = await import('../sqlite-manager.js');
         const stmbCoreModule = await import('../../public/scripts/stmb-core.js');
         applyLoadedMessageRange = chatsModule.applyLoadedMessageRange;
@@ -107,6 +140,7 @@ describe('SQLite chat length handling', () => {
         updateSqliteMessageByUuid = chatsModule.updateSqliteMessageByUuid;
         updateSqliteMessageVisibility = chatsModule.updateSqliteMessageVisibility;
         updateSqliteUserPersonaMessages = chatsModule.updateSqliteUserPersonaMessages;
+        validateMessageSwipeState = identityModule.validateMessageSwipeState;
         insertLogicalMessageAfter = sqliteModule.insertLogicalMessageAfter;
         writeLogicalChat = chatsModule.writeLogicalChat;
     });
@@ -540,6 +574,147 @@ describe('SQLite chat length handling', () => {
             expect(logicalChat).toHaveLength(7);
             expect(logicalChat[3].mes).toBe('edited historical text');
             expect(logicalChat.at(-1).mes).toBe('message 5');
+        } finally {
+            fs.rmSync(tempDir, { recursive: true, force: true });
+        }
+    });
+
+    it('atomically updates selected swipe text and metadata without changing sibling swipes', async () => {
+        const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'sqlite-chat-swipe-text-update-'));
+        const chatPath = path.join(tempDir, 'chat.jsonl');
+
+        try {
+            const message = makeMultiSwipeAssistant();
+            await writeLogicalChat(chatPath, makeHeader({ chat_revision: 7 }), [message]);
+
+            const updatedMessage = structuredClone(message);
+            updatedMessage.mes = 'edited selected text';
+            updatedMessage.swipes[1] = 'edited selected text';
+            updatedMessage.swipe_info[1].extra.bias = null;
+            const payload = await updateSqliteMessageByUuid({
+                filePath: chatPath,
+                requestBody: {
+                    message_uuid: message.aikobots_message_uuid,
+                    message: updatedMessage,
+                    mutation_type: 'ordinary_text_edit',
+                    selected_swipe_uuid: message.swipe_info[1].aikobots_swipe_uuid,
+                    base_revision: 7,
+                    save_session_id: '44444444-4444-4444-8444-444444444444',
+                },
+                saveSessionId: '44444444-4444-4444-8444-444444444444',
+                displayCount: 10,
+            });
+
+            const savedMessage = (await getLogicalChatData(chatPath))[1];
+            expect(payload.chat_revision).toBe(8);
+            expect(savedMessage.mes).toBe('edited selected text');
+            expect(savedMessage.swipes[1]).toBe('edited selected text');
+            expect(savedMessage.swipe_info[1].aikobots_swipe_uuid).toBe(message.swipe_info[1].aikobots_swipe_uuid);
+            expect(savedMessage.swipes[0]).toBe(message.swipes[0]);
+            expect(savedMessage.swipe_info[0]).toEqual(message.swipe_info[0]);
+            expect(validateMessageSwipeState(savedMessage)).toMatchObject({ ok: true });
+        } finally {
+            fs.rmSync(tempDir, { recursive: true, force: true });
+        }
+    });
+
+    it('edits a user message without replacing its following multi-swipe assistant response', async () => {
+        const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'sqlite-chat-user-before-swipes-'));
+        const chatPath = path.join(tempDir, 'chat.jsonl');
+
+        try {
+            const userMessage = {
+                aikobots_message_uuid: '66666666-6666-4666-8666-666666666666',
+                name: 'User',
+                is_user: true,
+                mes: 'original user text',
+                send_date: 'June 14, 2026 10:29am',
+            };
+            const assistantMessage = makeMultiSwipeAssistant();
+            await writeLogicalChat(chatPath, makeHeader({ chat_revision: 7 }), [userMessage, assistantMessage]);
+
+            await updateSqliteMessageByUuid({
+                filePath: chatPath,
+                requestBody: {
+                    message_uuid: userMessage.aikobots_message_uuid,
+                    message: { ...userMessage, mes: 'edited user text' },
+                    mutation_type: 'ordinary_text_edit',
+                    selected_swipe_uuid: null,
+                    base_revision: 7,
+                    save_session_id: '77777777-7777-4777-8777-777777777777',
+                },
+                saveSessionId: '77777777-7777-4777-8777-777777777777',
+                displayCount: 10,
+            });
+
+            const logicalChat = await getLogicalChatData(chatPath);
+            const savedAssistant = logicalChat[2];
+            delete savedAssistant.id;
+            delete savedAssistant.order_index;
+            expect(logicalChat[1].mes).toBe('edited user text');
+            expect(savedAssistant).toEqual(assistantMessage);
+        } finally {
+            fs.rmSync(tempDir, { recursive: true, force: true });
+        }
+    });
+
+    it.each([
+        ['out-of-bounds swipe id', message => { message.swipe_id = 2; }, 'swipe_id_out_of_bounds'],
+        ['unequal swipe arrays', message => { message.swipe_info.pop(); }, 'swipe_length_mismatch'],
+        ['active text mismatch', message => { message.mes = 'wrong active text'; }, 'active_swipe_text_mismatch'],
+        ['active timestamp mismatch', message => { message.gen_finished = 'wrong timestamp'; }, 'active_swipe_gen_finished_mismatch'],
+        ['active metadata mismatch', message => { message.extra.model = 'wrong-model'; }, 'active_swipe_extra_mismatch'],
+    ])('detects %s before a swipe message save', (_label, mutate, reason) => {
+        const message = makeMultiSwipeAssistant();
+        mutate(message);
+        expect(validateMessageSwipeState(message)).toMatchObject({ ok: false, reason });
+    });
+
+    it.each([
+        ['selected swipe UUID replacement', message => {
+            message.swipe_info[1].aikobots_swipe_uuid = '55555555-5555-4555-8555-555555555555';
+        }, 'ordinary_text_edit_swipe_mutation'],
+        ['sibling swipe replacement', message => {
+            message.swipes[0] = 'silently replaced sibling';
+        }, 'ordinary_text_edit_swipe_mutation'],
+        ['swipe reordering', message => {
+            message.swipes.reverse();
+            message.swipe_info.reverse();
+            message.swipe_id = 0;
+            message.mes = message.swipes[0];
+            message.send_date = message.swipe_info[0].send_date;
+            message.gen_started = message.swipe_info[0].gen_started;
+            message.gen_finished = message.swipe_info[0].gen_finished;
+            message.extra = structuredClone(message.swipe_info[0].extra);
+        }, 'ordinary_text_edit_swipe_mutation'],
+    ])('rejects %s during an ordinary SQLite text edit', async (_label, mutate, expectedError) => {
+        const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'sqlite-chat-swipe-edit-reject-'));
+        const chatPath = path.join(tempDir, 'chat.jsonl');
+
+        try {
+            const message = makeMultiSwipeAssistant();
+            await writeLogicalChat(chatPath, makeHeader({ chat_revision: 7 }), [message]);
+            const updatedMessage = structuredClone(message);
+            mutate(updatedMessage);
+
+            await expect(updateSqliteMessageByUuid({
+                filePath: chatPath,
+                requestBody: {
+                    message_uuid: message.aikobots_message_uuid,
+                    message: updatedMessage,
+                    mutation_type: 'ordinary_text_edit',
+                    selected_swipe_uuid: message.swipe_info[1].aikobots_swipe_uuid,
+                    base_revision: 7,
+                    save_session_id: '44444444-4444-4444-8444-444444444444',
+                },
+                saveSessionId: '44444444-4444-4444-8444-444444444444',
+                displayCount: 10,
+            })).rejects.toMatchObject({ error: expectedError });
+
+            const savedMessage = (await getLogicalChatData(chatPath))[1];
+            delete savedMessage.id;
+            delete savedMessage.order_index;
+            expect(savedMessage).toEqual(message);
         } finally {
             fs.rmSync(tempDir, { recursive: true, force: true });
         }

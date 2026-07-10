@@ -182,6 +182,7 @@ import {
     isValidAikobotsUuid,
     normalizeChatIdentities,
     validateChatIdentities,
+    validateMessageSwipeState,
 } from './scripts/chat-identities.js';
 
 import { cancelDebouncedMetadataSave, doDailyExtensionUpdatesCheck, extension_settings, initExtensions, loadExtensionSettings, runGenerationInterceptors } from './scripts/extensions.js';
@@ -2834,6 +2835,8 @@ function createMessageEditSession(messageId, fieldType = null) {
         originalMessageId: Number(messageId),
         originalSwipeId: typeof message?.swipe_id === 'number' ? message.swipe_id : null,
         originalSwipesLength: Array.isArray(message?.swipes) ? message.swipes.length : null,
+        originalSwipes: Array.isArray(message?.swipes) ? structuredClone(message.swipes) : null,
+        originalSwipeInfo: Array.isArray(message?.swipe_info) ? structuredClone(message.swipe_info) : null,
     };
 
     return activeMessageEditSession;
@@ -2879,6 +2882,9 @@ function resolveActiveMessageEditSession({ fieldType = null, allowMessageTextSes
         const swipeLookup = findSwipeByAikobotsUuid(messageLookup.message, session.swipeUuid);
         if (!swipeLookup.ok) {
             return { ok: false, reason: swipeLookup.reason };
+        }
+        if (getActiveSwipeUuid(messageLookup.message) !== session.swipeUuid) {
+            return { ok: false, reason: 'selected_swipe_changed' };
         }
         return { ok: true, session, ...messageLookup, swipeIndex: swipeLookup.index, swipeInfo: swipeLookup.swipeInfo };
     }
@@ -3188,6 +3194,45 @@ export async function refreshCsrfToken() {
     const tokenData = await tokenResponse.json();
     token = tokenData.token;
     return token;
+}
+
+/**
+ * Ensures an open text edit still targets the same active swipe and untouched siblings.
+ * @param {object} target Resolved active message edit target.
+ */
+function assertOrdinaryMessageEditSwipeState(target) {
+    if (target.session.fieldType !== 'swipe_text' || target.swipeIndex === null) {
+        return;
+    }
+
+    const validation = validateMessageSwipeState(target.message, {
+        allowMesMismatch: target.index === 0,
+        allowMetadataMismatch: target.index === 0,
+    });
+    if (!validation.ok) {
+        throw new Error(`Message swipe validation failed before edit: ${validation.reason}`);
+    }
+
+    const originalSwipes = target.session.originalSwipes;
+    const originalSwipeInfo = target.session.originalSwipeInfo;
+    if (!Array.isArray(originalSwipes) || !Array.isArray(originalSwipeInfo)
+        || originalSwipes.length !== target.message.swipes.length
+        || originalSwipeInfo.length !== target.message.swipe_info.length) {
+        throw new Error('Message swipes changed while the text editor was open.');
+    }
+
+    for (let index = 0; index < originalSwipeInfo.length; index++) {
+        const originalUuid = originalSwipeInfo[index]?.[AIKOBOTS_SWIPE_UUID_KEY];
+        const currentUuid = target.message.swipe_info[index]?.[AIKOBOTS_SWIPE_UUID_KEY];
+        if (originalUuid !== currentUuid) {
+            throw new Error('Message swipes were replaced or reordered while the text editor was open.');
+        }
+        if (index !== target.swipeIndex
+            && (originalSwipes[index] !== target.message.swipes[index]
+                || JSON.stringify(originalSwipeInfo[index]) !== JSON.stringify(target.message.swipe_info[index]))) {
+            throw new Error('A non-selected swipe changed while the text editor was open.');
+        }
+    }
 }
 
 export function getRequestHeaders({ omitContentType = false } = {}) {
@@ -5343,6 +5388,28 @@ export async function prepareCurrentChatSavePayload({ header = null, endId = und
         trimmedChat = getDenseChatMessages(0, normalizedEndId);
     }
 
+    const firstMessageId = loadedRangeStart ?? 0;
+    for (let index = 0; index < trimmedChat.length; index++) {
+        const messageId = firstMessageId + index;
+        const validation = validateMessageSwipeState(trimmedChat[index], {
+            allowMesMismatch: messageId === 0,
+            allowMetadataMismatch: messageId === 0,
+        });
+        if (!validation.ok) {
+            console.error('Refusing to save an inconsistent message swipe state.', {
+                messageId,
+                messageUuid: trimmedChat[index]?.[AIKOBOTS_MESSAGE_UUID_KEY] ?? null,
+                reason: validation.reason,
+            });
+            return {
+                ok: false,
+                reason: validation.reason,
+                message: t`Message swipe data became inconsistent. Reload the chat before saving again.`,
+                title: t`Chat save blocked`,
+            };
+        }
+    }
+
     const sanitizedMessages = trimmedChat.map(sanitizeChatMessageForSave);
     return {
         ok: true,
@@ -6260,6 +6327,7 @@ export async function deleteLastMessage({ persist = false, regeneratePrepare = f
  * @param {number} id The ID of the message to delete.
  * @param {number} [swipeDeletionIndex] Deletes the swipe with that index.
  * @param {boolean} [askConfirmation=false] Whether to ask for confirmation before deleting.
+ * @returns {Promise<boolean|undefined>} True after deletion, false after a persistence failure, or undefined when cancelled.
  */
 export async function deleteMessage(id, swipeDeletionIndex = undefined, askConfirmation = false) {
     const editTarget = activeMessageEditSession ? resolveActiveMessageEditSession() : null;
@@ -6311,8 +6379,7 @@ export async function deleteMessage(id, swipeDeletionIndex = undefined, askConfi
     }
 
     if (deleteOnlySwipe) {
-        await deleteSwipe(swipeDeletionIndex, id);
-        return;
+        return await deleteSwipe(swipeDeletionIndex, id) !== undefined;
     }
 
     if (editTarget?.ok) {
@@ -6324,7 +6391,7 @@ export async function deleteMessage(id, swipeDeletionIndex = undefined, askConfi
         const pendingSaveResult = await flushPendingSqliteMessageUpdateSave();
         if (pendingSaveResult !== CHAT_SAVE_RESULT.SAVED) {
             await reloadCurrentChat();
-            return;
+            return false;
         }
     }
 
@@ -6350,7 +6417,7 @@ export async function deleteMessage(id, swipeDeletionIndex = undefined, askConfi
         const saveResult = await saveSqliteMessageDeleteByUuid(deletedMessageUuid);
         if (saveResult !== CHAT_SAVE_RESULT.SAVED) {
             await reloadCurrentChat();
-            return;
+            return false;
         }
     } else if (askConfirmation) {
         await saveChatConditional();
@@ -6366,6 +6433,7 @@ export async function deleteMessage(id, swipeDeletionIndex = undefined, askConfi
     refreshSwipeButtons();
 
     await eventSource.emit(event_types.MESSAGE_DELETED, id, chat.length);
+    return true;
 }
 
 export const reloadChatMutex = new SimpleMutex(reloadCurrentChatUnsafe);
@@ -13287,20 +13355,12 @@ function updateMessage(div) {
         warnStaleMessageEdit();
         throw new Error(`Message edit target validation failed: ${target.reason}`);
     }
+    assertOrdinaryMessageEditSwipeState(target);
     const mes = target.message;
     const normalized = normalizeMessageEditText(mes, text);
 
     text = normalized.text;
     const bias = normalized.bias;
-
-    if (target.session.fieldType === 'swipe_text' && target.swipeIndex !== null) {
-        mes.swipes[target.swipeIndex] = text;
-        if (Number(mes.swipe_id) === Number(target.swipeIndex)) {
-            mes.mes = text;
-        }
-    } else {
-        mes['mes'] = text;
-    }
 
     // editing old messages
     if (!mes.extra) {
@@ -13313,9 +13373,49 @@ function updateMessage(div) {
         mes.extra.bias = null;
     }
 
+    const ordinaryTextEdit = target.session.fieldType === 'swipe_text' && target.swipeIndex !== null;
+    if (ordinaryTextEdit) {
+        const selectedSwipeInfo = mes.swipe_info[target.swipeIndex];
+        const selectedSwipeUuid = selectedSwipeInfo[AIKOBOTS_SWIPE_UUID_KEY];
+        const topLevelOnlyExtra = {};
+        for (const key of CHAT_SWIPE_INFO_EXTRA_STRIP_KEYS) {
+            if (Object.prototype.hasOwnProperty.call(mes.extra, key)) {
+                topLevelOnlyExtra[key] = mes.extra[key];
+            }
+        }
+        mes.swipes[target.swipeIndex] = text;
+        selectedSwipeInfo.send_date = mes.send_date;
+        selectedSwipeInfo.gen_started = mes.gen_started;
+        selectedSwipeInfo.gen_finished = mes.gen_finished;
+        selectedSwipeInfo.extra = createSwipeInfoExtra(mes.extra);
+        selectedSwipeInfo[AIKOBOTS_SWIPE_UUID_KEY] = selectedSwipeUuid;
+
+        mes.swipe_id = target.swipeIndex;
+        mes.mes = mes.swipes[target.swipeIndex];
+        mes.send_date = selectedSwipeInfo.send_date;
+        mes.gen_started = selectedSwipeInfo.gen_started;
+        mes.gen_finished = selectedSwipeInfo.gen_finished;
+        mes.extra = { ...structuredClone(selectedSwipeInfo.extra), ...topLevelOnlyExtra };
+    } else {
+        mes.mes = text;
+    }
+
+    const swipeValidation = validateMessageSwipeState(mes);
+    if (!swipeValidation.ok) {
+        throw new Error(`Message swipe validation failed after edit: ${swipeValidation.reason}`);
+    }
+
     chat_metadata['tainted'] = true;
 
-    return { mesBlock, text, mes, bias, messageId: target.index };
+    return {
+        mesBlock,
+        text,
+        mes,
+        bias,
+        messageId: target.index,
+        ordinaryTextEdit: true,
+        selectedSwipeUuid: target.session.swipeUuid,
+    };
 }
 
 function openMessageDelete(fromSlashCommand) {
@@ -13362,14 +13462,14 @@ async function flushPendingSqliteMessageUpdateSave() {
 
     clearTimeout(sqliteAutoEditSaveTimer);
     sqliteAutoEditSaveTimer = null;
-    const messageToSave = pendingSqliteAutoEditMessage;
+    const pendingEdit = pendingSqliteAutoEditMessage;
     pendingSqliteAutoEditMessage = null;
 
-    if (!messageToSave) {
+    if (!pendingEdit?.message) {
         return CHAT_SAVE_RESULT.SAVED;
     }
 
-    const saveResult = await saveMessageUpdateByUuid(messageToSave);
+    const saveResult = await saveMessageUpdateByUuid(pendingEdit.message, pendingEdit);
     await waitForSqliteMessageUpdateSaveQueue();
     return saveResult;
 }
@@ -13382,17 +13482,17 @@ function cancelPendingSqliteAutoEditSave() {
     pendingSqliteAutoEditMessage = null;
 }
 
-function scheduleSqliteAutoEditSave(message) {
-    pendingSqliteAutoEditMessage = message;
+function scheduleSqliteAutoEditSave(message, editContext) {
+    pendingSqliteAutoEditMessage = { message, ...editContext };
     if (sqliteAutoEditSaveTimer) {
         clearTimeout(sqliteAutoEditSaveTimer);
     }
 
     sqliteAutoEditSaveTimer = setTimeout(() => {
         sqliteAutoEditSaveTimer = null;
-        const messageToSave = pendingSqliteAutoEditMessage;
+        const pendingEdit = pendingSqliteAutoEditMessage;
         pendingSqliteAutoEditMessage = null;
-        saveMessageUpdateByUuid(messageToSave).then(async (saveResult) => {
+        saveMessageUpdateByUuid(pendingEdit?.message, pendingEdit).then(async (saveResult) => {
             if (saveResult !== CHAT_SAVE_RESULT.SAVED) {
                 await reloadCurrentChat();
             }
@@ -13410,7 +13510,7 @@ function messageEditAuto(div) {
         return;
     }
 
-    const { mesBlock, text, mes, bias, messageId } = updateResult;
+    const { mesBlock, text, mes, bias, messageId, ordinaryTextEdit, selectedSwipeUuid } = updateResult;
 
     mesBlock.find('.mes_text').val('');
     mesBlock.find('.mes_text').val(messageFormatting(
@@ -13425,7 +13525,7 @@ function messageEditAuto(div) {
     mesBlock.find('.mes_bias').empty();
     mesBlock.find('.mes_bias').append(messageFormatting(bias, '', false, false, -1, {}, false));
     if (currentChatFileNameLooksSqlite()) {
-        scheduleSqliteAutoEditSave(mes);
+        scheduleSqliteAutoEditSave(mes, { ordinaryTextEdit, selectedSwipeUuid });
     } else {
         saveChatDebounced();
     }
@@ -13704,14 +13804,32 @@ async function cloneEditedMessage() {
     const clone = cloneMessageWithNewIdentity(sourceMessage, { generateUuid: uuidv4 });
 
     // 4. Apply the edited text and bias overrides to the clone
-    clone.mes = text;
-    if (bias) {
-        if (!clone.extra) {
-            clone.extra = {};
+    clone.extra ??= {};
+    clone.extra.bias = bias ?? null;
+    if (Array.isArray(clone.swipes) && Array.isArray(clone.swipe_info)) {
+        const cloneSwipeId = Number(clone.swipe_id);
+        const cloneSwipeInfo = clone.swipe_info[cloneSwipeId];
+        if (Number.isInteger(cloneSwipeId) && cloneSwipeId >= 0 && cloneSwipeId < clone.swipes.length && cloneSwipeInfo) {
+            const cloneSwipeUuid = cloneSwipeInfo[AIKOBOTS_SWIPE_UUID_KEY];
+            const topLevelOnlyExtra = {};
+            for (const key of CHAT_SWIPE_INFO_EXTRA_STRIP_KEYS) {
+                if (Object.prototype.hasOwnProperty.call(clone.extra, key)) {
+                    topLevelOnlyExtra[key] = clone.extra[key];
+                }
+            }
+            clone.swipes[cloneSwipeId] = text;
+            cloneSwipeInfo.send_date = clone.send_date;
+            cloneSwipeInfo.gen_started = clone.gen_started;
+            cloneSwipeInfo.gen_finished = clone.gen_finished;
+            cloneSwipeInfo.extra = createSwipeInfoExtra(clone.extra);
+            cloneSwipeInfo[AIKOBOTS_SWIPE_UUID_KEY] = cloneSwipeUuid;
+            clone.mes = clone.swipes[cloneSwipeId];
+            clone.extra = { ...structuredClone(cloneSwipeInfo.extra), ...topLevelOnlyExtra };
+        } else {
+            clone.mes = text;
         }
-        clone.extra.bias = bias;
-    } else if (clone.extra) {
-        delete clone.extra.bias;
+    } else {
+        clone.mes = text;
     }
     clone.order_index = cloneOrderIndex;
 
@@ -13748,6 +13866,7 @@ async function cloneEditedMessage() {
         ? {
             id: getCurrentChatId(),
             message_id: target.index,
+            message_uuid: target.session.messageUuid,
             text_override: text,
             bias_override: bias ?? null,
             base_revision: getChatSaveRevision(),
@@ -13759,6 +13878,7 @@ async function cloneEditedMessage() {
             file_name: currentChatDetails?.fileName ?? characters[this_chid]?.chat,
             avatar_url: currentChatDetails?.avatarUrl ?? characters[this_chid]?.avatar,
             message_id: target.index,
+            message_uuid: target.session.messageUuid,
             text_override: text,
             bias_override: bias ?? null,
             base_revision: getChatSaveRevision(),
@@ -13831,8 +13951,18 @@ async function cloneEditedMessage() {
     }
 }
 
-async function saveMessageUpdateByUuid(message) {
+async function saveMessageUpdateByUuid(message, { ordinaryTextEdit = false, selectedSwipeUuid = null } = {}) {
     if (!message || typeof message !== 'object' || Array.isArray(message)) {
+        return CHAT_SAVE_RESULT.FAILED;
+    }
+
+    const swipeValidation = validateMessageSwipeState(message);
+    if (!swipeValidation.ok) {
+        console.error('Refusing to save an inconsistent message swipe state.', {
+            messageUuid: message?.[AIKOBOTS_MESSAGE_UUID_KEY] ?? null,
+            reason: swipeValidation.reason,
+        });
+        toastr.error(t`Message update was blocked because its swipe data became inconsistent.`);
         return CHAT_SAVE_RESULT.FAILED;
     }
 
@@ -13845,6 +13975,10 @@ async function saveMessageUpdateByUuid(message) {
     const saveMessage = () => saveSqliteMessageMutation('update', {
         message_uuid: messageUuid,
         message: structuredClone(message),
+        ...(ordinaryTextEdit ? {
+            mutation_type: 'ordinary_text_edit',
+            selected_swipe_uuid: selectedSwipeUuid,
+        } : {}),
     }, t`Message update failed.`);
     const queuedSave = sqliteMessageUpdateSaveQueue.then(saveMessage, saveMessage);
     sqliteMessageUpdateSaveQueue = queuedSave.catch(() => {});
@@ -14030,6 +14164,14 @@ function currentChatFileNameLooksSqlite() {
     return chatLoadState.storageMode === 'sqlite';
 }
 
+/**
+ * Reports whether the active chat is backed by SQLite targeted mutations.
+ * @returns {boolean}
+ */
+export function isCurrentChatSqlite() {
+    return currentChatFileNameLooksSqlite();
+}
+
 async function messageEditDone(div) {
     let updateResult;
     try {
@@ -14042,7 +14184,7 @@ async function messageEditDone(div) {
         return;
     }
 
-    let { mesBlock, text, mes, bias, messageId } = updateResult;
+    let { mesBlock, text, mes, bias, messageId, ordinaryTextEdit, selectedSwipeUuid } = updateResult;
     if (messageId == 0) {
         text = substituteParams(text);
     }
@@ -14080,7 +14222,7 @@ async function messageEditDone(div) {
     let saveResult;
     if (currentChatFileNameLooksSqlite()) {
         cancelPendingSqliteAutoEditSave();
-        saveResult = await saveMessageUpdateByUuid(mes);
+        saveResult = await saveMessageUpdateByUuid(mes, { ordinaryTextEdit, selectedSwipeUuid });
     } else if (selected_group) {
         saveResult = await saveCurrentGroupMessageIncremental(messageId, mes);
         if (saveResult !== CHAT_SAVE_RESULT.SAVED) {

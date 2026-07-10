@@ -29,6 +29,7 @@ import {
     online_status,
     messageFormatting,
     deleteMessage,
+    isCurrentChatSqlite,
 } from '../script.js';
 import { isMobile, initMovingUI, favsToHotswap } from './RossAscends-mods.js';
 import {
@@ -3333,7 +3334,7 @@ async function doMesCut(_, text) {
     let cutText = '';
 
     for (let i = 0; i < totalMesToCut; i++) {
-        cutText += (chat[mesIDToCut]?.mes || '') + '\n';
+        const messageText = chat[mesIDToCut]?.mes || '';
         let mesToCut = $('#chat').find(`.mes[mesid=${mesIDToCut}]`);
 
         if (!mesToCut.length) {
@@ -3345,10 +3346,16 @@ async function doMesCut(_, text) {
         }
 
         setEditedMessageId(mesIDToCut);
-        await deleteMessage(mesIDToCut, null, false);
+        const deleted = await deleteMessage(mesIDToCut, null, false);
+        if (deleted !== true) {
+            return cutText;
+        }
+        cutText += messageText + '\n';
     }
 
-    await saveChatConditional();
+    if (!isCurrentChatSqlite()) {
+        await saveChatConditional();
+    }
 
     return cutText;
 }
