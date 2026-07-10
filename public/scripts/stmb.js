@@ -2116,7 +2116,7 @@ function buildSettingsPopupHtml(sceneData, currentUiConnection, regexOptions) {
 
     return `
         <div class="stmb-settings-popup">
-            <h2>Memory Books Settings</h2>
+            <h2>📕 Memory Books</h2>
             <div id="stmb-settings-scene-section">${buildSettingsPopupSceneSectionHtml(sceneData)}</div>
 
             <div id="stmb-settings-memory-status" class="info-block marginBot10">${buildSettingsPopupMemoryStatusHtml(sceneData)}</div>
@@ -2255,7 +2255,7 @@ function buildSettingsPopupHtml(sceneData, currentUiConnection, regexOptions) {
 
             </section>
 
-            <h3 class="stmb-section-title">Memory Profiles</h3>
+            <h3 class="stmb-section-title">🧠 Memory Profiles</h3>
             <div class="world_entry_form_control">
                 <label for="stmb-settings-title-format-select" title="Use [0], [00], [000] for plain auto-numbering; use [[0]], [[00]], [[000]] to keep square brackets. Available: {{title}}, {{scene}}, {{char}}, {{user}}, {{messages}}, {{profile}}, {{date}}, {{time}}.">Memory Title Format</label>
                 <select id="stmb-settings-title-format-select" class="text_pole">
@@ -2285,7 +2285,7 @@ function buildSettingsPopupHtml(sceneData, currentUiConnection, regexOptions) {
                 </details>
             </div>
             <div class="world_entry_form_control">
-                <div class="marginBot5">Profile Actions</div>
+                <div class="marginBot5">👤 Profile Actions</div>
                 <div class="buttons_block marginTop5 justifyCenter gap10px whitespacenowrap">
                     <div id="stmb-settings-profile-set-default" class="menu_button interactable">Set As Default</div>
                     <div id="stmb-settings-profile-new" class="menu_button interactable">New Profile</div>
@@ -2301,7 +2301,7 @@ function buildSettingsPopupHtml(sceneData, currentUiConnection, regexOptions) {
                     <div id="stmb-settings-profile-import" class="menu_button interactable">Import Profiles</div>
                 </div>
             </div>
-            <h3 class="stmb-section-title">Prompt Managers</h3>
+            <h3 class="stmb-section-title">⚙️ Settings</h3>
             <div class="buttons_block marginTop5 justifyCenter gap10px whitespacenowrap">
                 <div id="stmb-settings-open-general-settings" class="menu_button interactable">General Settings</div>
                 <div id="stmb-settings-open-automatic-settings" class="menu_button interactable">Automatic Memories</div>
