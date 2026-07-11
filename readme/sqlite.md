@@ -1,63 +1,103 @@
 # Native SQLite Chat Architecture
 
-This document records the resolved architecture for Aikobots chat storage.
+This document records Aikobots’ native SQLite storage decisions, the current transitional mutation model, and the target mutation contract.
 
-## Current Decision
+`AGENTS.md` is the governing project directive. This file must not be treated as proof that every current mutation path already satisfies the target architecture. Claims in this document must remain consistent with verified code and tests.
 
-Aikobots uses native SQLite through `better-sqlite3`. The former `sql.js`
-whole-file persistence model is retired.
+## Architectural Status
 
-Ordinary reads and mutations operate directly on database pages:
+Aikobots has completed the storage-engine transition from `sql.js` whole-file persistence to native SQLite through `better-sqlite3`.
 
-1. Open the target `.sqlite` file with a native connection.
-2. Execute bounded SQL reads or a transaction containing the requested mutation.
-3. Commit through SQLite.
-4. Close the connection.
+Ordinary reads and writes now operate directly against SQLite:
 
-Ordinary saves do not read the complete file, call `db.export()`, or atomically
-replace the complete database image. Full serialization is reserved for an
-explicit raw SQLite export.
+1. Resolve and validate the target chat path.
+2. Acquire any required application-level coordination.
+3. Open the target `.sqlite` file.
+4. Execute bounded reads or one transaction containing the complete requested mutation.
+5. Commit through SQLite.
+6. Close the connection.
+7. Release application-level coordination.
 
-The project requires Node.js 20 or newer. `better-sqlite3` is a native runtime
-dependency, so production installation must allow its prebuilt binary to install
-or provide the build toolchain needed by the deployment platform.
+Ordinary saves must not load the entire database image, call `db.export()`, or replace the complete `.sqlite` file. Full serialization is reserved for explicit raw SQLite export.
 
-## Resolved Operational Decisions
+The mutation architecture is not yet considered fully resolved.
+
+Some existing routes may still retain legacy client-authoritative behavior, including:
+
+- full-chat saves;
+- loaded-range saves;
+- reconciliation based on submitted positions;
+- swipe operations based on mutable array indexes;
+- compatibility helpers that replace broad portions of chat state;
+- destructive helpers whose call sites require audit;
+- revision checks performed outside the mutation transaction.
+
+These paths are transitional unless they are explicitly restricted to creation, import, restore, migration, administrative repair, or intentional clear-all behavior.
+
+The target state is one authoritative explicit-mutation model based on stable identities, server-controlled revisions, one transaction per semantic operation, idempotent retries, and defined conflict behavior.
+
+## Project Priorities
+
+Storage work must prioritize:
+
+1. Preventing exposure of secure lorebook content through storage, logs, diagnostics, errors, or tests.
+2. Preventing accidental loss, duplication, replacement, or corruption of existing chats and messages.
+3. Preserving edits and new-message creation.
+4. Improving long-chat reliability and speed through bounded reads and incremental mutations.
+5. Keeping changes targeted and reviewable without preserving an incorrect architecture merely to minimize code changes.
+
+## Resolved Native SQLite Decisions
 
 - Driver: `better-sqlite3` 12.x.
 - Runtime floor: Node.js 20.
-- Connection lifetime: short-lived, one connection per storage operation.
+- Connection lifetime: short-lived, normally one connection per storage operation.
 - Journal mode: WAL.
 - Durability: `synchronous = FULL`.
-- SQLite lock wait: `busy_timeout = 10000` milliseconds.
+- SQLite lock wait: `busy_timeout = 10000`.
 - Automatic WAL checkpoint threshold: 1,000 pages.
-- Application lock files remain in place.
-- Revision and active-session validation remain in place.
-- Existing `.sqlite` chat files are upgraded in place.
-- Existing `.jsonl` chats remain supported migration/import inputs.
+- Foreign keys enabled.
+- Existing `.sqlite` files are upgraded in place.
+- Existing `.jsonl` chats remain supported as migration or import inputs.
+- Ordinary reads are bounded SQL reads.
+- Ordinary writes use native transactions.
+- Ordinary saves do not serialize or replace the complete database file.
 
-Short-lived connections are intentional. Aikobots can have many chat databases,
-and chat files can be renamed or deleted. A process-global connection cache would
-retain large numbers of file handles and complicate safe rename, delete, and WAL
-sidecar handling. Native page-level I/O does not require a long-lived connection.
+Short-lived connections are intentional. Aikobots may have many chat databases, and files can be renamed or deleted. A global connection cache would retain file handles and complicate safe rename, delete, export, and WAL-sidecar handling.
+
+Every native connection applies:
+
+```sql
+PRAGMA busy_timeout = 10000;
+PRAGMA synchronous = FULL;
+PRAGMA foreign_keys = ON;
+PRAGMA journal_mode = WAL;
+PRAGMA wal_autocheckpoint = 1000;
+```
+
+These settings must be verified under the production deployment model. They do not replace correct transaction boundaries, revision handling, or mutation semantics.
+
+Production uses multiple PM2 workers sharing one local `DATA_ROOT`. The filesystem must support SQLite byte-range locking and shared-memory behavior correctly. Network filesystems must not be assumed safe for WAL without explicit validation.
 
 ## Key Files
 
-- `src/sqlite-manager.js`: native connection configuration, schema upgrades,
-  JSONL migration, range reads, indexed UUID lookup, transactions, and explicit
-  raw database export.
-- `src/chat-storage.js`: canonical companion paths, cross-process chat locks,
-  locked companion cleanup, and consistent lifecycle snapshots.
-- `src/endpoints/chats.js`: path validation, cross-process locking, revisions,
-  active-session checks, chat mutation endpoints, backups, imports, exports, and
-  group chat adaptation.
-- `src/chat-paths.js`: canonical `.sqlite`, `.jsonl`, `-wal`, and `-shm` paths.
-- `migrate-sqlite.js`: one-shot JSONL migration and integrity verification.
-- `src/__tests__/chat-storage.test.js`: storage and mutation regression coverage.
+- `src/sqlite-manager.js`: native connection configuration, schema upgrades, JSONL migration, bounded reads, UUID lookup, transactions, and raw export.
+- `src/chat-storage.js`: canonical companion paths, cross-process locks, lifecycle cleanup, and storage snapshots.
+- `src/endpoints/chats.js`: path validation, authorization, revisions, active sessions, mutations, compatibility routes, imports, restores, repairs, and exports.
+- `src/chat-paths.js`: canonical `.sqlite`, `.jsonl`, `.sqlite-wal`, `.sqlite-shm`, and lock paths.
+- `migrate-sqlite.js`: one-shot migration and integrity validation.
+- Storage and endpoint tests: engine, mutation, migration, and multi-worker regression coverage.
 
-## Storage Schema
+Any other route, extension integration, background task, or helper capable of mutating chat storage is part of this architecture and must satisfy the same invariants.
 
-The storage version is `20260711`.
+## Current Storage Schema
+
+The current documented storage version is:
+
+```text
+20260711
+```
+
+The current base schema is:
 
 ```sql
 CREATE TABLE metadata (
@@ -79,218 +119,615 @@ CREATE INDEX idx_messages_message_uuid
     ON messages(message_uuid);
 ```
 
-`messages.content` remains the canonical JSON representation of each record. This
-preserves compatibility with existing chat objects, including `swipes` and
-`swipe_info`. The first ordered record is the chat header.
+The first ordered row is the chat header. Logical messages follow it.
 
-`message_uuid` mirrors `content.aikobots_message_uuid` for logical messages. It is
-an indexed lookup column, not a second public source of truth. All manager-owned
-insert and update paths write `content` and `message_uuid` together.
+`messages.content` remains the compatibility JSON representation of the complete record, including embedded swipe data.
 
-The UUID index locates the target row without parsing every message JSON object.
-Computing its zero-based logical position still counts preceding entries through
-the ordering index for response metadata. A swipe edit updates one message row
-atomically because all sibling swipes belong to that row.
+`messages.message_uuid` mirrors the durable message UUID stored in the JSON object and permits indexed lookup.
 
-## Existing Database Upgrade
+This schema describes the current baseline. It does not yet enforce every target identity constraint.
 
-Opening an older Aikobots database performs an idempotent schema upgrade:
+## Message Identity
 
-1. Verify that the `messages` table exists.
-2. Add `messages.message_uuid` if absent.
-3. Create `idx_messages_message_uuid` if absent.
-4. Backfill UUIDs by parsing each existing logical message once.
-5. Set `metadata.storage_version` to `20260711`.
+Every logical message has two conceptually different identifiers:
 
-The upgrade uses an immediate SQLite transaction and rechecks the schema after
-acquiring the writer lock. Concurrent PM2 processes therefore cannot both attempt
-the same `ALTER TABLE` operation.
-
-The upgrade is resumable. If a process stops before the storage version is
-advanced, the next open repeats the UUID backfill safely.
-
-Existing chat data, message row IDs, `order_index` values, swipe arrays, metadata,
-and revisions are not reformatted during this schema upgrade.
-
-## Connection And WAL Policy
-
-Every native connection applies:
-
-```sql
-PRAGMA busy_timeout = 10000;
-PRAGMA synchronous = FULL;
-PRAGMA foreign_keys = ON;
-PRAGMA journal_mode = WAL;
-PRAGMA wal_autocheckpoint = 1000;
+```text
+db_message_id
+message_uuid
 ```
 
-Committed data is durable when it is present in either the main database or its
-WAL. Code must never assume that reading only the main `.sqlite` file captures the
-latest state while a WAL may exist.
+In the current schema:
 
-Closing the final connection normally checkpoints and removes idle sidecars, but
-sidecars remain first-class storage companions:
+```text
+db_message_id = messages.id
+```
 
-- `<chat>.sqlite-wal`
-- `<chat>.sqlite-shm`
+`db_message_id` is internal database identity.
 
-Delete paths remove both sidecars. Rename and raw export operations must run while
-holding the chat lock and use logical copying or a consistent SQLite snapshot.
+`message_uuid` is the durable identity used by clients and mutation APIs.
 
-## Application Locks And Multiple PM2 Processes
+A message must not be externally identified primarily by:
 
-Native SQLite supplies file locking and transaction isolation. Aikobots also
-retains `${chat}.sqlite.lock` directory locks because application mutations are
-more than isolated SQL statements. They include revision checks, active-session
-authorization, identity validation, header updates, and sometimes multiple row
-changes that must share one application decision.
+- `order_index`;
+- array position;
+- DOM `mesid`;
+- loaded-range position;
+- message content;
+- timestamp;
+- database row ID alone.
 
-The directory lock:
+The client must create `message_uuid` before the first persistence request involving a new message. Rerendering, hydration, retry, move, or reordering must not create a new UUID for the same logical message.
 
-- coordinates all PM2 instances using the same `DATA_ROOT`;
-- serializes revisioned mutations for one logical chat;
-- protects rename, delete, import, and raw export lifecycle operations;
-- remains separate from SQLite's WAL reader/writer locking.
+The indexed database column is the authoritative mutation target. The UUID inside `content` is a compatibility mirror. Manager-owned writes must keep them synchronized. A mismatch is an invalid state that must be detected rather than silently resolved.
 
-The shared `DATA_ROOT` must be on a filesystem with correct SQLite byte-range lock
-and shared-memory semantics. A local Linux filesystem is the expected production
-configuration. Network filesystems must not be assumed safe without explicit
-SQLite WAL compatibility validation.
+The final schema must enforce UUID uniqueness within the intended scope after existing data is audited and repaired. A likely staged form is a partial unique index excluding the header or other legitimate null values:
+
+```sql
+CREATE UNIQUE INDEX ... ON messages(message_uuid)
+WHERE message_uuid IS NOT NULL;
+```
+
+Do not add this constraint blindly if existing chats contain duplicate, malformed, or missing identities.
+
+## Swipe Identity
+
+Storing all swipes inside one message row makes a row update atomic, but it does not by itself provide stable swipe identity. A transaction can still atomically edit or select the wrong swipe if the target is only a mutable array index.
+
+Independent swipe operations require durable `swipe_uuid` values where the client can:
+
+- create a swipe;
+- select a swipe;
+- edit a swipe;
+- delete a swipe;
+- reorder swipes;
+- retry swipe creation;
+- regenerate while preserving history.
+
+The client must create a swipe UUID before persistence when later operations may refer to that swipe.
+
+Use the smallest safe representation.
+
+### Embedded swipe UUIDs
+
+Keep swipes embedded in `messages.content` if that representation can safely support:
+
+- one durable UUID per swipe;
+- UUID-based selection, edit, delete, and reordering;
+- preservation of swipe metadata;
+- conflict detection;
+- idempotent retries;
+- deterministic migration.
+
+### Normalized swipe table
+
+Introduce a swipe table only if embedded swipe data cannot establish those invariants without broad ambiguous replacement.
+
+Possible conceptual fields include:
+
+```text
+messages:
+- db_message_id
+- message_uuid
+- order_index
+- current_swipe_uuid
+- row_version
+- created_at
+- updated_at
+- last_updated_device_id
+
+swipes:
+- db_swipe_id
+- db_message_id
+- swipe_uuid
+- swipe_index
+- content
+- metadata
+- row_version
+- created_at
+- updated_at
+- last_updated_device_id
+```
+
+Normalization must be justified by actual supported operations, not theoretical preference.
+
+## Ordering
+
+`order_index` remains ordering data and may remain `REAL`.
+
+It must not serve as durable message identity.
+
+Moving, inserting, deleting, cloning, or reindexing messages must preserve unaffected message and swipe UUIDs.
+
+Fractional insertion may use the midpoint between adjacent order values. If precision no longer permits a distinct midpoint, reindexing must occur atomically and change only ordering information unless another change is explicitly required.
+
+Helpers using physical row order must account for the header without exposing the header offset as logical identity.
 
 ## Read Flow
 
-Chunked reads use SQL range queries and parse only returned rows:
+Normal reads use bounded SQL operations, including:
 
-- `getChatHeader()` reads the header.
-- `getMessageCount()` performs `COUNT(*)` over logical messages.
-- `getLastMessage()` reads one tail row.
-- `getMessageRange(offset, limit)` reads the requested logical window.
-- `getLogicalMessageRowByUuid()` uses `idx_messages_message_uuid` and does not scan
-  every message JSON object.
+- reading the header;
+- reading the revision;
+- counting logical messages;
+- reading the tail;
+- reading a range;
+- locating a message by UUID;
+- reading only rows required by a mutation.
 
-Read flows that combine a count, header, and one or more ranges use an explicit
-read transaction so a concurrent WAL commit cannot mix two logical chat versions
-inside one response or prompt assembly.
+A logical response composed from multiple queries must use a read transaction when needed so it cannot combine values from different committed revisions.
 
-The browser still receives complete swipe data for each returned message. Chunking
-is by logical message, not by swipe byte count.
+The browser may continue to receive complete swipe data for each returned message. Chunking remains by logical message unless measured evidence justifies a separate swipe-loading design.
 
-Legacy JSONL reads still parse the JSONL file because JSONL has no query engine.
-Production chats should be migrated to SQLite.
+Legacy JSONL reads still require parsing. JSONL is a migration or import source, not a second indefinitely writable authoritative format.
 
-## Identity Validation
+## Target Mutation Contract
 
-Old or partially migrated databases may require a complete message/swipe identity
-scan. The result is recorded in:
+Existing-chat changes must become explicit semantic operations, for example:
 
 ```text
-metadata.identity_scan_version = 1
+create message
+append message
+insert message
+edit message UUID X
+delete message UUID X
+truncate after message UUID X
+truncate all messages
+add swipe UUID Y to message UUID X
+select swipe UUID Y on message UUID X
+edit swipe UUID Y
+delete swipe UUID Y
+reorder swipes
+move message UUID X before UUID Y
+copy message UUID X
+rename chat
+duplicate chat
+import chat
+restore chat
+migrate chat
 ```
 
-Full normalized writes set this marker directly. Modern chats without the marker
-are scanned once; ordinary chunk reads then skip the complete identity scan.
-Mutation boundaries continue to validate the submitted message or range.
+A routine mutation request should contain only:
 
-The marker is invalidated only by a future schema or identity algorithm migration.
-Code that directly edits chat files outside Aikobots is unsupported and must not
-expect automatic detection after the scan marker is set.
+- the intended operation;
+- stable target identity;
+- changed data;
+- `base_revision`;
+- `operation_uuid`;
+- `device_id`;
+- operation-specific preconditions.
 
-## Write And Mutation Flow
+The client must not resend a complete chat or broad loaded range merely to identify one changed entity.
 
-The endpoint layer retains the existing public behavior:
+## Server-Authoritative Revision
 
-- full and loaded-range saves;
-- UUID-targeted message edits;
-- UUID-targeted message deletes;
-- suffix truncation after a stable branch-point UUID, or explicit truncation of
-  all logical messages while preserving the chat header;
-- message append with expected-tail validation;
-- message clone and fractional ordering;
-- visibility and persona updates;
-- group chat equivalents.
+Every existing chat must have an integer revision.
 
-Mutations preserve this order:
+Every ordinary mutation request must include:
 
-1. Resolve and validate the chat path.
-2. Acquire the application lock.
-3. Check active-session authority when required.
-4. Open the native database.
-5. Read the persisted header and revision.
-6. Validate identities, active swipe state, and request shape.
-7. Begin a SQL transaction.
-8. Update the revision header and affected rows.
+```text
+base_revision
+```
+
+The mutation must:
+
+1. Begin the write transaction.
+2. Read the persisted revision inside the transaction.
+3. Compare it with `base_revision`.
+4. Reject the operation if stale.
+5. Perform the complete semantic mutation.
+6. Increment the chat revision exactly once.
+7. Record the resulting revision.
+8. Record the successful operation UUID.
 9. Commit.
-10. Close the connection and release the application lock.
 
-`saveDb()` remains temporarily as a compatibility boundary for existing callers.
-It no longer exports or writes the file; it only rejects a leaked open transaction.
-New code should treat the SQL commit as the durability boundary.
+Revision validation, mutation, revision increment, and operation recording must share one transaction.
 
-## Ordering And Inserts
+Do not:
 
-`order_index` remains `REAL`. Cloning between two messages uses their midpoint,
-avoiding a full reindex for ordinary inserts. If floating-point precision cannot
-represent a distinct midpoint, the existing reindex fallback remains available.
+- validate revision only before the transaction;
+- increment revision before all mutation work succeeds;
+- update data and revision in separate transactions;
+- use client timestamps as authoritative conflict order;
+- silently apply last-write-wins behavior.
 
-Logical message IDs exclude the header. Helpers that operate in physical row order
-must continue to account for the header at position zero.
+## One Semantic Operation, One Transaction
+
+One user-visible action must commit atomically.
+
+Examples include:
+
+- editing or deleting a message;
+- truncating after a message;
+- adding and selecting a swipe;
+- deleting a selected swipe and choosing the new selection;
+- regenerating a response;
+- moving or copying a message;
+- importing or restoring a chat;
+- renaming a chat when multiple records or files are affected.
+
+If any required statement fails, the entire semantic operation must roll back.
+
+A transaction does not make a logically incorrect replacement safe. Routine mutations must not be implemented by transactionally deleting and rebuilding the complete chat.
+
+## Idempotent Retries
+
+Every logical mutation attempt must include:
+
+```text
+operation_uuid
+```
+
+The client reuses the same operation UUID when retrying the same logical request.
+
+Inside the transaction, the server must:
+
+1. Check whether the operation UUID already committed.
+2. If so, verify the replay matches the original operation.
+3. Return the recorded result or another safe idempotent response.
+4. Otherwise perform the mutation.
+5. Record the operation type, target, resulting revision, and safe response data.
+6. Commit.
+
+The operation must not be recorded as successful before the mutation commits.
+
+Reusing one operation UUID with a materially different payload must be rejected.
+
+The operation log must have a bounded retention policy sufficient for realistic retry and reconnect windows.
+
+## Device Identity and Time
+
+Clients may provide a random installation-scoped:
+
+```text
+device_id
+```
+
+This must not be hardware fingerprinting.
+
+A successful mutation may record:
+
+```text
+last_updated_device_id
+```
+
+Device identity is diagnostic. It does not decide whose write wins.
+
+Server-generated timestamps are authoritative for storage events such as:
+
+```text
+created_at
+updated_at
+committed_at
+```
+
+Existing client timestamps may be preserved separately when they represent composition, generation, or imported history.
+
+Client clocks must not determine ordering or conflict resolution.
+
+The design must remain correct when:
+
+- a device clock is wrong;
+- a clock moves backward or forward;
+- a suspended device submits an old request;
+- requests arrive out of creation order;
+- two devices begin from the same revision.
+
+## Conflicts and API Responses
+
+A stale revision must return an explicit conflict response containing safe metadata such as:
+
+- submitted base revision;
+- current server revision;
+- operation type;
+- confirmation that the operation was not applied;
+- whether the client must reload or reconcile.
+
+A successful mutation response must provide enough authoritative state for the client to update without reconstructing the result from assumptions. Depending on the operation, this may include:
+
+- operation UUID;
+- resulting revision;
+- changed message UUID;
+- changed swipe UUID;
+- normalized changed entity;
+- authoritative selected swipe UUID;
+- ordering information;
+- deleted UUIDs;
+- server timestamps;
+- idempotent replay status.
+
+Success must not be returned before commit.
+
+## Transitional Compatibility Paths
+
+The current code may still contain:
+
+- full-chat saves;
+- loaded-range saves;
+- compatibility save helpers;
+- UUID-targeted mutations;
+- append and truncate helpers;
+- clone or move behavior;
+- group-chat variants;
+- repair and migration routes.
+
+Every path must be inventoried and classified as:
+
+- temporarily required by an active caller;
+- required only for creation, import, restore, migration, or repair;
+- unused;
+- immediately replaceable;
+- unsafe and requiring disablement.
+
+Full-chat, loaded-range, and explicit CRUD must not remain equally authoritative mutation systems.
+
+The target is one explicit mutation model plus narrowly isolated replacement operations.
+
+## Full Replacement and Destructive Helpers
+
+A helper that deletes or replaces all logical messages is not inherently wrong. Its call sites determine whether it is safe.
+
+Full replacement may be valid for:
+
+- new chat creation;
+- import;
+- restore;
+- migration;
+- administrator repair;
+- explicit clear-all;
+- explicit truncate-all.
+
+It must not implement ordinary:
+
+- edit;
+- swipe selection or editing;
+- regeneration;
+- single-message deletion;
+- truncation after one message;
+- stale-client reconciliation;
+- autosave;
+- routine persistence.
+
+An empty array, missing UUID, omitted range, absent unloaded message, or partially hydrated payload must never silently mean “delete everything.”
+
+### Truncate after UUID
+
+This operation must:
+
+- validate the target UUID;
+- preserve the target when that is the defined behavior;
+- delete only later messages and dependent data;
+- preserve earlier UUIDs;
+- update ordering only where necessary;
+- increment revision atomically;
+- return authoritative deleted identities.
+
+### Truncate all
+
+This operation must:
+
+- require explicit destructive intent such as `truncate_all: true`;
+- never infer intent from a missing UUID;
+- preserve required header and metadata;
+- delete all logical messages and dependent data atomically;
+- increment revision atomically;
+- return authoritative empty-chat state.
+
+These are separate semantic operations and must not be overloaded ambiguously.
+
+## Loaded-Range and Full-Chat Compatibility
+
+While a compatibility path remains, it must:
+
+- require `base_revision`;
+- require active-session validation where applicable;
+- reject sparse or ambiguous ranges;
+- reject ranges beyond the server tail unless append is explicit;
+- verify submitted UUIDs against the authoritative range;
+- reject partially hydrated full replacement;
+- never infer deletion from unloaded messages;
+- preserve unseen authoritative state;
+- log safe operation metadata for migration tracking;
+- identify its active caller and removal criteria.
+
+Compatibility tests may prove that loaded-range writes preserve unseen data. They must be labeled transitional and must not imply that loaded-range save is part of the final architecture.
+
+## Application Locks and PM2
+
+Native SQLite supplies locking and transaction isolation.
+
+Aikobots also uses per-chat application lock directories.
+
+Application locks remain clearly justified for lifecycle operations involving the database and companion files, including:
+
+- rename;
+- delete;
+- import replacement;
+- restore;
+- migration;
+- raw export;
+- sidecar cleanup.
+
+The need for application locks around ordinary row mutations must be verified rather than assumed.
+
+A mutation lock may remain justified when correctness depends on state outside the SQLite transaction, such as external active-session state or coordinated filesystem work.
+
+However:
+
+- revision validation belongs inside the transaction;
+- row mutations belong inside the transaction;
+- revision increment belongs inside the transaction;
+- operation-idempotency recording belongs inside the transaction.
+
+An application lock must not compensate for missing transaction boundaries.
+
+If ordinary mutation locks remain, tests must verify:
+
+- coordination across PM2 workers;
+- timeout and stale-lock recovery;
+- cleanup after worker failure;
+- no route bypass;
+- no conflict with SQLite busy handling;
+- no serialization across unrelated chats.
+
+A deterministic single-process bug must not be blamed on PM2. Fixing that bug does not prove multi-worker safety.
+
+## Existing Database Upgrade
+
+Opening an older database may:
+
+1. Verify the `messages` table.
+2. Add `message_uuid` if absent.
+3. Create the lookup index.
+4. Backfill lookup values from message JSON.
+5. Update `metadata.storage_version`.
+
+Upgrade steps must run inside an appropriate transaction and recheck schema state after acquiring the writer lock so concurrent workers cannot perform incompatible changes.
+
+A resumable upgrade is not a complete recovery plan.
+
+Every schema or identity migration must define:
+
+- source and schema detection;
+- backup policy;
+- handling of duplicate, malformed, or missing identities;
+- logical before-and-after validation;
+- completion marking;
+- failure cleanup;
+- restoration procedure;
+- compatibility with application rollback.
+
+An identity-scan marker may record successful completion of a specific scan algorithm. It must be invalidated by future schema or identity changes and must not conceal interrupted or failed repair.
 
 ## JSONL Migration
 
-JSONL migration is failure-atomic:
+JSONL migration is an explicit replacement operation.
 
-1. Create a temporary native SQLite database beside the destination.
-2. Use rollback-journal mode for the temporary build.
-3. Validate every JSONL record before insertion.
-4. Insert all records in one transaction.
-5. Run `PRAGMA integrity_check`.
-6. Close the temporary database.
-7. Rename it to the final `.sqlite` path.
+A failure-atomic migration should:
 
-On failure, the temporary file is removed and the legacy source remains untouched.
-Split-tail JSONL remains unsupported.
+1. Identify and validate the source format.
+2. Check schema version.
+3. Preserve the source according to backup policy.
+4. Build a temporary native SQLite database beside the destination.
+5. Validate every source record.
+6. Preserve or assign message UUIDs.
+7. Preserve or assign swipe UUIDs where required.
+8. Preserve order, selected swipe, and documented timestamps.
+9. Insert in one transaction.
+10. Run `PRAGMA integrity_check`.
+11. Compare the logical chat before and after migration.
+12. Close the temporary database.
+13. Rename it into place atomically where supported.
+14. Mark migration complete only after validation.
 
-## Backups And Exports
+On failure, the source must remain recoverable and the incomplete target must not become authoritative.
 
-Normal mutations do not serialize the database.
+Split-tail JSONL remains unsupported unless separately designed and tested.
 
-JSONL backups continue to be logical backups produced from stored chat records.
-Incremental mutations do not synchronously serialize JSONL, even when the loaded
-range happens to cover the whole chat. Periodic append backups retain the existing
-configured cadence. This policy is independent of SQLite's WAL durability.
+## Backups and Raw Export
 
-A raw SQLite export is an explicit exceptional operation. It acquires the chat
-lock, checkpoints committed WAL state, and serializes a consistent database image.
-The whole database is read only because the user explicitly requested the whole
-database file.
+Normal mutations do not synchronously serialize the full chat to JSONL.
 
-Never copy or export the main `.sqlite` file without accounting for active WAL
-state.
+Logical backups may continue on the configured schedule and must preserve enough information to restore:
 
-## Rename And Delete
+- header;
+- message order;
+- message UUIDs;
+- swipe identities;
+- selected swipe;
+- relevant metadata;
+- format or schema version.
 
-Chat lifecycle operations use canonical companion paths and the application lock.
+Raw SQLite export is explicit and exceptional.
 
-- Delete removes `.jsonl`, `.sqlite`, `.sqlite-wal`, and `.sqlite-shm` companions.
-- Rename normally reads logical records and writes a new native database while
-  holding locks for both source and destination.
-- Direct raw-file fallback copying is allowed only when no logical header exists
-  and no connection can be writing the source.
+It must produce a consistent snapshot containing committed WAL state. Never copy only the main `.sqlite` file while committed changes may remain in `.sqlite-wal`.
 
-## Security And Data Integrity
+Export should use SQLite-supported backup or snapshot behavior where possible and must coordinate with required lifecycle locks.
 
-- Continue using `src/chat-paths.js` for every user-derived chat path.
-- Preserve active-session and revision checks.
-- Validate selected swipe text, index, metadata, and UUID consistency before save.
-- Never log chat content, swipe text, prompt snapshots, or secure lorebook data.
-- Do not place secure lorebook entries in SQLite diagnostics or thrown errors.
-- Do not trust client-provided UUIDs, revisions, ranges, filenames, or storage
-  metadata.
-- Keep SQL values parameterized.
+## Rename and Delete
+
+Lifecycle operations use canonical validated paths and required locks.
+
+Delete must account for:
+
+- `.jsonl`;
+- `.sqlite`;
+- `.sqlite-wal`;
+- `.sqlite-shm`;
+- lock and temporary companions where applicable.
+
+Rename must not ignore active WAL state. Source and destination coordination must prevent concurrent mutation or path collision.
+
+Raw-file fallback behavior must be restricted to explicitly verified conditions in which no writer is active and no committed sidecar state is omitted.
+
+## Security and Diagnostics
+
+Storage code must:
+
+- use canonical validated chat paths;
+- preserve authorization and active-session checks;
+- validate UUIDs, revisions, ranges, filenames, and storage metadata;
+- use parameterized SQL;
+- fail closed when destructive intent is ambiguous;
+- distinguish malformed input from a stale conflict.
+
+Do not log:
+
+- message text;
+- swipe text;
+- prompt content;
+- secure lorebook entries;
+- private chat content.
+
+Timing instrumentation may capture:
+
+```text
+request received
+validation complete
+application lock requested
+application lock acquired
+transaction requested
+transaction started
+database wait duration
+mutation complete
+transaction committed
+response sent
+```
+
+Safe diagnostic fields may include:
+
+- internal or anonymized chat reference;
+- operation type;
+- operation UUID;
+- worker ID;
+- base and resulting revisions;
+- duration;
+- conflict or rollback outcome;
+- safe device metadata.
+
+Performance conclusions must be based on measurements rather than assumptions about disk, network, or SQLite contention.
+
+## Client Contract
+
+The browser must:
+
+- create stable message and swipe UUIDs before persistence where required;
+- preserve identity through rendering and hydration;
+- avoid treating DOM position or array index as durable identity;
+- reuse the entity UUID when retrying persistence of the same entity;
+- reuse the operation UUID for retry of the same logical mutation;
+- create a new operation UUID for a genuinely new mutation;
+- send the current known base revision;
+- update its revision from the authoritative response;
+- handle conflicts explicitly;
+- never represent partially hydrated state as complete authoritative state.
+
+Automatic last-write-wins behavior requires an explicit product decision and dedicated tests.
 
 ## Verification
 
-Focused checks for storage changes:
+Use package scripts directly. Do not use `npx`, `bunx`, or equivalent wrappers.
+
+Focused static checks may include:
 
 ```text
 node --check src/sqlite-manager.js
@@ -301,22 +738,154 @@ node --check migrate-sqlite.js
 git diff --check
 ```
 
-Storage regression coverage must include:
+Tests must cover the semantic operation, not only isolated SQL helpers.
 
-- opening and upgrading a pre-`20260711` database;
-- UUID index backfill;
-- bounded chunk reads;
-- selected-swipe edits preserving sibling swipes;
-- message deletion, suffix truncation, and truncate-all empty-chat handling;
-- loaded-range writes preserving unseen messages;
-- fractional clone insertion;
-- raw export containing committed WAL state;
-- JSONL migration cleanup after failure;
-- `.sqlite-wal` and `.sqlite-shm` lifecycle cleanup.
+Required categories include:
+
+### Storage
+
+- pre-current database upgrade;
+- UUID backfill;
+- bounded reads;
+- coherent multi-query reads;
+- raw export with committed WAL state;
+- WAL and SHM cleanup;
+- interrupted migration or upgrade recovery;
+- rename and delete lifecycle safety.
+
+### Messages
+
+- create with client UUID;
+- duplicate operation retry;
+- duplicate entity UUID under a different operation;
+- append and insert;
+- edit and delete by UUID;
+- truncate after UUID;
+- explicit truncate-all;
+- move, reorder, and clone;
+- preservation of unaffected UUIDs, content, and order.
+
+### Swipes
+
+- create with client UUID;
+- add and select by UUID;
+- edit and delete by UUID;
+- delete selected and non-selected swipes;
+- deterministic selection after deletion;
+- reorder;
+- regeneration preserving history;
+- prevention of cross-message effects;
+- preservation of metadata;
+- duplicate retry prevention.
+
+### Revisions and idempotency
+
+- correct and stale base revisions;
+- two requests from one base revision;
+- duplicate operation delivery;
+- operation UUID reused with conflicting payload;
+- one revision increment per successful semantic operation;
+- no increment after rollback, conflict, or idempotent replay.
+
+### Rollback
+
+Inject failure during:
+
+- add/select swipe;
+- truncate;
+- regenerate;
+- import or restore;
+- message reordering.
+
+Verify no partial data, selection, ordering, revision, or operation record remains.
+
+### Multi-device and multi-worker
+
+- two devices from one revision;
+- delayed stale request;
+- incorrect client clocks;
+- device metadata recording;
+- separate connections or processes;
+- concurrent same-chat and separate-chat writes;
+- writer waiting and busy timeout;
+- stale revision after waiting;
+- worker termination during a transaction;
+- coherent reads during writes;
+- authoritative final state.
+
+### Compatibility
+
+While legacy paths remain, verify:
+
+- loaded-range writes preserve unseen messages;
+- stale revisions are rejected;
+- submitted UUIDs match authoritative ranges;
+- partial hydration cannot trigger full replacement;
+- empty payload cannot clear a chat;
+- replacement requires explicit authorized intent;
+- migrated data cannot be overwritten by an unguarded compatibility route.
+
+## Implementation Stages
+
+1. Inventory routes and reproduce deterministic failures.
+2. Establish message and swipe identity invariants.
+3. Implement explicit transactional operations.
+4. Add operation idempotency and device metadata.
+5. Validate multi-worker behavior and locking.
+6. Restrict and remove ordinary replacement paths.
+7. Validate migration, recovery, and performance.
+
+Each stage must remain reviewable and state:
+
+- invariant established;
+- files changed;
+- behavior changed;
+- tests added;
+- compatibility impact;
+- migration impact;
+- remaining risk.
+
+## Completion Criteria
+
+The storage-engine conversion is complete.
+
+The mutation architecture is complete only when:
+
+- deterministic failures have identified root causes and regression tests;
+- ordinary mutations use stable message UUIDs;
+- swipe operations have stable identity semantics;
+- new messages and swipes can be identified before persistence where required;
+- one semantic operation uses one transaction;
+- revision validation and increment occur inside that transaction;
+- injected failure leaves no partial logical change;
+- duplicate delivery does not duplicate effects;
+- stale requests do not overwrite newer state;
+- client clocks do not determine authoritative order;
+- multi-device conflict behavior is defined;
+- multi-worker behavior is tested;
+- ordinary edits do not rebuild unrelated rows;
+- full replacement is restricted to explicit replacement operations;
+- empty or partially hydrated payloads cannot clear a chat;
+- unaffected message and swipe UUIDs survive mutations;
+- migration and recovery are tested;
+- loaded-range and generalized replacement writes have a defined removal path.
+
+The goal is not merely that native SQLite writes succeed.
+
+The goal is a coherent database contract in which every user-visible chat action has stable identity, explicit semantics, one atomic transaction boundary, server-authoritative revision behavior, idempotent retries, deterministic tests, and defined recovery.
 
 ## Superseded Architecture
 
-The previous architecture loaded the full file into `sql.js`, mutated an in-memory
-database, called `db.export()`, and atomically replaced the complete file. That
-model is intentionally superseded. It must not be reintroduced as a fallback for
-ordinary reads or saves.
+The former storage architecture used `sql.js` to load the complete database, mutate it in memory, call `db.export()`, and replace the complete file. It must not return as a fallback for ordinary reads or saves.
+
+The legacy client-authoritative mutation model is also being superseded.
+
+Native SQLite must not become merely a faster container for:
+
+- full-array replacement;
+- loaded-range splicing;
+- index-based identity;
+- deletion inferred from absence;
+- routine delete-and-rebuild behavior.
+
+The completed architecture uses SQLite as a database: stable identities, bounded reads, explicit mutations, constraints, atomic transactions, revisions, idempotency, and defined recovery.
