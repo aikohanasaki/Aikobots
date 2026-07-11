@@ -1,36 +1,61 @@
-# SQLite Chat Architecture
+# Native SQLite Chat Architecture
 
-This note documents the current SQLite chat implementation so future changes do not require rediscovering the storage model from scratch.
+This document records the resolved architecture for Aikobots chat storage.
 
 ## Current Decision
 
-Aikobots chat SQLite storage uses `sql.js`, not native SQLite connections.
+Aikobots uses native SQLite through `better-sqlite3`. The former `sql.js`
+whole-file persistence model is retired.
 
-Each `.sqlite` chat file is treated as a durable file format, while mutations happen in memory:
+Ordinary reads and mutations operate directly on database pages:
 
-1. Load the full `.sqlite` file into an in-memory `SQL.Database`.
-2. Apply reads/writes against that in-memory database.
-3. Use SQL transactions for multi-row logical mutations.
-4. Run `PRAGMA integrity_check` before persistence.
-5. Export the full database with `db.export()`.
-6. Persist via atomic whole-file replacement using `write-file-atomic`.
+1. Open the target `.sqlite` file with a native connection.
+2. Execute bounded SQL reads or a transaction containing the requested mutation.
+3. Commit through SQLite.
+4. Close the connection.
 
-This preserves the historical whole-file chat persistence model while changing the on-disk format from JSONL to SQLite.
+Ordinary saves do not read the complete file, call `db.export()`, or atomically
+replace the complete database image. Full serialization is reserved for an
+explicit raw SQLite export.
+
+The project requires Node.js 20 or newer. `better-sqlite3` is a native runtime
+dependency, so production installation must allow its prebuilt binary to install
+or provide the build toolchain needed by the deployment platform.
+
+## Resolved Operational Decisions
+
+- Driver: `better-sqlite3` 12.x.
+- Runtime floor: Node.js 20.
+- Connection lifetime: short-lived, one connection per storage operation.
+- Journal mode: WAL.
+- Durability: `synchronous = FULL`.
+- SQLite lock wait: `busy_timeout = 10000` milliseconds.
+- Automatic WAL checkpoint threshold: 1,000 pages.
+- Application lock files remain in place.
+- Revision and active-session validation remain in place.
+- Existing `.sqlite` chat files are upgraded in place.
+- Existing `.jsonl` chats remain supported migration/import inputs.
+
+Short-lived connections are intentional. Aikobots can have many chat databases,
+and chat files can be renamed or deleted. A process-global connection cache would
+retain large numbers of file handles and complicate safe rename, delete, and WAL
+sidecar handling. Native page-level I/O does not require a long-lived connection.
 
 ## Key Files
 
-- `src/sqlite-manager.js`: low-level SQLite lifecycle, schema creation, JSONL migration, message range reads, range writes, reindexing, metadata helpers, and clone insertion ordering.
-- `src/endpoints/chats.js`: HTTP-level chat behavior, validation, revision checks, active-session checks, save locking, imports, exports, backups, group chat adaptation, chunked reads, STMB range resolution, and mutation endpoints.
-- `src/chat-paths.js`: storage path validation, extension normalization, `.sqlite` defaulting, legacy `.jsonl` acceptance, companion path resolution, and path traversal defenses.
-- `migrate-sqlite.js`: one-shot legacy JSONL to SQLite migration with integrity verification and split-tail refusal.
-- `src/__tests__/chat-storage.test.js`: SQLite behavior coverage for chunking, STMB sparse range reads, loaded-range writes, fractional insert ordering, clone behavior, dotted names, and split-tail rejection.
-- `src/__tests__/chat-paths.test.js`: path validation and storage extension coverage.
+- `src/sqlite-manager.js`: native connection configuration, schema upgrades,
+  JSONL migration, range reads, indexed UUID lookup, transactions, and explicit
+  raw database export.
+- `src/endpoints/chats.js`: path validation, cross-process locking, revisions,
+  active-session checks, chat mutation endpoints, backups, imports, exports, and
+  group chat adaptation.
+- `src/chat-paths.js`: canonical `.sqlite`, `.jsonl`, `-wal`, and `-shm` paths.
+- `migrate-sqlite.js`: one-shot JSONL migration and integrity verification.
+- `src/__tests__/chat-storage.test.js`: storage and mutation regression coverage.
 
-## Storage Format
+## Storage Schema
 
-New chat paths default to `.sqlite`. Legacy `.jsonl` paths are still accepted at boundaries so old clients, imports, and references can be resolved, then converted to the SQLite companion path where appropriate.
-
-The SQLite schema is created in `createDatabase()`:
+The storage version is `20260711`.
 
 ```sql
 CREATE TABLE metadata (
@@ -41,244 +66,253 @@ CREATE TABLE metadata (
 CREATE TABLE messages (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     order_index REAL,
-    content TEXT
+    content TEXT,
+    message_uuid TEXT
 );
 
-CREATE INDEX idx_messages_order_index ON messages(order_index);
+CREATE INDEX idx_messages_order_index
+    ON messages(order_index);
+
+CREATE INDEX idx_messages_message_uuid
+    ON messages(message_uuid);
 ```
 
-`metadata.storage_version` is currently set to `20260530`.
+`messages.content` remains the canonical JSON representation of each record. This
+preserves compatibility with existing chat objects, including `swipes` and
+`swipe_info`. The first ordered record is the chat header.
 
-`messages.content` stores one JSON string per logical chat record. The first record is always the chat header.
+`message_uuid` mirrors `content.aikobots_message_uuid` for logical messages. It is
+an indexed lookup column, not a second public source of truth. All manager-owned
+insert and update paths write `content` and `message_uuid` together.
 
-## Logical Message Model
+The UUID index locates the target row without parsing every message JSON object.
+Computing its zero-based logical position still counts preceding entries through
+the ordering index for response metadata. A swipe edit updates one message row
+atomically because all sibling swipes belong to that row.
 
-There are two index spaces:
+## Existing Database Upgrade
 
-- SQLite row ordering includes the header at `order_index = 0`.
-- Public/logical message IDs exclude the header. Logical message `0` is stored after the header.
+Opening an older Aikobots database performs an idempotent schema upgrade:
 
-That means helper calls intentionally offset by one in write paths:
+1. Verify that the `messages` table exists.
+2. Add `messages.message_uuid` if absent.
+3. Create `idx_messages_message_uuid` if absent.
+4. Backfill UUIDs by parsing each existing logical message once.
+5. Set `metadata.storage_version` to `20260711`.
 
-- `getMessageRange(db, offset, limit)` reads logical messages only, with `WHERE order_index > 0`.
-- `getMessageCount(db)` counts logical messages only, with `WHERE order_index > 0`.
-- `writeLogicalChat(..., { messageStartId })` calls `updateMessages(db, messages, messageStartId + 1)` because `updateMessages()` works in SQLite row order including the header.
-- Header updates use row/order index `0`.
+The upgrade uses an immediate SQLite transaction and rechecks the schema after
+acquiring the writer lock. Concurrent PM2 processes therefore cannot both attempt
+the same `ALTER TABLE` operation.
 
-Do not mix logical message IDs with SQLite row offsets without checking whether the helper includes or excludes the header.
+The upgrade is resumable. If a process stops before the storage version is
+advanced, the next open repeats the UUID backfill safely.
+
+Existing chat data, message row IDs, `order_index` values, swipe arrays, metadata,
+and revisions are not reformatted during this schema upgrade.
+
+## Connection And WAL Policy
+
+Every native connection applies:
+
+```sql
+PRAGMA busy_timeout = 10000;
+PRAGMA synchronous = FULL;
+PRAGMA foreign_keys = ON;
+PRAGMA journal_mode = WAL;
+PRAGMA wal_autocheckpoint = 1000;
+```
+
+Committed data is durable when it is present in either the main database or its
+WAL. Code must never assume that reading only the main `.sqlite` file captures the
+latest state while a WAL may exist.
+
+Closing the final connection normally checkpoints and removes idle sidecars, but
+sidecars remain first-class storage companions:
+
+- `<chat>.sqlite-wal`
+- `<chat>.sqlite-shm`
+
+Delete paths remove both sidecars. Rename and raw export operations must run while
+holding the chat lock and use logical copying or a consistent SQLite snapshot.
+
+## Application Locks And Multiple PM2 Processes
+
+Native SQLite supplies file locking and transaction isolation. Aikobots also
+retains `${chat}.sqlite.lock` directory locks because application mutations are
+more than isolated SQL statements. They include revision checks, active-session
+authorization, identity validation, header updates, and sometimes multiple row
+changes that must share one application decision.
+
+The directory lock:
+
+- coordinates all PM2 instances using the same `DATA_ROOT`;
+- serializes revisioned mutations for one logical chat;
+- protects rename, delete, import, and raw export lifecycle operations;
+- remains separate from SQLite's WAL reader/writer locking.
+
+The shared `DATA_ROOT` must be on a filesystem with correct SQLite byte-range lock
+and shared-memory semantics. A local Linux filesystem is the expected production
+configuration. Network filesystems must not be assumed safe without explicit
+SQLite WAL compatibility validation.
 
 ## Read Flow
 
-The main read adapter is `getChatSegments(filePath)` in `src/endpoints/chats.js`.
+Chunked reads use SQL range queries and parse only returned rows:
 
-For SQLite files:
+- `getChatHeader()` reads the header.
+- `getMessageCount()` performs `COUNT(*)` over logical messages.
+- `getLastMessage()` reads one tail row.
+- `getMessageRange(offset, limit)` reads the requested logical window.
+- `getLogicalMessageRowByUuid()` uses `idx_messages_message_uuid` and does not scan
+  every message JSON object.
 
-- It resolves the `.sqlite` companion path with `replaceChatStorageExtension()`.
-- Metadata-only reads load only the header, logical message count, and last logical message.
-- Full reads load all rows through `getMessages(db)` and return `header = messages[0]`, `messages = messages.slice(1)`.
+Read flows that combine a count, header, and one or more ranges use an explicit
+read transaction so a concurrent WAL commit cannot mix two logical chat versions
+inside one response or prompt assembly.
 
-For legacy JSONL files:
+The browser still receives complete swipe data for each returned message. Chunking
+is by logical message, not by swipe byte count.
 
-- It reads newline-delimited JSON objects with `readJsonlObjects()`.
-- It rejects legacy split-tail storage through `assertSupportedChatStorage()`.
-- It treats the first record as the header and the rest as logical messages.
+Legacy JSONL reads still parse the JSONL file because JSONL has no query engine.
+Production chats should be migrated to SQLite.
 
-Reads use chunk loading and do not require hydrating the full chat into memory; only saves load/export the complete file. Chunked chat reads use `buildChunkedChatPayload()`:
+## Identity Validation
 
-- SQLite reads fetch only the requested logical range with `getMessageRange()`.
-- Non-SQLite legacy reads slice the already-loaded JSONL array.
-- `displayCount` is clamped by `normalizeLongChatConfig()`.
-- Returned range metadata is absolute logical message metadata: `loadedRangeStart`, `loadedRangeEnd`, `tailStartId`, `tailEndId`, `headCount`, and `tailCount`.
+Old or partially migrated databases may require a complete message/swipe identity
+scan. The result is recorded in:
 
-STMB uses `resolveSqliteLogicalChatReference()` when it needs SQLite-native behavior. It intentionally does not fall back to JSONL if the `.sqlite` file is missing, and can populate only a requested range into sparse logical message positions.
+```text
+metadata.identity_scan_version = 1
+```
 
-## Write Flow
+Full normalized writes set this marker directly. Modern chats without the marker
+are scanned once; ordinary chunk reads then skip the complete identity scan.
+Mutation boundaries continue to validate the submitted message or range.
 
-The central write helper is `writeLogicalChat(filePath, header, messages, options)`.
+The marker is invalidated only by a future schema or identity algorithm migration.
+Code that directly edits chat files outside Aikobots is unsupported and must not
+expect automatic detection after the scan marker is set.
 
-It:
+## Write And Mutation Flow
 
-1. Rejects the old `startIndex` option. Callers must use `messageStartId`, which is a zero-based logical message id excluding the header.
-2. Sanitizes the header and messages before persistence.
-3. Normalizes or regenerates Aikobots message identities.
-4. Resolves the `.sqlite` companion path.
-5. Loads or creates the database.
-6. Performs either:
-   - a full rewrite with `setMessages(db, [header, ...messages])`, or
-   - a targeted logical message update with `updateMessages(db, messages, messageStartId + 1)`.
-7. Runs `saveDb()`, which performs SQLite integrity checking and atomic whole-file replacement.
-8. Returns range metadata and a JSONL backup payload only for full saves.
+The endpoint layer retains the existing public behavior:
 
-Important implications:
+- full and loaded-range saves;
+- UUID-targeted message edits;
+- UUID-targeted message deletes;
+- suffix truncation after a stable branch-point UUID;
+- message append with expected-tail validation;
+- message clone and fractional ordering;
+- visibility and persona updates;
+- group chat equivalents.
 
-- Incremental and partial range saves do not return `fullJsonl`, so chat backups are skipped for those writes.
-- Complete loaded-range saves for SQLite chats serialize the stored logical chat after the database write and can create a JSONL backup without using ordinary full replacement.
-- SQLite message appends create a periodic full JSONL backup every `backups.chat.sqliteAppendBackupMessageInterval` messages by default, subject to the existing backup throttle.
-- `updateMessages()` may update existing rows or append when the start index is exactly the current row count.
-- `updateMessages()` rejects gaps and overlong ranges to avoid sparse/corrupt row sequences.
+Mutations preserve this order:
 
-## Mutations
+1. Resolve and validate the chat path.
+2. Acquire the application lock.
+3. Check active-session authority when required.
+4. Open the native database.
+5. Read the persisted header and revision.
+6. Validate identities, active swipe state, and request shape.
+7. Begin a SQL transaction.
+8. Update the revision header and affected rows.
+9. Commit.
+10. Close the connection and release the application lock.
 
-Most mutation endpoints live in `src/endpoints/chats.js` and should continue to reuse the existing helpers.
-
-Key mutation paths:
-
-- `/save`: full or loaded-range direct chat saves. `save_mode = tail` is rejected. Full saves require hydrated chat data unless `save_mode = loaded_range`.
-- `/group/save`: group equivalent of direct saves, with group header wrapping.
-- `/message-visibility`: currently loads the logical chat, mutates visibility, and rewrites through `writeLogicalChat()`.
-- `/sync-user-persona`: updates matching user persona messages directly in SQLite rows and saves the database.
-- `/message/clone`: requires SQLite, clones a logical message after the source, assigns new identities, strips prompt snapshot keys from affected messages, remaps timed-world-info checkpoints, updates the revision header, and returns a window around the inserted clone.
-- `/rename`: rewrites the target through `writeLogicalChat()` when logical records are available, then removes old `.jsonl` and `.sqlite` companions.
-- `/delete` and `/group/delete`: remove both `.jsonl` and `.sqlite` companions.
-- `/export`: supports raw SQLite export as base64 and logical JSONL/text exports from the current logical chat view.
-- `/import` and `/group/import`: normalize supported imports and persist new chats through `writeLogicalChat()` or `writeGroupChat()`.
+`saveDb()` remains temporarily as a compatibility boundary for existing callers.
+It no longer exports or writes the file; it only rejects a leaked open transaction.
+New code should treat the SQL commit as the durability boundary.
 
 ## Ordering And Inserts
 
-`messages.order_index` is `REAL` so `insertLogicalMessageAfter()` can insert between two existing logical messages without immediately rewriting every row.
+`order_index` remains `REAL`. Cloning between two messages uses their midpoint,
+avoiding a full reindex for ordinary inserts. If floating-point precision cannot
+represent a distinct midpoint, the existing reindex fallback remains available.
 
-Insert behavior:
+Logical message IDs exclude the header. Helpers that operate in physical row order
+must continue to account for the header at position zero.
 
-- Find the source logical row with `getLogicalMessageRow(db, messageId)`.
-- Find the next logical row.
-- Use the midpoint between `source.orderIndex` and `next.orderIndex`, or append at `source.orderIndex + 1`.
-- If the midpoint is not finite or collides due to precision limits, reindex with `setMessagesWithoutTransaction(db, getMessages(db))` and retry.
+## JSONL Migration
 
-Loaded-range updates remain position-based after fractional inserts because `updateMessages()` selects target rows by ordered row position, not by raw `order_index` value.
+JSONL migration is failure-atomic:
 
-## Concurrency And Revisions
+1. Create a temporary native SQLite database beside the destination.
+2. Use rollback-journal mode for the temporary build.
+3. Validate every JSONL record before insertion.
+4. Insert all records in one transaction.
+5. Run `PRAGMA integrity_check`.
+6. Close the temporary database.
+7. Rename it to the final `.sqlite` path.
 
-Writes are coordinated by application-level lock files, not SQLite WAL or native SQLite file locks.
-
-`withChatSaveLock(filePath, callback)`:
-
-- Creates `${filePath}.lock` with exclusive `wx` open.
-- Retries every `25ms`.
-- Times out after `10s`.
-- Removes stale locks older than `10 minutes`.
-- Always closes and removes the lock in `finally`.
-
-Revision conflict detection is separate:
-
-- `chat_revision` lives in the chat header.
-- `base_revision` from the request is compared against the persisted header.
-- A stale revision returns `409`.
-- `last_save_session_id` is preserved when the request provides a valid UUID save session.
-
-Active-session checks remain endpoint-level and must not be bypassed for mutations that currently require them.
-
-## Journal Mode / WAL
-
-We do not use WAL mode.
-
-There is no configured `PRAGMA journal_mode`, no `journal_mode=WAL`, no checkpoint management, and no expected `-wal` or `-shm` sidecar files for chat storage.
-
-This is intentional for the current architecture because `sql.js` does not operate as a long-lived native SQLite file connection. The app owns durability by exporting the complete database image and atomically replacing the chat file.
-
-Application-level save locking remains the concurrency boundary for writes. SQLite native file-locking and WAL semantics are not relied on for coordinating concurrent writers.
-
-This keeps the current deployment model simple: each chat save produces one complete `.sqlite` file, without sidecar journal files that would need coordinated lifecycle handling across multiple instances sharing `DATA_ROOT`.
-
-## Path And Format Boundaries
-
-All chat file paths should be resolved through `src/chat-paths.js`.
-
-Current rules:
-
-- `.sqlite` and `.jsonl` are supported chat storage extensions.
-- Missing extensions default to `.sqlite`.
-- Extension normalization is case-insensitive.
-- Known unsafe/non-chat extensions such as `.db`, `.sqlite3`, `.sqlite-wal`, `.sqlite-shm`, `.json`, `.txt`, `.bak`, `.tmp`, and `.log` are rejected.
-- `*.head.jsonl` split-head files are rejected.
-- Path traversal, absolute paths, URL-encoded traversal, NULs, slash/backslash separators, drive-letter paths, and empty logical names are rejected.
-- Deduplicated chat listings prefer `.sqlite` over legacy `.jsonl` for the same logical chat name.
-
-Do not build chat paths manually in new code.
-
-## Legacy JSONL And Split-Tail
-
-Legacy JSONL is still a compatibility input, but split-tail storage is intentionally unsupported.
-
-Supported JSONL paths:
-
-- legacy reads where no SQLite companion exists,
-- imports from complete JSONL exports,
-- JSONL exports generated from SQLite logical records,
-- backups from full saves.
-
-Rejected JSONL paths:
-
-- headers with `chat_storage.mode === 'split-tail'`,
-- split-head files such as `*.head.jsonl`,
-- partial split-tail migration inputs.
-
-`migrate-sqlite.js` refuses partial split-tail JSONL, writes SQLite through `migrateFromJsonl()`, verifies `PRAGMA integrity_check`, and only then removes legacy JSONL sources.
+On failure, the temporary file is removed and the legacy source remains untouched.
+Split-tail JSONL remains unsupported.
 
 ## Backups And Exports
 
-Backups remain JSONL files in the backup directory.
+Normal mutations do not serialize the database.
 
-Full saves produce a serialized JSONL payload and can be backed up. Complete loaded-range saves for SQLite chats can also be backed up by serializing the stored logical chat after the database write. SQLite appends also create periodic JSONL backups when the post-append message count is divisible by `backups.chat.sqliteAppendBackupMessageInterval`, default `2`; set it to `0` to disable that cadence. Incremental updates and partial range saves avoid loading the entire chat and return `fullJsonl: null`, so backup creation is skipped for those writes.
+JSONL backups continue to be logical backups produced from stored chat records.
+Incremental mutations may skip a JSONL backup according to the existing backup
+cadence. This policy is independent of SQLite's WAL durability.
 
-Exports are format-specific:
+A raw SQLite export is an explicit exceptional operation. It acquires the chat
+lock, checkpoints committed WAL state, and serializes a consistent database image.
+The whole database is read only because the user explicitly requested the whole
+database file.
 
-- `format = sqlite`: reads the `.sqlite` file and returns base64 with `is_binary: true`.
-- `format = jsonl`: serializes logical chat data, optionally stripping Aikobots identity metadata.
-- other formats: serialize visible logical messages to text.
+Never copy or export the main `.sqlite` file without accounting for active WAL
+state.
 
-## Group Chats
+## Rename And Delete
 
-Group chats share the same SQLite storage primitives but use a synthetic group header:
+Chat lifecycle operations use canonical companion paths and the application lock.
 
-- `is_group_chat_header: true`
-- `group_chat_header_version`
-- `chat_metadata`
+- Delete removes `.jsonl`, `.sqlite`, `.sqlite-wal`, and `.sqlite-shm` companions.
+- Rename normally reads logical records and writes a new native database while
+  holding locks for both source and destination.
+- Direct raw-file fallback copying is allowed only when no logical header exists
+  and no connection can be writing the source.
 
-Legacy group chats without headers are wrapped by `ensureGroupChatHeader()`, which can use legacy group metadata if available. Group chunked reads use `buildChunkedGroupChatPayload()`.
+## Security And Data Integrity
 
-## Security Notes
+- Continue using `src/chat-paths.js` for every user-derived chat path.
+- Preserve active-session and revision checks.
+- Validate selected swipe text, index, metadata, and UUID consistency before save.
+- Never log chat content, swipe text, prompt snapshots, or secure lorebook data.
+- Do not place secure lorebook entries in SQLite diagnostics or thrown errors.
+- Do not trust client-provided UUIDs, revisions, ranges, filenames, or storage
+  metadata.
+- Keep SQL values parameterized.
 
-Chat content may contain sensitive secure lorebook data. Architecture or debugging changes must not log message content, secure entry data, full JSONL payloads, or raw SQLite row contents.
+## Verification
 
-Security boundaries to preserve:
+Focused checks for storage changes:
 
-- Use `chat-paths.js` for path validation.
-- Keep active-session checks for write endpoints that currently require them.
-- Keep revision checks before mutating persisted chats.
-- Keep integrity checks before `saveDb()` persistence.
-- Keep import rejection for split-tail partial files.
-- Do not trust client-provided filenames, paths, message IDs, revisions, or format names.
+```text
+node --check src/sqlite-manager.js
+node --check src/endpoints/chats.js
+node --check src/chat-paths.js
+node --check src/endpoints/groups.js
+node --check migrate-sqlite.js
+git diff --check
+```
 
-## Regression Map
+Storage regression coverage must include:
 
-Relevant focused checks:
+- opening and upgrading a pre-`20260711` database;
+- UUID index backfill;
+- bounded chunk reads;
+- selected-swipe edits preserving sibling swipes;
+- message deletion and suffix truncation;
+- loaded-range writes preserving unseen messages;
+- fractional clone insertion;
+- raw export containing committed WAL state;
+- JSONL migration cleanup after failure;
+- `.sqlite-wal` and `.sqlite-shm` lifecycle cleanup.
 
-- `node --check src/sqlite-manager.js`
-- `node --check src/endpoints/chats.js`
-- `node --check src/chat-paths.js`
-- `npm test -- src/__tests__/chat-storage.test.js`
-- `npm test -- src/__tests__/chat-paths.test.js`
-- `git diff --check`
+## Superseded Architecture
 
-Existing tests cover:
-
-- default `.sqlite` path normalization and legacy `.jsonl` acceptance,
-- dotted chat names without accidental `.sqlite.sqlite` paths,
-- unsupported extension and path traversal rejection,
-- split-head and split-tail rejection,
-- chunked SQLite range reads,
-- STMB sparse range reads and missing-SQLite reporting,
-- loaded-range saves preserving unseen messages,
-- position-based range updates after fractional inserts,
-- clone insertion identity regeneration and prompt snapshot invalidation.
-
-## Revisit Criteria
-
-Reconsider native SQLite and WAL only if we intentionally move from whole-file `sql.js` persistence to long-lived native database connections, and after designing:
-
-- multi-instance writer coordination,
-- WAL/checkpoint policy,
-- backup/export behavior,
-- rename/delete handling for sidecar files,
-- crash recovery expectations,
-- deployment behavior on shared `DATA_ROOT`.
+The previous architecture loaded the full file into `sql.js`, mutated an in-memory
+database, called `db.export()`, and atomically replaced the complete file. That
+model is intentionally superseded. It must not be reintroduced as a fallback for
+ordinary reads or saves.

@@ -1,26 +1,88 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import initSqlJs from 'sql.js';
-import { sync as writeFileAtomicSync } from 'write-file-atomic';
+import process from 'node:process';
+import Database from 'better-sqlite3';
 
-let SQL = null;
+const SQLITE_BUSY_TIMEOUT_MS = 10_000;
+const SQLITE_STORAGE_VERSION = '20260711';
 
-/**
- * Initializes the sql.js library.
- * @returns {Promise<void>}
- */
-async function initSql() {
-    if (SQL) return;
-    SQL = await initSqlJs();
+function getPersistedMessageUuid(message) {
+    return typeof message?.aikobots_message_uuid === 'string' && message.aikobots_message_uuid
+        ? message.aikobots_message_uuid
+        : null;
+}
+
+function getBindParameters(parameters) {
+    if (parameters === undefined) {
+        return [];
+    }
+
+    return Array.isArray(parameters) ? parameters : [parameters];
+}
+
+class NativeStatementAdapter {
+    constructor(statement) {
+        this.statement = statement;
+        this.boundParameters = [];
+        this.iterator = null;
+        this.currentRow = null;
+    }
+
+    resetIterator() {
+        this.iterator?.return?.();
+        this.iterator = null;
+        this.currentRow = null;
+    }
+
+    bind(parameters) {
+        this.resetIterator();
+        this.boundParameters = getBindParameters(parameters);
+        return true;
+    }
+
+    step() {
+        if (!this.iterator) {
+            this.iterator = this.statement.raw(true).iterate(...this.boundParameters)[Symbol.iterator]();
+        }
+
+        const next = this.iterator.next();
+        this.currentRow = next.done ? null : next.value;
+        return !next.done;
+    }
+
+    get() {
+        return this.currentRow;
+    }
+
+    run(parameters = undefined) {
+        const bindParameters = parameters === undefined ? this.boundParameters : getBindParameters(parameters);
+        this.resetIterator();
+        return this.statement.run(...bindParameters);
+    }
+
+    free() {
+        this.resetIterator();
+    }
 }
 
 /**
- * Creates a new database with the required schema.
- * @returns {import('sql.js').Database}
+ * Compatibility adapter that keeps the existing chat storage helpers stable while
+ * executing against a native, file-backed SQLite connection.
  */
-function createDatabase() {
-    const db = new SQL.Database();
-    db.run(`
+class NativeDatabaseAdapter {
+    constructor(filePath, { initialize = false, journalMode = 'WAL' } = {}) {
+        this.filePath = filePath;
+        this.database = new Database(filePath);
+        this.database.pragma(`busy_timeout = ${SQLITE_BUSY_TIMEOUT_MS}`);
+        this.database.pragma('synchronous = FULL');
+        this.database.pragma('foreign_keys = ON');
+        this.database.pragma(`journal_mode = ${journalMode}`);
+        if (journalMode === 'WAL') {
+            this.database.pragma('wal_autocheckpoint = 1000');
+        }
+
+        if (initialize) {
+            this.database.exec(`
         CREATE TABLE metadata (
             key TEXT PRIMARY KEY,
             value TEXT
@@ -28,43 +90,151 @@ function createDatabase() {
         CREATE TABLE messages (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             order_index REAL,
-            content TEXT
+            content TEXT,
+            message_uuid TEXT
         );
         CREATE INDEX idx_messages_order_index ON messages(order_index);
-        INSERT INTO metadata (key, value) VALUES ('storage_version', '20260530');
-    `);
-    return db;
+        CREATE INDEX idx_messages_message_uuid ON messages(message_uuid);
+        INSERT INTO metadata (key, value) VALUES ('storage_version', '${SQLITE_STORAGE_VERSION}');
+            `);
+        } else {
+            this.upgradeSchema();
+        }
+    }
+
+    upgradeSchema() {
+        const initialColumns = this.database.pragma('table_info(messages)');
+        if (!initialColumns.length) {
+            throw new Error('SQLite chat is missing the messages table.');
+        }
+
+        const initialVersion = this.database.prepare('SELECT value FROM metadata WHERE key = \'storage_version\'').pluck().get();
+        const hasMessageUuidColumn = initialColumns.some(column => column.name === 'message_uuid');
+        const hasMessageUuidIndex = Boolean(this.database.prepare(`
+            SELECT 1 FROM sqlite_master WHERE type = 'index' AND name = 'idx_messages_message_uuid'
+        `).pluck().get());
+        if (initialVersion === SQLITE_STORAGE_VERSION && hasMessageUuidColumn && hasMessageUuidIndex) {
+            return;
+        }
+
+        const upgrade = this.database.transaction(() => {
+            const messageColumns = this.database.pragma('table_info(messages)');
+            const storedVersion = this.database.prepare('SELECT value FROM metadata WHERE key = \'storage_version\'').pluck().get();
+            const addedMessageUuidColumn = !messageColumns.some(column => column.name === 'message_uuid');
+            if (addedMessageUuidColumn) {
+                this.database.exec('ALTER TABLE messages ADD COLUMN message_uuid TEXT');
+            }
+
+            this.database.exec('CREATE INDEX IF NOT EXISTS idx_messages_message_uuid ON messages(message_uuid)');
+            if (addedMessageUuidColumn || storedVersion !== SQLITE_STORAGE_VERSION) {
+                const missingUuidRows = this.database.prepare(`
+                    SELECT id, content
+                    FROM messages
+                    WHERE order_index > 0 AND message_uuid IS NULL
+                `).all();
+                const update = this.database.prepare('UPDATE messages SET message_uuid = ? WHERE id = ?');
+                for (const row of missingUuidRows) {
+                    const message = JSON.parse(row.content);
+                    update.run(getPersistedMessageUuid(message), row.id);
+                }
+            }
+
+            if (storedVersion !== SQLITE_STORAGE_VERSION) {
+                this.database.prepare(`
+                    INSERT INTO metadata (key, value) VALUES ('storage_version', ?)
+                    ON CONFLICT(key) DO UPDATE SET value = excluded.value
+                `).run(SQLITE_STORAGE_VERSION);
+            }
+        });
+        upgrade.immediate();
+    }
+
+    exec(sql) {
+        const normalizedSql = String(sql || '').trim();
+        if (!normalizedSql) {
+            return [];
+        }
+
+        const returnsRows = /^(?:SELECT|PRAGMA|WITH|EXPLAIN)\b/i.test(normalizedSql);
+        if (!returnsRows) {
+            this.database.exec(normalizedSql);
+            return [];
+        }
+
+        const statement = this.database.prepare(normalizedSql).raw(true);
+        const columns = statement.columns().map(column => column.name);
+        const values = statement.all();
+        return values.length || columns.length ? [{ columns, values }] : [];
+    }
+
+    run(sql, parameters = undefined) {
+        if (parameters === undefined) {
+            this.database.exec(sql);
+            return this;
+        }
+
+        this.database.prepare(sql).run(...getBindParameters(parameters));
+        return this;
+    }
+
+    prepare(sql) {
+        return new NativeStatementAdapter(this.database.prepare(sql));
+    }
+
+    serialize() {
+        if (this.database.inTransaction) {
+            throw new Error('Cannot serialize a SQLite database during an active transaction.');
+        }
+
+        this.database.pragma('wal_checkpoint(TRUNCATE)');
+        return this.database.serialize();
+    }
+
+    close() {
+        if (this.database.open) {
+            this.database.close();
+        }
+    }
 }
 
 /**
- * Loads a database from a file.
+ * Opens a native file-backed SQLite database, creating the chat schema when absent.
  * @param {string} filePath
- * @returns {Promise<import('sql.js').Database>}
+ * @returns {Promise<NativeDatabaseAdapter>}
  */
 export async function loadDb(filePath) {
-    await initSql();
-    if (!fs.existsSync(filePath)) {
-        return createDatabase();
-    }
-    const fileBuffer = fs.readFileSync(filePath);
-    return new SQL.Database(fileBuffer);
+    const resolvedPath = path.resolve(filePath);
+    const initialize = !fs.existsSync(resolvedPath);
+    fs.mkdirSync(path.dirname(resolvedPath), { recursive: true });
+    return new NativeDatabaseAdapter(resolvedPath, { initialize });
 }
 
 /**
- * Saves a database to a file.
- * @param {import('sql.js').Database} db
+ * Compatibility persistence boundary. Native SQLite commits are already durable;
+ * this now verifies that callers did not leave an open transaction.
+ * @param {NativeDatabaseAdapter} db
  * @param {string} filePath
  */
 export function saveDb(db, filePath) {
-    // Integrity check
-    const check = db.exec('PRAGMA integrity_check');
-    if (check[0].values[0][0] !== 'ok') {
-        throw new Error(`Database integrity check failed: ${check[0].values[0][0]}`);
+    void filePath;
+    if (db?.database?.inTransaction) {
+        throw new Error('SQLite transaction remained open at the persistence boundary.');
     }
+}
 
-    const data = db.export();
-    const buffer = Buffer.from(data);
-    writeFileAtomicSync(filePath, buffer);
+/**
+ * Produces a consistent SQLite file image for an explicit raw export.
+ * Ordinary chat mutations never serialize the whole database.
+ * @param {string} filePath
+ * @returns {Promise<Buffer>}
+ */
+export async function exportDatabaseFile(filePath) {
+    const db = await loadDb(filePath);
+    try {
+        return db.serialize();
+    } finally {
+        db.close();
+    }
 }
 
 /**
@@ -74,13 +244,20 @@ export function saveDb(db, filePath) {
  * @returns {Promise<void>}
  */
 export async function migrateFromJsonlRecords(records, sqlitePath) {
-    await initSql();
-    const db = createDatabase();
+    const resolvedSqlitePath = path.resolve(sqlitePath);
+    if (fs.existsSync(resolvedSqlitePath)) {
+        throw new Error(`SQLite migration target already exists: ${resolvedSqlitePath}`);
+    }
+
+    const tempPath = `${resolvedSqlitePath}.${process.pid}.${Date.now()}.tmp`;
+    fs.mkdirSync(path.dirname(resolvedSqlitePath), { recursive: true });
+    const db = new NativeDatabaseAdapter(tempPath, { initialize: true, journalMode: 'DELETE' });
+    let migrated = false;
     try {
         db.run('BEGIN TRANSACTION');
         let stmt;
         try {
-            stmt = db.prepare('INSERT INTO messages (order_index, content) VALUES (?, ?)');
+            stmt = db.prepare('INSERT INTO messages (order_index, content, message_uuid) VALUES (?, ?, ?)');
             let index = 0;
             for await (const record of records) {
                 const line = typeof record === 'string' ? record : record?.content;
@@ -89,13 +266,14 @@ export async function migrateFromJsonlRecords(records, sqlitePath) {
                 }
 
                 // Use index as order_index for initial migration
+                let parsedRecord;
                 try {
-                    JSON.parse(line);
+                    parsedRecord = JSON.parse(line);
                 } catch (error) {
                     const label = typeof record === 'object' && record?.label ? record.label : `line ${index + 1}`;
                     throw new Error(`Invalid JSONL at ${label}: ${error.message}`);
                 }
-                stmt.run([index, line]);
+                stmt.run([index, line, index > 0 ? getPersistedMessageUuid(parsedRecord) : null]);
                 index++;
             }
             db.run('COMMIT');
@@ -106,9 +284,29 @@ export async function migrateFromJsonlRecords(records, sqlitePath) {
             stmt?.free();
         }
 
-        saveDb(db, sqlitePath);
+        const check = db.exec('PRAGMA integrity_check');
+        if (check[0]?.values?.[0]?.[0] !== 'ok') {
+            throw new Error(`Database integrity check failed: ${check[0]?.values?.[0]?.[0] ?? 'unknown'}`);
+        }
+        migrated = true;
     } finally {
         db.close();
+        let renamed = false;
+        try {
+            if (migrated) {
+                fs.renameSync(tempPath, resolvedSqlitePath);
+                renamed = true;
+            }
+        } finally {
+            if (!renamed && fs.existsSync(tempPath)) {
+                fs.unlinkSync(tempPath);
+            }
+            for (const sidecarPath of [`${tempPath}-journal`, `${tempPath}-wal`, `${tempPath}-shm`]) {
+                if (fs.existsSync(sidecarPath)) {
+                    fs.unlinkSync(sidecarPath);
+                }
+            }
+        }
     }
 }
 
@@ -126,7 +324,7 @@ export async function migrateFromJsonl(jsonlPath, sqlitePath) {
 
 /**
  * Reindexes all messages to ensure order_index is sequential.
- * @param {import('sql.js').Database} db
+ * @param {NativeDatabaseAdapter} db
  */
 export function reindexChat(db) {
     const messages = getMessages(db);
@@ -137,9 +335,9 @@ function setMessagesWithoutTransaction(db, messages) {
     db.run('DELETE FROM messages');
     let stmt;
     try {
-        stmt = db.prepare('INSERT INTO messages (order_index, content) VALUES (?, ?)');
+        stmt = db.prepare('INSERT INTO messages (order_index, content, message_uuid) VALUES (?, ?, ?)');
         for (let i = 0; i < messages.length; i++) {
-            stmt.run([i, JSON.stringify(messages[i])]);
+            stmt.run([i, JSON.stringify(messages[i]), i > 0 ? getPersistedMessageUuid(messages[i]) : null]);
         }
     } finally {
         stmt?.free();
@@ -148,7 +346,7 @@ function setMessagesWithoutTransaction(db, messages) {
 
 /**
  * Gets all messages from the database.
- * @param {import('sql.js').Database} db
+ * @param {NativeDatabaseAdapter} db
  * @returns {any[]}
  */
 export function getMessages(db) {
@@ -169,7 +367,7 @@ export function getMessages(db) {
 
 /**
  * Gets the chat header (first message) from the database.
- * @param {import('sql.js').Database} db
+ * @param {NativeDatabaseAdapter} db
  * @returns {any|null}
  */
 export function getChatHeader(db) {
@@ -188,7 +386,7 @@ export function getChatHeader(db) {
 
 /**
  * Gets the total number of messages (excluding header) from the database.
- * @param {import('sql.js').Database} db
+ * @param {NativeDatabaseAdapter} db
  * @returns {number}
  */
 export function getMessageCount(db) {
@@ -199,7 +397,7 @@ export function getMessageCount(db) {
 
 /**
  * Gets the last message from the database.
- * @param {import('sql.js').Database} db
+ * @param {NativeDatabaseAdapter} db
  * @returns {any|null}
  */
 export function getLastMessage(db) {
@@ -218,7 +416,7 @@ export function getLastMessage(db) {
 
 /**
  * Gets a range of messages (excluding header) from the database.
- * @param {import('sql.js').Database} db
+ * @param {NativeDatabaseAdapter} db
  * @param {number} offset
  * @param {number} limit
  * @returns {any[]}
@@ -247,7 +445,7 @@ export function getMessageRange(db, offset, limit) {
 
 /**
  * Gets a logical message row by zero-based message id, excluding the header.
- * @param {import('sql.js').Database} db
+ * @param {NativeDatabaseAdapter} db
  * @param {number} messageId
  * @returns {{id: number, orderIndex: number, content: string, message: any}|null}
  */
@@ -314,7 +512,7 @@ function getLastOrderIndex(db) {
 
 /**
  * Gets an ordered logical message row by Aikobots message UUID.
- * @param {import('sql.js').Database} db
+ * @param {NativeDatabaseAdapter} db
  * @param {string} messageUuid
  * @returns {{logicalIndex: number, id: number, orderIndex: number, content: string, message: any}|null}
  */
@@ -324,47 +522,63 @@ export function getLogicalMessageRowByUuid(db, messageUuid) {
         return null;
     }
 
-    const rows = getOrderedRows(db, 1, getMessageCount(db));
-    let match = null;
-
-    for (let index = 0; index < rows.length; index++) {
-        const message = JSON.parse(rows[index].content);
-        if (message?.aikobots_message_uuid !== normalizedUuid) {
-            continue;
+    const stmt = db.prepare(`
+        SELECT id, order_index, content
+        FROM messages
+        WHERE order_index > 0 AND message_uuid = ?
+        ORDER BY order_index ASC
+        LIMIT 2
+    `);
+    stmt.bind([normalizedUuid]);
+    const matches = [];
+    try {
+        while (stmt.step()) {
+            matches.push(stmt.get());
         }
-
-        if (match) {
-            return null;
-        }
-
-        if (message && typeof message === 'object') {
-            message.id = rows[index].id;
-            message.order_index = Number(rows[index].orderIndex);
-        }
-
-        match = {
-            logicalIndex: index,
-            id: rows[index].id,
-            orderIndex: Number(rows[index].orderIndex),
-            content: rows[index].content,
-            message,
-        };
+    } finally {
+        stmt.free();
     }
 
-    return match;
+    if (matches.length !== 1) {
+        return null;
+    }
+
+    const [id, orderIndex, content] = matches[0];
+    const countStmt = db.prepare('SELECT COUNT(*) FROM messages WHERE order_index > 0 AND order_index < ?');
+    countStmt.bind([orderIndex]);
+    let logicalIndex;
+    try {
+        logicalIndex = countStmt.step() ? Number(countStmt.get()[0]) : 0;
+    } finally {
+        countStmt.free();
+    }
+
+    const message = JSON.parse(content);
+    if (message && typeof message === 'object') {
+        message.id = Number(id);
+        message.order_index = Number(orderIndex);
+    }
+
+    return {
+        logicalIndex,
+        id: Number(id),
+        orderIndex: Number(orderIndex),
+        content,
+        message,
+    };
 }
 
 /**
  * Appends one logical message after the current SQLite tail.
- * @param {import('sql.js').Database} db
+ * @param {NativeDatabaseAdapter} db
  * @param {any} message
  * @returns {number} Inserted logical message id.
  */
 export function appendLogicalMessage(db, message) {
     const orderIndex = getLastOrderIndex(db) + 1;
-    const stmt = db.prepare('INSERT INTO messages (order_index, content) VALUES (?, ?)');
+    const stmt = db.prepare('INSERT INTO messages (order_index, content, message_uuid) VALUES (?, ?, ?)');
     try {
-        stmt.run([orderIndex, JSON.stringify(message)]);
+        stmt.run([orderIndex, JSON.stringify(message), getPersistedMessageUuid(message)]);
     } finally {
         stmt.free();
     }
@@ -374,7 +588,7 @@ export function appendLogicalMessage(db, message) {
 
 /**
  * Updates a logical message row by SQLite row id.
- * @param {import('sql.js').Database} db
+ * @param {NativeDatabaseAdapter} db
  * @param {number} rowId
  * @param {any} message
  */
@@ -384,9 +598,9 @@ export function updateLogicalMessageRowById(db, rowId, message) {
         throw new Error('Invalid SQLite message row id.');
     }
 
-    const stmt = db.prepare('UPDATE messages SET content = ? WHERE id = ?');
+    const stmt = db.prepare('UPDATE messages SET content = ?, message_uuid = ? WHERE id = ?');
     try {
-        stmt.run([JSON.stringify(message), id]);
+        stmt.run([JSON.stringify(message), getPersistedMessageUuid(message), id]);
     } finally {
         stmt.free();
     }
@@ -394,7 +608,7 @@ export function updateLogicalMessageRowById(db, rowId, message) {
 
 /**
  * Deletes all logical rows after the supplied logical message id.
- * @param {import('sql.js').Database} db
+ * @param {NativeDatabaseAdapter} db
  * @param {number} messageId
  */
 export function deleteLogicalMessagesAfter(db, messageId) {
@@ -413,7 +627,7 @@ export function deleteLogicalMessagesAfter(db, messageId) {
 
 /**
  * Inserts a logical message immediately after the supplied logical message id.
- * @param {import('sql.js').Database} db
+ * @param {NativeDatabaseAdapter} db
  * @param {number} messageId
  * @param {any} message
  * @returns {number} Inserted logical message id.
@@ -445,9 +659,9 @@ export function insertLogicalMessageAfter(db, messageId, message) {
                 : Number(reindexedSourceRow.orderIndex) + 1;
         }
 
-        const stmt = db.prepare('INSERT INTO messages (order_index, content) VALUES (?, ?)');
+        const stmt = db.prepare('INSERT INTO messages (order_index, content, message_uuid) VALUES (?, ?, ?)');
         try {
-            stmt.run([orderIndex, JSON.stringify(message)]);
+            stmt.run([orderIndex, JSON.stringify(message), getPersistedMessageUuid(message)]);
         } finally {
             stmt.free();
         }
@@ -462,7 +676,7 @@ export function insertLogicalMessageAfter(db, messageId, message) {
 
 /**
  * Sets all messages in the database.
- * @param {import('sql.js').Database} db
+ * @param {NativeDatabaseAdapter} db
  * @param {any[]} messages
  */
 export function setMessages(db, messages) {
@@ -478,7 +692,7 @@ export function setMessages(db, messages) {
 
 /**
  * Updates a range of messages in the database.
- * @param {import('sql.js').Database} db
+ * @param {NativeDatabaseAdapter} db
  * @param {any[]} messages
  * @param {number} startIndex
  */
@@ -509,14 +723,14 @@ export function updateMessages(db, messages, startIndex) {
         let stmt;
         try {
             stmt = targetRows.length === messages.length
-                ? db.prepare('UPDATE messages SET content = ? WHERE id = ?')
-                : db.prepare('INSERT INTO messages (order_index, content) VALUES (?, ?)');
+                ? db.prepare('UPDATE messages SET content = ?, message_uuid = ? WHERE id = ?')
+                : db.prepare('INSERT INTO messages (order_index, content, message_uuid) VALUES (?, ?, ?)');
 
             for (let i = 0; i < messages.length; i++) {
                 if (targetRows.length === messages.length) {
-                    stmt.run([JSON.stringify(messages[i]), targetRows[i].id]);
+                    stmt.run([JSON.stringify(messages[i]), getPersistedMessageUuid(messages[i]), targetRows[i].id]);
                 } else {
-                    stmt.run([appendBaseOrderIndex + 1 + i, JSON.stringify(messages[i])]);
+                    stmt.run([appendBaseOrderIndex + 1 + i, JSON.stringify(messages[i]), getPersistedMessageUuid(messages[i])]);
                 }
             }
         } finally {
@@ -530,7 +744,7 @@ export function updateMessages(db, messages, startIndex) {
 }
 /**
  * Updates metadata in the database.
- * @param {import('sql.js').Database} db
+ * @param {NativeDatabaseAdapter} db
  * @param {string} key
  * @param {string} value
  */
@@ -540,7 +754,7 @@ export function setMetadata(db, key, value) {
 
 /**
  * Gets metadata from the database.
- * @param {import('sql.js').Database} db
+ * @param {NativeDatabaseAdapter} db
  * @param {string} key
  * @returns {string|null}
  */

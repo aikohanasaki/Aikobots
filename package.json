@@ -38,6 +38,7 @@
         "@popperjs/core": "^2.11.8",
         "@zeldafan0225/ai_horde": "^5.2.0",
         "archiver": "^7.0.1",
+        "better-sqlite3": "^12.11.1",
         "bing-translate-api": "^4.1.0",
         "body-parser": "^1.20.2",
         "bowser": "^2.12.1",
@@ -89,7 +90,6 @@
         "sillytavern-transformers": "2.14.6",
         "simple-git": "^3.28.0",
         "slidetoggle": "^4.0.0",
-        "sql.js": "^1.10.0",
         "tiktoken": "^1.0.22",
         "url-join": "^5.0.0",
         "vectra": "^0.2.2",
@@ -102,7 +102,7 @@
         "yauzl": "^3.2.0"
     },
     "engines": {
-        "node": ">= 18"
+        "node": ">= 20"
     },
     "overrides": {
         "vectra": {
@@ -156,7 +156,7 @@
         "@types/lodash": "^4.17.20",
         "@types/mime-types": "^3.0.1",
         "@types/multer": "^2.0.0",
-        "@types/node": "^18.19.84",
+        "@types/node": "^20.19.43",
         "@types/node-persist": "^3.1.8",
         "@types/png-chunk-text": "^1.0.3",
         "@types/png-chunks-extract": "^1.0.2",

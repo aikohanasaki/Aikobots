@@ -251,6 +251,14 @@ router.post('/delete', getFileNameValidationFunction('id'), async (request, resp
                             if (fs.existsSync(chatPaths.sqlitePath)) {
                                 fs.unlinkSync(chatPaths.sqlitePath);
                             }
+
+                            if (fs.existsSync(chatPaths.walPath)) {
+                                fs.unlinkSync(chatPaths.walPath);
+                            }
+
+                            if (fs.existsSync(chatPaths.shmPath)) {
+                                fs.unlinkSync(chatPaths.shmPath);
+                            }
                         });
                     }
                 }

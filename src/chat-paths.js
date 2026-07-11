@@ -200,13 +200,19 @@ export function resolveGroupChatFilePath(groupChatsDirectory, chatId) {
  * Resolves every storage companion for a group chat ID inside the group chat directory.
  * @param {string} groupChatsDirectory Base group chat directory.
  * @param {string} chatId Logical group chat ID or existing group chat file name.
- * @returns {{chatId: string, jsonlPath: string, sqlitePath: string}}
+ * @returns {{chatId: string, jsonlPath: string, sqlitePath: string, walPath: string, shmPath: string}}
  */
 export function resolveGroupChatStoragePaths(groupChatsDirectory, chatId) {
     const safeChatId = normalizeGroupChatId(chatId);
     const jsonlPath = resolveContainedChildPath(groupChatsDirectory, `${safeChatId}.jsonl`, 'group_chat_file');
     const sqlitePath = resolveContainedChildPath(groupChatsDirectory, `${safeChatId}.sqlite`, 'group_chat_file');
-    return { chatId: safeChatId, jsonlPath, sqlitePath };
+    return {
+        chatId: safeChatId,
+        jsonlPath,
+        sqlitePath,
+        walPath: `${sqlitePath}-wal`,
+        shmPath: `${sqlitePath}-shm`,
+    };
 }
 
 export function validateStmbChatRef(chatRef) {

@@ -47,6 +47,7 @@ import {
 import {
     loadDb,
     saveDb,
+    exportDatabaseFile,
     getMessages,
     setMessages,
     getChatHeader,
@@ -60,6 +61,8 @@ import {
     updateLogicalMessageRowById,
     deleteLogicalMessagesAfter,
     updateMessages,
+    getMetadata,
+    setMetadata,
 } from '../sqlite-manager.js';
 
 const isBackupEnabled = !!getConfigValue('backups.chat.enabled', true, 'boolean');
@@ -71,6 +74,8 @@ const CHAT_STORAGE_KEY = 'chat_storage';
 const CHAT_REVISION_KEY = 'chat_revision';
 const CHAT_LAST_SAVE_SESSION_KEY = 'last_save_session_id';
 const CHAT_IDENTITY_REPAIR_ERROR = 'chat_repaired';
+const CHAT_IDENTITY_SCAN_METADATA_KEY = 'identity_scan_version';
+const CHAT_IDENTITY_SCAN_VERSION = '1';
 const GROUP_CHAT_HEADER_VERSION = 1;
 const CHAT_METADATA_STRIP_KEYS = ['timedWorldInfo', 'worldInfoSummary', 'worldInfoReport'];
 const CHAT_EXTRA_STRIP_KEYS = ['timedWorldInfo', 'worldInfoSummary', 'worldInfoReport'];
@@ -906,7 +911,7 @@ function validatePersonaAvatarName(userDirectories, personaAvatar) {
 
 /**
  * Updates persisted user messages in place without hydrating the chat in the browser.
- * @param {import('sql.js').Database} db SQLite chat database
+ * @param {object} db Native SQLite chat database adapter
  * @param {string} userName Target user name
  * @param {string} forceAvatar Target persona thumbnail URL
  * @returns {{matched: number, changed: number, updates: {id: number, message: object}[]}}
@@ -979,15 +984,13 @@ export async function updateSqliteUserPersonaMessages({ filePath, requestBody, u
 
         db.run('BEGIN TRANSACTION');
         let headerStmt;
-        let updateStmt;
         try {
             const revisedHeader = setChatRevision(stripChatStorage(header), revisionCheck.nextRevision, saveSessionId);
             headerStmt = db.prepare('UPDATE messages SET content = ? WHERE order_index = 0');
             headerStmt.run([JSON.stringify(sanitizeChatHeaderForPersistence(revisedHeader))]);
 
-            updateStmt = db.prepare('UPDATE messages SET content = ? WHERE id = ?');
             for (const update of updates) {
-                updateStmt.run([JSON.stringify(sanitizeChatMessageForPersistence(update.message)), update.id]);
+                updateLogicalMessageRowById(db, update.id, sanitizeChatMessageForPersistence(update.message));
             }
 
             db.run('COMMIT');
@@ -996,7 +999,6 @@ export async function updateSqliteUserPersonaMessages({ filePath, requestBody, u
             throw error;
         } finally {
             headerStmt?.free();
-            updateStmt?.free();
         }
 
         saveDb(db, sqlitePath);
@@ -1021,7 +1023,7 @@ function getAikobotsMessageUuid(message) {
 /**
  * Backfills missing/ambiguous SQLite chat identities created by partial migrations.
  * Keeps the existing chat revision so clients must reload instead of treating repair as a save.
- * @param {import('sql.js').Database} db
+ * @param {object} db Native SQLite chat database adapter
  * @param {string} sqlitePath
  * @param {object|null} header
  * @returns {{repaired: boolean, changedMessages: number, missingMessages: number, duplicateMessages: number, missingSwipes: number, duplicateSwipes: number}}
@@ -1038,8 +1040,20 @@ function repairSqliteChatMessageIdentities(db, sqlitePath, header = null) {
         };
     }
 
+    if (getMetadata(db, CHAT_IDENTITY_SCAN_METADATA_KEY) === CHAT_IDENTITY_SCAN_VERSION) {
+        return {
+            repaired: false,
+            changedMessages: 0,
+            missingMessages: 0,
+            duplicateMessages: 0,
+            missingSwipes: 0,
+            duplicateSwipes: 0,
+        };
+    }
+
     const totalMessages = getMessageCount(db);
     if (totalMessages <= 0) {
+        setMetadata(db, CHAT_IDENTITY_SCAN_METADATA_KEY, CHAT_IDENTITY_SCAN_VERSION);
         return {
             repaired: false,
             changedMessages: 0,
@@ -1053,6 +1067,7 @@ function repairSqliteChatMessageIdentities(db, sqlitePath, header = null) {
     const messages = getMessageRange(db, 0, totalMessages);
     const identityResult = normalizeChatIdentities(messages, { generateUuid: uuidv4 });
     if (!identityResult.changed) {
+        setMetadata(db, CHAT_IDENTITY_SCAN_METADATA_KEY, CHAT_IDENTITY_SCAN_VERSION);
         return {
             repaired: false,
             changedMessages: 0,
@@ -1064,6 +1079,7 @@ function repairSqliteChatMessageIdentities(db, sqlitePath, header = null) {
     }
 
     updateMessages(db, messages.map(message => sanitizeChatMessageForPersistence(message)), 1);
+    setMetadata(db, CHAT_IDENTITY_SCAN_METADATA_KEY, CHAT_IDENTITY_SCAN_VERSION);
     saveDb(db, sqlitePath);
 
     const changedMessageIndexes = new Set([
@@ -1953,17 +1969,12 @@ async function updateGroupChatMessageRow({ filePath, requestBody, saveSessionId 
 
         db.run('BEGIN TRANSACTION');
         let headerStmt;
-        let messageStmt;
         try {
             const revisedHeader = setChatRevision(stripChatStorage(header), revisionCheck.nextRevision, saveSessionId);
             headerStmt = db.prepare('UPDATE messages SET content = ? WHERE order_index = 0');
             headerStmt.run([JSON.stringify(sanitizeChatHeaderForPersistence(revisedHeader))]);
 
-            messageStmt = db.prepare('UPDATE messages SET content = ? WHERE id = ?');
-            messageStmt.run([
-                JSON.stringify(sanitizeChatMessageForPersistence(requestBody.message)),
-                existingRow.id,
-            ]);
+            updateLogicalMessageRowById(db, existingRow.id, sanitizeChatMessageForPersistence(requestBody.message));
 
             db.run('COMMIT');
         } catch (error) {
@@ -1971,7 +1982,6 @@ async function updateGroupChatMessageRow({ filePath, requestBody, saveSessionId 
             throw error;
         } finally {
             headerStmt?.free();
-            messageStmt?.free();
         }
 
         saveDb(db, sqlitePath);
@@ -2096,6 +2106,7 @@ export async function writeLogicalChat(filePath, header, messages, {
     const existingSqliteFile = fs.existsSync(sqlitePath);
     const db = await loadDb(sqlitePath);
     let totalMessages = 0;
+    let writeSucceeded = false;
 
     try {
         if (messageStartId === null) {
@@ -2124,6 +2135,7 @@ export async function writeLogicalChat(filePath, header, messages, {
 
             assertSubmittedActiveSwipeStates(submittedSwipeMessages, activeSwipeValidationStartId);
             setMessages(db, [baseHeader, ...sanitizedMessages]);
+            setMetadata(db, CHAT_IDENTITY_SCAN_METADATA_KEY, CHAT_IDENTITY_SCAN_VERSION);
             totalMessages = getMessageCount(db);
 
             if (existingSqliteFile || isPrivilegedOperation === true) {
@@ -2152,8 +2164,14 @@ export async function writeLogicalChat(filePath, header, messages, {
         }
 
         saveDb(db, sqlitePath);
+        writeSucceeded = true;
     } finally {
         db.close();
+        if (!existingSqliteFile && !writeSucceeded) {
+            for (const createdPath of [sqlitePath, `${sqlitePath}-wal`, `${sqlitePath}-shm`]) {
+                unlinkFileIfExists(createdPath);
+            }
+        }
     }
 
     console.debug(`[SQLite] Updated database for ${filePath}: ${sanitizedMessages.length} messages starting at message id ${messageStartId ?? 0}. Total messages: ${totalMessages}.`);
@@ -3289,41 +3307,49 @@ export async function resolveSqliteLogicalChatReference(directories, chatRef, op
 
     const db = await loadDb(sqlitePath);
     try {
-        const header = getChatHeader(db);
-        const totalMessages = getMessageCount(db);
-        const lastAvailableMessageId = totalMessages > 0 ? totalMessages - 1 : -1;
-        const rangeStart = Number(options.rangeStart);
-        const rangeEnd = Number(options.rangeEnd);
-        const shouldLoadRange = options.includeMessages === true
-            && Number.isInteger(rangeStart)
-            && Number.isInteger(rangeEnd)
-            && rangeStart >= 0
-            && rangeEnd >= rangeStart
-            && rangeStart <= lastAvailableMessageId;
-        const clampedRangeEnd = shouldLoadRange ? Math.min(rangeEnd, lastAvailableMessageId) : -1;
-        const rangeMessages = shouldLoadRange
-            ? getMessageRange(db, rangeStart, clampedRangeEnd - rangeStart + 1)
-            : [];
-        const expectedRangeCount = shouldLoadRange ? clampedRangeEnd - rangeStart + 1 : 0;
-        const missingRanges = shouldLoadRange && rangeMessages.length < expectedRangeCount
-            ? [{ start: rangeStart + rangeMessages.length, end: clampedRangeEnd }]
-            : [];
+        db.run('BEGIN TRANSACTION');
+        try {
+            const header = getChatHeader(db);
+            const totalMessages = getMessageCount(db);
+            const lastAvailableMessageId = totalMessages > 0 ? totalMessages - 1 : -1;
+            const rangeStart = Number(options.rangeStart);
+            const rangeEnd = Number(options.rangeEnd);
+            const shouldLoadRange = options.includeMessages === true
+                && Number.isInteger(rangeStart)
+                && Number.isInteger(rangeEnd)
+                && rangeStart >= 0
+                && rangeEnd >= rangeStart
+                && rangeStart <= lastAvailableMessageId;
+            const clampedRangeEnd = shouldLoadRange ? Math.min(rangeEnd, lastAvailableMessageId) : -1;
+            const rangeMessages = shouldLoadRange
+                ? getMessageRange(db, rangeStart, clampedRangeEnd - rangeStart + 1)
+                : [];
+            const expectedRangeCount = shouldLoadRange ? clampedRangeEnd - rangeStart + 1 : 0;
+            const missingRanges = shouldLoadRange && rangeMessages.length < expectedRangeCount
+                ? [{ start: rangeStart + rangeMessages.length, end: clampedRangeEnd }]
+                : [];
 
-        return {
-            chatType,
-            filePath,
-            sqlitePath,
-            header: stripChatStorage(header),
-            messages: shouldLoadRange ? createSparseLogicalMessages(totalMessages, rangeStart, rangeMessages) : [],
-            totalMessages,
-            lastAvailableMessageId,
-            missingRanges,
-            storageMode: 'sqlite',
-            storageHealthy: Boolean(header),
-            sqliteMissing: false,
-            loadedRangeStart: shouldLoadRange ? rangeStart : null,
-            loadedRangeEnd: shouldLoadRange ? clampedRangeEnd : null,
-        };
+            const result = {
+                chatType,
+                filePath,
+                sqlitePath,
+                header: stripChatStorage(header),
+                messages: shouldLoadRange ? createSparseLogicalMessages(totalMessages, rangeStart, rangeMessages) : [],
+                totalMessages,
+                lastAvailableMessageId,
+                missingRanges,
+                storageMode: 'sqlite',
+                storageHealthy: Boolean(header),
+                sqliteMissing: false,
+                loadedRangeStart: shouldLoadRange ? rangeStart : null,
+                loadedRangeEnd: shouldLoadRange ? clampedRangeEnd : null,
+            };
+            db.run('COMMIT');
+            return result;
+        } catch (error) {
+            db.run('ROLLBACK');
+            throw error;
+        }
     } finally {
         db.close();
     }
@@ -3352,20 +3378,28 @@ export async function resolveCoreChatPayload(chatsDirectory, coreChatPayload) {
         if (fs.existsSync(sqlitePath)) {
             const db = await loadDb(sqlitePath);
             try {
-                const totalMessages = getMessageCount(db);
-                const tailStartId = Number.isInteger(coreChatPayload.tailStartId)
-                    ? Math.max(0, Math.min(coreChatPayload.tailStartId, totalMessages))
-                    : 0;
+                db.run('BEGIN TRANSACTION');
+                try {
+                    const totalMessages = getMessageCount(db);
+                    const tailStartId = Number.isInteger(coreChatPayload.tailStartId)
+                        ? Math.max(0, Math.min(coreChatPayload.tailStartId, totalMessages))
+                        : 0;
 
-                const parentMessages = coreChatPayload.useParentUnhiddenMessages
-                    ? getMessageRange(db, 0, tailStartId).filter(isResidentParentPromptMessage)
-                    : [];
+                    const parentMessages = coreChatPayload.useParentUnhiddenMessages
+                        ? getMessageRange(db, 0, tailStartId).filter(isResidentParentPromptMessage)
+                        : [];
 
-                const tailMessages = coreChatPayload.useTailContents === false
-                    ? []
-                    : getMessageRange(db, tailStartId, totalMessages - tailStartId);
+                    const tailMessages = coreChatPayload.useTailContents === false
+                        ? []
+                        : getMessageRange(db, tailStartId, totalMessages - tailStartId);
 
-                return [...parentMessages, ...tailMessages];
+                    const resolvedMessages = [...parentMessages, ...tailMessages];
+                    db.run('COMMIT');
+                    return resolvedMessages;
+                } catch (error) {
+                    db.run('ROLLBACK');
+                    throw error;
+                }
             } finally {
                 db.close();
             }
@@ -4644,16 +4678,18 @@ router.post('/export', validateAvatarUrlMiddleware, async function (request, res
             return response.status(404).json(errorMessage);
         }
 
-        // Export raw SQLite
+        // Export a consistent raw SQLite snapshot, including committed WAL state.
         if (request.body.format === 'sqlite') {
             if (!fs.existsSync(sqlitePath)) {
                 return response.status(404).json({ message: 'SQLite file not found for this chat.' });
             }
-            const buffer = fs.readFileSync(sqlitePath);
-            return response.status(200).json({
-                message: `Chat saved to ${exportfilename}`,
-                result: buffer.toString('base64'),
-                is_binary: true,
+            return await withChatSaveLock(sqlitePath, async () => {
+                const buffer = await exportDatabaseFile(sqlitePath);
+                return response.status(200).json({
+                    message: `Chat saved to ${exportfilename}`,
+                    result: buffer.toString('base64'),
+                    is_binary: true,
+                });
             });
         }
 

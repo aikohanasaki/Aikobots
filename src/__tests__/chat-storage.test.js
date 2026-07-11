@@ -3,18 +3,19 @@ import os from 'node:os';
 import path from 'node:path';
 
 import { beforeAll, describe, expect, it } from '@jest/globals';
-import initSqlJs from 'sql.js';
+import Database from 'better-sqlite3';
 
-let SQL;
 let applyLoadedMessageRange;
 let appendSqliteMessage;
 let buildChunkedChatPayload;
 let cloneSqliteMessageAfter;
 let compileScene;
 let deleteSqliteMessageByUuid;
+let exportDatabaseFile;
 let getLogicalChatData;
 let hasValidGroupChatPayload;
 let insertLogicalMessageAfter;
+let loadDb;
 let resolveSqliteLogicalChatReference;
 let truncateSqliteChatAfterUuid;
 let updateSqliteLoadedMessageRange;
@@ -86,10 +87,12 @@ function makeMultiSwipeAssistant() {
 
 function getSqliteRows(chatPath) {
     const sqlitePath = String(chatPath).replace(/\.(?:jsonl|sqlite)$/i, '.sqlite');
-    const db = new SQL.Database(fs.readFileSync(sqlitePath));
+    const db = new Database(sqlitePath, { readonly: true });
     try {
-        const result = db.exec('SELECT order_index, content FROM messages ORDER BY order_index ASC');
-        return result[0]?.values?.map(row => JSON.parse(row[1])) || [];
+        return db.prepare('SELECT content FROM messages ORDER BY order_index ASC')
+            .pluck()
+            .all()
+            .map(content => JSON.parse(content));
     } finally {
         db.close();
     }
@@ -97,20 +100,19 @@ function getSqliteRows(chatPath) {
 
 function stripSqliteMessageUuids(chatPath) {
     const sqlitePath = String(chatPath).replace(/\.(?:jsonl|sqlite)$/i, '.sqlite');
-    const db = new SQL.Database(fs.readFileSync(sqlitePath));
+    const db = new Database(sqlitePath);
     try {
-        const rows = db.exec('SELECT id, order_index, content FROM messages WHERE order_index > 0 ORDER BY order_index ASC')[0]?.values || [];
+        const rows = db.prepare('SELECT id, content FROM messages WHERE order_index > 0 ORDER BY order_index ASC').all();
         const stmt = db.prepare('UPDATE messages SET content = ? WHERE id = ?');
-        try {
+        const update = db.transaction(() => {
             for (const row of rows) {
-                const message = JSON.parse(row[2]);
+                const message = JSON.parse(row.content);
                 delete message.aikobots_message_uuid;
-                stmt.run([JSON.stringify(message), row[0]]);
+                stmt.run(JSON.stringify(message), row.id);
             }
-        } finally {
-            stmt.free();
-        }
-        fs.writeFileSync(sqlitePath, Buffer.from(db.export()));
+            db.prepare('DELETE FROM metadata WHERE key = \'identity_scan_version\'').run();
+        });
+        update();
     } finally {
         db.close();
     }
@@ -118,18 +120,12 @@ function stripSqliteMessageUuids(chatPath) {
 
 function mutateSqliteMessage(chatPath, logicalIndex, mutate) {
     const sqlitePath = String(chatPath).replace(/\.(?:jsonl|sqlite)$/i, '.sqlite');
-    const db = new SQL.Database(fs.readFileSync(sqlitePath));
+    const db = new Database(sqlitePath);
     try {
-        const row = db.exec(`SELECT id, content FROM messages WHERE order_index = ${logicalIndex + 1}`)[0]?.values?.[0];
-        const message = JSON.parse(row[1]);
+        const row = db.prepare('SELECT id, content FROM messages WHERE order_index = ?').get(logicalIndex + 1);
+        const message = JSON.parse(row.content);
         mutate(message);
-        const stmt = db.prepare('UPDATE messages SET content = ? WHERE id = ?');
-        try {
-            stmt.run([JSON.stringify(message), row[0]]);
-        } finally {
-            stmt.free();
-        }
-        fs.writeFileSync(sqlitePath, Buffer.from(db.export()));
+        db.prepare('UPDATE messages SET content = ? WHERE id = ?').run(JSON.stringify(message), row.id);
     } finally {
         db.close();
     }
@@ -137,7 +133,6 @@ function mutateSqliteMessage(chatPath, logicalIndex, mutate) {
 
 describe('SQLite chat length handling', () => {
     beforeAll(async () => {
-        SQL = await initSqlJs();
         const utilModule = await import('../util.js');
         utilModule.setConfigFilePath(getConfigPath());
 
@@ -151,6 +146,7 @@ describe('SQLite chat length handling', () => {
         cloneSqliteMessageAfter = chatsModule.cloneSqliteMessageAfter;
         compileScene = stmbCoreModule.compileScene;
         deleteSqliteMessageByUuid = chatsModule.deleteSqliteMessageByUuid;
+        exportDatabaseFile = sqliteModule.exportDatabaseFile;
         getLogicalChatData = chatsModule.getLogicalChatData;
         hasValidGroupChatPayload = chatsModule.hasValidGroupChatPayload;
         resolveSqliteLogicalChatReference = chatsModule.resolveSqliteLogicalChatReference;
@@ -161,7 +157,77 @@ describe('SQLite chat length handling', () => {
         updateSqliteUserPersonaMessages = chatsModule.updateSqliteUserPersonaMessages;
         validateMessageSwipeState = identityModule.validateMessageSwipeState;
         insertLogicalMessageAfter = sqliteModule.insertLogicalMessageAfter;
+        loadDb = sqliteModule.loadDb;
         writeLogicalChat = chatsModule.writeLogicalChat;
+    });
+
+    it('upgrades legacy SQLite chats with an indexed message UUID column', async () => {
+        const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'sqlite-chat-native-upgrade-'));
+        const sqlitePath = path.join(tempDir, 'chat.sqlite');
+
+        try {
+            const legacyDb = new Database(sqlitePath);
+            legacyDb.exec(`
+                CREATE TABLE metadata (key TEXT PRIMARY KEY, value TEXT);
+                CREATE TABLE messages (id INTEGER PRIMARY KEY AUTOINCREMENT, order_index REAL, content TEXT);
+                CREATE INDEX idx_messages_order_index ON messages(order_index);
+            `);
+            legacyDb.prepare('INSERT INTO metadata (key, value) VALUES (?, ?)').run('storage_version', '20260530');
+            legacyDb.prepare('INSERT INTO messages (order_index, content) VALUES (?, ?)').run(0, JSON.stringify(makeHeader()));
+            const message = makeMessages(1)[0];
+            legacyDb.prepare('INSERT INTO messages (order_index, content) VALUES (?, ?)').run(1, JSON.stringify(message));
+            legacyDb.close();
+
+            const upgradedDb = await loadDb(sqlitePath);
+            upgradedDb.close();
+
+            const verifyDb = new Database(sqlitePath, { readonly: true });
+            const columns = verifyDb.pragma('table_info(messages)');
+            const storedUuid = verifyDb.prepare('SELECT message_uuid FROM messages WHERE order_index = 1').pluck().get();
+            const storageVersion = verifyDb.prepare('SELECT value FROM metadata WHERE key = \'storage_version\'').pluck().get();
+            const queryPlan = verifyDb.prepare('EXPLAIN QUERY PLAN SELECT id FROM messages WHERE message_uuid = ?')
+                .get(message.aikobots_message_uuid);
+            verifyDb.close();
+
+            expect(columns.some(column => column.name === 'message_uuid')).toBe(true);
+            expect(storedUuid).toBe(message.aikobots_message_uuid);
+            expect(storageVersion).toBe('20260711');
+            expect(queryPlan.detail).toContain('idx_messages_message_uuid');
+        } finally {
+            fs.rmSync(tempDir, { recursive: true, force: true });
+        }
+    });
+
+    it('exports committed WAL state as a standalone SQLite image', async () => {
+        const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'sqlite-chat-native-export-'));
+        const chatPath = path.join(tempDir, 'chat.jsonl');
+        const sqlitePath = path.join(tempDir, 'chat.sqlite');
+        const exportedPath = path.join(tempDir, 'exported.sqlite');
+        let openDb = null;
+
+        try {
+            const messages = makeMessages(2);
+            await writeLogicalChat(chatPath, makeHeader(), messages);
+
+            openDb = await loadDb(sqlitePath);
+            openDb.run('BEGIN TRANSACTION');
+            openDb.run('UPDATE messages SET content = ? WHERE order_index = 2', [
+                JSON.stringify({ ...messages[1], mes: 'committed in WAL' }),
+            ]);
+            openDb.run('COMMIT');
+
+            const exported = await exportDatabaseFile(sqlitePath);
+            fs.writeFileSync(exportedPath, exported);
+            const verifyDb = new Database(exportedPath, { readonly: true });
+            const content = verifyDb.prepare('SELECT content FROM messages WHERE order_index = 2').pluck().get();
+            verifyDb.close();
+            openDb.close();
+
+            expect(JSON.parse(content).mes).toBe('committed in WAL');
+        } finally {
+            openDb?.close();
+            fs.rmSync(tempDir, { recursive: true, force: true });
+        }
     });
 
     it('accepts only dense group chat message payloads', () => {

@@ -17,7 +17,10 @@ COPY . ./
 
 RUN \
   echo "*** Install npm packages ***" && \
-  npm i --no-audit --no-fund --loglevel=error --no-progress --omit=dev && npm cache clean --force
+  apk add --no-cache --virtual .native-build-deps python3 make g++ && \
+  npm i --no-audit --no-fund --loglevel=error --no-progress --omit=dev && \
+  npm cache clean --force && \
+  apk del .native-build-deps
 
 # Create config directory and link config.yaml
 RUN \
