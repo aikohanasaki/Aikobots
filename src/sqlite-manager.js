@@ -626,6 +626,14 @@ export function deleteLogicalMessagesAfter(db, messageId) {
 }
 
 /**
+ * Deletes every logical chat message while preserving the header row.
+ * @param {NativeDatabaseAdapter} db
+ */
+export function deleteAllLogicalMessages(db) {
+    db.run('DELETE FROM messages WHERE order_index > 0');
+}
+
+/**
  * Inserts a logical message immediately after the supplied logical message id.
  * @param {NativeDatabaseAdapter} db
  * @param {number} messageId

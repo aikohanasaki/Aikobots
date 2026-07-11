@@ -6343,17 +6343,19 @@ export async function deleteLastMessage({ persist = false, regeneratePrepare = f
     syncPartialChatRangeStateAfterMutation();
     chatElement.children('.mes').last().remove();
     syncVisibleChatRangeFromDom();
-    await syncLatestPromptInspectorAfterMessageDeletion(deletedId);
-    await maintainPromptSnapshotKeys({ deletes: deletedSnapshotKeys });
     updateHistoryControls();
     await recomputeTimedWorldInfo();
-    if (persist && currentChatFileNameLooksSqlite()) {
-        const saveResult = await saveSqliteTailRemoval(deletedId, deletedMessage, { regeneratePrepare });
+    if (persist) {
+        const saveResult = currentChatFileNameLooksSqlite()
+            ? await saveSqliteTailRemoval(deletedId, deletedMessage, { regeneratePrepare })
+            : await saveChatConditional({ immediate: true });
         if (saveResult !== CHAT_SAVE_RESULT.SAVED) {
             await reloadCurrentChat();
             return CHAT_SAVE_RESULT.FAILED;
         }
     }
+    await syncLatestPromptInspectorAfterMessageDeletion(deletedId);
+    await maintainPromptSnapshotKeys({ deletes: deletedSnapshotKeys });
     await eventSource.emit(event_types.MESSAGE_DELETED, deletedId, chat.length);
     return CHAT_SAVE_RESULT.SAVED;
 }
@@ -6440,26 +6442,22 @@ export async function deleteMessage(id, swipeDeletionIndex = undefined, askConfi
     for (let messageIndex = id; messageIndex < chat.length; messageIndex++) {
         rekeyMessagePromptSnapshotKeys(chat[messageIndex], messageIndex, rekeys, { remapTimedWorldInfoIndex });
     }
-    await syncLatestPromptInspectorAfterMessageDeletion(id);
     messageElement.remove();
     await recomputeTimedWorldInfo();
-    await maintainPromptSnapshotKeys({ deletes: deletedSnapshotKeys, rekeys });
 
     chat_metadata['tainted'] = true;
 
     const startIndex = [0, minId].includes(id) ? id : null;
     updateViewMessageIds(startIndex);
-    if (currentChatFileNameLooksSqlite()) {
-        const saveResult = await saveSqliteMessageDeleteByUuid(deletedMessageUuid);
-        if (saveResult !== CHAT_SAVE_RESULT.SAVED) {
-            await reloadCurrentChat();
-            return false;
-        }
-    } else if (askConfirmation) {
-        await saveChatConditional();
-    } else {
-        saveChatDebounced();
+    const saveResult = currentChatFileNameLooksSqlite()
+        ? await saveSqliteMessageDeleteByUuid(deletedMessageUuid)
+        : await saveChatConditional({ immediate: true });
+    if (saveResult !== CHAT_SAVE_RESULT.SAVED) {
+        await reloadCurrentChat();
+        return false;
     }
+    await syncLatestPromptInspectorAfterMessageDeletion(id);
+    await maintainPromptSnapshotKeys({ deletes: deletedSnapshotKeys, rekeys });
 
     if (this_edit_mes_id === id) {
         this_edit_mes_id = undefined;
@@ -14151,6 +14149,21 @@ async function saveSqliteTruncateAfterUuid(messageUuid, { regeneratePrepare = fa
     }, t`Chat truncate failed.`);
 }
 
+/**
+ * Removes all logical messages from the current SQLite chat.
+ * @returns {Promise<string>} Chat save result.
+ */
+async function saveSqliteTruncateAll() {
+    const pendingSaveResult = await flushPendingSqliteMessageUpdateSave();
+    if (pendingSaveResult !== CHAT_SAVE_RESULT.SAVED) {
+        return CHAT_SAVE_RESULT.FAILED;
+    }
+
+    return saveSqliteMessageMutation('truncate', {
+        truncate_all: true,
+    }, t`Chat truncate failed.`);
+}
+
 async function saveSqliteTailRemoval(deletedMessageId, deletedMessage, { regeneratePrepare = false } = {}) {
     const branchPoint = chat[Number(deletedMessageId) - 1];
     const branchPointUuid = branchPoint?.[AIKOBOTS_MESSAGE_UUID_KEY];
@@ -17277,18 +17290,11 @@ export async function deleteSwipe(swipeId = null, messageId = chat.length - 1) {
         }
     }
     syncMessagePromptSnapshotKeyFromActiveSwipe(message);
-    await syncLatestPromptInspectorAfterSwipeMutation(messageId);
-    await maintainPromptSnapshotKeys({
-        deletes: typeof deletedSwipeSnapshotKey === 'string' && deletedSwipeSnapshotKey ? [deletedSwipeSnapshotKey] : [],
-        rekeys,
-    });
 
     chat_metadata['tainted'] = true;
 
     await recomputeTimedWorldInfo();
-    await eventSource.emit(event_types.MESSAGE_SWIPE_DELETED, { messageId, swipeId, newSwipeId });
 
-    let swipeMutationSaved = false;
     if (swipeId === currentSwipeId) {
         const direction = swipeId <= newSwipeId ? SWIPE_DIRECTION.RIGHT : SWIPE_DIRECTION.LEFT;
         await swipe(null, direction, {
@@ -17296,6 +17302,7 @@ export async function deleteSwipe(swipeId = null, messageId = chat.length - 1) {
             repeated: false,
             forceMesId: messageId,
             forceSwipeId: newSwipeId,
+            persist: false,
         });
     } else {
         await updateSwipeCounter(messageId);
@@ -17303,27 +17310,21 @@ export async function deleteSwipe(swipeId = null, messageId = chat.length - 1) {
             await updateSwipeCounter(chat.length - 1);
         }
         refreshSwipeButtons();
-        if (currentChatFileNameLooksSqlite()) {
-            const saveResult = await saveMessageUpdateByUuid(message);
-            if (saveResult !== CHAT_SAVE_RESULT.SAVED) {
-                await reloadCurrentChat();
-                return;
-            }
-            swipeMutationSaved = true;
-        } else {
-            saveChatDebounced();
-        }
     }
 
-    if (!swipeMutationSaved) {
-        const saveResult = currentChatFileNameLooksSqlite()
-            ? await saveMessageUpdateByUuid(message)
-            : await saveChatConditional();
-        if (saveResult !== CHAT_SAVE_RESULT.SAVED) {
-            await reloadCurrentChat();
-            return;
-        }
+    const saveResult = currentChatFileNameLooksSqlite()
+        ? await saveMessageUpdateByUuid(message)
+        : await saveChatConditional({ immediate: true });
+    if (saveResult !== CHAT_SAVE_RESULT.SAVED) {
+        await reloadCurrentChat();
+        return;
     }
+    await syncLatestPromptInspectorAfterSwipeMutation(messageId);
+    await maintainPromptSnapshotKeys({
+        deletes: typeof deletedSwipeSnapshotKey === 'string' && deletedSwipeSnapshotKey ? [deletedSwipeSnapshotKey] : [],
+        rekeys,
+    });
+    await eventSource.emit(event_types.MESSAGE_SWIPE_DELETED, { messageId, swipeId, newSwipeId });
 
     return newSwipeId;
 }
@@ -18229,8 +18230,9 @@ function formatSwipeCounter(current, total) {
  * @param {number} [params.forceMesId] The message id to swipe.
  * @param {number} [params.forceSwipeId] The target swipe id.
  * @param {number} [params.forceDuration] Overwrites the default swipe duration.
+ * @param {boolean} [params.persist=true] Whether to persist the selected swipe.
  */
-export async function swipe(event, direction, { source, repeated, message = chat[chat.length - 1], forceMesId, forceSwipeId, forceDuration } = {}) {
+export async function swipe(event, direction, { source, repeated, message = chat[chat.length - 1], forceMesId, forceSwipeId, forceDuration, persist = true } = {}) {
     if (chat.length === 0) {
         console.warn('Swipe was called on an empty chat.');
         return;
@@ -18370,7 +18372,7 @@ export async function swipe(event, direction, { source, repeated, message = chat
                 console.trace(`Error! Recursion detected when reverting failed ${direction} swipe on message #${mesId}. Something has broken.`);
                 await reloadCurrentChat();
             }
-        } else if (source !== SWIPE_SOURCE.BACK) {
+        } else if (source !== SWIPE_SOURCE.BACK && persist) {
             if (currentChatFileNameLooksSqlite()) {
                 const saveResult = await saveMessageUpdateByUuid(chat[mesId]);
                 if (saveResult !== CHAT_SAVE_RESULT.SAVED) {
@@ -20281,9 +20283,14 @@ jQuery(async function () {
             await recomputeTimedWorldInfo();
             updateHistoryControls();
             chat_metadata['tainted'] = true;
-            const saveResult = currentChatFileNameLooksSqlite() && retainedMessage?.[AIKOBOTS_MESSAGE_UUID_KEY]
-                ? await saveSqliteTruncateAfterUuid(retainedMessage[AIKOBOTS_MESSAGE_UUID_KEY])
-                : await saveChatConditional();
+            let saveResult;
+            if (currentChatFileNameLooksSqlite()) {
+                saveResult = retainedMessage?.[AIKOBOTS_MESSAGE_UUID_KEY]
+                    ? await saveSqliteTruncateAfterUuid(retainedMessage[AIKOBOTS_MESSAGE_UUID_KEY])
+                    : await saveSqliteTruncateAll();
+            } else {
+                saveResult = await saveChatConditional();
+            }
             if (saveResult !== CHAT_SAVE_RESULT.SAVED) {
                 showSwipeButtons();
                 this_del_mes = -1;

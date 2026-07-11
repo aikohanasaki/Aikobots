@@ -60,6 +60,7 @@ import {
     getLogicalMessageRowByUuid,
     updateLogicalMessageRowById,
     deleteLogicalMessagesAfter,
+    deleteAllLogicalMessages,
     updateMessages,
     getMetadata,
     setMetadata,
@@ -2926,7 +2927,8 @@ export async function truncateSqliteChatAfterUuid({ filePath, requestBody, saveS
         throw new ChatMutationError(409, 'truncate_requires_sqlite', 'Truncate requires SQLite chat storage.');
     }
 
-    const targetUuid = assertValidMessageUuid(requestBody?.branch_point_uuid || requestBody?.message_uuid);
+    const truncateAll = requestBody?.truncate_all === true;
+    const targetUuid = truncateAll ? null : assertValidMessageUuid(requestBody?.branch_point_uuid || requestBody?.message_uuid);
     const db = await loadDb(sqlitePath);
     try {
         const header = getChatHeader(db);
@@ -2938,8 +2940,8 @@ export async function truncateSqliteChatAfterUuid({ filePath, requestBody, saveS
 
         const revisionCheck = requireSqliteMutationRequest(requestBody, header);
         const serverMessageCountBefore = getMessageCount(db);
-        const row = getLogicalMessageRowByUuid(db, targetUuid);
-        if (!row) {
+        const row = truncateAll ? null : getLogicalMessageRowByUuid(db, targetUuid);
+        if (!truncateAll && !row) {
             throw new ChatMutationError(404, 'message_not_found');
         }
 
@@ -2947,7 +2949,11 @@ export async function truncateSqliteChatAfterUuid({ filePath, requestBody, saveS
         db.run('BEGIN TRANSACTION');
         try {
             updateSqliteHeaderRow(db, revisedHeader);
-            deleteLogicalMessagesAfter(db, row.logicalIndex);
+            if (truncateAll) {
+                deleteAllLogicalMessages(db);
+            } else {
+                deleteLogicalMessagesAfter(db, row.logicalIndex);
+            }
             db.run('COMMIT');
         } catch (error) {
             db.run('ROLLBACK');
@@ -2958,7 +2964,7 @@ export async function truncateSqliteChatAfterUuid({ filePath, requestBody, saveS
         const serverMessageCountAfter = getMessageCount(db);
         logChatPersistenceOperation('info', {
             routeName: 'sqlite_mutation',
-            operationType: 'truncate',
+            operationType: truncateAll ? 'truncate_all' : 'truncate',
             filePath: sqlitePath,
             oldRevision: revisionCheck.currentRevision,
             requestBody,
@@ -2967,9 +2973,9 @@ export async function truncateSqliteChatAfterUuid({ filePath, requestBody, saveS
             serverMessageCountAfter,
             isPrivilegedOperation: true,
         });
-        return buildSqliteMutationPayload(db, revisedHeader, row.logicalIndex, displayCount, {
-            message_uuid: targetUuid,
-            branch_point_message_id: row.logicalIndex,
+        return buildSqliteMutationPayload(db, revisedHeader, row?.logicalIndex ?? -1, displayCount, {
+            ...(targetUuid ? { message_uuid: targetUuid } : {}),
+            branch_point_message_id: row?.logicalIndex ?? -1,
         });
     } finally {
         db.close();

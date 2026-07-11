@@ -1147,6 +1147,38 @@ describe('SQLite chat length handling', () => {
         }
     });
 
+    it('truncates every SQLite message while preserving the header and advancing revision', async () => {
+        const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'sqlite-chat-truncate-all-'));
+        const chatPath = path.join(tempDir, 'chat.jsonl');
+
+        try {
+            const header = makeHeader({ chat_revision: 7, chat_metadata: { tainted: true } });
+            await writeLogicalChat(chatPath, header, makeMessages(3));
+
+            const payload = await truncateSqliteChatAfterUuid({
+                filePath: chatPath,
+                requestBody: {
+                    truncate_all: true,
+                    base_revision: 7,
+                    save_session_id: '44444444-4444-4444-8444-444444444444',
+                },
+                saveSessionId: '44444444-4444-4444-8444-444444444444',
+                displayCount: 10,
+            });
+
+            const logicalChat = await getLogicalChatData(chatPath);
+            expect(payload.chat_revision).toBe(8);
+            expect(payload.totalMessages).toBe(0);
+            expect(payload.messages).toEqual([]);
+            expect(payload.loadedRangeEnd).toBe(-1);
+            expect(logicalChat).toHaveLength(1);
+            expect(logicalChat[0].chat_revision).toBe(8);
+            expect(logicalChat[0].chat_metadata).toEqual({ tainted: true });
+        } finally {
+            fs.rmSync(tempDir, { recursive: true, force: true });
+        }
+    });
+
     it('updates a targeted SQLite message range without dropping unseen messages', async () => {
         const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'sqlite-chat-patch-'));
         const chatPath = path.join(tempDir, 'chat.jsonl');

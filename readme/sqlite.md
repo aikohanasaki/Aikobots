@@ -200,7 +200,8 @@ The endpoint layer retains the existing public behavior:
 - full and loaded-range saves;
 - UUID-targeted message edits;
 - UUID-targeted message deletes;
-- suffix truncation after a stable branch-point UUID;
+- suffix truncation after a stable branch-point UUID, or explicit truncation of
+  all logical messages while preserving the chat header;
 - message append with expected-tail validation;
 - message clone and fractional ordering;
 - visibility and persona updates;
@@ -303,7 +304,7 @@ Storage regression coverage must include:
 - UUID index backfill;
 - bounded chunk reads;
 - selected-swipe edits preserving sibling swipes;
-- message deletion and suffix truncation;
+- message deletion, suffix truncation, and truncate-all empty-chat handling;
 - loaded-range writes preserving unseen messages;
 - fractional clone insertion;
 - raw export containing committed WAL state;
