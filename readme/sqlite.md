@@ -46,6 +46,8 @@ sidecar handling. Native page-level I/O does not require a long-lived connection
 - `src/sqlite-manager.js`: native connection configuration, schema upgrades,
   JSONL migration, range reads, indexed UUID lookup, transactions, and explicit
   raw database export.
+- `src/chat-storage.js`: canonical companion paths, cross-process chat locks,
+  locked companion cleanup, and consistent lifecycle snapshots.
 - `src/endpoints/chats.js`: path validation, cross-process locking, revisions,
   active-session checks, chat mutation endpoints, backups, imports, exports, and
   group chat adaptation.
@@ -253,8 +255,9 @@ Split-tail JSONL remains unsupported.
 Normal mutations do not serialize the database.
 
 JSONL backups continue to be logical backups produced from stored chat records.
-Incremental mutations may skip a JSONL backup according to the existing backup
-cadence. This policy is independent of SQLite's WAL durability.
+Incremental mutations do not synchronously serialize JSONL, even when the loaded
+range happens to cover the whole chat. Periodic append backups retain the existing
+configured cadence. This policy is independent of SQLite's WAL durability.
 
 A raw SQLite export is an explicit exceptional operation. It acquires the chat
 lock, checkpoints committed WAL state, and serializes a consistent database image.

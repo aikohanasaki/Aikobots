@@ -76,6 +76,7 @@ class NativeDatabaseAdapter {
         this.database.pragma(`busy_timeout = ${SQLITE_BUSY_TIMEOUT_MS}`);
         this.database.pragma('synchronous = FULL');
         this.database.pragma('foreign_keys = ON');
+        this.database.function('aikobots_lower', { deterministic: true }, value => String(value ?? '').toLowerCase());
         this.database.pragma(`journal_mode = ${journalMode}`);
         if (journalMode === 'WAL') {
             this.database.pragma('wal_autocheckpoint = 1000');
@@ -646,7 +647,10 @@ export function insertLogicalMessageAfter(db, messageId, message) {
         throw new Error('Invalid logical message insert id.');
     }
 
-    db.run('BEGIN TRANSACTION');
+    const ownsTransaction = !db?.database?.inTransaction;
+    if (ownsTransaction) {
+        db.run('BEGIN TRANSACTION');
+    }
     try {
         const sourceRow = getLogicalMessageRow(db, normalizedMessageId);
         if (!sourceRow) {
@@ -674,10 +678,14 @@ export function insertLogicalMessageAfter(db, messageId, message) {
             stmt.free();
         }
 
-        db.run('COMMIT');
+        if (ownsTransaction) {
+            db.run('COMMIT');
+        }
         return normalizedMessageId + 1;
     } catch (error) {
-        db.run('ROLLBACK');
+        if (ownsTransaction && db?.database?.inTransaction) {
+            db.run('ROLLBACK');
+        }
         throw error;
     }
 }

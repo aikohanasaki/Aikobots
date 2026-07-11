@@ -6,24 +6,31 @@ import { beforeAll, describe, expect, it } from '@jest/globals';
 import Database from 'better-sqlite3';
 
 let applyLoadedMessageRange;
+let backupSqliteDatabaseFile;
 let appendSqliteMessage;
 let buildChunkedChatPayload;
+let calculateStats;
 let cloneSqliteMessageAfter;
 let compileScene;
 let deleteSqliteMessageByUuid;
+let deleteChatStorageCompanions;
 let exportDatabaseFile;
 let getLogicalChatData;
+let getChatSearchResult;
 let hasValidGroupChatPayload;
 let insertLogicalMessageAfter;
 let loadDb;
+let migrateChatHeaderReferences;
 let resolveSqliteLogicalChatReference;
 let truncateSqliteChatAfterUuid;
 let updateSqliteLoadedMessageRange;
 let updateSqliteMessageByUuid;
 let updateSqliteMessageVisibility;
+let updateSqliteParticipantHistory;
 let updateSqliteUserPersonaMessages;
 let validateMessageSwipeState;
 let writeLogicalChat;
+let withChatSaveLock;
 
 function getConfigPath() {
     const localPath = path.resolve(process.cwd(), 'config.yaml');
@@ -139,25 +146,35 @@ describe('SQLite chat length handling', () => {
         const chatsModule = await import('../endpoints/chats.js');
         const identityModule = await import('../../public/scripts/chat-identities.js');
         const sqliteModule = await import('../sqlite-manager.js');
+        const statsModule = await import('../endpoints/stats.js');
+        const lorebookModule = await import('../lorebook-repository.js');
+        const chatStorageModule = await import('../chat-storage.js');
         const stmbCoreModule = await import('../../public/scripts/stmb-core.js');
         applyLoadedMessageRange = chatsModule.applyLoadedMessageRange;
+        backupSqliteDatabaseFile = chatStorageModule.backupSqliteDatabaseFile;
+        deleteChatStorageCompanions = chatStorageModule.deleteChatStorageCompanions;
+        withChatSaveLock = chatStorageModule.withChatSaveLock;
         appendSqliteMessage = chatsModule.appendSqliteMessage;
         buildChunkedChatPayload = chatsModule.buildChunkedChatPayload;
+        calculateStats = statsModule.calculateStats;
         cloneSqliteMessageAfter = chatsModule.cloneSqliteMessageAfter;
         compileScene = stmbCoreModule.compileScene;
         deleteSqliteMessageByUuid = chatsModule.deleteSqliteMessageByUuid;
         exportDatabaseFile = sqliteModule.exportDatabaseFile;
         getLogicalChatData = chatsModule.getLogicalChatData;
+        getChatSearchResult = chatsModule.getChatSearchResult;
         hasValidGroupChatPayload = chatsModule.hasValidGroupChatPayload;
         resolveSqliteLogicalChatReference = chatsModule.resolveSqliteLogicalChatReference;
         truncateSqliteChatAfterUuid = chatsModule.truncateSqliteChatAfterUuid;
         updateSqliteLoadedMessageRange = chatsModule.updateSqliteLoadedMessageRange;
         updateSqliteMessageByUuid = chatsModule.updateSqliteMessageByUuid;
         updateSqliteMessageVisibility = chatsModule.updateSqliteMessageVisibility;
+        updateSqliteParticipantHistory = chatsModule.updateSqliteParticipantHistory;
         updateSqliteUserPersonaMessages = chatsModule.updateSqliteUserPersonaMessages;
         validateMessageSwipeState = identityModule.validateMessageSwipeState;
         insertLogicalMessageAfter = sqliteModule.insertLogicalMessageAfter;
         loadDb = sqliteModule.loadDb;
+        migrateChatHeaderReferences = lorebookModule.migrateChatHeaderReferences;
         writeLogicalChat = chatsModule.writeLogicalChat;
     });
 
@@ -226,6 +243,48 @@ describe('SQLite chat length handling', () => {
             expect(JSON.parse(content).mes).toBe('committed in WAL');
         } finally {
             openDb?.close();
+            fs.rmSync(tempDir, { recursive: true, force: true });
+        }
+    });
+
+    it('creates a consistent atomic SQLite lifecycle snapshot', async () => {
+        const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'sqlite-chat-lifecycle-snapshot-'));
+        const sourcePath = path.join(tempDir, 'source.sqlite');
+        const targetPath = path.join(tempDir, 'target.sqlite');
+        let writerDb;
+        try {
+            await writeLogicalChat(sourcePath, makeHeader(), makeMessages(8));
+            writerDb = new Database(sourcePath);
+            writerDb.pragma('journal_mode = WAL');
+            writerDb.pragma('wal_autocheckpoint = 0');
+            const walMessage = { ...makeMessages(1)[0], aikobots_message_uuid: '99999999-9999-4999-8999-999999999999', mes: 'committed WAL row' };
+            writerDb.prepare('INSERT INTO messages (order_index, content, message_uuid) VALUES (?, ?, ?)')
+                .run(9, JSON.stringify(walMessage), walMessage.aikobots_message_uuid);
+            await backupSqliteDatabaseFile(sourcePath, targetPath);
+            const targetDb = new Database(targetPath, { readonly: true });
+            expect(targetDb.pragma('integrity_check', { simple: true })).toBe('ok');
+            expect(targetDb.prepare('SELECT COUNT(*) FROM messages').pluck().get()).toBe(10);
+            targetDb.close();
+            writerDb.close();
+            writerDb = null;
+            expect(fs.readdirSync(tempDir).some(file => file.startsWith('target.sqlite.') && file.endsWith('.tmp'))).toBe(false);
+        } finally {
+            writerDb?.close();
+            fs.rmSync(tempDir, { recursive: true, force: true });
+        }
+    });
+
+    it('deletes every chat storage companion under the shared lock', async () => {
+        const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'sqlite-chat-companion-delete-'));
+        const chatPath = path.join(tempDir, 'chat.sqlite');
+        const companionPaths = [chatPath, chatPath.replace('.sqlite', '.jsonl'), `${chatPath}-wal`, `${chatPath}-shm`];
+        try {
+            for (const companionPath of companionPaths) {
+                fs.writeFileSync(companionPath, 'test');
+            }
+            await withChatSaveLock(chatPath, async () => deleteChatStorageCompanions(chatPath));
+            expect(companionPaths.every(companionPath => !fs.existsSync(companionPath))).toBe(true);
+        } finally {
             fs.rmSync(tempDir, { recursive: true, force: true });
         }
     });
@@ -456,6 +515,51 @@ describe('SQLite chat length handling', () => {
             expect(compiledScene.metadata.totalChatLength).toBe(1000);
             expect(compiledScene.messages[0].id).toBe(901);
             expect(compiledScene.messages.at(-1).id).toBe(999);
+        } finally {
+            fs.rmSync(tempDir, { recursive: true, force: true });
+        }
+    });
+
+    it('searches SQLite substrings across the filename and different message rows', async () => {
+        const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'sqlite-chat-search-'));
+        const chatPath = path.join(tempDir, 'Dragon Tale.sqlite');
+        try {
+            const messages = makeMessages(3);
+            messages[0].mes = 'First café clue';
+            messages[2].mes = 'Final treasure';
+            await writeLogicalChat(chatPath, makeHeader(), messages);
+            const chatFile = { path: chatPath, file_name: 'Dragon Tale.sqlite', file_size: '1kb' };
+
+            await expect(getChatSearchResult(chatFile, ['dragon', 'CAFÉ', 'treasure'].map(value => value.toLowerCase())))
+                .resolves.toMatchObject({ file_name: 'Dragon Tale.sqlite', message_count: 3, preview_message: 'Final treasure' });
+            await expect(getChatSearchResult(chatFile, ['missing'])).resolves.toBeNull();
+        } finally {
+            fs.rmSync(tempDir, { recursive: true, force: true });
+        }
+    });
+
+    it('calculates equivalent message statistics from SQLite and legacy JSONL chats', async () => {
+        const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'sqlite-chat-stats-'));
+        const sqliteDir = path.join(tempDir, 'SqliteBot');
+        const jsonlDir = path.join(tempDir, 'JsonlBot');
+        fs.mkdirSync(sqliteDir);
+        fs.mkdirSync(jsonlDir);
+        try {
+            const messages = makeMessages(3).map((message, index) => ({
+                ...message,
+                mes: `stats message ${index}`,
+                send_date: `July ${index + 1}, 2026 1:00pm`,
+            }));
+            await writeLogicalChat(path.join(sqliteDir, 'chat.sqlite'), makeHeader(), messages);
+            fs.writeFileSync(path.join(sqliteDir, 'chat.jsonl'), 'legacy duplicate that must not be counted');
+            fs.writeFileSync(path.join(jsonlDir, 'chat.jsonl'), [makeHeader(), ...messages].map(value => JSON.stringify(value)).join('\n'));
+
+            const sqliteStats = (await calculateStats(tempDir, 'SqliteBot.png'))['SqliteBot.png'];
+            const jsonlStats = (await calculateStats(tempDir, 'JsonlBot.png'))['JsonlBot.png'];
+            for (const key of ['total_gen_time', 'user_word_count', 'non_user_word_count', 'user_msg_count', 'non_user_msg_count', 'total_swipe_count', 'date_first_chat']) {
+                expect(sqliteStats[key]).toBe(jsonlStats[key]);
+            }
+            expect(sqliteStats.chat_size).toBe(fs.statSync(path.join(sqliteDir, 'chat.sqlite')).size);
         } finally {
             fs.rmSync(tempDir, { recursive: true, force: true });
         }
@@ -1285,6 +1389,84 @@ describe('SQLite chat length handling', () => {
         }
     });
 
+    it('writes only the header and changed rows for a fully loaded SQLite range', async () => {
+        const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'sqlite-chat-write-audit-'));
+        const chatPath = path.join(tempDir, 'chat.jsonl');
+        const sqlitePath = chatPath.replace('.jsonl', '.sqlite');
+        const saveSessionId = '33333333-3333-4333-8333-333333333333';
+
+        try {
+            const header = makeHeader({ chat_revision: 2 });
+            const messages = makeMessages(6);
+            await writeLogicalChat(chatPath, header, messages);
+
+            const auditDb = new Database(sqlitePath);
+            auditDb.exec(`
+                CREATE TABLE write_audit (row_id INTEGER NOT NULL);
+                CREATE TRIGGER audit_message_update AFTER UPDATE ON messages
+                BEGIN
+                    INSERT INTO write_audit (row_id) VALUES (new.id);
+                END;
+            `);
+            auditDb.close();
+
+            const rangeMessages = messages.map(message => ({ ...message }));
+            rangeMessages[3].mes = 'only changed row';
+            const payload = await updateSqliteLoadedMessageRange({
+                filePath: chatPath,
+                requestBody: {
+                    loaded_range_start: 0,
+                    loaded_range_end: 5,
+                    base_revision: 2,
+                    save_session_id: saveSessionId,
+                    saved_message_count: 6,
+                },
+                incomingHeader: header,
+                rangeMessages,
+                saveSessionId,
+            });
+
+            const verifyDb = new Database(sqlitePath, { readonly: true });
+            const updatedOrderIndexes = verifyDb.prepare(`
+                SELECT messages.order_index
+                FROM write_audit
+                JOIN messages ON messages.id = write_audit.row_id
+                ORDER BY messages.order_index
+            `).pluck().all();
+            verifyDb.close();
+
+            expect(payload.changed).toBe(6);
+            expect(updatedOrderIndexes).toEqual([0, 4]);
+
+            const resetDb = new Database(sqlitePath);
+            resetDb.prepare('DELETE FROM write_audit').run();
+            resetDb.close();
+            await updateSqliteLoadedMessageRange({
+                filePath: chatPath,
+                requestBody: {
+                    loaded_range_start: 0,
+                    loaded_range_end: 5,
+                    base_revision: 3,
+                    save_session_id: saveSessionId,
+                    saved_message_count: 6,
+                },
+                incomingHeader: makeHeader({ chat_revision: 3, chat_metadata: { title: 'metadata only' } }),
+                rangeMessages,
+                saveSessionId,
+            });
+            const metadataDb = new Database(sqlitePath, { readonly: true });
+            const metadataUpdatedIndexes = metadataDb.prepare(`
+                SELECT messages.order_index
+                FROM write_audit
+                JOIN messages ON messages.id = write_audit.row_id
+            `).pluck().all();
+            metadataDb.close();
+            expect(metadataUpdatedIndexes).toEqual([0]);
+        } finally {
+            fs.rmSync(tempDir, { recursive: true, force: true });
+        }
+    });
+
     it('rejects a submitted loaded-range message with a fatal active-text mismatch', async () => {
         const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'sqlite-chat-loaded-range-swipe-reject-'));
         const chatPath = path.join(tempDir, 'chat.jsonl');
@@ -1521,7 +1703,7 @@ describe('SQLite chat length handling', () => {
         }
     });
 
-    it('returns a JSONL backup payload for complete loaded-range SQLite saves', async () => {
+    it('does not serialize a JSONL backup for complete loaded-range SQLite saves', async () => {
         const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'sqlite-chat-loaded-range-backup-'));
         const chatPath = path.join(tempDir, 'chat.jsonl');
         const saveSessionId = '33333333-3333-4333-8333-333333333333';
@@ -1549,15 +1731,16 @@ describe('SQLite chat length handling', () => {
                 rangeMessages: nextMessages,
                 saveSessionId,
             });
-            const backupRows = payload.fullJsonl.split('\n').map(line => JSON.parse(line));
+            const savedRows = await getLogicalChatData(chatPath);
 
             expect(payload.chat_revision).toBe(4);
-            expect(backupRows).toHaveLength(5);
-            expect(backupRows[0].chat_revision).toBe(4);
-            expect(backupRows[0].last_save_session_id).toBe(saveSessionId);
-            expect(backupRows[0].chat_metadata).toEqual({ title: 'after' });
-            expect(backupRows[1].mes).toBe('complete save 0');
-            expect(backupRows.at(-1).mes).toBe('complete save 3');
+            expect(payload.fullJsonl).toBeNull();
+            expect(savedRows).toHaveLength(5);
+            expect(savedRows[0].chat_revision).toBe(4);
+            expect(savedRows[0].last_save_session_id).toBe(saveSessionId);
+            expect(savedRows[0].chat_metadata).toEqual({ title: 'after' });
+            expect(savedRows[1].mes).toBe('complete save 0');
+            expect(savedRows.at(-1).mes).toBe('complete save 3');
         } finally {
             fs.rmSync(tempDir, { recursive: true, force: true });
         }
@@ -1644,6 +1827,97 @@ describe('SQLite chat length handling', () => {
             expect(logicalChat[4].is_system).toBe(false);
             expect(logicalChat[5].is_system).toBe(true);
             expect(logicalChat[6].is_system).toBe(false);
+        } finally {
+            fs.rmSync(tempDir, { recursive: true, force: true });
+        }
+    });
+
+    it('renames participant history with targeted row updates', async () => {
+        const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'sqlite-chat-participant-rename-'));
+        const chatPath = path.join(tempDir, 'chat.jsonl');
+        const sqlitePath = chatPath.replace('.jsonl', '.sqlite');
+
+        try {
+            const header = makeHeader({ chat_revision: 4 });
+            const messages = makeMessages(5);
+            messages[1].force_avatar = '/thumbnail?type=avatar&file=old%20avatar.png';
+            messages[1].original_avatar = 'old avatar.png';
+            messages[3].force_avatar = '/thumbnail?type=avatar&file=other.png';
+            await writeLogicalChat(chatPath, header, messages);
+
+            const auditDb = new Database(sqlitePath);
+            auditDb.exec(`
+                CREATE TABLE rename_audit (row_id INTEGER NOT NULL);
+                CREATE TRIGGER audit_rename_update AFTER UPDATE ON messages
+                BEGIN
+                    INSERT INTO rename_audit (row_id) VALUES (new.id);
+                END;
+            `);
+            auditDb.close();
+
+            const payload = await updateSqliteParticipantHistory({
+                filePath: chatPath,
+                oldAvatar: 'old avatar.png',
+                newAvatar: 'new avatar.png',
+                newName: 'Renamed',
+                saveSessionId: '33333333-3333-4333-8333-333333333333',
+            });
+            const saved = await getLogicalChatData(chatPath);
+            const verifyDb = new Database(sqlitePath, { readonly: true });
+            const updateCount = verifyDb.prepare('SELECT COUNT(*) FROM rename_audit').pluck().get();
+            verifyDb.close();
+
+            expect(payload).toMatchObject({ changed: 1, chat_revision: 5 });
+            expect(updateCount).toBe(2);
+            expect(saved[2]).toMatchObject({ name: 'Renamed', original_avatar: 'new avatar.png' });
+            expect(saved[2].force_avatar).toContain('new%20avatar.png');
+            expect(saved[4].name).toBe('Character');
+        } finally {
+            fs.rmSync(tempDir, { recursive: true, force: true });
+        }
+    });
+
+    it('updates lorebook references in only the SQLite chat header', async () => {
+        const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'sqlite-chat-lorebook-reference-'));
+        const chatPath = path.join(tempDir, 'chat.sqlite');
+        try {
+            await writeLogicalChat(chatPath, makeHeader({
+                chat_revision: 9,
+                last_save_session_id: '33333333-3333-4333-8333-333333333333',
+                chat_metadata: { world_info: 'Old Lorebook' },
+            }), makeMessages(3));
+            const auditDb = new Database(chatPath);
+            auditDb.exec(`
+                CREATE TABLE lorebook_audit (order_index REAL NOT NULL);
+                CREATE TRIGGER audit_lorebook_update AFTER UPDATE ON messages
+                BEGIN
+                    INSERT INTO lorebook_audit (order_index) VALUES (new.order_index);
+                END;
+            `);
+            auditDb.close();
+
+            await expect(migrateChatHeaderReferences(chatPath, 'test-user', 'Old Lorebook', 'New Lorebook'))
+                .resolves.toMatchObject({ changed: true });
+            const saved = await getLogicalChatData(chatPath);
+            const verifyDb = new Database(chatPath, { readonly: true });
+            const updatedIndexes = verifyDb.prepare('SELECT order_index FROM lorebook_audit').pluck().all();
+            verifyDb.close();
+
+            expect(updatedIndexes).toEqual([0]);
+            expect(saved[0].chat_metadata.world_info).toBe('New Lorebook');
+            expect(saved[0].chat_revision).toBe(10);
+            expect(saved[0].last_save_session_id).toBeUndefined();
+
+            const legacyPath = path.join(tempDir, 'legacy.jsonl');
+            fs.writeFileSync(legacyPath, [
+                JSON.stringify(makeHeader({ chat_metadata: { world_info: 'Old Lorebook' } })),
+                JSON.stringify(makeMessages(1)[0]),
+            ].join('\n'));
+            await expect(migrateChatHeaderReferences(legacyPath, 'test-user', 'Old Lorebook', 'New Lorebook'))
+                .resolves.toMatchObject({ changed: true });
+            const legacyRows = fs.readFileSync(legacyPath, 'utf8').split('\n').map(line => JSON.parse(line));
+            expect(legacyRows[0].chat_metadata.world_info).toBe('New Lorebook');
+            expect(legacyRows[1].mes).toBe('message 0');
         } finally {
             fs.rmSync(tempDir, { recursive: true, force: true });
         }
@@ -1839,6 +2113,42 @@ describe('SQLite chat length handling', () => {
             expect(shifted.extra.timedWorldInfoCheckpoint.messageId).toBe(3);
             expect(shifted.extra.timedWorldInfoCheckpoint.timedWorldInfo.sticky.b.start).toBe(3);
             expect(shifted.extra.timedWorldInfoCheckpoint.timedWorldInfo.sticky.b.end).toBe(4);
+        } finally {
+            fs.rmSync(tempDir, { recursive: true, force: true });
+        }
+    });
+
+    it('rolls back clone insertion when shifted-message repair fails', async () => {
+        const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'sqlite-chat-clone-rollback-'));
+        const chatPath = path.join(tempDir, 'chat.jsonl');
+        const sqlitePath = chatPath.replace('.jsonl', '.sqlite');
+
+        try {
+            const header = makeHeader({ chat_revision: 7 });
+            const messages = makeMessages(4);
+            await writeLogicalChat(chatPath, header, messages);
+
+            const corruptDb = new Database(sqlitePath);
+            corruptDb.prepare('UPDATE messages SET content = ? WHERE order_index = 3').run('{invalid json');
+            const countBefore = corruptDb.prepare('SELECT COUNT(*) FROM messages').pluck().get();
+            corruptDb.close();
+
+            await expect(cloneSqliteMessageAfter({
+                filePath: chatPath,
+                requestBody: {
+                    message_uuid: messages[0].aikobots_message_uuid,
+                    base_revision: 7,
+                    save_session_id: '33333333-3333-4333-8333-333333333333',
+                },
+                saveSessionId: '33333333-3333-4333-8333-333333333333',
+            })).rejects.toThrow();
+
+            const verifyDb = new Database(sqlitePath, { readonly: true });
+            const countAfter = verifyDb.prepare('SELECT COUNT(*) FROM messages').pluck().get();
+            const savedHeader = JSON.parse(verifyDb.prepare('SELECT content FROM messages WHERE order_index = 0').pluck().get());
+            verifyDb.close();
+            expect(countAfter).toBe(countBefore);
+            expect(savedHeader.chat_revision).toBe(7);
         } finally {
             fs.rmSync(tempDir, { recursive: true, force: true });
         }

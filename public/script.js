@@ -12342,47 +12342,64 @@ async function renamePastChats(oldAvatar, newAvatar, newName) {
     for (const { file_name } of pastChats) {
         try {
             const fileNameWithoutExtension = file_name.replace(/\.(jsonl|sqlite)$/i, '');
-            const getChatResponse = await fetch('/api/chats/get', {
+            const hasRenameListeners = Array.isArray(eventSource.events?.[event_types.CHARACTER_RENAMED_IN_PAST_CHAT])
+                && eventSource.events[event_types.CHARACTER_RENAMED_IN_PAST_CHAT].length > 0;
+            if (hasRenameListeners) {
+                const getChatResponse = await fetch('/api/chats/get', {
+                    method: 'POST',
+                    headers: getRequestHeaders(),
+                    body: JSON.stringify({ file_name: fileNameWithoutExtension, avatar_url: newAvatar }),
+                    cache: 'no-cache',
+                });
+                if (!getChatResponse.ok) {
+                    throw new Error('Could not load chat history for extension migration');
+                }
+                const currentChat = await getChatResponse.json();
+                for (const message of currentChat.slice(1)) {
+                    if (message.is_user || message.is_system || message.extra?.type == system_message_types.NARRATOR) continue;
+                    if (message.name !== undefined) message.name = newName;
+                }
+                await eventSource.emit(event_types.CHARACTER_RENAMED_IN_PAST_CHAT, currentChat, oldAvatar, newAvatar);
+                const messages = currentChat.slice(1);
+                if (messages.length === 0) continue;
+                const saveResponse = await fetch('/api/chats/save', {
+                    method: 'POST',
+                    headers: getRequestHeaders(),
+                    body: JSON.stringify({
+                        file_name: fileNameWithoutExtension,
+                        avatar_url: newAvatar,
+                        chat: currentChat,
+                        save_mode: 'loaded_range',
+                        loaded_range_start: 0,
+                        loaded_range_end: messages.length - 1,
+                        saved_message_count: messages.length,
+                        base_revision: Number(currentChat[0]?.chat_revision) || 0,
+                        save_session_id: getChatSaveSessionId(),
+                    }),
+                    cache: 'no-cache',
+                });
+                if (!saveResponse.ok) {
+                    throw new Error('Could not save extension-updated chat history');
+                }
+                continue;
+            }
+
+            const response = await fetch('/api/chats/member/rename-history', {
                 method: 'POST',
                 headers: getRequestHeaders(),
                 body: JSON.stringify({
-                    ch_name: newName,
                     file_name: fileNameWithoutExtension,
                     avatar_url: newAvatar,
+                    old_avatar: oldAvatar,
+                    new_avatar: newAvatar,
+                    new_name: newName,
+                    save_session_id: getChatSaveSessionId(),
                 }),
                 cache: 'no-cache',
             });
 
-            if (getChatResponse.ok) {
-                const currentChat = await getChatResponse.json();
-
-                for (const message of currentChat) {
-                    if (message.is_user || message.is_system || message.extra?.type == system_message_types.NARRATOR) {
-                        continue;
-                    }
-
-                    if (message.name !== undefined) {
-                        message.name = newName;
-                    }
-                }
-
-                await eventSource.emit(event_types.CHARACTER_RENAMED_IN_PAST_CHAT, currentChat, oldAvatar, newAvatar);
-
-                const saveChatResponse = await fetch('/api/chats/save', {
-                    method: 'POST',
-                    headers: getRequestHeaders(),
-                    body: JSON.stringify({
-                        ch_name: newName,
-                        file_name: fileNameWithoutExtension,
-                        chat: currentChat,
-                        avatar_url: newAvatar,
-                    }),
-                    cache: 'no-cache',
-                });
-
-                if (!saveChatResponse.ok) {
-                    throw new Error('Could not save chat');
-                }
+            if (!response.ok) {
+                throw new Error('Could not update chat history');
             }
         } catch (error) {
             toastr.error(t`Past chat could not be updated: ${file_name}`);
