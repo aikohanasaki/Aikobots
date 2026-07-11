@@ -32,21 +32,7 @@ function isObject(value) {
     return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
 }
 
-function normalizeComparableSwipeExtra(extra) {
-    if (!isObject(extra)) {
-        return {};
-    }
-
-    const comparable = structuredClone(extra);
-    if (comparable.bias === null) {
-        delete comparable.bias;
-    }
-    delete comparable.worldInfoSummary;
-    delete comparable.worldInfoReport;
-    return comparable;
-}
-
-function areJsonValuesEqual(left, right) {
+function areMetadataValuesEqual(left, right) {
     if (Object.is(left, right)) {
         return true;
     }
@@ -54,7 +40,7 @@ function areJsonValuesEqual(left, right) {
         return Array.isArray(left)
             && Array.isArray(right)
             && left.length === right.length
-            && left.every((value, index) => areJsonValuesEqual(value, right[index]));
+            && left.every((value, index) => areMetadataValuesEqual(value, right[index]));
     }
     if (!isObject(left) || !isObject(right)) {
         return false;
@@ -63,7 +49,307 @@ function areJsonValuesEqual(left, right) {
     const leftKeys = Object.keys(left).sort();
     const rightKeys = Object.keys(right).sort();
     return leftKeys.length === rightKeys.length
-        && leftKeys.every((key, index) => key === rightKeys[index] && areJsonValuesEqual(left[key], right[key]));
+        && leftKeys.every((key, index) => key === rightKeys[index] && areMetadataValuesEqual(left[key], right[key]));
+}
+
+const COMPARISON_BUCKETS = Object.freeze({
+    fatal: 'fatalMismatches',
+    harmless: 'harmlessDifferences',
+    informational: 'informationalDifferences',
+    repairable: 'repairableDifferences',
+    ambiguous: 'ambiguousConflicts',
+});
+const DATE_FIELDS = Object.freeze(['send_date', 'gen_started', 'gen_finished']);
+const HARMLESS_EXTRA_KEYS = new Set(['branches', 'timedWorldInfo', 'worldInfoSummary', 'worldInfoReport']);
+const MONTH_NAMES = Object.freeze([
+    'january', 'february', 'march', 'april', 'may', 'june',
+    'july', 'august', 'september', 'october', 'november', 'december',
+]);
+
+function createComparisonResult() {
+    return {
+        ok: true,
+        fatalMismatches: [],
+        harmlessDifferences: [],
+        informationalDifferences: [],
+        repairableDifferences: [],
+        ambiguousConflicts: [],
+    };
+}
+
+function addComparisonRecord(result, classification, code, path, location) {
+    result[COMPARISON_BUCKETS[classification]].push({
+        code,
+        path,
+        classification,
+        messageRelativeIndex: location.messageRelativeIndex ?? null,
+        logicalChatIndex: location.logicalChatIndex ?? null,
+        selectedSwipeIndex: location.selectedSwipeIndex ?? null,
+    });
+}
+
+function normalizeActiveSwipeText(value) {
+    return typeof value === 'string' ? value.replace(/\r\n/g, '\n') : value;
+}
+
+function getValidUtcTimestamp(year, month, day, hour, minute, second, millisecond = 0) {
+    const timestamp = Date.UTC(year, month - 1, day, hour, minute, second, millisecond);
+    const date = new Date(timestamp);
+    return date.getUTCFullYear() === year
+        && date.getUTCMonth() === month - 1
+        && date.getUTCDate() === day
+        && date.getUTCHours() === hour
+        && date.getUTCMinutes() === minute
+        && date.getUTCSeconds() === second
+        && date.getUTCMilliseconds() === millisecond
+        ? timestamp
+        : null;
+}
+
+/**
+ * Parses only documented chat timestamp representations without permissive date parsing.
+ * Month-name message timestamps have no timezone, so they are comparable only to the same local representation.
+ * @param {unknown} value Persisted timestamp representation.
+ * @returns {{kind: string, value: number|string}|null} Comparable timestamp or null when unrecognized.
+ */
+function parseComparableDate(value) {
+    if (typeof value === 'number' || (typeof value === 'string' && /^\d+(?:\.\d+)?$/.test(value))) {
+        const numeric = Number(value);
+        if (!Number.isFinite(numeric) || numeric < 0) {
+            return null;
+        }
+        return { kind: 'instant', value: numeric < 100_000_000_000 ? numeric * 1000 : numeric };
+    }
+
+    if (typeof value !== 'string') {
+        return null;
+    }
+
+    const isoMatch = value.match(/^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.(\d{1,3})\d*)?(Z|[+-]\d{2}:\d{2})$/);
+    if (isoMatch) {
+        const timestamp = Date.parse(value);
+        return Number.isFinite(timestamp) ? { kind: 'instant', value: timestamp } : null;
+    }
+
+    const humanizedMatch = value.match(/^(\d{4})-(\d{1,2})-(\d{1,2}) ?@(\d{1,2})h ?(\d{1,2})m ?(\d{1,2})s(?: ?(\d{1,3})ms)?$/);
+    if (humanizedMatch) {
+        const [, year, month, day, hour, minute, second, millisecond = '0'] = humanizedMatch;
+        const timestamp = getValidUtcTimestamp(
+            Number(year), Number(month), Number(day), Number(hour),
+            Number(minute), Number(second), Number(millisecond.padEnd(3, '0')),
+        );
+        return timestamp === null ? null : { kind: 'instant', value: timestamp };
+    }
+
+    const meridiemMatch = value.match(/^([A-Za-z]+) (\d{1,2}), (\d{4}) (\d{1,2}):(\d{2})(am|pm)$/i);
+    if (meridiemMatch) {
+        const [, monthName, day, year, hour, minute, meridiem] = meridiemMatch;
+        const month = MONTH_NAMES.indexOf(monthName.toLowerCase()) + 1;
+        const hourNumber = Number(hour);
+        const minuteNumber = Number(minute);
+        if (!month || Number(day) < 1 || Number(day) > 31 || hourNumber < 1 || hourNumber > 12 || minuteNumber > 59) {
+            return null;
+        }
+        const hour24 = (hourNumber % 12) + (meridiem.toLowerCase() === 'pm' ? 12 : 0);
+        if (getValidUtcTimestamp(Number(year), month, Number(day), hour24, minuteNumber, 0) === null) {
+            return null;
+        }
+        return { kind: 'local', value: `${year}-${month}-${Number(day)}-${hour24}-${minuteNumber}` };
+    }
+
+    return null;
+}
+
+function compareDateField(result, message, selectedSwipeInfo, key, location) {
+    const topHasValue = message[key] !== undefined && message[key] !== null;
+    const swipeHasValue = selectedSwipeInfo[key] !== undefined && selectedSwipeInfo[key] !== null;
+    const path = key;
+    if (!topHasValue && !swipeHasValue) {
+        return;
+    }
+    if (!topHasValue || !swipeHasValue) {
+        addComparisonRecord(result, 'harmless', `active_swipe_${key}_missing`, path, location);
+        return;
+    }
+    if (Object.is(message[key], selectedSwipeInfo[key])) {
+        return;
+    }
+
+    const topDate = parseComparableDate(message[key]);
+    const swipeDate = parseComparableDate(selectedSwipeInfo[key]);
+    if (!topDate || !swipeDate) {
+        addComparisonRecord(result, 'ambiguous', `active_swipe_${key}_unrecognized`, path, location);
+    } else if (topDate.kind === swipeDate.kind && topDate.value === swipeDate.value) {
+        addComparisonRecord(result, 'repairable', `active_swipe_${key}_equivalent`, path, location);
+    } else {
+        addComparisonRecord(result, 'ambiguous', `active_swipe_${key}_conflict`, path, location);
+    }
+}
+
+function isBookmarkExtraKey(key) {
+    return key === 'bookmark' || key === 'bookmark_link' || key.startsWith('bookmark_');
+}
+
+function compareExtraObjects(result, topExtra, swipeExtra, location, path = 'extra') {
+    if (!isObject(topExtra) || !isObject(swipeExtra)) {
+        if (!areMetadataValuesEqual(topExtra, swipeExtra)) {
+            addComparisonRecord(result, 'ambiguous', 'active_swipe_extra_container_conflict', path, location);
+        }
+        return;
+    }
+
+    const keys = new Set([...Object.keys(topExtra), ...Object.keys(swipeExtra)]);
+    for (const key of keys) {
+        const topHasKey = Object.prototype.hasOwnProperty.call(topExtra, key);
+        const swipeHasKey = Object.prototype.hasOwnProperty.call(swipeExtra, key);
+        const fieldPath = `${path}.${key}`;
+
+        if (!topHasKey || !swipeHasKey) {
+            const presentValue = topHasKey ? topExtra[key] : swipeExtra[key];
+            if (key === 'bias' && presentValue === null) {
+                addComparisonRecord(result, 'repairable', 'active_swipe_bias_missing_null', fieldPath, location);
+            } else if (HARMLESS_EXTRA_KEYS.has(key) || isBookmarkExtraKey(key)) {
+                addComparisonRecord(result, 'harmless', 'active_swipe_preserved_metadata_one_sided', fieldPath, location);
+            } else {
+                addComparisonRecord(result, 'informational', 'active_swipe_imported_metadata_one_sided', fieldPath, location);
+            }
+            continue;
+        }
+
+        const topValue = topExtra[key];
+        const swipeValue = swipeExtra[key];
+        if (areMetadataValuesEqual(topValue, swipeValue)) {
+            continue;
+        }
+        if (isObject(topValue) && isObject(swipeValue)) {
+            compareExtraObjects(result, topValue, swipeValue, location, fieldPath);
+            continue;
+        }
+        addComparisonRecord(result, 'ambiguous', 'active_swipe_metadata_conflict', fieldPath, location);
+    }
+}
+
+/**
+ * Compares only the semantic state needed to identify and persist a message's active swipe.
+ * The comparison is diagnostic-only and never mutates or reconciles either metadata container.
+ * @param {object} message Chat message to compare.
+ * @param {object} [options] Comparison and diagnostic-location options.
+ * @returns {{ok: boolean, fatalMismatches: object[], harmlessDifferences: object[], informationalDifferences: object[], repairableDifferences: object[], ambiguousConflicts: object[]}}
+ */
+export function compareActiveSwipeState(message, {
+    allowMesMismatch = false,
+    allowMetadataMismatch = false,
+    messageRelativeIndex = null,
+    logicalChatIndex = null,
+} = {}) {
+    const result = createComparisonResult();
+    const location = { messageRelativeIndex, logicalChatIndex, selectedSwipeIndex: null };
+    const add = (classification, code, path) => addComparisonRecord(result, classification, code, path, location);
+
+    if (!isObject(message)) {
+        add('fatal', 'invalid_message', 'message');
+        result.ok = false;
+        return result;
+    }
+
+    const hasSwipesField = Object.prototype.hasOwnProperty.call(message, 'swipes');
+    const hasSwipeInfoField = Object.prototype.hasOwnProperty.call(message, 'swipe_info');
+    const hasSwipeId = Object.prototype.hasOwnProperty.call(message, 'swipe_id');
+    if (!hasSwipesField && !hasSwipeInfoField && !hasSwipeId) {
+        return result;
+    }
+    if (!hasSwipesField) {
+        add('fatal', 'invalid_swipe_arrays', 'swipes');
+        result.ok = false;
+        return result;
+    }
+    if (!Array.isArray(message.swipes)) {
+        add('fatal', 'invalid_swipe_arrays', 'swipes');
+        result.ok = false;
+        return result;
+    }
+    if (hasSwipeInfoField && !Array.isArray(message.swipe_info)) {
+        add('fatal', 'invalid_swipe_arrays', 'swipe_info');
+        result.ok = false;
+        return result;
+    }
+
+    const swipeId = Number(message.swipe_id);
+    location.selectedSwipeIndex = Number.isInteger(swipeId) ? swipeId : null;
+    if (!Number.isInteger(swipeId) || swipeId < 0 || swipeId >= message.swipes.length) {
+        add('fatal', 'swipe_id_out_of_bounds', 'swipe_id');
+        result.ok = false;
+        return result;
+    }
+
+    const selectedSwipeText = message.swipes[swipeId];
+    if (typeof message.mes !== 'string'
+        || typeof selectedSwipeText !== 'string'
+        || (!allowMesMismatch && !Object.is(normalizeActiveSwipeText(message.mes), normalizeActiveSwipeText(selectedSwipeText)))) {
+        add('fatal', 'active_swipe_text_mismatch', `swipes[${swipeId}]`);
+    }
+
+    const swipeInfo = Array.isArray(message.swipe_info) ? message.swipe_info : null;
+    if (!swipeInfo) {
+        add('repairable', 'swipe_info_missing', 'swipe_info');
+    } else {
+        if (swipeInfo.length < message.swipes.length) {
+            add('repairable', 'swipe_info_shorter_than_swipes', 'swipe_info');
+        } else if (swipeInfo.length > message.swipes.length) {
+            add('ambiguous', 'swipe_info_longer_than_swipes', 'swipe_info');
+        }
+
+        const seenSwipeUuids = new Set();
+        for (let index = 0; index < Math.min(swipeInfo.length, message.swipes.length); index++) {
+            const swipeUuid = swipeInfo[index]?.[AIKOBOTS_SWIPE_UUID_KEY];
+            if (!isValidAikobotsUuid(swipeUuid)) {
+                if (index < message.swipes.length) {
+                    addComparisonRecord(result, 'repairable', swipeUuid == null ? 'missing_swipe_uuid' : 'malformed_swipe_uuid', `swipe_info[${index}].${AIKOBOTS_SWIPE_UUID_KEY}`, {
+                        ...location,
+                        selectedSwipeIndex: swipeId,
+                    });
+                }
+                continue;
+            }
+            if (seenSwipeUuids.has(swipeUuid)) {
+                add('fatal', 'duplicate_swipe_uuid', `swipe_info[${index}].${AIKOBOTS_SWIPE_UUID_KEY}`);
+            }
+            seenSwipeUuids.add(swipeUuid);
+        }
+    }
+
+    const selectedSwipeInfo = swipeInfo?.[swipeId];
+    if (selectedSwipeInfo === undefined || selectedSwipeInfo === null) {
+        add('repairable', 'selected_swipe_info_missing', `swipe_info[${swipeId}]`);
+    } else if (!isObject(selectedSwipeInfo)) {
+        add('fatal', 'invalid_selected_swipe_info', `swipe_info[${swipeId}]`);
+    } else {
+        const selectedSwipeUuid = selectedSwipeInfo[AIKOBOTS_SWIPE_UUID_KEY];
+        const topLevelSwipeUuid = message[AIKOBOTS_SWIPE_UUID_KEY];
+        if (topLevelSwipeUuid !== undefined && !isValidAikobotsUuid(topLevelSwipeUuid)) {
+            add('repairable', topLevelSwipeUuid == null ? 'missing_active_swipe_uuid' : 'malformed_active_swipe_uuid', AIKOBOTS_SWIPE_UUID_KEY);
+        }
+        if (isValidAikobotsUuid(selectedSwipeUuid)
+            && isValidAikobotsUuid(topLevelSwipeUuid)
+            && selectedSwipeUuid !== topLevelSwipeUuid) {
+            add('fatal', 'active_swipe_uuid_conflict', AIKOBOTS_SWIPE_UUID_KEY);
+        }
+
+        if (!allowMetadataMismatch) {
+            for (const key of DATE_FIELDS) {
+                compareDateField(result, message, selectedSwipeInfo, key, location);
+            }
+            compareExtraObjects(
+                result,
+                message.extra === undefined ? {} : message.extra,
+                selectedSwipeInfo.extra === undefined ? {} : selectedSwipeInfo.extra,
+                location,
+            );
+        }
+    }
+
+    result.ok = result.fatalMismatches.length === 0;
+    return result;
 }
 
 /**
@@ -73,67 +359,38 @@ function areJsonValuesEqual(left, right) {
  * @param {object} [options] Validation options.
  * @param {boolean} [options.allowMesMismatch=false] Allows the greeting's rendered macro text to differ from its stored swipe.
  * @param {boolean} [options.allowMetadataMismatch=false] Allows legacy greeting metadata to differ from its selected swipe.
- * @returns {{ok: boolean, reason: string, swipeId: number|null, selectedSwipeUuid: string|null}}
+ * @param {number|null} [options.messageRelativeIndex=null] Submitted-range index for diagnostics.
+ * @param {number|null} [options.logicalChatIndex=null] Logical chat index for diagnostics.
+ * @returns {{ok: boolean, reason: string, swipeId: number|null, selectedSwipeUuid: string|null, comparison: object}}
  */
-export function validateMessageSwipeState(message, { allowMesMismatch = false, allowMetadataMismatch = false } = {}) {
-    const result = { ok: true, reason: '', swipeId: null, selectedSwipeUuid: null };
-    if (!isObject(message)) {
-        return { ...result, ok: false, reason: 'invalid_message' };
-    }
-
-    const hasSwipes = Array.isArray(message.swipes);
-    const hasSwipeInfo = Array.isArray(message.swipe_info);
-    const hasSwipeId = Object.prototype.hasOwnProperty.call(message, 'swipe_id');
-    if (!hasSwipes && !hasSwipeInfo && !hasSwipeId) {
-        return result;
-    }
-    if (!hasSwipes || !hasSwipeInfo) {
-        return { ...result, ok: false, reason: 'invalid_swipe_arrays' };
-    }
-    if (message.swipes.length !== message.swipe_info.length) {
-        return { ...result, ok: false, reason: 'swipe_length_mismatch' };
-    }
-
-    const swipeId = Number(message.swipe_id);
-    if (!Number.isInteger(swipeId) || swipeId < 0 || swipeId >= message.swipes.length) {
-        return { ...result, ok: false, reason: 'swipe_id_out_of_bounds', swipeId };
-    }
-    result.swipeId = swipeId;
-
-    if (!allowMesMismatch && message.mes !== message.swipes[swipeId]) {
-        return { ...result, ok: false, reason: 'active_swipe_text_mismatch' };
-    }
-
-    const seenSwipeUuids = new Set();
-    for (let index = 0; index < message.swipe_info.length; index++) {
-        const swipeUuid = message.swipe_info[index]?.[AIKOBOTS_SWIPE_UUID_KEY];
-        if (!isValidAikobotsUuid(swipeUuid)) {
-            return { ...result, ok: false, reason: 'invalid_swipe_uuid' };
-        }
-        if (seenSwipeUuids.has(swipeUuid)) {
-            return { ...result, ok: false, reason: 'duplicate_swipe_uuid' };
-        }
-        seenSwipeUuids.add(swipeUuid);
-    }
-
-    const selectedSwipeInfo = message.swipe_info[swipeId];
-    result.selectedSwipeUuid = selectedSwipeInfo[AIKOBOTS_SWIPE_UUID_KEY];
-    if (allowMetadataMismatch) {
-        return result;
-    }
-    for (const key of ['send_date', 'gen_started', 'gen_finished']) {
-        if (!Object.is(message[key], selectedSwipeInfo[key])) {
-            return { ...result, ok: false, reason: `active_swipe_${key}_mismatch` };
-        }
-    }
-
-    const topLevelExtra = normalizeComparableSwipeExtra(message.extra);
-    const selectedSwipeExtra = normalizeComparableSwipeExtra(selectedSwipeInfo.extra);
-    if (!areJsonValuesEqual(topLevelExtra, selectedSwipeExtra)) {
-        return { ...result, ok: false, reason: 'active_swipe_extra_mismatch' };
-    }
-
-    return result;
+export function validateMessageSwipeState(message, {
+    allowMesMismatch = false,
+    allowMetadataMismatch = false,
+    messageRelativeIndex = null,
+    logicalChatIndex = null,
+} = {}) {
+    const comparison = compareActiveSwipeState(message, {
+        allowMesMismatch,
+        allowMetadataMismatch,
+        messageRelativeIndex,
+        logicalChatIndex,
+    });
+    const swipeId = Number(message?.swipe_id);
+    const normalizedSwipeId = Number.isInteger(swipeId) ? swipeId : null;
+    return {
+        ok: comparison.ok,
+        reason: comparison.fatalMismatches[0]?.code ?? '',
+        swipeId: normalizedSwipeId,
+        selectedSwipeUuid: Array.isArray(message?.swipe_info) && normalizedSwipeId !== null
+            ? message.swipe_info[normalizedSwipeId]?.[AIKOBOTS_SWIPE_UUID_KEY] ?? null
+            : null,
+        comparison,
+        fatalMismatches: comparison.fatalMismatches,
+        harmlessDifferences: comparison.harmlessDifferences,
+        informationalDifferences: comparison.informationalDifferences,
+        repairableDifferences: comparison.repairableDifferences,
+        ambiguousConflicts: comparison.ambiguousConflicts,
+    };
 }
 
 function ensureUniqueUuid(currentUuid, seenUuids, { generateUuid, repairDuplicates, regenerate }) {

@@ -5160,6 +5160,39 @@ function createSwipeInfoExtra(extra, { includeReasoning = true } = {}) {
     return swipeInfoExtra;
 }
 
+/**
+ * Updates swipe metadata from the active message while preserving swipe-only imported fields.
+ * @param {object} existingSwipeExtra Existing selected-swipe metadata.
+ * @param {object} messageExtra Active message metadata to synchronize.
+ * @param {object} [options] Options forwarded to swipe metadata filtering.
+ * @returns {object} Synchronized swipe metadata.
+ */
+function synchronizeSwipeInfoExtra(existingSwipeExtra, messageExtra, options = {}) {
+    return {
+        ...(existingSwipeExtra && typeof existingSwipeExtra === 'object' && !Array.isArray(existingSwipeExtra)
+            ? structuredClone(existingSwipeExtra)
+            : {}),
+        ...createSwipeInfoExtra(messageExtra, options),
+    };
+}
+
+/**
+ * Applies the selected swipe metadata while preserving message-only UI and imported fields.
+ * @param {object} messageExtra Existing active message metadata.
+ * @param {object} selectedSwipeExtra Selected-swipe metadata to apply.
+ * @returns {object} Synchronized active message metadata.
+ */
+function synchronizeMessageExtra(messageExtra, selectedSwipeExtra) {
+    return {
+        ...(messageExtra && typeof messageExtra === 'object' && !Array.isArray(messageExtra)
+            ? structuredClone(messageExtra)
+            : {}),
+        ...(selectedSwipeExtra && typeof selectedSwipeExtra === 'object' && !Array.isArray(selectedSwipeExtra)
+            ? structuredClone(selectedSwipeExtra)
+            : {}),
+    };
+}
+
 function normalizeTimedWorldInfoState(timedWorldInfo) {
     if (!timedWorldInfo || typeof timedWorldInfo !== 'object' || Array.isArray(timedWorldInfo)) {
         return null;
@@ -5394,12 +5427,15 @@ export async function prepareCurrentChatSavePayload({ header = null, endId = und
         const validation = validateMessageSwipeState(trimmedChat[index], {
             allowMesMismatch: messageId === 0,
             allowMetadataMismatch: messageId === 0,
+            messageRelativeIndex: index,
+            logicalChatIndex: messageId,
         });
         if (!validation.ok) {
             console.error('Refusing to save an inconsistent message swipe state.', {
                 messageId,
                 messageUuid: trimmedChat[index]?.[AIKOBOTS_MESSAGE_UUID_KEY] ?? null,
                 reason: validation.reason,
+                fatalMismatches: validation.fatalMismatches,
             });
             return {
                 ok: false,
@@ -11934,7 +11970,7 @@ export function syncMesToSwipe(messageId = null) {
     targetSwipeInfo.send_date = targetMessage.send_date;
     targetSwipeInfo.gen_started = targetMessage.gen_started;
     targetSwipeInfo.gen_finished = targetMessage.gen_finished;
-    targetSwipeInfo.extra = createSwipeInfoExtra(targetMessage.extra);
+    targetSwipeInfo.extra = synchronizeSwipeInfoExtra(targetSwipeInfo.extra, targetMessage.extra);
 
     return true;
 }
@@ -12010,7 +12046,7 @@ export function syncSwipeToMes(messageId = null, swipeId = null, targetMessage =
     targetMessage.send_date = targetSwipeInfo?.send_date;
     targetMessage.gen_started = targetSwipeInfo?.gen_started;
     targetMessage.gen_finished = targetSwipeInfo?.gen_finished;
-    targetMessage.extra = structuredClone(targetSwipeInfo?.extra) ?? {};
+    targetMessage.extra = synchronizeMessageExtra(targetMessage.extra, targetSwipeInfo?.extra);
 
     return true;
 }
@@ -13377,17 +13413,11 @@ function updateMessage(div) {
     if (ordinaryTextEdit) {
         const selectedSwipeInfo = mes.swipe_info[target.swipeIndex];
         const selectedSwipeUuid = selectedSwipeInfo[AIKOBOTS_SWIPE_UUID_KEY];
-        const topLevelOnlyExtra = {};
-        for (const key of CHAT_SWIPE_INFO_EXTRA_STRIP_KEYS) {
-            if (Object.prototype.hasOwnProperty.call(mes.extra, key)) {
-                topLevelOnlyExtra[key] = mes.extra[key];
-            }
-        }
         mes.swipes[target.swipeIndex] = text;
         selectedSwipeInfo.send_date = mes.send_date;
         selectedSwipeInfo.gen_started = mes.gen_started;
         selectedSwipeInfo.gen_finished = mes.gen_finished;
-        selectedSwipeInfo.extra = createSwipeInfoExtra(mes.extra);
+        selectedSwipeInfo.extra = synchronizeSwipeInfoExtra(selectedSwipeInfo.extra, { bias: mes.extra.bias });
         selectedSwipeInfo[AIKOBOTS_SWIPE_UUID_KEY] = selectedSwipeUuid;
 
         mes.swipe_id = target.swipeIndex;
@@ -13395,7 +13425,6 @@ function updateMessage(div) {
         mes.send_date = selectedSwipeInfo.send_date;
         mes.gen_started = selectedSwipeInfo.gen_started;
         mes.gen_finished = selectedSwipeInfo.gen_finished;
-        mes.extra = { ...structuredClone(selectedSwipeInfo.extra), ...topLevelOnlyExtra };
     } else {
         mes.mes = text;
     }
@@ -13811,20 +13840,13 @@ async function cloneEditedMessage() {
         const cloneSwipeInfo = clone.swipe_info[cloneSwipeId];
         if (Number.isInteger(cloneSwipeId) && cloneSwipeId >= 0 && cloneSwipeId < clone.swipes.length && cloneSwipeInfo) {
             const cloneSwipeUuid = cloneSwipeInfo[AIKOBOTS_SWIPE_UUID_KEY];
-            const topLevelOnlyExtra = {};
-            for (const key of CHAT_SWIPE_INFO_EXTRA_STRIP_KEYS) {
-                if (Object.prototype.hasOwnProperty.call(clone.extra, key)) {
-                    topLevelOnlyExtra[key] = clone.extra[key];
-                }
-            }
             clone.swipes[cloneSwipeId] = text;
             cloneSwipeInfo.send_date = clone.send_date;
             cloneSwipeInfo.gen_started = clone.gen_started;
             cloneSwipeInfo.gen_finished = clone.gen_finished;
-            cloneSwipeInfo.extra = createSwipeInfoExtra(clone.extra);
+            cloneSwipeInfo.extra = synchronizeSwipeInfoExtra(cloneSwipeInfo.extra, { bias: clone.extra.bias });
             cloneSwipeInfo[AIKOBOTS_SWIPE_UUID_KEY] = cloneSwipeUuid;
             clone.mes = clone.swipes[cloneSwipeId];
-            clone.extra = { ...structuredClone(cloneSwipeInfo.extra), ...topLevelOnlyExtra };
         } else {
             clone.mes = text;
         }
@@ -13961,6 +13983,7 @@ async function saveMessageUpdateByUuid(message, { ordinaryTextEdit = false, sele
         console.error('Refusing to save an inconsistent message swipe state.', {
             messageUuid: message?.[AIKOBOTS_MESSAGE_UUID_KEY] ?? null,
             reason: swipeValidation.reason,
+            fatalMismatches: swipeValidation.fatalMismatches,
         });
         toastr.error(t`Message update was blocked because its swipe data became inconsistent.`);
         return CHAT_SAVE_RESULT.FAILED;

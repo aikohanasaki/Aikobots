@@ -116,6 +116,25 @@ function stripSqliteMessageUuids(chatPath) {
     }
 }
 
+function mutateSqliteMessage(chatPath, logicalIndex, mutate) {
+    const sqlitePath = String(chatPath).replace(/\.(?:jsonl|sqlite)$/i, '.sqlite');
+    const db = new SQL.Database(fs.readFileSync(sqlitePath));
+    try {
+        const row = db.exec(`SELECT id, content FROM messages WHERE order_index = ${logicalIndex + 1}`)[0]?.values?.[0];
+        const message = JSON.parse(row[1]);
+        mutate(message);
+        const stmt = db.prepare('UPDATE messages SET content = ? WHERE id = ?');
+        try {
+            stmt.run([JSON.stringify(message), row[0]]);
+        } finally {
+            stmt.free();
+        }
+        fs.writeFileSync(sqlitePath, Buffer.from(db.export()));
+    } finally {
+        db.close();
+    }
+}
+
 describe('SQLite chat length handling', () => {
     beforeAll(async () => {
         SQL = await initSqlJs();
@@ -707,14 +726,23 @@ describe('SQLite chat length handling', () => {
 
     it.each([
         ['out-of-bounds swipe id', message => { message.swipe_id = 2; }, 'swipe_id_out_of_bounds'],
-        ['unequal swipe arrays', message => { message.swipe_info.pop(); }, 'swipe_length_mismatch'],
         ['active text mismatch', message => { message.mes = 'wrong active text'; }, 'active_swipe_text_mismatch'],
-        ['active timestamp mismatch', message => { message.gen_finished = 'wrong timestamp'; }, 'active_swipe_gen_finished_mismatch'],
-        ['active metadata mismatch', message => { message.extra.model = 'wrong-model'; }, 'active_swipe_extra_mismatch'],
     ])('detects %s before a swipe message save', (_label, mutate, reason) => {
         const message = makeMultiSwipeAssistant();
         mutate(message);
         expect(validateMessageSwipeState(message)).toMatchObject({ ok: false, reason });
+    });
+
+    it.each([
+        ['short legacy swipe metadata', message => { message.swipe_info.pop(); }, 'repairableDifferences'],
+        ['active timestamp conflict', message => { message.gen_finished = 'wrong timestamp'; }, 'ambiguousConflicts'],
+        ['active metadata conflict', message => { message.extra.model = 'wrong-model'; }, 'ambiguousConflicts'],
+    ])('reports non-fatal %s before a swipe message save', (_label, mutate, bucket) => {
+        const message = makeMultiSwipeAssistant();
+        mutate(message);
+        const validation = validateMessageSwipeState(message);
+        expect(validation.ok).toBe(true);
+        expect(validation[bucket]).not.toHaveLength(0);
     });
 
     it.each([
@@ -1125,6 +1153,202 @@ describe('SQLite chat length handling', () => {
         }
     });
 
+    it('does not active-swipe validate an unrelated out-of-range SQLite row', async () => {
+        const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'sqlite-chat-loaded-range-swipe-isolation-'));
+        const chatPath = path.join(tempDir, 'chat.jsonl');
+
+        try {
+            const header = makeHeader({ chat_revision: 4 });
+            const messages = [makeMultiSwipeAssistant(), ...makeMessages(4)];
+            await writeLogicalChat(chatPath, header, messages);
+            mutateSqliteMessage(chatPath, 0, message => { message.mes = 'legacy contradictory active text'; });
+
+            const patchMessages = structuredClone(messages.slice(2, 4));
+            patchMessages[0].mes = 'range edit';
+            await expect(updateSqliteLoadedMessageRange({
+                filePath: chatPath,
+                requestBody: {
+                    loaded_range_start: 2,
+                    loaded_range_end: 3,
+                    base_revision: 4,
+                    save_session_id: '33333333-3333-4333-8333-333333333333',
+                    saved_message_count: messages.length,
+                },
+                incomingHeader: header,
+                rangeMessages: patchMessages,
+                saveSessionId: '33333333-3333-4333-8333-333333333333',
+            })).resolves.toMatchObject({ result: 'ok', changed: 2 });
+
+            const saved = await getLogicalChatData(chatPath);
+            expect(saved[1].mes).toBe('legacy contradictory active text');
+            expect(saved[3].mes).toBe('range edit');
+        } finally {
+            fs.rmSync(tempDir, { recursive: true, force: true });
+        }
+    });
+
+    it('rejects a submitted loaded-range message with a fatal active-text mismatch', async () => {
+        const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'sqlite-chat-loaded-range-swipe-reject-'));
+        const chatPath = path.join(tempDir, 'chat.jsonl');
+
+        try {
+            const header = makeHeader({ chat_revision: 4 });
+            const message = makeMultiSwipeAssistant();
+            const leadingMessage = makeMessages(1)[0];
+            await writeLogicalChat(chatPath, header, [leadingMessage, message]);
+            const contradictory = structuredClone(message);
+            contradictory.mes = 'contradictory active text';
+
+            await expect(updateSqliteLoadedMessageRange({
+                filePath: chatPath,
+                requestBody: {
+                    loaded_range_start: 1,
+                    loaded_range_end: 1,
+                    base_revision: 4,
+                    save_session_id: '33333333-3333-4333-8333-333333333333',
+                    saved_message_count: 2,
+                },
+                incomingHeader: header,
+                rangeMessages: [contradictory],
+                saveSessionId: '33333333-3333-4333-8333-333333333333',
+            })).rejects.toMatchObject({
+                status: 409,
+                error: 'invalid_message_swipe_state',
+                details: {
+                    reason: 'active_swipe_text_mismatch',
+                    comparison: {
+                        fatalMismatches: [expect.objectContaining({
+                            messageRelativeIndex: 0,
+                            logicalChatIndex: 1,
+                            selectedSwipeIndex: 1,
+                        })],
+                    },
+                },
+            });
+        } finally {
+            fs.rmSync(tempDir, { recursive: true, force: true });
+        }
+    });
+
+    it.each([
+        ['missing', message => { delete message.swipe_info[1].aikobots_swipe_uuid; }],
+        ['malformed', message => { message.swipe_info[1].aikobots_swipe_uuid = 'legacy-swipe-id'; }],
+    ])('accepts a submitted loaded-range message with a %s legacy swipe UUID', async (_label, mutate) => {
+        const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'sqlite-chat-loaded-range-legacy-swipe-'));
+        const chatPath = path.join(tempDir, 'chat.jsonl');
+
+        try {
+            const header = makeHeader({ chat_revision: 4 });
+            const message = makeMultiSwipeAssistant();
+            await writeLogicalChat(chatPath, header, [message]);
+            const legacyMessage = structuredClone(message);
+            mutate(legacyMessage);
+
+            await expect(updateSqliteLoadedMessageRange({
+                filePath: chatPath,
+                requestBody: {
+                    loaded_range_start: 0,
+                    loaded_range_end: 0,
+                    base_revision: 4,
+                    save_session_id: '33333333-3333-4333-8333-333333333333',
+                    saved_message_count: 1,
+                },
+                incomingHeader: header,
+                rangeMessages: [legacyMessage],
+                saveSessionId: '33333333-3333-4333-8333-333333333333',
+            })).resolves.toMatchObject({ result: 'ok' });
+
+            const savedUuid = (await getLogicalChatData(chatPath))[1].swipe_info[1].aikobots_swipe_uuid;
+            expect(savedUuid).toMatch(/^[0-9a-f-]{36}$/i);
+        } finally {
+            fs.rmSync(tempDir, { recursive: true, force: true });
+        }
+    });
+
+    it('rejects conflicting valid active-swipe UUIDs in a submitted loaded range', async () => {
+        const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'sqlite-chat-loaded-range-swipe-uuid-conflict-'));
+        const chatPath = path.join(tempDir, 'chat.jsonl');
+
+        try {
+            const header = makeHeader({ chat_revision: 4 });
+            const message = makeMultiSwipeAssistant();
+            await writeLogicalChat(chatPath, header, [message]);
+            const contradictory = structuredClone(message);
+            contradictory.aikobots_swipe_uuid = '55555555-5555-4555-8555-555555555555';
+
+            await expect(updateSqliteLoadedMessageRange({
+                filePath: chatPath,
+                requestBody: {
+                    loaded_range_start: 0,
+                    loaded_range_end: 0,
+                    base_revision: 4,
+                    save_session_id: '33333333-3333-4333-8333-333333333333',
+                    saved_message_count: 1,
+                },
+                incomingHeader: header,
+                rangeMessages: [contradictory],
+                saveSessionId: '33333333-3333-4333-8333-333333333333',
+            })).rejects.toMatchObject({
+                error: 'invalid_message_swipe_state',
+                details: { reason: 'active_swipe_uuid_conflict' },
+            });
+        } finally {
+            fs.rmSync(tempDir, { recursive: true, force: true });
+        }
+    });
+
+    it('preserves imported metadata through a non-fatal loaded-range save', async () => {
+        const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'sqlite-chat-loaded-range-metadata-'));
+        const chatPath = path.join(tempDir, 'chat.jsonl');
+
+        try {
+            const header = makeHeader({ chat_revision: 4 });
+            const message = makeMultiSwipeAssistant();
+            message.extra.branches = [{ id: 'top-branch' }];
+            message.extra.bookmark_link = 'bookmark-name';
+            message.swipe_info[1].extra.imported_vendor_field = { preserved: true };
+            await writeLogicalChat(chatPath, header, [message]);
+
+            const updated = structuredClone(message);
+            updated.mes = 'edited selected text';
+            updated.swipes[1] = 'edited selected text';
+            await updateSqliteLoadedMessageRange({
+                filePath: chatPath,
+                requestBody: {
+                    loaded_range_start: 0,
+                    loaded_range_end: 0,
+                    base_revision: 4,
+                    save_session_id: '33333333-3333-4333-8333-333333333333',
+                    saved_message_count: 1,
+                },
+                incomingHeader: header,
+                rangeMessages: [updated],
+                saveSessionId: '33333333-3333-4333-8333-333333333333',
+            });
+
+            const saved = (await getLogicalChatData(chatPath))[1];
+            expect(saved.extra.branches).toEqual([{ id: 'top-branch' }]);
+            expect(saved.extra.bookmark_link).toBe('bookmark-name');
+            expect(saved.swipe_info[1].extra.imported_vendor_field).toEqual({ preserved: true });
+        } finally {
+            fs.rmSync(tempDir, { recursive: true, force: true });
+        }
+    });
+
+    it('validates every submitted message in a full-chat write', async () => {
+        const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'sqlite-chat-full-swipe-validation-'));
+        const chatPath = path.join(tempDir, 'chat.jsonl');
+
+        try {
+            const message = makeMultiSwipeAssistant();
+            message.mes = 'contradictory active text';
+            await expect(writeLogicalChat(chatPath, makeHeader(), [makeMessages(1)[0], message]))
+                .rejects.toMatchObject({ error: 'invalid_message_swipe_state' });
+        } finally {
+            fs.rmSync(tempDir, { recursive: true, force: true });
+        }
+    });
+
     it('rejects stale SQLite loaded-range saves before accepting no-op payloads', async () => {
         const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'sqlite-chat-loaded-range-stale-noop-'));
         const chatPath = path.join(tempDir, 'chat.jsonl');
@@ -1443,6 +1667,8 @@ describe('SQLite chat length handling', () => {
                     aikobots_swipe_uuid: '22222222-2222-4222-8222-222222222222',
                     extra: {
                         promptSnapshotKey: 'user|chat:test|1|0',
+                        branches: [{ id: 'swipe-only-branch' }],
+                        imported_vendor_field: 'swipe-value',
                         timedWorldInfoCheckpoint: {
                             version: 1,
                             messageId: 1,
@@ -1455,6 +1681,8 @@ describe('SQLite chat length handling', () => {
                 }],
                 extra: {
                     promptSnapshotKey: 'user|chat:test|1|0',
+                    bookmark_link: 'top-only-bookmark',
+                    imported_vendor_field: 'top-value',
                     timedWorldInfoCheckpoint: {
                         version: 1,
                         messageId: 1,
@@ -1505,6 +1733,10 @@ describe('SQLite chat length handling', () => {
             expect(clone.swipe_info[0].aikobots_swipe_uuid).not.toBe(messages[1].swipe_info[0].aikobots_swipe_uuid);
             expect(clone.extra.promptSnapshotKey).toBeUndefined();
             expect(clone.extra.timedWorldInfoCheckpoint).toBeUndefined();
+            expect(clone.extra.bookmark_link).toBe('top-only-bookmark');
+            expect(clone.extra.imported_vendor_field).toBe('top-value');
+            expect(clone.swipe_info[0].extra.branches).toEqual([{ id: 'swipe-only-branch' }]);
+            expect(clone.swipe_info[0].extra.imported_vendor_field).toBe('swipe-value');
             expect(shifted.extra.promptSnapshotKey).toBeUndefined();
             expect(shifted.extra.timedWorldInfoCheckpoint.messageId).toBe(3);
             expect(shifted.extra.timedWorldInfoCheckpoint.timedWorldInfo.sticky.b.start).toBe(3);

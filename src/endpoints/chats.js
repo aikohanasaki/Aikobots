@@ -37,6 +37,7 @@ import {
     AIKOBOTS_MESSAGE_UUID_KEY,
     AIKOBOTS_SWIPE_UUID_KEY,
     cloneMessageWithNewIdentity,
+    compareActiveSwipeState,
     isValidAikobotsUuid,
     normalizeChatIdentities,
     regenerateChatIdentities,
@@ -1386,6 +1387,35 @@ function validateLoadedMessageRangeForSqlite(db, rangeStart, rangeMessages, rang
     };
 }
 
+/**
+ * Rejects only fatal active-swipe contradictions in messages submitted by the current mutation.
+ * Diagnostic records contain locations and field paths, never message or metadata contents.
+ * @param {object[]} messages Messages submitted by the current mutation.
+ * @param {number} [logicalStartId=0] Logical index of the first submitted message.
+ * @returns {void}
+ */
+function assertSubmittedActiveSwipeStates(messages, logicalStartId = 0) {
+    if (!Array.isArray(messages)) {
+        return;
+    }
+
+    for (let messageRelativeIndex = 0; messageRelativeIndex < messages.length; messageRelativeIndex++) {
+        const logicalChatIndex = logicalStartId + messageRelativeIndex;
+        const comparison = compareActiveSwipeState(messages[messageRelativeIndex], {
+            allowMesMismatch: logicalChatIndex === 0,
+            allowMetadataMismatch: logicalChatIndex === 0,
+            messageRelativeIndex,
+            logicalChatIndex,
+        });
+        if (!comparison.ok) {
+            throw new ChatMutationError(409, 'invalid_message_swipe_state', 'Message swipe data is inconsistent.', {
+                reason: comparison.fatalMismatches[0]?.code ?? 'invalid_message_swipe_state',
+                comparison,
+            });
+        }
+    }
+}
+
 function validateForcePushRangeMessages(rangeMessages) {
     if (!validateLoadedMessageRangeMessages(rangeMessages)) {
         return { ok: false, error: 'invalid_loaded_range' };
@@ -1492,6 +1522,8 @@ async function updateSqliteForcePushLoadedMessageRange({ filePath, requestBody, 
             throw new ChatMutationError(400, 'saved_message_count_mismatch');
         }
 
+        assertSubmittedActiveSwipeStates(rangeMessages, submittedStartId);
+
         const candidateHeader = incomingHeader ?? header;
         if (oldRangeCount === rangeMessages.length && isLoadedRangeSaveNoop(header, candidateHeader, existingRangeMessages, rangeMessages)) {
             return {
@@ -1518,6 +1550,8 @@ async function updateSqliteForcePushLoadedMessageRange({ filePath, requestBody, 
         requestBody,
         isPrivilegedOperation: true,
         allowExistingSqliteFullReplacement: true,
+        activeSwipeValidationMessages: rangeMessages,
+        activeSwipeValidationStartId: submittedStartId,
     });
 
     return {
@@ -2030,6 +2064,8 @@ export async function writeLogicalChat(filePath, header, messages, {
     operationType = null,
     requestBody = null,
     isPrivilegedOperation = false,
+    activeSwipeValidationMessages = null,
+    activeSwipeValidationStartId = 0,
 } = {}) {
     if (startIndex !== undefined) {
         throw new Error('writeLogicalChat startIndex is no longer supported. Use messageStartId with zero-based logical message IDs.');
@@ -2038,6 +2074,10 @@ export async function writeLogicalChat(filePath, header, messages, {
     if (messageStartId !== null && (!Number.isInteger(messageStartId) || messageStartId < 0)) {
         throw new Error('Invalid logical message update start id.');
     }
+
+    const submittedSwipeMessages = Array.isArray(activeSwipeValidationMessages)
+        ? activeSwipeValidationMessages
+        : messageStartId === null ? messages : [];
 
     const baseHeader = sanitizeChatHeaderForPersistence(header);
     const identityMessages = Array.isArray(messages)
@@ -2082,6 +2122,7 @@ export async function writeLogicalChat(filePath, header, messages, {
                 }
             }
 
+            assertSubmittedActiveSwipeStates(submittedSwipeMessages, activeSwipeValidationStartId);
             setMessages(db, [baseHeader, ...sanitizedMessages]);
             totalMessages = getMessageCount(db);
 
@@ -2099,6 +2140,7 @@ export async function writeLogicalChat(filePath, header, messages, {
                 });
             }
         } else {
+            assertSubmittedActiveSwipeStates(submittedSwipeMessages, activeSwipeValidationStartId);
             // Header is always order_index 0; logical message ids start after it.
             if (baseHeader) {
                 const headerStmt = db.prepare('UPDATE messages SET content = ? WHERE order_index = 0');
@@ -2172,6 +2214,8 @@ export async function updateSqliteLoadedMessageRange({ filePath, requestBody, in
         if (!validation.ok) {
             throw new ChatMutationError(400, validation.error);
         }
+
+        assertSubmittedActiveSwipeStates(rangeMessages, validation.startId);
 
         const candidateHeader = incomingHeader ?? header;
         const saveIsNoop = isLoadedRangeSaveNoop(header, candidateHeader, validation.existingRangeMessages, rangeMessages);
@@ -2535,7 +2579,12 @@ function applyCloneTextOverride(clone, requestBody) {
         selectedSwipeInfo.send_date = clone.send_date;
         selectedSwipeInfo.gen_started = clone.gen_started;
         selectedSwipeInfo.gen_finished = clone.gen_finished;
-        selectedSwipeInfo.extra = _.cloneDeep(clone.extra ?? {});
+        if (Object.prototype.hasOwnProperty.call(requestBody || {}, 'bias_override')) {
+            selectedSwipeInfo.extra = _.isPlainObject(selectedSwipeInfo.extra)
+                ? _.cloneDeep(selectedSwipeInfo.extra)
+                : {};
+            selectedSwipeInfo.extra.bias = requestBody.bias_override;
+        }
     }
 
     const swipeValidation = validateMessageSwipeState(clone);
