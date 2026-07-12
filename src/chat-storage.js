@@ -33,6 +33,20 @@ export function hasPrimaryChatStorageFile(filePath) {
     return fs.existsSync(sqlitePath) || fs.existsSync(jsonlPath);
 }
 
+/**
+ * Classifies whether a source-to-new-target chat operation is safe to create.
+ * @param {string} sourcePath Source chat path.
+ * @param {string} targetPath Requested new chat path.
+ * @returns {'source_target_collision'|'target_chat_exists'|null}
+ */
+export function getNewChatTargetConflict(sourcePath, targetPath) {
+    if (path.resolve(sourcePath) === path.resolve(targetPath)) {
+        return 'source_target_collision';
+    }
+
+    return hasPrimaryChatStorageFile(targetPath) ? 'target_chat_exists' : null;
+}
+
 /** Runs one operation under the established cross-process logical-chat lock. */
 export async function withChatSaveLock(filePath, callback) {
     const lockTargetPath = replaceChatStorageExtension(filePath, '.sqlite');

@@ -530,6 +530,90 @@ function getLastOrderIndex(db) {
     return Number(res[0].values[0][0]);
 }
 
+/** Error carrying only a safe migration mismatch category. */
+export class MigrationEquivalenceError extends Error {
+    constructor(category) {
+        super(`SQLite migration equivalence check failed: ${category}`);
+        this.name = 'MigrationEquivalenceError';
+        this.category = category;
+    }
+}
+
+function normalizeJsonForEquivalence(value) {
+    if (!value || typeof value !== 'object') {
+        return value;
+    }
+
+    if (Array.isArray(value)) {
+        return value.map(normalizeJsonForEquivalence);
+    }
+
+    return Object.keys(value).sort().reduce((result, key) => {
+        result[key] = normalizeJsonForEquivalence(value[key]);
+        return result;
+    }, {});
+}
+
+function migrationValuesEqual(left, right) {
+    return JSON.stringify(normalizeJsonForEquivalence(left)) === JSON.stringify(normalizeJsonForEquivalence(right));
+}
+
+/**
+ * Verifies that ordered JSONL records and a SQLite chat represent the same logical chat.
+ * Errors contain only a safe mismatch category and never include persisted values.
+ * @param {Iterable<string|{content: string}>|AsyncIterable<string|{content: string}>} records Complete source records, including the header.
+ * @param {string} sqlitePath SQLite destination path.
+ * @returns {Promise<void>}
+ */
+export async function verifyJsonlRecordsMatchSqlite(records, sqlitePath) {
+    const db = await loadDb(sqlitePath);
+    let statement;
+    let rowIterator;
+    let sourceIndex = 0;
+    try {
+        const integrityResult = db.exec('PRAGMA integrity_check')?.[0]?.values?.[0]?.[0];
+        if (integrityResult !== 'ok') {
+            throw new MigrationEquivalenceError('integrity_check_failed');
+        }
+
+        statement = db.prepare('SELECT content FROM messages ORDER BY order_index ASC, id ASC');
+        rowIterator = statement.statement.raw(true).iterate()[Symbol.iterator]();
+        for await (const record of records) {
+            const line = typeof record === 'string' ? record : record?.content;
+            if (!String(line || '').trim()) {
+                continue;
+            }
+
+            const destination = rowIterator.next();
+            if (destination.done) {
+                throw new MigrationEquivalenceError(sourceIndex === 0 ? 'header_mismatch' : 'message_count_mismatch');
+            }
+
+            let sourceValue;
+            let destinationValue;
+            try {
+                sourceValue = JSON.parse(line);
+                destinationValue = JSON.parse(destination.value[0]);
+            } catch {
+                throw new MigrationEquivalenceError(sourceIndex === 0 ? 'header_mismatch' : 'message_metadata_mismatch');
+            }
+
+            if (!migrationValuesEqual(sourceValue, destinationValue)) {
+                throw new MigrationEquivalenceError(sourceIndex === 0 ? 'header_mismatch' : 'message_content_mismatch');
+            }
+            sourceIndex++;
+        }
+
+        if (!rowIterator.next().done) {
+            throw new MigrationEquivalenceError(sourceIndex === 0 ? 'header_mismatch' : 'message_count_mismatch');
+        }
+    } finally {
+        rowIterator?.return?.();
+        statement?.free();
+        db.close();
+    }
+}
+
 /**
  * Gets an ordered logical message row by Aikobots message UUID.
  * @param {NativeDatabaseAdapter} db

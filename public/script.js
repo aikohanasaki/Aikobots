@@ -13546,7 +13546,7 @@ function updateMessage(div) {
         mes,
         bias,
         messageId: target.index,
-        ordinaryTextEdit: true,
+        ordinaryTextEdit,
         selectedSwipeUuid: target.session.swipeUuid,
     };
 }

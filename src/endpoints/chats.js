@@ -18,6 +18,7 @@ import {
     deleteChatStorageCompanions,
     getChatStorageCompanionPaths,
     hasPrimaryChatStorageFile,
+    getNewChatTargetConflict,
     replaceChatStorageExtension,
     withChatSaveLock,
     withChatSaveLocks,
@@ -4752,6 +4753,12 @@ router.post('/save-prefix', validateAvatarUrlMiddleware, async function (request
         }
 
         return await withChatSaveLocks([sourcePath, targetPath], async () => {
+            const targetConflict = getNewChatTargetConflict(sourcePath, targetPath);
+            if (targetConflict) {
+                const status = targetConflict === 'target_chat_exists' ? 409 : 400;
+                return response.status(status).send({ error: targetConflict });
+            }
+
             let sourceHeader;
             let messages;
             const sourceSqlitePath = replaceChatStorageExtension(sourcePath, '.sqlite');
@@ -4781,11 +4788,9 @@ router.post('/save-prefix', validateAvatarUrlMiddleware, async function (request
             const targetHeader = { ...sourceHeader, ...headerOverrides };
             const writeResult = await writeLogicalChat(targetPath, targetHeader, messages, {
                 regenerateIdentities: true,
-                allowExistingSqliteFullReplacement: true,
                 routeName: '/api/chats/save-prefix',
                 operationType: 'save_prefix',
                 requestBody: request.body,
-                isPrivilegedOperation: true,
             });
             getBackupFunction(request.user.profile.handle)(request.user.directories.backups, dirName, writeResult.fullJsonl);
             return response.send({ ok: true });

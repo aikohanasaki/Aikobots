@@ -16,6 +16,7 @@ let deleteSqliteMessageByUuid;
 let deleteChatStorageCompanions;
 let exportDatabaseFile;
 let getLogicalChatData;
+let getNewChatTargetConflict;
 let getChatSearchResult;
 let hasValidGroupChatPayload;
 let insertLogicalMessageAfter;
@@ -153,6 +154,7 @@ describe('SQLite chat length handling', () => {
         applyLoadedMessageRange = chatsModule.applyLoadedMessageRange;
         backupSqliteDatabaseFile = chatStorageModule.backupSqliteDatabaseFile;
         deleteChatStorageCompanions = chatStorageModule.deleteChatStorageCompanions;
+        getNewChatTargetConflict = chatStorageModule.getNewChatTargetConflict;
         withChatSaveLock = chatStorageModule.withChatSaveLock;
         appendSqliteMessage = chatsModule.appendSqliteMessage;
         buildChunkedChatPayload = chatsModule.buildChunkedChatPayload;
@@ -176,6 +178,23 @@ describe('SQLite chat length handling', () => {
         loadDb = sqliteModule.loadDb;
         migrateChatHeaderReferences = lorebookModule.migrateChatHeaderReferences;
         writeLogicalChat = chatsModule.writeLogicalChat;
+    });
+
+    it('classifies save-prefix targets without changing an existing chat', () => {
+        const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'save-prefix-target-'));
+        const sourcePath = path.join(tempDir, 'source.sqlite');
+        const targetPath = path.join(tempDir, 'target.jsonl');
+        const originalTarget = '{"header":"unchanged"}\n{"mes":"unchanged","swipes":["also unchanged"]}\n';
+        try {
+            fs.writeFileSync(targetPath, originalTarget);
+
+            expect(getNewChatTargetConflict(sourcePath, path.join(tempDir, 'new.sqlite'))).toBeNull();
+            expect(getNewChatTargetConflict(sourcePath, targetPath)).toBe('target_chat_exists');
+            expect(getNewChatTargetConflict(sourcePath, sourcePath)).toBe('source_target_collision');
+            expect(fs.readFileSync(targetPath, 'utf8')).toBe(originalTarget);
+        } finally {
+            fs.rmSync(tempDir, { recursive: true, force: true });
+        }
     });
 
     it('upgrades legacy SQLite chats with an indexed message UUID column', async () => {

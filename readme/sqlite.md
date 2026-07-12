@@ -478,6 +478,15 @@ Full replacement may be valid for:
 - explicit clear-all;
 - explicit truncate-all.
 
+`/api/chats/save-prefix` is creation-only. It rejects an existing target and a
+source/target path collision; it is not an implicit restore or replacement path.
+
+Migration cleanup retires JSONL only after SQLite integrity succeeds and every
+ordered structured record (header plus all messages and embedded swipe state)
+matches. Legacy split-storage bookkeeping is removed from the recombined header;
+no other metadata difference is ignored. Verification failures retain JSONL and
+report only a safe mismatch category.
+
 It must not implement ordinary:
 
 - edit;
