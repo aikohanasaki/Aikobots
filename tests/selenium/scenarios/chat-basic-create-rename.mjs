@@ -2,7 +2,7 @@ import { runLoggedStep } from '../run-context.mjs';
 
 export async function runChatBasicCreateRenameScenario({ page, logger, captureArtifacts }) {
     const testName = 'chat-basic-create-rename';
-    const featureTags = ['chat-create', 'chat-send-message', 'chat-rename'];
+    const featureTags = ['chat-create', 'chat-send-message', 'chat-rename', 'chat-convert-group', 'chat-group-member'];
     const promptText = 'Selenium MVP smoke prompt: reply with one short sentence.';
     const renamedChat = `mvp-renamed-${Date.now()}`;
 
@@ -207,11 +207,139 @@ export async function runChatBasicCreateRenameScenario({ page, logger, captureAr
         onError: error => captureArtifacts({ testName, stepName: 'wait-for-assistant-response-after-rename', error }),
     });
 
+    await runLoggedStep({
+        logger,
+        testName,
+        stepName: 'convert-chat-to-group',
+        featureTags,
+        selector: '#options_button,#option_convert_to_group,dialog.popup[open]',
+        expected: 'Current chat converts to group chat successfully',
+        action: async () => {
+            await page.convertCurrentChatToGroup();
+            return { converted: true };
+        },
+        onError: error => captureArtifacts({ testName, stepName: 'convert-chat-to-group', error }),
+    });
+
+    const beforeGroupAssistantCount = await runLoggedStep({
+        logger,
+        testName,
+        stepName: 'count-assistant-messages-after-group-convert',
+        featureTags,
+        selector: '.mes[is_user="false"]',
+        expected: 'Assistant message count is captured before group message send',
+        action: async () => {
+            const assistantCount = await page.countAssistantMessages();
+            return { assistantCount };
+        },
+        onError: error => captureArtifacts({ testName, stepName: 'count-assistant-messages-after-group-convert', error }),
+    });
+
+    const beforeGroupUserCount = await runLoggedStep({
+        logger,
+        testName,
+        stepName: 'count-user-messages-after-group-convert',
+        featureTags,
+        selector: '.mes[is_user="true"]',
+        expected: 'User message count is captured before group message send',
+        action: async () => {
+            const userCount = await page.countUserMessages();
+            return { userCount };
+        },
+        onError: error => captureArtifacts({ testName, stepName: 'count-user-messages-after-group-convert', error }),
+    });
+
+    const groupPrompt = 'this is a group-converted chat I am sending a message in';
+
+    await runLoggedStep({
+        logger,
+        testName,
+        stepName: 'send-user-message-after-group-convert',
+        featureTags,
+        selector: '#send_textarea,#send_but',
+        expected: 'A user message is sent after conversion to group',
+        action: async () => {
+            const result = await page.sendMessageWithRetry(groupPrompt, beforeGroupUserCount.userCount);
+            return { groupPrompt, ...result };
+        },
+        onError: error => captureArtifacts({ testName, stepName: 'send-user-message-after-group-convert', error }),
+    });
+
+    const groupResponse = await runLoggedStep({
+        logger,
+        testName,
+        stepName: 'wait-for-assistant-response-after-group-convert',
+        featureTags,
+        selector: '.mes[is_user="false"] .mes_text',
+        expected: 'Assistant provides full response after group conversion',
+        action: async () => {
+            return page.waitForAssistantResponse(beforeGroupAssistantCount.assistantCount);
+        },
+        onError: error => captureArtifacts({ testName, stepName: 'wait-for-assistant-response-after-group-convert', error }),
+    });
+
+    await runLoggedStep({
+        logger,
+        testName,
+        stepName: 'add-member-to-group',
+        featureTags,
+        selector: '#rm_group_add_members .group_member [data-action="add"]',
+        expected: 'At least one additional character is added to the current group',
+        action: async () => {
+            await page.addFirstAvailableMemberToGroup();
+            return { added: true };
+        },
+        onError: error => captureArtifacts({ testName, stepName: 'add-member-to-group', error }),
+    });
+
+    const beforeSpeakAssistantCount = await runLoggedStep({
+        logger,
+        testName,
+        stepName: 'count-assistant-before-speak-once',
+        featureTags,
+        selector: '.mes[is_user="false"]',
+        expected: 'Assistant message count captured before triggering speak once',
+        action: async () => {
+            const assistantCount = await page.countAssistantMessages();
+            return { assistantCount };
+        },
+        onError: error => captureArtifacts({ testName, stepName: 'count-assistant-before-speak-once', error }),
+    });
+
+    await runLoggedStep({
+        logger,
+        testName,
+        stepName: 'trigger-group-member-speak-once',
+        featureTags,
+        selector: '#rm_group_members .group_member [data-action="speak"]',
+        expected: 'Selected group member speak-once action is triggered',
+        action: async () => {
+            await page.triggerSpeakOnceOnFirstGroupMember();
+            return { triggered: true };
+        },
+        onError: error => captureArtifacts({ testName, stepName: 'trigger-group-member-speak-once', error }),
+    });
+
+    const speakOnceResponse = await runLoggedStep({
+        logger,
+        testName,
+        stepName: 'wait-for-assistant-response-after-speak-once',
+        featureTags,
+        selector: '.mes[is_user="false"] .mes_text',
+        expected: 'Assistant provides full response after group member speak-once action',
+        action: async () => {
+            return page.waitForAssistantResponse(beforeSpeakAssistantCount.assistantCount);
+        },
+        onError: error => captureArtifacts({ testName, stepName: 'wait-for-assistant-response-after-speak-once', error }),
+    });
+
     const connectionStatus = await page.getConnectionStatusText();
     console.log(`[selenium-smoke] Connection status: ${connectionStatus}`);
     console.log(`[selenium-smoke] Assistant response: ${response.responseText}`);
     console.log(`[selenium-smoke] Renamed chat: ${renamedChat}`);
     console.log(`[selenium-smoke] Post-rename assistant response: ${postRenameResponse.responseText}`);
+    console.log(`[selenium-smoke] Post-group-convert assistant response: ${groupResponse.responseText}`);
+    console.log(`[selenium-smoke] Speak-once assistant response: ${speakOnceResponse.responseText}`);
 
     return {
         testName,
@@ -220,5 +348,7 @@ export async function runChatBasicCreateRenameScenario({ page, logger, captureAr
         connectionStatus,
         renamedChat,
         postRenameAssistantResponse: postRenameResponse.responseText,
+        postGroupConvertAssistantResponse: groupResponse.responseText,
+        speakOnceAssistantResponse: speakOnceResponse.responseText,
     };
 }

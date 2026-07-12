@@ -167,6 +167,84 @@ export class ChatPage {
         }, this.config.timeouts.stepMs);
     }
 
+    async openOptionsMenu() {
+        await this.clickElementById('options_button');
+        await this.driver.wait(async () => {
+            return this.driver.executeScript(`
+                const options = document.getElementById('options');
+                return options ? getComputedStyle(options).display !== 'none' : false;
+            `);
+        }, this.config.timeouts.stepMs);
+    }
+
+    async openRightPanelGroupEditor() {
+        const panelOpen = await this.driver.executeScript(`
+            const panel = document.getElementById('right-nav-panel');
+            return panel ? panel.classList.contains('openDrawer') : false;
+        `);
+
+        if (!panelOpen) {
+            await this.clickElementById('rightNavDrawerIcon');
+            await this.driver.wait(async () => {
+                return this.driver.executeScript(`
+                    const panel = document.getElementById('right-nav-panel');
+                    return panel ? panel.classList.contains('openDrawer') : false;
+                `);
+            }, this.config.timeouts.stepMs);
+        }
+
+        await this.clickElementById('rm_button_group_chats');
+        await this.driver.wait(until.elementLocated(By.id('rm_group_chats_block')), this.config.timeouts.stepMs);
+        await this.driver.wait(async () => {
+            return this.driver.executeScript(`
+                const block = document.getElementById('rm_group_chats_block');
+                return block ? getComputedStyle(block).display !== 'none' : false;
+            `);
+        }, this.config.timeouts.stepMs);
+    }
+
+    async convertCurrentChatToGroup() {
+        await this.openOptionsMenu();
+        await this.clickElementById('option_convert_to_group');
+
+        await this.driver.wait(until.elementLocated(By.css('dialog.popup[open]')), this.config.timeouts.stepMs);
+        const dialog = await this.driver.findElement(By.css('dialog.popup[open]'));
+        const confirmButton = await dialog.findElement(By.css('.popup-button-ok[data-result="1"]'));
+        await this.driver.executeScript('arguments[0].click();', confirmButton);
+
+        await this.driver.wait(async () => {
+            return this.driver.executeScript(`
+                const toasts = Array.from(document.querySelectorAll('#toast-container .toast-message'));
+                return toasts.some(el => /successfully converted/i.test((el.textContent || '').trim()));
+            `);
+        }, this.config.timeouts.responseMs);
+    }
+
+    async addFirstAvailableMemberToGroup() {
+        await this.openRightPanelGroupEditor();
+
+        await this.clickElementById('groupAddMemberListToggle');
+        await this.driver.wait(async () => {
+            return this.driver.executeScript(`
+                const list = document.getElementById('rm_group_add_members');
+                if (!list) return false;
+                return getComputedStyle(list).display !== 'none';
+            `);
+        }, this.config.timeouts.stepMs);
+
+        await this.driver.wait(until.elementLocated(By.css('#rm_group_add_members .group_member .right_menu_button.fa-solid.fa-2xl.fa-plus.interactable')), this.config.timeouts.responseMs);
+        const addButton = await this.driver.findElement(By.css('#rm_group_add_members .group_member .right_menu_button.fa-solid.fa-2xl.fa-plus.interactable'));
+        await this.driver.executeScript('arguments[0].click();', addButton);
+
+        await this.driver.wait(until.elementLocated(By.css('#rm_group_members .group_member [data-action="speak"]')), this.config.timeouts.responseMs);
+    }
+
+    async triggerSpeakOnceOnFirstGroupMember() {
+        await this.openRightPanelGroupEditor();
+        const speakButton = await this.driver.findElement(By.css('#rm_group_members .group_member [data-action="speak"]'));
+        await this.driver.executeScript('arguments[0].click();', speakButton);
+    }
+
     async importChatFixture(absoluteFixturePath) {
         const importButton = await this.driver.findElement(By.id('chat_import_button'));
         await importButton.click();
