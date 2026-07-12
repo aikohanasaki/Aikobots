@@ -2,8 +2,9 @@ import { runLoggedStep } from '../run-context.mjs';
 
 export async function runChatBasicCreateRenameScenario({ page, logger, captureArtifacts }) {
     const testName = 'chat-basic-create-rename';
-    const featureTags = ['chat-create', 'chat-send-message'];
+    const featureTags = ['chat-create', 'chat-send-message', 'chat-rename'];
     const promptText = 'Selenium MVP smoke prompt: reply with one short sentence.';
+    const renamedChat = `mvp-renamed-${Date.now()}`;
 
     await runLoggedStep({
         logger,
@@ -85,9 +86,8 @@ export async function runChatBasicCreateRenameScenario({ page, logger, captureAr
         selector: '#send_textarea,#send_but',
         expected: 'A user message is sent to generate assistant response',
         action: async () => {
-            await page.sendMessage(promptText);
-            await page.waitForUserMessageSent(beforeUserCount.userCount);
-            return { promptText };
+            const result = await page.sendMessageWithRetry(promptText, beforeUserCount.userCount);
+            return { promptText, ...result };
         },
         onError: error => captureArtifacts({ testName, stepName: 'send-user-message', error }),
     });
@@ -105,9 +105,120 @@ export async function runChatBasicCreateRenameScenario({ page, logger, captureAr
         onError: error => captureArtifacts({ testName, stepName: 'wait-for-assistant-response', error }),
     });
 
+    await runLoggedStep({
+        logger,
+        testName,
+        stepName: 'wait-rename-ready',
+        featureTags,
+        selector: '#top_chat_bar_rename_chat',
+        expected: 'Rename button becomes enabled after chat is persisted',
+        action: async () => {
+            await page.waitForRenameReady();
+            return { ready: true };
+        },
+        onError: error => captureArtifacts({ testName, stepName: 'wait-rename-ready', error }),
+    });
+
+    await runLoggedStep({
+        logger,
+        testName,
+        stepName: 'rename-temporary-chat',
+        featureTags,
+        selector: '#top_chat_bar_rename_chat,dialog.popup[open] textarea.popup-input',
+        expected: `Current chat name contains ${renamedChat}`,
+        action: async () => {
+            await page.renameCurrentChat(renamedChat);
+            await page.waitForCurrentChatContains(renamedChat);
+            const currentName = await page.getCurrentChatName();
+            return { currentName, renamedChat };
+        },
+        onError: error => captureArtifacts({ testName, stepName: 'rename-temporary-chat', error }),
+    });
+
+    const beforeAssistantAfterRename = await runLoggedStep({
+        logger,
+        testName,
+        stepName: 'count-assistant-messages-after-rename',
+        featureTags,
+        selector: '.mes[is_user="false"]',
+        expected: 'Assistant message count is captured before post-rename send',
+        action: async () => {
+            const assistantCount = await page.countAssistantMessages();
+            return { assistantCount };
+        },
+        onError: error => captureArtifacts({ testName, stepName: 'count-assistant-messages-after-rename', error }),
+    });
+
+    const beforeUserAfterRename = await runLoggedStep({
+        logger,
+        testName,
+        stepName: 'count-user-messages-after-rename',
+        featureTags,
+        selector: '.mes[is_user="true"]',
+        expected: 'User message count is captured before post-rename send',
+        action: async () => {
+            const userCount = await page.countUserMessages();
+            return { userCount };
+        },
+        onError: error => captureArtifacts({ testName, stepName: 'count-user-messages-after-rename', error }),
+    });
+
+    await runLoggedStep({
+        logger,
+        testName,
+        stepName: 'wait-send-ready-after-rename',
+        featureTags,
+        selector: '#send_textarea,#send_but',
+        expected: 'Send input and button become ready after rename',
+        action: async () => {
+            await page.waitForSendReady();
+            await new Promise(resolve => setTimeout(resolve, 1_000));
+            return { ready: true };
+        },
+        onError: error => captureArtifacts({ testName, stepName: 'wait-send-ready-after-rename', error }),
+    });
+
+    const postRenamePrompt = `Post-rename smoke prompt for ${renamedChat}: reply briefly.`;
+
+    await runLoggedStep({
+        logger,
+        testName,
+        stepName: 'send-user-message-after-rename',
+        featureTags,
+        selector: '#send_textarea,#send_but',
+        expected: 'A user message is sent after rename and appears in chat',
+        action: async () => {
+            const result = await page.sendMessageWithRetry(postRenamePrompt, beforeUserAfterRename.userCount);
+            return { postRenamePrompt, ...result };
+        },
+        onError: error => captureArtifacts({ testName, stepName: 'send-user-message-after-rename', error }),
+    });
+
+    const postRenameResponse = await runLoggedStep({
+        logger,
+        testName,
+        stepName: 'wait-for-assistant-response-after-rename',
+        featureTags,
+        selector: '.mes[is_user="false"] .mes_text',
+        expected: 'Assistant response appears after sending post-rename message',
+        action: async () => {
+            return page.waitForAssistantResponse(beforeAssistantAfterRename.assistantCount);
+        },
+        onError: error => captureArtifacts({ testName, stepName: 'wait-for-assistant-response-after-rename', error }),
+    });
+
     const connectionStatus = await page.getConnectionStatusText();
     console.log(`[selenium-smoke] Connection status: ${connectionStatus}`);
     console.log(`[selenium-smoke] Assistant response: ${response.responseText}`);
+    console.log(`[selenium-smoke] Renamed chat: ${renamedChat}`);
+    console.log(`[selenium-smoke] Post-rename assistant response: ${postRenameResponse.responseText}`);
 
-    return { testName, status: 'pass', assistantResponse: response.responseText, connectionStatus };
+    return {
+        testName,
+        status: 'pass',
+        assistantResponse: response.responseText,
+        connectionStatus,
+        renamedChat,
+        postRenameAssistantResponse: postRenameResponse.responseText,
+    };
 }

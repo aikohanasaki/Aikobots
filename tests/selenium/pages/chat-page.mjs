@@ -102,7 +102,20 @@ export class ChatPage {
         await this.clickElementById('dialogue_popup_ok');
     }
 
+    async waitForRenameReady() {
+        await this.driver.wait(async () => {
+            return this.driver.executeScript(`
+                const button = document.getElementById('top_chat_bar_rename_chat');
+                if (!button) return false;
+                const disabled = button.disabled || button.classList.contains('not-in-chat') || button.getAttribute('aria-disabled') === 'true';
+                return !disabled;
+            `);
+        }, this.config.timeouts.responseMs);
+    }
+
     async renameCurrentChat(newName) {
+        await this.waitForRenameReady();
+
         const opened = await this.driver.executeScript(`
             const button = document.getElementById('top_chat_bar_rename_chat');
             if (!button) return false;
@@ -114,13 +127,14 @@ export class ChatPage {
             throw new Error('Rename button is not available.');
         }
 
-        await this.driver.wait(until.elementLocated(By.id('dialogue_popup_input')), this.config.timeouts.stepMs);
-
-        const input = await this.driver.findElement(By.id('dialogue_popup_input'));
+        await this.driver.wait(until.elementLocated(By.css('dialog.popup[open]')), this.config.timeouts.stepMs);
+        const dialog = await this.driver.findElement(By.css('dialog.popup[open]'));
+        const input = await dialog.findElement(By.css('textarea.popup-input[data-result="1"]'));
         await input.clear();
         await input.sendKeys(newName);
 
-        await this.clickElementById('dialogue_popup_ok');
+        const saveButton = await dialog.findElement(By.css('.popup-button-ok[data-result="1"]'));
+        await this.driver.executeScript('arguments[0].click();', saveButton);
     }
 
     async waitForActiveChatReady() {
@@ -189,7 +203,14 @@ export class ChatPage {
         await this.driver.wait(async () => {
             const current = await this.getCurrentChatName();
             return current.includes(namePart);
-        }, this.config.timeouts.stepMs);
+        }, this.config.timeouts.responseMs);
+    }
+
+    async waitForCurrentChatNotTemporary() {
+        await this.driver.wait(async () => {
+            const current = await this.getCurrentChatName();
+            return current && !current.includes('(Temporary Chat)');
+        }, this.config.timeouts.responseMs);
     }
 
     async getLastMessageText() {
@@ -222,40 +243,54 @@ export class ChatPage {
     }
 
     async waitForConnectionReady() {
-        const startedAt = Date.now();
-        let sentWaitingProbe = false;
+        await new Promise(resolve => setTimeout(resolve, 3_000));
+    }
 
+    async waitForSendReady() {
         await this.driver.wait(async () => {
-            const status = await this.getConnectionStatusText();
-            const isOffline = /no connection/i.test(status) || /offline/i.test(status);
-
-            if (!isOffline) {
-                return true;
-            }
-
-            if (!sentWaitingProbe && (Date.now() - startedAt) >= 1_000) {
-                await this.sendMessage('[selenium] waiting for connection...');
-                await new Promise(resolve => setTimeout(resolve, 1_000));
-                sentWaitingProbe = true;
-                return true;
-            }
-
-            return false;
-        }, this.config.timeouts.responseMs);
+            return this.driver.executeScript(`
+                const textarea = document.getElementById('send_textarea');
+                const sendButton = document.getElementById('send_but');
+                if (!textarea || !sendButton) return false;
+                const textareaDisabled = textarea.disabled || textarea.readOnly;
+                const buttonHidden = getComputedStyle(sendButton).display === 'none' || getComputedStyle(sendButton).visibility === 'hidden';
+                return !textareaDisabled && !buttonHidden;
+            `);
+        }, this.config.timeouts.stepMs);
     }
 
     async sendMessage(text) {
+        await this.waitForSendReady();
         const textarea = await this.driver.findElement(By.id('send_textarea'));
+        await textarea.click();
         await textarea.clear();
         await textarea.sendKeys(text);
+        await new Promise(resolve => setTimeout(resolve, 500));
         await this.clickElementById('send_but');
     }
 
-    async waitForUserMessageSent(previousUserCount) {
+    async waitForUserMessageSent(previousUserCount, timeoutMs = this.config.timeouts.stepMs) {
         await this.driver.wait(async () => {
             const currentCount = await this.countUserMessages();
             return currentCount > previousUserCount;
-        }, this.config.timeouts.stepMs);
+        }, timeoutMs);
+    }
+
+    async sendMessageWithRetry(text, previousUserCount, attempts = 3) {
+        let lastError = null;
+
+        for (let attempt = 0; attempt < attempts; attempt++) {
+            try {
+                await this.sendMessage(text);
+                await this.waitForUserMessageSent(previousUserCount, 8_000);
+                return { sent: true, attempt: attempt + 1 };
+            } catch (error) {
+                lastError = error;
+                await new Promise(resolve => setTimeout(resolve, 2_000));
+            }
+        }
+
+        throw lastError || new Error('Failed to send message after retries.');
     }
 
     async waitForAssistantResponse(previousAssistantCount) {
