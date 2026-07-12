@@ -906,22 +906,43 @@ export async function updateSqliteUserPersonaMessages({ filePath, requestBody, u
 
     const db = await loadDb(sqlitePath);
     try {
+        const operationId = requireRequestOperationId(requestBody);
+        const repeatedReceipt = getRepeatedSqliteOperationReceipt(db, requestBody);
         const header = getChatHeader(db);
         if (!header) {
             throw new ChatMutationError(404, 'chat_not_found');
         }
         throwIfSqliteChatIdentityRepairNeeded(db, sqlitePath, header);
 
-        const revisionCheck = requireChatMutationRequest(requestBody, header);
+        const currentRevision = getChatRevision(header);
+        if (repeatedReceipt) {
+            logChatRevisionDecision({ filePath, route: '/api/chats/sync-user-persona', operationType: 'persona_sync', operationId, saveSessionId, receiptFound: true, submittedBaseRevision: requestBody.base_revision, authoritativeRevisionBefore: currentRevision, authoritativeRevisionAfter: currentRevision, decision: 'replayed' });
+            return repeatedReceipt;
+        }
+        const revisionCheck = requireLoggedChatMutationRequest(requestBody, header, { filePath, route: '/api/chats/sync-user-persona', operationType: 'persona_sync', operationId, saveSessionId });
 
         const { matched, changed, updates } = getUserPersonaMessageUpdates(db, userName, forceAvatar);
         if (changed === 0) {
-            return {
+            const payload = {
                 result: 'ok',
+                ok: true,
+                operation_id: operationId,
+                status: 'noop',
                 matched,
                 changed,
                 chat_revision: revisionCheck.currentRevision,
             };
+            db.run('BEGIN TRANSACTION');
+            try {
+                recordSqliteOperationReceipt(db, requestBody, revisionCheck.currentRevision, payload);
+                db.run('COMMIT');
+            } catch (error) {
+                db.run('ROLLBACK');
+                throw error;
+            }
+            saveDb(db, sqlitePath);
+            logChatRevisionDecision({ filePath, route: '/api/chats/sync-user-persona', operationType: 'persona_sync', operationId, saveSessionId, receiptFound: false, submittedBaseRevision: requestBody.base_revision, authoritativeRevisionBefore: currentRevision, authoritativeRevisionAfter: currentRevision, decision: 'noop' });
+            return payload;
         }
 
         if (typeof assertMutationAllowed === 'function') {
@@ -938,6 +959,7 @@ export async function updateSqliteUserPersonaMessages({ filePath, requestBody, u
             for (const update of updates) {
                 updateLogicalMessageRowById(db, update.id, sanitizeChatMessageForPersistence(update.message));
             }
+            recordSqliteOperationReceipt(db, requestBody, revisionCheck.nextRevision, { operation_id: operationId, status: 'applied', matched, changed });
 
             db.run('COMMIT');
         } catch (error) {
@@ -949,12 +971,17 @@ export async function updateSqliteUserPersonaMessages({ filePath, requestBody, u
 
         saveDb(db, sqlitePath);
 
-        return {
+        const payload = {
             result: 'ok',
+            ok: true,
+            operation_id: operationId,
+            status: 'applied',
             matched,
             changed,
             chat_revision: revisionCheck.nextRevision,
         };
+        logChatRevisionDecision({ filePath, route: '/api/chats/sync-user-persona', operationType: 'persona_sync', operationId, saveSessionId, receiptFound: false, submittedBaseRevision: requestBody.base_revision, authoritativeRevisionBefore: currentRevision, authoritativeRevisionAfter: revisionCheck.nextRevision, decision: 'applied' });
+        return payload;
     } finally {
         db.close();
     }
@@ -1849,15 +1876,15 @@ function sanitizeGroupForPersistence(group) {
  * @param {{filePath: string, requestBody: object, saveSessionId?: string|null}} options Update options
  * @returns {Promise<{result: string, chat_revision: number, message_id: number}>}
  */
-async function updateGroupChatMessageRow({ filePath, requestBody, saveSessionId }) {
+export async function updateGroupChatMessageRow({ filePath, requestBody, saveSessionId }) {
     const sqlitePath = replaceChatStorageExtension(filePath, '.sqlite');
     if (!fs.existsSync(sqlitePath)) {
         throw new ChatMutationError(409, 'message_update_requires_sqlite', 'Message update requires SQLite chat storage.');
     }
 
-    const hasMessageUuid = typeof requestBody?.message_uuid === 'string' && requestBody.message_uuid.trim();
+    const targetUuid = assertValidMessageUuid(requestBody?.message_uuid);
     const messageId = Number(requestBody?.message_id);
-    if (!hasMessageUuid && (!Number.isInteger(messageId) || messageId < 0)) {
+    if (requestBody?.message_id !== undefined && (!Number.isInteger(messageId) || messageId < 0)) {
         throw new ChatMutationError(400, 'invalid_message_id');
     }
 
@@ -1875,6 +1902,8 @@ async function updateGroupChatMessageRow({ filePath, requestBody, saveSessionId 
 
     const db = await loadDb(sqlitePath);
     try {
+        const operationId = requireRequestOperationId(requestBody);
+        const repeatedReceipt = getRepeatedSqliteOperationReceipt(db, requestBody);
         const header = getChatHeader(db);
         if (!header) {
             throw new ChatMutationError(404, 'chat_not_found');
@@ -1882,21 +1911,35 @@ async function updateGroupChatMessageRow({ filePath, requestBody, saveSessionId 
         assertSupportedChatStorage(header);
         throwIfSqliteChatIdentityRepairNeeded(db, sqlitePath, header);
 
-        const revisionCheck = requireChatMutationRequest(requestBody, header);
-
-        const existingRow = getLogicalMessageRow(db, messageId);
-        if (!existingRow) {
-            throw new ChatMutationError(400, 'invalid_message_id');
+        const currentRevision = getChatRevision(header);
+        if (repeatedReceipt) {
+            logChatRevisionDecision({ filePath, route: '/api/chats/group/message/update', operationType: 'group_incremental_update', operationId, saveSessionId, receiptFound: true, submittedBaseRevision: requestBody.base_revision, authoritativeRevisionBefore: currentRevision, authoritativeRevisionAfter: currentRevision, decision: 'replayed' });
+            return repeatedReceipt;
         }
+        const revisionCheck = requireLoggedChatMutationRequest(requestBody, header, { filePath, route: '/api/chats/group/message/update', operationType: 'group_incremental_update', operationId, saveSessionId });
+
+        const existingRow = getLogicalMessageRowByUuid(db, targetUuid);
+        if (!existingRow) {
+            throw new ChatMutationError(404, 'message_not_found');
+        }
+        if (requestBody?.message_id !== undefined && existingRow.logicalIndex !== messageId) {
+            throw new ChatMutationError(409, 'message_identity_mismatch');
+        }
+
+        const updatedMessage = applyMessageUpdatePayload(existingRow.message, requestBody);
+        const changed = !_.isEqual(sanitizeChatMessageForPersistence(existingRow.message), updatedMessage);
+        const resultingRevision = changed ? revisionCheck.nextRevision : revisionCheck.currentRevision;
 
         db.run('BEGIN TRANSACTION');
         let headerStmt;
         try {
-            const revisedHeader = setChatRevision(stripChatStorage(header), revisionCheck.nextRevision, saveSessionId);
-            headerStmt = db.prepare('UPDATE messages SET content = ? WHERE order_index = 0');
-            headerStmt.run([JSON.stringify(sanitizeChatHeaderForPersistence(revisedHeader))]);
-
-            updateLogicalMessageRowById(db, existingRow.id, sanitizeChatMessageForPersistence(requestBody.message));
+            if (changed) {
+                const revisedHeader = setChatRevision(stripChatStorage(header), revisionCheck.nextRevision, saveSessionId);
+                headerStmt = db.prepare('UPDATE messages SET content = ? WHERE order_index = 0');
+                headerStmt.run([JSON.stringify(sanitizeChatHeaderForPersistence(revisedHeader))]);
+                updateLogicalMessageRowById(db, existingRow.id, updatedMessage);
+            }
+            recordSqliteOperationReceipt(db, requestBody, resultingRevision, { operation_id: operationId, status: changed ? 'applied' : 'noop', message_id: existingRow.logicalIndex, message_uuid: targetUuid });
 
             db.run('COMMIT');
         } catch (error) {
@@ -1907,11 +1950,17 @@ async function updateGroupChatMessageRow({ filePath, requestBody, saveSessionId 
         }
 
         saveDb(db, sqlitePath);
-        return {
+        const payload = {
             result: 'ok',
-            chat_revision: revisionCheck.nextRevision,
-            message_id: messageId,
+            ok: true,
+            operation_id: operationId,
+            status: changed ? 'applied' : 'noop',
+            chat_revision: resultingRevision,
+            message_id: existingRow.logicalIndex,
+            message_uuid: targetUuid,
         };
+        logChatRevisionDecision({ filePath, route: '/api/chats/group/message/update', operationType: 'group_incremental_update', operationId, saveSessionId, receiptFound: false, submittedBaseRevision: requestBody.base_revision, authoritativeRevisionBefore: currentRevision, authoritativeRevisionAfter: resultingRevision, decision: payload.status });
+        return payload;
     } finally {
         db.close();
     }
@@ -2315,6 +2364,8 @@ export async function updateSqliteMessageVisibility({ filePath, requestBody, sta
 
     const db = await loadDb(sqlitePath);
     try {
+        const operationId = requireRequestOperationId(requestBody);
+        const repeatedReceipt = getRepeatedSqliteOperationReceipt(db, requestBody);
         const header = getChatHeader(db);
         if (!header) {
             throw new ChatMutationError(404, 'chat_not_found');
@@ -2322,12 +2373,18 @@ export async function updateSqliteMessageVisibility({ filePath, requestBody, sta
         assertSupportedChatStorage(header);
         throwIfSqliteChatIdentityRepairNeeded(db, sqlitePath, header);
 
+        const currentRevision = getChatRevision(header);
+        if (repeatedReceipt) {
+            logChatRevisionDecision({ filePath, route: '/api/chats/message-visibility', operationType: 'visibility', operationId, saveSessionId, receiptFound: true, submittedBaseRevision: requestBody.base_revision, authoritativeRevisionBefore: currentRevision, authoritativeRevisionAfter: currentRevision, decision: 'replayed' });
+            return repeatedReceipt;
+        }
+
         const totalMessages = getMessageCount(db);
         if (normalizedEnd >= totalMessages) {
             throw new ChatMutationError(400, 'invalid_visibility_range');
         }
 
-        const revisionCheck = requireChatMutationRequest(requestBody, header);
+        const revisionCheck = requireLoggedChatMutationRequest(requestBody, header, { filePath, route: '/api/chats/message-visibility', operationType: 'visibility', operationId, saveSessionId });
 
         const messages = getMessageRange(db, normalizedStart, normalizedEnd - normalizedStart + 1);
         const changedMessages = [];
@@ -2343,8 +2400,11 @@ export async function updateSqliteMessageVisibility({ filePath, requestBody, sta
         }
 
         if (changedMessages.length === 0) {
-            return {
+            const payload = {
                 result: 'ok',
+                ok: true,
+                operation_id: operationId,
+                status: 'noop',
                 changed: 0,
                 chat_revision: revisionCheck.currentRevision,
                 storage_mode: 'sqlite',
@@ -2353,6 +2413,17 @@ export async function updateSqliteMessageVisibility({ filePath, requestBody, sta
                 headCount: 0,
                 tailCount: totalMessages,
             };
+            db.run('BEGIN TRANSACTION');
+            try {
+                recordSqliteOperationReceipt(db, requestBody, revisionCheck.currentRevision, payload);
+                db.run('COMMIT');
+            } catch (error) {
+                db.run('ROLLBACK');
+                throw error;
+            }
+            saveDb(db, sqlitePath);
+            logChatRevisionDecision({ filePath, route: '/api/chats/message-visibility', operationType: 'visibility', operationId, saveSessionId, receiptFound: false, submittedBaseRevision: requestBody.base_revision, authoritativeRevisionBefore: currentRevision, authoritativeRevisionAfter: currentRevision, decision: 'noop' });
+            return payload;
         }
 
         if (typeof assertMutationAllowed === 'function') {
@@ -2366,6 +2437,7 @@ export async function updateSqliteMessageVisibility({ filePath, requestBody, sta
             for (const message of changedMessages) {
                 updateLogicalMessageRowById(db, message.id, sanitizeChatMessageForPersistence(message));
             }
+            recordSqliteOperationReceipt(db, requestBody, revisionCheck.nextRevision, { operation_id: operationId, status: 'applied', changed: changedMessages.length });
             db.run('COMMIT');
         } catch (error) {
             db.run('ROLLBACK');
@@ -2373,8 +2445,11 @@ export async function updateSqliteMessageVisibility({ filePath, requestBody, sta
         }
 
         saveDb(db, sqlitePath);
-        return {
+        const payload = {
             result: 'ok',
+            ok: true,
+            operation_id: operationId,
+            status: 'applied',
             changed: changedMessages.length,
             chat_revision: revisionCheck.nextRevision,
             storage_mode: 'sqlite',
@@ -2383,6 +2458,8 @@ export async function updateSqliteMessageVisibility({ filePath, requestBody, sta
             headCount: 0,
             tailCount: totalMessages,
         };
+        logChatRevisionDecision({ filePath, route: '/api/chats/message-visibility', operationType: 'visibility', operationId, saveSessionId, receiptFound: false, submittedBaseRevision: requestBody.base_revision, authoritativeRevisionBefore: currentRevision, authoritativeRevisionAfter: revisionCheck.nextRevision, decision: 'applied' });
+        return payload;
     } finally {
         db.close();
     }
@@ -2693,6 +2770,14 @@ function getRequestOperationId(requestBody) {
     return operationId;
 }
 
+function requireRequestOperationId(requestBody) {
+    const operationId = getRequestOperationId(requestBody);
+    if (!operationId) {
+        throw new ChatMutationError(400, 'operation_id_required');
+    }
+    return operationId;
+}
+
 function getRepeatedSqliteOperationReceipt(db, requestBody) {
     const operationId = getRequestOperationId(requestBody);
     if (!operationId) {
@@ -2700,7 +2785,7 @@ function getRepeatedSqliteOperationReceipt(db, requestBody) {
     }
     try {
         const receipt = getOperationReceipt(db, operationId, requestBody);
-        return receipt ? { ...receipt, duplicate_operation: true } : null;
+        return receipt ? { ...receipt, status: 'replayed', duplicate_operation: true } : null;
     } catch (error) {
         if (error?.code === 'operation_id_reused') {
             throw new ChatMutationError(409, 'operation_id_reused', error.message);
@@ -2709,7 +2794,7 @@ function getRepeatedSqliteOperationReceipt(db, requestBody) {
     }
 }
 
-function recordSqliteOperationReceipt(db, requestBody, revision) {
+function recordSqliteOperationReceipt(db, requestBody, revision, responseData = {}) {
     const operationId = getRequestOperationId(requestBody);
     if (!operationId) {
         return;
@@ -2719,7 +2804,42 @@ function recordSqliteOperationReceipt(db, requestBody, revision) {
         ok: true,
         storage_mode: 'sqlite',
         chat_revision: revision,
+        ...responseData,
     });
+}
+
+function logChatRevisionDecision({ filePath, route, operationType, operationId, saveSessionId, receiptFound, submittedBaseRevision, authoritativeRevisionBefore, authoritativeRevisionAfter, decision }) {
+    console.debug('[ChatRevision] mutation decision', {
+        route,
+        operationType,
+        operationId: operationId || null,
+        chatKey: crypto.createHash('sha256').update(String(filePath || '')).digest('hex').slice(0, 12),
+        saveSessionId: saveSessionId || null,
+        receiptFound,
+        submittedBaseRevision,
+        authoritativeRevisionBefore,
+        authoritativeRevisionAfter,
+        decision,
+    });
+}
+
+function requireLoggedChatMutationRequest(requestBody, header, logContext) {
+    try {
+        return requireChatMutationRequest(requestBody, header);
+    } catch (error) {
+        if (error instanceof ChatMutationError && error.error === 'stale_revision') {
+            const currentRevision = getChatRevision(header);
+            logChatRevisionDecision({
+                ...logContext,
+                receiptFound: false,
+                submittedBaseRevision: requestBody?.base_revision,
+                authoritativeRevisionBefore: currentRevision,
+                authoritativeRevisionAfter: currentRevision,
+                decision: 'rejected_stale',
+            });
+        }
+        throw error;
+    }
 }
 
 async function getRepeatedSqliteOperationReceiptFromFile(sqlitePath, requestBody) {

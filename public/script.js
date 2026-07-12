@@ -968,6 +968,8 @@ let chatSaveTimeout;
 let importFlashTimeout;
 export let isChatSaving = false;
 let chatSaveRevision = 0;
+let activeChatRevisionIdentity = '';
+let activeChatRevisionOpaqueKey = '';
 let chatSaveSessionId = '';
 let chatSaveDirty = false;
 let chatSaveQueuePromise = null;
@@ -1663,6 +1665,60 @@ export function setChatSaveRevision(revision) {
     chatSaveRevision = Number.isInteger(normalizedRevision) && normalizedRevision >= 0 ? normalizedRevision : 0;
 }
 
+/** Returns a non-path active-chat key suitable for revision ownership and diagnostics. */
+export function getActiveChatRevisionKey() {
+    const chatId = String(getCurrentChatId() || '');
+    if (!chatId) {
+        return '';
+    }
+    const identity = `${selected_group ? 'group' : 'character'}:${chatId}`;
+    if (identity !== activeChatRevisionIdentity) {
+        activeChatRevisionIdentity = identity;
+        activeChatRevisionOpaqueKey = uuidv4();
+    }
+    return activeChatRevisionOpaqueKey;
+}
+
+/** Monotonically adopts an authoritative revision for the active chat. */
+export function adoptChatSaveRevision({ chatKey, incomingRevision, source, allowAdvance = true }) {
+    const activeChatKey = getActiveChatRevisionKey();
+    const previousRevision = getChatSaveRevision();
+    const normalizedRevision = Number(incomingRevision);
+    let adopted = false;
+    let reason = 'adopted';
+
+    if (!chatKey || chatKey !== activeChatKey) {
+        reason = 'chat_mismatch';
+    } else if (!Number.isInteger(normalizedRevision) || normalizedRevision < 0) {
+        reason = 'invalid_revision';
+    } else if (normalizedRevision < previousRevision) {
+        reason = 'revision_regression';
+    } else if (!allowAdvance && normalizedRevision > previousRevision) {
+        reason = 'unexpected_revision_advance';
+    } else {
+        setChatSaveRevision(normalizedRevision);
+        adopted = true;
+    }
+
+    console.debug('[ChatRevision] revision adoption', {
+        source,
+        chatKey,
+        previousRevision,
+        incomingRevision: Number.isInteger(normalizedRevision) ? normalizedRevision : null,
+        adopted,
+        reason,
+    });
+    if (!adopted && reason === 'revision_regression') {
+        console.warn('[ChatRevision] rejected revision regression', {
+            source,
+            chatKey,
+            previousRevision,
+            incomingRevision: normalizedRevision,
+        });
+    }
+    return { adopted, reason, currentRevision: getChatSaveRevision() };
+}
+
 export function getChatSaveSessionId() {
     if (chatSaveSessionId) {
         return chatSaveSessionId;
@@ -1705,7 +1761,7 @@ export function warnStaleChatSave(errorData) {
 
     if (sameSessionStale) {
         if (canAdoptServerRevision) {
-            setChatSaveRevision(serverRevision);
+            adoptChatSaveRevision({ chatKey: getActiveChatRevisionKey(), incomingRevision: serverRevision, source: 'same_session_stale_conflict' });
         }
         return { adoptedServerRevision: canAdoptServerRevision, sameSessionStale, localRevision, submittedBaseRevision, serverRevision, lastSaveSessionId, currentSaveSessionId };
     }
@@ -1724,14 +1780,29 @@ export function warnStaleChatSave(errorData) {
  */
 export function queueAcknowledgedChatRevisionRequest(requestFactory) {
     const operationId = uuidv4();
+    const chatKey = getActiveChatRevisionKey();
     const run = chatRevisionOperationQueue.then(async () => {
         const baseRevision = getChatSaveRevision();
-        const request = requestFactory({ baseRevision, operationId });
+        const saveSessionId = getChatSaveSessionId();
+        const request = requestFactory({ baseRevision, operationId, saveSessionId, chatKey });
         const requestBody = structuredClone(request.body || {});
         let retryDelay = CHAT_SAVE_REQUEST_RETRY_DELAY_MS;
+        let attempt = 0;
 
         for (;;) {
             let response;
+            console.debug('[ChatRevision] mutation dispatch', {
+                route: request.url,
+                operationType: request.operationType || null,
+                operationId,
+                attempt: attempt++ > 0 ? 'retry' : 'original',
+                chatKey,
+                activeChatKey: getActiveChatRevisionKey(),
+                queue: 'acknowledged-chat-revision',
+                revisionBeforeDispatch: getChatSaveRevision(),
+                serializedBaseRevision: requestBody.base_revision ?? null,
+                payloadHeaderRevision: requestBody?.header?.chat_revision ?? null,
+            });
             try {
                 response = await fetch(request.url, {
                     method: request.method || 'POST',
@@ -1769,7 +1840,7 @@ export function queueAcknowledgedChatRevisionRequest(requestFactory) {
                     retryDelay = Math.min(retryDelay * 2, 10_000);
                     continue;
                 }
-                setChatSaveRevision(acknowledgedRevision);
+                adoptChatSaveRevision({ chatKey, incomingRevision: acknowledgedRevision, source: responseData?.status === 'replayed' ? 'receipt_replay' : 'mutation_acknowledgement' });
             } else if (response.status >= 500 || response.status === 408 || response.status === 425 || response.status === 429) {
                 console.warn('Chat operation received a retryable response; retrying the same operation.', {
                     operationId,
@@ -5570,6 +5641,27 @@ export function applyChunkedChatPayload(response, { replace = false, currentView
         requireLatestTail: replace && currentView === 'tail',
     });
     const { header, messages, totalMessages, loadedRangeStart, loadedRangeEnd } = payload;
+    const chatKey = response?.revisionChatKey || getActiveChatRevisionKey();
+    const incomingRevision = Number(header?.chat_revision ?? response?.chat_revision);
+    const currentRevision = getChatSaveRevision();
+    const isFullCoherentLoad = replace;
+    const revisionResult = adoptChatSaveRevision({
+        chatKey,
+        incomingRevision,
+        source: isFullCoherentLoad ? 'full_hydration' : 'range_hydration',
+        allowAdvance: isFullCoherentLoad,
+    });
+    if (!revisionResult.adopted) {
+        console.warn('[ChatRevision] rejected hydration snapshot', {
+            chatKey,
+            activeChatKey: getActiveChatRevisionKey(),
+            incomingRevision: Number.isInteger(incomingRevision) ? incomingRevision : null,
+            currentRevision,
+            reason: revisionResult.reason,
+            coherentReloadRequired: revisionResult.reason === 'unexpected_revision_advance',
+        });
+        return null;
+    }
 
     if (replace) {
         chat.length = 0;
@@ -5598,8 +5690,6 @@ export function applyChunkedChatPayload(response, { replace = false, currentView
     chatLoadState.tailCount = Math.max(0, getTotalChatMessages() - chatLoadState.tailStartId);
     chatLoadState.currentView = currentView ?? (loadedRangeStart < chatLoadState.tailStartId ? 'history' : 'tail');
     chatLoadState.storageMode = String(response?.storageMode || response?.storage_mode || chatLoadState.storageMode || 'unknown');
-
-    setChatSaveRevision(header?.chat_revision);
 
     return header;
 }
@@ -5715,7 +5805,9 @@ export async function prefetchCurrentChatTailBuffer(chatId) {
                 return;
             }
 
-            applyChunkedChatPayload(response, { replace: false, currentView: chatLoadState.currentView });
+            if (!applyChunkedChatPayload(response, { replace: false, currentView: chatLoadState.currentView })) {
+                return;
+            }
             await delay(0);
         }
     } catch (error) {
@@ -5783,6 +5875,7 @@ async function replaceChunkedChatPayloadWithLatestTail(response) {
 }
 
 async function fetchChunkedChat({ rangeStart = null, count = null, hydrateFull = false } = {}) {
+    const revisionChatKey = getActiveChatRevisionKey();
     const normalizedCount = Number(count);
     const requestedCount = count !== null
         && count !== undefined
@@ -5811,7 +5904,7 @@ async function fetchChunkedChat({ rangeStart = null, count = null, hydrateFull =
             throw new Error('Chunked group chat could not be loaded');
         }
 
-        return await response.json();
+        return { ...await response.json(), revisionChatKey };
     }
 
     await unshallowCharacter(this_chid);
@@ -5836,7 +5929,7 @@ async function fetchChunkedChat({ rangeStart = null, count = null, hydrateFull =
         throw new Error('Chunked chat could not be loaded');
     }
 
-    return await response.json();
+    return { ...await response.json(), revisionChatKey };
 }
 
 async function ensureChatRangeLoaded(startId, count = null, navigationToken = null) {
@@ -5865,8 +5958,7 @@ async function ensureChatRangeLoaded(startId, count = null, navigationToken = nu
         return false;
     }
 
-    applyChunkedChatPayload(response, { replace: false, currentView: normalizedStartId < chatLoadState.tailStartId ? 'history' : 'tail' });
-    return true;
+    return Boolean(applyChunkedChatPayload(response, { replace: false, currentView: normalizedStartId < chatLoadState.tailStartId ? 'history' : 'tail' }));
 }
 
 async function ensureChatSuffixLoaded(startId) {
@@ -5911,7 +6003,9 @@ export async function hydrateCurrentChatForEditing(navigationToken = null) {
             return false;
         }
 
-        applyChunkedChatPayload(response, { replace: true, currentView: chatLoadState.currentView });
+        if (!applyChunkedChatPayload(response, { replace: true, currentView: chatLoadState.currentView })) {
+            return false;
+        }
         chatLoadState.isHydrated = true;
 
         const renderStart = Number.isFinite(previousStartId)
@@ -12697,10 +12791,6 @@ export async function saveChat({ chatName, withMetadata, mesId, force = false, f
             if (responseData?.storage_mode) {
                 chatLoadState.storageMode = String(responseData.storage_mode);
             }
-            if (shouldTrackRevision) {
-                setChatSaveRevision(responseData?.chat_revision);
-            }
-
             if (isPendingSoloCharacterSave || isTemporaryCharacterSave) {
                 clearTemporaryCharacterChat();
                 characters[this_chid]['date_last_chat'] = Date.now();

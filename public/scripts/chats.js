@@ -32,9 +32,7 @@ import {
     chatElement,
     hydrateCurrentChatForEditing,
     isHistoricalChatMessage,
-    getChatSaveRevision,
-    getChatSaveSessionId,
-    setChatSaveRevision,
+    queueAcknowledgedChatRevisionRequest,
     warnStaleChatSave,
     isPromptHiddenChatMessage,
     flushDebouncedChatSave,
@@ -494,7 +492,7 @@ const CHAT_MESSAGE_VISIBILITY_SAVE_RESULT = {
     STALE: 'stale',
 };
 
-async function updateServerChatMessageVisibility(start, end, unhide, nameFilter = null, { allowStaleRevisionRetry = true } = {}) {
+async function updateServerChatMessageVisibility(start, end, unhide, nameFilter = null) {
     if (selected_group) {
         toastr.warning(t`Changing historical message visibility in group chats is not supported yet.`, t`Chat message visibility`);
         return CHAT_MESSAGE_VISIBILITY_SAVE_RESULT.FAILED;
@@ -525,34 +523,33 @@ async function updateServerChatMessageVisibility(start, end, unhide, nameFilter 
     };
 
     try {
-        const response = await fetch('/api/chats/message-visibility', {
+        const operation = {
+            ch_name: characters[this_chid].name,
+            file_name: getCurrentChatId(),
+            avatar_url: characters[this_chid].avatar,
+            start,
+            end,
+            unhide: Boolean(unhide),
+            name_filter: String(nameFilter || '').trim(),
+        };
+        const { response, errorData } = await queueAcknowledgedChatRevisionRequest(({ baseRevision, operationId, saveSessionId }) => ({
+            url: '/api/chats/message-visibility',
             method: 'POST',
             headers: getRequestHeaders(),
-            body: JSON.stringify({
-                ch_name: characters[this_chid].name,
-                file_name: getCurrentChatId(),
-                avatar_url: characters[this_chid].avatar,
-                start,
-                end,
-                unhide: Boolean(unhide),
-                name_filter: String(nameFilter || '').trim(),
-                base_revision: getChatSaveRevision(),
-                save_session_id: getChatSaveSessionId(),
-                }),
-            cache: 'no-cache',
-        });
+            operationType: 'visibility',
+            body: {
+                ...operation,
+                operation_id: operationId,
+                base_revision: baseRevision,
+                save_session_id: saveSessionId,
+            },
+        }));
 
         if (!response.ok) {
-            let errorData = null;
             try {
-                errorData = await response.json();
                 if (errorData?.error === 'stale_revision') {
-                    const staleResult = warnStaleChatSave(errorData);
-                    console.error('Chat message visibility rejected as stale', errorData);
-                    if (allowStaleRevisionRetry && staleResult?.adoptedServerRevision) {
-                        console.info('Retrying chat message visibility after adopting same-session save revision.');
-                        return updateServerChatMessageVisibility(start, end, unhide, nameFilter, { allowStaleRevisionRetry: false });
-                    }
+                    warnStaleChatSave(errorData);
+                    console.warn('Chat message visibility rejected as stale', errorData);
                     return CHAT_MESSAGE_VISIBILITY_SAVE_RESULT.STALE;
                 }
             } catch {
@@ -562,8 +559,6 @@ async function updateServerChatMessageVisibility(start, end, unhide, nameFilter 
             return handleSaveFailure(response, errorData);
         }
 
-        const data = await response.json();
-        setChatSaveRevision(data?.chat_revision);
         return CHAT_MESSAGE_VISIBILITY_SAVE_RESULT.SAVED;
     } catch (error) {
         return handleSaveFailure(error);

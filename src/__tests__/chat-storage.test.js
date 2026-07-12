@@ -26,6 +26,7 @@ let resolveSqliteLogicalChatReference;
 let truncateSqliteChatAfterUuid;
 let updateSqliteLoadedMessageRange;
 let updateSqliteMessageByUuid;
+let updateGroupChatMessageRow;
 let updateSqliteMessageVisibility;
 let updateSqliteParticipantHistory;
 let updateSqliteUserPersonaMessages;
@@ -170,6 +171,7 @@ describe('SQLite chat length handling', () => {
         truncateSqliteChatAfterUuid = chatsModule.truncateSqliteChatAfterUuid;
         updateSqliteLoadedMessageRange = chatsModule.updateSqliteLoadedMessageRange;
         updateSqliteMessageByUuid = chatsModule.updateSqliteMessageByUuid;
+        updateGroupChatMessageRow = chatsModule.updateGroupChatMessageRow;
         updateSqliteMessageVisibility = chatsModule.updateSqliteMessageVisibility;
         updateSqliteParticipantHistory = chatsModule.updateSqliteParticipantHistory;
         updateSqliteUserPersonaMessages = chatsModule.updateSqliteUserPersonaMessages;
@@ -1911,6 +1913,7 @@ describe('SQLite chat length handling', () => {
             const payload = await updateSqliteMessageVisibility({
                 filePath: chatPath,
                 requestBody: {
+                    operation_id: '11111111-1111-4111-8111-111111111111',
                     base_revision: 1,
                     save_session_id: '33333333-3333-4333-8333-333333333333',
                 },
@@ -2036,6 +2039,7 @@ describe('SQLite chat length handling', () => {
             await expect(updateSqliteMessageVisibility({
                 filePath: chatPath,
                 requestBody: {
+                    operation_id: '22222222-2222-4222-8222-222222222222',
                     base_revision: 2,
                     save_session_id: '33333333-3333-4333-8333-333333333333',
                 },
@@ -2068,6 +2072,7 @@ describe('SQLite chat length handling', () => {
             const payload = await updateSqliteUserPersonaMessages({
                 filePath: chatPath,
                 requestBody: {
+                    operation_id: '55555555-5555-4555-8555-555555555555',
                     base_revision: 4,
                     save_session_id: '33333333-3333-4333-8333-333333333333',
                 },
@@ -2085,6 +2090,96 @@ describe('SQLite chat length handling', () => {
             expect(logicalChat[1].force_avatar).toBe('/thumbnail?type=persona&file=new.png');
             expect(logicalChat[2].name).toBe('Character');
             expect(logicalChat[3].name).toBe('New User');
+        } finally {
+            fs.rmSync(tempDir, { recursive: true, force: true });
+        }
+    });
+
+    it('replays visibility and persona receipts before stale revision validation', async () => {
+        const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'sqlite-chat-p1-replay-'));
+        try {
+            const visibilityPath = path.join(tempDir, 'visibility.jsonl');
+            await writeLogicalChat(visibilityPath, makeHeader({ chat_revision: 4 }), makeMessages(3));
+            const visibilityBody = {
+                operation_id: '66666666-6666-4666-8666-666666666666',
+                base_revision: 4,
+                save_session_id: '33333333-3333-4333-8333-333333333333',
+            };
+            const visibilityOptions = { filePath: visibilityPath, requestBody: visibilityBody, start: 0, end: 0, hide: true, saveSessionId: visibilityBody.save_session_id };
+            await expect(updateSqliteMessageVisibility(visibilityOptions)).resolves.toMatchObject({ status: 'applied', chat_revision: 5 });
+            await expect(updateSqliteMessageVisibility(visibilityOptions)).resolves.toMatchObject({ status: 'replayed', chat_revision: 5 });
+
+            const personaPath = path.join(tempDir, 'persona.jsonl');
+            await writeLogicalChat(personaPath, makeHeader({ chat_revision: 4 }), makeMessages(3));
+            const personaBody = {
+                operation_id: '77777777-7777-4777-8777-777777777777',
+                base_revision: 4,
+                save_session_id: '33333333-3333-4333-8333-333333333333',
+            };
+            const personaOptions = { filePath: personaPath, requestBody: personaBody, userName: 'New User', forceAvatar: '/new.png', saveSessionId: personaBody.save_session_id };
+            await expect(updateSqliteUserPersonaMessages(personaOptions)).resolves.toMatchObject({ status: 'applied', chat_revision: 5 });
+            await expect(updateSqliteUserPersonaMessages(personaOptions)).resolves.toMatchObject({ status: 'replayed', chat_revision: 5 });
+        } finally {
+            fs.rmSync(tempDir, { recursive: true, force: true });
+        }
+    });
+
+    it('rejects a group positional and wrapper UUID mismatch without mutation or receipt', async () => {
+        const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'sqlite-group-identity-mismatch-'));
+        const chatPath = path.join(tempDir, 'group.jsonl');
+        try {
+            const messages = makeMessages(2);
+            await writeLogicalChat(chatPath, makeHeader({ chat_revision: 4, is_group_chat_header: true }), messages);
+            const requestBody = {
+                id: 'group-chat',
+                operation_id: '88888888-8888-4888-8888-888888888888',
+                base_revision: 4,
+                save_session_id: '33333333-3333-4333-8333-333333333333',
+                message_uuid: messages[0].aikobots_message_uuid,
+                message_id: 1,
+                message: { ...messages[0], mes: 'must not persist' },
+            };
+            await expect(updateGroupChatMessageRow({ filePath: chatPath, requestBody, saveSessionId: requestBody.save_session_id }))
+                .rejects.toMatchObject({ status: 409, error: 'message_identity_mismatch' });
+
+            const saved = await getLogicalChatData(chatPath);
+            expect(saved[0].chat_revision).toBe(4);
+            expect(saved[1].mes).toBe('message 0');
+            expect(saved[2].mes).toBe('message 1');
+            const db = new Database(chatPath.replace('.jsonl', '.sqlite'), { readonly: true });
+            expect(db.prepare('SELECT COUNT(*) FROM operation_receipts').pluck().get()).toBe(0);
+            db.close();
+        } finally {
+            fs.rmSync(tempDir, { recursive: true, force: true });
+        }
+    });
+
+    it('replays a group incremental receipt and rejects a distinct stale operation', async () => {
+        const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'sqlite-group-p1-replay-'));
+        const chatPath = path.join(tempDir, 'group.jsonl');
+        try {
+            const messages = makeMessages(2);
+            await writeLogicalChat(chatPath, makeHeader({ chat_revision: 4, is_group_chat_header: true }), messages);
+            const requestBody = {
+                id: 'group-chat',
+                operation_id: '99999999-9999-4999-8999-999999999999',
+                base_revision: 4,
+                save_session_id: '33333333-3333-4333-8333-333333333333',
+                message_uuid: messages[0].aikobots_message_uuid,
+                message_id: 0,
+                message: { ...messages[0], mes: 'updated once' },
+            };
+            const options = { filePath: chatPath, requestBody, saveSessionId: requestBody.save_session_id };
+            await expect(updateGroupChatMessageRow(options)).resolves.toMatchObject({ status: 'applied', chat_revision: 5 });
+            await expect(updateGroupChatMessageRow(options)).resolves.toMatchObject({ status: 'replayed', chat_revision: 5 });
+
+            await expect(updateGroupChatMessageRow({
+                ...options,
+                requestBody: { ...requestBody, operation_id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa' },
+            })).rejects.toMatchObject({ status: 409, error: 'stale_revision' });
+            const saved = await getLogicalChatData(chatPath);
+            expect(saved[0].chat_revision).toBe(5);
+            expect(saved[1].mes).toBe('updated once');
         } finally {
             fs.rmSync(tempDir, { recursive: true, force: true });
         }

@@ -907,3 +907,7 @@ Native SQLite must not become merely a faster container for:
 - routine delete-and-rebuild behavior.
 
 The completed architecture uses SQLite as a database: stable identities, bounded reads, explicit mutations, constraints, atomic transactions, revisions, idempotency, and defined recovery.
+
+### Active-chat revision operations
+
+Visibility changes, persona synchronization, and group incremental message updates use the shared acknowledged client queue and SQLite operation receipts. Receipts are checked under the logical-chat lock before stale-revision validation, including for validated no-ops. Group incremental updates resolve the persisted wrapper by `aikobots_message_uuid`; a supplied positional message ID is compatibility metadata and must match the UUID-resolved row.

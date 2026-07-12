@@ -75,7 +75,6 @@ import {
     CHAT_SAVE_RESULT,
     getChatSaveRevision,
     getChatSaveSessionId,
-    setChatSaveRevision,
     warnStaleChatSave,
     queueAcknowledgedChatRevisionRequest,
     currentChatFileNameLooksSqlite,
@@ -497,7 +496,6 @@ export async function getGroupChat(groupId, reload = false) {
     const totalMessages = Number.isInteger(Number(payload.totalMessages)) ? Number(payload.totalMessages) : (Array.isArray(data) ? data.length : 0);
     const freshChat = !metadata.tainted && totalMessages === 0;
 
-    setChatSaveRevision(payload.chat_revision);
     updateChatMetadata(metadata, true);
     await ensureDeferredLoaderShown({ force: totalMessages >= LONG_CHAT_DISPLAY_MIN || freshChat });
     await waitForLoaderPaint();
@@ -969,10 +967,6 @@ async function saveGroupChat(groupId, shouldSaveGroup, { force = false, forcePus
     if (responseData?.storage_mode) {
         setCurrentChatStorageMode(responseData.storage_mode);
     }
-    if (shouldTrackRevision) {
-        setChatSaveRevision(responseData?.chat_revision);
-    }
-
     if (shouldSaveGroup) {
         await editGroup(groupId, true, false);
     }
@@ -1044,24 +1038,29 @@ export async function saveCurrentGroupMessageIncremental(messageId, message) {
         return CHAT_SAVE_RESULT.FAILED;
     }
 
-    const response = await fetch('/api/chats/group/message/update', {
-        method: 'PATCH',
-        headers: getRequestHeaders(),
-        body: JSON.stringify({
+    const messageUuid = String(message?.aikobots_message_uuid || '');
+    if (!messageUuid) {
+        return CHAT_SAVE_RESULT.FAILED;
+    }
+    const operation = {
             id: chatId,
             message_id: targetMessageId,
+            message_uuid: messageUuid,
             message: structuredClone(message),
-            base_revision: getChatSaveRevision(),
-            save_session_id: getChatSaveSessionId(),
-        }),
-    });
+    };
+    const { response, errorData } = await queueAcknowledgedChatRevisionRequest(({ baseRevision, operationId, saveSessionId }) => ({
+        url: '/api/chats/group/message/update',
+        method: 'PATCH',
+        headers: getRequestHeaders(),
+        operationType: 'group_incremental_update',
+        body: { ...operation, operation_id: operationId, base_revision: baseRevision, save_session_id: saveSessionId },
+    }));
 
     if (!response.ok) {
         try {
-            const errorData = await response.json();
             if (errorData?.error === 'stale_revision') {
                 warnStaleChatSave(errorData);
-                console.error('Group message update rejected as stale', errorData);
+                console.warn('Group message update rejected as stale', errorData);
                 return CHAT_SAVE_RESULT.FAILED;
             }
         } catch {
@@ -1072,8 +1071,6 @@ export async function saveCurrentGroupMessageIncremental(messageId, message) {
         return CHAT_SAVE_RESULT.FAILED;
     }
 
-    const responseData = await response.json();
-    setChatSaveRevision(responseData?.chat_revision);
     return CHAT_SAVE_RESULT.SAVED;
 }
 
