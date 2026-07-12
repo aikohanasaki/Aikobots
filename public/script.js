@@ -21215,7 +21215,7 @@ jQuery(async function () {
         doCharListDisplaySwitch();
     });
 
-    $('#character_catalog_button').on('click', async () => {
+    $(document).on('click', '#character_catalog_button, .character_catalog_button', async () => {
         await showCharacterCatalog();
     });
 
