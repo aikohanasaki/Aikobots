@@ -178,7 +178,7 @@ export async function runChatBasicCreateRenameScenario({ page, logger, captureAr
         onError: error => captureArtifacts({ testName, stepName: 'wait-send-ready-after-rename', error }),
     });
 
-    const postRenamePrompt = `Post-rename smoke prompt for ${renamedChat}: reply briefly.`;
+    const postRenamePrompt = 'this is a renamed chat I am sending a message in';
 
     await runLoggedStep({
         logger,

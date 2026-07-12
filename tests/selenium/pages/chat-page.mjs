@@ -299,6 +299,55 @@ export class ChatPage {
             return currentCount > previousAssistantCount;
         }, this.config.timeouts.responseMs);
 
+        await this.driver.wait(async () => {
+            const state = await this.driver.executeScript(`
+                const messages = Array.from(document.querySelectorAll('.mes[is_user="false"]'))
+                    .filter(el => String(el.getAttribute('is_system')) !== 'true');
+                const last = messages[messages.length - 1];
+                const text = last?.querySelector('.mes_text')?.innerText?.trim() || '';
+                const stop = document.getElementById('mes_stop');
+                const generating = stop ? getComputedStyle(stop).display !== 'none' : false;
+                const nonPlaceholder = text.length > 0 && text !== '…' && text !== '...';
+                return { assistantCount: messages.length, text, generating, nonPlaceholder };
+            `);
+
+            return state.nonPlaceholder && !state.generating;
+        }, this.config.timeouts.responseMs);
+
+        let stableText = '';
+        let stableTicks = 0;
+        const stableTarget = 3;
+        const stableStarted = Date.now();
+
+        while (stableTicks < stableTarget && (Date.now() - stableStarted) < this.config.timeouts.responseMs) {
+            const state = await this.driver.executeScript(`
+                const messages = Array.from(document.querySelectorAll('.mes[is_user="false"]'))
+                    .filter(el => String(el.getAttribute('is_system')) !== 'true');
+                const last = messages[messages.length - 1];
+                const text = last?.querySelector('.mes_text')?.innerText?.trim() || '';
+                const stop = document.getElementById('mes_stop');
+                const generating = stop ? getComputedStyle(stop).display !== 'none' : false;
+                return { assistantCount: messages.length, text, generating };
+            `);
+
+            if (!state.generating && state.text && state.text !== '…' && state.text !== '...') {
+                if (state.text === stableText) {
+                    stableTicks += 1;
+                } else {
+                    stableText = state.text;
+                    stableTicks = 1;
+                }
+            } else {
+                stableTicks = 0;
+            }
+
+            await new Promise(resolve => setTimeout(resolve, 500));
+        }
+
+        if (stableTicks < stableTarget) {
+            throw new Error('Assistant response did not stabilize before timeout.');
+        }
+
         return this.driver.executeScript(`
             const messages = Array.from(document.querySelectorAll('.mes[is_user="false"]'))
                 .filter(el => String(el.getAttribute('is_system')) !== 'true');
