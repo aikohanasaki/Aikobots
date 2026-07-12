@@ -14,7 +14,8 @@ Copy `.env.example` to `.env` and set:
 ## Commands
 
 - `npm run test:selenium:mvp:smoke`
-  - Runs bootstrap + connection profile + create/rename scenarios
+  - Runs bootstrap + connection profile + create chat + send message/response smoke scenario
+  - Response wait timeout is controlled by `ST_RESPONSE_TIMEOUT_MS` (default 90000)
 - `npm run test:selenium:mvp`
   - Runs full MVP scenarios
 

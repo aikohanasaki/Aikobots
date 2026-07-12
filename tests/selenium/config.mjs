@@ -46,6 +46,7 @@ export function loadConfig() {
             pageLoadMs: parseNumber(process.env.ST_PAGELOAD_TIMEOUT_MS, 60_000),
             scriptMs: parseNumber(process.env.ST_SCRIPT_TIMEOUT_MS, 30_000),
             downloadMs: parseNumber(process.env.ST_DOWNLOAD_TIMEOUT_MS, 20_000),
+            responseMs: parseNumber(process.env.ST_RESPONSE_TIMEOUT_MS, 90_000),
         },
     };
 }

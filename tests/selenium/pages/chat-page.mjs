@@ -29,6 +29,26 @@ export class ChatPage {
         await this.driver.wait(until.elementLocated(By.id('top_chat_connection_profiles_select')), this.config.timeouts.stepMs);
     }
 
+    async closeConnectionProfilesPanel() {
+        const isVisible = await this.driver.executeScript(`
+            const panel = document.getElementById('top_chat_connection_profiles');
+            return panel ? panel.classList.contains('visible') : false;
+        `);
+
+        if (!isVisible) {
+            return;
+        }
+
+        const toggle = await this.driver.findElement(By.id('top_chat_bar_toggle_connection_profiles'));
+        await toggle.click();
+        await this.driver.wait(async () => {
+            return this.driver.executeScript(`
+                const panel = document.getElementById('top_chat_connection_profiles');
+                return panel ? !panel.classList.contains('visible') : true;
+            `);
+        }, this.config.timeouts.stepMs);
+    }
+
     async readConnectionProfileOptions() {
         const select = await this.driver.findElement(By.id('top_chat_connection_profiles_select'));
         const options = await select.findElements(By.css('option'));
@@ -65,25 +85,54 @@ export class ChatPage {
         `);
     }
 
+    async clickElementById(id) {
+        const element = await this.driver.findElement(By.id(id));
+        await this.driver.executeScript('arguments[0].scrollIntoView({ block: "center", inline: "center" });', element);
+
+        try {
+            await element.click();
+        } catch {
+            await this.driver.executeScript('arguments[0].click();', element);
+        }
+    }
+
     async startNewChat() {
-        const button = await this.driver.findElement(By.id('top_chat_bar_new_chat'));
-        await button.click();
+        await this.clickElementById('top_chat_bar_new_chat');
         await this.driver.wait(until.elementLocated(By.id('dialogue_popup_ok')), this.config.timeouts.stepMs);
-        const ok = await this.driver.findElement(By.id('dialogue_popup_ok'));
-        await ok.click();
+        await this.clickElementById('dialogue_popup_ok');
     }
 
     async renameCurrentChat(newName) {
-        const button = await this.driver.findElement(By.id('top_chat_bar_rename_chat'));
-        await button.click();
+        const opened = await this.driver.executeScript(`
+            const button = document.getElementById('top_chat_bar_rename_chat');
+            if (!button) return false;
+            button.click();
+            return true;
+        `);
+
+        if (!opened) {
+            throw new Error('Rename button is not available.');
+        }
+
         await this.driver.wait(until.elementLocated(By.id('dialogue_popup_input')), this.config.timeouts.stepMs);
 
         const input = await this.driver.findElement(By.id('dialogue_popup_input'));
         await input.clear();
         await input.sendKeys(newName);
 
-        const ok = await this.driver.findElement(By.id('dialogue_popup_ok'));
-        await ok.click();
+        await this.clickElementById('dialogue_popup_ok');
+    }
+
+    async waitForActiveChatReady() {
+        await this.driver.wait(async () => {
+            return this.driver.executeScript(`
+                const select = document.getElementById('top_chat_bar_chat_name');
+                if (!select || !select.selectedOptions || !select.selectedOptions[0]) return false;
+                const selected = (select.selectedOptions[0].textContent || '').trim();
+                if (!selected || selected === 'No chat selected') return false;
+                return !select.disabled;
+            `);
+        }, this.config.timeouts.stepMs);
     }
 
     async getCurrentChatName() {
@@ -147,6 +196,81 @@ export class ChatPage {
         await this.driver.wait(until.elementLocated(By.css('.last_mes .mes_text')), this.config.timeouts.stepMs);
         const el = await this.driver.findElement(By.css('.last_mes .mes_text'));
         return (await el.getText()).trim();
+    }
+
+    async countAssistantMessages() {
+        return this.driver.executeScript(`
+            return Array.from(document.querySelectorAll('.mes[is_user="false"]'))
+                .filter(el => String(el.getAttribute('is_system')) !== 'true')
+                .length;
+        `);
+    }
+
+    async countUserMessages() {
+        return this.driver.executeScript(`
+            return Array.from(document.querySelectorAll('.mes[is_user="true"]'))
+                .filter(el => String(el.getAttribute('is_system')) !== 'true')
+                .length;
+        `);
+    }
+
+    async getConnectionStatusText() {
+        return this.driver.executeScript(`
+            const el = document.getElementById('top_chat_connection_profiles_status');
+            return el ? (el.textContent || '').trim() : '';
+        `);
+    }
+
+    async waitForConnectionReady() {
+        const startedAt = Date.now();
+        let sentWaitingProbe = false;
+
+        await this.driver.wait(async () => {
+            const status = await this.getConnectionStatusText();
+            const isOffline = /no connection/i.test(status) || /offline/i.test(status);
+
+            if (!isOffline) {
+                return true;
+            }
+
+            if (!sentWaitingProbe && (Date.now() - startedAt) >= 1_000) {
+                await this.sendMessage('[selenium] waiting for connection...');
+                await new Promise(resolve => setTimeout(resolve, 1_000));
+                sentWaitingProbe = true;
+                return true;
+            }
+
+            return false;
+        }, this.config.timeouts.responseMs);
+    }
+
+    async sendMessage(text) {
+        const textarea = await this.driver.findElement(By.id('send_textarea'));
+        await textarea.clear();
+        await textarea.sendKeys(text);
+        await this.clickElementById('send_but');
+    }
+
+    async waitForUserMessageSent(previousUserCount) {
+        await this.driver.wait(async () => {
+            const currentCount = await this.countUserMessages();
+            return currentCount > previousUserCount;
+        }, this.config.timeouts.stepMs);
+    }
+
+    async waitForAssistantResponse(previousAssistantCount) {
+        await this.driver.wait(async () => {
+            const currentCount = await this.countAssistantMessages();
+            return currentCount > previousAssistantCount;
+        }, this.config.timeouts.responseMs);
+
+        return this.driver.executeScript(`
+            const messages = Array.from(document.querySelectorAll('.mes[is_user="false"]'))
+                .filter(el => String(el.getAttribute('is_system')) !== 'true');
+            const last = messages[messages.length - 1];
+            const text = last?.querySelector('.mes_text')?.innerText?.trim() || '';
+            return { assistantCount: messages.length, responseText: text };
+        `);
     }
 
     async swipeLastMessageRight() {

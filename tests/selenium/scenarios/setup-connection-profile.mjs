@@ -53,5 +53,19 @@ export async function runSetupConnectionProfileScenario({ page, logger, captureA
         onError: error => captureArtifacts({ testName, stepName: 'select-profile', error }),
     });
 
+    await runLoggedStep({
+        logger,
+        testName,
+        stepName: 'close-connection-profiles-panel',
+        featureTags,
+        selector: '#top_chat_bar_toggle_connection_profiles',
+        expected: 'Connection profiles panel closes after selection',
+        action: async () => {
+            await page.closeConnectionProfilesPanel();
+            return 'closed';
+        },
+        onError: error => captureArtifacts({ testName, stepName: 'close-connection-profiles-panel', error }),
+    });
+
     return { testName, status: 'pass' };
 }
