@@ -274,7 +274,9 @@ export class ChatPage {
             throw new Error(`Expected at least 2 non-Assistant add candidates, but found ${candidateChids.length}.`);
         }
 
-        for (const chid of candidateChids.slice(0, 2)) {
+        const addedChids = candidateChids.slice(0, 2);
+
+        for (const chid of addedChids) {
             const addButton = await this.driver.findElement(By.css(`#rm_group_add_members .group_member[data-chid="${chid}"] [title="Add to group"][data-action="add"]`));
             await this.driver.executeScript('arguments[0].scrollIntoView({ block: "center", inline: "center" });', addButton);
             try {
@@ -289,8 +291,31 @@ export class ChatPage {
             return rows.length >= beforeGroupCount.length + 2;
         }, this.config.timeouts.responseMs);
 
-        return 2;
-    }
+        return { addedCount: addedChids.length, addedChids };
+        }
+
+        async triggerGroupMemberSpeakByChid(chid) {
+        await this.openRightPanelGroupEditor();
+
+        const clicked = await this.driver.executeScript(`
+            const targetChid = String(arguments[0]);
+            const row = document.querySelector('#rm_group_members .group_member[data-chid="' + targetChid + '"]')
+                || document.querySelector('#rm_group_add_members .group_member[data-chid="' + targetChid + '"]');
+            if (!row) return false;
+
+            const button = row.querySelector('[title="Trigger a message from this character"][data-action="speak"]')
+                || row.querySelector('[data-action="speak"]');
+            if (!button) return false;
+
+            button.scrollIntoView({ block: 'center', inline: 'center' });
+            button.click();
+            return true;
+        `, chid);
+
+        if (!clicked) {
+            throw new Error(`No speak button found for group member chid=${chid}.`);
+        }
+        }
 
     async getGroupSpeakButtonCount() {
         await this.openRightPanelGroupEditor();
