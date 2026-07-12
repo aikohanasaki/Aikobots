@@ -77,6 +77,8 @@ import {
     getChatSaveSessionId,
     setChatSaveRevision,
     warnStaleChatSave,
+    queueAcknowledgedChatRevisionRequest,
+    currentChatFileNameLooksSqlite,
     setCharacterSettingsOverrides,
     system_avatar,
     isChatSaving,
@@ -896,32 +898,45 @@ async function saveGroupChat(groupId, shouldSaveGroup, { force = false, forcePus
         return CHAT_SAVE_RESULT.FAILED;
     }
 
-    const response = await fetch('/api/chats/group/save', {
-        method: 'POST',
-        headers: getRequestHeaders(),
-        body: JSON.stringify({
-            id: chat_id,
-            group_id: String(groupId),
-            chat: savePayload.chat,
-            chat_metadata: JSON.parse(JSON.stringify(chat_metadata)),
-            force: force,
-            force_push: forcePush,
-            save_mode: savePayload.saveMode,
-            full_chat: savePayload.fullChat,
-            loaded_range_start: savePayload.loadedRangeStart,
-            loaded_range_end: savePayload.loadedRangeEnd,
-            saved_message_count: savePayload.savedMessageCount,
-            ...(shouldTrackRevision ? {
-                base_revision: getChatSaveRevision(),
-                save_session_id: getChatSaveSessionId(),
-            } : {}),
-        }),
-    });
+    const requestBody = {
+        id: chat_id,
+        group_id: String(groupId),
+        chat: savePayload.chat,
+        chat_metadata: JSON.parse(JSON.stringify(chat_metadata)),
+        force: force,
+        force_push: forcePush,
+        save_mode: savePayload.saveMode,
+        full_chat: savePayload.fullChat,
+        loaded_range_start: savePayload.loadedRangeStart,
+        loaded_range_end: savePayload.loadedRangeEnd,
+        saved_message_count: savePayload.savedMessageCount,
+        ...(shouldTrackRevision ? { save_session_id: getChatSaveSessionId() } : {}),
+    };
+    let response;
+    let responseData = null;
+    let errorData = null;
+    if (shouldTrackRevision && currentChatFileNameLooksSqlite()) {
+        ({ response, responseData, errorData } = await queueAcknowledgedChatRevisionRequest(({ baseRevision, operationId }) => ({
+            url: '/api/chats/group/save',
+            body: {
+                ...requestBody,
+                base_revision: baseRevision,
+                operation_id: operationId,
+            },
+        })));
+    } else {
+        response = await fetch('/api/chats/group/save', {
+            method: 'POST',
+            headers: getRequestHeaders(),
+            body: JSON.stringify(shouldTrackRevision
+                ? { ...requestBody, base_revision: getChatSaveRevision() }
+                : requestBody),
+        });
+    }
 
     if (!response.ok) {
-        let errorData = null;
         try {
-            errorData = await response.json();
+            errorData ??= await response.json();
             if (errorData?.error === 'stale_revision') {
                 const staleResult = warnStaleChatSave(errorData);
                 console.error('Group chat save rejected as stale', errorData);
@@ -950,7 +965,7 @@ async function saveGroupChat(groupId, shouldSaveGroup, { force = false, forcePus
         return CHAT_SAVE_RESULT.FAILED;
     }
 
-    const responseData = await response.json();
+    responseData ??= await response.json();
     if (responseData?.storage_mode) {
         setCurrentChatStorageMode(responseData.storage_mode);
     }

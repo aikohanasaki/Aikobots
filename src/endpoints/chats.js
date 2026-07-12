@@ -74,6 +74,8 @@ import {
     updateMessages,
     getMetadata,
     setMetadata,
+    getOperationReceipt,
+    recordOperationReceipt,
 } from '../sqlite-manager.js';
 
 const isBackupEnabled = !!getConfigValue('backups.chat.enabled', true, 'boolean');
@@ -2054,8 +2056,16 @@ export async function writeLogicalChat(filePath, header, messages, {
             }
 
             assertSubmittedActiveSwipeStates(submittedSwipeMessages, activeSwipeValidationStartId);
-            setMessages(db, [baseHeader, ...sanitizedMessages]);
-            setMetadata(db, CHAT_IDENTITY_SCAN_METADATA_KEY, CHAT_IDENTITY_SCAN_VERSION);
+            db.run('BEGIN TRANSACTION');
+            try {
+                setMessages(db, [baseHeader, ...sanitizedMessages]);
+                setMetadata(db, CHAT_IDENTITY_SCAN_METADATA_KEY, CHAT_IDENTITY_SCAN_VERSION);
+                recordSqliteOperationReceipt(db, requestBody, getChatRevision(baseHeader));
+                db.run('COMMIT');
+            } catch (error) {
+                db.run('ROLLBACK');
+                throw error;
+            }
             totalMessages = getMessageCount(db);
             changedMessages = sanitizedMessages.length;
 
@@ -2107,6 +2117,7 @@ export async function writeLogicalChat(filePath, header, messages, {
                 for (const message of appendedMessages) {
                     appendLogicalMessage(db, message);
                 }
+                recordSqliteOperationReceipt(db, requestBody, getChatRevision(baseHeader));
                 db.run('COMMIT');
             } catch (error) {
                 db.run('ROLLBACK');
@@ -2273,6 +2284,7 @@ export async function updateSqliteLoadedMessageRange({ filePath, requestBody, in
     const writeResult = await writeLogicalChat(filePath, revisedHeader, rangeMessages, {
         regenerateIdentities,
         messageStartId: validation.startId,
+        requestBody,
     });
     return {
         result: 'ok',
@@ -2672,6 +2684,55 @@ function requireSqliteMutationRequest(requestBody, header) {
     return requireChatMutationRequest(requestBody, header);
 }
 
+function getRequestOperationId(requestBody) {
+    const operationId = String(requestBody?.operation_id || '').trim();
+    if (operationId && !isValidAikobotsUuid(operationId)) {
+        throw new ChatMutationError(400, 'invalid_operation_id');
+    }
+    return operationId;
+}
+
+function getRepeatedSqliteOperationReceipt(db, requestBody) {
+    const operationId = getRequestOperationId(requestBody);
+    if (!operationId) {
+        return null;
+    }
+    try {
+        const receipt = getOperationReceipt(db, operationId, requestBody);
+        return receipt ? { ...receipt, duplicate_operation: true } : null;
+    } catch (error) {
+        if (error?.code === 'operation_id_reused') {
+            throw new ChatMutationError(409, 'operation_id_reused', error.message);
+        }
+        throw error;
+    }
+}
+
+function recordSqliteOperationReceipt(db, requestBody, revision) {
+    const operationId = getRequestOperationId(requestBody);
+    if (!operationId) {
+        return;
+    }
+    recordOperationReceipt(db, operationId, requestBody, {
+        result: 'ok',
+        ok: true,
+        storageMode: 'sqlite',
+        chat_revision: revision,
+    });
+}
+
+async function getRepeatedSqliteOperationReceiptFromFile(sqlitePath, requestBody) {
+    if (!fs.existsSync(sqlitePath) || !getRequestOperationId(requestBody)) {
+        return null;
+    }
+    const db = await loadDb(sqlitePath);
+    try {
+        return getRepeatedSqliteOperationReceipt(db, requestBody);
+    } finally {
+        db.close();
+    }
+}
+
 function updateSqliteHeaderRow(db, header) {
     const stmt = db.prepare('UPDATE messages SET content = ? WHERE order_index = 0');
     try {
@@ -2783,6 +2844,10 @@ export async function updateSqliteMessageByUuid({ filePath, requestBody, saveSes
     const targetUuid = assertValidMessageUuid(requestBody?.message_uuid);
     const db = await loadDb(sqlitePath);
     try {
+        const repeatedReceipt = getRepeatedSqliteOperationReceipt(db, requestBody);
+        if (repeatedReceipt) {
+            return repeatedReceipt;
+        }
         const header = getChatHeader(db);
         if (!header) {
             throw new ChatMutationError(404, 'chat_not_found');
@@ -2803,6 +2868,7 @@ export async function updateSqliteMessageByUuid({ filePath, requestBody, saveSes
         try {
             updateSqliteHeaderRow(db, revisedHeader);
             updateLogicalMessageRowById(db, row.id, updatedMessage);
+            recordSqliteOperationReceipt(db, requestBody, revisionCheck.nextRevision);
             db.run('COMMIT');
         } catch (error) {
             db.run('ROLLBACK');
@@ -2831,6 +2897,10 @@ export async function appendSqliteMessage({ filePath, requestBody, saveSessionId
 
     const db = await loadDb(sqlitePath);
     try {
+        const repeatedReceipt = getRepeatedSqliteOperationReceipt(db, requestBody);
+        if (repeatedReceipt) {
+            return repeatedReceipt;
+        }
         const header = getChatHeader(db);
         if (!header) {
             throw new ChatMutationError(404, 'chat_not_found');
@@ -2866,6 +2936,7 @@ export async function appendSqliteMessage({ filePath, requestBody, saveSessionId
         try {
             updateSqliteHeaderRow(db, revisedHeader);
             insertedMessageId = appendLogicalMessage(db, sanitizedMessage);
+            recordSqliteOperationReceipt(db, requestBody, revisionCheck.nextRevision);
             db.run('COMMIT');
         } catch (error) {
             db.run('ROLLBACK');
@@ -2891,6 +2962,10 @@ export async function deleteSqliteMessageByUuid({ filePath, requestBody, saveSes
     const targetUuid = assertValidMessageUuid(requestBody?.message_uuid);
     const db = await loadDb(sqlitePath);
     try {
+        const repeatedReceipt = getRepeatedSqliteOperationReceipt(db, requestBody);
+        if (repeatedReceipt) {
+            return repeatedReceipt;
+        }
         const header = getChatHeader(db);
         if (!header) {
             throw new ChatMutationError(404, 'chat_not_found');
@@ -2912,6 +2987,7 @@ export async function deleteSqliteMessageByUuid({ filePath, requestBody, saveSes
             stmt = db.prepare('DELETE FROM messages WHERE id = ?');
             stmt.run([row.id]);
             updateShiftedMessagesAfterDelete(db, row.logicalIndex);
+            recordSqliteOperationReceipt(db, requestBody, revisionCheck.nextRevision);
             db.run('COMMIT');
         } catch (error) {
             db.run('ROLLBACK');
@@ -2940,6 +3016,10 @@ export async function truncateSqliteChatAfterUuid({ filePath, requestBody, saveS
     const targetUuid = truncateAll ? null : assertValidMessageUuid(requestBody?.branch_point_uuid || requestBody?.message_uuid);
     const db = await loadDb(sqlitePath);
     try {
+        const repeatedReceipt = getRepeatedSqliteOperationReceipt(db, requestBody);
+        if (repeatedReceipt) {
+            return repeatedReceipt;
+        }
         const header = getChatHeader(db);
         if (!header) {
             throw new ChatMutationError(404, 'chat_not_found');
@@ -2963,6 +3043,7 @@ export async function truncateSqliteChatAfterUuid({ filePath, requestBody, saveS
             } else {
                 deleteLogicalMessagesAfter(db, row.logicalIndex);
             }
+            recordSqliteOperationReceipt(db, requestBody, revisionCheck.nextRevision);
             db.run('COMMIT');
         } catch (error) {
             db.run('ROLLBACK');
@@ -3010,6 +3091,10 @@ export async function cloneSqliteMessageAfter({ filePath, requestBody, saveSessi
 
     const db = await loadDb(sqlitePath);
     try {
+        const repeatedReceipt = getRepeatedSqliteOperationReceipt(db, requestBody);
+        if (repeatedReceipt) {
+            return repeatedReceipt;
+        }
         const header = getChatHeader(db);
         if (!header) {
             throw new ChatMutationError(404, 'chat_not_found');
@@ -3058,6 +3143,7 @@ export async function cloneSqliteMessageAfter({ filePath, requestBody, saveSessi
             }
 
             updateSqliteHeaderRow(db, revisedHeader);
+            recordSqliteOperationReceipt(db, requestBody, revisionCheck.nextRevision);
             db.run('COMMIT');
         } catch (error) {
             db.run('ROLLBACK');
@@ -4438,6 +4524,12 @@ router.post('/save', validateAvatarUrlMiddleware, async function (request, respo
             const existingSegments = fs.existsSync(filePath) || existingSqliteChat
                 ? await getChatSegments(filePath, { metadataOnly: existingSqliteChat })
                 : null;
+            if (existingSqliteChat) {
+                const repeatedReceipt = await getRepeatedSqliteOperationReceiptFromFile(sqlitePath, request.body);
+                if (repeatedReceipt) {
+                    return response.send(repeatedReceipt);
+                }
+            }
             const revisionCheck = existingSegments?.header || Object.prototype.hasOwnProperty.call(request.body || {}, 'base_revision')
                 ? requireChatMutationRequest(request.body, existingSegments?.header)
                 : { currentRevision: 0, nextRevision: 1 };
@@ -4546,6 +4638,7 @@ router.post('/save', validateAvatarUrlMiddleware, async function (request, respo
 
             const writeOptions = {
                 regenerateIdentities: request.body.regenerate_identities === true,
+                requestBody: request.body,
             };
 
             const writeResult = await writeLogicalChat(filePath, header, messages, writeOptions);
@@ -5814,6 +5907,12 @@ router.post('/group/save', async (request, response) => {
                 messages: [],
                 hasHeader: isGroupChatHeader(loadedRangeSqliteSegments?.header),
             };
+            if (groupSqliteExists) {
+                const repeatedReceipt = await getRepeatedSqliteOperationReceiptFromFile(replaceChatStorageExtension(pathToFile, '.sqlite'), request.body);
+                if (repeatedReceipt) {
+                    return response.send(repeatedReceipt);
+                }
+            }
 
             if (groupSqliteExists && effectiveExistingPayload.header) {
                 await throwIfSqliteChatFileIdentityRepairNeeded(replaceChatStorageExtension(pathToFile, '.sqlite'));
@@ -5835,6 +5934,7 @@ router.post('/group/save', async (request, response) => {
             let messages = chat_data;
             const writeOptions = {
                 regenerateIdentities: request.body.regenerate_identities === true,
+                requestBody: request.body,
             };
 
             if (request.body.save_mode === 'tail') {

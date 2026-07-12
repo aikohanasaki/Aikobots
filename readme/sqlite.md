@@ -354,7 +354,7 @@ A transaction does not make a logically incorrect replacement safe. Routine muta
 Every logical mutation attempt must include:
 
 ```text
-operation_uuid
+operation_id
 ```
 
 The client reuses the same operation UUID when retrying the same logical request.
@@ -373,6 +373,8 @@ The operation must not be recorded as successful before the mutation commits.
 Reusing one operation UUID with a materially different payload must be rejected.
 
 The operation log must have a bounded retention policy sufficient for realistic retry and reconnect windows.
+
+SQLite chats persist the newest 4096 operation receipts in `operation_receipts`. Each receipt contains only a request fingerprint and safe acknowledgement data; chat or secure lore content is not copied into the receipt. Receipt insertion occurs in the same transaction as the chat mutation.
 
 ## Device Identity and Time
 
@@ -718,10 +720,17 @@ The browser must:
 - create a new operation UUID for a genuinely new mutation;
 - send the current known base revision;
 - update its revision from the authoritative response;
+- serialize active-chat revision changes through one acknowledgement-gated queue;
+- assign the latest acknowledged base revision only when an operation reaches the head of that queue;
+- keep a debounced save flush as one immutable operation envelope;
+- pause later operations while the head operation has no acknowledgement;
+- retry transport failures and retryable HTTP responses with the same operation UUID and identical request body;
 - handle conflicts explicitly;
 - never represent partially hydrated state as complete authoritative state.
 
 Automatic last-write-wins behavior requires an explicit product decision and dedicated tests.
+
+A successful no-op acknowledgement may retain the submitted base revision. A successful mutation acknowledgement advances it by exactly one. Any other successful revision response is invalid and must not release the next queued operation.
 
 ## Verification
 

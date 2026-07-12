@@ -202,13 +202,15 @@ describe('SQLite chat length handling', () => {
             const columns = verifyDb.pragma('table_info(messages)');
             const storedUuid = verifyDb.prepare('SELECT message_uuid FROM messages WHERE order_index = 1').pluck().get();
             const storageVersion = verifyDb.prepare('SELECT value FROM metadata WHERE key = \'storage_version\'').pluck().get();
+            const hasOperationReceipts = Boolean(verifyDb.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'operation_receipts'").pluck().get());
             const queryPlan = verifyDb.prepare('EXPLAIN QUERY PLAN SELECT id FROM messages WHERE message_uuid = ?')
                 .get(message.aikobots_message_uuid);
             verifyDb.close();
 
             expect(columns.some(column => column.name === 'message_uuid')).toBe(true);
             expect(storedUuid).toBe(message.aikobots_message_uuid);
-            expect(storageVersion).toBe('20260711');
+            expect(storageVersion).toBe('20260711.1');
+            expect(hasOperationReceipts).toBe(true);
             expect(queryPlan.detail).toContain('idx_messages_message_uuid');
         } finally {
             fs.rmSync(tempDir, { recursive: true, force: true });
@@ -1165,6 +1167,83 @@ describe('SQLite chat length handling', () => {
             expect(logicalChat).toHaveLength(4);
             expect(logicalChat.at(-1).mes).toBe('new explicit append');
             expect(logicalChat.at(-1).aikobots_message_uuid).toBe(payload.message_uuid);
+        } finally {
+            fs.rmSync(tempDir, { recursive: true, force: true });
+        }
+    });
+
+    it('acknowledges a retried append operation UUID without applying it twice', async () => {
+        const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'sqlite-chat-idempotent-append-'));
+        const chatPath = path.join(tempDir, 'chat.jsonl');
+
+        try {
+            const messages = makeMessages(2);
+            await writeLogicalChat(chatPath, makeHeader({ chat_revision: 1 }), messages);
+            const requestBody = {
+                operation_id: '88888888-8888-4888-8888-888888888888',
+                message: {
+                    aikobots_message_uuid: '99999999-9999-4999-8999-999999999999',
+                    name: 'Character',
+                    is_user: false,
+                    mes: 'retry-safe append',
+                    send_date: 99,
+                },
+                expected_tail_uuid: messages[1].aikobots_message_uuid,
+                base_revision: 1,
+                save_session_id: '33333333-3333-4333-8333-333333333333',
+            };
+
+            const first = await appendSqliteMessage({
+                filePath: chatPath,
+                requestBody,
+                saveSessionId: requestBody.save_session_id,
+                displayCount: 10,
+            });
+            const retry = await appendSqliteMessage({
+                filePath: chatPath,
+                requestBody: structuredClone(requestBody),
+                saveSessionId: requestBody.save_session_id,
+                displayCount: 10,
+            });
+
+            const logicalChat = await getLogicalChatData(chatPath);
+            expect(first.chat_revision).toBe(2);
+            expect(retry).toMatchObject({ chat_revision: 2, duplicate_operation: true });
+            expect(logicalChat.filter(message => message.mes === 'retry-safe append')).toHaveLength(1);
+        } finally {
+            fs.rmSync(tempDir, { recursive: true, force: true });
+        }
+    });
+
+    it('rejects an operation UUID reused with a different payload', async () => {
+        const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'sqlite-chat-operation-reuse-'));
+        const chatPath = path.join(tempDir, 'chat.jsonl');
+
+        try {
+            const messages = makeMessages(1);
+            await writeLogicalChat(chatPath, makeHeader({ chat_revision: 1 }), messages);
+            const requestBody = {
+                operation_id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+                message: {
+                    aikobots_message_uuid: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
+                    name: 'Character',
+                    is_user: false,
+                    mes: 'original payload',
+                },
+                base_revision: 1,
+                save_session_id: '33333333-3333-4333-8333-333333333333',
+            };
+            await appendSqliteMessage({ filePath: chatPath, requestBody, saveSessionId: requestBody.save_session_id, displayCount: 10 });
+
+            await expect(appendSqliteMessage({
+                filePath: chatPath,
+                requestBody: {
+                    ...structuredClone(requestBody),
+                    message: { ...requestBody.message, mes: 'different payload' },
+                },
+                saveSessionId: requestBody.save_session_id,
+                displayCount: 10,
+            })).rejects.toMatchObject({ error: 'operation_id_reused' });
         } finally {
             fs.rmSync(tempDir, { recursive: true, force: true });
         }

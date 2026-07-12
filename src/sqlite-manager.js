@@ -1,10 +1,12 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import process from 'node:process';
+import crypto from 'node:crypto';
 import Database from 'better-sqlite3';
 
 const SQLITE_BUSY_TIMEOUT_MS = 10_000;
-const SQLITE_STORAGE_VERSION = '20260711';
+const SQLITE_STORAGE_VERSION = '20260711.1';
+const MAX_OPERATION_RECEIPTS = 4096;
 
 function getPersistedMessageUuid(message) {
     return typeof message?.aikobots_message_uuid === 'string' && message.aikobots_message_uuid
@@ -96,6 +98,12 @@ class NativeDatabaseAdapter {
         );
         CREATE INDEX idx_messages_order_index ON messages(order_index);
         CREATE INDEX idx_messages_message_uuid ON messages(message_uuid);
+        CREATE TABLE operation_receipts (
+            operation_id TEXT PRIMARY KEY,
+            request_fingerprint TEXT NOT NULL,
+            response_json TEXT NOT NULL,
+            created_at INTEGER NOT NULL
+        );
         INSERT INTO metadata (key, value) VALUES ('storage_version', '${SQLITE_STORAGE_VERSION}');
             `);
         } else {
@@ -114,7 +122,10 @@ class NativeDatabaseAdapter {
         const hasMessageUuidIndex = Boolean(this.database.prepare(`
             SELECT 1 FROM sqlite_master WHERE type = 'index' AND name = 'idx_messages_message_uuid'
         `).pluck().get());
-        if (initialVersion === SQLITE_STORAGE_VERSION && hasMessageUuidColumn && hasMessageUuidIndex) {
+        const hasOperationReceiptsTable = Boolean(this.database.prepare(`
+            SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'operation_receipts'
+        `).pluck().get());
+        if (initialVersion === SQLITE_STORAGE_VERSION && hasMessageUuidColumn && hasMessageUuidIndex && hasOperationReceiptsTable) {
             return;
         }
 
@@ -127,6 +138,14 @@ class NativeDatabaseAdapter {
             }
 
             this.database.exec('CREATE INDEX IF NOT EXISTS idx_messages_message_uuid ON messages(message_uuid)');
+            this.database.exec(`
+                CREATE TABLE IF NOT EXISTS operation_receipts (
+                    operation_id TEXT PRIMARY KEY,
+                    request_fingerprint TEXT NOT NULL,
+                    response_json TEXT NOT NULL,
+                    created_at INTEGER NOT NULL
+                )
+            `);
             if (addedMessageUuidColumn || storedVersion !== SQLITE_STORAGE_VERSION) {
                 const missingUuidRows = this.database.prepare(`
                     SELECT id, content
@@ -696,13 +715,84 @@ export function insertLogicalMessageAfter(db, messageId, message) {
  * @param {any[]} messages
  */
 export function setMessages(db, messages) {
-    db.run('BEGIN TRANSACTION');
+    const ownsTransaction = !db?.database?.inTransaction;
+    if (ownsTransaction) {
+        db.run('BEGIN TRANSACTION');
+    }
     try {
         setMessagesWithoutTransaction(db, messages);
-        db.run('COMMIT');
+        if (ownsTransaction) {
+            db.run('COMMIT');
+        }
     } catch (error) {
-        db.run('ROLLBACK');
+        if (ownsTransaction && db?.database?.inTransaction) {
+            db.run('ROLLBACK');
+        }
         throw error;
+    }
+}
+
+function getOperationRequestFingerprint(requestBody) {
+    return crypto.createHash('sha256').update(JSON.stringify(requestBody ?? {})).digest('hex');
+}
+
+/** Returns a persisted idempotency acknowledgement for an exact repeated operation. */
+export function getOperationReceipt(db, operationId, requestBody) {
+    const normalizedOperationId = String(operationId || '').trim();
+    if (!normalizedOperationId) {
+        return null;
+    }
+
+    const stmt = db.prepare('SELECT request_fingerprint, response_json FROM operation_receipts WHERE operation_id = ?');
+    stmt.bind([normalizedOperationId]);
+    try {
+        if (!stmt.step()) {
+            return null;
+        }
+        const [requestFingerprint, responseJson] = stmt.get();
+        if (requestFingerprint !== getOperationRequestFingerprint(requestBody)) {
+            const error = new Error('Operation UUID was reused with a different request payload.');
+            error.code = 'operation_id_reused';
+            throw error;
+        }
+        return JSON.parse(responseJson);
+    } finally {
+        stmt.free();
+    }
+}
+
+/** Records an operation acknowledgement in the caller's active mutation transaction. */
+export function recordOperationReceipt(db, operationId, requestBody, responseData) {
+    const normalizedOperationId = String(operationId || '').trim();
+    if (!normalizedOperationId) {
+        return;
+    }
+    if (!db?.database?.inTransaction) {
+        throw new Error('Operation receipts must be recorded inside the mutation transaction.');
+    }
+
+    const stmt = db.prepare(`
+        INSERT INTO operation_receipts (operation_id, request_fingerprint, response_json, created_at)
+        VALUES (?, ?, ?, ?)
+    `);
+    try {
+        stmt.run([
+            normalizedOperationId,
+            getOperationRequestFingerprint(requestBody),
+            JSON.stringify(responseData ?? {}),
+            Date.now(),
+        ]);
+        db.run(`
+            DELETE FROM operation_receipts
+            WHERE operation_id IN (
+                SELECT operation_id
+                FROM operation_receipts
+                ORDER BY created_at DESC
+                LIMIT -1 OFFSET ${MAX_OPERATION_RECEIPTS}
+            )
+        `);
+    } finally {
+        stmt.free();
     }
 }
 

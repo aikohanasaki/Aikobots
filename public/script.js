@@ -973,6 +973,7 @@ let chatSaveDirty = false;
 let chatSaveQueuePromise = null;
 let chatSaveQueueTimer = null;
 let chatSaveQueueRun = null;
+let chatRevisionOperationQueue = Promise.resolve();
 let chatSaveRequestOptions = {};
 let chatSaveStreamingAppendRetryTimer = null;
 let pendingStreamingSqliteAppend = null;
@@ -1715,6 +1716,83 @@ export function warnStaleChatSave(errorData) {
 
     toastr.warning(conflictMessage, t`Chat save conflict`);
     return { adoptedServerRevision: false, sameSessionStale: false, localRevision, submittedBaseRevision, serverRevision, lastSaveSessionId, currentSaveSessionId };
+}
+
+/**
+ * Serializes one revision-changing request and retries the same immutable operation after transport failures.
+ * The next operation is released only after an HTTP acknowledgement has supplied the expected revision.
+ */
+export function queueAcknowledgedChatRevisionRequest(requestFactory) {
+    const operationId = uuidv4();
+    const run = chatRevisionOperationQueue.then(async () => {
+        const baseRevision = getChatSaveRevision();
+        const request = requestFactory({ baseRevision, operationId });
+        const requestBody = structuredClone(request.body || {});
+        let retryDelay = CHAT_SAVE_REQUEST_RETRY_DELAY_MS;
+
+        for (;;) {
+            let response;
+            try {
+                response = await fetch(request.url, {
+                    method: request.method || 'POST',
+                    headers: request.headers || getRequestHeaders(),
+                    cache: request.cache || 'no-cache',
+                    body: JSON.stringify(requestBody),
+                });
+            } catch (error) {
+                console.warn('Chat operation acknowledgement was not received; retrying the same operation.', {
+                    operationId,
+                    baseRevision,
+                    error,
+                });
+                await delay(retryDelay);
+                retryDelay = Math.min(retryDelay * 2, 10_000);
+                continue;
+            }
+
+            let responseData = null;
+            try {
+                responseData = await response.json();
+            } catch {
+                // A successful revision-changing request must include a JSON acknowledgement.
+            }
+
+            if (response.ok) {
+                const acknowledgedRevision = Number(responseData?.chat_revision);
+                if (!Number.isInteger(acknowledgedRevision) || (acknowledgedRevision !== baseRevision && acknowledgedRevision !== baseRevision + 1)) {
+                    console.warn('Chat operation returned an invalid acknowledgement; retrying the same operation.', {
+                        operationId,
+                        baseRevision,
+                        acknowledgedRevision: responseData?.chat_revision,
+                    });
+                    await delay(retryDelay);
+                    retryDelay = Math.min(retryDelay * 2, 10_000);
+                    continue;
+                }
+                setChatSaveRevision(acknowledgedRevision);
+            } else if (response.status >= 500 || response.status === 408 || response.status === 425 || response.status === 429) {
+                console.warn('Chat operation received a retryable response; retrying the same operation.', {
+                    operationId,
+                    baseRevision,
+                    status: response.status,
+                });
+                await delay(retryDelay);
+                retryDelay = Math.min(retryDelay * 2, 10_000);
+                continue;
+            }
+
+            return {
+                response,
+                responseData: response.ok ? responseData : null,
+                errorData: response.ok ? null : responseData,
+                baseRevision,
+                operationId,
+            };
+        }
+    });
+
+    chatRevisionOperationQueue = run.catch(() => {});
+    return run;
 }
 
 function getSyncCurrentChatCooldownSeconds() {
@@ -6283,6 +6361,7 @@ export async function flushDebouncedChatSave() {
         const result = chatSaveQueuePromise
             ? await chatSaveQueuePromise
             : CHAT_SAVE_RESULT.SAVED;
+        await chatRevisionOperationQueue;
         await flushPendingSqliteMessageUpdateSave();
         return result;
     }
@@ -6290,6 +6369,7 @@ export async function flushDebouncedChatSave() {
     cancelDebouncedChatSave();
     toastr.info(t`Please wait until the chat is saved.`, t`Your chat is still saving...`);
     const result = await saveChatConditional({ immediate: true });
+    await chatRevisionOperationQueue;
     await flushPendingSqliteMessageUpdateSave();
 
     if (result !== CHAT_SAVE_RESULT.SAVED) {
@@ -12595,15 +12675,24 @@ export async function saveChat({ chatName, withMetadata, mesId, force = false, f
         loaded_range_start: savePayload.loadedRangeStart,
         loaded_range_end: savePayload.loadedRangeEnd,
         saved_message_count: savePayload.savedMessageCount,
-        ...(shouldTrackRevision ? {
-            base_revision: getChatSaveRevision(),
-            save_session_id: getChatSaveSessionId(),
-        } : {}),
+        ...(shouldTrackRevision ? { save_session_id: getChatSaveSessionId() } : {}),
         regenerate_identities: Boolean(chatName),
     };
 
     try {
-        const { response: result, responseData, errorData } = await fetchChatSaveWithRetry(requestBody);
+        const shouldQueueRevision = shouldTrackRevision && currentChatFileNameLooksSqlite();
+        const { response: result, responseData, errorData } = shouldQueueRevision
+            ? await queueAcknowledgedChatRevisionRequest(({ baseRevision, operationId }) => ({
+                url: '/api/chats/save',
+                body: {
+                    ...requestBody,
+                    base_revision: baseRevision,
+                    operation_id: operationId,
+                },
+            }))
+            : await fetchChatSaveWithRetry(shouldTrackRevision
+                ? { ...requestBody, base_revision: getChatSaveRevision() }
+                : requestBody);
         if (result.ok) {
             if (responseData?.storage_mode) {
                 chatLoadState.storageMode = String(responseData.storage_mode);
@@ -13906,7 +13995,6 @@ async function cloneEditedMessage() {
             message_uuid: target.session.messageUuid,
             text_override: text,
             bias_override: bias ?? null,
-            base_revision: getChatSaveRevision(),
             save_session_id: getChatSaveSessionId(),
             display_count: getConfiguredLongChatDisplayCount(),
         }
@@ -13934,21 +14022,16 @@ async function cloneEditedMessage() {
     }
 
     try {
-        const response = await fetch(endpoint, {
-            method: 'POST',
-            headers: getRequestHeaders(),
-            cache: 'no-cache',
-            body: JSON.stringify(body),
-        });
+        const { response, responseData: payload, errorData } = await queueAcknowledgedChatRevisionRequest(({ baseRevision, operationId }) => ({
+            url: endpoint,
+            body: {
+                ...body,
+                base_revision: baseRevision,
+                operation_id: operationId,
+            },
+        }));
 
         if (!response.ok) {
-            let errorData = null;
-            try {
-                errorData = await response.json();
-            } catch {
-                // Fall through to generic message below.
-            }
-
             if (errorData?.error === 'stale_revision') {
                 warnStaleChatSave(errorData);
                 await rollbackClone(insertAt);
@@ -13966,7 +14049,10 @@ async function cloneEditedMessage() {
             return;
         }
 
-        const payload = await response.json();
+        if (payload?.duplicate_operation) {
+            await reloadCurrentChat();
+            return;
+        }
         setLatestItemizedPrompt(null);
         await saveItemizedPrompts(getCurrentChatId());
 
@@ -14061,21 +14147,23 @@ async function saveSqliteMessageMutation(operation, fields, defaultErrorMessage 
     if (!endpoint) {
         return CHAT_SAVE_RESULT.FAILED;
     }
+    const ownerFields = getCurrentSqliteChatMutationOwnerFields();
 
     let response;
+    let responseData = null;
+    let errorData = null;
     try {
-        response = await fetch(endpoint, {
-            method: 'POST',
-            headers: getRequestHeaders(),
-            cache: 'no-cache',
-            body: JSON.stringify({
-                ...getCurrentSqliteChatMutationOwnerFields(),
+        ({ response, responseData, errorData } = await queueAcknowledgedChatRevisionRequest(({ baseRevision, operationId }) => ({
+            url: endpoint,
+            body: {
+                ...ownerFields,
                 ...fields,
-                base_revision: getChatSaveRevision(),
+                base_revision: baseRevision,
                 save_session_id: getChatSaveSessionId(),
+                operation_id: operationId,
                 display_count: getConfiguredLongChatDisplayCount(),
-            }),
-        });
+            },
+        })));
     } catch (error) {
         console.error('SQLite chat mutation failed', error);
         toastr.error(defaultErrorMessage);
@@ -14084,7 +14172,6 @@ async function saveSqliteMessageMutation(operation, fields, defaultErrorMessage 
 
     if (!response.ok) {
         try {
-            const errorData = await response.json();
             if (errorData?.error === 'stale_revision') {
                 const staleResult = warnStaleChatSave(errorData);
                 if (retrySameSessionStale && staleResult.sameSessionStale) {
@@ -14104,14 +14191,8 @@ async function saveSqliteMessageMutation(operation, fields, defaultErrorMessage 
         return CHAT_SAVE_RESULT.FAILED;
     }
 
-    try {
-        const responseData = await response.json();
-        if (responseData?.storageMode || responseData?.storage_mode) {
-            setCurrentChatStorageMode(responseData.storageMode || responseData.storage_mode);
-        }
-        setChatSaveRevision(responseData?.chat_revision);
-    } catch {
-        // Successful save without a JSON body: keep the previous revision.
+    if (responseData?.storageMode || responseData?.storage_mode) {
+        setCurrentChatStorageMode(responseData.storageMode || responseData.storage_mode);
     }
     return CHAT_SAVE_RESULT.SAVED;
 }
@@ -14213,7 +14294,7 @@ async function saveSqliteReplyMutation(replyResult) {
     return saveMessageUpdateByUuid(message);
 }
 
-function currentChatFileNameLooksSqlite() {
+export function currentChatFileNameLooksSqlite() {
     return chatLoadState.storageMode === 'sqlite';
 }
 
