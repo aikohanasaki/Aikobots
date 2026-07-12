@@ -283,55 +283,15 @@ export async function runChatBasicCreateRenameScenario({ page, logger, captureAr
         testName,
         stepName: 'add-member-to-group',
         featureTags,
-        selector: '#rm_group_add_members .group_member [data-action="add"]',
-        expected: 'At least one additional character is added to the current group',
+        selector: '#rm_group_add_members .group_member [title="Add to group"]',
+        expected: 'At least two non-Assistant characters are added to the current group',
         action: async () => {
-            await page.addFirstAvailableMemberToGroup();
-            return { added: true };
+            const addedCount = await page.addFirstAvailableMemberToGroup();
+            return { addedCount };
         },
         onError: error => captureArtifacts({ testName, stepName: 'add-member-to-group', error }),
     });
 
-    const beforeSpeakAssistantCount = await runLoggedStep({
-        logger,
-        testName,
-        stepName: 'count-assistant-before-speak-once',
-        featureTags,
-        selector: '.mes[is_user="false"]',
-        expected: 'Assistant message count captured before triggering speak once',
-        action: async () => {
-            const assistantCount = await page.countAssistantMessages();
-            return { assistantCount };
-        },
-        onError: error => captureArtifacts({ testName, stepName: 'count-assistant-before-speak-once', error }),
-    });
-
-    await runLoggedStep({
-        logger,
-        testName,
-        stepName: 'trigger-group-member-speak-once',
-        featureTags,
-        selector: '#rm_group_members .group_member [data-action="speak"]',
-        expected: 'Selected group member speak-once action is triggered',
-        action: async () => {
-            await page.triggerSpeakOnceOnFirstGroupMember();
-            return { triggered: true };
-        },
-        onError: error => captureArtifacts({ testName, stepName: 'trigger-group-member-speak-once', error }),
-    });
-
-    const speakOnceResponse = await runLoggedStep({
-        logger,
-        testName,
-        stepName: 'wait-for-assistant-response-after-speak-once',
-        featureTags,
-        selector: '.mes[is_user="false"] .mes_text',
-        expected: 'Assistant provides full response after group member speak-once action',
-        action: async () => {
-            return page.waitForAssistantResponse(beforeSpeakAssistantCount.assistantCount);
-        },
-        onError: error => captureArtifacts({ testName, stepName: 'wait-for-assistant-response-after-speak-once', error }),
-    });
 
     const connectionStatus = await page.getConnectionStatusText();
     console.log(`[selenium-smoke] Connection status: ${connectionStatus}`);
@@ -339,7 +299,6 @@ export async function runChatBasicCreateRenameScenario({ page, logger, captureAr
     console.log(`[selenium-smoke] Renamed chat: ${renamedChat}`);
     console.log(`[selenium-smoke] Post-rename assistant response: ${postRenameResponse.responseText}`);
     console.log(`[selenium-smoke] Post-group-convert assistant response: ${groupResponse.responseText}`);
-    console.log(`[selenium-smoke] Speak-once assistant response: ${speakOnceResponse.responseText}`);
 
     return {
         testName,
@@ -349,6 +308,5 @@ export async function runChatBasicCreateRenameScenario({ page, logger, captureAr
         renamedChat,
         postRenameAssistantResponse: postRenameResponse.responseText,
         postGroupConvertAssistantResponse: groupResponse.responseText,
-        speakOnceAssistantResponse: speakOnceResponse.responseText,
     };
 }

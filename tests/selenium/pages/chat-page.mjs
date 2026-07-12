@@ -128,12 +128,34 @@ export class ChatPage {
         }
 
         await this.driver.wait(until.elementLocated(By.css('dialog.popup[open]')), this.config.timeouts.stepMs);
-        const dialog = await this.driver.findElement(By.css('dialog.popup[open]'));
-        const input = await dialog.findElement(By.css('textarea.popup-input[data-result="1"]'));
-        await input.clear();
-        await input.sendKeys(newName);
+        await this.driver.wait(async () => {
+            return this.driver.executeScript(`
+                const input = document.querySelector('dialog.popup[open] textarea.popup-input[data-result="1"]');
+                if (!input) return false;
+                const style = getComputedStyle(input);
+                const visible = style.display !== 'none' && style.visibility !== 'hidden' && style.opacity !== '0';
+                return visible && !input.disabled;
+            `);
+        }, this.config.timeouts.stepMs);
 
-        const saveButton = await dialog.findElement(By.css('.popup-button-ok[data-result="1"]'));
+        const input = await this.driver.findElement(By.css('dialog.popup[open] textarea.popup-input[data-result="1"]'));
+
+        try {
+            await this.driver.executeScript('arguments[0].focus(); arguments[0].click();', input);
+            await input.clear();
+            await input.sendKeys(newName);
+        } catch {
+            await this.driver.executeScript(`
+                const input = arguments[0];
+                input.focus();
+                input.value = '';
+                input.dispatchEvent(new Event('input', { bubbles: true }));
+                input.value = arguments[1];
+                input.dispatchEvent(new Event('input', { bubbles: true }));
+            `, input, newName);
+        }
+
+        const saveButton = await this.driver.findElement(By.css('dialog.popup[open] .popup-button-ok[data-result="1"]'));
         await this.driver.executeScript('arguments[0].click();', saveButton);
     }
 
@@ -223,6 +245,8 @@ export class ChatPage {
     async addFirstAvailableMemberToGroup() {
         await this.openRightPanelGroupEditor();
 
+        const beforeGroupCount = await this.driver.findElements(By.css('#rm_group_members .group_member'));
+
         await this.clickElementById('groupAddMemberListToggle');
         await this.driver.wait(async () => {
             return this.driver.executeScript(`
@@ -232,17 +256,80 @@ export class ChatPage {
             `);
         }, this.config.timeouts.stepMs);
 
-        await this.driver.wait(until.elementLocated(By.css('#rm_group_add_members .group_member .right_menu_button.fa-solid.fa-2xl.fa-plus.interactable')), this.config.timeouts.responseMs);
-        const addButton = await this.driver.findElement(By.css('#rm_group_add_members .group_member .right_menu_button.fa-solid.fa-2xl.fa-plus.interactable'));
-        await this.driver.executeScript('arguments[0].click();', addButton);
+        await this.driver.wait(until.elementLocated(By.css('#rm_group_add_members .group_member [title="Add to group"][data-action="add"]')), this.config.timeouts.responseMs);
 
-        await this.driver.wait(until.elementLocated(By.css('#rm_group_members .group_member [data-action="speak"]')), this.config.timeouts.responseMs);
+        const candidateChids = await this.driver.executeScript(`
+            const rows = Array.from(document.querySelectorAll('#rm_group_add_members .group_member'));
+            return rows
+                .filter(row => {
+                    const name = (row.querySelector('.ch_name')?.textContent || '').trim();
+                    const addButton = row.querySelector('[title="Add to group"][data-action="add"]');
+                    return Boolean(addButton) && name && !/assistant/i.test(name);
+                })
+                .map(row => String(row.getAttribute('data-chid') || ''))
+                .filter(Boolean);
+        `);
+
+        if (candidateChids.length < 2) {
+            throw new Error(`Expected at least 2 non-Assistant add candidates, but found ${candidateChids.length}.`);
+        }
+
+        for (const chid of candidateChids.slice(0, 2)) {
+            const addButton = await this.driver.findElement(By.css(`#rm_group_add_members .group_member[data-chid="${chid}"] [title="Add to group"][data-action="add"]`));
+            await this.driver.executeScript('arguments[0].scrollIntoView({ block: "center", inline: "center" });', addButton);
+            try {
+                await addButton.click();
+            } catch {
+                await this.driver.executeScript('arguments[0].click();', addButton);
+            }
+        }
+
+        await this.driver.wait(async () => {
+            const rows = await this.driver.findElements(By.css('#rm_group_members .group_member'));
+            return rows.length >= beforeGroupCount.length + 2;
+        }, this.config.timeouts.responseMs);
+
+        return 2;
     }
 
-    async triggerSpeakOnceOnFirstGroupMember() {
+    async getGroupSpeakButtonCount() {
         await this.openRightPanelGroupEditor();
-        const speakButton = await this.driver.findElement(By.css('#rm_group_members .group_member [data-action="speak"]'));
-        await this.driver.executeScript('arguments[0].click();', speakButton);
+        const buttons = await this.driver.findElements(By.css('#rm_group_members .group_member .right_menu_button.fa-solid.fa-lg.fa-comment.interactable[data-action="speak"]'));
+        return buttons.length;
+    }
+
+    async triggerFirstGroupMemberChatButton() {
+        await this.openRightPanelGroupEditor();
+        const clicked = await this.driver.executeScript(`
+            const rows = Array.from(document.querySelectorAll('#rm_group_members .group_member'));
+            const targetRow = rows.find(row => {
+                const name = (row.querySelector('.ch_name')?.textContent || '').trim();
+                return name && !/assistant/i.test(name);
+            });
+            if (!targetRow) return false;
+
+            const button = targetRow.querySelector('[data-action="speak"][title="Trigger a message from this character"]')
+                || targetRow.querySelector('[data-action="speak"]');
+            if (!button) return false;
+
+            button.scrollIntoView({ block: 'center', inline: 'center' });
+            button.click();
+            return true;
+        `);
+
+        if (!clicked) {
+            throw new Error('No non-Assistant group member chat button available.');
+        }
+    }
+
+    async triggerSpeakOnceOnGroupMember(index) {
+        await this.openRightPanelGroupEditor();
+        const buttons = await this.driver.findElements(By.css('#rm_group_members .group_member .right_menu_button.fa-solid.fa-lg.fa-comment.interactable[data-action="speak"]'));
+        if (index < 0 || index >= buttons.length) {
+            throw new Error(`Speak button index out of range: ${index} (count=${buttons.length})`);
+        }
+
+        await this.driver.executeScript('arguments[0].click();', buttons[index]);
     }
 
     async importChatFixture(absoluteFixturePath) {
