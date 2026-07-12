@@ -2717,7 +2717,7 @@ function recordSqliteOperationReceipt(db, requestBody, revision) {
     recordOperationReceipt(db, operationId, requestBody, {
         result: 'ok',
         ok: true,
-        storageMode: 'sqlite',
+        storage_mode: 'sqlite',
         chat_revision: revision,
     });
 }

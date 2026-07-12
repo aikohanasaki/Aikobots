@@ -1227,7 +1227,12 @@ describe('SQLite chat length handling', () => {
 
             const logicalChat = await getLogicalChatData(chatPath);
             expect(first.chat_revision).toBe(2);
-            expect(retry).toMatchObject({ chat_revision: 2, duplicate_operation: true });
+            expect(retry).toMatchObject({
+                chat_revision: 2,
+                storage_mode: 'sqlite',
+                duplicate_operation: true,
+            });
+            expect(retry).not.toHaveProperty('storageMode');
             expect(logicalChat.filter(message => message.mes === 'retry-safe append')).toHaveLength(1);
         } finally {
             fs.rmSync(tempDir, { recursive: true, force: true });
