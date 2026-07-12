@@ -12,8 +12,13 @@ export class ChatPage {
         await this.driver.get(this.config.baseUrl);
         await this.driver.wait(until.elementLocated(By.id('top_chat_bar')), this.config.timeouts.stepMs);
         await this.driver.wait(async () => {
-            const hasPreloader = await this.driver.executeScript('return document.getElementById("preloader") !== null;');
-            return !hasPreloader;
+            return this.driver.executeScript(`
+                const preloader = document.getElementById('preloader');
+                if (!preloader) return true;
+                const hiddenByClass = preloader.classList.contains('loader-hidden');
+                const hiddenByStyle = getComputedStyle(preloader).display === 'none' || getComputedStyle(preloader).visibility === 'hidden';
+                return hiddenByClass || hiddenByStyle;
+            `);
         }, this.config.timeouts.pageLoadMs);
         await this.driver.wait(until.elementLocated(By.id('top_chat_bar_chat_name')), this.config.timeouts.stepMs);
     }
