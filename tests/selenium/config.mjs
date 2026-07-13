@@ -9,7 +9,12 @@ const __dirname = path.dirname(__filename);
 
 const localEnvPath = path.resolve(__dirname, '.env');
 if (fs.existsSync(localEnvPath)) {
-    dotenv.config({ path: localEnvPath });
+    const parsed = dotenv.parse(fs.readFileSync(localEnvPath));
+    for (const [key, value] of Object.entries(parsed)) {
+        if (process.env[key] === undefined) {
+            process.env[key] = value;
+        }
+    }
 } else {
     dotenv.config();
 }
