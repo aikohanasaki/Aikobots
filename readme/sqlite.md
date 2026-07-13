@@ -127,6 +127,16 @@ The first ordered row is the chat header. Logical messages follow it.
 
 This schema describes the current baseline. It does not yet enforce every target identity constraint.
 
+### Recent-chat activity
+
+SQLite chat metadata may contain `last_activity_at`, an epoch-millisecond timestamp used only to compile and order the welcome screen's Recent Chats list. It records the most recent successful committed change to the canonical message sequence or state.
+
+Qualifying changes are message append, edit, reorder, delete, truncate, clone, persisted swipe creation/edit/deletion/selection, and message visibility changes. Imports use import time. A copied, duplicated, or branched target uses its creation time without changing the source. A newly created empty chat receives no activity timestamp until its first message is persisted.
+
+Chat rename, chat-header metadata, persona or participant-history synchronization, group membership/configuration, opening a chat, pin changes, export, backup, migration, repair, compaction, and other maintenance do not update this value. Failed, rolled-back, no-op, and idempotently replayed mutations do not update it.
+
+Pinned and unpinned chats form separate display tiers; each tier sorts by `last_activity_at` descending. Legacy chats without the metadata value use their last persisted message timestamp without writing a migration value or consulting filesystem modification time. Chats with neither value are omitted until qualifying activity occurs.
+
 ## Message Identity
 
 Every logical message has two conceptually different identifiers:

@@ -978,6 +978,7 @@ let chatSaveQueueRun = null;
 let chatRevisionOperationQueue = Promise.resolve();
 let chatSaveRequestOptions = {};
 let chatSaveStreamingAppendRetryTimer = null;
+let chatSaveDeferredForSwipeGeneration = false;
 let pendingStreamingSqliteAppend = null;
 let temporaryCharacterChat = null;
 let temporaryGroupChat = null;
@@ -17602,6 +17603,10 @@ async function drainChatSaveQueue() {
     try {
         while (chatSaveDirty) {
             const options = chatSaveRequestOptions;
+            if (hasPendingSwipeGenerationSlot()) {
+                chatSaveDeferredForSwipeGeneration = true;
+                return finalResult;
+            }
             if (shouldDeferChatSaveForStreamingAppend(options)) {
                 scheduleChatSaveAfterStreamingAppend();
                 return finalResult;
@@ -17648,12 +17653,42 @@ function scheduleChatSaveAfterStreamingAppend() {
     }, CHAT_SAVE_STREAMING_APPEND_RETRY_MS);
 }
 
+/** Returns whether swipe generation is temporarily targeting the next uncreated slot. */
+function hasPendingSwipeGenerationSlot() {
+    return swipeState === SWIPE_STATE.SWIPING && chat.some(message => (
+        Array.isArray(message?.swipes)
+        && Number.isInteger(message.swipe_id)
+        && message.swipe_id === message.swipes.length
+    ));
+}
+
+/** Returns whether persistence must wait for an in-progress chat mutation to settle. */
 function shouldDeferChatSaveForStreamingAppend(options = {}) {
     if (!isPendingStreamingSqliteAppendActive()) {
         return false;
     }
 
     return options?.chatName === undefined && options?.mesId === undefined;
+}
+
+/** Restarts a save deferred while swipe generation was targeting its next slot. */
+function resumeChatSaveAfterSwipeGeneration() {
+    if (!chatSaveDeferredForSwipeGeneration) {
+        return;
+    }
+
+    chatSaveDeferredForSwipeGeneration = false;
+    const resumeSave = () => {
+        if (chatSaveDirty && !chatSaveQueuePromise) {
+            void saveChatConditional({ immediate: true });
+        }
+    };
+
+    if (chatSaveQueuePromise) {
+        void chatSaveQueuePromise.then(resumeSave, resumeSave);
+    } else {
+        resumeSave();
+    }
 }
 
 export async function saveChatConditional(options = {}) {
@@ -18575,6 +18610,7 @@ export async function swipe(event, direction, { source, repeated, message = chat
         swipeState = SWIPE_STATE.NONE;
         delete document.body.dataset.swiping;
         showSwipeButtons();
+        resumeChatSaveAfterSwipeGeneration();
     }
 
     async function standardSwipe(targetSwipeId) {
@@ -18835,6 +18871,7 @@ export async function swipe(event, direction, { source, repeated, message = chat
         swipeState = SWIPE_STATE.NONE;
         delete document.body.dataset.swiping;
         showSwipeButtons();
+        resumeChatSaveAfterSwipeGeneration();
     }
 }
 
