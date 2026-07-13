@@ -977,7 +977,8 @@ let chatSaveQueueTimer = null;
 let chatSaveQueueRun = null;
 let chatRevisionOperationQueue = Promise.resolve();
 let chatSaveRequestOptions = {};
-let chatSaveTransientStateRetryTimer = null;
+let chatSaveStreamingAppendRetryTimer = null;
+let chatSaveDeferredForSwipeGeneration = false;
 let pendingStreamingSqliteAppend = null;
 let temporaryCharacterChat = null;
 let temporaryGroupChat = null;
@@ -987,7 +988,7 @@ const CHAT_SAVE_RESULT = {
     MISSING_CHAT: 'missing_chat',
 };
 export { CHAT_SAVE_RESULT };
-const CHAT_SAVE_TRANSIENT_STATE_RETRY_MS = 250;
+const CHAT_SAVE_STREAMING_APPEND_RETRY_MS = 250;
 const CHAT_SAVE_REQUEST_RETRY_DELAY_MS = 750;
 const CHAT_SAVE_SESSION_ID_KEY = 'aikobots_chat_save_session_id';
 const TEMPORARY_CHAT_DISPLAY_NAME = '(Temporary Chat)';
@@ -17602,8 +17603,12 @@ async function drainChatSaveQueue() {
     try {
         while (chatSaveDirty) {
             const options = chatSaveRequestOptions;
-            if (shouldDeferChatSaveForTransientState(options)) {
-                scheduleChatSaveAfterTransientState();
+            if (hasPendingSwipeGenerationSlot()) {
+                chatSaveDeferredForSwipeGeneration = true;
+                return finalResult;
+            }
+            if (shouldDeferChatSaveForStreamingAppend(options)) {
+                scheduleChatSaveAfterStreamingAppend();
                 return finalResult;
             }
 
@@ -17635,17 +17640,17 @@ function cancelChatSaveQueueTimer() {
     }
 }
 
-function scheduleChatSaveAfterTransientState() {
-    if (chatSaveTransientStateRetryTimer) {
+function scheduleChatSaveAfterStreamingAppend() {
+    if (chatSaveStreamingAppendRetryTimer) {
         return;
     }
 
-    chatSaveTransientStateRetryTimer = setTimeout(() => {
-        chatSaveTransientStateRetryTimer = null;
+    chatSaveStreamingAppendRetryTimer = setTimeout(() => {
+        chatSaveStreamingAppendRetryTimer = null;
         if (chatSaveDirty && !chatSaveQueuePromise) {
             void saveChatConditional({ immediate: true });
         }
-    }, CHAT_SAVE_TRANSIENT_STATE_RETRY_MS);
+    }, CHAT_SAVE_STREAMING_APPEND_RETRY_MS);
 }
 
 /** Returns whether swipe generation is temporarily targeting the next uncreated slot. */
@@ -17658,10 +17663,32 @@ function hasPendingSwipeGenerationSlot() {
 }
 
 /** Returns whether persistence must wait for an in-progress chat mutation to settle. */
-function shouldDeferChatSaveForTransientState(options = {}) {
-    const isCurrentChatSave = options?.chatName === undefined && options?.mesId === undefined;
-    return hasPendingSwipeGenerationSlot()
-        || (isCurrentChatSave && isPendingStreamingSqliteAppendActive());
+function shouldDeferChatSaveForStreamingAppend(options = {}) {
+    if (!isPendingStreamingSqliteAppendActive()) {
+        return false;
+    }
+
+    return options?.chatName === undefined && options?.mesId === undefined;
+}
+
+/** Restarts a save deferred while swipe generation was targeting its next slot. */
+function resumeChatSaveAfterSwipeGeneration() {
+    if (!chatSaveDeferredForSwipeGeneration) {
+        return;
+    }
+
+    chatSaveDeferredForSwipeGeneration = false;
+    const resumeSave = () => {
+        if (chatSaveDirty && !chatSaveQueuePromise) {
+            void saveChatConditional({ immediate: true });
+        }
+    };
+
+    if (chatSaveQueuePromise) {
+        void chatSaveQueuePromise.then(resumeSave, resumeSave);
+    } else {
+        resumeSave();
+    }
 }
 
 export async function saveChatConditional(options = {}) {
@@ -18583,6 +18610,7 @@ export async function swipe(event, direction, { source, repeated, message = chat
         swipeState = SWIPE_STATE.NONE;
         delete document.body.dataset.swiping;
         showSwipeButtons();
+        resumeChatSaveAfterSwipeGeneration();
     }
 
     async function standardSwipe(targetSwipeId) {
@@ -18843,6 +18871,7 @@ export async function swipe(event, direction, { source, repeated, message = chat
         swipeState = SWIPE_STATE.NONE;
         delete document.body.dataset.swiping;
         showSwipeButtons();
+        resumeChatSaveAfterSwipeGeneration();
     }
 }
 
