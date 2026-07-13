@@ -1,4 +1,5 @@
 import fs from 'node:fs';
+import crypto from 'node:crypto';
 import path from 'node:path';
 import readline from 'node:readline';
 import process from 'node:process';
@@ -51,6 +52,7 @@ import {
     compareActiveSwipeState,
     isValidAikobotsUuid,
     normalizeChatIdentities,
+    repairPendingOverswipeState,
     regenerateChatIdentities,
     stripAikobotsIdentityMetadata,
     validateMessageSwipeState,
@@ -91,6 +93,8 @@ const CHAT_LAST_SAVE_SESSION_KEY = 'last_save_session_id';
 const CHAT_IDENTITY_REPAIR_ERROR = 'chat_repaired';
 const CHAT_IDENTITY_SCAN_METADATA_KEY = 'identity_scan_version';
 const CHAT_IDENTITY_SCAN_VERSION = '1';
+const CHAT_SWIPE_STATE_SCAN_METADATA_KEY = 'swipe_state_scan_version';
+const CHAT_SWIPE_STATE_SCAN_VERSION = '1';
 const CHAT_LAST_ACTIVITY_METADATA_KEY = 'last_activity_at';
 const GROUP_CHAT_HEADER_VERSION = 1;
 const CHAT_METADATA_STRIP_KEYS = ['timedWorldInfo', 'worldInfoSummary', 'worldInfoReport'];
@@ -1019,13 +1023,14 @@ function getAikobotsMessageUuid(message) {
  * @param {object} db Native SQLite chat database adapter
  * @param {string} sqlitePath
  * @param {object|null} header
- * @returns {{repaired: boolean, changedMessages: number, missingMessages: number, duplicateMessages: number, missingSwipes: number, duplicateSwipes: number}}
+ * @returns {{repaired: boolean, changedMessages: number, changedMessageIndexes: number[], missingMessages: number, duplicateMessages: number, missingSwipes: number, duplicateSwipes: number}}
  */
-function repairSqliteChatMessageIdentities(db, sqlitePath, header = null) {
+function repairSqliteChatMessageIdentitiesOnly(db, sqlitePath, header = null) {
     if (!hasModernSaveMetadata(header)) {
         return {
             repaired: false,
             changedMessages: 0,
+            changedMessageIndexes: [],
             missingMessages: 0,
             duplicateMessages: 0,
             missingSwipes: 0,
@@ -1037,6 +1042,7 @@ function repairSqliteChatMessageIdentities(db, sqlitePath, header = null) {
         return {
             repaired: false,
             changedMessages: 0,
+            changedMessageIndexes: [],
             missingMessages: 0,
             duplicateMessages: 0,
             missingSwipes: 0,
@@ -1050,6 +1056,7 @@ function repairSqliteChatMessageIdentities(db, sqlitePath, header = null) {
         return {
             repaired: false,
             changedMessages: 0,
+            changedMessageIndexes: [],
             missingMessages: 0,
             duplicateMessages: 0,
             missingSwipes: 0,
@@ -1064,6 +1071,7 @@ function repairSqliteChatMessageIdentities(db, sqlitePath, header = null) {
         return {
             repaired: false,
             changedMessages: 0,
+            changedMessageIndexes: [],
             missingMessages: 0,
             duplicateMessages: 0,
             missingSwipes: 0,
@@ -1095,10 +1103,76 @@ function repairSqliteChatMessageIdentities(db, sqlitePath, header = null) {
     return {
         repaired: true,
         changedMessages: changedMessageIndexes.size,
+        changedMessageIndexes: [...changedMessageIndexes],
         missingMessages: identityResult.missingMessageIndexes.length,
         duplicateMessages: identityResult.duplicateMessageIndexes.length,
         missingSwipes: identityResult.missingSwipeRefs.length,
         duplicateSwipes: identityResult.duplicateSwipeRefs.length,
+    };
+}
+
+/**
+ * Repairs the exact one-past-the-end swipe sentinel persisted by interrupted legacy overswipes.
+ * Messages are updated individually and only after the existing active-swipe validator accepts
+ * the final materialized swipe as a complete, internally consistent state.
+ * @param {object} db Native SQLite chat database adapter.
+ * @param {string} sqlitePath SQLite chat path for diagnostics.
+ * @param {object|null} header Chat header.
+ * @returns {{repaired: boolean, changedMessages: number, changedMessageIndexes: number[], repairedSwipeStates: number}}
+ */
+function repairSqlitePendingOverswipeStates(db, sqlitePath, header = null) {
+    if (!hasModernSaveMetadata(header) || getMetadata(db, CHAT_SWIPE_STATE_SCAN_METADATA_KEY) === CHAT_SWIPE_STATE_SCAN_VERSION) {
+        return { repaired: false, changedMessages: 0, changedMessageIndexes: [], repairedSwipeStates: 0 };
+    }
+
+    const totalMessages = getMessageCount(db);
+    const messages = totalMessages > 0 ? getMessageRange(db, 0, totalMessages) : [];
+    const repairedIndexes = [];
+    for (let messageIndex = 0; messageIndex < messages.length; messageIndex++) {
+        const result = repairPendingOverswipeState(messages[messageIndex], { logicalChatIndex: messageIndex });
+        if (!result.repaired) {
+            continue;
+        }
+
+        updateMessages(db, [sanitizeChatMessageForPersistence(messages[messageIndex])], messageIndex + 1);
+        repairedIndexes.push(messageIndex);
+    }
+
+    setMetadata(db, CHAT_SWIPE_STATE_SCAN_METADATA_KEY, CHAT_SWIPE_STATE_SCAN_VERSION);
+    saveDb(db, sqlitePath);
+
+    if (repairedIndexes.length > 0) {
+        console.info('[SQLite] Repaired interrupted overswipe message state.', {
+            filePath: sqlitePath,
+            totalMessages,
+            changedMessages: repairedIndexes.length,
+            repairedSwipeStates: repairedIndexes.length,
+            messageIndexes: repairedIndexes,
+        });
+    }
+
+    return {
+        repaired: repairedIndexes.length > 0,
+        changedMessages: repairedIndexes.length,
+        changedMessageIndexes: repairedIndexes,
+        repairedSwipeStates: repairedIndexes.length,
+    };
+}
+
+/** Repairs known deterministic SQLite message identity and interrupted-overswipe states. */
+function repairSqliteChatMessageIdentities(db, sqlitePath, header = null) {
+    const identityRepair = repairSqliteChatMessageIdentitiesOnly(db, sqlitePath, header);
+    const swipeRepair = repairSqlitePendingOverswipeStates(db, sqlitePath, header);
+    const changedMessageIndexes = new Set([
+        ...identityRepair.changedMessageIndexes,
+        ...swipeRepair.changedMessageIndexes,
+    ]);
+    return {
+        ...identityRepair,
+        repaired: identityRepair.repaired || swipeRepair.repaired,
+        changedMessages: changedMessageIndexes.size,
+        changedMessageIndexes: [...changedMessageIndexes],
+        repairedSwipeStates: swipeRepair.repairedSwipeStates,
     };
 }
 
@@ -2893,6 +2967,99 @@ function updateSqliteHeaderRow(db, header) {
     }
 }
 
+/**
+ * Replaces chat-header metadata without reading or rewriting message rows.
+ */
+export async function updateSqliteChatMetadata({ filePath, requestBody, chatMetadata, saveSessionId, assertMutationAllowed = null, route = '/api/chats/metadata' }) {
+    if (!_.isPlainObject(chatMetadata)) {
+        throw new ChatMutationError(400, 'invalid_chat_metadata');
+    }
+
+    const sqlitePath = replaceChatStorageExtension(filePath, '.sqlite');
+    if (!fs.existsSync(sqlitePath)) {
+        throw new ChatMutationError(404, 'chat_not_found');
+    }
+
+    const db = await loadDb(sqlitePath);
+    try {
+        const operationId = requireRequestOperationId(requestBody);
+        const repeatedReceipt = getRepeatedSqliteOperationReceipt(db, requestBody);
+        const header = getChatHeader(db);
+        if (!header) {
+            throw new ChatMutationError(404, 'chat_not_found');
+        }
+        assertSupportedChatStorage(header);
+
+        const currentRevision = getChatRevision(header);
+        if (repeatedReceipt) {
+            logChatRevisionDecision({ filePath, route, operationType: 'chat_metadata', operationId, saveSessionId, receiptFound: true, submittedBaseRevision: requestBody.base_revision, authoritativeRevisionBefore: currentRevision, authoritativeRevisionAfter: currentRevision, decision: 'replayed' });
+            return repeatedReceipt;
+        }
+
+        const revisionCheck = requireLoggedChatMutationRequest(requestBody, header, { filePath, route, operationType: 'chat_metadata', operationId, saveSessionId });
+        const sanitizedMetadata = stripPersistedChatMetadata(chatMetadata);
+        const currentMetadata = stripPersistedChatMetadata(header.chat_metadata || {});
+        const totalMessages = getMessageCount(db);
+
+        if (_.isEqual(currentMetadata, sanitizedMetadata)) {
+            const payload = {
+                result: 'ok',
+                ok: true,
+                operation_id: operationId,
+                status: 'noop',
+                changed: 0,
+                chat_revision: revisionCheck.currentRevision,
+                storage_mode: 'sqlite',
+            };
+            db.run('BEGIN TRANSACTION');
+            try {
+                recordSqliteOperationReceipt(db, requestBody, revisionCheck.currentRevision, payload);
+                db.run('COMMIT');
+            } catch (error) {
+                db.run('ROLLBACK');
+                throw error;
+            }
+            saveDb(db, sqlitePath);
+            logChatRevisionDecision({ filePath, route, operationType: 'chat_metadata', operationId, saveSessionId, receiptFound: false, submittedBaseRevision: requestBody.base_revision, authoritativeRevisionBefore: currentRevision, authoritativeRevisionAfter: currentRevision, decision: 'noop' });
+            return payload;
+        }
+
+        if (typeof assertMutationAllowed === 'function') {
+            await assertMutationAllowed();
+        }
+
+        const revisedHeader = setChatRevision({
+            ...stripChatStorage(header),
+            chat_metadata: sanitizedMetadata,
+        }, revisionCheck.nextRevision, saveSessionId);
+        db.run('BEGIN TRANSACTION');
+        try {
+            updateSqliteHeaderRow(db, revisedHeader);
+            recordSqliteOperationReceipt(db, requestBody, revisionCheck.nextRevision, { operation_id: operationId, status: 'applied', changed: 1 });
+            db.run('COMMIT');
+        } catch (error) {
+            db.run('ROLLBACK');
+            throw error;
+        }
+
+        saveDb(db, sqlitePath);
+        const payload = {
+            result: 'ok',
+            ok: true,
+            operation_id: operationId,
+            status: 'applied',
+            changed: 1,
+            chat_revision: revisionCheck.nextRevision,
+            storage_mode: 'sqlite',
+            totalMessages,
+        };
+        logChatRevisionDecision({ filePath, route, operationType: 'chat_metadata', operationId, saveSessionId, receiptFound: false, submittedBaseRevision: requestBody.base_revision, authoritativeRevisionBefore: currentRevision, authoritativeRevisionAfter: revisionCheck.nextRevision, decision: 'applied' });
+        return payload;
+    } finally {
+        db.close();
+    }
+}
+
 function applyMessageUpdatePayload(existingMessage, requestBody) {
     if (!_.isPlainObject(requestBody?.message)) {
         throw new ChatMutationError(400, 'invalid_message_payload');
@@ -3805,8 +3972,20 @@ function writeChatBackup(directory, name, chat, { skipThrottle = false, label = 
     return backupFile;
 }
 
-/** Creates the mandatory JSONL recovery point before a force push overwrites server chat data. */
-async function backupPreForcePushServerChat(user, filePath, name) {
+/**
+ * Creates a mandatory JSONL recovery point before a destructive chat operation.
+ * @param {object} user Authenticated user context
+ * @param {string} filePath Canonical chat path
+ * @param {string} name Backup owner name
+ * @param {{label:string,errorCode:string,errorMessage:string,operationName:string}} options Backup and error labels
+ * @returns {Promise<void>}
+ */
+async function backupServerChatBeforeDestructiveOperation(user, filePath, name, {
+    label,
+    errorCode,
+    errorMessage,
+    operationName,
+}) {
     try {
         const serverChat = await getLogicalChatData(filePath);
         if (!Array.isArray(serverChat) || serverChat.length === 0) {
@@ -3815,12 +3994,38 @@ async function backupPreForcePushServerChat(user, filePath, name) {
 
         writeChatBackup(user.directories.backups, name, serializeJsonl(serverChat), {
             skipThrottle: true,
-            label: 'force_push_pre_server',
+            label,
         });
     } catch (error) {
-        console.error(`Could not create pre-force-push chat backup for ${name}`, error);
-        throw new ChatMutationError(500, 'force_push_backup_failed', 'Could not create a JSONL backup of the server chat. Server copy was not overwritten.');
+        console.error(`Could not create ${operationName} chat backup for ${name}`, error);
+        throw new ChatMutationError(500, errorCode, errorMessage);
     }
+}
+
+/** Creates the mandatory JSONL recovery point before a force push overwrites server chat data. */
+async function backupPreForcePushServerChat(user, filePath, name) {
+    return await backupServerChatBeforeDestructiveOperation(user, filePath, name, {
+        label: 'force_push_pre_server',
+        errorCode: 'force_push_backup_failed',
+        errorMessage: 'Could not create a JSONL backup of the server chat. Server copy was not overwritten.',
+        operationName: 'pre-force-push',
+    });
+}
+
+/**
+ * Creates the mandatory JSONL recovery point before deleting a chat.
+ * @param {object} user Authenticated user context
+ * @param {string} filePath Canonical chat path
+ * @param {string} name Backup owner name
+ * @returns {Promise<void>}
+ */
+export async function backupChatBeforeDelete(user, filePath, name) {
+    return await backupServerChatBeforeDestructiveOperation(user, filePath, name, {
+        label: 'pre_delete',
+        errorCode: 'delete_backup_failed',
+        errorMessage: 'Could not create a JSONL backup of the chat. The chat was not deleted.',
+        operationName: 'pre-delete',
+    });
 }
 
 /**
@@ -4448,6 +4653,87 @@ router.post('/regenerate-prepare', validateAvatarUrlMiddleware, async function (
     }
 });
 
+router.post('/metadata', validateAvatarUrlMiddleware, async function (request, response) {
+    try {
+        const fileName = String(request.body?.file_name || '').trim();
+        if (!fileName || !_.isPlainObject(request.body?.chat_metadata)) {
+            return response.status(400).send({ error: 'invalid_chat_metadata' });
+        }
+
+        const filePath = resolveCharacterChatFilePath(request.user.directories.chats, request.body.avatar_url, fileName);
+        if (!fs.existsSync(replaceChatStorageExtension(filePath, '.sqlite'))) {
+            return response.status(404).send({ error: 'chat_not_found' });
+        }
+
+        return await withChatSaveLock(filePath, async () => {
+            const payload = await updateSqliteChatMetadata({
+                filePath,
+                requestBody: request.body,
+                chatMetadata: request.body.chat_metadata,
+                saveSessionId: getRequestSaveSessionId(request.body),
+                assertMutationAllowed: () => request.activeSessionOperation?.assertAllowed(),
+            });
+            return response.send(payload);
+        });
+    } catch (error) {
+        if (isActiveSessionError(error)) {
+            return sendActiveSessionRequired(response);
+        }
+        if (isUnsupportedSplitTailChatError(error)) {
+            return sendUnsupportedSplitTailChatError(response, error);
+        }
+        if (isChatPathValidationError(error)) {
+            return sendChatPathValidationError(response, error);
+        }
+        if (error instanceof ChatMutationError) {
+            return response.status(error.status || 400).send({ error: error.error, message: error.message, ...error.details });
+        }
+        console.error(error);
+        return response.status(500).send({ error: 'chat_metadata_update_failed' });
+    }
+});
+
+router.post('/group/metadata', async function (request, response) {
+    try {
+        const chatId = String(request.body?.id || '').trim();
+        if (!chatId || !_.isPlainObject(request.body?.chat_metadata)) {
+            return response.status(400).send({ error: 'invalid_chat_metadata' });
+        }
+
+        const filePath = getGroupChatFilePath(request.user.directories.groupChats, chatId);
+        if (!fs.existsSync(replaceChatStorageExtension(filePath, '.sqlite'))) {
+            return response.status(404).send({ error: 'chat_not_found' });
+        }
+
+        return await withChatSaveLock(filePath, async () => {
+            const payload = await updateSqliteChatMetadata({
+                filePath,
+                requestBody: request.body,
+                chatMetadata: request.body.chat_metadata,
+                saveSessionId: getRequestSaveSessionId(request.body),
+                assertMutationAllowed: () => request.activeSessionOperation?.assertAllowed(),
+                route: '/api/chats/group/metadata',
+            });
+            return response.send(payload);
+        });
+    } catch (error) {
+        if (isActiveSessionError(error)) {
+            return sendActiveSessionRequired(response);
+        }
+        if (isUnsupportedSplitTailChatError(error)) {
+            return sendUnsupportedSplitTailChatError(response, error);
+        }
+        if (isChatPathValidationError(error)) {
+            return sendChatPathValidationError(response, error);
+        }
+        if (error instanceof ChatMutationError) {
+            return response.status(error.status || 400).send({ error: error.error, message: error.message, ...error.details });
+        }
+        console.error(error);
+        return response.status(500).send({ error: 'group_chat_metadata_update_failed' });
+    }
+});
+
 router.post('/message-visibility', validateAvatarUrlMiddleware, async function (request, response) {
     try {
         const directoryName = normalizeCharacterChatDirectoryName(request.body.avatar_url);
@@ -5023,6 +5309,7 @@ router.post('/rename', validateAvatarUrlMiddleware, async function (request, res
 
 router.post('/delete', validateAvatarUrlMiddleware, async function (request, response) {
     try {
+        const directoryName = normalizeCharacterChatDirectoryName(request.body.avatar_url);
         const filePath = resolveCharacterChatFilePath(request.user.directories.chats, request.body.avatar_url, request.body.chatfile);
 
         return await withChatSaveLock(filePath, async () => {
@@ -5034,6 +5321,9 @@ router.post('/delete', validateAvatarUrlMiddleware, async function (request, res
             const segments = await getChatSegments(filePath, { metadataOnly: fs.existsSync(replaceChatStorageExtension(filePath, '.sqlite')) });
             requireChatMutationRequest(request.body, segments.header);
             await request.activeSessionOperation?.assertAllowed();
+            if (request.body.backup_before_delete === true) {
+                await backupChatBeforeDelete(request.user, filePath, directoryName);
+            }
 
             deleteChatStorageCompanions(filePath);
             console.info(`Deleted chat file: ${filePath}`);
@@ -5531,6 +5821,10 @@ router.post('/group/delete', async (request, response) => {
                 const segments = await getChatSegments(pathToFile, { metadataOnly: fs.existsSync(replaceChatStorageExtension(pathToFile, '.sqlite')) });
                 requireChatMutationRequest(request.body, segments.header);
                 await request.activeSessionOperation?.assertAllowed();
+                if (request.body.backup_before_delete === true) {
+                    const backupOwnerKey = getVerifiedGroupBackupOwnerKey(request.user, id, request.body.group_id);
+                    await backupChatBeforeDelete(request.user, pathToFile, backupOwnerKey);
+                }
 
                 deleteChatStorageCompanions(pathToFile);
                 return response.send({ ok: true });

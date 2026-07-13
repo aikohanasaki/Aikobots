@@ -1,6 +1,6 @@
 import { Fuse } from '../lib.js';
 
-import { saveSettings, substituteParams, getRequestHeaders, chat, chat_metadata, this_chid, characters, markCharacterEditorDirty, menu_type, eventSource, event_types, saveMetadata, getCurrentChatId, extension_prompt_roles, create_save, name1, canEditCharacterMetadata } from '../script.js';
+import { saveSettings, substituteParams, getRequestHeaders, chat, chat_metadata, this_chid, characters, markCharacterEditorDirty, menu_type, eventSource, event_types, saveMetadata, getCurrentChatId, extension_prompt_roles, create_save, name1, canEditCharacterMetadata, CHAT_SAVE_RESULT } from '../script.js';
 import { download, debounce, delay, initScrollHeight, resetScrollHeight, parseJsonFile, extractDataFromPng, getFileBuffer, getCharaFilename, getSortableDelay, PAGINATION_TEMPLATE, navigation_option, waitUntilCondition, isTrueBoolean, setValueByPath, flashHighlight, select2ModifyOptions, getSelect2OptionId, dynamicSelect2DataViaAjax, highlightRegex, select2ChoiceClickSubscribe, isFalseBoolean, getSanitizedFilename, checkOverwriteExistingData, parseStringArray, cancelDebounce, findChar, onlyUnique, equalsIgnoreCaseAndAccents, uuidv4, normalizeArray, getUniqueName } from './utils.js';
 import { getContext, writeExtensionField } from './extensions.js';
 import { isMobile } from './RossAscends-mods.js';
@@ -27,6 +27,12 @@ import {
     getStloSettingsFromLorebook,
     setStloSettingsOnLorebook,
 } from './stlo-utils.js';
+import {
+    DEFAULT_WORLD_INFO_SORT_ORDER,
+    getWorldInfoSortOrder,
+    normalizeWorldInfoSortOrder,
+    SEARCH_WORLD_INFO_SORT_ORDER,
+} from './world-info-sort-order.js';
 
 export const world_info_logic = {
     AND_ANY: 0,
@@ -79,6 +85,7 @@ const saveSettingsDebounced = debounce(() => {
     saveSettings();
 }, debounce_timeout.relaxed);
 let updateEditor = (navigation, flashOnNav = true) => { console.debug('Triggered WI navigation', navigation, flashOnNav); };
+let updateWorldInfoSortOrder = async () => {};
 
 // Do not optimize. updateEditor is a function that is updated by the displayWorldEntries with new data.
 export const worldInfoFilter = new FilterHelper(() => updateEditor());
@@ -1578,7 +1585,7 @@ export function setWorldInfoSettings(settings, data) {
 
     refreshWorldInfoSelectors();
 
-    $('#world_info_sort_order').val(accountStorage.getItem(SORT_ORDER_KEY) || '0');
+    $('#world_info_sort_order').val(getWorldInfoSortOrder(null, accountStorage.getItem(SORT_ORDER_KEY)));
     $('#world_info').trigger('change');
     $('#world_editor_select').trigger('change');
     initWorldInfoFloatingBook();
@@ -3907,6 +3914,40 @@ export async function updateWorldInfoList() {
     }
 }
 
+/**
+ * Persists a lorebook display sort without sending a stale full-book snapshot.
+ * @param {string} name Lorebook name
+ * @param {string} sortOrder Persistent sort option
+ * @returns {Promise<{data: object, metadata: object|null, sortOrder: string}>} Updated lorebook state
+ */
+async function saveWorldInfoSortOrder(name, sortOrder) {
+    const response = await fetch('/api/worldinfo/sort-order', {
+        method: 'POST',
+        headers: getRequestHeaders(),
+        body: JSON.stringify({ name, storage: getLorebookStorageForRequest(name), sortOrder }),
+    });
+
+    if (!response.ok) {
+        const error = await response.json().catch(() => null);
+        const message = error?.error?.message || t`Could not save lorebook sort order.`;
+        toastr.error(message, t`World Info`);
+        throw new Error(message);
+    }
+
+    const result = await response.json();
+    if (!result?.data || typeof result.data !== 'object' || Array.isArray(result.data) || !result.data.entries) {
+        const message = t`Lorebook sort order was saved, but the updated lorebook data was invalid.`;
+        toastr.error(message, t`World Info`);
+        throw new Error(message);
+    }
+
+    return {
+        data: result.data,
+        metadata: result?.metadata && typeof result.metadata === 'object' ? result.metadata : null,
+        sortOrder: String(result.sortOrder),
+    };
+}
+
 async function hideWorldEditor() {
     await displayWorldEntries(null, null);
 }
@@ -4146,6 +4187,7 @@ async function displayWorldEntries(name, data, navigation = navigation_option.no
     const isReadOnlySharedLorebook = isSharedLorebookReadOnly(lorebook);
 
     if (!data || !('entries' in data)) {
+        updateWorldInfoSortOrder = async () => {};
         $('#world_popup_new').off('click').on('click', nullWorldInfo);
         $('#world_bulk_move_mode').off('click').removeClass('world_bulk_move_active').on('click', nullWorldInfo);
         $('#world_bulk_move_apply').off('click').hide();
@@ -4165,6 +4207,27 @@ async function displayWorldEntries(name, data, navigation = navigation_option.no
         $('#world_info_pagination').html('');
         return;
     }
+
+    updateWorldInfoSortOrder = async (sortOrder) => {
+        try {
+            const result = await saveWorldInfoSortOrder(name, sortOrder);
+            data = result.data;
+            worldInfoCache.set(name, data);
+            setPersistedWorldInfoSnapshot(name, data);
+            if (result.metadata) {
+                upsertWorldInfoItem(result.metadata);
+            }
+            await eventSource.emit(event_types.WORLDINFO_UPDATED, name, data);
+
+            if (loadToken === worldEditorLoadToken) {
+                await displayWorldEntries(name, data, navigation_option.none, true, loadToken);
+            }
+        } catch {
+            if (loadToken === worldEditorLoadToken) {
+                verifyWorldInfoSearchSortRule(data);
+            }
+        }
+    };
 
     // Regardless of whether success is displayed or not. Make sure the delete button is available.
     // Do not put this code behind.
@@ -4189,7 +4252,7 @@ async function displayWorldEntries(name, data, navigation = navigation_option.no
     });
 
     // Before printing the WI, we check if we should enable/disable search sorting
-    verifyWorldInfoSearchSortRule();
+    verifyWorldInfoSearchSortRule(data);
 
     function getDataArray(callback) {
         // Convert the data.entries object into an array
@@ -4599,24 +4662,31 @@ export const originalWIDataKeyMap = {
     'activationOnly': 'extensions.activation_only',
 };
 
-/** Checks the state of the current search, and adds/removes the search sorting option accordingly */
-function verifyWorldInfoSearchSortRule() {
+/**
+ * Checks the current search state and restores the lorebook's persistent sorting when search is inactive.
+ * @param {object|null} data Current lorebook JSON data
+ */
+function verifyWorldInfoSearchSortRule(data) {
     const searchTerm = worldInfoFilter.getFilterData(FILTER_TYPES.WORLD_INFO_SEARCH);
     const searchOption = $('#world_info_sort_order option[data-rule="search"]');
     const selector = $('#world_info_sort_order');
     const isHidden = searchOption.attr('hidden') !== undefined;
 
     // If we have a search term, we are displaying the sorting option for it
-    if (searchTerm && isHidden) {
-        searchOption.removeAttr('hidden');
-        selector.val(searchOption.attr('value') || '0');
-        flashHighlight(selector);
+    if (searchTerm) {
+        if (isHidden) {
+            searchOption.removeAttr('hidden');
+            flashHighlight(selector);
+        }
+        selector.val(SEARCH_WORLD_INFO_SORT_ORDER);
+        return;
     }
-    // If search got cleared, we make sure to hide the option and go back to the one before
-    if (!searchTerm && !isHidden) {
+
+    // If search got cleared, hide the temporary option and restore this lorebook's choice.
+    if (!isHidden) {
         searchOption.attr('hidden', '');
-        selector.val(accountStorage.getItem(SORT_ORDER_KEY) || '0');
     }
+    selector.val(getWorldInfoSortOrder(data, accountStorage.getItem(SORT_ORDER_KEY)));
 }
 
 /**
@@ -7638,8 +7708,10 @@ export async function assignLorebookToChat(event) {
         worldSelect.append(option);
     }
 
-    worldSelect.on('change', function () {
+    let persistedName = selectedName;
+    worldSelect.on('change', async function () {
         const worldName = $(this).val();
+        worldSelect.prop('disabled', true);
 
         if (worldName) {
             chat_metadata[METADATA_KEY] = worldName;
@@ -7649,7 +7721,22 @@ export async function assignLorebookToChat(event) {
             $('.chat_lorebook_button').removeClass('world_set');
         }
 
-        saveMetadata();
+        try {
+            const saveResult = await saveMetadata();
+            if (saveResult !== CHAT_SAVE_RESULT.SAVED) {
+                if (persistedName) {
+                    chat_metadata[METADATA_KEY] = persistedName;
+                } else {
+                    delete chat_metadata[METADATA_KEY];
+                }
+                worldSelect.val(persistedName || '');
+                $('.chat_lorebook_button').toggleClass('world_set', Boolean(persistedName));
+            } else {
+                persistedName = worldName;
+            }
+        } finally {
+            worldSelect.prop('disabled', false);
+        }
     });
 
     await callGenericPopup(template, POPUP_TYPE.TEXT);
@@ -8220,11 +8307,24 @@ export function initWorldInfo() {
         updateEditor(navigation_option.previous);
     });
 
-    $('#world_info_sort_order').on('change', function () {
-        const value = String($(this).find(':selected').val());
-        // Save sort order, but do not save search sorting, as this is a temporary sorting option
-        if (value !== 'search') accountStorage.setItem(SORT_ORDER_KEY, value);
-        updateEditor(navigation_option.none);
+    $('#world_info_sort_order').on('change', async function () {
+        const option = $(this).find(':selected');
+        if (option.data('rule') === 'search') {
+            return;
+        }
+
+        const value = normalizeWorldInfoSortOrder(option.val());
+        if (value === null) {
+            $(this).val(DEFAULT_WORLD_INFO_SORT_ORDER);
+            return;
+        }
+
+        $(this).prop('disabled', true);
+        try {
+            await updateWorldInfoSortOrder(value);
+        } finally {
+            $(this).prop('disabled', false);
+        }
     });
 
     $(document).on('click', '.chat_lorebook_button', assignLorebookToChat);

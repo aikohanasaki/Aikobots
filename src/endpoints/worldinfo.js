@@ -29,6 +29,7 @@ import {
     saveLorebookForManagement,
     unshareLorebook,
     updateSharedLorebookOwners,
+    withLorebookManagementTransaction,
 } from '../lorebook-repository.js';
 import { getAllEnabledUsers, getAllUserHandles, requireAdminMiddleware } from '../users.js';
 import {
@@ -38,6 +39,10 @@ import {
     normalizeStloBudgetValue,
     normalizeStloSettings,
 } from '../../public/scripts/stlo-utils.js';
+import {
+    normalizeWorldInfoSortOrder,
+    setWorldInfoSortOrder,
+} from '../../public/scripts/world-info-sort-order.js';
 
 export const readWorldInfoFile = readUserWorldInfoFile;
 
@@ -530,6 +535,45 @@ function sendLorebookError(response, error) {
     });
 }
 
+/**
+ * Updates only the display sort metadata on the latest persisted lorebook data.
+ * @param {import('../users.js').User} user Acting user
+ * @param {object} body Request body
+ * @param {object} [dependencies={}] Injectable repository operations for tests
+ * @returns {Promise<{data: object, metadata: object, sortOrder: string}>} Updated lorebook state
+ */
+export async function updateWorldInfoSortOrder(user, body = {}, dependencies = {}) {
+    const name = String(body?.name || '');
+    const storage = body?.storage || null;
+    const sortOrder = normalizeWorldInfoSortOrder(body?.sortOrder);
+    if (!name) {
+        throw new LorebookRepositoryError('LorebookInvalidName', 'World file must have a name.', 400);
+    }
+    if (storage !== null && storage !== 'user' && storage !== 'secure') {
+        throw new LorebookRepositoryError('LorebookStorageInvalid', 'Lorebook storage must be user or secure.', 400);
+    }
+    if (sortOrder === null) {
+        throw new LorebookRepositoryError('LorebookSortOrderInvalid', 'Lorebook sort order is invalid.', 400);
+    }
+
+    const getLorebook = dependencies.getLorebookForManagement || getLorebookForManagement;
+    const withTransaction = dependencies.withLorebookManagementTransaction || withLorebookManagementTransaction;
+
+    return await withTransaction(async transaction => {
+        const loaded = await getLorebook(user, name, false, storage);
+        const data = structuredClone(loaded.data);
+
+        try {
+            setWorldInfoSortOrder(data, sortOrder);
+        } catch (error) {
+            throw new LorebookRepositoryError('LorebookInvalidData', error.message, 400);
+        }
+
+        const metadata = await transaction.save(user, loaded.metadata.name, data, loaded.metadata.storage);
+        return { data, metadata, sortOrder };
+    });
+}
+
 function getTimedWorldInfoReplayGenerationBoundary(message) {
     const promptSnapshotKey = message?.extra?.promptSnapshotKey;
     if (typeof promptSnapshotKey === 'string' && promptSnapshotKey) {
@@ -756,6 +800,15 @@ router.post('/edit', async (request, response) => {
             shadowingSecure: Boolean(metadata.shadowingSecure),
             metadata,
         });
+    } catch (error) {
+        return sendLorebookError(response, error);
+    }
+});
+
+router.post('/sort-order', async (request, response) => {
+    try {
+        const result = await updateWorldInfoSortOrder(request.user, request.body);
+        return response.send({ ok: true, ...result });
     } catch (error) {
         return sendLorebookError(response, error);
     }

@@ -32,6 +32,93 @@ function isObject(value) {
     return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
 }
 
+/**
+ * Validates that a pending swipe generation still owns either the next unmaterialized
+ * slot or the materialized slot carrying its preallocated UUID.
+ * @param {object} message Chat message containing the swipe arrays.
+ * @param {object} swipeTarget Captured swipe generation target.
+ * @returns {{ok: boolean, reason: string, swipeId: number|null, materialized: boolean}}
+ */
+export function validateSwipeGenerationTarget(message, swipeTarget) {
+    const swipeId = Number(swipeTarget?.swipeId);
+    const previousSwipeId = Number(swipeTarget?.previousSwipeId);
+    const swipeUuid = swipeTarget?.swipeUuid;
+    if (!isObject(message)) {
+        return { ok: false, reason: 'invalid target message', swipeId: null, materialized: false };
+    }
+    if (!Number.isInteger(swipeId) || swipeId < 0) {
+        return { ok: false, reason: 'invalid swipe id', swipeId: null, materialized: false };
+    }
+    if (!isValidAikobotsUuid(swipeUuid)) {
+        return { ok: false, reason: 'invalid swipe UUID', swipeId, materialized: false };
+    }
+    if (!Array.isArray(message.swipes) || !Array.isArray(message.swipe_info)) {
+        return { ok: false, reason: 'target message has invalid swipe arrays', swipeId, materialized: false };
+    }
+    if (message.swipes.length !== message.swipe_info.length) {
+        return { ok: false, reason: 'target swipe arrays are misaligned', swipeId, materialized: false };
+    }
+    if (swipeId > message.swipes.length) {
+        return { ok: false, reason: 'swipe id is not the next slot', swipeId, materialized: false };
+    }
+
+    const matchingUuidIndexes = message.swipe_info.reduce((indexes, info, index) => {
+        if (info?.[AIKOBOTS_SWIPE_UUID_KEY] === swipeUuid) {
+            indexes.push(index);
+        }
+        return indexes;
+    }, []);
+    const materialized = swipeId < message.swipes.length;
+    if (!materialized) {
+        if (!Number.isInteger(previousSwipeId) || previousSwipeId < 0 || previousSwipeId >= message.swipes.length) {
+            return { ok: false, reason: 'invalid previous swipe id', swipeId, materialized: false };
+        }
+        if (Number(message.swipe_id) !== previousSwipeId) {
+            return { ok: false, reason: 'selected swipe changed before materialization', swipeId, materialized: false };
+        }
+        if (matchingUuidIndexes.length > 0) {
+            return { ok: false, reason: 'swipe UUID already belongs to another slot', swipeId, materialized: false };
+        }
+        return { ok: true, reason: '', swipeId, materialized: false };
+    }
+
+    if (message.swipe_info[swipeId]?.[AIKOBOTS_SWIPE_UUID_KEY] !== swipeUuid) {
+        return { ok: false, reason: 'materialized swipe UUID changed', swipeId, materialized: true };
+    }
+    if (matchingUuidIndexes.length !== 1 || matchingUuidIndexes[0] !== swipeId) {
+        return { ok: false, reason: 'swipe UUID ownership is ambiguous', swipeId, materialized: true };
+    }
+    if (Number(message.swipe_id) !== swipeId) {
+        return { ok: false, reason: 'selected swipe changed after materialization', swipeId, materialized: true };
+    }
+
+    return { ok: true, reason: '', swipeId, materialized: true };
+}
+
+/**
+ * Materializes a validated pending swipe slot with its preallocated UUID.
+ * Existing materialized targets are accepted only when the same UUID still owns the slot.
+ * @param {object} message Chat message containing the swipe arrays.
+ * @param {object} swipeTarget Captured swipe generation target.
+ * @returns {{ok: boolean, reason: string, swipeId: number|null, materialized: boolean}}
+ */
+export function materializeSwipeGenerationTarget(message, swipeTarget) {
+    const validation = validateSwipeGenerationTarget(message, swipeTarget);
+    if (!validation.ok) {
+        return validation;
+    }
+
+    if (!validation.materialized) {
+        message.swipes.push('');
+        message.swipe_info.push({
+            [AIKOBOTS_SWIPE_UUID_KEY]: swipeTarget.swipeUuid,
+        });
+    }
+    message.swipe_id = validation.swipeId;
+
+    return { ...validation, materialized: true };
+}
+
 function areMetadataValuesEqual(left, right) {
     if (Object.is(left, right)) {
         return true;
@@ -391,6 +478,37 @@ export function validateMessageSwipeState(message, {
         repairableDifferences: comparison.repairableDifferences,
         ambiguousConflicts: comparison.ambiguousConflicts,
     };
+}
+
+/**
+ * Repairs only the one-past-the-end swipe index left by an interrupted overswipe generation.
+ * The message is changed only when selecting the final materialized swipe makes the complete
+ * active-swipe state valid; unrelated malformed swipe states remain untouched for diagnosis.
+ * @param {object} message Chat message to inspect and optionally repair.
+ * @param {object} [options] Repair context.
+ * @param {number|null} [options.logicalChatIndex=null] Logical message index for greeting allowances and diagnostics.
+ * @returns {{repaired: boolean, swipeId: number|null, reason: string}}
+ */
+export function repairPendingOverswipeState(message, { logicalChatIndex = null } = {}) {
+    const swipeId = Number(message?.swipe_id);
+    const swipes = message?.swipes;
+    if (!Number.isInteger(swipeId) || !Array.isArray(swipes) || swipes.length === 0 || swipeId !== swipes.length) {
+        return { repaired: false, swipeId: Number.isInteger(swipeId) ? swipeId : null, reason: '' };
+    }
+
+    const repairedSwipeId = swipes.length - 1;
+    const candidate = { ...message, swipe_id: repairedSwipeId };
+    const validation = validateMessageSwipeState(candidate, {
+        allowMesMismatch: logicalChatIndex === 0,
+        allowMetadataMismatch: logicalChatIndex === 0,
+        logicalChatIndex,
+    });
+    if (!validation.ok) {
+        return { repaired: false, swipeId, reason: validation.reason };
+    }
+
+    message.swipe_id = repairedSwipeId;
+    return { repaired: true, swipeId: repairedSwipeId, reason: '' };
 }
 
 function ensureUniqueUuid(currentUuid, seenUuids, { generateUuid, repairDuplicates, regenerate }) {

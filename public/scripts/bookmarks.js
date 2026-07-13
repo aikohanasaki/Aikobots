@@ -688,7 +688,11 @@ export async function createBranch(mesId, { swipeId = null } = {}) {
                 return null;
             }
         } else {
-            await saveChat({ chatName: name, withMetadata: newMetadata, mesId });
+            const saveResult = await saveChat({ chatName: name, withMetadata: newMetadata, mesId });
+            if (saveResult !== CHAT_SAVE_RESULT.SAVED) {
+                toastr.warning('Could not create the branch chat.', 'Branch creation failed');
+                return null;
+            }
         }
     } finally {
         if (originalSwipeState) {
@@ -767,7 +771,11 @@ export async function createNewBookmark(mesId, { forceName = null } = {}) {
             return null;
         }
     } else {
-        await saveChat({ chatName: name, withMetadata: newMetadata, mesId });
+        const saveResult = await saveChat({ chatName: name, withMetadata: newMetadata, mesId });
+        if (saveResult !== CHAT_SAVE_RESULT.SAVED) {
+            toastr.warning('Could not create the checkpoint chat.', 'Checkpoint creation failed');
+            return null;
+        }
     }
 
     lastMes.extra['bookmark_link'] = name;

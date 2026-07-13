@@ -74,6 +74,7 @@ import {
     getCurrentChatId,
     CHAT_SAVE_RESULT,
     getChatSaveRevision,
+    setChatSaveRevision,
     getChatSaveSessionId,
     warnStaleChatSave,
     queueAcknowledgedChatRevisionRequest,
@@ -525,7 +526,12 @@ export async function getGroupChat(groupId, reload = false) {
             addOneMessage(mes);
             await eventSource.emit(event_types.CHARACTER_MESSAGE_RENDERED, (chat.length - 1), 'first_message');
         }
-        await saveGroupChat(groupId, false);
+        if (chat.length === 0) {
+            setChatSaveRevision(payload.header?.chat_revision ?? payload.chat_revision);
+            setCurrentChatStorageMode(payload.storageMode || payload.storage_mode);
+        } else {
+            await saveGroupChat(groupId, false);
+        }
     } else if (Array.isArray(data) && data.length) {
         applyChunkedChatPayload(payload, { replace: true, currentView: 'tail' });
         const firstLoadedMessage = chat.find(message => message);
@@ -977,10 +983,10 @@ async function saveGroupChat(groupId, shouldSaveGroup, { force = false, forcePus
 async function persistActiveGroupChat(groupId) {
     const group = groups.find(x => x.id === groupId);
     if (!group?.chat_id || String(selected_group) !== String(groupId)) {
-        return;
+        return CHAT_SAVE_RESULT.SAVED;
     }
 
-    await saveGroupChat(groupId, false);
+    return await saveGroupChat(groupId, false);
 }
 
 async function getGroupChatDeleteRevisionFields(groupId, chatId) {
@@ -2402,17 +2408,25 @@ async function createGroup() {
     }
 }
 
+/**
+ * Creates and opens a new group chat after successfully persisting the active one.
+ * @param {string} groupId Group id
+ * @returns {Promise<boolean>} Whether the new group chat was created
+ */
 export async function createNewGroupChat(groupId) {
     const group = groups.find(x => x.id === groupId);
 
     if (!group) {
-        return;
+        return false;
     }
 
     const newChatName = humanizedDateTime();
     const hadExistingChats = group.chats.length > 0;
 
-    await persistActiveGroupChat(groupId);
+    const saveResult = await persistActiveGroupChat(groupId);
+    if (saveResult !== CHAT_SAVE_RESULT.SAVED) {
+        return false;
+    }
     await clearChat();
     chat.length = 0;
     group.chats.push(newChatName);
@@ -2424,6 +2438,7 @@ export async function createNewGroupChat(groupId) {
 
     await editGroup(group.id, true, false);
     await getGroupChat(group.id);
+    return true;
 }
 
 export async function getGroupPastChats(groupId) {
@@ -2555,12 +2570,14 @@ export async function deleteGroupChatByName(groupId, chatName) {
  * @param {string} chatId The id/name of the chat to delete.
  * @param {object} [options={}] Options for the deletion.
  * @param {boolean} [options.jumpToNewChat=true] Whether to jump to a new chat after deletion (existing one, or create a new one if none exists)
+ * @param {boolean} [options.backupBeforeDelete=false] Whether deletion requires a fresh recovery backup
+ * @returns {Promise<boolean>} Whether the chat was deleted
  */
-export async function deleteGroupChat(groupId, chatId, { jumpToNewChat = true } = {}) {
+export async function deleteGroupChat(groupId, chatId, { jumpToNewChat = true, backupBeforeDelete = false } = {}) {
     const group = groups.find(x => x.id === groupId);
 
     if (!group || !group.chats.includes(chatId)) {
-        return;
+        return false;
     }
 
     const isCurrentChat = group.chat_id === chatId;
@@ -2570,13 +2587,13 @@ export async function deleteGroupChat(groupId, chatId, { jumpToNewChat = true } 
     const response = await fetch('/api/chats/group/delete', {
         method: 'POST',
         headers: getRequestHeaders(),
-        body: JSON.stringify({ id: chatId, ...revisionFields }),
+        body: JSON.stringify({ id: chatId, group_id: String(groupId), backup_before_delete: backupBeforeDelete, ...revisionFields }),
     });
 
     if (!response.ok) {
         toastr.error(t`Check the server connection and reload the page to prevent data loss.`, t`Group chat could not be deleted`);
         console.error('Group chat could not be deleted');
-        return;
+        return false;
     }
 
     const chatIndex = group.chats.indexOf(chatId);
@@ -2609,6 +2626,7 @@ export async function deleteGroupChat(groupId, chatId, { jumpToNewChat = true } 
     }
 
     await eventSource.emit(event_types.GROUP_CHAT_DELETED, chatId);
+    return true;
 }
 
 function prepareNextGroupChat(group) {

@@ -180,7 +180,9 @@ import {
     findMessageByAikobotsUuid,
     findSwipeByAikobotsUuid,
     isValidAikobotsUuid,
+    materializeSwipeGenerationTarget,
     normalizeChatIdentities,
+    validateSwipeGenerationTarget,
     validateChatIdentities,
     validateMessageSwipeState,
 } from './scripts/chat-identities.js';
@@ -977,9 +979,9 @@ let chatSaveQueueTimer = null;
 let chatSaveQueueRun = null;
 let chatRevisionOperationQueue = Promise.resolve();
 let chatSaveRequestOptions = {};
-let chatSaveStreamingAppendRetryTimer = null;
+let chatSaveDeferredForStreamingMutation = false;
 let chatSaveDeferredForSwipeGeneration = false;
-let pendingStreamingSqliteAppend = null;
+let pendingStreamingSqliteMutation = null;
 let temporaryCharacterChat = null;
 let temporaryGroupChat = null;
 const CHAT_SAVE_RESULT = {
@@ -988,7 +990,6 @@ const CHAT_SAVE_RESULT = {
     MISSING_CHAT: 'missing_chat',
 };
 export { CHAT_SAVE_RESULT };
-const CHAT_SAVE_STREAMING_APPEND_RETRY_MS = 250;
 const CHAT_SAVE_REQUEST_RETRY_DELAY_MS = 750;
 const CHAT_SAVE_SESSION_ID_KEY = 'aikobots_chat_save_session_id';
 const TEMPORARY_CHAT_DISPLAY_NAME = '(Temporary Chat)';
@@ -4799,14 +4800,20 @@ function reportCharacterChatDeleteRevisionError(error) {
     console.error('Failed to read chat revision before deleting character chat.', error);
 }
 
-async function delChat(chatfile) {
+/**
+ * Deletes a character chat and optionally requires a fresh server-side recovery backup.
+ * @param {string} chatfile Chat file name
+ * @param {{backupBeforeDelete?:boolean}} options Delete options
+ * @returns {Promise<boolean>} Whether the chat was deleted
+ */
+async function delChat(chatfile, { backupBeforeDelete = false } = {}) {
     const avatarUrl = characters[this_chid].avatar;
     let revisionFields;
     try {
         revisionFields = await getCharacterChatDeleteRevisionFields(avatarUrl, chatfile);
     } catch (error) {
         reportCharacterChatDeleteRevisionError(error);
-        return;
+        return false;
     }
 
     const response = await fetch('/api/chats/delete', {
@@ -4815,6 +4822,7 @@ async function delChat(chatfile) {
         body: JSON.stringify({
             chatfile: chatfile,
             avatar_url: avatarUrl,
+            backup_before_delete: backupBeforeDelete,
             ...revisionFields,
         }),
     });
@@ -4837,7 +4845,12 @@ async function delChat(chatfile) {
             }
         }
         await eventSource.emit(event_types.CHAT_DELETED, name);
+        return true;
     }
+
+    toastr.error(t`Check the server connection and reload the page to prevent data loss.`, t`Chat could not be deleted`);
+    console.error('Character chat could not be deleted', response);
+    return false;
 }
 
 /**
@@ -5137,8 +5150,8 @@ function markChatRangeLoaded(startId, endId = startId) {
     syncPartialChatStateAfterMutation();
 }
 
-// Streaming appends extend the in-memory tail before the SQLite append mutation persists it.
-function markPendingStreamingSqliteAppend(messageId, message) {
+/** Records the ephemeral message that must not become authoritative before SQLite read-back. */
+function markPendingStreamingSqliteMutation(messageId, message) {
     if (!currentChatFileNameLooksSqlite()) {
         return;
     }
@@ -5149,31 +5162,51 @@ function markPendingStreamingSqliteAppend(messageId, message) {
         return;
     }
 
-    pendingStreamingSqliteAppend = {
+    let resolveSettled;
+    const settled = new Promise(resolve => {
+        resolveSettled = resolve;
+    });
+    pendingStreamingSqliteMutation = {
         messageId: normalizedMessageId,
         messageUuid,
+        settled,
+        resolveSettled,
     };
 }
 
-// Generic loaded-range saves must wait for the append mutation that makes the new tail durable.
-function isPendingStreamingSqliteAppendActive() {
-    if (!currentChatFileNameLooksSqlite() || !pendingStreamingSqliteAppend) {
+/** Returns whether a streamed SQLite mutation is still awaiting persistence or read-back. */
+function isPendingStreamingSqliteMutationActive() {
+    if (!currentChatFileNameLooksSqlite() || !pendingStreamingSqliteMutation) {
         return false;
     }
 
-    const message = chat[pendingStreamingSqliteAppend.messageId];
-    return message?.[AIKOBOTS_MESSAGE_UUID_KEY] === pendingStreamingSqliteAppend.messageUuid;
+    const message = chat[pendingStreamingSqliteMutation.messageId];
+    return message?.[AIKOBOTS_MESSAGE_UUID_KEY] === pendingStreamingSqliteMutation.messageUuid;
 }
 
-function clearPendingStreamingSqliteAppend(message) {
-    if (!pendingStreamingSqliteAppend) {
+/** Settles the streaming mutation gate and resumes deferred saves only after verified success. */
+function clearPendingStreamingSqliteMutation(message, { result = CHAT_SAVE_RESULT.SAVED } = {}) {
+    if (!pendingStreamingSqliteMutation) {
         return;
     }
 
     const messageUuid = message?.[AIKOBOTS_MESSAGE_UUID_KEY];
-    if (!messageUuid || pendingStreamingSqliteAppend.messageUuid === messageUuid) {
-        pendingStreamingSqliteAppend = null;
+    if (!messageUuid || pendingStreamingSqliteMutation.messageUuid === messageUuid) {
+        const { resolveSettled } = pendingStreamingSqliteMutation;
+        pendingStreamingSqliteMutation = null;
+        resolveSettled(result);
+        if (result === CHAT_SAVE_RESULT.SAVED) {
+            resumeChatSaveAfterStreamingMutation();
+        }
     }
+}
+
+/** Waits for the active streamed SQLite mutation and canonical read-back, if any. */
+async function waitForPendingStreamingSqliteMutation() {
+    const pendingMutation = isPendingStreamingSqliteMutationActive()
+        ? pendingStreamingSqliteMutation
+        : null;
+    return await pendingMutation?.settled;
 }
 
 export function getTotalChatMessages() {
@@ -6444,18 +6477,25 @@ function hasPendingDebouncedChatSave() {
 
 export async function flushDebouncedChatSave() {
     await flushPendingSqliteMessageUpdateSave();
+    const streamingMutationResult = await waitForPendingStreamingSqliteMutation();
+    if (streamingMutationResult === CHAT_SAVE_RESULT.FAILED) {
+        return CHAT_SAVE_RESULT.FAILED;
+    }
 
     if (!hasPendingDebouncedChatSave()) {
-        const result = chatSaveQueuePromise
+        let result = chatSaveQueuePromise
             ? await chatSaveQueuePromise
             : CHAT_SAVE_RESULT.SAVED;
+        if (chatSaveDirty && !chatSaveQueuePromise) {
+            result = await saveChatConditional({ immediate: true });
+        }
         await chatRevisionOperationQueue;
         await flushPendingSqliteMessageUpdateSave();
         return result;
     }
 
     cancelDebouncedChatSave();
-    toastr.info(t`Please wait until the chat is saved.`, t`Your chat is still saving...`);
+    toastr.info(t`Saving queued chat changes before continuing.`, t`Saving pending chat changes...`);
     const result = await saveChatConditional({ immediate: true });
     await chatRevisionOperationQueue;
     await flushPendingSqliteMessageUpdateSave();
@@ -6477,6 +6517,11 @@ export async function clearChat({ flushPendingSave = true } = {}) {
         }
     } else {
         cancelDebouncedChatSave();
+        clearPendingStreamingSqliteMutation(null, { result: CHAT_SAVE_RESULT.FAILED });
+        chatSaveDirty = false;
+        chatSaveRequestOptions = {};
+        chatSaveDeferredForStreamingMutation = false;
+        chatSaveDeferredForSwipeGeneration = false;
     }
 
     cancelDebouncedMetadataSave();
@@ -6700,6 +6745,7 @@ async function refreshCurrentChatFromServer() {
     if (chatSaveQueuePromise) {
         await chatSaveQueuePromise.catch(() => CHAT_SAVE_RESULT.FAILED);
     }
+    await waitForPendingStreamingSqliteMutation();
 
     await reloadCurrentChat({ flushPendingSave: false });
     toastr.success(t`Chat refreshed from server`);
@@ -8600,36 +8646,35 @@ function validateSwipeTarget(swipeTarget) {
     if (!message || !Array.isArray(message.swipes)) {
         return { ok: false, reason: 'target message has no swipes' };
     }
-    if (swipeId > message.swipes.length) {
-        return { ok: false, reason: 'swipe id is not the next slot' };
+    const identityValidation = validateSwipeGenerationTarget(message, swipeTarget);
+    if (!identityValidation.ok) {
+        return { ok: false, reason: identityValidation.reason };
     }
 
     return { ok: true, message, messageId, swipeId };
 }
 
 function ensureSwipeTargetSlot(message, swipeTarget) {
-    const swipeId = Number(swipeTarget?.swipeId);
-    if (!Number.isInteger(swipeId) || swipeId < 0) {
-        return false;
-    }
-
     ensureSwipes(message);
-    if (!Array.isArray(message?.swipes)) {
-        return false;
-    }
-    if (!Array.isArray(message.swipe_info)) {
-        message.swipe_info = [];
-    }
+    return materializeSwipeGenerationTarget(message, swipeTarget);
+}
 
-    while (message.swipes.length <= swipeId) {
-        message.swipes.push('');
+/**
+ * Creates a swipe UUID that is not already present on the target message.
+ * @param {object} message Target chat message.
+ * @returns {string} Unique swipe UUID.
+ */
+function createSwipeGenerationTargetUuid(message) {
+    const existingUuids = new Set(
+        Array.isArray(message?.swipe_info)
+            ? message.swipe_info.map(info => info?.[AIKOBOTS_SWIPE_UUID_KEY]).filter(isValidAikobotsUuid)
+            : [],
+    );
+    let swipeUuid = uuidv4();
+    while (!isValidAikobotsUuid(swipeUuid) || existingUuids.has(swipeUuid)) {
+        swipeUuid = uuidv4();
     }
-    while (message.swipe_info.length <= swipeId) {
-        message.swipe_info.push({});
-    }
-
-    message.swipe_id = swipeId;
-    return true;
+    return swipeUuid;
 }
 
 async function resetStaleSwipeTarget(swipeTarget) {
@@ -8832,9 +8877,13 @@ class StreamingProcessor {
             }
 
             if (this.type === 'swipe') {
-                ensureSwipeTargetSlot(swipeValidation.message, this.swipeTarget);
+                const slotResult = ensureSwipeTargetSlot(swipeValidation.message, this.swipeTarget);
+                if (!slotResult.ok) {
+                    await rejectStaleSwipeTarget(this.swipeTarget, slotResult.reason);
+                }
                 swipeValidation.message.swipes[swipeValidation.swipeId] = processedText;
                 swipeValidation.message.swipe_info[swipeValidation.swipeId] = {
+                    [AIKOBOTS_SWIPE_UUID_KEY]: this.swipeTarget.swipeUuid,
                     'send_date': swipeValidation.message['send_date'],
                     'gen_started': swipeValidation.message['gen_started'],
                     'gen_finished': swipeValidation.message['gen_finished'],
@@ -8913,6 +8962,7 @@ class StreamingProcessor {
             const basePromptSnapshotKey = typeof targetMessage.extra?.promptSnapshotKey === 'string' ? targetMessage.extra.promptSnapshotKey : null;
             const swipeInfoArray = Array(this.swipes.length).fill().map((_, index) => {
                 const swipeInfoClone = structuredClone(swipeInfo);
+                swipeInfoClone[AIKOBOTS_SWIPE_UUID_KEY] = uuidv4();
                 const swipePromptSnapshotKey = basePromptSnapshotKey
                     ? rekeyPromptSnapshotKey(basePromptSnapshotKey, { mesId: messageId, swipeId: startingSwipeIndex + index })
                     : null;
@@ -8939,15 +8989,11 @@ class StreamingProcessor {
             targetMessage.extra.reasoning_signature = this.reasoningSignature;
         }
 
-        if (this.type !== 'impersonate') {
-            await eventSource.emit(event_types.MESSAGE_RECEIVED, this.messageId, this.type);
-            await eventSource.emit(event_types.CHARACTER_MESSAGE_RENDERED, this.messageId, this.type);
-        } else {
-            await eventSource.emit(event_types.IMPERSONATE_READY, text);
-        }
-
         if (this.type === 'swipe') {
-            ensureSwipeTargetSlot(finishSwipeValidation.message, this.swipeTarget);
+            const slotResult = ensureSwipeTargetSlot(finishSwipeValidation.message, this.swipeTarget);
+            if (!slotResult.ok) {
+                await rejectStaleSwipeTarget(this.swipeTarget, slotResult.reason);
+            }
         }
 
         syncMesToSwipe(messageId);
@@ -8960,9 +9006,16 @@ class StreamingProcessor {
             messageId: sqliteMutationMessageId,
         });
         if (saveResult !== CHAT_SAVE_RESULT.SAVED) {
-            await reloadCurrentChat();
+            await reloadCurrentChat({ flushPendingSave: false });
             unblockGeneration();
             return false;
+        }
+
+        if (this.type !== 'impersonate') {
+            await eventSource.emit(event_types.MESSAGE_RECEIVED, this.messageId, this.type);
+            await eventSource.emit(event_types.CHARACTER_MESSAGE_RENDERED, this.messageId, this.type);
+        } else {
+            await eventSource.emit(event_types.IMPERSONATE_READY, text);
         }
         unblockGeneration();
 
@@ -8980,17 +9033,18 @@ class StreamingProcessor {
         return true;
     }
 
-    onErrorStreaming() {
+    async onErrorStreaming() {
         this.abortController.abort();
         this.isStopped = true;
 
         this.markUIGenStopped();
         unblockGeneration();
 
-        const noEmitTypes = ['swipe', 'impersonate', 'continue'];
-        if (!noEmitTypes.includes(this.type)) {
-            eventSource.emit(event_types.MESSAGE_RECEIVED, this.messageId, this.type);
-            eventSource.emit(event_types.CHARACTER_MESSAGE_RENDERED, this.messageId, this.type);
+        const ephemeralMessage = chat[this.messageId];
+        const shouldRestoreAuthoritativeMessage = isPendingStreamingSqliteMutationActive();
+        clearPendingStreamingSqliteMutation(ephemeralMessage, { result: CHAT_SAVE_RESULT.FAILED });
+        if (shouldRestoreAuthoritativeMessage) {
+            await reloadCurrentChat({ flushPendingSave: false });
         }
     }
 
@@ -9069,7 +9123,7 @@ class StreamingProcessor {
             // in the case of a self-inflicted abort, we have already cleaned up
             if (!this.isFinished) {
                 console.error(err);
-                this.onErrorStreaming();
+                await this.onErrorStreaming();
             }
             return this.result;
         }
@@ -9504,6 +9558,7 @@ async function restoreUnsavedDeletedLastMessage(messageId, message) {
  * @property {string} [quietName] Name to use for the quiet prompt (defaults to "System:")
  * @property {number} [depth] Recursion depth for the generation. Used to prevent infinite loops in tool calls.
  * @property {JsonSchema} [jsonSchema] JSON schema to use for the structured generation. Usually requires a special instruction.
+ * @property {object?} [swipeTarget] Captured swipe generation target with a preallocated swipe UUID.
  */
 
 /**
@@ -11749,7 +11804,15 @@ export async function saveReply({ type, getMessage, fromStreaming = false, title
     const generationFinished = new Date();
     if (type === 'swipe') {
         const targetMessage = swipeTargetValidation.message;
-        ensureSwipeTargetSlot(targetMessage, swipeTarget);
+        const slotResult = ensureSwipeTargetSlot(targetMessage, swipeTarget);
+        if (!slotResult.ok) {
+            await resetStaleSwipeTarget(swipeTarget);
+            if (!fromStreaming) {
+                consumeOpenAIResponseData(openAIRequestId);
+            }
+            unblockGeneration(type);
+            throw new Error(`Invalid swipe generation target: ${slotResult.reason}`);
+        }
         ensureMessageIdentity(targetMessage, { generateUuid: uuidv4 });
         ensureSwipeIdentities(targetMessage, { generateUuid: uuidv4 });
         oldMessage = targetMessage['mes'];
@@ -11937,8 +12000,8 @@ export async function saveReply({ type, getMessage, fromStreaming = false, title
 
     normalizeActiveChatIdentities();
     mutationMessageId = Math.min(mutationMessageId, chat.length - 1);
-    if (fromStreaming && mutation === 'append') {
-        markPendingStreamingSqliteAppend(mutationMessageId, chat[mutationMessageId]);
+    if (fromStreaming && ['append', 'update'].includes(mutation)) {
+        markPendingStreamingSqliteMutation(mutationMessageId, chat[mutationMessageId]);
     }
 
     if (!fromStreaming) {
@@ -14175,7 +14238,7 @@ async function saveMessageUpdateByUuid(message, { ordinaryTextEdit = false, sele
         return CHAT_SAVE_RESULT.FAILED;
     }
 
-    const saveMessage = () => saveSqliteMessageMutation('update', {
+    const saveMessage = () => saveSqliteChatMutation('update', {
         message_uuid: messageUuid,
         message: structuredClone(message),
         ...(ordinaryTextEdit ? {
@@ -14204,6 +14267,7 @@ function getCurrentSqliteChatMutationOwnerFields() {
 
 function getSqliteChatMutationEndpoint(operation) {
     const directEndpoints = {
+        metadata: '/api/chats/metadata',
         append: '/api/chats/message/append',
         update: '/api/chats/message/update',
         delete: '/api/chats/message/delete',
@@ -14211,6 +14275,7 @@ function getSqliteChatMutationEndpoint(operation) {
         regeneratePrepare: '/api/chats/regenerate-prepare',
     };
     const groupEndpoints = {
+        metadata: '/api/chats/group/metadata',
         append: '/api/chats/group/message/append',
         update: '/api/chats/group/message/update',
         delete: '/api/chats/group/message/delete',
@@ -14221,7 +14286,7 @@ function getSqliteChatMutationEndpoint(operation) {
     return (selected_group ? groupEndpoints : directEndpoints)[operation] || '';
 }
 
-async function saveSqliteMessageMutation(operation, fields, defaultErrorMessage = t`Chat update failed.`, { retrySameSessionStale = true } = {}) {
+async function saveSqliteChatMutation(operation, fields, defaultErrorMessage = t`Chat update failed.`, { retrySameSessionStale = true } = {}) {
     const endpoint = getSqliteChatMutationEndpoint(operation);
     if (!endpoint) {
         return CHAT_SAVE_RESULT.FAILED;
@@ -14254,7 +14319,7 @@ async function saveSqliteMessageMutation(operation, fields, defaultErrorMessage 
             if (errorData?.error === 'stale_revision') {
                 const staleResult = warnStaleChatSave(errorData);
                 if (retrySameSessionStale && staleResult.sameSessionStale) {
-                    return saveSqliteMessageMutation(operation, fields, defaultErrorMessage, { retrySameSessionStale: false });
+                    return saveSqliteChatMutation(operation, fields, defaultErrorMessage, { retrySameSessionStale: false });
                 }
             } else if (errorData?.error === 'chat_repaired') {
                 await reloadCurrentChatAfterServerRepair(errorData);
@@ -14284,7 +14349,7 @@ async function saveSqliteMessageAppend(messageId, message) {
     ensureMessageIdentity(message, { generateUuid: uuidv4 });
     const expectedTailMessage = Number.isInteger(Number(messageId)) ? chat[Number(messageId) - 1] : null;
     const expectedTailUuid = expectedTailMessage?.[AIKOBOTS_MESSAGE_UUID_KEY];
-    const appendResult = await saveSqliteMessageMutation('append', {
+    const appendResult = await saveSqliteChatMutation('append', {
         message: structuredClone(message),
         ...(expectedTailUuid ? { expected_tail_uuid: expectedTailUuid } : {}),
     }, t`Message append failed.`);
@@ -14306,7 +14371,7 @@ async function saveSqliteMessageDeleteByUuid(messageUuid) {
         return CHAT_SAVE_RESULT.FAILED;
     }
 
-    return saveSqliteMessageMutation('delete', {
+    return saveSqliteChatMutation('delete', {
         message_uuid: messageUuid,
     }, t`Message delete failed.`);
 }
@@ -14321,7 +14386,7 @@ async function saveSqliteTruncateAfterUuid(messageUuid, { regeneratePrepare = fa
         return CHAT_SAVE_RESULT.FAILED;
     }
 
-    return saveSqliteMessageMutation(regeneratePrepare ? 'regeneratePrepare' : 'truncate', {
+    return saveSqliteChatMutation(regeneratePrepare ? 'regeneratePrepare' : 'truncate', {
         branch_point_uuid: messageUuid,
     }, t`Chat truncate failed.`);
 }
@@ -14336,7 +14401,7 @@ async function saveSqliteTruncateAll() {
         return CHAT_SAVE_RESULT.FAILED;
     }
 
-    return saveSqliteMessageMutation('truncate', {
+    return saveSqliteChatMutation('truncate', {
         truncate_all: true,
     }, t`Chat truncate failed.`);
 }
@@ -14362,15 +14427,61 @@ async function saveSqliteReplyMutation(replyResult) {
         return CHAT_SAVE_RESULT.FAILED;
     }
 
-    if (replyResult.mutation === 'append') {
-        try {
-            return await saveSqliteMessageAppend(messageId, message);
-        } finally {
-            clearPendingStreamingSqliteAppend(message);
+    const messageUuid = message[AIKOBOTS_MESSAGE_UUID_KEY];
+    let saveResult;
+    let finalResult = CHAT_SAVE_RESULT.FAILED;
+    try {
+        if (replyResult.mutation === 'append') {
+            saveResult = await saveSqliteMessageAppend(messageId, message);
+        } else {
+            saveResult = await saveMessageUpdateByUuid(message);
         }
-    }
 
-    return saveMessageUpdateByUuid(message);
+        if (saveResult !== CHAT_SAVE_RESULT.SAVED || !currentChatFileNameLooksSqlite()) {
+            finalResult = saveResult;
+            return saveResult;
+        }
+
+        finalResult = await replaceClientMessageWithAuthoritativeSqliteMessage(messageId, messageUuid);
+        return finalResult;
+    } finally {
+        clearPendingStreamingSqliteMutation(message, { result: finalResult });
+    }
+}
+
+/**
+ * Replaces an ephemeral client message with the canonical row read back from SQLite.
+ * @param {number} messageId Logical message position to read.
+ * @param {string} expectedMessageUuid Stable identity expected at that position.
+ * @returns {Promise<string>} Chat save result.
+ */
+async function replaceClientMessageWithAuthoritativeSqliteMessage(messageId, expectedMessageUuid) {
+    try {
+        const response = await fetchChunkedChat({ rangeStart: messageId, count: 1 });
+        const loadedRangeStart = Number(response?.loadedRangeStart);
+        const messageOffset = messageId - loadedRangeStart;
+        const authoritativeMessage = response?.messages?.[messageOffset];
+        if (!Number.isInteger(loadedRangeStart)
+            || messageOffset < 0
+            || authoritativeMessage?.[AIKOBOTS_MESSAGE_UUID_KEY] !== expectedMessageUuid) {
+            throw new Error('Authoritative SQLite message did not match the completed stream');
+        }
+
+        if (!applyChunkedChatPayload(response, { replace: false, currentView: chatLoadState.currentView })) {
+            throw new Error('Authoritative SQLite message belonged to a different chat');
+        }
+
+        if (chatElement.children('.mes').filter(`[mesid="${messageId}"]`).length) {
+            addOneMessage(chat[messageId], { type: 'swipe', forceId: messageId, scroll: false, showSwipes: false });
+            await updateSwipeCounter(messageId);
+            refreshSwipeButtons();
+        }
+        return CHAT_SAVE_RESULT.SAVED;
+    } catch (error) {
+        console.error('Failed to replace streamed message with the authoritative SQLite row', error);
+        toastr.error(t`The saved response could not be verified. Reloading the chat from the server.`);
+        return CHAT_SAVE_RESULT.FAILED;
+    }
 }
 
 export function currentChatFileNameLooksSqlite() {
@@ -17230,8 +17341,9 @@ export function callPopup(text, type, inputValue = '', { okButton, rows, wide, w
  * @param {object} [options] Options.
  * @param {ChatMessage} [options.message=undefined] Message to read swipe numbers from.
  * @param {JQuery<HTMLElement>} [options.messageElement=undefined] Rendered message element.
+ * @param {number} [options.displaySwipeId=undefined] Optional UI-only pending swipe index.
  */
-export async function updateSwipeCounter(mesId, { message = undefined, messageElement = undefined } = {}) {
+export async function updateSwipeCounter(mesId, { message = undefined, messageElement = undefined, displaySwipeId = undefined } = {}) {
     message ??= chat[mesId];
     messageElement ??= chatElement.children('.mes').filter(`[mesid="${mesId}"]`);
 
@@ -17243,7 +17355,11 @@ export async function updateSwipeCounter(mesId, { message = undefined, messageEl
         syncMesToSwipe(mesId);
     }
 
-    const swipeCounterText = formatSwipeCounter((message?.swipe_id + 1), message?.swipes?.length);
+    const counterSwipeId = Number.isInteger(displaySwipeId) ? displaySwipeId : message?.swipe_id;
+    const counterSwipeCount = Number.isInteger(displaySwipeId)
+        ? Math.max(message?.swipes?.length ?? 0, displaySwipeId + 1)
+        : message?.swipes?.length;
+    const swipeCounterText = formatSwipeCounter((counterSwipeId + 1), counterSwipeCount);
     const swipeCounter = messageElement.find('.swipes-counter');
     const swipePickerButton = messageElement.find('.mes_swipe_picker');
     const canOpenSwipePicker = canOpenSwipePickerForMessage(mesId);
@@ -17515,7 +17631,13 @@ export async function deleteSwipe(swipeId = null, messageId = chat.length - 1) {
 }
 
 export async function saveMetadata() {
-    await saveChatConditional();
+    if (currentChatFileNameLooksSqlite()) {
+        return await saveSqliteChatMutation('metadata', {
+            chat_metadata: sanitizeChatMetadataForSave({ ...chat_metadata }),
+        }, t`Chat metadata could not be saved.`);
+    }
+
+    return await saveChatConditional();
 }
 
 async function saveChatOnce(options = {}) {
@@ -17603,12 +17725,12 @@ async function drainChatSaveQueue() {
     try {
         while (chatSaveDirty) {
             const options = chatSaveRequestOptions;
-            if (hasPendingSwipeGenerationSlot()) {
+            if (hasActiveSwipeOperation()) {
                 chatSaveDeferredForSwipeGeneration = true;
                 return finalResult;
             }
-            if (shouldDeferChatSaveForStreamingAppend(options)) {
-                scheduleChatSaveAfterStreamingAppend();
+            if (shouldDeferChatSaveForStreamingMutation(options)) {
+                chatSaveDeferredForStreamingMutation = true;
                 return finalResult;
             }
 
@@ -17640,31 +17762,34 @@ function cancelChatSaveQueueTimer() {
     }
 }
 
-function scheduleChatSaveAfterStreamingAppend() {
-    if (chatSaveStreamingAppendRetryTimer) {
+/** Restarts a save deferred until the streamed SQLite mutation and read-back settled. */
+function resumeChatSaveAfterStreamingMutation() {
+    if (!chatSaveDeferredForStreamingMutation) {
         return;
     }
 
-    chatSaveStreamingAppendRetryTimer = setTimeout(() => {
-        chatSaveStreamingAppendRetryTimer = null;
+    chatSaveDeferredForStreamingMutation = false;
+    const resumeSave = () => {
         if (chatSaveDirty && !chatSaveQueuePromise) {
             void saveChatConditional({ immediate: true });
         }
-    }, CHAT_SAVE_STREAMING_APPEND_RETRY_MS);
+    };
+
+    if (chatSaveQueuePromise) {
+        void chatSaveQueuePromise.then(resumeSave, resumeSave);
+    } else {
+        resumeSave();
+    }
 }
 
-/** Returns whether swipe generation is temporarily targeting the next uncreated slot. */
-function hasPendingSwipeGenerationSlot() {
-    return swipeState === SWIPE_STATE.SWIPING && chat.some(message => (
-        Array.isArray(message?.swipes)
-        && Number.isInteger(message.swipe_id)
-        && message.swipe_id === message.swipes.length
-    ));
+/** Returns whether a swipe operation is still navigating, generating, rolling back, or persisting. */
+function hasActiveSwipeOperation() {
+    return swipeState === SWIPE_STATE.SWIPING;
 }
 
 /** Returns whether persistence must wait for an in-progress chat mutation to settle. */
-function shouldDeferChatSaveForStreamingAppend(options = {}) {
-    if (!isPendingStreamingSqliteAppendActive()) {
+function shouldDeferChatSaveForStreamingMutation(options = {}) {
+    if (!isPendingStreamingSqliteMutationActive()) {
         return false;
     }
 
@@ -18557,6 +18682,11 @@ export async function swipe(event, direction, { source, repeated, message = chat
         }
 
         const clampedId = clamp(chat[mesId].swipe_id, 0, Math.max(0, chat[mesId].swipes.length - 1));
+        const pendingTargetUnmaterialized = Boolean(
+            swipeTarget
+            && Number.isInteger(swipeTarget.swipeId)
+            && chat[mesId].swipes.length <= swipeTarget.swipeId,
+        );
 
         await updateSwipeCounter(mesId);
         if (mesId !== chat.length - 1) {
@@ -18576,7 +18706,7 @@ export async function swipe(event, direction, { source, repeated, message = chat
             }
         }
 
-        if (chat[mesId]?.swipe_id !== clampedId || revert) {
+        if (chat[mesId]?.swipe_id !== clampedId || revert || pendingTargetUnmaterialized) {
             if (source !== SWIPE_SOURCE.BACK) {
                 source = SWIPE_SOURCE.BACK;
                 chat[mesId].swipe_id = clampedId;
@@ -18744,7 +18874,7 @@ export async function swipe(event, direction, { source, repeated, message = chat
         }
 
         if (runGenerate) {
-            await updateSwipeCounter(mesId);
+            await updateSwipeCounter(mesId, { displaySwipeId: swipeTarget?.swipeId });
             thisMesDiv.find('.mes_text').html('...');
             thisMesDiv.find('.mes_timer').html('');
             thisMesDiv.find('.tokenCounterDisplay').text('');
@@ -18835,21 +18965,19 @@ export async function swipe(event, direction, { source, repeated, message = chat
 
             if (newSwipeId >= chat[mesId].swipes.length) {
                 newSwipeId = chat[mesId].swipes.length;
-                chat[mesId].swipe_id = newSwipeId;
-                swipeTarget = {
-                    messageId: mesId,
-                    messageRef: chat[mesId],
-                    swipeId: newSwipeId,
-                    previousSwipeId: originalSwipeId,
-                };
-
                 const overswipe = getOverswipeBehavior(mesId);
 
                 if (overswipe === OVERSWIPE_BEHAVIOR.NONE) {
-                    chat[mesId].swipe_id = originalSwipeId;
                     await endSwipe();
                     return;
                 } else if (overswipe === OVERSWIPE_BEHAVIOR.REGENERATE) {
+                    swipeTarget = {
+                        messageId: mesId,
+                        messageRef: chat[mesId],
+                        swipeId: newSwipeId,
+                        swipeUuid: createSwipeGenerationTargetUuid(chat[mesId]),
+                        previousSwipeId: originalSwipeId,
+                    };
                     clearMessageData(chat[mesId]);
                     await animateSwipe(true);
                     await endSwipe();
@@ -19073,22 +19201,23 @@ export async function doNewChat({ deleteCurrentChat = false } = {}) {
 
     //Fix it; New chat doesn't create while open create character menu
     await waitUntilCondition(() => !isChatSaving, debounce_timeout.extended, 10);
-    await clearChat();
-    discardTemporaryCharacterChat();
-    chat.length = 0;
-
     chat_file_for_del = getCurrentChatDetails()?.sessionName;
 
-    // Make it easier to find in backups
-    if (deleteCurrentChat) {
-        await saveChatConditional();
-    }
-
     if (selected_group) {
-        await createNewGroupChat(selected_group);
-        if (deleteCurrentChat) await deleteGroupChat(selected_group, chat_file_for_del, { jumpToNewChat: false }); // don't jump, new chat was already created and jumped to above
+        const created = await createNewGroupChat(selected_group);
+        if (!created) {
+            return;
+        }
+        if (deleteCurrentChat) {
+            await deleteGroupChat(selected_group, chat_file_for_del, { jumpToNewChat: false, backupBeforeDelete: true }); // don't jump, new chat was already created and jumped to above
+        }
     }
     else {
+        await clearChat();
+        const currentChatWasTemporary = isCurrentCharacterChatTemporary();
+        discardTemporaryCharacterChat();
+        chat.length = 0;
+
         //RossAscends: added character name to new chat filenames and replaced Date.now() with humanizedDateTime;
         const previousChatFileName = String(characters[this_chid].chat || '');
         chat_metadata = {};
@@ -19096,9 +19225,11 @@ export async function doNewChat({ deleteCurrentChat = false } = {}) {
         $('#selected_chat_pole').val(characters[this_chid].chat);
         await getChat();
         setTemporaryCharacterChatPreviousFileName(previousChatFileName);
-        if (deleteCurrentChat) {
-            await delChat(chat_file_for_del + '.jsonl');
-            setTemporaryCharacterChatPreviousFileName('');
+        if (deleteCurrentChat && !currentChatWasTemporary) {
+            const deleted = await delChat(chat_file_for_del + '.jsonl', { backupBeforeDelete: true });
+            if (deleted) {
+                setTemporaryCharacterChatPreviousFileName('');
+            }
         }
     }
 

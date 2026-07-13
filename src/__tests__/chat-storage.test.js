@@ -6,6 +6,7 @@ import { beforeAll, describe, expect, it } from '@jest/globals';
 import Database from 'better-sqlite3';
 
 let applyLoadedMessageRange;
+let backupChatBeforeDelete;
 let backupSqliteDatabaseFile;
 let appendSqliteMessage;
 let buildChunkedChatPayload;
@@ -24,6 +25,7 @@ let loadDb;
 let migrateChatHeaderReferences;
 let resolveSqliteLogicalChatReference;
 let truncateSqliteChatAfterUuid;
+let updateSqliteChatMetadata;
 let updateSqliteLoadedMessageRange;
 let updateSqliteMessageByUuid;
 let updateGroupChatMessageRow;
@@ -176,6 +178,7 @@ describe('SQLite chat length handling', () => {
         const chatStorageModule = await import('../chat-storage.js');
         const stmbCoreModule = await import('../../public/scripts/stmb-core.js');
         applyLoadedMessageRange = chatsModule.applyLoadedMessageRange;
+        backupChatBeforeDelete = chatsModule.backupChatBeforeDelete;
         backupSqliteDatabaseFile = chatStorageModule.backupSqliteDatabaseFile;
         deleteChatStorageCompanions = chatStorageModule.deleteChatStorageCompanions;
         getNewChatTargetConflict = chatStorageModule.getNewChatTargetConflict;
@@ -192,6 +195,7 @@ describe('SQLite chat length handling', () => {
         hasValidGroupChatPayload = chatsModule.hasValidGroupChatPayload;
         resolveSqliteLogicalChatReference = chatsModule.resolveSqliteLogicalChatReference;
         truncateSqliteChatAfterUuid = chatsModule.truncateSqliteChatAfterUuid;
+        updateSqliteChatMetadata = chatsModule.updateSqliteChatMetadata;
         updateSqliteLoadedMessageRange = chatsModule.updateSqliteLoadedMessageRange;
         updateSqliteMessageByUuid = chatsModule.updateSqliteMessageByUuid;
         updateGroupChatMessageRow = chatsModule.updateGroupChatMessageRow;
@@ -203,6 +207,58 @@ describe('SQLite chat length handling', () => {
         loadDb = sqliteModule.loadDb;
         migrateChatHeaderReferences = lorebookModule.migrateChatHeaderReferences;
         writeLogicalChat = chatsModule.writeLogicalChat;
+    });
+
+    it('creates a non-throttled recovery backup before deleting a SQLite chat', async () => {
+        const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'sqlite-chat-pre-delete-backup-'));
+        const backupsDir = path.join(tempDir, 'backups');
+        const chatPath = path.join(tempDir, 'chat.jsonl');
+
+        try {
+            fs.mkdirSync(backupsDir);
+            const messages = makeMessages(3900);
+            await writeLogicalChat(chatPath, makeHeader({ chat_revision: 17 }), messages);
+
+            await withChatSaveLock(chatPath, async () => {
+                await backupChatBeforeDelete({ directories: { backups: backupsDir } }, chatPath, 'Character.png');
+                deleteChatStorageCompanions(chatPath);
+            });
+
+            const backupFiles = fs.readdirSync(backupsDir);
+            expect(backupFiles).toHaveLength(1);
+            expect(backupFiles[0]).toContain('_pre_delete_');
+            const backupRecords = fs.readFileSync(path.join(backupsDir, backupFiles[0]), 'utf8')
+                .trim()
+                .split('\n')
+                .map(line => JSON.parse(line));
+            expect(backupRecords).toHaveLength(messages.length + 1);
+            expect(backupRecords[0].chat_revision).toBe(17);
+            expect(backupRecords.at(-1).mes).toBe(messages.at(-1).mes);
+            expect(fs.existsSync(chatPath)).toBe(false);
+            expect(fs.existsSync(chatPath.replace(/\.jsonl$/i, '.sqlite'))).toBe(false);
+        } finally {
+            fs.rmSync(tempDir, { recursive: true, force: true });
+        }
+    });
+
+    it('leaves SQLite chat storage intact when the required delete backup cannot be created', async () => {
+        const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'sqlite-chat-pre-delete-backup-fail-'));
+        const chatPath = path.join(tempDir, 'chat.jsonl');
+
+        try {
+            await writeLogicalChat(chatPath, makeHeader({ chat_revision: 9 }), makeMessages(3900));
+
+            await expect(backupChatBeforeDelete({
+                directories: { backups: path.join(tempDir, 'missing-backups') },
+            }, chatPath, 'Character.png')).rejects.toMatchObject({ error: 'delete_backup_failed' });
+
+            expect(fs.existsSync(chatPath.replace(/\.jsonl$/i, '.sqlite'))).toBe(true);
+            const records = await getLogicalChatData(chatPath);
+            expect(records).toHaveLength(3901);
+            expect(records[0].chat_revision).toBe(9);
+        } finally {
+            fs.rmSync(tempDir, { recursive: true, force: true });
+        }
     });
 
     it('classifies save-prefix targets without changing an existing chat', () => {
@@ -1099,6 +1155,61 @@ describe('SQLite chat length handling', () => {
         }
     });
 
+    it('repairs a persisted one-past-the-end overswipe sentinel on load', async () => {
+        const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'sqlite-chat-overswipe-repair-load-'));
+        const chatPath = path.join(tempDir, 'chat.jsonl');
+        const saveSessionId = '33333333-3333-4333-8333-333333333333';
+
+        try {
+            const message = makeMultiSwipeAssistant();
+            await writeLogicalChat(
+                chatPath,
+                makeHeader({ chat_revision: 7, last_save_session_id: saveSessionId }),
+                [message],
+            );
+            mutateSqliteMessage(chatPath, 0, storedMessage => {
+                storedMessage.swipe_id = storedMessage.swipes.length;
+            });
+
+            const repairedPayload = await buildChunkedChatPayload(chatPath, { displayCount: 10 });
+            const repairedMessage = getSqliteRows(chatPath)[1];
+            expect(repairedPayload.chat_repaired).toBe(true);
+            expect(repairedPayload.reload_required).toBe(true);
+            expect(repairedPayload.header.chat_revision).toBe(7);
+            expect(repairedMessage.swipe_id).toBe(1);
+            expect(validateMessageSwipeState(repairedMessage).ok).toBe(true);
+            expect(getSqliteMetadata(chatPath, 'swipe_state_scan_version')).toBe('1');
+
+            const stablePayload = await buildChunkedChatPayload(chatPath, { displayCount: 10 });
+            expect(stablePayload.chat_repaired).toBe(false);
+            expect(getSqliteRows(chatPath)[1].swipe_id).toBe(1);
+        } finally {
+            fs.rmSync(tempDir, { recursive: true, force: true });
+        }
+    });
+
+    it('does not repair a one-past-the-end swipe whose final materialized swipe is contradictory', async () => {
+        const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'sqlite-chat-overswipe-ambiguous-load-'));
+        const chatPath = path.join(tempDir, 'chat.jsonl');
+
+        try {
+            const message = makeMultiSwipeAssistant();
+            await writeLogicalChat(chatPath, makeHeader({ chat_revision: 7 }), [message]);
+            mutateSqliteMessage(chatPath, 0, storedMessage => {
+                storedMessage.swipe_id = storedMessage.swipes.length;
+                storedMessage.mes = 'contradictory text';
+            });
+
+            const payload = await buildChunkedChatPayload(chatPath, { displayCount: 10 });
+            const storedMessage = getSqliteRows(chatPath)[1];
+            expect(payload.chat_repaired).toBe(false);
+            expect(storedMessage.swipe_id).toBe(2);
+            expect(getSqliteMetadata(chatPath, 'swipe_state_scan_version')).toBe('1');
+        } finally {
+            fs.rmSync(tempDir, { recursive: true, force: true });
+        }
+    });
+
     it('returns chat_repaired before tail validation when a modern SQLite chat lacks message UUIDs', async () => {
         const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'sqlite-chat-identity-repair-append-'));
         const chatPath = path.join(tempDir, 'chat.jsonl');
@@ -1591,6 +1702,74 @@ describe('SQLite chat length handling', () => {
             `).pluck().all();
             metadataDb.close();
             expect(metadataUpdatedIndexes).toEqual([0]);
+        } finally {
+            fs.rmSync(tempDir, { recursive: true, force: true });
+        }
+    });
+
+    it('updates metadata for an empty SQLite chat without requiring message rows', async () => {
+        const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'sqlite-chat-header-metadata-'));
+        const chatPath = path.join(tempDir, 'chat.jsonl');
+
+        try {
+            const header = makeHeader({ chat_revision: 2, chat_metadata: { title: 'before' } });
+            await writeLogicalChat(chatPath, header, []);
+            const requestBody = {
+                base_revision: 2,
+                save_session_id: '33333333-3333-4333-8333-333333333333',
+                operation_id: '44444444-4444-4444-8444-444444444444',
+                chat_metadata: {
+                    title: 'after',
+                    world_info: 'Bound Lorebook',
+                    worldInfoReport: { transient: true },
+                },
+            };
+            let mutationChecks = 0;
+            const options = {
+                filePath: chatPath,
+                requestBody,
+                chatMetadata: requestBody.chat_metadata,
+                saveSessionId: requestBody.save_session_id,
+                assertMutationAllowed: async () => mutationChecks++,
+            };
+
+            await expect(updateSqliteChatMetadata(options)).resolves.toMatchObject({
+                status: 'applied',
+                changed: 1,
+                chat_revision: 3,
+                totalMessages: 0,
+            });
+            expect(mutationChecks).toBe(1);
+
+            const saved = await getLogicalChatData(chatPath);
+            expect(saved).toHaveLength(1);
+            expect(saved[0].chat_revision).toBe(3);
+            expect(saved[0].chat_metadata).toEqual({
+                title: 'after',
+                world_info: 'Bound Lorebook',
+            });
+
+            await expect(updateSqliteChatMetadata(options)).resolves.toMatchObject({
+                status: 'replayed',
+                duplicate_operation: true,
+                chat_revision: 3,
+            });
+            expect(mutationChecks).toBe(1);
+
+            const noopRequestBody = {
+                ...requestBody,
+                base_revision: 3,
+                operation_id: '55555555-5555-4555-8555-555555555555',
+            };
+            await expect(updateSqliteChatMetadata({
+                ...options,
+                requestBody: noopRequestBody,
+            })).resolves.toMatchObject({
+                status: 'noop',
+                changed: 0,
+                chat_revision: 3,
+            });
+            expect(mutationChecks).toBe(1);
         } finally {
             fs.rmSync(tempDir, { recursive: true, force: true });
         }

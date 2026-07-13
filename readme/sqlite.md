@@ -135,6 +135,14 @@ Qualifying changes are message append, edit, reorder, delete, truncate, clone, p
 
 Chat rename, chat-header metadata, persona or participant-history synchronization, group membership/configuration, opening a chat, pin changes, export, backup, migration, repair, compaction, and other maintenance do not update this value. Failed, rolled-back, no-op, and idempotently replayed mutations do not update it.
 
+### Interrupted overswipe repair
+
+Generating a new swipe past the right edge uses an in-memory pending target that is separate from the canonical message `swipe_id`. The client allocates the new swipe's UUID when it captures that target, then materializes the `swipes` and `swipe_info` slot with that exact UUID before changing the canonical index. Later streaming and save steps require the same UUID to still own the slot and reject the generation if either the slot identity or selected swipe changed. Saves therefore cannot persist a one-past-the-end generation sentinel or apply generated content to a different swipe that occupied the same array index.
+
+Modern SQLite chats receive a one-time `swipe_state_scan_version` maintenance scan on load. The scan repairs only the exact legacy overswipe shape where `swipe_id === swipes.length`, the swipe list is non-empty, and selecting the final materialized swipe makes the entire message pass active-swipe validation. Other out-of-bounds or contradictory states are left unchanged for explicit diagnosis. A successful repair preserves the chat revision and activity timestamp and requires the client to reload the repaired chat before writing.
+
+Chat-header metadata changes use a dedicated revision-checked SQLite mutation for direct and group chats. The mutation replaces the sanitized `chat_metadata` object atomically, records an operation receipt, and does not read, validate, or rewrite message rows. This allows metadata such as chat-bound lorebooks to persist for empty chats and independently of message-range state.
+
 Pinned and unpinned chats form separate display tiers; each tier sorts by `last_activity_at` descending. Legacy chats without the metadata value use their last persisted message timestamp without writing a migration value or consulting filesystem modification time. Chats with neither value are omitted until qualifying activity occurs.
 
 ## Message Identity
@@ -676,6 +684,8 @@ Delete must account for:
 - `.sqlite-shm`;
 - lock and temporary companions where applicable.
 
+The start-new-chat flow's optional deletion creates a non-throttled logical JSONL recovery backup while holding the chat lifecycle lock. If that backup cannot be created, deletion fails closed and leaves the authoritative chat intact. Ordinary standalone deletion retains its existing configured-backup behavior.
+
 Rename must not ignore active WAL state. Source and destination coordination must prevent concurrent mutation or path collision.
 
 Raw-file fallback behavior must be restricted to explicitly verified conditions in which no writer is active and no committed sidecar state is omitted.
@@ -920,4 +930,10 @@ The completed architecture uses SQLite as a database: stable identities, bounded
 
 ### Active-chat revision operations
 
-Visibility changes, persona synchronization, and group incremental message updates use the shared acknowledged client queue and SQLite operation receipts. Receipts are checked under the logical-chat lock before stale-revision validation, including for validated no-ops. Group incremental updates resolve the persisted wrapper by `aikobots_message_uuid`; a supplied positional message ID is compatibility metadata and must match the UUID-resolved row.
+Chat-header metadata changes, visibility changes, persona synchronization, and group incremental message updates use the shared acknowledged client queue and SQLite operation receipts. Receipts are checked under the logical-chat lock before stale-revision validation, including for validated no-ops. Group incremental updates resolve the persisted wrapper by `aikobots_message_uuid`; a supplied positional message ID is compatibility metadata and must match the UUID-resolved row.
+
+### Streamed response authority
+
+The browser message shown while generation is streaming is ephemeral display state. When a stream finishes, the client sends one explicit SQLite append or update mutation, waits for its acknowledged revision, reads that message back from the server by logical position, validates its stable message UUID, and replaces the ephemeral browser object and DOM with the canonical SQLite row. Completion events run only after that replacement.
+
+Generic range saves are deferred until both the final streaming mutation and authoritative read-back settle. An explicit chat flush waits for the same boundary, while an explicit server refresh discards deferred browser-save state. This prevents a courtesy streaming display or a delayed save timer from becoming authoritative or leaking into another chat.
