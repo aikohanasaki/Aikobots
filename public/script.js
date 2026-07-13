@@ -13902,18 +13902,13 @@ async function messageEditCancel(messageId = this_edit_mes_id) {
         reasoningEditDone.trigger('click');
     }
 
-    await eventSource.emit(event_types.MESSAGE_UPDATED, messageId);
-    if (messageId == this_edit_mes_id) {
-        this_edit_mes_id = undefined;
-        clearActiveMessageEditSession();
-    }
-    else {
+    if (messageId != this_edit_mes_id) {
         console.warn(`The message editor was closed on message #${messageId} while #${this_edit_mes_id} is being edited.`);
-        this_edit_mes_id = undefined;
-        clearActiveMessageEditSession();
     }
-
+    this_edit_mes_id = undefined;
+    clearActiveMessageEditSession();
     showSwipeButtons();
+    await eventSource.emit(event_types.MESSAGE_UPDATED, messageId);
 }
 
 /**
@@ -14413,7 +14408,12 @@ async function messageEditDone(div) {
         text = substituteParams(text);
     }
 
-    await eventSource.emit(event_types.MESSAGE_EDITED, messageId);
+    let editEventError;
+    try {
+        await eventSource.emit(event_types.MESSAGE_EDITED, messageId);
+    } catch (error) {
+        editEventError = error;
+    }
     text = chat[messageId]?.mes ?? text;
     mesBlock.find('.mes_text').empty();
     mesBlock.find('.mes_edit_buttons').css('display', 'none');
@@ -14439,9 +14439,14 @@ async function messageEditDone(div) {
         reasoningEditDone.trigger('click');
     }
 
-    await eventSource.emit(event_types.MESSAGE_UPDATED, messageId);
     this_edit_mes_id = undefined;
     clearActiveMessageEditSession();
+    showSwipeButtons();
+
+    if (editEventError) {
+        throw editEventError;
+    }
+    await eventSource.emit(event_types.MESSAGE_UPDATED, messageId);
 
     let saveResult;
     if (currentChatFileNameLooksSqlite()) {
@@ -14458,10 +14463,8 @@ async function messageEditDone(div) {
 
     if (saveResult !== CHAT_SAVE_RESULT.SAVED) {
         await reloadCurrentChat();
-        showSwipeButtons();
         return;
     }
-    showSwipeButtons();
 }
 
 const pastCharacterChatsCache = new Map();
