@@ -977,9 +977,9 @@ let chatSaveQueueTimer = null;
 let chatSaveQueueRun = null;
 let chatRevisionOperationQueue = Promise.resolve();
 let chatSaveRequestOptions = {};
-let chatSaveStreamingAppendRetryTimer = null;
+let chatSaveDeferredForStreamingMutation = false;
 let chatSaveDeferredForSwipeGeneration = false;
-let pendingStreamingSqliteAppend = null;
+let pendingStreamingSqliteMutation = null;
 let temporaryCharacterChat = null;
 let temporaryGroupChat = null;
 const CHAT_SAVE_RESULT = {
@@ -988,7 +988,6 @@ const CHAT_SAVE_RESULT = {
     MISSING_CHAT: 'missing_chat',
 };
 export { CHAT_SAVE_RESULT };
-const CHAT_SAVE_STREAMING_APPEND_RETRY_MS = 250;
 const CHAT_SAVE_REQUEST_RETRY_DELAY_MS = 750;
 const CHAT_SAVE_SESSION_ID_KEY = 'aikobots_chat_save_session_id';
 const TEMPORARY_CHAT_DISPLAY_NAME = '(Temporary Chat)';
@@ -5137,8 +5136,8 @@ function markChatRangeLoaded(startId, endId = startId) {
     syncPartialChatStateAfterMutation();
 }
 
-// Streaming appends extend the in-memory tail before the SQLite append mutation persists it.
-function markPendingStreamingSqliteAppend(messageId, message) {
+/** Records the ephemeral message that must not become authoritative before SQLite read-back. */
+function markPendingStreamingSqliteMutation(messageId, message) {
     if (!currentChatFileNameLooksSqlite()) {
         return;
     }
@@ -5149,31 +5148,51 @@ function markPendingStreamingSqliteAppend(messageId, message) {
         return;
     }
 
-    pendingStreamingSqliteAppend = {
+    let resolveSettled;
+    const settled = new Promise(resolve => {
+        resolveSettled = resolve;
+    });
+    pendingStreamingSqliteMutation = {
         messageId: normalizedMessageId,
         messageUuid,
+        settled,
+        resolveSettled,
     };
 }
 
-// Generic loaded-range saves must wait for the append mutation that makes the new tail durable.
-function isPendingStreamingSqliteAppendActive() {
-    if (!currentChatFileNameLooksSqlite() || !pendingStreamingSqliteAppend) {
+/** Returns whether a streamed SQLite mutation is still awaiting persistence or read-back. */
+function isPendingStreamingSqliteMutationActive() {
+    if (!currentChatFileNameLooksSqlite() || !pendingStreamingSqliteMutation) {
         return false;
     }
 
-    const message = chat[pendingStreamingSqliteAppend.messageId];
-    return message?.[AIKOBOTS_MESSAGE_UUID_KEY] === pendingStreamingSqliteAppend.messageUuid;
+    const message = chat[pendingStreamingSqliteMutation.messageId];
+    return message?.[AIKOBOTS_MESSAGE_UUID_KEY] === pendingStreamingSqliteMutation.messageUuid;
 }
 
-function clearPendingStreamingSqliteAppend(message) {
-    if (!pendingStreamingSqliteAppend) {
+/** Settles the streaming mutation gate and resumes deferred saves only after verified success. */
+function clearPendingStreamingSqliteMutation(message, { result = CHAT_SAVE_RESULT.SAVED } = {}) {
+    if (!pendingStreamingSqliteMutation) {
         return;
     }
 
     const messageUuid = message?.[AIKOBOTS_MESSAGE_UUID_KEY];
-    if (!messageUuid || pendingStreamingSqliteAppend.messageUuid === messageUuid) {
-        pendingStreamingSqliteAppend = null;
+    if (!messageUuid || pendingStreamingSqliteMutation.messageUuid === messageUuid) {
+        const { resolveSettled } = pendingStreamingSqliteMutation;
+        pendingStreamingSqliteMutation = null;
+        resolveSettled(result);
+        if (result === CHAT_SAVE_RESULT.SAVED) {
+            resumeChatSaveAfterStreamingMutation();
+        }
     }
+}
+
+/** Waits for the active streamed SQLite mutation and canonical read-back, if any. */
+async function waitForPendingStreamingSqliteMutation() {
+    const pendingMutation = isPendingStreamingSqliteMutationActive()
+        ? pendingStreamingSqliteMutation
+        : null;
+    return await pendingMutation?.settled;
 }
 
 export function getTotalChatMessages() {
@@ -6444,11 +6463,18 @@ function hasPendingDebouncedChatSave() {
 
 export async function flushDebouncedChatSave() {
     await flushPendingSqliteMessageUpdateSave();
+    const streamingMutationResult = await waitForPendingStreamingSqliteMutation();
+    if (streamingMutationResult === CHAT_SAVE_RESULT.FAILED) {
+        return CHAT_SAVE_RESULT.FAILED;
+    }
 
     if (!hasPendingDebouncedChatSave()) {
-        const result = chatSaveQueuePromise
+        let result = chatSaveQueuePromise
             ? await chatSaveQueuePromise
             : CHAT_SAVE_RESULT.SAVED;
+        if (chatSaveDirty && !chatSaveQueuePromise) {
+            result = await saveChatConditional({ immediate: true });
+        }
         await chatRevisionOperationQueue;
         await flushPendingSqliteMessageUpdateSave();
         return result;
@@ -6477,6 +6503,11 @@ export async function clearChat({ flushPendingSave = true } = {}) {
         }
     } else {
         cancelDebouncedChatSave();
+        clearPendingStreamingSqliteMutation(null, { result: CHAT_SAVE_RESULT.FAILED });
+        chatSaveDirty = false;
+        chatSaveRequestOptions = {};
+        chatSaveDeferredForStreamingMutation = false;
+        chatSaveDeferredForSwipeGeneration = false;
     }
 
     cancelDebouncedMetadataSave();
@@ -6700,6 +6731,7 @@ async function refreshCurrentChatFromServer() {
     if (chatSaveQueuePromise) {
         await chatSaveQueuePromise.catch(() => CHAT_SAVE_RESULT.FAILED);
     }
+    await waitForPendingStreamingSqliteMutation();
 
     await reloadCurrentChat({ flushPendingSave: false });
     toastr.success(t`Chat refreshed from server`);
@@ -8939,13 +8971,6 @@ class StreamingProcessor {
             targetMessage.extra.reasoning_signature = this.reasoningSignature;
         }
 
-        if (this.type !== 'impersonate') {
-            await eventSource.emit(event_types.MESSAGE_RECEIVED, this.messageId, this.type);
-            await eventSource.emit(event_types.CHARACTER_MESSAGE_RENDERED, this.messageId, this.type);
-        } else {
-            await eventSource.emit(event_types.IMPERSONATE_READY, text);
-        }
-
         if (this.type === 'swipe') {
             ensureSwipeTargetSlot(finishSwipeValidation.message, this.swipeTarget);
         }
@@ -8960,9 +8985,16 @@ class StreamingProcessor {
             messageId: sqliteMutationMessageId,
         });
         if (saveResult !== CHAT_SAVE_RESULT.SAVED) {
-            await reloadCurrentChat();
+            await reloadCurrentChat({ flushPendingSave: false });
             unblockGeneration();
             return false;
+        }
+
+        if (this.type !== 'impersonate') {
+            await eventSource.emit(event_types.MESSAGE_RECEIVED, this.messageId, this.type);
+            await eventSource.emit(event_types.CHARACTER_MESSAGE_RENDERED, this.messageId, this.type);
+        } else {
+            await eventSource.emit(event_types.IMPERSONATE_READY, text);
         }
         unblockGeneration();
 
@@ -8980,17 +9012,18 @@ class StreamingProcessor {
         return true;
     }
 
-    onErrorStreaming() {
+    async onErrorStreaming() {
         this.abortController.abort();
         this.isStopped = true;
 
         this.markUIGenStopped();
         unblockGeneration();
 
-        const noEmitTypes = ['swipe', 'impersonate', 'continue'];
-        if (!noEmitTypes.includes(this.type)) {
-            eventSource.emit(event_types.MESSAGE_RECEIVED, this.messageId, this.type);
-            eventSource.emit(event_types.CHARACTER_MESSAGE_RENDERED, this.messageId, this.type);
+        const ephemeralMessage = chat[this.messageId];
+        const shouldRestoreAuthoritativeMessage = isPendingStreamingSqliteMutationActive();
+        clearPendingStreamingSqliteMutation(ephemeralMessage, { result: CHAT_SAVE_RESULT.FAILED });
+        if (shouldRestoreAuthoritativeMessage) {
+            await reloadCurrentChat({ flushPendingSave: false });
         }
     }
 
@@ -9069,7 +9102,7 @@ class StreamingProcessor {
             // in the case of a self-inflicted abort, we have already cleaned up
             if (!this.isFinished) {
                 console.error(err);
-                this.onErrorStreaming();
+                await this.onErrorStreaming();
             }
             return this.result;
         }
@@ -11937,8 +11970,8 @@ export async function saveReply({ type, getMessage, fromStreaming = false, title
 
     normalizeActiveChatIdentities();
     mutationMessageId = Math.min(mutationMessageId, chat.length - 1);
-    if (fromStreaming && mutation === 'append') {
-        markPendingStreamingSqliteAppend(mutationMessageId, chat[mutationMessageId]);
+    if (fromStreaming && ['append', 'update'].includes(mutation)) {
+        markPendingStreamingSqliteMutation(mutationMessageId, chat[mutationMessageId]);
     }
 
     if (!fromStreaming) {
@@ -14364,15 +14397,61 @@ async function saveSqliteReplyMutation(replyResult) {
         return CHAT_SAVE_RESULT.FAILED;
     }
 
-    if (replyResult.mutation === 'append') {
-        try {
-            return await saveSqliteMessageAppend(messageId, message);
-        } finally {
-            clearPendingStreamingSqliteAppend(message);
+    const messageUuid = message[AIKOBOTS_MESSAGE_UUID_KEY];
+    let saveResult;
+    let finalResult = CHAT_SAVE_RESULT.FAILED;
+    try {
+        if (replyResult.mutation === 'append') {
+            saveResult = await saveSqliteMessageAppend(messageId, message);
+        } else {
+            saveResult = await saveMessageUpdateByUuid(message);
         }
-    }
 
-    return saveMessageUpdateByUuid(message);
+        if (saveResult !== CHAT_SAVE_RESULT.SAVED || !currentChatFileNameLooksSqlite()) {
+            finalResult = saveResult;
+            return saveResult;
+        }
+
+        finalResult = await replaceClientMessageWithAuthoritativeSqliteMessage(messageId, messageUuid);
+        return finalResult;
+    } finally {
+        clearPendingStreamingSqliteMutation(message, { result: finalResult });
+    }
+}
+
+/**
+ * Replaces an ephemeral client message with the canonical row read back from SQLite.
+ * @param {number} messageId Logical message position to read.
+ * @param {string} expectedMessageUuid Stable identity expected at that position.
+ * @returns {Promise<string>} Chat save result.
+ */
+async function replaceClientMessageWithAuthoritativeSqliteMessage(messageId, expectedMessageUuid) {
+    try {
+        const response = await fetchChunkedChat({ rangeStart: messageId, count: 1 });
+        const loadedRangeStart = Number(response?.loadedRangeStart);
+        const messageOffset = messageId - loadedRangeStart;
+        const authoritativeMessage = response?.messages?.[messageOffset];
+        if (!Number.isInteger(loadedRangeStart)
+            || messageOffset < 0
+            || authoritativeMessage?.[AIKOBOTS_MESSAGE_UUID_KEY] !== expectedMessageUuid) {
+            throw new Error('Authoritative SQLite message did not match the completed stream');
+        }
+
+        if (!applyChunkedChatPayload(response, { replace: false, currentView: chatLoadState.currentView })) {
+            throw new Error('Authoritative SQLite message belonged to a different chat');
+        }
+
+        if (chatElement.children('.mes').filter(`[mesid="${messageId}"]`).length) {
+            addOneMessage(chat[messageId], { type: 'swipe', forceId: messageId, scroll: false, showSwipes: false });
+            await updateSwipeCounter(messageId);
+            refreshSwipeButtons();
+        }
+        return CHAT_SAVE_RESULT.SAVED;
+    } catch (error) {
+        console.error('Failed to replace streamed message with the authoritative SQLite row', error);
+        toastr.error(t`The saved response could not be verified. Reloading the chat from the server.`);
+        return CHAT_SAVE_RESULT.FAILED;
+    }
 }
 
 export function currentChatFileNameLooksSqlite() {
@@ -17620,8 +17699,8 @@ async function drainChatSaveQueue() {
                 chatSaveDeferredForSwipeGeneration = true;
                 return finalResult;
             }
-            if (shouldDeferChatSaveForStreamingAppend(options)) {
-                scheduleChatSaveAfterStreamingAppend();
+            if (shouldDeferChatSaveForStreamingMutation(options)) {
+                chatSaveDeferredForStreamingMutation = true;
                 return finalResult;
             }
 
@@ -17653,17 +17732,24 @@ function cancelChatSaveQueueTimer() {
     }
 }
 
-function scheduleChatSaveAfterStreamingAppend() {
-    if (chatSaveStreamingAppendRetryTimer) {
+/** Restarts a save deferred until the streamed SQLite mutation and read-back settled. */
+function resumeChatSaveAfterStreamingMutation() {
+    if (!chatSaveDeferredForStreamingMutation) {
         return;
     }
 
-    chatSaveStreamingAppendRetryTimer = setTimeout(() => {
-        chatSaveStreamingAppendRetryTimer = null;
+    chatSaveDeferredForStreamingMutation = false;
+    const resumeSave = () => {
         if (chatSaveDirty && !chatSaveQueuePromise) {
             void saveChatConditional({ immediate: true });
         }
-    }, CHAT_SAVE_STREAMING_APPEND_RETRY_MS);
+    };
+
+    if (chatSaveQueuePromise) {
+        void chatSaveQueuePromise.then(resumeSave, resumeSave);
+    } else {
+        resumeSave();
+    }
 }
 
 /** Returns whether a swipe operation is still navigating, generating, rolling back, or persisting. */
@@ -17672,8 +17758,8 @@ function hasActiveSwipeOperation() {
 }
 
 /** Returns whether persistence must wait for an in-progress chat mutation to settle. */
-function shouldDeferChatSaveForStreamingAppend(options = {}) {
-    if (!isPendingStreamingSqliteAppendActive()) {
+function shouldDeferChatSaveForStreamingMutation(options = {}) {
+    if (!isPendingStreamingSqliteMutationActive()) {
         return false;
     }
 
