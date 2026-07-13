@@ -51,6 +51,22 @@ export async function runChatBasicCreateRenameScenario({ page, logger, captureAr
     });
 
     const smokeCharacterName = 'zzzzzzTesterBillySmokilyDokily';
+    const upsideDownSmokeCharacterName = 'zzzzzzTesterUpsideDownSmokilyDokily';
+
+    const characterFixturePaths = await runLoggedStep({
+        logger,
+        testName,
+        stepName: 'verify-smoke-character-fixtures',
+        featureTags,
+        selector: '#send_textarea',
+        expected: 'Smoke character PNG fixtures are present and resolvable',
+        action: async () => {
+            const billyPath = page.resolveSmokeCharacterImportPath('zzzzzzTesterBillySmokilyDokily.png');
+            const upsideDownPath = page.resolveSmokeCharacterImportPath('zzzzzzTesterUpsideDownSmokilyDokily.png');
+            return { billyPath, upsideDownPath };
+        },
+        onError: error => captureArtifacts({ testName, stepName: 'verify-smoke-character-fixtures', error }),
+    });
 
     await runLoggedStep({
         logger,
@@ -66,8 +82,7 @@ export async function runChatBasicCreateRenameScenario({ page, logger, captureAr
             try {
                 await page.waitForSelectedCharacterName(smokeCharacterName, 2_500);
             } catch {
-                const smokeCharacterPath = page.resolveSmokeCharacterImportPath('zzzzzzTesterBillySmokilyDokily.png');
-                await page.importCharacterFromFile(smokeCharacterPath);
+                await page.importCharacterFromFile(characterFixturePaths.billyPath);
                 imported = true;
                 await page.runSlashCommand(`/go ${smokeCharacterName}`);
                 await page.waitForSelectedCharacterName(smokeCharacterName);
@@ -355,17 +370,30 @@ export async function runChatBasicCreateRenameScenario({ page, logger, captureAr
         onError: error => captureArtifacts({ testName, stepName: 'swipe-right-after-group-convert-response', error }),
     });
 
+    await runLoggedStep({
+        logger,
+        testName,
+        stepName: 'ensure-upside-down-group-character-available',
+        featureTags,
+        selector: '#rm_group_add_members,#character_import_file,#rm_group_add_members_pagination',
+        expected: `${upsideDownSmokeCharacterName} is present in group add-members list (import if missing)`,
+        action: async () => {
+            return page.ensureGroupAddCandidateExistsOrImport(upsideDownSmokeCharacterName, characterFixturePaths.upsideDownPath);
+        },
+        onError: error => captureArtifacts({ testName, stepName: 'ensure-upside-down-group-character-available', error }),
+    });
+
     const addMembersResult = await runLoggedStep({
         logger,
         testName,
-        stepName: 'add-member-to-group',
+        stepName: 'add-upside-down-member-to-group-from-end',
         featureTags,
-        selector: '#rm_group_add_members .group_member [title="Add to group"]',
-        expected: 'At least two non-Assistant characters are added to the current group',
+        selector: '#rm_group_add_members .group_member [title="Add to group"],#rm_group_add_members_pagination .paginationjs-next',
+        expected: `${upsideDownSmokeCharacterName} is added from the last page of group candidates`,
         action: async () => {
-            return page.addFirstAvailableMemberToGroup();
+            return page.addGroupMemberByNameFromEnd(upsideDownSmokeCharacterName);
         },
-        onError: error => captureArtifacts({ testName, stepName: 'add-member-to-group', error }),
+        onError: error => captureArtifacts({ testName, stepName: 'add-upside-down-member-to-group-from-end', error }),
     });
 
     await runLoggedStep({

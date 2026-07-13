@@ -268,6 +268,118 @@ export class ChatPage {
         }, this.config.timeouts.stepMs);
     }
 
+    async openGroupAddMembersList() {
+        await this.openRightPanelGroupEditor();
+
+        const isVisible = await this.driver.executeScript(`
+            const list = document.getElementById('rm_group_add_members');
+            return list ? getComputedStyle(list).display !== 'none' : false;
+        `);
+
+        if (!isVisible) {
+            await this.clickElementById('groupAddMemberListToggle');
+        }
+
+        await this.driver.wait(async () => {
+            return this.driver.executeScript(`
+                const list = document.getElementById('rm_group_add_members');
+                return list ? getComputedStyle(list).display !== 'none' : false;
+            `);
+        }, this.config.timeouts.stepMs);
+
+        await this.driver.wait(until.elementLocated(By.css('#rm_group_add_members .group_member')), this.config.timeouts.responseMs);
+    }
+
+    async paginateGroupAddMembersToLastPage() {
+        await this.openGroupAddMembersList();
+
+        await this.driver.wait(async () => {
+            const moved = await this.driver.executeScript(`
+                const next = document.querySelector('#rm_group_add_members_pagination .paginationjs-next:not(.disabled) a');
+                if (!next) return false;
+                next.click();
+                return true;
+            `);
+
+            if (!moved) {
+                return true;
+            }
+
+            await new Promise(resolve => setTimeout(resolve, 250));
+            return false;
+        }, this.config.timeouts.responseMs);
+    }
+
+    async isGroupAddCandidatePresentByName(targetName) {
+        await this.openGroupAddMembersList();
+        const normalized = String(targetName || '').trim().toLowerCase();
+
+        return this.driver.executeScript(`
+            const expected = arguments[0];
+            const rows = Array.from(document.querySelectorAll('#rm_group_add_members .group_member'));
+            return rows.some(row => {
+                const name = (row.querySelector('.ch_name')?.textContent || '').trim().toLowerCase();
+                return name === expected;
+            });
+        `, normalized);
+    }
+
+    async ensureGroupAddCandidateExistsOrImport(targetName, absoluteCharacterPath) {
+        let present = await this.isGroupAddCandidatePresentByName(targetName);
+        let imported = false;
+
+        if (!present) {
+            await this.waitForStandardSendState();
+            await this.importCharacterFromFile(absoluteCharacterPath);
+            imported = true;
+            await this.openGroupAddMembersList();
+            present = await this.isGroupAddCandidatePresentByName(targetName);
+        }
+
+        if (!present) {
+            throw new Error(`Target group candidate not found after import: ${targetName}`);
+        }
+
+        return { targetName, imported, importPath: absoluteCharacterPath };
+    }
+
+    async addGroupMemberByNameFromEnd(targetName) {
+        await this.paginateGroupAddMembersToLastPage();
+        const normalized = String(targetName || '').trim().toLowerCase();
+
+        const addedChid = await this.driver.executeScript(`
+            const expected = arguments[0];
+            const rows = Array.from(document.querySelectorAll('#rm_group_add_members .group_member'));
+            const target = rows.find(row => {
+                const name = (row.querySelector('.ch_name')?.textContent || '').trim().toLowerCase();
+                return name === expected;
+            });
+
+            if (!target) return null;
+
+            const addButton = target.querySelector('[title="Add to group"][data-action="add"]');
+            if (!addButton) return null;
+
+            const chid = String(target.getAttribute('data-chid') || '');
+            addButton.scrollIntoView({ block: 'center', inline: 'center' });
+            addButton.click();
+            return chid || null;
+        `, normalized);
+
+        if (!addedChid) {
+            throw new Error(`Target character not addable from last candidates page: ${targetName}`);
+        }
+
+        await this.driver.wait(async () => {
+            return this.driver.executeScript(`
+                const row = document.querySelector('#rm_group_members .group_member[data-chid="' + arguments[0] + '"]');
+                return Boolean(row);
+            `, addedChid);
+        }, this.config.timeouts.responseMs);
+
+        return { addedCount: 1, addedChids: [addedChid], targetName };
+    }
+
     async convertCurrentChatToGroup() {
         await this.openOptionsMenu();
         await this.clickElementById('option_convert_to_group');
@@ -488,8 +600,25 @@ export class ChatPage {
         }, this.config.timeouts.stepMs);
     }
 
+    async waitForStandardSendState() {
+        await this.driver.wait(async () => {
+            return this.driver.executeScript(`
+                const sendButton = document.getElementById('send_but');
+                const stopButton = document.getElementById('mes_stop');
+                if (!sendButton) return false;
+
+                const sendVisible = getComputedStyle(sendButton).display !== 'none' && getComputedStyle(sendButton).visibility !== 'hidden';
+                const sendLooksStandard = sendButton.classList.contains('fa-paper-plane');
+                const stopVisible = stopButton ? (getComputedStyle(stopButton).display !== 'none' && getComputedStyle(stopButton).visibility !== 'hidden') : false;
+
+                return sendVisible && sendLooksStandard && !stopVisible;
+            `);
+        }, this.config.timeouts.responseMs);
+    }
+
     async waitForSendReady() {
         await this.waitForNoBlockingDialog();
+        await this.waitForStandardSendState();
         await this.driver.wait(async () => {
             return this.driver.executeScript(`
                 const textarea = document.getElementById('send_textarea');
