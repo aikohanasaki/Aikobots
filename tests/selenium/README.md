@@ -14,10 +14,38 @@ Copy `.env.example` to `.env` and set:
 ## Commands
 
 - `npm run test:selenium:mvp:smoke`
-  - Runs bootstrap + connection profile + create chat + send message/response smoke scenario
+  - Runs only the smoke path (`node tests/selenium/run.mjs --smoke`) in a single browser session
+  - Scope: bootstrap + connection-profile setup + chat create/rename/group-message flow
   - Response wait timeout is controlled by `ST_RESPONSE_TIMEOUT_MS` (default 90000)
 - `npm run test:selenium:mvp`
-  - Runs full MVP scenarios
+  - Runs the same smoke path plus additional non-smoke scenarios
+
+## Smoke test flow
+
+`npm run test:selenium:mvp:smoke` executes these steps in order:
+
+1. **Bootstrap (`run.mjs`)**
+   - `bootstrap / load-app`: open the app and wait for shell readiness (`#top_chat_bar`).
+2. **Connection profile setup (`scenarios/setup-connection-profile.mjs`)**
+   - `open-connection-profiles-panel`
+   - `verify-profile-exists`
+   - `select-profile`
+   - `close-connection-profiles-panel`
+3. **Chat basic create/rename/group flow (`scenarios/chat-basic-create-rename.mjs`)**
+   - Start and stabilize chat: `start-new-chat`, `wait-chat-ready`, `wait-connection-ready`
+   - Send first prompt and verify reply: `send-user-message`, `wait-for-assistant-response`
+   - Rename path: `wait-rename-ready`, `rename-temporary-chat`, `send-user-message-after-rename`, `wait-for-assistant-response-after-rename`
+   - Group conversion path: `convert-chat-to-group`, `send-user-message-after-group-convert`, `wait-for-assistant-response-after-group-convert`
+   - Group member activity path: `add-member-to-group`, `trigger-added-member-speak`, `send-user-message-after-added-member-speak`, `wait-for-assistant-response-after-added-member-speak`
+
+## Non-smoke scenarios
+
+When `--smoke` is **not** passed (for `npm run test:selenium:mvp`), `run.mjs` also runs:
+
+- `chat-import-export-roundtrip`
+- `chat-long-swipe-smoke`
+
+These scenarios are intentionally excluded from `npm run test:selenium:mvp:smoke` to keep smoke runs focused and fast.
 
 ## Output
 

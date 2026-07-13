@@ -50,6 +50,24 @@ export async function runChatBasicCreateRenameScenario({ page, logger, captureAr
         onError: error => captureArtifacts({ testName, stepName: 'wait-connection-ready', error }),
     });
 
+    const smokeCharacterName = 'zzzzzzTesterBillySmokilyDokily';
+
+    await runLoggedStep({
+        logger,
+        testName,
+        stepName: 'go-to-smoke-character',
+        featureTags,
+        selector: '#send_textarea,#send_but,#rm_button_selected_ch h2',
+        expected: `Slash command /go loads ${smokeCharacterName}`,
+        action: async () => {
+            await page.runSlashCommand(`/go ${smokeCharacterName}`);
+            await page.waitForSelectedCharacterName(smokeCharacterName);
+            const selectedCharacterName = await page.getSelectedCharacterName();
+            return { selectedCharacterName };
+        },
+        onError: error => captureArtifacts({ testName, stepName: 'go-to-smoke-character', error }),
+    });
+
     const beforeAssistantCount = await runLoggedStep({
         logger,
         testName,

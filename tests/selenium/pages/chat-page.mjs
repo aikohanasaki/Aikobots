@@ -179,6 +179,21 @@ export class ChatPage {
         `);
     }
 
+    async getSelectedCharacterName() {
+        return this.driver.executeScript(`
+            const el = document.querySelector('#rm_button_selected_ch h2');
+            return el ? (el.textContent || '').trim() : '';
+        `);
+    }
+
+    async waitForSelectedCharacterName(namePart) {
+        const normalized = String(namePart || '').trim().toLowerCase();
+        await this.driver.wait(async () => {
+            const selectedName = await this.getSelectedCharacterName();
+            return selectedName.toLowerCase().includes(normalized);
+        }, this.config.timeouts.responseMs);
+    }
+
     async openManageChats() {
         const button = await this.driver.findElement(By.id('top_chat_bar_chat_manager'));
         await button.click();
@@ -447,6 +462,24 @@ export class ChatPage {
                 return !textareaDisabled && !buttonHidden;
             `);
         }, this.config.timeouts.stepMs);
+    }
+
+    async runSlashCommand(commandText) {
+        await this.waitForSendReady();
+        const textarea = await this.driver.findElement(By.id('send_textarea'));
+        await textarea.click();
+        await textarea.clear();
+        await textarea.sendKeys(commandText);
+        await new Promise(resolve => setTimeout(resolve, 500));
+        await this.clickElementById('send_but');
+
+        await this.driver.wait(async () => {
+            const currentValue = await this.driver.executeScript(`
+                const ta = document.getElementById('send_textarea');
+                return ta ? String(ta.value || '') : '';
+            `);
+            return currentValue.length === 0;
+        }, this.config.timeouts.responseMs);
     }
 
     async sendMessage(text) {
