@@ -4800,14 +4800,20 @@ function reportCharacterChatDeleteRevisionError(error) {
     console.error('Failed to read chat revision before deleting character chat.', error);
 }
 
-async function delChat(chatfile) {
+/**
+ * Deletes a character chat and optionally requires a fresh server-side recovery backup.
+ * @param {string} chatfile Chat file name
+ * @param {{backupBeforeDelete?:boolean}} options Delete options
+ * @returns {Promise<boolean>} Whether the chat was deleted
+ */
+async function delChat(chatfile, { backupBeforeDelete = false } = {}) {
     const avatarUrl = characters[this_chid].avatar;
     let revisionFields;
     try {
         revisionFields = await getCharacterChatDeleteRevisionFields(avatarUrl, chatfile);
     } catch (error) {
         reportCharacterChatDeleteRevisionError(error);
-        return;
+        return false;
     }
 
     const response = await fetch('/api/chats/delete', {
@@ -4816,6 +4822,7 @@ async function delChat(chatfile) {
         body: JSON.stringify({
             chatfile: chatfile,
             avatar_url: avatarUrl,
+            backup_before_delete: backupBeforeDelete,
             ...revisionFields,
         }),
     });
@@ -4838,7 +4845,12 @@ async function delChat(chatfile) {
             }
         }
         await eventSource.emit(event_types.CHAT_DELETED, name);
+        return true;
     }
+
+    toastr.error(t`Check the server connection and reload the page to prevent data loss.`, t`Chat could not be deleted`);
+    console.error('Character chat could not be deleted', response);
+    return false;
 }
 
 /**
@@ -6483,7 +6495,7 @@ export async function flushDebouncedChatSave() {
     }
 
     cancelDebouncedChatSave();
-    toastr.info(t`Please wait until the chat is saved.`, t`Your chat is still saving...`);
+    toastr.info(t`Saving queued chat changes before continuing.`, t`Saving pending chat changes...`);
     const result = await saveChatConditional({ immediate: true });
     await chatRevisionOperationQueue;
     await flushPendingSqliteMessageUpdateSave();
@@ -19189,22 +19201,23 @@ export async function doNewChat({ deleteCurrentChat = false } = {}) {
 
     //Fix it; New chat doesn't create while open create character menu
     await waitUntilCondition(() => !isChatSaving, debounce_timeout.extended, 10);
-    await clearChat();
-    discardTemporaryCharacterChat();
-    chat.length = 0;
-
     chat_file_for_del = getCurrentChatDetails()?.sessionName;
 
-    // Make it easier to find in backups
-    if (deleteCurrentChat) {
-        await saveChatConditional();
-    }
-
     if (selected_group) {
-        await createNewGroupChat(selected_group);
-        if (deleteCurrentChat) await deleteGroupChat(selected_group, chat_file_for_del, { jumpToNewChat: false }); // don't jump, new chat was already created and jumped to above
+        const created = await createNewGroupChat(selected_group);
+        if (!created) {
+            return;
+        }
+        if (deleteCurrentChat) {
+            await deleteGroupChat(selected_group, chat_file_for_del, { jumpToNewChat: false, backupBeforeDelete: true }); // don't jump, new chat was already created and jumped to above
+        }
     }
     else {
+        await clearChat();
+        const currentChatWasTemporary = isCurrentCharacterChatTemporary();
+        discardTemporaryCharacterChat();
+        chat.length = 0;
+
         //RossAscends: added character name to new chat filenames and replaced Date.now() with humanizedDateTime;
         const previousChatFileName = String(characters[this_chid].chat || '');
         chat_metadata = {};
@@ -19212,9 +19225,11 @@ export async function doNewChat({ deleteCurrentChat = false } = {}) {
         $('#selected_chat_pole').val(characters[this_chid].chat);
         await getChat();
         setTemporaryCharacterChatPreviousFileName(previousChatFileName);
-        if (deleteCurrentChat) {
-            await delChat(chat_file_for_del + '.jsonl');
-            setTemporaryCharacterChatPreviousFileName('');
+        if (deleteCurrentChat && !currentChatWasTemporary) {
+            const deleted = await delChat(chat_file_for_del + '.jsonl', { backupBeforeDelete: true });
+            if (deleted) {
+                setTemporaryCharacterChatPreviousFileName('');
+            }
         }
     }
 

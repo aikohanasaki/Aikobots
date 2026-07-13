@@ -6,6 +6,7 @@ import { beforeAll, describe, expect, it } from '@jest/globals';
 import Database from 'better-sqlite3';
 
 let applyLoadedMessageRange;
+let backupChatBeforeDelete;
 let backupSqliteDatabaseFile;
 let appendSqliteMessage;
 let buildChunkedChatPayload;
@@ -177,6 +178,7 @@ describe('SQLite chat length handling', () => {
         const chatStorageModule = await import('../chat-storage.js');
         const stmbCoreModule = await import('../../public/scripts/stmb-core.js');
         applyLoadedMessageRange = chatsModule.applyLoadedMessageRange;
+        backupChatBeforeDelete = chatsModule.backupChatBeforeDelete;
         backupSqliteDatabaseFile = chatStorageModule.backupSqliteDatabaseFile;
         deleteChatStorageCompanions = chatStorageModule.deleteChatStorageCompanions;
         getNewChatTargetConflict = chatStorageModule.getNewChatTargetConflict;
@@ -205,6 +207,58 @@ describe('SQLite chat length handling', () => {
         loadDb = sqliteModule.loadDb;
         migrateChatHeaderReferences = lorebookModule.migrateChatHeaderReferences;
         writeLogicalChat = chatsModule.writeLogicalChat;
+    });
+
+    it('creates a non-throttled recovery backup before deleting a SQLite chat', async () => {
+        const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'sqlite-chat-pre-delete-backup-'));
+        const backupsDir = path.join(tempDir, 'backups');
+        const chatPath = path.join(tempDir, 'chat.jsonl');
+
+        try {
+            fs.mkdirSync(backupsDir);
+            const messages = makeMessages(3900);
+            await writeLogicalChat(chatPath, makeHeader({ chat_revision: 17 }), messages);
+
+            await withChatSaveLock(chatPath, async () => {
+                await backupChatBeforeDelete({ directories: { backups: backupsDir } }, chatPath, 'Character.png');
+                deleteChatStorageCompanions(chatPath);
+            });
+
+            const backupFiles = fs.readdirSync(backupsDir);
+            expect(backupFiles).toHaveLength(1);
+            expect(backupFiles[0]).toContain('_pre_delete_');
+            const backupRecords = fs.readFileSync(path.join(backupsDir, backupFiles[0]), 'utf8')
+                .trim()
+                .split('\n')
+                .map(line => JSON.parse(line));
+            expect(backupRecords).toHaveLength(messages.length + 1);
+            expect(backupRecords[0].chat_revision).toBe(17);
+            expect(backupRecords.at(-1).mes).toBe(messages.at(-1).mes);
+            expect(fs.existsSync(chatPath)).toBe(false);
+            expect(fs.existsSync(chatPath.replace(/\.jsonl$/i, '.sqlite'))).toBe(false);
+        } finally {
+            fs.rmSync(tempDir, { recursive: true, force: true });
+        }
+    });
+
+    it('leaves SQLite chat storage intact when the required delete backup cannot be created', async () => {
+        const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'sqlite-chat-pre-delete-backup-fail-'));
+        const chatPath = path.join(tempDir, 'chat.jsonl');
+
+        try {
+            await writeLogicalChat(chatPath, makeHeader({ chat_revision: 9 }), makeMessages(3900));
+
+            await expect(backupChatBeforeDelete({
+                directories: { backups: path.join(tempDir, 'missing-backups') },
+            }, chatPath, 'Character.png')).rejects.toMatchObject({ error: 'delete_backup_failed' });
+
+            expect(fs.existsSync(chatPath.replace(/\.jsonl$/i, '.sqlite'))).toBe(true);
+            const records = await getLogicalChatData(chatPath);
+            expect(records).toHaveLength(3901);
+            expect(records[0].chat_revision).toBe(9);
+        } finally {
+            fs.rmSync(tempDir, { recursive: true, force: true });
+        }
     });
 
     it('classifies save-prefix targets without changing an existing chat', () => {

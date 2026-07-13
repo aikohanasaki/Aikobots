@@ -684,6 +684,8 @@ Delete must account for:
 - `.sqlite-shm`;
 - lock and temporary companions where applicable.
 
+The start-new-chat flow's optional deletion creates a non-throttled logical JSONL recovery backup while holding the chat lifecycle lock. If that backup cannot be created, deletion fails closed and leaves the authoritative chat intact. Ordinary standalone deletion retains its existing configured-backup behavior.
+
 Rename must not ignore active WAL state. Source and destination coordination must prevent concurrent mutation or path collision.
 
 Raw-file fallback behavior must be restricted to explicitly verified conditions in which no writer is active and no committed sidecar state is omitted.

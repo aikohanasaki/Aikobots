@@ -3972,8 +3972,20 @@ function writeChatBackup(directory, name, chat, { skipThrottle = false, label = 
     return backupFile;
 }
 
-/** Creates the mandatory JSONL recovery point before a force push overwrites server chat data. */
-async function backupPreForcePushServerChat(user, filePath, name) {
+/**
+ * Creates a mandatory JSONL recovery point before a destructive chat operation.
+ * @param {object} user Authenticated user context
+ * @param {string} filePath Canonical chat path
+ * @param {string} name Backup owner name
+ * @param {{label:string,errorCode:string,errorMessage:string,operationName:string}} options Backup and error labels
+ * @returns {Promise<void>}
+ */
+async function backupServerChatBeforeDestructiveOperation(user, filePath, name, {
+    label,
+    errorCode,
+    errorMessage,
+    operationName,
+}) {
     try {
         const serverChat = await getLogicalChatData(filePath);
         if (!Array.isArray(serverChat) || serverChat.length === 0) {
@@ -3982,12 +3994,38 @@ async function backupPreForcePushServerChat(user, filePath, name) {
 
         writeChatBackup(user.directories.backups, name, serializeJsonl(serverChat), {
             skipThrottle: true,
-            label: 'force_push_pre_server',
+            label,
         });
     } catch (error) {
-        console.error(`Could not create pre-force-push chat backup for ${name}`, error);
-        throw new ChatMutationError(500, 'force_push_backup_failed', 'Could not create a JSONL backup of the server chat. Server copy was not overwritten.');
+        console.error(`Could not create ${operationName} chat backup for ${name}`, error);
+        throw new ChatMutationError(500, errorCode, errorMessage);
     }
+}
+
+/** Creates the mandatory JSONL recovery point before a force push overwrites server chat data. */
+async function backupPreForcePushServerChat(user, filePath, name) {
+    return await backupServerChatBeforeDestructiveOperation(user, filePath, name, {
+        label: 'force_push_pre_server',
+        errorCode: 'force_push_backup_failed',
+        errorMessage: 'Could not create a JSONL backup of the server chat. Server copy was not overwritten.',
+        operationName: 'pre-force-push',
+    });
+}
+
+/**
+ * Creates the mandatory JSONL recovery point before deleting a chat.
+ * @param {object} user Authenticated user context
+ * @param {string} filePath Canonical chat path
+ * @param {string} name Backup owner name
+ * @returns {Promise<void>}
+ */
+export async function backupChatBeforeDelete(user, filePath, name) {
+    return await backupServerChatBeforeDestructiveOperation(user, filePath, name, {
+        label: 'pre_delete',
+        errorCode: 'delete_backup_failed',
+        errorMessage: 'Could not create a JSONL backup of the chat. The chat was not deleted.',
+        operationName: 'pre-delete',
+    });
 }
 
 /**
@@ -5271,6 +5309,7 @@ router.post('/rename', validateAvatarUrlMiddleware, async function (request, res
 
 router.post('/delete', validateAvatarUrlMiddleware, async function (request, response) {
     try {
+        const directoryName = normalizeCharacterChatDirectoryName(request.body.avatar_url);
         const filePath = resolveCharacterChatFilePath(request.user.directories.chats, request.body.avatar_url, request.body.chatfile);
 
         return await withChatSaveLock(filePath, async () => {
@@ -5282,6 +5321,9 @@ router.post('/delete', validateAvatarUrlMiddleware, async function (request, res
             const segments = await getChatSegments(filePath, { metadataOnly: fs.existsSync(replaceChatStorageExtension(filePath, '.sqlite')) });
             requireChatMutationRequest(request.body, segments.header);
             await request.activeSessionOperation?.assertAllowed();
+            if (request.body.backup_before_delete === true) {
+                await backupChatBeforeDelete(request.user, filePath, directoryName);
+            }
 
             deleteChatStorageCompanions(filePath);
             console.info(`Deleted chat file: ${filePath}`);
@@ -5779,6 +5821,10 @@ router.post('/group/delete', async (request, response) => {
                 const segments = await getChatSegments(pathToFile, { metadataOnly: fs.existsSync(replaceChatStorageExtension(pathToFile, '.sqlite')) });
                 requireChatMutationRequest(request.body, segments.header);
                 await request.activeSessionOperation?.assertAllowed();
+                if (request.body.backup_before_delete === true) {
+                    const backupOwnerKey = getVerifiedGroupBackupOwnerKey(request.user, id, request.body.group_id);
+                    await backupChatBeforeDelete(request.user, pathToFile, backupOwnerKey);
+                }
 
                 deleteChatStorageCompanions(pathToFile);
                 return response.send({ ok: true });
