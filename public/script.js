@@ -180,7 +180,9 @@ import {
     findMessageByAikobotsUuid,
     findSwipeByAikobotsUuid,
     isValidAikobotsUuid,
+    materializeSwipeGenerationTarget,
     normalizeChatIdentities,
+    validateSwipeGenerationTarget,
     validateChatIdentities,
     validateMessageSwipeState,
 } from './scripts/chat-identities.js';
@@ -8632,36 +8634,35 @@ function validateSwipeTarget(swipeTarget) {
     if (!message || !Array.isArray(message.swipes)) {
         return { ok: false, reason: 'target message has no swipes' };
     }
-    if (swipeId > message.swipes.length) {
-        return { ok: false, reason: 'swipe id is not the next slot' };
+    const identityValidation = validateSwipeGenerationTarget(message, swipeTarget);
+    if (!identityValidation.ok) {
+        return { ok: false, reason: identityValidation.reason };
     }
 
     return { ok: true, message, messageId, swipeId };
 }
 
 function ensureSwipeTargetSlot(message, swipeTarget) {
-    const swipeId = Number(swipeTarget?.swipeId);
-    if (!Number.isInteger(swipeId) || swipeId < 0) {
-        return false;
-    }
-
     ensureSwipes(message);
-    if (!Array.isArray(message?.swipes)) {
-        return false;
-    }
-    if (!Array.isArray(message.swipe_info)) {
-        message.swipe_info = [];
-    }
+    return materializeSwipeGenerationTarget(message, swipeTarget);
+}
 
-    while (message.swipes.length <= swipeId) {
-        message.swipes.push('');
+/**
+ * Creates a swipe UUID that is not already present on the target message.
+ * @param {object} message Target chat message.
+ * @returns {string} Unique swipe UUID.
+ */
+function createSwipeGenerationTargetUuid(message) {
+    const existingUuids = new Set(
+        Array.isArray(message?.swipe_info)
+            ? message.swipe_info.map(info => info?.[AIKOBOTS_SWIPE_UUID_KEY]).filter(isValidAikobotsUuid)
+            : [],
+    );
+    let swipeUuid = uuidv4();
+    while (!isValidAikobotsUuid(swipeUuid) || existingUuids.has(swipeUuid)) {
+        swipeUuid = uuidv4();
     }
-    while (message.swipe_info.length <= swipeId) {
-        message.swipe_info.push({});
-    }
-
-    message.swipe_id = swipeId;
-    return true;
+    return swipeUuid;
 }
 
 async function resetStaleSwipeTarget(swipeTarget) {
@@ -8864,9 +8865,13 @@ class StreamingProcessor {
             }
 
             if (this.type === 'swipe') {
-                ensureSwipeTargetSlot(swipeValidation.message, this.swipeTarget);
+                const slotResult = ensureSwipeTargetSlot(swipeValidation.message, this.swipeTarget);
+                if (!slotResult.ok) {
+                    await rejectStaleSwipeTarget(this.swipeTarget, slotResult.reason);
+                }
                 swipeValidation.message.swipes[swipeValidation.swipeId] = processedText;
                 swipeValidation.message.swipe_info[swipeValidation.swipeId] = {
+                    [AIKOBOTS_SWIPE_UUID_KEY]: this.swipeTarget.swipeUuid,
                     'send_date': swipeValidation.message['send_date'],
                     'gen_started': swipeValidation.message['gen_started'],
                     'gen_finished': swipeValidation.message['gen_finished'],
@@ -8945,6 +8950,7 @@ class StreamingProcessor {
             const basePromptSnapshotKey = typeof targetMessage.extra?.promptSnapshotKey === 'string' ? targetMessage.extra.promptSnapshotKey : null;
             const swipeInfoArray = Array(this.swipes.length).fill().map((_, index) => {
                 const swipeInfoClone = structuredClone(swipeInfo);
+                swipeInfoClone[AIKOBOTS_SWIPE_UUID_KEY] = uuidv4();
                 const swipePromptSnapshotKey = basePromptSnapshotKey
                     ? rekeyPromptSnapshotKey(basePromptSnapshotKey, { mesId: messageId, swipeId: startingSwipeIndex + index })
                     : null;
@@ -8972,7 +8978,10 @@ class StreamingProcessor {
         }
 
         if (this.type === 'swipe') {
-            ensureSwipeTargetSlot(finishSwipeValidation.message, this.swipeTarget);
+            const slotResult = ensureSwipeTargetSlot(finishSwipeValidation.message, this.swipeTarget);
+            if (!slotResult.ok) {
+                await rejectStaleSwipeTarget(this.swipeTarget, slotResult.reason);
+            }
         }
 
         syncMesToSwipe(messageId);
@@ -9537,6 +9546,7 @@ async function restoreUnsavedDeletedLastMessage(messageId, message) {
  * @property {string} [quietName] Name to use for the quiet prompt (defaults to "System:")
  * @property {number} [depth] Recursion depth for the generation. Used to prevent infinite loops in tool calls.
  * @property {JsonSchema} [jsonSchema] JSON schema to use for the structured generation. Usually requires a special instruction.
+ * @property {object?} [swipeTarget] Captured swipe generation target with a preallocated swipe UUID.
  */
 
 /**
@@ -11782,7 +11792,15 @@ export async function saveReply({ type, getMessage, fromStreaming = false, title
     const generationFinished = new Date();
     if (type === 'swipe') {
         const targetMessage = swipeTargetValidation.message;
-        ensureSwipeTargetSlot(targetMessage, swipeTarget);
+        const slotResult = ensureSwipeTargetSlot(targetMessage, swipeTarget);
+        if (!slotResult.ok) {
+            await resetStaleSwipeTarget(swipeTarget);
+            if (!fromStreaming) {
+                consumeOpenAIResponseData(openAIRequestId);
+            }
+            unblockGeneration(type);
+            throw new Error(`Invalid swipe generation target: ${slotResult.reason}`);
+        }
         ensureMessageIdentity(targetMessage, { generateUuid: uuidv4 });
         ensureSwipeIdentities(targetMessage, { generateUuid: uuidv4 });
         oldMessage = targetMessage['mes'];
@@ -18945,6 +18963,7 @@ export async function swipe(event, direction, { source, repeated, message = chat
                         messageId: mesId,
                         messageRef: chat[mesId],
                         swipeId: newSwipeId,
+                        swipeUuid: createSwipeGenerationTargetUuid(chat[mesId]),
                         previousSwipeId: originalSwipeId,
                     };
                     clearMessageData(chat[mesId]);

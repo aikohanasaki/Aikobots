@@ -3,7 +3,9 @@ import { describe, expect, it } from '@jest/globals';
 import {
     AIKOBOTS_SWIPE_UUID_KEY,
     compareActiveSwipeState,
+    materializeSwipeGenerationTarget,
     repairPendingOverswipeState,
+    validateSwipeGenerationTarget,
     validateMessageSwipeState,
 } from '../../public/scripts/chat-identities.js';
 
@@ -243,5 +245,81 @@ describe('compareActiveSwipeState', () => {
         const message = makeMessage();
         message.extra.model = 'different-model';
         expect(validateMessageSwipeState(message).comparison).toEqual(compareActiveSwipeState(message));
+    });
+});
+
+describe('swipe generation target identity', () => {
+    function makePendingTarget() {
+        const message = makeMessage();
+        return {
+            message,
+            target: {
+                swipeId: message.swipes.length,
+                swipeUuid: '33333333-3333-4333-8333-333333333333',
+                previousSwipeId: message.swipe_id,
+            },
+        };
+    }
+
+    it('materializes the next slot with the preallocated UUID', () => {
+        const { message, target } = makePendingTarget();
+
+        expect(validateSwipeGenerationTarget(message, target)).toMatchObject({
+            ok: true,
+            swipeId: 2,
+            materialized: false,
+        });
+        expect(materializeSwipeGenerationTarget(message, target)).toMatchObject({
+            ok: true,
+            swipeId: 2,
+            materialized: true,
+        });
+        expect(message.swipe_id).toBe(2);
+        expect(message.swipes).toHaveLength(3);
+        expect(message.swipe_info[2]).toEqual({
+            [AIKOBOTS_SWIPE_UUID_KEY]: target.swipeUuid,
+        });
+    });
+
+    it('rejects an index that was occupied by a different swipe before materialization', () => {
+        const { message, target } = makePendingTarget();
+        message.swipes.push('competing swipe');
+        message.swipe_info.push({
+            [AIKOBOTS_SWIPE_UUID_KEY]: '44444444-4444-4444-8444-444444444444',
+        });
+        message.swipe_id = 2;
+
+        expect(validateSwipeGenerationTarget(message, target)).toMatchObject({
+            ok: false,
+            reason: 'materialized swipe UUID changed',
+        });
+    });
+
+    it('rejects selection changes before and after materialization', () => {
+        const { message, target } = makePendingTarget();
+        message.swipe_id = 0;
+        expect(validateSwipeGenerationTarget(message, target)).toMatchObject({
+            ok: false,
+            reason: 'selected swipe changed before materialization',
+        });
+
+        message.swipe_id = target.previousSwipeId;
+        expect(materializeSwipeGenerationTarget(message, target).ok).toBe(true);
+        message.swipe_id = 0;
+        expect(validateSwipeGenerationTarget(message, target)).toMatchObject({
+            ok: false,
+            reason: 'selected swipe changed after materialization',
+        });
+    });
+
+    it('rejects duplicate ownership of a materialized target UUID', () => {
+        const { message, target } = makePendingTarget();
+        expect(materializeSwipeGenerationTarget(message, target).ok).toBe(true);
+        message.swipe_info[0][AIKOBOTS_SWIPE_UUID_KEY] = target.swipeUuid;
+
+        expect(validateSwipeGenerationTarget(message, target)).toMatchObject({
+            ok: false,
+            reason: 'swipe UUID ownership is ambiguous',
+        });
     });
 });

@@ -137,7 +137,7 @@ Chat rename, chat-header metadata, persona or participant-history synchronizatio
 
 ### Interrupted overswipe repair
 
-Generating a new swipe past the right edge uses an in-memory pending target that is separate from the canonical message `swipe_id`. The canonical index changes only after the new `swipes` and `swipe_info` slot has been materialized, so saves cannot persist a one-past-the-end generation sentinel.
+Generating a new swipe past the right edge uses an in-memory pending target that is separate from the canonical message `swipe_id`. The client allocates the new swipe's UUID when it captures that target, then materializes the `swipes` and `swipe_info` slot with that exact UUID before changing the canonical index. Later streaming and save steps require the same UUID to still own the slot and reject the generation if either the slot identity or selected swipe changed. Saves therefore cannot persist a one-past-the-end generation sentinel or apply generated content to a different swipe that occupied the same array index.
 
 Modern SQLite chats receive a one-time `swipe_state_scan_version` maintenance scan on load. The scan repairs only the exact legacy overswipe shape where `swipe_id === swipes.length`, the swipe list is non-empty, and selecting the final materialized swipe makes the entire message pass active-swipe validation. Other out-of-bounds or contradictory states are left unchanged for explicit diagnosis. A successful repair preserves the chat revision and activity timestamp and requires the client to reload the repaired chat before writing.
 
