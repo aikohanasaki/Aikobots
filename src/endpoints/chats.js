@@ -912,6 +912,7 @@ export async function updateSqliteUserPersonaMessages({ filePath, requestBody, u
         if (!header) {
             throw new ChatMutationError(404, 'chat_not_found');
         }
+        assertSupportedChatStorage(header);
         throwIfSqliteChatIdentityRepairNeeded(db, sqlitePath, header);
 
         const currentRevision = getChatRevision(header);

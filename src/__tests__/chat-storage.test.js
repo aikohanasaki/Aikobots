@@ -140,6 +140,19 @@ function mutateSqliteMessage(chatPath, logicalIndex, mutate) {
     }
 }
 
+function mutateSqliteHeader(chatPath, mutate) {
+    const sqlitePath = String(chatPath).replace(/\.(?:jsonl|sqlite)$/i, '.sqlite');
+    const db = new Database(sqlitePath);
+    try {
+        const row = db.prepare('SELECT id, content FROM messages WHERE order_index = 0').get();
+        const header = JSON.parse(row.content);
+        mutate(header);
+        db.prepare('UPDATE messages SET content = ? WHERE id = ?').run(JSON.stringify(header), row.id);
+    } finally {
+        db.close();
+    }
+}
+
 describe('SQLite chat length handling', () => {
     beforeAll(async () => {
         const utilModule = await import('../util.js');
@@ -2095,6 +2108,42 @@ describe('SQLite chat length handling', () => {
         }
     });
 
+    it('rejects SQLite persona sync for unsupported split-tail storage without mutation', async () => {
+        const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'sqlite-chat-persona-unsupported-'));
+        const chatPath = path.join(tempDir, 'chat.jsonl');
+
+        try {
+            await writeLogicalChat(chatPath, makeHeader({ chat_revision: 4 }), makeMessages(3));
+            mutateSqliteHeader(chatPath, header => {
+                header.chat_storage = { mode: 'split-tail', head_count: 1 };
+            });
+
+            await expect(updateSqliteUserPersonaMessages({
+                filePath: chatPath,
+                requestBody: {
+                    operation_id: '12121212-1212-4212-8212-121212121212',
+                    base_revision: 4,
+                    save_session_id: '33333333-3333-4333-8333-333333333333',
+                },
+                userName: 'New User',
+                forceAvatar: '/new.png',
+                saveSessionId: '33333333-3333-4333-8333-333333333333',
+            })).rejects.toMatchObject({ status: 409, code: 'unsupported_split_tail' });
+
+            const rows = getSqliteRows(chatPath);
+            expect(rows[0]).toMatchObject({ chat_revision: 4, chat_storage: { mode: 'split-tail' } });
+            expect(rows[1]).toMatchObject({ name: 'User' });
+            const db = new Database(chatPath.replace('.jsonl', '.sqlite'), { readonly: true });
+            try {
+                expect(db.prepare('SELECT COUNT(*) FROM operation_receipts').pluck().get()).toBe(0);
+            } finally {
+                db.close();
+            }
+        } finally {
+            fs.rmSync(tempDir, { recursive: true, force: true });
+        }
+    });
+
     it('replays visibility and persona receipts before stale revision validation', async () => {
         const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'sqlite-chat-p1-replay-'));
         try {
@@ -2119,6 +2168,10 @@ describe('SQLite chat length handling', () => {
             const personaOptions = { filePath: personaPath, requestBody: personaBody, userName: 'New User', forceAvatar: '/new.png', saveSessionId: personaBody.save_session_id };
             await expect(updateSqliteUserPersonaMessages(personaOptions)).resolves.toMatchObject({ status: 'applied', chat_revision: 5 });
             await expect(updateSqliteUserPersonaMessages(personaOptions)).resolves.toMatchObject({ status: 'replayed', chat_revision: 5 });
+            mutateSqliteHeader(personaPath, header => {
+                header.chat_storage = { mode: 'split-tail', head_count: 1 };
+            });
+            await expect(updateSqliteUserPersonaMessages(personaOptions)).rejects.toMatchObject({ status: 409, code: 'unsupported_split_tail' });
         } finally {
             fs.rmSync(tempDir, { recursive: true, force: true });
         }
