@@ -61,6 +61,20 @@ export function createJsonlLogger({ logsDir, runIdUtc, profileName, baseUrl }) {
                 artifactPaths,
             });
         },
+        writeWarning({
+            source,
+            message,
+            level = 'warning',
+            observed = null,
+        }) {
+            return write({
+                type: 'warning',
+                source,
+                level,
+                message,
+                observed,
+            });
+        },
         writeRunSummary({ status, tests }) {
             return write({
                 type: 'run_summary',
@@ -70,4 +84,4 @@ export function createJsonlLogger({ logsDir, runIdUtc, profileName, baseUrl }) {
             });
         },
     };
-}
+    }

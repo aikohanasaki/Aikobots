@@ -55,31 +55,28 @@ export async function runChatBasicCreateRenameScenario({ page, logger, captureAr
     await runLoggedStep({
         logger,
         testName,
-        stepName: 'ensure-smoke-character-exists',
+        stepName: 'ensure-smoke-character-available',
         featureTags,
-        selector: '#rm_button_characters,#character_import_file,#rm_print_characters_block',
-        expected: `${smokeCharacterName} exists or is imported from testing/selenium/zzzzzzTesterBillySmokilyDokily.png`,
+        selector: '#send_textarea,#send_but,#character_import_file,#rm_button_selected_ch h2',
+        expected: `${smokeCharacterName} can be loaded; import PNG only when missing`,
         action: async () => {
-            const smokeCharacterPath = page.resolveSmokeCharacterImportPath('zzzzzzTesterBillySmokilyDokily.png');
-            return page.ensureCharacterExistsOrImport(smokeCharacterName, smokeCharacterPath);
-        },
-        onError: error => captureArtifacts({ testName, stepName: 'ensure-smoke-character-exists', error }),
-    });
+            let imported = false;
 
-    await runLoggedStep({
-        logger,
-        testName,
-        stepName: 'go-to-smoke-character',
-        featureTags,
-        selector: '#send_textarea,#send_but,#rm_button_selected_ch h2',
-        expected: `Slash command /go loads ${smokeCharacterName}`,
-        action: async () => {
             await page.runSlashCommand(`/go ${smokeCharacterName}`);
-            await page.waitForSelectedCharacterName(smokeCharacterName);
+            try {
+                await page.waitForSelectedCharacterName(smokeCharacterName, 2_500);
+            } catch {
+                const smokeCharacterPath = page.resolveSmokeCharacterImportPath('zzzzzzTesterBillySmokilyDokily.png');
+                await page.importCharacterFromFile(smokeCharacterPath);
+                imported = true;
+                await page.runSlashCommand(`/go ${smokeCharacterName}`);
+                await page.waitForSelectedCharacterName(smokeCharacterName);
+            }
+
             const selectedCharacterName = await page.getSelectedCharacterName();
-            return { selectedCharacterName };
+            return { selectedCharacterName, imported };
         },
-        onError: error => captureArtifacts({ testName, stepName: 'go-to-smoke-character', error }),
+        onError: error => captureArtifacts({ testName, stepName: 'ensure-smoke-character-available', error }),
     });
 
     const beforeAssistantCount = await runLoggedStep({
@@ -135,6 +132,22 @@ export async function runChatBasicCreateRenameScenario({ page, logger, captureAr
             return page.waitForAssistantResponse(beforeAssistantCount.assistantCount);
         },
         onError: error => captureArtifacts({ testName, stepName: 'wait-for-assistant-response', error }),
+    });
+
+    await runLoggedStep({
+        logger,
+        testName,
+        stepName: 'swipe-right-after-first-response',
+        featureTags,
+        selector: '.last_mes .swipe_right.fa-solid.fa-chevron-right.interactable',
+        expected: 'Swipe right is tapped after the first assistant response',
+        action: async () => {
+            const beforeSwipeText = await page.getLastMessageText();
+            await page.swipeLastMessageRight();
+            const afterSwipeText = await page.getLastMessageText();
+            return { beforeSwipeText, afterSwipeText };
+        },
+        onError: error => captureArtifacts({ testName, stepName: 'swipe-right-after-first-response', error }),
     });
 
     await runLoggedStep({
@@ -242,6 +255,22 @@ export async function runChatBasicCreateRenameScenario({ page, logger, captureAr
     await runLoggedStep({
         logger,
         testName,
+        stepName: 'swipe-right-after-rename-response',
+        featureTags,
+        selector: '.last_mes .swipe_right.fa-solid.fa-chevron-right.interactable',
+        expected: 'Swipe right is tapped after the post-rename assistant response',
+        action: async () => {
+            const beforeSwipeText = await page.getLastMessageText();
+            await page.swipeLastMessageRight();
+            const afterSwipeText = await page.getLastMessageText();
+            return { beforeSwipeText, afterSwipeText };
+        },
+        onError: error => captureArtifacts({ testName, stepName: 'swipe-right-after-rename-response', error }),
+    });
+
+    await runLoggedStep({
+        logger,
+        testName,
         stepName: 'convert-chat-to-group',
         featureTags,
         selector: '#options_button,#option_convert_to_group,dialog.popup[open]',
@@ -308,6 +337,22 @@ export async function runChatBasicCreateRenameScenario({ page, logger, captureAr
             return page.waitForAssistantResponse(beforeGroupAssistantCount.assistantCount);
         },
         onError: error => captureArtifacts({ testName, stepName: 'wait-for-assistant-response-after-group-convert', error }),
+    });
+
+    await runLoggedStep({
+        logger,
+        testName,
+        stepName: 'swipe-right-after-group-convert-response',
+        featureTags,
+        selector: '.last_mes .swipe_right.fa-solid.fa-chevron-right.interactable',
+        expected: 'Swipe right is tapped after the group-convert assistant response',
+        action: async () => {
+            const beforeSwipeText = await page.getLastMessageText();
+            await page.swipeLastMessageRight();
+            const afterSwipeText = await page.getLastMessageText();
+            return { beforeSwipeText, afterSwipeText };
+        },
+        onError: error => captureArtifacts({ testName, stepName: 'swipe-right-after-group-convert-response', error }),
     });
 
     const addMembersResult = await runLoggedStep({
@@ -392,6 +437,22 @@ export async function runChatBasicCreateRenameScenario({ page, logger, captureAr
             return page.waitForAssistantResponse(beforeGroupFollowupAssistantCount.assistantCount);
         },
         onError: error => captureArtifacts({ testName, stepName: 'wait-for-assistant-response-after-added-member-speak', error }),
+    });
+
+    await runLoggedStep({
+        logger,
+        testName,
+        stepName: 'swipe-right-after-added-member-speak-response',
+        featureTags,
+        selector: '.last_mes .swipe_right.fa-solid.fa-chevron-right.interactable',
+        expected: 'Swipe right is tapped after the added-member-speak follow-up response',
+        action: async () => {
+            const beforeSwipeText = await page.getLastMessageText();
+            await page.swipeLastMessageRight();
+            const afterSwipeText = await page.getLastMessageText();
+            return { beforeSwipeText, afterSwipeText };
+        },
+        onError: error => captureArtifacts({ testName, stepName: 'swipe-right-after-added-member-speak-response', error }),
     });
 
     const connectionStatus = await page.getConnectionStatusText();

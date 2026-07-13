@@ -187,59 +187,25 @@ export class ChatPage {
         `);
     }
 
-    async waitForSelectedCharacterName(namePart) {
+    async waitForSelectedCharacterName(namePart, timeoutMs = this.config.timeouts.responseMs) {
         const normalized = String(namePart || '').trim().toLowerCase();
         await this.driver.wait(async () => {
             const selectedName = await this.getSelectedCharacterName();
             return selectedName.toLowerCase().includes(normalized);
-        }, this.config.timeouts.responseMs);
+        }, timeoutMs);
     }
 
-    async openCharactersPanel() {
-        await this.clickElementById('rm_button_characters');
-        await this.driver.wait(async () => {
-            return this.driver.executeScript(`
-                const block = document.getElementById('rm_print_characters_block');
-                return block ? getComputedStyle(block).display !== 'none' : false;
-            `);
-        }, this.config.timeouts.stepMs);
-    }
-
-    async characterExistsByName(characterName) {
-        const normalized = String(characterName || '').trim().toLowerCase();
-        return this.driver.executeScript(`
-            const expected = arguments[0];
-            const names = Array.from(document.querySelectorAll('#rm_print_characters_block .character_select .ch_name'))
-                .map(el => (el.textContent || '').trim().toLowerCase())
-                .filter(Boolean);
-            return names.includes(expected);
-        `, normalized);
-    }
-
-    async ensureCharacterExistsOrImport(characterName, absoluteCharacterPath) {
-        await this.openCharactersPanel();
-
-        const existsBeforeImport = await this.characterExistsByName(characterName);
-        if (existsBeforeImport) {
-            return {
-                characterName,
-                imported: false,
-                importPath: absoluteCharacterPath,
-            };
-        }
-
+    async importCharacterFromFile(absoluteCharacterPath) {
         const importInput = await this.driver.findElement(By.id('character_import_file'));
         await importInput.sendKeys(absoluteCharacterPath);
-
         await this.driver.wait(async () => {
-            return this.characterExistsByName(characterName);
-        }, this.config.timeouts.responseMs);
-
-        return {
-            characterName,
-            imported: true,
-            importPath: absoluteCharacterPath,
-        };
+            const inputValue = await this.driver.executeScript(`
+                const el = document.getElementById('character_import_file');
+                return el ? String(el.value || '') : '';
+            `);
+            return inputValue === '';
+        }, this.config.timeouts.responseMs).catch(() => {});
+        await new Promise(resolve => setTimeout(resolve, 1_000));
     }
 
     resolveSmokeCharacterImportPath(fileName) {
@@ -513,7 +479,17 @@ export class ChatPage {
         await new Promise(resolve => setTimeout(resolve, 3_000));
     }
 
+    async waitForNoBlockingDialog() {
+        await this.driver.wait(async () => {
+            return this.driver.executeScript(`
+                const openDialog = document.querySelector('dialog.popup[open]');
+                return !openDialog;
+            `);
+        }, this.config.timeouts.stepMs);
+    }
+
     async waitForSendReady() {
+        await this.waitForNoBlockingDialog();
         await this.driver.wait(async () => {
             return this.driver.executeScript(`
                 const textarea = document.getElementById('send_textarea');

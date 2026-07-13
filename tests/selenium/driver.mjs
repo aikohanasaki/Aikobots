@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 
-import { Builder, By, until } from 'selenium-webdriver';
+import { Builder, By, until, logging } from 'selenium-webdriver';
 import chrome from 'selenium-webdriver/chrome.js';
 import { ServiceBuilder } from 'selenium-webdriver/chrome.js';
 
@@ -30,6 +30,10 @@ export async function createDriver({ headless, timeouts, downloadsDir, chromeBin
     const builder = new Builder()
         .forBrowser('chrome')
         .setChromeOptions(options);
+
+    const loggingPrefs = new logging.Preferences();
+    loggingPrefs.setLevel(logging.Type.BROWSER, logging.Level.ALL);
+    builder.setLoggingPrefs(loggingPrefs);
 
     if (chromedriverPath) {
         const service = new ServiceBuilder(chromedriverPath);
@@ -83,6 +87,23 @@ export async function captureFailureArtifacts({ driver, snapshotsDir, testName, 
         screenshot: screenshotPath,
         domSnapshot: domSnapshotPath,
     };
+}
+
+export async function readBrowserConsoleLogs(driver) {
+    if (!driver) {
+        return [];
+    }
+
+    try {
+        const entries = await driver.manage().logs().get(logging.Type.BROWSER);
+        return entries.map(entry => ({
+            level: String(entry.level?.name || entry.level || '').toUpperCase(),
+            message: String(entry.message || ''),
+            timestamp: Number(entry.timestamp || Date.now()),
+        }));
+    } catch {
+        return [];
+    }
 }
 
 export async function closeDriver(driver) {

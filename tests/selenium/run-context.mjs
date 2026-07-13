@@ -95,5 +95,9 @@ export async function runLoggedStep({
             error,
             artifactPaths,
         });
+
+        if (typeof logger.captureBrowserConsoleWarnings === 'function') {
+            await logger.captureBrowserConsoleWarnings({ testName, stepName });
+        }
     }
-}
+    }

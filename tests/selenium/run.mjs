@@ -1,7 +1,7 @@
 import path from 'node:path';
 
 import { loadConfig } from './config.mjs';
-import { closeDriver, createDriver, captureFailureArtifacts, waitForFileInDirectory } from './driver.mjs';
+import { closeDriver, createDriver, captureFailureArtifacts, waitForFileInDirectory, readBrowserConsoleLogs } from './driver.mjs';
 import { createJsonlLogger } from './logger.mjs';
 import { ChatPage } from './pages/chat-page.mjs';
 import { createRunContext, runLoggedStep } from './run-context.mjs';
@@ -36,6 +36,32 @@ async function main() {
 
         const { driver } = driverBundle;
         const page = new ChatPage({ driver, config });
+        let lastBrowserLogTimestamp = 0;
+
+        logger.captureBrowserConsoleWarnings = async ({ testName, stepName }) => {
+            const entries = await readBrowserConsoleLogs(driver);
+            const newEntries = entries.filter(entry => entry.timestamp > lastBrowserLogTimestamp);
+
+            if (entries.length > 0) {
+                lastBrowserLogTimestamp = Math.max(lastBrowserLogTimestamp, ...entries.map(entry => entry.timestamp));
+            }
+
+            const warningEntries = newEntries.filter(entry => /SEVERE|ERROR/i.test(entry.level));
+            for (const entry of warningEntries) {
+                logger.writeWarning({
+                    source: 'browser-console',
+                    level: 'warning',
+                    message: `Console ${entry.level}: ${entry.message}`,
+                    observed: {
+                        testName,
+                        stepName,
+                        consoleLevel: entry.level,
+                        timestampMs: entry.timestamp,
+                        message: entry.message,
+                    },
+                });
+            }
+        };
 
         const captureArtifacts = async ({ testName, stepName }) => {
             return captureFailureArtifacts({
