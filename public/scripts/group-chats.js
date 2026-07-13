@@ -74,6 +74,7 @@ import {
     getCurrentChatId,
     CHAT_SAVE_RESULT,
     getChatSaveRevision,
+    setChatSaveRevision,
     getChatSaveSessionId,
     warnStaleChatSave,
     queueAcknowledgedChatRevisionRequest,
@@ -525,7 +526,12 @@ export async function getGroupChat(groupId, reload = false) {
             addOneMessage(mes);
             await eventSource.emit(event_types.CHARACTER_MESSAGE_RENDERED, (chat.length - 1), 'first_message');
         }
-        await saveGroupChat(groupId, false);
+        if (chat.length === 0) {
+            setChatSaveRevision(payload.header?.chat_revision ?? payload.chat_revision);
+            setCurrentChatStorageMode(payload.storageMode || payload.storage_mode);
+        } else {
+            await saveGroupChat(groupId, false);
+        }
     } else if (Array.isArray(data) && data.length) {
         applyChunkedChatPayload(payload, { replace: true, currentView: 'tail' });
         const firstLoadedMessage = chat.find(message => message);

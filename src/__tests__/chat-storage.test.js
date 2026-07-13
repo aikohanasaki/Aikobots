@@ -24,6 +24,7 @@ let loadDb;
 let migrateChatHeaderReferences;
 let resolveSqliteLogicalChatReference;
 let truncateSqliteChatAfterUuid;
+let updateSqliteChatMetadata;
 let updateSqliteLoadedMessageRange;
 let updateSqliteMessageByUuid;
 let updateGroupChatMessageRow;
@@ -192,6 +193,7 @@ describe('SQLite chat length handling', () => {
         hasValidGroupChatPayload = chatsModule.hasValidGroupChatPayload;
         resolveSqliteLogicalChatReference = chatsModule.resolveSqliteLogicalChatReference;
         truncateSqliteChatAfterUuid = chatsModule.truncateSqliteChatAfterUuid;
+        updateSqliteChatMetadata = chatsModule.updateSqliteChatMetadata;
         updateSqliteLoadedMessageRange = chatsModule.updateSqliteLoadedMessageRange;
         updateSqliteMessageByUuid = chatsModule.updateSqliteMessageByUuid;
         updateGroupChatMessageRow = chatsModule.updateGroupChatMessageRow;
@@ -1591,6 +1593,74 @@ describe('SQLite chat length handling', () => {
             `).pluck().all();
             metadataDb.close();
             expect(metadataUpdatedIndexes).toEqual([0]);
+        } finally {
+            fs.rmSync(tempDir, { recursive: true, force: true });
+        }
+    });
+
+    it('updates metadata for an empty SQLite chat without requiring message rows', async () => {
+        const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'sqlite-chat-header-metadata-'));
+        const chatPath = path.join(tempDir, 'chat.jsonl');
+
+        try {
+            const header = makeHeader({ chat_revision: 2, chat_metadata: { title: 'before' } });
+            await writeLogicalChat(chatPath, header, []);
+            const requestBody = {
+                base_revision: 2,
+                save_session_id: '33333333-3333-4333-8333-333333333333',
+                operation_id: '44444444-4444-4444-8444-444444444444',
+                chat_metadata: {
+                    title: 'after',
+                    world_info: 'Bound Lorebook',
+                    worldInfoReport: { transient: true },
+                },
+            };
+            let mutationChecks = 0;
+            const options = {
+                filePath: chatPath,
+                requestBody,
+                chatMetadata: requestBody.chat_metadata,
+                saveSessionId: requestBody.save_session_id,
+                assertMutationAllowed: async () => mutationChecks++,
+            };
+
+            await expect(updateSqliteChatMetadata(options)).resolves.toMatchObject({
+                status: 'applied',
+                changed: 1,
+                chat_revision: 3,
+                totalMessages: 0,
+            });
+            expect(mutationChecks).toBe(1);
+
+            const saved = await getLogicalChatData(chatPath);
+            expect(saved).toHaveLength(1);
+            expect(saved[0].chat_revision).toBe(3);
+            expect(saved[0].chat_metadata).toEqual({
+                title: 'after',
+                world_info: 'Bound Lorebook',
+            });
+
+            await expect(updateSqliteChatMetadata(options)).resolves.toMatchObject({
+                status: 'replayed',
+                duplicate_operation: true,
+                chat_revision: 3,
+            });
+            expect(mutationChecks).toBe(1);
+
+            const noopRequestBody = {
+                ...requestBody,
+                base_revision: 3,
+                operation_id: '55555555-5555-4555-8555-555555555555',
+            };
+            await expect(updateSqliteChatMetadata({
+                ...options,
+                requestBody: noopRequestBody,
+            })).resolves.toMatchObject({
+                status: 'noop',
+                changed: 0,
+                chat_revision: 3,
+            });
+            expect(mutationChecks).toBe(1);
         } finally {
             fs.rmSync(tempDir, { recursive: true, force: true });
         }

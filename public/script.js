@@ -14175,7 +14175,7 @@ async function saveMessageUpdateByUuid(message, { ordinaryTextEdit = false, sele
         return CHAT_SAVE_RESULT.FAILED;
     }
 
-    const saveMessage = () => saveSqliteMessageMutation('update', {
+    const saveMessage = () => saveSqliteChatMutation('update', {
         message_uuid: messageUuid,
         message: structuredClone(message),
         ...(ordinaryTextEdit ? {
@@ -14204,6 +14204,7 @@ function getCurrentSqliteChatMutationOwnerFields() {
 
 function getSqliteChatMutationEndpoint(operation) {
     const directEndpoints = {
+        metadata: '/api/chats/metadata',
         append: '/api/chats/message/append',
         update: '/api/chats/message/update',
         delete: '/api/chats/message/delete',
@@ -14211,6 +14212,7 @@ function getSqliteChatMutationEndpoint(operation) {
         regeneratePrepare: '/api/chats/regenerate-prepare',
     };
     const groupEndpoints = {
+        metadata: '/api/chats/group/metadata',
         append: '/api/chats/group/message/append',
         update: '/api/chats/group/message/update',
         delete: '/api/chats/group/message/delete',
@@ -14221,7 +14223,7 @@ function getSqliteChatMutationEndpoint(operation) {
     return (selected_group ? groupEndpoints : directEndpoints)[operation] || '';
 }
 
-async function saveSqliteMessageMutation(operation, fields, defaultErrorMessage = t`Chat update failed.`, { retrySameSessionStale = true } = {}) {
+async function saveSqliteChatMutation(operation, fields, defaultErrorMessage = t`Chat update failed.`, { retrySameSessionStale = true } = {}) {
     const endpoint = getSqliteChatMutationEndpoint(operation);
     if (!endpoint) {
         return CHAT_SAVE_RESULT.FAILED;
@@ -14254,7 +14256,7 @@ async function saveSqliteMessageMutation(operation, fields, defaultErrorMessage 
             if (errorData?.error === 'stale_revision') {
                 const staleResult = warnStaleChatSave(errorData);
                 if (retrySameSessionStale && staleResult.sameSessionStale) {
-                    return saveSqliteMessageMutation(operation, fields, defaultErrorMessage, { retrySameSessionStale: false });
+                    return saveSqliteChatMutation(operation, fields, defaultErrorMessage, { retrySameSessionStale: false });
                 }
             } else if (errorData?.error === 'chat_repaired') {
                 await reloadCurrentChatAfterServerRepair(errorData);
@@ -14284,7 +14286,7 @@ async function saveSqliteMessageAppend(messageId, message) {
     ensureMessageIdentity(message, { generateUuid: uuidv4 });
     const expectedTailMessage = Number.isInteger(Number(messageId)) ? chat[Number(messageId) - 1] : null;
     const expectedTailUuid = expectedTailMessage?.[AIKOBOTS_MESSAGE_UUID_KEY];
-    const appendResult = await saveSqliteMessageMutation('append', {
+    const appendResult = await saveSqliteChatMutation('append', {
         message: structuredClone(message),
         ...(expectedTailUuid ? { expected_tail_uuid: expectedTailUuid } : {}),
     }, t`Message append failed.`);
@@ -14306,7 +14308,7 @@ async function saveSqliteMessageDeleteByUuid(messageUuid) {
         return CHAT_SAVE_RESULT.FAILED;
     }
 
-    return saveSqliteMessageMutation('delete', {
+    return saveSqliteChatMutation('delete', {
         message_uuid: messageUuid,
     }, t`Message delete failed.`);
 }
@@ -14321,7 +14323,7 @@ async function saveSqliteTruncateAfterUuid(messageUuid, { regeneratePrepare = fa
         return CHAT_SAVE_RESULT.FAILED;
     }
 
-    return saveSqliteMessageMutation(regeneratePrepare ? 'regeneratePrepare' : 'truncate', {
+    return saveSqliteChatMutation(regeneratePrepare ? 'regeneratePrepare' : 'truncate', {
         branch_point_uuid: messageUuid,
     }, t`Chat truncate failed.`);
 }
@@ -14336,7 +14338,7 @@ async function saveSqliteTruncateAll() {
         return CHAT_SAVE_RESULT.FAILED;
     }
 
-    return saveSqliteMessageMutation('truncate', {
+    return saveSqliteChatMutation('truncate', {
         truncate_all: true,
     }, t`Chat truncate failed.`);
 }
@@ -17515,7 +17517,13 @@ export async function deleteSwipe(swipeId = null, messageId = chat.length - 1) {
 }
 
 export async function saveMetadata() {
-    await saveChatConditional();
+    if (currentChatFileNameLooksSqlite()) {
+        return await saveSqliteChatMutation('metadata', {
+            chat_metadata: sanitizeChatMetadataForSave({ ...chat_metadata }),
+        }, t`Chat metadata could not be saved.`);
+    }
+
+    return await saveChatConditional();
 }
 
 async function saveChatOnce(options = {}) {

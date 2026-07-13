@@ -1,4 +1,5 @@
 import fs from 'node:fs';
+import crypto from 'node:crypto';
 import path from 'node:path';
 import readline from 'node:readline';
 import process from 'node:process';
@@ -2893,6 +2894,99 @@ function updateSqliteHeaderRow(db, header) {
     }
 }
 
+/**
+ * Replaces chat-header metadata without reading or rewriting message rows.
+ */
+export async function updateSqliteChatMetadata({ filePath, requestBody, chatMetadata, saveSessionId, assertMutationAllowed = null, route = '/api/chats/metadata' }) {
+    if (!_.isPlainObject(chatMetadata)) {
+        throw new ChatMutationError(400, 'invalid_chat_metadata');
+    }
+
+    const sqlitePath = replaceChatStorageExtension(filePath, '.sqlite');
+    if (!fs.existsSync(sqlitePath)) {
+        throw new ChatMutationError(404, 'chat_not_found');
+    }
+
+    const db = await loadDb(sqlitePath);
+    try {
+        const operationId = requireRequestOperationId(requestBody);
+        const repeatedReceipt = getRepeatedSqliteOperationReceipt(db, requestBody);
+        const header = getChatHeader(db);
+        if (!header) {
+            throw new ChatMutationError(404, 'chat_not_found');
+        }
+        assertSupportedChatStorage(header);
+
+        const currentRevision = getChatRevision(header);
+        if (repeatedReceipt) {
+            logChatRevisionDecision({ filePath, route, operationType: 'chat_metadata', operationId, saveSessionId, receiptFound: true, submittedBaseRevision: requestBody.base_revision, authoritativeRevisionBefore: currentRevision, authoritativeRevisionAfter: currentRevision, decision: 'replayed' });
+            return repeatedReceipt;
+        }
+
+        const revisionCheck = requireLoggedChatMutationRequest(requestBody, header, { filePath, route, operationType: 'chat_metadata', operationId, saveSessionId });
+        const sanitizedMetadata = stripPersistedChatMetadata(chatMetadata);
+        const currentMetadata = stripPersistedChatMetadata(header.chat_metadata || {});
+        const totalMessages = getMessageCount(db);
+
+        if (_.isEqual(currentMetadata, sanitizedMetadata)) {
+            const payload = {
+                result: 'ok',
+                ok: true,
+                operation_id: operationId,
+                status: 'noop',
+                changed: 0,
+                chat_revision: revisionCheck.currentRevision,
+                storage_mode: 'sqlite',
+            };
+            db.run('BEGIN TRANSACTION');
+            try {
+                recordSqliteOperationReceipt(db, requestBody, revisionCheck.currentRevision, payload);
+                db.run('COMMIT');
+            } catch (error) {
+                db.run('ROLLBACK');
+                throw error;
+            }
+            saveDb(db, sqlitePath);
+            logChatRevisionDecision({ filePath, route, operationType: 'chat_metadata', operationId, saveSessionId, receiptFound: false, submittedBaseRevision: requestBody.base_revision, authoritativeRevisionBefore: currentRevision, authoritativeRevisionAfter: currentRevision, decision: 'noop' });
+            return payload;
+        }
+
+        if (typeof assertMutationAllowed === 'function') {
+            await assertMutationAllowed();
+        }
+
+        const revisedHeader = setChatRevision({
+            ...stripChatStorage(header),
+            chat_metadata: sanitizedMetadata,
+        }, revisionCheck.nextRevision, saveSessionId);
+        db.run('BEGIN TRANSACTION');
+        try {
+            updateSqliteHeaderRow(db, revisedHeader);
+            recordSqliteOperationReceipt(db, requestBody, revisionCheck.nextRevision, { operation_id: operationId, status: 'applied', changed: 1 });
+            db.run('COMMIT');
+        } catch (error) {
+            db.run('ROLLBACK');
+            throw error;
+        }
+
+        saveDb(db, sqlitePath);
+        const payload = {
+            result: 'ok',
+            ok: true,
+            operation_id: operationId,
+            status: 'applied',
+            changed: 1,
+            chat_revision: revisionCheck.nextRevision,
+            storage_mode: 'sqlite',
+            totalMessages,
+        };
+        logChatRevisionDecision({ filePath, route, operationType: 'chat_metadata', operationId, saveSessionId, receiptFound: false, submittedBaseRevision: requestBody.base_revision, authoritativeRevisionBefore: currentRevision, authoritativeRevisionAfter: revisionCheck.nextRevision, decision: 'applied' });
+        return payload;
+    } finally {
+        db.close();
+    }
+}
+
 function applyMessageUpdatePayload(existingMessage, requestBody) {
     if (!_.isPlainObject(requestBody?.message)) {
         throw new ChatMutationError(400, 'invalid_message_payload');
@@ -4445,6 +4539,87 @@ router.post('/regenerate-prepare', validateAvatarUrlMiddleware, async function (
         }
         console.error(error);
         return response.status(500).send({ error: 'regenerate_prepare_failed' });
+    }
+});
+
+router.post('/metadata', validateAvatarUrlMiddleware, async function (request, response) {
+    try {
+        const fileName = String(request.body?.file_name || '').trim();
+        if (!fileName || !_.isPlainObject(request.body?.chat_metadata)) {
+            return response.status(400).send({ error: 'invalid_chat_metadata' });
+        }
+
+        const filePath = resolveCharacterChatFilePath(request.user.directories.chats, request.body.avatar_url, fileName);
+        if (!fs.existsSync(replaceChatStorageExtension(filePath, '.sqlite'))) {
+            return response.status(404).send({ error: 'chat_not_found' });
+        }
+
+        return await withChatSaveLock(filePath, async () => {
+            const payload = await updateSqliteChatMetadata({
+                filePath,
+                requestBody: request.body,
+                chatMetadata: request.body.chat_metadata,
+                saveSessionId: getRequestSaveSessionId(request.body),
+                assertMutationAllowed: () => request.activeSessionOperation?.assertAllowed(),
+            });
+            return response.send(payload);
+        });
+    } catch (error) {
+        if (isActiveSessionError(error)) {
+            return sendActiveSessionRequired(response);
+        }
+        if (isUnsupportedSplitTailChatError(error)) {
+            return sendUnsupportedSplitTailChatError(response, error);
+        }
+        if (isChatPathValidationError(error)) {
+            return sendChatPathValidationError(response, error);
+        }
+        if (error instanceof ChatMutationError) {
+            return response.status(error.status || 400).send({ error: error.error, message: error.message, ...error.details });
+        }
+        console.error(error);
+        return response.status(500).send({ error: 'chat_metadata_update_failed' });
+    }
+});
+
+router.post('/group/metadata', async function (request, response) {
+    try {
+        const chatId = String(request.body?.id || '').trim();
+        if (!chatId || !_.isPlainObject(request.body?.chat_metadata)) {
+            return response.status(400).send({ error: 'invalid_chat_metadata' });
+        }
+
+        const filePath = getGroupChatFilePath(request.user.directories.groupChats, chatId);
+        if (!fs.existsSync(replaceChatStorageExtension(filePath, '.sqlite'))) {
+            return response.status(404).send({ error: 'chat_not_found' });
+        }
+
+        return await withChatSaveLock(filePath, async () => {
+            const payload = await updateSqliteChatMetadata({
+                filePath,
+                requestBody: request.body,
+                chatMetadata: request.body.chat_metadata,
+                saveSessionId: getRequestSaveSessionId(request.body),
+                assertMutationAllowed: () => request.activeSessionOperation?.assertAllowed(),
+                route: '/api/chats/group/metadata',
+            });
+            return response.send(payload);
+        });
+    } catch (error) {
+        if (isActiveSessionError(error)) {
+            return sendActiveSessionRequired(response);
+        }
+        if (isUnsupportedSplitTailChatError(error)) {
+            return sendUnsupportedSplitTailChatError(response, error);
+        }
+        if (isChatPathValidationError(error)) {
+            return sendChatPathValidationError(response, error);
+        }
+        if (error instanceof ChatMutationError) {
+            return response.status(error.status || 400).send({ error: error.error, message: error.message, ...error.details });
+        }
+        console.error(error);
+        return response.status(500).send({ error: 'group_chat_metadata_update_failed' });
     }
 });
 

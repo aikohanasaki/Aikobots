@@ -135,6 +135,8 @@ Qualifying changes are message append, edit, reorder, delete, truncate, clone, p
 
 Chat rename, chat-header metadata, persona or participant-history synchronization, group membership/configuration, opening a chat, pin changes, export, backup, migration, repair, compaction, and other maintenance do not update this value. Failed, rolled-back, no-op, and idempotently replayed mutations do not update it.
 
+Chat-header metadata changes use a dedicated revision-checked SQLite mutation for direct and group chats. The mutation replaces the sanitized `chat_metadata` object atomically, records an operation receipt, and does not read, validate, or rewrite message rows. This allows metadata such as chat-bound lorebooks to persist for empty chats and independently of message-range state.
+
 Pinned and unpinned chats form separate display tiers; each tier sorts by `last_activity_at` descending. Legacy chats without the metadata value use their last persisted message timestamp without writing a migration value or consulting filesystem modification time. Chats with neither value are omitted until qualifying activity occurs.
 
 ## Message Identity
@@ -920,4 +922,4 @@ The completed architecture uses SQLite as a database: stable identities, bounded
 
 ### Active-chat revision operations
 
-Visibility changes, persona synchronization, and group incremental message updates use the shared acknowledged client queue and SQLite operation receipts. Receipts are checked under the logical-chat lock before stale-revision validation, including for validated no-ops. Group incremental updates resolve the persisted wrapper by `aikobots_message_uuid`; a supplied positional message ID is compatibility metadata and must match the UUID-resolved row.
+Chat-header metadata changes, visibility changes, persona synchronization, and group incremental message updates use the shared acknowledged client queue and SQLite operation receipts. Receipts are checked under the logical-chat lock before stale-revision validation, including for validated no-ops. Group incremental updates resolve the persisted wrapper by `aikobots_message_uuid`; a supplied positional message ID is compatibility metadata and must match the UUID-resolved row.

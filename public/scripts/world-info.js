@@ -1,6 +1,6 @@
 import { Fuse } from '../lib.js';
 
-import { saveSettings, substituteParams, getRequestHeaders, chat, chat_metadata, this_chid, characters, markCharacterEditorDirty, menu_type, eventSource, event_types, saveMetadata, getCurrentChatId, extension_prompt_roles, create_save, name1, canEditCharacterMetadata } from '../script.js';
+import { saveSettings, substituteParams, getRequestHeaders, chat, chat_metadata, this_chid, characters, markCharacterEditorDirty, menu_type, eventSource, event_types, saveMetadata, getCurrentChatId, extension_prompt_roles, create_save, name1, canEditCharacterMetadata, CHAT_SAVE_RESULT } from '../script.js';
 import { download, debounce, delay, initScrollHeight, resetScrollHeight, parseJsonFile, extractDataFromPng, getFileBuffer, getCharaFilename, getSortableDelay, PAGINATION_TEMPLATE, navigation_option, waitUntilCondition, isTrueBoolean, setValueByPath, flashHighlight, select2ModifyOptions, getSelect2OptionId, dynamicSelect2DataViaAjax, highlightRegex, select2ChoiceClickSubscribe, isFalseBoolean, getSanitizedFilename, checkOverwriteExistingData, parseStringArray, cancelDebounce, findChar, onlyUnique, equalsIgnoreCaseAndAccents, uuidv4, normalizeArray, getUniqueName } from './utils.js';
 import { getContext, writeExtensionField } from './extensions.js';
 import { isMobile } from './RossAscends-mods.js';
@@ -7638,8 +7638,10 @@ export async function assignLorebookToChat(event) {
         worldSelect.append(option);
     }
 
-    worldSelect.on('change', function () {
+    let persistedName = selectedName;
+    worldSelect.on('change', async function () {
         const worldName = $(this).val();
+        worldSelect.prop('disabled', true);
 
         if (worldName) {
             chat_metadata[METADATA_KEY] = worldName;
@@ -7649,7 +7651,22 @@ export async function assignLorebookToChat(event) {
             $('.chat_lorebook_button').removeClass('world_set');
         }
 
-        saveMetadata();
+        try {
+            const saveResult = await saveMetadata();
+            if (saveResult !== CHAT_SAVE_RESULT.SAVED) {
+                if (persistedName) {
+                    chat_metadata[METADATA_KEY] = persistedName;
+                } else {
+                    delete chat_metadata[METADATA_KEY];
+                }
+                worldSelect.val(persistedName || '');
+                $('.chat_lorebook_button').toggleClass('world_set', Boolean(persistedName));
+            } else {
+                persistedName = worldName;
+            }
+        } finally {
+            worldSelect.prop('disabled', false);
+        }
     });
 
     await callGenericPopup(template, POPUP_TYPE.TEXT);
