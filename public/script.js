@@ -1671,7 +1671,10 @@ export function getActiveChatRevisionKey() {
     if (!chatId) {
         return '';
     }
-    const identity = `${selected_group ? 'group' : 'character'}:${chatId}`;
+    const ownerId = selected_group
+        ? String(selected_group)
+        : String(characters[this_chid]?.avatar || '');
+    const identity = `${selected_group ? 'group' : 'character'}:${ownerId}:${chatId}`;
     if (identity !== activeChatRevisionIdentity) {
         activeChatRevisionIdentity = identity;
         activeChatRevisionOpaqueKey = uuidv4();
@@ -5642,26 +5645,16 @@ export function applyChunkedChatPayload(response, { replace = false, currentView
     });
     const { header, messages, totalMessages, loadedRangeStart, loadedRangeEnd } = payload;
     const chatKey = response?.revisionChatKey || getActiveChatRevisionKey();
-    const incomingRevision = Number(header?.chat_revision ?? response?.chat_revision);
-    const currentRevision = getChatSaveRevision();
-    const isFullCoherentLoad = replace;
-    const revisionResult = adoptChatSaveRevision({
-        chatKey,
-        incomingRevision,
-        source: isFullCoherentLoad ? 'full_hydration' : 'range_hydration',
-        allowAdvance: isFullCoherentLoad,
-    });
-    if (!revisionResult.adopted) {
-        console.warn('[ChatRevision] rejected hydration snapshot', {
+    const activeChatKey = getActiveChatRevisionKey();
+    if (!chatKey || chatKey !== activeChatKey) {
+        console.warn('[ChatRevision] rejected hydration for a different chat', {
             chatKey,
-            activeChatKey: getActiveChatRevisionKey(),
-            incomingRevision: Number.isInteger(incomingRevision) ? incomingRevision : null,
-            currentRevision,
-            reason: revisionResult.reason,
-            coherentReloadRequired: revisionResult.reason === 'unexpected_revision_advance',
+            activeChatKey,
         });
         return null;
     }
+
+    setChatSaveRevision(header?.chat_revision ?? response?.chat_revision);
 
     if (replace) {
         chat.length = 0;
@@ -13902,18 +13895,13 @@ async function messageEditCancel(messageId = this_edit_mes_id) {
         reasoningEditDone.trigger('click');
     }
 
-    await eventSource.emit(event_types.MESSAGE_UPDATED, messageId);
-    if (messageId == this_edit_mes_id) {
-        this_edit_mes_id = undefined;
-        clearActiveMessageEditSession();
-    }
-    else {
+    if (messageId != this_edit_mes_id) {
         console.warn(`The message editor was closed on message #${messageId} while #${this_edit_mes_id} is being edited.`);
-        this_edit_mes_id = undefined;
-        clearActiveMessageEditSession();
     }
-
+    this_edit_mes_id = undefined;
+    clearActiveMessageEditSession();
     showSwipeButtons();
+    await eventSource.emit(event_types.MESSAGE_UPDATED, messageId);
 }
 
 /**
@@ -14413,7 +14401,12 @@ async function messageEditDone(div) {
         text = substituteParams(text);
     }
 
-    await eventSource.emit(event_types.MESSAGE_EDITED, messageId);
+    let editEventError;
+    try {
+        await eventSource.emit(event_types.MESSAGE_EDITED, messageId);
+    } catch (error) {
+        editEventError = error;
+    }
     text = chat[messageId]?.mes ?? text;
     mesBlock.find('.mes_text').empty();
     mesBlock.find('.mes_edit_buttons').css('display', 'none');
@@ -14439,9 +14432,14 @@ async function messageEditDone(div) {
         reasoningEditDone.trigger('click');
     }
 
-    await eventSource.emit(event_types.MESSAGE_UPDATED, messageId);
     this_edit_mes_id = undefined;
     clearActiveMessageEditSession();
+    showSwipeButtons();
+
+    if (editEventError) {
+        throw editEventError;
+    }
+    await eventSource.emit(event_types.MESSAGE_UPDATED, messageId);
 
     let saveResult;
     if (currentChatFileNameLooksSqlite()) {
@@ -14458,10 +14456,8 @@ async function messageEditDone(div) {
 
     if (saveResult !== CHAT_SAVE_RESULT.SAVED) {
         await reloadCurrentChat();
-        showSwipeButtons();
         return;
     }
-    showSwipeButtons();
 }
 
 const pastCharacterChatsCache = new Map();
