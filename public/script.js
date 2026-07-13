@@ -977,7 +977,7 @@ let chatSaveQueueTimer = null;
 let chatSaveQueueRun = null;
 let chatRevisionOperationQueue = Promise.resolve();
 let chatSaveRequestOptions = {};
-let chatSaveStreamingAppendRetryTimer = null;
+let chatSaveTransientStateRetryTimer = null;
 let pendingStreamingSqliteAppend = null;
 let temporaryCharacterChat = null;
 let temporaryGroupChat = null;
@@ -987,7 +987,7 @@ const CHAT_SAVE_RESULT = {
     MISSING_CHAT: 'missing_chat',
 };
 export { CHAT_SAVE_RESULT };
-const CHAT_SAVE_STREAMING_APPEND_RETRY_MS = 250;
+const CHAT_SAVE_TRANSIENT_STATE_RETRY_MS = 250;
 const CHAT_SAVE_REQUEST_RETRY_DELAY_MS = 750;
 const CHAT_SAVE_SESSION_ID_KEY = 'aikobots_chat_save_session_id';
 const TEMPORARY_CHAT_DISPLAY_NAME = '(Temporary Chat)';
@@ -17602,8 +17602,8 @@ async function drainChatSaveQueue() {
     try {
         while (chatSaveDirty) {
             const options = chatSaveRequestOptions;
-            if (shouldDeferChatSaveForStreamingAppend(options)) {
-                scheduleChatSaveAfterStreamingAppend();
+            if (shouldDeferChatSaveForTransientState(options)) {
+                scheduleChatSaveAfterTransientState();
                 return finalResult;
             }
 
@@ -17635,25 +17635,33 @@ function cancelChatSaveQueueTimer() {
     }
 }
 
-function scheduleChatSaveAfterStreamingAppend() {
-    if (chatSaveStreamingAppendRetryTimer) {
+function scheduleChatSaveAfterTransientState() {
+    if (chatSaveTransientStateRetryTimer) {
         return;
     }
 
-    chatSaveStreamingAppendRetryTimer = setTimeout(() => {
-        chatSaveStreamingAppendRetryTimer = null;
+    chatSaveTransientStateRetryTimer = setTimeout(() => {
+        chatSaveTransientStateRetryTimer = null;
         if (chatSaveDirty && !chatSaveQueuePromise) {
             void saveChatConditional({ immediate: true });
         }
-    }, CHAT_SAVE_STREAMING_APPEND_RETRY_MS);
+    }, CHAT_SAVE_TRANSIENT_STATE_RETRY_MS);
 }
 
-function shouldDeferChatSaveForStreamingAppend(options = {}) {
-    if (!isPendingStreamingSqliteAppendActive()) {
-        return false;
-    }
+/** Returns whether swipe generation is temporarily targeting the next uncreated slot. */
+function hasPendingSwipeGenerationSlot() {
+    return swipeState === SWIPE_STATE.SWIPING && chat.some(message => (
+        Array.isArray(message?.swipes)
+        && Number.isInteger(message.swipe_id)
+        && message.swipe_id === message.swipes.length
+    ));
+}
 
-    return options?.chatName === undefined && options?.mesId === undefined;
+/** Returns whether persistence must wait for an in-progress chat mutation to settle. */
+function shouldDeferChatSaveForTransientState(options = {}) {
+    const isCurrentChatSave = options?.chatName === undefined && options?.mesId === undefined;
+    return hasPendingSwipeGenerationSlot()
+        || (isCurrentChatSave && isPendingStreamingSqliteAppendActive());
 }
 
 export async function saveChatConditional(options = {}) {
