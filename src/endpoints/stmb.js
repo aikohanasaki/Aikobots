@@ -8,6 +8,7 @@ import {
     getNextManagedMemorySequenceNumber,
     parseSequenceFromTitle,
     compileScene,
+    STMB_MANAGED_FLAG,
 } from '../../public/scripts/stmb-core.js';
 import {
     createManagedSummaryEntryData,
@@ -17,9 +18,11 @@ import {
     verifySummarySourceFingerprints,
 } from '../../public/scripts/stmb-summary.js';
 import {
+    assertLorebookCheckoutForManagement,
     getLorebookForManagement,
     LorebookRepositoryError,
     saveLorebookForManagement,
+    withLorebookManagementTransaction,
 } from '../lorebook-repository.js';
 import {
     deleteStmbContextSetting,
@@ -133,6 +136,17 @@ function normalizeSceneEndpointRequest(body = {}) {
         groupId: String(body.groupId || ''),
         characterName: String(body.characterName || ''),
         userName: String(body.userName || ''),
+        groupName: String(body.groupName || ''),
+        isGroupChat: Boolean(body.isGroupChat || body.groupId),
+        groupParticipants: (Array.isArray(body.groupParticipants) ? body.groupParticipants : [])
+            .slice(0, 100)
+            .map(item => ({
+                key: String(item?.key || '').slice(0, 512),
+                avatar: String(item?.avatar || '').slice(0, 512),
+                memberId: String(item?.memberId || '').slice(0, 512),
+                name: String(item?.name || '').slice(0, 512),
+                characterFilterName: String(item?.characterFilterName || '').slice(0, 512),
+            })),
     };
 }
 
@@ -275,9 +289,12 @@ async function resolveCapturedScene(request, normalizedRequest) {
             chatId: normalizedRequest.chatId,
             characterName: normalizedRequest.characterName,
             userName: normalizedRequest.userName,
+            groupName: normalizedRequest.groupName,
+            stmbPromptTarget: normalizedRequest.isGroupChat ? 'group' : 'character',
         },
         {
             skipSystemMessages: normalizedRequest.skipSystemMessages,
+            groupParticipants: normalizedRequest.groupParticipants,
         },
     );
 
@@ -422,6 +439,88 @@ function getLorebookContext(request) {
         lorebookName,
         storage: normalizeStorage(request.body?.storage),
     };
+}
+
+function normalizeGroupMemoryWriteTarget(value, label) {
+    const lorebookName = String(value?.lorebookName || '').trim();
+    const memoryObject = value?.memoryObject;
+    if (!lorebookName || !memoryObject || typeof memoryObject !== 'object' || Array.isArray(memoryObject)) {
+        throw createStmbRequestError(400, 'StmbBadRequest', `${label} must include lorebookName and memoryObject.`);
+    }
+    const title = String(memoryObject.title || '').trim();
+    const content = String(memoryObject.content || '').trim();
+    if (!title || !content) {
+        throw createStmbRequestError(400, 'StmbBadRequest', `${label} memoryObject requires title and content.`);
+    }
+    if (value.storage !== undefined && !['user', 'secure'].includes(value.storage)) {
+        throw createStmbRequestError(400, 'StmbBadRequest', `${label} storage must be "user" or "secure".`);
+    }
+    if (memoryObject.keywords !== undefined && !Array.isArray(memoryObject.keywords)) {
+        throw createStmbRequestError(400, 'StmbBadRequest', `${label} memoryObject keywords must be an array.`);
+    }
+    if (value.characterFilterNames !== undefined && !Array.isArray(value.characterFilterNames)) {
+        throw createStmbRequestError(400, 'StmbBadRequest', `${label} characterFilterNames must be an array.`);
+    }
+    if (value.usePrimaryTitle !== undefined && typeof value.usePrimaryTitle !== 'boolean') {
+        throw createStmbRequestError(400, 'StmbBadRequest', `${label} usePrimaryTitle must be a boolean.`);
+    }
+    return {
+        lorebookName,
+        storage: value.storage || 'user',
+        memoryObject: {
+            title,
+            content,
+            keywords: Array.isArray(memoryObject.keywords)
+                ? memoryObject.keywords.map(item => String(item || '').trim()).filter(Boolean).slice(0, 100)
+                : [],
+        },
+        characterFilterNames: [...new Set((Array.isArray(value.characterFilterNames) ? value.characterFilterNames : [])
+            .map(item => String(item || '').trim()).filter(Boolean))].slice(0, 100),
+        usePrimaryTitle: value.usePrimaryTitle !== false,
+    };
+}
+
+function getCanonicalMemoryNumber(entry) {
+    if (entry?.[STMB_MANAGED_FLAG] !== true || entry?.stmbSummary === true) return null;
+    const direct = Number(entry?.STMB_canonicalMemoryNumber ?? entry?.STMB_memoryNumber);
+    if (Number.isFinite(direct) && direct > 0) return Math.trunc(direct);
+    const parsed = parseSequenceFromTitle(entry?.comment || entry?.title || '');
+    return Number.isFinite(parsed) && parsed > 0 ? Math.trunc(parsed) : null;
+}
+
+function allocateCanonicalMemoryNumber(lorebooks) {
+    let maximum = 0;
+    for (const item of lorebooks) {
+        for (const entry of Object.values(item?.data?.entries || {})) {
+            const number = getCanonicalMemoryNumber(entry);
+            if (number && number > maximum) maximum = number;
+        }
+    }
+    return maximum + 1;
+}
+
+function createCanonicalInclusionGroup(sceneContext, canonicalNumber) {
+    const rawName = String(sceneContext?.groupName || sceneContext?.characterName || sceneContext?.chatId || 'Chat').trim();
+    const name = rawName
+        .replace(/[^\p{L}\p{N}_-]+/gu, '-')
+        .replace(/-+/g, '-')
+        .replace(/^-|-$/g, '') || 'Chat';
+    return `${name}-Memory-${String(canonicalNumber).padStart(3, '0')}`;
+}
+
+function createCanonicalEntryMetadata(inclusionGroup, canonicalLorebookName, canonicalEntryUid, canonicalNumber, isCanonical) {
+    return {
+        STMB_canonical: Boolean(isCanonical),
+        STMB_canonicalLorebook: canonicalLorebookName,
+        STMB_canonicalEntryUid: canonicalEntryUid,
+        STMB_canonicalMemoryNumber: canonicalNumber,
+        STMB_inclusionGroup: inclusionGroup,
+    };
+}
+
+function restoreManagedInclusionGroup(entry) {
+    const inclusionGroup = String(entry?.STMB_inclusionGroup || '').trim();
+    if (inclusionGroup) entry.group = inclusionGroup;
 }
 
 router.post('/context-settings/list', (request, response) => {
@@ -667,6 +766,200 @@ router.post('/save-memory', async (request, response) => {
     }
 });
 
+router.post('/save-group-memory', async (request, response) => {
+    let primary;
+    let targets;
+    const sceneContext = request.body?.sceneContext;
+    const profile = request.body?.profile || {};
+    try {
+        const rawTargets = request.body?.targets;
+        if (rawTargets !== undefined && !Array.isArray(rawTargets)) {
+            throw createStmbRequestError(400, 'StmbBadRequest', 'targets must be an array.');
+        }
+        if (Array.isArray(rawTargets) && rawTargets.length > 100) {
+            throw createStmbRequestError(400, 'StmbBadRequest', 'No more than 100 group memory targets are allowed.');
+        }
+        if (!profile || typeof profile !== 'object' || Array.isArray(profile)) {
+            throw createStmbRequestError(400, 'StmbBadRequest', 'profile must be an object.');
+        }
+        primary = normalizeGroupMemoryWriteTarget(request.body?.primary, 'primary');
+        targets = (rawTargets || [])
+            .map((target, index) => normalizeGroupMemoryWriteTarget(target, `targets[${index}]`));
+        if (!sceneContext || typeof sceneContext !== 'object' || Array.isArray(sceneContext)) {
+            throw createStmbRequestError(400, 'StmbBadRequest', 'sceneContext is required.');
+        }
+        const names = new Set([primary.lorebookName]);
+        for (const target of targets) {
+            if (names.has(target.lorebookName)) {
+                throw createStmbRequestError(400, 'StmbDuplicateGroupLorebook', 'Each group memory target lorebook must be unique.');
+            }
+            names.add(target.lorebookName);
+        }
+    } catch (error) {
+        return sendStmbError(response, error);
+    }
+
+    try {
+        const result = await withLorebookManagementTransaction(async transaction => {
+            const requested = [primary, ...targets];
+            const lorebooks = [];
+            const resolvedLorebookKeys = new Set();
+            for (const target of requested) {
+                const loaded = await getLorebookForManagement(
+                    request.user,
+                    target.lorebookName,
+                    false,
+                    target.storage,
+                );
+                if (!loaded?.data) {
+                    throw createStmbRequestError(404, 'StmbLorebookNotFound', 'A configured group memory lorebook was not found.');
+                }
+                assertLorebookCheckoutForManagement(request.user, loaded.metadata);
+                const resolvedKey = `${loaded.metadata.storage}:${loaded.metadata.name}`;
+                if (resolvedLorebookKeys.has(resolvedKey)) {
+                    throw createStmbRequestError(400, 'StmbDuplicateGroupLorebook', 'Each group memory target lorebook must be unique.');
+                }
+                resolvedLorebookKeys.add(resolvedKey);
+                ensureEntriesObject(loaded.data);
+                lorebooks.push({
+                    request: target,
+                    data: loaded.data,
+                    metadata: loaded.metadata,
+                    originalData: structuredClone(loaded.data),
+                });
+            }
+
+            const canonicalNumber = allocateCanonicalMemoryNumber(lorebooks);
+            const inclusionGroup = createCanonicalInclusionGroup(sceneContext, canonicalNumber);
+            const primaryBook = lorebooks[0];
+            const primarySequence = getNextManagedMemorySequenceNumber(
+                primaryBook.data.entries,
+                profile?.titleFormat || sceneContext?.titleFormat || null,
+            );
+            const primaryPayload = createManagedLorebookEntryData(
+                primary.memoryObject,
+                sceneContext,
+                profile,
+                primarySequence,
+                {
+                    characterFilterNames: primary.characterFilterNames,
+                    inclusionGroup,
+                    entryMetadata: createCanonicalEntryMetadata(
+                        inclusionGroup,
+                        primaryBook.metadata.name,
+                        null,
+                        canonicalNumber,
+                        true,
+                    ),
+                },
+            );
+            const primaryEntry = createLorebookEntry(primaryBook.data);
+            Object.assign(primaryEntry, primaryPayload);
+            primaryEntry.STMB_canonicalEntryUid = primaryEntry.uid;
+            const orderClampNotifications = [];
+            applyLorebookSettings(primaryEntry, profile, {
+                orderNumber: parseSequenceFromTitle(primaryEntry.comment || '') || primarySequence,
+                orderNumberLabel: 'memory',
+                onOrderClamped: notification => orderClampNotifications.push(notification),
+            });
+            restoreManagedInclusionGroup(primaryEntry);
+
+            const created = [{
+                lorebookName: primaryBook.metadata.name,
+                storage: primaryBook.metadata.storage,
+                entry: primaryEntry,
+            }];
+            for (let index = 1; index < lorebooks.length; index++) {
+                const book = lorebooks[index];
+                const target = book.request;
+                const sequence = getNextManagedMemorySequenceNumber(
+                    book.data.entries,
+                    profile?.titleFormat || sceneContext?.titleFormat || null,
+                );
+                const payload = createManagedLorebookEntryData(
+                    target.memoryObject,
+                    sceneContext,
+                    profile,
+                    sequence,
+                    {
+                        entryTitle: target.usePrimaryTitle ? primaryEntry.comment : null,
+                        characterFilterNames: target.characterFilterNames,
+                        inclusionGroup,
+                        entryMetadata: createCanonicalEntryMetadata(
+                            inclusionGroup,
+                            primaryBook.metadata.name,
+                            primaryEntry.uid,
+                            canonicalNumber,
+                            false,
+                        ),
+                    },
+                );
+                const entry = createLorebookEntry(book.data);
+                Object.assign(entry, payload);
+                applyLorebookSettings(entry, profile, {
+                    orderNumber: parseSequenceFromTitle(entry.comment || '') || sequence,
+                    orderNumberLabel: 'memory',
+                    onOrderClamped: notification => orderClampNotifications.push(notification),
+                });
+                restoreManagedInclusionGroup(entry);
+                created.push({ lorebookName: book.metadata.name, storage: book.metadata.storage, entry });
+            }
+
+            await request.activeSessionOperation?.assertAllowed();
+            const savedBooks = [];
+            try {
+                for (const book of lorebooks) {
+                    await request.activeSessionOperation?.assertAllowed();
+                    await transaction.save(request.user, book.metadata.name, book.data, book.metadata.storage);
+                    savedBooks.push(book);
+                }
+            } catch (error) {
+                let rollbackFailed = false;
+                for (const book of savedBooks.reverse()) {
+                    try {
+                        await transaction.save(request.user, book.metadata.name, book.originalData, book.metadata.storage);
+                    } catch {
+                        rollbackFailed = true;
+                    }
+                }
+                if (rollbackFailed) {
+                    throw createStmbRequestError(
+                        500,
+                        'StmbGroupMemoryRollbackFailed',
+                        'The group memory write failed and could not be fully rolled back. Manual review is required.',
+                    );
+                }
+                throw error;
+            }
+
+            return {
+                canonicalNumber,
+                inclusionGroup,
+                orderClampNotifications,
+                entries: created.map(item => ({
+                    lorebookName: item.lorebookName,
+                    storage: item.storage,
+                    uid: item.entry.uid,
+                    title: item.entry.comment,
+                    characterFilterNames: item.entry.characterFilter?.names || [],
+                })),
+            };
+        });
+        return response.send({ ok: true, ...result });
+    } catch (error) {
+        if (!(error instanceof LorebookRepositoryError) && !Number.isInteger(error?.status) && !isActiveSessionError(error)) {
+            console.error('[STMB] Group memory save failed', String(error?.name || 'Error'));
+            return response.status(500).send({
+                error: {
+                    type: 'StmbGroupMemoryWriteFailed',
+                    message: 'The group memory could not be saved.',
+                },
+            });
+        }
+        return sendStmbError(response, error);
+    }
+});
+
 router.post('/commit-summaries', async (request, response) => {
     const lorebookContext = getLorebookContext(request);
     const summaryCandidates = Array.isArray(request.body?.summaryCandidates) ? request.body.summaryCandidates : null;
@@ -712,6 +1005,7 @@ router.post('/commit-summaries', async (request, response) => {
                 targetTier,
                 titleFormat,
                 sequenceNumber: nextSummaryNumber,
+                sourceEntries: Object.values(lorebookData.entries),
             });
             Object.assign(entry, entryPayload);
             applyLorebookSettings(entry, summaryEntrySettings, {
@@ -719,6 +1013,7 @@ router.post('/commit-summaries', async (request, response) => {
                 orderNumberLabel: getSummaryTierLabel(targetTier).toLowerCase(),
                 onOrderClamped: notification => orderClampNotifications.push(notification),
             });
+            restoreManagedInclusionGroup(entry);
 
             if (disableOriginals) {
                 const sourceIds = new Set((summaryCandidate.memberIds || []).map(String));

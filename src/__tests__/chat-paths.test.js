@@ -18,6 +18,8 @@ describe('chat path helpers', () => {
         expect(paths.chatId).toBe('chat-123');
         expect(paths.jsonlPath).toBe(path.join(groupChatsDirectory, 'chat-123.jsonl'));
         expect(paths.sqlitePath).toBe(path.join(groupChatsDirectory, 'chat-123.sqlite'));
+        expect(paths.walPath).toBe(path.join(groupChatsDirectory, 'chat-123.sqlite-wal'));
+        expect(paths.shmPath).toBe(path.join(groupChatsDirectory, 'chat-123.sqlite-shm'));
     });
 
     it('normalizes existing group chat file names to the same storage companions', () => {
@@ -55,6 +57,8 @@ describe('chat path helpers', () => {
                 chatId: 'chat-123',
                 jsonlPath: path.join(groupChatsDirectory, 'chat-123.jsonl'),
                 sqlitePath: path.join(groupChatsDirectory, 'chat-123.sqlite'),
+                walPath: path.join(groupChatsDirectory, 'chat-123.sqlite-wal'),
+                shmPath: path.join(groupChatsDirectory, 'chat-123.sqlite-shm'),
             });
     });
 

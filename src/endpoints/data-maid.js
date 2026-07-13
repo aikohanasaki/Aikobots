@@ -4,9 +4,11 @@ import path from 'node:path';
 import express from 'express';
 import mime from 'mime-types';
 import { getSettingsBackupFilePrefix } from './settings.js';
-import { CHAT_BACKUPS_PREFIX, getDeduplicatedChatHistoryFileNames, isHeadChatFile } from './chats.js';
+import { CHAT_BACKUPS_PREFIX, getDeduplicatedChatHistoryFileNames, getLogicalChatData, isHeadChatFile } from './chats.js';
 import { tryParse } from '../util.js';
 import { SETTINGS_FILE } from '../constants.js';
+import { deleteChatStorageCompanions, getChatStorageCompanionPaths, withChatSaveLock } from '../chat-storage.js';
+import { exportDatabaseFile } from '../sqlite-manager.js';
 
 const sha256 = str => crypto.createHash('sha256').update(str).digest('hex');
 const LAYOUT_ASSET_ROUTE_PREFIX = '/api/layouts/assets/file/';
@@ -23,8 +25,7 @@ const getChatStoragePathsForCleanup = filePath => {
         return [filePath];
     }
 
-    const basePath = filePath.slice(0, -extension.length);
-    return [`${basePath}.jsonl`, `${basePath}.sqlite`];
+    return Object.values(getChatStorageCompanionPaths(filePath));
 };
 const resolveComparablePath = async filePath => {
     try {
@@ -872,13 +873,15 @@ router.get('/view', async (req, res) => {
         const storagePaths = getChatStoragePathsForCleanup(fileEntry.path);
         const pathToFile = fs.existsSync(fileEntry.path)
             ? fileEntry.path
-            : storagePaths.find(filePath => fs.existsSync(filePath));
+            : storagePaths.find(filePath => ['.jsonl', '.sqlite'].includes(path.extname(filePath).toLowerCase()) && fs.existsSync(filePath));
 
         if (!pathToFile) {
             return res.sendStatus(404);
         }
 
-        const fileBuffer = await fs.promises.readFile(pathToFile);
+        const fileBuffer = path.extname(pathToFile).toLowerCase() === '.sqlite'
+            ? await withChatSaveLock(pathToFile, async () => await exportDatabaseFile(pathToFile))
+            : await fs.promises.readFile(pathToFile);
         const mimeType = mime.lookup(pathToFile) || 'text/plain';
         res.setHeader('Content-Type', mimeType);
         return res.send(fileBuffer);
@@ -915,10 +918,11 @@ router.post('/delete', async (req, res) => {
                 continue;
             }
 
-            for (const cleanupPath of new Set(getChatStoragePathsForCleanup(fileEntry.path))) {
-                if (fs.existsSync(cleanupPath)) {
-                    await fs.promises.unlink(cleanupPath);
-                }
+            const extension = path.extname(fileEntry.path).toLowerCase();
+            if (extension === '.jsonl' || extension === '.sqlite') {
+                await withChatSaveLock(fileEntry.path, async () => deleteChatStorageCompanions(fileEntry.path));
+            } else if (fs.existsSync(fileEntry.path)) {
+                await fs.promises.unlink(fileEntry.path);
             }
         }
 

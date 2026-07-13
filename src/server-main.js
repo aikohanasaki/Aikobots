@@ -326,7 +326,7 @@ async function postSetupTasks(result) {
 
     if (cliArgs.browserLaunchEnabled) {
         try {
-            // TODO: This should be converted to a regular import when support for Node 18 is dropped
+            // Load browser-launch code only when browser launching is enabled.
             const openModule = await import('open');
             const { default: open, apps } = openModule;
 

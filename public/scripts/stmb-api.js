@@ -61,6 +61,17 @@ export async function saveStmbMemoryEntry(payload, options = {}) {
     return signal ? postStmbWithSignal('save-memory', payload, signal) : postStmb('save-memory', payload);
 }
 
+/**
+ * Atomically saves one group memory and its character-lorebook copies.
+ * @param {object} payload Validated group-memory request payload.
+ * @param {{signal?: AbortSignal|null}} [options] Request options.
+ * @returns {Promise<object>}
+ */
+export async function saveStmbGroupMemoryEntries(payload, options = {}) {
+    const { signal = null } = options;
+    return signal ? postStmbWithSignal('save-group-memory', payload, signal) : postStmb('save-group-memory', payload);
+}
+
 export async function getStmbChatRangeInfo(payload, options = {}) {
     const { signal = null } = options;
     return signal ? postStmbWithSignal('chat-range-info', payload, signal) : postStmb('chat-range-info', payload);

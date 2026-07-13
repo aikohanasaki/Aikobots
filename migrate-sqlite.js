@@ -239,47 +239,25 @@ async function* readLegacySplitChatRecords(plan) {
     });
 }
 
-function normalizeJsonForComparison(value) {
-    if (!value || typeof value !== 'object') {
-        return value;
+async function* readCompleteJsonlRecords(filePath) {
+    const stream = fs.createReadStream(filePath, { encoding: 'utf8' });
+    const lines = readline.createInterface({ input: stream, crlfDelay: Infinity });
+    try {
+        for await (const line of lines) {
+            if (line.trim()) {
+                yield { content: line };
+            }
+        }
+    } finally {
+        lines.close();
+        stream.destroy();
     }
-
-    if (Array.isArray(value)) {
-        return value.map(normalizeJsonForComparison);
-    }
-
-    return Object.keys(value).sort().reduce((result, key) => {
-        result[key] = normalizeJsonForComparison(value[key]);
-        return result;
-    }, {});
 }
 
-function jsonValuesEqual(left, right) {
-    return JSON.stringify(normalizeJsonForComparison(left)) === JSON.stringify(normalizeJsonForComparison(right));
-}
-
-/**
- * Summarizes a migration source without exposing chat message content.
- * @param {{type: 'full-jsonl', header: object|null}|{type: 'legacy-split-tail', tailPath: string, header: object, storage: object, headPath: string}} plan JSONL migration plan.
- * @param {string} entryPath Tail or complete JSONL chat path.
- * @returns {Promise<{header: object|null, messageCount: number}>}
- */
-async function getJsonlMigrationSourceSummary(plan, entryPath) {
-    if (plan.type !== 'legacy-split-tail') {
-        return {
-            header: plan.header,
-            messageCount: await countJsonlRecordsAfterHeader(entryPath),
-        };
-    }
-
-    const headCount = await countJsonlRecordsAfterHeader(plan.headPath);
-    const tailCount = await countJsonlRecordsAfterHeader(plan.tailPath);
-    assertLegacySplitCounts(plan, { head: headCount, tail: tailCount });
-
-    return {
-        header: stripLegacySplitMetadata(plan.header),
-        messageCount: headCount + tailCount,
-    };
+function getMigrationPlanRecords(plan, entryPath) {
+    return plan.type === 'legacy-split-tail'
+        ? readLegacySplitChatRecords(plan)
+        : readCompleteJsonlRecords(entryPath);
 }
 
 /**
@@ -289,7 +267,7 @@ async function getJsonlMigrationSourceSummary(plan, entryPath) {
 async function migrateAllUsersChatsToSqlite() {
     const { getAllUserHandles, getUserDirectories } = await import('./src/users.js');
     const { isHeadChatFile } = await import('./src/chat-paths.js');
-    const { getChatHeader, getMessageCount, loadDb, migrateFromJsonl, migrateFromJsonlRecords } = await import('./src/sqlite-manager.js');
+    const { loadDb, migrateFromJsonl, migrateFromJsonlRecords, verifyJsonlRecordsMatchSqlite } = await import('./src/sqlite-manager.js');
     const handles = await getAllUserHandles();
     let totalMigrated = 0;
     let totalRemovedExisting = 0;
@@ -337,21 +315,7 @@ async function migrateAllUsersChatsToSqlite() {
     };
 
     const verifySqliteMatchesMigrationPlan = async (sqlitePath, migrationPlan, entryPath) => {
-        const sourceSummary = await getJsonlMigrationSourceSummary(migrationPlan, entryPath);
-        const db = await loadDb(sqlitePath);
-        try {
-            const sqliteHeader = getChatHeader(db);
-            const sqliteMessageCount = getMessageCount(db);
-            if (!jsonValuesEqual(sourceSummary.header, sqliteHeader)) {
-                throw new Error('SQLite content check failed: chat header does not match legacy JSONL source.');
-            }
-
-            if (sourceSummary.messageCount !== sqliteMessageCount) {
-                throw new Error(`SQLite content check failed: expected ${sourceSummary.messageCount} message(s), found ${sqliteMessageCount}.`);
-            }
-        } finally {
-            db.close();
-        }
+        await verifyJsonlRecordsMatchSqlite(getMigrationPlanRecords(migrationPlan, entryPath), sqlitePath);
     };
 
     for (const { entryPath, sqlitePath } of allEntries) {

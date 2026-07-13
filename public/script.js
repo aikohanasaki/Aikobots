@@ -182,6 +182,7 @@ import {
     isValidAikobotsUuid,
     normalizeChatIdentities,
     validateChatIdentities,
+    validateMessageSwipeState,
 } from './scripts/chat-identities.js';
 
 import { cancelDebouncedMetadataSave, doDailyExtensionUpdatesCheck, extension_settings, initExtensions, loadExtensionSettings, runGenerationInterceptors } from './scripts/extensions.js';
@@ -967,11 +968,14 @@ let chatSaveTimeout;
 let importFlashTimeout;
 export let isChatSaving = false;
 let chatSaveRevision = 0;
+let activeChatRevisionIdentity = '';
+let activeChatRevisionOpaqueKey = '';
 let chatSaveSessionId = '';
 let chatSaveDirty = false;
 let chatSaveQueuePromise = null;
 let chatSaveQueueTimer = null;
 let chatSaveQueueRun = null;
+let chatRevisionOperationQueue = Promise.resolve();
 let chatSaveRequestOptions = {};
 let chatSaveStreamingAppendRetryTimer = null;
 let pendingStreamingSqliteAppend = null;
@@ -1661,6 +1665,60 @@ export function setChatSaveRevision(revision) {
     chatSaveRevision = Number.isInteger(normalizedRevision) && normalizedRevision >= 0 ? normalizedRevision : 0;
 }
 
+/** Returns a non-path active-chat key suitable for revision ownership and diagnostics. */
+export function getActiveChatRevisionKey() {
+    const chatId = String(getCurrentChatId() || '');
+    if (!chatId) {
+        return '';
+    }
+    const identity = `${selected_group ? 'group' : 'character'}:${chatId}`;
+    if (identity !== activeChatRevisionIdentity) {
+        activeChatRevisionIdentity = identity;
+        activeChatRevisionOpaqueKey = uuidv4();
+    }
+    return activeChatRevisionOpaqueKey;
+}
+
+/** Monotonically adopts an authoritative revision for the active chat. */
+export function adoptChatSaveRevision({ chatKey, incomingRevision, source, allowAdvance = true }) {
+    const activeChatKey = getActiveChatRevisionKey();
+    const previousRevision = getChatSaveRevision();
+    const normalizedRevision = Number(incomingRevision);
+    let adopted = false;
+    let reason = 'adopted';
+
+    if (!chatKey || chatKey !== activeChatKey) {
+        reason = 'chat_mismatch';
+    } else if (!Number.isInteger(normalizedRevision) || normalizedRevision < 0) {
+        reason = 'invalid_revision';
+    } else if (normalizedRevision < previousRevision) {
+        reason = 'revision_regression';
+    } else if (!allowAdvance && normalizedRevision > previousRevision) {
+        reason = 'unexpected_revision_advance';
+    } else {
+        setChatSaveRevision(normalizedRevision);
+        adopted = true;
+    }
+
+    console.debug('[ChatRevision] revision adoption', {
+        source,
+        chatKey,
+        previousRevision,
+        incomingRevision: Number.isInteger(normalizedRevision) ? normalizedRevision : null,
+        adopted,
+        reason,
+    });
+    if (!adopted && reason === 'revision_regression') {
+        console.warn('[ChatRevision] rejected revision regression', {
+            source,
+            chatKey,
+            previousRevision,
+            incomingRevision: normalizedRevision,
+        });
+    }
+    return { adopted, reason, currentRevision: getChatSaveRevision() };
+}
+
 export function getChatSaveSessionId() {
     if (chatSaveSessionId) {
         return chatSaveSessionId;
@@ -1703,7 +1761,7 @@ export function warnStaleChatSave(errorData) {
 
     if (sameSessionStale) {
         if (canAdoptServerRevision) {
-            setChatSaveRevision(serverRevision);
+            adoptChatSaveRevision({ chatKey: getActiveChatRevisionKey(), incomingRevision: serverRevision, source: 'same_session_stale_conflict' });
         }
         return { adoptedServerRevision: canAdoptServerRevision, sameSessionStale, localRevision, submittedBaseRevision, serverRevision, lastSaveSessionId, currentSaveSessionId };
     }
@@ -1714,6 +1772,98 @@ export function warnStaleChatSave(errorData) {
 
     toastr.warning(conflictMessage, t`Chat save conflict`);
     return { adoptedServerRevision: false, sameSessionStale: false, localRevision, submittedBaseRevision, serverRevision, lastSaveSessionId, currentSaveSessionId };
+}
+
+/**
+ * Serializes one revision-changing request and retries the same immutable operation after transport failures.
+ * The next operation is released only after an HTTP acknowledgement has supplied the expected revision.
+ */
+export function queueAcknowledgedChatRevisionRequest(requestFactory) {
+    const operationId = uuidv4();
+    const chatKey = getActiveChatRevisionKey();
+    const run = chatRevisionOperationQueue.then(async () => {
+        const baseRevision = getChatSaveRevision();
+        const saveSessionId = getChatSaveSessionId();
+        const request = requestFactory({ baseRevision, operationId, saveSessionId, chatKey });
+        const requestBody = structuredClone(request.body || {});
+        let retryDelay = CHAT_SAVE_REQUEST_RETRY_DELAY_MS;
+        let attempt = 0;
+
+        for (;;) {
+            let response;
+            console.debug('[ChatRevision] mutation dispatch', {
+                route: request.url,
+                operationType: request.operationType || null,
+                operationId,
+                attempt: attempt++ > 0 ? 'retry' : 'original',
+                chatKey,
+                activeChatKey: getActiveChatRevisionKey(),
+                queue: 'acknowledged-chat-revision',
+                revisionBeforeDispatch: getChatSaveRevision(),
+                serializedBaseRevision: requestBody.base_revision ?? null,
+                payloadHeaderRevision: requestBody?.header?.chat_revision ?? null,
+            });
+            try {
+                response = await fetch(request.url, {
+                    method: request.method || 'POST',
+                    headers: request.headers || getRequestHeaders(),
+                    cache: request.cache || 'no-cache',
+                    body: JSON.stringify(requestBody),
+                });
+            } catch (error) {
+                console.warn('Chat operation acknowledgement was not received; retrying the same operation.', {
+                    operationId,
+                    baseRevision,
+                    error,
+                });
+                await delay(retryDelay);
+                retryDelay = Math.min(retryDelay * 2, 10_000);
+                continue;
+            }
+
+            let responseData = null;
+            try {
+                responseData = await response.json();
+            } catch {
+                // A successful revision-changing request must include a JSON acknowledgement.
+            }
+
+            if (response.ok) {
+                const acknowledgedRevision = Number(responseData?.chat_revision);
+                if (!Number.isInteger(acknowledgedRevision) || (acknowledgedRevision !== baseRevision && acknowledgedRevision !== baseRevision + 1)) {
+                    console.warn('Chat operation returned an invalid acknowledgement; retrying the same operation.', {
+                        operationId,
+                        baseRevision,
+                        acknowledgedRevision: responseData?.chat_revision,
+                    });
+                    await delay(retryDelay);
+                    retryDelay = Math.min(retryDelay * 2, 10_000);
+                    continue;
+                }
+                adoptChatSaveRevision({ chatKey, incomingRevision: acknowledgedRevision, source: responseData?.status === 'replayed' ? 'receipt_replay' : 'mutation_acknowledgement' });
+            } else if (response.status >= 500 || response.status === 408 || response.status === 425 || response.status === 429) {
+                console.warn('Chat operation received a retryable response; retrying the same operation.', {
+                    operationId,
+                    baseRevision,
+                    status: response.status,
+                });
+                await delay(retryDelay);
+                retryDelay = Math.min(retryDelay * 2, 10_000);
+                continue;
+            }
+
+            return {
+                response,
+                responseData: response.ok ? responseData : null,
+                errorData: response.ok ? null : responseData,
+                baseRevision,
+                operationId,
+            };
+        }
+    });
+
+    chatRevisionOperationQueue = run.catch(() => {});
+    return run;
 }
 
 function getSyncCurrentChatCooldownSeconds() {
@@ -2834,6 +2984,8 @@ function createMessageEditSession(messageId, fieldType = null) {
         originalMessageId: Number(messageId),
         originalSwipeId: typeof message?.swipe_id === 'number' ? message.swipe_id : null,
         originalSwipesLength: Array.isArray(message?.swipes) ? message.swipes.length : null,
+        originalSwipes: Array.isArray(message?.swipes) ? structuredClone(message.swipes) : null,
+        originalSwipeInfo: Array.isArray(message?.swipe_info) ? structuredClone(message.swipe_info) : null,
     };
 
     return activeMessageEditSession;
@@ -2879,6 +3031,9 @@ function resolveActiveMessageEditSession({ fieldType = null, allowMessageTextSes
         const swipeLookup = findSwipeByAikobotsUuid(messageLookup.message, session.swipeUuid);
         if (!swipeLookup.ok) {
             return { ok: false, reason: swipeLookup.reason };
+        }
+        if (getActiveSwipeUuid(messageLookup.message) !== session.swipeUuid) {
+            return { ok: false, reason: 'selected_swipe_changed' };
         }
         return { ok: true, session, ...messageLookup, swipeIndex: swipeLookup.index, swipeInfo: swipeLookup.swipeInfo };
     }
@@ -3188,6 +3343,45 @@ export async function refreshCsrfToken() {
     const tokenData = await tokenResponse.json();
     token = tokenData.token;
     return token;
+}
+
+/**
+ * Ensures an open text edit still targets the same active swipe and untouched siblings.
+ * @param {object} target Resolved active message edit target.
+ */
+function assertOrdinaryMessageEditSwipeState(target) {
+    if (target.session.fieldType !== 'swipe_text' || target.swipeIndex === null) {
+        return;
+    }
+
+    const validation = validateMessageSwipeState(target.message, {
+        allowMesMismatch: target.index === 0,
+        allowMetadataMismatch: target.index === 0,
+    });
+    if (!validation.ok) {
+        throw new Error(`Message swipe validation failed before edit: ${validation.reason}`);
+    }
+
+    const originalSwipes = target.session.originalSwipes;
+    const originalSwipeInfo = target.session.originalSwipeInfo;
+    if (!Array.isArray(originalSwipes) || !Array.isArray(originalSwipeInfo)
+        || originalSwipes.length !== target.message.swipes.length
+        || originalSwipeInfo.length !== target.message.swipe_info.length) {
+        throw new Error('Message swipes changed while the text editor was open.');
+    }
+
+    for (let index = 0; index < originalSwipeInfo.length; index++) {
+        const originalUuid = originalSwipeInfo[index]?.[AIKOBOTS_SWIPE_UUID_KEY];
+        const currentUuid = target.message.swipe_info[index]?.[AIKOBOTS_SWIPE_UUID_KEY];
+        if (originalUuid !== currentUuid) {
+            throw new Error('Message swipes were replaced or reordered while the text editor was open.');
+        }
+        if (index !== target.swipeIndex
+            && (originalSwipes[index] !== target.message.swipes[index]
+                || JSON.stringify(originalSwipeInfo[index]) !== JSON.stringify(target.message.swipe_info[index]))) {
+            throw new Error('A non-selected swipe changed while the text editor was open.');
+        }
+    }
 }
 
 export function getRequestHeaders({ omitContentType = false } = {}) {
@@ -5115,6 +5309,39 @@ function createSwipeInfoExtra(extra, { includeReasoning = true } = {}) {
     return swipeInfoExtra;
 }
 
+/**
+ * Updates swipe metadata from the active message while preserving swipe-only imported fields.
+ * @param {object} existingSwipeExtra Existing selected-swipe metadata.
+ * @param {object} messageExtra Active message metadata to synchronize.
+ * @param {object} [options] Options forwarded to swipe metadata filtering.
+ * @returns {object} Synchronized swipe metadata.
+ */
+function synchronizeSwipeInfoExtra(existingSwipeExtra, messageExtra, options = {}) {
+    return {
+        ...(existingSwipeExtra && typeof existingSwipeExtra === 'object' && !Array.isArray(existingSwipeExtra)
+            ? structuredClone(existingSwipeExtra)
+            : {}),
+        ...createSwipeInfoExtra(messageExtra, options),
+    };
+}
+
+/**
+ * Applies the selected swipe metadata while preserving message-only UI and imported fields.
+ * @param {object} messageExtra Existing active message metadata.
+ * @param {object} selectedSwipeExtra Selected-swipe metadata to apply.
+ * @returns {object} Synchronized active message metadata.
+ */
+function synchronizeMessageExtra(messageExtra, selectedSwipeExtra) {
+    return {
+        ...(messageExtra && typeof messageExtra === 'object' && !Array.isArray(messageExtra)
+            ? structuredClone(messageExtra)
+            : {}),
+        ...(selectedSwipeExtra && typeof selectedSwipeExtra === 'object' && !Array.isArray(selectedSwipeExtra)
+            ? structuredClone(selectedSwipeExtra)
+            : {}),
+    };
+}
+
 function normalizeTimedWorldInfoState(timedWorldInfo) {
     if (!timedWorldInfo || typeof timedWorldInfo !== 'object' || Array.isArray(timedWorldInfo)) {
         return null;
@@ -5343,6 +5570,31 @@ export async function prepareCurrentChatSavePayload({ header = null, endId = und
         trimmedChat = getDenseChatMessages(0, normalizedEndId);
     }
 
+    const firstMessageId = loadedRangeStart ?? 0;
+    for (let index = 0; index < trimmedChat.length; index++) {
+        const messageId = firstMessageId + index;
+        const validation = validateMessageSwipeState(trimmedChat[index], {
+            allowMesMismatch: messageId === 0,
+            allowMetadataMismatch: messageId === 0,
+            messageRelativeIndex: index,
+            logicalChatIndex: messageId,
+        });
+        if (!validation.ok) {
+            console.error('Refusing to save an inconsistent message swipe state.', {
+                messageId,
+                messageUuid: trimmedChat[index]?.[AIKOBOTS_MESSAGE_UUID_KEY] ?? null,
+                reason: validation.reason,
+                fatalMismatches: validation.fatalMismatches,
+            });
+            return {
+                ok: false,
+                reason: validation.reason,
+                message: t`Message swipe data became inconsistent. Reload the chat before saving again.`,
+                title: t`Chat save blocked`,
+            };
+        }
+    }
+
     const sanitizedMessages = trimmedChat.map(sanitizeChatMessageForSave);
     return {
         ok: true,
@@ -5389,6 +5641,27 @@ export function applyChunkedChatPayload(response, { replace = false, currentView
         requireLatestTail: replace && currentView === 'tail',
     });
     const { header, messages, totalMessages, loadedRangeStart, loadedRangeEnd } = payload;
+    const chatKey = response?.revisionChatKey || getActiveChatRevisionKey();
+    const incomingRevision = Number(header?.chat_revision ?? response?.chat_revision);
+    const currentRevision = getChatSaveRevision();
+    const isFullCoherentLoad = replace;
+    const revisionResult = adoptChatSaveRevision({
+        chatKey,
+        incomingRevision,
+        source: isFullCoherentLoad ? 'full_hydration' : 'range_hydration',
+        allowAdvance: isFullCoherentLoad,
+    });
+    if (!revisionResult.adopted) {
+        console.warn('[ChatRevision] rejected hydration snapshot', {
+            chatKey,
+            activeChatKey: getActiveChatRevisionKey(),
+            incomingRevision: Number.isInteger(incomingRevision) ? incomingRevision : null,
+            currentRevision,
+            reason: revisionResult.reason,
+            coherentReloadRequired: revisionResult.reason === 'unexpected_revision_advance',
+        });
+        return null;
+    }
 
     if (replace) {
         chat.length = 0;
@@ -5417,8 +5690,6 @@ export function applyChunkedChatPayload(response, { replace = false, currentView
     chatLoadState.tailCount = Math.max(0, getTotalChatMessages() - chatLoadState.tailStartId);
     chatLoadState.currentView = currentView ?? (loadedRangeStart < chatLoadState.tailStartId ? 'history' : 'tail');
     chatLoadState.storageMode = String(response?.storageMode || response?.storage_mode || chatLoadState.storageMode || 'unknown');
-
-    setChatSaveRevision(header?.chat_revision);
 
     return header;
 }
@@ -5534,7 +5805,9 @@ export async function prefetchCurrentChatTailBuffer(chatId) {
                 return;
             }
 
-            applyChunkedChatPayload(response, { replace: false, currentView: chatLoadState.currentView });
+            if (!applyChunkedChatPayload(response, { replace: false, currentView: chatLoadState.currentView })) {
+                return;
+            }
             await delay(0);
         }
     } catch (error) {
@@ -5602,6 +5875,7 @@ async function replaceChunkedChatPayloadWithLatestTail(response) {
 }
 
 async function fetchChunkedChat({ rangeStart = null, count = null, hydrateFull = false } = {}) {
+    const revisionChatKey = getActiveChatRevisionKey();
     const normalizedCount = Number(count);
     const requestedCount = count !== null
         && count !== undefined
@@ -5630,7 +5904,7 @@ async function fetchChunkedChat({ rangeStart = null, count = null, hydrateFull =
             throw new Error('Chunked group chat could not be loaded');
         }
 
-        return await response.json();
+        return { ...await response.json(), revisionChatKey };
     }
 
     await unshallowCharacter(this_chid);
@@ -5655,7 +5929,7 @@ async function fetchChunkedChat({ rangeStart = null, count = null, hydrateFull =
         throw new Error('Chunked chat could not be loaded');
     }
 
-    return await response.json();
+    return { ...await response.json(), revisionChatKey };
 }
 
 async function ensureChatRangeLoaded(startId, count = null, navigationToken = null) {
@@ -5684,8 +5958,7 @@ async function ensureChatRangeLoaded(startId, count = null, navigationToken = nu
         return false;
     }
 
-    applyChunkedChatPayload(response, { replace: false, currentView: normalizedStartId < chatLoadState.tailStartId ? 'history' : 'tail' });
-    return true;
+    return Boolean(applyChunkedChatPayload(response, { replace: false, currentView: normalizedStartId < chatLoadState.tailStartId ? 'history' : 'tail' }));
 }
 
 async function ensureChatSuffixLoaded(startId) {
@@ -5730,7 +6003,9 @@ export async function hydrateCurrentChatForEditing(navigationToken = null) {
             return false;
         }
 
-        applyChunkedChatPayload(response, { replace: true, currentView: chatLoadState.currentView });
+        if (!applyChunkedChatPayload(response, { replace: true, currentView: chatLoadState.currentView })) {
+            return false;
+        }
         chatLoadState.isHydrated = true;
 
         const renderStart = Number.isFinite(previousStartId)
@@ -6180,6 +6455,7 @@ export async function flushDebouncedChatSave() {
         const result = chatSaveQueuePromise
             ? await chatSaveQueuePromise
             : CHAT_SAVE_RESULT.SAVED;
+        await chatRevisionOperationQueue;
         await flushPendingSqliteMessageUpdateSave();
         return result;
     }
@@ -6187,6 +6463,7 @@ export async function flushDebouncedChatSave() {
     cancelDebouncedChatSave();
     toastr.info(t`Please wait until the chat is saved.`, t`Your chat is still saving...`);
     const result = await saveChatConditional({ immediate: true });
+    await chatRevisionOperationQueue;
     await flushPendingSqliteMessageUpdateSave();
 
     if (result !== CHAT_SAVE_RESULT.SAVED) {
@@ -6240,17 +6517,19 @@ export async function deleteLastMessage({ persist = false, regeneratePrepare = f
     syncPartialChatRangeStateAfterMutation();
     chatElement.children('.mes').last().remove();
     syncVisibleChatRangeFromDom();
-    await syncLatestPromptInspectorAfterMessageDeletion(deletedId);
-    await maintainPromptSnapshotKeys({ deletes: deletedSnapshotKeys });
     updateHistoryControls();
     await recomputeTimedWorldInfo();
-    if (persist && currentChatFileNameLooksSqlite()) {
-        const saveResult = await saveSqliteTailRemoval(deletedId, deletedMessage, { regeneratePrepare });
+    if (persist) {
+        const saveResult = currentChatFileNameLooksSqlite()
+            ? await saveSqliteTailRemoval(deletedId, deletedMessage, { regeneratePrepare })
+            : await saveChatConditional({ immediate: true });
         if (saveResult !== CHAT_SAVE_RESULT.SAVED) {
             await reloadCurrentChat();
             return CHAT_SAVE_RESULT.FAILED;
         }
     }
+    await syncLatestPromptInspectorAfterMessageDeletion(deletedId);
+    await maintainPromptSnapshotKeys({ deletes: deletedSnapshotKeys });
     await eventSource.emit(event_types.MESSAGE_DELETED, deletedId, chat.length);
     return CHAT_SAVE_RESULT.SAVED;
 }
@@ -6260,6 +6539,7 @@ export async function deleteLastMessage({ persist = false, regeneratePrepare = f
  * @param {number} id The ID of the message to delete.
  * @param {number} [swipeDeletionIndex] Deletes the swipe with that index.
  * @param {boolean} [askConfirmation=false] Whether to ask for confirmation before deleting.
+ * @returns {Promise<boolean|undefined>} True after deletion, false after a persistence failure, or undefined when cancelled.
  */
 export async function deleteMessage(id, swipeDeletionIndex = undefined, askConfirmation = false) {
     const editTarget = activeMessageEditSession ? resolveActiveMessageEditSession() : null;
@@ -6311,8 +6591,7 @@ export async function deleteMessage(id, swipeDeletionIndex = undefined, askConfi
     }
 
     if (deleteOnlySwipe) {
-        await deleteSwipe(swipeDeletionIndex, id);
-        return;
+        return await deleteSwipe(swipeDeletionIndex, id) !== undefined;
     }
 
     if (editTarget?.ok) {
@@ -6324,7 +6603,7 @@ export async function deleteMessage(id, swipeDeletionIndex = undefined, askConfi
         const pendingSaveResult = await flushPendingSqliteMessageUpdateSave();
         if (pendingSaveResult !== CHAT_SAVE_RESULT.SAVED) {
             await reloadCurrentChat();
-            return;
+            return false;
         }
     }
 
@@ -6337,26 +6616,22 @@ export async function deleteMessage(id, swipeDeletionIndex = undefined, askConfi
     for (let messageIndex = id; messageIndex < chat.length; messageIndex++) {
         rekeyMessagePromptSnapshotKeys(chat[messageIndex], messageIndex, rekeys, { remapTimedWorldInfoIndex });
     }
-    await syncLatestPromptInspectorAfterMessageDeletion(id);
     messageElement.remove();
     await recomputeTimedWorldInfo();
-    await maintainPromptSnapshotKeys({ deletes: deletedSnapshotKeys, rekeys });
 
     chat_metadata['tainted'] = true;
 
     const startIndex = [0, minId].includes(id) ? id : null;
     updateViewMessageIds(startIndex);
-    if (currentChatFileNameLooksSqlite()) {
-        const saveResult = await saveSqliteMessageDeleteByUuid(deletedMessageUuid);
-        if (saveResult !== CHAT_SAVE_RESULT.SAVED) {
-            await reloadCurrentChat();
-            return;
-        }
-    } else if (askConfirmation) {
-        await saveChatConditional();
-    } else {
-        saveChatDebounced();
+    const saveResult = currentChatFileNameLooksSqlite()
+        ? await saveSqliteMessageDeleteByUuid(deletedMessageUuid)
+        : await saveChatConditional({ immediate: true });
+    if (saveResult !== CHAT_SAVE_RESULT.SAVED) {
+        await reloadCurrentChat();
+        return false;
     }
+    await syncLatestPromptInspectorAfterMessageDeletion(id);
+    await maintainPromptSnapshotKeys({ deletes: deletedSnapshotKeys, rekeys });
 
     if (this_edit_mes_id === id) {
         this_edit_mes_id = undefined;
@@ -6366,6 +6641,7 @@ export async function deleteMessage(id, swipeDeletionIndex = undefined, askConfi
     refreshSwipeButtons();
 
     await eventSource.emit(event_types.MESSAGE_DELETED, id, chat.length);
+    return true;
 }
 
 export const reloadChatMutex = new SimpleMutex(reloadCurrentChatUnsafe);
@@ -11866,7 +12142,7 @@ export function syncMesToSwipe(messageId = null) {
     targetSwipeInfo.send_date = targetMessage.send_date;
     targetSwipeInfo.gen_started = targetMessage.gen_started;
     targetSwipeInfo.gen_finished = targetMessage.gen_finished;
-    targetSwipeInfo.extra = createSwipeInfoExtra(targetMessage.extra);
+    targetSwipeInfo.extra = synchronizeSwipeInfoExtra(targetSwipeInfo.extra, targetMessage.extra);
 
     return true;
 }
@@ -11942,7 +12218,7 @@ export function syncSwipeToMes(messageId = null, swipeId = null, targetMessage =
     targetMessage.send_date = targetSwipeInfo?.send_date;
     targetMessage.gen_started = targetSwipeInfo?.gen_started;
     targetMessage.gen_finished = targetSwipeInfo?.gen_finished;
-    targetMessage.extra = structuredClone(targetSwipeInfo?.extra) ?? {};
+    targetMessage.extra = synchronizeMessageExtra(targetMessage.extra, targetSwipeInfo?.extra);
 
     return true;
 }
@@ -12240,47 +12516,64 @@ async function renamePastChats(oldAvatar, newAvatar, newName) {
     for (const { file_name } of pastChats) {
         try {
             const fileNameWithoutExtension = file_name.replace(/\.(jsonl|sqlite)$/i, '');
-            const getChatResponse = await fetch('/api/chats/get', {
+            const hasRenameListeners = Array.isArray(eventSource.events?.[event_types.CHARACTER_RENAMED_IN_PAST_CHAT])
+                && eventSource.events[event_types.CHARACTER_RENAMED_IN_PAST_CHAT].length > 0;
+            if (hasRenameListeners) {
+                const getChatResponse = await fetch('/api/chats/get', {
+                    method: 'POST',
+                    headers: getRequestHeaders(),
+                    body: JSON.stringify({ file_name: fileNameWithoutExtension, avatar_url: newAvatar }),
+                    cache: 'no-cache',
+                });
+                if (!getChatResponse.ok) {
+                    throw new Error('Could not load chat history for extension migration');
+                }
+                const currentChat = await getChatResponse.json();
+                for (const message of currentChat.slice(1)) {
+                    if (message.is_user || message.is_system || message.extra?.type == system_message_types.NARRATOR) continue;
+                    if (message.name !== undefined) message.name = newName;
+                }
+                await eventSource.emit(event_types.CHARACTER_RENAMED_IN_PAST_CHAT, currentChat, oldAvatar, newAvatar);
+                const messages = currentChat.slice(1);
+                if (messages.length === 0) continue;
+                const saveResponse = await fetch('/api/chats/save', {
+                    method: 'POST',
+                    headers: getRequestHeaders(),
+                    body: JSON.stringify({
+                        file_name: fileNameWithoutExtension,
+                        avatar_url: newAvatar,
+                        chat: currentChat,
+                        save_mode: 'loaded_range',
+                        loaded_range_start: 0,
+                        loaded_range_end: messages.length - 1,
+                        saved_message_count: messages.length,
+                        base_revision: Number(currentChat[0]?.chat_revision) || 0,
+                        save_session_id: getChatSaveSessionId(),
+                    }),
+                    cache: 'no-cache',
+                });
+                if (!saveResponse.ok) {
+                    throw new Error('Could not save extension-updated chat history');
+                }
+                continue;
+            }
+
+            const response = await fetch('/api/chats/member/rename-history', {
                 method: 'POST',
                 headers: getRequestHeaders(),
                 body: JSON.stringify({
-                    ch_name: newName,
                     file_name: fileNameWithoutExtension,
                     avatar_url: newAvatar,
+                    old_avatar: oldAvatar,
+                    new_avatar: newAvatar,
+                    new_name: newName,
+                    save_session_id: getChatSaveSessionId(),
                 }),
                 cache: 'no-cache',
             });
 
-            if (getChatResponse.ok) {
-                const currentChat = await getChatResponse.json();
-
-                for (const message of currentChat) {
-                    if (message.is_user || message.is_system || message.extra?.type == system_message_types.NARRATOR) {
-                        continue;
-                    }
-
-                    if (message.name !== undefined) {
-                        message.name = newName;
-                    }
-                }
-
-                await eventSource.emit(event_types.CHARACTER_RENAMED_IN_PAST_CHAT, currentChat, oldAvatar, newAvatar);
-
-                const saveChatResponse = await fetch('/api/chats/save', {
-                    method: 'POST',
-                    headers: getRequestHeaders(),
-                    body: JSON.stringify({
-                        ch_name: newName,
-                        file_name: fileNameWithoutExtension,
-                        chat: currentChat,
-                        avatar_url: newAvatar,
-                    }),
-                    cache: 'no-cache',
-                });
-
-                if (!saveChatResponse.ok) {
-                    throw new Error('Could not save chat');
-                }
+            if (!response.ok) {
+                throw new Error('Could not update chat history');
             }
         } catch (error) {
             toastr.error(t`Past chat could not be updated: ${file_name}`);
@@ -12476,23 +12769,28 @@ export async function saveChat({ chatName, withMetadata, mesId, force = false, f
         loaded_range_start: savePayload.loadedRangeStart,
         loaded_range_end: savePayload.loadedRangeEnd,
         saved_message_count: savePayload.savedMessageCount,
-        ...(shouldTrackRevision ? {
-            base_revision: getChatSaveRevision(),
-            save_session_id: getChatSaveSessionId(),
-        } : {}),
+        ...(shouldTrackRevision ? { save_session_id: getChatSaveSessionId() } : {}),
         regenerate_identities: Boolean(chatName),
     };
 
     try {
-        const { response: result, responseData, errorData } = await fetchChatSaveWithRetry(requestBody);
+        const shouldQueueRevision = shouldTrackRevision && currentChatFileNameLooksSqlite();
+        const { response: result, responseData, errorData } = shouldQueueRevision
+            ? await queueAcknowledgedChatRevisionRequest(({ baseRevision, operationId }) => ({
+                url: '/api/chats/save',
+                body: {
+                    ...requestBody,
+                    base_revision: baseRevision,
+                    operation_id: operationId,
+                },
+            }))
+            : await fetchChatSaveWithRetry(shouldTrackRevision
+                ? { ...requestBody, base_revision: getChatSaveRevision() }
+                : requestBody);
         if (result.ok) {
             if (responseData?.storage_mode) {
                 chatLoadState.storageMode = String(responseData.storage_mode);
             }
-            if (shouldTrackRevision) {
-                setChatSaveRevision(responseData?.chat_revision);
-            }
-
             if (isPendingSoloCharacterSave || isTemporaryCharacterSave) {
                 clearTemporaryCharacterChat();
                 characters[this_chid]['date_last_chat'] = Date.now();
@@ -13287,20 +13585,12 @@ function updateMessage(div) {
         warnStaleMessageEdit();
         throw new Error(`Message edit target validation failed: ${target.reason}`);
     }
+    assertOrdinaryMessageEditSwipeState(target);
     const mes = target.message;
     const normalized = normalizeMessageEditText(mes, text);
 
     text = normalized.text;
     const bias = normalized.bias;
-
-    if (target.session.fieldType === 'swipe_text' && target.swipeIndex !== null) {
-        mes.swipes[target.swipeIndex] = text;
-        if (Number(mes.swipe_id) === Number(target.swipeIndex)) {
-            mes.mes = text;
-        }
-    } else {
-        mes['mes'] = text;
-    }
 
     // editing old messages
     if (!mes.extra) {
@@ -13313,9 +13603,42 @@ function updateMessage(div) {
         mes.extra.bias = null;
     }
 
+    const ordinaryTextEdit = target.session.fieldType === 'swipe_text' && target.swipeIndex !== null;
+    if (ordinaryTextEdit) {
+        const selectedSwipeInfo = mes.swipe_info[target.swipeIndex];
+        const selectedSwipeUuid = selectedSwipeInfo[AIKOBOTS_SWIPE_UUID_KEY];
+        mes.swipes[target.swipeIndex] = text;
+        selectedSwipeInfo.send_date = mes.send_date;
+        selectedSwipeInfo.gen_started = mes.gen_started;
+        selectedSwipeInfo.gen_finished = mes.gen_finished;
+        selectedSwipeInfo.extra = synchronizeSwipeInfoExtra(selectedSwipeInfo.extra, { bias: mes.extra.bias });
+        selectedSwipeInfo[AIKOBOTS_SWIPE_UUID_KEY] = selectedSwipeUuid;
+
+        mes.swipe_id = target.swipeIndex;
+        mes.mes = mes.swipes[target.swipeIndex];
+        mes.send_date = selectedSwipeInfo.send_date;
+        mes.gen_started = selectedSwipeInfo.gen_started;
+        mes.gen_finished = selectedSwipeInfo.gen_finished;
+    } else {
+        mes.mes = text;
+    }
+
+    const swipeValidation = validateMessageSwipeState(mes);
+    if (!swipeValidation.ok) {
+        throw new Error(`Message swipe validation failed after edit: ${swipeValidation.reason}`);
+    }
+
     chat_metadata['tainted'] = true;
 
-    return { mesBlock, text, mes, bias, messageId: target.index };
+    return {
+        mesBlock,
+        text,
+        mes,
+        bias,
+        messageId: target.index,
+        ordinaryTextEdit,
+        selectedSwipeUuid: target.session.swipeUuid,
+    };
 }
 
 function openMessageDelete(fromSlashCommand) {
@@ -13362,14 +13685,14 @@ async function flushPendingSqliteMessageUpdateSave() {
 
     clearTimeout(sqliteAutoEditSaveTimer);
     sqliteAutoEditSaveTimer = null;
-    const messageToSave = pendingSqliteAutoEditMessage;
+    const pendingEdit = pendingSqliteAutoEditMessage;
     pendingSqliteAutoEditMessage = null;
 
-    if (!messageToSave) {
+    if (!pendingEdit?.message) {
         return CHAT_SAVE_RESULT.SAVED;
     }
 
-    const saveResult = await saveMessageUpdateByUuid(messageToSave);
+    const saveResult = await saveMessageUpdateByUuid(pendingEdit.message, pendingEdit);
     await waitForSqliteMessageUpdateSaveQueue();
     return saveResult;
 }
@@ -13382,17 +13705,17 @@ function cancelPendingSqliteAutoEditSave() {
     pendingSqliteAutoEditMessage = null;
 }
 
-function scheduleSqliteAutoEditSave(message) {
-    pendingSqliteAutoEditMessage = message;
+function scheduleSqliteAutoEditSave(message, editContext) {
+    pendingSqliteAutoEditMessage = { message, ...editContext };
     if (sqliteAutoEditSaveTimer) {
         clearTimeout(sqliteAutoEditSaveTimer);
     }
 
     sqliteAutoEditSaveTimer = setTimeout(() => {
         sqliteAutoEditSaveTimer = null;
-        const messageToSave = pendingSqliteAutoEditMessage;
+        const pendingEdit = pendingSqliteAutoEditMessage;
         pendingSqliteAutoEditMessage = null;
-        saveMessageUpdateByUuid(messageToSave).then(async (saveResult) => {
+        saveMessageUpdateByUuid(pendingEdit?.message, pendingEdit).then(async (saveResult) => {
             if (saveResult !== CHAT_SAVE_RESULT.SAVED) {
                 await reloadCurrentChat();
             }
@@ -13410,7 +13733,7 @@ function messageEditAuto(div) {
         return;
     }
 
-    const { mesBlock, text, mes, bias, messageId } = updateResult;
+    const { mesBlock, text, mes, bias, messageId, ordinaryTextEdit, selectedSwipeUuid } = updateResult;
 
     mesBlock.find('.mes_text').val('');
     mesBlock.find('.mes_text').val(messageFormatting(
@@ -13425,7 +13748,7 @@ function messageEditAuto(div) {
     mesBlock.find('.mes_bias').empty();
     mesBlock.find('.mes_bias').append(messageFormatting(bias, '', false, false, -1, {}, false));
     if (currentChatFileNameLooksSqlite()) {
-        scheduleSqliteAutoEditSave(mes);
+        scheduleSqliteAutoEditSave(mes, { ordinaryTextEdit, selectedSwipeUuid });
     } else {
         saveChatDebounced();
     }
@@ -13704,14 +14027,25 @@ async function cloneEditedMessage() {
     const clone = cloneMessageWithNewIdentity(sourceMessage, { generateUuid: uuidv4 });
 
     // 4. Apply the edited text and bias overrides to the clone
-    clone.mes = text;
-    if (bias) {
-        if (!clone.extra) {
-            clone.extra = {};
+    clone.extra ??= {};
+    clone.extra.bias = bias ?? null;
+    if (Array.isArray(clone.swipes) && Array.isArray(clone.swipe_info)) {
+        const cloneSwipeId = Number(clone.swipe_id);
+        const cloneSwipeInfo = clone.swipe_info[cloneSwipeId];
+        if (Number.isInteger(cloneSwipeId) && cloneSwipeId >= 0 && cloneSwipeId < clone.swipes.length && cloneSwipeInfo) {
+            const cloneSwipeUuid = cloneSwipeInfo[AIKOBOTS_SWIPE_UUID_KEY];
+            clone.swipes[cloneSwipeId] = text;
+            cloneSwipeInfo.send_date = clone.send_date;
+            cloneSwipeInfo.gen_started = clone.gen_started;
+            cloneSwipeInfo.gen_finished = clone.gen_finished;
+            cloneSwipeInfo.extra = synchronizeSwipeInfoExtra(cloneSwipeInfo.extra, { bias: clone.extra.bias });
+            cloneSwipeInfo[AIKOBOTS_SWIPE_UUID_KEY] = cloneSwipeUuid;
+            clone.mes = clone.swipes[cloneSwipeId];
+        } else {
+            clone.mes = text;
         }
-        clone.extra.bias = bias;
-    } else if (clone.extra) {
-        delete clone.extra.bias;
+    } else {
+        clone.mes = text;
     }
     clone.order_index = cloneOrderIndex;
 
@@ -13748,9 +14082,9 @@ async function cloneEditedMessage() {
         ? {
             id: getCurrentChatId(),
             message_id: target.index,
+            message_uuid: target.session.messageUuid,
             text_override: text,
             bias_override: bias ?? null,
-            base_revision: getChatSaveRevision(),
             save_session_id: getChatSaveSessionId(),
             display_count: getConfiguredLongChatDisplayCount(),
         }
@@ -13759,6 +14093,7 @@ async function cloneEditedMessage() {
             file_name: currentChatDetails?.fileName ?? characters[this_chid]?.chat,
             avatar_url: currentChatDetails?.avatarUrl ?? characters[this_chid]?.avatar,
             message_id: target.index,
+            message_uuid: target.session.messageUuid,
             text_override: text,
             bias_override: bias ?? null,
             base_revision: getChatSaveRevision(),
@@ -13777,21 +14112,16 @@ async function cloneEditedMessage() {
     }
 
     try {
-        const response = await fetch(endpoint, {
-            method: 'POST',
-            headers: getRequestHeaders(),
-            cache: 'no-cache',
-            body: JSON.stringify(body),
-        });
+        const { response, responseData: payload, errorData } = await queueAcknowledgedChatRevisionRequest(({ baseRevision, operationId }) => ({
+            url: endpoint,
+            body: {
+                ...body,
+                base_revision: baseRevision,
+                operation_id: operationId,
+            },
+        }));
 
         if (!response.ok) {
-            let errorData = null;
-            try {
-                errorData = await response.json();
-            } catch {
-                // Fall through to generic message below.
-            }
-
             if (errorData?.error === 'stale_revision') {
                 warnStaleChatSave(errorData);
                 await rollbackClone(insertAt);
@@ -13809,7 +14139,10 @@ async function cloneEditedMessage() {
             return;
         }
 
-        const payload = await response.json();
+        if (payload?.duplicate_operation) {
+            await reloadCurrentChat();
+            return;
+        }
         setLatestItemizedPrompt(null);
         await saveItemizedPrompts(getCurrentChatId());
 
@@ -13831,8 +14164,19 @@ async function cloneEditedMessage() {
     }
 }
 
-async function saveMessageUpdateByUuid(message) {
+async function saveMessageUpdateByUuid(message, { ordinaryTextEdit = false, selectedSwipeUuid = null } = {}) {
     if (!message || typeof message !== 'object' || Array.isArray(message)) {
+        return CHAT_SAVE_RESULT.FAILED;
+    }
+
+    const swipeValidation = validateMessageSwipeState(message);
+    if (!swipeValidation.ok) {
+        console.error('Refusing to save an inconsistent message swipe state.', {
+            messageUuid: message?.[AIKOBOTS_MESSAGE_UUID_KEY] ?? null,
+            reason: swipeValidation.reason,
+            fatalMismatches: swipeValidation.fatalMismatches,
+        });
+        toastr.error(t`Message update was blocked because its swipe data became inconsistent.`);
         return CHAT_SAVE_RESULT.FAILED;
     }
 
@@ -13845,6 +14189,10 @@ async function saveMessageUpdateByUuid(message) {
     const saveMessage = () => saveSqliteMessageMutation('update', {
         message_uuid: messageUuid,
         message: structuredClone(message),
+        ...(ordinaryTextEdit ? {
+            mutation_type: 'ordinary_text_edit',
+            selected_swipe_uuid: selectedSwipeUuid,
+        } : {}),
     }, t`Message update failed.`);
     const queuedSave = sqliteMessageUpdateSaveQueue.then(saveMessage, saveMessage);
     sqliteMessageUpdateSaveQueue = queuedSave.catch(() => {});
@@ -13889,21 +14237,23 @@ async function saveSqliteMessageMutation(operation, fields, defaultErrorMessage 
     if (!endpoint) {
         return CHAT_SAVE_RESULT.FAILED;
     }
+    const ownerFields = getCurrentSqliteChatMutationOwnerFields();
 
     let response;
+    let responseData = null;
+    let errorData = null;
     try {
-        response = await fetch(endpoint, {
-            method: 'POST',
-            headers: getRequestHeaders(),
-            cache: 'no-cache',
-            body: JSON.stringify({
-                ...getCurrentSqliteChatMutationOwnerFields(),
+        ({ response, responseData, errorData } = await queueAcknowledgedChatRevisionRequest(({ baseRevision, operationId }) => ({
+            url: endpoint,
+            body: {
+                ...ownerFields,
                 ...fields,
-                base_revision: getChatSaveRevision(),
+                base_revision: baseRevision,
                 save_session_id: getChatSaveSessionId(),
+                operation_id: operationId,
                 display_count: getConfiguredLongChatDisplayCount(),
-            }),
-        });
+            },
+        })));
     } catch (error) {
         console.error('SQLite chat mutation failed', error);
         toastr.error(defaultErrorMessage);
@@ -13912,7 +14262,6 @@ async function saveSqliteMessageMutation(operation, fields, defaultErrorMessage 
 
     if (!response.ok) {
         try {
-            const errorData = await response.json();
             if (errorData?.error === 'stale_revision') {
                 const staleResult = warnStaleChatSave(errorData);
                 if (retrySameSessionStale && staleResult.sameSessionStale) {
@@ -13932,14 +14281,8 @@ async function saveSqliteMessageMutation(operation, fields, defaultErrorMessage 
         return CHAT_SAVE_RESULT.FAILED;
     }
 
-    try {
-        const responseData = await response.json();
-        if (responseData?.storageMode || responseData?.storage_mode) {
-            setCurrentChatStorageMode(responseData.storageMode || responseData.storage_mode);
-        }
-        setChatSaveRevision(responseData?.chat_revision);
-    } catch {
-        // Successful save without a JSON body: keep the previous revision.
+    if (responseData?.storageMode || responseData?.storage_mode) {
+        setCurrentChatStorageMode(responseData.storageMode || responseData.storage_mode);
     }
     return CHAT_SAVE_RESULT.SAVED;
 }
@@ -13994,6 +14337,21 @@ async function saveSqliteTruncateAfterUuid(messageUuid, { regeneratePrepare = fa
     }, t`Chat truncate failed.`);
 }
 
+/**
+ * Removes all logical messages from the current SQLite chat.
+ * @returns {Promise<string>} Chat save result.
+ */
+async function saveSqliteTruncateAll() {
+    const pendingSaveResult = await flushPendingSqliteMessageUpdateSave();
+    if (pendingSaveResult !== CHAT_SAVE_RESULT.SAVED) {
+        return CHAT_SAVE_RESULT.FAILED;
+    }
+
+    return saveSqliteMessageMutation('truncate', {
+        truncate_all: true,
+    }, t`Chat truncate failed.`);
+}
+
 async function saveSqliteTailRemoval(deletedMessageId, deletedMessage, { regeneratePrepare = false } = {}) {
     const branchPoint = chat[Number(deletedMessageId) - 1];
     const branchPointUuid = branchPoint?.[AIKOBOTS_MESSAGE_UUID_KEY];
@@ -14026,8 +14384,16 @@ async function saveSqliteReplyMutation(replyResult) {
     return saveMessageUpdateByUuid(message);
 }
 
-function currentChatFileNameLooksSqlite() {
+export function currentChatFileNameLooksSqlite() {
     return chatLoadState.storageMode === 'sqlite';
+}
+
+/**
+ * Reports whether the active chat is backed by SQLite targeted mutations.
+ * @returns {boolean}
+ */
+export function isCurrentChatSqlite() {
+    return currentChatFileNameLooksSqlite();
 }
 
 async function messageEditDone(div) {
@@ -14042,7 +14408,7 @@ async function messageEditDone(div) {
         return;
     }
 
-    let { mesBlock, text, mes, bias, messageId } = updateResult;
+    let { mesBlock, text, mes, bias, messageId, ordinaryTextEdit, selectedSwipeUuid } = updateResult;
     if (messageId == 0) {
         text = substituteParams(text);
     }
@@ -14080,7 +14446,7 @@ async function messageEditDone(div) {
     let saveResult;
     if (currentChatFileNameLooksSqlite()) {
         cancelPendingSqliteAutoEditSave();
-        saveResult = await saveMessageUpdateByUuid(mes);
+        saveResult = await saveMessageUpdateByUuid(mes, { ordinaryTextEdit, selectedSwipeUuid });
     } else if (selected_group) {
         saveResult = await saveCurrentGroupMessageIncremental(messageId, mes);
         if (saveResult !== CHAT_SAVE_RESULT.SAVED) {
@@ -17112,18 +17478,11 @@ export async function deleteSwipe(swipeId = null, messageId = chat.length - 1) {
         }
     }
     syncMessagePromptSnapshotKeyFromActiveSwipe(message);
-    await syncLatestPromptInspectorAfterSwipeMutation(messageId);
-    await maintainPromptSnapshotKeys({
-        deletes: typeof deletedSwipeSnapshotKey === 'string' && deletedSwipeSnapshotKey ? [deletedSwipeSnapshotKey] : [],
-        rekeys,
-    });
 
     chat_metadata['tainted'] = true;
 
     await recomputeTimedWorldInfo();
-    await eventSource.emit(event_types.MESSAGE_SWIPE_DELETED, { messageId, swipeId, newSwipeId });
 
-    let swipeMutationSaved = false;
     if (swipeId === currentSwipeId) {
         const direction = swipeId <= newSwipeId ? SWIPE_DIRECTION.RIGHT : SWIPE_DIRECTION.LEFT;
         await swipe(null, direction, {
@@ -17131,6 +17490,7 @@ export async function deleteSwipe(swipeId = null, messageId = chat.length - 1) {
             repeated: false,
             forceMesId: messageId,
             forceSwipeId: newSwipeId,
+            persist: false,
         });
     } else {
         await updateSwipeCounter(messageId);
@@ -17138,27 +17498,21 @@ export async function deleteSwipe(swipeId = null, messageId = chat.length - 1) {
             await updateSwipeCounter(chat.length - 1);
         }
         refreshSwipeButtons();
-        if (currentChatFileNameLooksSqlite()) {
-            const saveResult = await saveMessageUpdateByUuid(message);
-            if (saveResult !== CHAT_SAVE_RESULT.SAVED) {
-                await reloadCurrentChat();
-                return;
-            }
-            swipeMutationSaved = true;
-        } else {
-            saveChatDebounced();
-        }
     }
 
-    if (!swipeMutationSaved) {
-        const saveResult = currentChatFileNameLooksSqlite()
-            ? await saveMessageUpdateByUuid(message)
-            : await saveChatConditional();
-        if (saveResult !== CHAT_SAVE_RESULT.SAVED) {
-            await reloadCurrentChat();
-            return;
-        }
+    const saveResult = currentChatFileNameLooksSqlite()
+        ? await saveMessageUpdateByUuid(message)
+        : await saveChatConditional({ immediate: true });
+    if (saveResult !== CHAT_SAVE_RESULT.SAVED) {
+        await reloadCurrentChat();
+        return;
     }
+    await syncLatestPromptInspectorAfterSwipeMutation(messageId);
+    await maintainPromptSnapshotKeys({
+        deletes: typeof deletedSwipeSnapshotKey === 'string' && deletedSwipeSnapshotKey ? [deletedSwipeSnapshotKey] : [],
+        rekeys,
+    });
+    await eventSource.emit(event_types.MESSAGE_SWIPE_DELETED, { messageId, swipeId, newSwipeId });
 
     return newSwipeId;
 }
@@ -18064,8 +18418,9 @@ function formatSwipeCounter(current, total) {
  * @param {number} [params.forceMesId] The message id to swipe.
  * @param {number} [params.forceSwipeId] The target swipe id.
  * @param {number} [params.forceDuration] Overwrites the default swipe duration.
+ * @param {boolean} [params.persist=true] Whether to persist the selected swipe.
  */
-export async function swipe(event, direction, { source, repeated, message = chat[chat.length - 1], forceMesId, forceSwipeId, forceDuration } = {}) {
+export async function swipe(event, direction, { source, repeated, message = chat[chat.length - 1], forceMesId, forceSwipeId, forceDuration, persist = true } = {}) {
     if (chat.length === 0) {
         console.warn('Swipe was called on an empty chat.');
         return;
@@ -18205,7 +18560,7 @@ export async function swipe(event, direction, { source, repeated, message = chat
                 console.trace(`Error! Recursion detected when reverting failed ${direction} swipe on message #${mesId}. Something has broken.`);
                 await reloadCurrentChat();
             }
-        } else if (source !== SWIPE_SOURCE.BACK) {
+        } else if (source !== SWIPE_SOURCE.BACK && persist) {
             if (currentChatFileNameLooksSqlite()) {
                 const saveResult = await saveMessageUpdateByUuid(chat[mesId]);
                 if (saveResult !== CHAT_SAVE_RESULT.SAVED) {
@@ -20116,9 +20471,14 @@ jQuery(async function () {
             await recomputeTimedWorldInfo();
             updateHistoryControls();
             chat_metadata['tainted'] = true;
-            const saveResult = currentChatFileNameLooksSqlite() && retainedMessage?.[AIKOBOTS_MESSAGE_UUID_KEY]
-                ? await saveSqliteTruncateAfterUuid(retainedMessage[AIKOBOTS_MESSAGE_UUID_KEY])
-                : await saveChatConditional();
+            let saveResult;
+            if (currentChatFileNameLooksSqlite()) {
+                saveResult = retainedMessage?.[AIKOBOTS_MESSAGE_UUID_KEY]
+                    ? await saveSqliteTruncateAfterUuid(retainedMessage[AIKOBOTS_MESSAGE_UUID_KEY])
+                    : await saveSqliteTruncateAll();
+            } else {
+                saveResult = await saveChatConditional();
+            }
             if (saveResult !== CHAT_SAVE_RESULT.SAVED) {
                 showSwipeButtons();
                 this_del_mes = -1;
@@ -21026,7 +21386,7 @@ jQuery(async function () {
         doCharListDisplaySwitch();
     });
 
-    $('#character_catalog_button').on('click', async () => {
+    $(document).on('click', '#character_catalog_button, .character_catalog_button', async () => {
         await showCharacterCatalog();
     });
 

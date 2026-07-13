@@ -29,7 +29,11 @@ import {
     online_status,
     messageFormatting,
     deleteMessage,
+    isCurrentChatSqlite,
+    isChatFullyHydrated,
+    hydrateCurrentChatForEditing,
 } from '../script.js';
+import { validateMessageSwipeState } from './chat-identities.js';
 import { isMobile, initMovingUI, favsToHotswap } from './RossAscends-mods.js';
 import {
     groups,
@@ -3328,12 +3332,33 @@ async function doMesCut(_, text) {
         return;
     }
 
+    if (!isChatFullyHydrated()) {
+        const hydrated = await hydrateCurrentChatForEditing();
+        if (!hydrated) {
+            toastr.error('Could not load the full chat for cutting messages.');
+            return '';
+        }
+    }
+
     let totalMesToCut = (range.end - range.start) + 1;
     let mesIDToCut = range.start;
     let cutText = '';
 
     for (let i = 0; i < totalMesToCut; i++) {
-        cutText += (chat[mesIDToCut]?.mes || '') + '\n';
+        const message = chat[mesIDToCut];
+        const swipeValidation = validateMessageSwipeState(message, {
+            allowMesMismatch: mesIDToCut === 0,
+            allowMetadataMismatch: mesIDToCut === 0,
+            logicalChatIndex: mesIDToCut,
+        });
+        if (!swipeValidation.ok) {
+            toastr.error('Message swipe data is inconsistent. Reload the chat before cutting this message.');
+            return cutText;
+        }
+
+        const messageText = swipeValidation.swipeId === null
+            ? message?.mes || ''
+            : message.swipes[swipeValidation.swipeId] || '';
         let mesToCut = $('#chat').find(`.mes[mesid=${mesIDToCut}]`);
 
         if (!mesToCut.length) {
@@ -3345,10 +3370,16 @@ async function doMesCut(_, text) {
         }
 
         setEditedMessageId(mesIDToCut);
-        await deleteMessage(mesIDToCut, null, false);
+        const deleted = await deleteMessage(mesIDToCut, null, false);
+        if (deleted !== true) {
+            return cutText;
+        }
+        cutText += messageText + '\n';
     }
 
-    await saveChatConditional();
+    if (!isCurrentChatSqlite()) {
+        await saveChatConditional();
+    }
 
     return cutText;
 }

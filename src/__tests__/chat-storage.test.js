@@ -3,25 +3,36 @@ import os from 'node:os';
 import path from 'node:path';
 
 import { beforeAll, describe, expect, it } from '@jest/globals';
-import initSqlJs from 'sql.js';
+import Database from 'better-sqlite3';
 
-let SQL;
 let applyLoadedMessageRange;
+let backupSqliteDatabaseFile;
 let appendSqliteMessage;
 let buildChunkedChatPayload;
+let calculateStats;
 let cloneSqliteMessageAfter;
 let compileScene;
 let deleteSqliteMessageByUuid;
+let deleteChatStorageCompanions;
+let exportDatabaseFile;
 let getLogicalChatData;
+let getNewChatTargetConflict;
+let getChatSearchResult;
 let hasValidGroupChatPayload;
 let insertLogicalMessageAfter;
+let loadDb;
+let migrateChatHeaderReferences;
 let resolveSqliteLogicalChatReference;
 let truncateSqliteChatAfterUuid;
 let updateSqliteLoadedMessageRange;
 let updateSqliteMessageByUuid;
+let updateGroupChatMessageRow;
 let updateSqliteMessageVisibility;
+let updateSqliteParticipantHistory;
 let updateSqliteUserPersonaMessages;
+let validateMessageSwipeState;
 let writeLogicalChat;
+let withChatSaveLock;
 
 function getConfigPath() {
     const localPath = path.resolve(process.cwd(), 'config.yaml');
@@ -52,12 +63,45 @@ function makeMessages(count) {
     }));
 }
 
+function makeMultiSwipeAssistant() {
+    return {
+        aikobots_message_uuid: '11111111-1111-4111-8111-111111111111',
+        name: 'Character',
+        is_user: false,
+        mes: 'selected text',
+        swipe_id: 1,
+        swipes: ['other text', 'selected text'],
+        send_date: 'June 14, 2026 10:30am',
+        gen_started: '2026-06-14T17:30:40.886Z',
+        gen_finished: '2026-06-14T17:31:00.052Z',
+        extra: { model: 'test-model', bias: null },
+        swipe_info: [
+            {
+                aikobots_swipe_uuid: '22222222-2222-4222-8222-222222222222',
+                send_date: 'June 14, 2026 10:29am',
+                gen_started: '2026-06-14T17:29:46.906Z',
+                gen_finished: '2026-06-14T17:30:03.746Z',
+                extra: { model: 'test-model' },
+            },
+            {
+                aikobots_swipe_uuid: '33333333-3333-4333-8333-333333333333',
+                send_date: 'June 14, 2026 10:30am',
+                gen_started: '2026-06-14T17:30:40.886Z',
+                gen_finished: '2026-06-14T17:31:00.052Z',
+                extra: { model: 'test-model' },
+            },
+        ],
+    };
+}
+
 function getSqliteRows(chatPath) {
     const sqlitePath = String(chatPath).replace(/\.(?:jsonl|sqlite)$/i, '.sqlite');
-    const db = new SQL.Database(fs.readFileSync(sqlitePath));
+    const db = new Database(sqlitePath, { readonly: true });
     try {
-        const result = db.exec('SELECT order_index, content FROM messages ORDER BY order_index ASC');
-        return result[0]?.values?.map(row => JSON.parse(row[1])) || [];
+        return db.prepare('SELECT content FROM messages ORDER BY order_index ASC')
+            .pluck()
+            .all()
+            .map(content => JSON.parse(content));
     } finally {
         db.close();
     }
@@ -65,20 +109,45 @@ function getSqliteRows(chatPath) {
 
 function stripSqliteMessageUuids(chatPath) {
     const sqlitePath = String(chatPath).replace(/\.(?:jsonl|sqlite)$/i, '.sqlite');
-    const db = new SQL.Database(fs.readFileSync(sqlitePath));
+    const db = new Database(sqlitePath);
     try {
-        const rows = db.exec('SELECT id, order_index, content FROM messages WHERE order_index > 0 ORDER BY order_index ASC')[0]?.values || [];
+        const rows = db.prepare('SELECT id, content FROM messages WHERE order_index > 0 ORDER BY order_index ASC').all();
         const stmt = db.prepare('UPDATE messages SET content = ? WHERE id = ?');
-        try {
+        const update = db.transaction(() => {
             for (const row of rows) {
-                const message = JSON.parse(row[2]);
+                const message = JSON.parse(row.content);
                 delete message.aikobots_message_uuid;
-                stmt.run([JSON.stringify(message), row[0]]);
+                stmt.run(JSON.stringify(message), row.id);
             }
-        } finally {
-            stmt.free();
-        }
-        fs.writeFileSync(sqlitePath, Buffer.from(db.export()));
+            db.prepare('DELETE FROM metadata WHERE key = \'identity_scan_version\'').run();
+        });
+        update();
+    } finally {
+        db.close();
+    }
+}
+
+function mutateSqliteMessage(chatPath, logicalIndex, mutate) {
+    const sqlitePath = String(chatPath).replace(/\.(?:jsonl|sqlite)$/i, '.sqlite');
+    const db = new Database(sqlitePath);
+    try {
+        const row = db.prepare('SELECT id, content FROM messages WHERE order_index = ?').get(logicalIndex + 1);
+        const message = JSON.parse(row.content);
+        mutate(message);
+        db.prepare('UPDATE messages SET content = ? WHERE id = ?').run(JSON.stringify(message), row.id);
+    } finally {
+        db.close();
+    }
+}
+
+function mutateSqliteHeader(chatPath, mutate) {
+    const sqlitePath = String(chatPath).replace(/\.(?:jsonl|sqlite)$/i, '.sqlite');
+    const db = new Database(sqlitePath);
+    try {
+        const row = db.prepare('SELECT id, content FROM messages WHERE order_index = 0').get();
+        const header = JSON.parse(row.content);
+        mutate(header);
+        db.prepare('UPDATE messages SET content = ? WHERE id = ?').run(JSON.stringify(header), row.id);
     } finally {
         db.close();
     }
@@ -86,29 +155,174 @@ function stripSqliteMessageUuids(chatPath) {
 
 describe('SQLite chat length handling', () => {
     beforeAll(async () => {
-        SQL = await initSqlJs();
         const utilModule = await import('../util.js');
         utilModule.setConfigFilePath(getConfigPath());
 
         const chatsModule = await import('../endpoints/chats.js');
+        const identityModule = await import('../../public/scripts/chat-identities.js');
         const sqliteModule = await import('../sqlite-manager.js');
+        const statsModule = await import('../endpoints/stats.js');
+        const lorebookModule = await import('../lorebook-repository.js');
+        const chatStorageModule = await import('../chat-storage.js');
         const stmbCoreModule = await import('../../public/scripts/stmb-core.js');
         applyLoadedMessageRange = chatsModule.applyLoadedMessageRange;
+        backupSqliteDatabaseFile = chatStorageModule.backupSqliteDatabaseFile;
+        deleteChatStorageCompanions = chatStorageModule.deleteChatStorageCompanions;
+        getNewChatTargetConflict = chatStorageModule.getNewChatTargetConflict;
+        withChatSaveLock = chatStorageModule.withChatSaveLock;
         appendSqliteMessage = chatsModule.appendSqliteMessage;
         buildChunkedChatPayload = chatsModule.buildChunkedChatPayload;
+        calculateStats = statsModule.calculateStats;
         cloneSqliteMessageAfter = chatsModule.cloneSqliteMessageAfter;
         compileScene = stmbCoreModule.compileScene;
         deleteSqliteMessageByUuid = chatsModule.deleteSqliteMessageByUuid;
+        exportDatabaseFile = sqliteModule.exportDatabaseFile;
         getLogicalChatData = chatsModule.getLogicalChatData;
+        getChatSearchResult = chatsModule.getChatSearchResult;
         hasValidGroupChatPayload = chatsModule.hasValidGroupChatPayload;
         resolveSqliteLogicalChatReference = chatsModule.resolveSqliteLogicalChatReference;
         truncateSqliteChatAfterUuid = chatsModule.truncateSqliteChatAfterUuid;
         updateSqliteLoadedMessageRange = chatsModule.updateSqliteLoadedMessageRange;
         updateSqliteMessageByUuid = chatsModule.updateSqliteMessageByUuid;
+        updateGroupChatMessageRow = chatsModule.updateGroupChatMessageRow;
         updateSqliteMessageVisibility = chatsModule.updateSqliteMessageVisibility;
+        updateSqliteParticipantHistory = chatsModule.updateSqliteParticipantHistory;
         updateSqliteUserPersonaMessages = chatsModule.updateSqliteUserPersonaMessages;
+        validateMessageSwipeState = identityModule.validateMessageSwipeState;
         insertLogicalMessageAfter = sqliteModule.insertLogicalMessageAfter;
+        loadDb = sqliteModule.loadDb;
+        migrateChatHeaderReferences = lorebookModule.migrateChatHeaderReferences;
         writeLogicalChat = chatsModule.writeLogicalChat;
+    });
+
+    it('classifies save-prefix targets without changing an existing chat', () => {
+        const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'save-prefix-target-'));
+        const sourcePath = path.join(tempDir, 'source.sqlite');
+        const targetPath = path.join(tempDir, 'target.jsonl');
+        const originalTarget = '{"header":"unchanged"}\n{"mes":"unchanged","swipes":["also unchanged"]}\n';
+        try {
+            fs.writeFileSync(targetPath, originalTarget);
+
+            expect(getNewChatTargetConflict(sourcePath, path.join(tempDir, 'new.sqlite'))).toBeNull();
+            expect(getNewChatTargetConflict(sourcePath, targetPath)).toBe('target_chat_exists');
+            expect(getNewChatTargetConflict(sourcePath, sourcePath)).toBe('source_target_collision');
+            expect(fs.readFileSync(targetPath, 'utf8')).toBe(originalTarget);
+        } finally {
+            fs.rmSync(tempDir, { recursive: true, force: true });
+        }
+    });
+
+    it('upgrades legacy SQLite chats with an indexed message UUID column', async () => {
+        const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'sqlite-chat-native-upgrade-'));
+        const sqlitePath = path.join(tempDir, 'chat.sqlite');
+
+        try {
+            const legacyDb = new Database(sqlitePath);
+            legacyDb.exec(`
+                CREATE TABLE metadata (key TEXT PRIMARY KEY, value TEXT);
+                CREATE TABLE messages (id INTEGER PRIMARY KEY AUTOINCREMENT, order_index REAL, content TEXT);
+                CREATE INDEX idx_messages_order_index ON messages(order_index);
+            `);
+            legacyDb.prepare('INSERT INTO metadata (key, value) VALUES (?, ?)').run('storage_version', '20260530');
+            legacyDb.prepare('INSERT INTO messages (order_index, content) VALUES (?, ?)').run(0, JSON.stringify(makeHeader()));
+            const message = makeMessages(1)[0];
+            legacyDb.prepare('INSERT INTO messages (order_index, content) VALUES (?, ?)').run(1, JSON.stringify(message));
+            legacyDb.close();
+
+            const upgradedDb = await loadDb(sqlitePath);
+            upgradedDb.close();
+
+            const verifyDb = new Database(sqlitePath, { readonly: true });
+            const columns = verifyDb.pragma('table_info(messages)');
+            const storedUuid = verifyDb.prepare('SELECT message_uuid FROM messages WHERE order_index = 1').pluck().get();
+            const storageVersion = verifyDb.prepare('SELECT value FROM metadata WHERE key = \'storage_version\'').pluck().get();
+            const hasOperationReceipts = Boolean(verifyDb.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'operation_receipts'").pluck().get());
+            const queryPlan = verifyDb.prepare('EXPLAIN QUERY PLAN SELECT id FROM messages WHERE message_uuid = ?')
+                .get(message.aikobots_message_uuid);
+            verifyDb.close();
+
+            expect(columns.some(column => column.name === 'message_uuid')).toBe(true);
+            expect(storedUuid).toBe(message.aikobots_message_uuid);
+            expect(storageVersion).toBe('20260711.1');
+            expect(hasOperationReceipts).toBe(true);
+            expect(queryPlan.detail).toContain('idx_messages_message_uuid');
+        } finally {
+            fs.rmSync(tempDir, { recursive: true, force: true });
+        }
+    });
+
+    it('exports committed WAL state as a standalone SQLite image', async () => {
+        const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'sqlite-chat-native-export-'));
+        const chatPath = path.join(tempDir, 'chat.jsonl');
+        const sqlitePath = path.join(tempDir, 'chat.sqlite');
+        const exportedPath = path.join(tempDir, 'exported.sqlite');
+        let openDb = null;
+
+        try {
+            const messages = makeMessages(2);
+            await writeLogicalChat(chatPath, makeHeader(), messages);
+
+            openDb = await loadDb(sqlitePath);
+            openDb.run('BEGIN TRANSACTION');
+            openDb.run('UPDATE messages SET content = ? WHERE order_index = 2', [
+                JSON.stringify({ ...messages[1], mes: 'committed in WAL' }),
+            ]);
+            openDb.run('COMMIT');
+
+            const exported = await exportDatabaseFile(sqlitePath);
+            fs.writeFileSync(exportedPath, exported);
+            const verifyDb = new Database(exportedPath, { readonly: true });
+            const content = verifyDb.prepare('SELECT content FROM messages WHERE order_index = 2').pluck().get();
+            verifyDb.close();
+            openDb.close();
+
+            expect(JSON.parse(content).mes).toBe('committed in WAL');
+        } finally {
+            openDb?.close();
+            fs.rmSync(tempDir, { recursive: true, force: true });
+        }
+    });
+
+    it('creates a consistent atomic SQLite lifecycle snapshot', async () => {
+        const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'sqlite-chat-lifecycle-snapshot-'));
+        const sourcePath = path.join(tempDir, 'source.sqlite');
+        const targetPath = path.join(tempDir, 'target.sqlite');
+        let writerDb;
+        try {
+            await writeLogicalChat(sourcePath, makeHeader(), makeMessages(8));
+            writerDb = new Database(sourcePath);
+            writerDb.pragma('journal_mode = WAL');
+            writerDb.pragma('wal_autocheckpoint = 0');
+            const walMessage = { ...makeMessages(1)[0], aikobots_message_uuid: '99999999-9999-4999-8999-999999999999', mes: 'committed WAL row' };
+            writerDb.prepare('INSERT INTO messages (order_index, content, message_uuid) VALUES (?, ?, ?)')
+                .run(9, JSON.stringify(walMessage), walMessage.aikobots_message_uuid);
+            await backupSqliteDatabaseFile(sourcePath, targetPath);
+            const targetDb = new Database(targetPath, { readonly: true });
+            expect(targetDb.pragma('integrity_check', { simple: true })).toBe('ok');
+            expect(targetDb.prepare('SELECT COUNT(*) FROM messages').pluck().get()).toBe(10);
+            targetDb.close();
+            writerDb.close();
+            writerDb = null;
+            expect(fs.readdirSync(tempDir).some(file => file.startsWith('target.sqlite.') && file.endsWith('.tmp'))).toBe(false);
+        } finally {
+            writerDb?.close();
+            fs.rmSync(tempDir, { recursive: true, force: true });
+        }
+    });
+
+    it('deletes every chat storage companion under the shared lock', async () => {
+        const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'sqlite-chat-companion-delete-'));
+        const chatPath = path.join(tempDir, 'chat.sqlite');
+        const companionPaths = [chatPath, chatPath.replace('.sqlite', '.jsonl'), `${chatPath}-wal`, `${chatPath}-shm`];
+        try {
+            for (const companionPath of companionPaths) {
+                fs.writeFileSync(companionPath, 'test');
+            }
+            await withChatSaveLock(chatPath, async () => deleteChatStorageCompanions(chatPath));
+            expect(companionPaths.every(companionPath => !fs.existsSync(companionPath))).toBe(true);
+        } finally {
+            fs.rmSync(tempDir, { recursive: true, force: true });
+        }
     });
 
     it('accepts only dense group chat message payloads', () => {
@@ -342,6 +556,98 @@ describe('SQLite chat length handling', () => {
         }
     });
 
+    it('searches SQLite substrings across the filename and different message rows', async () => {
+        const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'sqlite-chat-search-'));
+        const chatPath = path.join(tempDir, 'Dragon Tale.sqlite');
+        try {
+            const messages = makeMessages(3);
+            messages[0].mes = 'First café clue';
+            messages[2].mes = 'Final treasure';
+            await writeLogicalChat(chatPath, makeHeader(), messages);
+            const chatFile = { path: chatPath, file_name: 'Dragon Tale.sqlite', file_size: '1kb' };
+
+            await expect(getChatSearchResult(chatFile, ['dragon', 'CAFÉ', 'treasure'].map(value => value.toLowerCase())))
+                .resolves.toMatchObject({ file_name: 'Dragon Tale.sqlite', message_count: 3, preview_message: 'Final treasure' });
+            await expect(getChatSearchResult(chatFile, ['missing'])).resolves.toBeNull();
+        } finally {
+            fs.rmSync(tempDir, { recursive: true, force: true });
+        }
+    });
+
+    it('calculates equivalent message statistics from SQLite and legacy JSONL chats', async () => {
+        const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'sqlite-chat-stats-'));
+        const sqliteDir = path.join(tempDir, 'SqliteBot');
+        const jsonlDir = path.join(tempDir, 'JsonlBot');
+        fs.mkdirSync(sqliteDir);
+        fs.mkdirSync(jsonlDir);
+        try {
+            const messages = makeMessages(3).map((message, index) => ({
+                ...message,
+                mes: `stats message ${index}`,
+                send_date: `July ${index + 1}, 2026 1:00pm`,
+            }));
+            await writeLogicalChat(path.join(sqliteDir, 'chat.sqlite'), makeHeader(), messages);
+            fs.writeFileSync(path.join(sqliteDir, 'chat.jsonl'), 'legacy duplicate that must not be counted');
+            fs.writeFileSync(path.join(jsonlDir, 'chat.jsonl'), [makeHeader(), ...messages].map(value => JSON.stringify(value)).join('\n'));
+
+            const sqliteStats = (await calculateStats(tempDir, 'SqliteBot.png'))['SqliteBot.png'];
+            const jsonlStats = (await calculateStats(tempDir, 'JsonlBot.png'))['JsonlBot.png'];
+            for (const key of ['total_gen_time', 'user_word_count', 'non_user_word_count', 'user_msg_count', 'non_user_msg_count', 'total_swipe_count', 'date_first_chat']) {
+                expect(sqliteStats[key]).toBe(jsonlStats[key]);
+            }
+            expect(sqliteStats.chat_size).toBe(fs.statSync(path.join(sqliteDir, 'chat.sqlite')).size);
+        } finally {
+            fs.rmSync(tempDir, { recursive: true, force: true });
+        }
+    });
+
+    it('preserves group avatar identity and participant filters in SQLite range capture', async () => {
+        const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'sqlite-stmb-group-capture-'));
+        const chatsDir = path.join(tempDir, 'chats');
+        const groupChatsDir = path.join(tempDir, 'group chats');
+        const chatPath = path.join(groupChatsDir, 'group.jsonl');
+
+        try {
+            fs.mkdirSync(groupChatsDir, { recursive: true });
+            await writeLogicalChat(chatPath, {
+                is_group_chat_header: true,
+                group_chat_header_version: 1,
+                create_date: '2026-07-09',
+                chat_metadata: {},
+            }, [
+                { ...makeMessages(1)[0], name: 'Alice', is_user: false, original_avatar: 'alice.png' },
+                { ...makeMessages(2)[1], name: 'Bob', is_user: false, original_avatar: 'bob.webp' },
+            ]);
+
+            const chatState = await resolveSqliteLogicalChatReference({
+                chats: chatsDir,
+                groupChats: groupChatsDir,
+            }, {
+                type: 'group',
+                chatId: 'group',
+            }, {
+                rangeStart: 0,
+                rangeEnd: 1,
+                includeMessages: true,
+            });
+            const compiledScene = compileScene(chatState.messages, {
+                sceneStart: 0,
+                sceneEnd: 1,
+                groupName: 'Party',
+            }, {
+                groupParticipants: [
+                    { key: 'alice.png', avatar: 'alice.png', name: 'Alice' },
+                    { key: 'bob.webp', avatar: 'bob.webp', name: 'Bob' },
+                ],
+            });
+
+            expect(compiledScene.messages.map(message => message.original_avatar)).toEqual(['alice.png', 'bob.webp']);
+            expect(compiledScene.metadata.characterFilterNames).toEqual(['alice', 'bob']);
+        } finally {
+            fs.rmSync(tempDir, { recursive: true, force: true });
+        }
+    });
+
     it('reports missing SQLite storage without falling back to JSONL', async () => {
         const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'sqlite-stmb-missing-'));
         const chatsDir = path.join(tempDir, 'chats');
@@ -540,6 +846,156 @@ describe('SQLite chat length handling', () => {
             expect(logicalChat).toHaveLength(7);
             expect(logicalChat[3].mes).toBe('edited historical text');
             expect(logicalChat.at(-1).mes).toBe('message 5');
+        } finally {
+            fs.rmSync(tempDir, { recursive: true, force: true });
+        }
+    });
+
+    it('atomically updates selected swipe text and metadata without changing sibling swipes', async () => {
+        const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'sqlite-chat-swipe-text-update-'));
+        const chatPath = path.join(tempDir, 'chat.jsonl');
+
+        try {
+            const message = makeMultiSwipeAssistant();
+            await writeLogicalChat(chatPath, makeHeader({ chat_revision: 7 }), [message]);
+
+            const updatedMessage = structuredClone(message);
+            updatedMessage.mes = 'edited selected text';
+            updatedMessage.swipes[1] = 'edited selected text';
+            updatedMessage.swipe_info[1].extra.bias = null;
+            const payload = await updateSqliteMessageByUuid({
+                filePath: chatPath,
+                requestBody: {
+                    message_uuid: message.aikobots_message_uuid,
+                    message: updatedMessage,
+                    mutation_type: 'ordinary_text_edit',
+                    selected_swipe_uuid: message.swipe_info[1].aikobots_swipe_uuid,
+                    base_revision: 7,
+                    save_session_id: '44444444-4444-4444-8444-444444444444',
+                },
+                saveSessionId: '44444444-4444-4444-8444-444444444444',
+                displayCount: 10,
+            });
+
+            const savedMessage = (await getLogicalChatData(chatPath))[1];
+            expect(payload.chat_revision).toBe(8);
+            expect(savedMessage.mes).toBe('edited selected text');
+            expect(savedMessage.swipes[1]).toBe('edited selected text');
+            expect(savedMessage.swipe_info[1].aikobots_swipe_uuid).toBe(message.swipe_info[1].aikobots_swipe_uuid);
+            expect(savedMessage.swipes[0]).toBe(message.swipes[0]);
+            expect(savedMessage.swipe_info[0]).toEqual(message.swipe_info[0]);
+            expect(validateMessageSwipeState(savedMessage)).toMatchObject({ ok: true });
+        } finally {
+            fs.rmSync(tempDir, { recursive: true, force: true });
+        }
+    });
+
+    it('edits a user message without replacing its following multi-swipe assistant response', async () => {
+        const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'sqlite-chat-user-before-swipes-'));
+        const chatPath = path.join(tempDir, 'chat.jsonl');
+
+        try {
+            const userMessage = {
+                aikobots_message_uuid: '66666666-6666-4666-8666-666666666666',
+                name: 'User',
+                is_user: true,
+                mes: 'original user text',
+                send_date: 'June 14, 2026 10:29am',
+            };
+            const assistantMessage = makeMultiSwipeAssistant();
+            await writeLogicalChat(chatPath, makeHeader({ chat_revision: 7 }), [userMessage, assistantMessage]);
+
+            await updateSqliteMessageByUuid({
+                filePath: chatPath,
+                requestBody: {
+                    message_uuid: userMessage.aikobots_message_uuid,
+                    message: { ...userMessage, mes: 'edited user text' },
+                    mutation_type: 'ordinary_text_edit',
+                    selected_swipe_uuid: null,
+                    base_revision: 7,
+                    save_session_id: '77777777-7777-4777-8777-777777777777',
+                },
+                saveSessionId: '77777777-7777-4777-8777-777777777777',
+                displayCount: 10,
+            });
+
+            const logicalChat = await getLogicalChatData(chatPath);
+            const savedAssistant = logicalChat[2];
+            delete savedAssistant.id;
+            delete savedAssistant.order_index;
+            expect(logicalChat[1].mes).toBe('edited user text');
+            expect(savedAssistant).toEqual(assistantMessage);
+        } finally {
+            fs.rmSync(tempDir, { recursive: true, force: true });
+        }
+    });
+
+    it.each([
+        ['out-of-bounds swipe id', message => { message.swipe_id = 2; }, 'swipe_id_out_of_bounds'],
+        ['active text mismatch', message => { message.mes = 'wrong active text'; }, 'active_swipe_text_mismatch'],
+    ])('detects %s before a swipe message save', (_label, mutate, reason) => {
+        const message = makeMultiSwipeAssistant();
+        mutate(message);
+        expect(validateMessageSwipeState(message)).toMatchObject({ ok: false, reason });
+    });
+
+    it.each([
+        ['short legacy swipe metadata', message => { message.swipe_info.pop(); }, 'repairableDifferences'],
+        ['active timestamp conflict', message => { message.gen_finished = 'wrong timestamp'; }, 'ambiguousConflicts'],
+        ['active metadata conflict', message => { message.extra.model = 'wrong-model'; }, 'ambiguousConflicts'],
+    ])('reports non-fatal %s before a swipe message save', (_label, mutate, bucket) => {
+        const message = makeMultiSwipeAssistant();
+        mutate(message);
+        const validation = validateMessageSwipeState(message);
+        expect(validation.ok).toBe(true);
+        expect(validation[bucket]).not.toHaveLength(0);
+    });
+
+    it.each([
+        ['selected swipe UUID replacement', message => {
+            message.swipe_info[1].aikobots_swipe_uuid = '55555555-5555-4555-8555-555555555555';
+        }, 'ordinary_text_edit_swipe_mutation'],
+        ['sibling swipe replacement', message => {
+            message.swipes[0] = 'silently replaced sibling';
+        }, 'ordinary_text_edit_swipe_mutation'],
+        ['swipe reordering', message => {
+            message.swipes.reverse();
+            message.swipe_info.reverse();
+            message.swipe_id = 0;
+            message.mes = message.swipes[0];
+            message.send_date = message.swipe_info[0].send_date;
+            message.gen_started = message.swipe_info[0].gen_started;
+            message.gen_finished = message.swipe_info[0].gen_finished;
+            message.extra = structuredClone(message.swipe_info[0].extra);
+        }, 'ordinary_text_edit_swipe_mutation'],
+    ])('rejects %s during an ordinary SQLite text edit', async (_label, mutate, expectedError) => {
+        const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'sqlite-chat-swipe-edit-reject-'));
+        const chatPath = path.join(tempDir, 'chat.jsonl');
+
+        try {
+            const message = makeMultiSwipeAssistant();
+            await writeLogicalChat(chatPath, makeHeader({ chat_revision: 7 }), [message]);
+            const updatedMessage = structuredClone(message);
+            mutate(updatedMessage);
+
+            await expect(updateSqliteMessageByUuid({
+                filePath: chatPath,
+                requestBody: {
+                    message_uuid: message.aikobots_message_uuid,
+                    message: updatedMessage,
+                    mutation_type: 'ordinary_text_edit',
+                    selected_swipe_uuid: message.swipe_info[1].aikobots_swipe_uuid,
+                    base_revision: 7,
+                    save_session_id: '44444444-4444-4444-8444-444444444444',
+                },
+                saveSessionId: '44444444-4444-4444-8444-444444444444',
+                displayCount: 10,
+            })).rejects.toMatchObject({ error: expectedError });
+
+            const savedMessage = (await getLogicalChatData(chatPath))[1];
+            delete savedMessage.id;
+            delete savedMessage.order_index;
+            expect(savedMessage).toEqual(message);
         } finally {
             fs.rmSync(tempDir, { recursive: true, force: true });
         }
@@ -750,6 +1206,88 @@ describe('SQLite chat length handling', () => {
         }
     });
 
+    it('acknowledges a retried append operation UUID without applying it twice', async () => {
+        const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'sqlite-chat-idempotent-append-'));
+        const chatPath = path.join(tempDir, 'chat.jsonl');
+
+        try {
+            const messages = makeMessages(2);
+            await writeLogicalChat(chatPath, makeHeader({ chat_revision: 1 }), messages);
+            const requestBody = {
+                operation_id: '88888888-8888-4888-8888-888888888888',
+                message: {
+                    aikobots_message_uuid: '99999999-9999-4999-8999-999999999999',
+                    name: 'Character',
+                    is_user: false,
+                    mes: 'retry-safe append',
+                    send_date: 99,
+                },
+                expected_tail_uuid: messages[1].aikobots_message_uuid,
+                base_revision: 1,
+                save_session_id: '33333333-3333-4333-8333-333333333333',
+            };
+
+            const first = await appendSqliteMessage({
+                filePath: chatPath,
+                requestBody,
+                saveSessionId: requestBody.save_session_id,
+                displayCount: 10,
+            });
+            const retry = await appendSqliteMessage({
+                filePath: chatPath,
+                requestBody: structuredClone(requestBody),
+                saveSessionId: requestBody.save_session_id,
+                displayCount: 10,
+            });
+
+            const logicalChat = await getLogicalChatData(chatPath);
+            expect(first.chat_revision).toBe(2);
+            expect(retry).toMatchObject({
+                chat_revision: 2,
+                storage_mode: 'sqlite',
+                duplicate_operation: true,
+            });
+            expect(retry).not.toHaveProperty('storageMode');
+            expect(logicalChat.filter(message => message.mes === 'retry-safe append')).toHaveLength(1);
+        } finally {
+            fs.rmSync(tempDir, { recursive: true, force: true });
+        }
+    });
+
+    it('rejects an operation UUID reused with a different payload', async () => {
+        const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'sqlite-chat-operation-reuse-'));
+        const chatPath = path.join(tempDir, 'chat.jsonl');
+
+        try {
+            const messages = makeMessages(1);
+            await writeLogicalChat(chatPath, makeHeader({ chat_revision: 1 }), messages);
+            const requestBody = {
+                operation_id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+                message: {
+                    aikobots_message_uuid: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
+                    name: 'Character',
+                    is_user: false,
+                    mes: 'original payload',
+                },
+                base_revision: 1,
+                save_session_id: '33333333-3333-4333-8333-333333333333',
+            };
+            await appendSqliteMessage({ filePath: chatPath, requestBody, saveSessionId: requestBody.save_session_id, displayCount: 10 });
+
+            await expect(appendSqliteMessage({
+                filePath: chatPath,
+                requestBody: {
+                    ...structuredClone(requestBody),
+                    message: { ...requestBody.message, mes: 'different payload' },
+                },
+                saveSessionId: requestBody.save_session_id,
+                displayCount: 10,
+            })).rejects.toMatchObject({ error: 'operation_id_reused' });
+        } finally {
+            fs.rmSync(tempDir, { recursive: true, force: true });
+        }
+    });
+
     it('deletes a SQLite message by UUID and repairs shifted positional metadata', async () => {
         const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'sqlite-chat-uuid-delete-'));
         const chatPath = path.join(tempDir, 'chat.jsonl');
@@ -831,6 +1369,38 @@ describe('SQLite chat length handling', () => {
         }
     });
 
+    it('truncates every SQLite message while preserving the header and advancing revision', async () => {
+        const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'sqlite-chat-truncate-all-'));
+        const chatPath = path.join(tempDir, 'chat.jsonl');
+
+        try {
+            const header = makeHeader({ chat_revision: 7, chat_metadata: { tainted: true } });
+            await writeLogicalChat(chatPath, header, makeMessages(3));
+
+            const payload = await truncateSqliteChatAfterUuid({
+                filePath: chatPath,
+                requestBody: {
+                    truncate_all: true,
+                    base_revision: 7,
+                    save_session_id: '44444444-4444-4444-8444-444444444444',
+                },
+                saveSessionId: '44444444-4444-4444-8444-444444444444',
+                displayCount: 10,
+            });
+
+            const logicalChat = await getLogicalChatData(chatPath);
+            expect(payload.chat_revision).toBe(8);
+            expect(payload.totalMessages).toBe(0);
+            expect(payload.messages).toEqual([]);
+            expect(payload.loadedRangeEnd).toBe(-1);
+            expect(logicalChat).toHaveLength(1);
+            expect(logicalChat[0].chat_revision).toBe(8);
+            expect(logicalChat[0].chat_metadata).toEqual({ tainted: true });
+        } finally {
+            fs.rmSync(tempDir, { recursive: true, force: true });
+        }
+    });
+
     it('updates a targeted SQLite message range without dropping unseen messages', async () => {
         const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'sqlite-chat-patch-'));
         const chatPath = path.join(tempDir, 'chat.jsonl');
@@ -898,6 +1468,280 @@ describe('SQLite chat length handling', () => {
             expect(logicalChat[8].mes).toBe('patched direct 7');
             expect(logicalChat[9].mes).toBe('message 8');
             expect(logicalChat.at(-1).mes).toBe('message 19');
+        } finally {
+            fs.rmSync(tempDir, { recursive: true, force: true });
+        }
+    });
+
+    it('does not active-swipe validate an unrelated out-of-range SQLite row', async () => {
+        const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'sqlite-chat-loaded-range-swipe-isolation-'));
+        const chatPath = path.join(tempDir, 'chat.jsonl');
+
+        try {
+            const header = makeHeader({ chat_revision: 4 });
+            const messages = [makeMultiSwipeAssistant(), ...makeMessages(4)];
+            await writeLogicalChat(chatPath, header, messages);
+            mutateSqliteMessage(chatPath, 0, message => { message.mes = 'legacy contradictory active text'; });
+
+            const patchMessages = structuredClone(messages.slice(2, 4));
+            patchMessages[0].mes = 'range edit';
+            await expect(updateSqliteLoadedMessageRange({
+                filePath: chatPath,
+                requestBody: {
+                    loaded_range_start: 2,
+                    loaded_range_end: 3,
+                    base_revision: 4,
+                    save_session_id: '33333333-3333-4333-8333-333333333333',
+                    saved_message_count: messages.length,
+                },
+                incomingHeader: header,
+                rangeMessages: patchMessages,
+                saveSessionId: '33333333-3333-4333-8333-333333333333',
+            })).resolves.toMatchObject({ result: 'ok', changed: 2 });
+
+            const saved = await getLogicalChatData(chatPath);
+            expect(saved[1].mes).toBe('legacy contradictory active text');
+            expect(saved[3].mes).toBe('range edit');
+        } finally {
+            fs.rmSync(tempDir, { recursive: true, force: true });
+        }
+    });
+
+    it('writes only the header and changed rows for a fully loaded SQLite range', async () => {
+        const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'sqlite-chat-write-audit-'));
+        const chatPath = path.join(tempDir, 'chat.jsonl');
+        const sqlitePath = chatPath.replace('.jsonl', '.sqlite');
+        const saveSessionId = '33333333-3333-4333-8333-333333333333';
+
+        try {
+            const header = makeHeader({ chat_revision: 2 });
+            const messages = makeMessages(6);
+            await writeLogicalChat(chatPath, header, messages);
+
+            const auditDb = new Database(sqlitePath);
+            auditDb.exec(`
+                CREATE TABLE write_audit (row_id INTEGER NOT NULL);
+                CREATE TRIGGER audit_message_update AFTER UPDATE ON messages
+                BEGIN
+                    INSERT INTO write_audit (row_id) VALUES (new.id);
+                END;
+            `);
+            auditDb.close();
+
+            const rangeMessages = messages.map(message => ({ ...message }));
+            rangeMessages[3].mes = 'only changed row';
+            const payload = await updateSqliteLoadedMessageRange({
+                filePath: chatPath,
+                requestBody: {
+                    loaded_range_start: 0,
+                    loaded_range_end: 5,
+                    base_revision: 2,
+                    save_session_id: saveSessionId,
+                    saved_message_count: 6,
+                },
+                incomingHeader: header,
+                rangeMessages,
+                saveSessionId,
+            });
+
+            const verifyDb = new Database(sqlitePath, { readonly: true });
+            const updatedOrderIndexes = verifyDb.prepare(`
+                SELECT messages.order_index
+                FROM write_audit
+                JOIN messages ON messages.id = write_audit.row_id
+                ORDER BY messages.order_index
+            `).pluck().all();
+            verifyDb.close();
+
+            expect(payload.changed).toBe(6);
+            expect(updatedOrderIndexes).toEqual([0, 4]);
+
+            const resetDb = new Database(sqlitePath);
+            resetDb.prepare('DELETE FROM write_audit').run();
+            resetDb.close();
+            await updateSqliteLoadedMessageRange({
+                filePath: chatPath,
+                requestBody: {
+                    loaded_range_start: 0,
+                    loaded_range_end: 5,
+                    base_revision: 3,
+                    save_session_id: saveSessionId,
+                    saved_message_count: 6,
+                },
+                incomingHeader: makeHeader({ chat_revision: 3, chat_metadata: { title: 'metadata only' } }),
+                rangeMessages,
+                saveSessionId,
+            });
+            const metadataDb = new Database(sqlitePath, { readonly: true });
+            const metadataUpdatedIndexes = metadataDb.prepare(`
+                SELECT messages.order_index
+                FROM write_audit
+                JOIN messages ON messages.id = write_audit.row_id
+            `).pluck().all();
+            metadataDb.close();
+            expect(metadataUpdatedIndexes).toEqual([0]);
+        } finally {
+            fs.rmSync(tempDir, { recursive: true, force: true });
+        }
+    });
+
+    it('rejects a submitted loaded-range message with a fatal active-text mismatch', async () => {
+        const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'sqlite-chat-loaded-range-swipe-reject-'));
+        const chatPath = path.join(tempDir, 'chat.jsonl');
+
+        try {
+            const header = makeHeader({ chat_revision: 4 });
+            const message = makeMultiSwipeAssistant();
+            const leadingMessage = makeMessages(1)[0];
+            await writeLogicalChat(chatPath, header, [leadingMessage, message]);
+            const contradictory = structuredClone(message);
+            contradictory.mes = 'contradictory active text';
+
+            await expect(updateSqliteLoadedMessageRange({
+                filePath: chatPath,
+                requestBody: {
+                    loaded_range_start: 1,
+                    loaded_range_end: 1,
+                    base_revision: 4,
+                    save_session_id: '33333333-3333-4333-8333-333333333333',
+                    saved_message_count: 2,
+                },
+                incomingHeader: header,
+                rangeMessages: [contradictory],
+                saveSessionId: '33333333-3333-4333-8333-333333333333',
+            })).rejects.toMatchObject({
+                status: 409,
+                error: 'invalid_message_swipe_state',
+                details: {
+                    reason: 'active_swipe_text_mismatch',
+                    comparison: {
+                        fatalMismatches: [expect.objectContaining({
+                            messageRelativeIndex: 0,
+                            logicalChatIndex: 1,
+                            selectedSwipeIndex: 1,
+                        })],
+                    },
+                },
+            });
+        } finally {
+            fs.rmSync(tempDir, { recursive: true, force: true });
+        }
+    });
+
+    it.each([
+        ['missing', message => { delete message.swipe_info[1].aikobots_swipe_uuid; }],
+        ['malformed', message => { message.swipe_info[1].aikobots_swipe_uuid = 'legacy-swipe-id'; }],
+    ])('accepts a submitted loaded-range message with a %s legacy swipe UUID', async (_label, mutate) => {
+        const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'sqlite-chat-loaded-range-legacy-swipe-'));
+        const chatPath = path.join(tempDir, 'chat.jsonl');
+
+        try {
+            const header = makeHeader({ chat_revision: 4 });
+            const message = makeMultiSwipeAssistant();
+            await writeLogicalChat(chatPath, header, [message]);
+            const legacyMessage = structuredClone(message);
+            mutate(legacyMessage);
+
+            await expect(updateSqliteLoadedMessageRange({
+                filePath: chatPath,
+                requestBody: {
+                    loaded_range_start: 0,
+                    loaded_range_end: 0,
+                    base_revision: 4,
+                    save_session_id: '33333333-3333-4333-8333-333333333333',
+                    saved_message_count: 1,
+                },
+                incomingHeader: header,
+                rangeMessages: [legacyMessage],
+                saveSessionId: '33333333-3333-4333-8333-333333333333',
+            })).resolves.toMatchObject({ result: 'ok' });
+
+            const savedUuid = (await getLogicalChatData(chatPath))[1].swipe_info[1].aikobots_swipe_uuid;
+            expect(savedUuid).toMatch(/^[0-9a-f-]{36}$/i);
+        } finally {
+            fs.rmSync(tempDir, { recursive: true, force: true });
+        }
+    });
+
+    it('rejects conflicting valid active-swipe UUIDs in a submitted loaded range', async () => {
+        const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'sqlite-chat-loaded-range-swipe-uuid-conflict-'));
+        const chatPath = path.join(tempDir, 'chat.jsonl');
+
+        try {
+            const header = makeHeader({ chat_revision: 4 });
+            const message = makeMultiSwipeAssistant();
+            await writeLogicalChat(chatPath, header, [message]);
+            const contradictory = structuredClone(message);
+            contradictory.aikobots_swipe_uuid = '55555555-5555-4555-8555-555555555555';
+
+            await expect(updateSqliteLoadedMessageRange({
+                filePath: chatPath,
+                requestBody: {
+                    loaded_range_start: 0,
+                    loaded_range_end: 0,
+                    base_revision: 4,
+                    save_session_id: '33333333-3333-4333-8333-333333333333',
+                    saved_message_count: 1,
+                },
+                incomingHeader: header,
+                rangeMessages: [contradictory],
+                saveSessionId: '33333333-3333-4333-8333-333333333333',
+            })).rejects.toMatchObject({
+                error: 'invalid_message_swipe_state',
+                details: { reason: 'active_swipe_uuid_conflict' },
+            });
+        } finally {
+            fs.rmSync(tempDir, { recursive: true, force: true });
+        }
+    });
+
+    it('preserves imported metadata through a non-fatal loaded-range save', async () => {
+        const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'sqlite-chat-loaded-range-metadata-'));
+        const chatPath = path.join(tempDir, 'chat.jsonl');
+
+        try {
+            const header = makeHeader({ chat_revision: 4 });
+            const message = makeMultiSwipeAssistant();
+            message.extra.branches = [{ id: 'top-branch' }];
+            message.extra.bookmark_link = 'bookmark-name';
+            message.swipe_info[1].extra.imported_vendor_field = { preserved: true };
+            await writeLogicalChat(chatPath, header, [message]);
+
+            const updated = structuredClone(message);
+            updated.mes = 'edited selected text';
+            updated.swipes[1] = 'edited selected text';
+            await updateSqliteLoadedMessageRange({
+                filePath: chatPath,
+                requestBody: {
+                    loaded_range_start: 0,
+                    loaded_range_end: 0,
+                    base_revision: 4,
+                    save_session_id: '33333333-3333-4333-8333-333333333333',
+                    saved_message_count: 1,
+                },
+                incomingHeader: header,
+                rangeMessages: [updated],
+                saveSessionId: '33333333-3333-4333-8333-333333333333',
+            });
+
+            const saved = (await getLogicalChatData(chatPath))[1];
+            expect(saved.extra.branches).toEqual([{ id: 'top-branch' }]);
+            expect(saved.extra.bookmark_link).toBe('bookmark-name');
+            expect(saved.swipe_info[1].extra.imported_vendor_field).toEqual({ preserved: true });
+        } finally {
+            fs.rmSync(tempDir, { recursive: true, force: true });
+        }
+    });
+
+    it('validates every submitted message in a full-chat write', async () => {
+        const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'sqlite-chat-full-swipe-validation-'));
+        const chatPath = path.join(tempDir, 'chat.jsonl');
+
+        try {
+            const message = makeMultiSwipeAssistant();
+            message.mes = 'contradictory active text';
+            await expect(writeLogicalChat(chatPath, makeHeader(), [makeMessages(1)[0], message]))
+                .rejects.toMatchObject({ error: 'invalid_message_swipe_state' });
         } finally {
             fs.rmSync(tempDir, { recursive: true, force: true });
         }
@@ -977,7 +1821,7 @@ describe('SQLite chat length handling', () => {
         }
     });
 
-    it('returns a JSONL backup payload for complete loaded-range SQLite saves', async () => {
+    it('does not serialize a JSONL backup for complete loaded-range SQLite saves', async () => {
         const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'sqlite-chat-loaded-range-backup-'));
         const chatPath = path.join(tempDir, 'chat.jsonl');
         const saveSessionId = '33333333-3333-4333-8333-333333333333';
@@ -1005,15 +1849,16 @@ describe('SQLite chat length handling', () => {
                 rangeMessages: nextMessages,
                 saveSessionId,
             });
-            const backupRows = payload.fullJsonl.split('\n').map(line => JSON.parse(line));
+            const savedRows = await getLogicalChatData(chatPath);
 
             expect(payload.chat_revision).toBe(4);
-            expect(backupRows).toHaveLength(5);
-            expect(backupRows[0].chat_revision).toBe(4);
-            expect(backupRows[0].last_save_session_id).toBe(saveSessionId);
-            expect(backupRows[0].chat_metadata).toEqual({ title: 'after' });
-            expect(backupRows[1].mes).toBe('complete save 0');
-            expect(backupRows.at(-1).mes).toBe('complete save 3');
+            expect(payload.fullJsonl).toBeNull();
+            expect(savedRows).toHaveLength(5);
+            expect(savedRows[0].chat_revision).toBe(4);
+            expect(savedRows[0].last_save_session_id).toBe(saveSessionId);
+            expect(savedRows[0].chat_metadata).toEqual({ title: 'after' });
+            expect(savedRows[1].mes).toBe('complete save 0');
+            expect(savedRows.at(-1).mes).toBe('complete save 3');
         } finally {
             fs.rmSync(tempDir, { recursive: true, force: true });
         }
@@ -1081,6 +1926,7 @@ describe('SQLite chat length handling', () => {
             const payload = await updateSqliteMessageVisibility({
                 filePath: chatPath,
                 requestBody: {
+                    operation_id: '11111111-1111-4111-8111-111111111111',
                     base_revision: 1,
                     save_session_id: '33333333-3333-4333-8333-333333333333',
                 },
@@ -1105,6 +1951,97 @@ describe('SQLite chat length handling', () => {
         }
     });
 
+    it('renames participant history with targeted row updates', async () => {
+        const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'sqlite-chat-participant-rename-'));
+        const chatPath = path.join(tempDir, 'chat.jsonl');
+        const sqlitePath = chatPath.replace('.jsonl', '.sqlite');
+
+        try {
+            const header = makeHeader({ chat_revision: 4 });
+            const messages = makeMessages(5);
+            messages[1].force_avatar = '/thumbnail?type=avatar&file=old%20avatar.png';
+            messages[1].original_avatar = 'old avatar.png';
+            messages[3].force_avatar = '/thumbnail?type=avatar&file=other.png';
+            await writeLogicalChat(chatPath, header, messages);
+
+            const auditDb = new Database(sqlitePath);
+            auditDb.exec(`
+                CREATE TABLE rename_audit (row_id INTEGER NOT NULL);
+                CREATE TRIGGER audit_rename_update AFTER UPDATE ON messages
+                BEGIN
+                    INSERT INTO rename_audit (row_id) VALUES (new.id);
+                END;
+            `);
+            auditDb.close();
+
+            const payload = await updateSqliteParticipantHistory({
+                filePath: chatPath,
+                oldAvatar: 'old avatar.png',
+                newAvatar: 'new avatar.png',
+                newName: 'Renamed',
+                saveSessionId: '33333333-3333-4333-8333-333333333333',
+            });
+            const saved = await getLogicalChatData(chatPath);
+            const verifyDb = new Database(sqlitePath, { readonly: true });
+            const updateCount = verifyDb.prepare('SELECT COUNT(*) FROM rename_audit').pluck().get();
+            verifyDb.close();
+
+            expect(payload).toMatchObject({ changed: 1, chat_revision: 5 });
+            expect(updateCount).toBe(2);
+            expect(saved[2]).toMatchObject({ name: 'Renamed', original_avatar: 'new avatar.png' });
+            expect(saved[2].force_avatar).toContain('new%20avatar.png');
+            expect(saved[4].name).toBe('Character');
+        } finally {
+            fs.rmSync(tempDir, { recursive: true, force: true });
+        }
+    });
+
+    it('updates lorebook references in only the SQLite chat header', async () => {
+        const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'sqlite-chat-lorebook-reference-'));
+        const chatPath = path.join(tempDir, 'chat.sqlite');
+        try {
+            await writeLogicalChat(chatPath, makeHeader({
+                chat_revision: 9,
+                last_save_session_id: '33333333-3333-4333-8333-333333333333',
+                chat_metadata: { world_info: 'Old Lorebook' },
+            }), makeMessages(3));
+            const auditDb = new Database(chatPath);
+            auditDb.exec(`
+                CREATE TABLE lorebook_audit (order_index REAL NOT NULL);
+                CREATE TRIGGER audit_lorebook_update AFTER UPDATE ON messages
+                BEGIN
+                    INSERT INTO lorebook_audit (order_index) VALUES (new.order_index);
+                END;
+            `);
+            auditDb.close();
+
+            await expect(migrateChatHeaderReferences(chatPath, 'test-user', 'Old Lorebook', 'New Lorebook'))
+                .resolves.toMatchObject({ changed: true });
+            const saved = await getLogicalChatData(chatPath);
+            const verifyDb = new Database(chatPath, { readonly: true });
+            const updatedIndexes = verifyDb.prepare('SELECT order_index FROM lorebook_audit').pluck().all();
+            verifyDb.close();
+
+            expect(updatedIndexes).toEqual([0]);
+            expect(saved[0].chat_metadata.world_info).toBe('New Lorebook');
+            expect(saved[0].chat_revision).toBe(10);
+            expect(saved[0].last_save_session_id).toBeUndefined();
+
+            const legacyPath = path.join(tempDir, 'legacy.jsonl');
+            fs.writeFileSync(legacyPath, [
+                JSON.stringify(makeHeader({ chat_metadata: { world_info: 'Old Lorebook' } })),
+                JSON.stringify(makeMessages(1)[0]),
+            ].join('\n'));
+            await expect(migrateChatHeaderReferences(legacyPath, 'test-user', 'Old Lorebook', 'New Lorebook'))
+                .resolves.toMatchObject({ changed: true });
+            const legacyRows = fs.readFileSync(legacyPath, 'utf8').split('\n').map(line => JSON.parse(line));
+            expect(legacyRows[0].chat_metadata.world_info).toBe('New Lorebook');
+            expect(legacyRows[1].mes).toBe('message 0');
+        } finally {
+            fs.rmSync(tempDir, { recursive: true, force: true });
+        }
+    });
+
     it('rejects stale SQLite visibility updates without mutating messages', async () => {
         const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'sqlite-chat-visibility-stale-'));
         const chatPath = path.join(tempDir, 'chat.jsonl');
@@ -1115,6 +2052,7 @@ describe('SQLite chat length handling', () => {
             await expect(updateSqliteMessageVisibility({
                 filePath: chatPath,
                 requestBody: {
+                    operation_id: '22222222-2222-4222-8222-222222222222',
                     base_revision: 2,
                     save_session_id: '33333333-3333-4333-8333-333333333333',
                 },
@@ -1147,6 +2085,7 @@ describe('SQLite chat length handling', () => {
             const payload = await updateSqliteUserPersonaMessages({
                 filePath: chatPath,
                 requestBody: {
+                    operation_id: '55555555-5555-4555-8555-555555555555',
                     base_revision: 4,
                     save_session_id: '33333333-3333-4333-8333-333333333333',
                 },
@@ -1164,6 +2103,136 @@ describe('SQLite chat length handling', () => {
             expect(logicalChat[1].force_avatar).toBe('/thumbnail?type=persona&file=new.png');
             expect(logicalChat[2].name).toBe('Character');
             expect(logicalChat[3].name).toBe('New User');
+        } finally {
+            fs.rmSync(tempDir, { recursive: true, force: true });
+        }
+    });
+
+    it('rejects SQLite persona sync for unsupported split-tail storage without mutation', async () => {
+        const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'sqlite-chat-persona-unsupported-'));
+        const chatPath = path.join(tempDir, 'chat.jsonl');
+
+        try {
+            await writeLogicalChat(chatPath, makeHeader({ chat_revision: 4 }), makeMessages(3));
+            mutateSqliteHeader(chatPath, header => {
+                header.chat_storage = { mode: 'split-tail', head_count: 1 };
+            });
+
+            await expect(updateSqliteUserPersonaMessages({
+                filePath: chatPath,
+                requestBody: {
+                    operation_id: '12121212-1212-4212-8212-121212121212',
+                    base_revision: 4,
+                    save_session_id: '33333333-3333-4333-8333-333333333333',
+                },
+                userName: 'New User',
+                forceAvatar: '/new.png',
+                saveSessionId: '33333333-3333-4333-8333-333333333333',
+            })).rejects.toMatchObject({ status: 409, code: 'unsupported_split_tail' });
+
+            const rows = getSqliteRows(chatPath);
+            expect(rows[0]).toMatchObject({ chat_revision: 4, chat_storage: { mode: 'split-tail' } });
+            expect(rows[1]).toMatchObject({ name: 'User' });
+            const db = new Database(chatPath.replace('.jsonl', '.sqlite'), { readonly: true });
+            try {
+                expect(db.prepare('SELECT COUNT(*) FROM operation_receipts').pluck().get()).toBe(0);
+            } finally {
+                db.close();
+            }
+        } finally {
+            fs.rmSync(tempDir, { recursive: true, force: true });
+        }
+    });
+
+    it('replays visibility and persona receipts before stale revision validation', async () => {
+        const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'sqlite-chat-p1-replay-'));
+        try {
+            const visibilityPath = path.join(tempDir, 'visibility.jsonl');
+            await writeLogicalChat(visibilityPath, makeHeader({ chat_revision: 4 }), makeMessages(3));
+            const visibilityBody = {
+                operation_id: '66666666-6666-4666-8666-666666666666',
+                base_revision: 4,
+                save_session_id: '33333333-3333-4333-8333-333333333333',
+            };
+            const visibilityOptions = { filePath: visibilityPath, requestBody: visibilityBody, start: 0, end: 0, hide: true, saveSessionId: visibilityBody.save_session_id };
+            await expect(updateSqliteMessageVisibility(visibilityOptions)).resolves.toMatchObject({ status: 'applied', chat_revision: 5 });
+            await expect(updateSqliteMessageVisibility(visibilityOptions)).resolves.toMatchObject({ status: 'replayed', chat_revision: 5 });
+
+            const personaPath = path.join(tempDir, 'persona.jsonl');
+            await writeLogicalChat(personaPath, makeHeader({ chat_revision: 4 }), makeMessages(3));
+            const personaBody = {
+                operation_id: '77777777-7777-4777-8777-777777777777',
+                base_revision: 4,
+                save_session_id: '33333333-3333-4333-8333-333333333333',
+            };
+            const personaOptions = { filePath: personaPath, requestBody: personaBody, userName: 'New User', forceAvatar: '/new.png', saveSessionId: personaBody.save_session_id };
+            await expect(updateSqliteUserPersonaMessages(personaOptions)).resolves.toMatchObject({ status: 'applied', chat_revision: 5 });
+            await expect(updateSqliteUserPersonaMessages(personaOptions)).resolves.toMatchObject({ status: 'replayed', chat_revision: 5 });
+            mutateSqliteHeader(personaPath, header => {
+                header.chat_storage = { mode: 'split-tail', head_count: 1 };
+            });
+            await expect(updateSqliteUserPersonaMessages(personaOptions)).rejects.toMatchObject({ status: 409, code: 'unsupported_split_tail' });
+        } finally {
+            fs.rmSync(tempDir, { recursive: true, force: true });
+        }
+    });
+
+    it('rejects a group positional and wrapper UUID mismatch without mutation or receipt', async () => {
+        const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'sqlite-group-identity-mismatch-'));
+        const chatPath = path.join(tempDir, 'group.jsonl');
+        try {
+            const messages = makeMessages(2);
+            await writeLogicalChat(chatPath, makeHeader({ chat_revision: 4, is_group_chat_header: true }), messages);
+            const requestBody = {
+                id: 'group-chat',
+                operation_id: '88888888-8888-4888-8888-888888888888',
+                base_revision: 4,
+                save_session_id: '33333333-3333-4333-8333-333333333333',
+                message_uuid: messages[0].aikobots_message_uuid,
+                message_id: 1,
+                message: { ...messages[0], mes: 'must not persist' },
+            };
+            await expect(updateGroupChatMessageRow({ filePath: chatPath, requestBody, saveSessionId: requestBody.save_session_id }))
+                .rejects.toMatchObject({ status: 409, error: 'message_identity_mismatch' });
+
+            const saved = await getLogicalChatData(chatPath);
+            expect(saved[0].chat_revision).toBe(4);
+            expect(saved[1].mes).toBe('message 0');
+            expect(saved[2].mes).toBe('message 1');
+            const db = new Database(chatPath.replace('.jsonl', '.sqlite'), { readonly: true });
+            expect(db.prepare('SELECT COUNT(*) FROM operation_receipts').pluck().get()).toBe(0);
+            db.close();
+        } finally {
+            fs.rmSync(tempDir, { recursive: true, force: true });
+        }
+    });
+
+    it('replays a group incremental receipt and rejects a distinct stale operation', async () => {
+        const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'sqlite-group-p1-replay-'));
+        const chatPath = path.join(tempDir, 'group.jsonl');
+        try {
+            const messages = makeMessages(2);
+            await writeLogicalChat(chatPath, makeHeader({ chat_revision: 4, is_group_chat_header: true }), messages);
+            const requestBody = {
+                id: 'group-chat',
+                operation_id: '99999999-9999-4999-8999-999999999999',
+                base_revision: 4,
+                save_session_id: '33333333-3333-4333-8333-333333333333',
+                message_uuid: messages[0].aikobots_message_uuid,
+                message_id: 0,
+                message: { ...messages[0], mes: 'updated once' },
+            };
+            const options = { filePath: chatPath, requestBody, saveSessionId: requestBody.save_session_id };
+            await expect(updateGroupChatMessageRow(options)).resolves.toMatchObject({ status: 'applied', chat_revision: 5 });
+            await expect(updateGroupChatMessageRow(options)).resolves.toMatchObject({ status: 'replayed', chat_revision: 5 });
+
+            await expect(updateGroupChatMessageRow({
+                ...options,
+                requestBody: { ...requestBody, operation_id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa' },
+            })).rejects.toMatchObject({ status: 409, error: 'stale_revision' });
+            const saved = await getLogicalChatData(chatPath);
+            expect(saved[0].chat_revision).toBe(5);
+            expect(saved[1].mes).toBe('updated once');
         } finally {
             fs.rmSync(tempDir, { recursive: true, force: true });
         }
@@ -1221,6 +2290,8 @@ describe('SQLite chat length handling', () => {
                     aikobots_swipe_uuid: '22222222-2222-4222-8222-222222222222',
                     extra: {
                         promptSnapshotKey: 'user|chat:test|1|0',
+                        branches: [{ id: 'swipe-only-branch' }],
+                        imported_vendor_field: 'swipe-value',
                         timedWorldInfoCheckpoint: {
                             version: 1,
                             messageId: 1,
@@ -1233,6 +2304,8 @@ describe('SQLite chat length handling', () => {
                 }],
                 extra: {
                     promptSnapshotKey: 'user|chat:test|1|0',
+                    bookmark_link: 'top-only-bookmark',
+                    imported_vendor_field: 'top-value',
                     timedWorldInfoCheckpoint: {
                         version: 1,
                         messageId: 1,
@@ -1283,10 +2356,50 @@ describe('SQLite chat length handling', () => {
             expect(clone.swipe_info[0].aikobots_swipe_uuid).not.toBe(messages[1].swipe_info[0].aikobots_swipe_uuid);
             expect(clone.extra.promptSnapshotKey).toBeUndefined();
             expect(clone.extra.timedWorldInfoCheckpoint).toBeUndefined();
+            expect(clone.extra.bookmark_link).toBe('top-only-bookmark');
+            expect(clone.extra.imported_vendor_field).toBe('top-value');
+            expect(clone.swipe_info[0].extra.branches).toEqual([{ id: 'swipe-only-branch' }]);
+            expect(clone.swipe_info[0].extra.imported_vendor_field).toBe('swipe-value');
             expect(shifted.extra.promptSnapshotKey).toBeUndefined();
             expect(shifted.extra.timedWorldInfoCheckpoint.messageId).toBe(3);
             expect(shifted.extra.timedWorldInfoCheckpoint.timedWorldInfo.sticky.b.start).toBe(3);
             expect(shifted.extra.timedWorldInfoCheckpoint.timedWorldInfo.sticky.b.end).toBe(4);
+        } finally {
+            fs.rmSync(tempDir, { recursive: true, force: true });
+        }
+    });
+
+    it('rolls back clone insertion when shifted-message repair fails', async () => {
+        const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'sqlite-chat-clone-rollback-'));
+        const chatPath = path.join(tempDir, 'chat.jsonl');
+        const sqlitePath = chatPath.replace('.jsonl', '.sqlite');
+
+        try {
+            const header = makeHeader({ chat_revision: 7 });
+            const messages = makeMessages(4);
+            await writeLogicalChat(chatPath, header, messages);
+
+            const corruptDb = new Database(sqlitePath);
+            corruptDb.prepare('UPDATE messages SET content = ? WHERE order_index = 3').run('{invalid json');
+            const countBefore = corruptDb.prepare('SELECT COUNT(*) FROM messages').pluck().get();
+            corruptDb.close();
+
+            await expect(cloneSqliteMessageAfter({
+                filePath: chatPath,
+                requestBody: {
+                    message_uuid: messages[0].aikobots_message_uuid,
+                    base_revision: 7,
+                    save_session_id: '33333333-3333-4333-8333-333333333333',
+                },
+                saveSessionId: '33333333-3333-4333-8333-333333333333',
+            })).rejects.toThrow();
+
+            const verifyDb = new Database(sqlitePath, { readonly: true });
+            const countAfter = verifyDb.prepare('SELECT COUNT(*) FROM messages').pluck().get();
+            const savedHeader = JSON.parse(verifyDb.prepare('SELECT content FROM messages WHERE order_index = 0').pluck().get());
+            verifyDb.close();
+            expect(countAfter).toBe(countBefore);
+            expect(savedHeader.chat_revision).toBe(7);
         } finally {
             fs.rmSync(tempDir, { recursive: true, force: true });
         }

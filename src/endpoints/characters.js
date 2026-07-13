@@ -57,6 +57,12 @@ import { countBotDryRunMessageTokens, countBotDryRunTextTokens, countBotDryRunTo
 import { assembleChatCompletionPrompt } from '../prompting/chat-completion-assembly.js';
 import { prepareServerPromptContext } from './backends/chat-completions.js';
 import { migrateFromJsonlRecords } from '../sqlite-manager.js';
+import {
+    backupSqliteDatabaseFile,
+    copyLegacyJsonlFile,
+    deleteChatStorageCompanions,
+    withChatSaveLocks,
+} from '../chat-storage.js';
 
 // With 100 MB limit it would take roughly 3000 characters to reach this limit
 const memoryCacheCapacity = getConfigValue('performance.memoryCacheCapacity', '100mb');
@@ -77,6 +83,91 @@ const TOKEN_DRY_RUN_ASSEMBLY_MODEL = 'gpt-4o';
 const CATALOG_CHARACTER_DIRECTORY = 'characters';
 const CATALOG_CHARACTER_EXTENSION = '.png';
 const CHAT_STORAGE_EXTENSIONS = new Set(['.jsonl', '.sqlite']);
+
+/** Stages consistent chat copies before publishing a renamed character. */
+async function migrateCharacterChatsForRename(oldChatsPath, newChatsPath, publishCharacter) {
+    const chatFiles = fs.existsSync(oldChatsPath)
+        ? getDeduplicatedChatHistoryFileNames(fs.readdirSync(oldChatsPath, { withFileTypes: true }))
+        : [];
+    const sourcePaths = chatFiles.map(fileName => path.join(oldChatsPath, fileName));
+    const targetPaths = chatFiles.map(fileName => path.join(newChatsPath, fileName));
+    const stagedTargets = [];
+    let published = false;
+
+    try {
+        await withChatSaveLocks([...sourcePaths, ...targetPaths], async () => {
+            try {
+                if (chatFiles.length > 0) {
+                    fs.mkdirSync(newChatsPath, { recursive: true });
+                }
+                for (let index = 0; index < sourcePaths.length; index++) {
+                    const sourcePath = sourcePaths[index];
+                    const targetPath = targetPaths[index];
+                    if (path.extname(sourcePath).toLowerCase() === '.sqlite') {
+                        await backupSqliteDatabaseFile(sourcePath, targetPath);
+                    } else {
+                        copyLegacyJsonlFile(sourcePath, targetPath);
+                    }
+                    stagedTargets.push(targetPath);
+                }
+
+                await publishCharacter();
+                published = true;
+
+                for (const sourcePath of sourcePaths) {
+                    try {
+                        deleteChatStorageCompanions(sourcePath);
+                    } catch (error) {
+                        console.warn('Renamed character chat source cleanup was incomplete:', sourcePath, error);
+                    }
+                }
+            } catch (error) {
+                if (!published) {
+                    for (const targetPath of stagedTargets) {
+                        deleteChatStorageCompanions(targetPath);
+                    }
+                }
+                throw error;
+            }
+        });
+    } catch (error) {
+        if (!published && fs.existsSync(newChatsPath)) {
+            try {
+                fs.rmdirSync(newChatsPath);
+            } catch {
+                // Preserve unexpected files rather than deleting them during rollback.
+            }
+        }
+        throw error;
+    }
+
+    if (fs.existsSync(oldChatsPath)) {
+        try {
+            fs.rmdirSync(oldChatsPath);
+        } catch (error) {
+            if (error?.code !== 'ENOTEMPTY' && error?.code !== 'ENOENT') {
+                throw error;
+            }
+        }
+    }
+}
+
+/** Deletes primary chat files and SQLite companions while holding every chat lock. */
+async function deleteCharacterChatsSafely(chatsPath) {
+    if (!fs.existsSync(chatsPath)) return;
+    const chatFiles = getDeduplicatedChatHistoryFileNames(fs.readdirSync(chatsPath, { withFileTypes: true }));
+    const chatPaths = chatFiles.map(fileName => path.join(chatsPath, fileName));
+    await withChatSaveLocks(chatPaths, async () => {
+        for (const chatPath of chatPaths) {
+            deleteChatStorageCompanions(chatPath);
+        }
+    });
+    try {
+        fs.rmdirSync(chatsPath);
+    } catch (error) {
+        if (error?.code !== 'ENOTEMPTY' && error?.code !== 'ENOENT') throw error;
+    }
+}
 
 function getDefaultContentRoot() {
     return path.resolve(String(globalThis.DEFAULT_CONTENT_ROOT || './default/content'));
@@ -1962,17 +2053,27 @@ router.post('/rename', validateAvatarUrlMiddleware, async function (request, res
         _.set(oldData, 'name', newName);
         const newData = JSON.stringify(oldData);
 
-        // Write data to new location
-        await writeCharacterData(oldAvatarPath, newData, newInternalName, request);
-
-        // Rename chats folder
-        if (fs.existsSync(oldChatsPath) && !fs.existsSync(newChatsPath)) {
-            fs.cpSync(oldChatsPath, newChatsPath, { recursive: true });
-            fs.rmSync(oldChatsPath, { recursive: true, force: true });
+        if (fs.existsSync(newChatsPath)) {
+            throw new Error('Target character chat directory already exists.');
         }
 
-        // Remove the old character file
-        fs.unlinkSync(oldAvatarPath);
+        let newCharacterWritten = false;
+        try {
+            await migrateCharacterChatsForRename(oldChatsPath, newChatsPath, async () => {
+                const wasWritten = await writeCharacterData(oldAvatarPath, newData, newInternalName, request);
+                if (!wasWritten) {
+                    throw new Error('Failed to write renamed character data.');
+                }
+                newCharacterWritten = true;
+                fs.unlinkSync(oldAvatarPath);
+            });
+        } catch (error) {
+            const newAvatarPath = resolveCharacterFilePath(request.user.directories, newAvatarName);
+            if (newCharacterWritten && fs.existsSync(oldAvatarPath) && fs.existsSync(newAvatarPath)) {
+                fs.unlinkSync(newAvatarPath);
+            }
+            throw error;
+        }
         moveAvatarFavorite(request.user.directories, { oldAvatar: oldAvatarName, newAvatar: newAvatarName });
 
         // Return new avatar name to ST
@@ -2407,13 +2508,13 @@ router.post('/delete', validateAvatarUrlMiddleware, async function (request, res
         const avatarPath = resolveCharacterFilePath(directories, avatarUrl);
         const avatarExists = fs.existsSync(avatarPath);
 
+        if (request.body.delete_chats == true) {
+            await deleteCharacterChatsSafely(resolveCharacterChatDirectory(directories, dir_name));
+        }
+
         if (avatarExists) {
             fs.unlinkSync(avatarPath);
             invalidateThumbnail(directories, 'avatar', avatarUrl);
-        }
-
-        if (request.body.delete_chats == true) {
-            await fs.promises.rm(resolveCharacterChatDirectory(directories, dir_name), { recursive: true, force: true });
         }
 
         return avatarExists;

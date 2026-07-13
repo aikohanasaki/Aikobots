@@ -10,6 +10,10 @@ import { migrateHiddenLorebookBindingReferences } from './hidden-lorebook-bindin
 import { compileAndWriteHiddenLorebookTemplates, migrateHiddenLorebookTemplateReferences } from './hidden-lorebook-templates.js';
 import { getUserDirectories } from './users.js';
 import { assertPathUnderParent, hasUnsafePathSegment } from './path-security.js';
+import { withDirectoryLock } from './file-system-lock.js';
+import { getDeduplicatedChatHistoryFileNames } from './chat-paths.js';
+import { replaceChatStorageExtension, withChatSaveLock } from './chat-storage.js';
+import { getChatHeader, loadDb } from './sqlite-manager.js';
 
 const SECURE_LOREBOOK_DIRECTORY = ['_secure', 'worlds'];
 const SHARED_SECURE_LOREBOOK_DIRECTORY = ['_secure', 'shared-worlds'];
@@ -19,6 +23,10 @@ const SHARED_SECURE_INDEX_FILENAME = 'index.json';
 const SECURE_INDEX_LOCK_SUFFIX = '.lock';
 const SECURE_INDEX_LOCK_STALE_MS = 60_000;
 let secureLorebookMutationQueue = Promise.resolve();
+const LOREBOOK_MUTATION_LOCK_RETRY_MS = 50;
+const LOREBOOK_MUTATION_LOCK_TIMEOUT_MS = 30_000;
+const LOREBOOK_MUTATION_LOCK_STALE_MS = 120_000;
+const LOREBOOK_MUTATION_LOCK_HEARTBEAT_MS = 10_000;
 
 export class LorebookRepositoryError extends Error {
     /**
@@ -37,7 +45,19 @@ export class LorebookRepositoryError extends Error {
 }
 
 function runWithSecureLorebookMutationLock(operation) {
-    const queuedOperation = secureLorebookMutationQueue.catch(() => { }).then(async () => await operation());
+    const queuedOperation = secureLorebookMutationQueue.catch(() => { }).then(async () => {
+        if (!globalThis.DATA_ROOT) {
+            throw new Error('DATA_ROOT must be defined before mutating lorebooks');
+        }
+        return await withDirectoryLock({
+            lockPath: path.join(globalThis.DATA_ROOT, '_locks', 'lorebooks.mutation.lock'),
+            retryMs: LOREBOOK_MUTATION_LOCK_RETRY_MS,
+            timeoutMs: LOREBOOK_MUTATION_LOCK_TIMEOUT_MS,
+            staleMs: LOREBOOK_MUTATION_LOCK_STALE_MS,
+            heartbeatMs: LOREBOOK_MUTATION_LOCK_HEARTBEAT_MS,
+            timeoutMessage: 'Timed out waiting for the lorebook mutation lock.',
+        }, operation);
+    });
     secureLorebookMutationQueue = queuedOperation.catch(() => { });
     return queuedOperation;
 }
@@ -992,13 +1012,34 @@ function doesLorebookReferenceMatch(reference, canonicalName) {
     return getCanonicalLorebookName(reference) === canonicalName;
 }
 
-function inspectLorebookReferenceState(name, userHandles = []) {
+function readFirstJsonlLine(filePath) {
+    const descriptor = fs.openSync(filePath, 'r');
+    const chunks = [];
+    const buffer = Buffer.allocUnsafe(64 * 1024);
+    try {
+        while (true) {
+            const bytesRead = fs.readSync(descriptor, buffer, 0, buffer.length, null);
+            if (bytesRead === 0) break;
+            const chunk = buffer.subarray(0, bytesRead);
+            const newlineIndex = chunk.indexOf(0x0A);
+            chunks.push(newlineIndex === -1 ? Buffer.from(chunk) : Buffer.from(chunk.subarray(0, newlineIndex)));
+            if (newlineIndex !== -1) break;
+        }
+    } finally {
+        fs.closeSync(descriptor);
+    }
+    return Buffer.concat(chunks).toString('utf8').replace(/\r$/, '');
+}
+
+async function inspectLorebookReferenceState(name, userHandles = []) {
     const canonicalName = assertCanonicalName(name);
     const normalizedUserHandles = [...new Set((Array.isArray(userHandles) ? userHandles : []).map(handle => String(handle || '').trim()).filter(Boolean))];
     const settingsReferences = [];
     const characterReferences = [];
     const settingsReadErrors = [];
     const characterReadErrors = [];
+    const chatReferences = [];
+    const chatReadErrors = [];
 
     for (const handle of normalizedUserHandles) {
         const directories = getUserDirectories(handle);
@@ -1089,18 +1130,53 @@ function inspectLorebookReferenceState(name, userHandles = []) {
         }
     }
 
+    for (const handle of normalizedUserHandles) {
+        const directories = getUserDirectories(handle);
+        const chatFiles = [
+            ...listChatFiles(directories.chats, { recursive: true }),
+            ...listChatFiles(directories.groupChats, { recursive: false }),
+        ];
+        for (const filePath of chatFiles) {
+            try {
+                let header;
+                if (path.extname(filePath).toLowerCase() === '.sqlite') {
+                    header = await withChatSaveLock(filePath, async () => {
+                        const db = await loadDb(filePath);
+                        try {
+                            return getChatHeader(db);
+                        } finally {
+                            db.close();
+                        }
+                    });
+                } else {
+                    const firstLine = readFirstJsonlLine(filePath);
+                    header = firstLine ? JSON.parse(firstLine) : null;
+                }
+                const metadata = header?.chat_metadata ? JSON.parse(JSON.stringify(header.chat_metadata)) : null;
+                if (migrateChatMetadataReferences(metadata, canonicalName, '')) {
+                    chatReferences.push({ handle, path: filePath, field: 'chat_metadata', matches: [canonicalName] });
+                }
+            } catch (error) {
+                chatReadErrors.push({ handle, path: filePath, message: String(error?.message || error) });
+            }
+        }
+    }
+
     return {
         settingsReferences,
         characterReferences,
+        chatReferences,
         settingsReadErrors,
         characterReadErrors,
+        chatReadErrors,
     };
 }
 
 function hasAnyLorebookReferences(state) {
     return Boolean(
         (Array.isArray(state?.settingsReferences) && state.settingsReferences.length > 0)
-        || (Array.isArray(state?.characterReferences) && state.characterReferences.length > 0),
+        || (Array.isArray(state?.characterReferences) && state.characterReferences.length > 0)
+        || (Array.isArray(state?.chatReferences) && state.chatReferences.length > 0),
     );
 }
 
@@ -1195,7 +1271,7 @@ function removeSecureDeleteMarker(name) {
     }
 }
 
-function removeAllLorebookArtifacts(name, userHandles = [], options = {}) {
+async function removeAllLorebookArtifacts(name, userHandles = [], options = {}) {
     const canonicalName = assertCanonicalName(name);
     const removeSecureBacking = options?.removeSecureBacking !== false;
     const referenceState = options?.referenceState && typeof options.referenceState === 'object' ? options.referenceState : null;
@@ -1206,7 +1282,7 @@ function removeAllLorebookArtifacts(name, userHandles = [], options = {}) {
         removeUserLorebookCopy(handle, canonicalName);
     }
 
-    const cleanupResult = cleanupLorebookReferences(canonicalName, referenceUserHandles, referenceState, options?.user || null);
+    const cleanupResult = await cleanupLorebookReferences(canonicalName, referenceUserHandles, referenceState, options?.user || null);
     if ((Array.isArray(cleanupResult?.settingsCleanupErrors) && cleanupResult.settingsCleanupErrors.length > 0)
         || (Array.isArray(cleanupResult?.characterCleanupErrors) && cleanupResult.characterCleanupErrors.length > 0)
         || (Array.isArray(cleanupResult?.chatCleanupErrors) && cleanupResult.chatCleanupErrors.length > 0)
@@ -1220,7 +1296,7 @@ function removeAllLorebookArtifacts(name, userHandles = [], options = {}) {
     }
 
     const postCleanupCopyState = inspectLorebookCopyState(canonicalName, userHandles);
-    const postCleanupReferenceState = inspectLorebookReferenceState(canonicalName, referenceUserHandles);
+    const postCleanupReferenceState = await inspectLorebookReferenceState(canonicalName, referenceUserHandles);
     if ((Array.isArray(postCleanupCopyState.userHandlesWithCopies) && postCleanupCopyState.userHandlesWithCopies.length > 0)
         || hasAnyLorebookReferences(postCleanupReferenceState)) {
         throw new LorebookRepositoryError(
@@ -1250,10 +1326,10 @@ function removeAllLorebookArtifacts(name, userHandles = [], options = {}) {
     };
 }
 
-function deleteResidualSecureLorebookArtifacts(user, name, userHandles = []) {
+async function deleteResidualSecureLorebookArtifacts(user, name, userHandles = []) {
     const canonicalName = assertCanonicalName(name);
     const beforeState = inspectLorebookCopyState(canonicalName, userHandles);
-    const beforeReferenceState = inspectLorebookReferenceState(canonicalName, userHandles);
+    const beforeReferenceState = await inspectLorebookReferenceState(canonicalName, userHandles);
     const deleteMarker = readSecureDeleteMarker(canonicalName);
 
     if (deleteMarker ? !canManageSecureLorebook(user, deleteMarker) : !Boolean(user?.profile?.admin)) {
@@ -1272,13 +1348,13 @@ function deleteResidualSecureLorebookArtifacts(user, name, userHandles = []) {
     }
 
     try {
-        const { deletedUserHandles, cleanupResult } = removeAllLorebookArtifacts(canonicalName, userHandles, {
+        const { deletedUserHandles, cleanupResult } = await removeAllLorebookArtifacts(canonicalName, userHandles, {
             removeSecureBacking: true,
             referenceState: beforeReferenceState,
             user,
         });
         const finalState = inspectLorebookCopyState(canonicalName, userHandles);
-        const finalReferenceState = inspectLorebookReferenceState(canonicalName, userHandles);
+        const finalReferenceState = await inspectLorebookReferenceState(canonicalName, userHandles);
         if (hasAnyLorebookCopies(finalState) || hasAnyLorebookReferences(finalReferenceState)) {
             throw new LorebookRepositoryError(
                 'LorebookStateRepairFailed',
@@ -1300,7 +1376,7 @@ function deleteResidualSecureLorebookArtifacts(user, name, userHandles = []) {
         };
     } catch (error) {
         const afterFailureState = inspectLorebookCopyState(canonicalName, userHandles);
-        const afterFailureReferenceState = inspectLorebookReferenceState(canonicalName, userHandles);
+        const afterFailureReferenceState = await inspectLorebookReferenceState(canonicalName, userHandles);
         if (!hasAnyLorebookCopies(afterFailureState) && !hasAnyLorebookReferences(afterFailureReferenceState)) {
             removeSecureDeleteMarker(canonicalName);
             return buildDeletedSecureLorebookResponse(canonicalName, user, beforeState.userHandlesWithCopies);
@@ -1374,6 +1450,17 @@ function migrateStmbStateReferences(state, oldCanonicalName, newCanonicalName = 
             delete state.manualLorebook;
         }
         changed = true;
+    }
+
+    if (state.manualCharacterLorebooks && typeof state.manualCharacterLorebooks === 'object' && !Array.isArray(state.manualCharacterLorebooks)) {
+        for (const [memberKey, value] of Object.entries(state.manualCharacterLorebooks)) {
+            const migrated = migrateLorebookReferenceScalar(value, oldCanonicalName, newCanonicalName);
+            if (!migrated.changed) continue;
+            if (migrated.value) state.manualCharacterLorebooks[memberKey] = migrated.value;
+            else delete state.manualCharacterLorebooks[memberKey];
+            changed = true;
+        }
+        if (Object.keys(state.manualCharacterLorebooks).length === 0) delete state.manualCharacterLorebooks;
     }
 
     if (state.sidePromptLorebookOverrides && typeof state.sidePromptLorebookOverrides === 'object' && !Array.isArray(state.sidePromptLorebookOverrides)) {
@@ -1585,7 +1672,7 @@ function migrateLorebookCharacterReferences(name, newName, userHandles = [], ref
     return { cleanedCharacterFiles, characterCleanupErrors: errors };
 }
 
-function listJsonlFiles(directory, { recursive = false } = {}) {
+function listChatFiles(directory, { recursive = false } = {}) {
     const files = [];
     if (!directory || !fs.existsSync(directory)) {
         return files;
@@ -1594,10 +1681,12 @@ function listJsonlFiles(directory, { recursive = false } = {}) {
     for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
         const entryPath = path.join(directory, entry.name);
         if (entry.isDirectory() && recursive) {
-            files.push(...listJsonlFiles(entryPath, { recursive }));
-        } else if (entry.isFile() && path.extname(entry.name).toLowerCase() === '.jsonl') {
-            files.push(entryPath);
+            files.push(...listChatFiles(entryPath, { recursive }));
         }
+    }
+
+    for (const fileName of getDeduplicatedChatHistoryFileNames(fs.readdirSync(directory, { withFileTypes: true }))) {
+        files.push(path.join(directory, fileName));
     }
 
     return files;
@@ -1624,7 +1713,45 @@ function migrateChatJsonlHeaderReferences(filePath, handle, oldCanonicalName, ne
     return { changed: true, handle, path: filePath };
 }
 
-function migrateLorebookChatReferences(name, newName, userHandles = []) {
+/** Migrates lorebook references in one locked chat header without reading message rows. */
+export async function migrateChatHeaderReferences(filePath, handle, oldCanonicalName, newCanonicalName = '') {
+    if (path.extname(filePath).toLowerCase() !== '.sqlite') {
+        return migrateChatJsonlHeaderReferences(filePath, handle, oldCanonicalName, newCanonicalName);
+    }
+
+    return await withChatSaveLock(filePath, async () => {
+        const sqlitePath = replaceChatStorageExtension(filePath, '.sqlite');
+        const db = await loadDb(sqlitePath);
+        try {
+            const header = getChatHeader(db);
+            if (!header || typeof header !== 'object' || Array.isArray(header)) {
+                return { changed: false };
+            }
+            const nextHeader = JSON.parse(JSON.stringify(header));
+            if (!migrateChatMetadataReferences(nextHeader.chat_metadata, oldCanonicalName, newCanonicalName)) {
+                return { changed: false };
+            }
+            delete nextHeader.id;
+            delete nextHeader.order_index;
+            nextHeader.chat_revision = Math.max(0, Number.isInteger(Number(nextHeader.chat_revision)) ? Number(nextHeader.chat_revision) : 0) + 1;
+            delete nextHeader.last_save_session_id;
+
+            db.run('BEGIN TRANSACTION');
+            try {
+                db.run('UPDATE messages SET content = ? WHERE order_index = 0', [JSON.stringify(nextHeader)]);
+                db.run('COMMIT');
+            } catch (error) {
+                db.run('ROLLBACK');
+                throw error;
+            }
+            return { changed: true, handle, path: sqlitePath };
+        } finally {
+            db.close();
+        }
+    });
+}
+
+async function migrateLorebookChatReferences(name, newName, userHandles = []) {
     const oldCanonicalName = assertCanonicalName(name);
     const newCanonicalName = newName ? assertCanonicalName(newName) : '';
     const normalizedUserHandles = normalizeReferenceUserHandles(userHandles);
@@ -1634,13 +1761,13 @@ function migrateLorebookChatReferences(name, newName, userHandles = []) {
     for (const handle of normalizedUserHandles) {
         const directories = getUserDirectories(handle);
         const chatFiles = [
-            ...listJsonlFiles(directories.chats, { recursive: true }),
-            ...listJsonlFiles(directories.groupChats, { recursive: false }),
+            ...listChatFiles(directories.chats, { recursive: true }),
+            ...listChatFiles(directories.groupChats, { recursive: false }),
         ];
 
         for (const filePath of chatFiles) {
             try {
-                const result = migrateChatJsonlHeaderReferences(filePath, handle, oldCanonicalName, newCanonicalName);
+                const result = await migrateChatHeaderReferences(filePath, handle, oldCanonicalName, newCanonicalName);
                 if (result.changed) {
                     cleanedChatFiles.push({ handle, path: filePath });
                 }
@@ -1715,7 +1842,7 @@ function migrateLorebookHiddenReferences(name, newName) {
     return { cleanedHiddenBindings, cleanedHiddenTemplates, hiddenCleanupErrors };
 }
 
-export function migrateLorebookGenerationReferences({ operation, oldName, newName = '', userHandles = [], user = null, referenceState = null } = {}) {
+export async function migrateLorebookGenerationReferences({ operation, oldName, newName = '', userHandles = [], user = null, referenceState = null } = {}) {
     if (operation !== 'rename' && operation !== 'delete') {
         throw new LorebookRepositoryError('LorebookInvalidReferenceMigration', 'Lorebook reference migration operation must be "rename" or "delete".', 400);
     }
@@ -1729,7 +1856,7 @@ export function migrateLorebookGenerationReferences({ operation, oldName, newNam
         newName: newCanonicalName,
         ...migrateLorebookSettingsReferences(oldCanonicalName, newCanonicalName, userHandles, referenceState),
         ...migrateLorebookCharacterReferences(oldCanonicalName, newCanonicalName, userHandles, referenceState),
-        ...migrateLorebookChatReferences(oldCanonicalName, newCanonicalName, userHandles),
+        ...await migrateLorebookChatReferences(oldCanonicalName, newCanonicalName, userHandles),
         ...migrateLorebookHiddenReferences(oldCanonicalName, newCanonicalName),
     };
 }
@@ -1743,8 +1870,8 @@ function getLorebookReferenceMigrationErrors(result) {
     ];
 }
 
-function cleanupLorebookReferences(name, userHandles = [], referenceState = null, user = null) {
-    return migrateLorebookGenerationReferences({
+async function cleanupLorebookReferences(name, userHandles = [], referenceState = null, user = null) {
+    return await migrateLorebookGenerationReferences({
         operation: 'delete',
         oldName: name,
         userHandles,
@@ -2063,12 +2190,12 @@ export function resolveLorebookWithMetadata(user, name, {
     throw new LorebookRepositoryError('LorebookNotFound', `Lorebook "${canonicalName}" not found.`, 404);
 }
 
-function deleteAllSecureLorebookCopies(user, record, userHandles = [], options = {}) {
+async function deleteAllSecureLorebookCopies(user, record, userHandles = [], options = {}) {
     const canonicalName = assertCanonicalName(record?.name);
     const isShared = record?.sharingMode === 'shared';
     const referenceUserHandles = Array.isArray(options?.referenceUserHandles) ? options.referenceUserHandles : userHandles;
     const beforeState = inspectLorebookCopyState(canonicalName, userHandles);
-    const beforeReferenceState = inspectLorebookReferenceState(canonicalName, referenceUserHandles);
+    const beforeReferenceState = await inspectLorebookReferenceState(canonicalName, referenceUserHandles);
 
     if (!canManageSecureLorebook(user, record)) {
         throw new LorebookRepositoryError('LorebookAccessDenied', `Lorebook "${canonicalName}" is not deletable.`, 403);
@@ -2081,7 +2208,7 @@ function deleteAllSecureLorebookCopies(user, record, userHandles = [], options =
         }
 
         writeSecureDeleteMarker(record);
-        cleanupArtifactResult = removeAllLorebookArtifacts(canonicalName, userHandles, {
+        cleanupArtifactResult = await removeAllLorebookArtifacts(canonicalName, userHandles, {
             removeSecureBacking: true,
             referenceState: beforeReferenceState,
             referenceUserHandles,
@@ -2089,7 +2216,7 @@ function deleteAllSecureLorebookCopies(user, record, userHandles = [], options =
         });
     } catch (error) {
         const afterFailureState = inspectLorebookCopyState(canonicalName, userHandles);
-        const afterFailureReferenceState = inspectLorebookReferenceState(canonicalName, referenceUserHandles);
+        const afterFailureReferenceState = await inspectLorebookReferenceState(canonicalName, referenceUserHandles);
         if (!hasAnyLorebookCopies(afterFailureState) && !hasAnyLorebookReferences(afterFailureReferenceState)) {
             removeSecureDeleteMarker(canonicalName);
             return buildDeletedSecureLorebookResponse(record, user, beforeState.userHandlesWithCopies);
@@ -2113,7 +2240,7 @@ function deleteAllSecureLorebookCopies(user, record, userHandles = [], options =
     }
 
     const finalState = inspectLorebookCopyState(canonicalName, userHandles);
-    const finalReferenceState = inspectLorebookReferenceState(canonicalName, referenceUserHandles);
+    const finalReferenceState = await inspectLorebookReferenceState(canonicalName, referenceUserHandles);
     if (hasAnyLorebookCopies(finalState) || hasAnyLorebookReferences(finalReferenceState)) {
         throw new LorebookRepositoryError(
             'LorebookStateRepairFailed',
@@ -2148,6 +2275,18 @@ export function getLorebookForManagement(user, name, allowDummy = false, storage
         preferUser: false,
         requireManageableSecure: true,
     });
+}
+
+/**
+ * Validates the shared-secure checkout state before a management transaction writes anything.
+ * Management reads already validate ownership and permissions.
+ * @param {import('./users.js').User} user
+ * @param {object} metadata Lorebook metadata returned by getLorebookForManagement.
+ */
+export function assertLorebookCheckoutForManagement(user, metadata) {
+    if (metadata?.storage === 'secure') {
+        assertSharedLorebookCheckedOutForEdit(user, metadata);
+    }
 }
 
 /**
@@ -2230,56 +2369,79 @@ export function hasLorebookForGeneration(user, name) {
  * @param {object} data
  * @param {'user'|'secure'} [storage='user'] Target storage location for the save
  */
-export async function saveLorebookForManagement(user, name, data, storage = 'user') {
-    return runWithSecureLorebookMutationLock(() => {
-        assertLorebookSaveNameAllowed(name);
-        const canonicalName = assertCanonicalName(name);
-        assertLorebookData(data, canonicalName);
-        const sanitizedData = sanitizeLorebookDataForStorage(data);
-        const secureRecord = getSecureIndexEntry(canonicalName);
-        const sharedSecureRecord = getSharedSecureIndexEntry(canonicalName);
-        const preferredStorage = storage === 'secure' ? 'secure' : 'user';
+function saveLorebookForManagementUnlocked(user, name, data, storage = 'user') {
+    assertLorebookSaveNameAllowed(name);
+    const canonicalName = assertCanonicalName(name);
+    assertLorebookData(data, canonicalName);
+    const sanitizedData = sanitizeLorebookDataForStorage(data);
+    const secureRecord = getSecureIndexEntry(canonicalName);
+    const sharedSecureRecord = getSharedSecureIndexEntry(canonicalName);
+    const preferredStorage = storage === 'secure' ? 'secure' : 'user';
 
-        if (preferredStorage === 'secure') {
-            if (sharedSecureRecord) {
-                if (!canManageSecureLorebook(user, sharedSecureRecord)) {
-                    throw new LorebookRepositoryError('LorebookNotFound', `Lorebook "${canonicalName}" not found.`, 404);
-                }
-
-                assertSharedLorebookCheckedOutForEdit(user, sharedSecureRecord);
-                writeSharedSecureLorebook(canonicalName, sanitizedData);
-                writeSharedSecureLorebookMetadata(canonicalName, sharedSecureRecord.ownerHandles, user.profile.handle, sharedSecureRecord);
-                const updatedRecord = getSharedSecureIndexEntry(canonicalName);
-                return buildLorebookMetadata(updatedRecord || sharedSecureRecord, user);
-            }
-
-            if (!secureRecord || !canManageSecureLorebook(user, secureRecord)) {
+    if (preferredStorage === 'secure') {
+        if (sharedSecureRecord) {
+            if (!canManageSecureLorebook(user, sharedSecureRecord)) {
                 throw new LorebookRepositoryError('LorebookNotFound', `Lorebook "${canonicalName}" not found.`, 404);
             }
 
-            writeUserLorebook(secureRecord.ownerHandle, canonicalName, sanitizedData);
-            writeSecureLorebookMetadata(canonicalName, secureRecord.ownerHandle, user.profile.handle, secureRecord);
-            return buildLorebookMetadata(getSecureIndexEntry(canonicalName) || secureRecord, user);
+            assertSharedLorebookCheckedOutForEdit(user, sharedSecureRecord);
+            writeSharedSecureLorebook(canonicalName, sanitizedData);
+            writeSharedSecureLorebookMetadata(canonicalName, sharedSecureRecord.ownerHandles, user.profile.handle, sharedSecureRecord);
+            const updatedRecord = getSharedSecureIndexEntry(canonicalName);
+            return buildLorebookMetadata(updatedRecord || sharedSecureRecord, user);
         }
 
-        assertUserLorebookNameAvailable(canonicalName);
-        writeUserLorebook(user.profile.handle, canonicalName, sanitizedData);
-        return {
-            name: canonicalName,
-            storage: 'user',
-            ownerHandle: user.profile.handle,
-            ownerHandles: [user.profile.handle].filter(Boolean),
-            sharingMode: 'single',
-            checkedOutBy: null,
-            checkedOutAt: null,
-            checkoutState: 'available',
-            canCheckOut: false,
-            canCheckIn: false,
-            canForceCheckout: false,
-            canManageOwners: false,
-            shadowingSecure: false,
-        };
-    });
+        if (!secureRecord || !canManageSecureLorebook(user, secureRecord)) {
+            throw new LorebookRepositoryError('LorebookNotFound', `Lorebook "${canonicalName}" not found.`, 404);
+        }
+
+        writeUserLorebook(secureRecord.ownerHandle, canonicalName, sanitizedData);
+        writeSecureLorebookMetadata(canonicalName, secureRecord.ownerHandle, user.profile.handle, secureRecord);
+        return buildLorebookMetadata(getSecureIndexEntry(canonicalName) || secureRecord, user);
+    }
+
+    assertUserLorebookNameAvailable(canonicalName);
+    writeUserLorebook(user.profile.handle, canonicalName, sanitizedData);
+    return {
+        name: canonicalName,
+        storage: 'user',
+        ownerHandle: user.profile.handle,
+        ownerHandles: [user.profile.handle].filter(Boolean),
+        sharingMode: 'single',
+        checkedOutBy: null,
+        checkedOutAt: null,
+        checkoutState: 'available',
+        canCheckOut: false,
+        canCheckIn: false,
+        canForceCheckout: false,
+        canManageOwners: false,
+        shadowingSecure: false,
+    };
+}
+
+/**
+ * Saves a manageable lorebook while holding the shared mutation lock.
+ * @param {import('./users.js').User} user
+ * @param {string} name
+ * @param {object} data
+ * @param {'user'|'secure'} [storage='user']
+ * @returns {Promise<object>}
+ */
+export async function saveLorebookForManagement(user, name, data, storage = 'user') {
+    return runWithSecureLorebookMutationLock(() => saveLorebookForManagementUnlocked(user, name, data, storage));
+}
+
+/**
+ * Runs a multi-lorebook management operation under the shared mutation lock.
+ * The callback must use the supplied save function to avoid reacquiring the lock.
+ * @param {(transaction: {save: typeof saveLorebookForManagementUnlocked}) => Promise<any>} operation
+ * @returns {Promise<any>}
+ */
+export async function withLorebookManagementTransaction(operation) {
+    if (typeof operation !== 'function') {
+        throw new TypeError('Lorebook management transaction callback is required.');
+    }
+    return runWithSecureLorebookMutationLock(() => operation({ save: saveLorebookForManagementUnlocked }));
 }
 
 /**
@@ -2289,7 +2451,7 @@ export async function saveLorebookForManagement(user, name, data, storage = 'use
  * @param {{storage?: 'user'|'secure'|null, referenceUserHandles?: string[]}} [options]
  */
 export async function renameLorebookForManagement(user, oldName, newName, options = {}) {
-    return runWithSecureLorebookMutationLock(() => {
+    return runWithSecureLorebookMutationLock(async () => {
         assertLorebookSaveNameAllowed(oldName);
         assertLorebookSaveNameAllowed(newName);
         const oldCanonicalName = assertCanonicalName(oldName);
@@ -2334,7 +2496,7 @@ export async function renameLorebookForManagement(user, oldName, newName, option
             });
         }
 
-        const referenceMigration = migrateLorebookGenerationReferences({
+        const referenceMigration = await migrateLorebookGenerationReferences({
             operation: 'rename',
             oldName: oldCanonicalName,
             newName: newCanonicalName,
@@ -2378,7 +2540,7 @@ export async function renameLorebookForManagement(user, oldName, newName, option
  * @param {string} name
  */
 export async function deleteLorebookForManagement(user, name, options = {}) {
-    return runWithSecureLorebookMutationLock(() => {
+    return runWithSecureLorebookMutationLock(async () => {
         const canonicalName = assertCanonicalName(name);
         const secureRecord = getSecureIndexEntry(canonicalName);
         const sharedSecureRecord = getSharedSecureIndexEntry(canonicalName);
@@ -2393,15 +2555,15 @@ export async function deleteLorebookForManagement(user, name, options = {}) {
             const secureTarget = sharedSecureRecord || secureRecord;
             if (!secureTarget) {
                 const residualCopyState = inspectLorebookCopyState(canonicalName, allUserHandles);
-                const residualReferenceState = inspectLorebookReferenceState(canonicalName, allUserHandles);
+                const residualReferenceState = await inspectLorebookReferenceState(canonicalName, allUserHandles);
                 if (hasAnyLorebookCopies(residualCopyState) || hasAnyLorebookReferences(residualReferenceState)) {
-                    return deleteResidualSecureLorebookArtifacts(user, canonicalName, allUserHandles);
+                    return await deleteResidualSecureLorebookArtifacts(user, canonicalName, allUserHandles);
                 }
 
                 throw new LorebookRepositoryError('LorebookNotFound', `Lorebook "${canonicalName}" not found.`, 404);
             }
 
-            return deleteAllSecureLorebookCopies(user, secureTarget, allUserHandles, { referenceUserHandles: secureReferenceUserHandles });
+            return await deleteAllSecureLorebookCopies(user, secureTarget, allUserHandles, { referenceUserHandles: secureReferenceUserHandles });
         }
 
         if (preferredStorage === 'user') {
@@ -2419,7 +2581,7 @@ export async function deleteLorebookForManagement(user, name, options = {}) {
                 throw new LorebookRepositoryError('LorebookDeleteFailed', `Failed to delete lorebook "${canonicalName}".`, 500);
             }
 
-            const referenceCleanup = migrateLorebookGenerationReferences({
+            const referenceCleanup = await migrateLorebookGenerationReferences({
                 operation: 'delete',
                 oldName: canonicalName,
                 userHandles: referenceUserHandles,
@@ -2435,11 +2597,11 @@ export async function deleteLorebookForManagement(user, name, options = {}) {
         }
 
         if (sharedSecureRecord) {
-            return deleteAllSecureLorebookCopies(user, sharedSecureRecord, allUserHandles, { referenceUserHandles: secureReferenceUserHandles });
+            return await deleteAllSecureLorebookCopies(user, sharedSecureRecord, allUserHandles, { referenceUserHandles: secureReferenceUserHandles });
         }
 
         if (secureRecord) {
-            return deleteAllSecureLorebookCopies(user, secureRecord, allUserHandles, { referenceUserHandles: secureReferenceUserHandles });
+            return await deleteAllSecureLorebookCopies(user, secureRecord, allUserHandles, { referenceUserHandles: secureReferenceUserHandles });
         }
 
         if (userRecord && !isSecureBackingLorebook) {
@@ -2453,7 +2615,7 @@ export async function deleteLorebookForManagement(user, name, options = {}) {
                 throw new LorebookRepositoryError('LorebookDeleteFailed', `Failed to delete lorebook "${canonicalName}".`, 500);
             }
 
-            const referenceCleanup = migrateLorebookGenerationReferences({
+            const referenceCleanup = await migrateLorebookGenerationReferences({
                 operation: 'delete',
                 oldName: canonicalName,
                 userHandles: referenceUserHandles,

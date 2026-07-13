@@ -99,12 +99,23 @@ export function buildMemoryPromptMessages(compiledScene, profile, worldInfo, stm
 }
 
 export function buildMemoryPromptText(compiledScene, profile, worldInfo, stmbSettings = {}, additionalContextEntries = []) {
-    const basePrompt = typeof profile?.promptText === 'string' && profile.promptText.trim()
+    const promptTarget = String(compiledScene?.metadata?.stmbPromptTarget || profile?.stmbPromptTarget || '').trim().toLowerCase();
+    let basePrompt = typeof profile?.promptText === 'string' && profile.promptText.trim()
         ? profile.promptText
         : getRequiredSummaryPromptText(profile?.preset, stmbSettings);
+    if (profile?.useGroupSpecificPrompts && promptTarget === 'group') {
+        basePrompt = typeof profile?.groupPromptText === 'string' && profile.groupPromptText.trim()
+            ? profile.groupPromptText
+            : getRequiredSummaryPromptText(profile?.groupPreset || 'group', stmbSettings);
+    } else if (profile?.useGroupSpecificPrompts && (promptTarget === 'character' || promptTarget === 'char')) {
+        basePrompt = typeof profile?.characterPromptText === 'string' && profile.characterPromptText.trim()
+            ? profile.characterPromptText
+            : getRequiredSummaryPromptText(profile?.characterPreset || 'char', stmbSettings);
+    }
     const presetPrompt = String(basePrompt || '')
-        .replace(/\{\{user\}\}/g, String(compiledScene?.metadata?.userName || 'User'))
-        .replace(/\{\{char\}\}/g, String(compiledScene?.metadata?.characterName || 'Character'));
+        .replace(/\{\{\s*user\s*\}\}/gi, String(compiledScene?.metadata?.userName || 'User'))
+        .replace(/\{\{\s*char\s*\}\}/gi, String(compiledScene?.metadata?.characterName || 'Character'))
+        .replace(/\{\{\s*group\s*\}\}/gi, String(compiledScene?.metadata?.groupName || compiledScene?.metadata?.characterName || 'Group'));
     const memoryCount = Number(stmbSettings?.moduleSettings?.defaultMemoryCount) || 0;
     const previousMemories = fetchPreviousMemories(worldInfo, memoryCount);
     const messageLines = Array.isArray(compiledScene?.messages)

@@ -10,6 +10,14 @@ const SUMMARY_PROMPT_DISPLAY_NAMES = Object.freeze({
         text: 'Summary - Detailed beat-by-beat summaries in narrative prose',
         key: 'STMemoryBooks_DisplayName_summary',
     },
+    group: {
+        text: 'Group - Shared group memory with clear attribution',
+        key: 'STMemoryBooks_DisplayName_group',
+    },
+    char: {
+        text: 'Character - Targeted character memory',
+        key: 'STMemoryBooks_DisplayName_char',
+    },
     summarize: {
         text: 'Summarize - Bullet-point format',
         key: 'STMemoryBooks_DisplayName_summarize',

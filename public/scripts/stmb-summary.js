@@ -728,6 +728,16 @@ export function buildBriefsFromEntries(entries) {
 
     for (const entry of entries || []) {
         if (!entry || typeof entry !== 'object') continue;
+        if (entry.__stmbGapMarker) {
+            briefs.push({
+                id: String(entry.id || `gap-${briefs.length + 1}`),
+                order: Number.isFinite(Number(entry.order)) ? Number(entry.order) : 0,
+                title: String(entry.title || 'Chronology gap').trim(),
+                content: String(entry.content || '').trim(),
+                gapMarker: true,
+            });
+            continue;
+        }
         briefs.push({
             id: String(entry.uid ?? ''),
             order: parseSequenceFromTitle(entry.comment ?? '') ?? 0,
@@ -798,7 +808,7 @@ export function buildSummaryAnalysisPrompt({
         const sequence = String(index + 1).padStart(3, '0');
         lines.push(`=== ${childTierLabel} ${sequence} ===`);
         lines.push(`Title: ${String(brief.title || '').trim()}`);
-        lines.push(`Contents: ${String(brief.content || '').trim()}`);
+        lines.push(`${brief.gapMarker ? 'Note' : 'Contents'}: ${String(brief.content || '').trim()}`);
         lines.push(`=== end ${childTierLabel} ${sequence} ===`);
         lines.push('');
     });
@@ -852,6 +862,7 @@ export function parseSummaryJsonResponse(response) {
 
 export function createSummaryCandidatesFromResponse(parsedResponse, sourceEntries, options = {}) {
     const briefs = buildBriefsFromEntries(sourceEntries);
+    const realBriefs = briefs.filter(brief => !brief.gapMarker);
     const idResolver = new Map();
     const summaries = Array.isArray(parsedResponse?.summaries) ? parsedResponse.summaries : [];
     const allowAmbiguousAssignments = Boolean(options?.allowAmbiguousAssignments);
@@ -868,6 +879,7 @@ export function createSummaryCandidatesFromResponse(parsedResponse, sourceEntrie
     }
 
     briefs.forEach((brief, index) => {
+        if (brief.gapMarker) return;
         const uid = String(brief.id);
         idResolver.set(uid, uid);
         const sequence = String(index + 1).padStart(3, '0');
@@ -887,13 +899,13 @@ export function createSummaryCandidatesFromResponse(parsedResponse, sourceEntrie
 
         return idResolver.get(String(sequence).padStart(3, '0')) || idResolver.get(String(sequence)) || null;
     };
-    const allBriefIds = briefs.map(brief => String(brief.id));
+    const allBriefIds = realBriefs.map(brief => String(brief.id));
     const unassignedIds = new Set();
     for (const item of parsedResponse.unassigned_items || []) {
         const resolved = resolveId(item.id);
         if (resolved) unassignedIds.add(resolved);
     }
-    const inferredMemberIds = summaries.length > 1 ? inferSummaryMemberIdsFromText(summaries, briefs) : [];
+    const inferredMemberIds = summaries.length > 1 ? inferSummaryMemberIdsFromText(summaries, realBriefs) : [];
 
     const summaryCandidates = [];
     for (let index = 0; index < summaries.length; index++) {
@@ -940,7 +952,7 @@ export function createSummaryCandidatesFromResponse(parsedResponse, sourceEntrie
 
     return {
         summaryCandidates,
-        leftovers: briefs.map(brief => String(brief.id)).filter(id => !summaryCandidates.some(candidate => candidate.memberIds.includes(id))),
+        leftovers: realBriefs.map(brief => String(brief.id)).filter(id => !summaryCandidates.some(candidate => candidate.memberIds.includes(id))),
     };
 }
 
@@ -958,7 +970,56 @@ export function fingerprintLorebookEntry(entry) {
         stmbSummary: Boolean(entry.stmbSummary),
         stmbSummaryTier: entry.stmbSummaryTier ?? null,
         type: entry.type ?? null,
+        characterFilter: entry.characterFilter ?? null,
+        group: entry.group ?? '',
+        STMB_inclusionGroup: entry.STMB_inclusionGroup ?? '',
+        STMB_canonical: entry.STMB_canonical ?? null,
+        STMB_canonicalLorebook: entry.STMB_canonicalLorebook ?? '',
+        STMB_canonicalEntryUid: entry.STMB_canonicalEntryUid ?? null,
+        STMB_canonicalMemoryNumber: entry.STMB_canonicalMemoryNumber ?? null,
     });
+}
+
+function normalizeSummaryCharacterFilterNames(value) {
+    const result = [];
+    const seen = new Set();
+    for (const item of Array.isArray(value) ? value : []) {
+        const name = String(item || '').trim();
+        if (!name || seen.has(name)) continue;
+        seen.add(name);
+        result.push(name);
+    }
+    return result;
+}
+
+function collectSummarySourceCharacterFilter(summaryCandidate, sourceEntries) {
+    if (Array.isArray(summaryCandidate?.characterFilterNames)) {
+        const names = normalizeSummaryCharacterFilterNames(summaryCandidate.characterFilterNames);
+        return names.length > 0 ? { isExclude: false, names, tags: [] } : null;
+    }
+
+    const sourceIds = new Set((summaryCandidate?.memberIds || []).map(String));
+    if (sourceIds.size === 0) return null;
+    const included = [];
+    const excluded = new Set();
+    const includedSet = new Set();
+    for (const entry of sourceEntries || []) {
+        if (!entry || entry.__stmbGapMarker || !sourceIds.has(String(entry.uid))) continue;
+        const names = normalizeSummaryCharacterFilterNames(entry.characterFilter?.names);
+        if (names.length === 0) return null;
+        if (entry.characterFilter?.isExclude) {
+            for (const name of names) excluded.add(name);
+        } else {
+            for (const name of names) {
+                if (!includedSet.has(name)) {
+                    includedSet.add(name);
+                    included.push(name);
+                }
+            }
+        }
+    }
+    const names = included.filter(name => !excluded.has(name));
+    return names.length > 0 ? { isExclude: false, names, tags: [] } : null;
 }
 
 export function verifySummarySourceFingerprints(lorebookData, expected, sourceIds = null) {
@@ -1021,8 +1082,9 @@ export function createManagedSummaryEntryData(summaryCandidate, {
     targetTier = 1,
     titleFormat = null,
     sequenceNumber = 1,
+    sourceEntries = [],
 } = {}) {
-    return {
+    const entry = {
         comment: formatSummaryTitle(targetTier, titleFormat, summaryCandidate.title, sequenceNumber),
         content: String(summaryCandidate.summary || '').trim(),
         key: normalizeKeywords(summaryCandidate.keywords),
@@ -1032,4 +1094,11 @@ export function createManagedSummaryEntryData(summaryCandidate, {
         type: getSummaryTypeKey(targetTier),
         disable: false,
     };
+    const characterFilter = collectSummarySourceCharacterFilter(summaryCandidate, sourceEntries);
+    if (characterFilter) entry.characterFilter = characterFilter;
+    if (summaryCandidate?.inclusionGroup) {
+        entry.group = String(summaryCandidate.inclusionGroup);
+        entry.STMB_inclusionGroup = String(summaryCandidate.inclusionGroup);
+    }
+    return entry;
 }

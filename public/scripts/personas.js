@@ -7,9 +7,7 @@ import {
     default_user_avatar,
     eventSource,
     event_types,
-    getChatSaveRevision,
     getCurrentChatId,
-    getChatSaveSessionId,
     refreshPristineFirstMessage,
     getRequestHeaders,
     getThumbnailUrl,
@@ -21,10 +19,10 @@ import {
     saveChatConditional,
     saveMetadata,
     saveSettingsDebounced,
-    setChatSaveRevision,
     setUserName,
     this_chid,
     warnStaleChatSave,
+    queueAcknowledgedChatRevisionRequest,
 } from '../script.js';
 import { persona_description_positions, power_user } from './power-user.js';
 import { getTokenCountAsync } from './tokenizers.js';
@@ -1764,29 +1762,22 @@ async function syncUserNameToPersona() {
         return;
     }
 
-    const response = await fetch('/api/chats/sync-user-persona', {
-        method: 'POST',
-        headers: getRequestHeaders(),
-        cache: 'no-cache',
-        body: JSON.stringify({
+    const operation = {
             file_name: character.chat,
             avatar_url: character.avatar,
             user_name: name1,
             persona_avatar: user_avatar,
             integrity: chat_metadata?.integrity,
-            base_revision: getChatSaveRevision(),
-            save_session_id: getChatSaveSessionId(),
-        }),
-    });
+    };
+    const { response, errorData } = await queueAcknowledgedChatRevisionRequest(({ baseRevision, operationId, saveSessionId }) => ({
+        url: '/api/chats/sync-user-persona',
+        method: 'POST',
+        headers: getRequestHeaders(),
+        operationType: 'persona_sync',
+        body: { ...operation, operation_id: operationId, base_revision: baseRevision, save_session_id: saveSessionId },
+    }));
 
     if (!response.ok) {
-        let errorData = null;
-        try {
-            errorData = await response.json();
-        } catch {
-            errorData = null;
-        }
-
         if (errorData?.error === 'stale_revision') {
             warnStaleChatSave(errorData);
         } else {
@@ -1795,8 +1786,6 @@ async function syncUserNameToPersona() {
         return;
     }
 
-    const data = await response.json();
-    setChatSaveRevision(data?.chat_revision);
     await reloadCurrentChat();
 }
 

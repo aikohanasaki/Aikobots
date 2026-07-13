@@ -10,6 +10,7 @@ import { getFileNameValidationFunction } from '../middleware/validateFileName.js
 import { createFavoritesState, flushFavoritesState, getGroupFavorite, setGroupFavorite } from '../favorites-repository.js';
 import { isChatPathValidationError, resolveGroupChatStoragePaths } from '../chat-paths.js';
 import { withDirectoryLock } from '../file-system-lock.js';
+import { deleteChatStorageCompanions, withChatSaveLock } from '../chat-storage.js';
 
 export const router = express.Router();
 
@@ -29,19 +30,6 @@ async function withGroupMetadataLock(groupPath, callback) {
         staleMs: GROUP_METADATA_LOCK_STALE_MS,
         heartbeatMs: GROUP_METADATA_LOCK_HEARTBEAT_MS,
         timeoutMessage: `Timed out waiting for group metadata lock: ${groupPath}`,
-    }, async lock => await lock.run(callback));
-}
-
-async function withGroupChatStorageLock(chatPaths, callback) {
-    const lockPath = `${chatPaths.sqlitePath}.lock`;
-
-    return await withDirectoryLock({
-        lockPath,
-        retryMs: GROUP_METADATA_LOCK_RETRY_MS,
-        timeoutMs: GROUP_METADATA_LOCK_TIMEOUT_MS,
-        staleMs: GROUP_METADATA_LOCK_STALE_MS,
-        heartbeatMs: GROUP_METADATA_LOCK_HEARTBEAT_MS,
-        timeoutMessage: `Timed out waiting for group chat storage lock: ${chatPaths.sqlitePath}`,
     }, async lock => await lock.run(callback));
 }
 
@@ -243,15 +231,7 @@ router.post('/delete', getFileNameValidationFunction('id'), async (request, resp
                             throw error;
                         }
 
-                        await withGroupChatStorageLock(chatPaths, async () => {
-                            if (fs.existsSync(chatPaths.jsonlPath)) {
-                                fs.unlinkSync(chatPaths.jsonlPath);
-                            }
-
-                            if (fs.existsSync(chatPaths.sqlitePath)) {
-                                fs.unlinkSync(chatPaths.sqlitePath);
-                            }
-                        });
+                        await withChatSaveLock(chatPaths.sqlitePath, async () => deleteChatStorageCompanions(chatPaths.sqlitePath));
                     }
                 }
             } catch (error) {
