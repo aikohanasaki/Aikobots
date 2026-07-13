@@ -55,6 +55,20 @@ export async function runChatBasicCreateRenameScenario({ page, logger, captureAr
     await runLoggedStep({
         logger,
         testName,
+        stepName: 'ensure-smoke-character-exists',
+        featureTags,
+        selector: '#rm_button_characters,#character_import_file,#rm_print_characters_block',
+        expected: `${smokeCharacterName} exists or is imported from testing/selenium/zzzzzzTesterBillySmokilyDokily.png`,
+        action: async () => {
+            const smokeCharacterPath = page.resolveSmokeCharacterImportPath('zzzzzzTesterBillySmokilyDokily.png');
+            return page.ensureCharacterExistsOrImport(smokeCharacterName, smokeCharacterPath);
+        },
+        onError: error => captureArtifacts({ testName, stepName: 'ensure-smoke-character-exists', error }),
+    });
+
+    await runLoggedStep({
+        logger,
+        testName,
         stepName: 'go-to-smoke-character',
         featureTags,
         selector: '#send_textarea,#send_but,#rm_button_selected_ch h2',

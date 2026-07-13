@@ -1,3 +1,4 @@
+import fs from 'node:fs';
 import path from 'node:path';
 
 import { By, until } from 'selenium-webdriver';
@@ -192,6 +193,67 @@ export class ChatPage {
             const selectedName = await this.getSelectedCharacterName();
             return selectedName.toLowerCase().includes(normalized);
         }, this.config.timeouts.responseMs);
+    }
+
+    async openCharactersPanel() {
+        await this.clickElementById('rm_button_characters');
+        await this.driver.wait(async () => {
+            return this.driver.executeScript(`
+                const block = document.getElementById('rm_print_characters_block');
+                return block ? getComputedStyle(block).display !== 'none' : false;
+            `);
+        }, this.config.timeouts.stepMs);
+    }
+
+    async characterExistsByName(characterName) {
+        const normalized = String(characterName || '').trim().toLowerCase();
+        return this.driver.executeScript(`
+            const expected = arguments[0];
+            const names = Array.from(document.querySelectorAll('#rm_print_characters_block .character_select .ch_name'))
+                .map(el => (el.textContent || '').trim().toLowerCase())
+                .filter(Boolean);
+            return names.includes(expected);
+        `, normalized);
+    }
+
+    async ensureCharacterExistsOrImport(characterName, absoluteCharacterPath) {
+        await this.openCharactersPanel();
+
+        const existsBeforeImport = await this.characterExistsByName(characterName);
+        if (existsBeforeImport) {
+            return {
+                characterName,
+                imported: false,
+                importPath: absoluteCharacterPath,
+            };
+        }
+
+        const importInput = await this.driver.findElement(By.id('character_import_file'));
+        await importInput.sendKeys(absoluteCharacterPath);
+
+        await this.driver.wait(async () => {
+            return this.characterExistsByName(characterName);
+        }, this.config.timeouts.responseMs);
+
+        return {
+            characterName,
+            imported: true,
+            importPath: absoluteCharacterPath,
+        };
+    }
+
+    resolveSmokeCharacterImportPath(fileName) {
+        const testingPath = path.resolve(process.cwd(), 'testing', 'selenium', fileName);
+        if (fs.existsSync(testingPath)) {
+            return testingPath;
+        }
+
+        const testsPath = path.resolve(process.cwd(), 'tests', 'selenium', fileName);
+        if (fs.existsSync(testsPath)) {
+            return testsPath;
+        }
+
+        throw new Error(`Smoke character import file not found: ${testingPath} or ${testsPath}`);
     }
 
     async openManageChats() {
