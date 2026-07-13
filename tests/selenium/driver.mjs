@@ -12,6 +12,10 @@ function sanitizeSegment(value) {
 export async function createDriver({ headless, timeouts, downloadsDir, chromeBinaryPath, chromedriverPath }) {
     const options = new chrome.Options();
     options.addArguments('--window-size=1600,1200');
+    options.addArguments('--no-sandbox');
+    options.addArguments('--disable-dev-shm-usage');
+    options.addArguments('--disable-gpu');
+
     options.setUserPreferences({
         'download.default_directory': downloadsDir,
         'download.prompt_for_download': false,
