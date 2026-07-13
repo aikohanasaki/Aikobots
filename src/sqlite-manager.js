@@ -961,3 +961,24 @@ export function getMetadata(db, key) {
     }
     return result;
 }
+
+/**
+ * Reads Recent Chats activity inputs without creating or upgrading the database.
+ * @param {string} filePath SQLite chat path.
+ * @param {string} metadataKey Activity metadata key.
+ * @returns {{storedValue: string|null, lastMessage: object|null}}
+ */
+export function readChatActivityData(filePath, metadataKey) {
+    const db = new Database(path.resolve(filePath), { readonly: true, fileMustExist: true });
+    try {
+        db.pragma(`busy_timeout = ${SQLITE_BUSY_TIMEOUT_MS}`);
+        const storedValue = db.prepare('SELECT value FROM metadata WHERE key = ?').pluck().get(metadataKey) ?? null;
+        const content = db.prepare('SELECT content FROM messages WHERE order_index > 0 ORDER BY order_index DESC LIMIT 1').pluck().get();
+        return {
+            storedValue,
+            lastMessage: content ? JSON.parse(content) : null,
+        };
+    } finally {
+        db.close();
+    }
+}

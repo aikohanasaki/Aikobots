@@ -107,6 +107,16 @@ function getSqliteRows(chatPath) {
     }
 }
 
+function getSqliteMetadata(chatPath, key) {
+    const sqlitePath = String(chatPath).replace(/\.(?:jsonl|sqlite)$/i, '.sqlite');
+    const db = new Database(sqlitePath, { readonly: true });
+    try {
+        return db.prepare('SELECT value FROM metadata WHERE key = ?').pluck().get(key) ?? null;
+    } finally {
+        db.close();
+    }
+}
+
 function stripSqliteMessageUuids(chatPath) {
     const sqlitePath = String(chatPath).replace(/\.(?:jsonl|sqlite)$/i, '.sqlite');
     const db = new Database(sqlitePath);
@@ -846,6 +856,7 @@ describe('SQLite chat length handling', () => {
             expect(logicalChat).toHaveLength(7);
             expect(logicalChat[3].mes).toBe('edited historical text');
             expect(logicalChat.at(-1).mes).toBe('message 5');
+            expect(Number(getSqliteMetadata(chatPath, 'last_activity_at'))).toBeGreaterThan(0);
         } finally {
             fs.rmSync(tempDir, { recursive: true, force: true });
         }
@@ -2080,7 +2091,7 @@ describe('SQLite chat length handling', () => {
                 name: message.is_user ? 'Old User' : message.name,
                 force_avatar: message.is_user ? '/old-avatar.png' : message.force_avatar,
             }));
-            await writeLogicalChat(chatPath, makeHeader({ chat_revision: 4 }), messages);
+            await writeLogicalChat(chatPath, makeHeader({ chat_revision: 4 }), messages, { activityTimestamp: 123456789 });
 
             const payload = await updateSqliteUserPersonaMessages({
                 filePath: chatPath,
@@ -2103,6 +2114,7 @@ describe('SQLite chat length handling', () => {
             expect(logicalChat[1].force_avatar).toBe('/thumbnail?type=persona&file=new.png');
             expect(logicalChat[2].name).toBe('Character');
             expect(logicalChat[3].name).toBe('New User');
+            expect(getSqliteMetadata(chatPath, 'last_activity_at')).toBe('123456789');
         } finally {
             fs.rmSync(tempDir, { recursive: true, force: true });
         }

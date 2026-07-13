@@ -77,6 +77,7 @@ import {
     setMetadata,
     getOperationReceipt,
     recordOperationReceipt,
+    readChatActivityData,
 } from '../sqlite-manager.js';
 
 const isBackupEnabled = !!getConfigValue('backups.chat.enabled', true, 'boolean');
@@ -90,6 +91,7 @@ const CHAT_LAST_SAVE_SESSION_KEY = 'last_save_session_id';
 const CHAT_IDENTITY_REPAIR_ERROR = 'chat_repaired';
 const CHAT_IDENTITY_SCAN_METADATA_KEY = 'identity_scan_version';
 const CHAT_IDENTITY_SCAN_VERSION = '1';
+const CHAT_LAST_ACTIVITY_METADATA_KEY = 'last_activity_at';
 const GROUP_CHAT_HEADER_VERSION = 1;
 const CHAT_METADATA_STRIP_KEYS = ['timedWorldInfo', 'worldInfoSummary', 'worldInfoReport'];
 const CHAT_EXTRA_STRIP_KEYS = ['timedWorldInfo', 'worldInfoSummary', 'worldInfoReport'];
@@ -823,6 +825,23 @@ function hasValidChatPayload(chat) {
     return true;
 }
 
+/** Records a committed canonical-message activity timestamp in SQLite metadata. */
+function setChatLastActivity(db, timestamp = Date.now()) {
+    setMetadata(db, CHAT_LAST_ACTIVITY_METADATA_KEY, String(timestamp));
+}
+
+/** Reads canonical-message activity, falling back to the last persisted message for legacy chats. */
+function getChatLastActivity(filePath) {
+    const sqlitePath = replaceChatStorageExtension(filePath, '.sqlite');
+    const activityData = readChatActivityData(sqlitePath, CHAT_LAST_ACTIVITY_METADATA_KEY);
+    const storedTimestamp = normalizeChatTimestamp(activityData.storedValue, NaN);
+    if (Number.isFinite(storedTimestamp)) {
+        return storedTimestamp;
+    }
+
+    return normalizeChatTimestamp(activityData.lastMessage?.send_date, 0);
+}
+
 export function hasValidGroupChatPayload(chat) {
     if (!Array.isArray(chat)) {
         return false;
@@ -1540,6 +1559,7 @@ async function updateSqliteForcePushLoadedMessageRange({ filePath, requestBody, 
         requestBody,
         isPrivilegedOperation: true,
         allowExistingSqliteFullReplacement: true,
+        activityTimestamp: Date.now(),
         activeSwipeValidationMessages: rangeMessages,
         activeSwipeValidationStartId: submittedStartId,
     });
@@ -1744,12 +1764,13 @@ async function getGroupChatPayload(filePath) {
     return { header: null, messages: [], hasHeader: false };
 }
 
-async function writeGroupChat(filePath, messages, chatMetadata = {}, existingHeader = null) {
+async function writeGroupChat(filePath, messages, chatMetadata = {}, existingHeader = null, { activityTimestamp = null } = {}) {
     return await writeLogicalChat(filePath, buildGroupChatHeader(chatMetadata, existingHeader), messages, {
         allowExistingSqliteFullReplacement: true,
         routeName: 'internal',
         operationType: 'group_header_migration',
         isPrivilegedOperation: true,
+        activityTimestamp,
     });
 }
 
@@ -2048,6 +2069,7 @@ export async function writeLogicalChat(filePath, header, messages, {
     isPrivilegedOperation = false,
     activeSwipeValidationMessages = null,
     activeSwipeValidationStartId = 0,
+    activityTimestamp = null,
 } = {}) {
     if (startIndex !== undefined) {
         throw new Error('writeLogicalChat startIndex is no longer supported. Use messageStartId with zero-based logical message IDs.');
@@ -2111,6 +2133,9 @@ export async function writeLogicalChat(filePath, header, messages, {
             try {
                 setMessages(db, [baseHeader, ...sanitizedMessages]);
                 setMetadata(db, CHAT_IDENTITY_SCAN_METADATA_KEY, CHAT_IDENTITY_SCAN_VERSION);
+                if (Number.isFinite(activityTimestamp)) {
+                    setChatLastActivity(db, activityTimestamp);
+                }
                 recordSqliteOperationReceipt(db, requestBody, getChatRevision(baseHeader));
                 db.run('COMMIT');
             } catch (error) {
@@ -2167,6 +2192,9 @@ export async function writeLogicalChat(filePath, header, messages, {
                 }
                 for (const message of appendedMessages) {
                     appendLogicalMessage(db, message);
+                }
+                if (changedRows.length > 0 || appendedMessages.length > 0) {
+                    setChatLastActivity(db);
                 }
                 recordSqliteOperationReceipt(db, requestBody, getChatRevision(baseHeader));
                 db.run('COMMIT');
@@ -2438,6 +2466,7 @@ export async function updateSqliteMessageVisibility({ filePath, requestBody, sta
             for (const message of changedMessages) {
                 updateLogicalMessageRowById(db, message.id, sanitizeChatMessageForPersistence(message));
             }
+            setChatLastActivity(db);
             recordSqliteOperationReceipt(db, requestBody, revisionCheck.nextRevision, { operation_id: operationId, status: 'applied', changed: changedMessages.length });
             db.run('COMMIT');
         } catch (error) {
@@ -2984,12 +3013,16 @@ export async function updateSqliteMessageByUuid({ filePath, requestBody, saveSes
         }
 
         const updatedMessage = applyMessageUpdatePayload(row.message, requestBody);
+        const messageChanged = !_.isEqual(sanitizeChatMessageForPersistence(row.message), updatedMessage);
         const revisedHeader = setChatRevision(stripChatStorage(header), revisionCheck.nextRevision, saveSessionId);
 
         db.run('BEGIN TRANSACTION');
         try {
             updateSqliteHeaderRow(db, revisedHeader);
             updateLogicalMessageRowById(db, row.id, updatedMessage);
+            if (messageChanged) {
+                setChatLastActivity(db);
+            }
             recordSqliteOperationReceipt(db, requestBody, revisionCheck.nextRevision);
             db.run('COMMIT');
         } catch (error) {
@@ -3058,6 +3091,7 @@ export async function appendSqliteMessage({ filePath, requestBody, saveSessionId
         try {
             updateSqliteHeaderRow(db, revisedHeader);
             insertedMessageId = appendLogicalMessage(db, sanitizedMessage);
+            setChatLastActivity(db);
             recordSqliteOperationReceipt(db, requestBody, revisionCheck.nextRevision);
             db.run('COMMIT');
         } catch (error) {
@@ -3109,6 +3143,7 @@ export async function deleteSqliteMessageByUuid({ filePath, requestBody, saveSes
             stmt = db.prepare('DELETE FROM messages WHERE id = ?');
             stmt.run([row.id]);
             updateShiftedMessagesAfterDelete(db, row.logicalIndex);
+            setChatLastActivity(db);
             recordSqliteOperationReceipt(db, requestBody, revisionCheck.nextRevision);
             db.run('COMMIT');
         } catch (error) {
@@ -3157,6 +3192,7 @@ export async function truncateSqliteChatAfterUuid({ filePath, requestBody, saveS
         }
 
         const revisedHeader = setChatRevision(stripChatStorage(header), revisionCheck.nextRevision, saveSessionId);
+        const changesCanonicalMessages = truncateAll ? serverMessageCountBefore > 0 : row.logicalIndex < serverMessageCountBefore - 1;
         db.run('BEGIN TRANSACTION');
         try {
             updateSqliteHeaderRow(db, revisedHeader);
@@ -3164,6 +3200,9 @@ export async function truncateSqliteChatAfterUuid({ filePath, requestBody, saveS
                 deleteAllLogicalMessages(db);
             } else {
                 deleteLogicalMessagesAfter(db, row.logicalIndex);
+            }
+            if (changesCanonicalMessages) {
+                setChatLastActivity(db);
             }
             recordSqliteOperationReceipt(db, requestBody, revisionCheck.nextRevision);
             db.run('COMMIT');
@@ -3265,6 +3304,7 @@ export async function cloneSqliteMessageAfter({ filePath, requestBody, saveSessi
             }
 
             updateSqliteHeaderRow(db, revisedHeader);
+            setChatLastActivity(db);
             recordSqliteOperationReceipt(db, requestBody, revisionCheck.nextRevision);
             db.run('COMMIT');
         } catch (error) {
@@ -4488,6 +4528,7 @@ router.post('/message-visibility', validateAvatarUrlMiddleware, async function (
                 operationType: 'visibility_rewrite',
                 requestBody: request.body,
                 isPrivilegedOperation: true,
+                activityTimestamp: Date.now(),
             });
             getBackupFunction(request.user.profile.handle)(request.user.directories.backups, directoryName, writeResult.fullJsonl);
 
@@ -4761,6 +4802,7 @@ router.post('/save', validateAvatarUrlMiddleware, async function (request, respo
             const writeOptions = {
                 regenerateIdentities: request.body.regenerate_identities === true,
                 requestBody: request.body,
+                activityTimestamp: !existingSegments?.header && messages.length > 0 ? Date.now() : null,
             };
 
             const writeResult = await writeLogicalChat(filePath, header, messages, writeOptions);
@@ -4912,6 +4954,7 @@ router.post('/save-prefix', validateAvatarUrlMiddleware, async function (request
                 routeName: '/api/chats/save-prefix',
                 operationType: 'save_prefix',
                 requestBody: request.body,
+                activityTimestamp: Date.now(),
             });
             getBackupFunction(request.user.profile.handle)(request.user.directories.backups, dirName, writeResult.fullJsonl);
             return response.send({ ok: true });
@@ -5133,7 +5176,7 @@ router.post('/group/import', async function (request, response) {
                     throw new ChatMutationError(409, 'target_chat_exists');
                 }
 
-                await writeGroupChat(pathToNewFile, normalizedImportedChat.messages, normalizedImportedChat.header.chat_metadata || {}, normalizedImportedChat.header);
+                await writeGroupChat(pathToNewFile, normalizedImportedChat.messages, normalizedImportedChat.header.chat_metadata || {}, normalizedImportedChat.header, { activityTimestamp: Date.now() });
             });
             fs.unlinkSync(pathToUpload);
             return response.send({ res: chatname, fileNames: [`${chatname}.sqlite`] });
@@ -5160,7 +5203,7 @@ router.post('/group/import', async function (request, response) {
                 throw new ChatMutationError(409, 'target_chat_exists');
             }
 
-            await writeGroupChat(pathToNewFile, normalizedImportedChat.messages, normalizedImportedChat.header.chat_metadata || {}, normalizedImportedChat.header);
+            await writeGroupChat(pathToNewFile, normalizedImportedChat.messages, normalizedImportedChat.header.chat_metadata || {}, normalizedImportedChat.header, { activityTimestamp: Date.now() });
         });
         fs.unlinkSync(pathToUpload);
         return response.send({ res: chatname });
@@ -5256,6 +5299,7 @@ router.post('/import', validateAvatarUrlMiddleware, async function (request, res
                         operationType: 'import_json',
                         requestBody: request.body,
                         isPrivilegedOperation: true,
+                        activityTimestamp: Date.now(),
                     });
                 });
             };
@@ -5322,6 +5366,7 @@ router.post('/import', validateAvatarUrlMiddleware, async function (request, res
                     operationType: 'import_jsonl',
                     requestBody: request.body,
                     isPrivilegedOperation: true,
+                    activityTimestamp: Date.now(),
                 });
             });
             fs.unlinkSync(pathToUpload);
@@ -5357,6 +5402,7 @@ router.post('/import', validateAvatarUrlMiddleware, async function (request, res
                     operationType: 'import_sqlite',
                     requestBody: request.body,
                     isPrivilegedOperation: true,
+                    activityTimestamp: Date.now(),
                 });
             });
             fs.unlinkSync(pathToUpload);
@@ -5549,7 +5595,7 @@ router.post('/group/create-from-direct', validateAvatarUrlMiddleware, async (req
                 assertNewGroupChatTarget(request.user, id);
                 await request.activeSessionOperation?.assertAllowed();
                 const header = getNewGroupChatHeader(request.body.chat_metadata, getRequestSaveSessionId(request.body));
-                const writeResult = await writeLogicalChat(targetPath, header, messages);
+                const writeResult = await writeLogicalChat(targetPath, header, messages, { activityTimestamp: Date.now() });
                 if (writeResult.fullJsonl) {
                     getBackupFunction(request.user.profile.handle)(request.user.directories.backups, String(id), writeResult.fullJsonl);
                 }
@@ -5645,6 +5691,7 @@ router.post('/group/copy-prefix', async (request, response) => {
                     operationType: 'group_copy_prefix',
                     requestBody: request.body,
                     isPrivilegedOperation: allowExistingTarget,
+                    activityTimestamp: Date.now(),
                 });
                 if (writeResult.fullJsonl) {
                     getBackupFunction(request.user.profile.handle)(request.user.directories.backups, String(targetId), writeResult.fullJsonl);
@@ -6061,6 +6108,7 @@ router.post('/group/save', async (request, response) => {
             const writeOptions = {
                 regenerateIdentities: request.body.regenerate_identities === true,
                 requestBody: request.body,
+                activityTimestamp: !effectiveExistingPayload.header && chat_data.length > 0 ? Date.now() : null,
             };
 
             if (request.body.save_mode === 'tail') {
@@ -6400,7 +6448,7 @@ router.post('/orphaned', async function (request, response) {
 
 router.post('/recent', async function (request, response) {
     try {
-        /** @typedef {{pngFile?: string, groupId?: string, filePath: string, mtime: number}} ChatFile */
+        /** @typedef {{pngFile?: string, groupId?: string, filePath: string, activity?: number}} ChatFile */
         /** @type {ChatFile[]} */
         const allChatFiles = [];
         /** @type {import('../../public/scripts/welcome-screen.js').PinnedChat[]} */
@@ -6423,8 +6471,7 @@ router.post('/recent', async function (request, response) {
 
                     for (const file of storageFiles) {
                         const filePath = path.join(pathToChats, file);
-                        const fileStats = getChatFileStats(filePath);
-                        allChatFiles.push({ pngFile, filePath, mtime: fileStats.latestMtimeMs });
+                        allChatFiles.push({ pngFile, filePath });
                     }
                 }
             }
@@ -6446,8 +6493,7 @@ router.post('/recent', async function (request, response) {
                             if (!fs.existsSync(replaceChatStorageExtension(filePath, '.sqlite'))) {
                                 continue;
                             }
-                            const fileStats = getChatFileStats(filePath);
-                            allChatFiles.push({ groupId: groupData.id, filePath, mtime: fileStats.latestMtimeMs });
+                            allChatFiles.push({ groupId: groupData.id, filePath });
                             }
                             }
                             } catch (error) {
@@ -6463,29 +6509,36 @@ router.post('/recent', async function (request, response) {
 
                             for (const file of chatFiles) {
                             const filePath = path.join(request.user.directories.chats, file);
-                            const fileStats = getChatFileStats(filePath);
-                            allChatFiles.push({ filePath, mtime: fileStats.latestMtimeMs });
+                            allChatFiles.push({ filePath });
                             }
                             };
 
                             await Promise.allSettled([getCharacterChatFiles(), getGroupChatFiles(), getRootChatFiles()]);
 
+                            for (const chatFile of allChatFiles) {
+                            try {
+                            chatFile.activity = getChatLastActivity(chatFile.filePath);
+                            } catch {
+                            chatFile.activity = 0;
+                            }
+                            }
+
                             const max = parseInt(request.body.max ?? Number.MAX_SAFE_INTEGER) + pinnedChats.length;
                             const isPinned = (/** @type {ChatFile} */ chatFile) => pinnedChats.some(p => path.parse(String(p.file_name || '')).name === path.parse(path.basename(chatFile.filePath)).name && (p.avatar === chatFile.pngFile || p.group === chatFile.groupId));
-                            const recentChats = allChatFiles.sort((a, b) => {
+                            const recentChats = allChatFiles.filter(chatFile => (chatFile.activity ?? 0) > 0).sort((a, b) => {
                             const isAPinned = isPinned(a);
                             const isBPinned = isPinned(b);
 
                             if (isAPinned && !isBPinned) return -1;
                             if (!isAPinned && isBPinned) return 1;
 
-                            return b.mtime - a.mtime;
+                            return (b.activity ?? 0) - (a.activity ?? 0);
                             }).slice(0, max);
                             const jsonFilesPromise = recentChats.map((file) => {
                                 const withMetadata = Boolean(request.body.metadata);
                                 return file.groupId
-                                    ? getChatInfo(file.filePath, { group: file.groupId }, true, withMetadata)
-                                    : getChatInfo(file.filePath, { avatar: file.pngFile }, false, withMetadata);
+                                    ? getChatInfo(file.filePath, { group: file.groupId, last_activity: file.activity ?? 0 }, true, withMetadata)
+                                    : getChatInfo(file.filePath, { avatar: file.pngFile, last_activity: file.activity ?? 0 }, false, withMetadata);
                             });
 
                             const chatDataResults = await Promise.allSettled(jsonFilesPromise);

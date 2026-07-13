@@ -689,6 +689,7 @@ async function refreshWelcomeScreen({ flashChat = null } = {}) {
  * @property {number} chat_items Number of items in the chat
  * @property {string} mes Last message content
  * @property {string} last_mes Timestamp of the last message
+ * @property {number} last_activity Timestamp of the last canonical message change
  * @property {string} avatar Avatar URL
  * @property {string} char_thumbnail Thumbnail URL
  * @property {string} char_name Character or group name
@@ -725,7 +726,7 @@ async function getRecentChats() {
         .sort((a, b) => {
             const isAPinned = PinnedChatsManager.isPinned(a.chat);
             const isBPinned = PinnedChatsManager.isPinned(b.chat);
-            const momentComparison = sortMoments(timestampToMoment(a.chat.last_mes), timestampToMoment(b.chat.last_mes));
+            const momentComparison = sortMoments(timestampToMoment(a.chat.last_activity), timestampToMoment(b.chat.last_activity));
 
             if (isAPinned && !isBPinned) {
                 return -1;
@@ -738,7 +739,7 @@ async function getRecentChats() {
         });
 
     dataWithEntities.forEach(({ chat, character, group }, index) => {
-        const chatTimestamp = timestampToMoment(chat.last_mes);
+        const chatTimestamp = timestampToMoment(chat.last_activity);
         chat.char_name = character?.name || group?.name || '';
         chat.date_short = chatTimestamp.format('l');
         chat.date_long = chatTimestamp.format('LL LT');
