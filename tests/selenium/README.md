@@ -7,9 +7,28 @@ This is the MVP Selenium harness focused on high-signal JSONL output for LLM/Cod
 Copy `.env.example` to `.env` and set:
 
 - `ST_BASE_URL` (default `http://127.0.0.1:8000`)
-- `TEST_HARNESS_ST_CONNECTION_PROFILE_NAME` (**required**; must match an existing profile in UI)
-- `TEST_HARNESS_CHROME_BINARY_PATH` (optional; set explicit Chrome/Chrome for Testing binary path)
-- `TEST_HARNESS_CHROMEDRIVER_PATH` (optional; set explicit chromedriver binary path, useful for Windows/macOS per-dev setup)
+- `TEST_HARNESS_ST_CONNECTION_PROFILE_NAME` (**required**; must match an
+existing profile in UI, a tester specific one is recommended for tracking
+spend/adjustments)
+- `TEST_HARNESS_CHROME_BINARY_PATH` (set explicit Chrome/Chrome for Testing binary path)
+- `TEST_HARNESS_CHROMEDRIVER_PATH` (set explicit chromedriver binary path, useful for Windows/macOS per-dev setup)
+
+## Windows vs Mac
+
+In windows the env file settings should NOT have ' or "  marks around values. 
+
+In powershell you may need  to run  the following command if it's onery about
+running scripts: 
+
+`Set-ExecutionPolicy -Scope CurrentUser -ExecutionPolicy RemoteSigned`
+
+You will usually only have to do that 1x per user.
+
+Your ST_PAGELOAD_TIMEOUT_MS  might need to be like 90000 because slower startup
+
+In mac, the env file settings should  have ' marks around the paths and the test
+harness profile name should be without spaces like zzzzTestHarness
+
 
 ## Commands
 
@@ -19,6 +38,7 @@ Copy `.env.example` to `.env` and set:
   - Response wait timeout is controlled by `ST_RESPONSE_TIMEOUT_MS` (default 90000)
 - `npm run test:selenium:mvp`
   - Runs the same smoke path plus additional non-smoke scenarios
+
 
 ## Smoke test flow
 
