@@ -3,6 +3,7 @@ import { describe, expect, it } from '@jest/globals';
 import {
     AIKOBOTS_SWIPE_UUID_KEY,
     compareActiveSwipeState,
+    repairPendingOverswipeState,
     validateMessageSwipeState,
 } from '../../public/scripts/chat-identities.js';
 
@@ -176,6 +177,36 @@ describe('compareActiveSwipeState', () => {
         const message = makeMessage();
         mutate(message);
         expectSingleCode(compareActiveSwipeState(message), 'fatalMismatches', code, path);
+    });
+
+    it('repairs only an exact one-past-the-end overswipe sentinel', () => {
+        const message = makeMessage();
+        message.swipe_id = message.swipes.length;
+
+        expect(repairPendingOverswipeState(message, { logicalChatIndex: 3 })).toEqual({
+            repaired: true,
+            swipeId: 1,
+            reason: '',
+        });
+        expect(message.swipe_id).toBe(1);
+        expect(validateMessageSwipeState(message).ok).toBe(true);
+    });
+
+    it('does not clamp unrelated or internally contradictory swipe states', () => {
+        const unrelated = makeMessage();
+        unrelated.swipe_id = unrelated.swipes.length + 1;
+        expect(repairPendingOverswipeState(unrelated).repaired).toBe(false);
+        expect(unrelated.swipe_id).toBe(3);
+
+        const contradictory = makeMessage();
+        contradictory.swipe_id = contradictory.swipes.length;
+        contradictory.mes = 'text that does not match the final materialized swipe';
+        expect(repairPendingOverswipeState(contradictory)).toMatchObject({
+            repaired: false,
+            swipeId: 2,
+            reason: 'active_swipe_text_mismatch',
+        });
+        expect(contradictory.swipe_id).toBe(2);
     });
 
     it('treats CRLF and LF active text as equivalent', () => {

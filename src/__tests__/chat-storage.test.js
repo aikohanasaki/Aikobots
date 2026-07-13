@@ -1101,6 +1101,61 @@ describe('SQLite chat length handling', () => {
         }
     });
 
+    it('repairs a persisted one-past-the-end overswipe sentinel on load', async () => {
+        const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'sqlite-chat-overswipe-repair-load-'));
+        const chatPath = path.join(tempDir, 'chat.jsonl');
+        const saveSessionId = '33333333-3333-4333-8333-333333333333';
+
+        try {
+            const message = makeMultiSwipeAssistant();
+            await writeLogicalChat(
+                chatPath,
+                makeHeader({ chat_revision: 7, last_save_session_id: saveSessionId }),
+                [message],
+            );
+            mutateSqliteMessage(chatPath, 0, storedMessage => {
+                storedMessage.swipe_id = storedMessage.swipes.length;
+            });
+
+            const repairedPayload = await buildChunkedChatPayload(chatPath, { displayCount: 10 });
+            const repairedMessage = getSqliteRows(chatPath)[1];
+            expect(repairedPayload.chat_repaired).toBe(true);
+            expect(repairedPayload.reload_required).toBe(true);
+            expect(repairedPayload.header.chat_revision).toBe(7);
+            expect(repairedMessage.swipe_id).toBe(1);
+            expect(validateMessageSwipeState(repairedMessage).ok).toBe(true);
+            expect(getSqliteMetadata(chatPath, 'swipe_state_scan_version')).toBe('1');
+
+            const stablePayload = await buildChunkedChatPayload(chatPath, { displayCount: 10 });
+            expect(stablePayload.chat_repaired).toBe(false);
+            expect(getSqliteRows(chatPath)[1].swipe_id).toBe(1);
+        } finally {
+            fs.rmSync(tempDir, { recursive: true, force: true });
+        }
+    });
+
+    it('does not repair a one-past-the-end swipe whose final materialized swipe is contradictory', async () => {
+        const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'sqlite-chat-overswipe-ambiguous-load-'));
+        const chatPath = path.join(tempDir, 'chat.jsonl');
+
+        try {
+            const message = makeMultiSwipeAssistant();
+            await writeLogicalChat(chatPath, makeHeader({ chat_revision: 7 }), [message]);
+            mutateSqliteMessage(chatPath, 0, storedMessage => {
+                storedMessage.swipe_id = storedMessage.swipes.length;
+                storedMessage.mes = 'contradictory text';
+            });
+
+            const payload = await buildChunkedChatPayload(chatPath, { displayCount: 10 });
+            const storedMessage = getSqliteRows(chatPath)[1];
+            expect(payload.chat_repaired).toBe(false);
+            expect(storedMessage.swipe_id).toBe(2);
+            expect(getSqliteMetadata(chatPath, 'swipe_state_scan_version')).toBe('1');
+        } finally {
+            fs.rmSync(tempDir, { recursive: true, force: true });
+        }
+    });
+
     it('returns chat_repaired before tail validation when a modern SQLite chat lacks message UUIDs', async () => {
         const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'sqlite-chat-identity-repair-append-'));
         const chatPath = path.join(tempDir, 'chat.jsonl');

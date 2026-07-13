@@ -135,6 +135,12 @@ Qualifying changes are message append, edit, reorder, delete, truncate, clone, p
 
 Chat rename, chat-header metadata, persona or participant-history synchronization, group membership/configuration, opening a chat, pin changes, export, backup, migration, repair, compaction, and other maintenance do not update this value. Failed, rolled-back, no-op, and idempotently replayed mutations do not update it.
 
+### Interrupted overswipe repair
+
+Generating a new swipe past the right edge uses an in-memory pending target that is separate from the canonical message `swipe_id`. The canonical index changes only after the new `swipes` and `swipe_info` slot has been materialized, so saves cannot persist a one-past-the-end generation sentinel.
+
+Modern SQLite chats receive a one-time `swipe_state_scan_version` maintenance scan on load. The scan repairs only the exact legacy overswipe shape where `swipe_id === swipes.length`, the swipe list is non-empty, and selecting the final materialized swipe makes the entire message pass active-swipe validation. Other out-of-bounds or contradictory states are left unchanged for explicit diagnosis. A successful repair preserves the chat revision and activity timestamp and requires the client to reload the repaired chat before writing.
+
 Chat-header metadata changes use a dedicated revision-checked SQLite mutation for direct and group chats. The mutation replaces the sanitized `chat_metadata` object atomically, records an operation receipt, and does not read, validate, or rewrite message rows. This allows metadata such as chat-bound lorebooks to persist for empty chats and independently of message-range state.
 
 Pinned and unpinned chats form separate display tiers; each tier sorts by `last_activity_at` descending. Legacy chats without the metadata value use their last persisted message timestamp without writing a migration value or consulting filesystem modification time. Chats with neither value are omitted until qualifying activity occurs.

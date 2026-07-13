@@ -17232,8 +17232,9 @@ export function callPopup(text, type, inputValue = '', { okButton, rows, wide, w
  * @param {object} [options] Options.
  * @param {ChatMessage} [options.message=undefined] Message to read swipe numbers from.
  * @param {JQuery<HTMLElement>} [options.messageElement=undefined] Rendered message element.
+ * @param {number} [options.displaySwipeId=undefined] Optional UI-only pending swipe index.
  */
-export async function updateSwipeCounter(mesId, { message = undefined, messageElement = undefined } = {}) {
+export async function updateSwipeCounter(mesId, { message = undefined, messageElement = undefined, displaySwipeId = undefined } = {}) {
     message ??= chat[mesId];
     messageElement ??= chatElement.children('.mes').filter(`[mesid="${mesId}"]`);
 
@@ -17245,7 +17246,11 @@ export async function updateSwipeCounter(mesId, { message = undefined, messageEl
         syncMesToSwipe(mesId);
     }
 
-    const swipeCounterText = formatSwipeCounter((message?.swipe_id + 1), message?.swipes?.length);
+    const counterSwipeId = Number.isInteger(displaySwipeId) ? displaySwipeId : message?.swipe_id;
+    const counterSwipeCount = Number.isInteger(displaySwipeId)
+        ? Math.max(message?.swipes?.length ?? 0, displaySwipeId + 1)
+        : message?.swipes?.length;
+    const swipeCounterText = formatSwipeCounter((counterSwipeId + 1), counterSwipeCount);
     const swipeCounter = messageElement.find('.swipes-counter');
     const swipePickerButton = messageElement.find('.mes_swipe_picker');
     const canOpenSwipePicker = canOpenSwipePickerForMessage(mesId);
@@ -17611,7 +17616,7 @@ async function drainChatSaveQueue() {
     try {
         while (chatSaveDirty) {
             const options = chatSaveRequestOptions;
-            if (hasPendingSwipeGenerationSlot()) {
+            if (hasActiveSwipeOperation()) {
                 chatSaveDeferredForSwipeGeneration = true;
                 return finalResult;
             }
@@ -17661,13 +17666,9 @@ function scheduleChatSaveAfterStreamingAppend() {
     }, CHAT_SAVE_STREAMING_APPEND_RETRY_MS);
 }
 
-/** Returns whether swipe generation is temporarily targeting the next uncreated slot. */
-function hasPendingSwipeGenerationSlot() {
-    return swipeState === SWIPE_STATE.SWIPING && chat.some(message => (
-        Array.isArray(message?.swipes)
-        && Number.isInteger(message.swipe_id)
-        && message.swipe_id === message.swipes.length
-    ));
+/** Returns whether a swipe operation is still navigating, generating, rolling back, or persisting. */
+function hasActiveSwipeOperation() {
+    return swipeState === SWIPE_STATE.SWIPING;
 }
 
 /** Returns whether persistence must wait for an in-progress chat mutation to settle. */
@@ -18565,6 +18566,11 @@ export async function swipe(event, direction, { source, repeated, message = chat
         }
 
         const clampedId = clamp(chat[mesId].swipe_id, 0, Math.max(0, chat[mesId].swipes.length - 1));
+        const pendingTargetUnmaterialized = Boolean(
+            swipeTarget
+            && Number.isInteger(swipeTarget.swipeId)
+            && chat[mesId].swipes.length <= swipeTarget.swipeId,
+        );
 
         await updateSwipeCounter(mesId);
         if (mesId !== chat.length - 1) {
@@ -18584,7 +18590,7 @@ export async function swipe(event, direction, { source, repeated, message = chat
             }
         }
 
-        if (chat[mesId]?.swipe_id !== clampedId || revert) {
+        if (chat[mesId]?.swipe_id !== clampedId || revert || pendingTargetUnmaterialized) {
             if (source !== SWIPE_SOURCE.BACK) {
                 source = SWIPE_SOURCE.BACK;
                 chat[mesId].swipe_id = clampedId;
@@ -18752,7 +18758,7 @@ export async function swipe(event, direction, { source, repeated, message = chat
         }
 
         if (runGenerate) {
-            await updateSwipeCounter(mesId);
+            await updateSwipeCounter(mesId, { displaySwipeId: swipeTarget?.swipeId });
             thisMesDiv.find('.mes_text').html('...');
             thisMesDiv.find('.mes_timer').html('');
             thisMesDiv.find('.tokenCounterDisplay').text('');
@@ -18843,21 +18849,18 @@ export async function swipe(event, direction, { source, repeated, message = chat
 
             if (newSwipeId >= chat[mesId].swipes.length) {
                 newSwipeId = chat[mesId].swipes.length;
-                chat[mesId].swipe_id = newSwipeId;
-                swipeTarget = {
-                    messageId: mesId,
-                    messageRef: chat[mesId],
-                    swipeId: newSwipeId,
-                    previousSwipeId: originalSwipeId,
-                };
-
                 const overswipe = getOverswipeBehavior(mesId);
 
                 if (overswipe === OVERSWIPE_BEHAVIOR.NONE) {
-                    chat[mesId].swipe_id = originalSwipeId;
                     await endSwipe();
                     return;
                 } else if (overswipe === OVERSWIPE_BEHAVIOR.REGENERATE) {
+                    swipeTarget = {
+                        messageId: mesId,
+                        messageRef: chat[mesId],
+                        swipeId: newSwipeId,
+                        previousSwipeId: originalSwipeId,
+                    };
                     clearMessageData(chat[mesId]);
                     await animateSwipe(true);
                     await endSwipe();

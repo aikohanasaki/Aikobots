@@ -52,6 +52,7 @@ import {
     compareActiveSwipeState,
     isValidAikobotsUuid,
     normalizeChatIdentities,
+    repairPendingOverswipeState,
     regenerateChatIdentities,
     stripAikobotsIdentityMetadata,
     validateMessageSwipeState,
@@ -92,6 +93,8 @@ const CHAT_LAST_SAVE_SESSION_KEY = 'last_save_session_id';
 const CHAT_IDENTITY_REPAIR_ERROR = 'chat_repaired';
 const CHAT_IDENTITY_SCAN_METADATA_KEY = 'identity_scan_version';
 const CHAT_IDENTITY_SCAN_VERSION = '1';
+const CHAT_SWIPE_STATE_SCAN_METADATA_KEY = 'swipe_state_scan_version';
+const CHAT_SWIPE_STATE_SCAN_VERSION = '1';
 const CHAT_LAST_ACTIVITY_METADATA_KEY = 'last_activity_at';
 const GROUP_CHAT_HEADER_VERSION = 1;
 const CHAT_METADATA_STRIP_KEYS = ['timedWorldInfo', 'worldInfoSummary', 'worldInfoReport'];
@@ -1020,13 +1023,14 @@ function getAikobotsMessageUuid(message) {
  * @param {object} db Native SQLite chat database adapter
  * @param {string} sqlitePath
  * @param {object|null} header
- * @returns {{repaired: boolean, changedMessages: number, missingMessages: number, duplicateMessages: number, missingSwipes: number, duplicateSwipes: number}}
+ * @returns {{repaired: boolean, changedMessages: number, changedMessageIndexes: number[], missingMessages: number, duplicateMessages: number, missingSwipes: number, duplicateSwipes: number}}
  */
-function repairSqliteChatMessageIdentities(db, sqlitePath, header = null) {
+function repairSqliteChatMessageIdentitiesOnly(db, sqlitePath, header = null) {
     if (!hasModernSaveMetadata(header)) {
         return {
             repaired: false,
             changedMessages: 0,
+            changedMessageIndexes: [],
             missingMessages: 0,
             duplicateMessages: 0,
             missingSwipes: 0,
@@ -1038,6 +1042,7 @@ function repairSqliteChatMessageIdentities(db, sqlitePath, header = null) {
         return {
             repaired: false,
             changedMessages: 0,
+            changedMessageIndexes: [],
             missingMessages: 0,
             duplicateMessages: 0,
             missingSwipes: 0,
@@ -1051,6 +1056,7 @@ function repairSqliteChatMessageIdentities(db, sqlitePath, header = null) {
         return {
             repaired: false,
             changedMessages: 0,
+            changedMessageIndexes: [],
             missingMessages: 0,
             duplicateMessages: 0,
             missingSwipes: 0,
@@ -1065,6 +1071,7 @@ function repairSqliteChatMessageIdentities(db, sqlitePath, header = null) {
         return {
             repaired: false,
             changedMessages: 0,
+            changedMessageIndexes: [],
             missingMessages: 0,
             duplicateMessages: 0,
             missingSwipes: 0,
@@ -1096,10 +1103,76 @@ function repairSqliteChatMessageIdentities(db, sqlitePath, header = null) {
     return {
         repaired: true,
         changedMessages: changedMessageIndexes.size,
+        changedMessageIndexes: [...changedMessageIndexes],
         missingMessages: identityResult.missingMessageIndexes.length,
         duplicateMessages: identityResult.duplicateMessageIndexes.length,
         missingSwipes: identityResult.missingSwipeRefs.length,
         duplicateSwipes: identityResult.duplicateSwipeRefs.length,
+    };
+}
+
+/**
+ * Repairs the exact one-past-the-end swipe sentinel persisted by interrupted legacy overswipes.
+ * Messages are updated individually and only after the existing active-swipe validator accepts
+ * the final materialized swipe as a complete, internally consistent state.
+ * @param {object} db Native SQLite chat database adapter.
+ * @param {string} sqlitePath SQLite chat path for diagnostics.
+ * @param {object|null} header Chat header.
+ * @returns {{repaired: boolean, changedMessages: number, changedMessageIndexes: number[], repairedSwipeStates: number}}
+ */
+function repairSqlitePendingOverswipeStates(db, sqlitePath, header = null) {
+    if (!hasModernSaveMetadata(header) || getMetadata(db, CHAT_SWIPE_STATE_SCAN_METADATA_KEY) === CHAT_SWIPE_STATE_SCAN_VERSION) {
+        return { repaired: false, changedMessages: 0, changedMessageIndexes: [], repairedSwipeStates: 0 };
+    }
+
+    const totalMessages = getMessageCount(db);
+    const messages = totalMessages > 0 ? getMessageRange(db, 0, totalMessages) : [];
+    const repairedIndexes = [];
+    for (let messageIndex = 0; messageIndex < messages.length; messageIndex++) {
+        const result = repairPendingOverswipeState(messages[messageIndex], { logicalChatIndex: messageIndex });
+        if (!result.repaired) {
+            continue;
+        }
+
+        updateMessages(db, [sanitizeChatMessageForPersistence(messages[messageIndex])], messageIndex + 1);
+        repairedIndexes.push(messageIndex);
+    }
+
+    setMetadata(db, CHAT_SWIPE_STATE_SCAN_METADATA_KEY, CHAT_SWIPE_STATE_SCAN_VERSION);
+    saveDb(db, sqlitePath);
+
+    if (repairedIndexes.length > 0) {
+        console.info('[SQLite] Repaired interrupted overswipe message state.', {
+            filePath: sqlitePath,
+            totalMessages,
+            changedMessages: repairedIndexes.length,
+            repairedSwipeStates: repairedIndexes.length,
+            messageIndexes: repairedIndexes,
+        });
+    }
+
+    return {
+        repaired: repairedIndexes.length > 0,
+        changedMessages: repairedIndexes.length,
+        changedMessageIndexes: repairedIndexes,
+        repairedSwipeStates: repairedIndexes.length,
+    };
+}
+
+/** Repairs known deterministic SQLite message identity and interrupted-overswipe states. */
+function repairSqliteChatMessageIdentities(db, sqlitePath, header = null) {
+    const identityRepair = repairSqliteChatMessageIdentitiesOnly(db, sqlitePath, header);
+    const swipeRepair = repairSqlitePendingOverswipeStates(db, sqlitePath, header);
+    const changedMessageIndexes = new Set([
+        ...identityRepair.changedMessageIndexes,
+        ...swipeRepair.changedMessageIndexes,
+    ]);
+    return {
+        ...identityRepair,
+        repaired: identityRepair.repaired || swipeRepair.repaired,
+        changedMessages: changedMessageIndexes.size,
+        changedMessageIndexes: [...changedMessageIndexes],
+        repairedSwipeStates: swipeRepair.repairedSwipeStates,
     };
 }
 

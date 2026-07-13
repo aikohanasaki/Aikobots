@@ -393,6 +393,37 @@ export function validateMessageSwipeState(message, {
     };
 }
 
+/**
+ * Repairs only the one-past-the-end swipe index left by an interrupted overswipe generation.
+ * The message is changed only when selecting the final materialized swipe makes the complete
+ * active-swipe state valid; unrelated malformed swipe states remain untouched for diagnosis.
+ * @param {object} message Chat message to inspect and optionally repair.
+ * @param {object} [options] Repair context.
+ * @param {number|null} [options.logicalChatIndex=null] Logical message index for greeting allowances and diagnostics.
+ * @returns {{repaired: boolean, swipeId: number|null, reason: string}}
+ */
+export function repairPendingOverswipeState(message, { logicalChatIndex = null } = {}) {
+    const swipeId = Number(message?.swipe_id);
+    const swipes = message?.swipes;
+    if (!Number.isInteger(swipeId) || !Array.isArray(swipes) || swipes.length === 0 || swipeId !== swipes.length) {
+        return { repaired: false, swipeId: Number.isInteger(swipeId) ? swipeId : null, reason: '' };
+    }
+
+    const repairedSwipeId = swipes.length - 1;
+    const candidate = { ...message, swipe_id: repairedSwipeId };
+    const validation = validateMessageSwipeState(candidate, {
+        allowMesMismatch: logicalChatIndex === 0,
+        allowMetadataMismatch: logicalChatIndex === 0,
+        logicalChatIndex,
+    });
+    if (!validation.ok) {
+        return { repaired: false, swipeId, reason: validation.reason };
+    }
+
+    message.swipe_id = repairedSwipeId;
+    return { repaired: true, swipeId: repairedSwipeId, reason: '' };
+}
+
 function ensureUniqueUuid(currentUuid, seenUuids, { generateUuid, repairDuplicates, regenerate }) {
     const isMissing = !isValidAikobotsUuid(currentUuid);
     const isDuplicate = Boolean(seenUuids?.has(currentUuid));
