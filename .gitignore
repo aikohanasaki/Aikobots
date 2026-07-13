@@ -14,7 +14,9 @@
 /public/css/user.css
 /public/error/
 /plugins/
-/tests/
+/tests/selenium/.env
+/tests/selenium/logs
+/tests/selenium/artifacts
 *.code-workspace
 *.jsonl
 .coderabbit.yaml
