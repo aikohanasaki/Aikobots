@@ -649,7 +649,7 @@ const saveUserInputDebounced = debounce(saveUserInput);
 
 const PULL_TO_REFRESH_THRESHOLD = 80;
 const PULL_TO_REFRESH_DIRECTION_TOLERANCE = 12;
-const PULL_TO_REFRESH_MAX_DURATION = 1500;
+const PULL_TO_REFRESH_TOP_TOLERANCE = 2;
 const PULL_TO_REFRESH_IGNORED_TARGETS = [
     'a',
     'button',
@@ -713,7 +713,7 @@ async function refreshPageFromPullGesture() {
 }
 
 /**
- * Adds a mobile pull-to-refresh gesture to the nested chat scroller.
+ * Adds pull-to-refresh to the nested chat scroller in touch browsers and standalone PWAs.
  */
 function initPullToRefresh() {
     const chat = document.getElementById('chat');
@@ -724,13 +724,16 @@ function initPullToRefresh() {
     let gesture = null;
     let refreshInProgress = false;
 
-    chat.addEventListener('touchstart', event => {
+    document.addEventListener('touchstart', event => {
         const target = event.target;
         const isIgnoredTarget = target instanceof Element
             && Boolean(target.closest(PULL_TO_REFRESH_IGNORED_TARGETS));
+        const isRefreshSurface = target instanceof Element
+            && Boolean(target.closest('#sheld'))
+            && !target.closest('#form_sheld');
 
-        if (!isMobile() || power_user.gestures === false || Popup.util.isPopupOpen()
-            || event.touches.length !== 1 || chat.scrollTop > 0 || isIgnoredTarget) {
+        if (Popup.util.isPopupOpen() || !isRefreshSurface
+            || event.touches.length !== 1 || chat.scrollTop > PULL_TO_REFRESH_TOP_TOLERANCE || isIgnoredTarget) {
             gesture = null;
             return;
         }
@@ -738,12 +741,11 @@ function initPullToRefresh() {
         gesture = {
             startX: event.touches[0].clientX,
             startY: event.touches[0].clientY,
-            startedAt: performance.now(),
-            distance: 0,
+            armed: false,
         };
-    }, { passive: true });
+    }, { passive: true, capture: true });
 
-    chat.addEventListener('touchmove', event => {
+    document.addEventListener('touchmove', event => {
         if (!gesture || event.touches.length !== 1) {
             gesture = null;
             return;
@@ -754,17 +756,21 @@ function initPullToRefresh() {
         const isHorizontal = Math.abs(deltaX) > PULL_TO_REFRESH_DIRECTION_TOLERANCE
             && Math.abs(deltaX) > Math.abs(deltaY);
 
-        if (chat.scrollTop > 0 || deltaY < -PULL_TO_REFRESH_DIRECTION_TOLERANCE || isHorizontal) {
+        if (chat.scrollTop > PULL_TO_REFRESH_TOP_TOLERANCE
+            || deltaY < -PULL_TO_REFRESH_DIRECTION_TOLERANCE || isHorizontal) {
             gesture = null;
             return;
         }
 
-        gesture.distance = deltaY;
-    }, { passive: true });
+        const wasArmed = gesture.armed;
+        gesture.armed = deltaY >= PULL_TO_REFRESH_THRESHOLD;
+        if (gesture.armed && !wasArmed) {
+            toastr.info('Release to refresh', '', { timeOut: 1200, preventDuplicates: true });
+        }
+    }, { passive: true, capture: true });
 
-    chat.addEventListener('touchend', () => {
-        const shouldRefresh = gesture?.distance >= PULL_TO_REFRESH_THRESHOLD
-            && performance.now() - gesture.startedAt <= PULL_TO_REFRESH_MAX_DURATION;
+    document.addEventListener('touchend', () => {
+        const shouldRefresh = gesture?.armed === true;
         gesture = null;
 
         if (!shouldRefresh || refreshInProgress) {
@@ -775,11 +781,11 @@ function initPullToRefresh() {
         void refreshPageFromPullGesture().finally(() => {
             refreshInProgress = false;
         });
-    }, { passive: true });
+    }, { passive: true, capture: true });
 
-    chat.addEventListener('touchcancel', () => {
+    document.addEventListener('touchcancel', () => {
         gesture = null;
-    }, { passive: true });
+    }, { passive: true, capture: true });
 }
 
 // Make the DIV element draggable:
