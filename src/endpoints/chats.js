@@ -71,6 +71,7 @@ import {
     insertLogicalMessageAfter,
     getLogicalMessageRow,
     getLogicalMessageRowByUuid,
+    swapLogicalMessageOrder,
     updateLogicalMessageRowById,
     deleteLogicalMessagesAfter,
     deleteAllLogicalMessages,
@@ -3207,6 +3208,81 @@ export async function updateSqliteMessageByUuid({ filePath, requestBody, saveSes
     }
 }
 
+/**
+ * Swaps two adjacent SQLite chat messages addressed by durable UUID.
+ * @param {{filePath: string, requestBody: object, saveSessionId?: string|null}} options
+ * @returns {Promise<object>} Revision acknowledgement and authoritative new positions.
+ */
+export async function moveSqliteMessagesAdjacent({ filePath, requestBody, saveSessionId }) {
+    const sqlitePath = replaceChatStorageExtension(filePath, '.sqlite');
+    if (!fs.existsSync(sqlitePath)) {
+        throw new ChatMutationError(409, 'message_move_requires_sqlite', 'Message move requires SQLite chat storage.');
+    }
+
+    const messageUuid = assertValidMessageUuid(requestBody?.message_uuid);
+    const targetMessageUuid = assertValidMessageUuid(requestBody?.target_message_uuid);
+    if (messageUuid === targetMessageUuid) {
+        throw new ChatMutationError(400, 'message_move_same_target');
+    }
+
+    const db = await loadDb(sqlitePath);
+    try {
+        const operationId = requireRequestOperationId(requestBody);
+        const repeatedReceipt = getRepeatedSqliteOperationReceipt(db, requestBody);
+        if (repeatedReceipt) {
+            return repeatedReceipt;
+        }
+        const header = getChatHeader(db);
+        if (!header) {
+            throw new ChatMutationError(404, 'chat_not_found');
+        }
+        assertSupportedChatStorage(header);
+        throwIfSqliteChatIdentityRepairNeeded(db, sqlitePath, header);
+
+        const revisionCheck = requireSqliteMutationRequest(requestBody, header);
+        const messageRow = getLogicalMessageRowByUuid(db, messageUuid);
+        const targetRow = getLogicalMessageRowByUuid(db, targetMessageUuid);
+        if (!messageRow || !targetRow) {
+            throw new ChatMutationError(404, 'message_not_found');
+        }
+        if (Math.abs(messageRow.logicalIndex - targetRow.logicalIndex) !== 1) {
+            throw new ChatMutationError(409, 'messages_not_adjacent');
+        }
+
+        const revisedHeader = setChatRevision(stripChatStorage(header), revisionCheck.nextRevision, saveSessionId);
+        const responseData = {
+            operation_id: operationId,
+            status: 'applied',
+            message_uuid: messageUuid,
+            target_message_uuid: targetMessageUuid,
+            message_id: targetRow.logicalIndex,
+            target_message_id: messageRow.logicalIndex,
+        };
+        db.run('BEGIN TRANSACTION');
+        try {
+            updateSqliteHeaderRow(db, revisedHeader);
+            swapLogicalMessageOrder(db, messageRow, targetRow);
+            setChatLastActivity(db);
+            recordSqliteOperationReceipt(db, requestBody, revisionCheck.nextRevision, responseData);
+            db.run('COMMIT');
+        } catch (error) {
+            db.run('ROLLBACK');
+            throw error;
+        }
+
+        saveDb(db, sqlitePath);
+        return {
+            result: 'ok',
+            ok: true,
+            storage_mode: 'sqlite',
+            chat_revision: revisionCheck.nextRevision,
+            ...responseData,
+        };
+    } finally {
+        db.close();
+    }
+}
+
 export async function appendSqliteMessage({ filePath, requestBody, saveSessionId, displayCount }) {
     const sqlitePath = replaceChatStorageExtension(filePath, '.sqlite');
     if (!fs.existsSync(sqlitePath)) {
@@ -4549,6 +4625,37 @@ router.post('/message/update', validateAvatarUrlMiddleware, async function (requ
         }
         console.error(error);
         return response.status(500).send({ error: 'message_update_failed' });
+    }
+});
+
+router.post('/message/move', validateAvatarUrlMiddleware, async function (request, response) {
+    try {
+        const filePath = resolveCharacterChatFilePath(request.user.directories.chats, request.body.avatar_url, request.body.file_name);
+        if (!fs.existsSync(replaceChatStorageExtension(filePath, '.sqlite'))) {
+            return response.status(404).send({ error: 'chat_not_found' });
+        }
+
+        return await withChatSaveLock(filePath, async () => {
+            await request.activeSessionOperation?.assertAllowed();
+            const payload = await moveSqliteMessagesAdjacent({
+                filePath,
+                requestBody: request.body,
+                saveSessionId: getRequestSaveSessionId(request.body),
+            });
+            return response.send(payload);
+        });
+    } catch (error) {
+        if (isActiveSessionError(error)) {
+            return sendActiveSessionRequired(response);
+        }
+        if (isChatPathValidationError(error)) {
+            return sendChatPathValidationError(response, error);
+        }
+        if (error instanceof ChatMutationError) {
+            return response.status(error.status || 400).send({ error: error.error, message: error.message, ...error.details });
+        }
+        console.error(error);
+        return response.status(500).send({ error: 'message_move_failed' });
     }
 });
 
@@ -6176,6 +6283,45 @@ router.post('/group/message/update', async (request, response) => {
         }
         console.error(error);
         return response.status(500).send({ error: 'message_update_failed' });
+    }
+});
+
+router.post('/group/message/move', async (request, response) => {
+    try {
+        if (!request.body || !request.body.id) {
+            return response.sendStatus(400);
+        }
+
+        const id = request.body.id;
+        const pathToFile = getGroupChatFilePath(request.user.directories.groupChats, id);
+        if (!fs.existsSync(replaceChatStorageExtension(pathToFile, '.sqlite'))) {
+            return response.status(404).send({ error: 'chat_not_found' });
+        }
+
+        return await withChatSaveLock(pathToFile, async () => {
+            await request.activeSessionOperation?.assertAllowed();
+            const payload = await moveSqliteMessagesAdjacent({
+                filePath: pathToFile,
+                requestBody: request.body,
+                saveSessionId: getRequestSaveSessionId(request.body),
+            });
+            return response.send(payload);
+        });
+    } catch (error) {
+        if (isActiveSessionError(error)) {
+            return sendActiveSessionRequired(response);
+        }
+        if (isUnsupportedSplitTailChatError(error)) {
+            return sendUnsupportedSplitTailChatError(response, error);
+        }
+        if (isChatPathValidationError(error)) {
+            return sendChatPathValidationError(response, error);
+        }
+        if (error instanceof ChatMutationError) {
+            return response.status(error.status || 400).send({ error: error.error, message: error.message, ...error.details });
+        }
+        console.error(error);
+        return response.status(500).send({ error: 'message_move_failed' });
     }
 });
 

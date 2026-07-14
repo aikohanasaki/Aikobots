@@ -930,7 +930,7 @@ The completed architecture uses SQLite as a database: stable identities, bounded
 
 ### Active-chat revision operations
 
-Chat-header metadata changes, visibility changes, persona synchronization, and group incremental message updates use the shared acknowledged client queue and SQLite operation receipts. Receipts are checked under the logical-chat lock before stale-revision validation, including for validated no-ops. Group incremental updates resolve the persisted wrapper by `aikobots_message_uuid`; a supplied positional message ID is compatibility metadata and must match the UUID-resolved row.
+Chat-header metadata changes, visibility changes, persona synchronization, adjacent message moves, and group incremental message updates use the shared acknowledged client queue and SQLite operation receipts. An adjacent move addresses both messages by UUID, verifies their persisted adjacency, and swaps only their ordering values in one transaction. Receipts are checked under the logical-chat lock before stale-revision validation, including for validated no-ops. Group incremental updates resolve the persisted wrapper by `aikobots_message_uuid`; a supplied positional message ID is compatibility metadata and must match the UUID-resolved row.
 
 ### Streamed response authority
 

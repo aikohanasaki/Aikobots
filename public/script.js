@@ -14008,6 +14008,15 @@ async function messageEditMove(sourceId, targetId) {
         return false;
     }
 
+    if (currentChatFileNameLooksSqlite()) {
+        const sourceMessageUuid = chat[sourceId]?.[AIKOBOTS_MESSAGE_UUID_KEY];
+        const targetMessageUuid = chat[targetId]?.[AIKOBOTS_MESSAGE_UUID_KEY];
+        const saveResult = await saveSqliteMessageMoveByUuid(sourceMessageUuid, targetMessageUuid);
+        if (saveResult !== CHAT_SAVE_RESULT.SAVED) {
+            return false;
+        }
+    }
+
     if (sourceId <= targetId) {
         sourceMessageDiv.insertAfter(targetMessageDiv);
     }
@@ -14034,7 +14043,9 @@ async function messageEditMove(sourceId, targetId) {
     await syncLatestPromptInspectorAfterMessageMove(sourceId, targetId);
     await maintainPromptSnapshotKeys({ rekeys });
     await recomputeTimedWorldInfo();
-    await saveChatConditional();
+    if (!currentChatFileNameLooksSqlite()) {
+        await saveChatConditional();
+    }
     return true;
 }
 
@@ -14270,6 +14281,7 @@ function getSqliteChatMutationEndpoint(operation) {
         metadata: '/api/chats/metadata',
         append: '/api/chats/message/append',
         update: '/api/chats/message/update',
+        move: '/api/chats/message/move',
         delete: '/api/chats/message/delete',
         truncate: '/api/chats/truncate-after',
         regeneratePrepare: '/api/chats/regenerate-prepare',
@@ -14278,12 +14290,29 @@ function getSqliteChatMutationEndpoint(operation) {
         metadata: '/api/chats/group/metadata',
         append: '/api/chats/group/message/append',
         update: '/api/chats/group/message/update',
+        move: '/api/chats/group/message/move',
         delete: '/api/chats/group/message/delete',
         truncate: '/api/chats/group/truncate-after',
         regeneratePrepare: '/api/chats/group/truncate-after',
     };
 
     return (selected_group ? groupEndpoints : directEndpoints)[operation] || '';
+}
+
+async function saveSqliteMessageMoveByUuid(messageUuid, targetMessageUuid) {
+    if (!messageUuid || !targetMessageUuid || messageUuid === targetMessageUuid) {
+        return CHAT_SAVE_RESULT.FAILED;
+    }
+
+    const pendingSaveResult = await flushDebouncedChatSave();
+    if (pendingSaveResult !== CHAT_SAVE_RESULT.SAVED) {
+        return CHAT_SAVE_RESULT.FAILED;
+    }
+
+    return saveSqliteChatMutation('move', {
+        message_uuid: messageUuid,
+        target_message_uuid: targetMessageUuid,
+    }, t`Message move failed.`);
 }
 
 async function saveSqliteChatMutation(operation, fields, defaultErrorMessage = t`Chat update failed.`, { retrySameSessionStale = true } = {}) {

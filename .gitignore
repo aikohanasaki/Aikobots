@@ -14,6 +14,7 @@
 /public/css/user.css
 /public/error/
 /plugins/
+/tests/node_modules/
 /tests/selenium/.env
 /tests/selenium/logs
 /tests/selenium/artifacts

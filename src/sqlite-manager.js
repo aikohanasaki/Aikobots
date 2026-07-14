@@ -673,6 +673,43 @@ export function getLogicalMessageRowByUuid(db, messageUuid) {
 }
 
 /**
+ * Atomically swaps the persisted order values of two logical message rows.
+ * The caller owns the surrounding transaction.
+ * @param {NativeDatabaseAdapter} db
+ * @param {{id: number, orderIndex: number}} firstRow
+ * @param {{id: number, orderIndex: number}} secondRow
+ */
+export function swapLogicalMessageOrder(db, firstRow, secondRow) {
+    const firstId = Number(firstRow?.id);
+    const secondId = Number(secondRow?.id);
+    const firstOrderIndex = Number(firstRow?.orderIndex);
+    const secondOrderIndex = Number(secondRow?.orderIndex);
+    if (!Number.isInteger(firstId) || firstId <= 0
+        || !Number.isInteger(secondId) || secondId <= 0
+        || firstId === secondId
+        || !Number.isFinite(firstOrderIndex) || firstOrderIndex <= 0
+        || !Number.isFinite(secondOrderIndex) || secondOrderIndex <= 0
+        || firstOrderIndex === secondOrderIndex) {
+        throw new Error('Invalid SQLite message rows for order swap.');
+    }
+
+    const stmt = db.prepare(`
+        UPDATE messages
+        SET order_index = CASE id
+            WHEN ? THEN ?
+            WHEN ? THEN ?
+            ELSE order_index
+        END
+        WHERE id IN (?, ?)
+    `);
+    try {
+        stmt.run([firstId, secondOrderIndex, secondId, firstOrderIndex, firstId, secondId]);
+    } finally {
+        stmt.free();
+    }
+}
+
+/**
  * Appends one logical message after the current SQLite tail.
  * @param {NativeDatabaseAdapter} db
  * @param {any} message

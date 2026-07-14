@@ -23,6 +23,7 @@ let hasValidGroupChatPayload;
 let insertLogicalMessageAfter;
 let loadDb;
 let migrateChatHeaderReferences;
+let moveSqliteMessagesAdjacent;
 let resolveSqliteLogicalChatReference;
 let truncateSqliteChatAfterUuid;
 let updateSqliteChatMetadata;
@@ -206,6 +207,7 @@ describe('SQLite chat length handling', () => {
         insertLogicalMessageAfter = sqliteModule.insertLogicalMessageAfter;
         loadDb = sqliteModule.loadDb;
         migrateChatHeaderReferences = lorebookModule.migrateChatHeaderReferences;
+        moveSqliteMessagesAdjacent = chatsModule.moveSqliteMessagesAdjacent;
         writeLogicalChat = chatsModule.writeLogicalChat;
     });
 
@@ -1454,6 +1456,95 @@ describe('SQLite chat length handling', () => {
             expect(shiftedMessage.extra.timedWorldInfoCheckpoint.messageId).toBe(1);
             expect(shiftedMessage.extra.timedWorldInfoCheckpoint.timedWorldInfo.sticky.entry.start).toBe(1);
             expect(shiftedMessage.extra.timedWorldInfoCheckpoint.timedWorldInfo.sticky.entry.end).toBe(2);
+        } finally {
+            fs.rmSync(tempDir, { recursive: true, force: true });
+        }
+    });
+
+    it('moves adjacent SQLite messages by UUID exactly once across a retried operation', async () => {
+        const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'sqlite-chat-uuid-move-'));
+        const chatPath = path.join(tempDir, 'chat.jsonl');
+
+        try {
+            const header = makeHeader({ chat_revision: 9 });
+            const messages = makeMessages(4);
+            await writeLogicalChat(chatPath, header, messages);
+            const requestBody = {
+                message_uuid: messages[1].aikobots_message_uuid,
+                target_message_uuid: messages[2].aikobots_message_uuid,
+                operation_id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+                base_revision: 9,
+                save_session_id: '33333333-3333-4333-8333-333333333333',
+            };
+
+            const first = await moveSqliteMessagesAdjacent({
+                filePath: chatPath,
+                requestBody,
+                saveSessionId: requestBody.save_session_id,
+            });
+            const retry = await moveSqliteMessagesAdjacent({
+                filePath: chatPath,
+                requestBody,
+                saveSessionId: requestBody.save_session_id,
+            });
+            const logicalChat = await getLogicalChatData(chatPath);
+
+            expect(first).toMatchObject({
+                chat_revision: 10,
+                message_id: 2,
+                target_message_id: 1,
+            });
+            expect(retry).toMatchObject({
+                chat_revision: 10,
+                duplicate_operation: true,
+            });
+            expect(logicalChat.map(message => message.mes)).toEqual([
+                undefined,
+                'message 0',
+                'message 2',
+                'message 1',
+                'message 3',
+            ]);
+            expect(logicalChat.slice(1).map(message => message.aikobots_message_uuid)).toEqual([
+                messages[0].aikobots_message_uuid,
+                messages[2].aikobots_message_uuid,
+                messages[1].aikobots_message_uuid,
+                messages[3].aikobots_message_uuid,
+            ]);
+        } finally {
+            fs.rmSync(tempDir, { recursive: true, force: true });
+        }
+    });
+
+    it('rejects a non-adjacent SQLite message move without changing order or revision', async () => {
+        const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'sqlite-chat-non-adjacent-move-'));
+        const chatPath = path.join(tempDir, 'chat.jsonl');
+
+        try {
+            const header = makeHeader({ chat_revision: 4 });
+            const messages = makeMessages(4);
+            await writeLogicalChat(chatPath, header, messages);
+
+            await expect(moveSqliteMessagesAdjacent({
+                filePath: chatPath,
+                requestBody: {
+                    message_uuid: messages[0].aikobots_message_uuid,
+                    target_message_uuid: messages[2].aikobots_message_uuid,
+                    operation_id: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
+                    base_revision: 4,
+                    save_session_id: '33333333-3333-4333-8333-333333333333',
+                },
+                saveSessionId: '33333333-3333-4333-8333-333333333333',
+            })).rejects.toMatchObject({ error: 'messages_not_adjacent' });
+
+            const logicalChat = await getLogicalChatData(chatPath);
+            expect(logicalChat[0].chat_revision).toBe(4);
+            expect(logicalChat.slice(1).map(message => message.mes)).toEqual([
+                'message 0',
+                'message 1',
+                'message 2',
+                'message 3',
+            ]);
         } finally {
             fs.rmSync(tempDir, { recursive: true, force: true });
         }
