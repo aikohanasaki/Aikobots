@@ -20,6 +20,7 @@ import {
     findFirstLorebookEntryByTitle,
     getActiveStmbProfile,
     readSidePromptCheckpoint,
+    resolveAfterMemorySidePromptSetKey,
     STMB_METADATA_KEY,
 } from './stmb-core.js';
 import { buildStmbSceneContext, captureStmbSceneRange, fetchStmbChatRangeInfo } from './stmb-scene.js';
@@ -116,8 +117,13 @@ function getSidePromptChatLorebookOverrides() {
         : {};
 }
 
-function getSelectedAfterMemorySetKey() {
-    return String(getStmbChatState()?.sidePromptAfterMemorySetKey || '').trim();
+function getSelectedAfterMemorySetKey(settings, sceneContext) {
+    const resolvedSceneContext = sceneContext || buildStmbSceneContext();
+    return resolveAfterMemorySidePromptSetKey(
+        getStmbChatState(),
+        settings?.moduleSettings,
+        Boolean(resolvedSceneContext?.isGroupChat),
+    );
 }
 
 function getChatContextSettingKey() {
@@ -664,7 +670,7 @@ export async function buildQueuedAfterMemorySidePromptJobs({
     sceneContext = null,
     contextSettingKey = getChatContextSettingKey(),
 }) {
-    const selectedSetKey = getSelectedAfterMemorySetKey();
+    const selectedSetKey = getSelectedAfterMemorySetKey(settings, sceneContext);
     let selectedSet = null;
     let runItems = [];
     if (selectedSetKey) {

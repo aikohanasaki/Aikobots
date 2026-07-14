@@ -5,6 +5,7 @@ import {
     createManagedLorebookEntryData,
     getStmbCharacterFilterName,
     normalizeStmbSettings,
+    resolveAfterMemorySidePromptSetKey,
 } from '../../public/scripts/stmb-core.js';
 import {
     buildBriefsFromEntries,
@@ -114,6 +115,30 @@ describe('STMB group settings migration', () => {
             characterPreset: 'custom-char',
         });
         expect(settings.moduleSettings.autoAcceptGroupParticipants).toBe(true);
+    });
+
+    it('normalizes separate solo and group side prompt set defaults', () => {
+        const settings = normalizeStmbSettings({
+            moduleSettings: {
+                defaultSoloSidePromptSetKey: ' solo-set ',
+                defaultGroupSidePromptSetKey: ' group-set ',
+            },
+        });
+
+        expect(settings.moduleSettings.defaultSoloSidePromptSetKey).toBe('solo-set');
+        expect(settings.moduleSettings.defaultGroupSidePromptSetKey).toBe('group-set');
+    });
+
+    it('resolves side prompt defaults without overriding explicit chat choices', () => {
+        const moduleSettings = {
+            defaultSoloSidePromptSetKey: 'solo-set',
+            defaultGroupSidePromptSetKey: 'group-set',
+        };
+
+        expect(resolveAfterMemorySidePromptSetKey({}, moduleSettings, false)).toBe('solo-set');
+        expect(resolveAfterMemorySidePromptSetKey({}, moduleSettings, true)).toBe('group-set');
+        expect(resolveAfterMemorySidePromptSetKey({ sidePromptAfterMemorySetKey: '' }, moduleSettings, true)).toBe('');
+        expect(resolveAfterMemorySidePromptSetKey({ sidePromptAfterMemorySetKey: ' legacy-set ' }, moduleSettings, false)).toBe('legacy-set');
     });
 });
 

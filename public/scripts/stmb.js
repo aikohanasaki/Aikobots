@@ -2095,7 +2095,17 @@ async function getSettingsPopupSceneData() {
     return data;
 }
 
-function buildSettingsPopupHtml(sceneData, currentUiConnection, regexOptions) {
+function buildDefaultSidePromptSetOptionsHtml(sets = [], selectedKey = '') {
+    const normalizedKey = String(selectedKey || '').trim();
+    const hasSelected = normalizedKey && sets.some(set => set.key === normalizedKey);
+    return [
+        `<option value="" ${!normalizedKey ? 'selected' : ''}>Use individually-enabled side prompts</option>`,
+        ...(hasSelected || !normalizedKey ? [] : [`<option value="${escapeHtml(normalizedKey)}" selected>Missing set: ${escapeHtml(normalizedKey)}</option>`]),
+        ...sets.map(set => `<option value="${escapeHtml(set.key)}" ${normalizedKey === set.key ? 'selected' : ''}>${escapeHtml(set.name)}</option>`),
+    ].join('');
+}
+
+function buildSettingsPopupHtml(sceneData, currentUiConnection, regexOptions, sidePromptSets = []) {
     const settings = stmbSettings;
     const moduleSettings = getModuleSettings();
     const selectedProfileIndex = Number.isFinite(Number(settings.defaultProfile)) ? Number(settings.defaultProfile) : 0;
@@ -2151,6 +2161,20 @@ function buildSettingsPopupHtml(sceneData, currentUiConnection, regexOptions) {
             <div class="world_entry_form_control">
                 <label for="stmb-settings-default-memory-count" title="Default number of previous memories to include as context when creating new memories.">Default Previous Memories Count</label>
                 <input type="number" id="stmb-settings-default-memory-count" class="text_pole" min="0" max="7" step="1" value="${escapeHtml(String(moduleSettings.defaultMemoryCount ?? 0))}" title="Default number of previous memories to include as context when creating new memories.">
+            </div>
+            <div class="world_entry_form_control">
+                <label for="stmb-settings-default-solo-sideprompt-set">Default Side Prompt Set for Solo Chats</label>
+                <select id="stmb-settings-default-solo-sideprompt-set" class="text_pole">
+                    ${buildDefaultSidePromptSetOptionsHtml(sidePromptSets, moduleSettings.defaultSoloSidePromptSetKey)}
+                </select>
+                <small class="opacity50p">Used for after-memory side prompts when a solo chat has no per-chat override.</small>
+            </div>
+            <div class="world_entry_form_control">
+                <label for="stmb-settings-default-group-sideprompt-set">Default Side Prompt Set for Group Chats</label>
+                <select id="stmb-settings-default-group-sideprompt-set" class="text_pole">
+                    ${buildDefaultSidePromptSetOptionsHtml(sidePromptSets, moduleSettings.defaultGroupSidePromptSetKey)}
+                </select>
+                <small class="opacity50p">Used for after-memory side prompts when a group chat has no per-chat override.</small>
             </div>
 
             <h3 class="stmb-section-title">Token Saving (Hide/Unhide Messages)</h3>
@@ -3607,12 +3631,21 @@ async function refreshSidePromptManagerList(dialog, selectedTemplateKey = null) 
 }
 
 function buildAfterMemorySetModeHtml(sets = []) {
+    const hasOverride = hasChatAfterMemorySetOverride();
     const selectedKey = getChatAfterMemorySetKey();
     const hasSelected = selectedKey && sets.some(set => set.key === selectedKey);
+    const defaultKey = String((selected_group
+        ? getModuleSettings().defaultGroupSidePromptSetKey
+        : getModuleSettings().defaultSoloSidePromptSetKey) || '').trim();
+    const defaultSet = sets.find(set => set.key === defaultKey);
+    const defaultLabel = defaultKey
+        ? (defaultSet?.name || `Missing set: ${defaultKey}`)
+        : 'individually-enabled side prompts';
     const options = [
-        `<option value="" ${!selectedKey ? 'selected' : ''}>Use individually-enabled side prompts</option>`,
-        ...(hasSelected || !selectedKey ? [] : [`<option value="${escapeHtml(selectedKey)}" selected>Missing set: ${escapeHtml(selectedKey)}</option>`]),
-        ...sets.map(set => `<option value="${escapeHtml(set.key)}" ${selectedKey === set.key ? 'selected' : ''}>${escapeHtml(set.name)}</option>`),
+        `<option value="inherit" ${!hasOverride ? 'selected' : ''}>Use ${selected_group ? 'group' : 'solo'} default (${escapeHtml(defaultLabel)})</option>`,
+        `<option value="individual" ${hasOverride && !selectedKey ? 'selected' : ''}>Use individually-enabled side prompts</option>`,
+        ...(hasSelected || !selectedKey ? [] : [`<option value="set:${escapeHtml(selectedKey)}" selected>Missing set: ${escapeHtml(selectedKey)}</option>`]),
+        ...sets.map(set => `<option value="set:${escapeHtml(set.key)}" ${hasOverride && selectedKey === set.key ? 'selected' : ''}>${escapeHtml(set.name)}</option>`),
     ].join('');
 
     return `
@@ -3621,7 +3654,7 @@ function buildAfterMemorySetModeHtml(sets = []) {
                 <h4>After-memory side prompt mode for this chat</h4>
                 <select id="stmb-sp-after-memory-set-mode" class="text_pole">${options}</select>
             </label>
-            <small class="opacity70p">Selecting a set replaces individually-enabled after-memory side prompts for this chat.</small>
+            <small class="opacity70p">A per-chat selection overrides the default configured in General Settings.</small>
         </div>
     `;
 }
@@ -3939,13 +3972,16 @@ function getChatAfterMemorySetKey() {
     return String(state.sidePromptAfterMemorySetKey || '').trim();
 }
 
-function setChatAfterMemorySetKey(setKey) {
+function hasChatAfterMemorySetOverride() {
+    return Object.hasOwn(getPersistedStmbState(), 'sidePromptAfterMemorySetKey');
+}
+
+function setChatAfterMemorySetKey(setKey, { inherit = false } = {}) {
     const state = getPersistedStmbState();
-    const normalized = String(setKey || '').trim();
-    if (normalized) {
-        state.sidePromptAfterMemorySetKey = normalized;
-    } else {
+    if (inherit) {
         delete state.sidePromptAfterMemorySetKey;
+    } else {
+        state.sidePromptAfterMemorySetKey = String(setKey || '').trim();
     }
     saveMetadataDebounced();
 }
@@ -4527,6 +4563,17 @@ async function showSidePromptManagerPopup({ onChange = null } = {}) {
                     if (getChatAfterMemorySetKey() === setKey) {
                         setChatAfterMemorySetKey('');
                     }
+                    let clearedDefault = false;
+                    for (const settingKey of ['defaultSoloSidePromptSetKey', 'defaultGroupSidePromptSetKey']) {
+                        if (String(stmbSettings.moduleSettings?.[settingKey] || '').trim() === setKey) {
+                            stmbSettings.moduleSettings[settingKey] = '';
+                            clearedDefault = true;
+                        }
+                    }
+                    if (clearedDefault) {
+                        stmbSettings = normalizeStmbSettings(stmbSettings);
+                        saveSettingsDebounced();
+                    }
                     await refreshSidePromptCache();
                     window.dispatchEvent(new CustomEvent('stmb-sideprompts-updated'));
                     toastr.success('Side prompt set deleted successfully', 'STMB');
@@ -4704,7 +4751,14 @@ async function showSidePromptManagerPopup({ onChange = null } = {}) {
             return;
         }
         if (target.id === 'stmb-sp-after-memory-set-mode') {
-            setChatAfterMemorySetKey(target.value || '');
+            const value = String(target.value || '');
+            if (value === 'inherit') {
+                setChatAfterMemorySetKey('', { inherit: true });
+            } else if (value === 'individual') {
+                setChatAfterMemorySetKey('');
+            } else if (value.startsWith('set:')) {
+                setChatAfterMemorySetKey(value.slice(4));
+            }
             toastr.success('After-memory side prompt mode saved for this chat.', 'STMB');
             await notifyChange();
         }
@@ -5323,10 +5377,18 @@ function selectSettingsPopupView(html, view = 'main') {
 async function showMainEntryPopup(view = 'main') {
     await firstRunInitArcPromptPresets(stmbSettings);
     await firstRunInitSummaryPromptPresets(stmbSettings);
+    let sidePromptSets = [];
+    if (view === 'general') {
+        try {
+            sidePromptSets = await listSets();
+        } catch (error) {
+            console.warn('STMB failed to load side prompt sets for General Settings', error);
+        }
+    }
     const sceneData = await getSettingsPopupSceneData();
     const currentUiConnection = await getCurrentUiConnectionInfo();
     const regexOptions = getSettingsRegexOptions();
-    const popup = new Popup(selectSettingsPopupView(buildSettingsPopupHtml(sceneData, currentUiConnection, regexOptions), view), POPUP_TYPE.TEXT, '', {
+    const popup = new Popup(selectSettingsPopupView(buildSettingsPopupHtml(sceneData, currentUiConnection, regexOptions, sidePromptSets), view), POPUP_TYPE.TEXT, '', {
         okButton: false,
         cancelButton: 'Close',
         wide: true,
@@ -5496,6 +5558,16 @@ async function showMainEntryPopup(view = 'main') {
         if (target.matches('#stmb-settings-default-memory-count')) {
             const value = Number(target.value);
             moduleSettings.defaultMemoryCount = normalizeMemoryContextCount(value);
+            persistSettings();
+            return;
+        }
+        if (target.matches('#stmb-settings-default-solo-sideprompt-set')) {
+            moduleSettings.defaultSoloSidePromptSetKey = String(target.value || '').trim();
+            persistSettings();
+            return;
+        }
+        if (target.matches('#stmb-settings-default-group-sideprompt-set')) {
+            moduleSettings.defaultGroupSidePromptSetKey = String(target.value || '').trim();
             persistSettings();
             return;
         }

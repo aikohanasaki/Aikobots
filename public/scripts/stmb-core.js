@@ -456,6 +456,8 @@ export function createDefaultStmbSettings() {
             topicalClipPromptTemplate: '',
             compactionProfileIndex: 0,
             sidePromptsMaxConcurrent: 1,
+            defaultSoloSidePromptSetKey: '',
+            defaultGroupSidePromptSetKey: '',
             useRegex: false,
             selectedRegexOutgoing: [],
             selectedRegexIncoming: [],
@@ -742,6 +744,12 @@ export function normalizeStmbSettings(rawSettings, legacySettings = null) {
     moduleSettings.sidePromptsMaxConcurrent = Number.isFinite(Number(moduleSettings.sidePromptsMaxConcurrent))
         ? Math.max(1, Math.min(5, Math.trunc(Number(moduleSettings.sidePromptsMaxConcurrent))))
         : defaults.moduleSettings.sidePromptsMaxConcurrent;
+    moduleSettings.defaultSoloSidePromptSetKey = typeof moduleSettings.defaultSoloSidePromptSetKey === 'string'
+        ? moduleSettings.defaultSoloSidePromptSetKey.trim()
+        : defaults.moduleSettings.defaultSoloSidePromptSetKey;
+    moduleSettings.defaultGroupSidePromptSetKey = typeof moduleSettings.defaultGroupSidePromptSetKey === 'string'
+        ? moduleSettings.defaultGroupSidePromptSetKey.trim()
+        : defaults.moduleSettings.defaultGroupSidePromptSetKey;
     moduleSettings.showFloatingClipButton = moduleSettings.showFloatingClipButton !== false;
     moduleSettings.memoryBoundaryMode = normalizeStmbMemoryBoundaryMode(moduleSettings.memoryBoundaryMode);
     moduleSettings.memoryBoundaryButtonPosition = normalizeStmbMemoryBoundaryButtonPosition(moduleSettings.memoryBoundaryButtonPosition);
@@ -823,6 +831,19 @@ export function normalizeStmbSettings(rawSettings, legacySettings = null) {
         defaultProfile,
         migrationVersion: Number.isFinite(Number(source.migrationVersion)) ? Number(source.migrationVersion) : defaults.migrationVersion,
     };
+}
+
+/** Resolves the chat override or chat-type default for after-memory side prompts. */
+export function resolveAfterMemorySidePromptSetKey(chatState = {}, moduleSettings = {}, isGroupChat = false) {
+    const state = chatState && typeof chatState === 'object' ? chatState : {};
+    if (Object.hasOwn(state, 'sidePromptAfterMemorySetKey')) {
+        return String(state.sidePromptAfterMemorySetKey || '').trim();
+    }
+
+    const defaultKey = isGroupChat
+        ? moduleSettings?.defaultGroupSidePromptSetKey
+        : moduleSettings?.defaultSoloSidePromptSetKey;
+    return String(defaultKey || '').trim();
 }
 
 export function getActiveStmbProfile(settings, profileIndex = null) {
