@@ -178,12 +178,6 @@
         flex-wrap: wrap;
     }
 
-    body {
-        touch-action: none;
-        overflow: hidden;
-        position: fixed;
-    }
-
     .world_entry_form_control {
         /* width: 100%; */
     }
