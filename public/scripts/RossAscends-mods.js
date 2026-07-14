@@ -20,6 +20,10 @@ import {
     sendTextareaMessage,
     doNavbarIconClick,
     isSwipingAllowed,
+    isGenerating,
+    hasActiveMessageEditSession,
+    flushDebouncedChatSave,
+    CHAT_SAVE_RESULT,
 } from '../script.js';
 
 import {
@@ -643,6 +647,141 @@ function saveUserInput() {
 }
 const saveUserInputDebounced = debounce(saveUserInput);
 
+const PULL_TO_REFRESH_THRESHOLD = 80;
+const PULL_TO_REFRESH_DIRECTION_TOLERANCE = 12;
+const PULL_TO_REFRESH_MAX_DURATION = 1500;
+const PULL_TO_REFRESH_IGNORED_TARGETS = [
+    'a',
+    'button',
+    'input',
+    'textarea',
+    'select',
+    '[role="button"]',
+    '[contenteditable="true"]',
+    '[data-swipe-ignore="true"]',
+    '.interactable',
+    '.menu_button',
+    '.mes_button',
+].join(', ');
+
+/**
+ * Returns whether reloading would discard composer content that cannot be restored.
+ * @returns {boolean} True when pull-to-refresh must be blocked.
+ */
+function hasUnrestorableComposerContent() {
+    const hasDraft = String($('#send_textarea').val()).length > 0;
+    const hasPendingFile = ['#file_form_input', '#embed_file_input']
+        .some(selector => document.querySelector(selector)?.files?.length > 0);
+
+    return hasPendingFile || (hasDraft && !power_user.restore_user_input);
+}
+
+/**
+ * Reloads after preserving restorable input and flushing queued chat mutations.
+ * @returns {Promise<void>}
+ */
+async function refreshPageFromPullGesture() {
+    if (Popup.util.isPopupOpen() || isGenerating() || hasActiveMessageEditSession()) {
+        toastr.warning('Finish the current operation before refreshing.');
+        return;
+    }
+
+    if (hasUnrestorableComposerContent()) {
+        toastr.warning('Send or clear the unsaved input or attachment before refreshing.');
+        return;
+    }
+
+    if (power_user.restore_user_input) {
+        saveUserInput();
+    }
+
+    toastr.info('Refreshing...');
+
+    try {
+        const saveResult = await flushDebouncedChatSave();
+        if (saveResult !== CHAT_SAVE_RESULT.SAVED) {
+            toastr.error('Could not safely refresh because pending chat changes were not saved.');
+            return;
+        }
+    } catch {
+        console.error('[Pull to refresh] Pending chat changes could not be saved.');
+        toastr.error('Could not safely refresh because pending chat changes were not saved.');
+        return;
+    }
+
+    location.reload();
+}
+
+/**
+ * Adds a mobile pull-to-refresh gesture to the nested chat scroller.
+ */
+function initPullToRefresh() {
+    const chat = document.getElementById('chat');
+    if (!chat) {
+        return;
+    }
+
+    let gesture = null;
+    let refreshInProgress = false;
+
+    chat.addEventListener('touchstart', event => {
+        const target = event.target;
+        const isIgnoredTarget = target instanceof Element
+            && Boolean(target.closest(PULL_TO_REFRESH_IGNORED_TARGETS));
+
+        if (!isMobile() || power_user.gestures === false || Popup.util.isPopupOpen()
+            || event.touches.length !== 1 || chat.scrollTop > 0 || isIgnoredTarget) {
+            gesture = null;
+            return;
+        }
+
+        gesture = {
+            startX: event.touches[0].clientX,
+            startY: event.touches[0].clientY,
+            startedAt: performance.now(),
+            distance: 0,
+        };
+    }, { passive: true });
+
+    chat.addEventListener('touchmove', event => {
+        if (!gesture || event.touches.length !== 1) {
+            gesture = null;
+            return;
+        }
+
+        const deltaX = event.touches[0].clientX - gesture.startX;
+        const deltaY = event.touches[0].clientY - gesture.startY;
+        const isHorizontal = Math.abs(deltaX) > PULL_TO_REFRESH_DIRECTION_TOLERANCE
+            && Math.abs(deltaX) > Math.abs(deltaY);
+
+        if (chat.scrollTop > 0 || deltaY < -PULL_TO_REFRESH_DIRECTION_TOLERANCE || isHorizontal) {
+            gesture = null;
+            return;
+        }
+
+        gesture.distance = deltaY;
+    }, { passive: true });
+
+    chat.addEventListener('touchend', () => {
+        const shouldRefresh = gesture?.distance >= PULL_TO_REFRESH_THRESHOLD
+            && performance.now() - gesture.startedAt <= PULL_TO_REFRESH_MAX_DURATION;
+        gesture = null;
+
+        if (!shouldRefresh || refreshInProgress) {
+            return;
+        }
+
+        refreshInProgress = true;
+        void refreshPageFromPullGesture().finally(() => {
+            refreshInProgress = false;
+        });
+    }, { passive: true });
+
+    chat.addEventListener('touchcancel', () => {
+        gesture = null;
+    }, { passive: true });
+}
+
 // Make the DIV element draggable:
 
 /**
@@ -1146,6 +1285,7 @@ export function initRossMods() {
     });
 
     restoreUserInput();
+    initPullToRefresh();
 
     // Swipe gestures (see: https://www.npmjs.com/package/swiped-events)
     document.addEventListener('swiped-left', function (e) {
