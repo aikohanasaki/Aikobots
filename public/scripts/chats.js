@@ -14,6 +14,7 @@ import {
     name2,
     reloadCurrentChat,
     saveSettingsDebounced,
+    setCurrentChatStorageMode,
     this_chid,
     saveChatConditional,
     saveChatDebounced,
@@ -492,6 +493,24 @@ const CHAT_MESSAGE_VISIBILITY_SAVE_RESULT = {
     STALE: 'stale',
 };
 
+/** Updates visibility for matching messages that are already present in the sparse client cache. */
+function applyLoadedChatMessageVisibility(start, end, hide, nameFilter = null) {
+    for (let messageId = start; messageId <= end; messageId++) {
+        const message = chat[messageId];
+        if (!message || (nameFilter && message.name !== nameFilter)) {
+            continue;
+        }
+
+        message.is_system = hide;
+        const messageBlock = $(`.mes[mesid="${messageId}"]`);
+        if (messageBlock.length) {
+            messageBlock.attr('is_system', String(isPromptHiddenChatMessage(message)));
+        }
+    }
+
+    refreshSwipeButtons();
+}
+
 async function updateServerChatMessageVisibility(start, end, unhide, nameFilter = null) {
     const isGroupChat = Boolean(selected_group);
     if (!isGroupChat && (this_chid === undefined || !characters[this_chid])) {
@@ -525,6 +544,8 @@ async function updateServerChatMessageVisibility(start, end, unhide, nameFilter 
     };
 
     try {
+        const operationChatId = getCurrentChatId();
+        const operationGroupId = selected_group;
         const operation = {
             ...(isGroupChat
                 ? { id: chatId }
@@ -538,7 +559,7 @@ async function updateServerChatMessageVisibility(start, end, unhide, nameFilter 
             unhide: Boolean(unhide),
             name_filter: String(nameFilter || '').trim(),
         };
-        const { response, errorData } = await queueAcknowledgedChatRevisionRequest(({ baseRevision, operationId, saveSessionId }) => ({
+        const { response, responseData, errorData } = await queueAcknowledgedChatRevisionRequest(({ baseRevision, operationId, saveSessionId }) => ({
             url: isGroupChat ? '/api/chats/group/message-visibility' : '/api/chats/message-visibility',
             method: 'POST',
             headers: getRequestHeaders(),
@@ -565,6 +586,12 @@ async function updateServerChatMessageVisibility(start, end, unhide, nameFilter 
             return handleSaveFailure(response, errorData);
         }
 
+        if (getCurrentChatId() === operationChatId && selected_group === operationGroupId) {
+            if (responseData?.storageMode || responseData?.storage_mode) {
+                setCurrentChatStorageMode(responseData.storageMode || responseData.storage_mode);
+            }
+            applyLoadedChatMessageVisibility(start, end, !unhide, nameFilter);
+        }
         return CHAT_MESSAGE_VISIBILITY_SAVE_RESULT.SAVED;
     } catch (error) {
         return handleSaveFailure(error);
@@ -655,7 +682,6 @@ export async function hideChatMessageRange(start, end, unhide, nameFitler = null
 
         const saveResult = await updateServerChatMessageVisibility(start, end, unhide, nameFitler);
         if (saveResult === CHAT_MESSAGE_VISIBILITY_SAVE_RESULT.SAVED) {
-            await reloadCurrentChat();
             return;
         }
 
@@ -675,21 +701,7 @@ export async function hideChatMessageRange(start, end, unhide, nameFitler = null
         return;
     }
 
-    for (let messageId = start; messageId <= end; messageId++) {
-        const message = chat[messageId];
-        if (!message) continue;
-        if (nameFitler && message.name !== nameFitler) continue;
-
-        message.is_system = hide;
-
-        // Also toggle "hidden" state for all visible messages
-        const messageBlock = $(`.mes[mesid="${messageId}"]`);
-        if (!messageBlock.length) continue;
-        messageBlock.attr('is_system', String(isPromptHiddenChatMessage(message)));
-    }
-
-    // Reload swipes. Useful when a last message is hidden.
-    refreshSwipeButtons();
+    applyLoadedChatMessageVisibility(start, end, hide, nameFitler);
 
     if (persist) {
         await saveChatConditional();
