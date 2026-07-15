@@ -135,6 +135,10 @@ Qualifying changes are message append, edit, reorder, delete, truncate, clone, p
 
 Chat rename, chat-header metadata, persona or participant-history synchronization, group membership/configuration, opening a chat, pin changes, export, backup, migration, repair, compaction, and other maintenance do not update this value. Failed, rolled-back, no-op, and idempotently replayed mutations do not update it.
 
+### Ordinary swipe text edits
+
+An ordinary swipe text edit is addressed by the message UUID and the client-captured selected swipe UUID. While the compatibility request still carries the complete message record, the server rejects selected-swipe replacement, swipe reordering, and changes to persisted sibling swipe text or metadata. Sibling comparisons use the canonical persistence form so runtime-only fields that storage intentionally removes do not create false conflicts.
+
 ### Interrupted overswipe repair
 
 Generating a new swipe past the right edge uses an in-memory pending target that is separate from the canonical message `swipe_id`. The client allocates the new swipe's UUID when it captures that target, then materializes the `swipes` and `swipe_info` slot with that exact UUID before changing the canonical index. Later streaming and save steps require the same UUID to still own the slot and reject the generation if either the slot identity or selected swipe changed. Saves therefore cannot persist a one-past-the-end generation sentinel or apply generated content to a different swipe that occupied the same array index.

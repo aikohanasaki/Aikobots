@@ -959,6 +959,46 @@ describe('SQLite chat length handling', () => {
         }
     });
 
+    it.each(['timedWorldInfo', 'worldInfoSummary', 'worldInfoReport'])(
+        'ignores non-persisted sibling %s metadata during an ordinary SQLite text edit',
+        async transientKey => {
+            const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'sqlite-chat-swipe-transient-edit-'));
+            const chatPath = path.join(tempDir, 'chat.jsonl');
+
+            try {
+                const message = makeMultiSwipeAssistant();
+                message.swipe_info[0].extra[transientKey] = { transient: true };
+                await writeLogicalChat(chatPath, makeHeader({ chat_revision: 7 }), [message]);
+
+                const updatedMessage = structuredClone(message);
+                updatedMessage.mes = 'edited selected text';
+                updatedMessage.swipes[1] = 'edited selected text';
+                updatedMessage.swipe_info[1].extra.bias = null;
+
+                await expect(updateSqliteMessageByUuid({
+                    filePath: chatPath,
+                    requestBody: {
+                        message_uuid: message.aikobots_message_uuid,
+                        message: updatedMessage,
+                        mutation_type: 'ordinary_text_edit',
+                        selected_swipe_uuid: message.swipe_info[1].aikobots_swipe_uuid,
+                        base_revision: 7,
+                        save_session_id: '44444444-4444-4444-8444-444444444444',
+                    },
+                    saveSessionId: '44444444-4444-4444-8444-444444444444',
+                    displayCount: 10,
+                })).resolves.toMatchObject({ chat_revision: 8 });
+
+                const savedMessage = (await getLogicalChatData(chatPath))[1];
+                expect(savedMessage.mes).toBe('edited selected text');
+                expect(savedMessage.swipes[0]).toBe(message.swipes[0]);
+                expect(savedMessage.swipe_info[0].extra[transientKey]).toBeUndefined();
+            } finally {
+                fs.rmSync(tempDir, { recursive: true, force: true });
+            }
+        },
+    );
+
     it('edits a user message without replacing its following multi-swipe assistant response', async () => {
         const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'sqlite-chat-user-before-swipes-'));
         const chatPath = path.join(tempDir, 'chat.jsonl');
@@ -1026,6 +1066,9 @@ describe('SQLite chat length handling', () => {
         }, 'ordinary_text_edit_swipe_mutation'],
         ['sibling swipe replacement', message => {
             message.swipes[0] = 'silently replaced sibling';
+        }, 'ordinary_text_edit_swipe_mutation'],
+        ['sibling swipe metadata replacement', message => {
+            message.swipe_info[0].extra.model = 'silently-replaced-model';
         }, 'ordinary_text_edit_swipe_mutation'],
         ['swipe reordering', message => {
             message.swipes.reverse();

@@ -3094,31 +3094,33 @@ function applyMessageUpdatePayload(existingMessage, requestBody) {
 }
 
 /**
- * Rejects ordinary text edits that replace the selected identity or mutate sibling swipes.
+ * Rejects ordinary text edits that replace the selected identity or mutate persisted sibling swipe data.
  * @param {object} existingMessage Stored message before the edit.
  * @param {object} updatedMessage Submitted edited message.
  * @param {string|null} selectedSwipeUuid Client-captured selected swipe UUID.
  */
 function assertOrdinaryTextEditPreservesSwipes(existingMessage, updatedMessage, selectedSwipeUuid) {
-    const existingHasSwipes = Array.isArray(existingMessage?.swipes);
-    const updatedHasSwipes = Array.isArray(updatedMessage?.swipes);
+    const persistedExistingMessage = sanitizeChatMessageForPersistence(existingMessage);
+    const persistedUpdatedMessage = sanitizeChatMessageForPersistence(updatedMessage);
+    const existingHasSwipes = Array.isArray(persistedExistingMessage?.swipes);
+    const updatedHasSwipes = Array.isArray(persistedUpdatedMessage?.swipes);
     if (!existingHasSwipes || !updatedHasSwipes) {
         const swipeFields = ['swipes', 'swipe_info', 'swipe_id'];
         if (existingHasSwipes !== updatedHasSwipes
-            || swipeFields.some(key => !_.isEqual(existingMessage?.[key], updatedMessage?.[key]))) {
+            || swipeFields.some(key => !_.isEqual(persistedExistingMessage?.[key], persistedUpdatedMessage?.[key]))) {
             throw new ChatMutationError(409, 'ordinary_text_edit_swipe_mutation', 'An ordinary text edit cannot add, remove, or replace swipe data.');
         }
         return;
     }
 
-    const existingSwipeUuids = existingMessage.swipe_info.map(info => info?.[AIKOBOTS_SWIPE_UUID_KEY]);
-    const updatedSwipeUuids = updatedMessage.swipe_info.map(info => info?.[AIKOBOTS_SWIPE_UUID_KEY]);
+    const existingSwipeUuids = persistedExistingMessage.swipe_info.map(info => info?.[AIKOBOTS_SWIPE_UUID_KEY]);
+    const updatedSwipeUuids = persistedUpdatedMessage.swipe_info.map(info => info?.[AIKOBOTS_SWIPE_UUID_KEY]);
     if (!_.isEqual(existingSwipeUuids, updatedSwipeUuids)) {
         throw new ChatMutationError(409, 'ordinary_text_edit_swipe_mutation', 'An ordinary text edit cannot replace or reorder swipes.');
     }
 
-    const existingSwipeId = Number(existingMessage.swipe_id);
-    const updatedSwipeId = Number(updatedMessage.swipe_id);
+    const existingSwipeId = Number(persistedExistingMessage.swipe_id);
+    const updatedSwipeId = Number(persistedUpdatedMessage.swipe_id);
     const expectedSwipeUuid = existingSwipeUuids[existingSwipeId];
     if (!isValidAikobotsUuid(selectedSwipeUuid)
         || selectedSwipeUuid !== expectedSwipeUuid
@@ -3126,12 +3128,12 @@ function assertOrdinaryTextEditPreservesSwipes(existingMessage, updatedMessage, 
         throw new ChatMutationError(409, 'ordinary_text_edit_swipe_uuid_mismatch', 'The selected swipe changed during the text edit.');
     }
 
-    for (let index = 0; index < existingMessage.swipes.length; index++) {
+    for (let index = 0; index < persistedExistingMessage.swipes.length; index++) {
         if (index === existingSwipeId) {
             continue;
         }
-        if (existingMessage.swipes[index] !== updatedMessage.swipes[index]
-            || !_.isEqual(existingMessage.swipe_info[index], updatedMessage.swipe_info[index])) {
+        if (persistedExistingMessage.swipes[index] !== persistedUpdatedMessage.swipes[index]
+            || !_.isEqual(persistedExistingMessage.swipe_info[index], persistedUpdatedMessage.swipe_info[index])) {
             throw new ChatMutationError(409, 'ordinary_text_edit_swipe_mutation', 'An ordinary text edit cannot change a non-selected swipe.');
         }
     }
