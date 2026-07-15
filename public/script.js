@@ -6454,7 +6454,7 @@ function scrollOnMediaLoad() {
             return;
         }
         mediaLoaded++;
-        if (mediaLoaded === media.length) {
+        if (mediaLoaded === media.length && !scrollLock) {
             scrollChatToBottom({ waitForFrame: true });
         }
     }
@@ -13901,14 +13901,12 @@ export async function messageEdit(editMessageId) {
         $editTextArea.height(editTextArea.scrollHeight);
     }
 
-    $editTextArea.trigger('focus');
+    editTextArea.focus({ preventScroll: true });
 
     // Sets the cursor at the end of the text
     editTextArea.setSelectionRange(text.length, text.length);
 
-    if (Number(this_edit_mes_id) === chat.length - 1) {
-        chatElement.scrollTop(chatScrollPosition);
-    }
+    chatElement.scrollTop(chatScrollPosition);
 
     updateEditArrowClasses();
 }
@@ -13951,7 +13949,7 @@ async function messageEditCancel(messageId = this_edit_mes_id) {
             {},
             false,
         ));
-    appendMediaToMessage(chat[messageId], thisMesDiv);
+    appendMediaToMessage(chat[messageId], thisMesDiv, SCROLL_BEHAVIOR.NONE);
     addCopyToCodeBlocks(thisMesDiv);
 
     const reasoningEditDone = thisMesBlock.find('.mes_reasoning_edit_cancel:visible');
@@ -14565,7 +14563,7 @@ async function messageEditDone(div) {
     );
     mesBlock.find('.mes_bias').empty();
     mesBlock.find('.mes_bias').append(messageFormatting(bias, '', false, false, -1, {}, false));
-    appendMediaToMessage(mes, div.closest('.mes'));
+    appendMediaToMessage(mes, div.closest('.mes'), SCROLL_BEHAVIOR.NONE);
     addCopyToCodeBlocks(div.closest('.mes'));
 
     const reasoningEditDone = mesBlock.find('.mes_reasoning_edit_done:visible');
