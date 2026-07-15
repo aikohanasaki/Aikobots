@@ -1233,7 +1233,7 @@ async function flushDeferredPostSaveEffects(sceneContext = buildStmbSceneContext
 
     try {
         for (const hideRange of pending.hideRanges) {
-            await hideChatMessageRange(hideRange.start, hideRange.end, false, null, false);
+            await hideChatMessageRange(hideRange.start, hideRange.end, false, null, true);
         }
 
         if (Number.isInteger(Number(pending.highestProcessedMessageId))) {
@@ -7949,7 +7949,7 @@ async function applyPostSaveLorebookEffects(lorebookName, range, sceneContext = 
 
     try {
         for (const hideRange of hideRanges) {
-            await hideChatMessageRange(hideRange.start, hideRange.end, false, null, false);
+            await hideChatMessageRange(hideRange.start, hideRange.end, false, null, true);
         }
     } catch (error) {
         console.warn('STMB auto-hide failed', error);

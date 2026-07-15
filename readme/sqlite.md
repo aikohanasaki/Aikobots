@@ -932,6 +932,8 @@ The completed architecture uses SQLite as a database: stable identities, bounded
 
 Chat-header metadata changes, visibility changes, persona synchronization, adjacent message moves, and group incremental message updates use the shared acknowledged client queue and SQLite operation receipts. An adjacent move addresses both messages by UUID, verifies their persisted adjacency, and swaps only their ordering values in one transaction. Receipts are checked under the logical-chat lock before stale-revision validation, including for validated no-ops. Group incremental updates resolve the persisted wrapper by `aikobots_message_uuid`; a supplied positional message ID is compatibility metadata and must match the UUID-resolved row.
 
+STMB post-memory auto-hide is durable chat visibility state and must use the normal persisted visibility path. A browser-only `is_system` change is insufficient because later incremental message appends do not rewrite historical rows, and a subsequent authoritative reload would restore their previously persisted visibility.
+
 ### Streamed response authority
 
 The browser message shown while generation is streaming is ephemeral display state. When a stream finishes, the client sends one explicit SQLite append or update mutation, waits for its acknowledged revision, reads that message back from the server by logical position, validates its stable message UUID, and replaces the ephemeral browser object and DOM with the canonical SQLite row. Completion events run only after that replacement.
