@@ -660,7 +660,6 @@ const PULL_TO_REFRESH_IGNORED_TARGETS = [
     '[contenteditable="true"]',
     '[data-swipe-ignore="true"]',
     '.interactable',
-    '.drawer-toggle',
     '.menu_button',
     '.mes_button',
 ].join(', ');
@@ -727,20 +726,20 @@ function initPullToRefresh() {
 
     document.addEventListener('touchstart', event => {
         const target = event.target;
-        const isIgnoredTarget = target instanceof Element
-            && Boolean(target.closest(PULL_TO_REFRESH_IGNORED_TARGETS));
         const isChatSurface = target instanceof Element
             && Boolean(target.closest('#sheld'))
             && !target.closest('#form_sheld');
         const isTopBarSurface = target instanceof Element
             && Boolean(target.closest('#top-bar, #top-settings-holder'))
             && !target.closest('.drawer-content');
+        const isIgnoredChatTarget = !isTopBarSurface && target instanceof Element
+            && Boolean(target.closest(PULL_TO_REFRESH_IGNORED_TARGETS));
         const isRefreshSurface = isChatSurface || isTopBarSurface;
         const requiresChatAtTop = !isTopBarSurface;
 
         if (Popup.util.isPopupOpen() || !isRefreshSurface
             || event.touches.length !== 1 || (requiresChatAtTop && chat.scrollTop > PULL_TO_REFRESH_TOP_TOLERANCE)
-            || isIgnoredTarget) {
+            || isIgnoredChatTarget) {
             gesture = null;
             return;
         }
@@ -777,7 +776,7 @@ function initPullToRefresh() {
         }
     }, { passive: true, capture: true });
 
-    document.addEventListener('touchend', () => {
+    document.addEventListener('touchend', event => {
         const shouldRefresh = gesture?.armed === true;
         gesture = null;
 
@@ -785,11 +784,15 @@ function initPullToRefresh() {
             return;
         }
 
+        if (event.cancelable) {
+            event.preventDefault();
+        }
+
         refreshInProgress = true;
         void refreshPageFromPullGesture().finally(() => {
             refreshInProgress = false;
         });
-    }, { passive: true, capture: true });
+    }, { passive: false, capture: true });
 
     document.addEventListener('touchcancel', () => {
         gesture = null;
