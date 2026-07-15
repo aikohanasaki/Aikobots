@@ -2275,6 +2275,57 @@ describe('SQLite chat length handling', () => {
         }
     });
 
+    it('updates historical group visibility with targeted SQLite row mutations', async () => {
+        const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'sqlite-group-visibility-'));
+        const chatPath = path.join(tempDir, 'group.jsonl');
+        const sqlitePath = chatPath.replace('.jsonl', '.sqlite');
+
+        try {
+            const header = makeHeader({ chat_revision: 7, is_group_chat_header: true });
+            const messages = makeMessages(200).map(message => ({ ...message, is_system: false }));
+            await writeLogicalChat(chatPath, header, messages);
+
+            const auditDb = new Database(sqlitePath);
+            auditDb.exec(`
+                CREATE TABLE visibility_audit (row_id INTEGER NOT NULL);
+                CREATE TRIGGER audit_visibility_update AFTER UPDATE ON messages
+                WHEN new.order_index > 0
+                BEGIN
+                    INSERT INTO visibility_audit (row_id) VALUES (new.id);
+                END;
+            `);
+            auditDb.close();
+
+            const payload = await updateSqliteMessageVisibility({
+                filePath: chatPath,
+                requestBody: {
+                    operation_id: '14141414-1414-4414-8414-141414141414',
+                    base_revision: 7,
+                    save_session_id: '33333333-3333-4333-8333-333333333333',
+                },
+                start: 10,
+                end: 20,
+                hide: true,
+                saveSessionId: '33333333-3333-4333-8333-333333333333',
+                route: '/api/chats/group/message-visibility',
+            });
+            const verifyDb = new Database(sqlitePath, { readonly: true });
+            const updatedRows = verifyDb.prepare('SELECT row_id FROM visibility_audit ORDER BY row_id').pluck().all();
+            verifyDb.close();
+            const logicalChat = await getLogicalChatData(chatPath);
+
+            expect(payload).toMatchObject({ status: 'applied', changed: 11, chat_revision: 8 });
+            expect(logicalChat[0]).toMatchObject({ is_group_chat_header: true, chat_revision: 8 });
+            expect(logicalChat[10].is_system).toBe(false);
+            expect(logicalChat[11].is_system).toBe(true);
+            expect(logicalChat[21].is_system).toBe(true);
+            expect(logicalChat[22].is_system).toBe(false);
+            expect(updatedRows).toHaveLength(11);
+        } finally {
+            fs.rmSync(tempDir, { recursive: true, force: true });
+        }
+    });
+
     it('renames participant history with targeted row updates', async () => {
         const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'sqlite-chat-participant-rename-'));
         const chatPath = path.join(tempDir, 'chat.jsonl');

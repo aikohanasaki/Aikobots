@@ -493,13 +493,15 @@ const CHAT_MESSAGE_VISIBILITY_SAVE_RESULT = {
 };
 
 async function updateServerChatMessageVisibility(start, end, unhide, nameFilter = null) {
-    if (selected_group) {
-        toastr.warning(t`Changing historical message visibility in group chats is not supported yet.`, t`Chat message visibility`);
+    const isGroupChat = Boolean(selected_group);
+    if (!isGroupChat && (this_chid === undefined || !characters[this_chid])) {
+        toastr.warning(t`Select a character chat before changing historical message visibility.`, t`Chat message visibility`);
         return CHAT_MESSAGE_VISIBILITY_SAVE_RESULT.FAILED;
     }
 
-    if (this_chid === undefined || !characters[this_chid]) {
-        toastr.warning(t`Select a character chat before changing historical message visibility.`, t`Chat message visibility`);
+    const chatId = isGroupChat ? String(getCurrentChatId() || '').trim() : '';
+    if (isGroupChat && !chatId) {
+        toastr.warning(t`Select a group chat before changing historical message visibility.`, t`Chat message visibility`);
         return CHAT_MESSAGE_VISIBILITY_SAVE_RESULT.FAILED;
     }
 
@@ -524,19 +526,23 @@ async function updateServerChatMessageVisibility(start, end, unhide, nameFilter 
 
     try {
         const operation = {
-            ch_name: characters[this_chid].name,
-            file_name: getCurrentChatId(),
-            avatar_url: characters[this_chid].avatar,
+            ...(isGroupChat
+                ? { id: chatId }
+                : {
+                    ch_name: characters[this_chid].name,
+                    file_name: getCurrentChatId(),
+                    avatar_url: characters[this_chid].avatar,
+                }),
             start,
             end,
             unhide: Boolean(unhide),
             name_filter: String(nameFilter || '').trim(),
         };
         const { response, errorData } = await queueAcknowledgedChatRevisionRequest(({ baseRevision, operationId, saveSessionId }) => ({
-            url: '/api/chats/message-visibility',
+            url: isGroupChat ? '/api/chats/group/message-visibility' : '/api/chats/message-visibility',
             method: 'POST',
             headers: getRequestHeaders(),
-            operationType: 'visibility',
+            operationType: isGroupChat ? 'group_visibility' : 'visibility',
             body: {
                 ...operation,
                 operation_id: operationId,

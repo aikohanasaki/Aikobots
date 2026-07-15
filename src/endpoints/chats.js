@@ -2454,7 +2454,8 @@ export async function updateSqliteLoadedMessageRange({ filePath, requestBody, in
     };
 }
 
-export async function updateSqliteMessageVisibility({ filePath, requestBody, start, end, hide, nameFilter = '', saveSessionId, assertMutationAllowed = null }) {
+/** Updates visibility for a bounded SQLite message range under revision and receipt checks. */
+export async function updateSqliteMessageVisibility({ filePath, requestBody, start, end, hide, nameFilter = '', saveSessionId, assertMutationAllowed = null, route = '/api/chats/message-visibility' }) {
     const sqlitePath = replaceChatStorageExtension(filePath, '.sqlite');
     if (!fs.existsSync(sqlitePath)) {
         throw new ChatMutationError(409, 'visibility_requires_sqlite', 'Visibility update requires SQLite chat storage.');
@@ -2479,7 +2480,7 @@ export async function updateSqliteMessageVisibility({ filePath, requestBody, sta
 
         const currentRevision = getChatRevision(header);
         if (repeatedReceipt) {
-            logChatRevisionDecision({ filePath, route: '/api/chats/message-visibility', operationType: 'visibility', operationId, saveSessionId, receiptFound: true, submittedBaseRevision: requestBody.base_revision, authoritativeRevisionBefore: currentRevision, authoritativeRevisionAfter: currentRevision, decision: 'replayed' });
+            logChatRevisionDecision({ filePath, route, operationType: 'visibility', operationId, saveSessionId, receiptFound: true, submittedBaseRevision: requestBody.base_revision, authoritativeRevisionBefore: currentRevision, authoritativeRevisionAfter: currentRevision, decision: 'replayed' });
             return repeatedReceipt;
         }
 
@@ -2488,7 +2489,7 @@ export async function updateSqliteMessageVisibility({ filePath, requestBody, sta
             throw new ChatMutationError(400, 'invalid_visibility_range');
         }
 
-        const revisionCheck = requireLoggedChatMutationRequest(requestBody, header, { filePath, route: '/api/chats/message-visibility', operationType: 'visibility', operationId, saveSessionId });
+        const revisionCheck = requireLoggedChatMutationRequest(requestBody, header, { filePath, route, operationType: 'visibility', operationId, saveSessionId });
 
         const messages = getMessageRange(db, normalizedStart, normalizedEnd - normalizedStart + 1);
         const changedMessages = [];
@@ -2526,7 +2527,7 @@ export async function updateSqliteMessageVisibility({ filePath, requestBody, sta
                 throw error;
             }
             saveDb(db, sqlitePath);
-            logChatRevisionDecision({ filePath, route: '/api/chats/message-visibility', operationType: 'visibility', operationId, saveSessionId, receiptFound: false, submittedBaseRevision: requestBody.base_revision, authoritativeRevisionBefore: currentRevision, authoritativeRevisionAfter: currentRevision, decision: 'noop' });
+            logChatRevisionDecision({ filePath, route, operationType: 'visibility', operationId, saveSessionId, receiptFound: false, submittedBaseRevision: requestBody.base_revision, authoritativeRevisionBefore: currentRevision, authoritativeRevisionAfter: currentRevision, decision: 'noop' });
             return payload;
         }
 
@@ -2563,7 +2564,7 @@ export async function updateSqliteMessageVisibility({ filePath, requestBody, sta
             headCount: 0,
             tailCount: totalMessages,
         };
-        logChatRevisionDecision({ filePath, route: '/api/chats/message-visibility', operationType: 'visibility', operationId, saveSessionId, receiptFound: false, submittedBaseRevision: requestBody.base_revision, authoritativeRevisionBefore: currentRevision, authoritativeRevisionAfter: revisionCheck.nextRevision, decision: 'applied' });
+        logChatRevisionDecision({ filePath, route, operationType: 'visibility', operationId, saveSessionId, receiptFound: false, submittedBaseRevision: requestBody.base_revision, authoritativeRevisionBefore: currentRevision, authoritativeRevisionAfter: revisionCheck.nextRevision, decision: 'applied' });
         return payload;
     } finally {
         db.close();
@@ -4937,6 +4938,55 @@ router.post('/message-visibility', validateAvatarUrlMiddleware, async function (
                 headCount: writeResult.headCount,
                 tailCount: writeResult.tailCount,
             });
+        });
+    } catch (error) {
+        if (isActiveSessionError(error)) {
+            return sendActiveSessionRequired(response);
+        }
+        if (isUnsupportedSplitTailChatError(error)) {
+            return sendUnsupportedSplitTailChatError(response, error);
+        }
+        if (isChatPathValidationError(error)) {
+            return sendChatPathValidationError(response, error);
+        }
+        if (error instanceof ChatMutationError) {
+            return response.status(error.status || 400).send({ error: error.error, message: error.message, ...error.details });
+        }
+        console.error(error);
+        return response.status(500).send({ error: 'visibility_update_failed' });
+    }
+});
+
+router.post('/group/message-visibility', async function (request, response) {
+    try {
+        const chatId = String(request.body?.id || '').trim();
+        const start = Number(request.body?.start);
+        const end = request.body?.end === undefined ? start : Number(request.body.end);
+        const hide = request.body?.unhide !== true;
+        const nameFilter = String(request.body?.name_filter || '').trim();
+
+        if (!chatId || !Number.isInteger(start) || !Number.isInteger(end) || start < 0 || end < start) {
+            return response.status(400).send({ error: 'invalid_visibility_range' });
+        }
+
+        const filePath = getGroupChatFilePath(request.user.directories.groupChats, chatId);
+        if (!fs.existsSync(replaceChatStorageExtension(filePath, '.sqlite'))) {
+            return response.status(404).send({ error: 'chat_not_found' });
+        }
+
+        return await withChatSaveLock(filePath, async () => {
+            const payload = await updateSqliteMessageVisibility({
+                filePath,
+                requestBody: request.body,
+                start,
+                end,
+                hide,
+                nameFilter,
+                saveSessionId: getRequestSaveSessionId(request.body),
+                assertMutationAllowed: () => request.activeSessionOperation?.assertAllowed(),
+                route: '/api/chats/group/message-visibility',
+            });
+            return response.send(payload);
         });
     } catch (error) {
         if (isActiveSessionError(error)) {
