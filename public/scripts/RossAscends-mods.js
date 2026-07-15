@@ -660,6 +660,7 @@ const PULL_TO_REFRESH_IGNORED_TARGETS = [
     '[contenteditable="true"]',
     '[data-swipe-ignore="true"]',
     '.interactable',
+    '.drawer-toggle',
     '.menu_button',
     '.mes_button',
 ].join(', ');
@@ -728,12 +729,18 @@ function initPullToRefresh() {
         const target = event.target;
         const isIgnoredTarget = target instanceof Element
             && Boolean(target.closest(PULL_TO_REFRESH_IGNORED_TARGETS));
-        const isRefreshSurface = target instanceof Element
+        const isChatSurface = target instanceof Element
             && Boolean(target.closest('#sheld'))
             && !target.closest('#form_sheld');
+        const isTopBarSurface = target instanceof Element
+            && Boolean(target.closest('#top-bar, #top-settings-holder'))
+            && !target.closest('.drawer-content');
+        const isRefreshSurface = isChatSurface || isTopBarSurface;
+        const requiresChatAtTop = !isTopBarSurface;
 
         if (Popup.util.isPopupOpen() || !isRefreshSurface
-            || event.touches.length !== 1 || chat.scrollTop > PULL_TO_REFRESH_TOP_TOLERANCE || isIgnoredTarget) {
+            || event.touches.length !== 1 || (requiresChatAtTop && chat.scrollTop > PULL_TO_REFRESH_TOP_TOLERANCE)
+            || isIgnoredTarget) {
             gesture = null;
             return;
         }
@@ -742,6 +749,7 @@ function initPullToRefresh() {
             startX: event.touches[0].clientX,
             startY: event.touches[0].clientY,
             armed: false,
+            requiresChatAtTop,
         };
     }, { passive: true, capture: true });
 
@@ -756,7 +764,7 @@ function initPullToRefresh() {
         const isHorizontal = Math.abs(deltaX) > PULL_TO_REFRESH_DIRECTION_TOLERANCE
             && Math.abs(deltaX) > Math.abs(deltaY);
 
-        if (chat.scrollTop > PULL_TO_REFRESH_TOP_TOLERANCE
+        if ((gesture.requiresChatAtTop && chat.scrollTop > PULL_TO_REFRESH_TOP_TOLERANCE)
             || deltaY < -PULL_TO_REFRESH_DIRECTION_TOLERANCE || isHorizontal) {
             gesture = null;
             return;
