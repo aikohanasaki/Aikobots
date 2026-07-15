@@ -3828,7 +3828,8 @@ jQuery(() => {
         saveSettingsDebounced();
     });
 
-    $('#prompt_token_warning_threshold, #prompt_token_warning_threshold_counter').on('input', function () {
+    // Number counters are committed through the shared range-counter handler on Enter or blur.
+    $('#prompt_token_warning_threshold').on('input', function () {
         power_user.prompt_token_warning_threshold = clampPromptTokenWarningThreshold($(this).val());
         syncPromptTokenWarningControls();
         saveSettingsDebounced();
@@ -4023,7 +4024,7 @@ jQuery(() => {
         $('#aiko_layout_asset_upload').trigger('click');
     });
 
-    $('#initial_load, #initial_load_counter').on('input', function () {
+    $('#initial_load').on('input', function () {
         power_user.initial_load = $(this).val();
         const { initialLoadCount } = normalizeLongChatHandlingSettings();
         $('#initial_load').val(initialLoadCount);
@@ -4031,7 +4032,7 @@ jQuery(() => {
         saveSettingsDebounced();
     });
 
-    $('#long_chat_display_count, #long_chat_display_count_counter').on('input', function () {
+    $('#long_chat_display_count').on('input', function () {
         power_user.long_chat_display_count = $(this).val();
         const { displayCount } = normalizeLongChatHandlingSettings();
         $('#long_chat_display_count').val(displayCount);
