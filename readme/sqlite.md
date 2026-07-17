@@ -207,6 +207,8 @@ Independent swipe operations require durable `swipe_uuid` values where the clien
 
 The client must create a swipe UUID before persistence when later operations may refer to that swipe.
 
+Runtime replacements of embedded swipe metadata, including per-token streaming updates, must preserve the slot's existing valid swipe UUID. A legacy slot without a valid UUID may receive one during replacement, but replacing timestamps or `extra` metadata must not change an established identity.
+
 Use the smallest safe representation.
 
 ### Embedded swipe UUIDs

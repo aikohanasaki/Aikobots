@@ -5,6 +5,7 @@ import {
     compareActiveSwipeState,
     materializeSwipeGenerationTarget,
     repairPendingOverswipeState,
+    replaceSwipeInfoPreservingIdentity,
     validateSwipeGenerationTarget,
     validateMessageSwipeState,
 } from '../../public/scripts/chat-identities.js';
@@ -45,6 +46,32 @@ function expectSingleCode(result, bucket, code, path) {
         expect.objectContaining({ code, path }),
     ]));
 }
+
+describe('replaceSwipeInfoPreservingIdentity', () => {
+    it('preserves an existing swipe UUID while replacing streaming metadata', () => {
+        const replacement = replaceSwipeInfoPreservingIdentity(
+            { [AIKOBOTS_SWIPE_UUID_KEY]: FIRST_UUID, stale: true },
+            { send_date: 'updated', extra: { model: 'updated-model' } },
+            { generateUuid: () => SECOND_UUID },
+        );
+
+        expect(replacement).toEqual({
+            [AIKOBOTS_SWIPE_UUID_KEY]: FIRST_UUID,
+            send_date: 'updated',
+            extra: { model: 'updated-model' },
+        });
+    });
+
+    it('creates an identity when replacing legacy metadata without one', () => {
+        const replacement = replaceSwipeInfoPreservingIdentity(
+            { send_date: 'legacy' },
+            { send_date: 'updated' },
+            { generateUuid: () => SECOND_UUID },
+        );
+
+        expect(replacement[AIKOBOTS_SWIPE_UUID_KEY]).toBe(SECOND_UUID);
+    });
+});
 
 describe('compareActiveSwipeState', () => {
     it('accepts identical modern active-swipe state', () => {

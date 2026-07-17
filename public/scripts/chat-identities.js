@@ -33,6 +33,29 @@ function isObject(value) {
 }
 
 /**
+ * Replaces swipe metadata while retaining the stable identity of the existing swipe.
+ * @param {object|null|undefined} existingSwipeInfo Existing metadata for the swipe slot.
+ * @param {object} replacementSwipeInfo Replacement metadata for the swipe slot.
+ * @param {{generateUuid?: Function|null}} [options] Optional UUID generator for legacy slots without an identity.
+ * @returns {object} Replacement metadata carrying a valid swipe UUID.
+ */
+export function replaceSwipeInfoPreservingIdentity(existingSwipeInfo, replacementSwipeInfo, { generateUuid = null } = {}) {
+    if (!isObject(replacementSwipeInfo)) {
+        throw new TypeError('Replacement swipe metadata must be an object.');
+    }
+
+    const existingSwipeUuid = existingSwipeInfo?.[AIKOBOTS_SWIPE_UUID_KEY];
+    const swipeUuid = isValidAikobotsUuid(existingSwipeUuid)
+        ? existingSwipeUuid
+        : createAikobotsUuid(generateUuid);
+
+    return {
+        ...replacementSwipeInfo,
+        [AIKOBOTS_SWIPE_UUID_KEY]: swipeUuid,
+    };
+}
+
+/**
  * Validates that a pending swipe generation still owns either the next unmaterialized
  * slot or the materialized slot carrying its preallocated UUID.
  * @param {object} message Chat message containing the swipe arrays.

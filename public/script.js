@@ -182,6 +182,7 @@ import {
     isValidAikobotsUuid,
     materializeSwipeGenerationTarget,
     normalizeChatIdentities,
+    replaceSwipeInfoPreservingIdentity,
     validateSwipeGenerationTarget,
     validateChatIdentities,
     validateMessageSwipeState,
@@ -8890,13 +8891,14 @@ class StreamingProcessor {
                     'extra': createSwipeInfoExtra(swipeValidation.message['extra']),
                 };
             } else if (this.type === 'continue' && Array.isArray(chat[messageId]['swipes'])) {
-                chat[messageId]['swipes'][chat[messageId]['swipe_id']] = processedText;
-                chat[messageId]['swipe_info'][chat[messageId]['swipe_id']] = {
+                const swipeId = chat[messageId]['swipe_id'];
+                chat[messageId]['swipes'][swipeId] = processedText;
+                chat[messageId]['swipe_info'][swipeId] = replaceSwipeInfoPreservingIdentity(chat[messageId]['swipe_info'][swipeId], {
                     'send_date': chat[messageId]['send_date'],
                     'gen_started': chat[messageId]['gen_started'],
                     'gen_finished': chat[messageId]['gen_finished'],
                     'extra': createSwipeInfoExtra(chat[messageId]['extra']),
-                };
+                }, { generateUuid: uuidv4 });
             }
 
             const formattedText = messageFormatting(
@@ -9052,12 +9054,12 @@ class StreamingProcessor {
         if (this.type !== 'swipe' && this.type !== 'impersonate') {
             if (Array.isArray(chat[messageId]['swipes']) && chat[messageId]['swipes'].length === 1 && chat[messageId]['swipe_id'] === 0) {
                 chat[messageId]['swipes'][0] = chat[messageId]['mes'];
-                chat[messageId]['swipe_info'][0] = {
+                chat[messageId]['swipe_info'][0] = replaceSwipeInfoPreservingIdentity(chat[messageId]['swipe_info'][0], {
                     'send_date': chat[messageId]['send_date'],
                     'gen_started': chat[messageId]['gen_started'],
                     'gen_finished': chat[messageId]['gen_finished'],
                     'extra': createSwipeInfoExtra(chat[messageId]['extra']),
-                };
+                }, { generateUuid: uuidv4 });
             }
         }
     }
@@ -11949,15 +11951,13 @@ export async function saveReply({ type, getMessage, fromStreaming = false, title
     }
     if (item['swipe_id'] !== undefined) {
         const swipeId = item['swipe_id'];
-        const existingSwipeUuid = item['swipe_info']?.[swipeId]?.[AIKOBOTS_SWIPE_UUID_KEY] ?? uuidv4();
         item['swipes'][swipeId] = item['mes'];
-        item['swipe_info'][swipeId] = {
-            [AIKOBOTS_SWIPE_UUID_KEY]: existingSwipeUuid,
+        item['swipe_info'][swipeId] = replaceSwipeInfoPreservingIdentity(item['swipe_info'][swipeId], {
             send_date: item['send_date'],
             gen_started: item['gen_started'],
             gen_finished: item['gen_finished'],
             extra: createSwipeInfoExtra(item['extra']),
-        };
+        }, { generateUuid: uuidv4 });
     } else {
         item['swipe_id'] = 0;
         item['swipes'] = [];
@@ -13917,8 +13917,16 @@ export async function messageEdit(editMessageId) {
  * @param {number} [messageId=this_edit_mes_id]
  */
 async function messageEditCancel(messageId = this_edit_mes_id) {
+    const clickedMessage = this?.classList?.contains('mes_edit_cancel')
+        ? $(this).closest('.mes')
+        : $();
+    const clickedMessageId = Number(clickedMessage.attr('mesid'));
     const target = activeMessageEditSession ? resolveActiveMessageEditSession() : { ok: false };
-    messageId = target.ok ? target.index : Number(messageId);
+    const requestedMessageId = Number(messageId);
+    messageId = target.ok ? target.index : requestedMessageId;
+    if (!Number.isInteger(messageId)) {
+        messageId = clickedMessageId;
+    }
     if (!chat[messageId]) {
         this_edit_mes_id = undefined;
         clearActiveMessageEditSession();
@@ -13929,8 +13937,8 @@ async function messageEditCancel(messageId = this_edit_mes_id) {
     let text = chat[messageId]['mes'];
     let thisMesDiv;
     // If this is the button then select it's parent. Otherwise, select by messageId.
-    if (this?.classList?.contains('mes_edit_cancel')) {
-        thisMesDiv = $(this).closest('.mes');
+    if (clickedMessage.length > 0) {
+        thisMesDiv = clickedMessage;
     } else {
         thisMesDiv = chatElement.children().filter(`[mesid="${messageId}"]`);
     }
@@ -13957,7 +13965,7 @@ async function messageEditCancel(messageId = this_edit_mes_id) {
         reasoningEditDone.trigger('click');
     }
 
-    if (messageId != this_edit_mes_id) {
+    if (this_edit_mes_id >= 0 && messageId != this_edit_mes_id) {
         console.warn(`The message editor was closed on message #${messageId} while #${this_edit_mes_id} is being edited.`);
     }
     this_edit_mes_id = undefined;
@@ -14529,9 +14537,8 @@ async function messageEditDone(div) {
         updateResult = updateMessage(div);
     } catch (error) {
         console.warn(error);
-        clearActiveMessageEditSession();
-        this_edit_mes_id = undefined;
-        showSwipeButtons();
+        const messageId = Number(div.closest('.mes').attr('mesid'));
+        await messageEditCancel(Number.isInteger(messageId) ? messageId : this_edit_mes_id);
         return;
     }
 
@@ -18006,7 +18013,10 @@ export function updateEditArrowClasses() {
  */
 export function closeMessageEditor(what = 'all') {
     if (what === 'message' || what === 'all') {
-        if (this_edit_mes_id >= 0) {
+        const visibleCancelButtons = chatElement.find('.edit_textarea').closest('.mes').find('.mes_edit_cancel');
+        if (visibleCancelButtons.length > 0) {
+            visibleCancelButtons.trigger('click');
+        } else if (this_edit_mes_id >= 0) {
             chatElement.find(`.mes[mesid="${this_edit_mes_id}"] .mes_edit_cancel`).trigger('click');
         }
     }
@@ -21332,7 +21342,7 @@ jQuery(async function () {
                 return;
             }
             if (isEditVisible && power_user.auto_save_msg_edits === true) {
-                chatElement.find(`.mes[mesid="${this_edit_mes_id}"] .mes_edit_done`).trigger('click');
+                chatElement.find('.edit_textarea').closest('.mes').find('.mes_edit_done').trigger('click');
                 closeMessageEditor('reasoning');
                 $('#send_textarea').trigger('focus');
                 return;
