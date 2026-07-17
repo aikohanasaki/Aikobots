@@ -9736,13 +9736,15 @@ export async function Generate(type, { automatic_trigger, force_name2, quiet_pro
         const prevStarted = continuedMessage['gen_started'];
 
         if (prevFinished && prevStarted) {
-            const timePassed = Number(prevFinished) - Number(prevStarted);
-            generation_started = new Date(Date.now() - timePassed);
-            continueTimerRollback = {
-                message: continuedMessage,
-                gen_started: continuedMessage['gen_started'],
-            };
-            continuedMessage['gen_started'] = generation_started;
+            const timePassed = timestampToMoment(prevFinished).diff(timestampToMoment(prevStarted));
+            if (Number.isFinite(timePassed) && timePassed >= 0) {
+                generation_started = new Date(Date.now() - timePassed);
+                continueTimerRollback = {
+                    message: continuedMessage,
+                    gen_started: continuedMessage['gen_started'],
+                };
+                continuedMessage['gen_started'] = generation_started;
+            }
         }
     }
 
