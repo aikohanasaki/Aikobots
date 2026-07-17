@@ -14286,6 +14286,7 @@ function getSqliteChatMutationEndpoint(operation) {
     const directEndpoints = {
         metadata: '/api/chats/metadata',
         append: '/api/chats/message/append',
+        insert: '/api/chats/message/insert',
         update: '/api/chats/message/update',
         move: '/api/chats/message/move',
         delete: '/api/chats/message/delete',
@@ -14295,6 +14296,7 @@ function getSqliteChatMutationEndpoint(operation) {
     const groupEndpoints = {
         metadata: '/api/chats/group/metadata',
         append: '/api/chats/group/message/append',
+        insert: '/api/chats/group/message/insert',
         update: '/api/chats/group/message/update',
         move: '/api/chats/group/message/move',
         delete: '/api/chats/group/message/delete',
@@ -14394,6 +14396,57 @@ async function saveSqliteMessageAppend(messageId, message) {
     }
 
     return saveChatConditional({ immediate: true, forceFull: true });
+}
+
+/**
+ * Persists a message that the caller already appended to the active chat tail.
+ * Rolls the local append back when persistence fails.
+ * @param {number} messageId Logical id of the appended message.
+ * @param {object} message Appended chat message.
+ * @returns {Promise<string>} A CHAT_SAVE_RESULT value.
+ */
+export async function persistAppendedChatMessage(messageId, message) {
+    markChatRangeLoaded(messageId);
+    const saveResult = currentChatFileNameLooksSqlite()
+        ? await saveSqliteMessageAppend(messageId, message)
+        : await saveChatConditional();
+
+    if (saveResult !== CHAT_SAVE_RESULT.SAVED) {
+        await rollbackUnsavedInsertedMessage(messageId, message);
+    }
+
+    return saveResult;
+}
+
+async function saveSqliteMessageInsert(messageId, message) {
+    if (!message || typeof message !== 'object' || Array.isArray(message)) {
+        return CHAT_SAVE_RESULT.FAILED;
+    }
+
+    ensureMessageIdentity(message, { generateUuid: uuidv4 });
+    return saveSqliteChatMutation('insert', {
+        insert_at: messageId,
+        message: structuredClone(message),
+    }, t`Message insertion failed.`);
+}
+
+/**
+ * Persists a message that the caller already inserted at an absolute position.
+ * Reloads the authoritative chat if persistence fails.
+ * @param {number} messageId Logical position of the inserted message.
+ * @param {object} message Inserted chat message.
+ * @returns {Promise<string>} A CHAT_SAVE_RESULT value.
+ */
+export async function persistInsertedChatMessage(messageId, message) {
+    const saveResult = currentChatFileNameLooksSqlite()
+        ? await saveSqliteMessageInsert(messageId, message)
+        : await saveChatConditional();
+
+    if (saveResult !== CHAT_SAVE_RESULT.SAVED) {
+        await reloadCurrentChat({ flushPendingSave: false });
+    }
+
+    return saveResult;
 }
 
 async function saveSqliteMessageDeleteByUuid(messageUuid) {

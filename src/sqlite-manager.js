@@ -775,15 +775,16 @@ export function deleteAllLogicalMessages(db) {
 }
 
 /**
- * Inserts a logical message immediately after the supplied logical message id.
+ * Inserts a logical message at the supplied zero-based logical position.
  * @param {NativeDatabaseAdapter} db
- * @param {number} messageId
+ * @param {number} messageId Logical position at which to insert.
  * @param {any} message
  * @returns {number} Inserted logical message id.
  */
-export function insertLogicalMessageAfter(db, messageId, message) {
+export function insertLogicalMessageAt(db, messageId, message) {
     const normalizedMessageId = Number(messageId);
-    if (!Number.isInteger(normalizedMessageId) || normalizedMessageId < 0) {
+    const messageCount = getMessageCount(db);
+    if (!Number.isInteger(normalizedMessageId) || normalizedMessageId < 0 || normalizedMessageId > messageCount) {
         throw new Error('Invalid logical message insert id.');
     }
 
@@ -792,23 +793,21 @@ export function insertLogicalMessageAfter(db, messageId, message) {
         db.run('BEGIN TRANSACTION');
     }
     try {
-        const sourceRow = getLogicalMessageRow(db, normalizedMessageId);
-        if (!sourceRow) {
-            throw new Error('Message to clone was not found.');
-        }
-
-        const nextRow = getLogicalMessageRow(db, normalizedMessageId + 1);
+        const previousRow = normalizedMessageId > 0 ? getLogicalMessageRow(db, normalizedMessageId - 1) : null;
+        const nextRow = normalizedMessageId < messageCount ? getLogicalMessageRow(db, normalizedMessageId) : null;
+        const previousOrderIndex = previousRow ? Number(previousRow.orderIndex) : 0;
         let orderIndex = nextRow
-            ? (Number(sourceRow.orderIndex) + Number(nextRow.orderIndex)) / 2
-            : Number(sourceRow.orderIndex) + 1;
+            ? (previousOrderIndex + Number(nextRow.orderIndex)) / 2
+            : previousOrderIndex + 1;
 
-        if (!Number.isFinite(orderIndex) || orderIndex === Number(sourceRow.orderIndex) || (nextRow && orderIndex === Number(nextRow.orderIndex))) {
+        if (!Number.isFinite(orderIndex) || orderIndex === previousOrderIndex || (nextRow && orderIndex === Number(nextRow.orderIndex))) {
             setMessagesWithoutTransaction(db, getMessages(db));
-            const reindexedSourceRow = getLogicalMessageRow(db, normalizedMessageId);
-            const reindexedNextRow = getLogicalMessageRow(db, normalizedMessageId + 1);
+            const reindexedPreviousRow = normalizedMessageId > 0 ? getLogicalMessageRow(db, normalizedMessageId - 1) : null;
+            const reindexedNextRow = normalizedMessageId < messageCount ? getLogicalMessageRow(db, normalizedMessageId) : null;
+            const reindexedPreviousOrderIndex = reindexedPreviousRow ? Number(reindexedPreviousRow.orderIndex) : 0;
             orderIndex = reindexedNextRow
-                ? (Number(reindexedSourceRow.orderIndex) + Number(reindexedNextRow.orderIndex)) / 2
-                : Number(reindexedSourceRow.orderIndex) + 1;
+                ? (reindexedPreviousOrderIndex + Number(reindexedNextRow.orderIndex)) / 2
+                : reindexedPreviousOrderIndex + 1;
         }
 
         const stmt = db.prepare('INSERT INTO messages (order_index, content, message_uuid) VALUES (?, ?, ?)');
@@ -821,13 +820,29 @@ export function insertLogicalMessageAfter(db, messageId, message) {
         if (ownsTransaction) {
             db.run('COMMIT');
         }
-        return normalizedMessageId + 1;
+        return normalizedMessageId;
     } catch (error) {
         if (ownsTransaction && db?.database?.inTransaction) {
             db.run('ROLLBACK');
         }
         throw error;
     }
+}
+
+/**
+ * Inserts a logical message immediately after the supplied logical message id.
+ * @param {NativeDatabaseAdapter} db
+ * @param {number} messageId
+ * @param {any} message
+ * @returns {number} Inserted logical message id.
+ */
+export function insertLogicalMessageAfter(db, messageId, message) {
+    const normalizedMessageId = Number(messageId);
+    if (!Number.isInteger(normalizedMessageId) || normalizedMessageId < 0 || !getLogicalMessageRow(db, normalizedMessageId)) {
+        throw new Error('Message to clone was not found.');
+    }
+
+    return insertLogicalMessageAt(db, normalizedMessageId + 1, message);
 }
 
 /**

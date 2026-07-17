@@ -21,6 +21,7 @@ let getNewChatTargetConflict;
 let getChatSearchResult;
 let hasValidGroupChatPayload;
 let insertLogicalMessageAfter;
+let insertSqliteMessageAt;
 let loadDb;
 let migrateChatHeaderReferences;
 let moveSqliteMessagesAdjacent;
@@ -194,6 +195,7 @@ describe('SQLite chat length handling', () => {
         getLogicalChatData = chatsModule.getLogicalChatData;
         getChatSearchResult = chatsModule.getChatSearchResult;
         hasValidGroupChatPayload = chatsModule.hasValidGroupChatPayload;
+        insertSqliteMessageAt = chatsModule.insertSqliteMessageAt;
         resolveSqliteLogicalChatReference = chatsModule.resolveSqliteLogicalChatReference;
         truncateSqliteChatAfterUuid = chatsModule.truncateSqliteChatAfterUuid;
         updateSqliteChatMetadata = chatsModule.updateSqliteChatMetadata;
@@ -2645,6 +2647,109 @@ describe('SQLite chat length handling', () => {
                 'message 3',
                 'message 4',
             ]);
+        } finally {
+            fs.rmSync(tempDir, { recursive: true, force: true });
+        }
+    });
+
+    it('inserts supplied SQLite messages at the head and tail while repairing shifted metadata', async () => {
+        const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'sqlite-chat-insert-'));
+        const chatPath = path.join(tempDir, 'chat.jsonl');
+
+        try {
+            const messages = makeMessages(3);
+            messages[0] = {
+                ...messages[0],
+                extra: {
+                    promptSnapshotKey: 'user|chat:test|0|0',
+                    timedWorldInfoCheckpoint: {
+                        version: 1,
+                        messageId: 0,
+                        timedWorldInfo: {
+                            sticky: { a: { start: 0, end: 2 } },
+                            cooldown: {},
+                        },
+                    },
+                },
+            };
+            await writeLogicalChat(chatPath, makeHeader({ chat_revision: 4 }), messages);
+
+            const headPayload = await insertSqliteMessageAt({
+                filePath: chatPath,
+                requestBody: {
+                    insert_at: 0,
+                    message: {
+                        name: 'Narrator',
+                        is_user: false,
+                        is_system: true,
+                        mes: '# FIN',
+                        send_date: 99,
+                    },
+                    base_revision: 4,
+                    save_session_id: '33333333-3333-4333-8333-333333333333',
+                    operation_id: '55555555-5555-4555-8555-555555555555',
+                },
+                saveSessionId: '33333333-3333-4333-8333-333333333333',
+                displayCount: 10,
+            });
+            const afterHeadInsert = await getLogicalChatData(chatPath);
+            const insertedHead = afterHeadInsert[1];
+            const shiftedFirstMessage = afterHeadInsert[2];
+
+            expect(headPayload.inserted_message_id).toBe(0);
+            expect(headPayload.chat_revision).toBe(5);
+            expect(headPayload.totalMessages).toBe(4);
+            expect(insertedHead.mes).toBe('# FIN');
+            expect(insertedHead.aikobots_message_uuid).toBeTruthy();
+            expect(shiftedFirstMessage.extra.promptSnapshotKey).toBeUndefined();
+            expect(shiftedFirstMessage.extra.timedWorldInfoCheckpoint.messageId).toBe(1);
+            expect(shiftedFirstMessage.extra.timedWorldInfoCheckpoint.timedWorldInfo.sticky.a.start).toBe(1);
+            expect(shiftedFirstMessage.extra.timedWorldInfoCheckpoint.timedWorldInfo.sticky.a.end).toBe(3);
+
+            await expect(insertSqliteMessageAt({
+                filePath: chatPath,
+                requestBody: {
+                    insert_at: 0,
+                    message: {
+                        name: 'Narrator',
+                        is_user: false,
+                        is_system: true,
+                        mes: '# FIN',
+                        send_date: 99,
+                    },
+                    base_revision: 4,
+                    save_session_id: '33333333-3333-4333-8333-333333333333',
+                    operation_id: '55555555-5555-4555-8555-555555555555',
+                },
+                saveSessionId: '33333333-3333-4333-8333-333333333333',
+                displayCount: 10,
+            })).resolves.toMatchObject({ duplicate_operation: true, chat_revision: 5 });
+            await expect(getLogicalChatData(chatPath)).resolves.toHaveLength(5);
+
+            const tailPayload = await insertSqliteMessageAt({
+                filePath: chatPath,
+                requestBody: {
+                    insert_at: 4,
+                    message: {
+                        name: 'Narrator',
+                        is_user: false,
+                        is_system: true,
+                        mes: 'tail insertion',
+                        send_date: 100,
+                    },
+                    base_revision: 5,
+                    save_session_id: '44444444-4444-4444-8444-444444444444',
+                },
+                saveSessionId: '44444444-4444-4444-8444-444444444444',
+                displayCount: 10,
+            });
+            const afterTailInsert = await getLogicalChatData(chatPath);
+
+            expect(tailPayload.inserted_message_id).toBe(4);
+            expect(tailPayload.chat_revision).toBe(6);
+            expect(tailPayload.totalMessages).toBe(5);
+            expect(afterTailInsert).toHaveLength(6);
+            expect(afterTailInsert.at(-1).mes).toBe('tail insertion');
         } finally {
             fs.rmSync(tempDir, { recursive: true, force: true });
         }

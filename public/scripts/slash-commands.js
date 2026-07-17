@@ -2,6 +2,7 @@ import { Fuse, DOMPurify } from '../lib.js';
 import { canUseNegativeLookbehind, copyText, flashHighlight } from './utils.js';
 
 import {
+    CHAT_SAVE_RESULT,
     Generate,
     activateSendButtons,
     addOneMessage,
@@ -33,6 +34,8 @@ import {
     neutralCharacterName,
     newAssistantChat,
     online_status,
+    persistAppendedChatMessage,
+    persistInsertedChatMessage,
     reloadCurrentChat,
     removeMacros,
     renameCharacter,
@@ -4392,16 +4395,20 @@ export async function sendMessageAs(args, text) {
 
     if (!isNaN(insertAt) && insertAt >= 0 && insertAt <= chat.length) {
         chat.splice(insertAt, 0, message);
-        await saveChatConditional();
+        const saveResult = await persistInsertedChatMessage(insertAt, message);
+        if (saveResult !== CHAT_SAVE_RESULT.SAVED) {
+            return '';
+        }
         await eventSource.emit(event_types.MESSAGE_RECEIVED, insertAt, 'command');
         await reloadCurrentChat();
         await eventSource.emit(event_types.CHARACTER_MESSAGE_RENDERED, insertAt, 'command');
     } else {
         chat.push(message);
-        await eventSource.emit(event_types.MESSAGE_RECEIVED, (chat.length - 1), 'command');
+        const messageId = chat.length - 1;
+        await eventSource.emit(event_types.MESSAGE_RECEIVED, messageId, 'command');
         addOneMessage(message);
-        await eventSource.emit(event_types.CHARACTER_MESSAGE_RENDERED, (chat.length - 1), 'command');
-        await saveChatConditional();
+        await eventSource.emit(event_types.CHARACTER_MESSAGE_RENDERED, messageId, 'command');
+        await persistAppendedChatMessage(messageId, message);
     }
 
     return await slashCommandReturnHelper.doReturn(args.return ?? 'none', message, { objectToStringFunc: x => x.mes });
@@ -4444,16 +4451,20 @@ export async function sendNarratorMessage(args, text) {
 
     if (!isNaN(insertAt) && insertAt >= 0 && insertAt <= chat.length) {
         chat.splice(insertAt, 0, message);
-        await saveChatConditional();
+        const saveResult = await persistInsertedChatMessage(insertAt, message);
+        if (saveResult !== CHAT_SAVE_RESULT.SAVED) {
+            return '';
+        }
         await eventSource.emit(event_types.MESSAGE_SENT, insertAt);
         await reloadCurrentChat();
         await eventSource.emit(event_types.USER_MESSAGE_RENDERED, insertAt);
     } else {
         chat.push(message);
-        await eventSource.emit(event_types.MESSAGE_SENT, (chat.length - 1));
+        const messageId = chat.length - 1;
+        await eventSource.emit(event_types.MESSAGE_SENT, messageId);
         addOneMessage(message);
-        await eventSource.emit(event_types.USER_MESSAGE_RENDERED, (chat.length - 1));
-        await saveChatConditional();
+        await eventSource.emit(event_types.USER_MESSAGE_RENDERED, messageId);
+        await persistAppendedChatMessage(messageId, message);
     }
 
     return await slashCommandReturnHelper.doReturn(args.return ?? 'none', message, { objectToStringFunc: x => x.mes });
@@ -4495,10 +4506,11 @@ export async function promptQuietForLoudResponse(who, text) {
     chat_metadata['tainted'] = true;
 
     chat.push(message);
-    await eventSource.emit(event_types.MESSAGE_SENT, (chat.length - 1));
+    const messageId = chat.length - 1;
+    await eventSource.emit(event_types.MESSAGE_SENT, messageId);
     addOneMessage(message);
-    await eventSource.emit(event_types.USER_MESSAGE_RENDERED, (chat.length - 1));
-    await saveChatConditional();
+    await eventSource.emit(event_types.USER_MESSAGE_RENDERED, messageId);
+    await persistAppendedChatMessage(messageId, message);
 
 }
 
@@ -4532,16 +4544,20 @@ async function sendCommentMessage(args, text) {
 
     if (!isNaN(insertAt) && insertAt >= 0 && insertAt <= chat.length) {
         chat.splice(insertAt, 0, message);
-        await saveChatConditional();
+        const saveResult = await persistInsertedChatMessage(insertAt, message);
+        if (saveResult !== CHAT_SAVE_RESULT.SAVED) {
+            return '';
+        }
         await eventSource.emit(event_types.MESSAGE_SENT, insertAt);
         await reloadCurrentChat();
         await eventSource.emit(event_types.USER_MESSAGE_RENDERED, insertAt);
     } else {
         chat.push(message);
-        await eventSource.emit(event_types.MESSAGE_SENT, (chat.length - 1));
+        const messageId = chat.length - 1;
+        await eventSource.emit(event_types.MESSAGE_SENT, messageId);
         addOneMessage(message);
-        await eventSource.emit(event_types.USER_MESSAGE_RENDERED, (chat.length - 1));
-        await saveChatConditional();
+        await eventSource.emit(event_types.USER_MESSAGE_RENDERED, messageId);
+        await persistAppendedChatMessage(messageId, message);
     }
 
     return await slashCommandReturnHelper.doReturn(args.return ?? 'none', message, { objectToStringFunc: x => x.mes });

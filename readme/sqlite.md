@@ -131,7 +131,7 @@ This schema describes the current baseline. It does not yet enforce every target
 
 SQLite chat metadata may contain `last_activity_at`, an epoch-millisecond timestamp used only to compile and order the welcome screen's Recent Chats list. It records the most recent successful committed change to the canonical message sequence or state.
 
-Qualifying changes are message append, edit, reorder, delete, truncate, clone, persisted swipe creation/edit/deletion/selection, and message visibility changes. Imports use import time. A copied, duplicated, or branched target uses its creation time without changing the source. A newly created empty chat receives no activity timestamp until its first message is persisted.
+Qualifying changes are message append, insert, edit, reorder, delete, truncate, clone, persisted swipe creation/edit/deletion/selection, and message visibility changes. Imports use import time. A copied, duplicated, or branched target uses its creation time without changing the source. A newly created empty chat receives no activity timestamp until its first message is persisted.
 
 Chat rename, chat-header metadata, persona or participant-history synchronization, group membership/configuration, opening a chat, pin changes, export, backup, migration, repair, compaction, and other maintenance do not update this value. Failed, rolled-back, no-op, and idempotently replayed mutations do not update it.
 
@@ -146,6 +146,8 @@ Generating a new swipe past the right edge uses an in-memory pending target that
 Modern SQLite chats receive a one-time `swipe_state_scan_version` maintenance scan on load. The scan repairs only the exact legacy overswipe shape where `swipe_id === swipes.length`, the swipe list is non-empty, and selecting the final materialized swipe makes the entire message pass active-swipe validation. Other out-of-bounds or contradictory states are left unchanged for explicit diagnosis. A successful repair preserves the chat revision and activity timestamp and requires the client to reload the repaired chat before writing.
 
 Chat-header metadata changes use a dedicated revision-checked SQLite mutation for direct and group chats. The mutation replaces the sanitized `chat_metadata` object atomically, records an operation receipt, and does not read, validate, or rewrite message rows. This allows metadata such as chat-bound lorebooks to persist for empty chats and independently of message-range state.
+
+Direct and group SQLite chats also expose a dedicated revision-checked message insertion mutation. The client supplies the new message and its absolute logical position. Under the existing chat-save lock, the server rejects out-of-range positions and reused UUIDs, then atomically inserts the row, repairs positional metadata in the shifted suffix, advances the chat revision and activity time, and records the operation receipt. Slash commands that use `at=` call this mutation instead of submitting a loaded-range replacement.
 
 Pinned and unpinned chats form separate display tiers; each tier sorts by `last_activity_at` descending. Legacy chats without the metadata value use their last persisted message timestamp without writing a migration value or consulting filesystem modification time. Chats with neither value are omitted until qualifying activity occurs.
 
