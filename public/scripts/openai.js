@@ -74,6 +74,7 @@ import { callGenericPopup, Popup, POPUP_RESULT, POPUP_TYPE } from './popup.js';
 import { t } from './i18n.js';
 import { ToolManager } from './tool-calling.js';
 import { accountStorage } from './util/AccountStorage.js';
+import { LatestTask } from './util/LatestTask.js';
 import { COMETAPI_IGNORE_PATTERNS, IGNORE_SYMBOL } from './constants.js';
 import { consumeChatCompletionStream } from './chat-completion-stream.js';
 
@@ -4328,7 +4329,22 @@ function setGlobalPromptPostProcessingControls() {
         .attr('title', useGlobalModes ? disabledTitle : defaultTitle);
 }
 
-async function getStatusOpen() {
+const statusCheckTasks = new LatestTask();
+const connectionTasks = new LatestTask();
+
+/**
+ * Returns whether a status check still owns the shared connection state.
+ * @param {number} statusCheckId Status check sequence number
+ * @param {AbortController} statusCheckController Controller captured when the check started
+ * @returns {boolean} Whether the status check is current
+ */
+function isCurrentStatusCheck(statusCheckId, statusCheckController) {
+    return statusCheckTasks.isLatest(statusCheckId)
+        && statusCheckController === abortStatusCheck
+        && !statusCheckController.signal.aborted;
+}
+
+async function runStatusOpen(statusCheckId, statusCheckController) {
     const providerConfig = providerConfigs[oai_settings.chat_completion_source];
     if (providerConfig?.supportsStatusCheck === false) {
         let status = t`Key saved; press \"Test Message\" to verify.`;
@@ -4363,6 +4379,9 @@ async function getStatusOpen() {
 
     if (oai_settings.reverse_proxy && providerConfig?.supportsReverseProxy) {
         await validateReverseProxy();
+        if (!isCurrentStatusCheck(statusCheckId, statusCheckController)) {
+            return;
+        }
     }
 
     if (oai_settings.chat_completion_source === chat_completion_sources.CUSTOM) {
@@ -4392,15 +4411,22 @@ async function getStatusOpen() {
             method: 'POST',
             headers: getRequestHeaders(),
             body: JSON.stringify(data),
-            signal: abortStatusCheck.signal,
+            signal: statusCheckController.signal,
             cache: 'no-cache',
         });
+
+        if (!isCurrentStatusCheck(statusCheckId, statusCheckController)) {
+            return;
+        }
 
         if (!response.ok) {
             throw new Error(response.statusText);
         }
 
         const responseData = await response.json();
+        if (!isCurrentStatusCheck(statusCheckId, statusCheckController)) {
+            return;
+        }
 
         if ('data' in responseData && Array.isArray(responseData.data)) {
             saveModelList(responseData.data);
@@ -4412,6 +4438,11 @@ async function getStatusOpen() {
             setOnlineStatus(t`Status check bypassed`);
         }
     } catch (error) {
+        if (!isCurrentStatusCheck(statusCheckId, statusCheckController)) {
+            console.debug('Discarded canceled or superseded API status check.');
+            return;
+        }
+
         console.error(error);
 
         if (!canBypass) {
@@ -4421,6 +4452,11 @@ async function getStatusOpen() {
 
     updateFeatureSupportFlags();
     return resultCheckStatus();
+}
+
+async function getStatusOpen() {
+    const statusCheckController = abortStatusCheck;
+    return await statusCheckTasks.start(statusCheckId => runStatusOpen(statusCheckId, statusCheckController));
 }
 
 /**
@@ -5920,9 +5956,7 @@ function onReverseProxyInput() {
     saveSettingsDebounced();
 }
 
-async function onConnectButtonClick(e) {
-    e.stopPropagation();
-
+async function runOpenAIConnection(connectionId) {
     const providerConfig = providerConfigs[oai_settings.chat_completion_source];
 
     /** @type {{key: string, selector: string, proxy?: boolean, keyless?: boolean}|null} */
@@ -5950,6 +5984,10 @@ async function onConnectButtonClick(e) {
             await writeSecret(config.key, apiKey);
         }
 
+        if (!connectionTasks.isLatest(connectionId)) {
+            return;
+        }
+
         if (!secret_state[config.key] && (!config.proxy || !oai_settings.reverse_proxy) && !config.keyless) {
             console.log(`No secret key saved for ${oai_settings.chat_completion_source}`);
             return;
@@ -5959,6 +5997,18 @@ async function onConnectButtonClick(e) {
     startStatusLoading();
     saveSettingsDebounced();
     await getStatusOpen();
+}
+
+function onConnectButtonClick(e) {
+    e.stopPropagation();
+    return connectionTasks.start(connectionId => runOpenAIConnection(connectionId));
+}
+
+/**
+ * Waits until the latest OpenAI connection attempt has settled, including a replacement started while waiting.
+ */
+export async function waitForCurrentOpenAIConnection() {
+    await connectionTasks.wait();
 }
 
 function toggleChatCompletionForms() {

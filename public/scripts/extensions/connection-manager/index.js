@@ -14,7 +14,7 @@ import { SlashCommandScope } from '../../slash-commands/SlashCommandScope.js';
 import { collapseSpaces, getUniqueName, isFalseBoolean, uuidv4, waitUntilCondition } from '../../utils.js';
 import { t } from '../../i18n.js';
 import { getSecretLabelById } from '../../secrets.js';
-import { oai_settings } from '../../openai.js';
+import { oai_settings, waitForCurrentOpenAIConnection } from '../../openai.js';
 
 const MODULE_NAME = 'connection-manager';
 const NONE = '<None>';
@@ -436,29 +436,33 @@ export async function applyConnectionProfile(profile) {
     const spinner = new ConnectionManagerSpinner();
     spinner.start();
 
-    for (const command of commands) {
-        if (spinner.isAborted()) {
-            throw new Error('Profile application aborted');
+    try {
+        for (const command of commands) {
+            if (spinner.isAborted()) {
+                throw new Error('Profile application aborted');
+            }
+
+            const argument = profile[command];
+            const allowEmpty = ALLOW_EMPTY.includes(command);
+            if (shouldSkipPromptPostProcessingCommand(command)) {
+                continue;
+            }
+
+            if (!argument && !(allowEmpty && argument === '')) {
+                continue;
+            }
+            try {
+                const args = getNamedArguments(allowEmpty ? { force: 'true' } : {});
+                await SlashCommandParser.commands[command].callback(args, argument);
+            } catch (error) {
+                console.error(`Failed to execute command: ${command} ${argument}`, error);
+            }
         }
 
-        const argument = profile[command];
-        const allowEmpty = ALLOW_EMPTY.includes(command);
-        if (shouldSkipPromptPostProcessingCommand(command)) {
-            continue;
-        }
-
-        if (!argument && !(allowEmpty && argument === '')) {
-            continue;
-        }
-        try {
-            const args = getNamedArguments(allowEmpty ? { force: 'true' } : {});
-            await SlashCommandParser.commands[command].callback(args, argument);
-        } catch (error) {
-            console.error(`Failed to execute command: ${command} ${argument}`, error);
-        }
+        await waitForCurrentOpenAIConnection();
+    } finally {
+        spinner.stop();
     }
-
-    spinner.stop();
 }
 
 /**
