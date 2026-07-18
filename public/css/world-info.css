@@ -739,6 +739,7 @@ select.keyselect+span.select2-container .select2-selection--multiple {
     box-shadow: 0 6px 18px var(--black30a);
     backdrop-filter: blur(8px);
     cursor: pointer;
+    touch-action: none;
 }
 
 .wi-floating-book-trigger[hidden] {

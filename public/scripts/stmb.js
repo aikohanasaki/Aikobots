@@ -6721,6 +6721,7 @@ function handleFloatingJumpButtonPointerUp() {
 
     document.removeEventListener('pointermove', handleFloatingJumpButtonPointerMove);
     document.removeEventListener('pointerup', handleFloatingJumpButtonPointerUp);
+    document.removeEventListener('pointercancel', handleFloatingJumpButtonPointerUp);
     floatingJumpButtonDragState = null;
     if (!button || !position) {
         return;
@@ -6759,6 +6760,7 @@ function bindFloatingJumpButtonDrag(button, getFallbackPosition, savePosition) {
         };
         document.addEventListener('pointermove', handleFloatingJumpButtonPointerMove);
         document.addEventListener('pointerup', handleFloatingJumpButtonPointerUp);
+        document.addEventListener('pointercancel', handleFloatingJumpButtonPointerUp);
     });
 }
 

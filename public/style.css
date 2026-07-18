@@ -7059,6 +7059,7 @@ body:has(#character_popup.open) #top-settings-holder:has(.drawer-content.openDra
         0 0 0 1px var(--SmartThemeBorderColor);
     cursor: grab;
     opacity: 0.82;
+    touch-action: none;
     transition: opacity var(--animation-duration-2x) ease-in-out;
     user-select: none;
 }
