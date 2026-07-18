@@ -133,6 +133,8 @@ SQLite chat metadata may contain `last_activity_at`, an epoch-millisecond timest
 
 Qualifying changes are message append, insert, edit, reorder, delete, truncate, clone, persisted swipe creation/edit/deletion/selection, and message visibility changes. Imports use import time. A copied, duplicated, or branched target uses its creation time without changing the source. A newly created empty chat receives no activity timestamp until its first message is persisted.
 
+An empty SQLite chat may display a locally generated pristine greeting and its alternate swipes before roleplay starts. Navigating those existing greeting swipes remains client-local and does not create chat activity. Immediately before the first real message is appended, the client appends the selected greeting through the revision-checked SQLite message mutation; later messages then use the normal tail-checked append path. The client retains the server-reported SQLite storage mode while this local greeting is displayed and does not fall back to an ordinary full-chat replacement.
+
 Chat rename, chat-header metadata, persona or participant-history synchronization, group membership/configuration, opening a chat, pin changes, export, backup, migration, repair, compaction, and other maintenance do not update this value. Failed, rolled-back, no-op, and idempotently replayed mutations do not update it.
 
 ### Ordinary swipe text edits

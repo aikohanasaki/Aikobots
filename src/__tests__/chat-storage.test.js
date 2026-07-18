@@ -1375,6 +1375,41 @@ describe('SQLite chat length handling', () => {
         }
     });
 
+    it('appends the chosen pristine greeting to an empty SQLite chat', async () => {
+        const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'sqlite-chat-pristine-greeting-'));
+        const chatPath = path.join(tempDir, 'chat.jsonl');
+
+        try {
+            await writeLogicalChat(chatPath, makeHeader({ chat_revision: 1 }), []);
+            const greeting = makeMultiSwipeAssistant();
+
+            const payload = await appendSqliteMessage({
+                filePath: chatPath,
+                requestBody: {
+                    operation_id: '77777777-7777-4777-8777-777777777777',
+                    message: greeting,
+                    base_revision: 1,
+                    save_session_id: '33333333-3333-4333-8333-333333333333',
+                },
+                saveSessionId: '33333333-3333-4333-8333-333333333333',
+                displayCount: 10,
+            });
+
+            const logicalChat = await getLogicalChatData(chatPath);
+            expect(payload.chat_revision).toBe(2);
+            expect(payload.message_id).toBe(0);
+            expect(logicalChat).toHaveLength(2);
+            expect(logicalChat[1]).toMatchObject({
+                aikobots_message_uuid: greeting.aikobots_message_uuid,
+                swipe_id: greeting.swipe_id,
+                mes: greeting.mes,
+                swipes: greeting.swipes,
+            });
+        } finally {
+            fs.rmSync(tempDir, { recursive: true, force: true });
+        }
+    });
+
     it('acknowledges a retried append operation UUID without applying it twice', async () => {
         const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'sqlite-chat-idempotent-append-'));
         const chatPath = path.join(tempDir, 'chat.jsonl');

@@ -1139,6 +1139,7 @@ function getDefaultChatLoadState() {
         currentView: 'tail',
         isHydrated: true,
         storageMode: 'unknown',
+        hasLocalPristineGreeting: false,
     };
 }
 
@@ -1543,11 +1544,12 @@ function hasUserMessageInCurrentChat() {
 }
 
 /**
- * Skips only pristine temporary character chats that still contain just the generated greeting.
+ * Skips pristine character chats that still contain only a locally generated greeting.
  * Bot-only generated openings mark the chat tainted and must be persisted.
  */
-function shouldSkipTemporaryCharacterChatSave() {
-    return isCurrentCharacterChatTemporary() && !hasUserMessageInCurrentChat() && chat_metadata['tainted'] !== true;
+function shouldSkipPristineGreetingSave() {
+    const hasLocalGreeting = isCurrentCharacterChatTemporary() || chatLoadState.hasLocalPristineGreeting;
+    return hasLocalGreeting && !hasUserMessageInCurrentChat() && chat_metadata['tainted'] !== true;
 }
 
 function getTemporaryCharacterChatPendingFileName() {
@@ -11133,6 +11135,11 @@ export async function sendMessageAsUser(messageText, messageBias, insertAt = nul
     ensureMessageIdentity(message, { generateUuid: uuidv4 });
     statMesProcess(message, 'user', characters, this_chid, '');
 
+    const greetingSaveResult = await persistLocalPristineGreetingIfNeeded();
+    if (greetingSaveResult !== CHAT_SAVE_RESULT.SAVED) {
+        return null;
+    }
+
     chat_metadata['tainted'] = true;
 
     if (typeof insertAt === 'number' && insertAt >= 0 && insertAt <= chat.length) {
@@ -12661,8 +12668,8 @@ export function saveChatDebounced() {
         }
 
         console.debug('Chat save timeout triggered');
-        await saveChatConditional();
-        console.debug('Chat saved');
+        const saveResult = await saveChatConditional();
+        console.debug(saveResult === CHAT_SAVE_RESULT.SAVED ? 'Chat saved' : 'Chat save failed');
     }, DEFAULT_CHAT_SAVE_EDIT_TIMEOUT);
 }
 
@@ -12764,7 +12771,7 @@ export async function saveChat({ chatName, withMetadata, mesId, force = false, f
         ? pendingTemporaryFileName
         : existingFileName || (isPendingSoloCharacterSave ? `${name2} - ${humanizedDateTime()}` : existingFileName);
 
-    if (shouldSkipTemporaryCharacterChatSave()) {
+    if (shouldSkipPristineGreetingSave()) {
         return CHAT_SAVE_RESULT.SAVED;
     }
 
@@ -12850,6 +12857,7 @@ export async function saveChat({ chatName, withMetadata, mesId, force = false, f
             if (responseData?.storage_mode) {
                 chatLoadState.storageMode = String(responseData.storage_mode);
             }
+            chatLoadState.hasLocalPristineGreeting = false;
             if (isPendingSoloCharacterSave || isTemporaryCharacterSave) {
                 clearTemporaryCharacterChat();
                 characters[this_chid]['date_last_chat'] = Date.now();
@@ -13211,9 +13219,14 @@ async function getChatResult() {
     if (getTotalChatMessages() === 0) {
         const message = getFirstMessage();
         if (message.mes) {
+            ensureMessageIdentity(message, { generateUuid: uuidv4 });
+            ensureSwipeIdentities(message, { generateUuid: uuidv4 });
+            const storageMode = chatLoadState.storageMode;
             chat.length = 1;
             chat[0] = message;
             resetChatLoadState();
+            chatLoadState.storageMode = storageMode;
+            chatLoadState.hasLocalPristineGreeting = true;
             mergeLoadedRange(0, 0);
             chatLoadState.tailStartId = 0;
             chatLoadState.tailEndId = 0;
@@ -14398,6 +14411,32 @@ async function saveSqliteMessageAppend(messageId, message) {
     }
 
     return saveChatConditional({ immediate: true, forceFull: true });
+}
+
+/**
+ * Persists the locally generated greeting immediately before the first real message.
+ * Greeting-only swipe navigation remains local and does not create chat activity.
+ * @returns {Promise<string>} A CHAT_SAVE_RESULT value.
+ */
+async function persistLocalPristineGreetingIfNeeded() {
+    if (!chatLoadState.hasLocalPristineGreeting) {
+        return CHAT_SAVE_RESULT.SAVED;
+    }
+
+    if (!currentChatFileNameLooksSqlite()) {
+        return CHAT_SAVE_RESULT.SAVED;
+    }
+
+    const greeting = chat[0];
+    if (chat.length !== 1 || !greeting || greeting.is_user || greeting.is_system) {
+        return CHAT_SAVE_RESULT.FAILED;
+    }
+
+    const saveResult = await saveSqliteMessageAppend(0, greeting);
+    if (saveResult === CHAT_SAVE_RESULT.SAVED) {
+        chatLoadState.hasLocalPristineGreeting = false;
+    }
+    return saveResult;
 }
 
 /**
@@ -17741,7 +17780,7 @@ async function saveChatOnce(options = {}) {
     try {
         cancelDebouncedChatSave();
 
-        if (!selected_group && shouldSkipTemporaryCharacterChatSave()) {
+        if (!selected_group && shouldSkipPristineGreetingSave()) {
             return CHAT_SAVE_RESULT.SAVED;
         }
 
@@ -18813,7 +18852,7 @@ export async function swipe(event, direction, { source, repeated, message = chat
                 console.trace(`Error! Recursion detected when reverting failed ${direction} swipe on message #${mesId}. Something has broken.`);
                 await reloadCurrentChat();
             }
-        } else if (source !== SWIPE_SOURCE.BACK && persist) {
+        } else if (source !== SWIPE_SOURCE.BACK && persist && !chatLoadState.hasLocalPristineGreeting) {
             if (currentChatFileNameLooksSqlite()) {
                 const saveResult = await saveMessageUpdateByUuid(chat[mesId]);
                 if (saveResult !== CHAT_SAVE_RESULT.SAVED) {
