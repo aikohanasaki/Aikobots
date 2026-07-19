@@ -6001,7 +6001,19 @@ async function runOpenAIConnection(connectionId) {
 
 function onConnectButtonClick(e) {
     e.stopPropagation();
+    return connectOpenAI();
+}
+
+function connectOpenAI() {
     return connectionTasks.start(connectionId => runOpenAIConnection(connectionId));
+}
+
+/**
+ * Checks the current OpenAI connection without modifying saved secrets.
+ */
+export async function checkOpenAIStatus() {
+    startStatusLoading();
+    await getStatusOpen();
 }
 
 /**

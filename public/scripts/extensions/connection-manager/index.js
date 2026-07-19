@@ -14,7 +14,7 @@ import { SlashCommandScope } from '../../slash-commands/SlashCommandScope.js';
 import { collapseSpaces, getUniqueName, isFalseBoolean, uuidv4, waitUntilCondition } from '../../utils.js';
 import { t } from '../../i18n.js';
 import { getSecretLabelById } from '../../secrets.js';
-import { oai_settings, waitForCurrentOpenAIConnection } from '../../openai.js';
+import { checkOpenAIStatus, oai_settings, waitForCurrentOpenAIConnection } from '../../openai.js';
 
 const MODULE_NAME = 'connection-manager';
 const NONE = '<None>';
@@ -460,6 +460,9 @@ export async function applyConnectionProfile(profile) {
         }
 
         await waitForCurrentOpenAIConnection();
+        if (mode === 'cc' && online_status === 'no_connection') {
+            await checkOpenAIStatus();
+        }
     } finally {
         spinner.stop();
     }

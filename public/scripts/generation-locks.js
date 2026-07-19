@@ -5,6 +5,7 @@ import {
     event_types,
     eventSource,
     main_api,
+    online_status,
     saveMetadata,
     saveSettingsDebounced,
     this_chid,
@@ -12,7 +13,7 @@ import {
 import { extension_settings } from './extensions.js';
 import { groups, selected_group } from './group-chats.js';
 import { t } from './i18n.js';
-import { chat_completion_sources, oai_settings } from './openai.js';
+import { chat_completion_sources, checkOpenAIStatus, oai_settings, waitForCurrentOpenAIConnection } from './openai.js';
 import { Popup } from './popup.js';
 import { power_user } from './power-user.js';
 import { getPresetManager } from './preset-manager.js';
@@ -469,6 +470,12 @@ export async function applyResolvedGenerationLock(resolved, options = {}) {
         }
         if (shouldApplyOverrides || options.force) {
             applyOverrides(resolved.lock.overrides);
+        }
+        if ((shouldApplyProfile || shouldApplyPreset || shouldApplyModel || options.force) && main_api === 'openai') {
+            await waitForCurrentOpenAIConnection();
+            if (online_status === 'no_connection') {
+                await checkOpenAIStatus();
+            }
         }
         lastAppliedSignature = signature;
         updateGenerationLocksStatus(resolved);
