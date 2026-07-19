@@ -4,8 +4,6 @@ Aikobots is a fork of SillyTavern. Portions of the codebase remain derived from 
 
 This document summarizes major Aikobots-specific additions, integrations, and behavioral changes from the upstream SillyTavern base. It is intended as a provenance and orientation guide, not a complete line-by-line changelog.
 
-Fact-check basis: this document has been checked against the current v4 workspace, including `readme.md`, `readme/sqlite.md`, `public/index.html`, `public/script.js`, `public/scripts/chat-identities.js`, `public/scripts/world-info.js`, the `public/scripts/stmb*.js` modules, `src/chat-storage.js`, `src/endpoints/chats.js`, `src/endpoints/stmb.js`, `src/sqlite-manager.js`, `src/lorebook-repository.js`, `src/character-sharing-repository.js`, `src/character-submissions.js`, `src/active-session-store.js`, and related tests and endpoint files. It is a high-level provenance guide, not a formal exhaustive diff against every upstream SillyTavern commit.
-
 ## Attribution
 
 Aikobots is maintained by Aiko Hanasaki.
@@ -175,9 +173,13 @@ Suggested attribution wording:
 
 > Portions of this work are derived from Aikobots by Aiko Hanasaki.
 
+For Memory Books-derived work:
+
+> Portions of this work are derived from SillyTavern-MemoryBooks by Aiko Hanasaki.
+
 For WorldInfoInfo-derived work:
 
-> WorldInfoInfo originally by Len Anderson, with Aikobots-specific hidden-lorebook integration work by Aiko Hanasaki.
+> SillyTavern-WorldInfoInfo originally by Len Anderson, with additional features and Aikobots-specific hidden-lorebook work by Aiko Hanasaki.
 
 ## Notes on Scope
 
