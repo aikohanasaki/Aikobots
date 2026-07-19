@@ -1,5 +1,7 @@
 # Aikobots v3 / v3.1: SQLite Chat Storage and Safer Long Chats
 
+This document records the historical v3/v3.1 architecture. Native SQLite and later transactional mutation work belong to [Code Provenance v4](Code%20Provenance%20v4.md).
+
 Aikobots v3 keeps the v2 platform direction, but replaces the long-chat storage foundation underneath it.
 
 The main change is chat storage: v3 moves away from the v2 JSONL/split-tail model, itself a departure from base SillyTavern's plain JSONL, and introduces SQLite-backed chat files, with stricter migration rules, safer path handling, revision-aware writes, SQLite-aware Memory Book behavior, and frontend save recovery paths for long-running chats.

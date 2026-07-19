@@ -4,7 +4,7 @@ Aikobots is a fork of SillyTavern. Portions of the codebase remain derived from 
 
 This document summarizes major Aikobots-specific additions, integrations, and behavioral changes from the upstream SillyTavern base. It is intended as a provenance and orientation guide, not a complete line-by-line changelog.
 
-Fact-check basis: this document has been checked against the current `chat-dbs` / v3 workspace, including `readme.md`, `readme/sqlite.md`, `public/index.html`, `public/scripts/world-info.js`, the `public/scripts/stmb*.js` modules, `src/endpoints/chats.js`, `src/sqlite-manager.js`, `src/lorebook-repository.js`, `src/character-sharing-repository.js`, `src/character-submissions.js`, `src/active-session-store.js`, and related endpoint files. It is a high-level provenance guide, not a formal exhaustive diff against every upstream SillyTavern commit.
+Fact-check basis: this document has been checked against the current v4 workspace, including `readme.md`, `readme/sqlite.md`, `public/index.html`, `public/script.js`, `public/scripts/chat-identities.js`, `public/scripts/world-info.js`, the `public/scripts/stmb*.js` modules, `src/chat-storage.js`, `src/endpoints/chats.js`, `src/endpoints/stmb.js`, `src/sqlite-manager.js`, `src/lorebook-repository.js`, `src/character-sharing-repository.js`, `src/character-submissions.js`, `src/active-session-store.js`, and related tests and endpoint files. It is a high-level provenance guide, not a formal exhaustive diff against every upstream SillyTavern commit.
 
 ## Attribution
 
@@ -64,15 +64,15 @@ Current code includes shared character storage, owner metadata, checkout/force-c
 
 ### 7. Chat Handling and Long-Chat Performance Work
 
-Aikobots includes changes intended to improve long-chat handling, including split-tail/chunked chat loading behavior and related performance/stability work.
+Aikobots includes changes intended to improve long-chat handling, beginning with split-tail/chunked loading and continuing through SQLite-backed range reads and incremental mutations.
 
-Later development work moves toward replacing JSONL/split-tail behavior with SQLite-backed chat storage. This work was contributed by LeRobber and is substantial enough to make LeRobber the main developer for this specific feature. 
+The initial move from JSONL/split-tail behavior to SQLite-backed chat storage includes substantial retrieval and migration work by LeRobber, who should be credited as a major developer for that feature area.
 
-Repository history confirms LeRobber authored key SQLite retrieval and migration commits. Subsequent branch history also shows substantial Aikobots integration, migration, locking, STMB compatibility, and bugfix work by Aiko/aikohanasaki around the same chat-storage area.
+Repository history confirms LeRobber authored key early SQLite retrieval and migration commits. Subsequent branch history shows substantial integration, migration, locking, STMB compatibility, native SQLite conversion, transactional mutation, and bugfix work by Aiko Hanasaki around the same chat-storage area.
 
-Fact-check update for the current v3 workspace: SQLite-backed chat storage is now the documented current architecture, not only future work. New chat paths default to `.sqlite`, legacy `.jsonl` remains a compatibility input, v2's split-tail storage is intentionally unsupported by v3, chat imports/exports include SQLite, and migration tooling verifies SQLite integrity before removing legacy JSONL sources.
+Fact-check update for the current v4 workspace: SQLite-backed chat storage is the current architecture. New chat paths default to `.sqlite`, legacy `.jsonl` remains a migration or import input, v2's split-tail runtime storage remains unsupported, chat imports/exports include SQLite, and migration tooling verifies SQLite integrity and logical equivalence before retiring legacy JSONL sources.
 
-The current chat system also includes chat revisions, stale-write conflict detection, active-session checks on mutations, application-level save locks, chunked/range reads, STMB sparse range resolution, raw SQLite export, message cloning, and prompt snapshot invalidation for affected cloned messages.
+The current chat system uses native SQLite through `better-sqlite3`, bounded SQL reads, WAL-backed transactions, durable message and swipe UUIDs, revision checks, idempotent operation receipts, active-session checks, application-level coordination locks, STMB sparse range resolution, WAL-consistent raw export, message cloning, and prompt snapshot invalidation for affected cloned messages.
 
 ### 8. Layout and UI Systems
 
@@ -120,17 +120,37 @@ Aikobots moves important prompt assembly and inspection behavior server-side so 
 
 Current code includes server-side world-info scan reporting, prompt itemization, redacted prompt text, prompt inspection snapshots scoped to generation, and sanitization before returning snapshot data to the client.
 
-### 15. SQLite Chat Storage and Migration Tooling
+### 15. Native SQLite Chat Storage and Migration Tooling
 
-Aikobots v3 uses SQLite chat files through `sql.js` while preserving the historical whole-file persistence model. The storage layer includes schema creation, JSONL migration, message range reads, range writes, metadata helpers, and integrity checks.
+Aikobots v3 introduced SQLite chat files through `sql.js` while preserving the historical whole-file persistence model. Aikobots v4 replaces that engine with native SQLite through `better-sqlite3`: ordinary reads are bounded SQL reads, ordinary writes use transactions, WAL state is handled during lifecycle operations, and complete database serialization is reserved for explicit raw export.
 
-The migration tool supports legacy JSONL migration, verifies `PRAGMA integrity_check`, compares migrated content back to the source plan, and rejects unsafe partial split-tail inputs instead of silently producing ambiguous chat data.
+The migration tool supports legacy JSONL migration, verifies `PRAGMA integrity_check`, compares ordered structured records back to the source plan, and rejects unsafe partial split-tail inputs instead of silently producing ambiguous chat data.
 
 ### 16. Extension and Plugin Policy Changes
 
 Aikobots includes server-side extension runtime plumbing and policy checks for hosted environments. Third-party extension installation can be admin-restricted, and server-side extension hooks support generation interceptors, prompt providers, and macro providers.
 
 This supports an integrated Aikobots deployment model while keeping extension behavior behind explicit policy boundaries.
+
+### 17. Transactional Chat Identity and Mutation Model
+
+Aikobots v4 adds explicit direct and group SQLite mutations for message append, insert, update, move, delete, truncate, clone, metadata, visibility, and related operations. Durable message and swipe UUIDs identify the intended records independently of loaded array positions.
+
+Explicit mutations pair revision validation with transaction-scoped operation receipts so a retried request can be acknowledged without being applied twice. Receipt payloads contain safe fingerprints and acknowledgements rather than chat or secure lorebook content. Compatibility full-chat and loaded-range paths remain transitional and are not treated as the target architecture.
+
+### 18. Server-Managed and Group Memory Books
+
+Aikobots v4 moves more STMB persistence through server endpoints that reuse lorebook storage selection, checkout validation, active-session checks, and repository transactions. This includes scene capture, memory and summary writes, entry operations, group prompts, and canonical group-memory copies across configured participant lorebooks with rollback handling for partial write failures.
+
+### 19. Recent Chats, Character Catalog, and Saved Lorebook Sorting
+
+Aikobots v4 adds Recent Chats using explicit SQLite activity metadata with a legacy timestamp fallback. It also adds a welcome-screen character Catalog backed by the server-managed published-character index and safe retrieval routes.
+
+Lorebook sort order can now be saved per lorebook through a normalized client/server path, while temporary search sorting remains a UI-only mode.
+
+### 20. Browser End-to-End Test Harness
+
+Aikobots v4 adds an initial Selenium harness contributed by LeRobber. Its first scenarios cover chat creation and rename, edit cancellation, import/export round trips, long-chat swipe behavior, and connection-profile setup, complementing the repository's focused storage and feature tests.
 
 ## Forked or Integrated Third-Party Work
 
