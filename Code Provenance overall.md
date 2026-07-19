@@ -181,6 +181,10 @@ For WorldInfoInfo-derived work:
 
 > SillyTavern-WorldInfoInfo originally by Len Anderson, with additional features and Aikobots-specific hidden-lorebook work by Aiko Hanasaki.
 
+For WorldInfoPresets/WorldInfoLocks-derived work:
+
+> SillyTavern-WorldInfoPresets originally by Len Anderson, forked as WorldInfoLocks with additional features by Aiko Hanasaki.
+
 ## Notes on Scope
 
 This document is not a full diff against upstream SillyTavern. It highlights major Aikobots-specific systems and conventions so contributors, fork maintainers, and users can understand what was added or changed by Aikobots.
