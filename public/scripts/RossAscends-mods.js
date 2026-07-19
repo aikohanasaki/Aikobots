@@ -31,7 +31,7 @@ import {
     send_on_enter_options,
 } from './power-user.js';
 
-import { selected_group, is_group_generating, openGroupById } from './group-chats.js';
+import { openGroupById } from './group-chats.js';
 import { getTagKeyForEntity, applyTagsOnCharacterSelect } from './tags.js';
 import {
     SECRET_KEYS,
@@ -551,11 +551,10 @@ function RA_checkOnlineStatus() {
             }
             connection_made = true;
 
-            if (!is_send_press && !(selected_group && is_group_generating)) {
-                $('#send_but').removeClass('displayNone'); //on connect, send button shows
-                $('#mes_continue').removeClass('displayNone'); //continue button is shown when connected
-                $('#mes_impersonate').removeClass('displayNone'); //continue button is shown when connected
-            }
+            // Generation visibility is handled by body[data-generating]; clear stale connection-only hiding now.
+            $('#send_but').removeClass('displayNone'); //on connect, send button shows
+            $('#mes_continue').removeClass('displayNone'); //continue button is shown when connected
+            $('#mes_impersonate').removeClass('displayNone'); //continue button is shown when connected
         }
     }
 }
