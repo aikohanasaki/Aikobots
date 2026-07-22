@@ -1,5 +1,6 @@
 import {
     CHAT_SAVE_RESULT,
+    canEditCharacterMetadata,
     characters,
     chat_metadata,
     getRequestHeaders,
@@ -96,7 +97,7 @@ async function hydrateConfiguration(chid = this_chid) {
     configurationDirty = false;
     managementState = null;
     const character = getCharacter(chid);
-    if (!character) {
+    if (!character || !canEditCharacterMetadata(chid)) {
         resetSelect('#recommended_chat_setup_lorebook', [{ value: '', text: 'None' }], '', true);
         resetSelect('#recommended_chat_setup_side_prompts', [{ value: '', text: 'None' }], '', true);
         return;
@@ -140,7 +141,7 @@ async function hydrateConfiguration(chid = this_chid) {
 async function savePendingConfiguration() {
     if (!configurationDirty || !managementState) return;
     const character = getCharacter();
-    if (!character) return;
+    if (!character || !canEditCharacterMetadata(this_chid)) return;
     const controls = $('#recommended_chat_setup_lorebook, #recommended_chat_setup_side_prompts');
     const sidePromptControl = $('#recommended_chat_setup_side_prompts');
     const sidePromptValue = sidePromptControl.val();
