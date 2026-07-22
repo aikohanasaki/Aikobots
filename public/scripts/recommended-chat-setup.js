@@ -142,6 +142,11 @@ async function savePendingConfiguration() {
     const character = getCharacter();
     if (!character) return;
     const controls = $('#recommended_chat_setup_lorebook, #recommended_chat_setup_side_prompts');
+    const sidePromptControl = $('#recommended_chat_setup_side_prompts');
+    const sidePromptValue = sidePromptControl.val();
+    const sidePromptSetKey = sidePromptControl.prop('disabled') || sidePromptValue === null
+        ? undefined
+        : String(sidePromptValue || '');
     controls.prop('disabled', true);
     const templateValue = String($('#recommended_chat_setup_lorebook').val() || '');
     const templateAction = templateValue
@@ -150,7 +155,6 @@ async function savePendingConfiguration() {
             ? 'remove'
             : 'keep';
     try {
-        const sidePromptSetKey = String($('#recommended_chat_setup_side_prompts').val() || '');
         if (sidePromptSetKey) {
             const resolved = await resolveSetItemsForRun(sidePromptSetKey, {}, { allowUnresolved: false });
             if (!resolved.set || resolved.skipped.length > 0) {

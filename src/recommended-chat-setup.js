@@ -289,8 +289,13 @@ export async function saveRecommendedChatSetup(user, card, input = {}) {
             throw new RecommendedChatSetupError('RecommendedSetupBadRequest', 'Invalid template action.', 400);
         }
 
-        const sidePromptSetKey = String(input.sidePromptSetKey || '').trim();
-        if (sidePromptSetKey) snapshotSidePromptSet(user, sidePromptSetKey);
+        let sidePromptSetKey = String(previous?.sidePromptSetKey || '');
+        let sidePromptSourceOwnerHandle = String(previous?.sidePromptSourceOwnerHandle || '');
+        if (Object.hasOwn(input, 'sidePromptSetKey')) {
+            sidePromptSetKey = String(input.sidePromptSetKey || '').trim();
+            if (sidePromptSetKey) snapshotSidePromptSet(user, sidePromptSetKey);
+            sidePromptSourceOwnerHandle = sidePromptSetKey ? actorHandle : '';
+        }
 
         index.drafts[characterKey] = {
             characterKey,
@@ -301,7 +306,7 @@ export async function saveRecommendedChatSetup(user, card, input = {}) {
             templateSourceName,
             templateSourceOwnerHandle,
             sidePromptSetKey,
-            sidePromptSourceOwnerHandle: sidePromptSetKey ? actorHandle : '',
+            sidePromptSourceOwnerHandle,
             updatedAt: new Date().toISOString(),
         };
 

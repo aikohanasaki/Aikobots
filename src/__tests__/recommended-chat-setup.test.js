@@ -172,6 +172,16 @@ describe('Recommended Chat Setup drafts and publication', () => {
         expect(getRecommendedChatSetupSummary(card)).toEqual({ available: false });
     });
 
+    it('preserves an omitted side-prompt binding and removes an explicitly empty binding', async () => {
+        await saveRecommendedChatSetup(user, card, { templateAction: 'keep', sidePromptSetKey: 'source' });
+
+        await saveRecommendedChatSetup(user, card, { templateAction: 'keep' });
+        expect(getRecommendedChatSetupManagement(user, card).sidePromptSetKey).toBe('source');
+
+        await saveRecommendedChatSetup(user, card, { templateAction: 'keep', sidePromptSetKey: '' });
+        expect(getRecommendedChatSetupManagement(user, card).sidePromptSetKey).toBe('');
+    });
+
     it('does not authorize management when another owner copies the opaque key', async () => {
         await saveRecommendedChatSetup(user, card, {
             templateAction: 'replace',
