@@ -505,7 +505,9 @@ function getSecureIndexEntry(name) {
         return null;
     }
 
-    const { name: canonicalName, metadata, path: filePath } = secureEntry;
+    const { name: canonicalName, metadata } = secureEntry;
+    let filePath = secureEntry.path;
+    let usingBackingFile = false;
     let stats;
     repairLegacyLorebookFile(getSecureLorebookDirectory(), canonicalName, 'secure lorebook');
 
@@ -513,23 +515,37 @@ function getSecureIndexEntry(name) {
         stats = fs.lstatSync(filePath);
     } catch (error) {
         if (error?.code !== 'ENOENT') {
-            console.warn(`[Lorebooks] Failed to inspect secure lorebook "${canonicalName}"`, error);
-        } else {
-            console.warn(`[Lorebooks] Secure lorebook "${canonicalName}" is missing its symlink.`);
+            console.warn('[Lorebooks] Failed to inspect a secure lorebook link.');
+            return null;
         }
+
+        const ownerHandle = String(metadata.ownerHandle || '').trim();
+        const backingPath = ownerHandle ? getUserLorebookPath(ownerHandle, canonicalName) : '';
+        try {
+            stats = backingPath ? fs.statSync(backingPath) : null;
+            if (!stats?.isFile()) {
+                return null;
+            }
+            fs.accessSync(backingPath, fs.constants.R_OK);
+            filePath = backingPath;
+            usingBackingFile = true;
+        } catch {
+            return null;
+        }
+    }
+
+    if (!usingBackingFile && !stats.isSymbolicLink()) {
+        console.warn('[Lorebooks] A secure lorebook link is not a symbolic link.');
         return null;
     }
 
-    if (!stats.isSymbolicLink()) {
-        console.warn(`[Lorebooks] Secure lorebook "${canonicalName}" is not stored as a symlink.`);
-        return null;
-    }
-
-    try {
-        fs.accessSync(filePath, fs.constants.R_OK);
-    } catch (error) {
-        console.warn(`[Lorebooks] Secure lorebook "${canonicalName}" points to an unreadable target.`, error);
-        return null;
+    if (!usingBackingFile) {
+        try {
+            fs.accessSync(filePath, fs.constants.R_OK);
+        } catch {
+            console.warn('[Lorebooks] A secure lorebook link points to an unreadable target.');
+            return null;
+        }
     }
 
     return {

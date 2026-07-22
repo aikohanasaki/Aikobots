@@ -1,6 +1,5 @@
 import {
     CHAT_SAVE_RESULT,
-    canEditCharacterMetadata,
     characters,
     chat_metadata,
     getRequestHeaders,
@@ -97,21 +96,14 @@ async function hydrateConfiguration(chid = this_chid) {
     configurationDirty = false;
     managementState = null;
     const character = getCharacter(chid);
-    const canManage = Boolean(
-        character
-        && canEditCharacterMetadata(chid),
-    );
-    if (!canManage) {
+    if (!character) {
         resetSelect('#recommended_chat_setup_lorebook', [{ value: '', text: 'None' }], '', true);
         resetSelect('#recommended_chat_setup_side_prompts', [{ value: '', text: 'None' }], '', true);
         return;
     }
 
     try {
-        const [state, sidePromptSets] = await Promise.all([
-            postJson('/manage/get', { avatar_url: character.avatar }),
-            listSets(),
-        ]);
+        const state = await postJson('/manage/get', { avatar_url: character.avatar });
         if (token !== hydrateToken || String(chid) !== String(this_chid)) return;
         managementState = state;
         const templateOptions = [{ value: '', text: 'None' }];
@@ -125,12 +117,18 @@ async function hydrateConfiguration(chid = this_chid) {
             state.templateSourceName || '',
             false,
         );
-        resetSelect(
-            '#recommended_chat_setup_side_prompts',
-            [{ value: '', text: 'None' }, ...sidePromptSets.map(set => ({ value: set.key, text: set.name }))],
-            state.sidePromptSetKey || '',
-            false,
-        );
+        try {
+            const sidePromptSets = await listSets();
+            if (token !== hydrateToken || String(chid) !== String(this_chid)) return;
+            resetSelect(
+                '#recommended_chat_setup_side_prompts',
+                [{ value: '', text: 'None' }, ...sidePromptSets.map(set => ({ value: set.key, text: set.name }))],
+                state.sidePromptSetKey || '',
+                false,
+            );
+        } catch {
+            resetSelect('#recommended_chat_setup_side_prompts', [{ value: '', text: 'Unavailable' }], '', true);
+        }
     } catch (error) {
         if (token !== hydrateToken) return;
         resetSelect('#recommended_chat_setup_lorebook', [{ value: '', text: 'Unavailable' }], '', true);
@@ -142,7 +140,7 @@ async function hydrateConfiguration(chid = this_chid) {
 async function savePendingConfiguration() {
     if (!configurationDirty || !managementState) return;
     const character = getCharacter();
-    if (!character || !canEditCharacterMetadata(this_chid)) return;
+    if (!character) return;
     const controls = $('#recommended_chat_setup_lorebook, #recommended_chat_setup_side_prompts');
     controls.prop('disabled', true);
     const templateValue = String($('#recommended_chat_setup_lorebook').val() || '');
@@ -399,6 +397,7 @@ export function initRecommendedChatSetup() {
         await savePendingConfiguration();
     });
     $('#recommended_chat_setup_button').on('click', applyRecommendedSetup);
+    $('#advanced_div').on('click.recommendedChatSetup', () => hydrateConfiguration(this_chid));
     eventSource.on(event_types.CHARACTER_EDITOR_OPENED, async chid => {
         await hydrateConfiguration(chid);
         await refreshConsumerButton();

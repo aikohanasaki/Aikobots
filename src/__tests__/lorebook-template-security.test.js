@@ -53,6 +53,7 @@ beforeAll(async () => {
 
 beforeEach(() => {
     fs.rmSync(path.join(tempRoot, '_templates'), { recursive: true, force: true });
+    fs.rmSync(path.join(tempRoot, '_secure'), { recursive: true, force: true });
     fs.rmSync(worldsDirectory, { recursive: true, force: true });
     fs.mkdirSync(worldsDirectory, { recursive: true });
     fs.writeFileSync(path.join(worldsDirectory, `${templateName}.json`), JSON.stringify({ entries: { 0: { uid: 0 } } }), 'utf8');
@@ -108,5 +109,28 @@ describe('designated ordinary template lorebooks', () => {
     it('returns secure LTM lorebooks to programming-lorebook naming rules', async () => {
         await expect(promoteLorebook(user, templateName))
             .rejects.toMatchObject({ type: 'LorebookNameInvalid', status: 400 });
+    });
+
+    it('keeps indexed secure lorebooks secure when a copied data directory loses symlinks', () => {
+        const secureName = 'Z-template-maker-test-Programming';
+        fs.writeFileSync(path.join(worldsDirectory, `${secureName}.json`), JSON.stringify({ entries: {} }), 'utf8');
+        const secureDirectory = path.join(tempRoot, '_secure', 'worlds');
+        fs.mkdirSync(secureDirectory, { recursive: true });
+        fs.writeFileSync(path.join(secureDirectory, 'index.json'), JSON.stringify({
+            version: 1,
+            books: {
+                [secureName]: {
+                    ownerHandle: user.profile.handle,
+                    createdBy: user.profile.handle,
+                    updatedBy: user.profile.handle,
+                },
+            },
+        }), 'utf8');
+
+        expect(listLorebooksForManagement(user).find(item => item.name === secureName)).toMatchObject({
+            storage: 'secure',
+            ownerHandle: user.profile.handle,
+            canPromote: false,
+        });
     });
 });

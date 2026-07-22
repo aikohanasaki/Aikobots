@@ -126,5 +126,9 @@
     {
         "filename": "presets/reasoning/OpenAI Harmony.json",
         "type": "reasoning"
+    },
+    {
+        "filename": "characters/Ghost.png",
+        "type": "character"
     }
 ]
