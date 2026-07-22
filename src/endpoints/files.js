@@ -8,6 +8,7 @@ import { sync as writeFileSyncAtomic } from 'write-file-atomic';
 import { validateAssetFileName } from './assets.js';
 import { clientRelativePath } from '../util.js';
 import { assertPathUnderParent } from '../path-security.js';
+import { STMB_SIDE_PROMPTS_FILENAME } from '../stmb-side-prompts-repository.js';
 
 export const router = express.Router();
 
@@ -34,6 +35,10 @@ router.post('/upload', async (request, response) => {
 
         if (!request.body.data) {
             return response.status(400).send('No upload data specified');
+        }
+
+        if (String(request.body.name).toLowerCase() === STMB_SIDE_PROMPTS_FILENAME) {
+            return response.status(409).send('Use the revisioned STMB side-prompt endpoint.');
         }
 
         // Validate filename

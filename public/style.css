@@ -2939,6 +2939,24 @@ textarea::placeholder {
     margin-bottom: 0;
 }
 
+#recommended_chat_setup_configuration > .flex1,
+#recommended_chat_setup_configuration .select2-container,
+#recommended_chat_setup_button {
+    min-width: 0;
+    width: 100%;
+}
+
+#recommended_chat_setup_button {
+    justify-content: center;
+    margin: 8px 0 0;
+}
+
+#recommended_chat_setup_button:disabled {
+    cursor: not-allowed;
+    opacity: 0.5;
+    pointer-events: none;
+}
+
 @media screen and (max-width: 1000px) {
     #form_create textarea {
         flex-grow: 1;

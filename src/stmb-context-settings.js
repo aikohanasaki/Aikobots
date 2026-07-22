@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { sync as writeFileAtomicSync } from 'write-file-atomic';
 import {
+    isSecureTemplateLorebookName,
     listLorebooksForManagement,
     LorebookRepositoryError,
     resolveLorebookWithMetadata,
@@ -197,6 +198,9 @@ function resolveOwnedLorebookEntry(user, reference) {
     if (!ref) {
         throw createRequestError(400, 'StmbContextEntryInvalid', 'Context entry references require lorebookName and uid.');
     }
+    if (ref.storage === 'secure' && isSecureTemplateLorebookName(ref.lorebookName)) {
+        throw createRequestError(400, 'StmbContextEntryInvalid', 'Secure blank lorebook templates cannot be used as context.');
+    }
 
     const resolved = resolveLorebookWithMetadata(user, ref.lorebookName, {
         storage: ref.storage,
@@ -261,6 +265,9 @@ export function listOwnedStmbContextSourceEntries(user) {
     const sourceEntries = [];
     for (const item of listLorebooksForManagement(user)) {
         if (!userOwnsLorebookMetadata(user, item)) {
+            continue;
+        }
+        if (item.storage === 'secure' && isSecureTemplateLorebookName(item.name)) {
             continue;
         }
 

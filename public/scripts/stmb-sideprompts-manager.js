@@ -6,10 +6,12 @@ import {
     isValidMacroToken,
 } from './stmb-sideprompt-macros.js';
 
-const SIDE_PROMPTS_FILE = 'stmb-side-prompts.json';
 const BUILTIN_CAST_KEY = 'cast';
 const LEGACY_BUILTIN_CAST_KEY = 'cast-of-characters';
 let cachedDoc = null;
+let cachedRevision = 'missing';
+let loadPromise = null;
+let cacheGeneration = 0;
 
 function nowIso() {
     return new Date().toISOString();
@@ -55,6 +57,9 @@ function normalizeSet(raw, key, timestamp = nowIso()) {
             : [],
         createdAt: String(raw?.createdAt || timestamp),
         updatedAt: String(raw?.updatedAt || timestamp),
+        ...(raw?.recommendedSetup && typeof raw.recommendedSetup === 'object'
+            ? { recommendedSetup: structuredClone(raw.recommendedSetup) }
+            : {}),
     };
 }
 
@@ -353,29 +358,31 @@ function createBaseDoc() {
 }
 
 async function saveDoc(document) {
-    const json = JSON.stringify(document, null, 2);
-    const base64 = btoa(unescape(encodeURIComponent(json)));
-    const response = await fetch('/api/files/upload', {
-        method: 'POST',
+    const response = await fetch('/api/stmb/side-prompts', {
+        method: 'PUT',
         credentials: 'include',
         headers: getRequestHeaders(),
         body: JSON.stringify({
-            name: SIDE_PROMPTS_FILE,
-            data: base64,
+            document,
+            revision: cachedRevision,
         }),
     });
 
     if (!response.ok) {
+        if (response.status === 409) {
+            cachedDoc = null;
+            cachedRevision = 'missing';
+        }
         throw new Error(`Failed to save side prompts: ${response.status} ${response.statusText}`);
     }
 
+    const result = await response.json();
+    cachedRevision = String(result?.revision || 'missing');
     cachedDoc = document;
 }
 
-export async function loadSidePrompts() {
-    if (cachedDoc) return cachedDoc;
-
-    const response = await fetch(`/user/files/${SIDE_PROMPTS_FILE}`, {
+async function loadSidePromptsUncached() {
+    const response = await fetch('/api/stmb/side-prompts', {
         method: 'GET',
         credentials: 'include',
         headers: getRequestHeaders(),
@@ -384,17 +391,14 @@ export async function loadSidePrompts() {
     let data = null;
     if (response.status === 404) {
         data = createBaseDoc();
+        cachedRevision = 'missing';
         await saveDoc(data);
     } else if (!response.ok) {
         throw new Error(`Failed to load side prompts: ${response.status} ${response.statusText}`);
     } else {
-        const text = await response.text();
-        let parsed = null;
-        try {
-            parsed = JSON.parse(text);
-        } catch {
-            throw new Error('Failed to parse side prompts file');
-        }
+        const payload = await response.json();
+        const parsed = payload?.document;
+        cachedRevision = String(payload?.revision || 'missing');
 
         if (looksLikeV1SidePrompts(parsed)) {
             data = normalizeSidePromptsDocument(migrateV1toV2(parsed));
@@ -413,6 +417,23 @@ export async function loadSidePrompts() {
 
     cachedDoc = data;
     return cachedDoc;
+}
+
+export async function loadSidePrompts() {
+    if (cachedDoc) return cachedDoc;
+    const generation = cacheGeneration;
+    if (!loadPromise) {
+        loadPromise = loadSidePromptsUncached().finally(() => {
+            loadPromise = null;
+        });
+    }
+    const document = await loadPromise;
+    if (generation !== cacheGeneration) {
+        cachedDoc = null;
+        cachedRevision = 'missing';
+        return await loadSidePrompts();
+    }
+    return document;
 }
 
 export async function firstRunInitSidePrompts() {
@@ -581,6 +602,9 @@ export async function upsertTemplate(input) {
         triggers: input.triggers ? input.triggers : (previous?.triggers || { commands: ['sideprompt'] }),
         createdAt: previous?.createdAt || timestamp,
         updatedAt: timestamp,
+        ...(previous?.recommendedSetup && typeof previous.recommendedSetup === 'object'
+            ? { recommendedSetup: structuredClone(previous.recommendedSetup) }
+            : {}),
     };
 
     normalizeTemplateTriggers(next);
@@ -657,6 +681,7 @@ export async function upsertSet(input) {
         items: Array.isArray(input.items) ? input.items : (previous?.items || []),
         createdAt: previous?.createdAt || timestamp,
         updatedAt: timestamp,
+        recommendedSetup: previous?.recommendedSetup,
     }, key, timestamp);
     await saveDoc(data);
     return key;
@@ -936,5 +961,7 @@ export async function listByTrigger(kind) {
 }
 
 export function clearSidePromptsCache() {
+    cacheGeneration++;
     cachedDoc = null;
+    cachedRevision = 'missing';
 }

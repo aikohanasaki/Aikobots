@@ -59,6 +59,11 @@ async function generateAutoLorebookName(template) {
     return `${baseName} ${Date.now()}`;
 }
 
+/** Returns the next available lorebook name using STMB's Auto-create rules. */
+export async function suggestStmbLorebookName(template) {
+    return await generateAutoLorebookName(template);
+}
+
 async function autoCreateAndBindLorebook(lorebookNameTemplate, lorebookOrderDefaults = null) {
     const generatedName = await generateAutoLorebookName(lorebookNameTemplate);
     const created = lorebookOrderDefaults

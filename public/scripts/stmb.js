@@ -42,7 +42,7 @@ import { SlashCommandEnumValue } from './slash-commands/SlashCommandEnumValue.js
 import { hideChatMessageRange } from './chats.js';
 import { groups, selected_group } from './group-chats.js';
 import { getRegexScripts, runRegexScript, substitute_find_regex } from './extensions/regex/engine.js';
-import { getLorebookStorageForRequest, loadWorldInfo, METADATA_KEY, openLorebookOrderingDialog, reloadEditor, world_names, worldInfoCache } from './world-info.js';
+import { getLorebookStorageForRequest, isSecureTemplateWorldName, loadWorldInfo, METADATA_KEY, openLorebookOrderingDialog, reloadEditor, world_names, worldInfoCache } from './world-info.js';
 import { buildOpenAIGenerateData, oai_settings } from './openai.js';
 import { SECRET_KEYS, secret_state } from './secrets.js';
 import { buildMemoryPromptText } from './stmb-prompt-assembly.js';
@@ -3862,7 +3862,7 @@ function readSetEditorItems(dialog) {
         .filter(item => item.promptKey);
 }
 
-async function openSidePromptSetEditorPopup({ setKey = null } = {}) {
+export async function openSidePromptSetEditorPopup({ setKey = null } = {}) {
     const set = setKey ? await getSet(setKey) : null;
     if (setKey && !set) {
         throw new Error(`Set "${setKey}" not found`);
@@ -3997,13 +3997,13 @@ function getSidePromptLorebookTargetInfo(template = null) {
     if (hasChatOverride && chatOverride === '__memory__') {
         return { value: memoryLorebook, sourceLabel: 'Chat override' };
     }
-    if (hasChatOverride && chatOverride && Array.isArray(world_names) && world_names.includes(chatOverride)) {
+    if (hasChatOverride && chatOverride && Array.isArray(world_names) && world_names.includes(chatOverride) && !isSecureTemplateWorldName(chatOverride)) {
         return { value: chatOverride, sourceLabel: 'Chat override' };
     }
     if (hasChatOverride) {
         return { value: memoryLorebook, sourceLabel: 'Chat override' };
     }
-    if (templateOverride && Array.isArray(world_names) && world_names.includes(templateOverride)) {
+    if (templateOverride && Array.isArray(world_names) && world_names.includes(templateOverride) && !isSecureTemplateWorldName(templateOverride)) {
         return { value: templateOverride, sourceLabel: 'Side prompt setting' };
     }
 
@@ -4018,7 +4018,7 @@ function getSidePromptLorebookSelectValue(template = null) {
     if (hasChatOverride && chatOverride === '__memory__') {
         return '__memory__';
     }
-    if (hasChatOverride && chatOverride && Array.isArray(world_names) && world_names.includes(chatOverride)) {
+    if (hasChatOverride && chatOverride && Array.isArray(world_names) && world_names.includes(chatOverride) && !isSecureTemplateWorldName(chatOverride)) {
         return chatOverride;
     }
     if (hasChatOverride) {
@@ -4026,7 +4026,7 @@ function getSidePromptLorebookSelectValue(template = null) {
     }
 
     const templateOverride = String(template?.settings?.lorebook?.targetLorebookName || '').trim();
-    if (templateOverride && Array.isArray(world_names) && world_names.includes(templateOverride)) {
+    if (templateOverride && Array.isArray(world_names) && world_names.includes(templateOverride) && !isSecureTemplateWorldName(templateOverride)) {
         return templateOverride;
     }
 
@@ -4042,7 +4042,7 @@ function buildSidePromptLorebookTargetHtml(template = null) {
         : 'Same as memory lorebook (none selected)';
     const options = [
         `<option value="__memory__" ${selectedValue === '__memory__' ? 'selected' : ''}>${escapeHtml(memoryLabel)}</option>`,
-        ...((Array.isArray(world_names) ? world_names : []).map(name => (
+        ...((Array.isArray(world_names) ? world_names : []).filter(name => !isSecureTemplateWorldName(name)).map(name => (
             `<option value="${escapeHtml(name)}" ${selectedValue === name ? 'selected' : ''}>${escapeHtml(name)}</option>`
         ))),
     ].join('');

@@ -348,6 +348,13 @@ export function getSecureWorldNames() {
     return world_info_items.filter(item => item.storage === 'secure').map(item => item.name);
 }
 
+/** Returns whether a listed world is a reserved secure blank template. */
+export function isSecureTemplateWorldName(name) {
+    const value = String(name || '');
+    const isTemplateName = /^LTM - .+ - Blank$/.test(value) || /^LTM-.+-Blank$/.test(value);
+    return isTemplateName && getWorldInfoItem(value)?.storage === 'secure';
+}
+
 export function getLorebookStorageForRequest(name, fallback = 'user') {
     return getWorldInfoItem(name)?.storage === 'secure' ? 'secure' : fallback;
 }

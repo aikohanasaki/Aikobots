@@ -806,7 +806,24 @@ function assertSecureNameAvailableForPromotion(name) {
     }
 }
 
+/** Identifies the reserved secure blank-template naming formats. */
+export function isSecureTemplateLorebookName(name) {
+    const value = String(name || '');
+    return /^LTM - .+ - Blank$/.test(value) || /^LTM-.+-Blank$/.test(value);
+}
+
 function assertSecurePromotionNameAllowed(user, canonicalName) {
+    if (isSecureTemplateLorebookName(canonicalName)) {
+        return;
+    }
+    if (canonicalName.startsWith('LTM')) {
+        throw new LorebookRepositoryError(
+            'LorebookNameInvalid',
+            'Secure template lorebooks must be named "LTM - <character> - Blank" or "LTM-<character>-Blank".',
+            400,
+        );
+    }
+
     if (user?.profile?.admin) {
         if (!canonicalName.startsWith('9Z')) {
             throw new LorebookRepositoryError('LorebookNameInvalid', 'Admin secure lorebooks must start with "9Z". Capitalization matters.', 400);
@@ -2305,6 +2322,12 @@ export function readLorebookForGenerationWithMetadata(user, name, allowDummy = f
         };
     }
 
+    // Secure LTM books are repository templates, never generation inputs.
+    if (isSecureTemplateLorebookName(canonicalName)
+        && (getSecureIndexEntry(canonicalName) || getSharedSecureIndexEntry(canonicalName))) {
+        return { data: dummyObject, metadata: null };
+    }
+
     return resolveLorebookWithMetadata(user, canonicalName, {
         allowDummy,
         preferUser: true,
@@ -2349,6 +2372,11 @@ export function hasLorebookForGeneration(user, name) {
     const canonicalName = getCanonicalLorebookName(name);
 
     if (!canonicalName) {
+        return false;
+    }
+
+    if (isSecureTemplateLorebookName(canonicalName)
+        && (getSecureIndexEntry(canonicalName) || getSharedSecureIndexEntry(canonicalName))) {
         return false;
     }
 
@@ -2417,6 +2445,37 @@ function saveLorebookForManagementUnlocked(user, name, data, storage = 'user') {
         canManageOwners: false,
         shadowingSecure: false,
     };
+}
+
+function createUserLorebookForManagementUnlocked(user, name, data) {
+    assertLorebookSaveNameAllowed(name);
+    const canonicalName = assertCanonicalName(name);
+    assertLorebookData(data, canonicalName);
+    if (getUserLorebookRecord(user.profile.handle, canonicalName)) {
+        throw new LorebookRepositoryError('LorebookAlreadyExists', `Lorebook "${canonicalName}" already exists.`, 409);
+    }
+    assertUserLorebookNameAvailable(canonicalName);
+    writeUserLorebook(user.profile.handle, canonicalName, sanitizeLorebookDataForStorage(data));
+    return {
+        name: canonicalName,
+        storage: 'user',
+        ownerHandle: user.profile.handle,
+        ownerHandles: [user.profile.handle].filter(Boolean),
+        sharingMode: 'single',
+        checkedOutBy: null,
+        checkedOutAt: null,
+        checkoutState: 'available',
+        canCheckOut: false,
+        canCheckIn: false,
+        canForceCheckout: false,
+        canManageOwners: false,
+        shadowingSecure: false,
+    };
+}
+
+/** Creates an ordinary user lorebook without overwriting an existing book. */
+export async function createUserLorebookForManagement(user, name, data) {
+    return runWithSecureLorebookMutationLock(() => createUserLorebookForManagementUnlocked(user, name, data));
 }
 
 /**

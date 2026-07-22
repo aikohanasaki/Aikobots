@@ -52,6 +52,7 @@ import { router as dataMaidRouter } from './endpoints/data-maid.js';
 import { router as backupsRouter } from './endpoints/backups.js';
 import { router as characterSubmissionsRouter } from './endpoints/character-submissions.js';
 import { router as stmbRouter } from './endpoints/stmb.js';
+import { router as recommendedChatSetupRouter } from './endpoints/recommended-chat-setup.js';
 
 /**
  * @typedef {object} ServerStartupResult
@@ -185,6 +186,7 @@ export function setupPrivateEndpoints(app) {
     app.use('/api/backups', backupsRouter);
     app.use('/api/data-maid', dataMaidRouter);
     app.use('/api/stmb', stmbRouter);
+    app.use('/api/recommended-chat-setup', recommendedChatSetupRouter);
 }
 
 /**

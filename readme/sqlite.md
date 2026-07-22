@@ -949,3 +949,11 @@ STMB post-memory auto-hide is durable chat visibility state and must use the nor
 The browser message shown while generation is streaming is ephemeral display state. When a stream finishes, the client sends one explicit SQLite append or update mutation, waits for its acknowledged revision, reads that message back from the server by logical position, validates its stable message UUID, and replaces the ephemeral browser object and DOM with the canonical SQLite row. Completion events run only after that replacement.
 
 Generic range saves are deferred until both the final streaming mutation and authoritative read-back settle. An explicit chat flush waits for the same boundary, while an explicit server refresh discards deferred browser-save state. This prevents a courtesy streaming display or a delayed save timer from becoming authoritative or leaking into another chat.
+
+### Recommended Chat Setup persistence
+
+Recommended Chat Setup does not place secure template contents or bindings in character cards, chat metadata, client responses, or logs. Its private registry, side-prompt snapshots, and current template snapshots live under `DATA_ROOT/_secure/recommended-chat-setups`. Registry writes use an atomic file replacement under a cross-worker directory lock. Secure lorebooks named `LTM - <character> - Blank` or `LTM-<character>-Blank` are template sources only and are excluded from generation, character programming links, and STMB context or write targets; applying a setup creates a separate ordinary user-owned lorebook.
+
+STMB side prompts remain in each user's `stmb-side-prompts.json`, but reads now include a content revision and whole-document saves require the matching revision. Setup installation uses the same repository's cross-worker locked mutation so an install cannot silently overwrite a concurrent edit from another tab or PM2 worker. The generic file-upload endpoint cannot replace this file.
+
+The selected installed resources are stored in ordinary chat metadata (`world_info`, `STMemoryBooks.sidePromptAfterMemorySetKey`, and content-free setup provenance). For SQLite chats, the existing revision-checked metadata mutation persists those bindings without replacing message rows. A pristine temporary direct chat is persisted only after the user confirms Apply; group chats are not supported by this feature.

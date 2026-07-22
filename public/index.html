@@ -3655,6 +3655,10 @@
                                     </div>
                                 </div>
                             </div>
+                            <button id="recommended_chat_setup_button" type="button" class="menu_button menu_button_icon wide100p" disabled aria-disabled="true" title="This bot does not have a Recommended Chat Setup.">
+                                <i class="fa-solid fa-wand-magic-sparkles"></i>
+                                <span>Recommended Chat Setup</span>
+                            </button>
                             <small id="creators_note_desc_hidden" data-i18n="Character details are hidden.">Character details are hidden.</small>
                             <hr>
                             <div id="firstMessageWrapper" class="flex-container flexFlowColumn flex1">
@@ -4017,6 +4021,20 @@
                 <div class="flex1">
                     <h4 data-i18n="Character Version">Character Version</h4>
                     <textarea id="character_version_textarea" name="character_version" data-i18n="[placeholder](If you want to track character versions)" placeholder="(If you want to track character versions)" form="form_create" class="text_pole" autocomplete="off" rows="2"></textarea>
+                </div>
+            </div>
+            <div id="recommended_chat_setup_configuration" class="flex-container flexnowrap">
+                <div class="flex1">
+                    <h4><label for="recommended_chat_setup_lorebook">Blank Lorebook Template</label></h4>
+                    <select id="recommended_chat_setup_lorebook" class="text_pole" form="form_create">
+                        <option value="">None</option>
+                    </select>
+                </div>
+                <div class="flex1">
+                    <h4><label for="recommended_chat_setup_side_prompts">Recommended Side Prompts</label></h4>
+                    <select id="recommended_chat_setup_side_prompts" class="text_pole" form="form_create">
+                        <option value="">None</option>
+                    </select>
                 </div>
             </div>
             <div class="flex-container flexnowrap">

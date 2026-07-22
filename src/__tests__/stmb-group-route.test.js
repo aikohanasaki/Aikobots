@@ -16,6 +16,7 @@ class MockLorebookRepositoryError extends Error {
 jest.unstable_mockModule('../lorebook-repository.js', () => ({
     assertLorebookCheckoutForManagement,
     getLorebookForManagement,
+    isSecureTemplateLorebookName: name => /^LTM(?: - .+ - Blank|-.+-Blank)$/.test(String(name || '')),
     LorebookRepositoryError: MockLorebookRepositoryError,
     saveLorebookForManagement,
     withLorebookManagementTransaction: operation => operation({ save: transactionSave }),
@@ -106,6 +107,19 @@ function mockLoadedLorebooks() {
 }
 
 describe('STMB multi-lorebook group route', () => {
+    it('rejects secure blank template targets before reading lorebook data', async () => {
+        const request = makeRequest();
+        request.body.primary.lorebookName = 'LTM - Alice - Blank';
+        request.body.primary.storage = 'secure';
+        const response = makeResponse();
+
+        await handler(request, response);
+
+        expect(response.statusCode).toBe(400);
+        expect(getLorebookForManagement).not.toHaveBeenCalled();
+        expect(transactionSave).not.toHaveBeenCalled();
+    });
+
     it('validates target storage before opening a transaction', async () => {
         const request = makeRequest();
         request.body.targets[0].storage = 'remote';

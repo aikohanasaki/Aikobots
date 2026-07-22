@@ -20,6 +20,7 @@ import {
 import {
     assertLorebookCheckoutForManagement,
     getLorebookForManagement,
+    isSecureTemplateLorebookName,
     LorebookRepositoryError,
     saveLorebookForManagement,
     withLorebookManagementTransaction,
@@ -36,6 +37,11 @@ import {
     upsertStmbContextSetting,
 } from '../stmb-context-settings.js';
 import { isActiveSessionError, sendActiveSessionRequired } from '../active-session-store.js';
+import {
+    readStmbSidePrompts,
+    saveStmbSidePrompts,
+    StmbSidePromptsRepositoryError,
+} from '../stmb-side-prompts-repository.js';
 
 export const router = express.Router();
 
@@ -45,6 +51,15 @@ function sendStmbError(response, error) {
     }
 
     if (error instanceof LorebookRepositoryError) {
+        return response.status(error.status).send({
+            error: {
+                type: error.type,
+                message: error.message,
+            },
+        });
+    }
+
+    if (error instanceof StmbSidePromptsRepositoryError) {
         return response.status(error.status).send({
             error: {
                 type: error.type,
@@ -435,9 +450,14 @@ function getLorebookContext(request) {
         return null;
     }
 
+    const storage = normalizeStorage(request.body?.storage);
+    if (storage === 'secure' && isSecureTemplateLorebookName(lorebookName)) {
+        return null;
+    }
+
     return {
         lorebookName,
-        storage: normalizeStorage(request.body?.storage),
+        storage,
     };
 }
 
@@ -454,6 +474,9 @@ function normalizeGroupMemoryWriteTarget(value, label) {
     }
     if (value.storage !== undefined && !['user', 'secure'].includes(value.storage)) {
         throw createStmbRequestError(400, 'StmbBadRequest', `${label} storage must be "user" or "secure".`);
+    }
+    if (value.storage === 'secure' && isSecureTemplateLorebookName(lorebookName)) {
+        throw createStmbRequestError(400, 'StmbBadRequest', `${label} cannot use a secure blank lorebook template.`);
     }
     if (memoryObject.keywords !== undefined && !Array.isArray(memoryObject.keywords)) {
         throw createStmbRequestError(400, 'StmbBadRequest', `${label} memoryObject keywords must be an array.`);
@@ -479,6 +502,26 @@ function normalizeGroupMemoryWriteTarget(value, label) {
         usePrimaryTitle: value.usePrimaryTitle !== false,
     };
 }
+
+router.get('/side-prompts', async (request, response) => {
+    try {
+        const result = readStmbSidePrompts(request.user);
+        if (!result.document) return response.sendStatus(404);
+        return response.send(result);
+    } catch (error) {
+        return sendStmbError(response, error);
+    }
+});
+
+router.put('/side-prompts', async (request, response) => {
+    try {
+        await request.activeSessionOperation?.assertAllowed();
+        const result = await saveStmbSidePrompts(request.user, request.body?.document, request.body?.revision);
+        return response.send({ revision: result.revision });
+    } catch (error) {
+        return sendStmbError(response, error);
+    }
+});
 
 function getCanonicalMemoryNumber(entry) {
     if (entry?.[STMB_MANAGED_FLAG] !== true || entry?.stmbSummary === true) return null;

@@ -43,6 +43,7 @@ import {
     charSetAuxWorlds,
     getCharacterExtraBooks,
     getEditableCharacterExtraBooks,
+    isSecureTemplateWorldName,
     getEffectiveHiddenCharacterLorebooks,
     getForcedActivationEntriesSnapshot,
 } from './scripts/world-info.js';
@@ -277,6 +278,7 @@ import { syncManageChatsBackupsBrowser } from './scripts/chat-backups.js';
 import { canJumpToSwipeForMessage, canOpenSwipePickerForMessage, initSwipePicker } from './scripts/swipe-picker.js';
 import { MessageFormatter } from './scripts/message-formatter.js';
 import { initGenerationLocks } from './scripts/generation-locks.js';
+import { initRecommendedChatSetup } from './scripts/recommended-chat-setup.js';
 
 export { sanitizeMessageHtml } from './scripts/chats.js';
 
@@ -1528,7 +1530,7 @@ function clearTemporaryCharacterChat() {
     temporaryCharacterChat = null;
 }
 
-function isCurrentCharacterChatTemporary() {
+export function isCurrentCharacterChatTemporary() {
     return Boolean(
         temporaryCharacterChat
         && !selected_group
@@ -3962,6 +3964,7 @@ async function firstLoadInit() {
     initAccessibility();
     initSwipePicker();
     initStmb();
+    initRecommendedChatSetup();
     addDebugFunctions();
     doDailyExtensionUpdatesCheck();
     await hideLoader();
@@ -12746,10 +12749,11 @@ async function fetchChatSaveWithRetry(requestBody) {
  * @param {boolean} [options.forceFull] Force a complete chat save even when SQLite range saving is available
  * @param {boolean} [options.requireLoadedRange] Require an explicit loaded-range save
  * @param {boolean} [options.retrySameSessionStale] Retry once when this browser session already advanced the server revision
+ * @param {boolean} [options.persistPristine] Persist an explicitly confirmed pristine temporary chat
  *
  * @returns {Promise<void>}
  */
-export async function saveChat({ chatName, withMetadata, mesId, force = false, forcePush = false, forceLoadedRange = null, forceFull = false, requireLoadedRange = false, retrySameSessionStale = true } = {}) {
+export async function saveChat({ chatName, withMetadata, mesId, force = false, forcePush = false, forceLoadedRange = null, forceFull = false, requireLoadedRange = false, retrySameSessionStale = true, persistPristine = false } = {}) {
     if (arguments.length > 0 && typeof arguments[0] !== 'object') {
         console.trace('saveChat called with positional arguments. Please use an object instead.');
         [chatName, withMetadata, mesId, force] = arguments;
@@ -12771,7 +12775,7 @@ export async function saveChat({ chatName, withMetadata, mesId, force = false, f
         ? pendingTemporaryFileName
         : existingFileName || (isPendingSoloCharacterSave ? `${name2} - ${humanizedDateTime()}` : existingFileName);
 
-    if (shouldSkipPristineGreetingSave()) {
+    if (!persistPristine && shouldSkipPristineGreetingSave()) {
         return CHAT_SAVE_RESULT.SAVED;
     }
 
@@ -12877,7 +12881,7 @@ export async function saveChat({ chatName, withMetadata, mesId, force = false, f
         if (errorData?.error === 'stale_revision') {
             const staleResult = warnStaleChatSave(errorData);
             if (retrySameSessionStale && staleResult.sameSessionStale) {
-                return saveChat({ chatName, withMetadata, mesId, force, forcePush, forceLoadedRange, forceFull, requireLoadedRange, retrySameSessionStale: false });
+                return saveChat({ chatName, withMetadata, mesId, force, forcePush, forceLoadedRange, forceFull, requireLoadedRange, retrySameSessionStale: false, persistPristine });
             }
             return CHAT_SAVE_RESULT.FAILED;
         }
@@ -12909,7 +12913,7 @@ export async function saveChat({ chatName, withMetadata, mesId, force = false, f
             return CHAT_SAVE_RESULT.FAILED;
         }
 
-        return await saveChat({ chatName, withMetadata, mesId, force: true, forcePush, forceLoadedRange, forceFull, requireLoadedRange });
+        return await saveChat({ chatName, withMetadata, mesId, force: true, forcePush, forceLoadedRange, forceFull, requireLoadedRange, persistPristine });
     } catch (error) {
         console.error(error);
         toastr.error(
@@ -12920,6 +12924,14 @@ export async function saveChat({ chatName, withMetadata, mesId, force = false, f
         );
         return CHAT_SAVE_RESULT.FAILED;
     }
+}
+
+/** Persists the current temporary direct chat after an explicit setup confirmation. */
+export async function persistTemporaryChatForRecommendedSetup() {
+    if (!isCurrentCharacterChatTemporary()) {
+        return CHAT_SAVE_RESULT.SAVED;
+    }
+    return await saveChat({ persistPristine: true });
 }
 
 /**
@@ -16902,6 +16914,8 @@ const characterMetadataControlSelectors = [
     '#talkativeness_slider',
     '#mes_example_textarea',
     '#selected_chat_pole',
+    '#recommended_chat_setup_lorebook',
+    '#recommended_chat_setup_side_prompts',
 ];
 
 function updateCharacterMetadataEditability(chid = this_chid) {
@@ -18170,8 +18184,9 @@ async function openCharacterWorldPopup() {
     }
 
     const allowsUserLinkedLorebooks = canEditLoreLinks && !ownerHandle;
-    const secureWorldNames = getSecureWorldNames();
-    const selectableExtraBookOptions = allowsUserLinkedLorebooks ? world_names : secureWorldNames;
+    const secureWorldNames = getSecureWorldNames().filter(name => !isSecureTemplateWorldName(name));
+    const generationWorldNames = world_names.filter(name => !isSecureTemplateWorldName(name));
+    const selectableExtraBookOptions = allowsUserLinkedLorebooks ? generationWorldNames : secureWorldNames;
     const selectableExtraBookSet = new Set(selectableExtraBookOptions);
     const extrasPlaceholder = canEditLoreLinks
         ? t`Click here to select lorebooks.`
@@ -18218,8 +18233,9 @@ async function openCharacterWorldPopup() {
     if (!canEditLoreLinks && worldId && !world_names.includes(worldId)) {
         primarySelect.append(new Option(worldId, worldId, true, true));
     }
-    world_names.forEach((item, i) => {
-        primarySelect.append(new Option(item, String(i), item === worldId, item === worldId));
+    generationWorldNames.forEach(item => {
+        const worldIndex = world_names.indexOf(item);
+        primarySelect.append(new Option(item, String(worldIndex), item === worldId, item === worldId));
     });
     primarySelect.prop('disabled', !canEditLoreLinks);
 

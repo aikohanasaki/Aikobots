@@ -1,6 +1,6 @@
 import _ from 'lodash';
 
-import { resolveLorebookWithMetadata } from './lorebook-repository.js';
+import { isSecureTemplateLorebookName, resolveLorebookWithMetadata } from './lorebook-repository.js';
 
 const SECURE_LINKED_LOREBOOKS_ERROR_MESSAGE = 'Please ensure all lorebooks to be linked are secure lorebooks.';
 
@@ -91,6 +91,9 @@ export function getCharacterLinkedLorebooks(characterCard) {
  */
 export function getInvalidSecureLinkedLorebooks(user, characterCard) {
     return getCharacterLinkedLorebooks(characterCard).filter(name => {
+        if (isSecureTemplateLorebookName(name)) {
+            return true;
+        }
         try {
             const lorebook = resolveLorebookWithMetadata(user, name, {
                 storage: 'secure',
