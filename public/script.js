@@ -172,6 +172,7 @@ import {
     createTimeout,
 } from './scripts/utils.js';
 import { debounce_timeout, GENERATION_TYPE_TRIGGERS, IGNORE_SYMBOL, inject_ids, MEDIA_DISPLAY, MEDIA_SOURCE, MEDIA_TYPE, OVERSWIPE_BEHAVIOR, SCROLL_BEHAVIOR, SWIPE_DIRECTION, SWIPE_SOURCE, SWIPE_STATE } from './scripts/constants.js';
+import { ACTIVE_SESSION_STATUS_ACTION, getActiveSessionStatusAction } from './scripts/active-session-status.js';
 import {
     AIKOBOTS_MESSAGE_UUID_KEY,
     AIKOBOTS_SWIPE_UUID_KEY,
@@ -3616,13 +3617,33 @@ async function readActiveSessionStatus() {
     return await response.json();
 }
 
-async function recoverOrLockActiveSession() {
-    const status = await readActiveSessionStatus();
-    if (await claimActiveSessionIfUnowned(status)) {
-        return;
+/** Applies an authoritative active-session status without treating transport failures as ownership conflicts. */
+async function reconcileActiveSessionStatus(status) {
+    const action = getActiveSessionStatusAction(status);
+
+    if (action === ACTIVE_SESSION_STATUS_ACTION.RETRY) {
+        return null;
+    }
+
+    if (action === ACTIVE_SESSION_STATUS_ACTION.ACTIVE) {
+        // A takeover notification may be newer than this response. Only a
+        // successful claim or explicit takeover may unlock an already locked tab.
+        if (!isActiveSessionLocked) {
+            startActiveSessionHeartbeat();
+        }
+        return !isActiveSessionLocked;
+    }
+
+    if (action === ACTIVE_SESSION_STATUS_ACTION.CLAIM) {
+        return await claimActiveSessionIfUnowned(status);
     }
 
     setActiveSessionLocked(true);
+    return false;
+}
+
+async function recoverOrLockActiveSession() {
+    return await reconcileActiveSessionStatus(await readActiveSessionStatus());
 }
 
 async function heartbeatActiveSession() {
@@ -3634,25 +3655,11 @@ async function heartbeatActiveSession() {
         activeSessionHeartbeatInFlight = true;
         const response = await postActiveSession('heartbeat');
         if (response.ok) {
-            const status = await response.json();
-            if (status.active) {
-                return;
-            }
-
-            if (await claimActiveSessionIfUnowned(status)) {
-                return;
-            }
-
-            setActiveSessionLocked(true);
+            await reconcileActiveSessionStatus(await response.json());
             return;
         }
 
-        const status = await readActiveSessionStatus();
-        if (await claimActiveSessionIfUnowned(status)) {
-            return;
-        }
-
-        await handleActiveSessionResponse(response);
+        await recoverOrLockActiveSession();
     } catch (error) {
         console.warn('Active tab session heartbeat failed', error);
     } finally {
@@ -3726,24 +3733,11 @@ async function verifyActiveSession() {
         activeSessionVerifyInFlight = true;
         const response = await postActiveSession('verify');
         if (!response.ok) {
-            const status = await readActiveSessionStatus();
-            if (await claimActiveSessionIfUnowned(status)) {
-                return;
-            }
-
-            await handleActiveSessionResponse(response);
+            await recoverOrLockActiveSession();
             return;
         }
 
-        const status = await response.json();
-        if (await claimActiveSessionIfUnowned(status)) {
-            return;
-        }
-
-        setActiveSessionLocked(!status.active);
-        if (status.active) {
-            startActiveSessionHeartbeat();
-        }
+        await reconcileActiveSessionStatus(await response.json());
     } catch (error) {
         console.warn('Active tab session verification failed', error);
     } finally {

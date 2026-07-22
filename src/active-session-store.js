@@ -337,8 +337,11 @@ export const activeSessionStore = {
             const key = getLeaseKey(userHandle);
             const lease = store.leases[key];
             if (!isLeaseActive(lease, now)) {
-                pruneExpiredLease(store, key, now);
-                throw createActiveSessionError();
+                const pruned = pruneExpiredLease(store, key, now);
+                return {
+                    write: pruned,
+                    value: toPublicStatus(store.leases[key], normalizedSessionId, now),
+                };
             }
 
             if (getStoredTabSessionId(lease) !== normalizedSessionId) {

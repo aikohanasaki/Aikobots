@@ -68,10 +68,13 @@ describe('active session takeover', () => {
         store.leases[leaseKey].expiresAt = Date.now() - 1;
         await writeLeaseStore(tempRoot, store);
 
-        const expiredStatus = await activeSessionStore.verify(USER_HANDLE, FIRST_TAB_SESSION_ID);
+        const expiredStatus = await activeSessionStore.heartbeat(USER_HANDLE, FIRST_TAB_SESSION_ID);
         expect(expiredStatus).toEqual({
             active: false,
             hasActiveSession: false,
+            canTakeOver: true,
+            lease: null,
+            ttlMs: activeSessionStore.ttlMs,
         });
 
         const reclaimedStatus = await activeSessionStore.claim(USER_HANDLE, FIRST_TAB_SESSION_ID, {});
