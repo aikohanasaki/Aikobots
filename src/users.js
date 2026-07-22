@@ -20,6 +20,7 @@ import { getConfigValue, color, delay, generateTimestamp, invalidateFirefoxCache
 import { allowKeysExposure, readSecret, SECRETS_FILE, writeSecret } from './endpoints/secrets.js';
 import { buildPersonasDocumentFromLegacySettings, getPersonasPath, readPersonasDocument } from './persona-repository.js';
 import { serverDirectory } from './server-directory.js';
+import { migrateLegacyStorageCheckState } from './user-storage-check.js';
 
 export const KEY_PREFIX = 'user:';
 const AVATAR_PREFIX = 'avatar:';
@@ -502,6 +503,7 @@ export function toAvatarKey(handle) {
 export async function initUserStorage(dataRoot) {
     console.log('Using data root:', color.green(dataRoot));
     const storageDir = path.join(dataRoot, STORAGE_DIRECTORY);
+    await migrateLegacyStorageCheckState(dataRoot);
     await quarantineInvalidStorageFiles(storageDir);
     await storage.init({
         dir: storageDir,

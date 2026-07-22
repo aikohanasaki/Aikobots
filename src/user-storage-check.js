@@ -17,14 +17,20 @@ export const STORAGE_CHECK_CODES = Object.freeze({
 });
 
 const STORAGE_CHECK_STATE_FILE_NAME = 'storage-check-alerts.json';
+const STORAGE_CHECK_STATE_DIRECTORY = '_storage-check';
+const LEGACY_STORAGE_CHECK_STATE_DIRECTORY = '_storage';
 const STORAGE_CHECK_LOCK_RETRY_MS = 50;
 const STORAGE_CHECK_LOCK_TIMEOUT_MS = 10_000;
 const STORAGE_CHECK_LOCK_STALE_MS = 60_000;
 const STORAGE_CHECK_LOCK_HEARTBEAT_MS = 15_000;
 const SHARED_CHARACTER_DIRECTORY = ['_secure', 'shared-characters'];
 
-function getStorageCheckStatePath() {
-    return path.join(globalThis.DATA_ROOT, '_storage', STORAGE_CHECK_STATE_FILE_NAME);
+function getStorageCheckStatePath(dataRoot = globalThis.DATA_ROOT) {
+    return path.join(dataRoot, STORAGE_CHECK_STATE_DIRECTORY, STORAGE_CHECK_STATE_FILE_NAME);
+}
+
+function getLegacyStorageCheckStatePath(dataRoot) {
+    return path.join(dataRoot, LEGACY_STORAGE_CHECK_STATE_DIRECTORY, STORAGE_CHECK_STATE_FILE_NAME);
 }
 
 function getSharedCharactersDirectory() {
@@ -105,6 +111,37 @@ async function withStorageCheckStateLock(statePath, operation) {
         heartbeatMs: STORAGE_CHECK_LOCK_HEARTBEAT_MS,
         timeoutMessage: 'Timed out waiting for storage check state lock.',
     }, operation);
+}
+
+/**
+ * Moves the legacy alert state out of the node-persist storage directory without replacing newer state.
+ * @param {string} dataRoot Root directory for persistent application data.
+ * @returns {Promise<void>}
+ */
+export async function migrateLegacyStorageCheckState(dataRoot) {
+    const statePath = getStorageCheckStatePath(dataRoot);
+    const legacyStatePath = getLegacyStorageCheckStatePath(dataRoot);
+
+    await withStorageCheckStateLock(statePath, async lock => {
+        await lock.run(async () => {
+            try {
+                await fsPromises.access(statePath);
+                return;
+            } catch (error) {
+                if (error?.code !== 'ENOENT') {
+                    throw error;
+                }
+            }
+
+            try {
+                await fsPromises.rename(legacyStatePath, statePath);
+            } catch (error) {
+                if (error?.code !== 'ENOENT') {
+                    throw error;
+                }
+            }
+        });
+    });
 }
 
 function getUserCodeMap(state, stateKey, userHandle) {

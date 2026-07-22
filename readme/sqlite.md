@@ -957,3 +957,7 @@ Recommended Chat Setup does not place secure template contents or bindings in ch
 STMB side prompts remain in each user's `stmb-side-prompts.json`, but reads now include a content revision and whole-document saves require the matching revision. Setup installation uses the same repository's cross-worker locked mutation so an install cannot silently overwrite a concurrent edit from another tab or PM2 worker. The generic file-upload endpoint cannot replace this file.
 
 The selected installed resources are stored in ordinary chat metadata (`world_info`, `STMemoryBooks.sidePromptAfterMemorySetKey`, and content-free setup provenance). For SQLite chats, the existing revision-checked metadata mutation persists those bindings without replacing message rows. A pristine temporary direct chat is persisted only after the user confirms Apply; group chats are not supported by this feature.
+
+### User storage alert state
+
+Once-per-day user storage alert state lives at `DATA_ROOT/_storage-check/storage-check-alerts.json`. It remains outside `DATA_ROOT/_storage`, where every file must be a wrapped `node-persist` datum. Startup atomically moves the legacy alert file to the dedicated directory when no newer state exists. Reads, migrations, and atomic replacements use the alert state's cross-worker directory lock.

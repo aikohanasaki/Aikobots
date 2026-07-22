@@ -9,6 +9,7 @@ import {
     filterDueUserStorageCheckEvaluation,
     getRecursiveDirectorySize,
     getUserStorageCheckSizes,
+    migrateLegacyStorageCheckState,
     runUserStorageCheck,
     STORAGE_CHECK_BYTES_PER_GB,
     STORAGE_CHECK_CODES,
@@ -206,6 +207,41 @@ describe('user storage checks', () => {
         expect(second.adminAlerts).toHaveLength(1);
         expect(nextDay.warnings).toHaveLength(1);
         expect(nextDay.adminAlerts).toHaveLength(1);
+    });
+
+    it('migrates default alert state out of node-persist storage without replacing current state', async () => {
+        const tempDir = makeTempDir('storage-check-migration-');
+        const legacyStatePath = path.join(tempDir, '_storage', 'storage-check-alerts.json');
+        const statePath = path.join(tempDir, '_storage-check', 'storage-check-alerts.json');
+        globalThis.DATA_ROOT = tempDir;
+
+        fs.mkdirSync(path.dirname(legacyStatePath), { recursive: true });
+        fs.writeFileSync(legacyStatePath, JSON.stringify({
+            version: 2,
+            emitted: {
+                'user-a': {
+                    [STORAGE_CHECK_CODES.CHAT_1GB]: '2026-06-22',
+                },
+            },
+            adminEmitted: {},
+        }), 'utf8');
+
+        await migrateLegacyStorageCheckState(tempDir);
+        const result = await filterDueUserStorageCheckEvaluation('user-a', {
+            warnings: [{ code: STORAGE_CHECK_CODES.CHAT_1GB }],
+            adminAlerts: [],
+        }, { now: Date.UTC(2026, 5, 22) });
+
+        expect(fs.existsSync(legacyStatePath)).toBe(false);
+        expect(fs.existsSync(statePath)).toBe(true);
+        expect(result.warnings).toHaveLength(0);
+
+        fs.writeFileSync(legacyStatePath, JSON.stringify({ version: 2, emitted: {}, adminEmitted: {} }), 'utf8');
+        await migrateLegacyStorageCheckState(tempDir);
+
+        expect(JSON.parse(fs.readFileSync(statePath, 'utf8')).emitted['user-a']).toEqual({
+            [STORAGE_CHECK_CODES.CHAT_1GB]: '2026-06-22',
+        });
     });
 
     it('does not write admin alert messages for admin users', async () => {
