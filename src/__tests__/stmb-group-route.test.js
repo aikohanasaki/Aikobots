@@ -4,6 +4,7 @@ const getLorebookForManagement = jest.fn();
 const saveLorebookForManagement = jest.fn();
 const transactionSave = jest.fn();
 const assertLorebookCheckoutForManagement = jest.fn();
+const isReservedRecommendedTemplateSource = jest.fn();
 
 class MockLorebookRepositoryError extends Error {
     constructor(type, message, status = 400) {
@@ -16,10 +17,13 @@ class MockLorebookRepositoryError extends Error {
 jest.unstable_mockModule('../lorebook-repository.js', () => ({
     assertLorebookCheckoutForManagement,
     getLorebookForManagement,
-    isSecureTemplateLorebookName: name => /^LTM(?: - .+ - Blank|-.+-Blank)$/.test(String(name || '')),
     LorebookRepositoryError: MockLorebookRepositoryError,
     saveLorebookForManagement,
     withLorebookManagementTransaction: operation => operation({ save: transactionSave }),
+}));
+
+jest.unstable_mockModule('../recommended-chat-template-store.js', () => ({
+    isReservedRecommendedTemplateSource,
 }));
 
 jest.unstable_mockModule('../endpoints/chats.js', () => ({
@@ -55,6 +59,8 @@ beforeEach(() => {
     saveLorebookForManagement.mockReset();
     transactionSave.mockReset();
     assertLorebookCheckoutForManagement.mockReset();
+    isReservedRecommendedTemplateSource.mockReset();
+    isReservedRecommendedTemplateSource.mockReturnValue(false);
     transactionSave.mockResolvedValue({});
 });
 
@@ -107,10 +113,11 @@ function mockLoadedLorebooks() {
 }
 
 describe('STMB multi-lorebook group route', () => {
-    it('rejects secure blank template targets before reading lorebook data', async () => {
+    it('rejects designated ordinary template targets before reading lorebook data', async () => {
         const request = makeRequest();
         request.body.primary.lorebookName = 'LTM - Alice - Blank';
-        request.body.primary.storage = 'secure';
+        request.body.primary.storage = 'user';
+        isReservedRecommendedTemplateSource.mockReturnValue(true);
         const response = makeResponse();
 
         await handler(request, response);

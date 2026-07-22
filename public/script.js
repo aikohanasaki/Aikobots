@@ -43,7 +43,7 @@ import {
     charSetAuxWorlds,
     getCharacterExtraBooks,
     getEditableCharacterExtraBooks,
-    isSecureTemplateWorldName,
+    isReservedTemplateWorldName,
     getEffectiveHiddenCharacterLorebooks,
     getForcedActivationEntriesSnapshot,
 } from './scripts/world-info.js';
@@ -18184,8 +18184,8 @@ async function openCharacterWorldPopup() {
     }
 
     const allowsUserLinkedLorebooks = canEditLoreLinks && !ownerHandle;
-    const secureWorldNames = getSecureWorldNames().filter(name => !isSecureTemplateWorldName(name));
-    const generationWorldNames = world_names.filter(name => !isSecureTemplateWorldName(name));
+    const secureWorldNames = getSecureWorldNames();
+    const generationWorldNames = world_names.filter(name => !isReservedTemplateWorldName(name));
     const selectableExtraBookOptions = allowsUserLinkedLorebooks ? generationWorldNames : secureWorldNames;
     const selectableExtraBookSet = new Set(selectableExtraBookOptions);
     const extrasPlaceholder = canEditLoreLinks

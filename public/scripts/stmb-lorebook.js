@@ -9,6 +9,7 @@ import { getContext } from './extensions.js';
 import {
     assignLorebookToChat,
     createNewWorldInfo,
+    isReservedTemplateWorldName,
     loadWorldInfo,
     METADATA_KEY,
     world_names,
@@ -57,6 +58,10 @@ async function generateAutoLorebookName(template) {
     }
 
     return `${baseName} ${Date.now()}`;
+}
+
+function getSelectableLorebookNames() {
+    return (Array.isArray(world_names) ? world_names : []).filter(name => !isReservedTemplateWorldName(name));
 }
 
 /** Returns the next available lorebook name using STMB's Auto-create rules. */
@@ -122,7 +127,7 @@ export async function ensureResolvedLorebookName({
         let reason = null;
         if (!lorebookName) {
             reason = 'unassigned';
-        } else if (!Array.isArray(world_names) || !world_names.includes(lorebookName)) {
+        } else if (!Array.isArray(world_names) || !world_names.includes(lorebookName) || isReservedTemplateWorldName(lorebookName)) {
             reason = 'missing';
         }
 
@@ -131,7 +136,7 @@ export async function ensureResolvedLorebookName({
                 manualMode,
                 lorebookName,
                 allowCreate,
-                hasExistingLorebooks: Array.isArray(world_names) && world_names.length > 0,
+                hasExistingLorebooks: getSelectableLorebookNames().length > 0,
                 retryText,
                 reason,
             });
@@ -143,7 +148,7 @@ export async function ensureResolvedLorebookName({
 
             if (recovery.action === 'select') {
                 if (manualMode) {
-                    const selected = await showLorebookPickerPopup(world_names, {
+                    const selected = await showLorebookPickerPopup(getSelectableLorebookNames(), {
                         title: 'Select Lorebook',
                         emptyMessage: 'No existing lorebooks are available.',
                     });
@@ -167,7 +172,7 @@ export async function ensureResolvedLorebookName({
             manualMode,
             lorebookName,
             allowCreate,
-            hasExistingLorebooks: Array.isArray(world_names) && world_names.length > 0,
+            hasExistingLorebooks: getSelectableLorebookNames().length > 0,
             retryText,
             reason: 'loadFailed',
         });
@@ -179,7 +184,7 @@ export async function ensureResolvedLorebookName({
 
         if (recovery.action === 'select') {
             if (manualMode) {
-                const selected = await showLorebookPickerPopup(world_names, {
+                const selected = await showLorebookPickerPopup(getSelectableLorebookNames(), {
                     title: 'Select Lorebook',
                     emptyMessage: 'No existing lorebooks are available.',
                 });

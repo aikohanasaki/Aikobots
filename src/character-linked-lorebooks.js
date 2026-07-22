@@ -1,6 +1,7 @@
 import _ from 'lodash';
 
-import { isSecureTemplateLorebookName, resolveLorebookWithMetadata } from './lorebook-repository.js';
+import { resolveLorebookWithMetadata } from './lorebook-repository.js';
+import { isReservedRecommendedTemplateSource } from './recommended-chat-template-store.js';
 
 const SECURE_LINKED_LOREBOOKS_ERROR_MESSAGE = 'Please ensure all lorebooks to be linked are secure lorebooks.';
 
@@ -63,6 +64,11 @@ export function getCharacterSharedKey(characterCard) {
         .replace(/\.png$/i, '');
 }
 
+/** Gets the stable Recommended Chat Setup identity stored on a character card. */
+export function getRecommendedChatSetupKey(characterCard) {
+    return String(_.get(characterCard, 'data.extensions.aikobots.recommended_chat_setup_key', '') || '').trim();
+}
+
 /**
  * Checks whether the provided user handle is one of the character owners.
  * @param {object|null|undefined} characterCard
@@ -91,7 +97,7 @@ export function getCharacterLinkedLorebooks(characterCard) {
  */
 export function getInvalidSecureLinkedLorebooks(user, characterCard) {
     return getCharacterLinkedLorebooks(characterCard).filter(name => {
-        if (isSecureTemplateLorebookName(name)) {
+        if (isReservedRecommendedTemplateSource(user?.profile?.handle, name)) {
             return true;
         }
         try {

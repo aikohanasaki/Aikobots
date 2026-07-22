@@ -25,6 +25,7 @@ import {
 } from '../character-submissions.js';
 import { appendUserAdminUserMessage } from '../user-admin-messages.js';
 import { requireAdminMiddleware } from '../users.js';
+import { publishStagedRecommendedChatSetup, removeStagedRecommendedChatSetup } from '../recommended-chat-setup.js';
 
 export const router = express.Router();
 
@@ -273,6 +274,7 @@ router.post('/review', requireAdminMiddleware, async (request, response) => {
             record.targetHandles = [];
             record.publishedFilename = null;
             await writeSubmissionRecord(record);
+            removeStagedRecommendedChatSetup(getSubmissionPaths(record.id).recommendedSetupPath);
 
             return response.json(await buildSubmissionSummary(record, { includeUserBlacklist: true }));
         }
@@ -295,7 +297,8 @@ router.post('/review', requireAdminMiddleware, async (request, response) => {
             ? sanitize(String(request.body.publishedFilename))
             : undefined;
 
-        const { cardPath } = getSubmissionPaths(record.id);
+        const { cardPath, recommendedSetupPath } = getSubmissionPaths(record.id);
+        const previousRecord = structuredClone(record);
         const distribution = await distributeCharacterFile({
             sourcePath: cardPath,
             publishedFilename,
@@ -306,28 +309,56 @@ router.post('/review', requireAdminMiddleware, async (request, response) => {
             blacklistHandles: request.body?.blacklistHandles,
             persistWhitelist,
             whitelistHandles: request.body?.whitelistHandles,
+            afterDistribution: async result => {
+                const setupRollback = await publishStagedRecommendedChatSetup(recommendedSetupPath);
+                const approvedRecord = {
+                    ...record,
+                    status: SUBMISSION_STATUSES.APPROVED,
+                    reviewedAt: Date.now(),
+                    reviewedBy: request.user.profile.handle,
+                    reviewNote,
+                    publishMode,
+                    targetHandles: publishMode === PUBLISH_MODES.SELECTED ? result.targetHandles : [],
+                    publishedFilename: result.publishedFilename,
+                    requestedDistributionMode: publishMode === PUBLISH_MODES.SELECTED
+                        ? SUBMISSION_DISTRIBUTION_MODES.WHITELIST
+                        : result.distributionPolicy?.hasBlacklist
+                            ? SUBMISSION_DISTRIBUTION_MODES.GLOBAL_BLACKLIST
+                            : SUBMISSION_DISTRIBUTION_MODES.GLOBAL,
+                    requestedTargetHandles: publishMode === PUBLISH_MODES.SELECTED ? result.targetHandles : [],
+                    requestedBlacklistHandles: publishMode === PUBLISH_MODES.GLOBAL && result.distributionPolicy?.hasAdminBlacklist
+                        ? result.distributionPolicy.adminBlacklistHandles
+                        : [],
+                    userBlacklistHandles: publishMode === PUBLISH_MODES.GLOBAL && result.distributionPolicy?.hasUserBlacklist
+                        ? result.distributionPolicy.userBlacklistHandles
+                        : [],
+                };
+                try {
+                    await writeSubmissionRecord(approvedRecord);
+                } catch (error) {
+                    if (typeof setupRollback === 'function') await setupRollback();
+                    throw error;
+                }
+                Object.assign(record, approvedRecord);
+                const rollback = async () => {
+                    let rollbackError = null;
+                    try {
+                        if (typeof setupRollback === 'function') await setupRollback();
+                    } catch (error) {
+                        rollbackError = error;
+                    }
+                    try {
+                        await writeSubmissionRecord(previousRecord);
+                        Object.assign(record, previousRecord);
+                    } catch (error) {
+                        rollbackError ||= error;
+                    }
+                    if (rollbackError) throw rollbackError;
+                };
+                if (typeof setupRollback?.commit === 'function') rollback.commit = setupRollback.commit;
+                return rollback;
+            },
         });
-
-        record.status = SUBMISSION_STATUSES.APPROVED;
-        record.reviewedAt = Date.now();
-        record.reviewedBy = request.user.profile.handle;
-        record.reviewNote = reviewNote;
-        record.publishMode = publishMode;
-        record.targetHandles = publishMode === PUBLISH_MODES.SELECTED ? distribution.targetHandles : [];
-        record.publishedFilename = distribution.publishedFilename;
-        record.requestedDistributionMode = publishMode === PUBLISH_MODES.SELECTED
-            ? SUBMISSION_DISTRIBUTION_MODES.WHITELIST
-            : distribution.distributionPolicy?.hasBlacklist
-                ? SUBMISSION_DISTRIBUTION_MODES.GLOBAL_BLACKLIST
-                : SUBMISSION_DISTRIBUTION_MODES.GLOBAL;
-        record.requestedTargetHandles = publishMode === PUBLISH_MODES.SELECTED ? distribution.targetHandles : [];
-        record.requestedBlacklistHandles = publishMode === PUBLISH_MODES.GLOBAL && distribution.distributionPolicy?.hasAdminBlacklist
-            ? distribution.distributionPolicy.adminBlacklistHandles
-            : [];
-        record.userBlacklistHandles = publishMode === PUBLISH_MODES.GLOBAL && distribution.distributionPolicy?.hasUserBlacklist
-            ? distribution.distributionPolicy.userBlacklistHandles
-            : [];
-        await writeSubmissionRecord(record);
 
         return response.json({
             ...(await buildSubmissionSummary(record, { includeUserBlacklist: true })),

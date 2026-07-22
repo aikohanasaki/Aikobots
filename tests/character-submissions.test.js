@@ -109,6 +109,29 @@ describe('character submission distribution rollback', () => {
         });
         expect(policy.adminBlacklistHandles).toEqual([actingUserHandle]);
     });
+
+    it('rolls back distributed character files when setup publication fails', async () => {
+        const actingUserHandle = 'rollback-user';
+        const sourcePath = path.join(dataRoot, 'uploads', 'Bot.png');
+        const destinationPath = path.join(dataRoot, actingUserHandle, 'characters', 'Bot.png');
+        writeCard(sourcePath, buildCard({ name: 'New Bot' }));
+        const previousDestination = writeCard(destinationPath, buildCard({ name: 'Previous Bot' }));
+        const { distributeCharacterFile, PUBLISH_MODES } = await importCharacterSubmissionsModule('setupRollback');
+
+        await expect(distributeCharacterFile({
+            sourcePath,
+            publishedFilename: 'Bot',
+            publishMode: PUBLISH_MODES.SELECTED,
+            targetHandles: [actingUserHandle],
+            actingUserHandle,
+            sourceOwnerHandle: 'owner',
+            afterDistribution: async () => {
+                throw new Error('Setup publication failed.');
+            },
+        })).rejects.toThrow('Setup publication failed.');
+
+        expect(fs.readFileSync(destinationPath)).toEqual(previousDestination);
+    });
 });
 
 describe('default content character deletion', () => {
@@ -289,6 +312,31 @@ describe('character submission distribution defaults', () => {
             hasAdminBlacklist: false,
             hasUserBlacklist: false,
         });
+    });
+
+    it('never treats private Recommended Chat Setup staging as a submission record', async () => {
+        const {
+            getSubmissionPaths,
+            listSubmissionRecords,
+            SUBMISSION_STATUSES,
+            writeSubmissionRecord,
+        } = await importCharacterSubmissionsModule('privateSetupStaging');
+        const record = {
+            id: 'maker|Bot',
+            status: SUBMISSION_STATUSES.PENDING,
+            ownerHandle: 'maker',
+            ownerHandles: ['maker'],
+            submittedAt: Date.now(),
+            submittedFilename: 'Bot.png',
+            reviewNote: '',
+            targetHandles: [],
+        };
+        await writeSubmissionRecord(record);
+        const { recommendedSetupPath } = getSubmissionPaths(record.id);
+        fs.writeFileSync(recommendedSetupPath, JSON.stringify({ staged: true }));
+
+        const records = await listSubmissionRecords();
+        expect(records.map(item => item.id)).toEqual([record.id]);
     });
 
     it('prefills global blacklist submissions from the current persisted admin blacklist', async () => {

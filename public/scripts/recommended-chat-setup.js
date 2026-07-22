@@ -5,7 +5,6 @@ import {
     chat_metadata,
     getRequestHeaders,
     isCurrentCharacterChatTemporary,
-    markCharacterEditorDirty,
     persistTemporaryChatForRecommendedSetup,
     saveMetadata,
     this_chid,
@@ -13,7 +12,6 @@ import {
 import { eventSource, event_types } from './events.js';
 import { selected_group } from './group-chats.js';
 import { POPUP_RESULT, POPUP_TYPE, Popup } from './popup.js';
-import { currentUser } from './user.js';
 import { getStmbSettings, openSidePromptSetEditorPopup } from './stmb.js';
 import {
     clearSidePromptsCache,
@@ -21,15 +19,13 @@ import {
     resolveSetItemsForRun,
 } from './stmb-sideprompts-manager.js';
 import { suggestStmbLorebookName } from './stmb-lorebook.js';
-import { escapeHtml, getSanitizedFilename } from './utils.js';
+import { escapeHtml } from './utils.js';
 import {
-    getSecureWorldNames,
     METADATA_KEY,
     openWorldInfoEditor,
     updateWorldInfoList,
 } from './world-info.js';
 
-const CONFIGURED_TEMPLATE_VALUE = '__configured_secure_template__';
 let initialized = false;
 let configurationDirty = false;
 let managementState = null;
@@ -57,15 +53,26 @@ function getCharacter(chid = this_chid) {
     return chid === undefined || chid === null ? null : characters[chid] || null;
 }
 
-function getSharedCharacterKey(character) {
-    return String(character?.sharedCharacterKey || character?.data?.extensions?.aikobots?.shared_character_key || '').trim();
+function getRecommendedSetupKey(character) {
+    return String(character?.data?.extensions?.aikobots?.recommended_chat_setup_key || '').trim();
 }
 
-function hasCharacterOwners(character) {
-    const ownerHandles = character?.data?.extensions?.aikobots?.owner_handles;
-    return Array.isArray(ownerHandles)
-        ? ownerHandles.some(handle => String(handle || '').trim())
-        : Boolean(String(character?.ownerHandle || character?.data?.extensions?.aikobots?.owner_handle || '').trim());
+function applyRecommendedSetupKey(character, characterKey) {
+    const normalizedKey = String(characterKey || '').trim();
+    if (!character || !normalizedKey) return;
+    character.data ??= {};
+    character.data.extensions ??= {};
+    character.data.extensions.aikobots ??= {};
+    character.data.extensions.aikobots.recommended_chat_setup_key = normalizedKey;
+    if (character.json_data) {
+        const jsonData = JSON.parse(character.json_data);
+        jsonData.data ??= {};
+        jsonData.data.extensions ??= {};
+        jsonData.data.extensions.aikobots ??= {};
+        jsonData.data.extensions.aikobots.recommended_chat_setup_key = normalizedKey;
+        character.json_data = JSON.stringify(jsonData);
+        $('#character_json_data').val(character.json_data);
+    }
 }
 
 function resetSelect(select, options, value, disabled) {
@@ -85,12 +92,6 @@ function resetSelect(select, options, value, disabled) {
     });
 }
 
-async function getEligibleTemplateNames(characterName) {
-    const safeName = String(await getSanitizedFilename(characterName)).trim();
-    const allowed = new Set([`LTM - ${safeName} - Blank`, `LTM-${safeName}-Blank`]);
-    return getSecureWorldNames().filter(name => allowed.has(String(name || '').trim()));
-}
-
 async function hydrateConfiguration(chid = this_chid) {
     const token = ++hydrateToken;
     configurationDirty = false;
@@ -98,9 +99,7 @@ async function hydrateConfiguration(chid = this_chid) {
     const character = getCharacter(chid);
     const canManage = Boolean(
         character
-        && (hasCharacterOwners(character) || currentUser?.admin)
-        && canEditCharacterMetadata(chid)
-        && getSharedCharacterKey(character),
+        && canEditCharacterMetadata(chid),
     );
     if (!canManage) {
         resetSelect('#recommended_chat_setup_lorebook', [{ value: '', text: 'None' }], '', true);
@@ -109,20 +108,21 @@ async function hydrateConfiguration(chid = this_chid) {
     }
 
     try {
-        const [state, eligibleTemplates, sidePromptSets] = await Promise.all([
+        const [state, sidePromptSets] = await Promise.all([
             postJson('/manage/get', { avatar_url: character.avatar }),
-            getEligibleTemplateNames(character.name),
             listSets(),
         ]);
         if (token !== hydrateToken || String(chid) !== String(this_chid)) return;
         managementState = state;
         const templateOptions = [{ value: '', text: 'None' }];
-        if (state.hasTemplate) templateOptions.push({ value: CONFIGURED_TEMPLATE_VALUE, text: 'Configured Blank Lorebook Template' });
-        templateOptions.push(...eligibleTemplates.map(name => ({ value: name, text: name })));
+        if (state.templateSourceName && !(state.eligibleTemplateNames || []).includes(state.templateSourceName)) {
+            templateOptions.push({ value: state.templateSourceName, text: `${state.templateSourceName} (does not match current character)` });
+        }
+        templateOptions.push(...(state.eligibleTemplateNames || []).map(name => ({ value: name, text: name })));
         resetSelect(
             '#recommended_chat_setup_lorebook',
             templateOptions,
-            state.hasTemplate ? CONFIGURED_TEMPLATE_VALUE : '',
+            state.templateSourceName || '',
             false,
         );
         resetSelect(
@@ -143,14 +143,14 @@ async function savePendingConfiguration() {
     if (!configurationDirty || !managementState) return;
     const character = getCharacter();
     if (!character || !canEditCharacterMetadata(this_chid)) return;
+    const controls = $('#recommended_chat_setup_lorebook, #recommended_chat_setup_side_prompts');
+    controls.prop('disabled', true);
     const templateValue = String($('#recommended_chat_setup_lorebook').val() || '');
-    const templateAction = templateValue === CONFIGURED_TEMPLATE_VALUE
-        ? 'keep'
-        : templateValue
-            ? 'replace'
-            : managementState.hasTemplate
-                ? 'remove'
-                : 'keep';
+    const templateAction = templateValue
+        ? 'replace'
+        : managementState.templateSourceName
+            ? 'remove'
+            : 'keep';
     try {
         const sidePromptSetKey = String($('#recommended_chat_setup_side_prompts').val() || '');
         if (sidePromptSetKey) {
@@ -159,19 +159,21 @@ async function savePendingConfiguration() {
                 throw new Error('Recommended side prompts must be complete and must not require manual macro input.');
             }
         }
-        await postJson('/manage/save', {
+        const saved = await postJson('/manage/save', {
             avatar_url: character.avatar,
             templateAction,
             templateSourceName: templateAction === 'replace' ? templateValue : '',
             sidePromptSetKey,
         });
+        applyRecommendedSetupKey(character, saved.characterKey);
         configurationDirty = false;
+        await updateWorldInfoList();
         await hydrateConfiguration(this_chid);
         await refreshConsumerButton();
         toastr.success('Recommended Chat Setup saved.', 'Recommended Chat Setup');
     } catch (error) {
         configurationDirty = true;
-        markCharacterEditorDirty();
+        controls.prop('disabled', false);
         toastr.error(error?.message || 'Could not save Recommended Chat Setup.', 'Recommended Chat Setup');
     }
 }
@@ -190,7 +192,7 @@ function setButtonState(summary) {
 
 async function refreshConsumerButton() {
     const character = getCharacter();
-    if (!character || selected_group || !getSharedCharacterKey(character)) {
+    if (!character || selected_group || !getRecommendedSetupKey(character)) {
         setButtonState(null);
         return;
     }
@@ -210,7 +212,7 @@ function buildPreview(summary, suggestedName) {
     if (summary.hasTemplate) {
         root.append($('<div></div>')
             .append($('<h4></h4>').text('Lorebook'))
-            .append($('<p></p>').text('A secure blank template will be copied into a new ordinary lorebook that you own.'))
+            .append($('<p></p>').text('The botmaker\'s blank template will be copied into a new ordinary lorebook that you own.'))
             .append($('<label for="recommended-chat-setup-lorebook-name"></label>').text('Your lorebook name'))
             .append($('<input id="recommended-chat-setup-lorebook-name" class="text_pole" autocomplete="off">').val(suggestedName)));
     }
@@ -357,7 +359,7 @@ async function applyRecommendedSetup() {
         }
         const result = await postJson('/apply', {
             avatar_url: character.avatar,
-            version: summary.version,
+            revision: summary.revision,
             installLorebook: boundResolution.installLorebook,
             lorebookName,
             installSidePrompts: summary.hasSidePrompts,
@@ -374,7 +376,7 @@ async function applyRecommendedSetup() {
             window.dispatchEvent(new CustomEvent('stmb-sideprompts-updated'));
         }
         chat_metadata.recommendedChatSetup = {
-            version: summary.version,
+            revision: summary.revision,
         };
         const metadataSaved = await saveMetadata();
         if (metadataSaved === CHAT_SAVE_RESULT.FAILED) {
@@ -391,17 +393,16 @@ async function applyRecommendedSetup() {
 export function initRecommendedChatSetup() {
     if (initialized) return;
     initialized = true;
-    $('#recommended_chat_setup_lorebook, #recommended_chat_setup_side_prompts').on('change', function () {
+    $('#recommended_chat_setup_lorebook, #recommended_chat_setup_side_prompts').on('change', async function () {
         if (!managementState) return;
         configurationDirty = true;
-        markCharacterEditorDirty(`#${this.id}`);
+        await savePendingConfiguration();
     });
     $('#recommended_chat_setup_button').on('click', applyRecommendedSetup);
     eventSource.on(event_types.CHARACTER_EDITOR_OPENED, async chid => {
         await hydrateConfiguration(chid);
         await refreshConsumerButton();
     });
-    eventSource.on(event_types.CHARACTER_EDITED, savePendingConfiguration);
     eventSource.on(event_types.CHAT_CHANGED, refreshConsumerButton);
     eventSource.on(event_types.CHAT_CREATED, refreshConsumerButton);
     eventSource.on(event_types.WORLDINFO_UPDATED, () => hydrateConfiguration(this_chid));

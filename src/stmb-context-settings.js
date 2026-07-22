@@ -2,12 +2,12 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { sync as writeFileAtomicSync } from 'write-file-atomic';
 import {
-    isSecureTemplateLorebookName,
     listLorebooksForManagement,
     LorebookRepositoryError,
     resolveLorebookWithMetadata,
 } from './lorebook-repository.js';
 import { withDirectoryLock } from './file-system-lock.js';
+import { isReservedRecommendedTemplateSource } from './recommended-chat-template-store.js';
 
 export const STMB_CONTEXT_SETTINGS_FILE = 'stmb-context-settings.json';
 export const STMB_CONTEXT_NONE_KEY = '__none__';
@@ -198,8 +198,8 @@ function resolveOwnedLorebookEntry(user, reference) {
     if (!ref) {
         throw createRequestError(400, 'StmbContextEntryInvalid', 'Context entry references require lorebookName and uid.');
     }
-    if (ref.storage === 'secure' && isSecureTemplateLorebookName(ref.lorebookName)) {
-        throw createRequestError(400, 'StmbContextEntryInvalid', 'Secure blank lorebook templates cannot be used as context.');
+    if (ref.storage === 'user' && isReservedRecommendedTemplateSource(user?.profile?.handle, ref.lorebookName)) {
+        throw createRequestError(400, 'StmbContextEntryInvalid', 'Designated blank lorebook templates cannot be used as context.');
     }
 
     const resolved = resolveLorebookWithMetadata(user, ref.lorebookName, {
@@ -267,7 +267,7 @@ export function listOwnedStmbContextSourceEntries(user) {
         if (!userOwnsLorebookMetadata(user, item)) {
             continue;
         }
-        if (item.storage === 'secure' && isSecureTemplateLorebookName(item.name)) {
+        if (item.storage === 'user' && isReservedRecommendedTemplateSource(user?.profile?.handle, item.name)) {
             continue;
         }
 

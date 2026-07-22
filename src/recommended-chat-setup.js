@@ -1,32 +1,34 @@
 import crypto from 'node:crypto';
 import fs from 'node:fs';
-import path from 'node:path';
 
 import sanitize from 'sanitize-filename';
 import { sync as writeFileAtomicSync } from 'write-file-atomic';
 
-import { withDirectoryLock } from './file-system-lock.js';
 import {
     createUserLorebookForManagement,
     getLorebookForManagement,
+    listLorebooksForManagement,
     LorebookRepositoryError,
+    withLorebookManagementTransaction,
 } from './lorebook-repository.js';
 import {
     getCharacterOwnerHandles,
-    getCharacterSharedKey,
+    getRecommendedChatSetupKey,
 } from './character-linked-lorebooks.js';
+import {
+    getPublishedRecommendedSetup,
+    getRecommendedTemplateDraft,
+    mutateRecommendedTemplateStore,
+    publishRecommendedSetup,
+    readPublishedSidePrompts,
+    readPublishedTemplate,
+    withRecommendedTemplateStoreLock,
+} from './recommended-chat-template-store.js';
 import {
     mutateStmbSidePrompts,
     readStmbSidePrompts,
 } from './stmb-side-prompts-repository.js';
-
-const STORE_DIRECTORY = ['_secure', 'recommended-chat-setups'];
-const INDEX_FILENAME = 'index.json';
-const LOCK_RETRY_MS = 50;
-const LOCK_TIMEOUT_MS = 30_000;
-const LOCK_STALE_MS = 120_000;
-const LOCK_HEARTBEAT_MS = 10_000;
-let mutationQueue = Promise.resolve();
+import { getUserDirectories } from './users.js';
 
 export class RecommendedChatSetupError extends Error {
     constructor(type, message, status = 400) {
@@ -37,75 +39,28 @@ export class RecommendedChatSetupError extends Error {
     }
 }
 
-function getStoreRoot() {
-    if (!globalThis.DATA_ROOT) {
-        throw new Error('DATA_ROOT must be defined before using recommended chat setups');
-    }
-    const root = path.join(globalThis.DATA_ROOT, ...STORE_DIRECTORY);
-    fs.mkdirSync(root, { recursive: true });
-    return root;
-}
-
-function getIndexPath() {
-    return path.join(getStoreRoot(), INDEX_FILENAME);
-}
-
-function getLockPath() {
-    return path.join(getStoreRoot(), `${INDEX_FILENAME}.lock`);
-}
-
-function getTemplatePath(characterKey) {
-    const token = crypto.createHash('sha256').update(characterKey).digest('hex');
-    return path.join(getStoreRoot(), `${token}.template.json`);
-}
-
-function normalizeIndex(parsed) {
-    const setups = parsed?.setups && typeof parsed.setups === 'object' && !Array.isArray(parsed.setups)
-        ? parsed.setups
-        : {};
-    return { version: 1, setups };
-}
-
-function readIndex() {
-    if (!fs.existsSync(getIndexPath())) {
-        return { version: 1, setups: {} };
-    }
-    try {
-        return normalizeIndex(JSON.parse(fs.readFileSync(getIndexPath(), 'utf8')));
-    } catch {
-        throw new RecommendedChatSetupError('RecommendedSetupUnavailable', 'Recommended Chat Setup is temporarily unavailable.', 503);
-    }
-}
-
-function writeIndex(index) {
-    writeFileAtomicSync(getIndexPath(), JSON.stringify(index, null, 2), 'utf8');
-}
-
-async function runWithLock(operation) {
-    const queued = mutationQueue.catch(() => {}).then(() => withDirectoryLock({
-        lockPath: getLockPath(),
-        retryMs: LOCK_RETRY_MS,
-        timeoutMs: LOCK_TIMEOUT_MS,
-        staleMs: LOCK_STALE_MS,
-        heartbeatMs: LOCK_HEARTBEAT_MS,
-        timeoutMessage: 'Timed out waiting to update Recommended Chat Setup.',
-    }, operation));
-    mutationQueue = queued.catch(() => {});
-    return await queued;
-}
-
 function normalizeCharacterName(card) {
     return String(card?.data?.name || card?.name || '').trim();
 }
 
 function normalizeCharacterKey(card) {
-    return sanitize(getCharacterSharedKey(card)).trim();
+    return String(getRecommendedChatSetupKey(card) || '').trim();
 }
 
 function assertCanManage(user, card) {
     const owners = getCharacterOwnerHandles(card);
     const handle = String(user?.profile?.handle || '').trim();
-    if (!user?.profile?.admin && (owners.length === 0 || !owners.includes(handle))) {
+    if (!user?.profile?.admin && owners.length > 0 && !owners.includes(handle)) {
+        throw new RecommendedChatSetupError('RecommendedSetupForbidden', 'Only botmakers and admins can configure this setup.', 403);
+    }
+}
+
+function assertCanManageDraft(user, card, draft) {
+    assertCanManage(user, card);
+    if (!draft || user?.profile?.admin) return;
+    const handle = String(user?.profile?.handle || '').trim();
+    const managerHandles = Array.isArray(draft.managerHandles) ? draft.managerHandles : [];
+    if (!managerHandles.includes(handle)) {
         throw new RecommendedChatSetupError('RecommendedSetupForbidden', 'Only botmakers and admins can configure this setup.', 403);
     }
 }
@@ -118,9 +73,14 @@ function getEligibleTemplateNames(characterName) {
     ]);
 }
 
+/** Normalizes only the case-insensitive reserved Blank suffix. */
+function normalizeTemplateBlankSuffix(name) {
+    return String(name || '').replace(/Blank$/i, 'Blank');
+}
+
 function assertEligibleTemplateName(characterName, requestedName) {
     const canonicalName = sanitize(String(requestedName || '').trim()).replace(/\.json$/i, '');
-    if (!getEligibleTemplateNames(characterName).has(canonicalName)) {
+    if (!getEligibleTemplateNames(characterName).has(normalizeTemplateBlankSuffix(canonicalName))) {
         throw new RecommendedChatSetupError(
             'RecommendedSetupTemplateNameInvalid',
             'The blank lorebook template name does not match this character.',
@@ -128,6 +88,15 @@ function assertEligibleTemplateName(characterName, requestedName) {
         );
     }
     return canonicalName;
+}
+
+function getUserForHandle(user, handle) {
+    const normalizedHandle = String(handle || '').trim();
+    if (normalizedHandle === String(user?.profile?.handle || '').trim()) return user;
+    return {
+        profile: { handle: normalizedHandle, admin: false },
+        directories: getUserDirectories(normalizedHandle),
+    };
 }
 
 function snapshotSidePromptSet(user, setKey) {
@@ -168,17 +137,14 @@ function snapshotSidePromptSet(user, setKey) {
 
 function buildPublicSummary(entry) {
     if (!entry) return { available: false };
-    const hasTemplate = Boolean(entry.hasTemplate && fs.existsSync(getTemplatePath(entry.characterKey)));
-    const sidePromptCount = Array.isArray(entry.sidePrompts?.set?.items) ? entry.sidePrompts.set.items.length : 0;
-    const hasSidePrompts = Boolean(entry.sidePrompts);
     return {
-        available: hasTemplate || hasSidePrompts,
-        version: Number(entry.version) || 1,
+        available: Boolean(entry.hasTemplate || entry.hasSidePrompts),
+        revision: String(entry.revision || ''),
         botmakerName: String(entry.botmakerName || ''),
-        hasTemplate,
-        hasSidePrompts,
-        sidePromptSetName: hasSidePrompts ? String(entry.characterName || '') : '',
-        sidePromptCount,
+        hasTemplate: Boolean(entry.hasTemplate),
+        hasSidePrompts: Boolean(entry.hasSidePrompts),
+        sidePromptSetName: entry.hasSidePrompts ? String(entry.sidePromptSetName || entry.characterName || '') : '',
+        sidePromptCount: entry.hasSidePrompts ? Number(entry.sidePromptCount || 0) : 0,
     };
 }
 
@@ -201,10 +167,8 @@ function findSetByCharacterName(document, characterName) {
     return Object.values(document?.sets || {}).find(set => String(set?.name || '').trim().toLocaleLowerCase() === target) || null;
 }
 
-function installSidePrompts(document, entry, conflictMode) {
-    const next = document && typeof document === 'object'
-        ? document
-        : { version: 2, prompts: {}, sets: {} };
+function installSidePrompts(document, entry, sidePrompts, conflictMode) {
+    const next = document && typeof document === 'object' ? document : { version: 2, prompts: {}, sets: {} };
     next.prompts ??= {};
     next.sets ??= {};
     const existing = findSetByCharacterName(next, entry.characterName);
@@ -229,7 +193,7 @@ function installSidePrompts(document, entry, conflictMode) {
         return candidate;
     })();
     const promptKeyMap = new Map();
-    for (const [sourceKey, sourcePrompt] of Object.entries(entry.sidePrompts.prompts || {})) {
+    for (const [sourceKey, sourcePrompt] of Object.entries(sidePrompts.prompts || {})) {
         let promptKey = makePromptKey(entry.characterKey, sourceKey);
         let suffix = 2;
         while (next.prompts[promptKey]
@@ -240,20 +204,20 @@ function installSidePrompts(document, entry, conflictMode) {
         next.prompts[promptKey] = {
             ...structuredClone(sourcePrompt),
             key: promptKey,
-            recommendedSetup: { characterKey: entry.characterKey, version: entry.version },
+            recommendedSetup: { characterKey: entry.characterKey, revision: entry.revision },
         };
     }
     next.sets[targetSetKey] = {
-        ...structuredClone(entry.sidePrompts.set),
+        ...structuredClone(sidePrompts.set),
         key: targetSetKey,
         name: entry.characterName,
-        items: entry.sidePrompts.set.items.map((item, index) => ({
+        items: sidePrompts.set.items.map((item, index) => ({
             ...structuredClone(item),
             id: makeItemId(entry.characterKey, item.id || item.promptKey, index),
             promptKey: promptKeyMap.get(item.promptKey),
         })),
         updatedAt: new Date().toISOString(),
-        recommendedSetup: { characterKey: entry.characterKey, version: entry.version },
+        recommendedSetup: { characterKey: entry.characterKey, revision: entry.revision },
     };
     return {
         document: next,
@@ -264,100 +228,158 @@ function installSidePrompts(document, entry, conflictMode) {
     };
 }
 
-/** Returns the private configuration state safe for the owning botmaker UI. */
+/** Returns draft configuration state to an authorized botmaker. */
 export function getRecommendedChatSetupManagement(user, card) {
-    assertCanManage(user, card);
     const characterKey = normalizeCharacterKey(card);
-    if (!characterKey) {
-        return { available: false, hasTemplate: false, sidePromptSetKey: '' };
-    }
-    const entry = readIndex().setups[characterKey] || null;
+    const draft = characterKey ? getRecommendedTemplateDraft(characterKey) : null;
+    assertCanManageDraft(user, card, draft);
+    const eligibleNames = getEligibleTemplateNames(normalizeCharacterName(card));
+    const eligibleTemplateNames = listLorebooksForManagement(user)
+        .filter(item => item.storage === 'user' && eligibleNames.has(normalizeTemplateBlankSuffix(item.name)))
+        .map(item => item.name);
     return {
-        available: Boolean(entry),
-        hasTemplate: Boolean(entry?.hasTemplate && fs.existsSync(getTemplatePath(characterKey))),
-        sidePromptSetKey: String(entry?.sidePrompts?.sourceSetKey || ''),
+        available: Boolean(draft?.templateSourceName || draft?.sidePromptSetKey),
+        characterKey,
+        templateSourceName: String(draft?.templateSourceName || ''),
+        sidePromptSetKey: String(draft?.sidePromptSetKey || ''),
+        eligibleTemplateNames,
     };
 }
 
-/** Saves a character's private recommendation without exposing the secure template binding. */
+/** Saves private draft bindings without copying their contents. */
 export async function saveRecommendedChatSetup(user, card, input = {}) {
     assertCanManage(user, card);
     const characterKey = normalizeCharacterKey(card);
     const characterName = normalizeCharacterName(card);
     if (!characterKey || !characterName) {
-        throw new RecommendedChatSetupError('RecommendedSetupCharacterInvalid', 'Share the character before configuring Recommended Chat Setup.', 400);
+        throw new RecommendedChatSetupError('RecommendedSetupCharacterInvalid', 'Recommended Chat Setup identity is missing.', 400);
     }
 
-    return await runWithLock(async () => {
-        const index = readIndex();
-        const previous = index.setups[characterKey] || null;
+    const actorHandle = String(user?.profile?.handle || '').trim();
+    return await withLorebookManagementTransaction(async () => await mutateRecommendedTemplateStore(index => {
+        const previous = index.drafts[characterKey] || null;
+        assertCanManageDraft(user, card, previous);
         const templateAction = String(input.templateAction || 'keep');
-        let templateData = null;
-        let hasTemplate = Boolean(previous?.hasTemplate && fs.existsSync(getTemplatePath(characterKey)));
+        let templateSourceName = String(previous?.templateSourceName || '');
+        let templateSourceOwnerHandle = String(previous?.templateSourceOwnerHandle || '');
         if (templateAction === 'replace') {
-            const templateName = assertEligibleTemplateName(characterName, input.templateSourceName);
-            let source;
-            try {
-                source = getLorebookForManagement(user, templateName, false, 'secure');
-                if (!source?.data
-                    || typeof source.data !== 'object'
-                    || Array.isArray(source.data)
-                    || !source.data.entries
-                    || typeof source.data.entries !== 'object'
-                    || Array.isArray(source.data.entries)) {
-                    throw new Error('Invalid template');
-                }
-            } catch {
-                throw new RecommendedChatSetupError(
-                    'RecommendedSetupTemplateUnavailable',
-                    'The selected secure blank lorebook template is unavailable.',
-                    404,
-                );
+            templateSourceName = assertEligibleTemplateName(characterName, input.templateSourceName);
+            const eligibleOrdinarySource = listLorebooksForManagement(user)
+                .some(item => item.name === templateSourceName && item.storage === 'user');
+            if (!eligibleOrdinarySource) {
+                throw new RecommendedChatSetupError('RecommendedSetupTemplateUnavailable', 'The selected blank lorebook template is unavailable.', 404);
             }
-            templateData = structuredClone(source.data);
-            hasTemplate = true;
+            const source = getLorebookForManagement(user, templateSourceName, false, 'user');
+            if (source?.metadata?.storage !== 'user') {
+                throw new RecommendedChatSetupError('RecommendedSetupTemplateUnavailable', 'The selected blank lorebook template is unavailable.', 404);
+            }
+            const reservedElsewhere = Object.entries(index.drafts).some(([key, draft]) =>
+                key !== characterKey
+                && String(draft?.templateSourceOwnerHandle || '') === actorHandle
+                && String(draft?.templateSourceName || '') === templateSourceName,
+            );
+            if (reservedElsewhere) {
+                throw new RecommendedChatSetupError('RecommendedSetupTemplateReserved', 'That lorebook is already designated for another character.', 409);
+            }
+            templateSourceOwnerHandle = actorHandle;
         } else if (templateAction === 'remove') {
-            hasTemplate = false;
+            templateSourceName = '';
+            templateSourceOwnerHandle = '';
         } else if (templateAction !== 'keep') {
             throw new RecommendedChatSetupError('RecommendedSetupBadRequest', 'Invalid template action.', 400);
         }
 
-        const sidePrompts = snapshotSidePromptSet(user, input.sidePromptSetKey);
-        if (!hasTemplate && !sidePrompts) {
-            delete index.setups[characterKey];
-            writeIndex(index);
-            if (fs.existsSync(getTemplatePath(characterKey))) fs.rmSync(getTemplatePath(characterKey), { force: true });
-            return { available: false };
-        }
+        const sidePromptSetKey = String(input.sidePromptSetKey || '').trim();
+        if (sidePromptSetKey) snapshotSidePromptSet(user, sidePromptSetKey);
 
-        const version = Number(previous?.version || 0) + 1;
-        const entry = {
+        index.drafts[characterKey] = {
             characterKey,
             characterName,
+            ownerHandles: getCharacterOwnerHandles(card),
+            managerHandles: previous?.managerHandles || [...new Set([...getCharacterOwnerHandles(card), actorHandle].filter(Boolean))],
             botmakerName: String(user?.profile?.name || card?.data?.creator || user?.profile?.handle || '').trim(),
-            version,
-            hasTemplate,
-            sidePrompts,
+            templateSourceName,
+            templateSourceOwnerHandle,
+            sidePromptSetKey,
+            sidePromptSourceOwnerHandle: sidePromptSetKey ? actorHandle : '',
             updatedAt: new Date().toISOString(),
         };
-        if (templateData) writeFileAtomicSync(getTemplatePath(characterKey), JSON.stringify(templateData, null, 2), 'utf8');
-        index.setups[characterKey] = entry;
-        writeIndex(index);
-        if (!hasTemplate && fs.existsSync(getTemplatePath(characterKey))) fs.rmSync(getTemplatePath(characterKey), { force: true });
-        return buildPublicSummary(entry);
-    });
+
+        return {
+            available: Boolean(templateSourceName || sidePromptSetKey),
+            characterKey,
+            templateSourceName,
+            sidePromptSetKey,
+        };
+    }));
 }
 
-/** Returns the public, content-free recommendation summary for a character. */
+/** Stages the current draft contents for a character submission. */
+export function stageRecommendedChatSetupForSubmission(user, card, stagingPath) {
+    const characterKey = normalizeCharacterKey(card);
+    if (!characterKey) return null;
+    const draft = getRecommendedTemplateDraft(characterKey);
+    if (!draft) return null;
+    assertCanManageDraft(user, card, draft);
+
+    const characterName = normalizeCharacterName(card);
+    let templateData = null;
+    if (draft.templateSourceName) {
+        assertEligibleTemplateName(characterName, draft.templateSourceName);
+        const sourceUser = getUserForHandle(user, draft.templateSourceOwnerHandle);
+        let source;
+        try {
+            source = getLorebookForManagement(sourceUser, draft.templateSourceName, false, 'user');
+        } catch {
+            throw new RecommendedChatSetupError('RecommendedSetupTemplateUnavailable', 'The designated blank lorebook template is unavailable.', 400);
+        }
+        if (!source?.data?.entries || typeof source.data.entries !== 'object' || Array.isArray(source.data.entries)) {
+            throw new RecommendedChatSetupError('RecommendedSetupTemplateUnavailable', 'The designated blank lorebook template is invalid.', 400);
+        }
+        templateData = structuredClone(source.data);
+    }
+
+    let sidePrompts = null;
+    if (draft.sidePromptSetKey) {
+        sidePrompts = snapshotSidePromptSet(getUserForHandle(user, draft.sidePromptSourceOwnerHandle), draft.sidePromptSetKey);
+    }
+
+    const staged = {
+        characterKey,
+        characterName,
+        botmakerName: String(user?.profile?.name || card?.data?.creator || draft.botmakerName || '').trim(),
+        hasTemplate: Boolean(templateData),
+        hasSidePrompts: Boolean(sidePrompts),
+        templateData,
+        sidePrompts,
+    };
+    staged.revision = crypto.createHash('sha256').update(JSON.stringify(staged)).digest('hex');
+    writeFileAtomicSync(stagingPath, JSON.stringify(staged, null, 2), 'utf8');
+    return { characterKey, revision: staged.revision };
+}
+
+/** Publishes a previously staged setup during character approval. */
+export async function publishStagedRecommendedChatSetup(stagingPath) {
+    if (!stagingPath || !fs.existsSync(stagingPath)) return null;
+    const staged = JSON.parse(fs.readFileSync(stagingPath, 'utf8'));
+    return await publishRecommendedSetup(staged.characterKey, staged);
+}
+
+/** Deletes a submission-scoped setup snapshot without changing publication. */
+export function removeStagedRecommendedChatSetup(stagingPath) {
+    if (stagingPath && fs.existsSync(stagingPath)) fs.rmSync(stagingPath, { force: true });
+}
+
+/** Returns the content-free current publication summary for consumers. */
 export function getRecommendedChatSetupSummary(card) {
     const characterKey = normalizeCharacterKey(card);
-    return characterKey ? buildPublicSummary(readIndex().setups[characterKey] || null) : { available: false };
+    return buildPublicSummary(characterKey ? getPublishedRecommendedSetup(characterKey) : null);
 }
 
-/** Checks user-owned resource conflicts without returning setup contents. */
+/** Reports consumer conflicts against the current published revision. */
 export function preflightRecommendedChatSetup(user, card, lorebookName = '') {
     const characterKey = normalizeCharacterKey(card);
-    const entry = characterKey ? readIndex().setups[characterKey] : null;
+    const entry = characterKey ? getPublishedRecommendedSetup(characterKey) : null;
     const summary = buildPublicSummary(entry);
     if (!summary.available) throw new RecommendedChatSetupError('RecommendedSetupNotFound', 'No Recommended Chat Setup is available.', 404);
     let lorebookConflict = false;
@@ -365,8 +387,8 @@ export function preflightRecommendedChatSetup(user, card, lorebookName = '') {
     if (summary.hasTemplate && normalizedLorebookName) {
         try {
             const existing = getLorebookForManagement(user, normalizedLorebookName, false, 'user');
-            lorebookConflict = existing?.data?.extensions?.aikobots?.recommended_chat_setup?.characterKey !== characterKey
-                || Number(existing?.data?.extensions?.aikobots?.recommended_chat_setup?.version) !== Number(entry.version);
+            const provenance = existing?.data?.extensions?.aikobots?.recommended_chat_setup;
+            lorebookConflict = provenance?.characterKey !== characterKey || provenance?.revision !== entry.revision;
         } catch (error) {
             if (!(error instanceof LorebookRepositoryError) || error.status !== 404) throw error;
         }
@@ -380,60 +402,67 @@ export function preflightRecommendedChatSetup(user, card, lorebookName = '') {
     };
 }
 
-/** Copies the recommended components into user-owned storage. */
+/** Copies the latest published components into user-owned storage. */
 export async function applyRecommendedChatSetup(user, card, input = {}) {
-    return await runWithLock(async () => {
+    const published = await withRecommendedTemplateStoreLock(async () => {
         const characterKey = normalizeCharacterKey(card);
-        const entry = characterKey ? readIndex().setups[characterKey] : null;
+        const entry = characterKey ? getPublishedRecommendedSetup(characterKey) : null;
         const summary = buildPublicSummary(entry);
-        if (!summary.available || Number(input.version) !== Number(entry.version)) {
+        if (!summary.available || String(input.revision || '') !== String(entry?.revision || '')) {
             throw new RecommendedChatSetupError('RecommendedSetupChanged', 'The recommendation changed. Reopen Recommended Chat Setup.', 409);
         }
-
-        let lorebookName = '';
-        if (input.installLorebook && summary.hasTemplate) {
-            lorebookName = String(input.lorebookName || '').trim();
-            if (!lorebookName) throw new RecommendedChatSetupError('RecommendedSetupLorebookNameRequired', 'Enter a lorebook name.', 400);
-            let existing = null;
-            try {
-                existing = getLorebookForManagement(user, lorebookName, false, 'user');
-            } catch (error) {
-                if (!(error instanceof LorebookRepositoryError) || error.status !== 404) throw error;
-            }
-            const provenance = existing?.data?.extensions?.aikobots?.recommended_chat_setup;
-            if (existing && (provenance?.characterKey !== characterKey || Number(provenance?.version) !== Number(entry.version))) {
-                throw new RecommendedChatSetupError('RecommendedSetupLorebookConflict', 'A lorebook with that name already exists.', 409);
-            }
-            if (!existing) {
-                const templateData = JSON.parse(fs.readFileSync(getTemplatePath(characterKey), 'utf8'));
-                templateData.extensions ??= {};
-                templateData.extensions.aikobots ??= {};
-                templateData.extensions.aikobots.recommended_chat_setup = { characterKey, version: entry.version };
-                await createUserLorebookForManagement(user, lorebookName, templateData);
-            }
-        }
-
-        let sidePromptSetKey = '';
-        let sidePromptSetName = '';
-        let sidePromptCount = 0;
-        let keptExistingSidePrompts = false;
-        if (input.installSidePrompts && summary.hasSidePrompts) {
-            await mutateStmbSidePrompts(user, document => {
-                const installed = installSidePrompts(document, entry, String(input.sidePromptConflictMode || ''));
-                sidePromptSetKey = installed.setKey;
-                sidePromptSetName = installed.setName;
-                sidePromptCount = installed.sidePromptCount;
-                keptExistingSidePrompts = installed.keptExisting;
-                return installed.document;
-            });
-        }
         return {
-            lorebookName,
-            sidePromptSetKey,
-            sidePromptSetName,
-            sidePromptCount,
-            keptExistingSidePrompts,
-            version: entry.version,
+            characterKey,
+            entry,
+            summary,
+            templateData: summary.hasTemplate ? readPublishedTemplate(characterKey, entry.revision) : null,
+            sidePrompts: summary.hasSidePrompts ? readPublishedSidePrompts(characterKey, entry.revision) : null,
         };
     });
+    const { characterKey, entry, summary, templateData, sidePrompts } = published;
+
+    let lorebookName = '';
+    if (input.installLorebook && summary.hasTemplate) {
+        lorebookName = String(input.lorebookName || '').trim();
+        if (!lorebookName) throw new RecommendedChatSetupError('RecommendedSetupLorebookNameRequired', 'Enter a lorebook name.', 400);
+        let existing = null;
+        try {
+            existing = getLorebookForManagement(user, lorebookName, false, 'user');
+        } catch (error) {
+            if (!(error instanceof LorebookRepositoryError) || error.status !== 404) throw error;
+        }
+        const provenance = existing?.data?.extensions?.aikobots?.recommended_chat_setup;
+        if (existing && (provenance?.characterKey !== characterKey || provenance?.revision !== entry.revision)) {
+            throw new RecommendedChatSetupError('RecommendedSetupLorebookConflict', 'A lorebook with that name already exists.', 409);
+        }
+        if (!existing) {
+            templateData.extensions ??= {};
+            templateData.extensions.aikobots ??= {};
+            templateData.extensions.aikobots.recommended_chat_setup = { characterKey, revision: entry.revision };
+            await createUserLorebookForManagement(user, lorebookName, templateData);
+        }
+    }
+
+    let sidePromptSetKey = '';
+    let sidePromptSetName = '';
+    let sidePromptCount = 0;
+    let keptExistingSidePrompts = false;
+    if (input.installSidePrompts && summary.hasSidePrompts) {
+        await mutateStmbSidePrompts(user, document => {
+            const installed = installSidePrompts(document, entry, sidePrompts, String(input.sidePromptConflictMode || ''));
+            sidePromptSetKey = installed.setKey;
+            sidePromptSetName = installed.setName;
+            sidePromptCount = installed.sidePromptCount;
+            keptExistingSidePrompts = installed.keptExisting;
+            return installed.document;
+        });
+    }
+    return {
+        lorebookName,
+        sidePromptSetKey,
+        sidePromptSetName,
+        sidePromptCount,
+        keptExistingSidePrompts,
+        revision: entry.revision,
+    };
 }

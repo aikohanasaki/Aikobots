@@ -243,6 +243,7 @@ function normalizeWorldInfoItems(data = {}) {
                 canCheckIn: hasOwn('canCheckIn') ? Boolean(item.canCheckIn) : undefined,
                 canForceCheckout: hasOwn('canForceCheckout') ? Boolean(item.canForceCheckout) : undefined,
                 canManageOwners: hasOwn('canManageOwners') ? Boolean(item.canManageOwners) : undefined,
+                reservedTemplate: Boolean(item.reservedTemplate),
             };
             });
     }
@@ -265,6 +266,7 @@ function normalizeWorldInfoItems(data = {}) {
             canCheckIn: false,
             canForceCheckout: false,
             canManageOwners: false,
+            reservedTemplate: false,
         }))
         : [];
 }
@@ -348,11 +350,9 @@ export function getSecureWorldNames() {
     return world_info_items.filter(item => item.storage === 'secure').map(item => item.name);
 }
 
-/** Returns whether a listed world is a reserved secure blank template. */
-export function isSecureTemplateWorldName(name) {
-    const value = String(name || '');
-    const isTemplateName = /^LTM - .+ - Blank$/.test(value) || /^LTM-.+-Blank$/.test(value);
-    return isTemplateName && getWorldInfoItem(value)?.storage === 'secure';
+/** Returns whether a listed world is designated as a Recommended Chat Setup template draft. */
+export function isReservedTemplateWorldName(name) {
+    return Boolean(getWorldInfoItem(String(name || ''))?.reservedTemplate);
 }
 
 export function getLorebookStorageForRequest(name, fallback = 'user') {
@@ -510,6 +510,16 @@ function updateWorldInfoStorageButton(name = '') {
         return;
     }
 
+    if (item.reservedTemplate) {
+        const label = 'Template drafts cannot change storage while designated';
+        button.addClass('disabled');
+        button.attr('title', label);
+        button.attr('aria-label', label);
+        icon.removeClass('fa-lock fa-lock-open');
+        icon.addClass('fa-shield-halved');
+        return;
+    }
+
     const canToggle = item.canPromote || item.canDemote;
     button.toggleClass('disabled', !canToggle);
 
@@ -533,11 +543,13 @@ function refreshWorldInfoSelectors(editorSelected = '') {
     $('#world_editor_select').find('option[value!=""]').remove();
 
     world_names.forEach((item, i) => {
-        const globalListOption = new Option(item, i.toString());
-        globalListOption.selected = selected_world_info.includes(item);
+        if (!isReservedTemplateWorldName(item)) {
+            const globalListOption = new Option(item, i.toString());
+            globalListOption.selected = selected_world_info.includes(item);
+            $('#world_info').append(globalListOption);
+        }
         const editorListOption = new Option(item, i.toString());
         editorListOption.selected = editorSelected === item;
-        $('#world_info').append(globalListOption);
         $('#world_editor_select').append(editorListOption);
     });
 
@@ -4240,6 +4252,10 @@ async function displayWorldEntries(name, data, navigation = navigation_option.no
     // Do not put this code behind.
     $('#world_popup_delete').off('click').on('click', async () => {
         const currentLorebook = getResolvedWorldInfoItem(name, data);
+        if (currentLorebook?.reservedTemplate) {
+            toastr.info('Select another Blank Lorebook Template or None before deleting this lorebook.', 'Recommended Chat Setup');
+            return;
+        }
         if (currentLorebook?.storage === 'secure' && !currentLorebook?.canDelete) {
             toastr.info(getWorldInfoReadOnlyMessage(currentLorebook), t`World Info`);
             return;
@@ -4449,6 +4465,10 @@ async function displayWorldEntries(name, data, navigation = navigation_option.no
         }
         if (currentLorebook?.storage === 'secure') {
             toastr.info(t`Secure lorebooks cannot be renamed here.`, t`World Info`);
+            return;
+        }
+        if (currentLorebook?.reservedTemplate) {
+            toastr.info('Select another Blank Lorebook Template or None before renaming this lorebook.', 'Recommended Chat Setup');
             return;
         }
         await renameWorldInfo(name, data);
@@ -7707,7 +7727,7 @@ export async function assignLorebookToChat(event) {
     const chatName = template.find('.chat_name');
     chatName.text(getCurrentChatId());
 
-    for (const worldName of world_names) {
+    for (const worldName of world_names.filter(name => !isReservedTemplateWorldName(name))) {
         const option = document.createElement('option');
         option.value = worldName;
         option.innerText = worldName;

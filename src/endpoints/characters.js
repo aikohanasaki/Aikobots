@@ -1484,6 +1484,7 @@ function clearCharacterSharingIdentityMetadata(characterCard) {
     _.unset(characterCard, 'data.extensions.aikobots.owner_handles');
     _.unset(characterCard, 'data.extensions.aikobots.sharing_mode');
     _.unset(characterCard, 'data.extensions.aikobots.shared_character_key');
+    _.unset(characterCard, 'data.extensions.aikobots.recommended_chat_setup_key');
 
     _.unset(characterCard, 'ownerHandle');
     _.unset(characterCard, 'ownerHandles');

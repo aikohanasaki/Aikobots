@@ -717,6 +717,6 @@ body.layout-custom .mes_text {
 
 ## 19. Recommended Chat Setup controls
 
-The character Advanced Definitions panel contains the searchable `#recommended_chat_setup_lorebook` and `#recommended_chat_setup_side_prompts` selects inside `#recommended_chat_setup_configuration`. The consumer-facing `#recommended_chat_setup_button` sits directly below the Creator's Notes drawer and uses the same available width.
+The character Advanced Definitions panel contains the searchable `#recommended_chat_setup_lorebook` and `#recommended_chat_setup_side_prompts` selects inside `#recommended_chat_setup_configuration`. The lorebook select contains only eligible ordinary `LTM` template drafts for the current character. Changes save immediately; the designated lorebook remains editable in the lorebook editor but its rename, delete, storage, activation, binding, and STMB controls are unavailable until another source or `None` is selected. The consumer-facing `#recommended_chat_setup_button` sits directly below the Creator's Notes drawer and uses the same available width.
 
 Core styling for these controls belongs to the smart theme in `public/style.css`. Layouts may adjust spacing, but should preserve the full-width button, readable Select2 inputs, the disabled state, and the existing mobile character-editor flow. The setup confirmation and result views use the standard popup and smart-theme button classes rather than layout-specific colors.

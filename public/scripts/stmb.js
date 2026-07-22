@@ -42,7 +42,7 @@ import { SlashCommandEnumValue } from './slash-commands/SlashCommandEnumValue.js
 import { hideChatMessageRange } from './chats.js';
 import { groups, selected_group } from './group-chats.js';
 import { getRegexScripts, runRegexScript, substitute_find_regex } from './extensions/regex/engine.js';
-import { getLorebookStorageForRequest, isSecureTemplateWorldName, loadWorldInfo, METADATA_KEY, openLorebookOrderingDialog, reloadEditor, world_names, worldInfoCache } from './world-info.js';
+import { getLorebookStorageForRequest, isReservedTemplateWorldName, loadWorldInfo, METADATA_KEY, openLorebookOrderingDialog, reloadEditor, world_names, worldInfoCache } from './world-info.js';
 import { buildOpenAIGenerateData, oai_settings } from './openai.js';
 import { SECRET_KEYS, secret_state } from './secrets.js';
 import { buildMemoryPromptText } from './stmb-prompt-assembly.js';
@@ -2021,6 +2021,10 @@ function renderMemoryBoundaryModeOptions(selectedMode) {
     return options.map(option => `<option value="${escapeHtml(option.value)}" ${selected === option.value ? 'selected' : ''}>${escapeHtml(option.label)}</option>`).join('');
 }
 
+function getStmbSelectableLorebookNames() {
+    return (Array.isArray(world_names) ? world_names : []).filter(name => !isReservedTemplateWorldName(name));
+}
+
 function renderManualGroupLorebookBindingsHtml(manualMode) {
     const sceneContext = buildStmbSceneContext();
     if (!manualMode || !sceneContext.isGroupChat) return '';
@@ -2033,7 +2037,7 @@ function renderManualGroupLorebookBindingsHtml(manualMode) {
         const current = String(bindings[member.key] || '');
         const options = [
             `<option value="" ${current ? '' : 'selected'} disabled>None selected</option>`,
-            ...(world_names || []).map(name => `<option value="${escapeHtml(name)}" ${name === current ? 'selected' : ''}>${escapeHtml(name)}</option>`),
+            ...getStmbSelectableLorebookNames().map(name => `<option value="${escapeHtml(name)}" ${name === current ? 'selected' : ''}>${escapeHtml(name)}</option>`),
         ].join('');
         return `<div class="stmb-manual-group-lorebook-row">
             <label class="stmb-manual-group-lorebook-label" for="stmb-member-lorebook-${escapeHtml(member.key)}">${escapeHtml(member.name)}</label>
@@ -3997,13 +4001,13 @@ function getSidePromptLorebookTargetInfo(template = null) {
     if (hasChatOverride && chatOverride === '__memory__') {
         return { value: memoryLorebook, sourceLabel: 'Chat override' };
     }
-    if (hasChatOverride && chatOverride && Array.isArray(world_names) && world_names.includes(chatOverride) && !isSecureTemplateWorldName(chatOverride)) {
+    if (hasChatOverride && chatOverride && Array.isArray(world_names) && world_names.includes(chatOverride) && !isReservedTemplateWorldName(chatOverride)) {
         return { value: chatOverride, sourceLabel: 'Chat override' };
     }
     if (hasChatOverride) {
         return { value: memoryLorebook, sourceLabel: 'Chat override' };
     }
-    if (templateOverride && Array.isArray(world_names) && world_names.includes(templateOverride) && !isSecureTemplateWorldName(templateOverride)) {
+    if (templateOverride && Array.isArray(world_names) && world_names.includes(templateOverride) && !isReservedTemplateWorldName(templateOverride)) {
         return { value: templateOverride, sourceLabel: 'Side prompt setting' };
     }
 
@@ -4018,7 +4022,7 @@ function getSidePromptLorebookSelectValue(template = null) {
     if (hasChatOverride && chatOverride === '__memory__') {
         return '__memory__';
     }
-    if (hasChatOverride && chatOverride && Array.isArray(world_names) && world_names.includes(chatOverride) && !isSecureTemplateWorldName(chatOverride)) {
+    if (hasChatOverride && chatOverride && Array.isArray(world_names) && world_names.includes(chatOverride) && !isReservedTemplateWorldName(chatOverride)) {
         return chatOverride;
     }
     if (hasChatOverride) {
@@ -4026,7 +4030,7 @@ function getSidePromptLorebookSelectValue(template = null) {
     }
 
     const templateOverride = String(template?.settings?.lorebook?.targetLorebookName || '').trim();
-    if (templateOverride && Array.isArray(world_names) && world_names.includes(templateOverride) && !isSecureTemplateWorldName(templateOverride)) {
+    if (templateOverride && Array.isArray(world_names) && world_names.includes(templateOverride) && !isReservedTemplateWorldName(templateOverride)) {
         return templateOverride;
     }
 
@@ -4042,7 +4046,7 @@ function buildSidePromptLorebookTargetHtml(template = null) {
         : 'Same as memory lorebook (none selected)';
     const options = [
         `<option value="__memory__" ${selectedValue === '__memory__' ? 'selected' : ''}>${escapeHtml(memoryLabel)}</option>`,
-        ...((Array.isArray(world_names) ? world_names : []).filter(name => !isSecureTemplateWorldName(name)).map(name => (
+        ...((Array.isArray(world_names) ? world_names : []).filter(name => !isReservedTemplateWorldName(name)).map(name => (
             `<option value="${escapeHtml(name)}" ${selectedValue === name ? 'selected' : ''}>${escapeHtml(name)}</option>`
         ))),
     ].join('');
@@ -5620,7 +5624,7 @@ async function showMainEntryPopup(view = 'main') {
                 const state = getStmbState();
                 if (!String(state.manualLorebook || '').trim()) {
                     const chatBoundLorebook = String(chat_metadata[METADATA_KEY] || '').trim();
-                    if (chatBoundLorebook) {
+                    if (chatBoundLorebook && !isReservedTemplateWorldName(chatBoundLorebook)) {
                         const setupPopup = new Popup(DOMPurify.sanitize(`
                             <div class="stmb-manual-lorebook-setup">
                                 <h4>Manual Lorebook Setup</h4>
@@ -5636,7 +5640,7 @@ async function showMainEntryPopup(view = 'main') {
                             state.manualLorebook = chatBoundLorebook;
                             saveMetadataDebounced();
                         } else {
-                            const selectedLorebook = await showLorebookPickerPopup(Array.isArray(world_names) ? world_names : [], {
+                            const selectedLorebook = await showLorebookPickerPopup(getStmbSelectableLorebookNames(), {
                                 title: 'Select Lorebook',
                                 emptyMessage: 'No existing lorebooks are available.',
                             });
@@ -5648,7 +5652,7 @@ async function showMainEntryPopup(view = 'main') {
                             saveMetadataDebounced();
                         }
                     } else {
-                        const selectedLorebook = await showLorebookPickerPopup(Array.isArray(world_names) ? world_names : [], {
+                        const selectedLorebook = await showLorebookPickerPopup(getStmbSelectableLorebookNames(), {
                             title: 'Select Lorebook',
                             emptyMessage: 'No existing lorebooks are available.',
                         });
@@ -5778,7 +5782,7 @@ async function showMainEntryPopup(view = 'main') {
         }
 
         if (target.closest('#stmb-settings-select-lorebook')) {
-            const selectedLorebook = await showLorebookPickerPopup(Array.isArray(world_names) ? world_names : [], {
+            const selectedLorebook = await showLorebookPickerPopup(getStmbSelectableLorebookNames(), {
                 title: 'Select Lorebook',
                 emptyMessage: 'No existing lorebooks are available.',
             });
@@ -6522,7 +6526,7 @@ function validateManualGroupBindingSnapshot(snapshot) {
     for (const member of members) {
         const lorebookName = String(bindings[member.key] || '').trim();
         if (!lorebookName) issues.push(`${member.name}: no lorebook selected`);
-        else if (!world_names.includes(lorebookName)) issues.push(`${member.name}: "${lorebookName}" not found`);
+        else if (!world_names.includes(lorebookName) || isReservedTemplateWorldName(lorebookName)) issues.push(`${member.name}: "${lorebookName}" not found`);
     }
     if (issues.length > 0) {
         throw new Error(`Group manual lorebooks are incomplete: ${issues.join('; ')}`);
@@ -7097,7 +7101,7 @@ async function resolveAutoSummaryLorebook(options = {}) {
             };
         }
 
-        const selectedLorebook = await showLorebookPickerPopup(world_names, {
+        const selectedLorebook = await showLorebookPickerPopup(getStmbSelectableLorebookNames(), {
             title: 'Select Lorebook',
             emptyMessage: 'No existing lorebooks are available.',
         });

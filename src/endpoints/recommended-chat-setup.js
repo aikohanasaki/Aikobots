@@ -1,10 +1,13 @@
+import { randomUUID } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 
 import express from 'express';
+import { sync as writeFileAtomicSync } from 'write-file-atomic';
 
 import { isActiveSessionError, sendActiveSessionRequired } from '../active-session-store.js';
-import { parse } from '../character-card-parser.js';
+import { parse, write } from '../character-card-parser.js';
+import { withDirectoryLock } from '../file-system-lock.js';
 import { assertSafeFileName, resolvePathUnderParent } from '../path-security.js';
 import {
     applyRecommendedChatSetup,
@@ -16,14 +19,48 @@ import {
 } from '../recommended-chat-setup.js';
 
 export const router = express.Router();
+const CHARACTER_LOCK_OPTIONS = Object.freeze({
+    retryMs: 50,
+    timeoutMs: 30_000,
+    staleMs: 120_000,
+    heartbeatMs: 10_000,
+});
 
-async function readCharacterCard(request) {
+async function readCharacterCardRecord(request) {
     const avatar = assertSafeFileName(request.body?.avatar_url, 'avatar');
     const filePath = resolvePathUnderParent(request.user.directories.characters, avatar, 'avatar');
     if (!fs.existsSync(filePath) || path.extname(filePath).toLowerCase() !== '.png') {
         throw new RecommendedChatSetupError('RecommendedSetupCharacterNotFound', 'Character not found.', 404);
     }
-    return JSON.parse(await parse(filePath, 'png'));
+    return {
+        card: JSON.parse(await parse(filePath, 'png')),
+        filePath,
+        rawBuffer: fs.readFileSync(filePath),
+    };
+}
+
+async function readCharacterCard(request) {
+    return (await readCharacterCardRecord(request)).card;
+}
+
+async function ensureRecommendedSetupKey(record) {
+    return await withDirectoryLock({
+        lockPath: `${record.filePath}.recommended-setup.lock`,
+        ...CHARACTER_LOCK_OPTIONS,
+        timeoutMessage: 'Timed out waiting to configure Recommended Chat Setup.',
+    }, async () => {
+        record.rawBuffer = fs.readFileSync(record.filePath);
+        record.card = JSON.parse(await parse(record.filePath, 'png'));
+        record.card.data ??= {};
+        record.card.data.extensions ??= {};
+        record.card.data.extensions.aikobots ??= {};
+        const aikobots = record.card.data.extensions.aikobots;
+        if (!String(aikobots.recommended_chat_setup_key || '').trim()) {
+            aikobots.recommended_chat_setup_key = `recommended-${randomUUID()}`;
+            writeFileAtomicSync(record.filePath, write(record.rawBuffer, JSON.stringify(record.card)));
+        }
+        return String(aikobots.recommended_chat_setup_key);
+    });
 }
 
 function sendError(response, error) {
@@ -48,7 +85,10 @@ router.post('/manage/get', async (request, response) => {
 router.post('/manage/save', async (request, response) => {
     try {
         await request.activeSessionOperation?.assertAllowed();
-        return response.send(await saveRecommendedChatSetup(request.user, await readCharacterCard(request), request.body));
+        const record = await readCharacterCardRecord(request);
+        getRecommendedChatSetupManagement(request.user, record.card);
+        await ensureRecommendedSetupKey(record);
+        return response.send(await saveRecommendedChatSetup(request.user, record.card, request.body));
     } catch (error) {
         return sendError(response, error);
     }

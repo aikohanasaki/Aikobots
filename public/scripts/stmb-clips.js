@@ -6,7 +6,7 @@ import { createStmbEntry, generateStmbText, updateStmbEntryByUid } from './stmb-
 import { STMB_DEFAULT_COMPACTION_PROMPT_TEMPLATE } from './stmb-core.js';
 import { isSidePromptEntryTitle } from './stmb-sideprompts.js';
 import { escapeHtml, withGoBackButton } from './utils.js';
-import { getLorebookStorageForRequest, loadWorldInfo, METADATA_KEY, reloadEditor, world_names, worldInfoCache } from './world-info.js';
+import { getLorebookStorageForRequest, isReservedTemplateWorldName, loadWorldInfo, METADATA_KEY, reloadEditor, world_names, worldInfoCache } from './world-info.js';
 
 const MODULE_NAME = 'STMB Clips';
 const CREATE_NEW_VALUE = '__stmb_create_new_clip_entry__';
@@ -14,6 +14,10 @@ const TOKEN_WARNING_THRESHOLD = 500;
 const FLOATING_CLIP_X_OFFSET = 6;
 const FLOATING_CLIP_Y_OFFSET = -4;
 const FLOATING_CLIP_VIEWPORT_PADDING = 8;
+
+function getSelectableLorebookNames() {
+    return (Array.isArray(world_names) ? world_names : []).filter(name => !isReservedTemplateWorldName(name));
+}
 
 export const DEFAULT_COMPACTION_PROMPT_TEMPLATE = STMB_DEFAULT_COMPACTION_PROMPT_TEMPLATE;
 export const DEFAULT_TOPICAL_CLIP_PROMPT_TEMPLATE = `SYSTEM: You are a memory compiler. You do not converse. You do not ask questions.
@@ -1222,10 +1226,10 @@ export async function showCompactReviewPopup(lorebookName, lorebookData, entry, 
 
 function getDefaultCompactionLorebookName() {
     const runtimeDefault = String(runtime.getDefaultLorebookName?.() || '').trim();
-    if (runtimeDefault && Array.isArray(world_names) && world_names.includes(runtimeDefault)) return runtimeDefault;
+    if (runtimeDefault && Array.isArray(world_names) && world_names.includes(runtimeDefault) && !isReservedTemplateWorldName(runtimeDefault)) return runtimeDefault;
 
     const chatLorebook = String(chat_metadata?.[METADATA_KEY] || '').trim();
-    return chatLorebook && Array.isArray(world_names) && world_names.includes(chatLorebook) ? chatLorebook : '';
+    return chatLorebook && Array.isArray(world_names) && world_names.includes(chatLorebook) && !isReservedTemplateWorldName(chatLorebook) ? chatLorebook : '';
 }
 
 async function loadCompactionEntriesForLorebook(lorebookName) {
@@ -1849,7 +1853,7 @@ function getTopicalClipTargetEntries(lorebookData) {
 function buildTopicalClipPopupHtml(defaultLorebookName) {
     const lorebookOptions = [
         '<option></option>',
-        ...world_names.map(name => `<option value="${escapeHtml(name)}"${name === defaultLorebookName ? ' selected' : ''}>${escapeHtml(name)}</option>`),
+        ...getSelectableLorebookNames().map(name => `<option value="${escapeHtml(name)}"${name === defaultLorebookName ? ' selected' : ''}>${escapeHtml(name)}</option>`),
     ].join('');
     const profileControl = buildCompactionProfileControl('stmb-topical-clip-profile-select', {
         label: tr('Generation Profile'),
@@ -1912,7 +1916,7 @@ function buildTopicalClipPopupHtml(defaultLorebookName) {
 }
 
 export async function showTopicalClipPopup(options = {}) {
-    if (!Array.isArray(world_names) || world_names.length === 0) {
+    if (getSelectableLorebookNames().length === 0) {
         toastr.error(tr('No Memory Books were found.'), 'STMB');
         return;
     }
@@ -2272,7 +2276,7 @@ export async function showTopicalClipPopup(options = {}) {
 }
 
 export async function showStmbEntryReviewPopup(options = {}) {
-    if (!Array.isArray(world_names) || world_names.length === 0) {
+    if (getSelectableLorebookNames().length === 0) {
         toastr.error(tr('No Memory Books were found.'), 'STMB');
         return;
     }
@@ -2280,7 +2284,7 @@ export async function showStmbEntryReviewPopup(options = {}) {
     const defaultLorebookName = getDefaultCompactionLorebookName();
     const lorebookOptions = [
         '<option></option>',
-        ...world_names.map(name => `<option value="${escapeHtml(name)}"${name === defaultLorebookName ? ' selected' : ''}>${escapeHtml(name)}</option>`),
+        ...getSelectableLorebookNames().map(name => `<option value="${escapeHtml(name)}"${name === defaultLorebookName ? ' selected' : ''}>${escapeHtml(name)}</option>`),
     ].join('');
 
     const popupOptions = {

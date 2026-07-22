@@ -14,6 +14,7 @@ import { withDirectoryLock } from './file-system-lock.js';
 import { getDeduplicatedChatHistoryFileNames } from './chat-paths.js';
 import { replaceChatStorageExtension, withChatSaveLock } from './chat-storage.js';
 import { getChatHeader, loadDb } from './sqlite-manager.js';
+import { isReservedRecommendedTemplateSource } from './recommended-chat-template-store.js';
 
 const SECURE_LOREBOOK_DIRECTORY = ['_secure', 'worlds'];
 const SHARED_SECURE_LOREBOOK_DIRECTORY = ['_secure', 'shared-worlds'];
@@ -711,6 +712,7 @@ function buildListItem(record, user) {
     const isShared = record.sharingMode === 'shared';
     const canMutateShared = isSharedLorebookCheckedOutByUser(user, record);
     const metadata = buildLorebookMetadata(record, user);
+    const reservedTemplate = !isSecure && isReservedRecommendedTemplateSource(currentHandle, record.name);
     return {
         name: record.name,
         storage: record.storage,
@@ -721,13 +723,14 @@ function buildListItem(record, user) {
         checkedOutAt: metadata.checkedOutAt,
         checkoutState: metadata.checkoutState,
         canEdit: isSecure ? (isShared ? canMutateShared : canManageSecure) : canManage,
-        canDelete: isSecure ? (isShared ? canMutateShared : canManageSecure) : canManage,
-        canPromote: !isSecure && canManage,
+        canDelete: reservedTemplate ? false : (isSecure ? (isShared ? canMutateShared : canManageSecure) : canManage),
+        canPromote: !reservedTemplate && !isSecure && canManage,
         canDemote: isSecure && !isShared && canManageSecure,
         canCheckOut: metadata.canCheckOut,
         canCheckIn: metadata.canCheckIn,
         canForceCheckout: metadata.canForceCheckout,
         canManageOwners: metadata.canManageOwners && (isShared ? canMutateShared : false),
+        reservedTemplate,
     };
 }
 
@@ -806,24 +809,7 @@ function assertSecureNameAvailableForPromotion(name) {
     }
 }
 
-/** Identifies the reserved secure blank-template naming formats. */
-export function isSecureTemplateLorebookName(name) {
-    const value = String(name || '');
-    return /^LTM - .+ - Blank$/.test(value) || /^LTM-.+-Blank$/.test(value);
-}
-
 function assertSecurePromotionNameAllowed(user, canonicalName) {
-    if (isSecureTemplateLorebookName(canonicalName)) {
-        return;
-    }
-    if (canonicalName.startsWith('LTM')) {
-        throw new LorebookRepositoryError(
-            'LorebookNameInvalid',
-            'Secure template lorebooks must be named "LTM - <character> - Blank" or "LTM-<character>-Blank".',
-            400,
-        );
-    }
-
     if (user?.profile?.admin) {
         if (!canonicalName.startsWith('9Z')) {
             throw new LorebookRepositoryError('LorebookNameInvalid', 'Admin secure lorebooks must start with "9Z". Capitalization matters.', 400);
@@ -834,6 +820,16 @@ function assertSecurePromotionNameAllowed(user, canonicalName) {
     const requiredPrefix = `Z-${user?.profile?.handle || ''}-`;
     if (!canonicalName.startsWith(requiredPrefix) || canonicalName.length <= requiredPrefix.length) {
         throw new LorebookRepositoryError('LorebookNameInvalid', `Name must start with "${requiredPrefix}" and include at least one character after it.`, 400);
+    }
+}
+
+function assertLorebookNotReservedAsTemplate(user, canonicalName) {
+    if (isReservedRecommendedTemplateSource(user?.profile?.handle, canonicalName)) {
+        throw new LorebookRepositoryError(
+            'LorebookReservedForTemplate',
+            'This lorebook is designated as a Recommended Chat Setup template. Select another template or None before changing it.',
+            409,
+        );
     }
 }
 
@@ -2322,9 +2318,7 @@ export function readLorebookForGenerationWithMetadata(user, name, allowDummy = f
         };
     }
 
-    // Secure LTM books are repository templates, never generation inputs.
-    if (isSecureTemplateLorebookName(canonicalName)
-        && (getSecureIndexEntry(canonicalName) || getSharedSecureIndexEntry(canonicalName))) {
+    if (isReservedRecommendedTemplateSource(user?.profile?.handle, canonicalName)) {
         return { data: dummyObject, metadata: null };
     }
 
@@ -2375,8 +2369,7 @@ export function hasLorebookForGeneration(user, name) {
         return false;
     }
 
-    if (isSecureTemplateLorebookName(canonicalName)
-        && (getSecureIndexEntry(canonicalName) || getSharedSecureIndexEntry(canonicalName))) {
+    if (isReservedRecommendedTemplateSource(user?.profile?.handle, canonicalName)) {
         return false;
     }
 
@@ -2515,6 +2508,7 @@ export async function renameLorebookForManagement(user, oldName, newName, option
         assertLorebookSaveNameAllowed(newName);
         const oldCanonicalName = assertCanonicalName(oldName);
         const newCanonicalName = assertCanonicalName(newName);
+        assertLorebookNotReservedAsTemplate(user, oldCanonicalName);
 
         if (oldCanonicalName === newCanonicalName) {
             throw new LorebookRepositoryError('LorebookAlreadyExists', `Lorebook "${newCanonicalName}" already exists.`, 409);
@@ -2609,6 +2603,9 @@ export async function deleteLorebookForManagement(user, name, options = {}) {
         const referenceUserHandles = Array.isArray(options?.referenceUserHandles) ? options.referenceUserHandles : [user.profile.handle];
         const secureReferenceUserHandles = allUserHandles.length > 0 ? allUserHandles : referenceUserHandles;
         const isSecureBackingLorebook = Boolean(userRecord && secureRecord && secureRecord.ownerHandle === user.profile.handle);
+        if (userRecord && !isSecureBackingLorebook) {
+            assertLorebookNotReservedAsTemplate(user, canonicalName);
+        }
 
         if (preferredStorage === 'secure') {
             const secureTarget = sharedSecureRecord || secureRecord;
@@ -2707,6 +2704,8 @@ export async function promoteLorebook(user, name) {
             throw new LorebookRepositoryError('LorebookNotFound', `Lorebook "${canonicalName}" not found.`, 404);
         }
 
+        assertLorebookNotReservedAsTemplate(user, canonicalName);
+
         assertSecurePromotionNameAllowed(user, canonicalName);
         assertSecureNameAvailableForPromotion(canonicalName);
 
@@ -2796,6 +2795,7 @@ export async function promoteLorebookToShared(user, sourceName, sharedName, owne
         const localSourceRecord = getUserLorebookRecord(user.profile.handle, sourceCanonicalName);
         const secureSourceRecord = getSecureIndexEntry(sourceCanonicalName);
         const normalizedOwners = normalizeOwnerHandles(ownerHandles);
+        assertLorebookNotReservedAsTemplate(user, sourceCanonicalName);
         const overwriteExistingShared = Boolean(options?.overwriteExistingShared);
 
         assertLorebookSaveNameAllowed(sharedName);

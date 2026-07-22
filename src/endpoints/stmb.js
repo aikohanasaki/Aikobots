@@ -20,11 +20,11 @@ import {
 import {
     assertLorebookCheckoutForManagement,
     getLorebookForManagement,
-    isSecureTemplateLorebookName,
     LorebookRepositoryError,
     saveLorebookForManagement,
     withLorebookManagementTransaction,
 } from '../lorebook-repository.js';
+import { isReservedRecommendedTemplateSource } from '../recommended-chat-template-store.js';
 import {
     deleteStmbContextSetting,
     duplicateStmbContextSetting,
@@ -451,7 +451,7 @@ function getLorebookContext(request) {
     }
 
     const storage = normalizeStorage(request.body?.storage);
-    if (storage === 'secure' && isSecureTemplateLorebookName(lorebookName)) {
+    if (storage === 'user' && isReservedRecommendedTemplateSource(request.user?.profile?.handle, lorebookName)) {
         return null;
     }
 
@@ -461,7 +461,7 @@ function getLorebookContext(request) {
     };
 }
 
-function normalizeGroupMemoryWriteTarget(value, label) {
+function normalizeGroupMemoryWriteTarget(value, label, user) {
     const lorebookName = String(value?.lorebookName || '').trim();
     const memoryObject = value?.memoryObject;
     if (!lorebookName || !memoryObject || typeof memoryObject !== 'object' || Array.isArray(memoryObject)) {
@@ -475,8 +475,8 @@ function normalizeGroupMemoryWriteTarget(value, label) {
     if (value.storage !== undefined && !['user', 'secure'].includes(value.storage)) {
         throw createStmbRequestError(400, 'StmbBadRequest', `${label} storage must be "user" or "secure".`);
     }
-    if (value.storage === 'secure' && isSecureTemplateLorebookName(lorebookName)) {
-        throw createStmbRequestError(400, 'StmbBadRequest', `${label} cannot use a secure blank lorebook template.`);
+    if ((value.storage || 'user') === 'user' && isReservedRecommendedTemplateSource(user?.profile?.handle, lorebookName)) {
+        throw createStmbRequestError(400, 'StmbBadRequest', `${label} cannot use a designated blank lorebook template.`);
     }
     if (memoryObject.keywords !== undefined && !Array.isArray(memoryObject.keywords)) {
         throw createStmbRequestError(400, 'StmbBadRequest', `${label} memoryObject keywords must be an array.`);
@@ -825,9 +825,9 @@ router.post('/save-group-memory', async (request, response) => {
         if (!profile || typeof profile !== 'object' || Array.isArray(profile)) {
             throw createStmbRequestError(400, 'StmbBadRequest', 'profile must be an object.');
         }
-        primary = normalizeGroupMemoryWriteTarget(request.body?.primary, 'primary');
+        primary = normalizeGroupMemoryWriteTarget(request.body?.primary, 'primary', request.user);
         targets = (rawTargets || [])
-            .map((target, index) => normalizeGroupMemoryWriteTarget(target, `targets[${index}]`));
+            .map((target, index) => normalizeGroupMemoryWriteTarget(target, `targets[${index}]`, request.user));
         if (!sceneContext || typeof sceneContext !== 'object' || Array.isArray(sceneContext)) {
             throw createStmbRequestError(400, 'StmbBadRequest', 'sceneContext is required.');
         }

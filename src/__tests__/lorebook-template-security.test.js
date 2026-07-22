@@ -2,16 +2,28 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
-import { afterAll, beforeAll, describe, expect, it, jest } from '@jest/globals';
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from '@jest/globals';
 
 let tempRoot;
 let user;
 let worldsDirectory;
+let deleteLorebookForManagement;
 let hasLorebookForGeneration;
+let listLorebooksForManagement;
+let listOwnedStmbContextSourceEntries;
 let promoteLorebook;
 let readLorebookForGeneration;
-let getInvalidSecureLinkedLorebooks;
-let listOwnedStmbContextSourceEntries;
+let renameLorebookForManagement;
+let saveLorebookForManagement;
+let saveRecommendedChatSetup;
+
+const templateName = 'LTM - Aiko - Blank';
+const card = {
+    data: {
+        name: 'Aiko',
+        extensions: { aikobots: { recommended_chat_setup_key: 'recommended-aiko-reservation' } },
+    },
+};
 
 beforeAll(async () => {
     const utilModule = await import('../util.js');
@@ -19,66 +31,82 @@ beforeAll(async () => {
         ? path.resolve(process.cwd(), 'config.yaml')
         : path.resolve(process.cwd(), '..', 'config.yaml');
     utilModule.setConfigFilePath(configPath);
-    tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'lorebook-template-security-'));
+    tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'lorebook-template-reservation-'));
     globalThis.DATA_ROOT = tempRoot;
-    user = { profile: { handle: 'template-maker-test', admin: false } };
+    user = { profile: { handle: 'template-maker-test', name: 'Maker', admin: false } };
     const repositoryModule = await import('../lorebook-repository.js');
     const { getUserDirectories } = await import('../users.js');
-    ({ getInvalidSecureLinkedLorebooks } = await import('../character-linked-lorebooks.js'));
     ({ listOwnedStmbContextSourceEntries } = await import('../stmb-context-settings.js'));
-    ({ hasLorebookForGeneration, promoteLorebook, readLorebookForGeneration } = repositoryModule);
+    ({ saveRecommendedChatSetup } = await import('../recommended-chat-setup.js'));
+    ({
+        deleteLorebookForManagement,
+        hasLorebookForGeneration,
+        listLorebooksForManagement,
+        promoteLorebook,
+        readLorebookForGeneration,
+        renameLorebookForManagement,
+        saveLorebookForManagement,
+    } = repositoryModule);
     user.directories = getUserDirectories(user.profile.handle);
     worldsDirectory = user.directories.worlds;
+});
+
+beforeEach(() => {
+    fs.rmSync(path.join(tempRoot, '_templates'), { recursive: true, force: true });
+    fs.rmSync(worldsDirectory, { recursive: true, force: true });
     fs.mkdirSync(worldsDirectory, { recursive: true });
+    fs.writeFileSync(path.join(worldsDirectory, `${templateName}.json`), JSON.stringify({ entries: { 0: { uid: 0 } } }), 'utf8');
 });
 
 afterAll(() => {
     fs.rmSync(tempRoot, { recursive: true, force: true });
 });
 
-describe('secure LTM template lorebooks', () => {
-    it.each(['LTM - Aiko - Blank', 'LTM-Aiko-Blank'])('allows %s to be promoted to secure storage', async name => {
-        fs.writeFileSync(path.join(worldsDirectory, `${name}.json`), JSON.stringify({ entries: {} }), 'utf8');
-        const symlinkSpy = jest.spyOn(fs, 'symlinkSync').mockImplementation(() => {});
-        try {
-            await expect(promoteLorebook(user, name)).resolves.toMatchObject({ name, storage: 'secure' });
-        } finally {
-            symlinkSpy.mockRestore();
-        }
+describe('designated ordinary template lorebooks', () => {
+    it('remains editable but blocks rename, deletion, promotion, generation, and STMB use', async () => {
+        await saveRecommendedChatSetup(user, card, {
+            templateAction: 'replace',
+            templateSourceName: templateName,
+            sidePromptSetKey: '',
+        });
+
+        const listItem = listLorebooksForManagement(user).find(item => item.name === templateName);
+        expect(listItem).toMatchObject({
+            storage: 'user',
+            reservedTemplate: true,
+            canEdit: true,
+            canDelete: false,
+            canPromote: false,
+        });
+        expect(readLorebookForGeneration(user, templateName, false)).toBeNull();
+        expect(hasLorebookForGeneration(user, templateName)).toBe(false);
+        expect(listOwnedStmbContextSourceEntries(user).map(item => item.lorebookName)).not.toContain(templateName);
+
+        await expect(renameLorebookForManagement(user, templateName, 'LTM - Aiko - Other'))
+            .rejects.toMatchObject({ type: 'LorebookReservedForTemplate', status: 409 });
+        await expect(deleteLorebookForManagement(user, templateName))
+            .rejects.toMatchObject({ type: 'LorebookReservedForTemplate', status: 409 });
+        await expect(promoteLorebook(user, templateName))
+            .rejects.toMatchObject({ type: 'LorebookReservedForTemplate', status: 409 });
+        await expect(saveLorebookForManagement(user, templateName, { entries: { 1: { uid: 1 } } }, 'user'))
+            .resolves.toBeDefined();
     });
 
-    it('never exposes a secure LTM template to generation', () => {
-        const name = 'LTM - Secure Aiko - Blank';
-        const secureDirectory = path.join(tempRoot, '_secure', 'shared-worlds');
-        fs.mkdirSync(secureDirectory, { recursive: true });
-        fs.writeFileSync(path.join(secureDirectory, `${name}.json`), JSON.stringify({ entries: {} }), 'utf8');
-        fs.writeFileSync(path.join(secureDirectory, 'index.json'), JSON.stringify({
-            version: 1,
-            books: { [name]: { owners: [user.profile.handle] } },
-        }), 'utf8');
+    it('releases protection immediately when None is selected', async () => {
+        await saveRecommendedChatSetup(user, card, {
+            templateAction: 'replace',
+            templateSourceName: templateName,
+            sidePromptSetKey: '',
+        });
+        await saveRecommendedChatSetup(user, card, { templateAction: 'remove', sidePromptSetKey: '' });
 
-        expect(readLorebookForGeneration(user, name, false)).toBeNull();
-        expect(hasLorebookForGeneration(user, name)).toBe(false);
+        expect(listLorebooksForManagement(user).find(item => item.name === templateName)?.reservedTemplate).toBe(false);
+        expect(readLorebookForGeneration(user, templateName, false)).toEqual({ entries: { 0: { uid: 0 } } });
+        expect(hasLorebookForGeneration(user, templateName)).toBe(true);
     });
 
-    it('does not apply the generation block to an ordinary user lorebook', () => {
-        const name = 'LTM-Ordinary-Aiko-Blank';
-        const data = { entries: { 0: { uid: 0 } } };
-        fs.writeFileSync(path.join(worldsDirectory, `${name}.json`), JSON.stringify(data), 'utf8');
-
-        expect(readLorebookForGeneration(user, name, false)).toEqual(data);
-        expect(hasLorebookForGeneration(user, name)).toBe(true);
-    });
-
-    it('rejects secure LTM templates as character links and STMB context sources', () => {
-        const name = 'LTM - Secure Aiko - Blank';
-        const character = {
-            data: { extensions: { aikobots: { secure_lorebooks: [name] } } },
-        };
-        expect(getInvalidSecureLinkedLorebooks(user, character)).toEqual([name]);
-
-        const secureIndexPath = path.join(tempRoot, '_secure', 'worlds', 'index.json');
-        fs.writeFileSync(secureIndexPath, JSON.stringify({ version: 1, books: {} }), 'utf8');
-        expect(listOwnedStmbContextSourceEntries(user).map(item => item.lorebookName)).not.toContain(name);
+    it('returns secure LTM lorebooks to programming-lorebook naming rules', async () => {
+        await expect(promoteLorebook(user, templateName))
+            .rejects.toMatchObject({ type: 'LorebookNameInvalid', status: 400 });
     });
 });

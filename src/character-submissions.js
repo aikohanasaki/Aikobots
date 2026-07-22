@@ -14,6 +14,11 @@ import { invalidateThumbnail } from './endpoints/thumbnails.js';
 import { getAllEnabledUsers, getUserDirectories } from './users.js';
 import { FAVORITES_FILE, clearCharacterFavoriteState, getCharacterFavorite, getLegacyCharacterFavoriteState } from './favorites-repository.js';
 import { withDirectoryLock } from './file-system-lock.js';
+import {
+    publishStagedRecommendedChatSetup,
+    removeStagedRecommendedChatSetup,
+    stageRecommendedChatSetupForSubmission,
+} from './recommended-chat-setup.js';
 
 export const SUBMISSION_STATUSES = Object.freeze({
     PENDING: 'pending',
@@ -104,6 +109,7 @@ function getSubmissionsRoot() {
  * @property {string[]} [requestedTargetHandles]
  * @property {string[]} [requestedBlacklistHandles]
  * @property {string[]} [userBlacklistHandles]
+ * @property {boolean} [hasStagedRecommendedSetup]
  */
 
 /**
@@ -148,6 +154,7 @@ export function getSubmissionPaths(submissionId) {
         basePath,
         cardPath: path.join(basePath, `${submissionFileName}.png`),
         recordPath: path.join(basePath, `${submissionFileName}.json`),
+        recommendedSetupPath: path.join(basePath, `${submissionFileName}.recommended-setup.json`),
     };
 }
 
@@ -253,6 +260,7 @@ function normalizeSubmissionRecord(record) {
             ? normalizedRequestedBlacklistHandles
             : [],
         userBlacklistHandles: normalizedUserBlacklistHandles,
+        hasStagedRecommendedSetup: Boolean(record?.hasStagedRecommendedSetup),
     };
 }
 
@@ -1013,15 +1021,17 @@ export async function writeSubmissionRecord(record) {
  * @returns {Promise<void>}
  */
 export async function cleanupSubmission({ submissionId, deleteMode }) {
-    const { basePath, cardPath, recordPath } = getSubmissionPaths(submissionId);
+    const { basePath, cardPath, recordPath, recommendedSetupPath } = getSubmissionPaths(submissionId);
 
     switch (deleteMode) {
         case SUBMISSION_CLEANUP_MODES.ASSET:
             await fsPromises.rm(cardPath, { force: true }).catch(() => { });
+            await fsPromises.rm(recommendedSetupPath, { force: true }).catch(() => { });
             return;
         case SUBMISSION_CLEANUP_MODES.ALL:
             await fsPromises.rm(cardPath, { force: true }).catch(() => { });
             await fsPromises.rm(recordPath, { force: true }).catch(() => { });
+            await fsPromises.rm(recommendedSetupPath, { force: true }).catch(() => { });
             await removeSubmissionOwnerDirectoryIfEmpty(basePath);
             return;
         default:
@@ -1050,7 +1060,7 @@ export async function createCharacterSubmission({
     const characterName = normalizeCharacterFileName(getCharacterName(card), fallbackName);
     const submittedFilename = `${characterName}.png`;
     const submissionId = buildSubmissionId({ ownerHandle, submittedFilename });
-    const { basePath, cardPath } = getSubmissionPaths(submissionId);
+    const { basePath, cardPath, recommendedSetupPath } = getSubmissionPaths(submissionId);
     const existingOwnerHandle = getSubmissionOwnerHandle(card);
     const existingOwnerHandles = getSubmissionOwnerHandles(card);
     const existingSharedCharacterKey = getCharacterSharedKey(card) || getSharedCharacterKeyForFilePath(uploadPath);
@@ -1075,6 +1085,8 @@ export async function createCharacterSubmission({
     });
 
     await fsPromises.mkdir(basePath, { recursive: true });
+    const stagedRecommendedSetup = stageRecommendedChatSetupForSubmission(user, card, recommendedSetupPath);
+    if (!stagedRecommendedSetup) removeStagedRecommendedChatSetup(recommendedSetupPath);
     await writeCharacterCardFile(rawBuffer, card, cardPath);
 
     const existingApprovedRecord = await findExistingApprovedSubmissionRecord({
@@ -1107,6 +1119,7 @@ export async function createCharacterSubmission({
         requestedTargetHandles: requestedDistribution.requestedTargetHandles,
         requestedBlacklistHandles: requestedDistribution.requestedBlacklistHandles,
         userBlacklistHandles: [],
+        hasStagedRecommendedSetup: Boolean(stagedRecommendedSetup),
     };
 
     let autoApproved = false;
@@ -1119,28 +1132,56 @@ export async function createCharacterSubmission({
                 actingUserHandle: ownerHandle,
                 sourceOwnerHandle: existingOwnerHandle || ownerHandle,
                 ...existingApprovedDistribution.distributeParams,
+                afterDistribution: async distribution => {
+                    const previousRecord = structuredClone(record);
+                    const setupRollback = await publishStagedRecommendedChatSetup(recommendedSetupPath);
+                    const approvedRecord = {
+                        ...record,
+                        status: SUBMISSION_STATUSES.APPROVED,
+                        reviewedAt: Date.now(),
+                        reviewedBy: AUTO_APPROVED_REVIEWED_BY,
+                        publishMode: existingApprovedDistribution.distributeParams.publishMode || PUBLISH_MODES.GLOBAL,
+                        targetHandles: existingApprovedDistribution.distributeParams.publishMode === PUBLISH_MODES.SELECTED
+                            ? distribution.targetHandles
+                            : [],
+                        publishedFilename: distribution.publishedFilename,
+                        requestedBlacklistHandles: existingApprovedDistribution.distributeParams.publishMode === PUBLISH_MODES.GLOBAL
+                            && distribution.distributionPolicy?.hasAdminBlacklist
+                            ? distribution.distributionPolicy.adminBlacklistHandles
+                            : record.requestedBlacklistHandles,
+                        userBlacklistHandles: existingApprovedDistribution.distributeParams.publishMode === PUBLISH_MODES.GLOBAL
+                            && distribution.distributionPolicy?.hasUserBlacklist
+                            ? distribution.distributionPolicy.userBlacklistHandles
+                            : [],
+                    };
+                    try {
+                        await writeSubmissionRecord(approvedRecord);
+                    } catch (error) {
+                        if (typeof setupRollback === 'function') await setupRollback();
+                        throw error;
+                    }
+                    record = approvedRecord;
+                    autoApproved = true;
+                    const rollback = async () => {
+                        let rollbackError = null;
+                        try {
+                            if (typeof setupRollback === 'function') await setupRollback();
+                        } catch (error) {
+                            rollbackError = error;
+                        }
+                        try {
+                            await writeSubmissionRecord(previousRecord);
+                            record = previousRecord;
+                            autoApproved = false;
+                        } catch (error) {
+                            rollbackError ||= error;
+                        }
+                        if (rollbackError) throw rollbackError;
+                    };
+                    if (typeof setupRollback?.commit === 'function') rollback.commit = setupRollback.commit;
+                    return rollback;
+                },
             });
-
-            record = {
-                ...record,
-                status: SUBMISSION_STATUSES.APPROVED,
-                reviewedAt: Date.now(),
-                reviewedBy: AUTO_APPROVED_REVIEWED_BY,
-                publishMode: existingApprovedDistribution.distributeParams.publishMode || PUBLISH_MODES.GLOBAL,
-                targetHandles: existingApprovedDistribution.distributeParams.publishMode === PUBLISH_MODES.SELECTED
-                    ? autoApprovalDistribution.targetHandles
-                    : [],
-                publishedFilename: autoApprovalDistribution.publishedFilename,
-                requestedBlacklistHandles: existingApprovedDistribution.distributeParams.publishMode === PUBLISH_MODES.GLOBAL
-                    && autoApprovalDistribution.distributionPolicy?.hasAdminBlacklist
-                    ? autoApprovalDistribution.distributionPolicy.adminBlacklistHandles
-                    : record.requestedBlacklistHandles,
-                userBlacklistHandles: existingApprovedDistribution.distributeParams.publishMode === PUBLISH_MODES.GLOBAL
-                    && autoApprovalDistribution.distributionPolicy?.hasUserBlacklist
-                    ? autoApprovalDistribution.distributionPolicy.userBlacklistHandles
-                    : [],
-            };
-            autoApproved = true;
         } catch (error) {
             autoApprovalError = error;
             console.warn(`Automatic submission approval failed for ${submissionId}. Falling back to pending admin distribution.`, error);
@@ -1156,7 +1197,7 @@ export async function createCharacterSubmission({
         });
     }
 
-    await writeSubmissionRecord(record);
+    if (!autoApproved) await writeSubmissionRecord(record);
     return {
         ...record,
         autoApproved,
@@ -1265,7 +1306,10 @@ export async function listSubmissionRecords() {
         const fileEntries = await fsPromises.readdir(ownerPath, { withFileTypes: true }).catch(() => []);
 
         for (const fileEntry of fileEntries) {
-            if (!fileEntry.isFile() || path.extname(fileEntry.name).toLowerCase() !== '.json' || fileEntry.name === 'record.json') {
+            if (!fileEntry.isFile()
+                || path.extname(fileEntry.name).toLowerCase() !== '.json'
+                || fileEntry.name === 'record.json'
+                || fileEntry.name.endsWith('.recommended-setup.json')) {
                 continue;
             }
 
@@ -1303,7 +1347,7 @@ export function canAccessSubmission(record, user) {
 
 /**
  * Distributes a character PNG to selected users or globally.
- * @param {{ sourcePath: string, publishedFilename?: string, publishMode: 'selected'|'global', targetHandles?: string[], actingUserHandle: string, sourceOwnerHandle?: string, applyBlacklist?: boolean, blacklistHandles?: string[], persistWhitelist?: boolean, whitelistHandles?: string[] }} params
+ * @param {{ sourcePath: string, publishedFilename?: string, publishMode: 'selected'|'global', targetHandles?: string[], actingUserHandle: string, sourceOwnerHandle?: string, applyBlacklist?: boolean, blacklistHandles?: string[], persistWhitelist?: boolean, whitelistHandles?: string[], afterDistribution?: (result: object) => Promise<(() => Promise<void>)|null> }} params
  * @returns {Promise<{ publishedFilename: string, targetHandles: string[], skippedHandles: string[], distributionPolicy: object }>}
  */
 export async function distributeCharacterFile({
@@ -1317,6 +1361,7 @@ export async function distributeCharacterFile({
     blacklistHandles = [],
     persistWhitelist,
     whitelistHandles = [],
+    afterDistribution = null,
 }) {
     if (!fs.existsSync(sourcePath)) {
         throw new Error('Character source file was not found.');
@@ -1435,12 +1480,20 @@ export async function distributeCharacterFile({
             await upsertDefaultContentCharacter(path.join('characters', outputFilename).replaceAll('\\', '/'));
         }
 
-        return {
+        const result = {
             publishedFilename: outputFilename,
             targetHandles: recipients,
             skippedHandles,
             distributionPolicy,
         };
+        if (typeof afterDistribution === 'function') {
+            const rollback = await afterDistribution(result);
+            if (typeof rollback === 'function') {
+                rollbackActions.push(rollback);
+                if (typeof rollback.commit === 'function') await rollback.commit();
+            }
+        }
+        return result;
     } catch (error) {
         await rollbackDistributionChanges(rollbackActions);
         throw error;

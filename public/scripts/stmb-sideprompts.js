@@ -8,7 +8,7 @@ import { getContext } from './extensions.js';
 import { generateStmbText, upsertStmbEntriesBatch, upsertStmbEntryByTitle } from './stmb-api.js';
 import { saveMetadataDebounced } from './extensions.js';
 import { removeReasoningFromString } from './reasoning.js';
-import { getLorebookStorageForRequest, isSecureTemplateWorldName, loadWorldInfo, reloadEditor, world_names, worldInfoCache } from './world-info.js';
+import { getLorebookStorageForRequest, isReservedTemplateWorldName, loadWorldInfo, reloadEditor, world_names, worldInfoCache } from './world-info.js';
 import { buildOpenAIGenerateData, oai_settings } from './openai.js';
 import { showMemoryPreviewPopup } from './stmb-popups.js';
 import { ensureResolvedLorebookName, isStmbLorebookHandledError } from './stmb-lorebook.js';
@@ -213,7 +213,7 @@ function summarizeMissingSetMacros(skipped = []) {
 }
 
 function isExistingLorebookName(name) {
-    return Boolean(name && Array.isArray(world_names) && world_names.includes(name) && !isSecureTemplateWorldName(name));
+    return Boolean(name && Array.isArray(world_names) && world_names.includes(name) && !isReservedTemplateWorldName(name));
 }
 
 async function tryLoadSidePromptTargetLorebook(lorebookName, source, template) {
