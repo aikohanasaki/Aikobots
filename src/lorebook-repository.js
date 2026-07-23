@@ -1871,6 +1871,63 @@ function migrateLorebookHiddenReferences(name, newName) {
     return { cleanedHiddenBindings, cleanedHiddenTemplates, hiddenCleanupErrors };
 }
 
+/**
+ * Removes configured dead lorebook names from hidden template source and compiled bindings.
+ * @param {string[]} deadLorebookNames Exact lorebook names to remove
+ * @returns {Promise<{changed: boolean, cleanedHiddenBindings: boolean, cleanedHiddenTemplates: boolean}>}
+ */
+export async function cleanupDeadLorebookHiddenReferences(deadLorebookNames = []) {
+    const names = [...new Set((Array.isArray(deadLorebookNames) ? deadLorebookNames : [])
+        .map(name => String(name || '').trim())
+        .filter(Boolean))];
+
+    if (names.length === 0) {
+        return { changed: false, cleanedHiddenBindings: false, cleanedHiddenTemplates: false };
+    }
+
+    return runWithSecureLorebookMutationLock(() => {
+        let cleanedHiddenBindings = false;
+        let cleanedHiddenTemplates = false;
+        let cleanupFailed = false;
+
+        for (const name of names) {
+            try {
+                cleanedHiddenBindings = migrateHiddenLorebookBindingReferences({ oldName: name }).changed || cleanedHiddenBindings;
+            } catch {
+                cleanupFailed = true;
+            }
+
+            try {
+                cleanedHiddenTemplates = migrateHiddenLorebookTemplateReferences({ oldName: name }).changed || cleanedHiddenTemplates;
+            } catch {
+                cleanupFailed = true;
+            }
+        }
+
+        if (cleanedHiddenTemplates) {
+            try {
+                compileAndWriteHiddenLorebookTemplates();
+            } catch {
+                cleanupFailed = true;
+            }
+        }
+
+        if (cleanupFailed) {
+            throw new LorebookRepositoryError(
+                'DeadLorebookHiddenCleanupFailed',
+                'Failed to remove one or more dead lorebook references from the hidden registry.',
+                500,
+            );
+        }
+
+        return {
+            changed: cleanedHiddenBindings || cleanedHiddenTemplates,
+            cleanedHiddenBindings,
+            cleanedHiddenTemplates,
+        };
+    });
+}
+
 export async function migrateLorebookGenerationReferences({ operation, oldName, newName = '', userHandles = [], user = null, referenceState = null } = {}) {
     if (operation !== 'rename' && operation !== 'delete') {
         throw new LorebookRepositoryError('LorebookInvalidReferenceMigration', 'Lorebook reference migration operation must be "rename" or "delete".', 400);

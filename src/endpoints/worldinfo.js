@@ -941,7 +941,7 @@ router.post('/hidden-templates/get', requireAdminMiddleware, async (_request, re
 
 router.post('/hidden-templates/save', requireAdminMiddleware, async (request, response) => {
     try {
-        const data = writeHiddenLorebookTemplates(request.body ?? {});
+        const data = await withLorebookManagementTransaction(() => writeHiddenLorebookTemplates(request.body ?? {}));
         return response.send({ ok: true, data });
     } catch (error) {
         return response.status(500).send({
@@ -954,7 +954,7 @@ router.post('/hidden-templates/save', requireAdminMiddleware, async (request, re
 
 router.post('/hidden-templates/compile', requireAdminMiddleware, async (_request, response) => {
     try {
-        const result = compileAndWriteHiddenLorebookTemplates();
+        const result = await withLorebookManagementTransaction(() => compileAndWriteHiddenLorebookTemplates());
         return response.send({ ok: true, ...result });
     } catch (error) {
         return response.status(500).send({
