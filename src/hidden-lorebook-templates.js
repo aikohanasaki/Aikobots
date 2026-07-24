@@ -9,6 +9,7 @@ import {
 } from './hidden-lorebook-bindings.js';
 
 export const HIDDEN_LOREBOOK_TEMPLATES_FILE = 'hidden-lorebook-templates.json';
+const HIDDEN_LOREBOOK_COMPILE_PENDING_FILE = 'hidden-lorebook-compile.pending';
 const CHARACTER_AVATAR_EXTENSION_REGEX = /\.(?:png|webp|jpe?g|gif|bmp|avif)$/i;
 
 const cache = new Map();
@@ -25,10 +26,45 @@ function getRegistryPath(rootDir = globalThis.DATA_ROOT || process.cwd()) {
     return path.join(getRegistryDirectory(rootDir), HIDDEN_LOREBOOK_TEMPLATES_FILE);
 }
 
+function getCompilePendingPath(rootDir = globalThis.DATA_ROOT || process.cwd()) {
+    return path.join(getRegistryDirectory(rootDir), HIDDEN_LOREBOOK_COMPILE_PENDING_FILE);
+}
+
 function ensureRegistryDirectory(rootDir = globalThis.DATA_ROOT || process.cwd()) {
     const directoryPath = getRegistryDirectory(rootDir);
     fs.mkdirSync(directoryPath, { recursive: true });
     return directoryPath;
+}
+
+/** Persists retry intent before changed template source is written. */
+function markHiddenLorebookCompilationPending(rootDir = globalThis.DATA_ROOT || process.cwd()) {
+    ensureRegistryDirectory(rootDir);
+    writeFileAtomicSync(getCompilePendingPath(rootDir), '', 'utf8');
+}
+
+/** Clears retry intent only after compiled bindings have been written. */
+function clearHiddenLorebookCompilationPending(rootDir = globalThis.DATA_ROOT || process.cwd()) {
+    try {
+        fs.unlinkSync(getCompilePendingPath(rootDir));
+    } catch (error) {
+        if (error?.code !== 'ENOENT') {
+            throw error;
+        }
+    }
+}
+
+/** Returns whether persisted hidden-template source still needs compilation. */
+export function isHiddenLorebookCompilationPending({ rootDir = globalThis.DATA_ROOT || process.cwd() } = {}) {
+    try {
+        fs.statSync(getCompilePendingPath(rootDir));
+        return true;
+    } catch (error) {
+        if (error?.code === 'ENOENT') {
+            return false;
+        }
+
+        throw error;
+    }
 }
 
 function compareStrings(a, b) {
@@ -323,9 +359,14 @@ export function migrateHiddenLorebookTemplateReferences({ oldName, newName = '',
         }
     }
 
+    if (!changed) {
+        return { changed: false, data: registry };
+    }
+
+    markHiddenLorebookCompilationPending(rootDir);
     return {
-        changed,
-        data: changed ? writeHiddenLorebookTemplates(registry, { rootDir }) : registry,
+        changed: true,
+        data: writeHiddenLorebookTemplates(registry, { rootDir }),
     };
 }
 
@@ -363,6 +404,7 @@ export function compileAndWriteHiddenLorebookTemplates({ rootDir = globalThis.DA
     const source = readHiddenLorebookTemplatesEntry({ rootDir, throwOnError: true }).data;
     const result = compileHiddenLorebookTemplateRegistry(source);
     const compiled = writeHiddenLorebookBindings(result.compiled, { rootDir });
+    clearHiddenLorebookCompilationPending(rootDir);
 
     return {
         ...result,

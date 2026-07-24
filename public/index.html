@@ -2596,6 +2596,12 @@
                                 <input id="play_sound_unfocused" type="checkbox" />
                                 <small data-i18n="Background Sound Only">Background Sound Only</small>
                             </label>
+                            <label for="mobile_background_audio" class="checkbox_label" title="Play silent audio to help generation continue when switching apps. Mobile browsers only." data-i18n="[title]Play silent audio to help generation continue when switching apps. Mobile browsers only.">
+                                <input id="mobile_background_audio" type="checkbox" />
+                                <audio id="audio_mobile_background" src="sounds/silence.mp3" loop hidden></audio>
+                                <small data-i18n="Background Generation (Mobile)">Background Generation (Mobile)</small>
+                                <i class="fa-solid fa-flask" data-i18n="[title]Experimental feature. Mobile browsers may still suspend the tab." title="Experimental feature. Mobile browsers may still suspend the tab."></i>
+                            </label>
                             <label class="checkbox_label" for="relaxed_api_urls" title="Reduce the formatting requirements on API URLs." data-i18n="[title]Reduce the formatting requirements on API URLs">
                                 <input id="relaxed_api_urls" type="checkbox" />
                                 <small data-i18n="Relaxed API URLS">Relaxed API URLs</small>

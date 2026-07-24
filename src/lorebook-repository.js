@@ -7,7 +7,11 @@ import { sync as writeFileAtomicSync } from 'write-file-atomic';
 import { write as writeCharacterCard, read as readCharacterCard } from './character-card-parser.js';
 import { SETTINGS_FILE } from './constants.js';
 import { migrateHiddenLorebookBindingReferences } from './hidden-lorebook-bindings.js';
-import { compileAndWriteHiddenLorebookTemplates, migrateHiddenLorebookTemplateReferences } from './hidden-lorebook-templates.js';
+import {
+    compileAndWriteHiddenLorebookTemplates,
+    isHiddenLorebookCompilationPending,
+    migrateHiddenLorebookTemplateReferences,
+} from './hidden-lorebook-templates.js';
 import { getUserDirectories } from './users.js';
 import { assertPathUnderParent, hasUnsafePathSegment } from './path-security.js';
 import { withDirectoryLock } from './file-system-lock.js';
@@ -1881,10 +1885,6 @@ export async function cleanupDeadLorebookHiddenReferences(deadLorebookNames = []
         .map(name => String(name || '').trim())
         .filter(Boolean))];
 
-    if (names.length === 0) {
-        return { changed: false, cleanedHiddenBindings: false, cleanedHiddenTemplates: false };
-    }
-
     return runWithSecureLorebookMutationLock(() => {
         let cleanedHiddenBindings = false;
         let cleanedHiddenTemplates = false;
@@ -1904,7 +1904,8 @@ export async function cleanupDeadLorebookHiddenReferences(deadLorebookNames = []
             }
         }
 
-        if (cleanedHiddenTemplates) {
+        const compilationPending = isHiddenLorebookCompilationPending();
+        if (cleanedHiddenTemplates || compilationPending) {
             try {
                 compileAndWriteHiddenLorebookTemplates();
             } catch {
@@ -1921,7 +1922,7 @@ export async function cleanupDeadLorebookHiddenReferences(deadLorebookNames = []
         }
 
         return {
-            changed: cleanedHiddenBindings || cleanedHiddenTemplates,
+            changed: cleanedHiddenBindings || cleanedHiddenTemplates || compilationPending,
             cleanedHiddenBindings,
             cleanedHiddenTemplates,
         };
