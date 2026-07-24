@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from '@jest/globals';
+import { afterAll, beforeAll, beforeEach, describe, expect, it, jest } from '@jest/globals';
 
 let cleanupDeadLorebookHiddenReferences;
 let compileAndWriteHiddenLorebookTemplates;
@@ -109,5 +109,33 @@ describe('dead hidden lorebook cleanup', () => {
         expect(result.cleanedHiddenTemplates).toBe(false);
         expect(isHiddenLorebookCompilationPending()).toBe(false);
         expect(readHiddenLorebookBindings().global).toEqual(['Live Book']);
+    });
+
+    it('wraps pending marker read failures as hidden cleanup failures', async () => {
+        const originalStatSync = fs.statSync;
+        const pendingMarkerPath = path.join(
+            tempRoot,
+            '_system',
+            'hidden-lorebooks',
+            'hidden-lorebook-compile.pending',
+        );
+        const statSpy = jest.spyOn(fs, 'statSync').mockImplementation((filePath, ...args) => {
+            if (path.resolve(String(filePath)) === pendingMarkerPath) {
+                const error = new Error('Pending marker is not readable.');
+                error.code = 'EACCES';
+                throw error;
+            }
+
+            return originalStatSync(filePath, ...args);
+        });
+
+        try {
+            await expect(cleanupDeadLorebookHiddenReferences([])).rejects.toMatchObject({
+                type: 'DeadLorebookHiddenCleanupFailed',
+                status: 500,
+            });
+        } finally {
+            statSpy.mockRestore();
+        }
     });
 });

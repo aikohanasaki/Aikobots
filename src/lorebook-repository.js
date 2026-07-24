@@ -1904,7 +1904,12 @@ export async function cleanupDeadLorebookHiddenReferences(deadLorebookNames = []
             }
         }
 
-        const compilationPending = isHiddenLorebookCompilationPending();
+        let compilationPending = false;
+        try {
+            compilationPending = isHiddenLorebookCompilationPending();
+        } catch {
+            cleanupFailed = true;
+        }
         if (cleanedHiddenTemplates || compilationPending) {
             try {
                 compileAndWriteHiddenLorebookTemplates();
