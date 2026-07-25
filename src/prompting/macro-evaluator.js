@@ -172,7 +172,7 @@ export function evaluatePromptMacros(content, env = {}, { additional = {}, macro
         { regex: /<CHAR>/gi, replace: () => getValue('char') },
         { regex: /<CHARIFNOTGROUP>/gi, replace: () => getValue('group') ? '' : getValue('char') },
         { regex: /<GROUP>/gi, replace: () => getValue('group') },
-        { regex: /{{roll[: ]([^}]+)}}/gi, replace: (_, formulaText) => {
+        { regex: /{{roll(?:::|[ :])([^}]+)}}/gi, replace: (_, formulaText) => {
             let formula = String(formulaText || '').trim();
             if (isDigitsOnly(formula)) {
                 formula = `1d${formula}`;

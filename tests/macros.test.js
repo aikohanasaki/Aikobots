@@ -21,8 +21,8 @@ jest.unstable_mockModule('../public/lib.js', () => {
         moment,
         seedrandom: () => () => 0,
         droll: {
-            validate: () => false,
-            roll: () => false,
+            validate: formula => formula === '1d1',
+            roll: () => ({ total: 1 }),
         },
     };
 });
@@ -64,12 +64,19 @@ jest.unstable_mockModule('../public/scripts/constants.js', () => ({
 }));
 
 let evaluateMacros;
+let evaluatePromptMacros;
 
 beforeAll(async () => {
     ({ evaluateMacros } = await import('../public/scripts/macros.js'));
+    ({ evaluatePromptMacros } = await import('../src/prompting/macro-evaluator.js'));
 });
 
 describe('evaluateMacros', () => {
+    it('supports the base ST double-colon roll syntax', () => {
+        expect(evaluateMacros('{{roll::1d1}}', {})).toBe('1');
+        expect(evaluatePromptMacros('{{roll::1d1}}')).toBe('1');
+    });
+
     it('strips deprecated banned macros independently', () => {
         const warnSpy = jest.spyOn(console, 'warn').mockImplementation(() => {});
 
