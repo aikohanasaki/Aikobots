@@ -5,6 +5,7 @@ import {
 
 export const MIN_SUMMARY_CHILDREN = 1;
 const DEFAULT_MIN_CHILDREN = 5;
+export const CONSOLIDATION_REGENERATION_PRESET_KEY = 'arc_regenerate';
 
 export const STMB_SUMMARY_TIERS = Object.freeze([
     { tier: 0, key: 'memory', label: 'Memory' },
@@ -17,6 +18,12 @@ export const STMB_SUMMARY_TIERS = Object.freeze([
 ]);
 
 const SUMMARY_TIER_MAP = new Map(STMB_SUMMARY_TIERS.map(config => [config.tier, config]));
+
+const STMB_CONSOLIDATION_KEYWORD_GUIDANCE = `For the keywords field, generate 12–20 natural retrieval keywords when the material supports them. Use fewer rather than padding with weak terms. Keywords are search hooks, not miniature summaries or evidence notes.
+
+Prioritize stable named entities other than {{char}} or {{user}}, major continuity anchors, memorable shared moments, and independent secondary hooks. Use the shortest distinctive wording likely to remain recognizable under paraphrasing or reversed word order. Prefer one central named entity when it already covers related events; retain a modified phrase only when it provides a genuinely separate retrieval route.
+
+Keywords should normally contain 1–4 words, use ordinary noun phrases, identify distinct parts of the summary, and remain stable under paraphrasing. Exclude incidental scenery or props, exact administrative details, generic themes, unsupported conclusions, sentence-like evidence descriptions, and redundant variants of the same entity.`;
 
 export const STMB_DEFAULT_SUMMARY_PROMPTS = Object.freeze({
     arc_default: `You are an expert narrative analyst and memory-engine assistant.
@@ -71,8 +78,7 @@ Time period: ...
 ## Outcome & Continuity
 - 4-8 bullets covering decisions, promises, unresolved threads, permanent consequences, and foreshadowed next steps
 
-Keywords must be concrete nouns, objects, places, proper nouns, or distinctive actions.
-Do not use abstract emotions, themes, or plot-summary phrases.
+${STMB_CONSOLIDATION_KEYWORD_GUIDANCE}
 
 Return only the JSON object. No markdown fences. No commentary.`,
     arc_alternate: `You are an expert narrative analyst and memory-engine assistant.
@@ -93,12 +99,37 @@ Return JSON only:
   ]
 }
 
+${STMB_CONSOLIDATION_KEYWORD_GUIDANCE}
+
 Requirements:
 - Respect chronology.
 - Keep the summary compact but preserve major plot and continuity.
 - Ignore OOC and flavor-only detail unless it affects future events.
 - Use member_ids whenever possible.
 - Return only valid JSON.`,
+    [CONSOLIDATION_REGENERATION_PRESET_KEY]: `You are an expert narrative analyst and memory-engine assistant. Combine and condense all included {{stmbchildtier}} entries into one coherent {{stmbtier}} summary.
+
+Reconstruct events chronologically with a clear beginning, development, and conclusion. Preserve major plot, character, relationship, and continuity developments while omitting scenery, filler, banter, repeated actions, and throwaway logistics. Write in past tense and third person. Exclude OOC, meta discussion, and unsupported information.
+
+Return only valid JSON in this structure:
+{
+  "title": "Short descriptive title of 3–6 words",
+  "content": "Markdown-formatted synopsis",
+  "keywords": ["keyword1", "keyword2", "keyword3"]
+}
+
+The content must use these sections:
+# [Scene Title]
+**Timeline**: [Most specific supported date/time, relative time, or unspecified.]
+## Story Beats
+## Character Dynamics
+## Important Facts
+## Key Exchanges
+## Outcome & Continuity
+
+Organize developments through cause → intention → reaction → consequence. Include exact quotations only when preserved in the source, attribute speakers, and use no more than 8 quotations. Every sentence must add continuity-relevant information.
+
+Generate 12–20 natural retrieval keywords when the material supports them. Use fewer instead of padding. Prioritize stable named entities other than {{char}} or {{user}}, continuity anchors, memorable moments, and independent secondary hooks. Keywords should normally contain 1–4 words and remain useful under paraphrasing. Exclude incidental props, administrative details, generic themes, unsupported conclusions, sentence-like descriptions, and redundant variants of one entity.`,
     arc_tiny: `You specialize in compressing many small {{stmbchildtier}} entries into compact, coherent {{stmbtier}} summaries.
 
 Return JSON only:
@@ -155,6 +186,20 @@ export const STMB_SUMMARY_RESPONSE_SCHEMA = Object.freeze({
                     reason: { type: 'string' },
                 },
             },
+        },
+    },
+});
+
+export const STMB_REGENERATION_RESPONSE_SCHEMA = Object.freeze({
+    type: 'object',
+    additionalProperties: false,
+    required: ['title', 'content', 'keywords'],
+    properties: {
+        title: { type: 'string' },
+        content: { type: 'string' },
+        keywords: {
+            type: 'array',
+            items: { type: 'string' },
         },
     },
 });
@@ -480,11 +525,11 @@ function extractGeminiText(response) {
     return text.trim() || null;
 }
 
-function extractSummaryPayload(response) {
+function extractSummaryPayload(response, { allowRegeneration = false } = {}) {
     let value = response;
 
     if (value && typeof value === 'object' && !Array.isArray(value)) {
-        if (Array.isArray(value.summaries) || Array.isArray(value.arcs)) {
+        if (Array.isArray(value.summaries) || Array.isArray(value.arcs) || (allowRegeneration && typeof value.title === 'string')) {
             return value;
         }
     }
@@ -506,7 +551,11 @@ function extractSummaryPayload(response) {
         const toolUseInput = value.content.find(block =>
             block && typeof block === 'object' && block.type === 'tool_use' && block.input && typeof block.input === 'object',
         )?.input;
-        if (toolUseInput && (Array.isArray(toolUseInput.summaries) || Array.isArray(toolUseInput.arcs))) {
+        if (toolUseInput && (
+            Array.isArray(toolUseInput.summaries) ||
+            Array.isArray(toolUseInput.arcs) ||
+            (allowRegeneration && typeof toolUseInput.title === 'string')
+        )) {
             return toolUseInput;
         }
         value = extractClaudeText(value);
@@ -535,7 +584,11 @@ function extractSummaryPayload(response) {
     for (const candidate of [...new Set(candidates.map(item => String(item || '').trim()).filter(Boolean))]) {
         try {
             const parsed = JSON.parse(stripTrailingCommas(stripJsonComments(candidate)));
-            if (parsed && typeof parsed === 'object' && (Array.isArray(parsed.summaries) || Array.isArray(parsed.arcs))) {
+            if (parsed && typeof parsed === 'object' && (
+                Array.isArray(parsed.summaries) ||
+                Array.isArray(parsed.arcs) ||
+                (allowRegeneration && typeof parsed.title === 'string')
+            )) {
                 return parsed;
             }
         } catch {
@@ -818,8 +871,32 @@ export function buildSummaryAnalysisPrompt({
     return `${header}\n\n${lines.join('\n')}`;
 }
 
-export function parseSummaryJsonResponse(response) {
-    const parsed = extractSummaryPayload(response);
+export function parseSummaryJsonResponse(response, { responseShape = 'summary' } = {}) {
+    const parsed = extractSummaryPayload(response, { allowRegeneration: responseShape === 'regeneration' });
+    if (responseShape === 'regeneration') {
+        if (
+            typeof parsed?.title !== 'string' ||
+            !parsed.title.trim() ||
+            typeof parsed?.content !== 'string' ||
+            !parsed.content.trim() ||
+            !Array.isArray(parsed?.keywords)
+        ) {
+            throw makeSummaryParseError(
+                'INVALID_REGENERATION_RESPONSE',
+                'Regeneration must return title, content, and keywords.',
+                String(response || ''),
+            );
+        }
+        return {
+            summaries: [{
+                title: parsed.title.trim(),
+                summary: parsed.content.trim(),
+                keywords: normalizeKeywords(parsed.keywords),
+                member_ids: [],
+            }],
+            unassigned_items: [],
+        };
+    }
     const summaries = Array.isArray(parsed.summaries)
         ? parsed.summaries
         : Array.isArray(parsed.arcs)
@@ -1083,6 +1160,7 @@ export function createManagedSummaryEntryData(summaryCandidate, {
     titleFormat = null,
     sequenceNumber = 1,
     sourceEntries = [],
+    includeSourceUids = false,
 } = {}) {
     const entry = {
         comment: formatSummaryTitle(targetTier, titleFormat, summaryCandidate.title, sequenceNumber),
@@ -1099,6 +1177,13 @@ export function createManagedSummaryEntryData(summaryCandidate, {
     if (summaryCandidate?.inclusionGroup) {
         entry.group = String(summaryCandidate.inclusionGroup);
         entry.STMB_inclusionGroup = String(summaryCandidate.inclusionGroup);
+    }
+    if (includeSourceUids) {
+        entry.stmbSourceEntryUids = [...new Set(
+            (summaryCandidate?.memberIds || [])
+                .map(value => Number(value))
+                .filter(Number.isSafeInteger),
+        )];
     }
     return entry;
 }

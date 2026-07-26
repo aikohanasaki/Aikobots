@@ -150,3 +150,51 @@ export function applyStloDefaultsToLorebook(data = {}, defaults = null) {
 
     return data;
 }
+
+/**
+ * Adds speaking-character overrides without replacing existing STLO metadata.
+ * @param {object} data Lorebook document.
+ * @param {string[]} characterNames STLO character filter names.
+ * @returns {{changed: boolean, addedNames: string[]}}
+ */
+export function applyStloCharacterFilters(data, characterNames = []) {
+    if (!data || typeof data !== 'object' || Array.isArray(data)) {
+        throw new TypeError('Lorebook data must be an object.');
+    }
+    if (Object.hasOwn(data, 'stlo') && (!data.stlo || typeof data.stlo !== 'object' || Array.isArray(data.stlo))) {
+        throw new TypeError('Lorebook STLO metadata must be an object.');
+    }
+    if (data.stlo && Object.hasOwn(data.stlo, 'characterOverrides')
+        && (!data.stlo.characterOverrides || typeof data.stlo.characterOverrides !== 'object' || Array.isArray(data.stlo.characterOverrides))) {
+        throw new TypeError('STLO characterOverrides metadata must be an object.');
+    }
+
+    const names = [...new Set((Array.isArray(characterNames) ? characterNames : [])
+        .map(name => String(name || '').trim())
+        .filter(Boolean))];
+    if (names.length === 0) {
+        return { changed: false, addedNames: [] };
+    }
+
+    const stlo = data.stlo || {};
+    const characterOverrides = stlo.characterOverrides || {};
+    const defaultPriority = normalizeStloPriority(stlo.priority) ?? 3;
+    const defaultOrderAdjustment = Number(stlo.orderAdjustment) || 0;
+    const addedNames = [];
+    for (const name of names) {
+        if (Object.hasOwn(characterOverrides, name)) continue;
+        Object.defineProperty(characterOverrides, name, {
+            value: { priority: defaultPriority, orderAdjustment: defaultOrderAdjustment },
+            enumerable: true,
+            configurable: true,
+            writable: true,
+        });
+        addedNames.push(name);
+    }
+
+    data.stlo = stlo;
+    stlo.characterOverrides = characterOverrides;
+    const changedSpeakingFilter = stlo.onlyWhenSpeaking !== true;
+    stlo.onlyWhenSpeaking = true;
+    return { changed: addedNames.length > 0 || changedSpeakingFilter, addedNames };
+}

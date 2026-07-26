@@ -40,6 +40,80 @@ function parseKeywords(keywordText) {
         .filter(Boolean);
 }
 
+/**
+ * Shows the mandatory editable before/after review for a regeneration.
+ * @returns {Promise<{action:'cancel'|'replace', title?:string, content?:string, keywords?:string[]}>}
+ */
+export async function showRegenerationReviewPopup({
+    originalEntry,
+    generatedTitle,
+    generatedContent,
+    generatedKeywords,
+    formatTitle,
+    linkedLorebooks = [],
+} = {}) {
+    const initialFinalTitle = formatTitle?.(generatedTitle) || String(generatedTitle || '').trim();
+    const linkedWarning = linkedLorebooks.length > 0
+        ? `<div class="stmb-regeneration-linked-warning"><strong>Linked group copies are not modified.</strong> Only this entry will be replaced. Linked books: ${escapeHtml(linkedLorebooks.join(', '))}</div>`
+        : '';
+    const popup = new Popup(DOMPurify.sanitize(`
+        <div class="stmb-regeneration-review">
+            <h3>Review regenerated memory</h3>
+            <p>Approval is required before anything is overwritten.</p>
+            ${linkedWarning}
+            <div class="stmb-regeneration-columns">
+                <section class="stmb-regeneration-column">
+                    <h4>Before</h4>
+                    <label>Title</label>
+                    <input class="text_pole" value="${escapeHtml(String(originalEntry?.comment || ''))}" readonly>
+                    <label>Content</label>
+                    <textarea class="text_pole stmb-regeneration-content" readonly>${escapeHtml(String(originalEntry?.content || ''))}</textarea>
+                    <label>Keywords</label>
+                    <input class="text_pole" value="${escapeHtml(keywordsToString(originalEntry?.key))}" readonly>
+                </section>
+                <section class="stmb-regeneration-column">
+                    <h4>After</h4>
+                    <label for="stmb-regeneration-title">Semantic title</label>
+                    <input id="stmb-regeneration-title" class="text_pole" value="${escapeHtml(String(generatedTitle || ''))}">
+                    <label for="stmb-regeneration-final-title">Final formatted title</label>
+                    <input id="stmb-regeneration-final-title" class="text_pole" value="${escapeHtml(initialFinalTitle)}" readonly>
+                    <label for="stmb-regeneration-content">Content</label>
+                    <textarea id="stmb-regeneration-content" class="text_pole stmb-regeneration-content">${escapeHtml(String(generatedContent || ''))}</textarea>
+                    <label for="stmb-regeneration-keywords">Keywords</label>
+                    <input id="stmb-regeneration-keywords" class="text_pole" value="${escapeHtml(keywordsToString(generatedKeywords))}">
+                </section>
+            </div>
+        </div>
+    `), POPUP_TYPE.TEXT, '', {
+        okButton: 'Replace Entry',
+        cancelButton: 'Cancel',
+        wide: true,
+        large: true,
+        allowVerticalScrolling: true,
+    });
+    const titleInput = popup.dlg?.querySelector('#stmb-regeneration-title');
+    const finalTitleInput = popup.dlg?.querySelector('#stmb-regeneration-final-title');
+    titleInput?.addEventListener('input', () => {
+        if (finalTitleInput) finalTitleInput.value = formatTitle?.(titleInput.value) || titleInput.value;
+    });
+
+    if (await popup.show() !== POPUP_RESULT.AFFIRMATIVE) {
+        return { action: 'cancel' };
+    }
+    const title = String(finalTitleInput?.value || '').trim();
+    const content = String(popup.dlg?.querySelector('#stmb-regeneration-content')?.value || '').trim();
+    if (!title || !content) {
+        toastr.error('Title and content are required.', 'STMB');
+        return { action: 'cancel' };
+    }
+    return {
+        action: 'replace',
+        title,
+        content,
+        keywords: parseKeywords(popup.dlg?.querySelector('#stmb-regeneration-keywords')?.value),
+    };
+}
+
 function truncatePreviewText(text, maxLength = 180) {
     const value = String(text || '').replace(/\s+/g, ' ').trim();
     if (value.length <= maxLength) {

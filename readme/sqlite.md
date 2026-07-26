@@ -971,3 +971,11 @@ The selected installed resources are stored in ordinary chat metadata (`world_in
 ### User storage alert state
 
 Once-per-day user storage alert state lives at `DATA_ROOT/_storage-check/storage-check-alerts.json`. It remains outside `DATA_ROOT/_storage`, where every file must be a wrapped `node-persist` datum. Startup atomically moves the legacy alert file to the dedicated directory when no newer state exists. Reads, migrations, and atomic replacements use the alert state's cross-worker directory lock.
+
+### STMB entry regeneration
+
+Base-memory regeneration always captures its original message range through the server-side SQLite range reader, including rows outside the browser's loaded window. Capture metadata includes the current `chatRevision`. The replacement request supplies that revision plus a full target-entry hash; consolidation regeneration also supplies the explicit source UIDs and full source-entry hashes.
+
+`POST /api/stmb/regenerate-entry` supports only ordinary user lorebooks. It acquires the shared lorebook mutation lock before the logical-chat lock, re-reads the target, source identities, eligibility, and chat revision under that lock order, and rejects stale state with a typed `409` before mutation. A successful operation preserves the entry UID and unrelated metadata while replacing only the formatted title, content, keywords, explicit source UIDs, and a parent-disable state whose referenced parent is demonstrably absent.
+
+New ordinary-user consolidations store `stmbSourceEntryUids`; legacy consolidations may recover source identity from `disabledBySummaryId` backlinks. The recovered set must be complete and exactly one tier lower. Secure lorebooks are excluded because client-side generation may not read, return, log, or fingerprint secure content or hidden metadata.

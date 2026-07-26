@@ -1,6 +1,8 @@
 import express from 'express';
 import { resolveSqliteLogicalChatReference } from './chats.js';
 import { stableHashString } from '../../public/scripts/hashing.js';
+import { applyStloCharacterFilters } from '../../public/scripts/stlo-utils.js';
+import { withChatSaveLock } from '../chat-storage.js';
 
 import {
     applyLorebookSettings,
@@ -17,6 +19,13 @@ import {
     getSummaryTierLabel,
     verifySummarySourceFingerprints,
 } from '../../public/scripts/stmb-summary.js';
+import {
+    applyRegenerationReplacement,
+    buildRegenerationIndexes,
+    getRegenerationEligibility,
+    getRegenerationEntryByUid,
+    hashRegenerationEntry,
+} from '../../public/scripts/stmb-regeneration.js';
 import {
     assertLorebookCheckoutForManagement,
     getLorebookForManagement,
@@ -328,6 +337,7 @@ async function resolveCapturedScene(request, normalizedRequest) {
             isPartial: missingRanges.length > 0,
             storageMode: String(chatState?.storageMode || 'full'),
             storageHealthy: chatState?.storageHealthy !== false,
+            chatRevision: Math.max(0, Math.trunc(Number(chatState?.header?.chat_revision) || 0)),
         },
     };
 }
@@ -501,6 +511,111 @@ function normalizeGroupMemoryWriteTarget(value, label, user) {
             .map(item => String(item || '').trim()).filter(Boolean))].slice(0, 100),
         usePrimaryTitle: value.usePrimaryTitle !== false,
     };
+}
+
+function normalizeRegenerationRequest(body, user) {
+    const lorebookName = String(body?.lorebookName || '').trim();
+    const storage = normalizeStorage(body?.storage);
+    const uid = body?.uid === undefined || body?.uid === null ? '' : String(body.uid).trim();
+    const expectedTargetHash = String(body?.expectedTargetHash || '').trim();
+    const replacement = body?.replacement;
+    if (!lorebookName || !uid || !/^[a-f0-9]{8}$/i.test(expectedTargetHash) || !replacement || typeof replacement !== 'object' || Array.isArray(replacement)) {
+        throw createStmbRequestError(400, 'StmbBadRequest', 'lorebookName, uid, replacement, and expectedTargetHash are required.');
+    }
+    if (storage !== 'user') {
+        throw createStmbRequestError(403, 'StmbRegenerationStorageNotAllowed', 'Regeneration is available only for ordinary user lorebooks.');
+    }
+    if (isReservedRecommendedTemplateSource(user?.profile?.handle, lorebookName)) {
+        throw createStmbRequestError(400, 'StmbBadRequest', 'A designated blank lorebook template cannot be regenerated.');
+    }
+
+    const title = String(replacement.title || '').trim();
+    const content = String(replacement.content || '').trim();
+    if (!title || !content || title.length > 1000 || content.length > 1_000_000) {
+        throw createStmbRequestError(400, 'StmbBadRequest', 'replacement title and content are required and must be within size limits.');
+    }
+    if (!Array.isArray(replacement.keywords) || replacement.keywords.length > 100) {
+        throw createStmbRequestError(400, 'StmbBadRequest', 'replacement keywords must be an array with no more than 100 items.');
+    }
+    const keywords = replacement.keywords.map(value => String(value || '').trim()).filter(Boolean);
+    if (keywords.some(value => value.length > 500)) {
+        throw createStmbRequestError(400, 'StmbBadRequest', 'replacement keywords must be within size limits.');
+    }
+
+    if (Array.isArray(body?.sourceUids) && body.sourceUids.length > 10_000) {
+        throw createStmbRequestError(400, 'StmbBadRequest', 'sourceUids contains too many items.');
+    }
+    const sourceUids = Array.isArray(body?.sourceUids)
+        ? [...new Set(body.sourceUids.map(value => String(value ?? '').trim()).filter(Boolean))]
+        : [];
+    const sourceHashes = body?.sourceHashes && typeof body.sourceHashes === 'object' && !Array.isArray(body.sourceHashes)
+        ? Object.fromEntries(Object.entries(body.sourceHashes).map(([key, value]) => [String(key), String(value || '').trim()]))
+        : {};
+    if (Object.keys(sourceHashes).length > 10_000 || Object.values(sourceHashes).some(value => !/^[a-f0-9]{8}$/i.test(value))) {
+        throw createStmbRequestError(400, 'StmbBadRequest', 'sourceHashes contains an invalid hash.');
+    }
+    const expectedChatRevision = body?.expectedChatRevision === undefined || body?.expectedChatRevision === null
+        ? null
+        : Number(body.expectedChatRevision);
+
+    return {
+        lorebookName,
+        storage,
+        uid,
+        expectedTargetHash,
+        sourceUids,
+        sourceHashes,
+        replacement: { title, content, keywords },
+        chatRef: body?.chatRef,
+        expectedChatRevision: Number.isInteger(expectedChatRevision) && expectedChatRevision >= 0 ? expectedChatRevision : null,
+        currentChatId: String(body?.currentChatId || '').trim(),
+    };
+}
+
+function normalizeGroupStloTarget(value, label, user) {
+    const lorebookName = String(value?.lorebookName || '').trim();
+    const storage = normalizeStorage(value?.storage);
+    if (!lorebookName || !storage || !Array.isArray(value?.characterNames)) {
+        throw createStmbRequestError(400, 'StmbBadRequest', `${label} requires lorebookName, storage, and characterNames.`);
+    }
+    if (storage === 'user' && isReservedRecommendedTemplateSource(user?.profile?.handle, lorebookName)) {
+        throw createStmbRequestError(400, 'StmbBadRequest', `${label} cannot use a designated blank lorebook template.`);
+    }
+    const characterNames = [...new Set(value.characterNames
+        .map(item => String(item || '').trim())
+        .filter(Boolean))].slice(0, 100);
+    if (characterNames.length === 0) {
+        throw createStmbRequestError(400, 'StmbBadRequest', `${label} requires at least one character name.`);
+    }
+    return { lorebookName, storage, characterNames };
+}
+
+function assertRegenerationEntryState(lorebookData, requestData) {
+    const indexes = buildRegenerationIndexes(lorebookData);
+    const target = getRegenerationEntryByUid(lorebookData, requestData.uid, indexes);
+    if (!target || hashRegenerationEntry(target) !== requestData.expectedTargetHash) {
+        throw createStmbRequestError(409, 'StmbRegenerationTargetChanged', 'The memory entry changed before regeneration could be saved.');
+    }
+    const eligibility = getRegenerationEligibility(target, lorebookData, indexes);
+    if (!eligibility.eligible) {
+        throw createStmbRequestError(409, 'StmbRegenerationEligibilityChanged', 'The memory entry is no longer eligible for regeneration.');
+    }
+    if (parseSequenceFromTitle(requestData.replacement.title) !== eligibility.sequenceNumber) {
+        throw createStmbRequestError(400, 'StmbBadRequest', 'The replacement title must preserve the original sequence number.');
+    }
+
+    const actualSourceUids = [...(eligibility.sourceUids || [])].map(String).sort();
+    const expectedSourceUids = [...requestData.sourceUids].map(String).sort();
+    if (actualSourceUids.length !== expectedSourceUids.length || actualSourceUids.some((uid, index) => uid !== expectedSourceUids[index])) {
+        throw createStmbRequestError(409, 'StmbRegenerationSourcesChanged', 'The consolidation source set changed before regeneration could be saved.');
+    }
+    for (const sourceUid of actualSourceUids) {
+        const source = getRegenerationEntryByUid(lorebookData, sourceUid, indexes);
+        if (!source || hashRegenerationEntry(source) !== requestData.sourceHashes[sourceUid]) {
+            throw createStmbRequestError(409, 'StmbRegenerationSourcesChanged', 'A consolidation source changed before regeneration could be saved.');
+        }
+    }
+    return { target, eligibility };
 }
 
 router.get('/side-prompts', async (request, response) => {
@@ -809,6 +924,94 @@ router.post('/save-memory', async (request, response) => {
     }
 });
 
+router.post('/sync-group-stlo', async (request, response) => {
+    let targets;
+    try {
+        if (!Array.isArray(request.body?.targets) || request.body.targets.length > 100) {
+            throw createStmbRequestError(400, 'StmbBadRequest', 'targets must be an array with no more than 100 items.');
+        }
+        targets = request.body.targets.map((target, index) => normalizeGroupStloTarget(target, `targets[${index}]`, request.user));
+    } catch (error) {
+        if (!(error instanceof LorebookRepositoryError) && !Number.isInteger(error?.status) && !isActiveSessionError(error)) {
+            console.error('[STMB] Group STLO metadata sync failed', String(error?.name || 'Error'));
+            return response.status(500).send({
+                error: {
+                    type: 'StmbGroupStloSyncFailed',
+                    message: 'The STLO metadata could not be updated.',
+                },
+            });
+        }
+        return sendStmbError(response, error);
+    }
+
+    try {
+        const updatedCount = await withLorebookManagementTransaction(async transaction => {
+            const books = [];
+            const resolvedKeys = new Set();
+            for (const target of targets) {
+                const loaded = await getLorebookForManagement(request.user, target.lorebookName, false, target.storage);
+                if (!loaded?.data) {
+                    throw createStmbRequestError(404, 'StmbLorebookNotFound', 'A configured group character lorebook was not found.');
+                }
+                assertLorebookCheckoutForManagement(request.user, loaded.metadata);
+                const resolvedKey = `${loaded.metadata.storage}:${loaded.metadata.name}`;
+                if (resolvedKeys.has(resolvedKey)) {
+                    throw createStmbRequestError(400, 'StmbDuplicateGroupLorebook', 'Each STLO target lorebook must be unique.');
+                }
+                resolvedKeys.add(resolvedKey);
+                const originalData = structuredClone(loaded.data);
+                const change = applyStloCharacterFilters(loaded.data, target.characterNames);
+                books.push({
+                    data: loaded.data,
+                    metadata: loaded.metadata,
+                    originalData,
+                    changed: change.changed,
+                });
+            }
+
+            await request.activeSessionOperation?.assertAllowed();
+            const savedBooks = [];
+            try {
+                for (const book of books.filter(item => item.changed)) {
+                    await request.activeSessionOperation?.assertAllowed();
+                    await transaction.save(request.user, book.metadata.name, book.data, book.metadata.storage);
+                    savedBooks.push(book);
+                }
+            } catch (error) {
+                let rollbackFailed = false;
+                for (const book of savedBooks.reverse()) {
+                    try {
+                        await transaction.save(request.user, book.metadata.name, book.originalData, book.metadata.storage);
+                    } catch {
+                        rollbackFailed = true;
+                    }
+                }
+                if (rollbackFailed) {
+                    throw createStmbRequestError(
+                        500,
+                        'StmbGroupStloRollbackFailed',
+                        'The STLO metadata update failed and could not be fully rolled back. Manual review is required.',
+                    );
+                }
+                throw error;
+            }
+            return books.filter(item => item.changed).length;
+        });
+        return response.send({ ok: true, updatedCount });
+    } catch (error) {
+        if (!(error instanceof LorebookRepositoryError) && !Number.isInteger(error?.status) && !isActiveSessionError(error)) {
+            console.error('[STMB] Group STLO metadata sync failed', String(error?.name || 'Error'));
+            return response.status(500).send({
+                error: {
+                    type: 'StmbGroupStloSyncFailed',
+                    message: 'The STLO metadata could not be updated.',
+                },
+            });
+        }
+        return sendStmbError(response, error);
+    }
+});
+
 router.post('/save-group-memory', async (request, response) => {
     let primary;
     let targets;
@@ -915,6 +1118,7 @@ router.post('/save-group-memory', async (request, response) => {
             for (let index = 1; index < lorebooks.length; index++) {
                 const book = lorebooks[index];
                 const target = book.request;
+                applyStloCharacterFilters(book.data, target.characterFilterNames);
                 const sequence = getNextManagedMemorySequenceNumber(
                     book.data.entries,
                     profile?.titleFormat || sceneContext?.titleFormat || null,
@@ -1003,6 +1207,107 @@ router.post('/save-group-memory', async (request, response) => {
     }
 });
 
+router.post('/regenerate-entry', async (request, response) => {
+    let requestData;
+    try {
+        requestData = normalizeRegenerationRequest(request.body, request.user);
+    } catch (error) {
+        return sendStmbError(response, error);
+    }
+
+    try {
+        const result = await withLorebookManagementTransaction(async transaction => {
+            let { data: lorebookData, metadata } = await getLorebookForManagement(
+                request.user,
+                requestData.lorebookName,
+                false,
+                'user',
+            );
+            if (!lorebookData || metadata.storage !== 'user') {
+                throw createStmbRequestError(403, 'StmbRegenerationStorageNotAllowed', 'Regeneration is available only for ordinary user lorebooks.');
+            }
+            ensureEntriesObject(lorebookData);
+            const initialState = assertRegenerationEntryState(lorebookData, requestData);
+
+            const saveReplacement = async ({ reread = false } = {}) => {
+                if (reread) {
+                    const fresh = await getLorebookForManagement(
+                        request.user,
+                        requestData.lorebookName,
+                        false,
+                        'user',
+                    );
+                    if (!fresh?.data || fresh.metadata?.storage !== 'user') {
+                        throw createStmbRequestError(409, 'StmbRegenerationTargetChanged', 'The memory entry changed before regeneration could be saved.');
+                    }
+                    lorebookData = fresh.data;
+                    metadata = fresh.metadata;
+                    ensureEntriesObject(lorebookData);
+                }
+                const { target, eligibility } = assertRegenerationEntryState(lorebookData, requestData);
+                applyRegenerationReplacement(target, requestData.replacement, {
+                    lorebookData,
+                    sourceUids: eligibility.sourceUids,
+                });
+                await request.activeSessionOperation?.assertAllowed();
+                await transaction.save(request.user, metadata.name, lorebookData, 'user');
+                return {
+                    ok: true,
+                    lorebookName: metadata.name,
+                    storage: 'user',
+                    uid: target.uid,
+                };
+            };
+
+            if (initialState.eligibility.kind !== 'memory') {
+                return await saveReplacement();
+            }
+            if (!requestData.chatRef || requestData.expectedChatRevision === null || !requestData.currentChatId) {
+                throw createStmbRequestError(400, 'StmbBadRequest', 'Base-memory regeneration requires chatRef, currentChatId, and expectedChatRevision.');
+            }
+            const storedChatId = String(initialState.target.STMB_chatId || '').trim();
+            if (storedChatId && storedChatId !== requestData.currentChatId) {
+                throw createStmbRequestError(409, 'StmbRegenerationChatChanged', 'The memory does not belong to the current chat.');
+            }
+
+            const unlockedChatState = await resolveStmbChatState(request, requestData.chatRef);
+            assertSqliteChatStorageAvailable(unlockedChatState);
+            return await withChatSaveLock(unlockedChatState.sqlitePath, async () => {
+                const chatState = await resolveStmbChatStateForRange(
+                    request,
+                    requestData.chatRef,
+                    initialState.eligibility.sceneStart,
+                    initialState.eligibility.sceneEnd,
+                );
+                assertSqliteChatStorageAvailable(chatState);
+                const currentRevision = Math.max(0, Math.trunc(Number(chatState?.header?.chat_revision) || 0));
+                if (currentRevision !== requestData.expectedChatRevision) {
+                    throw createStmbRequestError(409, 'StmbRegenerationChatChanged', 'The chat changed before regeneration could be saved.');
+                }
+                if (
+                    initialState.eligibility.sceneEnd >= Number(chatState?.totalMessages || 0) ||
+                    (Array.isArray(chatState?.missingRanges) && chatState.missingRanges.length > 0)
+                ) {
+                    throw createStmbRequestError(409, 'StmbRegenerationChatChanged', 'The original message range is no longer available.');
+                }
+                return await saveReplacement({ reread: true });
+            });
+        });
+        return response.send(result);
+    } catch (error) {
+        if (!(error instanceof LorebookRepositoryError) && !Number.isInteger(error?.status) && !isActiveSessionError(error)) {
+            console.error('[STMB] Entry regeneration failed', String(error?.name || 'Error'));
+            return response.status(500).send({
+                error: {
+                    type: 'StmbRegenerationFailed',
+                    message: 'The memory entry could not be regenerated.',
+                },
+            });
+        }
+        return sendStmbError(response, error);
+    }
+});
+
 router.post('/commit-summaries', async (request, response) => {
     const lorebookContext = getLorebookContext(request);
     const summaryCandidates = Array.isArray(request.body?.summaryCandidates) ? request.body.summaryCandidates : null;
@@ -1049,6 +1354,7 @@ router.post('/commit-summaries', async (request, response) => {
                 titleFormat,
                 sequenceNumber: nextSummaryNumber,
                 sourceEntries: Object.values(lorebookData.entries),
+                includeSourceUids: metadata.storage === 'user',
             });
             Object.assign(entry, entryPayload);
             applyLorebookSettings(entry, summaryEntrySettings, {

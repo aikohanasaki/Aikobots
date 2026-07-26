@@ -7567,6 +7567,47 @@ body.active-session-read-only [data-active-session-disabled="true"] {
     display: block;
 }
 
+.stmb-regenerate-entry {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    margin-inline-start: 8px;
+    color: var(--SmartThemeBodyColor);
+    border-color: var(--SmartThemeBorderColor);
+    background-color: var(--SmartThemeBlurTintColor);
+}
+
+.stmb-regenerate-entry[hidden] {
+    display: none;
+}
+
+.stmb-regeneration-linked-warning {
+    margin-block: 10px;
+    padding: 10px;
+    color: var(--SmartThemeQuoteColor);
+    border: 1px solid var(--SmartThemeBorderColor);
+    border-radius: 6px;
+    background-color: var(--SmartThemeShadowColor);
+}
+
+.stmb-regeneration-columns {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 12px;
+}
+
+.stmb-regeneration-column {
+    display: flex;
+    min-width: 0;
+    flex-direction: column;
+    gap: 6px;
+}
+
+.stmb-regeneration-content {
+    min-height: 240px;
+    resize: vertical;
+}
+
 .stmb-section-title {
     color: var(--SmartThemeQuoteColor);
     font-weight: 600;
@@ -7575,6 +7616,10 @@ body.active-session-read-only [data-active-session-disabled="true"] {
 
 @media (max-width: 600px) {
     .stmb-manual-group-lorebook-row {
+        grid-template-columns: 1fr;
+    }
+
+    .stmb-regeneration-columns {
         grid-template-columns: 1fr;
     }
 }
