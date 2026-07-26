@@ -100,6 +100,23 @@ function sendStmbError(response, error) {
     });
 }
 
+/**
+ * Sends known STMB errors normally while hiding unexpected failure details.
+ */
+function sendSanitizedStmbError(response, error, { logLabel, type, message }) {
+    if (!(error instanceof LorebookRepositoryError) && !Number.isInteger(error?.status) && !isActiveSessionError(error)) {
+        console.error(logLabel, String(error?.name || 'Error'));
+        return response.status(500).send({
+            error: {
+                type,
+                message,
+            },
+        });
+    }
+
+    return sendStmbError(response, error);
+}
+
 function normalizeStorage(value) {
     return value === 'secure' ? 'secure' : (value === 'user' ? 'user' : null);
 }
@@ -932,16 +949,11 @@ router.post('/sync-group-stlo', async (request, response) => {
         }
         targets = request.body.targets.map((target, index) => normalizeGroupStloTarget(target, `targets[${index}]`, request.user));
     } catch (error) {
-        if (!(error instanceof LorebookRepositoryError) && !Number.isInteger(error?.status) && !isActiveSessionError(error)) {
-            console.error('[STMB] Group STLO metadata sync failed', String(error?.name || 'Error'));
-            return response.status(500).send({
-                error: {
-                    type: 'StmbGroupStloSyncFailed',
-                    message: 'The STLO metadata could not be updated.',
-                },
-            });
-        }
-        return sendStmbError(response, error);
+        return sendSanitizedStmbError(response, error, {
+            logLabel: '[STMB] Group STLO metadata sync failed',
+            type: 'StmbGroupStloSyncFailed',
+            message: 'The STLO metadata could not be updated.',
+        });
     }
 
     try {
@@ -999,16 +1011,11 @@ router.post('/sync-group-stlo', async (request, response) => {
         });
         return response.send({ ok: true, updatedCount });
     } catch (error) {
-        if (!(error instanceof LorebookRepositoryError) && !Number.isInteger(error?.status) && !isActiveSessionError(error)) {
-            console.error('[STMB] Group STLO metadata sync failed', String(error?.name || 'Error'));
-            return response.status(500).send({
-                error: {
-                    type: 'StmbGroupStloSyncFailed',
-                    message: 'The STLO metadata could not be updated.',
-                },
-            });
-        }
-        return sendStmbError(response, error);
+        return sendSanitizedStmbError(response, error, {
+            logLabel: '[STMB] Group STLO metadata sync failed',
+            type: 'StmbGroupStloSyncFailed',
+            message: 'The STLO metadata could not be updated.',
+        });
     }
 });
 
@@ -1194,16 +1201,11 @@ router.post('/save-group-memory', async (request, response) => {
         });
         return response.send({ ok: true, ...result });
     } catch (error) {
-        if (!(error instanceof LorebookRepositoryError) && !Number.isInteger(error?.status) && !isActiveSessionError(error)) {
-            console.error('[STMB] Group memory save failed', String(error?.name || 'Error'));
-            return response.status(500).send({
-                error: {
-                    type: 'StmbGroupMemoryWriteFailed',
-                    message: 'The group memory could not be saved.',
-                },
-            });
-        }
-        return sendStmbError(response, error);
+        return sendSanitizedStmbError(response, error, {
+            logLabel: '[STMB] Group memory save failed',
+            type: 'StmbGroupMemoryWriteFailed',
+            message: 'The group memory could not be saved.',
+        });
     }
 });
 
@@ -1295,16 +1297,11 @@ router.post('/regenerate-entry', async (request, response) => {
         });
         return response.send(result);
     } catch (error) {
-        if (!(error instanceof LorebookRepositoryError) && !Number.isInteger(error?.status) && !isActiveSessionError(error)) {
-            console.error('[STMB] Entry regeneration failed', String(error?.name || 'Error'));
-            return response.status(500).send({
-                error: {
-                    type: 'StmbRegenerationFailed',
-                    message: 'The memory entry could not be regenerated.',
-                },
-            });
-        }
-        return sendStmbError(response, error);
+        return sendSanitizedStmbError(response, error, {
+            logLabel: '[STMB] Entry regeneration failed',
+            type: 'StmbRegenerationFailed',
+            message: 'The memory entry could not be regenerated.',
+        });
     }
 });
 

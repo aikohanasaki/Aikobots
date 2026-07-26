@@ -607,6 +607,7 @@ export class ChatPage {
             const done = arguments[arguments.length - 1];
             const mesId = Number(arguments[0]);
             const appendedText = String(arguments[1]);
+            const timeoutMs = Number(arguments[2]);
             const textarea = document.querySelector('.mes[mesid="' + mesId + '"] #curEditTextarea');
             if (!textarea) {
                 done({ error: 'edit textarea disappeared before redraw' });
@@ -617,31 +618,50 @@ export class ChatPage {
             const expectedValue = textarea.value;
 
             import('/script.js')
-                .then(async ({ reloadCurrentChat, renderMessageWindow }) => {
+                .then(async ({ eventSource, event_types, getCurrentChatId, hasActiveMessageEditSession, reloadCurrentChat, renderMessageWindow }) => {
                     const renderResult = await renderMessageWindow(0, 1);
                     const reloadResult = await reloadCurrentChat();
+                    await eventSource.emit(event_types.CHAT_CHANGED, getCurrentChatId());
                     const currentTextarea = document.querySelector('.mes[mesid="' + mesId + '"] #curEditTextarea');
+                    const sameChatRefreshPreserved = hasActiveMessageEditSession();
+                    const draftPreserved = currentTextarea === textarea
+                        && currentTextarea?.isConnected
+                        && currentTextarea.value === expectedValue;
+                    const reloadedAfterCancel = new Promise(resolve => {
+                        const onChatChanged = () => {
+                            clearTimeout(timeout);
+                            eventSource.removeListener(event_types.CHAT_CHANGED, onChatChanged);
+                            resolve(true);
+                        };
+                        const timeout = setTimeout(() => {
+                            eventSource.removeListener(event_types.CHAT_CHANGED, onChatChanged);
+                            resolve(false);
+                        }, timeoutMs);
+                        eventSource.on(event_types.CHAT_CHANGED, onChatChanged);
+                    });
+                    currentTextarea?.closest('.mes')?.querySelector('.mes_edit_cancel')?.click();
                     done({
                         renderResult,
                         reloadResult,
-                        draftPreserved: currentTextarea === textarea
-                            && currentTextarea?.isConnected
-                            && currentTextarea.value === expectedValue,
+                        sameChatRefreshPreserved,
+                        reloadedAfterCancel: await reloadedAfterCancel,
+                        draftPreserved,
                     });
                 })
                 .catch(error => done({ error: error?.message || String(error) }));
-        `, mesId, appendedText);
+        `, mesId, appendedText, Math.min(this.config.timeouts.stepMs, 5_000));
 
         if (result?.error) {
             throw new Error(result.error);
         }
-        if (result?.renderResult !== false || result?.reloadResult !== false || !result?.draftPreserved) {
+        if (result?.renderResult !== false
+            || result?.reloadResult !== false
+            || !result?.draftPreserved
+            || !result?.sameChatRefreshPreserved
+            || !result?.reloadedAfterCancel) {
             throw new Error(`Active edit was not protected from redraw: ${JSON.stringify(result)}`);
         }
 
-        await this.driver.executeScript(`
-            document.querySelector('.mes[mesid="' + String(arguments[0]) + '"] .mes_edit_cancel')?.click();
-        `, mesId);
         await this.driver.wait(async () => {
             return this.driver.executeScript(`
                 return !document.querySelector('.mes[mesid="' + String(arguments[0]) + '"] #curEditTextarea');

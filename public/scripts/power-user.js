@@ -60,6 +60,7 @@ import { t } from './i18n.js';
 import { getBackgroundPath, isCustomBackgroundUrl } from './backgrounds.js';
 import { deriveBackgroundName, extractDominantColor, generateThemePalette } from './util/ThemeGenerator.js';
 import { setMobileBackgroundAudioPlayback } from './mobile-background-audio.js';
+import { resolveDeviceFontScales } from './device-font-scale.js';
 
 export const toastPositionClasses = [
     'toast-top-left',
@@ -156,7 +157,8 @@ const themeFontControls = Object.freeze([
 const uiThemeCssControls = Object.freeze([
     { key: 'blur_strength', selectors: ['#blur_strength', '#blur_strength_counter'], variables: ['--blurStrength', '--SmartThemeBlurStrength'], label: 'Blur Strength' },
     { key: 'shadow_width', selectors: ['#shadow_width', '#shadow_width_counter'], variables: ['--shadowWidth'], propertyNames: ['text-shadow'], label: 'Shadow Width' },
-    { key: 'font_scale', selectors: ['#font_scale', '#font_scale_counter'], variables: ['--fontScale', '--mainFontSize'], label: 'Font Scale' },
+    { key: 'font_scale', selectors: ['#font_scale', '#font_scale_counter'], variables: ['--fontScale', '--mainFontSize'], label: 'Desktop Font Scale' },
+    { key: 'mobile_font_scale', selectors: ['#mobile_font_scale', '#mobile_font_scale_counter'], variables: ['--fontScale', '--mainFontSize'], label: 'Mobile Font Scale' },
     { key: 'chat_text_line_height', selectors: ['#chat_text_line_height', '#chat_text_line_height_counter'], variables: ['--chatTextLineHeightScale'], label: 'Message Line Height' },
     { key: 'chat_text_letter_spacing', selectors: ['#chat_text_letter_spacing', '#chat_text_letter_spacing_counter'], variables: ['--chatTextLetterSpacing'], label: 'Message Text Spacing' },
     { key: 'top_bar_icon_scale', selectors: ['#top_bar_icon_scale', '#top_bar_icon_scale_counter'], variables: ['--topBarIconScale', '--topBarIconSize'], label: 'Top Bar Icon Size' },
@@ -316,6 +318,7 @@ export const power_user = {
     sort_order: 'asc',
     sort_rule: null,
     font_scale: 1,
+    mobile_font_scale: 1,
     chat_text_line_height: 1,
     chat_text_letter_spacing: 0,
     top_bar_icon_scale: 1,
@@ -1675,18 +1678,40 @@ function applyShadowWidth() {
 }
 
 function applyFontScale(type) {
+    const scales = resolveDeviceFontScales({
+        mobile: isMobile(),
+        desktopScale: power_user.font_scale,
+        mobileScale: power_user.mobile_font_scale,
+    });
+    power_user.font_scale = scales.desktopScale;
+    power_user.mobile_font_scale = scales.mobileScale;
+
     //this is to allow forced setting on page load, theme swap, etc
     if (type === 'forced') {
-        document.documentElement.style.setProperty('--fontScale', String(power_user.font_scale));
+        document.documentElement.style.setProperty('--fontScale', String(scales.effectiveScale));
     } else {
         //this is to prevent the slider from updating page in real time
-        $('#font_scale').off('mouseup touchend').on('mouseup touchend', () => {
-            document.documentElement.style.setProperty('--fontScale', String(power_user.font_scale));
-        });
+        $('#font_scale, #mobile_font_scale')
+            .off('mouseup.deviceFontScale touchend.deviceFontScale')
+            .on('mouseup.deviceFontScale touchend.deviceFontScale', () => {
+                document.documentElement.style.setProperty('--fontScale', String(scales.effectiveScale));
+            });
     }
 
-    $('#font_scale_counter').val(power_user.font_scale);
-    $('#font_scale').val(power_user.font_scale);
+    $('#font_scale_counter').val(scales.desktopScale);
+    $('#font_scale').val(scales.desktopScale);
+    $('#mobile_font_scale_counter').val(scales.mobileScale);
+    $('#mobile_font_scale').val(scales.mobileScale);
+}
+
+/**
+ * Preserves legacy theme sizing by copying its desktop scale to the missing mobile scale.
+ * @param {object} theme Theme settings.
+ */
+function migrateLegacyThemeMobileFontScale(theme) {
+    if (theme.mobile_font_scale === undefined && theme.font_scale !== undefined) {
+        theme.mobile_font_scale = theme.font_scale;
+    }
 }
 
 function sanitizeFiniteNumber(value, fallback, min = -Infinity, max = Infinity) {
@@ -1831,6 +1856,8 @@ function applyTheme(name) {
         return;
     }
 
+    migrateLegacyThemeMobileFontScale(theme);
+
     const themeProperties = [
         ...smartThemeColorControls,
         {
@@ -1853,6 +1880,12 @@ function applyTheme(name) {
         },
         {
             key: 'font_scale',
+            action: () => {
+                applyFontScale('forced');
+            },
+        },
+        {
+            key: 'mobile_font_scale',
             action: () => {
                 applyFontScale('forced');
             },
@@ -2324,6 +2357,9 @@ export async function loadPowerUserSettings(settings, data) {
             settings.power_user.tag_sort_mode = settings.power_user.auto_sort_tags ? tag_sort_mode.ALPHABETICAL : tag_sort_mode.MANUAL;
             delete settings.power_user.auto_sort_tags;
         }
+        if (!Object.hasOwn(settings.power_user, 'mobile_font_scale')) {
+            settings.power_user.mobile_font_scale = settings.power_user.font_scale ?? power_user.font_scale;
+        }
         Object.assign(power_user, settings.power_user);
     }
 
@@ -2537,6 +2573,8 @@ export async function loadPowerUserSettings(settings, data) {
 
     $('#font_scale').val(power_user.font_scale);
     $('#font_scale_counter').val(power_user.font_scale);
+    $('#mobile_font_scale').val(power_user.mobile_font_scale);
+    $('#mobile_font_scale_counter').val(power_user.mobile_font_scale);
     applyChatTextSpacing();
     applyTopBarLayout();
     applyTopBarIconOverrides();
@@ -3071,6 +3109,7 @@ export function getThemeObject(name) {
         shadow_width: power_user.shadow_width,
         border_color: power_user.border_color,
         font_scale: power_user.font_scale,
+        mobile_font_scale: power_user.mobile_font_scale,
         chat_text_line_height: power_user.chat_text_line_height,
         chat_text_letter_spacing: power_user.chat_text_letter_spacing,
         top_bar_icon_scale: power_user.top_bar_icon_scale,
@@ -3116,6 +3155,9 @@ function getNewTheme(parsed) {
         if (Object.hasOwn(theme, key)) {
             theme[key] = parsed[key];
         }
+    }
+    if (!Object.hasOwn(parsed, 'mobile_font_scale') && Object.hasOwn(parsed, 'font_scale')) {
+        theme.mobile_font_scale = parsed.font_scale;
     }
     return theme;
 }
@@ -4080,6 +4122,14 @@ jQuery(() => {
         const applyMode = data?.forced ? 'forced' : 'normal';
         power_user.font_scale = Number($(this).val());
         $('#font_scale_counter').val(power_user.font_scale);
+        applyFontScale(applyMode);
+        saveSettingsDebounced();
+    });
+
+    $('input[name="mobile_font_scale"]').on('input', function (e, data) {
+        const applyMode = data?.forced ? 'forced' : 'normal';
+        power_user.mobile_font_scale = Number($(this).val());
+        $('#mobile_font_scale_counter').val(power_user.mobile_font_scale);
         applyFontScale(applyMode);
         saveSettingsDebounced();
     });

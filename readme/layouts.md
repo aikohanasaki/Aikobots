@@ -288,12 +288,15 @@ UI Theme imported settings with direct CSS variable locks:
 |---|---|---|
 | `blur_strength` | Blur Strength | `--blurStrength`, `--SmartThemeBlurStrength` |
 | `shadow_width` | Shadow Width | `--shadowWidth`, `text-shadow` declarations |
-| `font_scale` | Font Scale | `--fontScale`, `--mainFontSize` |
+| `font_scale` | Desktop Font Scale | `--fontScale`, `--mainFontSize` |
+| `mobile_font_scale` | Mobile Font Scale | `--fontScale`, `--mainFontSize` |
 | `chat_text_line_height` | Message Line Height | `--chatTextLineHeightScale` |
 | `chat_text_letter_spacing` | Message Text Spacing | `--chatTextLetterSpacing` |
 | `top_bar_icon_scale` | Top Bar Icon Size | `--topBarIconScale`, `--topBarIconSize` |
 | `top_bar_icon_spacing` | Top Bar Spacing | `--topBarIconSpacing` |
 | `chat_width` | Chat Width | `--sheldWidth` |
+
+Desktop and mobile font scales are saved independently and selected by the parsed device type, not viewport width. Mobile and tablet devices use `mobile_font_scale`; desktop devices use `font_scale`. Legacy settings and themes without `mobile_font_scale` inherit their existing `font_scale`.
 
 UI Theme imported settings with selector/property locks:
 

@@ -2851,11 +2851,7 @@ function initTopChatUi() {
     eventSource.on(event_types.CHAT_RENAMED, refreshTopChatUiDebounced);
     eventSource.on(event_types.BRANCH_CREATED, refreshTopChatUiDebounced);
     eventSource.on(event_types.CHECKPOINT_CREATED, refreshTopChatUiDebounced);
-    eventSource.on(event_types.CHAT_CHANGED, () => {
-        deferredAuthoritativeReloadAfterMessageEdit = false;
-        clearActiveMessageEditSession();
-        this_edit_mes_id = undefined;
-    });
+    eventSource.on(event_types.CHAT_CHANGED, handleMessageEditChatChanged);
     eventSource.on(event_types.CHAT_CREATED, refreshTopChatUiDebounced);
     eventSource.on(event_types.CHAT_DELETED, refreshTopChatUiDebounced);
     eventSource.on(event_types.GROUP_CHAT_CREATED, refreshTopChatUiDebounced);
@@ -2945,7 +2941,7 @@ let this_edit_mes_chname = '';
 let this_edit_mes_id = undefined;
 let activeMessageEditSession = null;
 let messageEditSaveInFlight = false;
-let deferredAuthoritativeReloadAfterMessageEdit = false;
+let deferredAuthoritativeReloadChatIdentity = null;
 const MESSAGE_EDIT_STALE_WARNING = 'This message changed while it was being edited. Cancel and reopen the edit before saving.';
 const MESSAGE_EDIT_SAVE_FAILED_WARNING = 'The message edit could not be saved. Your draft was reopened; retry it, or copy it before canceling to reload the saved message.';
 
@@ -2970,6 +2966,30 @@ function isSameChatIdentity(left, right) {
         && left.groupId === right.groupId
         && left.characterId === right.characterId
         && left.chatId === right.chatId;
+}
+
+/** Discards a deferred reload after a genuine chat switch without logging chat identity data. */
+function discardDeferredAuthoritativeReload() {
+    if (!deferredAuthoritativeReloadChatIdentity) {
+        return;
+    }
+
+    console.debug('Discarding a deferred authoritative reload because the active chat identity changed.');
+    deferredAuthoritativeReloadChatIdentity = null;
+}
+
+/** Clears edit protection only when CHAT_CHANGED represents a genuine chat switch. */
+function handleMessageEditChatChanged() {
+    const currentChatIdentity = getActiveChatIdentity();
+    if (deferredAuthoritativeReloadChatIdentity && !isSameChatIdentity(deferredAuthoritativeReloadChatIdentity, currentChatIdentity)) {
+        discardDeferredAuthoritativeReload();
+    }
+    if (activeMessageEditSession && isSameChatIdentity(activeMessageEditSession.chatIdentity, currentChatIdentity)) {
+        return;
+    }
+
+    clearActiveMessageEditSession();
+    this_edit_mes_id = undefined;
 }
 
 function getMessageEditFieldType(message) {
@@ -3014,16 +3034,25 @@ export function clearActiveMessageEditSession() {
     activeMessageEditSession = null;
 }
 
+/** Marks an authoritative reload to run after the active message edit closes. */
+export function deferAuthoritativeReloadAfterMessageEdit() {
+    deferredAuthoritativeReloadChatIdentity ??= activeMessageEditSession?.chatIdentity ?? getActiveChatIdentity();
+}
+
 /**
  * Runs an authoritative reload that was deferred to protect an edit which has now closed.
  * @returns {Promise<void>}
  */
 export async function finishMessageEditProtection() {
-    if (!deferredAuthoritativeReloadAfterMessageEdit || hasActiveMessageEditSession()) {
+    if (!deferredAuthoritativeReloadChatIdentity || hasActiveMessageEditSession()) {
         return;
     }
 
-    deferredAuthoritativeReloadAfterMessageEdit = false;
+    if (!isSameChatIdentity(deferredAuthoritativeReloadChatIdentity, getActiveChatIdentity())) {
+        discardDeferredAuthoritativeReload();
+        return;
+    }
+
     await reloadCurrentChat({ flushPendingSave: false });
 }
 
@@ -5802,7 +5831,7 @@ async function fetchLatestTailForPayload(response, options = {}) {
 async function reloadCurrentChatAfterServerRepair(errorData = null) {
     console.warn('Chat message identity metadata was repaired by the server. Reloading chat before continuing.', errorData);
     if (hasActiveMessageEditSession()) {
-        deferredAuthoritativeReloadAfterMessageEdit = true;
+        deferAuthoritativeReloadAfterMessageEdit();
         toastr.warning(t`Chat storage was repaired. Your open edit was preserved; cancel it when you are ready to reload the authoritative chat.`);
         return;
     }
@@ -6739,8 +6768,8 @@ function deferChatReloadForMessageEdit(discardMessageEdit = false) {
         return false;
     }
 
-    const wasAlreadyDeferred = deferredAuthoritativeReloadAfterMessageEdit;
-    deferredAuthoritativeReloadAfterMessageEdit = true;
+    const wasAlreadyDeferred = Boolean(deferredAuthoritativeReloadChatIdentity);
+    deferAuthoritativeReloadAfterMessageEdit();
     if (!wasAlreadyDeferred) {
         toastr.warning(t`A chat reload was deferred to preserve your open edit. Save or cancel the edit to apply it.`);
     }
@@ -6775,6 +6804,7 @@ export async function reloadCurrentChatUnsafe({ flushPendingSave = true, discard
         return false;
     }
 
+    const deferredReloadAtStart = deferredAuthoritativeReloadChatIdentity;
     const deferredLoader = isLoaderVisible() ? null : deferLoader();
 
     try {
@@ -6799,6 +6829,9 @@ export async function reloadCurrentChatUnsafe({ flushPendingSave = true, discard
         }
 
         refreshSwipeButtons();
+        if (deferredAuthoritativeReloadChatIdentity === deferredReloadAtStart) {
+            deferredAuthoritativeReloadChatIdentity = null;
+        }
     } finally {
         await deferredLoader?.clear();
     }
@@ -13875,7 +13908,7 @@ function scheduleSqliteAutoEditSave(message, editContext) {
         pendingSqliteAutoEditMessage = null;
         saveMessageUpdateByUuid(pendingEdit?.message, pendingEdit).then((saveResult) => {
             if (saveResult !== CHAT_SAVE_RESULT.SAVED) {
-                deferredAuthoritativeReloadAfterMessageEdit = true;
+                deferAuthoritativeReloadAfterMessageEdit();
                 toastr.warning(t`The automatic message save failed. Your edit is still open; retry it, or cancel to reload the saved message.`);
             }
         });
@@ -14770,7 +14803,7 @@ async function messageEditDone(div) {
 
     if (editEventError) {
         messageEditSaveInFlight = false;
-        deferredAuthoritativeReloadAfterMessageEdit = true;
+        deferAuthoritativeReloadAfterMessageEdit();
         await messageEdit(messageId);
         throw editEventError;
     }
@@ -14797,7 +14830,7 @@ async function messageEditDone(div) {
     }
 
     if (saveResult !== CHAT_SAVE_RESULT.SAVED) {
-        deferredAuthoritativeReloadAfterMessageEdit = true;
+        deferAuthoritativeReloadAfterMessageEdit();
         toastr.warning(MESSAGE_EDIT_SAVE_FAILED_WARNING);
         await messageEdit(messageId);
         return;

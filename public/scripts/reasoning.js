@@ -1,7 +1,7 @@
 import {
     moment,
 } from '../lib.js';
-import { beginReasoningEditSession, chat, CHAT_SAVE_RESULT, clearActiveMessageEditSession, closeMessageEditor, event_types, eventSource, finishMessageEditProtection, hasActiveMessageEditSession, isGenerating, main_api, messageFormatting, reloadCurrentChat, resolveReasoningEditSession, saveChatConditional, saveChatDebounced, saveSettingsDebounced, substituteParams, syncMesToSwipe, updateMessageBlock } from '../script.js';
+import { beginReasoningEditSession, chat, CHAT_SAVE_RESULT, clearActiveMessageEditSession, closeMessageEditor, deferAuthoritativeReloadAfterMessageEdit, event_types, eventSource, finishMessageEditProtection, hasActiveMessageEditSession, isGenerating, main_api, messageFormatting, resolveReasoningEditSession, saveChatConditional, saveChatDebounced, saveSettingsDebounced, substituteParams, syncMesToSwipe, updateMessageBlock } from '../script.js';
 import { getRegexedString, regex_placement } from './extensions/regex/engine.js';
 import { getCurrentLocale, t, translate } from './i18n.js';
 import { MacrosParser } from './macros.js';
@@ -1406,7 +1406,7 @@ function setReasoningEventHandlers() {
             saveResult = CHAT_SAVE_RESULT.FAILED;
         }
         if (saveResult !== CHAT_SAVE_RESULT.SAVED) {
-            await reloadCurrentChat({ flushPendingSave: false });
+            deferAuthoritativeReloadAfterMessageEdit();
             toastr.warning(t`The reasoning edit could not be saved. Retry it, or copy it before canceling to reload the saved message.`);
             return;
         }
@@ -1439,7 +1439,9 @@ function setReasoningEventHandlers() {
             clearActiveMessageEditSession();
         }
 
-        messageBlock.find('.mes_reasoning_edit_cancel:visible').trigger('click');
+        if (hasMessageEditor) {
+            messageBlock.find('.mes_edit_cancel:visible').trigger('click');
+        }
 
         updateReasoningUI(messageBlock);
         if (!hasMessageEditor) {
