@@ -7,6 +7,7 @@ import {
     event_types,
     getCurrentChatId,
     getFirstDisplayedMessageId,
+    hasActiveMessageEditSession,
     jumpToMessageWindow,
     name1,
     name2,
@@ -1034,6 +1035,10 @@ function getPlannerReloadActionPayload(job = {}) {
 }
 
 async function applyPlannerReloadPayload(payload = null) {
+    if (hasActiveMessageEditSession()) {
+        return reloadPlannerCurrentChat();
+    }
+
     if (!payload || typeof payload !== 'object') {
         return reloadPlannerCurrentChat();
     }

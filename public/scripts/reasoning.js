@@ -1,7 +1,7 @@
 import {
     moment,
 } from '../lib.js';
-import { beginReasoningEditSession, chat, clearActiveMessageEditSession, closeMessageEditor, event_types, eventSource, hasActiveMessageEditSession, isGenerating, main_api, messageFormatting, resolveReasoningEditSession, saveChatConditional, saveChatDebounced, saveSettingsDebounced, substituteParams, syncMesToSwipe, updateMessageBlock } from '../script.js';
+import { beginReasoningEditSession, chat, CHAT_SAVE_RESULT, clearActiveMessageEditSession, closeMessageEditor, event_types, eventSource, finishMessageEditProtection, hasActiveMessageEditSession, isGenerating, main_api, messageFormatting, reloadCurrentChat, resolveReasoningEditSession, saveChatConditional, saveChatDebounced, saveSettingsDebounced, substituteParams, syncMesToSwipe, updateMessageBlock } from '../script.js';
 import { getRegexedString, regex_placement } from './extensions/regex/engine.js';
 import { getCurrentLocale, t, translate } from './i18n.js';
 import { MacrosParser } from './macros.js';
@@ -1392,39 +1392,59 @@ function setReasoningEventHandlers() {
 
         const textarea = messageBlock.find('.reasoning_edit_textarea');
         const newReasoning = String(textarea.val());
-        textarea.remove();
         const reasoningExtra = swipeInfo?.extra ?? message.extra;
-        if (newReasoning === reasoningExtra.reasoning) {
-            if (!messageBlock.find('#curEditTextarea').length) {
-                clearActiveMessageEditSession();
-            }
+        const reasoningChanged = newReasoning !== reasoningExtra.reasoning;
+        if (reasoningChanged) {
+            updateReasoningTargetFromValue({ message, messageId, messageBlock, swipeInfo, swipeIndex }, newReasoning);
+        }
+
+        let saveResult;
+        try {
+            saveResult = await saveChatConditional();
+        } catch (error) {
+            console.error('Reasoning edit save failed', error);
+            saveResult = CHAT_SAVE_RESULT.FAILED;
+        }
+        if (saveResult !== CHAT_SAVE_RESULT.SAVED) {
+            await reloadCurrentChat({ flushPendingSave: false });
+            toastr.warning(t`The reasoning edit could not be saved. Retry it, or copy it before canceling to reload the saved message.`);
             return;
         }
-        updateReasoningTargetFromValue({ message, messageId, messageBlock, swipeInfo, swipeIndex }, newReasoning);
-        await saveChatConditional();
+
+        textarea.remove();
         updateMessageBlock(messageId, message);
 
-        messageBlock.find('.mes_edit_done:visible').trigger('click');
-        if (!messageBlock.find('.mes_edit_done:visible').length) {
+        const messageEditDone = messageBlock.find('.mes_edit_done:visible');
+        messageEditDone.trigger('click');
+        if (!messageEditDone.length) {
             clearActiveMessageEditSession();
         }
-        await eventSource.emit(event_types.MESSAGE_REASONING_EDITED, messageId);
+        if (reasoningChanged) {
+            await eventSource.emit(event_types.MESSAGE_REASONING_EDITED, messageId);
+        }
+        if (!messageEditDone.length) {
+            await finishMessageEditProtection();
+        }
     });
 
-    $(document).on('click', '.mes_reasoning_edit_cancel', function (e) {
+    $(document).on('click', '.mes_reasoning_edit_cancel', async function (e) {
         e.stopPropagation();
         e.preventDefault();
 
-        const { messageBlock } = getMessageFromJquery(this);
+        const { messageId, messageBlock } = getMessageFromJquery(this);
         const textarea = messageBlock.find('.reasoning_edit_textarea');
         textarea.remove();
-        if (!messageBlock.find('#curEditTextarea').length) {
+        const hasMessageEditor = messageBlock.find('#curEditTextarea').length > 0;
+        if (!hasMessageEditor) {
             clearActiveMessageEditSession();
         }
 
         messageBlock.find('.mes_reasoning_edit_cancel:visible').trigger('click');
 
         updateReasoningUI(messageBlock);
+        if (!hasMessageEditor) {
+            await finishMessageEditProtection();
+        }
     });
 
     $(document).on('click', '.mes_edit_add_reasoning', async function () {

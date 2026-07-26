@@ -1,8 +1,8 @@
 import { runLoggedStep } from '../run-context.mjs';
 
 export async function runChatEditCancelOnlyScenario({ page, logger, captureArtifacts }) {
-    const testName = 'chat-edit-cancel-only';
-    const featureTags = ['chat-edit'];
+    const testName = 'chat-edit-draft-protection';
+    const featureTags = ['chat-edit', 'bad-connection'];
 
     const editTarget = await runLoggedStep({
         logger,
@@ -26,19 +26,18 @@ export async function runChatEditCancelOnlyScenario({ page, logger, captureArtif
     await runLoggedStep({
         logger,
         testName,
-        stepName: 'edit-message-and-cancel',
+        stepName: 'preserve-edit-during-redraw',
         featureTags,
         selector: '.mes_edit,.mes_edit_cancel,#curEditTextarea',
-        expected: 'Message edit is canceled with the red X control',
+        expected: 'A background redraw is rejected without replacing the open edit draft',
         action: async () => {
-            await page.editMessageById({
+            const result = await page.verifyEditSurvivesBlockedRedraw({
                 mesId: editTarget.mesId,
-                appendedText: '[selenium-edit-cancel-only]',
-                cancelEdit: true,
+                appendedText: '[selenium-edit-draft-protection]',
             });
-            return { mesId: editTarget.mesId };
+            return { mesId: editTarget.mesId, ...result };
         },
-        onError: error => captureArtifacts({ testName, stepName: 'edit-message-and-cancel', error }),
+        onError: error => captureArtifacts({ testName, stepName: 'preserve-edit-during-redraw', error }),
     });
 
     return { testName, status: 'pass' };
