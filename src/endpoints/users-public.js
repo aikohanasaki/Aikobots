@@ -95,7 +95,7 @@ router.post('/login', async (request, response) => {
         try {
             const cleanupResult = await cleanupDeadLorebookSettingsReferences(getUserDirectories(user.handle));
             if (cleanupResult.changed) {
-                console.info(`Cleaned ${cleanupResult.removedCount} dead lorebook reference${cleanupResult.removedCount === 1 ? '' : 's'} for user ${user.handle}.`);
+                console.info(`Cleaned dead lorebook references for user ${user.handle}.`);
             }
         } catch (error) {
             console.error(`Failed to clean dead lorebook references for user ${user.handle}:`, error);

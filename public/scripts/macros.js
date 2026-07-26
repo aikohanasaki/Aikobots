@@ -442,7 +442,7 @@ function getPickReplaceMacro(rawContent) {
  * @returns {Macro} The dire roll macro
  */
 function getDiceRollMacro() {
-    const rollPattern = /{{roll[ : ]([^}]+)}}/gi;
+    const rollPattern = /{{roll(?:::|[ :])([^}]+)}}/gi;
     const rollReplace = (match, matchValue) => {
         let formula = matchValue.trim();
 

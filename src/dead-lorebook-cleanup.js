@@ -5,6 +5,7 @@ import sanitize from 'sanitize-filename';
 import { sync as writeFileAtomicSync } from 'write-file-atomic';
 
 import { SETTINGS_FILE } from './constants.js';
+import { cleanupDeadLorebookHiddenReferences } from './lorebook-repository.js';
 import { withSettingsPersonasLock } from './settings-lock.js';
 import { getConfigValue } from './util.js';
 
@@ -360,15 +361,15 @@ function writeUserSettings(directories, settings, guard) {
 }
 
 /**
- * Removes explicitly declared dead lorebook names from a user's saved settings.
+ * Removes explicitly declared dead lorebook names from user settings and hidden registries.
  * This only mutates exact configured matches and does not inspect secure lorebook content.
  * @param {import('./users.js').UserDirectoryList} directories User directories
- * @returns {Promise<{changed: boolean, removedCount: number, deadLorebookNames: string[], orphanedCharacterRemovedCount: number, orphanedCharacterSettingsRemovedCount: number}>}
+ * @returns {Promise<{changed: boolean, removedCount: number, deadLorebookNames: string[], orphanedCharacterRemovedCount: number, orphanedCharacterSettingsRemovedCount: number, hiddenReferencesChanged: boolean}>}
  */
 export async function cleanupDeadLorebookSettingsReferences(directories) {
     const deadLorebookNames = getDeadLorebookNames();
 
-    return await withSettingsPersonasLock(directories, async (lock) => {
+    const settingsResult = await withSettingsPersonasLock(directories, async (lock) => {
         const settings = await lock.run(() => readUserSettings(directories));
         const deadLorebookResult = removeDeadLorebookSettingsReferences(settings, deadLorebookNames);
         const orphanedCharacterResult = removeOrphanedCharacterLorebookSettingsReferences(settings, directories.characters);
@@ -387,4 +388,11 @@ export async function cleanupDeadLorebookSettingsReferences(directories) {
 
         return result;
     });
+    const hiddenResult = await cleanupDeadLorebookHiddenReferences(deadLorebookNames);
+
+    return {
+        ...settingsResult,
+        changed: settingsResult.changed || hiddenResult.changed,
+        hiddenReferencesChanged: hiddenResult.changed,
+    };
 }

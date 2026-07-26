@@ -59,6 +59,7 @@ import { IMAGE_OVERSWIPE, MEDIA_DISPLAY } from './constants.js';
 import { t } from './i18n.js';
 import { getBackgroundPath, isCustomBackgroundUrl } from './backgrounds.js';
 import { deriveBackgroundName, extractDominantColor, generateThemePalette } from './util/ThemeGenerator.js';
+import { setMobileBackgroundAudioPlayback } from './mobile-background-audio.js';
 
 export const toastPositionClasses = [
     'toast-top-left',
@@ -305,6 +306,7 @@ export const power_user = {
     show_card_avatar_urls: false,
     play_message_sound: false,
     play_sound_unfocused: true,
+    mobile_background_audio: false,
     auto_save_msg_edits: false,
     confirm_message_delete: true,
     strip_ai_thinking_from_response: false,
@@ -570,6 +572,17 @@ export function playMessageSound() {
         audio.currentTime = 0;
         audio.play();
     }
+}
+
+/**
+ * Applies the mobile background-audio preference to the shared silent audio element.
+ */
+function syncMobileBackgroundAudioPlayback() {
+    setMobileBackgroundAudioPlayback({
+        enabled: !!power_user.mobile_background_audio,
+        mobile: isMobile(),
+        audio: document.getElementById('audio_mobile_background'),
+    });
 }
 
 /**
@@ -2468,6 +2481,7 @@ export async function loadPowerUserSettings(settings, data) {
     $('#auto_continue_target_length').val(power_user.auto_continue.target_length);
     $('#play_message_sound').prop('checked', power_user.play_message_sound);
     $('#play_sound_unfocused').prop('checked', power_user.play_sound_unfocused);
+    $('#mobile_background_audio').prop('checked', power_user.mobile_background_audio);
     $('#never_resize_avatars').prop('checked', power_user.never_resize_avatars);
     $('#show_card_avatar_urls').prop('checked', power_user.show_card_avatar_urls);
     $('#auto_save_msg_edits').prop('checked', power_user.auto_save_msg_edits);
@@ -2587,6 +2601,7 @@ export async function loadPowerUserSettings(settings, data) {
     $(`#character_sort_order option[data-order="${power_user.sort_order}"][data-field="${power_user.sort_field}"]`).prop('selected', true);
     switchReducedMotion();
     switchCompactInputArea();
+    syncMobileBackgroundAudioPlayback();
     updateTruckKunIcon();
     reloadMarkdownProcessor();
     await loadReasoningTemplates(data);
@@ -4207,6 +4222,12 @@ jQuery(() => {
 
     $('#play_sound_unfocused').on('input', function () {
         power_user.play_sound_unfocused = !!$(this).prop('checked');
+        saveSettingsDebounced();
+    });
+
+    $('#mobile_background_audio').on('input', function () {
+        power_user.mobile_background_audio = !!$(this).prop('checked');
+        syncMobileBackgroundAudioPlayback();
         saveSettingsDebounced();
     });
 

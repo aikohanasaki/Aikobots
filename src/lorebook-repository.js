@@ -7,7 +7,11 @@ import { sync as writeFileAtomicSync } from 'write-file-atomic';
 import { write as writeCharacterCard, read as readCharacterCard } from './character-card-parser.js';
 import { SETTINGS_FILE } from './constants.js';
 import { migrateHiddenLorebookBindingReferences } from './hidden-lorebook-bindings.js';
-import { compileAndWriteHiddenLorebookTemplates, migrateHiddenLorebookTemplateReferences } from './hidden-lorebook-templates.js';
+import {
+    compileAndWriteHiddenLorebookTemplates,
+    isHiddenLorebookCompilationPending,
+    migrateHiddenLorebookTemplateReferences,
+} from './hidden-lorebook-templates.js';
 import { getUserDirectories } from './users.js';
 import { assertPathUnderParent, hasUnsafePathSegment } from './path-security.js';
 import { withDirectoryLock } from './file-system-lock.js';
@@ -1869,6 +1873,65 @@ function migrateLorebookHiddenReferences(name, newName) {
     }
 
     return { cleanedHiddenBindings, cleanedHiddenTemplates, hiddenCleanupErrors };
+}
+
+/**
+ * Removes configured dead lorebook names from hidden template source and compiled bindings.
+ * @param {string[]} deadLorebookNames Exact lorebook names to remove
+ * @returns {Promise<{changed: boolean, cleanedHiddenBindings: boolean, cleanedHiddenTemplates: boolean}>}
+ */
+export async function cleanupDeadLorebookHiddenReferences(deadLorebookNames = []) {
+    const names = [...new Set((Array.isArray(deadLorebookNames) ? deadLorebookNames : [])
+        .map(name => String(name || '').trim())
+        .filter(Boolean))];
+
+    return runWithSecureLorebookMutationLock(() => {
+        let cleanedHiddenBindings = false;
+        let cleanedHiddenTemplates = false;
+        let cleanupFailed = false;
+
+        for (const name of names) {
+            try {
+                cleanedHiddenBindings = migrateHiddenLorebookBindingReferences({ oldName: name }).changed || cleanedHiddenBindings;
+            } catch {
+                cleanupFailed = true;
+            }
+
+            try {
+                cleanedHiddenTemplates = migrateHiddenLorebookTemplateReferences({ oldName: name }).changed || cleanedHiddenTemplates;
+            } catch {
+                cleanupFailed = true;
+            }
+        }
+
+        let compilationPending = false;
+        try {
+            compilationPending = isHiddenLorebookCompilationPending();
+        } catch {
+            cleanupFailed = true;
+        }
+        if (cleanedHiddenTemplates || compilationPending) {
+            try {
+                compileAndWriteHiddenLorebookTemplates();
+            } catch {
+                cleanupFailed = true;
+            }
+        }
+
+        if (cleanupFailed) {
+            throw new LorebookRepositoryError(
+                'DeadLorebookHiddenCleanupFailed',
+                'Failed to remove one or more dead lorebook references from the hidden registry.',
+                500,
+            );
+        }
+
+        return {
+            changed: cleanedHiddenBindings || cleanedHiddenTemplates || compilationPending,
+            cleanedHiddenBindings,
+            cleanedHiddenTemplates,
+        };
+    });
 }
 
 export async function migrateLorebookGenerationReferences({ operation, oldName, newName = '', userHandles = [], user = null, referenceState = null } = {}) {

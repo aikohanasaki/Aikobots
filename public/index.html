@@ -2596,6 +2596,12 @@
                                 <input id="play_sound_unfocused" type="checkbox" />
                                 <small data-i18n="Background Sound Only">Background Sound Only</small>
                             </label>
+                            <label for="mobile_background_audio" class="checkbox_label" title="Play silent audio to help generation continue when switching apps. Mobile browsers only." data-i18n="[title]Play silent audio to help generation continue when switching apps. Mobile browsers only.">
+                                <input id="mobile_background_audio" type="checkbox" />
+                                <audio id="audio_mobile_background" src="sounds/silence.mp3" loop hidden></audio>
+                                <small data-i18n="Background Generation (Mobile)">Background Generation (Mobile)</small>
+                                <i class="fa-solid fa-flask" data-i18n="[title]Experimental feature. Mobile browsers may still suspend the tab." title="Experimental feature. Mobile browsers may still suspend the tab."></i>
+                            </label>
                             <label class="checkbox_label" for="relaxed_api_urls" title="Reduce the formatting requirements on API URLs." data-i18n="[title]Reduce the formatting requirements on API URLs">
                                 <input id="relaxed_api_urls" type="checkbox" />
                                 <small data-i18n="Relaxed API URLS">Relaxed API URLs</small>
@@ -5056,39 +5062,27 @@
 
         <div id="onboarding_template" class="template_element">
             <div class="onboarding">
-                <h3 data-i18n="Welcome to SillyTavern!">Welcome to SillyTavern!</h3>
+                <h3 data-i18n="Welcome to SillyTavern!">Welcome to Aikobots!</h3>
                 <div id="onboarding-UI-language-block" class="flex-container alignItemsBaseline">
                     <span data-i18n="UI Language">Language:</span>
                     <select id="onboarding_ui_language_select" class="flex1 margin0">
                         <option value="en">English</option>
                     </select>
                 </div>
-                <b data-i18n="SillyTavern is aimed at advanced users.">
-                    SillyTavern is aimed at advanced users.
-                </b>
                 <ul class="justifyLeft marginTopBot5">
-                    <li><span data-i18n="welcome_message_part_1">Read the</span> <a href="https://docs.sillytavern.app/" target="_blank" data-i18n="welcome_message_part_2">Official Documentation</a><span data-i18n="welcome_message_part_3">.</span></li>
+                    <li><span data-i18n="welcome_message_part_1">Read the</span> <a href="https://www.aikobots.com/overall-fork.html" target="_blank" data-i18n="welcome_message_part_2">Aikobots code fork overview</a><span data-i18n="welcome_message_part_3">.</span></li>
                     <li><span data-i18n="welcome_message_part_4">Type</span> <code>/help</code> <span data-i18n="welcome_message_part_5">in chat for commands and macros.</span></li>
-                    <li><span data-i18n="welcome_message_part_6">Join the</span> <a href="https://discord.gg/sillytavern" data-i18n="Discord server" target="_blank">Discord server</a> <span data-i18n="welcome_message_part_7">for info and announcements.</span></li>
+                    <li><span data-i18n="welcome_message_part_6">Join the</span> <a href="https://discord.gg/rX7AKE2zDn" data-i18n="Discord server" target="_blank">Aikobots Discord server</a> <span data-i18n="welcome_message_part_7">for info and announcements.</span></li>
                 </ul>
                 <div class="expander"></div>
                 <div class="textAlignCenter">
                     <h3 data-i18n="Looking for AI characters?">
                         Looking for AI characters?
                     </h3>
-                    <span>
-                        <span class="menu_button menu_button_icon external_import_button">
-                            <i class="fa-solid fa-cloud-arrow-down"></i>
-                            <span data-i18n="onboarding_import">Import</span>
-                        </span>
-                        <span data-i18n="from supported sources or view">
-                            from supported sources or view
-                        </span>
-                        <span class="open_characters_library menu_button menu_button_icon">
-                            <i class="fa-solid fa-image-portrait"></i>
-                            <span data-i18n="Sample characters">Sample characters</span>
-                        </span>
-                    </span>
+                    <button type="button" class="character_catalog_button menu_button menu_button_icon inline-flex">
+                        <i class="fa-solid fa-book-open"></i>
+                        <span data-i18n="Character Catalog">Character Catalog</span>
+                    </button>
                 </div>
                 <div class="expander"></div>
                 <h3 data-i18n="Your Persona">
