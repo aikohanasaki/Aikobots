@@ -38,4 +38,30 @@ describe('device font scale', () => {
             effectiveScale: 0.5,
         });
     });
+
+    it('falls back for empty and non-scalar values', () => {
+        for (const invalidValue of [null, '', '   ', [], {}, false]) {
+            expect(resolveDeviceFontScales({
+                mobile: true,
+                desktopScale: invalidValue,
+                mobileScale: invalidValue,
+            })).toEqual({
+                desktopScale: 1,
+                mobileScale: 1,
+                effectiveScale: 1,
+            });
+        }
+    });
+
+    it('accepts numeric strings for saved-setting compatibility', () => {
+        expect(resolveDeviceFontScales({
+            mobile: true,
+            desktopScale: '1.2',
+            mobileScale: '0.8',
+        })).toEqual({
+            desktopScale: 1.2,
+            mobileScale: 0.8,
+            effectiveScale: 0.8,
+        });
+    });
 });

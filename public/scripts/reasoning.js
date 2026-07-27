@@ -1,7 +1,7 @@
 import {
     moment,
 } from '../lib.js';
-import { beginReasoningEditSession, chat, CHAT_SAVE_RESULT, clearActiveMessageEditSession, closeMessageEditor, deferAuthoritativeReloadAfterMessageEdit, event_types, eventSource, finishMessageEditProtection, hasActiveMessageEditSession, isGenerating, main_api, messageFormatting, resolveReasoningEditSession, saveChatConditional, saveChatDebounced, saveSettingsDebounced, substituteParams, syncMesToSwipe, updateMessageBlock } from '../script.js';
+import { beginReasoningEditSession, captureMessageEditChatIdentity, chat, CHAT_SAVE_RESULT, clearActiveMessageEditSession, closeMessageEditor, deferAuthoritativeReloadAfterMessageEdit, event_types, eventSource, finishMessageEditProtection, hasActiveMessageEditSession, isGenerating, isMessageEditChatIdentityActive, main_api, messageFormatting, resolveReasoningEditSession, saveChatConditional, saveChatDebounced, saveSettingsDebounced, substituteParams, syncMesToSwipe, updateMessageBlock } from '../script.js';
 import { getRegexedString, regex_placement } from './extensions/regex/engine.js';
 import { getCurrentLocale, t, translate } from './i18n.js';
 import { MacrosParser } from './macros.js';
@@ -1398,6 +1398,7 @@ function setReasoningEventHandlers() {
             updateReasoningTargetFromValue({ message, messageId, messageBlock, swipeInfo, swipeIndex }, newReasoning);
         }
 
+        const editChatIdentity = captureMessageEditChatIdentity();
         let saveResult;
         try {
             saveResult = await saveChatConditional();
@@ -1405,8 +1406,13 @@ function setReasoningEventHandlers() {
             console.error('Reasoning edit save failed', error);
             saveResult = CHAT_SAVE_RESULT.FAILED;
         }
+        if (!isMessageEditChatIdentityActive(editChatIdentity)) {
+            return;
+        }
         if (saveResult !== CHAT_SAVE_RESULT.SAVED) {
-            deferAuthoritativeReloadAfterMessageEdit();
+            if (!deferAuthoritativeReloadAfterMessageEdit(editChatIdentity)) {
+                return;
+            }
             toastr.warning(t`The reasoning edit could not be saved. Retry it, or copy it before canceling to reload the saved message.`);
             return;
         }

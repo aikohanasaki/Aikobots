@@ -5,10 +5,14 @@ const MAX_FONT_SCALE = 1.5;
 /**
  * Normalizes a font scale from saved settings or imported themes.
  * @param {unknown} value Candidate font scale.
- * @param {number} fallback Value used when the candidate is not finite.
+ * @param {number} fallback Value used when the candidate is invalid.
  * @returns {number} A valid font scale.
  */
 function normalizeFontScale(value, fallback) {
+    if (typeof value !== 'number' && (typeof value !== 'string' || value.trim() === '')) {
+        return fallback;
+    }
+
     const number = Number(value);
     return Number.isFinite(number)
         ? Math.min(Math.max(number, MIN_FONT_SCALE), MAX_FONT_SCALE)

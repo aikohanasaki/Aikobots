@@ -3,6 +3,19 @@ export const AIKOBOTS_SWIPE_UUID_KEY = 'aikobots_swipe_uuid';
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
+/**
+ * Compares complete active-chat identities used to guard client-side async work.
+ * @param {object|null|undefined} left First chat identity.
+ * @param {object|null|undefined} right Second chat identity.
+ * @returns {boolean} Whether both identities refer to the same active chat.
+ */
+export function isSameChatIdentity(left, right) {
+    return Boolean(left && right)
+        && left.groupId === right.groupId
+        && left.characterId === right.characterId
+        && left.chatId === right.chatId;
+}
+
 export function isValidAikobotsUuid(value) {
     return typeof value === 'string' && UUID_PATTERN.test(value);
 }

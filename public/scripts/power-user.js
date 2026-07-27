@@ -2010,14 +2010,18 @@ function applyTheme(name) {
         },
         {
             key: 'enableZenSliders',
-            action: () => {
-                switchMessageActions();
+            action: (oldValue, newValue) => {
+                if (oldValue !== newValue) {
+                    void switchZenSliders();
+                }
             },
         },
         {
             key: 'enableLabMode',
-            action: () => {
-                switchMessageActions();
+            action: (oldValue, newValue) => {
+                if (oldValue !== newValue) {
+                    void switchLabMode();
+                }
             },
         },
         {
