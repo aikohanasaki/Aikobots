@@ -196,6 +196,40 @@ describe('STMB regeneration route', () => {
         expect(JSON.stringify(res.payload)).not.toContain('New content');
     });
 
+    it('accepts uppercase target and source hashes', async () => {
+        const source1 = baseEntry({ uid: 1, comment: '[001] One' });
+        const source2 = baseEntry({ uid: 2, comment: '[002] Two', STMB_start: 21, STMB_end: 30 });
+        const target = {
+            uid: 10,
+            comment: '[ARC 001] Old',
+            content: 'Old arc',
+            key: ['arc'],
+            stmemorybooks: true,
+            stmbSummary: true,
+            stmbSummaryTier: 1,
+            stmbSourceEntryUids: [1, 2],
+        };
+        loadBook({ 1: source1, 2: source2, 10: target });
+        const req = requestFor(target, {
+            replacement: { title: '[ARC 001] New', content: 'New arc', keywords: ['new'] },
+            expectedTargetHash: hashRegenerationEntry(target).toUpperCase(),
+            sourceUids: ['1', '2'],
+            sourceHashes: {
+                1: hashRegenerationEntry(source1).toUpperCase(),
+                2: hashRegenerationEntry(source2).toUpperCase(),
+            },
+            chatRef: undefined,
+            currentChatId: undefined,
+            expectedChatRevision: undefined,
+        });
+        const res = response();
+
+        await handler(req, res);
+
+        expect(res.statusCode).toBe(200);
+        expect(transactionSave).toHaveBeenCalledTimes(1);
+    });
+
     it('rejects stale target and chat revisions without mutation', async () => {
         const entry = baseEntry();
         loadBook({ 1: entry });

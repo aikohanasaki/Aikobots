@@ -129,6 +129,7 @@ function createStmbRequestError(status, type, message, extra = {}) {
     return error;
 }
 
+/** Defensively clips reported gaps to the endpoint's requested window; SQLite range reads are already scoped. */
 function intersectRanges(ranges = [], start, end) {
     if (!Number.isInteger(start) || !Number.isInteger(end) || start > end) {
         return [];
@@ -534,7 +535,7 @@ function normalizeRegenerationRequest(body, user) {
     const lorebookName = String(body?.lorebookName || '').trim();
     const storage = normalizeStorage(body?.storage);
     const uid = body?.uid === undefined || body?.uid === null ? '' : String(body.uid).trim();
-    const expectedTargetHash = String(body?.expectedTargetHash || '').trim();
+    const expectedTargetHash = String(body?.expectedTargetHash || '').trim().toLowerCase();
     const replacement = body?.replacement;
     if (!lorebookName || !uid || !/^[a-f0-9]{8}$/i.test(expectedTargetHash) || !replacement || typeof replacement !== 'object' || Array.isArray(replacement)) {
         throw createStmbRequestError(400, 'StmbBadRequest', 'lorebookName, uid, replacement, and expectedTargetHash are required.');
@@ -566,7 +567,7 @@ function normalizeRegenerationRequest(body, user) {
         ? [...new Set(body.sourceUids.map(value => String(value ?? '').trim()).filter(Boolean))]
         : [];
     const sourceHashes = body?.sourceHashes && typeof body.sourceHashes === 'object' && !Array.isArray(body.sourceHashes)
-        ? Object.fromEntries(Object.entries(body.sourceHashes).map(([key, value]) => [String(key), String(value || '').trim()]))
+        ? Object.fromEntries(Object.entries(body.sourceHashes).map(([key, value]) => [String(key), String(value || '').trim().toLowerCase()]))
         : {};
     if (Object.keys(sourceHashes).length > 10_000 || Object.values(sourceHashes).some(value => !/^[a-f0-9]{8}$/i.test(value))) {
         throw createStmbRequestError(400, 'StmbBadRequest', 'sourceHashes contains an invalid hash.');
