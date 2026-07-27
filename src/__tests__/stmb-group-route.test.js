@@ -5,6 +5,8 @@ const saveLorebookForManagement = jest.fn();
 const transactionSave = jest.fn();
 const assertLorebookCheckoutForManagement = jest.fn();
 const isReservedRecommendedTemplateSource = jest.fn();
+const resolveSqliteLogicalChatReference = jest.fn();
+const withChatSaveLock = jest.fn(async (_path, callback) => await callback());
 
 class MockLorebookRepositoryError extends Error {
     constructor(type, message, status = 400) {
@@ -27,7 +29,11 @@ jest.unstable_mockModule('../recommended-chat-template-store.js', () => ({
 }));
 
 jest.unstable_mockModule('../endpoints/chats.js', () => ({
-    resolveSqliteLogicalChatReference: jest.fn(),
+    resolveSqliteLogicalChatReference,
+}));
+
+jest.unstable_mockModule('../chat-storage.js', () => ({
+    withChatSaveLock,
 }));
 
 jest.unstable_mockModule('../stmb-context-settings.js', () => ({
@@ -48,10 +54,12 @@ jest.unstable_mockModule('../active-session-store.js', () => ({
 }));
 
 let handler;
+let syncHandler;
 
 beforeAll(async () => {
     const { router } = await import('../endpoints/stmb.js');
     handler = router.stack.find(layer => layer.route?.path === '/save-group-memory').route.stack[0].handle;
+    syncHandler = router.stack.find(layer => layer.route?.path === '/sync-group-stlo').route.stack[0].handle;
 });
 
 beforeEach(() => {
@@ -113,6 +121,36 @@ function mockLoadedLorebooks() {
 }
 
 describe('STMB multi-lorebook group route', () => {
+    it('synchronizes existing group bindings without returning character metadata', async () => {
+        getLorebookForManagement.mockResolvedValue({
+            data: { entries: {}, stlo: { priority: 4, budget: 2000 } },
+            metadata: { name: 'Alice Book', storage: 'user' },
+        });
+        const request = makeRequest({
+            body: {
+                targets: [{
+                    lorebookName: 'Alice Book',
+                    storage: 'user',
+                    characterNames: ['alice'],
+                }],
+            },
+        });
+        const response = makeResponse();
+
+        await syncHandler(request, response);
+
+        expect(response.payload).toEqual({ ok: true, updatedCount: 1 });
+        expect(transactionSave.mock.calls[0][2].stlo).toMatchObject({
+            priority: 4,
+            budget: 2000,
+            onlyWhenSpeaking: true,
+            characterOverrides: {
+                alice: { priority: 4, orderAdjustment: 0 },
+            },
+        });
+        expect(JSON.stringify(response.payload)).not.toContain('alice');
+    });
+
     it('rejects designated ordinary template targets before reading lorebook data', async () => {
         const request = makeRequest();
         request.body.primary.lorebookName = 'LTM - Alice - Blank';
@@ -180,6 +218,12 @@ describe('STMB multi-lorebook group route', () => {
             STMB_canonicalLorebook: 'Group Book',
             STMB_canonicalEntryUid: primaryEntry.uid,
             STMB_canonicalMemoryNumber: 1,
+        });
+        expect(targetData.stlo).toMatchObject({
+            onlyWhenSpeaking: true,
+            characterOverrides: {
+                alice: { priority: 3, orderAdjustment: 0 },
+            },
         });
         expect(response.payload.entries[0]).not.toHaveProperty('content');
     });

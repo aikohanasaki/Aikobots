@@ -580,6 +580,106 @@ export class ChatPage {
         `);
     }
 
+    async getNonSystemMessageIdsInOrder() {
+        return this.driver.executeScript(`
+            return Array.from(document.querySelectorAll('.mes[mesid]'))
+                .filter(el => String(el.getAttribute('is_system')) !== 'true')
+                .map(el => Number(el.getAttribute('mesid')))
+                .filter(Number.isInteger);
+        `);
+    }
+
+    async verifyEditSurvivesBlockedRedraw({ mesId, appendedText }) {
+        const opened = await this.driver.executeScript(`
+            const message = document.querySelector('.mes[mesid="' + String(arguments[0]) + '"]');
+            const editButton = message?.querySelector('.mes_edit');
+            if (!editButton) return false;
+            editButton.click();
+            return true;
+        `, mesId);
+
+        if (!opened) {
+            throw new Error(`Message edit button was not available for mesId=${mesId}.`);
+        }
+
+        await this.driver.wait(until.elementLocated(By.css(`.mes[mesid="${mesId}"] #curEditTextarea`)), this.config.timeouts.stepMs);
+        const result = await this.driver.executeAsyncScript(`
+            const done = arguments[arguments.length - 1];
+            const mesId = Number(arguments[0]);
+            const appendedText = String(arguments[1]);
+            const timeoutMs = Number(arguments[2]);
+            const textarea = document.querySelector('.mes[mesid="' + mesId + '"] #curEditTextarea');
+            if (!textarea) {
+                done({ error: 'edit textarea disappeared before redraw' });
+                return;
+            }
+
+            textarea.value += appendedText;
+            const expectedValue = textarea.value;
+
+            import('/script.js')
+                .then(async ({ eventSource, event_types, getCurrentChatId, hasActiveMessageEditSession, reloadCurrentChat, renderMessageWindow }) => {
+                    const renderResult = await renderMessageWindow(0, 1);
+                    const reloadResult = await reloadCurrentChat();
+                    await eventSource.emit(event_types.CHAT_CHANGED, getCurrentChatId());
+                    const currentTextarea = document.querySelector('.mes[mesid="' + mesId + '"] #curEditTextarea');
+                    const sameChatRefreshPreserved = hasActiveMessageEditSession();
+                    const draftPreserved = currentTextarea === textarea
+                        && currentTextarea?.isConnected
+                        && currentTextarea.value === expectedValue;
+                    const reloadedAfterCancel = new Promise(resolve => {
+                        const onChatChanged = () => {
+                            clearTimeout(timeout);
+                            eventSource.removeListener(event_types.CHAT_CHANGED, onChatChanged);
+                            resolve(true);
+                        };
+                        const timeout = setTimeout(() => {
+                            eventSource.removeListener(event_types.CHAT_CHANGED, onChatChanged);
+                            resolve(false);
+                        }, timeoutMs);
+                        eventSource.on(event_types.CHAT_CHANGED, onChatChanged);
+                    });
+                    currentTextarea?.closest('.mes')?.querySelector('.mes_edit_cancel')?.click();
+                    done({
+                        renderResult,
+                        reloadResult,
+                        sameChatRefreshPreserved,
+                        reloadedAfterCancel: await reloadedAfterCancel,
+                        draftPreserved,
+                    });
+                })
+                .catch(error => done({ error: error?.message || String(error) }));
+        `, mesId, appendedText, Math.min(this.config.timeouts.stepMs, 5_000));
+
+        if (result?.error) {
+            throw new Error(result.error);
+        }
+        if (result?.renderResult !== false
+            || result?.reloadResult !== false
+            || !result?.draftPreserved
+            || !result?.sameChatRefreshPreserved
+            || !result?.reloadedAfterCancel) {
+            throw new Error(`Active edit was not protected from redraw: ${JSON.stringify(result)}`);
+        }
+
+        await this.driver.wait(async () => {
+            return this.driver.executeScript(`
+                return !document.querySelector('.mes[mesid="' + String(arguments[0]) + '"] #curEditTextarea');
+            `, mesId);
+        }, this.config.timeouts.stepMs);
+        await new Promise(resolve => setTimeout(resolve, 100));
+        await this.driver.wait(async () => {
+            return this.driver.executeAsyncScript(`
+                const done = arguments[arguments.length - 1];
+                import('/script.js')
+                    .then(({ reloadChatMutex }) => done(!reloadChatMutex.isBusy))
+                    .catch(() => done(false));
+            `);
+        }, this.config.timeouts.stepMs);
+
+        return result;
+    }
+
     async getConnectionStatusText() {
         return this.driver.executeScript(`
             const el = document.getElementById('top_chat_connection_profiles_status');

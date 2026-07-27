@@ -288,12 +288,15 @@ UI Theme imported settings with direct CSS variable locks:
 |---|---|---|
 | `blur_strength` | Blur Strength | `--blurStrength`, `--SmartThemeBlurStrength` |
 | `shadow_width` | Shadow Width | `--shadowWidth`, `text-shadow` declarations |
-| `font_scale` | Font Scale | `--fontScale`, `--mainFontSize` |
+| `font_scale` | Desktop Font Scale | `--fontScale`, `--mainFontSize` |
+| `mobile_font_scale` | Mobile Font Scale | `--fontScale`, `--mainFontSize` |
 | `chat_text_line_height` | Message Line Height | `--chatTextLineHeightScale` |
 | `chat_text_letter_spacing` | Message Text Spacing | `--chatTextLetterSpacing` |
 | `top_bar_icon_scale` | Top Bar Icon Size | `--topBarIconScale`, `--topBarIconSize` |
 | `top_bar_icon_spacing` | Top Bar Spacing | `--topBarIconSpacing` |
 | `chat_width` | Chat Width | `--sheldWidth` |
+
+Desktop and mobile font scales are saved independently and selected by the parsed device type, not viewport width. Mobile and tablet devices use `mobile_font_scale`; desktop devices use `font_scale`. Legacy settings and themes without `mobile_font_scale` inherit their existing `font_scale`.
 
 UI Theme imported settings with selector/property locks:
 
@@ -720,3 +723,9 @@ body.layout-custom .mes_text {
 The character Advanced Definitions panel contains the searchable `#recommended_chat_setup_lorebook` and `#recommended_chat_setup_side_prompts` selects inside `#recommended_chat_setup_configuration`. The lorebook select contains only eligible ordinary `LTM` template drafts for the current character. Changes save immediately; the designated lorebook remains editable in the lorebook editor but its rename, delete, storage, activation, binding, and STMB controls are unavailable until another source or `None` is selected. The consumer-facing `#recommended_chat_setup_button` sits directly above the Creator's Notes drawer and uses the same available width.
 
 Core styling for these controls belongs to the smart theme in `public/style.css`. Layouts may adjust spacing, but should preserve the full-width button, readable Select2 inputs, the disabled state, and the existing mobile character-editor flow. The setup confirmation and result views use the standard popup and smart-theme button classes rather than layout-specific colors.
+
+## 20. Memory Books regeneration controls
+
+The core lorebook-entry template contains a hidden `.stmb-regenerate-entry` next to the UID. The row renderer surfaces it only for eligible managed entries in ordinary-user lorebooks. Regeneration always opens `.stmb-regeneration-review`, whose `.stmb-regeneration-columns` present the original and editable replacement side by side on wider screens and as one column below 600px.
+
+Core colors, borders, button states, warning treatment, and responsive behavior live in `public/style.css` and use smart-theme variables. Layouts may change spacing but should keep both review states readable, preserve the disabled button state, and allow `.stmb-regeneration-content` to scroll or resize without overflowing the popup.

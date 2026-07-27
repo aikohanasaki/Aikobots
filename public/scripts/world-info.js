@@ -27,6 +27,8 @@ import {
     getStloSettingsFromLorebook,
     setStloSettingsOnLorebook,
 } from './stlo-utils.js';
+import { STMB_MANAGED_FLAG } from './stmb-core.js';
+import { buildRegenerationIndexes, getRegenerationEligibility } from './stmb-regeneration.js';
 import {
     DEFAULT_WORLD_INFO_SORT_ORDER,
     getWorldInfoSortOrder,
@@ -43,6 +45,15 @@ export const world_info_logic = {
 
 const WI_ENTRY_HEADER_TEMPLATE = $('#entry_edit_template .world_entry');
 const WI_ENTRY_EDIT_TEMPLATE = $('#entry_edit_template .world_entry_edit');
+let stmbRegenerationHandler = null;
+
+/**
+ * Registers the action invoked by eligible STMB lorebook-entry controls.
+ * @param {((button: HTMLButtonElement) => Promise<void>|void)|null} handler Regeneration action.
+ */
+export function registerStmbRegenerationHandler(handler) {
+    stmbRegenerationHandler = typeof handler === 'function' ? handler : null;
+}
 
 export let world_info = {};
 export let selected_world_info = [];
@@ -5511,6 +5522,22 @@ export async function getWorldEntry(name, data, entry) {
 
         // UID display
         editTemplate.find('.world_entry_form_uid_value').text(`(UID: ${entry.uid})`);
+        const regenerateButton = editTemplate.find('.stmb-regenerate-entry');
+        const regenerationEligibility = entry[STMB_MANAGED_FLAG] === true
+            && getLorebookStorageForRequest(name) === 'user'
+            ? getRegenerationEligibility(entry, data, buildRegenerationIndexes(data))
+            : { eligible: false };
+        if (regenerationEligibility.eligible) {
+            regenerateButton
+                .prop('hidden', false)
+                .attr('data-lorebook-name', name)
+                .attr('data-entry-uid', String(entry.uid))
+                .on('click', function (event) {
+                    event.preventDefault();
+                    event.stopPropagation();
+                    void Promise.resolve(stmbRegenerationHandler?.(this));
+                });
+        }
 
         // Key inputs
         const keyInput = enableKeysInputHelper({ template: editTemplate, entry, entryPropName: 'key', originalDataValueName: 'keys', name, data });

@@ -1,5 +1,8 @@
 import { getRequestHeaders } from '../script.js';
-import { STMB_DEFAULT_SUMMARY_PROMPTS } from './stmb-summary.js';
+import {
+    CONSOLIDATION_REGENERATION_PRESET_KEY,
+    STMB_DEFAULT_SUMMARY_PROMPTS,
+} from './stmb-summary.js';
 
 const ARC_PROMPTS_FILE = 'stmb-arc-prompts.json';
 const ARC_PROMPTS_VERSION = 1;
@@ -7,10 +10,30 @@ const ARC_PROMPTS_VERSION = 1;
 const ARC_PROMPT_DISPLAY_NAMES = Object.freeze({
     arc_default: 'Multi-Consolidation Analysis',
     arc_alternate: 'Single Consolidation Analysis',
+    [CONSOLIDATION_REGENERATION_PRESET_KEY]: 'Regenerate Consolidation',
     arc_tiny: 'Compact Consolidation Analysis',
 });
 
 let cachedDoc = null;
+
+/** Returns whether a preset is reserved for entry regeneration. */
+export function isRegenerationOnlyPreset(key) {
+    return String(key || '').trim() === CONSOLIDATION_REGENERATION_PRESET_KEY;
+}
+
+/** Selects a usable ordinary-consolidation default, never the regeneration preset. */
+export function selectConsolidationDefaultPresetKey(configuredKey, presets = []) {
+    const normalizedKey = String(configuredKey || '').trim();
+    const keys = (Array.isArray(presets) ? presets : [])
+        .map(preset => String(preset?.key || preset || '').trim())
+        .filter(Boolean);
+    if (normalizedKey && !isRegenerationOnlyPreset(normalizedKey) && keys.includes(normalizedKey)) {
+        return normalizedKey;
+    }
+    return keys.find(key => key === 'arc_default')
+        || keys.find(key => !isRegenerationOnlyPreset(key))
+        || 'arc_default';
+}
 
 function createMissingArcPromptError(key) {
     const normalizedKey = String(key || 'arc_default').trim() || 'arc_default';
@@ -256,6 +279,7 @@ export function listCachedArcPromptPresets(fallbackSettings = null) {
             createdAt: typeof value?.createdAt === 'string' ? value.createdAt : null,
             isBuiltIn: Object.prototype.hasOwnProperty.call(STMB_DEFAULT_SUMMARY_PROMPTS, key),
             hasOverride: true,
+            regenerationOnly: isRegenerationOnlyPreset(key),
         });
     }
 
@@ -267,6 +291,7 @@ export function listCachedArcPromptPresets(fallbackSettings = null) {
             createdAt: null,
             isBuiltIn: true,
             hasOverride: false,
+            regenerationOnly: isRegenerationOnlyPreset(key),
         });
     }
 
@@ -307,6 +332,9 @@ export async function upsertArcPromptPresetFile(key, prompt, displayName = null)
 
 export async function duplicateArcPromptPresetFile(key) {
     const normalizedKey = String(key || '').trim();
+    if (isRegenerationOnlyPreset(normalizedKey)) {
+        throw new Error('The regeneration-only consolidation prompt cannot be duplicated.');
+    }
     const sourcePrompt = getCachedArcPromptText(normalizedKey);
     if (!sourcePrompt) {
         throw new Error(`Consolidation prompt "${normalizedKey}" not found`);

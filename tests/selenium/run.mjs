@@ -7,6 +7,7 @@ import { ChatPage } from './pages/chat-page.mjs';
 import { createRunContext, runLoggedStep } from './run-context.mjs';
 import { runSetupConnectionProfileScenario } from './scenarios/setup-connection-profile.mjs';
 import { runChatBasicCreateRenameScenario } from './scenarios/chat-basic-create-rename.mjs';
+import { runChatEditCancelOnlyScenario } from './scenarios/chat-edit-cancel-only.mjs';
 import { runChatImportExportRoundtripScenario } from './scenarios/chat-import-export-roundtrip.mjs';
 import { runChatLongSwipeSmokeScenario } from './scenarios/chat-long-swipe-smoke.mjs';
 
@@ -88,6 +89,7 @@ async function main() {
 
         tests.push(await runSetupConnectionProfileScenario({ page, logger, captureArtifacts, config }));
         tests.push(await runChatBasicCreateRenameScenario({ page, logger, captureArtifacts }));
+        tests.push(await runChatEditCancelOnlyScenario({ page, logger, captureArtifacts }));
 
         if (!isSmoke) {
             tests.push(await runChatImportExportRoundtripScenario({

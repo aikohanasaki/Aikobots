@@ -72,6 +72,17 @@ export async function saveStmbGroupMemoryEntries(payload, options = {}) {
     return signal ? postStmbWithSignal('save-group-memory', payload, signal) : postStmb('save-group-memory', payload);
 }
 
+/**
+ * Merges manual-group character filters into target STLO metadata.
+ * @param {object} payload Lorebook targets and character names.
+ * @param {{signal?: AbortSignal|null}} [options] Request options.
+ * @returns {Promise<{ok:boolean, updatedCount:number}>}
+ */
+export async function syncStmbGroupStloMetadata(payload, options = {}) {
+    const { signal = null } = options;
+    return signal ? postStmbWithSignal('sync-group-stlo', payload, signal) : postStmb('sync-group-stlo', payload);
+}
+
 export async function getStmbChatRangeInfo(payload, options = {}) {
     const { signal = null } = options;
     return signal ? postStmbWithSignal('chat-range-info', payload, signal) : postStmb('chat-range-info', payload);
@@ -98,13 +109,13 @@ export async function generateStmbMemory(payload, options = {}) {
 }
 
 export async function generateStmbSummary(payload, options = {}) {
-    const { signal = null, onRateLimitWait = null } = options;
+    const { signal = null, onRateLimitWait = null, responseShape = 'summary' } = options;
     const providerResponse = await generateStmbProviderResponse(payload, signal, onRateLimitWait);
 
     try {
         return {
             ok: true,
-            parsed: parseSummaryJsonResponse(providerResponse),
+            parsed: parseSummaryJsonResponse(providerResponse, { responseShape }),
             providerResponse,
         };
     } catch (error) {
@@ -125,6 +136,17 @@ export async function generateStmbText(payload, options = {}) {
 export async function commitStmbSummaries(payload, options = {}) {
     const { signal = null } = options;
     return signal ? postStmbWithSignal('commit-summaries', payload, signal) : postStmb('commit-summaries', payload);
+}
+
+/**
+ * Atomically replaces one eligible ordinary-user memory entry.
+ * @param {object} payload Regeneration replacement and optimistic-lock data.
+ * @param {{signal?: AbortSignal|null}} [options] Request options.
+ * @returns {Promise<object>}
+ */
+export async function regenerateStmbEntry(payload, options = {}) {
+    const { signal = null } = options;
+    return signal ? postStmbWithSignal('regenerate-entry', payload, signal) : postStmb('regenerate-entry', payload);
 }
 
 export async function upsertStmbEntryByTitle(payload, options = {}) {

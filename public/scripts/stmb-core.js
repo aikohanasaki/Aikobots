@@ -332,29 +332,11 @@ Write compactly but completely — every line should add new information or insi
 Synthesize redundant actions or dialogue into unified cause–effect–emotion beats.
 Favor compression over coverage whenever the two conflict; omit anything that can be inferred from context or established characterization.
 
-For the keywords field:
+For the keywords field, generate **12–20 natural retrieval keywords when the material supports them**. Use fewer rather than padding the list with weak terms. Keywords are search hooks, not miniature summaries or evidence notes.
 
-Generate **15–30 standalone topical keywords** that function as retrieval tags, not micro-summaries. 
-Keywords must be:
-- **Concrete and scene-specific** (locations, objects, proper nouns, unique actions, repeated motifs).
-- **One concept per keyword** — do NOT combine multiple ideas into one keyword.
-- **Useful for retrieval if the user later mentions that noun or action alone**, not only in a specific context.
-- Not {{char}}'s or {{user}}'s names.
-- **Not thematic, emotional, or abstract.** Stop-list: intimacy, vulnerability, trust, dominance, submission, power dynamics, boundaries, jealousy, aftercare, longing, consent, emotional connection.
+Prioritize stable named entities other than {{char}} or {{user}}, major continuity anchors, memorable shared moments, and independent secondary hooks. Use the shortest distinctive wording likely to remain recognizable under paraphrasing or reversed word order. Prefer one central named entity when it already covers several related events; retain a modified phrase only when it provides a genuinely separate retrieval route.
 
-Avoid:
-- Overly specific compound keywords (“David Tokyo marriage”).
-- Narrative or plot-summary style keywords (“art dealer date fail”).
-- Keywords that contain multiple facts or descriptors.
-- Keywords that only make sense when the whole scene is remembered.
-
-Prefer:
-- Proper nouns (e.g., "Chinatown", "Ritz-Carlton bar").
-- Specific physical objects ("CPAP machine", "chocolate chip cookies").
-- Distinctive actions ("cookie baking", "piano apology").
-- Unique phrases or identifiers from the scene used by characters ("pack for forever", "dick-measuring contest").
-
-Your goal: **keywords should fire when the noun/action is mentioned alone**, not only when paired with a specific person or backstory.
+Keywords should normally contain 1–4 words, use ordinary noun phrases, identify distinct parts of the summary, and remain stable under paraphrasing. Exclude incidental scenery, exact administrative details, generic themes, unsupported conclusions, sentence-like evidence descriptions, and redundant variants of the same entity.
 
 Return ONLY the JSON — no additional text.`,
 });

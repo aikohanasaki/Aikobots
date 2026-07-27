@@ -3,6 +3,7 @@ import { describe, expect, it } from '@jest/globals';
 import {
     AIKOBOTS_SWIPE_UUID_KEY,
     compareActiveSwipeState,
+    isSameChatIdentity,
     materializeSwipeGenerationTarget,
     repairPendingOverswipeState,
     replaceSwipeInfoPreservingIdentity,
@@ -12,6 +13,26 @@ import {
 
 const FIRST_UUID = '11111111-1111-4111-8111-111111111111';
 const SECOND_UUID = '22222222-2222-4222-8222-222222222222';
+
+describe('isSameChatIdentity', () => {
+    const identity = {
+        groupId: '',
+        characterId: 'character-a',
+        chatId: 'chat-a',
+    };
+
+    it.each([
+        ['group', { groupId: 'group-b' }],
+        ['character', { characterId: 'character-b' }],
+        ['chat', { chatId: 'chat-b' }],
+    ])('rejects failure recovery after the active %s identity changes', (_label, changedField) => {
+        expect(isSameChatIdentity(identity, { ...identity, ...changedField })).toBe(false);
+    });
+
+    it('accepts a separately captured identity for the same active chat', () => {
+        expect(isSameChatIdentity(identity, { ...identity })).toBe(true);
+    });
+});
 
 function makeMessage() {
     return {
