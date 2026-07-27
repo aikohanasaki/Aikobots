@@ -14,7 +14,7 @@ import { getCharacterDistributionPolicy } from '../character-distribution-regist
 import { getCharacterSharedKey } from '../character-linked-lorebooks.js';
 import { clearCharacterFavoriteState, getCharacterFavorite, getLegacyCharacterFavoriteState } from '../favorites-repository.js';
 import { Jimp, JimpMime } from '../jimp.js';
-import { DEFAULT_AVATAR_PATH } from '../constants.js';
+import { DEFAULT_AVATAR_PATH, SETTINGS_FILE } from '../constants.js';
 import { serverDirectory } from '../server-directory.js';
 
 const contentDirectory = globalThis.DEFAULT_CONTENT_ROOT;
@@ -221,6 +221,32 @@ export function getDefaultPresetFile(filename) {
     } catch (err) {
         console.warn(`Failed to get default file ${filename}`, err);
         return null;
+    }
+}
+
+/**
+ * Copies the default settings file when a user does not already have one.
+ * @param {import('../users.js').UserDirectoryList} directories User directories
+ * @returns {Promise<void>}
+ */
+export async function ensureDefaultSettingsForUser(directories) {
+    const targetPath = path.join(directories.root, SETTINGS_FILE);
+    if (fs.existsSync(targetPath)) {
+        return;
+    }
+
+    await fs.promises.mkdir(directories.root, { recursive: true });
+
+    try {
+        await fs.promises.copyFile(
+            path.join(contentDirectory, SETTINGS_FILE),
+            targetPath,
+            fs.constants.COPYFILE_EXCL,
+        );
+    } catch (error) {
+        if (error?.code !== 'EEXIST') {
+            throw error;
+        }
     }
 }
 
