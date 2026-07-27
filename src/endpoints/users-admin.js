@@ -4,7 +4,7 @@ import path from 'node:path';
 import storage from 'node-persist';
 import express from 'express';
 import lodash from 'lodash';
-import { checkForNewContent, CONTENT_TYPES } from './content-manager.js';
+import { checkForNewContent, CONTENT_TYPES, ensureDefaultSettingsForUser } from './content-manager.js';
 import {
     KEY_PREFIX,
     toKey,
@@ -284,12 +284,13 @@ router.post('/create', requireAdminMiddleware, async (request, response) => {
             enabled: true,
         };
 
+        const directories = getUserDirectories(newUser.handle);
+        await ensureDefaultSettingsForUser(directories);
         await storage.setItem(toKey(handle), newUser);
 
         // Create user directories
         console.info('Creating data directories for', newUser.handle);
         await ensurePublicDirectoriesExist();
-        const directories = getUserDirectories(newUser.handle);
         await checkForNewContent([directories], [CONTENT_TYPES.SETTINGS, CONTENT_TYPES.CHARACTER]);
         return response.json({ handle: newUser.handle });
     } catch (error) {
