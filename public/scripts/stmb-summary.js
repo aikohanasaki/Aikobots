@@ -19,6 +19,12 @@ export const STMB_SUMMARY_TIERS = Object.freeze([
 
 const SUMMARY_TIER_MAP = new Map(STMB_SUMMARY_TIERS.map(config => [config.tier, config]));
 
+const STMB_CONSOLIDATION_KEYWORD_GUIDANCE = `For the keywords field, generate 12–20 natural retrieval keywords when the material supports them. Use fewer rather than padding with weak terms. Keywords are search hooks, not miniature summaries or evidence notes.
+
+Prioritize stable named entities other than {{char}} or {{user}}, major continuity anchors, memorable shared moments, and independent secondary hooks. Use the shortest distinctive wording likely to remain recognizable under paraphrasing or reversed word order. Prefer one central named entity when it already covers related events; retain a modified phrase only when it provides a genuinely separate retrieval route.
+
+Keywords should normally contain 1–4 words, use ordinary noun phrases, identify distinct parts of the summary, and remain stable under paraphrasing. Exclude incidental scenery or props, exact administrative details, generic themes, unsupported conclusions, sentence-like evidence descriptions, and redundant variants of the same entity.`;
+
 export const STMB_DEFAULT_SUMMARY_PROMPTS = Object.freeze({
     arc_default: `You are an expert narrative analyst and memory-engine assistant.
 Your task is to combine multiple {{stmbchildtier}} entries into one or more coherent {{stmbtier}} summaries.
