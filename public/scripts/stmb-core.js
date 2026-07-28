@@ -99,7 +99,7 @@ Capture ALL nuance without repeating verbatim. Make it comprehensive yet digesti
 For the keywords field, provide 15-30 specific, descriptive, relevant keywords for keyword retrieval via word-matching in chat context. Keywords must be concrete and scene-specific (locations, objects, proper nouns, unique actions). Do not use abstract themes (e.g., "sadness", "love") or character names.
 
 Return ONLY the JSON, no other text.`,
-    group: `Analyze the following roleplay scene and create a memory entry from an omniscient point of view.
+    group: `Analyze the following roleplay scene and create a memory entry from an omniscient POV.
 
 You must respond with ONLY valid JSON in this exact format:
 {
@@ -125,19 +125,26 @@ For the content field, use this markdown structure:
 - Exclude flavor-only details unless they reveal a lasting character or relationship change.
 
 ## Attribution
-- Clearly state who did what, knew what, and felt, believed, suspected, misunderstood, or intended what.
+- Clearly state who did what.
+- Clearly state who knew what.
+- Clearly state who felt, believed, suspected, misunderstood, or intended what.
 - Do not assign private thoughts or emotions to a character unless the scene text supports them.
 
 ## Continuity Impact
-- Record decisions, injuries, promises, secrets, changed relationships, new knowledge, unresolved threads, practical consequences, emotional shifts, or altered trust.
+- Record what should matter in future scenes: decisions, injuries, promises, secrets, changed relationships, new knowledge, unresolved threads, practical consequences, emotional shifts, or altered trust.
 - Separate shared knowledge from member-specific knowledge.
 
 ## Exclusions
 - Ignore and exclude all [OOC] or meta discussion.
 - Do not include unsupported assumptions.
-- Do not collapse multiple characters into vague phrases unless every target member clearly shares the state.
+- Do not collapse multiple characters into vague phrases like "they felt" unless every target member clearly felt it.
 
-For the keywords field, generate 15-30 standalone, concrete, scene-specific retrieval keywords. Do not use abstract themes or these major character names: {{group}}.
+For the keywords field:
+- Generate 15-30 standalone topical keywords for retrieval.
+- Keywords must be concrete and scene-specific: locations, objects, proper nouns, unique actions, repeated motifs, plans, injuries, named events, or distinctive phrases.
+- Do not use abstract themes.
+- Do not use these major character names as keywords: {{group}}. NPC names may be used if the NPC played a major role.
+- Prefer keywords that would fire if the user later mentions the noun/action alone.
 
 Return ONLY the JSON, no additional text.`,
     char: `Analyze the following scene and create a memory entry written with {{char}} as the focus.
@@ -149,12 +156,12 @@ You must respond with ONLY valid JSON in this exact format:
   "keywords": ["keyword1", "keyword2", "keyword3"]
 }
 
-Important: This is a targeted memory entry, not a general scene summary.
+Important: This is NOT a general scene summary. This is a targeted memory entry.
 - Write the memory as continuity relevant to {{char}}.
 - Include what {{char}} did, said, thought, felt, noticed, learned, decided, promised, concealed, misunderstood, or was affected by.
-- Include other characters only where their actions, words, emotions, or decisions matter to {{char}}'s future continuity.
+- Include other characters depending on how their actions, words, emotions, or decisions matter to {{char}}'s future continuity.
 - Do not include information {{char}} could not know unless it directly affects future continuity and is clearly marked as external scene knowledge.
-- Attribute actions, thoughts, emotions, and knowledge clearly.
+- Attribute all actions, thoughts, emotions, and knowledge clearly. Do not blur characters together.
 
 For the content field, use this markdown structure:
 
@@ -164,19 +171,24 @@ For the content field, use this markdown structure:
 ## Target-Relevant Events
 - Summarize the events that matter to {{char}} in chronological order.
 - Use cause -> intention -> reaction -> consequence logic.
+- Exclude flavor-only details unless they reveal a lasting character or relationship change.
 
 ## Attribution
-- Clearly state who did what, knew what, and felt, believed, suspected, misunderstood, or intended what.
+- Clearly state who did what.
+- Clearly state who knew what.
+- Clearly state who felt, believed, suspected, misunderstood, or intended what.
+- Do not assign private thoughts or emotions to a character unless the scene text supports them.
 
 ## Continuity Impact
-- Record decisions, injuries, promises, secrets, changed relationships, new knowledge, unresolved threads, practical consequences, emotional shifts, or altered trust.
+- Record what should matter in future scenes: decisions, injuries, promises, secrets, changed relationships, new knowledge, unresolved threads, practical consequences, emotional shifts, or altered trust.
+- Separate shared knowledge from member-specific knowledge.
 
 ## Exclusions
 - Ignore and exclude all [OOC] or meta discussion.
-- Do not summarize material that is not relevant to {{char}}.
+- Do not summarize the whole scene if it is not relevant to {{char}}.
 - Do not include unsupported assumptions.
 
-For the keywords field, generate 15-30 concrete, scene-specific retrieval keywords. Do not use abstract themes or character names.
+For the keywords field, generate 15-30 specific, descriptive, highly relevant keywords for database retrieval - focus on the most important topical terms. Keywords must be concrete and scene-specific (locations, objects, proper nouns, unique actions). No compound keywords unless they are proper nouns. Do not use abstract themes (e.g., "sadness", "love") or character names.
 
 Return ONLY the JSON, no additional text.`,
     summarize: `Analyze the following roleplay scene and return a structured summary as JSON.
@@ -305,38 +317,107 @@ Use concrete nouns (e.g., “rice cooker” > “appliance”).
 Only use adjectives/adverbs when they materially affect tone, emotion, or characterization.  
 Focus on **cause → intention → reaction → consequence** chains for clarity and compression.
 
+The \`content\` field must use this structure:
+
 # [Scene Title]
-**Timeline**: (day/time)
+
+**Timeline**: [Most specific date and time supported by the source entries; if unspecified, state unspecified or use relative time.]
 
 ## Story Beats
-- Present all major actions, revelations, and emotional or magical shifts in order.
-- Capture clear cause–effect logic: what triggered what, and why it mattered.
-- Only include plot-affecting interactions and do not capture flavor-only beats.
+
+* Present the major actions, revelations, decisions, and emotional or magical shifts in chronological order.
+* Explain what triggered each development, why characters acted, how others reacted, and what resulted.
+* Include plot-affecting interactions, meaningful shared experiences, and events that changed relationships or future continuity.
+* Omit repeated gestures, room dressing, background objects, and logistical detail unless they directly affected events.
 
 ## Character Dynamics
-- Summarize how each character’s **motives, emotions, and relationships** evolved.
-- Include subtext, tension, or silent implications.
-- Highlight key beats of conflict, vulnerability, trust, or power shifts.
+
+* Explain how motives, emotions, relationships, and power dynamics changed during the summarized period.
+* Capture consequential subtext, tension, vulnerability, trust, conflict, avoidance, affection, resentment, or loyalty.
+* Include small or domestic experiences only when they meaningfully shaped relationship history.
+* Do not repeat plot events unless needed to explain the interpersonal change they caused.
+
+## Important Facts
+
+* Record newly established facts likely to matter later, including plans, risks, abilities, limitations, preferences, promises, secrets, debts, injuries, magical effects, discoveries, and obligations.
+* Exclude casual preferences, scenery, errands, paperwork, clothing, furniture, weather, and other incidental details unless they became continuity-relevant.
 
 ## Key Exchanges
-- Include only pivotal dialogue that defines tone, emotion, or change.
-- Attribute speakers by name; keep quotes short but exact.
-- BE SELECTIVE. Maximum of 8 quotes.
+
+* Include only dialogue that defined a revelation, decision, conflict, emotional shift, or relationship change.
+* Attribute each quotation by speaker name.
+* Include a direct quotation only when the source entries preserve its exact wording. Never reconstruct quoted dialogue from a paraphrase.
+* Preserve distinctive phrases or identifiers, such as “pack for forever” or “dick-measuring contest,” only when they are memorable or relationship-relevant.
+* Include no more than 8 quotations.
 
 ## Outcome & Continuity
-- Detail resulting **decisions, emotional states, physical/magical effects, or narrative consequences**.
-- Include all elements that influence future continuity (knowledge, relationships, injuries, promises, etc.).
-- Note any unresolved threads or foreshadowed elements.
 
-Write compactly but completely — every line should add new information or insight.  
-Synthesize redundant actions or dialogue into unified cause–effect–emotion beats.
-Favor compression over coverage whenever the two conflict; omit anything that can be inferred from context or established characterization.
+* State the final narrative, emotional, relational, physical, or magical condition produced by the events.
+* Record resulting decisions, plans, risks, promises, secrets, injuries, knowledge, and obligations that affect what happens next.
+* Identify unresolved threads, pending conflicts, future consequences, and foreshadowed developments.
+* Do not recap the full sequence of events again.
 
-For the keywords field, generate **12–20 natural retrieval keywords when the material supports them**. Use fewer rather than padding the list with weak terms. Keywords are search hooks, not miniature summaries or evidence notes.
+For the \`keywords\` field:
 
-Prioritize stable named entities other than {{char}} or {{user}}, major continuity anchors, memorable shared moments, and independent secondary hooks. Use the shortest distinctive wording likely to remain recognizable under paraphrasing or reversed word order. Prefer one central named entity when it already covers several related events; retain a modified phrase only when it provides a genuinely separate retrieval route.
+Generate **12–20 natural retrieval keywords when the material supports them**. Use fewer rather than padding the list with weak terms. Keywords are search hooks, not miniature summaries or evidence notes.
 
-Keywords should normally contain 1–4 words, use ordinary noun phrases, identify distinct parts of the summary, and remain stable under paraphrasing. Exclude incidental scenery, exact administrative details, generic themes, unsupported conclusions, sentence-like evidence descriptions, and redundant variants of the same entity.
+Prioritize:
+
+1. **Stable named entities**: people other than {{char}} or {{user}}, places, organizations, events, documents, factions, spells, or distinctive objects.
+2. **Major continuity anchors**: plans, threats, secrets, discoveries, investigations, conflicts, injuries, promises, relationship changes, and unresolved threads.
+3. **Memorable moments**: meaningful shared activities, gifts, food, rituals, jokes, care-taking, arguments, or domestic events.
+4. **Independent secondary hooks** that retrieve a separate part of the summarized material.
+
+### Keyword construction
+
+Use the shortest distinctive wording likely to remain recognizable under paraphrasing or reversed word order.
+
+Examples:
+
+* \`Gala of the Silver Rose\` or \`Silver Rose Gala\` → \`Silver Rose\`
+* \`Bromet Response SA\` → \`Bromet\`
+* \`Château D’Aramitz\`, Comte D’Aramitz, or a plan involving him → \`D’Aramitz\`
+* Keep \`Althof Ledger\` when both words are required to identify the object.
+
+Prefer one central named entity when it already covers several related events:
+
+* \`D’Aramitz rescue plan\` → \`D’Aramitz\`
+* \`Bromet hidden contractors\` → \`Bromet\`
+* \`Althof Ledger substitution\` → \`Althof Ledger\`
+
+Retain a modified phrase only when it provides an independent retrieval route not covered by the central entity:
+
+* \`fake caterers\`
+* \`ledger facsimile\`
+* \`safehouse breakfast\`
+* \`counter-surveillance camera\`
+
+When several clues establish one conclusion, usually tag the resulting finding rather than each supporting clue:
+
+* Uniforms, badges, and vehicle access → \`fake caterers\`
+* Payments and company records → \`Bromet\`
+* A covert tactical team at the gala → \`suspected assassination\`
+* A rental used for equipment and disguises → \`staging villa\`
+
+A supporting clue may remain only when it is memorable, likely to recur, or independently useful for retrieval.
+
+Keywords should normally:
+
+* Contain 1–4 words.
+* Use ordinary noun phrases.
+* Identify genuinely distinct parts of the summary.
+* Remain stable if later descriptions use different wording.
+
+Exclude:
+
+* Incidental scenery or props.
+* Exact times, quantities, card digits, invoice wording, or administrative details.
+* Generic themes such as \`danger\`, \`romance\`, or \`conversation\`.
+* Unsupported conclusions.
+* Sentence-like evidence descriptions.
+* Multiple keywords that merely restate or narrow the same named entity.
+
+Before returning the JSON, silently verify that each keyword is natural to search, continuity-relevant, stable under paraphrasing, independently useful, and no longer than necessary.
 
 Return ONLY the JSON — no additional text.`,
 });
