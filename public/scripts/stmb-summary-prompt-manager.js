@@ -1,9 +1,15 @@
 import { getRequestHeaders } from '../script.js';
 import { translate } from './i18n.js';
 import { STMB_DEFAULT_PROMPTS } from './stmb-core.js';
+import { migrateStmbPromptDefaults } from './stmb-prompt-default-migration.js';
 
 const SUMMARY_PROMPTS_FILE = 'stmb-summary-prompts.json';
-const SUMMARY_PROMPTS_VERSION = 1;
+const SUMMARY_PROMPTS_VERSION = 2;
+const LEGACY_SUMMARY_PROMPT_SIGNATURES = Object.freeze({
+    group: '2134:1879064934380077',
+    char: '1827:6898753829110431',
+    comprehensive: '3570:496210695506964',
+});
 
 const SUMMARY_PROMPT_DISPLAY_NAMES = Object.freeze({
     summary: {
@@ -243,6 +249,14 @@ async function loadDoc(settings = null) {
                 shouldSave = true;
             } else {
                 data = parsed;
+                if (migrateStmbPromptDefaults(
+                    data,
+                    SUMMARY_PROMPTS_VERSION,
+                    LEGACY_SUMMARY_PROMPT_SIGNATURES,
+                    STMB_DEFAULT_PROMPTS,
+                )) {
+                    shouldSave = true;
+                }
                 if (isMissingBuiltInPromptOverride(data)) {
                     data = buildNormalizedPromptsDoc(data, settings);
                     shouldSave = true;

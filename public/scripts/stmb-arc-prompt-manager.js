@@ -3,9 +3,15 @@ import {
     CONSOLIDATION_REGENERATION_PRESET_KEY,
     STMB_DEFAULT_SUMMARY_PROMPTS,
 } from './stmb-summary.js';
+import { migrateStmbPromptDefaults } from './stmb-prompt-default-migration.js';
 
 const ARC_PROMPTS_FILE = 'stmb-arc-prompts.json';
-const ARC_PROMPTS_VERSION = 1;
+const ARC_PROMPTS_VERSION = 2;
+const LEGACY_ARC_PROMPT_SIGNATURES = Object.freeze({
+    arc_default: '2872:1323477331412122',
+    arc_alternate: '1713:3690939435338632',
+    [CONSOLIDATION_REGENERATION_PRESET_KEY]: '1662:8783551660719629',
+});
 
 const ARC_PROMPT_DISPLAY_NAMES = Object.freeze({
     arc_default: 'Multi-Consolidation Analysis',
@@ -194,6 +200,12 @@ async function loadDoc(settings = null) {
                 throw new Error('Invalid consolidation prompts file structure.');
             }
             data = parsed;
+            shouldCreate = migrateStmbPromptDefaults(
+                data,
+                ARC_PROMPTS_VERSION,
+                LEGACY_ARC_PROMPT_SIGNATURES,
+                STMB_DEFAULT_SUMMARY_PROMPTS,
+            );
         }
     } catch (error) {
         if (!shouldCreate) {
@@ -201,11 +213,15 @@ async function loadDoc(settings = null) {
         }
     }
 
-    if (shouldCreate) {
+    if (!data) {
         data = {
             version: ARC_PROMPTS_VERSION,
             overrides: buildInitialOverrides(settings),
         };
+        shouldCreate = true;
+    }
+
+    if (shouldCreate) {
         await saveDoc(data);
     }
 
