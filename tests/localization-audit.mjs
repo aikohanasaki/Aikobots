@@ -17,6 +17,14 @@ const FIX_TEXT = process.argv.includes('--fix-text');
 const CHECK_LOCALES = process.argv.includes('--check-locales');
 const ALLOW_MISSING = process.argv.includes('--allow-missing');
 const PRIORITY_LOCALES = ['de-de', 'fr-fr', 'ja-jp'];
+const REQUIRED_STMB_PROMPT_KEYS = [
+    ...['summary', 'group', 'char', 'summarize', 'synopsis', 'sumup', 'minimal', 'northgate', 'aelemar', 'comprehensive']
+        .map(key => `STMemoryBooks_Prompt_${key}`),
+    ...['arc_default', 'arc_alternate', 'arc_regenerate', 'arc_tiny']
+        .map(key => `STMemoryBooks_ConsolidationPrompt_${key}`),
+    ...['Plotpoints', 'Status', 'CastOfCharacters', 'Assess']
+        .flatMap(key => [`STMemoryBooks_${key}Prompt`, `STMemoryBooks_${key}ResponseFormat`]),
+];
 const PROTECTED_BRANDS = [
     'Aikobots', 'STMB', 'Memory Books', 'Data Maid', 'SillyTavern', 'OpenAI', 'Anthropic',
     'Claude', 'Cohere', 'CometAPI', 'DeepSeek', 'Electron Hub', 'Fireworks AI',
@@ -216,6 +224,11 @@ function collectSourceCatalog(filePaths) {
                 }
             }
         }
+    }
+
+    const stmbPromptSource = path.join(PUBLIC_ROOT, 'scripts', 'stmb-summary-prompt-manager.js');
+    for (const key of REQUIRED_STMB_PROMPT_KEYS) {
+        addCatalogKey(catalog, key, stmbPromptSource, 0);
     }
 
     return catalog;

@@ -1,7 +1,10 @@
 import { getRequestHeaders } from '../script.js';
-import { translate } from './i18n.js';
+import { getCurrentLocale, translate } from './i18n.js';
 import { STMB_DEFAULT_PROMPTS } from './stmb-core.js';
-import { migrateStmbPromptDefaults } from './stmb-prompt-default-migration.js';
+import {
+    migrateStmbPromptDefaults,
+    syncStmbLocalizedPromptFields,
+} from './stmb-prompt-default-migration.js';
 
 const SUMMARY_PROMPTS_FILE = 'stmb-summary-prompts.json';
 const SUMMARY_PROMPTS_VERSION = 2;
@@ -55,6 +58,17 @@ const SUMMARY_PROMPT_DISPLAY_NAMES = Object.freeze({
 });
 
 let cachedDoc = null;
+
+function getBuiltInSummaryPrompts() {
+    return Object.fromEntries(Object.entries(STMB_DEFAULT_PROMPTS).map(([key, prompt]) => [
+        key,
+        translate(prompt, `STMemoryBooks_Prompt_${key}`),
+    ]));
+}
+
+function toPromptRecords(prompts) {
+    return Object.fromEntries(Object.entries(prompts || {}).map(([key, prompt]) => [key, { prompt }]));
+}
 
 function createMissingSummaryPromptError(key) {
     const normalizedKey = String(key || 'summary').trim() || 'summary';
@@ -121,7 +135,7 @@ function buildInitialOverrides(settings = null) {
     const overrides = {};
     const timestamp = new Date().toISOString();
 
-    for (const [key, prompt] of Object.entries(STMB_DEFAULT_PROMPTS || {})) {
+    for (const [key, prompt] of Object.entries(getBuiltInSummaryPrompts())) {
         overrides[key] = {
             displayName: getDefaultDisplayName(key),
             prompt: String(prompt || ''),
@@ -159,6 +173,7 @@ function buildNormalizedPromptsDoc(source = null, settings = null) {
     const normalized = {
         version: SUMMARY_PROMPTS_VERSION,
         overrides: buildInitialOverrides(settings),
+        ...(source?.builtinPromptState ? { builtinPromptState: structuredClone(source.builtinPromptState) } : {}),
     };
 
     const sourceOverrides = source?.overrides && typeof source.overrides === 'object'
@@ -253,7 +268,7 @@ async function loadDoc(settings = null) {
                     data,
                     SUMMARY_PROMPTS_VERSION,
                     LEGACY_SUMMARY_PROMPT_SIGNATURES,
-                    STMB_DEFAULT_PROMPTS,
+                    getBuiltInSummaryPrompts(),
                 )) {
                     shouldSave = true;
                 }
@@ -266,6 +281,17 @@ async function loadDoc(settings = null) {
     } catch (error) {
         throw error;
     }
+
+    const localizedPrompts = getBuiltInSummaryPrompts();
+    const localeSync = syncStmbLocalizedPromptFields(
+        data.overrides,
+        toPromptRecords(localizedPrompts),
+        toPromptRecords(STMB_DEFAULT_PROMPTS),
+        data.builtinPromptState,
+        getCurrentLocale(),
+    );
+    data.builtinPromptState = localeSync.state;
+    shouldSave ||= localeSync.changed;
 
     if (shouldSave) {
         await saveDoc(data);
@@ -292,7 +318,8 @@ export function getCachedSummaryPromptText(key, fallbackSettings = null) {
         return fallbackPrompt;
     }
 
-    return STMB_DEFAULT_PROMPTS[normalizedKey] || STMB_DEFAULT_PROMPTS.summary;
+    const builtIns = getBuiltInSummaryPrompts();
+    return builtIns[normalizedKey] || builtIns.summary;
 }
 
 export function getRequiredSummaryPromptText(key, fallbackSettings = null) {
@@ -397,7 +424,7 @@ export async function upsertSummaryPromptPresetFile(key, prompt, displayName = n
 export async function duplicateSummaryPromptPresetFile(sourceKey) {
     const data = await loadDoc();
     const normalizedKey = String(sourceKey || '').trim();
-    const sourcePrompt = data.overrides[normalizedKey]?.prompt || STMB_DEFAULT_PROMPTS[normalizedKey];
+    const sourcePrompt = data.overrides[normalizedKey]?.prompt || getBuiltInSummaryPrompts()[normalizedKey];
     if (typeof sourcePrompt !== 'string' || !sourcePrompt.trim()) {
         throw new Error(`Preset "${normalizedKey}" not found`);
     }
@@ -433,7 +460,8 @@ export async function recreateBuiltInSummaryPromptOverridesFile() {
     const data = await loadDoc();
     const timestamp = new Date().toISOString();
     let replaced = 0;
-    for (const [key, prompt] of Object.entries(STMB_DEFAULT_PROMPTS || {})) {
+    const localizedPrompts = getBuiltInSummaryPrompts();
+    for (const [key, prompt] of Object.entries(localizedPrompts)) {
         data.overrides[key] = {
             displayName: getDefaultDisplayName(key),
             prompt: String(prompt || ''),
@@ -442,6 +470,14 @@ export async function recreateBuiltInSummaryPromptOverridesFile() {
         };
         replaced++;
     }
+    const localeSync = syncStmbLocalizedPromptFields(
+        data.overrides,
+        toPromptRecords(localizedPrompts),
+        toPromptRecords(STMB_DEFAULT_PROMPTS),
+        data.builtinPromptState,
+        getCurrentLocale(),
+    );
+    data.builtinPromptState = localeSync.state;
     await saveDoc(data);
     return { replaced };
 }

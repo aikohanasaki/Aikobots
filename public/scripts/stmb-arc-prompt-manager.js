@@ -1,9 +1,13 @@
 import { getRequestHeaders } from '../script.js';
+import { getCurrentLocale, translate } from './i18n.js';
 import {
     CONSOLIDATION_REGENERATION_PRESET_KEY,
     STMB_DEFAULT_SUMMARY_PROMPTS,
 } from './stmb-summary.js';
-import { migrateStmbPromptDefaults } from './stmb-prompt-default-migration.js';
+import {
+    migrateStmbPromptDefaults,
+    syncStmbLocalizedPromptFields,
+} from './stmb-prompt-default-migration.js';
 
 const ARC_PROMPTS_FILE = 'stmb-arc-prompts.json';
 const ARC_PROMPTS_VERSION = 2;
@@ -21,6 +25,17 @@ const ARC_PROMPT_DISPLAY_NAMES = Object.freeze({
 });
 
 let cachedDoc = null;
+
+function getBuiltInArcPrompts() {
+    return Object.fromEntries(Object.entries(STMB_DEFAULT_SUMMARY_PROMPTS).map(([key, prompt]) => [
+        key,
+        translate(prompt, `STMemoryBooks_ConsolidationPrompt_${key}`),
+    ]));
+}
+
+function toPromptRecords(prompts) {
+    return Object.fromEntries(Object.entries(prompts || {}).map(([key, prompt]) => [key, { prompt }]));
+}
 
 /** Returns whether a preset is reserved for entry regeneration. */
 export function isRegenerationOnlyPreset(key) {
@@ -120,7 +135,7 @@ function buildInitialOverrides(settings = null) {
     const overrides = {};
     const timestamp = new Date().toISOString();
 
-    for (const [key, prompt] of Object.entries(STMB_DEFAULT_SUMMARY_PROMPTS || {})) {
+    for (const [key, prompt] of Object.entries(getBuiltInArcPrompts())) {
         overrides[key] = {
             displayName: getDefaultDisplayName(key, prompt),
             prompt: String(prompt || ''),
@@ -204,7 +219,7 @@ async function loadDoc(settings = null) {
                 data,
                 ARC_PROMPTS_VERSION,
                 LEGACY_ARC_PROMPT_SIGNATURES,
-                STMB_DEFAULT_SUMMARY_PROMPTS,
+                getBuiltInArcPrompts(),
             );
         }
     } catch (error) {
@@ -220,6 +235,17 @@ async function loadDoc(settings = null) {
         };
         shouldCreate = true;
     }
+
+    const localizedPrompts = getBuiltInArcPrompts();
+    const localeSync = syncStmbLocalizedPromptFields(
+        data.overrides,
+        toPromptRecords(localizedPrompts),
+        toPromptRecords(STMB_DEFAULT_SUMMARY_PROMPTS),
+        data.builtinPromptState,
+        getCurrentLocale(),
+    );
+    data.builtinPromptState = localeSync.state;
+    shouldCreate ||= localeSync.changed;
 
     if (shouldCreate) {
         await saveDoc(data);
@@ -246,7 +272,8 @@ export function getCachedArcPromptText(key, fallbackSettings = null) {
         return fallbackPrompt;
     }
 
-    return STMB_DEFAULT_SUMMARY_PROMPTS[normalizedKey] || STMB_DEFAULT_SUMMARY_PROMPTS.arc_default;
+    const builtIns = getBuiltInArcPrompts();
+    return builtIns[normalizedKey] || builtIns.arc_default;
 }
 
 export function getRequiredArcPromptText(key) {
@@ -386,7 +413,8 @@ export async function recreateBuiltInArcPromptOverridesFile() {
     const doc = structuredClone(await loadDoc());
     const timestamp = new Date().toISOString();
     let replaced = 0;
-    for (const [key, prompt] of Object.entries(STMB_DEFAULT_SUMMARY_PROMPTS || {})) {
+    const localizedPrompts = getBuiltInArcPrompts();
+    for (const [key, prompt] of Object.entries(localizedPrompts)) {
         doc.overrides[key] = {
             displayName: getDefaultDisplayName(key, prompt),
             prompt: String(prompt || ''),
@@ -395,6 +423,14 @@ export async function recreateBuiltInArcPromptOverridesFile() {
         };
         replaced++;
     }
+    const localeSync = syncStmbLocalizedPromptFields(
+        doc.overrides,
+        toPromptRecords(localizedPrompts),
+        toPromptRecords(STMB_DEFAULT_SUMMARY_PROMPTS),
+        doc.builtinPromptState,
+        getCurrentLocale(),
+    );
+    doc.builtinPromptState = localeSync.state;
     await saveDoc(doc);
     return { replaced };
 }
