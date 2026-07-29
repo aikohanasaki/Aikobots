@@ -7,7 +7,7 @@ import { parse as parseHtml } from 'parse5';
 const PUBLIC_ROOT = path.resolve(process.cwd(), 'public');
 const SKIPPED_DIRECTORIES = new Set(['lib', 'locales', 'third-party']);
 const LOCALIZABLE_EXTENSIONS = new Set(['.html', '.js']);
-const ATTRIBUTE_DIRECTIVE = /^\[([^\]\s]+)\](.+)$/;
+const ATTRIBUTE_DIRECTIVE = /^\[([^\]\s]+)\]([\s\S]+)$/;
 const LOCALIZABLE_ATTRIBUTES = ['title', 'placeholder', 'aria-label', 'alt'];
 const OPENING_TAG = /<[a-z][^<>]*?>/gis;
 const LEAF_TEXT = /<([a-z][\w:-]*)(\s[^<>]*?)?>([^<>{}$]*[A-Za-z][^<>{}$]*)<\/\1>/gis;
@@ -121,11 +121,11 @@ function collectSourceCatalog(filePaths) {
     for (const filePath of filePaths) {
         const source = fs.readFileSync(filePath, 'utf8');
         for (const match of source.matchAll(/\bdata-i18n\s*=\s*(["'])(.*?)\1/gs)) {
-            for (const directive of match[2].split(';')) {
+            for (const directive of decodeHtmlSourceText(match[2]).split(';')) {
                 if (/\$\{|\{\{|<%/.test(directive)) {
                     continue;
                 }
-                const attributeMatch = directive.match(/^\[([^\]\s]+)\](.+)$/);
+                const attributeMatch = directive.match(ATTRIBUTE_DIRECTIVE);
                 const key = attributeMatch?.[2] || directive;
                 let sourceText = key;
                 if (attributeMatch) {
@@ -768,7 +768,7 @@ function auditFile(filePath) {
     for (const match of source.matchAll(directivePattern)) {
         const line = getLineNumber(source, match.index);
         const relativePath = path.relative(process.cwd(), filePath);
-        const directives = match[2].split(';');
+        const directives = decodeHtmlSourceText(match[2]).split(';');
 
         for (const directive of directives) {
             if (!directive.trim()) {

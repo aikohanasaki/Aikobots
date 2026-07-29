@@ -1,4 +1,5 @@
 const storageKey = 'language';
+const attributeDirective = /^\[([^\]\s]+)\]([\s\S]+)$/;
 const overrideLanguage = localStorage.getItem(storageKey);
 const localeFile = String(overrideLanguage || navigator.language || navigator.userLanguage || 'en').toLowerCase();
 var langs;
@@ -149,7 +150,7 @@ function findLang(language) {
 function translateElement(element) {
     const keys = element.getAttribute('data-i18n').split(';'); // Multi-key entries are ; delimited
     for (const key of keys) {
-        const attributeMatch = key.match(/\[(\S+)\](.+)/); // [attribute]key
+        const attributeMatch = key.match(attributeDirective); // [attribute]key
         if (attributeMatch) { // attribute-tagged key
             const localizedValue = localeData?.[attributeMatch[2]];
             if (localizedValue || localizedValue === '') {
@@ -190,7 +191,7 @@ async function getMissingTranslations() {
         $(document).find('[data-i18n]').each(function () {
             const keys = $(this).data('i18n').split(';'); // Multi-key entries are ; delimited
             for (const key of keys) {
-                const attributeMatch = key.match(/\[(\S+)\](.+)/); // [attribute]key
+                const attributeMatch = key.match(attributeDirective); // [attribute]key
                 if (attributeMatch) { // attribute-tagged key
                     const localizedValue = localeData?.[attributeMatch[2]];
                     if (!localizedValue) {
