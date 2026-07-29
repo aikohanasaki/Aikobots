@@ -2,10 +2,10 @@ import { cloneStloSettings } from './stlo-utils.js';
 
 export const STMB_PARITY = Object.freeze({
     sourceRepo: 'aikohanasaki/SillyTavern-MemoryBooks',
-    sourceCommit: '699840b63bae5f3613c3632b7b195cbf63dd1909',
+    sourceCommit: 'cae7ee71d1730b6ee7f6829b955a2b53566a9b02',
 });
 
-export const STMB_SETTINGS_VERSION = 4;
+export const STMB_SETTINGS_VERSION = 5;
 export const STMB_METADATA_KEY = 'STMemoryBooks';
 export const STMB_MANAGED_FLAG = 'stmemorybooks';
 export const STMB_DEFAULT_PROFILE_NAME = 'Current SillyTavern Settings';
@@ -469,6 +469,10 @@ export function createDefaultStmbProfile() {
         groupPreset: 'group',
         characterPreset: 'char',
         skipStructuredOutput: false,
+        connectionProfileId: '',
+        connectionProfileName: '',
+        modelOverride: '',
+        temperatureOverride: null,
         connection: {
             api: 'current_st',
         },
@@ -578,7 +582,10 @@ function sanitizeProfile(rawProfile) {
     const fallback = createDefaultStmbProfile();
     const profile = rawProfile && typeof rawProfile === 'object' ? rawProfile : {};
     const connection = profile.connection && typeof profile.connection === 'object' ? profile.connection : {};
-    const connectionApi = typeof connection.api === 'string' && connection.api.trim() ? connection.api.trim() : fallback.connection.api;
+    const connectionProfileId = typeof profile.connectionProfileId === 'string' ? profile.connectionProfileId.trim() : '';
+    const connectionApi = connectionProfileId
+        ? 'connection_profile'
+        : (typeof connection.api === 'string' && connection.api.trim() ? connection.api.trim() : fallback.connection.api);
     const position = normalizeLorebookPosition(profile.position, fallback.position);
     const preset = typeof profile.preset === 'string' && profile.preset.trim() ? profile.preset.trim() : fallback.preset;
     const sanitized = {
@@ -591,6 +598,21 @@ function sanitizeProfile(rawProfile) {
             ? profile.characterPreset.trim()
             : (typeof profile.charPreset === 'string' && profile.charPreset.trim() ? profile.charPreset.trim() : fallback.characterPreset),
         skipStructuredOutput: Boolean(profile.skipStructuredOutput),
+        connectionProfileId,
+        connectionProfileName: typeof profile.connectionProfileName === 'string' ? profile.connectionProfileName.trim() : '',
+        modelOverride: typeof profile.modelOverride === 'string'
+            ? profile.modelOverride.trim()
+            : (typeof connection.model === 'string' ? connection.model.trim() : ''),
+        temperatureOverride: profile.temperatureOverride !== null
+            && profile.temperatureOverride !== ''
+            && Number.isFinite(Number(profile.temperatureOverride))
+            ? Math.max(0, Math.min(2, Number(profile.temperatureOverride)))
+            : (connection.temperature !== null
+                && connection.temperature !== ''
+                && connection.temperature !== undefined
+                && Number.isFinite(Number(connection.temperature))
+                ? Math.max(0, Math.min(2, Number(connection.temperature)))
+                : null),
         connection: {
             api: connectionApi,
         },
@@ -605,11 +627,17 @@ function sanitizeProfile(rawProfile) {
         ignoreBudget: Boolean(profile.ignoreBudget),
     };
 
-    if (typeof connection.model === 'string') sanitized.connection.model = connection.model;
-    if (Number.isFinite(Number(connection.temperature))) sanitized.connection.temperature = Number(connection.temperature);
-    else if (connectionApi !== 'current_st') sanitized.connection.temperature = 0.7;
-    if (typeof connection.endpoint === 'string') sanitized.connection.endpoint = connection.endpoint;
-    if (typeof connection.apiKey === 'string') sanitized.connection.apiKey = connection.apiKey;
+    if (!connectionProfileId) {
+        if (typeof connection.model === 'string') sanitized.connection.model = connection.model;
+        if (connection.temperature !== null
+            && connection.temperature !== ''
+            && connection.temperature !== undefined
+            && Number.isFinite(Number(connection.temperature))) {
+            sanitized.connection.temperature = Number(connection.temperature);
+        } else if (connectionApi !== 'current_st') sanitized.connection.temperature = 0.7;
+        if (typeof connection.endpoint === 'string') sanitized.connection.endpoint = connection.endpoint;
+        if (typeof connection.apiKey === 'string') sanitized.connection.apiKey = connection.apiKey;
+    }
     if (typeof profile.titleFormat === 'string' && profile.titleFormat.trim()) sanitized.titleFormat = profile.titleFormat;
     if (profile.useDynamicSTSettings !== undefined) sanitized.useDynamicSTSettings = Boolean(profile.useDynamicSTSettings);
 
@@ -682,8 +710,9 @@ export function validateAndFixStmbProfiles(settings = {}) {
     for (const profile of nextSettings.profiles) {
         if (profile?.isBuiltinCurrentST) {
             profile.name = STMB_DEFAULT_PROFILE_NAME;
-            profile.connection = profile.connection && typeof profile.connection === 'object' ? profile.connection : {};
-            profile.connection.api = 'current_st';
+            profile.connectionProfileId = '';
+            profile.connectionProfileName = '';
+            profile.connection = { api: 'current_st' };
         }
 
         if (!profile.titleFormat) {
@@ -892,7 +921,9 @@ export function normalizeStmbSettings(rawSettings, legacySettings = null) {
             : { ...defaults.arcPromptPresetMetadata },
         profiles: profileValidation.settings.profiles,
         defaultProfile,
-        migrationVersion: Number.isFinite(Number(source.migrationVersion)) ? Number(source.migrationVersion) : defaults.migrationVersion,
+        migrationVersion: Number.isFinite(Number(source.migrationVersion))
+            ? Math.max(STMB_SETTINGS_VERSION, Number(source.migrationVersion))
+            : defaults.migrationVersion,
     };
 }
 

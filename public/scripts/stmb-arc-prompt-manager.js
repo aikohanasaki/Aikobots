@@ -2,6 +2,7 @@ import { getRequestHeaders } from '../script.js';
 import { getCurrentLocale, translate } from './i18n.js';
 import {
     CONSOLIDATION_REGENERATION_PRESET_KEY,
+    GROUP_CHAT_CONSOLIDATION_PRESET_KEY,
     STMB_DEFAULT_SUMMARY_PROMPTS,
 } from './stmb-summary.js';
 import {
@@ -21,6 +22,7 @@ const ARC_PROMPT_DISPLAY_NAMES = Object.freeze({
     arc_default: 'Multi-Consolidation Analysis',
     arc_alternate: 'Single Consolidation Analysis',
     [CONSOLIDATION_REGENERATION_PRESET_KEY]: 'Regenerate Consolidation',
+    [GROUP_CHAT_CONSOLIDATION_PRESET_KEY]: 'Group Chat Consolidation Analysis (Automatic)',
     arc_tiny: 'Compact Consolidation Analysis',
 });
 
@@ -42,17 +44,22 @@ export function isRegenerationOnlyPreset(key) {
     return String(key || '').trim() === CONSOLIDATION_REGENERATION_PRESET_KEY;
 }
 
+/** Returns whether a preset is reserved for automatic group-chat consolidation. */
+export function isGroupChatOnlyPreset(key) {
+    return String(key || '').trim() === GROUP_CHAT_CONSOLIDATION_PRESET_KEY;
+}
+
 /** Selects a usable ordinary-consolidation default, never the regeneration preset. */
 export function selectConsolidationDefaultPresetKey(configuredKey, presets = []) {
     const normalizedKey = String(configuredKey || '').trim();
     const keys = (Array.isArray(presets) ? presets : [])
         .map(preset => String(preset?.key || preset || '').trim())
         .filter(Boolean);
-    if (normalizedKey && !isRegenerationOnlyPreset(normalizedKey) && keys.includes(normalizedKey)) {
+    if (normalizedKey && !isRegenerationOnlyPreset(normalizedKey) && !isGroupChatOnlyPreset(normalizedKey) && keys.includes(normalizedKey)) {
         return normalizedKey;
     }
     return keys.find(key => key === 'arc_default')
-        || keys.find(key => !isRegenerationOnlyPreset(key))
+        || keys.find(key => !isRegenerationOnlyPreset(key) && !isGroupChatOnlyPreset(key))
         || 'arc_default';
 }
 
@@ -282,6 +289,9 @@ export function getRequiredArcPromptText(key) {
     if (typeof cachedPrompt === 'string' && cachedPrompt.trim()) {
         return cachedPrompt;
     }
+    if (isGroupChatOnlyPreset(normalizedKey)) {
+        return getBuiltInArcPrompts()[normalizedKey];
+    }
 
     throw createMissingArcPromptError(normalizedKey);
 }
@@ -323,6 +333,7 @@ export function listCachedArcPromptPresets(fallbackSettings = null) {
             isBuiltIn: Object.prototype.hasOwnProperty.call(STMB_DEFAULT_SUMMARY_PROMPTS, key),
             hasOverride: true,
             regenerationOnly: isRegenerationOnlyPreset(key),
+            groupChatOnly: isGroupChatOnlyPreset(key),
         });
     }
 
@@ -335,6 +346,7 @@ export function listCachedArcPromptPresets(fallbackSettings = null) {
             isBuiltIn: true,
             hasOverride: false,
             regenerationOnly: isRegenerationOnlyPreset(key),
+            groupChatOnly: isGroupChatOnlyPreset(key),
         });
     }
 
@@ -398,7 +410,16 @@ export async function removeArcPromptPresetFile(key) {
 }
 
 export async function exportArcPromptPresetsJsonFile() {
-    return JSON.stringify(await loadDoc(), null, 2);
+    const doc = structuredClone(await loadDoc());
+    const timestamp = new Date().toISOString();
+    for (const [key, prompt] of Object.entries(getBuiltInArcPrompts())) {
+        doc.overrides[key] ??= {
+            displayName: getDefaultDisplayName(key, prompt),
+            prompt,
+            createdAt: timestamp,
+        };
+    }
+    return JSON.stringify(doc, null, 2);
 }
 
 export async function importArcPromptPresetsJsonFile(text) {

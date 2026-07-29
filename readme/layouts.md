@@ -729,3 +729,13 @@ Core styling for these controls belongs to the smart theme in `public/style.css`
 The core lorebook-entry template contains a hidden `.stmb-regenerate-entry` next to the UID. The row renderer surfaces it only for eligible managed entries in ordinary-user lorebooks. Regeneration always opens `.stmb-regeneration-review`, whose `.stmb-regeneration-columns` present the original and editable replacement side by side on wider screens and as one column below 600px.
 
 Core colors, borders, button states, warning treatment, and responsive behavior live in `public/style.css` and use smart-theme variables. Layouts may change spacing but should keep both review states readable, preserve the disabled button state, and allow `.stmb-regeneration-content` to scroll or resize without overflowing the popup.
+
+## 21. Memory Books wand entry and connection controls
+
+The core `public/scripts/templates/wandMenu.html` template owns `#stmb-menu-item` inside `#memory_books_wand_container`; Memory Books binds that existing DOM node and does not inject or poll for an extension-style menu entry. Layouts may adjust spacing through existing wand-menu rules but should preserve the entry's standard `.list-group-item` interaction and focus behavior.
+
+Memory Books profile and Advanced-run dialogs use the shared popup controls and smart-theme colors. A profile selects a central SillyTavern connection profile while keeping optional model and temperature overrides. Advanced runs expose the same two overrides for that run. Layouts may adjust spacing only; the connection selector and both override inputs must remain readable and keyboard accessible.
+
+## 22. Memory Books group and regeneration guidance
+
+The group participant chooser keeps `.stmb-group-participants-list` within half the viewport height and scrolls long member lists. The regeneration visibility warning can open General Settings, scroll to the hidden-message checkbox, and temporarily highlight its enclosing label with `.stmb-setting-focus-highlight`. Layouts may adjust spacing but should preserve both the scroll region and visible keyboard focus.

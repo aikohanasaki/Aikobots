@@ -1,10 +1,14 @@
 import { CONNECT_API_MAP, getRequestHeaders } from '../../script.js';
 import { extension_settings, openThirdPartyExtensionMenu } from '../extensions.js';
 import { t, translate } from '../i18n.js';
-import { oai_settings, proxies } from '../openai.js';
+import { oai_settings } from '../openai.js';
 import { SECRET_KEYS, secret_state } from '../secrets.js';
 import { getTokenCountAsync } from '../tokenizers.js';
 import { createThumbnail, isValidUrl } from '../utils.js';
+import {
+    getSupportedConnectionProfiles,
+    sendConnectionProfileRequest,
+} from '../connection-profile-request.js';
 
 /**
  * Generates a caption for an image using a multimodal model.
@@ -288,48 +292,7 @@ export class ConnectionManagerRequestService {
      * @returns {Promise<import('../custom-request.js').ExtractedData | (() => AsyncGenerator<import('../custom-request.js').StreamResponse>)>} If not streaming, returns extracted data; if streaming, returns a function that creates an AsyncGenerator
      */
     static async sendRequest(profileId, prompt, maxTokens, custom = this.defaultSendRequestParams, overridePayload = {}) {
-        const { stream, signal, extractData, includePreset } = { ...this.defaultSendRequestParams, ...custom };
-
-        const context = SillyTavern.getContext();
-        if (context.extensionSettings.disabledExtensions.includes('connection-manager')) {
-            throw new Error('Connection Manager is not available');
-        }
-
-        const profile = context.extensionSettings.connectionManager.profiles.find((p) => p.id === profileId);
-        const selectedApiMap = this.validateProfile(profile);
-
-        try {
-            switch (selectedApiMap.selected) {
-                case 'openai': {
-                    if (!selectedApiMap.source) {
-                        throw new Error(`API type ${selectedApiMap.selected} does not support chat completions`);
-                    }
-
-                    const proxyPreset = proxies.find((p) => p.name === profile.proxy);
-
-                    const messages = Array.isArray(prompt) ? prompt : [{ role: 'user', content: prompt }];
-                    return await context.ChatCompletionService.processRequest({
-                        stream,
-                        messages,
-                        max_tokens: maxTokens,
-                        model: profile.model,
-                        chat_completion_source: selectedApiMap.source,
-                        custom_url: profile['api-url'],
-                        reverse_proxy: proxyPreset?.url,
-                        proxy_password: proxyPreset?.password,
-                        custom_prompt_post_processing: profile['prompt-post-processing'],
-                        ...overridePayload,
-                    }, {
-                        presetName: includePreset ? profile.preset : undefined,
-                    }, extractData, signal);
-                }
-                default: {
-                    throw new Error(`Unknown API type ${selectedApiMap.selected}`);
-                }
-            }
-        } catch (error) {
-            throw new Error('API request failed', { cause: error });
-        }
+        return await sendConnectionProfileRequest(profileId, prompt, maxTokens, custom, overridePayload);
     }
 
     /**
@@ -337,13 +300,7 @@ export class ConnectionManagerRequestService {
      * @returns {import('./connection-manager/index.js').ConnectionProfile[]}
      */
     static getSupportedProfiles() {
-        const context = SillyTavern.getContext();
-        if (context.extensionSettings.disabledExtensions.includes('connection-manager')) {
-            throw new Error('Connection Manager is not available');
-        }
-
-        const profiles = context.extensionSettings.connectionManager.profiles;
-        return profiles.filter((p) => this.isProfileSupported(p));
+        return getSupportedConnectionProfiles();
     }
 
     /**

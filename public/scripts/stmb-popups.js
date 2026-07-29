@@ -1030,10 +1030,12 @@ export async function showAdvancedOptionsPopup(data) {
                 <input id="stmb-advanced-memory-count" type="number" min="0" max="7" step="1" class="text_pole" style="width:100%" value="${escapeHtml(String(data?.defaultMemoryCount ?? 0))}">
             </div>
             <div class="world_entry_form_control">
-                <label class="checkbox_label">
-                    <input id="stmb-advanced-override-settings" type="checkbox" ${data?.overrideSettings ? 'checked' : ''}>
-                    <span data-i18n="Use current SillyTavern model/provider settings for this run">Use current SillyTavern model/provider settings for this run</span>
-                </label>
+                <label for="stmb-advanced-model-override" data-i18n="Model override for this run">Model override for this run</label>
+                <input id="stmb-advanced-model-override" class="text_pole" value="${escapeHtml(String(data?.modelOverride || ''))}" placeholder="Use saved profile model" data-i18n="[placeholder]Use saved profile model">
+            </div>
+            <div class="world_entry_form_control">
+                <label for="stmb-advanced-temperature-override" data-i18n="Temperature override for this run">Temperature override for this run</label>
+                <input id="stmb-advanced-temperature-override" type="number" min="0" max="2" step="0.1" class="text_pole" value="${data?.temperatureOverride !== null && data?.temperatureOverride !== undefined ? escapeHtml(String(data.temperatureOverride)) : ''}" placeholder="Use saved profile temperature" data-i18n="[placeholder]Use saved profile temperature">
             </div>
             <div class="world_entry_form_control">
                 <label for="stmb-advanced-profile-name" data-i18n="New profile name">New profile name</label>
@@ -1106,7 +1108,8 @@ export async function showAdvancedOptionsPopup(data) {
         profileIndex: Number(profileSelect?.value ?? selectedIndex),
         promptText: String(profiles[selectedIndex]?.effectivePrompt || ''),
         memoryCount: Number(data?.defaultMemoryCount ?? 0),
-        overrideSettings: Boolean(data?.overrideSettings),
+        modelOverride: String(data?.modelOverride || ''),
+        temperatureOverride: data?.temperatureOverride ?? null,
     };
     const updateSelectedProfile = (updateBaseline = false) => {
         const nextProfileIndex = Number(profileSelect?.value ?? selectedIndex);
@@ -1123,11 +1126,14 @@ export async function showAdvancedOptionsPopup(data) {
         const currentProfileIndex = Number(profileSelect?.value ?? selectedIndex);
         const currentPrompt = String(dialog.querySelector('#stmb-advanced-prompt')?.value || '');
         const currentMemoryCount = Number(dialog.querySelector('#stmb-advanced-memory-count')?.value ?? data?.defaultMemoryCount ?? 0);
-        const currentOverride = Boolean(dialog.querySelector('#stmb-advanced-override-settings')?.checked);
+        const currentModelOverride = String(dialog.querySelector('#stmb-advanced-model-override')?.value || '');
+        const rawTemperatureOverride = String(dialog.querySelector('#stmb-advanced-temperature-override')?.value ?? '').trim();
+        const currentTemperatureOverride = rawTemperatureOverride === '' ? null : Number(rawTemperatureOverride);
         const hasChanges = currentProfileIndex !== originalSettings.profileIndex
             || currentPrompt !== originalSettings.promptText
             || currentMemoryCount !== originalSettings.memoryCount
-            || currentOverride !== originalSettings.overrideSettings;
+            || currentModelOverride !== originalSettings.modelOverride
+            || currentTemperatureOverride !== originalSettings.temperatureOverride;
 
         if (!createButton) {
             return;
@@ -1163,7 +1169,8 @@ export async function showAdvancedOptionsPopup(data) {
             console.warn('STMB advanced token estimate update failed', error);
         });
     });
-    dialog.querySelector('#stmb-advanced-override-settings')?.addEventListener('change', updateCreateButtonState);
+    dialog.querySelector('#stmb-advanced-model-override')?.addEventListener('input', updateCreateButtonState);
+    dialog.querySelector('#stmb-advanced-temperature-override')?.addEventListener('input', updateCreateButtonState);
     updateCreateButtonState();
 
     let tokenEstimateRequestId = 0;
@@ -1200,7 +1207,8 @@ export async function showAdvancedOptionsPopup(data) {
                 profileIndex: Number(profileSelect?.value ?? selectedIndex),
                 promptText: String(dialog.querySelector('#stmb-advanced-prompt')?.value || ''),
                 memoryCount: Number.isFinite(memoryCount) ? memoryCount : Number(data?.defaultMemoryCount ?? 0),
-                overrideSettings: Boolean(dialog.querySelector('#stmb-advanced-override-settings')?.checked),
+                modelOverride: String(dialog.querySelector('#stmb-advanced-model-override')?.value || '').trim(),
+                temperatureOverride: String(dialog.querySelector('#stmb-advanced-temperature-override')?.value ?? '').trim(),
             });
             if (requestId !== tokenEstimateRequestId) {
                 return;
@@ -1220,7 +1228,12 @@ export async function showAdvancedOptionsPopup(data) {
         profileIndex: Number(profileSelect?.value ?? selectedIndex),
         promptText: String(dialog.querySelector('#stmb-advanced-prompt')?.value || ''),
         memoryCount: Number(dialog.querySelector('#stmb-advanced-memory-count')?.value ?? data?.defaultMemoryCount ?? 0),
-        overrideSettings: Boolean(dialog.querySelector('#stmb-advanced-override-settings')?.checked),
+        modelOverride: String(dialog.querySelector('#stmb-advanced-model-override')?.value || '').trim(),
+        temperatureOverride: (() => {
+            const value = String(dialog.querySelector('#stmb-advanced-temperature-override')?.value ?? '').trim();
+            const temperature = Number(value);
+            return value === '' || !Number.isFinite(temperature) ? null : Math.max(0, Math.min(2, temperature));
+        })(),
         newProfileName: String(dialog.querySelector('#stmb-advanced-profile-name')?.value || '').trim(),
     });
 

@@ -9,6 +9,7 @@ import { syncStmbLocalizedPromptFields } from './stmb-prompt-default-migration.j
 import { isSidePromptEntryTitle } from './stmb-sideprompts.js';
 import { escapeHtml, withGoBackButton } from './utils.js';
 import { getLorebookStorageForRequest, isReservedTemplateWorldName, loadWorldInfo, METADATA_KEY, reloadEditor, world_names, worldInfoCache } from './world-info.js';
+import { refreshStmbMacroCache } from './stmb-macros.js';
 
 const MODULE_NAME = 'STMB Clips';
 const CREATE_NEW_VALUE = '__stmb_create_new_clip_entry__';
@@ -447,6 +448,7 @@ async function afterLorebookWrite(lorebookName, lorebookData, entry) {
     worldInfoCache.delete(lorebookName);
     if (!lorebookData.entries || typeof lorebookData.entries !== 'object') lorebookData.entries = {};
     if (entry?.uid !== undefined) lorebookData.entries[entry.uid] = entry;
+    void refreshStmbMacroCache(lorebookName, lorebookData);
     if (shouldRefreshEditor()) {
         try {
             await Promise.resolve(reloadEditor(lorebookName));

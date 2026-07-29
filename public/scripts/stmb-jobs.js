@@ -5,6 +5,13 @@ import {
 } from '../script.js';
 import { closeActiveMemoryPreviewPopups } from './stmb-popups.js';
 import { buildStmbSceneContext, getStmbChatKey } from './stmb-scene.js';
+import {
+    buildStmbRetryPayload,
+    captureStmbRetryDependents,
+    collectStmbCanceledDependents,
+    isStmbAfterMemoryDependent,
+    isStmbJobRetryable,
+} from './stmb-job-retry-policy.js';
 import { escapeHtml } from './utils.js';
 
 const jobStores = new Map();
@@ -19,7 +26,7 @@ const ACTIVE_JOB_STATES = new Set([
     'saving',
     'post_save',
 ]);
-const TERMINAL_JOB_STATES = new Set(['completed', 'failed', 'canceled']);
+const TERMINAL_JOB_STATES = new Set(['completed', 'failed', 'blocked', 'canceled']);
 const RECENT_HISTORY_LIMIT = 20;
 const RENDER_INTERVAL_MS = 1000;
 const CONCURRENT_JOB_TYPES = new Set(['sidePrompt']);
@@ -120,6 +127,9 @@ function cloneJobForView(job = {}) {
         chatKey: String(job.chatKey || ''),
         type: String(job.type || 'memory'),
         dependsOnJobId: String(job.dependsOnJobId || ''),
+        parentJobOrder: job.parentJobOrder !== null && job.parentJobOrder !== undefined && Number.isFinite(Number(job.parentJobOrder))
+            ? Number(job.parentJobOrder)
+            : null,
         range: job.range ? { ...job.range } : null,
         lorebookName: String(job.lorebookName || ''),
         profileIndex: Number.isFinite(Number(job.profileIndex)) ? Number(job.profileIndex) : null,
@@ -523,6 +533,38 @@ function cancelQueuedJob(store, job, detail) {
     touchStore(store);
 }
 
+/**
+ * Cancels a terminal memory's queued automatic dependents after preserving their retry snapshots.
+ */
+function cancelQueuedMemoryDependents(store, memoryJob, { force = false } = {}) {
+    if (memoryJob.type !== 'memory' || (!force && !isStmbJobRetryable(memoryJob))) {
+        return 0;
+    }
+
+    const dependents = store.queue.filter(job => isStmbAfterMemoryDependent(memoryJob, job));
+    if (dependents.length === 0) {
+        return 0;
+    }
+
+    memoryJob.payload = {
+        ...(memoryJob.payload || {}),
+        retryAfterMemoryJobs: captureStmbRetryDependents(memoryJob, dependents)
+            .map(job => cloneJobForView(job)),
+    };
+
+    const canceledIds = new Set(dependents.map(job => String(job.id)));
+    const finishedAt = Date.now();
+    for (const dependent of dependents) {
+        dependent.state = 'canceled';
+        dependent.detail = 'Canceled by dependency.';
+        dependent.finishedAt = finishedAt;
+        markJobUpdated(dependent, finishedAt);
+        store.recentHistory.unshift(cloneJobForView(dependent));
+    }
+    store.queue = store.queue.filter(job => !canceledIds.has(String(job.id)));
+    return dependents.length;
+}
+
 function startQueuedJob(chatKey, store, nextJob) {
     try {
         const executor = jobExecutors.get(String(nextJob.type || ''));
@@ -581,6 +623,7 @@ function finishRunningJob(chatKey, store, nextJob) {
         }
     }
 
+    cancelQueuedMemoryDependents(store, nextJob);
     nextJob.finishedAt = Date.now();
     delete nextJob.approvalRequest;
     markJobUpdated(nextJob, nextJob.finishedAt);
@@ -689,6 +732,9 @@ function normalizeJobInput(input = {}) {
         chatKey,
         type: String(input.type || 'memory'),
         dependsOnJobId: String(input.dependsOnJobId || input.payload?.dependsOnJobId || ''),
+        parentJobOrder: input.parentJobOrder !== null && input.parentJobOrder !== undefined && Number.isFinite(Number(input.parentJobOrder))
+            ? Number(input.parentJobOrder)
+            : null,
         range: input.range ? structuredClone(input.range) : null,
         lorebookName: String(input.lorebookName || ''),
         profileIndex: Number.isFinite(Number(input.profileIndex)) ? Number(input.profileIndex) : null,
@@ -939,8 +985,13 @@ function renderJobRows(records = []) {
             const approvalAttrs = isAwaitingApproval
                 ? ` data-action="open-approval" data-job-id="${esc(job.id)}" role="button" tabindex="0" title="Review approval request"`
                 : '';
-            const retryButton = job.state === 'failed'
-                ? `<button type="button" class="menu_button stmb-jobs-row-action" data-action="retry" data-chat-key="${esc(record.chatKey)}" data-job-id="${esc(job.id)}" data-i18n="Retry failed">Retry failed</button>`
+            const retryButton = isStmbJobRetryable(job)
+                ? (job.type === 'memory'
+                    ? `<div class="flex-container flexGap5">
+                        <button type="button" class="menu_button stmb-jobs-row-action" data-action="retry-all" data-chat-key="${esc(record.chatKey)}" data-job-id="${esc(job.id)}" data-i18n="Retry all">Retry all</button>
+                        <button type="button" class="menu_button stmb-jobs-row-action" data-action="retry-memory" data-chat-key="${esc(record.chatKey)}" data-job-id="${esc(job.id)}" data-i18n="Retry memory">Retry memory</button>
+                    </div>`
+                    : `<button type="button" class="menu_button stmb-jobs-row-action" data-action="retry" data-chat-key="${esc(record.chatKey)}" data-job-id="${esc(job.id)}" data-i18n="Retry">Retry</button>`)
                 : '';
             const dismissButton = canDismissNotification
                 ? `<button type="button" class="stmb-jobs-row-dismiss" data-action="dismiss-job" data-chat-key="${esc(record.chatKey)}" data-job-id="${esc(job.id)}" title="Dismiss notification" aria-label="Dismiss notification" data-i18n="[title]Dismiss notification;[aria-label]Dismiss notification">&times;</button>`
@@ -1086,6 +1137,15 @@ function handlePanelClick(event) {
         if (retryChatKey) {
             retryFailedStmbJob(retryChatKey, actionButton.dataset.jobId);
         }
+        return;
+    }
+    if (action === 'retry-memory' || action === 'retry-all') {
+        const retryChatKey = actionButton.dataset.chatKey || currentChatKey;
+        if (retryChatKey) {
+            retryFailedStmbJob(retryChatKey, actionButton.dataset.jobId, {
+                includeDependents: action === 'retry-all',
+            });
+        }
     }
 }
 
@@ -1226,6 +1286,9 @@ export function cancelAllStmbJobs(chatKey = null) {
     const store = ensureChatStore(targetChatKey);
     let canceled = 0;
 
+    for (const runningJob of getRunningJobs(store)) {
+        canceled += cancelQueuedMemoryDependents(store, runningJob, { force: true });
+    }
     for (const queuedJob of store.queue.splice(0)) {
         queuedJob.state = 'canceled';
         queuedJob.detail = queuedJob.detail || 'Canceled by user';
@@ -1391,24 +1454,31 @@ export function dismissStmbJobNotification(chatKey = null, jobId = null) {
     return true;
 }
 
-export function retryFailedStmbJob(chatKey = null, jobId = null) {
+export function retryFailedStmbJob(chatKey = null, jobId = null, options = {}) {
     const targetChatKey = String(chatKey || getCurrentChatKey() || '').trim();
     if (!targetChatKey || !jobId) {
         return null;
     }
 
     const store = ensureChatStore(targetChatKey);
-    const sourceJob = store.recentHistory.find(job => String(job.id) === String(jobId) && job.state === 'failed');
+    const sourceJob = store.recentHistory.find(job => String(job.id) === String(jobId) && isStmbJobRetryable(job));
     if (!sourceJob) {
         return null;
     }
 
-    const payload = sourceJob.payload ? structuredClone(sourceJob.payload) : {};
-    if (sourceJob.type === 'sidePrompt' || sourceJob.type === 'sidePromptBatch') {
-        delete payload.dependsOnJobId;
-    }
+    const includeDependents = options.includeDependents && sourceJob.type === 'memory';
+    const dependentJobs = includeDependents
+        ? collectStmbCanceledDependents(sourceJob, store.recentHistory)
+        : [];
+    const consumedJobIds = new Set([
+        String(sourceJob.id),
+        ...dependentJobs.map(job => String(job.id)),
+    ]);
+    store.recentHistory = store.recentHistory.filter(job => !consumedJobIds.has(String(job.id)));
+    touchStore(store);
 
-    return enqueueStmbJob({
+    const payload = buildStmbRetryPayload(sourceJob, { includeDependents });
+    const retriedJob = enqueueStmbJob({
         chatKey: sourceJob.chatKey,
         type: sourceJob.type,
         range: sourceJob.range,
@@ -1420,4 +1490,27 @@ export function retryFailedStmbJob(chatKey = null, jobId = null) {
         sceneContext: sourceJob.sceneContext,
         payload,
     });
+    if (!includeDependents) {
+        return retriedJob;
+    }
+
+    for (const dependent of dependentJobs) {
+        const dependentPayload = structuredClone(dependent.payload || {});
+        dependentPayload.dependsOnJobId = retriedJob.id;
+        enqueueStmbJob({
+            chatKey: dependent.chatKey,
+            type: dependent.type,
+            dependsOnJobId: retriedJob.id,
+            parentJobOrder: dependent.parentJobOrder,
+            range: dependent.range,
+            lorebookName: dependent.lorebookName,
+            profileIndex: dependent.profileIndex,
+            title: dependent.title,
+            characterName: dependent.characterName,
+            chatTitle: dependent.chatTitle,
+            sceneContext: dependent.sceneContext,
+            payload: dependentPayload,
+        });
+    }
+    return retriedJob;
 }

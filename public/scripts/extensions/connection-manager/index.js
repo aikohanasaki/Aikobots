@@ -24,6 +24,18 @@ const PROMPT_POST_PROCESSING_DISABLED_TITLE = 'changing this is disabled by "Use
 const REMOVED_PROFILE_COMMANDS = [
     'regex-preset',
 ];
+const REQUEST_OVERRIDE_KEYS = [
+    'azure_base_url',
+    'azure_deployment_name',
+    'azure_api_version',
+    'custom_include_body',
+    'custom_exclude_body',
+    'custom_include_headers',
+    'vertexai_auth_mode',
+    'vertexai_region',
+    'vertexai_express_project_id',
+    'zai_endpoint',
+];
 
 const DEFAULT_SETTINGS = {
     profiles: [],
@@ -195,6 +207,13 @@ function removeObsoleteProfileCommands(profile) {
     return changed;
 }
 
+/** Saves provider options that are not represented by connection-manager slash commands. */
+function captureRequestOverrides(profile) {
+    profile['request-overrides'] = Object.fromEntries(REQUEST_OVERRIDE_KEYS
+        .filter(key => oai_settings[key] !== undefined)
+        .map(key => [key, structuredClone(oai_settings[key])]));
+}
+
 /**
  * @typedef {Object} ConnectionProfile
  * @property {string} id Unique identifier
@@ -211,6 +230,7 @@ function removeObsoleteProfileCommands(profile) {
  * @property {string} [prompt-post-processing] Prompt Post-Processing
  * @property {string} [api-url] Server URL
  * @property {string} [secret-id] Secret ID
+ * @property {Record<string, unknown>} [request-overrides] Provider-specific request options
  * @property {string[]} [exclude] Commands to exclude
  */
 
@@ -304,6 +324,9 @@ async function createConnectionProfile(forceName = null) {
     };
 
     await readProfileFromCommands(mode, profile);
+    if (mode === 'cc') {
+        captureRequestOverrides(profile);
+    }
 
     const profileForDisplay = makeFancyProfile(profile);
     if (mode === 'cc' && isGlobalPromptPostProcessingEnabled() && !profileForDisplay[FANCY_NAMES[PROMPT_POST_PROCESSING_COMMAND]]) {
@@ -546,6 +569,11 @@ export async function applyConnectionModel(modelId) {
 async function updateConnectionProfile(profile) {
     profile.mode = main_api === 'openai' ? 'cc' : 'tc';
     await readProfileFromCommands(profile.mode, profile, true);
+    if (profile.mode === 'cc') {
+        captureRequestOverrides(profile);
+    } else {
+        delete profile['request-overrides'];
+    }
 }
 
 /**

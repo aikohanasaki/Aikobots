@@ -7623,3 +7623,17 @@ body.active-session-read-only [data-active-session-disabled="true"] {
         grid-template-columns: 1fr;
     }
 }
+
+.stmb-group-participants-list {
+    max-height: min(50vh, 30rem);
+    max-height: min(50dvh, 30rem);
+    overflow-y: auto;
+    scrollbar-gutter: stable;
+}
+
+.stmb-setting-focus-highlight {
+    outline: 2px solid var(--SmartThemeQuoteColor);
+    outline-offset: 3px;
+    background-color: color-mix(in srgb, var(--SmartThemeQuoteColor) 14%, transparent);
+    border-radius: 4px;
+}

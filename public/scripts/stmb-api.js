@@ -1,40 +1,13 @@
 import { extractMessageFromData, getRequestHeaders } from '../script.js';
 import { getStreamingReply } from './openai.js';
 import EventSourceStream from './sse-stream.js';
-import { normalizeNavyReasoningEffort, parseStructuredMemoryResponse } from './stmb-core.js';
+import { parseStructuredMemoryResponse } from './stmb-core.js';
 import { parseSummaryJsonResponse } from './stmb-summary.js';
 import { consumeChatCompletionStream } from './chat-completion-stream.js';
+import { applyStmbRequestTransport } from './stmb-request-transport.js';
 
 const STMB_RATE_LIMIT_RETRY_DELAYS_MS = [3000, 8000];
 const stmbGenerationCooldowns = new Map();
-const STMB_GENERATE_DATA_FIELDS = new Set([
-    'type',
-    'messages',
-    'prompt_context',
-    'model',
-    'temperature',
-    'max_tokens',
-    'max_completion_tokens',
-    'max_output_tokens',
-    'max_new_tokens',
-    'stream',
-    'chat_completion_source',
-    'json_schema',
-    'response_format',
-    'responseMimeType',
-    'responseSchema',
-    'custom_url',
-    'custom_api_key',
-    'reverse_proxy',
-    'proxy_password',
-    'azure_base_url',
-    'azure_deployment_name',
-    'azure_api_version',
-    'vertexai_auth_mode',
-    'vertexai_region',
-    'vertexai_express_project_id',
-    'zai_endpoint',
-]);
 
 async function postStmb(path, payload) {
     const response = await fetch(`/api/stmb/${path}`, {
@@ -255,27 +228,6 @@ async function generateStmbProviderResponse(payload, signal = null, onRateLimitW
     }
 
     throw new Error('STMB generation failed.');
-}
-
-function applyStmbRequestTransport(generateData) {
-    const next = {};
-    for (const key of STMB_GENERATE_DATA_FIELDS) {
-        if (Object.hasOwn(generateData, key)) {
-            next[key] = generateData[key];
-        }
-    }
-    next.include_reasoning = false;
-
-    if (String(next.chat_completion_source || '').toLowerCase() === 'navy') {
-        const reasoningEffort = normalizeNavyReasoningEffort(next.reasoning_effort);
-        if (reasoningEffort) {
-            next.reasoning_effort = reasoningEffort;
-        } else {
-            delete next.reasoning_effort;
-        }
-    }
-
-    return next;
 }
 
 async function sendStmbStreamingRequest(requestBody, signal = null) {

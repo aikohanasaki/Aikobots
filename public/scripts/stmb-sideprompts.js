@@ -42,7 +42,13 @@ import {
     resolveSetItemsForRun,
     upsertTemplate,
 } from './stmb-sideprompts-manager.js';
+import { filterAutomaticSidePromptSetItems } from './stmb-sideprompt-set-policy.js';
 import { awaitStmbJobApproval, enqueueStmbJob, registerStmbJobExecutor } from './stmb-jobs.js';
+import { refreshStmbMacroCache } from './stmb-macros.js';
+import {
+    applyConnectionProfileSnapshot,
+    createConnectionProfileRequestSnapshot,
+} from './connection-profile-request.js';
 import {
     resolveAdditionalContextEntriesForKey,
     STMB_CONTEXT_NONE_KEY,
@@ -440,6 +446,7 @@ async function upsertLorebookEntryByTitle(lorebookName, lorebookData, title, con
     if (result?.entry && result.entry.uid !== undefined) {
         lorebookData.entries[result.entry.uid] = result.entry;
     }
+    void refreshStmbMacroCache(lorebookName, lorebookData);
     if (refreshEditor) {
         try {
             await Promise.resolve(reloadEditor(lorebookName));
@@ -474,6 +481,7 @@ async function upsertLorebookEntriesBatch(lorebookName, lorebookData, items, opt
             lorebookData.entries[batchResult.entry.uid] = batchResult.entry;
         }
     }
+    void refreshStmbMacroCache(lorebookName, lorebookData);
 
     if (refreshEditor) {
         try {
@@ -521,9 +529,47 @@ async function runWithConcurrencyLimit(items, limit, worker) {
 
 async function runTextGeneration(prompt, settings, profile = null, signal = null, onRateLimitWait = null) {
     const { generateData } = await buildOpenAIGenerateData('quiet', [{ role: 'user', content: String(prompt || '') }], {});
+    let profiledGenerateData;
+    if (profile?.connectionSnapshot || profile?.connectionProfileId) {
+        const snapshot = profile.connectionSnapshot || createConnectionProfileRequestSnapshot(
+            profile.connectionProfileId,
+            {
+                model: profile.modelOverride,
+                temperature: profile.temperatureOverride,
+            },
+        );
+        profiledGenerateData = applyConnectionProfileSnapshot(generateData, snapshot, {
+            model: profile.modelOverride,
+            temperature: profile.temperatureOverride,
+        });
+    } else if (String(profile?.connection?.api || '') === 'current_st') {
+        const model = String(profile?.modelOverride || generateData?.model || '').trim();
+        if (!model) {
+            throw new Error(translate('Enter a model ID or select a connection profile with a saved model ID.'));
+        }
+        profiledGenerateData = {
+            ...generateData,
+            model,
+            temperature: profile?.temperatureOverride !== null && profile?.temperatureOverride !== undefined
+                ? profile.temperatureOverride
+                : generateData.temperature,
+        };
+    } else {
+        const legacyProfile = {
+            ...profile,
+            connection: {
+                ...(profile?.connection || {}),
+                model: String(profile?.modelOverride || profile?.connection?.model || '').trim(),
+                temperature: profile?.temperatureOverride !== null && profile?.temperatureOverride !== undefined
+                    ? profile.temperatureOverride
+                    : profile?.connection?.temperature,
+            },
+        };
+        profiledGenerateData = applyStmbProfileToGenerateData(generateData, legacyProfile, getStmbProviderDefaults());
+    }
     const result = await generateStmbText({
         generateData: applyStmbMaxTokensToGenerateData(
-            applyStmbProfileToGenerateData(generateData, profile, getStmbProviderDefaults()),
+            profiledGenerateData,
             settings?.moduleSettings?.maxTokens,
         ),
     }, { signal, onRateLimitWait });
@@ -628,6 +674,21 @@ export async function buildQueuedSidePromptJob({
     setItemId = '',
     contextSettingKey = getChatContextSettingKey(),
 }) {
+    const overrideIndex = template?.settings?.overrideProfileEnabled
+        ? Number(template?.settings?.overrideProfileIndex)
+        : null;
+    const sourceProfile = Number.isFinite(overrideIndex)
+        ? resolveSidePromptProfile(settings, overrideIndex)
+        : (profile || resolveSidePromptProfile(settings, null));
+    const queuedProfile = sourceProfile?.connectionProfileId
+        ? {
+            ...structuredClone(sourceProfile),
+            connectionSnapshot: createConnectionProfileRequestSnapshot(sourceProfile.connectionProfileId, {
+                model: sourceProfile.modelOverride,
+                temperature: sourceProfile.temperatureOverride,
+            }),
+        }
+        : structuredClone(sourceProfile);
     return {
         type: 'sidePrompt',
         range: range ? structuredClone(range) : (compiledScene?.metadata
@@ -651,7 +712,7 @@ export async function buildQueuedSidePromptJob({
             compiledScene: compiledScene ? structuredClone(compiledScene) : null,
             range: range ? structuredClone(range) : null,
             settings: settings ? structuredClone(settings) : null,
-            profile: profile ? structuredClone(profile) : null,
+            profile: queuedProfile,
             runtimeMacros: structuredClone(runtimeMacros || {}),
             fallbackKinds: Array.isArray(fallbackKinds) ? fallbackKinds.slice() : [],
             metadataUpdates: structuredClone(metadataUpdates || {}),
@@ -686,7 +747,7 @@ export async function buildQueuedAfterMemorySidePromptJobs({
         if (missingMacros.length > 0) {
             toastr.warning(t`Skipped side prompt set items with unresolved macros: ${missingMacros.join(', ')}.`, 'STMB');
         }
-        runItems = (resolvedSet.runnable || []).map(item => ({
+        runItems = filterAutomaticSidePromptSetItems(resolvedSet.runnable, 'onAfterMemory').map(item => ({
             template: item.template,
             runtimeMacros: item.runtimeMacros || {},
             fallbackKinds: ['plotpoints', 'scoreboard'],
@@ -1058,8 +1119,41 @@ export async function evaluateTrackers(settings, options = {}) {
         const sceneContext = options.sceneContext || null;
         const contextSettingKey = options.contextSettingKey ?? getChatContextSettingKey();
         try {
-            const templates = await listByTrigger('onInterval');
-            if (!templates || templates.length === 0) return;
+            const selectedSetKey = getSelectedAfterMemorySetKey(settings, sceneContext);
+            let selectedSet = null;
+            let runItems = [];
+            if (selectedSetKey) {
+                const resolvedSet = await resolveSetItemsForRun(selectedSetKey, {}, { allowUnresolved: false });
+                selectedSet = resolvedSet.set;
+                logSkippedSetItems(resolvedSet.skipped, 'onInterval');
+                const missingMacros = summarizeMissingSetMacros(resolvedSet.skipped);
+                if (!selectedSet) {
+                    toastr.warning(translate('Selected side prompt set was not found. No interval side prompts were queued.'), 'STMB');
+                    return;
+                }
+                if (missingMacros.length > 0) {
+                    toastr.warning(t`Skipped side prompt set items with unresolved macros: ${missingMacros.join(', ')}.`, 'STMB');
+                }
+                runItems = filterAutomaticSidePromptSetItems(resolvedSet.runnable, 'onInterval').map(item => ({
+                    template: item.template,
+                    runtimeMacros: item.runtimeMacros || {},
+                    displayName: String(item.item?.label || item.baseTemplate?.name || item.template?.name || 'Side Prompt'),
+                    setKey: selectedSet.key,
+                    setName: selectedSet.name,
+                    setItemId: item.item?.id || '',
+                }));
+            } else {
+                const templates = await listByTrigger('onInterval');
+                runItems = (templates || []).map(template => ({
+                    template,
+                    runtimeMacros: {},
+                    displayName: String(template?.name || 'Side Prompt'),
+                    setKey: '',
+                    setName: '',
+                    setItemId: '',
+                }));
+            }
+            if (runItems.length === 0) return;
 
             const chatRangeInfo = await fetchStmbChatRangeInfo({ saveFirst: false, sceneContext });
             const currentLast = Number(chatRangeInfo?.lastAvailableMessageId);
@@ -1067,12 +1161,20 @@ export async function evaluateTrackers(settings, options = {}) {
             const jobs = [];
             const lorebookResolveContext = {};
 
-            for (const template of templates) {
+            for (const runItem of runItems) {
                 throwIfStmbAborted(signal);
+                const {
+                    template,
+                    runtimeMacros,
+                    displayName,
+                    setKey,
+                    setName,
+                    setItemId,
+                } = runItem;
                 const targetLorebook = await resolveSidePromptLorebook(template, settings, lorebookResolveContext);
                 const lorebookName = targetLorebook.name;
                 const lorebookData = targetLorebook.data || { entries: {} };
-                const lookupTitles = getSidePromptLookupTitles(template, {}, ['tracker']);
+                const lookupTitles = getSidePromptLookupTitles(template, runtimeMacros, ['tracker']);
                 const existing = findFirstLorebookEntryByTitle(lorebookData, lookupTitles);
                 const checkpoint = resolveSidePromptCheckpoint(template.key, existing);
                 const lastMessageId = checkpoint.lastMsgId;
@@ -1107,6 +1209,11 @@ export async function evaluateTrackers(settings, options = {}) {
                 const checkpointTimestamp = new Date().toISOString();
                 jobs.push(await buildQueuedSidePromptJob({
                     template,
+                    runtimeMacros,
+                    displayName,
+                    setKey,
+                    setName,
+                    setItemId,
                     lorebookName,
                     compiledScene,
                     settings,

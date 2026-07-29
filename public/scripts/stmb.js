@@ -65,6 +65,7 @@ import {
     STMB_DEFAULT_TITLE_FORMAT,
     STMB_DEFAULT_TITLE_FORMATS,
     STMB_MEMORY_BOUNDARY_MODES,
+    STMB_MANAGED_FLAG,
     STMB_METADATA_KEY,
     compileScene,
     getActiveStmbProfile,
@@ -81,8 +82,10 @@ import { buildStmbSceneContext, captureStmbSceneRange, fetchStmbChatRangeInfo, g
 import { isMobile } from './RossAscends-mods.js';
 import {
     CONSOLIDATION_REGENERATION_PRESET_KEY,
+    GROUP_CHAT_CONSOLIDATION_PRESET_KEY,
     STMB_REGENERATION_RESPONSE_SCHEMA,
     STMB_SUMMARY_RESPONSE_SCHEMA,
+    buildConsolidationKeywordPrompt,
     buildBriefsFromEntries,
     buildSummaryAnalysisPrompt,
     createSummaryCandidatesFromResponse,
@@ -96,10 +99,13 @@ import {
     identifyManagedSummaryEntries,
     migrateLorebookSummarySchema,
     normalizeSummaryMinChildren,
+    parseConsolidationKeywordsResponse,
     parseSummaryJsonResponse,
     pluralizeSummaryLabel,
     resolveSelectedSummarySourceEntries,
 } from './stmb-summary.js';
+import { buildConsolidationWorkItemPrompt } from './stmb-consolidation-work-item-policy.js';
+import { buildStmbGroupStloReconciliationTargets } from './stmb-group-stlo-policy.js';
 import {
     buildRegenerationIndexes,
     getRegenerationEligibility,
@@ -125,6 +131,7 @@ import {
     getCachedArcPromptText,
     getRequiredArcPromptText,
     importArcPromptPresetsJsonFile,
+    isGroupChatOnlyPreset,
     isRegenerationOnlyPreset,
     listCachedArcPromptPresets,
     recreateBuiltInArcPromptOverridesFile,
@@ -177,6 +184,12 @@ import { ensureResolvedLorebookName, isStmbLorebookHandledError } from './stmb-l
 import { createStmbTask, getActiveStmbTaskCount, hasActiveStmbTasks, isStmbAbortError, stopAllStmbTasks, throwIfStmbAborted } from './stmb-tasks.js';
 import { getTokenCountAsync } from './tokenizers.js';
 import { cloneStloSettings } from './stlo-utils.js';
+import { initStmbMacros, refreshStmbMacroCache } from './stmb-macros.js';
+import {
+    applyConnectionProfileSnapshot,
+    createConnectionProfileRequestSnapshot,
+    getSupportedConnectionProfiles,
+} from './connection-profile-request.js';
 import {
     configureStmbClipRuntime,
     hideFloatingClipButton,
@@ -212,7 +225,6 @@ let sceneButtonsBound = false;
 let slashCommandsRegistered = false;
 let lastFailedSummaryError = null;
 let lastFailedSummaryContext = null;
-let stmbUiBound = false;
 let sidePromptNameCache = [];
 let sidePromptSetNameCache = [];
 let activeSettingsPopupDialog = null;
@@ -1988,15 +2000,58 @@ function getProfileDisplayName(profile) {
 }
 
 function getProfileModelDisplay(profile) {
+    if (String(profile?.modelOverride || '').trim()) {
+        return String(profile.modelOverride).trim();
+    }
+    if (profile?.connectionSnapshot?.model) {
+        return String(profile.connectionSnapshot.model);
+    }
+    if (profile?.connectionProfileId) {
+        const connectionProfile = getSupportedConnectionProfiles().find(item => item.id === profile.connectionProfileId);
+        return String(connectionProfile?.model || 'Model required');
+    }
     return profile?.connection?.api === 'current_st'
         ? 'Current SillyTavern model'
         : String(profile?.connection?.model || 'Current SillyTavern model');
 }
 
 function getProfileTemperatureDisplay(profile) {
+    if (profile?.temperatureOverride !== null && profile?.temperatureOverride !== undefined) {
+        return profile.temperatureOverride;
+    }
+    if (profile?.connectionSnapshot?.temperature !== undefined) {
+        return profile.connectionSnapshot.temperature;
+    }
     return profile?.connection?.api === 'current_st'
         ? 'Current SillyTavern temperature'
-        : (profile?.connection?.temperature ?? 'Current SillyTavern temperature');
+        : (profile?.connection?.temperature ?? 'Connection profile preset/default');
+}
+
+function getConnectionProfileOptionsHtml(selectedId = '') {
+    const profiles = getSupportedConnectionProfiles()
+        .slice()
+        .sort((left, right) => String(left.name || '').localeCompare(String(right.name || '')));
+    return [
+        '<option value="" data-i18n="Select a Connection Profile">Select a Connection Profile</option>',
+        ...profiles.map(profile => `<option value="${escapeHtml(profile.id)}" ${profile.id === selectedId ? 'selected' : ''}>${escapeHtml(profile.name)}</option>`),
+    ].join('');
+}
+
+/** Captures the non-secret connection data a queued job must keep stable. */
+async function snapshotStmbProfileConnection(profile) {
+    const effectiveProfile = structuredClone(profile || {});
+    if (!effectiveProfile.connectionProfileId) {
+        return effectiveProfile;
+    }
+    effectiveProfile.connectionSnapshot = createConnectionProfileRequestSnapshot(
+        effectiveProfile.connectionProfileId,
+        {
+            model: effectiveProfile.modelOverride,
+            temperature: effectiveProfile.temperatureOverride,
+        },
+    );
+    effectiveProfile.connectionProfileName = effectiveProfile.connectionSnapshot.profileName;
+    return effectiveProfile;
 }
 
 function getSettingsRegexOptions() {
@@ -2654,35 +2709,6 @@ async function showRegexSelectionPopup() {
     }
 }
 
-const STMB_PROFILE_PROVIDER_OPTIONS = Object.freeze([
-    ['current_st', 'Current SillyTavern Settings'],
-    ['ai21', 'AI21'],
-    ['aimlapi', 'AI/ML API'],
-    ['claude', 'Anthropic/Claude'],
-    ['azure_openai', 'Azure OpenAI'],
-    ['cohere', 'Cohere'],
-    ['cometapi', 'Comet API'],
-    ['deepseek', 'DeepSeek'],
-    ['electronhub', 'Electron Hub'],
-    ['fireworks', 'Fireworks'],
-    ['makersuite', 'Google AI Studio'],
-    ['groq', 'Groq'],
-    ['mistralai', 'MistralAI'],
-    ['moonshot', 'Moonshot'],
-    ['navy', 'Navy'],
-    ['nanogpt', 'NanoGPT'],
-    ['openai', 'OpenAI'],
-    ['openrouter', 'OpenRouter'],
-    ['perplexity', 'Perplexity'],
-    ['pollinations', 'Pollinations'],
-    ['siliconflow', 'SiliconFlow'],
-    ['vertexai', 'Vertex AI'],
-    ['xai', 'xAI'],
-    ['zai', 'Z.AI'],
-    ['custom', 'Custom OpenAI-Compatible API'],
-    ['full-manual', 'Full Manual Configuration'],
-]);
-
 const STMB_SUMMARY_PROMPT_DISPLAY_NAMES = Object.freeze({
     summary: 'Summary - Detailed beat-by-beat summaries in narrative prose',
     summarize: 'Summarize - Bullet-point format',
@@ -2808,7 +2834,7 @@ function getDefaultArcPromptKey() {
 
 function setDefaultArcPromptKey(key) {
     const normalizedKey = String(key || '').trim();
-    if (!normalizedKey || isRegenerationOnlyPreset(normalizedKey) || !listArcPromptPresets().some(preset => preset.key === normalizedKey)) {
+    if (!normalizedKey || isRegenerationOnlyPreset(normalizedKey) || isGroupChatOnlyPreset(normalizedKey) || !listArcPromptPresets().some(preset => preset.key === normalizedKey)) {
         throw new Error('Select a consolidation preset first');
     }
     stmbSettings.moduleSettings.defaultArcPromptKey = normalizedKey;
@@ -2820,7 +2846,7 @@ function setDefaultArcPromptKey(key) {
 function buildArcPromptDefaultOptionsHtml(selectedKey = null) {
     const resolvedKey = String(selectedKey || getDefaultArcPromptKey());
     return listArcPromptPresets()
-        .filter(preset => !preset.regenerationOnly)
+        .filter(preset => !preset.regenerationOnly && !preset.groupChatOnly)
         .map(preset => `<option value="${escapeHtml(preset.key)}" ${preset.key === resolvedKey ? 'selected' : ''}>${escapeHtml(preset.displayName)}</option>`)
         .join('');
 }
@@ -2892,11 +2918,12 @@ function buildSummaryPromptManagerRowsHtml(presets, selectedPresetKey = null) {
                             ${preset.regenerationOnly ? '' : `<button class="menu_button stmb-action stmb-action-duplicate whitespacenowrap" data-action="duplicate" title="Duplicate" aria-label="Duplicate" data-i18n="[title]STMemoryBooks_Duplicate;[aria-label]STMemoryBooks_Duplicate" style="display:inline-flex; align-items:center; justify-content:center; width:auto; min-width:0; margin:0;">
                                 <i class="fa-solid fa-copy"></i>
                             </button>`}
-                            <button class="menu_button stmb-action stmb-action-delete whitespacenowrap" data-action="delete" title="Delete" aria-label="Delete" data-i18n="[title]STMemoryBooks_Delete;[aria-label]STMemoryBooks_Delete" style="display:inline-flex; align-items:center; justify-content:center; width:auto; min-width:0; margin:0;">
+                            ${preset.groupChatOnly ? '' : `<button class="menu_button stmb-action stmb-action-delete whitespacenowrap" data-action="delete" title="Delete" aria-label="Delete" data-i18n="[title]STMemoryBooks_Delete;[aria-label]STMemoryBooks_Delete" style="display:inline-flex; align-items:center; justify-content:center; width:auto; min-width:0; margin:0;">
                                 <i class="fa-solid fa-trash"></i>
-                            </button>
+                            </button>`}
                             </span>
                             ${preset.regenerationOnly ? '<small class="opacity70p" style="display:block;margin-top:4px;" data-i18n="Used only by the lorebook editor Regenerate action.">Used only by the lorebook editor Regenerate action.</small>' : ''}
+                            ${preset.groupChatOnly ? '<small class="opacity70p" style="display:block;margin-top:4px;" data-i18n="Used automatically for the canonical group lorebook when character lorebooks are also consolidated.">Used automatically for the canonical group lorebook when character lorebooks are also consolidated.</small>' : ''}
                         </td>
                     </tr>
                 `).join('')}
@@ -4839,6 +4866,9 @@ function buildProfileEditorHtml(profile, options = {}) {
     const selectedPreset = String(profile?.preset || 'summary');
     const orderMode = String(profile?.orderMode || 'auto');
     const position = Number(profile?.position ?? 0);
+    const connectionProfileId = String(profile?.connectionProfileId || '');
+    const isLegacyDirect = !isBuiltin && !connectionProfileId && String(connection.api || 'current_st') !== 'current_st';
+    const usesCurrentSt = isBuiltin || (!connectionProfileId && String(connection.api || 'current_st') === 'current_st');
 
     return `
         <div class="stmb-profile-editor-popup">
@@ -4847,33 +4877,34 @@ function buildProfileEditorHtml(profile, options = {}) {
                 <label for="stmb-profile-editor-name" data-i18n="Profile Name">Profile Name</label>
                 <input id="stmb-profile-editor-name" class="text_pole" value="${escapeHtml(String(profile?.name || 'New Profile'))}" ${isBuiltin ? 'disabled' : ''}>
             </div>
-            <div class="world_entry_form_control">
-                <label for="stmb-profile-editor-api">API/Provider</label>
-                <select id="stmb-profile-editor-api" class="text_pole" ${isBuiltin ? 'disabled' : ''}>
-                    ${STMB_PROFILE_PROVIDER_OPTIONS.map(([value, label]) => `<option value="${escapeHtml(value)}" ${String(connection.api || 'current_st') === value ? 'selected' : ''}>${escapeHtml(label)}</option>`).join('')}
-                </select>
-            </div>
+            ${isBuiltin ? `
+                <div class="world_entry_form_control opacity70p" data-i18n="This profile uses the currently active SillyTavern connection.">This profile uses the currently active SillyTavern connection.</div>
+            ` : `
+                <div class="world_entry_form_control">
+                    <label for="stmb-profile-editor-connection-profile" data-i18n="Connection Profile">Connection Profile</label>
+                    <select id="stmb-profile-editor-connection-profile" class="text_pole">
+                        ${getConnectionProfileOptionsHtml(connectionProfileId)}
+                    </select>
+                    ${isLegacyDirect ? '<small class="warning" data-i18n="This legacy profile remains usable. Select a connection profile to rebind it.">This legacy profile remains usable. Select a connection profile to rebind it.</small>' : ''}
+                    ${usesCurrentSt ? '<small data-i18n="This saved profile uses the currently active SillyTavern connection. Select a connection profile to rebind it.">This saved profile uses the currently active SillyTavern connection. Select a connection profile to rebind it.</small>' : ''}
+                </div>
+            `}
             <div class="world_entry_form_control">
                 <label class="checkbox_label"><input id="stmb-profile-editor-skip-structured-output" type="checkbox" ${profile?.skipStructuredOutput ? 'checked' : ''}> <span data-i18n="Skip structured-output and use plain-text completion">Skip structured-output and use plain-text completion</span></label>
             </div>
             <div class="world_entry_form_control">
                 <label for="stmb-profile-editor-model" data-i18n="Model">Model</label>
-                <input id="stmb-profile-editor-model" class="text_pole" value="${escapeHtml(String(connection.model || ''))}" ${String(connection.api || 'current_st') === 'current_st' ? 'disabled' : ''}>
+                <input id="stmb-profile-editor-model" class="text_pole" value="${escapeHtml(String(profile?.modelOverride || connection.model || ''))}" placeholder="Optional model override" data-i18n="[placeholder]Optional model override">
+                ${usesCurrentSt
+                    ? '<small data-i18n="Leave blank to use the current SillyTavern model.">Leave blank to use the current SillyTavern model.</small>'
+                    : '<small data-i18n="Leave blank to use the connection profile model.">Leave blank to use the connection profile model.</small>'}
             </div>
             <div class="world_entry_form_control">
                 <label for="stmb-profile-editor-temperature" data-i18n="Temperature">Temperature</label>
-                <input id="stmb-profile-editor-temperature" type="number" min="0" max="2" step="0.1" class="text_pole" value="${escapeHtml(String(connection.temperature ?? 0.7))}" ${String(connection.api || 'current_st') === 'current_st' ? 'disabled' : ''}>
-            </div>
-            <div id="stmb-profile-editor-manual-section" class="${String(connection.api || 'current_st') === 'full-manual' ? '' : 'displayNone'}">
-                <div class="world_entry_form_control">
-                    <label for="stmb-profile-editor-endpoint" data-i18n="API Base URL">API Base URL</label>
-                    <input id="stmb-profile-editor-endpoint" class="text_pole" value="${escapeHtml(String(connection.endpoint || ''))}">
-                    <small>Use the provider base URL, for example <code>https://hanasaki.ai/v1</code>. <code>/chat/completions</code> is added automatically.</small>
-                </div>
-                <div class="world_entry_form_control">
-                    <label for="stmb-profile-editor-apikey" data-i18n="API Key">API Key</label>
-                    <input id="stmb-profile-editor-apikey" class="text_pole" type="password" value="${escapeHtml(String(connection.apiKey || ''))}">
-                </div>
+                <input id="stmb-profile-editor-temperature" type="number" min="0" max="2" step="0.1" class="text_pole" value="${profile?.temperatureOverride !== null && profile?.temperatureOverride !== undefined ? escapeHtml(String(profile.temperatureOverride)) : (connection.temperature !== undefined ? escapeHtml(String(connection.temperature)) : '')}" placeholder="Optional temperature override" data-i18n="[placeholder]Optional temperature override">
+                ${usesCurrentSt
+                    ? '<small data-i18n="Leave blank to use the current SillyTavern temperature.">Leave blank to use the current SillyTavern temperature.</small>'
+                    : '<small data-i18n="Leave blank to use the connection profile preset or provider default.">Leave blank to use the connection profile preset or provider default.</small>'}
             </div>
             <div class="world_entry_form_control">
                 <label for="stmb-profile-editor-preset" data-i18n="Memory Creation Method">Memory Creation Method</label>
@@ -4967,11 +4998,7 @@ function updateProfileEditorDynamicState(dialog) {
         return;
     }
 
-    const apiSelect = dialog.querySelector('#stmb-profile-editor-api');
     const titleFormatSelect = dialog.querySelector('#stmb-profile-editor-title-format-select');
-    const manualSection = dialog.querySelector('#stmb-profile-editor-manual-section');
-    const modelInput = dialog.querySelector('#stmb-profile-editor-model');
-    const temperatureInput = dialog.querySelector('#stmb-profile-editor-temperature');
     const customTitleInput = dialog.querySelector('#stmb-profile-editor-custom-title-format');
     const positionSelect = dialog.querySelector('#stmb-profile-editor-position');
     const outletContainer = dialog.querySelector('#stmb-profile-editor-outlet-container');
@@ -4980,17 +5007,6 @@ function updateProfileEditorDynamicState(dialog) {
     const reverseStartContainer = dialog.querySelector('#stmb-profile-editor-reverse-start-container');
     const useGroupSpecificPrompts = dialog.querySelector('#stmb-profile-editor-use-group-specific-prompts');
     const groupPromptSection = dialog.querySelector('#stmb-profile-editor-group-prompt-section');
-    const isCurrentSt = String(apiSelect?.value || 'current_st') === 'current_st';
-
-    if (manualSection) {
-        manualSection.classList.toggle('displayNone', String(apiSelect?.value || '') !== 'full-manual');
-    }
-    if (modelInput) {
-        modelInput.disabled = isCurrentSt;
-    }
-    if (temperatureInput) {
-        temperatureInput.disabled = isCurrentSt;
-    }
     if (customTitleInput) {
         customTitleInput.classList.toggle('displayNone', titleFormatSelect?.value !== 'custom');
     }
@@ -5022,23 +5038,23 @@ function buildProfileFromEditor(dialog, baseProfile = null) {
     profile.groupPreset = String(dialog.querySelector('#stmb-profile-editor-group-preset')?.value || 'group').trim() || 'group';
     profile.characterPreset = String(dialog.querySelector('#stmb-profile-editor-character-preset')?.value || 'char').trim() || 'char';
     profile.connection = profile.connection && typeof profile.connection === 'object' ? profile.connection : {};
-    profile.connection.api = isBuiltin
-        ? 'current_st'
-        : String(dialog.querySelector('#stmb-profile-editor-api')?.value || profile.connection.api || 'current_st').trim();
     profile.skipStructuredOutput = Boolean(dialog.querySelector('#stmb-profile-editor-skip-structured-output')?.checked);
 
     const model = String(dialog.querySelector('#stmb-profile-editor-model')?.value || '').trim();
-    const temperature = Number(dialog.querySelector('#stmb-profile-editor-temperature')?.value ?? 0.7);
-    const endpoint = String(dialog.querySelector('#stmb-profile-editor-endpoint')?.value || '').trim();
-    const apiKey = String(dialog.querySelector('#stmb-profile-editor-apikey')?.value || '').trim();
-    if (model) profile.connection.model = model;
-    else delete profile.connection.model;
-    if (Number.isFinite(temperature)) profile.connection.temperature = temperature;
-    else delete profile.connection.temperature;
-    if (endpoint) profile.connection.endpoint = endpoint;
-    else delete profile.connection.endpoint;
-    if (apiKey) profile.connection.apiKey = apiKey;
-    else delete profile.connection.apiKey;
+    const rawTemperature = String(dialog.querySelector('#stmb-profile-editor-temperature')?.value ?? '').trim();
+    const temperature = rawTemperature === '' ? null : Number(rawTemperature);
+    profile.modelOverride = model;
+    profile.temperatureOverride = Number.isFinite(temperature) ? Math.max(0, Math.min(2, temperature)) : null;
+
+    if (!isBuiltin) {
+        const selectedConnectionProfileId = String(dialog.querySelector('#stmb-profile-editor-connection-profile')?.value || '').trim();
+        if (selectedConnectionProfileId) {
+            const selectedConnectionProfile = getSupportedConnectionProfiles().find(item => item.id === selectedConnectionProfileId);
+            profile.connectionProfileId = selectedConnectionProfileId;
+            profile.connectionProfileName = String(selectedConnectionProfile?.name || '');
+            profile.connection = { api: 'connection_profile' };
+        }
+    }
 
     profile.titleFormat = titleFormat || stmbSettings.titleFormat || STMB_DEFAULT_TITLE_FORMAT;
     profile.constVectMode = String(dialog.querySelector('#stmb-profile-editor-const-vect')?.value || 'link');
@@ -5054,6 +5070,8 @@ function buildProfileFromEditor(dialog, baseProfile = null) {
         profile.isBuiltinCurrentST = true;
         profile.name = 'Current SillyTavern Settings';
         profile.connection.api = 'current_st';
+        profile.connectionProfileId = '';
+        profile.connectionProfileName = '';
     } else {
         delete profile.isBuiltinCurrentST;
     }
@@ -5081,7 +5099,8 @@ async function openProfileEditor(profileIndex = null) {
             ...createDefaultStmbProfile(),
             name: getUniqueProfileName('New Profile'),
             isBuiltinCurrentST: false,
-            connection: { api: 'current_st', temperature: 0.7 },
+            connection: { api: 'connection_profile' },
+            temperatureOverride: null,
         }
         : structuredClone(stmbSettings.profiles[profileIndex] || getActiveStmbProfile(stmbSettings));
     const popup = new Popup(DOMPurify.sanitize(buildProfileEditorHtml(baseProfile, { mode: isNew ? 'new' : 'edit' })), POPUP_TYPE.TEXT, '', {
@@ -5101,13 +5120,23 @@ async function openProfileEditor(profileIndex = null) {
                 toastr.error(translate('Profile name is required'), 'STMB');
                 return false;
             }
-            if (nextProfile.connection?.api !== 'current_st' && !String(nextProfile.connection?.model || '').trim()) {
-                toastr.error(translate('Model is required for non-current-st profiles'), 'STMB');
+            const keepsLegacyConnection = !isNew
+                && !nextProfile.connectionProfileId
+                && String(nextProfile.connection?.api || '') !== 'connection_profile';
+            if (!nextProfile.isBuiltinCurrentST && !nextProfile.connectionProfileId && !keepsLegacyConnection) {
+                toastr.error(translate('Select a connection profile'), 'STMB');
                 return false;
             }
-            if (nextProfile.connection?.api === 'full-manual' && !String(nextProfile.connection?.endpoint || '').trim()) {
-                toastr.error(translate('Endpoint is required for full-manual profiles'), 'STMB');
-                return false;
+            if (nextProfile.connectionProfileId) {
+                try {
+                    createConnectionProfileRequestSnapshot(nextProfile.connectionProfileId, {
+                        model: nextProfile.modelOverride,
+                        temperature: nextProfile.temperatureOverride,
+                    });
+                } catch (error) {
+                    toastr.error(error?.message || translate('Connection profile is not available'), 'STMB');
+                    return false;
+                }
             }
             if (Number(nextProfile.position) === 7 && !String(nextProfile.outletName || '').trim()) {
                 toastr.error(translate('Outlet Name is required when Insertion Position is Outlet'), 'STMB');
@@ -5370,31 +5399,6 @@ function refreshProfileEditorPresetOptions(dialog, preferredSelectedValue = null
     }
 }
 
-function createMainEntryUi() {
-    if (stmbUiBound || $('#stmb-menu-item').length > 0) {
-        stmbUiBound = true;
-        return;
-    }
-
-    const menuItem = $(`
-        <div id="stmb-menu-item" class="list-group-item flex-container flexGap5 interactable" tabindex="0">
-            <div class="fa-fw fa-solid fa-book extensionsMenuExtensionButton"></div>
-            <span data-i18n="Memory Books">Memory Books</span>
-        </div>
-    `);
-    const memoryBooksWandContainer = $('#memory_books_wand_container');
-    if (memoryBooksWandContainer.length > 0) {
-        memoryBooksWandContainer.append(menuItem);
-        stmbUiBound = true;
-    } else {
-        setTimeout(() => {
-            if (!stmbUiBound) {
-                createMainEntryUi();
-            }
-        }, 250);
-    }
-}
-
 function selectSettingsPopupView(html, view = 'main') {
     const template = document.createElement('template');
     template.innerHTML = DOMPurify.sanitize(html);
@@ -5412,9 +5416,10 @@ function selectSettingsPopupView(html, view = 'main') {
     return template.innerHTML;
 }
 
-async function showMainEntryPopup(view = 'main') {
+async function showMainEntryPopup(view = 'main', options = {}) {
     await firstRunInitArcPromptPresets(stmbSettings);
     await firstRunInitSummaryPromptPresets(stmbSettings);
+    await reconcileCurrentManualGroupStloFilters();
     let sidePromptSets = [];
     if (view === 'general') {
         try {
@@ -5702,6 +5707,7 @@ async function showMainEntryPopup(view = 'main') {
             }
             moduleSettings.manualModeEnabled = target.checked;
             persistSettings();
+            void refreshStmbMacroCache();
             return;
         }
         if (target.matches('#stmb-settings-auto-accept-group-participants')) {
@@ -5846,6 +5852,7 @@ async function showMainEntryPopup(view = 'main') {
             if (selectedLorebook) {
                 getStmbState().manualLorebook = selectedLorebook;
                 saveMetadataDebounced();
+                void refreshStmbMacroCache();
                 updateSettingsPopupDynamicState(popup.dlg, currentUiConnection);
             }
             return;
@@ -5854,6 +5861,7 @@ async function showMainEntryPopup(view = 'main') {
         if (target.closest('#stmb-settings-clear-lorebook')) {
             delete getStmbState().manualLorebook;
             saveMetadataDebounced();
+            void refreshStmbMacroCache();
             updateSettingsPopupDynamicState(popup.dlg, currentUiConnection);
             return;
         }
@@ -5980,6 +5988,7 @@ async function showMainEntryPopup(view = 'main') {
     });
 
     updateSettingsPopupDynamicState(popup.dlg, currentUiConnection);
+    setTimeout(() => focusStmbSettingsControl(popup.dlg, options.focusControlId), 0);
 
     try {
         await popup.show();
@@ -6019,45 +6028,21 @@ async function getAvailableMemoryCount(lorebookName) {
     return identifyManagedMemoryEntries(lorebookData.entries).length;
 }
 
-function saveAdvancedProfile(baseProfile, popupResult, currentUiConnection) {
+/**
+ * Saves the Advanced-run model and temperature choices without copying secrets.
+ */
+function saveAdvancedProfile(baseProfile, popupResult) {
     const sourceProfile = baseProfile || getActiveStmbProfile(stmbSettings);
-    const sourceConnection = sourceProfile?.connection && typeof sourceProfile.connection === 'object'
-        ? sourceProfile.connection
-        : {};
-    const sourceApi = String(sourceConnection.api || 'openai').trim() || 'openai';
-    const sourceModel = String(sourceConnection.model || '').trim();
-    const sourceTemperature = Number(sourceConnection.temperature);
-
-    const overrideApi = String(currentUiConnection?.api || '').trim();
-    const overrideModel = String(currentUiConnection?.model || '').trim();
-    const overrideTemperature = Number(currentUiConnection?.temperature);
-
     const nextProfile = {
+        ...structuredClone(sourceProfile),
         name: getUniqueProfileName(popupResult.newProfileName),
-        connection: {
-            api: popupResult.overrideSettings && overrideApi ? overrideApi : sourceApi,
-            temperature: popupResult.overrideSettings && Number.isFinite(overrideTemperature)
-                ? Math.max(0, Math.min(2, overrideTemperature))
-                : (Number.isFinite(sourceTemperature) ? Math.max(0, Math.min(2, sourceTemperature)) : 0.7),
-        },
-        preset: String(sourceProfile?.preset || '').trim() || 'summary',
-        useGroupSpecificPrompts: Boolean(sourceProfile?.useGroupSpecificPrompts),
-        groupPreset: String(sourceProfile?.groupPreset || 'group').trim() || 'group',
-        characterPreset: String(sourceProfile?.characterPreset || 'char').trim() || 'char',
-        constVectMode: 'link',
-        position: 0,
-        orderMode: 'auto',
-        orderValue: 100,
-        reverseStart: 9999,
-        preventRecursion: true,
-        delayUntilRecursion: false,
-        titleFormat: String(sourceProfile?.titleFormat || stmbSettings.titleFormat || STMB_DEFAULT_TITLE_FORMAT).trim() || STMB_DEFAULT_TITLE_FORMAT,
+        modelOverride: String(popupResult.modelOverride || sourceProfile?.modelOverride || '').trim(),
+        temperatureOverride: popupResult.temperatureOverride !== null && popupResult.temperatureOverride !== undefined
+            ? Math.max(0, Math.min(2, Number(popupResult.temperatureOverride)))
+            : (sourceProfile?.temperatureOverride ?? null),
     };
-
-    const nextModel = popupResult.overrideSettings ? overrideModel : sourceModel;
-    if (nextModel) {
-        nextProfile.connection.model = nextModel;
-    }
+    delete nextProfile.isBuiltinCurrentST;
+    delete nextProfile.connectionSnapshot;
 
     stmbSettings.profiles.push(nextProfile);
     saveSettingsDebounced();
@@ -6178,7 +6163,8 @@ async function showAndGetMemorySettings(compiledScene, range, lorebookName, sele
         currentTemperature: currentUiConnection.temperature,
         availableMemories: await getAvailableMemoryCount(lorebookName),
         defaultMemoryCount,
-        overrideSettings: false,
+        modelOverride: '',
+        temperatureOverride: null,
         suggestedProfileName: `${getProfileDisplayName(selectedProfile)} - Modified`,
         tokenThreshold,
         estimateTokenTotal: async popupOptions => await estimateAdvancedMemoryTokens(compiledScene, lorebookName, popupOptions),
@@ -6193,11 +6179,12 @@ async function showAndGetMemorySettings(compiledScene, range, lorebookName, sele
         return null;
     }
 
+    const advancedSelectedProfile = getActiveStmbProfile(stmbSettings, advanced.profileIndex);
     if (advanced.action === 'save_profile') {
         if (!advanced.newProfileName) {
             throw new Error('Please enter a profile name');
         }
-        const saved = saveAdvancedProfile(selectedProfile, advanced, currentUiConnection);
+        const saved = saveAdvancedProfile(advancedSelectedProfile, advanced);
         toastr.success(t`Profile "${saved.name}" saved successfully`, 'STMB');
         return null;
     }
@@ -6205,7 +6192,7 @@ async function showAndGetMemorySettings(compiledScene, range, lorebookName, sele
         if (!advanced.newProfileName) {
             throw new Error('Please enter a profile name');
         }
-        const saved = saveAdvancedProfile(selectedProfile, advanced, currentUiConnection);
+        const saved = saveAdvancedProfile(advancedSelectedProfile, advanced);
         if (!validateConnectionProfilePreflight(saved)) {
             return null;
         }
@@ -6222,16 +6209,15 @@ async function showAndGetMemorySettings(compiledScene, range, lorebookName, sele
         };
     }
 
-    const effectiveProfile = structuredClone(selectedProfile);
-    const basePrompt = String(getEffectivePromptText(selectedProfile) || '').trim();
+    const effectiveProfile = structuredClone(advancedSelectedProfile);
+    const basePrompt = String(getEffectivePromptText(advancedSelectedProfile) || '').trim();
     const nextPrompt = String(advanced.promptText || '').trim();
     effectiveProfile.promptText = nextPrompt || basePrompt;
-    if (advanced.overrideSettings) {
-        effectiveProfile.connection = {
-            api: 'current_st',
-            model: '',
-            temperature: currentUiConnection.temperature,
-        };
+    if (String(advanced.modelOverride || '').trim()) {
+        effectiveProfile.modelOverride = String(advanced.modelOverride).trim();
+    }
+    if (advanced.temperatureOverride !== null && advanced.temperatureOverride !== undefined) {
+        effectiveProfile.temperatureOverride = advanced.temperatureOverride;
     }
 
     if (!validateConnectionProfilePreflight(effectiveProfile)) {
@@ -6577,6 +6563,49 @@ function getManualGroupBindingSnapshot(sceneContext = buildStmbSceneContext(), s
     };
 }
 
+/**
+ * Brings one settings control into view without changing its value.
+ */
+function focusStmbSettingsControl(dialog, controlId) {
+    const normalizedId = String(controlId || '').trim();
+    if (!dialog || !normalizedId) return;
+    const control = dialog.querySelector(`#${CSS.escape(normalizedId)}`);
+    if (!(control instanceof HTMLElement)) return;
+    const highlightTarget = control.closest('label') || control;
+    highlightTarget.classList.add('stmb-setting-focus-highlight');
+    control.scrollIntoView({ block: 'center', behavior: 'smooth' });
+    control.focus({ preventScroll: true });
+    setTimeout(() => highlightTarget.classList.remove('stmb-setting-focus-highlight'), 5000);
+}
+
+/**
+ * Repairs STLO character filters from the current manual group bindings.
+ */
+async function reconcileCurrentManualGroupStloFilters(sceneContext = buildStmbSceneContext()) {
+    if (!sceneContext?.isGroupChat || !getModuleSettings().manualModeEnabled) {
+        return;
+    }
+    const snapshot = getManualGroupBindingSnapshot(sceneContext);
+    const targets = buildStmbGroupStloReconciliationTargets({
+        ...snapshot,
+        availableLorebookNames: world_names,
+        isReservedLorebookName: isReservedTemplateWorldName,
+        getStorage: getLorebookStorageForRequest,
+    });
+    if (targets.length === 0) {
+        return;
+    }
+    try {
+        await syncStmbGroupStloMetadata({ targets });
+    } catch (error) {
+        console.warn('STMB could not reconcile group STLO character filters', error);
+        toastr.warning(
+            translate('Some group lorebook character filters could not be repaired. Review the manual group lorebook assignments.'),
+            'STMB',
+        );
+    }
+}
+
 function validateManualGroupBindingSnapshot(snapshot) {
     const members = Array.isArray(snapshot?.members) ? snapshot.members : [];
     const bindings = snapshot?.bindings && typeof snapshot.bindings === 'object' ? snapshot.bindings : {};
@@ -6614,7 +6643,7 @@ async function confirmGroupMemoryParticipants(compiledScene, snapshot) {
     const popup = new Popup(DOMPurify.sanitize(`
         <h3 data-i18n="Confirm memory participants">Confirm memory participants</h3>
         <p data-i18n="Select the characters this memory applies to. If none are selected, it will apply to every group character.">Select the characters this memory applies to. If none are selected, it will apply to every group character.</p>
-        <div class="world_entry_form_control flex-container flexFlowColumn">${rows}</div>
+        <div class="world_entry_form_control flex-container flexFlowColumn stmb-group-participants-list">${rows}</div>
         <label class="checkbox_label"><input type="checkbox" id="stmb-group-participants-auto"> <span data-i18n="Automatically accept detected participants in future">Automatically accept detected participants in future</span></label>
     `), POPUP_TYPE.CONFIRM, '', { okButton: translate('Save'), cancelButton: translate('Cancel') });
     const result = await popup.show();
@@ -7178,6 +7207,7 @@ async function resolveAutoSummaryLorebook(options = {}) {
 
         state.manualLorebook = selectedLorebook;
         saveMetadataDebounced();
+        void refreshStmbMacroCache();
         lorebookName = selectedLorebook;
     }
 
@@ -7188,6 +7218,7 @@ async function resolveAutoSummaryLorebook(options = {}) {
             setManualLorebook: async selectedLorebook => {
                 state.manualLorebook = String(selectedLorebook || '').trim();
                 saveMetadataDebounced();
+                void refreshStmbMacroCache();
             },
             createContext: 'auto-summary',
         });
@@ -7433,6 +7464,7 @@ function handleLorebookReferencesUpdated(payloadOrOperation = {}, oldNameArg = '
     });
     if (metadataChanged) {
         saveMetadataDebounced();
+        void refreshStmbMacroCache();
     }
 }
 
@@ -7451,6 +7483,7 @@ async function ensureLorebookName(createContext = 'chat') {
         setManualLorebook: async selectedLorebook => {
             getStmbState().manualLorebook = String(selectedLorebook || '').trim();
             saveMetadataDebounced();
+            void refreshStmbMacroCache();
         },
         autoCreateLorebook: getModuleSettings().autoCreateLorebook,
         lorebookNameTemplate: getModuleSettings().lorebookNameTemplate || 'LTM - {{char}} - {{chat}}',
@@ -7474,6 +7507,17 @@ async function validateLorebookPreflight() {
 }
 
 function getConnectionProfilePreflightMessage(profile) {
+    if (profile?.connectionProfileId) {
+        try {
+            createConnectionProfileRequestSnapshot(profile.connectionProfileId, {
+                model: profile.modelOverride,
+                temperature: profile.temperatureOverride,
+            });
+            return '';
+        } catch (error) {
+            return String(error?.message || 'Connection profile is not available.');
+        }
+    }
     const connectionApi = String(profile?.connection?.api || '').trim().toLowerCase();
     const secretKey = STMB_PROFILE_SECRET_KEYS[connectionApi];
     return getStmbConnectionProfileApiKeyError(profile, {
@@ -7516,8 +7560,46 @@ function buildSummaryPromptMessages(prompt) {
 async function buildStmbGenerateData(messages, profile, { jsonSchema = null } = {}) {
     const options = jsonSchema ? { jsonSchema } : {};
     const { generateData } = await buildOpenAIGenerateData('quiet', messages, options);
+    let profiledGenerateData;
+    if (profile?.connectionSnapshot || profile?.connectionProfileId) {
+        const snapshot = profile.connectionSnapshot || createConnectionProfileRequestSnapshot(
+            profile.connectionProfileId,
+            {
+                model: profile.modelOverride,
+                temperature: profile.temperatureOverride,
+            },
+        );
+        profiledGenerateData = applyConnectionProfileSnapshot(generateData, snapshot, {
+            model: profile.modelOverride,
+            temperature: profile.temperatureOverride,
+        });
+    } else if (String(profile?.connection?.api || '') === 'current_st') {
+        const model = String(profile?.modelOverride || generateData?.model || '').trim();
+        if (!model) {
+            throw new Error(translate('Enter a model ID or select a connection profile with a saved model ID.'));
+        }
+        profiledGenerateData = {
+            ...generateData,
+            model,
+            temperature: profile?.temperatureOverride !== null && profile?.temperatureOverride !== undefined
+                ? profile.temperatureOverride
+                : generateData.temperature,
+        };
+    } else {
+        const legacyProfile = {
+            ...profile,
+            connection: {
+                ...(profile?.connection || {}),
+                model: String(profile?.modelOverride || profile?.connection?.model || '').trim(),
+                temperature: profile?.temperatureOverride !== null && profile?.temperatureOverride !== undefined
+                    ? profile.temperatureOverride
+                    : profile?.connection?.temperature,
+            },
+        };
+        profiledGenerateData = applyStmbProfileToGenerateData(generateData, legacyProfile, getStmbProviderDefaults());
+    }
     return applyStmbMaxTokensToGenerateData(
-        applyStmbProfileToGenerateData(generateData, profile, getStmbProviderDefaults()),
+        profiledGenerateData,
         getModuleSettings().maxTokens,
     );
 }
@@ -7738,7 +7820,10 @@ async function requestStructuredSummaryWithRetry(prompt, profile, signal, onRate
             throw error;
         }
 
-        const repairPrompt = `${prompt}\n\nReturn ONLY the JSON object, nothing else. Ensure arrays and commas are valid.`;
+        const repairPrompt = `${prompt}\n\n${translate(
+            'Return ONLY the JSON object, nothing else. Ensure arrays and commas are valid.',
+            'STMemoryBooks_Consolidation_JsonRepair',
+        )}`;
         try {
             const repaired = await requestStructuredSummaryDetailed(repairPrompt, profile, signal, onRateLimitWait, responseShape);
             return {
@@ -7760,6 +7845,27 @@ async function requestStructuredSummaryWithRetry(prompt, profile, signal, onRate
             throw combined;
         }
     }
+}
+
+async function requestConsolidationKeywords(summary, targetTier, profile, signal, onRateLimitWait = null) {
+    const prompt = buildConsolidationKeywordPrompt(summary, targetTier, translate);
+    const request = async (requestPrompt) => {
+        const result = await generateStmbText({
+            generateData: await buildStmbGenerateData([{ role: 'user', content: requestPrompt }], profile),
+        }, { signal, onRateLimitWait });
+        const text = String(result.text || '');
+        assertNoProviderTruncation(result.providerResponse, text);
+        return parseConsolidationKeywordsResponse(text);
+    };
+
+    const keywords = await request(prompt);
+    if (keywords.length > 0) {
+        return keywords;
+    }
+    return await request(`${prompt}\n\n${translate(
+        'Return ONLY a JSON array of 15-30 strings.',
+        'STMemoryBooks_Consolidation_KeywordRepair',
+    )}`);
 }
 
 async function estimateSummaryPromptTokens(prompt, estimatedOutput = 500) {
@@ -7789,7 +7895,7 @@ async function runSequentialSummaryAnalysis(sourceEntries, options = {}, profile
         : getDefaultArcPromptKey();
     const regenerationOnly = presetKey === CONSOLIDATION_REGENERATION_PRESET_KEY;
 
-    const briefs = buildBriefsFromEntries(sourceEntries);
+    const briefs = buildBriefsFromEntries(sourceEntries, translate);
     const gapBriefs = briefs.filter(brief => brief.gapMarker);
     const remainingMap = new Map(briefs.filter(brief => !brief.gapMarker).map(brief => [String(brief.id), brief]));
     const acceptedSummaries = [];
@@ -7852,6 +7958,7 @@ async function runSequentialSummaryAnalysis(sourceEntries, options = {}, profile
             previousOrder: previousOrderValue,
             promptText,
             targetTier,
+            localize: translate,
         });
         let tokenEstimate = await estimateSummaryPromptTokens(prompt, 500);
         const countRealBriefs = () => batch.filter(brief => !brief.gapMarker).length;
@@ -7876,6 +7983,7 @@ async function runSequentialSummaryAnalysis(sourceEntries, options = {}, profile
                 previousOrder: previousOrderValue,
                 promptText,
                 targetTier,
+                localize: translate,
             });
             tokenEstimate = await estimateSummaryPromptTokens(prompt, 500);
         }
@@ -7927,6 +8035,18 @@ async function runSequentialSummaryAnalysis(sourceEntries, options = {}, profile
         }
 
         carryBriefs = batch.filter(brief => leftovers.includes(String(brief.id)));
+    }
+
+    for (const candidate of acceptedSummaries) {
+        if (Array.isArray(candidate.keywords) && candidate.keywords.length > 0) continue;
+        throwIfStmbAborted(signal);
+        candidate.keywords = await requestConsolidationKeywords(
+            candidate.summary,
+            targetTier,
+            profile,
+            signal,
+            onRateLimitWait,
+        );
     }
 
     return {
@@ -8425,6 +8545,7 @@ async function saveMemoryObjectToLorebook(memoryObject, { lorebookName, range, c
     }, { signal });
     throwIfStmbAborted(signal);
     worldInfoCache.delete(lorebookName);
+    void refreshStmbMacroCache(lorebookName);
     await applyPostSaveLorebookEffects(lorebookName, range, sceneContext);
     throwIfStmbAborted(signal);
     showOrderClampNotifications(result?.orderClampNotifications);
@@ -8473,11 +8594,11 @@ function clearAutoConsolidationPromptState(targetTier, sceneContext = null) {
 
 function listSummaryConsolidationPresets() {
     return listCachedArcPromptPresets(stmbSettings)
-        .filter(preset => !preset.regenerationOnly)
+        .filter(preset => !preset.regenerationOnly && !preset.groupChatOnly)
         .map(preset => ({
-        value: preset.key,
-        label: preset.displayName,
-        prompt: getRequiredArcPromptText(preset.key),
+            value: preset.key,
+            label: preset.displayName,
+            prompt: getRequiredArcPromptText(preset.key),
         }));
 }
 
@@ -8758,6 +8879,7 @@ async function commitSummaryCandidates(summaryCandidates, {
     }, { signal });
     throwIfStmbAborted(signal);
     worldInfoCache.delete(lorebookName);
+    void refreshStmbMacroCache(lorebookName);
     const createdEntries = Array.isArray(result?.createdEntries) ? result.createdEntries : [];
     await applyPostSummarySaveLorebookEffects(lorebookName);
     showOrderClampNotifications(result?.orderClampNotifications);
@@ -8833,6 +8955,15 @@ async function executeMemoryJob(job, context) {
     }
     if (!lorebookName) {
         throw new Error('Memory job is missing a lorebook.');
+    }
+    if (payload.resumePostSaveResult) {
+        context.setResult(payload.resumePostSaveResult);
+        context.setState('post_save', { detail: 'Resuming post-save actions' });
+        await maybePromptAutoConsolidation(1, {
+            sceneContext: job?.sceneContext || null,
+            lorebookName,
+        });
+        return;
     }
 
     context.setState('capturing_scene', {
@@ -9048,6 +9179,7 @@ async function executeMemoryCreationFromRange(range, options = {}) {
     if (!effectiveSettings) {
         return null;
     }
+    const queuedProfile = await snapshotStmbProfileConnection(effectiveSettings.profileSettings);
     let manualGroupSnapshot = null;
     if (sceneContext.isGroupChat) {
         const groupParticipantSnapshot = await prepareGroupMemoryParticipantSnapshot(compiledScene, sceneContext);
@@ -9065,7 +9197,7 @@ async function executeMemoryCreationFromRange(range, options = {}) {
             compiledScene,
             range,
             settings: requestSettings,
-            profile: effectiveSettings.profileSettings,
+            profile: queuedProfile,
             sceneContext,
             contextSettingKey,
         });
@@ -9085,7 +9217,7 @@ async function executeMemoryCreationFromRange(range, options = {}) {
             compiledScene,
             range,
             lorebookName,
-            profile: effectiveSettings.profileSettings,
+            profile: queuedProfile,
             summaryCount: effectiveSettings.summaryCount,
             contextSettingKey,
             keepSceneMarkers: Boolean(options.keepSceneMarkers),
@@ -9093,10 +9225,11 @@ async function executeMemoryCreationFromRange(range, options = {}) {
             manualGroupSnapshot,
         },
     });
-    for (const job of afterMemoryJobs) {
+    for (const [parentJobOrder, job] of afterMemoryJobs.entries()) {
         enqueueStmbJob({
             ...job,
             dependsOnJobId: memoryJobId,
+            parentJobOrder,
             payload: {
                 ...(job.payload || {}),
                 dependsOnJobId: memoryJobId,
@@ -9167,6 +9300,7 @@ function buildGroupConsolidationGapMarkers(targetEntries, primaryEntries, member
     }));
 }
 
+/** Builds canonical group and character-lorebook consolidation work items. */
 async function buildGroupConsolidationWorkItems(primaryItem, targetTier, requiredMinimum) {
     const sceneContext = buildStmbSceneContext();
     if (!getModuleSettings().manualModeEnabled || !sceneContext.isGroupChat) return [primaryItem];
@@ -9181,7 +9315,7 @@ async function buildGroupConsolidationWorkItems(primaryItem, targetTier, require
     if (itemsByLorebook.size === 0) return [primaryItem];
 
     const selectedNumbers = new Set(primaryItem.sourceEntries.map(getStmbCanonicalEntryNumber).filter(Number.isFinite));
-    const ready = [primaryItem];
+    const ready = [{ ...primaryItem, role: 'group', hasGroupCharacterTopology: true }];
     const skipped = [];
     for (const item of itemsByLorebook.values()) {
         const data = await loadWorldInfo(item.lorebookName) || { entries: {} };
@@ -9194,6 +9328,8 @@ async function buildGroupConsolidationWorkItems(primaryItem, targetTier, require
             selectedEntryIds: realEntries.map(entry => String(entry.uid)),
             gapMarkers,
             members: item.members,
+            role: 'character',
+            hasGroupCharacterTopology: true,
         };
         if (realEntries.length >= requiredMinimum) ready.push(workItem);
         else skipped.push(workItem);
@@ -9264,7 +9400,15 @@ export async function createSummaryForTier(targetTier, options = {}) {
 
     ensureStmbJobExecutorsRegistered();
     const sceneContext = buildStmbSceneContext();
+    const queuedProfile = await snapshotStmbProfileConnection(profile);
     for (const workItem of workItems) {
+        const workItemPrompt = buildConsolidationWorkItemPrompt(
+            workItem,
+            { presetKey, promptText },
+            workItem.role === 'group' && workItem.hasGroupCharacterTopology
+                ? getRequiredArcPromptText(GROUP_CHAT_CONSOLIDATION_PRESET_KEY)
+                : '',
+        );
         enqueueStmbJob({
             type: 'consolidation',
             lorebookName: workItem.lorebookName,
@@ -9280,8 +9424,9 @@ export async function createSummaryForTier(targetTier, options = {}) {
                 gapMarkers: structuredClone(workItem.gapMarkers || []),
                 requiredMin: requiredMinimum,
                 profileIndex: options.profileIndex ?? null,
-                presetKey,
-                promptText,
+                profile: queuedProfile,
+                presetKey: workItemPrompt.presetKey,
+                promptText: workItemPrompt.promptText,
                 maxItemsPerPass: Math.max(1, Math.trunc(Number(options.maxItemsPerPass) || 15)),
                 maxPasses: Math.max(1, Math.trunc(Number(options.maxPasses) || 10)),
                 tokenTarget: Math.max(1000, Math.trunc(Number(options.tokenTarget) || (getModuleSettings().tokenWarningThreshold ?? 30000))),
@@ -9388,7 +9533,7 @@ async function runSummaryConsolidationNow(payload = {}, signal = null, onRateLim
 
     const existingSummaries = identifyManagedSummaryEntries(lorebookData.entries, normalizedTargetTier);
     const previousSummary = existingSummaries.at(-1) || null;
-    const profile = getActiveStmbProfile(stmbSettings, payload.profileIndex ?? null);
+    const profile = payload.profile || getActiveStmbProfile(stmbSettings, payload.profileIndex ?? null);
     const chosenSummaryEntrySettings = normalizeLorebookEntrySettings(
         payload.summaryEntrySettings || getModuleSettings().summaryEntrySettings || {},
         getModuleSettings().summaryEntrySettings || {},
@@ -10263,6 +10408,10 @@ async function buildBaseRegenerationDraft(lorebookName, lorebookData, entry, eli
     });
     const compiledScene = sceneCapture?.compiledScene;
     if (!compiledScene || !Array.isArray(compiledScene.messages) || compiledScene.messages.length === 0) {
+        if (!getModuleSettings().unhideBeforeMemory) {
+            await showRegenerationVisibilityGuidance();
+            return null;
+        }
         throw new Error('No capturable messages remain in the original range.');
     }
     compiledScene.metadata = {
@@ -10315,6 +10464,24 @@ async function buildBaseRegenerationDraft(lorebookName, lorebookData, entry, eli
         currentChatId: sceneContext.chatId,
         expectedChatRevision: Number(sceneCapture?.capture?.chatRevision),
     };
+}
+
+async function showRegenerationVisibilityGuidance() {
+    const popup = new Popup(DOMPurify.sanitize(`
+        <h3 data-i18n="Hidden messages were excluded">Hidden messages were excluded</h3>
+        <p data-i18n="The original range contains only hidden messages, so there is nothing to regenerate with the current setting. Enable &quot;Include hidden messages for memory generation&quot; in General Settings, then try again.">The original range contains only hidden messages, so there is nothing to regenerate with the current setting. Enable &quot;Include hidden messages for memory generation&quot; in General Settings, then try again.</p>
+    `), POPUP_TYPE.TEXT, '', {
+        okButton: false,
+        cancelButton: translate('Close'),
+        customButtons: [{
+            text: translate('Open General Settings'),
+            result: POPUP_RESULT.CUSTOM1,
+            appendAtEnd: true,
+        }],
+    });
+    if (await popup.show() === POPUP_RESULT.CUSTOM1) {
+        await showMainEntryPopup('general', { focusControlId: 'stmb-settings-unhide-before-memory' });
+    }
 }
 
 async function buildConsolidationRegenerationDraft(lorebookData, eligibility, task) {
@@ -10401,6 +10568,7 @@ async function handleLorebookEntryRegeneration(button) {
             expectedChatRevision: draft.expectedChatRevision,
         }, { signal: task.signal });
         worldInfoCache.delete(lorebookName);
+        void refreshStmbMacroCache(lorebookName);
         await Promise.resolve(reloadEditor(lorebookName));
         toastr.success(translate('Memory regenerated successfully.'), 'STMB');
     } catch (error) {
@@ -10419,14 +10587,22 @@ export function initStmb() {
     }
 
     configureClipRuntime();
-    createMainEntryUi();
+    initStmbMacros({
+        getSettings: () => stmbSettings,
+        getManualLorebook: () => getStmbState().manualLorebook,
+    });
     ensurePlannerStatusUi();
     void pollCurrentChatPlannerState();
-    $(document).on('click', '#stmb-menu-item', () => {
+    const bindMainEntry = () => document.getElementById('stmb-menu-item')?.addEventListener('click', () => {
         showMainEntryPopup().catch(error => {
             console.warn('STMB main entry popup failed', error);
         });
     });
+    if (document.getElementById('stmb-menu-item')) {
+        bindMainEntry();
+    } else {
+        eventSource.once(event_types.APP_READY, bindMainEntry);
+    }
     registerStmbRegenerationHandler(handleLorebookEntryRegeneration);
     window.addEventListener(OPEN_APPROVAL_EVENT, event => {
         const jobId = String(event?.detail?.jobId || '').trim();

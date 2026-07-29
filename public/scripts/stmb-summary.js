@@ -6,6 +6,7 @@ import {
 export const MIN_SUMMARY_CHILDREN = 1;
 const DEFAULT_MIN_CHILDREN = 5;
 export const CONSOLIDATION_REGENERATION_PRESET_KEY = 'arc_regenerate';
+export const GROUP_CHAT_CONSOLIDATION_PRESET_KEY = 'arc_group_chat';
 
 export const STMB_SUMMARY_TIERS = Object.freeze([
     { tier: 0, key: 'memory', label: 'Memory' },
@@ -19,11 +20,29 @@ export const STMB_SUMMARY_TIERS = Object.freeze([
 
 const SUMMARY_TIER_MAP = new Map(STMB_SUMMARY_TIERS.map(config => [config.tier, config]));
 
-const STMB_CONSOLIDATION_KEYWORD_GUIDANCE = `For the keywords field, generate 12–20 natural retrieval keywords when the material supports them. Use fewer rather than padding with weak terms. Keywords are search hooks, not miniature summaries or evidence notes.
+export const STMB_DEFAULT_CONSOLIDATION_KEYWORD_PROMPT = `Based on this {{stmbtier}} summary, generate 15–30 standalone topical keywords that function as retrieval tags, not micro-summaries.
+Keywords must be:
+- Concrete and scene-specific (locations, objects, proper nouns, unique actions, repeated motifs).
+- One concept per keyword — do NOT combine multiple ideas into one keyword.
+- Useful for retrieval if the user later mentions that noun or action alone, not only in a specific context.
+- Not {{char}}'s or {{user}}'s names.
+- Not thematic, emotional, or abstract. Stop-list: intimacy, vulnerability, trust, dominance, submission, power dynamics, boundaries, jealousy, aftercare, longing, consent, emotional connection.
 
-Prioritize stable named entities other than {{char}} or {{user}}, major continuity anchors, memorable shared moments, and independent secondary hooks. Use the shortest distinctive wording likely to remain recognizable under paraphrasing or reversed word order. Prefer one central named entity when it already covers related events; retain a modified phrase only when it provides a genuinely separate retrieval route.
+Avoid:
+- Overly specific compound keywords (“David Tokyo marriage”).
+- Narrative or plot-summary style keywords (“art dealer date fail”).
+- Keywords that contain multiple facts or descriptors.
+- Keywords that only make sense when the whole scene is remembered.
 
-Keywords should normally contain 1–4 words, use ordinary noun phrases, identify distinct parts of the summary, and remain stable under paraphrasing. Exclude incidental scenery or props, exact administrative details, generic themes, unsupported conclusions, sentence-like evidence descriptions, and redundant variants of the same entity.`;
+Prefer:
+- Proper nouns (e.g., "Chinatown", "Ritz-Carlton bar").
+- Specific physical objects ("CPAP machine", "chocolate chip cookies").
+- Distinctive actions ("cookie baking", "piano apology").
+- Unique phrases or identifiers from the scene used by characters ("pack for forever", "dick-measuring contest").
+
+Your goal: keywords should fire when the noun/action is mentioned alone, not only when paired with a specific person or backstory.
+
+Return ONLY a JSON array of 15-30 strings. No commentary, no explanations.`;
 
 export const STMB_DEFAULT_SUMMARY_PROMPTS = Object.freeze({
     arc_default: `You are an expert narrative analyst and memory-engine assistant.
@@ -444,6 +463,173 @@ Rules:
 - Keep compression aggressive but accurate.
 - Identify non-fitting items in unassigned_items.
 - No commentary outside JSON.`,
+    [GROUP_CHAT_CONSOLIDATION_PRESET_KEY]: `You specialize in building omniscient narrative timelines and maintaining chronological story continuity.
+
+Your task is to combine multiple {{stmbchildtier}}-bounded chronologies into the smallest coherent number of {{stmbtier}}-bounded chronologies.
+
+These summaries record what objectively happened across the story. They do not imply that every character knows, witnessed, remembers, or correctly understands every included fact. Preserve distinctions between objective events and individual character knowledge whenever the source establishes them.
+
+You will receive:
+
+* An optional \`PREVIOUS {{stmbtier}}\` block. It is established canon and may be used for continuity, but it must not be summarized, rewritten, or repeated.
+* A set of {{stmbchildtier}} entries presented in chronological order. Each entry has a source ID.
+
+Return only valid JSON, with no commentary or code fences:
+
+{
+	"summaries": [
+		{
+			"title": "Short descriptive {{stmbtier}} title",
+			"summary": "Structured omniscient {{stmbtier}} chronology as a single JSON string.",
+			"keywords": ["keyword1", "keyword2"],
+			"member_ids": ["source-id-1", "source-id-2"]
+		}
+	],
+	"unassigned_items": [
+		{
+			"id": "source-id",
+			"reason": "Short explanation of why this item could not be assigned."
+		}
+	]
+}
+
+## Assignment rules
+
+* Respect the supplied chronology.
+* Produce the smallest coherent number of {{stmbtier}} summaries supported by the content.
+* Do not create separate summaries merely for different characters, points of view, memory owners, or knowledge scopes.
+* Split the material only when it contains genuinely distinct chronological or narrative units that should not form one coherent {{stmbtier}}.
+* Assign every source entry ID exactly once:
+  * either to one summary’s \`member_ids\`;
+  * or to \`unassigned_items\`.
+* Preserve the order of IDs within each summary.
+* If an entry cannot be placed coherently, put it in \`unassigned_items\` with a short, specific reason.
+* Use the \`PREVIOUS {{stmbtier}}\` only to maintain continuity and avoid repetition. Do not include it in \`member_ids\`.
+
+## Content rules
+
+Each summary must:
+
+* Trace cause, intention, reaction, and consequence clearly.
+* Preserve chronology, plot accuracy, and continuity.
+* Record important actions, revelations, decisions, conflicts, consequences, and lasting changes.
+* Preserve who knew, witnessed, concealed, misunderstood, or remained unaware of important information when supported by the source.
+* Treat the chronology as omniscient story history, not as proof that every character knows its contents.
+* Omit OOC discussion, repeated information, scenery, flavor, and routine logistics unless they materially affect continuity.
+* Be token-efficient without becoming vague.
+* Use past tense and third person.
+* Use specific names and nouns when they improve continuity or retrieval.
+* Include no information unsupported by the supplied entries.
+
+## Required \`summary\` structure
+
+The \`summary\` field must contain the following Markdown structure as one properly escaped JSON string:
+
+# [Title]
+
+**Timeline**: [Use the most specific date and time supported by the source entries. If no date or time is established, state that it is unspecified or use a supported relative period.]
+
+## Story Beats
+
+* Present the major actions, revelations, decisions, conflicts, and emotional, relational, physical, or magical changes in chronological order.
+* Explain what triggered each significant development, why the characters acted, how others reacted, and what resulted.
+* Include plot-affecting interactions, meaningful shared experiences, and events that altered relationships or future continuity.
+* Preserve distinctions between objective events and what individual characters knew or believed.
+* Omit repeated gestures, room dressing, background objects, and routine logistical details unless they directly affected events.
+
+## Character Dynamics
+
+* Explain how motives, emotions, relationships, loyalties, and power dynamics changed during the summarized period.
+* Capture consequential tension, vulnerability, trust, conflict, avoidance, affection, resentment, dependence, suspicion, or loyalty.
+* Include small or domestic experiences only when they meaningfully changed relationship history.
+* Do not repeat plot events unless needed to explain the interpersonal change they caused.
+
+## Important Facts
+
+* Record newly established facts likely to matter later, including plans, risks, abilities, limitations, promises, secrets, debts, injuries, magical effects, discoveries, knowledge, misunderstandings, and obligations.
+* State which characters know or do not know a fact when that distinction affects continuity.
+* Exclude casual preferences, scenery, errands, paperwork, clothing, furniture, weather, and other incidental details unless they became continuity-relevant.
+
+## Key Exchanges
+
+* Include only dialogue that established a revelation, decision, conflict, emotional shift, relationship change, promise, threat, or memorable identifier.
+* Attribute every quotation by speaker name.
+* Include a direct quotation only when the source preserves its exact wording.
+* Never convert paraphrased dialogue into a quotation.
+* Preserve distinctive phrases when they are narratively or relationship-relevant.
+* Include no more than eight short quotations.
+* Escape all quotation marks correctly so the final output remains valid JSON.
+
+## Outcome & Continuity
+
+* State the final narrative, emotional, relational, physical, or magical condition produced by the events.
+* Record resulting decisions, plans, risks, promises, secrets, injuries, knowledge changes, and obligations that affect what happens next.
+* Identify unresolved threads, pending conflicts, future consequences, and foreshadowed developments.
+* Do not repeat the entire event sequence.
+
+(OOC note: This is an omniscient narrative chronology maintained for story cohesion. Individual characters may know only part of it or may be entirely unaware of some events and facts.)
+
+For the \`keywords\` field:
+
+Generate **12–20 natural retrieval keywords when the material supports them**. Use fewer rather than padding the list with weak terms. Keywords are search hooks, not miniature summaries or evidence notes.
+
+Prioritize:
+
+1. **Stable named entities**: people other than {{char}} or {{user}}, places, organizations, events, documents, factions, spells, or distinctive objects.
+2. **Major continuity anchors**: plans, threats, secrets, discoveries, investigations, conflicts, injuries, promises, relationship changes, and unresolved threads.
+3. **Memorable moments**: meaningful shared activities, gifts, food, rituals, jokes, care-taking, arguments, or domestic events.
+4. **Independent secondary hooks** that retrieve a separate part of the summarized material.
+
+### Keyword construction
+
+Use the shortest distinctive wording likely to remain recognizable under paraphrasing or reversed word order.
+
+Examples:
+
+* \`Gala of the Silver Rose\` or \`Silver Rose Gala\` → \`Silver Rose\`
+* \`Bromet Response SA\` → \`Bromet\`
+* \`Château D’Aramitz\`, Comte D’Aramitz, or a plan involving him → \`D’Aramitz\`
+* Keep \`Althof Ledger\` when both words are required to identify the object.
+
+Prefer one central named entity when it already covers several related events:
+
+* \`D’Aramitz rescue plan\` → \`D’Aramitz\`
+* \`Bromet hidden contractors\` → \`Bromet\`
+* \`Althof Ledger substitution\` → \`Althof Ledger\`
+
+Retain a modified phrase only when it provides an independent retrieval route not covered by the central entity:
+
+* \`fake caterers\`
+* \`ledger facsimile\`
+* \`safehouse breakfast\`
+* \`counter-surveillance camera\`
+
+When several clues establish one conclusion, usually tag the resulting finding rather than each supporting clue:
+
+* Uniforms, badges, and vehicle access → \`fake caterers\`
+* Payments and company records → \`Bromet\`
+* A covert tactical team at the gala → \`suspected assassination\`
+* A rental used for equipment and disguises → \`staging villa\`
+
+A supporting clue may remain only when it is memorable, likely to recur, or independently useful for retrieval.
+
+Keywords should normally:
+
+* Contain 1–4 words.
+* Use ordinary noun phrases.
+* Identify genuinely distinct parts of the summary.
+* Remain stable if later descriptions use different wording.
+
+Exclude:
+
+* Incidental scenery or props.
+* Exact times, quantities, card digits, invoice wording, or administrative details.
+* Generic themes such as \`danger\`, \`romance\`, or \`conversation\`.
+* Unsupported conclusions.
+* Sentence-like evidence descriptions.
+* Multiple keywords that merely restate or narrow the same named entity.
+
+Before returning the JSON, silently verify that each keyword is natural to search, continuity-relevant, stable under paraphrasing, independently useful, and no longer than necessary.`,
 });
 
 export const STMB_SUMMARY_RESPONSE_SCHEMA = Object.freeze({
@@ -532,7 +718,7 @@ function extractFenceContent(text) {
 
 function extractBalancedJson(text) {
     const source = String(text || '');
-    const start = source.search(/[{\[]/);
+    const start = source.search(/{|\[/);
     if (start < 0) return null;
 
     const stack = [];
@@ -668,6 +854,51 @@ function normalizeKeywords(keywords) {
     }
 
     return normalized;
+}
+
+/**
+ * Parses a keyword-only completion from JSON, fenced JSON, bullets, or CSV.
+ */
+export function parseConsolidationKeywordsResponse(response) {
+    const normalized = normalizeText(response).trim();
+    const candidates = [
+        ...extractFenceContent(normalized),
+        extractBalancedJson(normalized),
+        normalized,
+    ].filter(Boolean);
+
+    for (const candidate of [...new Set(candidates)]) {
+        try {
+            const parsed = JSON.parse(stripTrailingCommas(stripJsonComments(candidate)));
+            const keywords = Array.isArray(parsed) ? parsed : parsed?.keywords;
+            if (Array.isArray(keywords)) {
+                return normalizeKeywords(keywords).slice(0, 30);
+            }
+        } catch {
+            // Continue with another representation.
+        }
+    }
+
+    const lines = normalized.split(/\r?\n/).map(line => line.trim()).filter(Boolean);
+    const fallback = lines.length > 1
+        ? lines.map(line => line.replace(/^[-*\u2022]?\s*\d*\.?\s*/, '').trim())
+        : normalized.split(/[,;]+/).map(value => value.trim());
+    return normalizeKeywords(fallback).slice(0, 30);
+}
+
+/**
+ * Builds the localized keyword-recovery prompt for a summary.
+ */
+export function buildConsolidationKeywordPrompt(summary, targetTier = 1, localize = source => source) {
+    const prompt = resolveSummaryPromptPlaceholders(
+        localize(STMB_DEFAULT_CONSOLIDATION_KEYWORD_PROMPT, 'STMemoryBooks_Consolidation_KeywordPrompt'),
+        { targetTier },
+    );
+    const tier = getSummaryTierLabel(targetTier).toUpperCase();
+    const start = String(localize('=== {{tier}} SUMMARY ===', 'STMemoryBooks_Consolidation_KeywordSummaryStart'))
+        .replaceAll('{{tier}}', tier);
+    const end = localize('=== END SUMMARY ===', 'STMemoryBooks_Consolidation_KeywordSummaryEnd');
+    return [prompt, '', start, String(summary || '').trim(), end].join('\n');
 }
 
 const SUMMARY_MEMBER_INFERENCE_STOPWORDS = new Set([
@@ -1072,7 +1303,7 @@ export function resolveSummaryPromptPlaceholders(promptText, { targetTier = 1, c
         .replace(/\{\{\s*stmbparenttier\s*\}\}/gi, getSummaryTierLabel(resolvedParentTier));
 }
 
-export function buildBriefsFromEntries(entries) {
+export function buildBriefsFromEntries(entries, localize = source => source) {
     const briefs = [];
 
     for (const entry of entries || []) {
@@ -1081,7 +1312,7 @@ export function buildBriefsFromEntries(entries) {
             briefs.push({
                 id: String(entry.id || `gap-${briefs.length + 1}`),
                 order: Number.isFinite(Number(entry.order)) ? Number(entry.order) : 0,
-                title: String(entry.title || 'Chronology gap').trim(),
+                title: String(entry.title || localize('Chronology gap', 'STMemoryBooks_Consolidation_ChronologyGap')).trim(),
                 content: String(entry.content || '').trim(),
                 gapMarker: true,
             });
@@ -1090,7 +1321,7 @@ export function buildBriefsFromEntries(entries) {
         briefs.push({
             id: String(entry.uid ?? ''),
             order: parseSequenceFromTitle(entry.comment ?? '') ?? 0,
-            title: String(entry.comment || 'Untitled').trim(),
+            title: String(entry.comment || localize('Untitled', 'STMemoryBooks_Untitled')).trim(),
             content: String(entry.content || '').trim(),
         });
     }
@@ -1106,6 +1337,7 @@ export function buildSummaryAnalysisPrompt({
     previousOrder = null,
     promptText = null,
     targetTier = 1,
+    localize = source => source,
 }) {
     if (!(typeof promptText === 'string' && promptText.trim())) {
         throw new Error('STMB consolidation prompt text is required before building an AI request.');
@@ -1122,12 +1354,27 @@ export function buildSummaryAnalysisPrompt({
     const lines = [];
     const numberedSourceExample = `${childTierLabel} 001`;
     const locked = Array.isArray(lockedSummaries) ? lockedSummaries : [];
+    const frame = (source, key, replacements = {}) => {
+        let result = String(localize(source, key));
+        for (const [name, value] of Object.entries(replacements)) {
+            result = result.replaceAll(`{{${name}}}`, String(value));
+        }
+        return result;
+    };
 
-    lines.push(`Important: member_ids must refer to the numbered source entries below, such as "001" or "${numberedSourceExample}", not character names, groups, or participants.`);
+    lines.push(frame(
+        'Important: member_ids must refer to the numbered source entries below, such as "001" or "{{example}}", not character names, groups, or participants.',
+        'STMemoryBooks_Consolidation_MemberIdsInstruction',
+        { example: numberedSourceExample },
+    ));
     lines.push('');
 
     if (locked.length > 0) {
-        lines.push(`=== ACCEPTED ${targetLabel} SUMMARIES (CANON - DO NOT REWRITE, DO NOT DUPLICATE) ===`);
+        lines.push(frame(
+            '=== ACCEPTED {{tier}} SUMMARIES (CANON — DO NOT REWRITE, DO NOT DUPLICATE) ===',
+            'STMemoryBooks_Consolidation_AcceptedSummariesStart',
+            { tier: targetLabel },
+        ));
         locked.forEach((item, index) => {
             const title = String(item?.title || `${getSummaryTierLabel(targetTier)} ${index + 1}`).trim();
             const summary = String(item?.summary || item?.content || '').trim();
@@ -1138,30 +1385,56 @@ export function buildSummaryAnalysisPrompt({
             lines.push(summary);
             lines.push('');
         });
-        lines.push(`=== END ACCEPTED ${targetLabel} SUMMARIES ===`);
+        lines.push(frame(
+            '=== END ACCEPTED {{tier}} SUMMARIES ===',
+            'STMemoryBooks_Consolidation_AcceptedSummariesEnd',
+            { tier: targetLabel },
+        ));
         lines.push('');
     }
 
     if (previousSummary) {
-        lines.push(`=== PREVIOUS ${targetLabel} (CANON — DO NOT REWRITE, DO NOT INCLUDE IN YOUR NEW SUMMARY) ===`);
+        lines.push(frame(
+            '=== PREVIOUS {{tier}} (CANON — DO NOT REWRITE, DO NOT INCLUDE IN YOUR NEW SUMMARY) ===',
+            'STMemoryBooks_Consolidation_PreviousSummaryStart',
+            { tier: targetLabel },
+        ));
         if (previousOrder !== null && previousOrder !== undefined) {
             lines.push(`${getSummaryTierLabel(targetTier)} ${previousOrder}`);
         }
         lines.push(String(previousSummary).trim());
-        lines.push(`=== END PREVIOUS ${targetLabel} ===`);
+        lines.push(frame(
+            '=== END PREVIOUS {{tier}} ===',
+            'STMemoryBooks_Consolidation_PreviousSummaryEnd',
+            { tier: targetLabel },
+        ));
         lines.push('');
     }
 
-    lines.push(`=== ${childPluralLabel} ===`);
+    lines.push(frame(
+        '=== {{tier}} ===',
+        'STMemoryBooks_Consolidation_SourceEntriesStart',
+        { tier: childPluralLabel },
+    ));
     briefs.forEach((brief, index) => {
         const sequence = String(index + 1).padStart(3, '0');
         lines.push(`=== ${childTierLabel} ${sequence} ===`);
-        lines.push(`Title: ${String(brief.title || '').trim()}`);
-        lines.push(`${brief.gapMarker ? 'Note' : 'Contents'}: ${String(brief.content || '').trim()}`);
-        lines.push(`=== end ${childTierLabel} ${sequence} ===`);
+        lines.push(`${localize('Title', 'STMemoryBooks_Consolidation_TitleLabel')}: ${String(brief.title || '').trim()}`);
+        lines.push(`${brief.gapMarker
+            ? localize('Note', 'STMemoryBooks_Consolidation_NoteLabel')
+            : localize('Contents', 'STMemoryBooks_Consolidation_ContentsLabel')}: ${String(brief.content || '').trim()}`);
+        lines.push(frame(
+            '=== end {{tier}} {{number}} ===',
+            'STMemoryBooks_Consolidation_SourceEntryEnd',
+            { tier: childTierLabel, number: sequence },
+        ));
         lines.push('');
     });
-    lines.push(`=== END ${childPluralLabel} ===`);
+    lines.push(frame(
+        '=== END {{tier}} ===',
+        'STMemoryBooks_Consolidation_SourceEntriesEnd',
+        { tier: childPluralLabel },
+    ));
     lines.push('');
 
     return `${header}\n\n${lines.join('\n')}`;
