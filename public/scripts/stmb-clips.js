@@ -2,8 +2,10 @@ import { chat_metadata, saveSettingsDebounced } from '../script.js';
 import { DOMPurify } from '../lib.js';
 import { Popup, POPUP_RESULT, POPUP_TYPE } from './popup.js';
 import { stableHashString } from './hashing.js';
+import { getCurrentLocale, translate } from './i18n.js';
 import { createStmbEntry, generateStmbText, updateStmbEntryByUid } from './stmb-api.js';
 import { STMB_DEFAULT_COMPACTION_PROMPT_TEMPLATE } from './stmb-core.js';
+import { syncStmbLocalizedPromptFields } from './stmb-prompt-default-migration.js';
 import { isSidePromptEntryTitle } from './stmb-sideprompts.js';
 import { escapeHtml, withGoBackButton } from './utils.js';
 import { getLorebookStorageForRequest, isReservedTemplateWorldName, loadWorldInfo, METADATA_KEY, reloadEditor, world_names, worldInfoCache } from './world-info.js';
@@ -73,6 +75,7 @@ let runtime = {};
 
 export function configureStmbClipRuntime(nextRuntime = {}) {
     runtime = { ...runtime, ...nextRuntime };
+    syncLocalizedUtilityPrompts();
 }
 
 function tr(fallback) {
@@ -102,6 +105,59 @@ function persistSettings() {
         return;
     }
     saveSettingsDebounced();
+}
+
+function getLocalizedCompactionPromptTemplate() {
+    return translate(DEFAULT_COMPACTION_PROMPT_TEMPLATE, 'STMemoryBooks_Compaction_DefaultPrompt');
+}
+
+function getLocalizedTopicalClipPromptTemplate() {
+    return translate(DEFAULT_TOPICAL_CLIP_PROMPT_TEMPLATE, 'STMemoryBooks_TopicalClip_DefaultPrompt');
+}
+
+/** Localizes unchanged built-in utility prompts while retaining customized templates. */
+function syncLocalizedUtilityPrompts({ persist = true } = {}) {
+    if (typeof runtime.getSettings !== 'function') return;
+
+    const settings = getModuleSettings();
+    const records = {
+        compaction: {
+            prompt: typeof settings.compactionPromptTemplate === 'string' && settings.compactionPromptTemplate.trim()
+                ? settings.compactionPromptTemplate
+                : DEFAULT_COMPACTION_PROMPT_TEMPLATE,
+        },
+        topicalClip: {
+            prompt: typeof settings.topicalClipPromptTemplate === 'string' && settings.topicalClipPromptTemplate.trim()
+                ? settings.topicalClipPromptTemplate
+                : DEFAULT_TOPICAL_CLIP_PROMPT_TEMPLATE,
+        },
+    };
+    const result = syncStmbLocalizedPromptFields(
+        records,
+        {
+            compaction: { prompt: getLocalizedCompactionPromptTemplate() },
+            topicalClip: { prompt: getLocalizedTopicalClipPromptTemplate() },
+        },
+        {
+            compaction: { prompt: DEFAULT_COMPACTION_PROMPT_TEMPLATE },
+            topicalClip: { prompt: DEFAULT_TOPICAL_CLIP_PROMPT_TEMPLATE },
+        },
+        settings.builtinUtilityPromptState,
+        getCurrentLocale(),
+    );
+
+    if (settings.compactionPromptTemplate !== records.compaction.prompt) {
+        settings.compactionPromptTemplate = records.compaction.prompt;
+        result.changed = true;
+    }
+    if (settings.topicalClipPromptTemplate !== records.topicalClip.prompt) {
+        settings.topicalClipPromptTemplate = records.topicalClip.prompt;
+        result.changed = true;
+    }
+    settings.builtinUtilityPromptState = result.state;
+    if (result.changed && persist) {
+        persistSettings();
+    }
 }
 
 function shouldRefreshEditor() {
@@ -921,11 +977,12 @@ function getCompactionPromptTemplate() {
     const saved = getModuleSettings().compactionPromptTemplate;
     return typeof saved === 'string' && saved.trim()
         ? saved
-        : DEFAULT_COMPACTION_PROMPT_TEMPLATE;
+        : getLocalizedCompactionPromptTemplate();
 }
 
 function setCompactionPromptTemplate(template) {
     getModuleSettings().compactionPromptTemplate = String(template || '');
+    syncLocalizedUtilityPrompts({ persist: false });
     persistSettings();
 }
 
@@ -1004,7 +1061,7 @@ function buildCompactionPrompt(entry, entryKind, template = getCompactionPromptT
         ENTRY_TITLE: String(entry?.comment || ''),
     };
 
-    return String(template || DEFAULT_COMPACTION_PROMPT_TEMPLATE).replace(
+    return String(template || getLocalizedCompactionPromptTemplate()).replace(
         /\{\{(ENTRY_CONTENT|ENTRY_KIND|ENTRY_TITLE)\}\}/g,
         (_match, token) => replacements[token] ?? '',
     );
@@ -1082,7 +1139,7 @@ async function showCompactionPromptEditorPopup() {
     });
     popup.dlg?.querySelector('#stmb-compaction-reset-prompt')?.addEventListener('click', () => {
         if (textarea) {
-            textarea.value = DEFAULT_COMPACTION_PROMPT_TEMPLATE;
+            textarea.value = getLocalizedCompactionPromptTemplate();
             textarea.focus();
         }
     });
@@ -1290,11 +1347,12 @@ function getTopicalClipPromptTemplate() {
     const saved = getModuleSettings().topicalClipPromptTemplate;
     return typeof saved === 'string' && saved.trim()
         ? saved
-        : DEFAULT_TOPICAL_CLIP_PROMPT_TEMPLATE;
+        : getLocalizedTopicalClipPromptTemplate();
 }
 
 function setTopicalClipPromptTemplate(template) {
     getModuleSettings().topicalClipPromptTemplate = String(template || '');
+    syncLocalizedUtilityPrompts({ persist: false });
     persistSettings();
 }
 
@@ -1538,7 +1596,7 @@ function buildTopicalClipPrompt({ mode, topic, keywords, sourceEntries, existing
         EXISTING_CLIP: String(existingClip || ''),
         EXISTING_ENTRY_CONTENT: String(existingClip || ''),
     };
-    return String(template || DEFAULT_TOPICAL_CLIP_PROMPT_TEMPLATE).replace(
+    return String(template || getLocalizedTopicalClipPromptTemplate()).replace(
         /\{\{(MODE|TOPIC|KEYWORDS|SOURCE_MEMORIES|EXISTING_CLIP|EXISTING_ENTRY_CONTENT)\}\}/g,
         (_match, token) => replacements[token] ?? '',
     );
@@ -1591,7 +1649,7 @@ async function showTopicalClipPromptEditorPopup() {
     });
     popup.dlg?.querySelector('#stmb-topical-clip-reset-prompt')?.addEventListener('click', () => {
         if (textarea) {
-            textarea.value = DEFAULT_TOPICAL_CLIP_PROMPT_TEMPLATE;
+            textarea.value = getLocalizedTopicalClipPromptTemplate();
             textarea.focus();
         }
     });

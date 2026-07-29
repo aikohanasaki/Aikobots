@@ -968,7 +968,7 @@ Submission copies the current ordinary source and selected side-prompt set into 
 
 STMB side prompts remain in each user's `stmb-side-prompts.json`, but reads now include a content revision and whole-document saves require the matching revision. Setup installation uses the same repository's cross-worker locked mutation so an install cannot silently overwrite a concurrent edit from another tab or PM2 worker. The generic file-upload endpoint cannot replace this file.
 
-Built-in STMB memory, consolidation, and side-prompt bodies follow the active German, French, or Japanese UI locale. Their prompt documents retain signatures for the last installed built-in text so a locale change can replace only an unchanged built-in; custom presets and user-edited built-ins are preserved. Built-in display names remain English.
+Built-in STMB memory, consolidation, side-prompt, Compaction, and Topical Clip bodies follow the active German, French, or Japanese UI locale. Their prompt documents and module settings retain signatures for the last installed built-in text so a locale change can replace only an unchanged built-in; custom presets and user-edited built-ins are preserved. Built-in display names remain English.
 
 The selected installed resources are stored in ordinary chat metadata (`world_info`, `STMemoryBooks.sidePromptAfterMemorySetKey`, and content-free setup provenance). For SQLite chats, the existing revision-checked metadata mutation persists those bindings without replacing message rows. A pristine temporary direct chat is persisted only after the user confirms Apply; group chats are not supported by this feature.
 

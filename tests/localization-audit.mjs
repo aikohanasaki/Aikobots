@@ -24,6 +24,8 @@ const REQUIRED_STMB_PROMPT_KEYS = [
         .map(key => `STMemoryBooks_ConsolidationPrompt_${key}`),
     ...['Plotpoints', 'Status', 'CastOfCharacters', 'Assess']
         .flatMap(key => [`STMemoryBooks_${key}Prompt`, `STMemoryBooks_${key}ResponseFormat`]),
+    'STMemoryBooks_Compaction_DefaultPrompt',
+    'STMemoryBooks_TopicalClip_DefaultPrompt',
 ];
 const PROTECTED_BRANDS = [
     'Aikobots', 'STMB', 'Memory Books', 'Data Maid', 'SillyTavern', 'OpenAI', 'Anthropic',
