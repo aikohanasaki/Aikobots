@@ -976,7 +976,7 @@ function auditPriorityLocales(catalog) {
                 blank.push(key);
                 continue;
             }
-            if (/[\uE000-\uF8FF]|__AIBOTPROTECTED\d+X__/u.test(data[key])) {
+            if (/[\uE000-\uF8FF]|__AIBOT(?:PROTECTED|START|END)\d+X__/u.test(data[key])) {
                 privateUseMarkers.push(key);
             }
             const sourceTokens = getProtectedTokens(source.sourceText);
