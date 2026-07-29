@@ -1,3 +1,4 @@
+import { translate } from '../../i18n.js';
 import { saveTtsProviderSettings } from './index.js';
 
 export { GptSovitsV2Provider };
@@ -49,12 +50,12 @@ class GptSovitsV2Provider {
     get settingsHtml() {
         let html = `
 
-        <label for="tts_endpoint">Provider Endpoint:</label>
+        <label for="tts_endpoint" data-i18n="Provider Endpoint:">Provider Endpoint:</label>
         <input id="tts_endpoint" type="text" class="text_pole" maxlength="250" height="300" value="${this.defaultSettings.provider_endpoint}"/>
         <span>Use <a target="_blank" href="https://github.com/v3ucn/GPT-SoVITS-V2">GPT-SoVITS-V2</a>(Unofficial).</span><br/>
-        <label for="text_lang">Text Lang(Inference text language):</label>
+        <label for="text_lang" data-i18n="Text Lang(Inference text language):">Text Lang(Inference text language):</label>
         <input id="text_lang" type="text" class="text_pole" maxlength="250" height="300" value="${this.defaultSettings.text_lang}"/>
-        <label for="text_lang">Prompt Lang(Reference audio text language):</label>
+        <label for="text_lang" data-i18n="Prompt Lang(Reference audio text language):">Prompt Lang(Reference audio text language):</label>
         <input id="prompt_lang" type="text" class="text_pole" maxlength="250" height="300" value="${this.defaultSettings.prompt_lang}"/>
         <br/>
 
@@ -208,7 +209,7 @@ class GptSovitsV2Provider {
             },
         );
         if (!response.ok) {
-            toastr.error(response.statusText, 'TTS Generation Failed');
+            toastr.error(response.statusText, translate('TTS Generation Failed'));
             throw new Error(`HTTP ${response.status}: ${await response.text()}`);
         }
         return response;

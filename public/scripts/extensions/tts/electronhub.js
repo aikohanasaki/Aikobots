@@ -31,17 +31,17 @@ class ElectronHubTtsProvider {
 
     get settingsHtml() {
         let html = `
-        <div>Electron Hub unified TTS API.</div>
+        <div data-i18n="Electron Hub unified TTS API.">Electron Hub unified TTS API.</div>
         <div class="flex-container alignItemsCenter">
             <div class="flex1"></div>
             <div id="electronhub_tts_key" class="menu_button menu_button_icon manage-api-keys" data-key="api_key_electronhub">
                 <i class="fa-solid fa-key"></i>
-                <span>API Key</span>
+                <span data-i18n="API Key">API Key</span>
             </div>
         </div>
         <div class="flex-container flexGap10 wrap">
             <div class="flex1">
-                <label for="electronhub_tts_model">Model</label>
+                <label for="electronhub_tts_model" data-i18n="Model">Model</label>
                 <select id="electronhub_tts_model" class="text_pole"></select>
             </div>
             <div>
@@ -49,7 +49,7 @@ class ElectronHubTtsProvider {
                 <input type="range" id="electronhub_tts_speed" value="1" min="0.25" max="4" step="0.05">
             </div>
             <div>
-                <label for="electronhub_tts_temperature">Temperature</label>
+                <label for="electronhub_tts_temperature" data-i18n="Temperature">Temperature</label>
                 <input id="electronhub_tts_temperature" class="text_pole" type="number" min="0" max="2" step="0.1" value="1" />
             </div>
             <div id="electronhub_block_top_p" style="display:none;">
@@ -59,34 +59,34 @@ class ElectronHubTtsProvider {
         </div>
 
         <div id="electronhub_block_instructions" style="display:none;">
-            <label for="electronhub_tts_instructions">Instructions (GPT-4o Mini TTS):</label>
-            <textarea id="electronhub_tts_instructions" class="textarea_compact autoSetHeight" placeholder="e.g., 'Speak cheerfully and energetically'"></textarea>
+            <label for="electronhub_tts_instructions" data-i18n="Instructions (GPT-4o Mini TTS):">Instructions (GPT-4o Mini TTS):</label>
+            <textarea id="electronhub_tts_instructions" class="textarea_compact autoSetHeight" placeholder="e.g., 'Speak cheerfully and energetically'" data-i18n="[placeholder]e.g., 'Speak cheerfully and energetically'"></textarea>
         </div>
 
         <div id="electronhub_block_dia" style="display:none;">
-            <label for="electronhub_tts_speaker_transcript">Speaker transcript (Dia):</label>
+            <label for="electronhub_tts_speaker_transcript" data-i18n="Speaker transcript (Dia):">Speaker transcript (Dia):</label>
             <textarea id="electronhub_tts_speaker_transcript" class="textarea_compact autoSetHeight" maxlength="1000"></textarea>
-            <label for="electronhub_tts_cfg_scale">CFG scale (1-5):</label>
+            <label for="electronhub_tts_cfg_scale" data-i18n="CFG scale (1-5):">CFG scale (1-5):</label>
             <input id="electronhub_tts_cfg_scale" type="number" min="1" max="5" step="1" />
-            <label for="electronhub_tts_cfg_topk">CFG filter top_k (15-50):</label>
+            <label for="electronhub_tts_cfg_topk" data-i18n="CFG filter top_k (15-50):">CFG filter top_k (15-50):</label>
             <input id="electronhub_tts_cfg_topk" type="number" min="15" max="50" step="1" />
         </div>
 
         <div id="electronhub_block_msft" style="display:none;">
             <div class="flex-container flexGap10 wrap">
                 <div>
-                    <label for="electronhub_tts_speech_rate">Speech rate (-100..100)</label>
+                    <label for="electronhub_tts_speech_rate" data-i18n="Speech rate (-100..100)">Speech rate (-100..100)</label>
                     <input id="electronhub_tts_speech_rate" class="text_pole" type="number" min="-100" max="100" step="1" style="width:120px;" />
                 </div>
                 <div>
-                    <label for="electronhub_tts_pitch_adjustment">Pitch adjustment (-100..100)</label>
+                    <label for="electronhub_tts_pitch_adjustment" data-i18n="Pitch adjustment (-100..100)">Pitch adjustment (-100..100)</label>
                     <input id="electronhub_tts_pitch_adjustment" class="text_pole" type="number" min="-100" max="100" step="1" style="width:120px;" />
                 </div>
             </div>
             <div class="flex-container flexGap10">
                 <div class="flex1">
-                    <label for="electronhub_tts_emotional_style">Emotional style</label>
-                    <input id="electronhub_tts_emotional_style" class="text_pole" type="text" placeholder="cheerful, sad, angry, gentle..." />
+                    <label for="electronhub_tts_emotional_style" data-i18n="Emotional style">Emotional style</label>
+                    <input id="electronhub_tts_emotional_style" class="text_pole" type="text" placeholder="cheerful, sad, angry, gentle..." data-i18n="[placeholder]cheerful, sad, angry, gentle..."/>
                 </div>
             </div>
         </div>

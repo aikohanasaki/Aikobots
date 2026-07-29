@@ -1,3 +1,4 @@
+import { t, translate } from './i18n.js';
 'use strict';
 
 import {
@@ -183,8 +184,8 @@ class BulkTagPopupHandler {
         return `<div id="bulk_tag_shadow_popup">
             <div id="bulk_tag_popup" class="wider_dialogue_popup">
                 <div id="bulk_tag_popup_holder">
-                    <h3 class="marginBot5">Modify tags of ${this.characterIds.length} characters</h3>
-                    <small class="bulk_tags_desc m-b-1">Add or remove the mutual tags of all selected characters. Import all or existing tags for all selected characters.</small>
+                    <h3 class="marginBot5">${t`Modify tags of ${this.characterIds.length} characters`}</h3>
+                    <small class="bulk_tags_desc m-b-1" data-i18n="Add or remove the mutual tags of all selected characters. Import all or existing tags for all selected characters.">Add or remove the mutual tags of all selected characters. Import all or existing tags for all selected characters.</small>
                     <div id="bulk_tags_avatars_block" class="avatars_inline avatars_inline_small tags tags_inline"></div>
                     <br>
                     <div id="bulk_tags_div" class="marginBot5" data-characters='${characterData}'>
@@ -203,10 +204,10 @@ class BulkTagPopupHandler {
                             <i class="fa-solid fa-trash-can margin-right-10px"></i>
                             Mutual
                         </div>
-                        <div id="bulk_tag_popup_import_all_tags" class="menu_button" title="Import all tags from selected characters" data-i18n="[title]Import all tags from selected characters">
+                        <div id="bulk_tag_popup_import_all_tags" class="menu_button" title="Import all tags from selected characters" data-i18n="[title]Import all tags from selected characters;Import All">
                             Import All
                         </div>
-                        <div id="bulk_tag_popup_import_existing_tags" class="menu_button" title="Import existing tags from selected characters" data-i18n="[title]Import existing tags from selected characters">
+                        <div id="bulk_tag_popup_import_existing_tags" class="menu_button" title="Import existing tags from selected characters" data-i18n="[title]Import existing tags from selected characters;Import Existing">
                             Import Existing
                         </div>
                         <div id="bulk_tag_popup_cancel" class="menu_button" data-i18n="Cancel">Close</div>
@@ -383,7 +384,7 @@ class BulkEditOverlay {
     /**
      * @typedef {object} LastSelected - An object noting the last selected character and its state.
      * @property {number} [characterId] - The character id of the last selected character.
-     * @property {boolean} [select] - The selected state of the last selected character. <c>true</c> if it was selected, <c>false</c> if it was deselected.
+     * @property {boolean} [select] - The selected state of the last selected character. <c data-i18n="true">true</c> if it was selected, <c data-i18n="false">false</c> if it was deselected.
      */
 
     /**
@@ -709,7 +710,7 @@ class BulkEditOverlay {
      */
     updateSelectedCount = (countOverride = undefined) => {
         const count = countOverride ?? this.selectedCharacters.length;
-        $(`#${BulkEditOverlay.bulkSelectedCountId}`).text(count).attr('title', `${count} characters selected`);
+        $(`#${BulkEditOverlay.bulkSelectedCountId}`).text(count).attr('title', t`${count} characters selected`);
     };
 
     /**
@@ -717,7 +718,7 @@ class BulkEditOverlay {
      * The range is provided by the given character and the last selected one remembered in the selection state.
      *
      * @param {HTMLElement} currentCharacter - The html element of the currently toggled character
-     * @param {boolean} select - <c>true</c> if the characters in the range are to be selected, <c>false</c> if deselected
+     * @param {boolean} select - <c data-i18n="true">true</c> if the characters in the range are to be selected, <c data-i18n="false">false</c> if deselected
      */
     toggleCharactersInRange = (currentCharacter, select) => {
         const currentCharacterId = Number(currentCharacter.getAttribute('data-chid'));
@@ -805,22 +806,22 @@ class BulkEditOverlay {
             ? `
                 <label for="del_char_checkbox_all_users" class="checkbox_label justifyCenter">
                     <input type="checkbox" id="del_char_checkbox_all_users" />
-                    <span>Delete for All Users</span>
+                    <span data-i18n="Delete for All Users">Delete for All Users</span>
                 </label>`
             : '';
 
         return `
-            <h3 class="marginBot5">Delete ${characterIds.length} characters?</h3>
+            <h3 class="marginBot5">${t`Delete ${characterIds.length} characters?`}</h3>
             <span class="bulk_delete_note">
                 <i class="fa-solid fa-triangle-exclamation warning margin-r5"></i>
-                <b>THIS IS PERMANENT!</b>
+                <b data-i18n="THIS IS PERMANENT!">THIS IS PERMANENT!</b>
             </span>
             <div id="bulk_delete_avatars_block" class="avatars_inline avatars_inline_small tags tags_inline m-t-1"></div>
             <br>
             <div id="bulk_delete_options" class="m-b-1">
                 <label for="del_char_checkbox" class="checkbox_label justifyCenter">
                     <input type="checkbox" id="del_char_checkbox" />
-                    <span>Also delete the chat files</span>
+                    <span data-i18n="Also delete the chat files">Also delete the chat files</span>
                 </label>
                 ${allUsersOption}
             </div>`;
@@ -844,7 +845,7 @@ class BulkEditOverlay {
                 const deleteForAllUsers = popupContent.find('#del_char_checkbox_all_users').prop('checked') ?? false;
 
                 showLoader();
-                const toast = toastr.info('We\'re deleting your characters, please wait...', 'Working on it');
+                const toast = toastr.info(translate('We\'re deleting your characters, please wait...'), translate('Working on it'));
                 const avatarList = characterIds.map(id => characters[id]?.avatar).filter(a => a);
                 return CharacterContextMenu.delete(avatarList, deleteChats, deleteForAllUsers)
                     .then(() => this.browseState())

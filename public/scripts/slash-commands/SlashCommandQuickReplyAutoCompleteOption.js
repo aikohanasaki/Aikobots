@@ -1,3 +1,4 @@
+import { translate } from '../i18n.js';
 import { AutoCompleteOption } from '../autocomplete/AutoCompleteOption.js';
 
 export class SlashCommandQuickReplyAutoCompleteOption extends AutoCompleteOption {
@@ -32,7 +33,7 @@ export class SlashCommandQuickReplyAutoCompleteOption extends AutoCompleteOption
         }
         const help = document.createElement('span'); {
             help.classList.add('help');
-            help.textContent = 'Quick Reply';
+            help.textContent = translate('Quick Reply');
             frag.append(help);
         }
         return frag;

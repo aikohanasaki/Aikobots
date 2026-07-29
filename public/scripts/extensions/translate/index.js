@@ -1,3 +1,4 @@
+import { t, translate as translateUi } from '../../i18n.js';
 export { translate };
 
 import {
@@ -480,7 +481,7 @@ async function translate(text, lang, provider = null) {
         return result;
     } catch (error) {
         console.log(error);
-        toastr.error(String(error), 'Failed to translate message');
+        toastr.error(String(error), translateUi('Failed to translate message'));
     }
 }
 
@@ -557,11 +558,11 @@ async function onTranslateInputMessageClick() {
     }
 
     if (!textarea.value) {
-        toastr.warning('Enter a message first');
+        toastr.warning(translateUi('Enter a message first'));
         return;
     }
 
-    const toast = toastr.info('Input Message is translating', 'Please wait...');
+    const toast = toastr.info(translateUi('Input Message is translating'), translateUi('Please wait...'));
     const translatedText = await translate(textarea.value, extension_settings.translate.internal_language);
     textarea.value = translatedText;
     textarea.dispatchEvent(new Event('input', { bubbles: true }));
@@ -581,7 +582,7 @@ async function onTranslateChatClick() {
         const context = getContext();
         const chat = context.chat;
 
-        toastr.info(`${chat.length} message(s) queued for translation.`, 'Please wait...');
+        toastr.info(t`${chat.length} message(s) queued for translation.`, translateUi('Please wait...'));
 
         for (let i = 0; i < chat.length; i++) {
             await translateIncomingMessageReasoning(i);
@@ -591,7 +592,7 @@ async function onTranslateChatClick() {
         await context.saveChat();
     } catch (error) {
         console.log(error);
-        toastr.error('Failed to translate chat');
+        toastr.error(translateUi('Failed to translate chat'));
     } finally {
         translateChatExecuting = false;
     }

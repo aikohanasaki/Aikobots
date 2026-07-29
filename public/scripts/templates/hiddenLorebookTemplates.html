@@ -1,91 +1,91 @@
 <div id="core_hidden_templates_container" class="inline-drawer wide100p flexFlowColumn">
     <div class="inline-drawer-toggle inline-drawer-header">
-        <b>Hidden Lorebook Templates</b>
+        <b data-i18n="Hidden Lorebook Templates">Hidden Lorebook Templates</b>
         <div class="inline-drawer-icon fa-solid fa-circle-chevron-down down"></div>
     </div>
     <div class="inline-drawer-content">
         <div class="core_hidden_templates_panel flex-container flexFlowColumn">
             <div class="core_hidden_templates_header">
-                <small>Admins edit template source here, then compile it into the runtime hidden lorebook bindings file.</small>
+                <small data-i18n="Admins edit template source here, then compile it into the runtime hidden lorebook bindings file.">Admins edit template source here, then compile it into the runtime hidden lorebook bindings file.</small>
             </div>
 
             <div class="core_hidden_templates_toolbar">
-                <button id="core_hidden_templates_refresh" type="button" class="menu_button">Refresh</button>
-                <button id="core_hidden_templates_save" type="button" class="menu_button">Save Source</button>
-                <button id="core_hidden_templates_compile" type="button" class="menu_button">Compile</button>
-                <div id="core_hidden_templates_status" class="core_hidden_templates_status">Loading hidden lorebook templates...</div>
+                <button id="core_hidden_templates_refresh" type="button" class="menu_button" data-i18n="Refresh">Refresh</button>
+                <button id="core_hidden_templates_save" type="button" class="menu_button" data-i18n="Save Source">Save Source</button>
+                <button id="core_hidden_templates_compile" type="button" class="menu_button" data-i18n="Compile">Compile</button>
+                <div id="core_hidden_templates_status" class="core_hidden_templates_status" data-i18n="Loading hidden lorebook templates...">Loading hidden lorebook templates...</div>
             </div>
 
             <div class="core_hidden_templates_grid">
                 <section class="core_hidden_templates_section">
                     <div class="core_hidden_templates_section_header">
-                        <h4 class="margin0">Template Manager</h4>
+                        <h4 class="margin0" data-i18n="Template Manager">Template Manager</h4>
                         <div class="core_hidden_templates_actions">
-                            <button id="core_template_create" type="button" class="menu_button">Create</button>
-                            <button id="core_template_rename" type="button" class="menu_button">Rename</button>
-                            <button id="core_template_delete" type="button" class="menu_button red_button">Delete</button>
+                            <button id="core_template_create" type="button" class="menu_button" data-i18n="Create">Create</button>
+                            <button id="core_template_rename" type="button" class="menu_button" data-i18n="Rename">Rename</button>
+                            <button id="core_template_delete" type="button" class="menu_button red_button" data-i18n="Delete">Delete</button>
                         </div>
                     </div>
 
                     <label class="core_hidden_templates_field">
-                        <span>Template</span>
+                        <span data-i18n="Template">Template</span>
                         <select id="core_template_select" class="text_pole"></select>
                     </label>
 
                     <label class="core_hidden_templates_field">
-                        <span>Template Add Lorebooks</span>
+                        <span data-i18n="Template Add Lorebooks">Template Add Lorebooks</span>
                         <select id="core_template_add" class="text_pole core_multi_select" multiple></select>
                     </label>
 
                     <label class="core_hidden_templates_field">
-                        <span>Template Remove Lorebooks</span>
+                        <span data-i18n="Template Remove Lorebooks">Template Remove Lorebooks</span>
                         <select id="core_template_remove" class="text_pole core_multi_select" multiple></select>
                     </label>
                 </section>
 
                 <section class="core_hidden_templates_section">
                     <div class="core_hidden_templates_section_header">
-                        <h4 class="margin0">Universal Assignments</h4>
+                        <h4 class="margin0" data-i18n="Universal Assignments">Universal Assignments</h4>
                     </div>
 
                     <label class="core_hidden_templates_field">
-                        <span>Assigned Templates</span>
+                        <span data-i18n="Assigned Templates">Assigned Templates</span>
                         <select id="core_global_templates" class="text_pole core_multi_select" multiple></select>
                     </label>
 
                     <label class="core_hidden_templates_field">
-                        <span>Universal Add Lorebooks</span>
+                        <span data-i18n="Universal Add Lorebooks">Universal Add Lorebooks</span>
                         <select id="core_global_add" class="text_pole core_multi_select" multiple></select>
                     </label>
 
                     <label class="core_hidden_templates_field">
-                        <span>Universal Remove Lorebooks</span>
+                        <span data-i18n="Universal Remove Lorebooks">Universal Remove Lorebooks</span>
                         <select id="core_global_remove" class="text_pole core_multi_select" multiple></select>
                     </label>
                 </section>
 
                 <section class="core_hidden_templates_section">
                     <div class="core_hidden_templates_section_header">
-                        <h4 class="margin0">Character Assignments</h4>
+                        <h4 class="margin0" data-i18n="Character Assignments">Character Assignments</h4>
                     </div>
 
                     <label class="core_hidden_templates_field">
-                        <span>Character</span>
+                        <span data-i18n="Character">Character</span>
                         <select id="core_character_select" class="text_pole"></select>
                     </label>
 
                     <label class="core_hidden_templates_field">
-                        <span>Assigned Templates</span>
+                        <span data-i18n="Assigned Templates">Assigned Templates</span>
                         <select id="core_character_templates" class="text_pole core_multi_select" multiple></select>
                     </label>
 
                     <label class="core_hidden_templates_field">
-                        <span>Character Add Lorebooks</span>
+                        <span data-i18n="Character Add Lorebooks">Character Add Lorebooks</span>
                         <select id="core_character_add" class="text_pole core_multi_select" multiple></select>
                     </label>
 
                     <label class="core_hidden_templates_field">
-                        <span>Character Remove Lorebooks</span>
+                        <span data-i18n="Character Remove Lorebooks">Character Remove Lorebooks</span>
                         <select id="core_character_remove" class="text_pole core_multi_select" multiple></select>
                     </label>
                 </section>
@@ -93,9 +93,9 @@
 
             <section class="core_hidden_templates_section">
                 <div class="core_hidden_templates_section_header">
-                    <h4 class="margin0">Compiled Preview</h4>
+                    <h4 class="margin0" data-i18n="Compiled Preview">Compiled Preview</h4>
                 </div>
-                <div class="core_hidden_templates_preview_copy">This preview shows the compiled hidden lorebook list for the selected character, including universal rules and any character-specific overrides.</div>
+                <div class="core_hidden_templates_preview_copy" data-i18n="This preview shows the compiled hidden lorebook list for the selected character, including universal rules and any character-specific overrides.">This preview shows the compiled hidden lorebook list for the selected character, including universal rules and any character-specific overrides.</div>
                 <pre id="core_compiled_preview" class="core_hidden_templates_preview" tabindex="0"></pre>
             </section>
         </div>

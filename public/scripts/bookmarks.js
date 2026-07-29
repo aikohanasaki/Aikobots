@@ -44,7 +44,7 @@ import { commonEnumProviders } from './slash-commands/SlashCommandCommonEnumsPro
 import { SlashCommandParser } from './slash-commands/SlashCommandParser.js';
 import { createTagMapFromList } from './tags.js';
 import { renderTemplateAsync } from './templates.js';
-import { t } from './i18n.js';
+import { t, translate } from './i18n.js';
 
 import {
     getUniqueName,
@@ -188,7 +188,7 @@ async function refreshNamedBookmarksPopup() {
 
 async function showNamedBookmarksPopup() {
     if (!hasActiveChatContext()) {
-        toastr.info('No character selected.', 'Bookmarks');
+        toastr.info(translate('No character selected.'), translate('Bookmarks'));
         return;
     }
 
@@ -250,17 +250,17 @@ async function showNamedBookmarkEditorPopup({ header, messageNum = '', title = '
             const nextTitle = String(popupDialog.find('#named_bookmark_title').val() ?? '').trim();
 
             if (!Number.isInteger(nextMessageNum) || nextMessageNum < 0) {
-                toastr.error('Invalid message number', 'Bookmarks');
+                toastr.error(translate('Invalid message number'), translate('Bookmarks'));
                 return false;
             }
 
             if (nextMessageNum >= getTotalChatMessages()) {
-                toastr.error('Message number does not exist', 'Bookmarks');
+                toastr.error(translate('Message number does not exist'), translate('Bookmarks'));
                 return false;
             }
 
             if (!nextTitle) {
-                toastr.error('Title is required', 'Bookmarks');
+                toastr.error(translate('Title is required'), translate('Bookmarks'));
                 return false;
             }
 
@@ -366,7 +366,7 @@ async function deleteNamedBookmark(messageNum, title) {
 
 async function navigateToNamedBookmark(messageNum) {
     if (!Number.isInteger(messageNum) || messageNum < 0 || messageNum >= getTotalChatMessages()) {
-        toastr.error(`Bookmark points to deleted message ${messageNum}`, 'Bookmarks');
+        toastr.error(t`Bookmark points to deleted message ${messageNum}`, translate('Bookmarks'));
         return false;
     }
 
@@ -376,7 +376,7 @@ async function navigateToNamedBookmark(messageNum) {
 
 async function promptCreateNamedBookmark(messageNum = chat.length - 1) {
     if (!chat.length) {
-        toastr.error('No messages available to bookmark.', 'Bookmarks');
+        toastr.error(translate('No messages available to bookmark.'), translate('Bookmarks'));
         return null;
     }
 
@@ -391,19 +391,19 @@ async function promptCreateNamedBookmark(messageNum = chat.length - 1) {
 
     const result = await createNamedBookmark(bookmark.messageNum, bookmark.title);
     if (!result.success) {
-        toastr.error(result.error, 'Bookmarks');
+        toastr.error(result.error, translate('Bookmarks'));
         return null;
     }
 
     await refreshNamedBookmarksPopup();
-    toastr.success(`Bookmark "${result.bookmark.title}" created`, 'Bookmarks');
+    toastr.success(t`Bookmark "${result.bookmark.title}" created`, translate('Bookmarks'));
     return result.bookmark;
 }
 
 async function promptEditNamedBookmark(index) {
     const bookmark = currentNamedBookmarks[index];
     if (!bookmark) {
-        toastr.error('Bookmark not found.', 'Bookmarks');
+        toastr.error(translate('Bookmark not found.'), translate('Bookmarks'));
         return;
     }
 
@@ -419,34 +419,34 @@ async function promptEditNamedBookmark(index) {
 
     const result = await updateNamedBookmark(bookmark.messageNum, bookmark.title, nextBookmark.messageNum, nextBookmark.title);
     if (!result.success) {
-        toastr.error(result.error, 'Bookmarks');
+        toastr.error(result.error, translate('Bookmarks'));
         return;
     }
 
     await refreshNamedBookmarksPopup();
-    toastr.success(`Bookmark "${nextBookmark.title}" updated`, 'Bookmarks');
+    toastr.success(t`Bookmark "${nextBookmark.title}" updated`, translate('Bookmarks'));
 }
 
 async function promptDeleteNamedBookmark(index) {
     const bookmark = currentNamedBookmarks[index];
     if (!bookmark) {
-        toastr.error('Bookmark not found.', 'Bookmarks');
+        toastr.error(translate('Bookmark not found.'), translate('Bookmarks'));
         return;
     }
 
-    const confirmation = await Popup.show.confirm(t`Delete Bookmark`, `Delete bookmark "${bookmark.messageNum} - ${bookmark.title}"?`);
+    const confirmation = await Popup.show.confirm(t`Delete Bookmark`, t`Delete bookmark "${bookmark.messageNum} - ${bookmark.title}"?`);
     if (!confirmation) {
         return;
     }
 
     const result = await deleteNamedBookmark(bookmark.messageNum, bookmark.title);
     if (!result.success) {
-        toastr.error(result.error, 'Bookmarks');
+        toastr.error(result.error, translate('Bookmarks'));
         return;
     }
 
     await refreshNamedBookmarksPopup();
-    toastr.success(`Bookmark "${bookmark.title}" deleted`, 'Bookmarks');
+    toastr.success(t`Bookmark "${bookmark.title}" deleted`, translate('Bookmarks'));
 }
 
 async function onNamedBookmarksPopupClick(event) {
@@ -542,7 +542,7 @@ async function getBookmarkName({ isReplace = false, forceName = null } = {}) {
     const chatNames = await getExistingChatNames();
 
     const body = await renderTemplateAsync('createCheckpoint', { isReplace: isReplace });
-    let name = forceName ?? await Popup.show.input('Create Checkpoint', body);
+    let name = forceName ?? await Popup.show.input(t`Create Checkpoint`, body);
     // Special handling for confirmed empty input (=> auto-generate name)
     if (name === '') {
         for (let i = chatNames.length; i < 1000; i++) {
@@ -608,7 +608,7 @@ export function showBookmarksButtons() {
 
 async function saveBookmarkMenu() {
     if (!chat.length) {
-        toastr.warning('The chat is empty.', 'Checkpoint creation failed');
+        toastr.warning(translate('The chat is empty.'), translate('Checkpoint creation failed'));
         return;
     }
 
@@ -623,18 +623,18 @@ export async function createBranch(mesId, { swipeId = null } = {}) {
     }
 
     if (!chat.length) {
-        toastr.warning('The chat is empty.', 'Branch creation failed');
+        toastr.warning(translate('The chat is empty.'), translate('Branch creation failed'));
         return;
     }
 
     if (mesId < 0 || mesId >= getTotalChatMessages()) {
-        toastr.warning('Invalid message ID.', 'Branch creation failed');
+        toastr.warning(translate('Invalid message ID.'), translate('Branch creation failed'));
         return;
     }
 
     const selectedSwipeId = swipeId === null ? null : Number(swipeId);
     if (selectedSwipeId !== null && !Number.isInteger(selectedSwipeId)) {
-        toastr.warning('Invalid swipe ID.', 'Branch creation failed');
+        toastr.warning(translate('Invalid swipe ID.'), translate('Branch creation failed'));
         return;
     }
 
@@ -647,7 +647,7 @@ export async function createBranch(mesId, { swipeId = null } = {}) {
 
     const lastMes = chat[mesId];
     if (selectedSwipeId !== null && (!Array.isArray(lastMes?.swipes) || selectedSwipeId < 0 || selectedSwipeId >= lastMes.swipes.length)) {
-        toastr.warning('Invalid swipe ID.', 'Branch creation failed');
+        toastr.warning(translate('Invalid swipe ID.'), translate('Branch creation failed'));
         return;
     }
 
@@ -668,14 +668,14 @@ export async function createBranch(mesId, { swipeId = null } = {}) {
     if (selected_group && selectedSwipeId !== null) {
         const saveResult = await saveChatConditional();
         if (saveResult !== CHAT_SAVE_RESULT.SAVED) {
-            toastr.warning('Could not save the current chat before branching.', 'Branch creation failed');
+            toastr.warning(translate('Could not save the current chat before branching.'), translate('Branch creation failed'));
             return null;
         }
     }
 
     try {
         if (selectedSwipeId !== null && !syncSwipeToMes(mesId, selectedSwipeId, lastMes)) {
-            toastr.warning('Could not prepare the selected swipe for branching.', 'Branch creation failed');
+            toastr.warning(translate('Could not prepare the selected swipe for branching.'), translate('Branch creation failed'));
             return;
         }
 
@@ -690,7 +690,7 @@ export async function createBranch(mesId, { swipeId = null } = {}) {
         } else {
             const saveResult = await saveChat({ chatName: name, withMetadata: newMetadata, mesId });
             if (saveResult !== CHAT_SAVE_RESULT.SAVED) {
-                toastr.warning('Could not create the branch chat.', 'Branch creation failed');
+                toastr.warning(translate('Could not create the branch chat.'), translate('Branch creation failed'));
                 return null;
             }
         }
@@ -727,11 +727,11 @@ export async function createBranch(mesId, { swipeId = null } = {}) {
  */
 export async function createNewBookmark(mesId, { forceName = null } = {}) {
     if (this_chid === undefined && !selected_group) {
-        toastr.info('No character selected.', 'Create Checkpoint');
+        toastr.info(translate('No character selected.'), translate('Create Checkpoint'));
         return null;
     }
     if (!chat.length) {
-        toastr.warning('The chat is empty.', 'Create Checkpoint');
+        toastr.warning(translate('The chat is empty.'), translate('Create Checkpoint'));
         return null;
     }
     if (isHistoricalChatMessage(mesId)) {
@@ -741,7 +741,7 @@ export async function createNewBookmark(mesId, { forceName = null } = {}) {
         }
     }
     if (!chat[mesId]) {
-        toastr.warning('Invalid message ID.', 'Create Checkpoint');
+        toastr.warning(translate('Invalid message ID.'), translate('Create Checkpoint'));
         return null;
     }
 
@@ -773,7 +773,7 @@ export async function createNewBookmark(mesId, { forceName = null } = {}) {
     } else {
         const saveResult = await saveChat({ chatName: name, withMetadata: newMetadata, mesId });
         if (saveResult !== CHAT_SAVE_RESULT.SAVED) {
-            toastr.warning('Could not create the checkpoint chat.', 'Checkpoint creation failed');
+            toastr.warning(translate('Could not create the checkpoint chat.'), translate('Checkpoint creation failed'));
             return null;
         }
     }
@@ -785,7 +785,7 @@ export async function createNewBookmark(mesId, { forceName = null } = {}) {
 
     await saveChatConditional();
     await eventSource.emit(event_types.CHECKPOINT_CREATED, { mesId, fileName: name });
-    toastr.success('Click the flag icon next to the message to open the checkpoint chat.', 'Create Checkpoint', { timeOut: 10000 });
+    toastr.success(translate('Click the flag icon next to the message to open the checkpoint chat.'), translate('Create Checkpoint'), { timeOut: 10000 });
     return name;
 }
 
@@ -798,7 +798,7 @@ export async function createNewBookmark(mesId, { forceName = null } = {}) {
 export function updateBookmarkDisplay(mes, newBookmarkLink = null) {
     newBookmarkLink && mes.attr('bookmark_link', newBookmarkLink);
     const bookmarkFlag = mes.find('.mes_bookmark');
-    bookmarkFlag.attr('title', `Checkpoint\n${mes.attr('bookmark_link')}\n\n${bookmarkFlag.data('tooltip')}`);
+    bookmarkFlag.attr('title', t`Checkpoint\n${mes.attr('bookmark_link')}\n\n${bookmarkFlag.data('tooltip')}`);
 }
 
 async function backToMainChat() {
@@ -938,7 +938,7 @@ export async function convertSoloToGroupChat() {
  */
 export async function branchChat(mesId, { swipeId = null } = {}) {
     if (this_chid === undefined && !selected_group) {
-        toastr.info('No character selected.', 'Create Branch');
+        toastr.info(translate('No character selected.'), translate('Create Branch'));
         return null;
     }
 
@@ -970,18 +970,18 @@ function registerBookmarksSlashCommands() {
      */
     function validateMessageId(mesId, context, { requireLoaded = true } = {}) {
         if (!Number.isInteger(mesId)) {
-            toastr.warning('Invalid message ID was provided', context);
+            toastr.warning(translate('Invalid message ID was provided'), context);
             return false;
         }
         if (mesId < 0 || mesId >= getTotalChatMessages()) {
-            toastr.warning(`Message for id ${mesId} not found`, context);
+            toastr.warning(t`Message for id ${mesId} not found`, context);
             return false;
         }
         if (!requireLoaded) {
             return true;
         }
         if (!chat[mesId]) {
-            toastr.warning(`Message for id ${mesId} not found`, context);
+            toastr.warning(t`Message for id ${mesId} not found`, context);
             return false;
         }
         return true;
@@ -1005,7 +1005,7 @@ function registerBookmarksSlashCommands() {
             }),
         ],
         helpString: `
-        <div>
+        <div data-i18n="Create a new branch from the selected message. If no message id is provided, will use the last message.">
             Create a new branch from the selected message. If no message id is provided, will use the last message.
         </div>
         <div>
@@ -1022,7 +1022,7 @@ function registerBookmarksSlashCommands() {
             const args = String(text ?? '').trim().split(/\s+/);
 
             if (args.length < 2) {
-                toastr.error('Usage: /bookmarkset <message_number> <title>', 'Bookmarks');
+                toastr.error(translate('Usage: /bookmarkset <message_number> <title>'), translate('Bookmarks'));
                 return '';
             }
 
@@ -1032,11 +1032,11 @@ function registerBookmarksSlashCommands() {
             const title = args.join(' ').trim();
             const result = await createNamedBookmark(messageNum, title);
             if (!result.success) {
-                toastr.error(result.error, 'Bookmarks');
+                toastr.error(result.error, translate('Bookmarks'));
                 return '';
             }
 
-            toastr.success(`Bookmark "${result.bookmark.title}" created`, 'Bookmarks');
+            toastr.success(t`Bookmark "${result.bookmark.title}" created`, translate('Bookmarks'));
             await refreshNamedBookmarksPopup();
             return '';
         },
@@ -1048,11 +1048,11 @@ function registerBookmarksSlashCommands() {
             }),
         ],
         helpString: `
-        <div>
+        <div data-i18n="Create a named bookmark for a specific message.">
             Create a named bookmark for a specific message.
         </div>
         <div>
-            <strong>Example:</strong> <pre><code>/bookmarkset 42 Important reveal</code></pre>
+            <strong data-i18n="Example:">Example:</strong> <pre><code>/bookmarkset 42 Important reveal</code></pre>
         </div>`,
     }));
     SlashCommandParser.addCommandObject(SlashCommand.fromProps({
@@ -1062,7 +1062,7 @@ function registerBookmarksSlashCommands() {
             return '';
         },
         helpString: `
-        <div>
+        <div data-i18n="Open the bookmarks manager for the current chat.">
             Open the bookmarks manager for the current chat.
         </div>`,
     }));
@@ -1071,13 +1071,13 @@ function registerBookmarksSlashCommands() {
         callback: async (_, text) => {
             const query = String(text ?? '').trim();
             if (!query) {
-                toastr.error('Usage: /bookmarkgo <title_or_message_number>', 'Bookmarks');
+                toastr.error(translate('Usage: /bookmarkgo <title_or_message_number>'), translate('Bookmarks'));
                 return '';
             }
 
             const bookmarks = getNamedBookmarks();
             if (!bookmarks.length) {
-                toastr.error('No bookmarks found.', 'Bookmarks');
+                toastr.error(translate('No bookmarks found.'), translate('Bookmarks'));
                 return '';
             }
 
@@ -1093,7 +1093,7 @@ function registerBookmarksSlashCommands() {
             }
 
             if (!bookmark) {
-                toastr.error(`Bookmark not found: ${query}`, 'Bookmarks');
+                toastr.error(t`Bookmark not found: ${query}`, translate('Bookmarks'));
                 return '';
             }
 
@@ -1108,7 +1108,7 @@ function registerBookmarksSlashCommands() {
             }),
         ],
         helpString: `
-        <div>
+        <div data-i18n="Jump to a bookmark by message number or title match.">
             Jump to a bookmark by message number or title match.
         </div>`,
     }));
@@ -1117,14 +1117,14 @@ function registerBookmarksSlashCommands() {
         callback: async (args, text) => {
             const json = String(text ?? '').trim();
             if (!json) {
-                toastr.error('Usage: /bookmark-import mode=overwrite [{"messageNum":5,"title":"Title"}]', 'Bookmarks');
+                toastr.error(translate('Usage: /bookmark-import mode=overwrite [{"messageNum":5,"title":"Title"}]'), translate('Bookmarks'));
                 return '';
             }
 
             try {
                 const parsed = JSON.parse(json);
                 if (!Array.isArray(parsed)) {
-                    toastr.error('Must be an array of bookmarks.', 'Bookmarks');
+                    toastr.error(translate('Must be an array of bookmarks.'), translate('Bookmarks'));
                     return '';
                 }
 
@@ -1144,24 +1144,24 @@ function registerBookmarksSlashCommands() {
                 setNamedBookmarks(importedBookmarks);
 
                 if (invalidCount > 0) {
-                    toastr.warning(`${invalidCount} imported bookmark${invalidCount === 1 ? '' : 's'} ${invalidCount === 1 ? 'was' : 'were'} skipped due to invalid format.`, 'Bookmarks');
+                    toastr.warning(t`${invalidCount} imported bookmark${invalidCount === 1 ? '' : 's'} ${invalidCount === 1 ? 'was' : 'were'} skipped due to invalid format.`, translate('Bookmarks'));
                 }
 
                 if (duplicateCount > 0) {
-                    toastr.warning(`${duplicateCount} duplicate bookmark${duplicateCount === 1 ? '' : 's'} ${duplicateCount === 1 ? 'was' : 'were'} skipped during import.`, 'Bookmarks');
+                    toastr.warning(t`${duplicateCount} duplicate bookmark${duplicateCount === 1 ? '' : 's'} ${duplicateCount === 1 ? 'was' : 'were'} skipped during import.`, translate('Bookmarks'));
                 }
 
                 if (truncatedCount > 0) {
-                    toastr.warning(`Truncated import by ${truncatedCount} bookmark${truncatedCount === 1 ? '' : 's'} due to the ${MAX_NAMED_BOOKMARKS} bookmark limit.`, 'Bookmarks');
+                    toastr.warning(t`Truncated import by ${truncatedCount} bookmark${truncatedCount === 1 ? '' : 's'} due to the ${MAX_NAMED_BOOKMARKS} bookmark limit.`, translate('Bookmarks'));
                 }
 
                 const appliedCount = mode === 'merge'
                     ? Math.max(importedBookmarks.length - existingBookmarks.length, 0)
                     : importedBookmarks.length;
-                toastr.success(`${mode === 'merge' ? 'Merged' : 'Imported'} ${appliedCount} bookmark${appliedCount === 1 ? '' : 's'}.`, 'Bookmarks');
+                toastr.success(t`${mode === 'merge' ? 'Merged' : 'Imported'} ${appliedCount} bookmark${appliedCount === 1 ? '' : 's'}.`, translate('Bookmarks'));
                 await refreshNamedBookmarksPopup();
             } catch {
-                toastr.error('Invalid JSON format.', 'Bookmarks');
+                toastr.error(translate('Invalid JSON format.'), translate('Bookmarks'));
             }
 
             return '';
@@ -1184,7 +1184,7 @@ function registerBookmarksSlashCommands() {
             }),
         ],
         helpString: `
-        <div>
+        <div data-i18n="Import named bookmarks from a JSON array.">
             Import named bookmarks from a JSON array.
         </div>
         <div>
@@ -1202,7 +1202,7 @@ function registerBookmarksSlashCommands() {
             if (!validateMessageId(mesId, 'Create Checkpoint', { requireLoaded: false })) return '';
 
             if (typeof text !== 'string') {
-                toastr.warning('Checkpoint name must be a string or empty', 'Create Checkpoint');
+                toastr.warning(translate('Checkpoint name must be a string or empty'), translate('Create Checkpoint'));
                 return '';
             }
 
@@ -1238,7 +1238,7 @@ function registerBookmarksSlashCommands() {
             Use Branches and <code>/branch-create</code> instead if you do want to jump to the new chat.
         </div>
         <div>
-            <strong>Example:</strong>
+            <strong data-i18n="Example:">Example:</strong>
             <ul>
                 <li>
                     <pre><code>/checkpoint-create mes={{lastCharMessage}} Checkpoint for char reply | /setvar key=rememberCheckpoint {{pipe}}</code></pre>
@@ -1256,7 +1256,7 @@ function registerBookmarksSlashCommands() {
 
             const checkPointName = chat[mesId].extra?.bookmark_link;
             if (!checkPointName) {
-                toastr.warning('No checkpoint is linked to the selected message', 'Open Checkpoint');
+                toastr.warning(translate('No checkpoint is linked to the selected message'), translate('Open Checkpoint'));
                 return '';
             }
 
@@ -1276,7 +1276,7 @@ function registerBookmarksSlashCommands() {
             }),
         ],
         helpString: `
-        <div>
+        <div data-i18n="Open the checkpoint linked to the selected message. If no message id is provided, will use the last message.">
             Open the checkpoint linked to the selected message. If no message id is provided, will use the last message.
         </div>
         <div>
@@ -1344,7 +1344,7 @@ function registerBookmarksSlashCommands() {
             }),
         ],
         helpString: `
-        <div>
+        <div data-i18n="List all existing checkpoints in this chat.">
             List all existing checkpoints in this chat.
         </div>
         <div>

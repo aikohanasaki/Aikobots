@@ -1,3 +1,4 @@
+import { translate } from './i18n.js';
 import { getRequestHeaders } from '../script.js';
 import { renderExtensionTemplateAsync } from './extensions.js';
 import { POPUP_RESULT, POPUP_TYPE, callGenericPopup } from './popup.js';
@@ -123,7 +124,7 @@ class Notepad {
             text = String($(this).val());
         });
 
-        const result = await callGenericPopup(template, POPUP_TYPE.CONFIRM, '', { wide: true, large: true, okButton: 'Save', cancelButton: 'Cancel' });
+        const result = await callGenericPopup(template, POPUP_TYPE.CONFIRM, '', { wide: true, large: true, okButton: translate('Save'), cancelButton: translate('Cancel') });
 
         if (!result || text === '') {
             return;
@@ -172,7 +173,7 @@ class WebScraper {
      */
     async scrape() {
         const template = $(await renderExtensionTemplateAsync('attachments', 'web-scrape', {}));
-        const linksString = await callGenericPopup(template, POPUP_TYPE.INPUT, '', { wide: false, large: false, okButton: 'Scrape', cancelButton: 'Cancel', rows: 4 });
+        const linksString = await callGenericPopup(template, POPUP_TYPE.INPUT, '', { wide: false, large: false, okButton: translate('Scrape'), cancelButton: translate('Cancel'), rows: 4 });
 
         if (!linksString) {
             return;
@@ -181,11 +182,11 @@ class WebScraper {
         const links = String(linksString).split('\n').map(l => l.trim()).filter(l => l).filter(l => isValidUrl(l));
 
         if (links.length === 0) {
-            toastr.error('Invalid URL');
+            toastr.error(translate('Invalid URL'));
             return;
         }
 
-        const toast = toastr.info('Working, please wait...');
+        const toast = toastr.info(translate('Working, please wait...'));
 
         const files = [];
 
@@ -285,18 +286,18 @@ class MediaWikiScraper {
             output = String($(this).val());
         });
 
-        const confirm = await callGenericPopup(template, POPUP_TYPE.CONFIRM, '', { wide: false, large: false, okButton: 'Scrape', cancelButton: 'Cancel' });
+        const confirm = await callGenericPopup(template, POPUP_TYPE.CONFIRM, '', { wide: false, large: false, okButton: translate('Scrape'), cancelButton: translate('Cancel') });
 
         if (confirm !== POPUP_RESULT.AFFIRMATIVE) {
             return;
         }
 
         if (!url) {
-            toastr.error('URL name is required');
+            toastr.error(translate('URL name is required'));
             return;
         }
 
-        const toast = toastr.info('Working, please wait...');
+        const toast = toastr.info(translate('Working, please wait...'));
 
         const result = await fetch('/api/plugins/fandom/scrape-mediawiki', {
             method: 'POST',
@@ -392,18 +393,18 @@ class FandomScraper {
             output = String($(this).val());
         });
 
-        const confirm = await callGenericPopup(template, POPUP_TYPE.CONFIRM, '', { wide: false, large: false, okButton: 'Scrape', cancelButton: 'Cancel' });
+        const confirm = await callGenericPopup(template, POPUP_TYPE.CONFIRM, '', { wide: false, large: false, okButton: translate('Scrape'), cancelButton: translate('Cancel') });
 
         if (confirm !== POPUP_RESULT.AFFIRMATIVE) {
             return;
         }
 
         if (!fandom) {
-            toastr.error('Fandom name is required');
+            toastr.error(translate('Fandom name is required'));
             return;
         }
 
-        const toast = toastr.info('Working, please wait...');
+        const toast = toastr.info(translate('Working, please wait...'));
 
         const result = await fetch('/api/plugins/fandom/scrape', {
             method: 'POST',
@@ -528,7 +529,7 @@ class YouTubeScraper {
     async scrape() {
         let lang = '';
         const template = $(await renderExtensionTemplateAsync('attachments', 'youtube-scrape', {}));
-        const videoUrl = await callGenericPopup(template, POPUP_TYPE.INPUT, '', { wide: false, large: false, okButton: 'Scrape', cancelButton: 'Cancel' });
+        const videoUrl = await callGenericPopup(template, POPUP_TYPE.INPUT, '', { wide: false, large: false, okButton: translate('Scrape'), cancelButton: translate('Cancel') });
 
         template.find('input[name="youtubeLanguageCode"]').on('input', function () {
             lang = String($(this).val()).trim();
@@ -538,7 +539,7 @@ class YouTubeScraper {
             return;
         }
 
-        const toast = toastr.info('Working, please wait...');
+        const toast = toastr.info(translate('Working, please wait...'));
         const { transcript, id } = await this.getScript(String(videoUrl), lang);
         toastr.clear(toast);
 

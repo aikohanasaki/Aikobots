@@ -1,3 +1,4 @@
+import { t, translate } from '../../i18n.js';
 import { cancelTtsPlay, eventSource, event_types, getCurrentChatId, isStreamingEnabled, name2, saveSettingsDebounced, substituteParams } from '../../../script.js';
 import { ModuleWorkerWrapper, extension_settings, getContext, renderExtensionTemplateAsync } from '../../extensions.js';
 import { delay, escapeRegex, getBase64Async, getStringHash, onlyUnique } from '../../utils.js';
@@ -190,7 +191,7 @@ async function onNarrateText(args, text) {
         : voiceMap[name];
 
     if (!voiceMapEntry || voiceMapEntry === DISABLED_VOICE_MARKER) {
-        toastr.info(`Specified voice for ${name} was not found. Check the TTS extension settings.`);
+        toastr.info(t`Specified voice for ${name} was not found. Check the TTS extension settings.`);
         return;
     }
 
@@ -422,8 +423,8 @@ function addAudioControl() {
             <div class="extensionsMenuExtensionButton fa-solid fa-radio"></div>
             Narrate All Chat
         </div>`);
-    $('#ttsExtensionMenuItem').attr('title', 'TTS play/pause').on('click', onAudioControlClicked);
-    $('#ttsExtensionNarrateAll').attr('title', 'Narrate all messages in the current chat. Includes user messages, excludes hidden comments.').on('click', playFullConversation);
+    $('#ttsExtensionMenuItem').attr('title', translate('TTS play/pause')).on('click', onAudioControlClicked);
+    $('#ttsExtensionNarrateAll').attr('title', translate('Narrate all messages in the current chat. Includes user messages, excludes hidden comments.')).on('click', playFullConversation);
     updateUiAudioPlayState();
 }
 
@@ -611,7 +612,7 @@ async function processTtsQueue() {
             const voice = await ttsProvider.getVoice(voiceMapEntry);
             const voiceId = voice.voice_id;
             if (voiceId == null) {
-                toastr.error(`Specified voice for ${char} was not found. Check the TTS extension settings.`);
+                toastr.error(t`Specified voice for ${char} was not found. Check the TTS extension settings.`);
                 throw `Unable to attain voiceId for ${char}`;
             }
 
@@ -791,14 +792,14 @@ async function playFullConversation() {
     resetTtsPlayback();
 
     if (!extension_settings.tts.enabled) {
-        return toastr.warning('TTS is disabled. Please enable it in the extension settings.');
+        return toastr.warning(translate('TTS is disabled. Please enable it in the extension settings.'));
     }
 
     const context = getContext();
     const chat = context.chat.filter(x => !x.is_system && x.mes !== '...' && x.mes !== '');
 
     if (chat.length === 0) {
-        return toastr.info('No messages to narrate.');
+        return toastr.info(translate('No messages to narrate.'));
     }
 
     ttsJobQueue = chat;
@@ -1420,7 +1421,7 @@ async function initVoiceMapInternal(unrestricted) {
         voiceIdsFromProvider = await ttsProvider.fetchTtsVoiceObjects();
     }
     catch {
-        toastr.error('TTS Provider failed to return voice ids.');
+        toastr.error(translate('TTS Provider failed to return voice ids.'));
     }
 
     // Build UI using VoiceMapEntry objects
@@ -1512,14 +1513,14 @@ jQuery(async function () {
             ),
         ],
         helpString: `
-            <div>
+            <div data-i18n="Narrate any text using currently selected character's voice.">
                 Narrate any text using currently selected character's voice.
             </div>
             <div>
                 Use <code>voice="Character Name"</code> argument to set other voice from the voice map.
             </div>
             <div>
-                <strong>Example:</strong>
+                <strong data-i18n="Example:">Example:</strong>
                 <ul>
                     <li>
                         <pre><code>/speak voice="Donald Duck" Quack!</code></pre>

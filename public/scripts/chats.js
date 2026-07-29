@@ -64,7 +64,7 @@ import { POPUP_RESULT, POPUP_TYPE, Popup, callGenericPopup } from './popup.js';
 import { ScraperManager } from './scrapers.js';
 import { DragAndDropHandler } from './dragdrop.js';
 import { renderTemplateAsync } from './templates.js';
-import { t } from './i18n.js';
+import { t, translate } from './i18n.js';
 import { humanizedDateTime } from './RossAscends-mods.js';
 import { accountStorage } from './util/AccountStorage.js';
 import { MEDIA_DISPLAY, MEDIA_SOURCE, MEDIA_TYPE, SCROLL_BEHAVIOR, SWIPE_DIRECTION } from './constants.js';
@@ -964,7 +964,7 @@ async function deleteMessageFile(messageBlock, messageId, fileIndex) {
         return;
     }
 
-    const confirm = await callGenericPopup('Are you sure you want to delete this file?', POPUP_TYPE.CONFIRM);
+    const confirm = await callGenericPopup(translate('Are you sure you want to delete this file?'), POPUP_TYPE.CONFIRM);
 
     if (confirm !== POPUP_RESULT.AFFIRMATIVE) {
         console.debug('Delete file cancelled');
@@ -1861,7 +1861,7 @@ async function editAttachment(attachment, source, callback) {
         editedFileName = String($(this).val());
     });
 
-    const result = await callGenericPopup(template, POPUP_TYPE.CONFIRM, '', { wide: true, large: true, okButton: 'Save', cancelButton: 'Cancel' });
+    const result = await callGenericPopup(template, POPUP_TYPE.CONFIRM, '', { wide: true, large: true, okButton: translate('Save'), cancelButton: translate('Cancel') });
 
     if (result !== POPUP_RESULT.AFFIRMATIVE) {
         return;
@@ -1933,7 +1933,7 @@ async function moveAttachment(attachment, source, callback) {
         selectedTarget = String($(this).val());
     });
 
-    const result = await callGenericPopup(template, POPUP_TYPE.CONFIRM, '', { wide: false, large: false, okButton: 'Move', cancelButton: 'Cancel' });
+    const result = await callGenericPopup(template, POPUP_TYPE.CONFIRM, '', { wide: false, large: false, okButton: translate('Move'), cancelButton: translate('Cancel') });
 
     if (result !== POPUP_RESULT.AFFIRMATIVE) {
         console.debug('Move attachment cancelled');
@@ -1962,7 +1962,7 @@ async function moveAttachment(attachment, source, callback) {
  */
 export async function deleteAttachment(attachment, source, callback, confirm = true) {
     if (confirm) {
-        const result = await callGenericPopup('Are you sure you want to delete this attachment?', POPUP_TYPE.CONFIRM);
+        const result = await callGenericPopup(translate('Are you sure you want to delete this attachment?'), POPUP_TYPE.CONFIRM);
 
         if (result !== POPUP_RESULT.AFFIRMATIVE) {
             return;
@@ -2191,7 +2191,7 @@ async function openAttachmentManager() {
         targetSelectTemplate.find('.droppedFilesTarget').on('input', function () {
             selectedTarget = String($(this).val());
         });
-        const result = await callGenericPopup(targetSelectTemplate, POPUP_TYPE.CONFIRM, '', { wide: false, large: false, okButton: 'Upload', cancelButton: 'Cancel' });
+        const result = await callGenericPopup(targetSelectTemplate, POPUP_TYPE.CONFIRM, '', { wide: false, large: false, okButton: translate('Upload'), cancelButton: translate('Cancel') });
         if (result !== POPUP_RESULT.AFFIRMATIVE) {
             console.log('File upload cancelled');
             return;
@@ -2296,7 +2296,7 @@ async function openAttachmentManager() {
     const cleanupFn = await renderButtons();
     await verifyAttachments();
     await renderAttachments();
-    await callGenericPopup(template, POPUP_TYPE.TEXT, '', { wide: true, large: true, okButton: 'Close', allowVerticalScrolling: true });
+    await callGenericPopup(template, POPUP_TYPE.TEXT, '', { wide: true, large: true, okButton: translate('Close'), allowVerticalScrolling: true });
 
     cleanupFn();
     dragDropHandler.destroy();

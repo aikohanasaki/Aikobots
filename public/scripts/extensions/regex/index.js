@@ -9,7 +9,7 @@ import { SlashCommandEnumValue, enumTypes } from '../../slash-commands/SlashComm
 import { SlashCommandParser } from '../../slash-commands/SlashCommandParser.js';
 import { download, equalsIgnoreCaseAndAccents, escapeHtml, getFileText, getSortableDelay, isFalseBoolean, isTrueBoolean, regexFromString, setInfoBlock, uuidv4 } from '../../utils.js';
 import { allowPresetScripts, allowScopedScripts, disallowPresetScripts, disallowScopedScripts, getCurrentPresetAPI, getCurrentPresetName, getRegexScripts, getScriptsByType, isPresetScriptsAllowed, isScopedScriptsAllowed, regex_placement, runRegexScript, saveScriptsByType, SCRIPT_TYPE_UNKNOWN, SCRIPT_TYPES, substitute_find_regex } from './engine.js';
-import { t } from '../../i18n.js';
+import { t, translate } from '../../i18n.js';
 import { accountStorage } from '../../util/AccountStorage.js';
 import { getPresetManager } from '../../preset-manager.js';
 
@@ -282,7 +282,7 @@ class RegexPresetManager {
                         return foundId;
                     }
 
-                    !quiet && toastr.warning(`Regex preset "${name}" not found`);
+                    !quiet && toastr.warning(t`Regex preset "${name}" not found`);
                     return '';
                 }
 
@@ -773,7 +773,7 @@ async function onRegexEditorOpenClick(existingId, scriptType) {
             if (existingScript.scriptName) {
                 editorHtml.find('.regex_script_name').val(existingScript.scriptName);
             } else {
-                toastr.error('This script doesn\'t have a name! Please delete it.');
+                toastr.error(translate('This script doesn\'t have a name! Please delete it.'));
                 return;
             }
 
@@ -1288,7 +1288,7 @@ async function onRegexDebuggerOpenClick() {
 
     debuggerHtml.find('#regex_debugger_expand_steps').on('click', function () {
         const popupContainer = $('<div class="expanded-regex-container"></div>');
-        const navPanel = $('<div class="expanded-regex-nav"><h4>Steps</h4></div>');
+        const navPanel = $('<div class="expanded-regex-nav"><h4 data-i18n="Steps">Steps</h4></div>');
         const contentPanel = $('<div class="expanded-regex-content"></div>');
 
         const content = $('#regex_debugger_steps_output').clone().html();
@@ -1422,7 +1422,7 @@ function migrateSettings() {
  */
 function runRegexCallback(args, value) {
     if (!args.name) {
-        toastr.warning('No regex script name provided.');
+        toastr.warning(translate('No regex script name provided.'));
         return value;
     }
 
@@ -1441,7 +1441,7 @@ function runRegexCallback(args, value) {
         }
     }
 
-    toastr.warning(`Regex script "${scriptName}" not found.`);
+    toastr.warning(t`Regex script "${scriptName}" not found.`);
     return value;
 }
 
@@ -1540,7 +1540,7 @@ async function onRegexImportObjectChange(regexScript, scriptType) {
  */
 async function onRegexImportFileChange(file, scriptType) {
     if (!file) {
-        toastr.error('No file provided.');
+        toastr.error(translate('No file provided.'));
         return;
     }
 
@@ -1555,7 +1555,7 @@ async function onRegexImportFileChange(file, scriptType) {
         }
     } catch (error) {
         console.log(error);
-        toastr.error('Invalid JSON file.');
+        toastr.error(translate('Invalid JSON file.'));
         return;
     }
 }
@@ -2096,11 +2096,11 @@ jQuery(async () => {
             }),
         ],
         helpString: `
-            <div>
+            <div data-i18n="Toggles the state of a specified regex script.">
                 Toggles the state of a specified regex script.
             </div>
             <div>
-                <strong>Example:</strong>
+                <strong data-i18n="Example:">Example:</strong>
                 <ul>
                     <li>
                         <pre><code class="language-stscript">/regex-toggle MyScript</code></pre>

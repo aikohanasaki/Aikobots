@@ -1,3 +1,4 @@
+import { translate } from '../../i18n.js';
 import { debounce_timeout } from '../../constants.js';
 import { debounceAsync, splitRecursive } from '../../utils.js';
 import { getPreviewString, saveTtsProviderSettings } from './index.js';
@@ -84,7 +85,7 @@ export class KokoroTtsProvider {
                 // Terminate the existing worker if it exists
                 if (this.worker) {
                     this.worker.terminate();
-                    $('#kokoro_status_text').text('Initializing...').removeAttr('style');
+                    $('#kokoro_status_text').text(translate('Initializing...')).removeAttr('style');
                 }
 
                 // Create a new worker
@@ -207,22 +208,22 @@ export class KokoroTtsProvider {
     get settingsHtml() {
         return `
             <div class="kokoro_tts_settings">
-                <label for="kokoro_model_id">Model ID:</label>
+                <label for="kokoro_model_id" data-i18n="Model ID:">Model ID:</label>
                 <input id="kokoro_model_id" type="text" class="text_pole" value="${this.settings.modelId}" />
 
-                <label for="kokoro_dtype">Data Type:</label>
+                <label for="kokoro_dtype" data-i18n="Data Type:">Data Type:</label>
                 <select id="kokoro_dtype" class="text_pole">
-                    <option value="q8" ${this.settings.dtype === 'q8' ? 'selected' : ''}>q8 (Recommended)</option>
-                    <option value="fp32" ${this.settings.dtype === 'fp32' ? 'selected' : ''}>fp32 (High Precision)</option>
+                    <option value="q8" ${this.settings.dtype === 'q8' ? 'selected' : ''} data-i18n="q8 (Recommended)">q8 (Recommended)</option>
+                    <option value="fp32" ${this.settings.dtype === 'fp32' ? 'selected' : ''} data-i18n="fp32 (High Precision)">fp32 (High Precision)</option>
                     <option value="fp16" ${this.settings.dtype === 'fp16' ? 'selected' : ''}>fp16</option>
-                    <option value="q4" ${this.settings.dtype === 'q4' ? 'selected' : ''}>q4 (Low Memory)</option>
+                    <option value="q4" ${this.settings.dtype === 'q4' ? 'selected' : ''} data-i18n="q4 (Low Memory)">q4 (Low Memory)</option>
                     <option value="q4f16" ${this.settings.dtype === 'q4f16' ? 'selected' : ''}>q4f16</option>
                 </select>
 
-                <label for="kokoro_device">Device:</label>
+                <label for="kokoro_device" data-i18n="Device:">Device:</label>
                 <select id="kokoro_device" class="text_pole">
-                    <option value="wasm" ${this.settings.device === 'wasm' ? 'selected' : ''}>WebAssembly (CPU)</option>
-                    <option value="webgpu" ${this.settings.device === 'webgpu' ? 'selected' : ''}>WebGPU (GPU Acceleration)</option>
+                    <option value="wasm" ${this.settings.device === 'wasm' ? 'selected' : ''} data-i18n="WebAssembly (CPU)">WebAssembly (CPU)</option>
+                    <option value="webgpu" ${this.settings.device === 'webgpu' ? 'selected' : ''} data-i18n="WebGPU (GPU Acceleration)">WebGPU (GPU Acceleration)</option>
                 </select>
 
                 <label for="kokoro_speaking_rate">Speaking Rate: <span id="kokoro_speaking_rate_output">${this.settings.speakingRate}x</span></label>

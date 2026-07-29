@@ -1,4 +1,5 @@
 import { initAccessibility } from './a11y.js';
+import { initLocales, t } from './i18n.js';
 
 /**
  * CRSF token for requests.
@@ -31,7 +32,7 @@ async function getUserList() {
 
     if (!response.ok) {
         const errorData = await response.json();
-        return displayError(errorData.error || 'An error occurred');
+        return displayError(errorData.error || t`An error occurred`);
     }
 
     if (response.status === 204) {
@@ -50,7 +51,7 @@ async function getUserList() {
  * @returns {Promise<void>}
  */
 async function sendRecoveryPart1(handle) {
-    displayError('Password recovery is disabled. Contact Aiko to get it reset.');
+    displayError(t`Password recovery is disabled. Contact Aiko to get it reset.`);
     $('#passwordRecoveryBlock').hide();
     $('#passwordEntryBlock').show();
 }
@@ -63,7 +64,7 @@ async function sendRecoveryPart1(handle) {
  * @returns {Promise<void>}
  */
 async function sendRecoveryPart2(handle, code, newPassword) {
-    displayError('Password recovery is disabled. Contact Aiko to get it reset.');
+    displayError(t`Password recovery is disabled. Contact Aiko to get it reset.`);
     $('#passwordRecoveryBlock').hide();
     $('#passwordEntryBlock').show();
 }
@@ -92,7 +93,7 @@ async function performLogin(handle, password) {
 
         if (!response.ok) {
             const errorData = await response.json();
-            return displayError(errorData.error || 'An error occurred');
+            return displayError(errorData.error || t`An error occurred`);
         }
 
         const data = await response.json();
@@ -237,6 +238,7 @@ function configureDiscreetLogin() {
 
 (async function () {
     initAccessibility();
+    await initLocales();
 
     csrfToken = await getCsrfToken();
     const userList = await getUserList();

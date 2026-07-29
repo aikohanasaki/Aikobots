@@ -184,7 +184,7 @@ async function getStats() {
     });
 
     if (!response.ok) {
-        toastr.error('Stats could not be loaded. Try reloading the page.');
+        toastr.error(translate('Stats could not be loaded. Try reloading the page.'));
         throw new Error('Error getting stats');
     }
     charStats = await response.json();
@@ -207,11 +207,11 @@ async function recreateStats() {
     });
 
     if (!response.ok) {
-        toastr.error('Stats could not be loaded. Try reloading the page.');
+        toastr.error(translate('Stats could not be loaded. Try reloading the page.'));
         throw new Error('Error getting stats');
     }
     else {
-        toastr.success('Stats file recreated successfully!');
+        toastr.success(translate('Stats file recreated successfully!'));
     }
 }
 

@@ -67,7 +67,7 @@ class GSVITtsProvider {
 
     get settingsHtml() {
         let html = `
-        <label for="gsvi_api_language">Text Language</label>
+        <label for="gsvi_api_language" data-i18n="Text Language">Text Language</label>
         <select id="gsvi_api_language">`;
 
         for (let language in this.languageLabels) {
@@ -81,8 +81,8 @@ class GSVITtsProvider {
 
         html += `
         </select>
-        <label>GSVI Settings:</label><br/>
-        <label for="gsvi_tts_endpoint">Provider Endpoint:</label>
+        <label data-i18n="GSVI Settings:">GSVI Settings:</label><br/>
+        <label for="gsvi_tts_endpoint" data-i18n="Provider Endpoint:">Provider Endpoint:</label>
         <input id="gsvi_tts_endpoint" type="text" class="text_pole" maxlength="250" value="${this.defaultSettings.provider_endpoint}"/>
 
 
@@ -103,14 +103,14 @@ class GSVITtsProvider {
 
         <label for="gsvi_tts_streaming" class="checkbox_label">
             <input id="gsvi_tts_streaming" type="checkbox" ${this.defaultSettings.stream ? 'checked' : ''}/>
-            <span>Streaming</span>
+            <span data-i18n="Streaming">Streaming</span>
         </label>
 
         <label for="gsvi_stream_chunk_size">Stream Chunk Size: <span id="gsvi_stream_chunk_size_output">${this.defaultSettings.stream_chunk_size}</span></label>
         <input id="gsvi_stream_chunk_size" type="range" value="${this.defaultSettings.stream_chunk_size}" min="100" max="400" step="1" />
         <p>
             For more information, visit the
-            <a href="https://github.com/X-T-E-R/GPT-SoVITS-Inference" target="_blank">GSVI project page</a>.
+            <a href="https://github.com/X-T-E-R/GPT-SoVITS-Inference" target="_blank" data-i18n="GSVI project page">GSVI project page</a>.
         </p>
         `;
 

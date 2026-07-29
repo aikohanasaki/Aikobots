@@ -15,7 +15,7 @@ import { Popup, POPUP_RESULT, POPUP_TYPE } from './popup.js';
 import { SlashCommandClosure } from './slash-commands/SlashCommandClosure.js';
 import { getTagsList } from './tags.js';
 import { groups, selected_group } from './group-chats.js';
-import { getCurrentLocale, t } from './i18n.js';
+import { getCurrentLocale, t, translate } from './i18n.js';
 import { importWorldInfo } from './world-info.js';
 
 export const shiftUpByOne = (e, i, a) => a[i] = e + 1;
@@ -70,7 +70,7 @@ export const renderPaginationDropdown = function(pageSize, sizeChangerOptions) {
     for (let i = 0; i < sizeChangerOptions.length; i++) {
         const option = document.createElement('option');
         option.value = `${sizeChangerOptions[i]}`;
-        option.textContent = `${sizeChangerOptions[i]} ${t`/ page`}`;
+        option.textContent = t`${sizeChangerOptions[i]} ${t`/ page`}`;
         if (sizeChangerOptions[i] === pageSize) {
             option.setAttribute('selected', 'selected');
         }
@@ -1766,7 +1766,7 @@ export async function getSanitizedFilename(fileName) {
         const responseData = await result.json();
         return responseData.fileName;
     } catch (error) {
-        toastr.error(String(error), 'Could not sanitize fileName');
+        toastr.error(String(error), translate('Could not sanitize fileName'));
         console.error('Could not sanitize fileName', error);
         throw error;
     }
@@ -2529,13 +2529,13 @@ export async function checkOverwriteExistingData(type, existingNames, name, { in
         return true;
     }
 
-    const overwrite = interactive && await Popup.show.confirm(`${type} ${actionName}`, `<p>A ${type.toLowerCase()} with the same name already exists:<br />${existing}</p>Do you want to overwrite it?`);
+    const overwrite = interactive && await Popup.show.confirm(t`${type} ${actionName}`, t`<p>A ${type.toLowerCase()} with the same name already exists:<br />${existing}</p>Do you want to overwrite it?`);
     if (!overwrite) {
-        toastr.warning(`${type} ${actionName.toLowerCase()} cancelled. A ${type.toLowerCase()} with the same name already exists:<br />${existing}`, `${type} ${actionName}`, { escapeHtml: false });
+        toastr.warning(t`${type} ${actionName.toLowerCase()} cancelled. A ${type.toLowerCase()} with the same name already exists:<br />${existing}`, `${type} ${actionName}`, { escapeHtml: false });
         return false;
     }
 
-    toastr.info(`Overwriting Existing ${type}:<br />${existing}`, `${type} ${actionName}`, { escapeHtml: false });
+    toastr.info(t`Overwriting Existing ${type}:<br />${existing}`, `${type} ${actionName}`, { escapeHtml: false });
 
     // If there is an action to delete the existing data, do it, as the name might be slightly different so file name would not be the same
     if (deleteAction) {
@@ -2650,7 +2650,7 @@ export async function showFontAwesomePicker(customList = null) {
                 qry.classList.add('text_pole');
                 qry.classList.add('faQuery');
                 qry.type = 'search';
-                qry.placeholder = 'Filter icons';
+                qry.placeholder = translate('Filter icons');
                 qry.autofocus = true;
                 const qryDebounced = debounce(() => {
                     const result = faList.filter(fa => fa.find(className => className.includes(qry.value.toLowerCase())));
@@ -2685,7 +2685,7 @@ export async function showFontAwesomePicker(customList = null) {
         }
     }
     let value = '';
-    const picker = new Popup(dom, POPUP_TYPE.TEXT, null, { allowVerticalScrolling: true, okButton: 'No Icon', cancelButton: 'Cancel' });
+    const picker = new Popup(dom, POPUP_TYPE.TEXT, null, { allowVerticalScrolling: true, okButton: translate('No Icon'), cancelButton: translate('Cancel') });
     await picker.show();
     if (picker.result == POPUP_RESULT.AFFIRMATIVE) {
         return value;
@@ -2786,7 +2786,7 @@ export function findChar({ name = null, allowAvatar = true, insensitive = true, 
     // Search for matching characters by name
     const matchingCharacters = name ? filteredCharacters.filter(matches) : filteredCharacters;
     if (matchingCharacters.length > 1) {
-        if (!quiet) toastr.warning('Multiple characters found for given conditions.');
+        if (!quiet) toastr.warning(translate('Multiple characters found for given conditions.'));
         else console.warn('Multiple characters found for given conditions. Returning the first match.');
     }
 
@@ -2996,7 +2996,7 @@ export async function importFromExternalUrl(url, { preserveFileName = null } = {
     }
 
     if (!request.ok) {
-        toastr.info(request.statusText, 'Custom content import failed');
+        toastr.info(request.statusText, translate('Custom content import failed'));
         console.error('Custom content import failed', request.status, request.statusText);
         return;
     }
@@ -3020,7 +3020,7 @@ export async function importFromExternalUrl(url, { preserveFileName = null } = {
             await importWorldInfo(file);
             break;
         default:
-            toastr.warning('Unknown content type');
+            toastr.warning(translate('Unknown content type'));
             console.error('Unknown content type', customContentType);
             break;
     }

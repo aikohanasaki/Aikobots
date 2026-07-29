@@ -331,10 +331,10 @@ function getTagBlock(tag, entities, hidden = 0, isUseless = false) {
     const template = FOLDER_TEMPLATE.clone();
     template.addClass(tagFolder.class);
     template.attr({ 'tagid': tag.id, 'id': `BogusFolder${tag.id}` });
-    template.find('.avatar').css({ 'background-color': tag.color, 'color': tag.color2 }).attr('title', `[Folder] ${tag.name}`);
-    template.find('.ch_name').text(tag.name).attr('title', `[Folder] ${tag.name}`);
+    template.find('.avatar').css({ 'background-color': tag.color, 'color': tag.color2 }).attr('title', t`[Folder] ${tag.name}`);
+    template.find('.ch_name').text(tag.name).attr('title', t`[Folder] ${tag.name}`);
     template.find('.bogus_folder_hidden_counter').text(hidden > 0 ? `${hidden} hidden` : '');
-    template.find('.bogus_folder_counter').text(`${count} ` + (count != 1 ? t`characters` : t`character`));
+    template.find('.bogus_folder_counter').text(t`${count} ` + (count != 1 ? t`characters` : t`character`));
     template.find('.bogus_folder_icon').addClass(tagFolder.fa_icon);
     if (isUseless) template.addClass('useless');
 
@@ -537,7 +537,7 @@ export function searchCharByName(charName, { suppressLogging = false } = {}) {
         : (selected_group ? groups.find(x => x.id == selected_group) : characters[this_chid]);
     const key = getTagKeyForEntity(entity);
     if (!key) {
-        if (!suppressLogging) toastr.warning(`Character ${charName} not found.`);
+        if (!suppressLogging) toastr.warning(t`Character ${charName} not found.`);
         return null;
     }
     return key;
@@ -689,7 +689,7 @@ function findTag(request, resolve, listSelector) {
  * @param {*} listSelector - The selector of the list to print/add to
  * @param {object} param1 - Optional parameters for this method call
  * @param {PrintTagListOptions} [param1.tagListOptions] - Optional parameters for printing the tag list. Can be set to be consistent with the expected behavior of tags in the list that was defined before.
- * @returns {boolean} <c>false</c>, to keep the input clear
+ * @returns {boolean} <c data-i18n="false">false</c>, to keep the input clear
  */
 function selectTag(event, ui, listSelector, { tagListOptions = {} } = {}) {
     let tagName = ui.item.value;
@@ -819,9 +819,9 @@ async function handleTagImport(character, { importSetting = null } = {}) {
 async function showTagImportPopup(character, existingTags, newTags, folderTags) {
     /** @type {{[key: string]: import('./popup.js').CustomPopupButton}} */
     const importButtons = {
-        NONE: { result: 2, text: 'Import None' },
-        ALL: { result: 3, text: 'Import All' },
-        EXISTING: { result: 4, text: 'Import Existing' },
+        NONE: { result: 2, text: translate('Import None') },
+        ALL: { result: 3, text: translate('Import All') },
+        EXISTING: { result: 4, text: translate('Import Existing') },
     };
     const buttonSettingsMap = {
         [POPUP_RESULT.AFFIRMATIVE]: tag_import_setting.ASK,
@@ -851,7 +851,7 @@ async function showTagImportPopup(character, existingTags, newTags, folderTags) 
     }
 
     const result = await callGenericPopup(popupContent, POPUP_TYPE.TEXT, null, {
-        wider: true, okButton: 'Import', cancelButton: true,
+        wider: true, okButton: translate('Import'), cancelButton: true,
         customButtons: Object.values(importButtons),
         customInputs: [{ id: 'import_remember_option', label: 'Remember my choice', tooltip: 'Remember the chosen import option\nIf anything besides \'Cancel\' is selected, this dialog will not show up anymore.\nTo change this, go to the settings and modify "Tag Import Option".\n\nIf the "Import" option is chosen, the global setting will stay on "Ask".' }],
         onClose: onCloseRemember,
@@ -900,7 +900,7 @@ function getTag(tagName, { createNew = false } = {}) {
 function createNewTag(tagName) {
     const existing = getTag(tagName);
     if (existing) {
-        toastr.warning(`Cannot create new tag. A tag with the name already exists:<br />${existing.name}`, 'Creating Tag', { escapeHtml: false });
+        toastr.warning(t`Cannot create new tag. A tag with the name already exists:<br />${existing.name}`, translate('Creating Tag'), { escapeHtml: false });
         return existing;
     }
 
@@ -1373,7 +1373,7 @@ function makeTagListDraggable(tagContainer) {
         if (power_user.tag_sort_mode !== tag_sort_mode.MANUAL) {
             power_user.tag_sort_mode = tag_sort_mode.MANUAL;
             $('#tag_sort_mode_select').val(tag_sort_mode.MANUAL);
-            toastr.info('Switched to Manual sorting mode.');
+            toastr.info(translate('Switched to Manual sorting mode.'));
         }
 
         // If the order of tags in display has changed, we need to redraw some UI elements. Do it debounced so it doesn't block and you can drag multiple tags.
@@ -1443,13 +1443,13 @@ async function onTagRestoreFileSelect(e) {
     const data = await parseJsonFile(file);
 
     if (!data) {
-        toastr.warning('Empty file data', 'Tag Restore');
+        toastr.warning(translate('Empty file data'), translate('Tag Restore'));
         console.log('Tag restore: File data empty.');
         return;
     }
 
     if (!data.tags || !data.tag_map || !Array.isArray(data.tags) || typeof data.tag_map !== 'object') {
-        toastr.warning('Invalid file format', 'Tag Restore');
+        toastr.warning(translate('Invalid file format'), translate('Tag Restore'));
         console.log('Tag restore: Invalid file format.');
         return;
     }
@@ -1457,8 +1457,8 @@ async function onTagRestoreFileSelect(e) {
     // Prompt user if they want to overwrite existing tags
     let overwrite = false;
     if (tags.length > 0) {
-        const result = await Popup.show.confirm('Tag Restore', 'You have existing tags. If the backup contains any of those tags, do you want the backup to overwrite their settings (Name, color, folder state, etc)?',
-            { okButton: 'Overwrite', cancelButton: 'Keep Existing' });
+        const result = await Popup.show.confirm(t`Tag Restore`, t`You have existing tags. If the backup contains any of those tags, do you want the backup to overwrite their settings (Name, color, folder state, etc)?`,
+            { okButton: translate('Overwrite'), cancelButton: translate('Keep Existing') });
         overwrite = result === POPUP_RESULT.AFFIRMATIVE;
     }
 
@@ -1530,13 +1530,13 @@ async function onTagRestoreFileSelect(e) {
     }
 
     if (warnings.length) {
-        toastr.warning('Tags restored with warnings. Check console or click on this message for details.', 'Tag Restore', {
+        toastr.warning(translate('Tags restored with warnings. Check console or click on this message for details.'), translate('Tag Restore'), {
             timeOut: toastr.options.timeOut * 2, // Display double the time
-            onclick: () => Popup.show.text('Tag Restore Warnings', `<samp class="justifyLeft">${DOMPurify.sanitize(warnings.join('\n'))}<samp>`, { allowVerticalScrolling: true }),
+            onclick: () => Popup.show.text(translate('Tag Restore Warnings'), `<samp class="justifyLeft">${DOMPurify.sanitize(warnings.join('\n'))}<samp>`, { allowVerticalScrolling: true }),
         });
         console.warn(`TAG RESTORE REPORT\n====================\n${warnings.join('\n')}`);
     } else {
-        toastr.success('Tags restored successfully.', 'Tag Restore');
+        toastr.success(translate('Tags restored successfully.'), translate('Tag Restore'));
     }
 
     $('#tag_view_restore_input').val('');
@@ -1616,7 +1616,7 @@ function onTagCreateClick() {
     printCharactersDebounced();
     saveSettingsDebounced();
 
-    toastr.success('Tag created', 'Create Tag');
+    toastr.success(translate('Tag created'), translate('Create Tag'));
 }
 
 /**
@@ -1652,9 +1652,9 @@ function appendViewTagToList(list, tag, count) {
         .attr({ id: colorPicker2Id, color: tag.color2 || power_user.main_text_color, 'data-default-color': power_user.main_text_color });
 
     template.find('.tag_view_color_picker[data-value="color"]').append(primaryColorPicker)
-        .append($('<div class="fas fa-link fa-xs link_icon right_menu_button" title="Link to theme color"></div>'));
+        .append($('<div class="fas fa-link fa-xs link_icon right_menu_button" title="Link to theme color" data-i18n="[title]Link to theme color"></div>'));
     template.find('.tag_view_color_picker[data-value="color2"]').append(secondaryColorPicker)
-        .append($('<div class="fas fa-link fa-xs link_icon right_menu_button" title="Link to theme color"></div>'));
+        .append($('<div class="fas fa-link fa-xs link_icon right_menu_button" title="Link to theme color" data-i18n="[title]Link to theme color"></div>'));
 
     template.find('.tag_as_folder').attr('id', tagAsFolderId);
 
@@ -1780,7 +1780,7 @@ async function onTagDeleteClick() {
     $(`.tag[id="${id}"]`).remove();
     $(`.tag_view_item[id="${id}"]`).remove();
 
-    toastr.success(`'${tag.name}' deleted${mergeTagId ? ` and merged into '${tags.find(x => x.id === mergeTagId).name}'` : ''}`, 'Delete Tag');
+    toastr.success(t`'${tag.name}' deleted${mergeTagId ? ` and merged into '${tags.find(x => x.id === mergeTagId).name}'` : ''}`, translate('Delete Tag'));
 
     printCharactersDebounced();
     saveSettingsDebounced();
@@ -1901,7 +1901,7 @@ function registerTagsSlashCommands() {
      */
     function paraGetTag(tagName, { allowCreate = false } = {}) {
         if (!tagName) {
-            toastr.warning('Tag name must be provided.');
+            toastr.warning(translate('Tag name must be provided.'));
             return null;
         }
         let tag = getTag(tagName);
@@ -1909,7 +1909,7 @@ function registerTagsSlashCommands() {
             tag = createNewTag(tagName);
         }
         if (!tag) {
-            toastr.warning(`Tag ${tagName} not found.`);
+            toastr.warning(t`Tag ${tagName} not found.`);
             return null;
         }
         return tag;
@@ -1952,7 +1952,7 @@ function registerTagsSlashCommands() {
             If the tag doesn't exist, it is created.
         </div>
         <div>
-            <strong>Example:</strong>
+            <strong data-i18n="Example:">Example:</strong>
             <ul>
                 <li>
                     <pre><code>/tag-add name="Chloe" scenario</code></pre>
@@ -1998,7 +1998,7 @@ function registerTagsSlashCommands() {
             Removes a tag from the character. If no character is provided, it removes it from the current character (<code>{{char}}</code>).
         </div>
         <div>
-            <strong>Example:</strong>
+            <strong data-i18n="Example:">Example:</strong>
             <ul>
                 <li>
                     <pre><code>/tag-remove name="Chloe" scenario</code></pre>
@@ -2042,7 +2042,7 @@ function registerTagsSlashCommands() {
             Checks whether the given tag is assigned to the character. If no character is provided, it checks the current character (<code>{{char}}</code>).
         </div>
         <div>
-            <strong>Example:</strong>
+            <strong data-i18n="Example:">Example:</strong>
             <ul>
                 <li>
                     <pre><code>/tag-exists name="Chloe" scenario</code></pre>
@@ -2078,7 +2078,7 @@ function registerTagsSlashCommands() {
             Note that there is no special handling for tags containing commas, they will be printed as-is.
         </div>
         <div>
-            <strong>Example:</strong>
+            <strong data-i18n="Example:">Example:</strong>
             <ul>
                 <li>
                     <pre><code>/tag-list name="Chloe"</code></pre>

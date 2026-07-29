@@ -1,3 +1,4 @@
+import { translate } from '../../i18n.js';
 import { getRequestHeaders } from '../../../script.js';
 import { POPUP_TYPE, callGenericPopup } from '../../popup.js';
 import { splitRecursive } from '../../utils.js';
@@ -37,18 +38,18 @@ class NovelTtsProvider {
     get settingsHtml() {
         let html = `
         <div class="novel_tts_hints">
-            <div>Use NovelAI's TTS engine.</div>
-            <div>
+            <div data-i18n="Use NovelAI's TTS engine.">Use NovelAI's TTS engine.</div>
+            <div data-i18n="The default Voice IDs are only examples. Add custom voices and Novel will create a new random voice for it. Feel free to try different options!">
                 The default Voice IDs are only examples. Add custom voices and Novel will create a new random voice for it.
                 Feel free to try different options!
             </div>
-            <i>Hint: Save an API key in the NovelAI API settings to use it here.</i>
+            <i data-i18n="Hint: Save an API key in the NovelAI API settings to use it here.">Hint: Save an API key in the NovelAI API settings to use it here.</i>
         </div>
-        <label for="tts-novel-custom-voices-add">Custom Voices</label>
+        <label for="tts-novel-custom-voices-add" data-i18n="Custom Voices">Custom Voices</label>
         <div class="tts_custom_voices">
             <select id="tts-novel-custom-voices-select"><select>
-            <i id="tts-novel-custom-voices-add" class="tts-button fa-solid fa-plus fa-xl success" title="Add"></i>
-            <i id="tts-novel-custom-voices-delete" class="tts-button fa-solid fa-xmark fa-xl failure" title="Delete"></i>
+            <i id="tts-novel-custom-voices-add" class="tts-button fa-solid fa-plus fa-xl success" title="Add" data-i18n="[title]Add"></i>
+            <i id="tts-novel-custom-voices-delete" class="tts-button fa-solid fa-xmark fa-xl failure" title="Delete" data-i18n="[title]Delete"></i>
         </div>
         `;
         return html;
@@ -57,7 +58,7 @@ class NovelTtsProvider {
 
     // Add a new Novel custom voice to provider
     async addCustomVoice() {
-        const voiceName = await callGenericPopup('Custom Voice name:',  POPUP_TYPE.INPUT);
+        const voiceName = await callGenericPopup(translate('Custom Voice name:'),  POPUP_TYPE.INPUT);
         this.settings.customVoices.push(voiceName);
         this.populateCustomVoices();
         initVoiceMap(); // Update TTS extension voiceMap
@@ -206,7 +207,7 @@ class NovelTtsProvider {
                 },
             );
             if (!response.ok) {
-                toastr.error(response.statusText, 'TTS Generation Failed');
+                toastr.error(response.statusText, translate('TTS Generation Failed'));
                 throw new Error(`HTTP ${response.status}: ${await response.text()}`);
             }
             yield response;

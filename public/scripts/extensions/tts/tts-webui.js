@@ -1,3 +1,4 @@
+import { translate } from '../../i18n.js';
 import { getPreviewString, saveTtsProviderSettings } from './index.js';
 
 export { TtsWebuiProvider };
@@ -41,22 +42,22 @@ class TtsWebuiProvider {
 
     get settingsHtml() {
         let html = `
-        <h4 class="textAlignCenter">TTS WebUI Settings</h4>
+        <h4 class="textAlignCenter" data-i18n="TTS WebUI Settings">TTS WebUI Settings</h4>
 
         <div class="flex gap10px marginBot10 alignItemsFlexEnd">
             <div class="flex1 flexFlowColumn">
-                <label for="tts_webui_endpoint">Provider Endpoint:</label>
+                <label for="tts_webui_endpoint" data-i18n="Provider Endpoint:">Provider Endpoint:</label>
                 <input id="tts_webui_endpoint" type="text" class="text_pole" maxlength="500" value="${this.defaultSettings.provider_endpoint}"/>
             </div>
         </div>
 
         <div class="flex gap10px marginBot10">
             <div class="flex1 flexFlowColumn">
-                <label for="tts_webui_model">Model:</label>
+                <label for="tts_webui_model" data-i18n="Model:">Model:</label>
                 <input id="tts_webui_model" type="text" class="text_pole" maxlength="500" value="${this.defaultSettings.model}"/>
             </div>
             <div class="flex1 flexFlowColumn">
-                <label for="tts_webui_voices">Available Voices (comma separated):</label>
+                <label for="tts_webui_voices" data-i18n="Available Voices (comma separated):">Available Voices (comma separated):</label>
                 <input id="tts_webui_voices" type="text" class="text_pole" value="${this.defaultSettings.available_voices.join()}"/>
             </div>
         </div>
@@ -65,7 +66,7 @@ class TtsWebuiProvider {
             <div class="flex1 flexFlowColumn">
                 <label for="tts_webui_streaming" class="checkbox_label alignItemsCenter flexGap5">
                     <input id="tts_webui_streaming" type="checkbox" />
-                    <span>Streaming</span>
+                    <span data-i18n="Streaming">Streaming</span>
                 </label>
             </div>
             <div class="flex1 flexFlowColumn">
@@ -75,7 +76,7 @@ class TtsWebuiProvider {
         </div>
 
         <hr>
-        <h4 class="textAlignCenter">Generation Settings</h4>
+        <h4 class="textAlignCenter" data-i18n="Generation Settings">Generation Settings</h4>
 
         <div class="flex gap10px marginBot10">
             <div class="flex1 flexFlowColumn">
@@ -94,25 +95,25 @@ class TtsWebuiProvider {
                 <input id="tts_webui_temperature" type="range" value="${this.defaultSettings.temperature}" min="0" max="2" step="0.1" />
             </div>
             <div class="flex1 flexFlowColumn">
-                <label for="tts_webui_seed">Seed (-1 for random):</label>
+                <label for="tts_webui_seed" data-i18n="Seed (-1 for random):">Seed (-1 for random):</label>
                 <input id="tts_webui_seed" type="text" class="text_pole" value="${this.defaultSettings.seed}"/>
             </div>
         </div>
 
         <hr>
-        <h4 class="textAlignCenter">Chunking</h4>
+        <h4 class="textAlignCenter" data-i18n="Chunking">Chunking</h4>
 
         <div class="flex gap10px marginBot10">
             <div class="flex1 flexFlowColumn">
                 <label for="tts_webui_chunked" class="checkbox_label alignItemsCenter flexGap5">
                     <input id="tts_webui_chunked" type="checkbox" />
-                    <span>Split prompt into chunks</span>
+                    <span data-i18n="Split prompt into chunks">Split prompt into chunks</span>
                 </label>
             </div>
             <div class="flex1 flexFlowColumn">
                 <label for="tts_webui_halve_first_chunk" class="checkbox_label alignItemsCenter flexGap5">
                     <input id="tts_webui_halve_first_chunk" type="checkbox" />
-                    <span>Halve First Chunk</span>
+                    <span data-i18n="Halve First Chunk">Halve First Chunk</span>
                 </label>
             </div>
         </div>
@@ -129,20 +130,20 @@ class TtsWebuiProvider {
         </div>
 
         <hr>
-        <h4 class="textAlignCenter">Model</h4>
+        <h4 class="textAlignCenter" data-i18n="Model">Model</h4>
 
         <div class="flex gap10px marginBot10">
             <div class="flex1 flexFlowColumn">
-                <label for="tts_webui_device">Device:</label>
+                <label for="tts_webui_device" data-i18n="Device:">Device:</label>
                 <select id="tts_webui_device">
-                    <option value="auto" ${this.defaultSettings.device === 'auto' ? 'selected' : ''}>Auto</option>
-                    <option value="cuda" ${this.defaultSettings.device === 'cuda' ? 'selected' : ''}>CUDA</option>
-                    <option value="mps" ${this.defaultSettings.device === 'mps' ? 'selected' : ''}>MPS</option>
-                    <option value="cpu" ${this.defaultSettings.device === 'cpu' ? 'selected' : ''}>CPU</option>
+                    <option value="auto" ${this.defaultSettings.device === 'auto' ? 'selected' : ''} data-i18n="Auto">Auto</option>
+                    <option value="cuda" ${this.defaultSettings.device === 'cuda' ? 'selected' : ''} data-i18n="CUDA">CUDA</option>
+                    <option value="mps" ${this.defaultSettings.device === 'mps' ? 'selected' : ''} data-i18n="MPS">MPS</option>
+                    <option value="cpu" ${this.defaultSettings.device === 'cpu' ? 'selected' : ''} data-i18n="CPU">CPU</option>
                 </select>
             </div>
             <div class="flex1 flexFlowColumn">
-                <label for="tts_webui_dtype">Data Type:</label>
+                <label for="tts_webui_dtype" data-i18n="Data Type:">Data Type:</label>
                 <select id="tts_webui_dtype">
                     <option value="float32" ${this.defaultSettings.dtype === 'float32' ? 'selected' : ''}>Float32</option>
                     <option value="float16" ${this.defaultSettings.dtype === 'float16' ? 'selected' : ''}>Float16</option>
@@ -155,7 +156,7 @@ class TtsWebuiProvider {
             <div class="flex1 flexFlowColumn">
                 <label for="tts_webui_cpu_offload" class="checkbox_label alignItemsCenter flexGap5">
                     <input id="tts_webui_cpu_offload" type="checkbox" />
-                    <span>CPU Offload</span>
+                    <span data-i18n="CPU Offload">CPU Offload</span>
                 </label>
             </div>
             <div class="flex1">
@@ -164,7 +165,7 @@ class TtsWebuiProvider {
         </div>
 
         <hr>
-        <h4 class="textAlignCenter">Streaming (Advanced Settings)</h4>
+        <h4 class="textAlignCenter" data-i18n="Streaming (Advanced Settings)">Streaming (Advanced Settings)</h4>
 
         <div class="flex gap10px marginBot10">
             <div class="flex1 flexFlowColumn">
@@ -172,10 +173,10 @@ class TtsWebuiProvider {
                 <input id="tts_webui_tokens_per_slice" type="range" value="${this.defaultSettings.tokens_per_slice}" min="15" max="1000" step="1" />
             </div>
             <div class="flex1 flexFlowColumn">
-                <label for="tts_webui_chunk_overlap_method">Chunk Overlap Method:</label>
+                <label for="tts_webui_chunk_overlap_method" data-i18n="Chunk Overlap Method:">Chunk Overlap Method:</label>
                 <select id="tts_webui_chunk_overlap_method">
-                    <option value="zero" ${this.defaultSettings.chunk_overlap_method === 'zero' ? 'selected' : ''}>Zero</option>
-                    <option value="full" ${this.defaultSettings.chunk_overlap_method === 'full' ? 'selected' : ''}>Full</option>
+                    <option value="zero" ${this.defaultSettings.chunk_overlap_method === 'zero' ? 'selected' : ''} data-i18n="Zero">Zero</option>
+                    <option value="full" ${this.defaultSettings.chunk_overlap_method === 'full' ? 'selected' : ''} data-i18n="Full">Full</option>
                 </select>
             </div>
         </div>
@@ -542,7 +543,7 @@ class TtsWebuiProvider {
         });
 
         if (!response.ok) {
-            toastr.error(response.statusText, 'TTS Generation Failed');
+            toastr.error(response.statusText, translate('TTS Generation Failed'));
             throw new Error(
                 `HTTP ${response.status}: ${await response.text()}`,
             );

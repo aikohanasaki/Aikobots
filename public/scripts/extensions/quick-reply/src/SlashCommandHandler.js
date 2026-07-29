@@ -1,3 +1,4 @@
+import { t, translate } from '../../../i18n.js';
 import { SlashCommand } from '../../../slash-commands/SlashCommand.js';
 import { SlashCommandAbortController } from '../../../slash-commands/SlashCommandAbortController.js';
 import { ARGUMENT_TYPE, SlashCommandArgument, SlashCommandNamedArgument } from '../../../slash-commands/SlashCommandArgument.js';
@@ -90,10 +91,10 @@ export class SlashCommandHandler {
         }));
         SlashCommandParser.addCommandObject(SlashCommand.fromProps({ name: 'qrset',
             callback: () => {
-                toastr.warning('The command /qrset has been deprecated. Use /qr-set, /qr-set-on, and /qr-set-off instead.');
+                toastr.warning(translate('The command /qrset has been deprecated. Use /qr-set, /qr-set-on, and /qr-set-off instead.'));
                 return '';
             },
-            helpString: '<strong>DEPRECATED</strong> – The command /qrset has been deprecated. Use /qr-set, /qr-set-on, and /qr-set-off instead.',
+            helpString: '<strong data-i18n="DEPRECATED">DEPRECATED</strong> – The command /qrset has been deprecated. Use /qr-set, /qr-set-on, and /qr-set-off instead.',
         }));
         SlashCommandParser.addCommandObject(SlashCommand.fromProps({ name: 'qr-set',
             callback: (args, value) => {
@@ -294,9 +295,9 @@ export class SlashCommandHandler {
                 ),
             ],
             helpString: `
-                <div>Creates a new Quick Reply.</div>
+                <div data-i18n="Creates a new Quick Reply.">Creates a new Quick Reply.</div>
                 <div>
-                    <strong>Example:</strong>
+                    <strong data-i18n="Example:">Example:</strong>
                     <ul>
                         <li>
                             <pre><code>/qr-create set=MyPreset label=MyButton /echo 123</code></pre>
@@ -334,9 +335,9 @@ export class SlashCommandHandler {
             ],
             returns: 'a dictionary with all the QR\'s properties',
             helpString: `
-                <div>Get a Quick Reply's properties.</div>
+                <div data-i18n="Get a Quick Reply's properties.">Get a Quick Reply's properties.</div>
                 <div>
-                    <strong>Examples:</strong>
+                    <strong data-i18n="Examples:">Examples:</strong>
                     <ul>
                         <li>
                             <pre><code>/qr-get set=MyPreset label=MyButton | /echo</code></pre>
@@ -364,11 +365,11 @@ export class SlashCommandHandler {
                 new SlashCommandArgument('command', [ARGUMENT_TYPE.STRING]),
             ],
             helpString: `
-                <div>
+                <div data-i18n="Updates Quick Reply.">
                     Updates Quick Reply.
                 </div>
                 <div>
-                    <strong>Example:</strong>
+                    <strong data-i18n="Example:">Example:</strong>
                     <ul>
                         <li>
                             <pre><code>/qr-update set=MyPreset label=MyButton newlabel=MyRenamedButton /echo 123</code></pre>
@@ -455,14 +456,14 @@ export class SlashCommandHandler {
                 }),
             ],
             helpString: `
-                <div>
+                <div data-i18n="Add a context menu preset to a QR.">
                     Add a context menu preset to a QR.
                 </div>
                 <div>
                     If <code>id</code> and <code>label</code> are both provided, <code>id</code> will be used.
                 </div>
                 <div>
-                    <strong>Example:</strong>
+                    <strong data-i18n="Example:">Example:</strong>
                     <ul>
                         <li>
                             <pre><code>/qr-contextadd set=MyQRSetWithTheButton label=MyButton chain=true MyQRSetWithContextItems</code></pre>
@@ -506,14 +507,14 @@ export class SlashCommandHandler {
                 }),
             ],
             helpString: `
-                <div>
+                <div data-i18n="Remove context menu preset from a QR.">
                     Remove context menu preset from a QR.
                 </div>
                 <div>
                     If <code>id</code> and <code>label</code> are both provided, <code>id</code> will be used.
                 </div>
                 <div>
-                    <strong>Example:</strong>
+                    <strong data-i18n="Example:">Example:</strong>
                     <ul>
                         <li>
                             <pre><code>/qr-contextdel set=MyPreset label=MyButton MyOtherPreset</code></pre>
@@ -550,14 +551,14 @@ export class SlashCommandHandler {
                 }),
             ],
             helpString: `
-                <div>
+                <div data-i18n="Remove all context menu presets from a QR.">
                     Remove all context menu presets from a QR.
                 </div>
                 <div>
                     If <code>id</code> and a label are both provided, <code>id</code> will be used.
                 </div>
                 <div>
-                    <strong>Example:</strong>
+                    <strong data-i18n="Example:">Example:</strong>
                     <ul>
                         <li>
                             <pre><code>/qr-contextclear set=MyPreset MyButton</code></pre>
@@ -589,11 +590,11 @@ export class SlashCommandHandler {
                 }),
             ],
             helpString: `
-                <div>
+                <div data-i18n="Create a new preset (overrides existing ones).">
                     Create a new preset (overrides existing ones).
                 </div>
                 <div>
-                    <strong>Example:</strong>
+                    <strong data-i18n="Example:">Example:</strong>
                     <ul>
                         <li>
                             <pre><code>/qr-set-add MyNewPreset</code></pre>
@@ -619,11 +620,11 @@ export class SlashCommandHandler {
                 }),
             ],
             helpString: `
-                <div>
+                <div data-i18n="Update an existing preset.">
                     Update an existing preset.
                 </div>
                 <div>
-                    <strong>Example:</strong>
+                    <strong data-i18n="Example:">Example:</strong>
                     <pre><code>/qr-set-update enabled=false MyPreset</code></pre>
                 </div>
             `,
@@ -643,11 +644,11 @@ export class SlashCommandHandler {
                 }),
             ],
             helpString: `
-                <div>
+                <div data-i18n="Delete an existing preset.">
                     Delete an existing preset.
                 </div>
                 <div>
-                    <strong>Example:</strong>
+                    <strong data-i18n="Example:">Example:</strong>
                     <pre><code>/qr-set-delete MyPreset</code></pre>
                 </div>
             `,
@@ -671,11 +672,11 @@ export class SlashCommandHandler {
             splitUnnamedArgument: true,
             splitUnnamedArgumentCount: 2,
             helpString: `
-                <div>
+                <div data-i18n="Set a fallback value for a Quick Reply argument.">
                     Set a fallback value for a Quick Reply argument.
                 </div>
                 <div>
-                    <strong>Example:</strong>
+                    <strong data-i18n="Example:">Example:</strong>
                     <pre><code>/qr-arg x foo |\n/echo {{arg::x}}</code></pre>
                 </div>
             `,
@@ -764,14 +765,14 @@ export class SlashCommandHandler {
             ],
             splitUnnamedArgument: true,
             helpString: `
-                <div>
+                <div data-i18n="Import one or more closures from another Quick Reply.">
                     Import one or more closures from another Quick Reply.
                 </div>
                 <div>
                     Only imports closures that are directly assigned a scoped variable via <code>/let</code> or <code>/var</code>.
                 </div>
                 <div>
-                    <strong>Examples:</strong>
+                    <strong data-i18n="Examples:">Examples:</strong>
                     <ul>
                         <li><pre><code>/import from=LibraryQrSet.FooBar foo |\n/:foo</code></pre></li>
                         <li><pre><code>/import from=LibraryQrSet.FooBar\n\tfoo\n\tbar\n|\n/:foo |\n/:bar</code></pre></li>
@@ -788,7 +789,7 @@ export class SlashCommandHandler {
     getSetByName(name) {
         const set = this.api.getSetByName(name);
         if (!set) {
-            toastr.error(`No Quick Reply Set with the name "${name}" could be found.`);
+            toastr.error(t`No Quick Reply Set with the name "${name}" could be found.`);
         }
         return set;
     }
@@ -796,7 +797,7 @@ export class SlashCommandHandler {
     getQrByLabel(setName, label) {
         const qr = this.api.getQrByLabel(setName, label);
         if (!qr) {
-            toastr.error(`No Quick Reply with the label "${label}" could be found in the set "${setName}"`);
+            toastr.error(t`No Quick Reply with the label "${label}" could be found in the set "${setName}"`);
         }
         return qr;
     }
@@ -886,7 +887,7 @@ export class SlashCommandHandler {
     }
     getQuickReply(args) {
         if (!args.id && !args.label) {
-            toastr.error('Please provide a valid id or label.');
+            toastr.error(translate('Please provide a valid id or label.'));
             return '';
         }
         try {

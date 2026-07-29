@@ -1,3 +1,4 @@
+import { t, translate } from '../../i18n.js';
 import { getPreviewString, initVoiceMap, saveTtsProviderSettings } from './index.js';
 import { event_types, eventSource, getRequestHeaders } from '../../../script.js';
 import { SECRET_KEYS, secret_state } from '../../secrets.js';
@@ -53,28 +54,28 @@ class MiniMaxTtsProvider {
             <div class="tts_block justifyCenter">
                 <div id="api_key_minimax" class="menu_button menu_button_icon manage-api-keys" data-key="api_key_minimax">
                     <i class="fa-solid fa-key"></i>
-                    <span>Click to set API Key</span>
+                    <span data-i18n="Click to set API Key">Click to set API Key</span>
                 </div>
                 <div id="minimax_group_id" class="menu_button menu_button_icon manage-api-keys" data-key="minimax_group_id">
                     <i class="fa-solid fa-key"></i>
-                    <span>Click to set Group ID</span>
+                    <span data-i18n="Click to set Group ID">Click to set Group ID</span>
                 </div>
             </div>
             <div class="tts_block">
-                <label for="minimax_tts_api_host">API Host</label>
+                <label for="minimax_tts_api_host" data-i18n="API Host">API Host</label>
                 <select id="minimax_tts_api_host" class="text_pole">
-                    <option value="https://api.minimax.io">Official (api.minimax.io)</option>
-                    <option value="https://api.minimaxi.chat">Global (api.minimaxi.chat)</option>
-                    <option value="https://api.minimax.chat">Mainland China (api.minimax.chat)</option>
+                    <option value="https://api.minimax.io" data-i18n="Official (api.minimax.io)">Official (api.minimax.io)</option>
+                    <option value="https://api.minimaxi.chat" data-i18n="Global (api.minimaxi.chat)">Global (api.minimaxi.chat)</option>
+                    <option value="https://api.minimax.chat" data-i18n="Mainland China (api.minimax.chat)">Mainland China (api.minimax.chat)</option>
                 </select>
             </div>
             <div class="tts_block">
-                <label for="minimax_tts_model">Model</label>
+                <label for="minimax_tts_model" data-i18n="Model">Model</label>
                 <select id="minimax_tts_model" class="text_pole">
-                    <option value="speech-02-hd">Speech-02-HD (High Quality)</option>
-                    <option value="speech-02-turbo">Speech-02-Turbo (Fast)</option>
-                    <option value="speech-01">Speech-01 (Legacy)</option>
-                    <option value="speech-01-240228">Speech-01-240228 (Legacy)</option>
+                    <option value="speech-02-hd" data-i18n="Speech-02-HD (High Quality)">Speech-02-HD (High Quality)</option>
+                    <option value="speech-02-turbo" data-i18n="Speech-02-Turbo (Fast)">Speech-02-Turbo (Fast)</option>
+                    <option value="speech-01" data-i18n="Speech-01 (Legacy)">Speech-01 (Legacy)</option>
+                    <option value="speech-01-240228" data-i18n="Speech-01-240228 (Legacy)">Speech-01-240228 (Legacy)</option>
                 </select>
             </div>
             <div class="tts_block">
@@ -95,56 +96,56 @@ class MiniMaxTtsProvider {
                 <input id="minimax_tts_pitch" type="range" value="${this.defaultSettings.pitch.default}" min="${this.defaultSettings.pitch.min}" max="${this.defaultSettings.pitch.max}" step="${this.defaultSettings.pitch.step}" />
             </div>
             <div class="tts_block">
-                <label for="minimax_tts_format">Audio Format</label>
+                <label for="minimax_tts_format" data-i18n="Audio Format">Audio Format</label>
                 <select id="minimax_tts_format" class="text_pole">
                     <option value="mp3">MP3</option>
-                    <option value="wav">WAV</option>
-                    <option value="flac">FLAC</option>
+                    <option value="wav" data-i18n="WAV">WAV</option>
+                    <option value="flac" data-i18n="FLAC">FLAC</option>
                 </select>
             </div>
 
             <hr>
             <div class="tts_block">
-                <label for="minimax_tts_custom_voice_id">Custom Voice ID (for 'customVoice' option)</label>
-                <input id="minimax_tts_custom_voice_id" type="text" class="text_pole" placeholder="Enter custom voice ID from MiniMax platform"/>
+                <label for="minimax_tts_custom_voice_id" data-i18n="Custom Voice ID (for 'customVoice' option)">Custom Voice ID (for 'customVoice' option)</label>
+                <input id="minimax_tts_custom_voice_id" type="text" class="text_pole" placeholder="Enter custom voice ID from MiniMax platform" data-i18n="[placeholder]Enter custom voice ID from MiniMax platform"/>
             </div>
 
             <hr>
             <div id="minimax_custom_voice_cloning" class="tts_block flexFlowColumn">
-                <h4>Custom Voice Management</h4>
+                <h4 data-i18n="Custom Voice Management">Custom Voice Management</h4>
                 <div class="tts_block wide100p">
-                    <input id="minimax_custom_voice_name" type="text" class="text_pole" placeholder="Voice Name"/>
+                    <input id="minimax_custom_voice_name" type="text" class="text_pole" placeholder="Voice Name" data-i18n="[placeholder]Voice Name"/>
                 </div>
                 <div class="tts_block wide100p">
-                    <input id="minimax_custom_voice_id" type="text" class="text_pole" placeholder="Voice ID (from MiniMax platform)"/>
+                    <input id="minimax_custom_voice_id" type="text" class="text_pole" placeholder="Voice ID (from MiniMax platform)" data-i18n="[placeholder]Voice ID (from MiniMax platform)"/>
                 </div>
                 <div class="tts_block wide100p">
                     <select id="minimax_custom_voice_lang" class="text_pole">
-                        <option value="auto">Auto Detect</option>
-                        <option value="Chinese">Chinese (中文)</option>
-                        <option value="Chinese,Yue">Chinese, Yue (粤语)</option>
-                        <option value="English">English</option>
-                        <option value="Arabic">Arabic (العربية)</option>
-                        <option value="Russian">Russian (Русский)</option>
-                        <option value="Spanish">Spanish (Español)</option>
-                        <option value="French">French (Français)</option>
-                        <option value="Portuguese">Portuguese (Português)</option>
-                        <option value="German">German (Deutsch)</option>
-                        <option value="Turkish">Turkish (Türkçe)</option>
-                        <option value="Dutch">Dutch (Nederlands)</option>
-                        <option value="Ukrainian">Ukrainian (Українська)</option>
-                        <option value="Vietnamese">Vietnamese (Tiếng Việt)</option>
-                        <option value="Indonesian">Indonesian (Bahasa Indonesia)</option>
-                        <option value="Japanese">Japanese (日本語)</option>
-                        <option value="Italian">Italian (Italiano)</option>
-                        <option value="Korean">Korean (한국어)</option>
-                        <option value="Thai">Thai (ไทย)</option>
-                        <option value="Polish">Polish (Polski)</option>
-                        <option value="Romanian">Romanian (Română)</option>
-                        <option value="Greek">Greek (Ελληνικά)</option>
-                        <option value="Czech">Czech (Čeština)</option>
-                        <option value="Finnish">Finnish (Suomi)</option>
-                        <option value="Hindi">Hindi (हिन्दी)</option>
+                        <option value="auto" data-i18n="Auto Detect">Auto Detect</option>
+                        <option value="Chinese" data-i18n="Chinese (中文)">Chinese (中文)</option>
+                        <option value="Chinese,Yue" data-i18n="Chinese, Yue (粤语)">Chinese, Yue (粤语)</option>
+                        <option value="English" data-i18n="English">English</option>
+                        <option value="Arabic" data-i18n="Arabic (العربية)">Arabic (العربية)</option>
+                        <option value="Russian" data-i18n="Russian (Русский)">Russian (Русский)</option>
+                        <option value="Spanish" data-i18n="Spanish (Español)">Spanish (Español)</option>
+                        <option value="French" data-i18n="French (Français)">French (Français)</option>
+                        <option value="Portuguese" data-i18n="Portuguese (Português)">Portuguese (Português)</option>
+                        <option value="German" data-i18n="German (Deutsch)">German (Deutsch)</option>
+                        <option value="Turkish" data-i18n="Turkish (Türkçe)">Turkish (Türkçe)</option>
+                        <option value="Dutch" data-i18n="Dutch (Nederlands)">Dutch (Nederlands)</option>
+                        <option value="Ukrainian" data-i18n="Ukrainian (Українська)">Ukrainian (Українська)</option>
+                        <option value="Vietnamese" data-i18n="Vietnamese (Tiếng Việt)">Vietnamese (Tiếng Việt)</option>
+                        <option value="Indonesian" data-i18n="Indonesian (Bahasa Indonesia)">Indonesian (Bahasa Indonesia)</option>
+                        <option value="Japanese" data-i18n="Japanese (日本語)">Japanese (日本語)</option>
+                        <option value="Italian" data-i18n="Italian (Italiano)">Italian (Italiano)</option>
+                        <option value="Korean" data-i18n="Korean (한국어)">Korean (한국어)</option>
+                        <option value="Thai" data-i18n="Thai (ไทย)">Thai (ไทย)</option>
+                        <option value="Polish" data-i18n="Polish (Polski)">Polish (Polski)</option>
+                        <option value="Romanian" data-i18n="Romanian (Română)">Romanian (Română)</option>
+                        <option value="Greek" data-i18n="Greek (Ελληνικά)">Greek (Ελληνικά)</option>
+                        <option value="Czech" data-i18n="Czech (Čeština)">Czech (Čeština)</option>
+                        <option value="Finnish" data-i18n="Finnish (Suomi)">Finnish (Suomi)</option>
+                        <option value="Hindi" data-i18n="Hindi (हिन्दी)">Hindi (हिन्दी)</option>
                     </select>
                 </div>
                 <div class="tts_block">
@@ -155,12 +156,12 @@ class MiniMaxTtsProvider {
 
             <hr>
             <div id="minimax_custom_model_management" class="tts_block flexFlowColumn">
-                <h4>Custom Model Management</h4>
+                <h4 data-i18n="Custom Model Management">Custom Model Management</h4>
                 <div class="tts_block wide100p">
-                    <input id="minimax_custom_model_id" type="text" class="text_pole" placeholder="Model ID"/>
+                    <input id="minimax_custom_model_id" type="text" class="text_pole" placeholder="Model ID" data-i18n="[placeholder]Model ID"/>
                 </div>
                 <div class="tts_block wide100p">
-                    <input id="minimax_custom_model_name" type="text" class="text_pole" placeholder="Model Name"/>
+                    <input id="minimax_custom_model_name" type="text" class="text_pole" placeholder="Model Name" data-i18n="[placeholder]Model Name"/>
                 </div>
                 <div class="tts_block">
                     <input id="minimax_add_custom_model" class="menu_button" type="button" value="Add Custom Model">
@@ -207,25 +208,25 @@ class MiniMaxTtsProvider {
         const modelName = $('#minimax_custom_model_name').val().toString().trim();
 
         if (!modelId || !modelName) {
-            toastr.error('Please enter model ID and name');
+            toastr.error(translate('Please enter model ID and name'));
             return;
         }
 
         // Check if already exists in custom models
         if (this.settings.customModels.find(m => m.id === modelId)) {
-            toastr.error('Model ID already exists in custom models');
+            toastr.error(translate('Model ID already exists in custom models'));
             return;
         }
 
         // Check if conflicts with default models
         if (MiniMaxTtsProvider.defaultModels.find(m => m.id === modelId)) {
-            toastr.error('Model ID conflicts with default model. Please use a different model ID.');
+            toastr.error(translate('Model ID conflicts with default model. Please use a different model ID.'));
             return;
         }
 
         // Check if conflicts with default model names
         if (MiniMaxTtsProvider.defaultModels.find(m => m.name === modelName)) {
-            toastr.error('Model name conflicts with default model. Please use a different model name.');
+            toastr.error(translate('Model name conflicts with default model. Please use a different model name.'));
             return;
         }
 
@@ -236,7 +237,7 @@ class MiniMaxTtsProvider {
         this.updateCustomModelsDisplay();
         this.updateModelSelect(this.getAllModels());
         saveTtsProviderSettings();
-        toastr.success('Model added successfully');
+        toastr.success(translate('Model added successfully'));
     }
 
     removeCustomModel(modelId) {
@@ -245,7 +246,7 @@ class MiniMaxTtsProvider {
         this.updateModelSelect(this.getAllModels());
         saveTtsProviderSettings();
 
-        toastr.success('Model removed successfully');
+        toastr.success(translate('Model removed successfully'));
     }
 
     addCustomVoice() {
@@ -254,25 +255,25 @@ class MiniMaxTtsProvider {
         const voiceLang = $('#minimax_custom_voice_lang').val().toString().trim();
 
         if (!voiceName || !voiceId) {
-            toastr.error('Please enter voice name and ID');
+            toastr.error(translate('Please enter voice name and ID'));
             return;
         }
 
         // Check if already exists in custom voices
         if (this.settings.customVoices.find(v => v.voice_id === voiceId)) {
-            toastr.error('Voice ID already exists in custom voices');
+            toastr.error(translate('Voice ID already exists in custom voices'));
             return;
         }
 
         // Check if conflicts with default voices
         if (MiniMaxTtsProvider.defaultVoices.find(v => v.voice_id === voiceId)) {
-            toastr.error('Voice ID conflicts with default voice. Please use a different voice ID.');
+            toastr.error(translate('Voice ID conflicts with default voice. Please use a different voice ID.'));
             return;
         }
 
         // Check if conflicts with default voice names
         if (MiniMaxTtsProvider.defaultVoices.find(v => v.name === voiceName)) {
-            toastr.error('Voice name conflicts with default voice. Please use a different voice name.');
+            toastr.error(translate('Voice name conflicts with default voice. Please use a different voice name.'));
             return;
         }
 
@@ -293,7 +294,7 @@ class MiniMaxTtsProvider {
         this.updateCustomVoicesDisplay();
         initVoiceMap(); // Update TTS extension voiceMap
         saveTtsProviderSettings();
-        toastr.success('Voice added successfully');
+        toastr.success(translate('Voice added successfully'));
     }
 
     // Remove custom voice
@@ -302,7 +303,7 @@ class MiniMaxTtsProvider {
         this.updateCustomVoicesDisplay();
         initVoiceMap(); // Update TTS extension voiceMap
         saveTtsProviderSettings();
-        toastr.success('Voice removed successfully');
+        toastr.success(translate('Voice removed successfully'));
     }
 
     // Helper function to escape HTML
@@ -318,7 +319,7 @@ class MiniMaxTtsProvider {
         container.empty();
 
         if (this.settings.customModels.length === 0) {
-            container.append('<div class="minimax-empty-list">No custom models added</div>');
+            container.append('<div class="minimax-empty-list" data-i18n="No custom models added">No custom models added</div>');
             return;
         }
 
@@ -327,18 +328,18 @@ class MiniMaxTtsProvider {
 
             const modelInfo = $('<div></div>').addClass('minimax-custom-item-info');
             const modelName = $('<div></div>').addClass('minimax-custom-item-name').text(model.name);
-            const modelId = $('<div></div>').addClass('minimax-custom-item-details').text(`(${model.id})`);
+            const modelId = $('<div></div>').addClass('minimax-custom-item-details').text(t`(${model.id})`);
             modelInfo.append(modelName).append(modelId);
 
             const removeBtn = $('<button></button>')
                 .addClass('menu_button minimax-custom-item-remove')
-                .text('Remove')
+                .text(translate('Remove'))
                 .on('click', () => {
                     try {
                         this.removeCustomModel(model.id);
                     } catch (error) {
                         console.error('MiniMax TTS: Error removing custom model:', error);
-                        toastr.error(`Failed to remove custom model: ${error.message}`);
+                        toastr.error(t`Failed to remove custom model: ${error.message}`);
                     }
                 });
 
@@ -353,7 +354,7 @@ class MiniMaxTtsProvider {
         container.empty();
 
         if (this.settings.customVoices.length === 0) {
-            container.append('<div class="minimax-empty-list">No custom voices added</div>');
+            container.append('<div class="minimax-empty-list" data-i18n="No custom voices added">No custom voices added</div>');
             return;
         }
 
@@ -362,18 +363,18 @@ class MiniMaxTtsProvider {
 
             const voiceInfo = $('<div></div>').addClass('minimax-custom-item-info');
             const voiceName = $('<div></div>').addClass('minimax-custom-item-name').text(voice.name);
-            const voiceDetails = $('<div></div>').addClass('minimax-custom-item-details').text(`(${voice.voice_id}) - ${voice.lang}`);
+            const voiceDetails = $('<div></div>').addClass('minimax-custom-item-details').text(t`(${voice.voice_id}) - ${voice.lang}`);
             voiceInfo.append(voiceName).append(voiceDetails);
 
             const removeBtn = $('<button></button>')
                 .addClass('menu_button minimax-custom-item-remove')
-                .text('Remove')
+                .text(translate('Remove'))
                 .on('click', () => {
                     try {
                         this.removeCustomVoice(voice.voice_id);
                     } catch (error) {
                         console.error('MiniMax TTS: Error removing custom voice:', error);
-                        toastr.error(`Failed to remove custom voice: ${error.message}`);
+                        toastr.error(t`Failed to remove custom voice: ${error.message}`);
                     }
                 });
 
@@ -508,7 +509,7 @@ class MiniMaxTtsProvider {
                 this.onConnectClick();
             } catch (error) {
                 console.error('MiniMax TTS: Error in connect click handler:', error);
-                toastr.error(`Connection failed: ${error.message}`);
+                toastr.error(t`Connection failed: ${error.message}`);
             }
         });
         $('#minimax_refresh').on('click', () => {
@@ -516,7 +517,7 @@ class MiniMaxTtsProvider {
                 this.onRefreshClick();
             } catch (error) {
                 console.error('MiniMax TTS: Error in refresh click handler:', error);
-                toastr.error(`Refresh failed: ${error.message}`);
+                toastr.error(t`Refresh failed: ${error.message}`);
             }
         });
         $('#minimax_tts_api_host').on('change', this.onSettingsChange.bind(this));
@@ -533,7 +534,7 @@ class MiniMaxTtsProvider {
                 this.addCustomModel();
             } catch (error) {
                 console.error('MiniMax TTS: Error adding custom model:', error);
-                toastr.error(`Failed to add custom model: ${error.message}`);
+                toastr.error(t`Failed to add custom model: ${error.message}`);
             }
         });
         $('#minimax_add_custom_voice').on('click', () => {
@@ -541,7 +542,7 @@ class MiniMaxTtsProvider {
                 this.addCustomVoice();
             } catch (error) {
                 console.error('MiniMax TTS: Error adding custom voice:', error);
-                toastr.error(`Failed to add custom voice: ${error.message}`);
+                toastr.error(t`Failed to add custom voice: ${error.message}`);
             }
         });
 
@@ -553,7 +554,7 @@ class MiniMaxTtsProvider {
                     this.addCustomModel();
                 } catch (error) {
                     console.error('MiniMax TTS: Error adding custom model via keyboard:', error);
-                    toastr.error(`Failed to add custom model: ${error.message}`);
+                    toastr.error(t`Failed to add custom model: ${error.message}`);
                 }
             }
         });
@@ -564,7 +565,7 @@ class MiniMaxTtsProvider {
                     this.addCustomVoice();
                 } catch (error) {
                     console.error('MiniMax TTS: Error adding custom voice via keyboard:', error);
-                    toastr.error(`Failed to add custom voice: ${error.message}`);
+                    toastr.error(t`Failed to add custom voice: ${error.message}`);
                 }
             }
         });
@@ -633,9 +634,9 @@ class MiniMaxTtsProvider {
         try {
             await this.updateModelsAndVoices();
             await initVoiceMap(); // Update voice map after refresh
-            toastr.success('MiniMax TTS: Models and voices refreshed successfully');
+            toastr.success(translate('MiniMax TTS: Models and voices refreshed successfully'));
         } catch (error) {
-            toastr.error(`MiniMax TTS: Failed to refresh - ${error.message}`);
+            toastr.error(t`MiniMax TTS: Failed to refresh - ${error.message}`);
         }
     }
 
@@ -643,10 +644,10 @@ class MiniMaxTtsProvider {
         try {
             await this.checkReady();
             await initVoiceMap(); // Update voice map after connection
-            toastr.success('MiniMax TTS: Connected successfully');
+            toastr.success(translate('MiniMax TTS: Connected successfully'));
             saveTtsProviderSettings();
         } catch (error) {
-            toastr.error(`MiniMax TTS: ${error.message}`);
+            toastr.error(t`MiniMax TTS: ${error.message}`);
         }
     }
 
@@ -828,7 +829,7 @@ class MiniMaxTtsProvider {
                     }
                 }
 
-                toastr.error(`${errorMessage}`, 'MiniMax TTS Generation Failed');
+                toastr.error(errorMessage, translate('MiniMax TTS Generation Failed'));
                 const error = new Error(errorMessage);
                 console.error('MiniMax TTS fetchTtsGeneration error:', error.message);
                 throw error;
@@ -939,7 +940,7 @@ class MiniMaxTtsProvider {
                     src: this.audioElement.src,
                 });
 
-                toastr.error('Audio playback failed. The audio format may not be supported by your browser.');
+                toastr.error(translate('Audio playback failed. The audio format may not be supported by your browser.'));
             };
 
             try {
@@ -957,7 +958,7 @@ class MiniMaxTtsProvider {
 
         } catch (error) {
             console.error('MiniMax TTS Preview Error:', error);
-            toastr.error(`Could not generate preview: ${error.message}`);
+            toastr.error(t`Could not generate preview: ${error.message}`);
         }
     }
 }

@@ -1,3 +1,4 @@
+import { translate } from './i18n.js';
 import {
     chat_metadata,
     substituteParams,
@@ -113,7 +114,7 @@ function setChatCfg(tempValue, setting) {
 // TODO: Only change CFG when character is selected
 function onCfgMenuItemClick() {
     if (!selected_group && this_chid === undefined) {
-        toastr.warning('Select a character before trying to configure CFG', '', { timeOut: 2000 });
+        toastr.warning(translate('Select a character before trying to configure CFG'), '', { timeOut: 2000 });
         return;
     }
 
@@ -361,7 +362,7 @@ export function initCfg() {
         chat_metadata[metadataKeys.groupchat_individual_chars] = checked;
 
         if (checked) {
-            toastr.info('You can edit character CFG values in their respective character chats.');
+            toastr.info(translate('You can edit character CFG values in their respective character chats.'));
         }
 
         saveMetadataDebounced();

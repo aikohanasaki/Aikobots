@@ -89,7 +89,7 @@ import { slashCommandReturnHelper } from './slash-commands/SlashCommandReturnHel
 import { accountStorage } from './util/AccountStorage.js';
 import { SlashCommandDebugController } from './slash-commands/SlashCommandDebugController.js';
 import { SlashCommandScope } from './slash-commands/SlashCommandScope.js';
-import { t } from './i18n.js';
+import { t, translate } from './i18n.js';
 import { debounce_timeout } from './constants.js';
 export {
     executeSlashCommands, executeSlashCommandsWithOptions, getSlashCommandsHelp, registerSlashCommand,
@@ -1475,11 +1475,11 @@ export function initDefaultSlashCommands() {
             ),
         ],
         helpString: `
-        <div>
+        <div data-i18n="Echoes the provided text to a toast message. Can be used to display informational messages or for pipes debugging.">
             Echoes the provided text to a toast message. Can be used to display informational messages or for pipes debugging.
         </div>
         <div>
-            <strong>Example:</strong>
+            <strong data-i18n="Example:">Example:</strong>
             <ul>
                 <li>
                     <pre><code>/echo title="My Message" severity=warning This is a warning message</code></pre>
@@ -2409,7 +2409,7 @@ export function initDefaultSlashCommands() {
                 ${t`Set the API url / server url for the currently selected supported API. If no argument is provided, it will return the current API url.`}
             </div>
             <div>
-                ${t`If a manual API is provided to <b>set</b> the URL, make sure to set <code>connect=false</code>, as auto-connect only works for the currently selected API, or consider switching to it with <code>/api</code> first.`}
+                ${t`If a manual API is provided to <b data-i18n="set">set</b> the URL, make sure to set <code>connect=false</code>, as auto-connect only works for the currently selected API, or consider switching to it with <code>/api</code> first.`}
             </div>
             <div>
                 ${t`This slash command currently supports Custom OpenAI-compatible and Z.AI chat completion connections. If unsure which APIs are supported, check the auto-completion of the optional <code>api</code> argument of this command.`}
@@ -5212,7 +5212,7 @@ export async function executeSlashCommandsOnChatInput(text, options = {}) {
                 const clickHint = `<p>${t`Click to see details`}</p>`;
                 toastr.error(
                     `${toast}${clickHint}`,
-                    'Slash Command Execution Error',
+                    translate('Slash Command Execution Error'),
                     { escapeHtml: false, timeOut: 10000, onclick: () => callGenericPopup(toast, POPUP_TYPE.TEXT, '', { allowHorizontalScrolling: true, allowVerticalScrolling: true }) },
                 );
             } else {
@@ -5294,10 +5294,10 @@ async function executeSlashCommandsWithOptions(text, options = {}) {
                 const ex = e;
                 const toast = `
                     <div>${ex.message}</div>
-                    <div>Line: ${ex.line} Column: ${ex.column}</div>
+                    <div><span data-i18n="Line:">Line:</span> ${ex.line} <span data-i18n="Column:">Column:</span> ${ex.column}</div>
                     <pre style="text-align:left;">${ex.hint}</pre>
                     `;
-                const clickHint = '<p>Click to see details</p>';
+                const clickHint = '<p data-i18n="Click to see details">Click to see details</p>';
                 toastr.error(
                     `${toast}${clickHint}`,
                     'SlashCommandExecutionError',

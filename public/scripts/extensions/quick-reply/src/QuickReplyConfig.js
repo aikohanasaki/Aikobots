@@ -1,3 +1,4 @@
+import { translate } from '../../../i18n.js';
 import { getSortableDelay } from '../../../utils.js';
 import { QuickReplySetLink } from './QuickReplySetLink.js';
 import { QuickReplySet } from './QuickReplySet.js';
@@ -64,7 +65,7 @@ export class QuickReplyConfig {
             if (newSet) {
                 this.addSet(newSet);
             } else {
-                toastr.warning('All existing QR Sets have already been added.');
+                toastr.warning(translate('All existing QR Sets have already been added.'));
             }
         });
         this.updateSetListDom();

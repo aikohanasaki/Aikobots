@@ -1,3 +1,4 @@
+import { t, translate } from './i18n.js';
 import {
     CHAT_SAVE_RESULT,
     canEditCharacterMetadata,
@@ -98,8 +99,8 @@ async function hydrateConfiguration(chid = this_chid) {
     managementState = null;
     const character = getCharacter(chid);
     if (!character || !canEditCharacterMetadata(chid)) {
-        resetSelect('#recommended_chat_setup_lorebook', [{ value: '', text: 'None' }], '', true);
-        resetSelect('#recommended_chat_setup_side_prompts', [{ value: '', text: 'None' }], '', true);
+        resetSelect('#recommended_chat_setup_lorebook', [{ value: '', text: translate('None') }], '', true);
+        resetSelect('#recommended_chat_setup_side_prompts', [{ value: '', text: translate('None') }], '', true);
         return;
     }
 
@@ -107,7 +108,7 @@ async function hydrateConfiguration(chid = this_chid) {
         const state = await postJson('/manage/get', { avatar_url: character.avatar });
         if (token !== hydrateToken || String(chid) !== String(this_chid)) return;
         managementState = state;
-        const templateOptions = [{ value: '', text: 'None' }];
+        const templateOptions = [{ value: '', text: translate('None') }];
         if (state.templateSourceName && !(state.eligibleTemplateNames || []).includes(state.templateSourceName)) {
             templateOptions.push({ value: state.templateSourceName, text: `${state.templateSourceName} (does not match current character)` });
         }
@@ -123,18 +124,18 @@ async function hydrateConfiguration(chid = this_chid) {
             if (token !== hydrateToken || String(chid) !== String(this_chid)) return;
             resetSelect(
                 '#recommended_chat_setup_side_prompts',
-                [{ value: '', text: 'None' }, ...sidePromptSets.map(set => ({ value: set.key, text: set.name }))],
+                [{ value: '', text: translate('None') }, ...sidePromptSets.map(set => ({ value: set.key, text: set.name }))],
                 state.sidePromptSetKey || '',
                 false,
             );
         } catch {
-            resetSelect('#recommended_chat_setup_side_prompts', [{ value: '', text: 'Unavailable' }], '', true);
+            resetSelect('#recommended_chat_setup_side_prompts', [{ value: '', text: translate('Unavailable') }], '', true);
         }
     } catch (error) {
         if (token !== hydrateToken) return;
-        resetSelect('#recommended_chat_setup_lorebook', [{ value: '', text: 'Unavailable' }], '', true);
-        resetSelect('#recommended_chat_setup_side_prompts', [{ value: '', text: 'Unavailable' }], '', true);
-        toastr.error(error?.message || 'Could not load Recommended Chat Setup.', 'Recommended Chat Setup');
+        resetSelect('#recommended_chat_setup_lorebook', [{ value: '', text: translate('Unavailable') }], '', true);
+        resetSelect('#recommended_chat_setup_side_prompts', [{ value: '', text: translate('Unavailable') }], '', true);
+        toastr.error(error?.message || 'Could not load Recommended Chat Setup.', translate('Recommended Chat Setup'));
     }
 }
 
@@ -173,11 +174,11 @@ async function savePendingConfiguration() {
         await updateWorldInfoList();
         await hydrateConfiguration(this_chid);
         await refreshConsumerButton();
-        toastr.success('Recommended Chat Setup saved.', 'Recommended Chat Setup');
+        toastr.success(translate('Recommended Chat Setup saved.'), translate('Recommended Chat Setup'));
     } catch (error) {
         configurationDirty = true;
         controls.prop('disabled', false);
-        toastr.error(error?.message || 'Could not save Recommended Chat Setup.', 'Recommended Chat Setup');
+        toastr.error(error?.message || 'Could not save Recommended Chat Setup.', translate('Recommended Chat Setup'));
     }
 }
 
@@ -210,35 +211,35 @@ async function refreshConsumerButton() {
 
 function buildPreview(summary, suggestedName) {
     const root = $('<div class="flex-container flexFlowColumn flexGap10"></div>');
-    root.append($('<h3 class="margin0"></h3>').text('Recommended Chat Setup'));
-    root.append($('<p></p>').text(`${summary.botmakerName || 'The botmaker'} created a Recommended Chat Setup that works well with this bot.`));
+    root.append($('<h3 class="margin0"></h3>').text(translate('Recommended Chat Setup')));
+    root.append($('<p></p>').text(t`${summary.botmakerName || 'The botmaker'} created a Recommended Chat Setup that works well with this bot.`));
     if (summary.hasTemplate) {
         root.append($('<div></div>')
-            .append($('<h4></h4>').text('Lorebook'))
-            .append($('<p></p>').text('The botmaker\'s blank template will be copied into a new ordinary lorebook that you own.'))
-            .append($('<label for="recommended-chat-setup-lorebook-name"></label>').text('Your lorebook name'))
+            .append($('<h4></h4>').text(translate('Lorebook')))
+            .append($('<p></p>').text(translate('The botmaker\'s blank template will be copied into a new ordinary lorebook that you own.')))
+            .append($('<label for="recommended-chat-setup-lorebook-name"></label>').text(translate('Your lorebook name')))
             .append($('<input id="recommended-chat-setup-lorebook-name" class="text_pole" autocomplete="off">').val(suggestedName)));
     }
     if (summary.hasSidePrompts) {
         root.append($('<div></div>')
-            .append($('<h4></h4>').text('Side Prompts'))
-            .append($('<p></p>').text(`Set: ${summary.sidePromptSetName} (${summary.sidePromptCount} side prompts)`))
-            .append($('<p></p>').text('These run automatically after memory is generated and require no work from you.')));
+            .append($('<h4></h4>').text(translate('Side Prompts')))
+            .append($('<p></p>').text(t`Set: ${summary.sidePromptSetName} (${summary.sidePromptCount} side prompts)`))
+            .append($('<p></p>').text(translate('These run automatically after memory is generated and require no work from you.'))));
     }
     return root;
 }
 
 async function showPreview(summary, suggestedName) {
     const popup = new Popup(buildPreview(summary, suggestedName), POPUP_TYPE.CONFIRM, '', {
-        okButton: 'Apply',
-        cancelButton: 'Cancel',
+        okButton: translate('Apply'),
+        cancelButton: translate('Cancel'),
         wide: true,
         leftAlign: true,
         onClosing: instance => {
             if (instance.result !== POPUP_RESULT.AFFIRMATIVE || !summary.hasTemplate) return true;
             const name = String(instance.dlg.querySelector('#recommended-chat-setup-lorebook-name')?.value || '').trim();
             if (name) return true;
-            toastr.warning('Enter a name for your lorebook.', 'Recommended Chat Setup');
+            toastr.warning(translate('Enter a name for your lorebook.'), translate('Recommended Chat Setup'));
             return false;
         },
     });
@@ -255,27 +256,27 @@ async function resolveBoundLorebookConflict(summary) {
     }
     if (!summary.hasSidePrompts) {
         await Popup.show.text(
-            'Lorebook Already Bound',
-            'You must unbind the current chat lorebook before applying this recommended blank lorebook template.',
+            translate('Lorebook Already Bound'),
+            t`You must unbind the current chat lorebook before applying this recommended blank lorebook template.`,
         );
         return { proceed: false, installLorebook: false };
     }
     const result = await Popup.show.confirm(
-        'Lorebook Already Bound',
-        'You must unbind the current chat lorebook before applying the recommended blank template. Would you like to turn on only the recommended side prompts?',
-        { okButton: 'Turn On Side Prompts Only', cancelButton: 'Cancel' },
+        translate('Lorebook Already Bound'),
+        t`You must unbind the current chat lorebook before applying the recommended blank template. Would you like to turn on only the recommended side prompts?`,
+        { okButton: translate('Turn On Side Prompts Only'), cancelButton: translate('Cancel') },
     );
     return { proceed: result === POPUP_RESULT.AFFIRMATIVE, installLorebook: false };
 }
 
 async function resolveSidePromptConflict(preflight) {
     if (!preflight.sidePromptConflict) return '';
-    const content = `<h3>Side Prompt Set Already Exists</h3>
-        <p>A side prompt set named "${escapeHtml(preflight.sidePromptSetName)}" already exists. Keep the existing set, or overwrite it with the new prompt set? Overwriting is recommended and affects other chats using this set.</p>`;
+    const content = `<h3 data-i18n="Side Prompt Set Already Exists">Side Prompt Set Already Exists</h3>
+        <p>${t`A side prompt set named "${escapeHtml(preflight.sidePromptSetName)}" already exists. Keep the existing set, or overwrite it with the new prompt set? Overwriting is recommended and affects other chats using this set.`}</p>`;
     const popup = new Popup(content, POPUP_TYPE.CONFIRM, '', {
-        okButton: 'Overwrite with Recommended Set',
+        okButton: translate('Overwrite with Recommended Set'),
         cancelButton: false,
-        customButtons: [{ text: 'Keep Existing', result: POPUP_RESULT.NEGATIVE }],
+        customButtons: [{ text: translate('Keep Existing'), result: POPUP_RESULT.NEGATIVE }],
         defaultResult: POPUP_RESULT.AFFIRMATIVE,
     });
     const result = await popup.show();
@@ -288,34 +289,34 @@ async function resolveLorebookNameConflict(currentName, suggestedName) {
     const nextSuggestion = await suggestStmbLorebookName(getStmbSettings()?.moduleSettings?.lorebookNameTemplate);
     const editedSuggestion = currentName === suggestedName ? nextSuggestion : currentName;
     return await Popup.show.input(
-        'Lorebook Name Already Exists',
+        translate('Lorebook Name Already Exists'),
         currentName === suggestedName
-            ? 'That suggested name is no longer available. Accept the next available name or enter another.'
-            : 'That lorebook name already exists. Enter another name.',
+            ? translate('That suggested name is no longer available. Accept the next available name or enter another.')
+            : translate('That lorebook name already exists. Enter another name.'),
         editedSuggestion,
-        { okButton: 'Continue', cancelButton: 'Cancel' },
+        { okButton: translate('Continue'), cancelButton: translate('Cancel') },
     );
 }
 
 async function showResult(result) {
     const root = $('<div class="flex-container flexFlowColumn flexGap10"></div>');
-    root.append($('<h3 class="margin0"></h3>').text('Recommended Chat Setup Loaded'));
+    root.append($('<h3 class="margin0"></h3>').text(translate('Recommended Chat Setup Loaded')));
     let lorebookButton = null;
     let sidePromptButton = null;
     if (result.lorebookName) {
         lorebookButton = $('<button type="button" class="menu_button menu_button_icon"></button>')
             .append('<i class="fa-solid fa-book"></i>')
-            .append($('<span></span>').text(`Lorebook: ${result.lorebookName}`));
+            .append($('<span></span>').text(t`Lorebook: ${result.lorebookName}`));
         root.append(lorebookButton);
     }
     if (result.sidePromptSetKey) {
         sidePromptButton = $('<button type="button" class="menu_button menu_button_icon"></button>')
             .append('<i class="fa-solid fa-list-check"></i>')
-            .append($('<span></span>').text(`Side Prompts: ${result.sidePromptSetName} (${result.sidePromptCount})`));
+            .append($('<span></span>').text(t`Side Prompts: ${result.sidePromptSetName} (${result.sidePromptCount})`));
         root.append(sidePromptButton);
-        root.append($('<p></p>').text('These side prompts are selected for this chat and run automatically after memory is generated.'));
+        root.append($('<p></p>').text(translate('These side prompts are selected for this chat and run automatically after memory is generated.')));
     }
-    const popup = new Popup(root, POPUP_TYPE.TEXT, '', { okButton: 'Close', wide: true });
+    const popup = new Popup(root, POPUP_TYPE.TEXT, '', { okButton: translate('Close'), wide: true });
     lorebookButton?.on('click', async () => {
         await popup.complete(POPUP_RESULT.AFFIRMATIVE);
         openWorldInfoEditor(result.lorebookName);
@@ -385,10 +386,10 @@ async function applyRecommendedSetup() {
         if (metadataSaved === CHAT_SAVE_RESULT.FAILED) {
             throw new Error('The setup was installed, but the chat binding could not be saved. Retry Recommended Chat Setup.');
         }
-        toastr.success('Recommended Chat Setup loaded.', 'Recommended Chat Setup');
+        toastr.success(translate('Recommended Chat Setup loaded.'), translate('Recommended Chat Setup'));
         await showResult(result);
     } catch (error) {
-        toastr.error(error?.message || 'Could not load Recommended Chat Setup.', 'Recommended Chat Setup');
+        toastr.error(error?.message || 'Could not load Recommended Chat Setup.', translate('Recommended Chat Setup'));
     }
 }
 

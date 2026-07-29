@@ -1462,7 +1462,7 @@ class PromptManager {
             let drawerHTML = `
         <div class="inline-drawer ${this.configuration.prefix}prompt_manager_prompt">
             <div class="inline-drawer-toggle inline-drawer-header">
-                <span>Name: ${escapeHtml(title)}, Role: ${role}, Tokens: ${tokens}</span>
+                <span><span data-i18n="Name:">Name:</span> ${escapeHtml(title)}, <span data-i18n="Role:">Role:</span> ${role}, <span data-i18n="Tokens:">Tokens:</span> ${tokens}</span>
                 <div class="fa-solid fa-circle-chevron-down inline-drawer-icon down"></div>
             </div>
             <div class="inline-drawer-content" style="white-space: pre-wrap;">${escapeHtml(content)}</div>
@@ -1478,7 +1478,7 @@ class PromptManager {
 
         const messagesCollection = messages instanceof Message ? [messages] : messages.getCollection();
 
-        if (0 === messagesCollection.length) messageList.innerHTML = '<span>This marker does not contain any prompts.</span>';
+        if (0 === messagesCollection.length) messageList.innerHTML = '<span data-i18n="This marker does not contain any prompts.">This marker does not contain any prompts.</span>';
 
         messagesCollection.forEach(message => {
             messageList.append(createInlineDrawer(message));
@@ -1776,7 +1776,7 @@ class PromptManager {
             let detachSpanHtml = '';
             if (this.isPromptDeletionAllowed(prompt)) {
                 detachSpanHtml = `
-                    <span title="Remove" class="prompt-manager-detach-action caution fa-solid fa-chain-broken fa-xs"></span>
+                    <span title="Remove" class="prompt-manager-detach-action caution fa-solid fa-chain-broken fa-xs" data-i18n="[title]Remove"></span>
                 `;
             } else {
                 detachSpanHtml = '<span class="fa-solid"></span>';
@@ -1785,7 +1785,7 @@ class PromptManager {
             let editSpanHtml = '';
             if (this.isPromptEditAllowed(prompt)) {
                 editSpanHtml = `
-                    <span title="edit" class="prompt-manager-edit-action fa-solid fa-pencil fa-xs"></span>
+                    <span title="edit" class="prompt-manager-edit-action fa-solid fa-pencil fa-xs" data-i18n="[title]edit"></span>
                 `;
             } else {
                 editSpanHtml = '<span class="fa-solid"></span>';
@@ -1822,15 +1822,15 @@ class PromptManager {
                 <li class="${prefix}prompt_manager_prompt ${draggableClass} ${enabledClass} ${markerClass} ${importantClass}" data-pm-identifier="${escapeHtml(prompt.identifier)}">
                     <span class="drag-handle">☰</span>
                     <span class="${prefix}prompt_manager_prompt_name" data-pm-name="${encodedName}">
-                        ${isMarkerPrompt ? '<span class="fa-fw fa-solid fa-thumb-tack" title="Marker"></span>' : ''}
-                        ${isSystemPrompt ? '<span class="fa-fw fa-solid fa-square-poll-horizontal" title="Global Prompt"></span>' : ''}
-                        ${isImportantPrompt ? '<span class="fa-fw fa-solid fa-star" title="Important Prompt"></span>' : ''}
-                        ${isUserPrompt ? '<span class="fa-fw fa-solid fa-asterisk" title="Preset Prompt"></span>' : ''}
-                        ${isInjectionPrompt ? '<span class="fa-fw fa-solid fa-syringe" title="In-Chat Injection"></span>' : ''}
+                        ${isMarkerPrompt ? '<span class="fa-fw fa-solid fa-thumb-tack" title="Marker" data-i18n="[title]Marker"></span>' : ''}
+                        ${isSystemPrompt ? '<span class="fa-fw fa-solid fa-square-poll-horizontal" title="Global Prompt" data-i18n="[title]Global Prompt"></span>' : ''}
+                        ${isImportantPrompt ? '<span class="fa-fw fa-solid fa-star" title="Important Prompt" data-i18n="[title]Important Prompt"></span>' : ''}
+                        ${isUserPrompt ? '<span class="fa-fw fa-solid fa-asterisk" title="Preset Prompt" data-i18n="[title]Preset Prompt"></span>' : ''}
+                        ${isInjectionPrompt ? '<span class="fa-fw fa-solid fa-syringe" title="In-Chat Injection" data-i18n="[title]In-Chat Injection"></span>' : ''}
                         ${this.isPromptInspectionAllowed(prompt) ? `<a title="${encodedName}" class="prompt-manager-inspect-action">${encodedName}</a>` : `<span title="${encodedName}">${encodedName}</span>`}
                         ${roleIcon ? `<span data-role="${escapeHtml(prompt.role)}" class="fa-xs fa-solid ${roleIcon}" title="${roleTitle}"></span>` : ''}
                         ${isInjectionPrompt ? `<small class="prompt-manager-injection-depth">@ ${escapeHtml(prompt.injection_depth)}</small>` : ''}
-                        ${isOverriddenPrompt ? '<small class="fa-solid fa-address-card prompt-manager-overridden" title="Pulled from a character card"></small>' : ''}
+                        ${isOverriddenPrompt ? '<small class="fa-solid fa-address-card prompt-manager-overridden" title="Pulled from a character card" data-i18n="[title]Pulled from a character card"></small>' : ''}
                     </span>
                     <span>
                             <span class="prompt_manager_prompt_controls">

@@ -19,7 +19,7 @@ async function doTokenCounter() {
         const ids = main_api == 'openai' ? getTextTokens(tokenizers.OPENAI, text) : getTextTokens(tokenizerId, text);
 
         if (Array.isArray(ids) && ids.length > 0) {
-            $('#token_counter_ids').text(`[${ids.join(', ')}]`);
+            $('#token_counter_ids').text(t`[${ids.join(', ')}]`);
             $('#token_counter_result').text(ids.length);
 
             if (Object.hasOwnProperty.call(ids, 'chunks')) {
@@ -97,7 +97,7 @@ async function doCount() {
 
     //toastr success with the token count of the chat
     const count = await getTokenCountAsync(allMessages);
-    toastr.success(`Token count: ${count}`);
+    toastr.success(t`Token count: ${count}`);
     return count;
 }
 

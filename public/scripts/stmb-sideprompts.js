@@ -1,3 +1,4 @@
+import { t, translate } from './i18n.js';
 import {
     chat_metadata,
     getCurrentChatId,
@@ -679,11 +680,11 @@ export async function buildQueuedAfterMemorySidePromptJobs({
         logSkippedSetItems(resolvedSet.skipped, 'onAfterMemory');
         const missingMacros = summarizeMissingSetMacros(resolvedSet.skipped);
         if (!selectedSet) {
-            toastr.warning('Selected side prompt set was not found. No after-memory side prompts were queued.', 'STMB');
+            toastr.warning(translate('Selected side prompt set was not found. No after-memory side prompts were queued.'), 'STMB');
             return [];
         }
         if (missingMacros.length > 0) {
-            toastr.warning(`Skipped side prompt set items with unresolved macros: ${missingMacros.join(', ')}.`, 'STMB');
+            toastr.warning(t`Skipped side prompt set items with unresolved macros: ${missingMacros.join(', ')}.`, 'STMB');
         }
         runItems = (resolvedSet.runnable || []).map(item => ({
             template: item.template,
@@ -863,7 +864,7 @@ export async function buildQueuedSidePromptWorkflowJobs({
 
 function ensureSidePromptTextNotBlank(text, template, trigger) {
     if (String(text || '').trim()) return true;
-    toastr.error(`SidePrompt "${template?.name || 'Unknown'}" returned blank content. No changes were saved.`, 'STMB');
+    toastr.error(t`SidePrompt "${template?.name || 'Unknown'}" returned blank content. No changes were saved.`, 'STMB');
     console.error('STMB SidePrompt blank response', { trigger, template: template?.key || template?.name || null });
     return false;
 }
@@ -1186,13 +1187,13 @@ export async function runSidePrompt(rawInput, settings, options = {}) {
         const contextSettingKey = options.contextSettingKey ?? getChatContextSettingKey();
         const parsed = parseSidePromptCommandInput(rawInput);
         if (parsed.error || !parsed.name) {
-            toastr.error('SidePrompt name not provided. Usage: /sideprompt "Name" {{macro}}="value" [X-Y]', 'STMB');
+            toastr.error(translate('SidePrompt name not provided. Usage: /sideprompt "Name" {{macro}}="value" [X-Y]'), 'STMB');
             return '';
         }
 
         const template = await findTemplateByName(parsed.name);
         if (!template) {
-            toastr.error('SidePrompt template not found. Check name.', 'STMB');
+            toastr.error(translate('SidePrompt template not found. Check name.'), 'STMB');
             return '';
         }
         activeTemplateName = String(template.name || '');
@@ -1203,7 +1204,7 @@ export async function runSidePrompt(rawInput, settings, options = {}) {
         const manualEnabled = Array.isArray(template?.triggers?.commands)
             && template.triggers.commands.some(command => String(command).toLowerCase() === 'sideprompt');
         if (!manualEnabled) {
-            toastr.error('Manual run is disabled for this template. Enable "Allow manual run via /sideprompt" in the template settings.', 'STMB');
+            toastr.error(translate('Manual run is disabled for this template. Enable "Allow manual run via /sideprompt" in the template settings.'), 'STMB');
             return '';
         }
 
@@ -1211,14 +1212,14 @@ export async function runSidePrompt(rawInput, settings, options = {}) {
         const missingRuntimeMacros = requiredRuntimeMacros.filter(token => !Object.hasOwn(parsed.runtimeMacros, token));
         if (missingRuntimeMacros.length > 0) {
             const usage = requiredRuntimeMacros.map(token => `${token}="value"`).join(' ');
-            toastr.error(`SidePrompt "${template.name}" requires: ${missingRuntimeMacros.join(', ')}. Usage: /sideprompt "${template.name}" ${usage} [X-Y]`, 'STMB');
+            toastr.error(t`SidePrompt "${template.name}" requires: ${missingRuntimeMacros.join(', ')}. Usage: /sideprompt "${template.name}" ${usage} [X-Y]`, 'STMB');
             return '';
         }
 
         const chatRangeInfo = await fetchStmbChatRangeInfo();
         const currentLast = Number(chatRangeInfo?.lastAvailableMessageId);
         if (currentLast < 0) {
-            toastr.error('No messages available.', 'STMB');
+            toastr.error(translate('No messages available.'), 'STMB');
             return '';
         }
 
@@ -1226,14 +1227,14 @@ export async function runSidePrompt(rawInput, settings, options = {}) {
         if (parsed.range) {
             const match = parsed.range.match(/^(\d+)\s*[-–—]\s*(\d+)$/);
             if (!match) {
-                toastr.error('Invalid range format. Use X-Y', 'STMB');
+                toastr.error(translate('Invalid range format. Use X-Y'), 'STMB');
                 return '';
             }
 
             const sceneStart = Number(match[1]);
             const sceneEnd = Number(match[2]);
             if (!(sceneStart >= 0 && sceneEnd >= sceneStart)) {
-                toastr.error('Invalid message range for /sideprompt', 'STMB');
+                toastr.error(translate('Invalid message range for /sideprompt'), 'STMB');
                 return '';
             }
 
@@ -1245,7 +1246,7 @@ export async function runSidePrompt(rawInput, settings, options = {}) {
             }
         } else {
             if (!hasShownSidePromptRangeTip) {
-                toastr.info('Tip: You can run a specific range with /sideprompt "Name" {{macro}}="value" X-Y (e.g., /sideprompt "Scoreboard" 100-120). Running without a range uses messages since the last checkpoint.', 'STMB');
+                toastr.info(translate('Tip: You can run a specific range with /sideprompt "Name" {{macro}}="value" X-Y (e.g., /sideprompt "Scoreboard" 100-120). Running without a range uses messages since the last checkpoint.'), 'STMB');
                 hasShownSidePromptRangeTip = true;
             }
 
@@ -1260,7 +1261,7 @@ export async function runSidePrompt(rawInput, settings, options = {}) {
             try {
                 compiledScene = await compileRange(boundedStart, currentLast, settings, { saveFirst: false, sceneContext });
             } catch {
-                toastr.error('Failed to compile messages for /sideprompt', 'STMB');
+                toastr.error(translate('Failed to compile messages for /sideprompt'), 'STMB');
                 return '';
             }
         }
@@ -1304,7 +1305,7 @@ export async function runSidePrompt(rawInput, settings, options = {}) {
         console.error('STMB /sideprompt failed', error);
         if (error?.message) {
             if (activeTemplateName) {
-                toastr.error(`SidePrompt "${activeTemplateName}" failed: ${error.message}`, 'STMB');
+                toastr.error(t`SidePrompt "${activeTemplateName}" failed: ${error.message}`, 'STMB');
             } else {
                 toastr.error(String(error.message), 'STMB');
             }
@@ -1321,15 +1322,15 @@ export async function runSidePromptSet(rawInput, settings, options = {}) {
         const parsed = parseSidePromptCommandInput(rawInput);
         if (parsed.error || !parsed.name) {
             toastr.error(macroMode
-                ? 'SidePrompt macroset guide: Choose a quoted set name, then fill any prompted macros. Usage: /sideprompt-macroset "Name" {{macro}}="value" [X-Y].'
-                : 'Side prompt set name not provided. Usage: /sideprompt-set "Name" [X-Y]',
+                ? translate('SidePrompt macroset guide: Choose a quoted set name, then fill any prompted macros. Usage: /sideprompt-macroset "Name" {{macro}}="value" [X-Y].')
+                : translate('Side prompt set name not provided. Usage: /sideprompt-set "Name" [X-Y]'),
             'STMB');
             return '';
         }
 
         const set = await findSetByName(parsed.name);
         if (!set) {
-            toastr.error('Side prompt set not found. Check name.', 'STMB');
+            toastr.error(translate('Side prompt set not found. Check name.'), 'STMB');
             return '';
         }
 
@@ -1338,7 +1339,7 @@ export async function runSidePromptSet(rawInput, settings, options = {}) {
         const missingRuntimeMacros = summarizeMissingSetMacros(resolvedSet.skipped);
         if (missingRuntimeMacros.length > 0) {
             const usage = missingRuntimeMacros.map(token => `${token}="value"`).join(' ');
-            toastr.error(`Side prompt set "${set.name}" requires: ${missingRuntimeMacros.join(', ')}. Usage: /sideprompt-macroset "${set.name}" ${usage} [X-Y]`, 'STMB');
+            toastr.error(t`Side prompt set "${set.name}" requires: ${missingRuntimeMacros.join(', ')}. Usage: /sideprompt-macroset "${set.name}" ${usage} [X-Y]`, 'STMB');
             return '';
         }
 
@@ -1352,14 +1353,14 @@ export async function runSidePromptSet(rawInput, settings, options = {}) {
             setItemId: item.item?.id || '',
         }));
         if (runItems.length === 0) {
-            toastr.warning('No runnable side prompts were found in this set.', 'STMB');
+            toastr.warning(translate('No runnable side prompts were found in this set.'), 'STMB');
             return '';
         }
 
         const chatRangeInfo = await fetchStmbChatRangeInfo();
         const currentLast = Number(chatRangeInfo?.lastAvailableMessageId);
         if (currentLast < 0) {
-            toastr.error('No messages available.', 'STMB');
+            toastr.error(translate('No messages available.'), 'STMB');
             return '';
         }
 
@@ -1369,14 +1370,14 @@ export async function runSidePromptSet(rawInput, settings, options = {}) {
         if (parsed.range) {
             const match = parsed.range.match(/^(\d+)\s*[-–—]\s*(\d+)$/);
             if (!match) {
-                toastr.error('Invalid range format. Use X-Y', 'STMB');
+                toastr.error(translate('Invalid range format. Use X-Y'), 'STMB');
                 return '';
             }
 
             const sceneStart = Number(match[1]);
             const sceneEnd = Number(match[2]);
             if (!(sceneStart >= 0 && sceneEnd >= sceneStart && sceneEnd <= currentLast)) {
-                toastr.error('Invalid message range for /sideprompt-set', 'STMB');
+                toastr.error(translate('Invalid message range for /sideprompt-set'), 'STMB');
                 return '';
             }
 
@@ -1388,7 +1389,7 @@ export async function runSidePromptSet(rawInput, settings, options = {}) {
             }
         } else {
             if (!hasShownSidePromptRangeTip) {
-                toastr.info('Tip: You can run a specific range with /sideprompt-set "Name" X-Y. Running without a range uses messages since the earliest checkpoint in the set.', 'STMB');
+                toastr.info(translate('Tip: You can run a specific range with /sideprompt-set "Name" X-Y. Running without a range uses messages since the earliest checkpoint in the set.'), 'STMB');
                 hasShownSidePromptRangeTip = true;
             }
 
@@ -1412,7 +1413,7 @@ export async function runSidePromptSet(rawInput, settings, options = {}) {
             try {
                 compiledScene = await compileRange(boundedStart, currentLast, settings, { saveFirst: false, sceneContext });
             } catch {
-                toastr.error('Failed to compile messages for /sideprompt-set', 'STMB');
+                toastr.error(translate('Failed to compile messages for /sideprompt-set'), 'STMB');
                 return '';
             }
         }
@@ -1449,7 +1450,7 @@ export async function runSidePromptSet(rawInput, settings, options = {}) {
             queued++;
         }
 
-        toastr.info(`Side prompt set "${set.name}" queued: ${queued} job${queued === 1 ? '' : 's'}.`, 'STMB');
+        toastr.info(t`Side prompt set "${set.name}" queued: ${queued} job${queued === 1 ? '' : 's'}.`, 'STMB');
         return '';
     } catch (error) {
         if (isStmbAbortError(error) || isStmbLorebookHandledError(error)) {

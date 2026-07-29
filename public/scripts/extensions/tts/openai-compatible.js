@@ -1,3 +1,4 @@
+import { translate } from '../../i18n.js';
 import { event_types, eventSource, getRequestHeaders } from '../../../script.js';
 import { SECRET_KEYS, secret_state } from '../../secrets.js';
 import { getPreviewString, saveTtsProviderSettings } from './index.js';
@@ -21,19 +22,19 @@ class OpenAICompatibleTtsProvider {
 
     get settingsHtml() {
         let html = `
-        <label for="openai_compatible_tts_endpoint">Provider Endpoint:</label>
+        <label for="openai_compatible_tts_endpoint" data-i18n="Provider Endpoint:">Provider Endpoint:</label>
         <div class="flex-container alignItemsCenter">
             <div class="flex1">
                 <input id="openai_compatible_tts_endpoint" type="text" class="text_pole" maxlength="500" value="${this.defaultSettings.provider_endpoint}"/>
             </div>
             <div id="openai_compatible_tts_key" class="menu_button menu_button_icon manage-api-keys" data-key="api_key_custom_openai_tts">
                 <i class="fa-solid fa-key"></i>
-                <span>API Key</span>
+                <span data-i18n="API Key">API Key</span>
             </div>
         </div>
-        <label for="openai_compatible_model">Model:</label>
+        <label for="openai_compatible_model" data-i18n="Model:">Model:</label>
         <input id="openai_compatible_model" type="text" class="text_pole" maxlength="500" value="${this.defaultSettings.model}"/>
-        <label for="openai_compatible_tts_voices">Available Voices (comma separated):</label>
+        <label for="openai_compatible_tts_voices" data-i18n="Available Voices (comma separated):">Available Voices (comma separated):</label>
         <input id="openai_compatible_tts_voices" type="text" class="text_pole" value="${this.defaultSettings.available_voices.join()}"/>
         <label for="openai_compatible_tts_speed">Speed: <span id="openai_compatible_tts_speed_output"></span></label>
         <input type="range" id="openai_compatible_tts_speed" value="1" min="0.25" max="4" step="0.05">`;
@@ -172,7 +173,7 @@ class OpenAICompatibleTtsProvider {
         });
 
         if (!response.ok) {
-            toastr.error(response.statusText, 'TTS Generation Failed');
+            toastr.error(response.statusText, translate('TTS Generation Failed'));
             throw new Error(`HTTP ${response.status}: ${await response.text()}`);
         }
 

@@ -14,7 +14,7 @@ import { debounce, delay, getStringHash } from './utils.js';
 import { decodeTextTokens, getTokenizerBestMatch } from './tokenizers.js';
 import { power_user } from './power-user.js';
 import { callGenericPopup, POPUP_TYPE } from './popup.js';
-import { t } from './i18n.js';
+import { t, translate } from './i18n.js';
 
 const TINTS = 4;
 const MAX_MESSAGE_LOGPROBS = 100;
@@ -85,7 +85,7 @@ function renderAlternativeTokensView() {
     if (!messageLogprobs?.length || usingSmoothStreaming) {
         const emptyState = $('<div></div>');
         const noTokensMsg = !power_user.request_token_probabilities
-            ? '<span>Enable <b>Request token probabilities</b> in the User Settings menu to use this feature.</span>'
+            ? '<span>Enable <b data-i18n="Request token probabilities">Request token probabilities</b> in the User Settings menu to use this feature.</span>'
             : usingSmoothStreaming
                 ? t`Token probabilities are not available when using Smooth Streaming.`
                 : is_send_press
@@ -209,7 +209,7 @@ function renderTopLogprobs() {
         const percentText = $('<span></span>').text(`${(+probability * 100).toFixed(2)}%`);
         container.append(tokenText, percentText);
         if (log) {
-            container.attr('title', `logarithm: ${log}`);
+            container.attr('title', t`logarithm: ${log}`);
         }
         addKeyboardProps(container);
         if (token !== '<others>') {
@@ -301,7 +301,7 @@ function onPrefixClicked(offset = undefined) {
 
 function checkGenerateReady() {
     if (is_send_press) {
-        toastr.warning('Please wait for the current generation to complete.');
+        toastr.warning(translate('Please wait for the current generation to complete.'));
         return false;
     }
     return true;

@@ -1,6 +1,6 @@
 import { CONNECT_API_MAP, getRequestHeaders } from '../../script.js';
 import { extension_settings, openThirdPartyExtensionMenu } from '../extensions.js';
-import { t } from '../i18n.js';
+import { t, translate } from '../i18n.js';
 import { oai_settings, proxies } from '../openai.js';
 import { SECRET_KEYS, secret_state } from '../secrets.js';
 import { getTokenCountAsync } from '../tokenizers.js';
@@ -177,7 +177,7 @@ export function isWebLlmSupported() {
     if (!('gpu' in navigator)) {
         const warningKey = 'webllm_browser_warning_shown';
         if (!sessionStorage.getItem(warningKey)) {
-            toastr.error('Your browser does not support the WebGPU API. Please use a different browser.', 'WebLLM', {
+            toastr.error(translate('Your browser does not support the WebGPU API. Please use a different browser.'), translate('WebLLM'), {
                 preventDuplicates: true,
                 timeOut: 0,
                 extendedTimeOut: 0,
@@ -190,7 +190,7 @@ export function isWebLlmSupported() {
     if (!('llm' in SillyTavern)) {
         const warningKey = 'webllm_extension_warning_shown';
         if (!sessionStorage.getItem(warningKey)) {
-            toastr.error('WebLLM extension is not installed. Click here to install it.', 'WebLLM', {
+            toastr.error(translate('WebLLM extension is not installed. Click here to install it.'), translate('WebLLM'), {
                 timeOut: 0,
                 extendedTimeOut: 0,
                 preventDuplicates: true,
@@ -430,7 +430,7 @@ export class ConnectionManagerRequestService {
         // Create default option using document.createElement
         const defaultOption = document.createElement('option');
         defaultOption.value = '';
-        defaultOption.textContent = 'Select a Connection Profile';
+        defaultOption.textContent = translate('Select a Connection Profile');
         defaultOption.dataset.i18n = 'Select a Connection Profile';
         dropdown.append(defaultOption);
 

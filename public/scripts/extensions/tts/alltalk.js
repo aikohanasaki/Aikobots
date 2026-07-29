@@ -67,41 +67,41 @@ class AllTalkTtsProvider {
         // HTML template literals can trigger ESLint quotes warnings when quotes are used in HTML attributes.
         // Disabling quotes rule for this one line as it's a false positive with HTML template literals.
         // eslint-disable-next-line quotes
-        let html = `<div class="at-settings-separator">AllTalk V2 Settings</div>`;
+        let html = `<div class="at-settings-separator" data-i18n="AllTalk V2 Settings">AllTalk V2 Settings</div>`;
 
         html += `<div class='at-settings-row'>
         <div class='at-settings-option'>
-            <label for='at_generation_method'>AllTalk TTS Generation Method</label>
+            <label for='at_generation_method' data-i18n="AllTalk TTS Generation Method">AllTalk TTS Generation Method</label>
                 <select id='at_generation_method'>
-                <option value='standard_generation'>Standard Audio Generation (AT Narrator - Optional)</option>
-                <option value='streaming_enabled'>Streaming Audio Generation (AT Narrator - Disabled)</option>
+                <option value='standard_generation' data-i18n="Standard Audio Generation (AT Narrator - Optional)">Standard Audio Generation (AT Narrator - Optional)</option>
+                <option value='streaming_enabled' data-i18n="Streaming Audio Generation (AT Narrator - Disabled)">Streaming Audio Generation (AT Narrator - Disabled)</option>
         </select>
         </div>
         </div>`;
 
         html += `<div class='at-settings-row'>
         <div class='at-settings-option'>
-            <label for='at_narrator_enabled'>AT Narrator</label>
+            <label for='at_narrator_enabled' data-i18n="AT Narrator">AT Narrator</label>
                 <select id='at_narrator_enabled'>
-                <option value='true'>Enabled</option>
-                <option value='silent'>Enabled (Silenced)</option>
-                <option value='false'>Disabled</option>
+                <option value='true' data-i18n="Enabled">Enabled</option>
+                <option value='silent' data-i18n="Enabled (Silenced)">Enabled (Silenced)</option>
+                <option value='false' data-i18n="Disabled">Disabled</option>
         </select>
         </div>
 
         <div class='at-settings-option'>
-            <label for='at_narrator_text_not_inside'>Text Not Inside * or " is</label>
+            <label for='at_narrator_text_not_inside' data-i18n="Text Not Inside * or &quot; is">Text Not Inside * or " is</label>
                 <select id='at_narrator_text_not_inside'>
-                <option value='character'>Character</option>
-                <option value='narrator'>Narrator</option>
-                <option value='silent'>Silent</option>
+                <option value='character' data-i18n="Character">Character</option>
+                <option value='narrator' data-i18n="Narrator">Narrator</option>
+                <option value='silent' data-i18n="Silent">Silent</option>
         </select>
         </div>
     </div>`;
 
         html += `<div class='at-settings-row'>
         <div class='at-settings-option'>
-            <label for='narrator_voice'>Narrator Voice</label>
+            <label for='narrator_voice' data-i18n="Narrator Voice">Narrator Voice</label>
             <select id='narrator_voice'>`;
         if (this.voices) {
             for (let voice of this.voices) {
@@ -111,7 +111,7 @@ class AllTalkTtsProvider {
         html += `</select>
         </div>
         <div class='at-settings-option'>
-            <label for='language_options'>Language</label>
+            <label for='language_options' data-i18n="Language">Language</label>
             <select id='language_options'>`;
         for (let language in this.languageLabels) {
             html += `<option value='${this.languageLabels[language]}' ${this.languageLabels[language] === this.settings?.language ? 'selected="selected"' : ''}>${language}</option>`;
@@ -122,7 +122,7 @@ class AllTalkTtsProvider {
 
         html += `<div class='at-settings-row'>
     <div class='at-settings-option'>
-        <label for='rvc_character_voice'>RVC Character</label>
+        <label for='rvc_character_voice' data-i18n="RVC Character">RVC Character</label>
         <select id='rvc_character_voice'>`;
         if (this.rvcVoices) {
             for (let rvccharvoice of this.rvcVoices) {
@@ -132,7 +132,7 @@ class AllTalkTtsProvider {
         html += `</select>
     </div>
     <div class='at-settings-option'>
-        <label for='rvc_narrator_voice'>RVC Narrator</label>
+        <label for='rvc_narrator_voice' data-i18n="RVC Narrator">RVC Narrator</label>
         <select id='rvc_narrator_voice'>`;
         if (this.rvcVoices) {
             for (let rvcnarrvoice of this.rvcVoices) {
@@ -145,7 +145,7 @@ class AllTalkTtsProvider {
 
         html += `<div class='at-settings-row'>
         <div class='at-settings-option'>
-            <label for='rvc_character_pitch'>RVC Character Pitch</label>
+            <label for='rvc_character_pitch' data-i18n="RVC Character Pitch">RVC Character Pitch</label>
             <select id='rvc_character_pitch'>`;
         for (let i = -24; i <= 24; i++) {
             const selected = i === 0 ? 'selected="selected"' : '';
@@ -154,7 +154,7 @@ class AllTalkTtsProvider {
         html += `</select>
         </div>
         <div class='at-settings-option'>
-            <label for='rvc_narrator_pitch'>RVC Narrator Pitch</label>
+            <label for='rvc_narrator_pitch' data-i18n="RVC Narrator Pitch">RVC Narrator Pitch</label>
             <select id='rvc_narrator_pitch'>`;
         for (let i = -24; i <= 24; i++) {
             const selected = i === 0 ? 'selected="selected"' : '';
@@ -166,39 +166,39 @@ class AllTalkTtsProvider {
 
         html += `<div class='at-model-endpoint-row'>
         <div class='at-model-option'>
-        <label for='switch_model'>Switch Model</label>
+        <label for='switch_model' data-i18n="Switch Model">Switch Model</label>
         <select id='switch_model'>
             <!-- Options will be dynamically populated -->
         </select>
         </div>
 
         <div class='at-endpoint-option'>
-            <label for='at_server'>AllTalk Endpoint:</label>
+            <label for='at_server' data-i18n="AllTalk Endpoint:">AllTalk Endpoint:</label>
             <input id='at_server' type='text' class='text_pole' maxlength='80' value='${this.settings.provider_endpoint}'/>
         </div>
    </div>`;
 
         html += `<div class='at-settings-row'>
         <div class='at-settings-option'>
-            <label for='server_version'>AllTalk Server Version</label>
+            <label for='server_version' data-i18n="AllTalk Server Version">AllTalk Server Version</label>
             <select id='server_version'>
-                <option value='v1'>AllTalk V1</option>
-                <option value='v2'>AllTalk V2</option>
+                <option value='v1' data-i18n="AllTalk V1">AllTalk V1</option>
+                <option value='v2' data-i18n="AllTalk V2">AllTalk V2</option>
             </select>
         </div>
     </div>`;
 
         html += `<div class='at-model-endpoint-row'>
     <div class='at-settings-option'>
-        <label for='low_vram'>Low VRAM</label>
+        <label for='low_vram' data-i18n="Low VRAM">Low VRAM</label>
         <input id='low_vram' type='checkbox'/>
     </div>
     <div class='at-settings-option'>
-        <label for='deepspeed'>DeepSpeed</label>
+        <label for='deepspeed' data-i18n="DeepSpeed">DeepSpeed</label>
         <input id='deepspeed' type='checkbox'/>
     </div>
     <div class='at-settings-option status-option'>
-        <span>Status: <span id='status_info'>Ready</span></span>
+        <span>Status: <span id='status_info' data-i18n="Ready">Ready</span></span>
     </div>
     <div class='at-settings-option empty-option'>
         <!-- This div remains empty for spacing -->
@@ -207,19 +207,19 @@ class AllTalkTtsProvider {
 
         html += `<div class='at-website-row'>
         <div class='at-website-option'>
-        <span>AllTalk V2<a target='_blank' href='${this.settings.provider_endpoint}'>Config & Docs</a>.</span>
+        <span>AllTalk V2<a target='_blank' href='${this.settings.provider_endpoint}' data-i18n="Config & Docs">Config & Docs</a>.</span>
     </div>
 
     <div class='at-website-option'>
-        <span>AllTalk <a target='_blank' href='https://github.com/erew123/alltalk_tts/'>Website</a>.</span>
+        <span>AllTalk <a target='_blank' href='https://github.com/erew123/alltalk_tts/' data-i18n="Website">Website</a>.</span>
     </div>
 </div>`;
 
         html += `<div class='at-website-row'>
 <div class='at-website-option'>
-<span>- If you <strong>change your TTS engine</strong> in AllTalk, you will need to <strong>Reload</strong> (button above) and re-select your voices.</span><br><br>
-<span>- Assuming the server is <strong>Status: Ready</strong>, most problems will be resolved by hitting Reload and selecting voices that match the loaded TTS engine.</span><br><br>
-<span>- <strong>Text-generation-webui</strong> users - Uncheck <strong>Enable TTS</strong> in the TGWUI interface, or you will hear 2x voices and file names being generated.</span>
+<span>- If you <strong data-i18n="change your TTS engine">change your TTS engine</strong> in AllTalk, you will need to <strong data-i18n="Reload">Reload</strong> (button above) and re-select your voices.</span><br><br>
+<span>- Assuming the server is <strong data-i18n="Status: Ready">Status: Ready</strong>, most problems will be resolved by hitting Reload and selecting voices that match the loaded TTS engine.</span><br><br>
+<span>- <strong>Text-generation-webui</strong> users - Uncheck <strong data-i18n="Enable TTS">Enable TTS</strong> in the TGWUI interface, or you will hear 2x voices and file names being generated.</span>
 </div>
 </div>`;
 

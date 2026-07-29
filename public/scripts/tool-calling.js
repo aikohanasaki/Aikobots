@@ -1,3 +1,4 @@
+import { t, translate } from './i18n.js';
 import { DOMPurify } from '../lib.js';
 
 import { addOneMessage, chat, event_types, eventSource, getGeneratingApi, getGeneratingModel, main_api, saveChatConditional, system_avatar, systemUserName } from '../script.js';
@@ -801,7 +802,7 @@ export class ToolManager {
             const displayName = ToolManager.getDisplayName(name);
             const isStealth = ToolManager.isStealthTool(name);
             const message = await ToolManager.formatToolCallMessage(name, parameters);
-            const toast = message && toastr.info(message, 'Tool Calling', { timeOut: 0 });
+            const toast = message && toastr.info(message, translate('Tool Calling'), { timeOut: 0 });
             const toolResult = await ToolManager.invokeFunctionTool(name, parameters);
             toastr.clear(toast);
             console.log('[ToolManager] Function tool result:', result);
@@ -863,7 +864,7 @@ export class ToolManager {
         });
         codeElement.textContent = JSON.stringify(data, null, 2);
         const toolNames = data.map(i => i.displayName || i.name);
-        summaryElement.textContent = `Tool calls: ${this.#groupToolNames(toolNames)}`;
+        summaryElement.textContent = t`Tool calls: ${this.#groupToolNames(toolNames)}`;
         preElement.append(codeElement);
         detailsElement.append(summaryElement, preElement);
         return detailsElement.outerHTML;
@@ -903,8 +904,8 @@ export class ToolManager {
      * @returns {void}
      */
     static showToolCallError(errors) {
-        toastr.error('An error occurred while invoking function tools. Click here for more details.', 'Tool Calling', {
-            onclick: () => Popup.show.text('Tool Calling Errors', DOMPurify.sanitize(errors.map(e => `${e.cause}: ${e.message}`).join('<br>'))),
+        toastr.error(translate('An error occurred while invoking function tools. Click here for more details.'), translate('Tool Calling'), {
+            onclick: () => Popup.show.text(translate('Tool Calling Errors'), DOMPurify.sanitize(errors.map(e => `${e.cause}: ${e.message}`).join('<br>'))),
             timeOut: 5000,
         });
     }
@@ -977,13 +978,13 @@ export class ToolManager {
         SlashCommandParser.addCommandObject(SlashCommand.fromProps({
             name: 'tools-register',
             aliases: ['tool-register'],
-            helpString: `<div>Registers a new tool with the tool registry.</div>
+            helpString: `<div data-i18n="Registers a new tool with the tool registry.">Registers a new tool with the tool registry.</div>
                 <ul>
                     <li>The <code>parameters</code> argument MUST be a JSON-serialized object with a valid JSON schema.</li>
-                    <li>The unnamed argument MUST be a closure that accepts the function parameters as local script variables.</li>
+                    <li data-i18n="The unnamed argument MUST be a closure that accepts the function parameters as local script variables.">The unnamed argument MUST be a closure that accepts the function parameters as local script variables.</li>
                 </ul>
-                <div>See <a target="_blank" href="https://json-schema.org/learn/">json-schema.org</a> and <a target="_blank" href="https://platform.openai.com/docs/guides/function-calling">OpenAI Function Calling</a> for more information.</div>
-                <div>Example:</div>
+                <div><span data-i18n="See">See</span> <a target="_blank" href="https://json-schema.org/learn/">json-schema.org</a> <span data-i18n="and">and</span> <a target="_blank" href="https://platform.openai.com/docs/guides/function-calling">OpenAI Function Calling</a> <span data-i18n="for more information.">for more information.</span></div>
+                <div data-i18n="Example:">Example:</div>
                 <pre><code>/let key=echoSchema
 {
     "$schema": "http://json-schema.org/draft-04/schema#",

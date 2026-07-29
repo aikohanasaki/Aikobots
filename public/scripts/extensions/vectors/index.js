@@ -1,3 +1,4 @@
+import { t, translate } from '../../i18n.js';
 import {
     eventSource,
     event_types,
@@ -129,7 +130,7 @@ async function onVectorizeAllClick() {
         const chatId = getCurrentChatId();
 
         if (!chatId) {
-            toastr.info('No chat selected', 'Vectorization aborted');
+            toastr.info(translate('No chat selected'), translate('Vectorization aborted'));
             return;
         }
 
@@ -146,7 +147,7 @@ async function onVectorizeAllClick() {
 
         while (!finished) {
             if (is_send_press) {
-                toastr.info('Message generation is in progress.', 'Vectorization aborted');
+                toastr.info(translate('Message generation is in progress.'), translate('Vectorization aborted'));
                 throw new Error('Message generation is in progress.');
             }
 
@@ -388,7 +389,7 @@ async function synchronizeChat(batchSize = 5) {
         console.error('Vectors: Failed to synchronize chat', error);
 
         const message = getErrorMessage(error.cause);
-        toastr.error(message, 'Vectorization failed', { preventDuplicates: true });
+        toastr.error(message, translate('Vectorization failed'), { preventDuplicates: true });
         return -1;
     } finally {
         syncBlocked = false;
@@ -587,8 +588,8 @@ async function vectorizeFile(fileText, fileName, collectionId, chunkSize, overla
         }
 
         const batchSize = getBatchSize();
-        const toastBody = $('<span>').text('This may take a while. Please wait...');
-        toast = toastr.info(toastBody, `Ingesting file ${escapeHtml(fileName)}`, { closeButton: false, escapeHtml: false, timeOut: 0, extendedTimeOut: 0 });
+        const toastBody = $('<span>').text(translate('This may take a while. Please wait...'));
+        toast = toastr.info(toastBody, t`Ingesting file ${escapeHtml(fileName)}`, { closeButton: false, escapeHtml: false, timeOut: 0, extendedTimeOut: 0 });
         const overlapSize = Math.round(chunkSize * overlapPercent / 100);
         const delimiters = getChunkDelimiters();
         // Overlap should not be included in chunk size. It will be later compensated by overlapChunks
@@ -602,7 +603,7 @@ async function vectorizeFile(fileText, fileName, collectionId, chunkSize, overla
         const items = chunks.map((chunk, index) => ({ hash: getStringHash(chunk), text: chunk, index: index }));
 
         for (let i = 0; i < items.length; i += batchSize) {
-            toastBody.text(`${i}/${items.length} (${Math.round((i / items.length) * 100)}%) chunks processed`);
+            toastBody.text(t`${i}/${items.length} (${Math.round((i / items.length) * 100)}%) chunks processed`);
             const chunkedBatch = items.slice(i, i + batchSize);
             await insertVectorItems(collectionId, chunkedBatch);
         }
@@ -612,7 +613,7 @@ async function vectorizeFile(fileText, fileName, collectionId, chunkSize, overla
         return true;
     } catch (error) {
         toastr.clear(toast);
-        toastr.error(String(error), 'Failed to vectorize file', { preventDuplicates: true });
+        toastr.error(String(error), translate('Failed to vectorize file'), { preventDuplicates: true });
         console.error('Vectors: Failed to vectorize file', error);
         return false;
     }
@@ -705,7 +706,7 @@ async function rearrangeChat(chat, _contextSize, _abort, type) {
         const insertedText = getPromptText(queriedMessages);
         setExtensionPrompt(EXTENSION_PROMPT_TAG, insertedText, settings.position, settings.depth, settings.include_wi);
     } catch (error) {
-        toastr.error(appendErrorCode('Generation interceptor aborted. Check browser console for more details.', error), 'Vector Storage');
+        toastr.error(appendErrorCode('Generation interceptor aborted. Check browser console for more details.', error), translate('Vector Storage'));
         console.error('Vectors: Failed to rearrange chat', error);
     }
 }
@@ -1072,10 +1073,10 @@ async function purgeAllVectorIndexes() {
         }
 
         console.log('Vectors: Purged all vector indexes');
-        toastr.success('All vector indexes purged', 'Purge successful');
+        toastr.success(translate('All vector indexes purged'), translate('Purge successful'));
     } catch (error) {
         console.error('Vectors: Failed to purge all', error);
-        toastr.error('Failed to purge all vector indexes', 'Purge failed');
+        toastr.error(translate('Failed to purge all vector indexes'), translate('Purge failed'));
     }
 }
 
@@ -1197,10 +1198,10 @@ async function executeWithWebLlmErrorHandling(func) {
         }
         switch (error.cause) {
             case 'webllm-not-available':
-                toastr.warning('WebLLM is not available. Please install the extension.', 'WebLLM not installed');
+                toastr.warning(translate('WebLLM is not available. Please install the extension.'), translate('WebLLM not installed'));
                 break;
             case 'webllm-not-updated':
-                toastr.warning('The installed extension version does not support embeddings.', 'WebLLM update required');
+                toastr.warning(translate('The installed extension version does not support embeddings.'), translate('WebLLM update required'));
                 break;
         }
     }
@@ -1249,20 +1250,20 @@ async function createWebLlmEmbeddings(items) {
 async function onPurgeClick() {
     const chatId = getCurrentChatId();
     if (!chatId) {
-        toastr.info('No chat selected', 'Purge aborted');
+        toastr.info(translate('No chat selected'), translate('Purge aborted'));
         return;
     }
     if (await purgeVectorIndex(chatId)) {
-        toastr.success('Vector index purged', 'Purge successful');
+        toastr.success(translate('Vector index purged'), translate('Purge successful'));
     } else {
-        toastr.error('Failed to purge vector index', 'Purge failed');
+        toastr.error(translate('Failed to purge vector index'), translate('Purge failed'));
     }
 }
 
 async function onViewStatsClick() {
     const chatId = getCurrentChatId();
     if (!chatId) {
-        toastr.info('No chat selected');
+        toastr.info(translate('No chat selected'));
         return;
     }
 
@@ -1270,10 +1271,10 @@ async function onViewStatsClick() {
     const totalHashes = hashesInCollection.length;
     const uniqueHashes = hashesInCollection.filter(onlyUnique).length;
 
-    toastr.info(`Total hashes: <b>${totalHashes}</b><br>
+    toastr.info(t`Total hashes: <b>${totalHashes}</b><br>
     Unique hashes: <b>${uniqueHashes}</b><br><br>
     I'll mark collected messages with a green circle.`,
-    `Stats for chat ${escapeHtml(chatId)}`,
+    t`Stats for chat ${escapeHtml(chatId)}`,
     { timeOut: 10000, escapeHtml: false },
     );
 
@@ -1354,13 +1355,13 @@ async function onVectorizeAllFilesClick() {
         }
 
         if (allSuccess) {
-            toastr.success('All files vectorized', 'Vectorization successful');
+            toastr.success(translate('All files vectorized'), translate('Vectorization successful'));
         } else {
-            toastr.warning('Some files failed to vectorize. Check browser console for more details.', 'Vector Storage');
+            toastr.warning(translate('Some files failed to vectorize. Check browser console for more details.'), translate('Vector Storage'));
         }
     } catch (error) {
         console.error('Vectors: Failed to vectorize all files', error);
-        toastr.error('Failed to vectorize all files', 'Vectorization failed');
+        toastr.error(translate('Failed to vectorize all files'), translate('Vectorization failed'));
     }
 }
 
@@ -1374,10 +1375,10 @@ async function onPurgeFilesClick() {
             await purgeFileVectorIndex(file.url);
         }
 
-        toastr.success('All files purged', 'Purge successful');
+        toastr.success(translate('All files purged'), translate('Purge successful'));
     } catch (error) {
         console.error('Vectors: Failed to purge all files', error);
-        toastr.error('Failed to purge all files', 'Purge failed');
+        toastr.error(translate('Failed to purge all files'), translate('Purge failed'));
     }
 }
 
@@ -1739,7 +1740,7 @@ jQuery(async () => {
         e.stopPropagation();
 
         if (Object.hasOwn(SillyTavern, 'llm')) {
-            toastr.info('WebLLM is already installed');
+            toastr.info(translate('WebLLM is already installed'));
             return;
         }
 
@@ -1755,7 +1756,7 @@ jQuery(async () => {
     $('#vectors_webllm_load').on('click', async () => {
         if (!settings.webllm_model) return;
         await webllmProvider.loadModel(settings.webllm_model);
-        toastr.success('WebLLM model loaded');
+        toastr.success(translate('WebLLM model loaded'));
     });
 
     $('#vectors_google_model').val(settings.google_model).on('input', () => {

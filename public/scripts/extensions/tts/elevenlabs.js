@@ -1,3 +1,4 @@
+import { t, translate } from '../../i18n.js';
 import { saveTtsProviderSettings } from './index.js';
 export { ElevenLabsTtsProvider };
 
@@ -25,19 +26,19 @@ class ElevenLabsTtsProvider {
     get settingsHtml() {
         let html = `
         <div class="elevenlabs_tts_settings">
-            <label for="elevenlabs_tts_api_key">API Key</label>
+            <label for="elevenlabs_tts_api_key" data-i18n="API Key">API Key</label>
             <input id="elevenlabs_tts_api_key" type="text" class="text_pole" placeholder="<API Key>"/>
-            <label for="elevenlabs_tts_model">Model</label>
+            <label for="elevenlabs_tts_model" data-i18n="Model">Model</label>
             <select id="elevenlabs_tts_model" class="text_pole">
-                <option value="eleven_v3">Eleven v3</option>
-                <option value="eleven_ttv_v3">Eleven ttv v3</option>
-                <option value="eleven_multilingual_v2">Multilingual v2</option>
-                <option value="eleven_flash_v2_5">Eleven Flash v2.5</option>
-                <option value="eleven_turbo_v2_5">Turbo v2.5</option>
-                <option value="eleven_multilingual_ttv_v2">Multilingual ttv v2</option>
-                <option value="eleven_monolingual_v1">English v1 (Old)</option>
-                <option value="eleven_multilingual_v1">Multilingual v1 (Old)</option>
-                <option value="eleven_turbo_v2">Turbo v2 (Old)</option>
+                <option value="eleven_v3" data-i18n="Eleven v3">Eleven v3</option>
+                <option value="eleven_ttv_v3" data-i18n="Eleven ttv v3">Eleven ttv v3</option>
+                <option value="eleven_multilingual_v2" data-i18n="Multilingual v2">Multilingual v2</option>
+                <option value="eleven_flash_v2_5" data-i18n="Eleven Flash v2.5">Eleven Flash v2.5</option>
+                <option value="eleven_turbo_v2_5" data-i18n="Turbo v2.5">Turbo v2.5</option>
+                <option value="eleven_multilingual_ttv_v2" data-i18n="Multilingual ttv v2">Multilingual ttv v2</option>
+                <option value="eleven_monolingual_v1" data-i18n="English v1 (Old)">English v1 (Old)</option>
+                <option value="eleven_multilingual_v1" data-i18n="Multilingual v1 (Old)">Multilingual v1 (Old)</option>
+                <option value="eleven_turbo_v2" data-i18n="Turbo v2 (Old)">Turbo v2 (Old)</option>
             </select>
             <input id="eleven_labs_connect" class="menu_button" type="button" value="Connect" />
             <label for="elevenlabs_tts_stability">Stability: <span id="elevenlabs_tts_stability_output"></span></label>
@@ -49,18 +50,18 @@ class ElevenLabsTtsProvider {
             <div id="elevenlabs_tts_v2_options" style="display: none;">
                 <label for="elevenlabs_tts_style_exaggeration">Style Exaggeration: <span id="elevenlabs_tts_style_exaggeration_output"></span></label>
                 <input id="elevenlabs_tts_style_exaggeration" type="range" value="${this.defaultSettings.style_exaggeration}" min="0" max="1" step="0.01" />
-                <label for="elevenlabs_tts_speaker_boost">Speaker Boost:</label>
+                <label for="elevenlabs_tts_speaker_boost" data-i18n="Speaker Boost:">Speaker Boost:</label>
                 <input id="elevenlabs_tts_speaker_boost" style="display: inline-grid" type="checkbox" />
             </div>
             <hr>
             <div id="elevenlabs_tts_voice_cloning">
-                <span>Instant Voice Cloning</span><br>
-                <input id="elevenlabs_tts_voice_cloning_name" type="text" class="text_pole" placeholder="Voice Name"/>
-                <input id="elevenlabs_tts_voice_cloning_description" type="text" class="text_pole" placeholder="Voice Description"/>
-                <input id="elevenlabs_tts_voice_cloning_labels" type="text" class="text_pole" placeholder="Labels"/>
+                <span data-i18n="Instant Voice Cloning">Instant Voice Cloning</span><br>
+                <input id="elevenlabs_tts_voice_cloning_name" type="text" class="text_pole" placeholder="Voice Name" data-i18n="[placeholder]Voice Name"/>
+                <input id="elevenlabs_tts_voice_cloning_description" type="text" class="text_pole" placeholder="Voice Description" data-i18n="[placeholder]Voice Description"/>
+                <input id="elevenlabs_tts_voice_cloning_labels" type="text" class="text_pole" placeholder="Labels" data-i18n="[placeholder]Labels"/>
                 <div class="menu_button menu_button_icon" id="upload_audio_file">
                     <i class="fa-solid fa-file-import"></i>
-                    <span>Upload Audio Files</span>
+                    <span data-i18n="Upload Audio Files">Upload Audio Files</span>
                 </div>
                 <input id="elevenlabs_tts_audio_files" type="file" name="audio_files" accept="audio/*" style="display: none;" multiple>
                 <div id="elevenlabs_tts_selected_files_list"></div>
@@ -162,7 +163,7 @@ class ElevenLabsTtsProvider {
     async onConnectClick() {
         // Update on Apply click
         return await this.updateApiKey().catch((error) => {
-            toastr.error(`ElevenLabs: ${error}`);
+            toastr.error(t`ElevenLabs: ${error}`);
         });
     }
 
@@ -205,19 +206,19 @@ class ElevenLabsTtsProvider {
             const voiceLabels = voiceCloningLabelsInput.value.trim();
 
             if (!voiceName) {
-                toastr.error('Please provide a name for the cloned voice.');
+                toastr.error(translate('Please provide a name for the cloned voice.'));
                 return;
             }
 
             try {
                 await this.addVoice(voiceName, voiceDescription, voiceLabels);
-                toastr.success('Voice cloned successfully. Hit reload to see the new voice in the voice listing.');
+                toastr.success(translate('Voice cloned successfully. Hit reload to see the new voice in the voice listing.'));
                 clearSelectedFiles();
                 voiceCloningNameInput.value = '';
                 voiceCloningDescriptionInput.value = '';
                 voiceCloningLabelsInput.value = '';
             } catch (error) {
-                toastr.error(`Failed to clone voice: ${error.message}`);
+                toastr.error(t`Failed to clone voice: ${error.message}`);
             }
         });
 
@@ -344,7 +345,7 @@ class ElevenLabsTtsProvider {
             body: JSON.stringify(request),
         });
         if (!response.ok) {
-            toastr.error(response.statusText, 'TTS Generation Failed');
+            toastr.error(response.statusText, translate('TTS Generation Failed'));
             throw new Error(`HTTP ${response.status}: ${await response.text()}`);
         }
         return response;

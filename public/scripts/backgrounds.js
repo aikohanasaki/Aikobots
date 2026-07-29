@@ -5,7 +5,7 @@ import { SlashCommand } from './slash-commands/SlashCommand.js';
 import { SlashCommandParser } from './slash-commands/SlashCommandParser.js';
 import { createThumbnail, flashHighlight, getBase64Async, stringFormat, debounce, setupScrollToTop } from './utils.js';
 import { debounce_timeout } from './constants.js';
-import { t } from './i18n.js';
+import { t, translate } from './i18n.js';
 import { Popup } from './popup.js';
 
 const BG_METADATA_KEY = 'custom_background';
@@ -263,7 +263,7 @@ async function onCopyToSystemBackgroundClick(e) {
     const bgFile = await fetch(bgNames.oldBg);
 
     if (!bgFile.ok) {
-        toastr.warning('Failed to copy background');
+        toastr.warning(translate('Failed to copy background'));
         return;
     }
 
@@ -381,7 +381,7 @@ async function onRenameBackgroundClick(e) {
         await getBackgrounds();
         highlightNewBackground(bgNames.newBg);
     } else {
-        toastr.warning('Failed to rename background');
+        toastr.warning(translate('Failed to rename background'));
     }
 }
 
@@ -441,7 +441,7 @@ async function autoBackgroundCommand() {
     const bgTitles = Array.from(document.querySelectorAll('#bg_menu_content .BGSampleTitle'));
     const options = bgTitles.map(x => ({ element: x, text: x.innerText.trim() })).filter(x => x.text.length > 0);
     if (options.length == 0) {
-        toastr.warning('No backgrounds to choose from. Please upload some images to the "backgrounds" folder.');
+        toastr.warning(translate('No backgrounds to choose from. Please upload some images to the "backgrounds" folder.'));
         return '';
     }
 
@@ -460,7 +460,7 @@ async function autoBackgroundCommand() {
             }
         }
 
-        toastr.warning('No match found. Please try again.');
+        toastr.warning(translate('No match found. Please try again.'));
         return '';
     }
 

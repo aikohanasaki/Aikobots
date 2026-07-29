@@ -1,3 +1,4 @@
+import { translate } from '../i18n.js';
 import { AutoCompleteOption } from '../autocomplete/AutoCompleteOption.js';
 
 export class SlashCommandVariableAutoCompleteOption extends AutoCompleteOption {
@@ -32,7 +33,7 @@ export class SlashCommandVariableAutoCompleteOption extends AutoCompleteOption {
         }
         const help = document.createElement('span'); {
             help.classList.add('help');
-            help.textContent = 'scoped variable';
+            help.textContent = translate('scoped variable');
             frag.append(help);
         }
         return frag;
