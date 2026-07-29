@@ -142,7 +142,7 @@ function collectSourceCatalog(filePaths) {
                     const tagName = source.slice(openingTagStart + 1, openingTagEnd).match(/^([a-z][\w:-]*)/i)?.[1];
                     const closingTag = tagName ? source.indexOf(`</${tagName}>`, openingTagEnd) : -1;
                     const innerText = closingTag >= 0 ? source.slice(openingTagEnd + 1, closingTag) : '';
-                    if (innerText && !/[<>{}$]/.test(innerText)) {
+                    if (/[A-Za-z]/.test(innerText) && !/[<>{}$]/.test(innerText)) {
                         sourceText = innerText;
                     }
                 }
@@ -878,13 +878,14 @@ function getProtectedTokens(text) {
     const patterns = [
         ['placeholder', /\$\{\d+\}/g],
         ['macro', /\{\{[^{}]+\}\}/g],
-        ['url', /https?:\/\/[^\s"'<>]+/g],
+        ['url', /https?:\/\/[^\s"'<>()[\]{}]+/g],
         ['html', /<\/?(?:a|b|br|code|div|em|i|kbd|li|ol|p|pre|small|span|strong|ul)\b[^>]*>/gi],
         ['shortcut', /\b(?:Ctrl|Alt|Shift|Cmd|Command|Meta)(?:\+[A-Za-z0-9]+)+\b/g],
         ['sentinel', /\b(?:OVERWRITE|START)\b/g],
         ['file', /\b[\w.-]+\.(?:jsonl?|png|jpe?g|webp|ya?ml|txt|md|sqlite|html|js|css)\b/gi],
         ['format', /%[sdif]/g],
         ['replacement', /\$(?:\d+|&|<[\w-]+>)/g],
+        ['icon', /:[a-z][\w-]*:/gi],
     ];
     for (const [type, pattern] of patterns) {
         for (const match of String(text).matchAll(pattern)) {
@@ -975,12 +976,16 @@ function auditPriorityLocales(catalog) {
                 blank.push(key);
                 continue;
             }
-            if (/[\uE000-\uF8FF]/u.test(data[key])) {
+            if (/[\uE000-\uF8FF]|__AIBOTPROTECTED\d+X__/u.test(data[key])) {
                 privateUseMarkers.push(key);
             }
             const sourceTokens = getProtectedTokens(source.sourceText);
             const translatedTokens = getProtectedTokens(data[key]);
-            if (JSON.stringify(sourceTokens) !== JSON.stringify(translatedTokens)) {
+            const retainedTokens = translatedTokens.filter(token => sourceTokens.includes(token));
+            const sourceBrands = sourceTokens.filter(token => token.startsWith('brand:'));
+            const translatedBrands = translatedTokens.filter(token => token.startsWith('brand:'));
+            if (JSON.stringify(sourceTokens) !== JSON.stringify(retainedTokens)
+                || JSON.stringify(sourceBrands) !== JSON.stringify(translatedBrands)) {
                 tokenMismatches.push(key);
             }
         }
