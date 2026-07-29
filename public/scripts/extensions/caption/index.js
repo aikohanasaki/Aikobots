@@ -1,4 +1,4 @@
-import { translate } from '../../i18n.js';
+import { t, translate } from '../../i18n.js';
 import { ensureImageFormatSupported, getBase64Async, getFileExtension, getStringHash, isTrueBoolean, saveBase64AsFile } from '../../utils.js';
 import { getContext, getApiUrl, doExtrasFetch, extension_settings, modules, renderExtensionTemplateAsync } from '../../extensions.js';
 import { appendMediaToMessage, chat_metadata, eventSource, event_types, getRequestHeaders, saveChatConditional, saveSettingsDebounced, substituteParamsExtended } from '../../../script.js';

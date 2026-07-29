@@ -3351,7 +3351,7 @@ async function showArcPromptManagerPopup({ onChange = null } = {}) {
                     await duplicateArcPromptPreset(selectedPresetKey);
                     toastr.success(translate('Consolidation preset duplicated successfully'), 'STMB');
                 } else if (actionButton.classList.contains('stmb-action-delete')) {
-            const confirm = await Popup.show.confirm(t`Delete Consolidation Preset`, t`Are you sure you want to delete "${escapeHtml(getArcPromptDisplayName(selectedPresetKey))}"?`);
+                    const confirm = await Popup.show.confirm(t`Delete Consolidation Preset`, t`Are you sure you want to delete "${escapeHtml(getArcPromptDisplayName(selectedPresetKey))}"?`);
                     if (!confirm) {
                         return;
                     }

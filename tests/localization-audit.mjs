@@ -43,7 +43,7 @@ const NONLOCALIZABLE_DYNAMIC_VALUES = new Set([
     'NovelAI API',
     'STMB',
 ]);
-const NONLOCALIZABLE_TEXT_TAGS = new Set(['code', 'pre', 'script', 'style', 'textarea']);
+const NONLOCALIZABLE_TEXT_TAGS = new Set(['code', 'pre', 'script', 'style', 'textarea', 'think']);
 
 /**
  * Returns first-party frontend source files that may contain localization tags.

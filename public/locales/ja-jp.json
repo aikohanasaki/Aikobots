@@ -5953,5 +5953,6 @@
     "sd_prompt_8": "キャラクター（マルチモーダルモード）",
     "sd_prompt_9": "ユーザー（マルチモーダルモード）",
     "sd_prompt_10": "ポートレート（マルチモーダルモード）",
-    "sd_prompt_11": "フリーモード（LLM 拡張）"
+    "sd_prompt_11": "フリーモード（LLM 拡張）",
+    "Press \"Cancel\" to abort the caption sending.": "「キャンセル」を押すと、キャプションの送信を中止します。"
 }

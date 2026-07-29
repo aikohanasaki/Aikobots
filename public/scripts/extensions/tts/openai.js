@@ -1,4 +1,4 @@
-import { t, translate } from '../../i18n.js';
+import { translate } from '../../i18n.js';
 import { getRequestHeaders, substituteParams } from '../../../script.js';
 import { saveTtsProviderSettings, sanitizeId } from './index.js';
 

@@ -5950,5 +5950,6 @@
     "sd_prompt_8": "Charakter (multimodaler Modus)",
     "sd_prompt_9": "Nutzer (multimodaler Modus)",
     "sd_prompt_10": "Porträt (multimodaler Modus)",
-    "sd_prompt_11": "Freier Modus (LLM-erweitert)"
+    "sd_prompt_11": "Freier Modus (LLM-erweitert)",
+    "Press \"Cancel\" to abort the caption sending.": "Klicke auf „Abbrechen“, um das Senden der Bildbeschreibung abzubrechen."
 }

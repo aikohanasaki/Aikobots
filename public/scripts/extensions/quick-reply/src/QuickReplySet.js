@@ -1,4 +1,4 @@
-import { t, translate } from '../../../i18n.js';
+import { translate } from '../../../i18n.js';
 import { getRequestHeaders, substituteParams } from '../../../../script.js';
 import { Popup, POPUP_RESULT, POPUP_TYPE } from '../../../popup.js';
 import { executeSlashCommandsOnChatInput, executeSlashCommandsWithOptions } from '../../../slash-commands.js';

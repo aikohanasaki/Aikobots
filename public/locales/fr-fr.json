@@ -6010,5 +6010,6 @@
     "sd_prompt_8": "Personnage (mode multimodal)",
     "sd_prompt_9": "Utilisateur (mode multimodal)",
     "sd_prompt_10": "Portrait (mode multimodal)",
-    "sd_prompt_11": "Mode libre (étendu par LLM)"
+    "sd_prompt_11": "Mode libre (étendu par LLM)",
+    "Press \"Cancel\" to abort the caption sending.": "Appuyez sur « Annuler » pour interrompre l’envoi de la légende."
 }

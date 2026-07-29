@@ -410,7 +410,7 @@ export const power_user = {
         add_to_prompts: false,
         auto_expand: false,
         show_hidden: false,
-        prefix: '<think data-i18n="\n', suffix: '\n">\n',
+        prefix: '<think>\n',
         suffix: '\n</think>',
         separator: '\n\n',
         max_additions: 1,
