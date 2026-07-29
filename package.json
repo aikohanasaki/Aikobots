@@ -127,6 +127,8 @@
         "lint": "eslint \"src/**/*.js\" \"public/**/*.js\" ./*.js",
         "lint:fix": "eslint \"src/**/*.js\" \"public/**/*.js\" ./*.js --fix",
         "lint:localization": "node tests/localization-audit.mjs",
+        "lint:localization:coverage": "node tests/localization-audit.mjs --check-locales",
+        "lint:localization:report": "node tests/localization-audit.mjs --check-locales --allow-missing",
         "lint:localization:fix": "node tests/localization-audit.mjs --fix-attributes",
         "lint:localization:fix-dynamic": "node tests/localization-audit.mjs --fix-dynamic",
         "lint:localization:fix-text": "node tests/localization-audit.mjs --fix-text",

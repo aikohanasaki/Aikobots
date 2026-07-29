@@ -5,7 +5,7 @@ import { parse as parseJs } from 'acorn';
 import { parse as parseHtml } from 'parse5';
 
 const PUBLIC_ROOT = path.resolve(process.cwd(), 'public');
-const SKIPPED_DIRECTORIES = new Set(['lib', 'locales']);
+const SKIPPED_DIRECTORIES = new Set(['lib', 'locales', 'third-party']);
 const LOCALIZABLE_EXTENSIONS = new Set(['.html', '.js']);
 const ATTRIBUTE_DIRECTIVE = /^\[([^\]\s]+)\](.+)$/;
 const LOCALIZABLE_ATTRIBUTES = ['title', 'placeholder', 'aria-label', 'alt'];
@@ -14,6 +14,16 @@ const LEAF_TEXT = /<([a-z][\w:-]*)(\s[^<>]*?)?>([^<>{}$]*[A-Za-z][^<>{}$]*)<\/\1
 const FIX_ATTRIBUTES = process.argv.includes('--fix-attributes');
 const FIX_DYNAMIC = process.argv.includes('--fix-dynamic');
 const FIX_TEXT = process.argv.includes('--fix-text');
+const CHECK_LOCALES = process.argv.includes('--check-locales');
+const ALLOW_MISSING = process.argv.includes('--allow-missing');
+const PRIORITY_LOCALES = ['de-de', 'fr-fr', 'ja-jp'];
+const PROTECTED_BRANDS = [
+    'Aikobots', 'STMB', 'Memory Books', 'Data Maid', 'SillyTavern', 'OpenAI', 'Anthropic',
+    'Claude', 'Cohere', 'CometAPI', 'DeepSeek', 'Electron Hub', 'Fireworks AI',
+    'Google AI Studio', 'Google Vertex AI', 'Groq', 'MistralAI', 'Moonshot AI',
+    'NanoGPT', 'NovelAI', 'OpenRouter', 'Perplexity', 'Pollinations', 'SiliconFlow',
+    'xAI', 'Z.AI', 'Azure OpenAI', 'Gemini', 'Gemma', 'KoboldAI', 'TabbyAPI',
+];
 const NONLOCALIZABLE_ATTRIBUTE_VALUES = new Set([
     'Gemini 2.0 Flash Experimental',
     'Gemini 1.5+, LearnLM',
@@ -57,7 +67,158 @@ function getSourceFiles(directory) {
         }
     }
 
-    return files;
+    return files.sort();
+}
+
+/**
+ * Adds a localization key and its first source location to the source catalog.
+ * @param {Map<string, {filePath: string, offset: number, sourceText: string}>} catalog Source catalog
+ * @param {string} key Localization key
+ * @param {string} filePath Source file
+ * @param {number} offset Source offset
+ * @param {string} [sourceText=key] English source text
+ */
+function addCatalogKey(catalog, key, filePath, offset, sourceText = key) {
+    if (!key || NONLOCALIZABLE_DYNAMIC_VALUES.has(key) || NONLOCALIZABLE_ATTRIBUTE_VALUES.has(key)) {
+        return;
+    }
+    if (!catalog.has(key)) {
+        catalog.set(key, { filePath, offset, sourceText });
+    } else if (catalog.get(key).sourceText === key && sourceText !== key) {
+        catalog.get(key).sourceText = sourceText;
+    } else if (sourceText === key && /[A-Z\s]/.test(key)) {
+        catalog.get(key).sourceText = key;
+    }
+}
+
+/**
+ * Decodes HTML source entities to the text exposed by the browser DOM.
+ * @param {string} text Raw HTML source text
+ * @returns {string} Browser-equivalent fallback text
+ */
+function decodeHtmlSourceText(text) {
+    return String(text)
+        .replaceAll('&#10;', '\n')
+        .replaceAll('&#13;', '\r')
+        .replaceAll('&nbsp;', '\u00A0')
+        .replaceAll('&lt;', '<')
+        .replaceAll('&gt;', '>')
+        .replaceAll('&quot;', '"')
+        .replaceAll('&apos;', '\'')
+        .replaceAll('&lcub;', '{')
+        .replaceAll('&rcub;', '}')
+        .replaceAll('&amp;', '&');
+}
+
+/**
+ * Collects source-derived localization keys in deterministic source order.
+ * @param {string[]} filePaths Frontend source files
+ * @returns {Map<string, {filePath: string, offset: number, sourceText: string}>} Localization key catalog
+ */
+function collectSourceCatalog(filePaths) {
+    const catalog = new Map();
+
+    for (const filePath of filePaths) {
+        const source = fs.readFileSync(filePath, 'utf8');
+        for (const match of source.matchAll(/\bdata-i18n\s*=\s*(["'])(.*?)\1/gs)) {
+            for (const directive of match[2].split(';')) {
+                if (/\$\{|\{\{|<%/.test(directive)) {
+                    continue;
+                }
+                const attributeMatch = directive.match(/^\[([^\]\s]+)\](.+)$/);
+                const key = attributeMatch?.[2] || directive;
+                let sourceText = key;
+                if (attributeMatch) {
+                    const openingTagStart = source.lastIndexOf('<', match.index);
+                    const openingTagEnd = source.indexOf('>', match.index);
+                    const openingTag = openingTagStart >= 0 && openingTagEnd >= 0
+                        ? source.slice(openingTagStart, openingTagEnd + 1)
+                        : '';
+                    const escapedAttribute = attributeMatch[1].replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+                    sourceText = openingTag.match(new RegExp(`\\b${escapedAttribute}\\s*=\\s*(["'])(.*?)\\1`, 's'))?.[2] || key;
+                } else {
+                    const openingTagStart = source.lastIndexOf('<', match.index);
+                    const openingTagEnd = source.indexOf('>', match.index);
+                    const tagName = source.slice(openingTagStart + 1, openingTagEnd).match(/^([a-z][\w:-]*)/i)?.[1];
+                    const closingTag = tagName ? source.indexOf(`</${tagName}>`, openingTagEnd) : -1;
+                    const innerText = closingTag >= 0 ? source.slice(openingTagEnd + 1, closingTag) : '';
+                    if (innerText && !/[<>{}$]/.test(innerText)) {
+                        sourceText = innerText;
+                    }
+                }
+                addCatalogKey(catalog, key, filePath, match.index, decodeHtmlSourceText(sourceText));
+            }
+        }
+
+        if (path.extname(filePath) !== '.js') {
+            continue;
+        }
+
+        let ast;
+        try {
+            ast = parseJs(source, { ecmaVersion: 'latest', sourceType: 'module' });
+        } catch {
+            continue;
+        }
+
+        const translateBindings = new Set();
+        const templateBindings = new Set();
+        for (const statement of ast.body) {
+            if (statement.type !== 'ImportDeclaration' || !String(statement.source?.value || '').endsWith('i18n.js')) {
+                continue;
+            }
+            for (const specifier of statement.specifiers) {
+                if (specifier.type !== 'ImportSpecifier') {
+                    continue;
+                }
+                if (specifier.imported?.name === 'translate') {
+                    translateBindings.add(specifier.local.name);
+                }
+                if (specifier.imported?.name === 't') {
+                    templateBindings.add(specifier.local.name);
+                }
+            }
+        }
+
+        const stack = [ast];
+        while (stack.length) {
+            const node = stack.pop();
+            if (!node || typeof node !== 'object') {
+                continue;
+            }
+            if (node.type === 'CallExpression' && node.callee?.type === 'Identifier' && translateBindings.has(node.callee.name)) {
+                const keyNode = node.arguments[1] || node.arguments[0];
+                if (keyNode?.type === 'Literal' && typeof keyNode.value === 'string') {
+                    const sourceTextNode = node.arguments[0];
+                    const sourceText = sourceTextNode?.type === 'Literal' && typeof sourceTextNode.value === 'string'
+                        ? sourceTextNode.value
+                        : keyNode.value;
+                    addCatalogKey(catalog, keyNode.value, filePath, keyNode.start, sourceText);
+                }
+            }
+            if (node.type === 'TaggedTemplateExpression' && node.tag?.type === 'Identifier' && templateBindings.has(node.tag.name)) {
+                let key = '';
+                node.quasi.quasis.forEach((part, index) => {
+                    key += part.value.cooked || '';
+                    if (index < node.quasi.expressions.length) {
+                        key += `\${${index}}`;
+                    }
+                });
+                addCatalogKey(catalog, key, filePath, node.start);
+            }
+            for (const value of Object.values(node)) {
+                if (Array.isArray(value)) {
+                    value.forEach(item => {
+                        if (item?.type) stack.push(item);
+                    });
+                } else if (value?.type) {
+                    stack.push(value);
+                }
+            }
+        }
+    }
+
+    return catalog;
 }
 
 /**
@@ -707,7 +868,153 @@ function auditFile(filePath) {
     return findings;
 }
 
-const findings = getSourceFiles(PUBLIC_ROOT).flatMap(auditFile);
+/**
+ * Extracts protected syntax that translations must preserve exactly.
+ * @param {string} text English source or translated text
+ * @returns {string[]} Sorted protected tokens
+ */
+function getProtectedTokens(text) {
+    const tokens = [];
+    const patterns = [
+        ['placeholder', /\$\{\d+\}/g],
+        ['macro', /\{\{[^{}]+\}\}/g],
+        ['url', /https?:\/\/[^\s"'<>]+/g],
+        ['html', /<\/?(?:a|b|br|code|div|em|i|kbd|li|ol|p|pre|small|span|strong|ul)\b[^>]*>/gi],
+        ['shortcut', /\b(?:Ctrl|Alt|Shift|Cmd|Command|Meta)(?:\+[A-Za-z0-9]+)+\b/g],
+        ['sentinel', /\b(?:OVERWRITE|START)\b/g],
+        ['file', /\b[\w.-]+\.(?:jsonl?|png|jpe?g|webp|ya?ml|txt|md|sqlite|html|js|css)\b/gi],
+        ['format', /%[sdif]/g],
+        ['replacement', /\$(?:\d+|&|<[\w-]+>)/g],
+    ];
+    for (const [type, pattern] of patterns) {
+        for (const match of String(text).matchAll(pattern)) {
+            tokens.push(`${type}:${match[0]}`);
+        }
+    }
+    for (const match of String(text).matchAll(/<code\b[^>]*>([\s\S]*?)<\/code>/gi)) {
+        tokens.push(`code:${match[1]}`);
+    }
+    for (const brand of PROTECTED_BRANDS) {
+        for (let offset = String(text).indexOf(brand); offset >= 0; offset = String(text).indexOf(brand, offset + brand.length)) {
+            tokens.push(`brand:${brand}`);
+        }
+    }
+    for (const match of String(text).matchAll(/\/([a-z][\w-]*)/g)) {
+        const previous = text[match.index - 1] || '';
+        if (!/[A-Za-z0-9_/:<]/.test(previous)) {
+            tokens.push(`command:/${match[1]}`);
+        }
+    }
+    return tokens.sort();
+}
+
+/**
+ * Finds duplicate object keys in a JSON locale file.
+ * @param {string} raw Locale JSON source
+ * @returns {string[]} Duplicate keys
+ */
+function getDuplicateJsonKeys(raw) {
+    const ast = parseJs(`(${raw})`, { ecmaVersion: 'latest' });
+    const properties = ast.body[0]?.expression?.properties || [];
+    const seen = new Set();
+    const duplicates = [];
+    for (const property of properties) {
+        const key = property.key?.value ?? property.key?.name;
+        if (seen.has(key)) {
+            duplicates.push(key);
+        }
+        seen.add(key);
+    }
+    return duplicates;
+}
+
+/**
+ * Audits priority locale coverage and protected translation syntax.
+ * @param {Map<string, {filePath: string, offset: number, sourceText: string}>} catalog Source key catalog
+ * @returns {string[]} Locale findings
+ */
+function auditPriorityLocales(catalog) {
+    const findings = [];
+    for (const locale of PRIORITY_LOCALES) {
+        const localePath = path.join(PUBLIC_ROOT, 'locales', `${locale}.json`);
+        const relativePath = path.relative(process.cwd(), localePath);
+        const raw = fs.readFileSync(localePath, 'utf8');
+        let data;
+        try {
+            data = JSON.parse(raw);
+        } catch (error) {
+            findings.push(`${relativePath}: invalid JSON: ${error.message}`);
+            continue;
+        }
+
+        let duplicates = [];
+        try {
+            duplicates = getDuplicateJsonKeys(raw);
+        } catch (error) {
+            findings.push(`${relativePath}: could not inspect duplicate keys: ${error.message}`);
+        }
+        if (duplicates.length) {
+            findings.push(`${relativePath}: duplicate keys: ${duplicates.join(', ')}`);
+        }
+
+        const missing = [];
+        const blank = [];
+        const invalidValues = [];
+        const privateUseMarkers = [];
+        const tokenMismatches = [];
+        for (const [key, source] of catalog) {
+            if (!Object.hasOwn(data, key)) {
+                missing.push(key);
+                continue;
+            }
+            if (typeof data[key] !== 'string') {
+                invalidValues.push(key);
+                continue;
+            }
+            if (!data[key].trim()) {
+                blank.push(key);
+                continue;
+            }
+            if (/[\uE000-\uF8FF]/u.test(data[key])) {
+                privateUseMarkers.push(key);
+            }
+            const sourceTokens = getProtectedTokens(source.sourceText);
+            const translatedTokens = getProtectedTokens(data[key]);
+            if (JSON.stringify(sourceTokens) !== JSON.stringify(translatedTokens)) {
+                tokenMismatches.push(key);
+            }
+        }
+
+        const staleCount = Object.keys(data).filter(key => !catalog.has(key)).length;
+        const identicalCount = [...catalog.keys()].filter(key => Object.hasOwn(data, key) && data[key] === catalog.get(key).sourceText).length;
+        console.log(`${locale}: ${catalog.size - missing.length}/${catalog.size} keys; ${missing.length} missing; ${staleCount} stale; ${identicalCount} source-identical`);
+
+        if (!ALLOW_MISSING && missing.length) {
+            findings.push(`${relativePath}: ${missing.length} missing source keys (first 20: ${missing.slice(0, 20).join(' | ')})`);
+        }
+        if (blank.length) {
+            findings.push(`${relativePath}: blank used values: ${blank.join(' | ')}`);
+        }
+        if (invalidValues.length) {
+            findings.push(`${relativePath}: non-string used values: ${invalidValues.join(' | ')}`);
+        }
+        if (privateUseMarkers.length) {
+            findings.push(`${relativePath}: private-use translation markers: ${privateUseMarkers.join(' | ')}`);
+        }
+        if (tokenMismatches.length) {
+            findings.push(`${relativePath}: protected-token mismatches: ${tokenMismatches.join(' | ')}`);
+        }
+    }
+    return findings;
+}
+
+const sourceFiles = getSourceFiles(PUBLIC_ROOT);
+const findings = sourceFiles.flatMap(auditFile);
+if (CHECK_LOCALES) {
+    const catalog = collectSourceCatalog(sourceFiles);
+    console.log(`Source localization catalog: ${catalog.size} keys.`);
+    findings.push(...auditPriorityLocales(catalog));
+}
 
 if (findings.length) {
     console.error(`Localization audit failed with ${findings.length} finding(s):`);
